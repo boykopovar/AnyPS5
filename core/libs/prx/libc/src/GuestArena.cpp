@@ -34,6 +34,8 @@
 namespace GuestArena {
 namespace {
 
+std::atomic<void (*)(std::uintptr_t, std::size_t)> hostWriteHook{nullptr};
+
 std::atomic<void (*)(std::uintptr_t, std::size_t)> hostReadHook{nullptr};
 
 #ifdef _WIN32
@@ -769,6 +771,10 @@ void* GuestArenaMapAlias_nid_postfix(std::uintptr_t address, std::size_t bytes) 
     return WindowsMappings::Get().MapAlias(address, bytes);
 }
 
+void* GuestArenaMapAliasForImport_nid_no_patch(std::uintptr_t address, std::size_t bytes, bool* boundsRefused) {
+    return WindowsMappings::Get().MapAlias(address, bytes, boundsRefused);
+}
+
 void GuestArenaUnmapAlias_nid_postfix(void* alias) {
     WindowsMappings::Get().UnmapAlias(alias);
 }
@@ -873,8 +879,41 @@ void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
 }
 #endif
 
+bool GuestArenaArmOwned_nid_no_patch(std::uintptr_t address, std::size_t bytes, std::uint64_t* words, std::size_t count, unsigned flags) {
+#ifdef _WIN32
+    if (bytes == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - address) return false;
+    const auto first = address & ~std::uintptr_t{65535};
+    const auto last = (address + bytes - 1) | std::uintptr_t{65535};
+    if (last == std::numeric_limits<std::uintptr_t>::max() || !Arena::Get().Contains(reinterpret_cast<void*>(first), last + 1 - first) || Arena::Get().OverlapsHostRegion(first, last + 1 - first)) return false;
+    return WindowsMappings::Get().ArmOwned(address, bytes, words, count, flags);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    static_cast<void>(words);
+    static_cast<void>(count);
+    static_cast<void>(flags);
+    return false;
+#endif
+}
+
+bool GuestArenaOwnedUnchanged_nid_no_patch(std::uintptr_t address, std::size_t bytes, const std::uint64_t* words, std::size_t count) {
+#ifdef _WIN32
+    return WindowsMappings::Get().OwnedUnchanged(address, bytes, words, count);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    static_cast<void>(words);
+    static_cast<void>(count);
+    return false;
+#endif
+}
+
 bool GuestArenaWriteWatched_nid_postfix() {
     return Arena::Get().WriteWatched();
+}
+
+void GuestArenaSetHostWriteHook_nid_no_patch(void (*hook)(std::uintptr_t, std::size_t)) {
+    hostWriteHook.store(hook, std::memory_order_release);
 }
 
 void GuestArenaSetAccessObserver_nid_postfix(void (*callback)(std::uintptr_t address, std::size_t bytes)) {
@@ -892,6 +931,7 @@ void GuestArenaPrepareHostRead_nid_no_patch(const void* pointer, std::size_t byt
 }
 
 bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
+    if (const auto hook = hostWriteHook.load(std::memory_order_acquire); hook != nullptr && bytes != 0) hook(reinterpret_cast<std::uintptr_t>(pointer), bytes);
 #ifdef _WIN32
     return WindowsMappings::Get().BeginHostWrite(reinterpret_cast<std::uintptr_t>(pointer), bytes);
 #else
