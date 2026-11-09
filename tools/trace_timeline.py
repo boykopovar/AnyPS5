@@ -57,3 +57,10 @@ def svg(laid):
     return "".join(parts)
 
 
+def page(svg_text, title, notes):
+    note_items = "".join(f"<li>{html.escape(note)}</li>" for note in notes)
+    return ("<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>" + html.escape(title) + "</title>"
+            "<style>body{font-family:sans-serif;margin:16px}svg{display:block;background:#f6f6f6}</style></head><body>"
+            "<h1>" + html.escape(title) + "</h1><ul>" + note_items + "</ul>" + svg_text + "</body></html>\n")
+
+
