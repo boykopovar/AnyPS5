@@ -104,34 +104,24 @@ int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi17
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity13getActivityIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity13getActivityIdEv(const void* self) {
+    return static_cast<const std::byte*>(self) + 0x10;
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity7getNameEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity7getNameEv(const void* self) {
+    return static_cast<const std::byte*>(self) + 0x30;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity9getHiddenEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return *reinterpret_cast<const bool*>(static_cast<const std::byte*>(self) + 0x50);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity12matchIdIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return *reinterpret_cast<const bool*>(static_cast<const std::byte*>(self) + 0x78);
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity10getMatchIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity10getMatchIdEv(const void* self) {
+    return static_cast<const std::byte*>(self) + 0x58;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities26GetUsersActivitiesResponse8getUsersEv(const void* self) {
