@@ -51,6 +51,7 @@
 #else
 #include <cerrno>
 #include <cstdint>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <fstream>
 #ifndef __APPLE__
@@ -82,7 +83,9 @@ unsigned long long ModuleOffset(const void* address) {
     GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCSTR>(address), &module);
     return reinterpret_cast<std::uintptr_t>(address) - reinterpret_cast<std::uintptr_t>(module);
 #else
-    return reinterpret_cast<std::uintptr_t>(address);
+    Dl_info info{};
+    if (dladdr(address, &info) == 0 || info.dli_fbase == nullptr) return reinterpret_cast<std::uintptr_t>(address);
+    return reinterpret_cast<std::uintptr_t>(address) - reinterpret_cast<std::uintptr_t>(info.dli_fbase);
 #endif
 }
 
@@ -1073,6 +1076,7 @@ struct WindowCopy {
     std::span<const std::uint64_t> hashes;
 
     bool Holds(std::uintptr_t page) const {
+        if (page < first || (page - first) / WritePageBytes >= hashes.size()) return false;
         return HashPage(reinterpret_cast<const std::byte*>(page)) == hashes[(page - first) / WritePageBytes];
     }
 };
