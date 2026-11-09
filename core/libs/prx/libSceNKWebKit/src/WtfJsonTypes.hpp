@@ -14,7 +14,7 @@ struct ObjectBase;
 struct Object;
 struct ArrayBase;
 struct Array;
-struct StringBuilder;
+using StringBuilder = NKWebKit::WtfAbi::StringBuilder;
 
 enum class ValueType : int {
     Null = 0,
@@ -192,8 +192,6 @@ struct ArrayBase : Value {
 };
 
 struct Array : ArrayBase {};
-
-using StringBuilder = NKWebKit::WtfAbi::StringBuilder;
 
 static_assert(sizeof(ValueType) == 4);
 static_assert(sizeof(Ref<Value>) == 8);
