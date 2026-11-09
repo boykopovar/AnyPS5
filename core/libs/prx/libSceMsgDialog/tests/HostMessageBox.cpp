@@ -23,5 +23,7 @@ int main() {
     Check(!MsgDialog::HostMessageBoxEnabled("1", true), "the host box is enabled on Apple builds");
 
     Check(MsgDialog::HostMessageLabel(u"Yes") == "Yes", "an ASCII label is changed");
+    Check(MsgDialog::HostMessageLabel(u"AÑ") == "A?", "a non-ASCII label is not replaced by ?");
+
     return correct ? 0 : 1;
 }
