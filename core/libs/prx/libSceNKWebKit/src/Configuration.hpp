@@ -50,6 +50,8 @@ public:
 
     Retained<ProcessPoolConfiguration> configuration;
     bool usesSingleWebProcess = false;
+    std::uint32_t cacheModel = 0;
+    bool accessibilityEnabled = false;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
