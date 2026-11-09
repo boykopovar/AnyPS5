@@ -396,8 +396,6 @@ void detailComposeTests() {
     details.vram.reset();
     details.ram.reset();
     details.cpuCelsius.reset();
-    const auto cold = AgcDriver::ComposeOverlay(uncounted, false, false, details);
-    require(std::none_of(cold.below.begin(), cold.below.end(), [](const std::string& line) { return line.rfind("CPU", 0) == 0; }), "a CPU line is shown without a reading");
     details.display = {};
     const auto partial = AgcDriver::ComposeOverlay(statistics, false, false, details);
     require(partial.below.size() == 3 && partial.below.back().rfind("SHADERS", 0) == 0, "a line is shown without its data: the last line is '" + partial.below.back() + "'");
@@ -414,7 +412,8 @@ void detailComposeTests() {
     const auto hot = AgcDriver::ComposeOverlay(uncounted, false, false, details);
     require(std::find(hot.below.begin(), hot.below.end(), std::string("CPU: 54 C")) != hot.below.end(), "the CPU temperature is not shown");
     details.cpuCelsius.reset();
-    require(std::find_if(AgcDriver::ComposeOverlay(uncounted, false, false, details).below.begin(), AgcDriver::ComposeOverlay(uncounted, false, false, details).below.end(), [](const std::string& line) { return line.rfind("CPU", 0) == 0; }) == AgcDriver::ComposeOverlay(uncounted, false, false, details).below.end(), "a CPU line is shown without a reading");
+    const auto cold = AgcDriver::ComposeOverlay(uncounted, false, false, details);
+    require(std::none_of(cold.below.begin(), cold.below.end(), [](const std::string& line) { return line.rfind("CPU", 0) == 0; }), "a CPU line is shown without a reading");
     details = fullDetails();
     details.window = {};
     require(AgcDriver::ComposeOverlay(uncounted, false, false, details).below.back() == "RAM: 3.2 GB", "RES is shown without a window size");
