@@ -747,14 +747,26 @@ private:
     mutable std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
     void writeHeapStage(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader);
     struct HeapStageState {
+        std::uint64_t inertProgram = 0;
+        std::uint64_t slotSerial = 0;
+        std::uint64_t dataOrigin = 0;
+        std::uint64_t pushedUserWords = 0;
+        const void* dataProgram = nullptr;
+        VkShaderStageFlags laidOutFor = 0;
+        std::uint32_t touchedEpoch = 0;
+        std::uint32_t pushedPlaced = 0;
+        std::vector<std::uint32_t> owned;
         std::vector<std::uintptr_t> key;
-        std::array<std::vector<std::uint32_t>, static_cast<std::size_t>(ShaderRecompiler::RuntimeAbi::Binding::Count)> slots;
+        struct KindRange {
+            std::uint32_t kind = 0;
+            std::uint32_t first = 0;
+            std::uint32_t count = 0;
+        };
         std::vector<std::uint32_t> imageSlots;
+        std::vector<KindRange> kindRanges;
         std::vector<std::uint32_t> slotGenerations;
         std::vector<std::uint32_t> samplerSlots;
         std::vector<std::uint32_t> samplerGenerations;
-        std::uint64_t slotSerial = 0;
-        std::uint32_t touchedEpoch = 0;
         std::vector<std::pair<std::uint32_t, std::uint32_t>> dataPatches;
         struct KeptSpan {
             std::vector<std::uint32_t> words;
@@ -762,13 +774,12 @@ private:
         };
         KeptSpan data, flat, map;
         std::vector<std::uint32_t> dataInput;
-        std::uint64_t dataOrigin = 0;
-        const void* dataProgram = nullptr;
-        std::uint64_t inertProgram = 0;
-        std::vector<std::uint32_t> owned;
-        VkShaderStageFlags laidOutFor = 0;
-        std::uint64_t pushedUserWords = 0;
-        std::uint32_t pushedPlaced = 0;
+        std::span<const std::uint32_t> Slots(std::uint32_t kind) const {
+            for (const auto& range : kindRanges) {
+                if (range.kind == kind) return std::span<const std::uint32_t>(imageSlots).subspan(range.first, range.count);
+            }
+            return {};
+        }
     };
     std::array<HeapStageState, ShaderRecompiler::RuntimeAbi::StageCount> heapStages;
     std::uint64_t heapSpan(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words, std::uint64_t pushed = 0);
