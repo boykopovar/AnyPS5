@@ -105,6 +105,55 @@ Pad::MouseButton parseMouseButton(std::string_view name) {
     throw std::runtime_error("unknown mouse button '" + std::string(name) + "'");
 }
 
+bool isEmulatorAction(Pad::InputControl control) {
+    switch (control) {
+        case Pad::InputControl::ToggleFullscreen:
+        case Pad::InputControl::TogglePerformanceOverlay:
+        case Pad::InputControl::Screenshot:
+        case Pad::InputControl::ShowPadStatus:
+        case Pad::InputControl::VolumeUp:
+        case Pad::InputControl::VolumeDown:
+        case Pad::InputControl::ToggleMute:
+        case Pad::InputControl::ReloadInputMapping: return true;
+        default: return false;
+    }
+}
+
+Pad::PadButton parsePadButton(std::string_view name) {
+    const auto normalized = upper(name);
+    if (normalized == "CROSS") return Pad::PadButton::Cross;
+    if (normalized == "CIRCLE") return Pad::PadButton::Circle;
+    if (normalized == "TRIANGLE") return Pad::PadButton::Triangle;
+    if (normalized == "SQUARE") return Pad::PadButton::Square;
+    if (normalized == "L1") return Pad::PadButton::L1;
+    if (normalized == "R1") return Pad::PadButton::R1;
+    if (normalized == "L2") return Pad::PadButton::L2;
+    if (normalized == "R2") return Pad::PadButton::R2;
+    if (normalized == "L3") return Pad::PadButton::L3;
+    if (normalized == "R3") return Pad::PadButton::R3;
+    if (normalized == "OPTIONS") return Pad::PadButton::Options;
+    if (normalized == "UP") return Pad::PadButton::Up;
+    if (normalized == "RIGHT") return Pad::PadButton::Right;
+    if (normalized == "DOWN") return Pad::PadButton::Down;
+    if (normalized == "LEFT") return Pad::PadButton::Left;
+    if (normalized == "TOUCHPAD") return Pad::PadButton::TouchPad;
+    throw std::runtime_error("unknown pad button '" + std::string(name) + "'");
+}
+
+std::uint32_t parsePadChord(std::string_view value) {
+    std::uint32_t mask = 0;
+    std::size_t start = 0;
+    while (true) {
+        const auto plus = value.find('+', start);
+        const auto part = trim(value.substr(start, plus == std::string_view::npos ? std::string_view::npos : plus - start));
+        if (part.empty()) throw std::runtime_error("pad chord has an empty button");
+        mask |= static_cast<std::uint32_t>(parsePadButton(part));
+        if (plus == std::string_view::npos) break;
+        start = plus + 1;
+    }
+    return mask;
+}
+
 Pad::InputBinding parseBinding(const InputAction& action, std::string_view source) {
     const auto separator = source.find(':');
     if (separator == std::string_view::npos) throw std::runtime_error("source must use TYPE:VALUE format");
