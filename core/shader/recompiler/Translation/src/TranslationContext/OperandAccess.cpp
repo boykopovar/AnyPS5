@@ -368,14 +368,22 @@ IrU32 TranslationContext::quietNan32(IrU32 bits) {
 IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct, bool multiplication) {
     if (!ExactF32Arithmetic()) return result;
     const auto isNan = [&](IrValue& bits) -> IrValue& { return ir.UGreaterThan(ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u)); };
-    IrValue* bits = &ir.BitCastU32(*result);
     const bool normalFactor = multiplication && std::any_of(sources.begin(), sources.end(), [](const IrValue* source) {
         const IrValue* constant = constantF32Bits(*source);
         if (constant == nullptr) return false;
         const std::uint32_t exponent = (constant->ImmediateU32() >> 23u) & 0xffu;
         return exponent != 0u && exponent != 0xffu;
     });
-    if (!normalFactor) bits = &ir.Select(isNan(*bits), ir.Constant(0xffc00000u), *bits);
+    if (!normalFactor) {
+        std::array<IrValue*, 3> operands{};
+        std::uint32_t count = 0u;
+        for (IrValue* source : sources) operands.at(count++) = source;
+        for (auto index = count; index < operands.size(); ++index) operands[index] = operands[0];
+        const std::uint32_t flags = (ieeeMode ? 1u : 0u) | (count << 1u);
+        IrValue& invalid = invalidProduct != nullptr && count == 3u ? *invalidProduct : ir.ConstantBool(false);
+        return &ir.Emit(IrOpcode::NanPropagateF32, IrType::F32, {result, &ir.Constant(flags), &invalid, operands[0], operands[1], operands[2]});
+    }
+    IrValue* bits = &ir.BitCastU32(*result);
     for (auto source = sources.end(); source != sources.begin();) {
         --source;
         IrValue& sourceBits = ir.BitCastU32(**source);

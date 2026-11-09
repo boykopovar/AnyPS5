@@ -144,6 +144,32 @@ std::size_t WindowStores(std::span<const std::uint32_t> words) {
     return stores;
 }
 
+std::size_t DynamicFunctionAccesses(std::span<const std::uint32_t> words) {
+    std::vector<std::uint32_t> constants;
+    std::vector<std::uint32_t> functionPointers;
+    std::vector<std::uint32_t> variables;
+    std::size_t dynamic = 0;
+    const auto contains = [](const std::vector<std::uint32_t>& ids, std::uint32_t id) { return std::find(ids.begin(), ids.end(), id) != ids.end(); };
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> spv::WordCountShift;
+        const auto op = static_cast<spv::Op>(words[cursor] & spv::OpCodeMask);
+        Require(count != 0 && cursor + count <= words.size(), "truncated SPIR-V instruction");
+        if (op == spv::OpConstant) constants.push_back(words[cursor + 2]);
+        if (op == spv::OpTypePointer && words[cursor + 2] == spv::StorageClassFunction) functionPointers.push_back(words[cursor + 1]);
+        if (op == spv::OpVariable && words[cursor + 3] == spv::StorageClassFunction && contains(functionPointers, words[cursor + 1])) variables.push_back(words[cursor + 2]);
+        if (op == spv::OpAccessChain && count > 4 && contains(variables, words[cursor + 3])) {
+            for (std::uint32_t index = 4; index < count; ++index) {
+                if (!contains(constants, words[cursor + index])) {
+                    ++dynamic;
+                    break;
+                }
+            }
+        }
+        cursor += count;
+    }
+    return dynamic;
+}
+
 constexpr std::array<std::uint32_t, 34> WindowInit{
     0x34020086, 0x34060088, 0x4a140680, 0x4a160681, 0x4a180682, 0x4a1a0683, 0x4a1c0684, 0x4a1e0685,
     0x4a200686, 0x4a220687, 0x4a240688, 0x4a260689, 0x4a28068a, 0x4a2a068b, 0x4a2c068c, 0x4a2e068d,
@@ -420,6 +446,13 @@ int main(int argc, char** argv) {
         const auto few = ScanNarrowing(RecompileNarrowing(2));
         if (many.switchCases > 4096u || many.functionVariables >= few.functionVariables) std::fprintf(stderr, "  300 unproven reads: %u function variables, %u switch cases (2 reads: %u, %u)\n", many.functionVariables, many.switchCases, few.functionVariables, few.switchCases);
         return many.switchCases <= 4096u && many.functionVariables < few.functionVariables;
+    });
+
+    passed &= run("a window whose relative reads each take one of a few indexes reads only constant slots", [] {
+        const auto bounded = DynamicFunctionAccesses(RecompileNarrowing(0));
+        const auto unbounded = DynamicFunctionAccesses(RecompileNarrowing(2));
+        if (bounded != 0u || unbounded == 0u) std::fprintf(stderr, "  dynamic window accesses: %zu with only a masked index, %zu with two unproven reads\n", bounded, unbounded);
+        return bounded == 0u && unbounded != 0u;
     });
 
     if (passed) std::puts("Vector window shape and SSA control tests passed");
