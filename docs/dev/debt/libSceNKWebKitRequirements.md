@@ -12,10 +12,6 @@
 - [`sqlite3_open_v2`](../../../core/libs/prx/libSceNKWebKitRequirements/src/Sqlite.cpp) installs a host authorizer on every connection it opens that denies `ATTACH DATABASE` of any non-empty name, so a guest `ATTACH` or `VACUUM INTO` fails with `SQLITE_AUTH` instead of writing a host path that skips the guest path resolver; `ATTACH ''` and a plain `VACUUM` still work. The guest's own `sqlite3_set_authorizer` callback runs after it and cannot lift it. Resolving the guest path for those statements is not implemented.
 - [`sqlite3_wal_hook`](../../../core/libs/prx/libSceNKWebKitRequirements/src/Sqlite.cpp) returns the host's previous argument, such as the default autocheckpoint frame count, until a guest hook is installed.
 
-### Functional
-
-- [zlib exports](../../../core/libs/prx/libSceNKWebKitRequirements/Zlib.cpp) - a valid gzip or automatic-detection `windowBits` throws: the vendored zlib 1.3.2 of libjpeg-turbo is built with `NO_GZIP`. The [zlib.h](https://github.com/madler/zlib/blob/51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf/zlib.h) prototypes and the LP64 112-byte `z_stream` are assumed because the NIDs of `deflateInit2_`, `deflate`, `deflateReset`, `deflateEnd`, `deflateBound`, `inflateInit2_`, `inflate`, `inflateReset`, `inflateEnd` and `uncompress` hash to those names; neither is measured on a console. The console's zlib version is unknown, so `deflateBound` values and compressed bytes follow 1.3.2 and may differ (zlib 1.3 bounds 1000 bytes on a null stream at 1139, 1.3.2 at 1151). Host stream bookkeeping bypasses the guest `zalloc`. On Windows, where the host `uLong` is 32-bit, a call clears a guest-set upper half of `adler` even where zlib leaves the field alone. `uncompress` with a null length throws.
-
 ### Additional callable exports
 
 - [Additional callable exports](../../../core/libs/prx/libSceNKWebKitRequirements/Export.cpp) - 32 entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. These NIDs are absent from the pinned public 3.20 catalogue. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
@@ -54,3 +50,7 @@
 | `Unknown` | `uiTgPO1VRaA` |
 | `Unknown` | `x2xMh95HEb4` |
 | `Unknown` | `z5L7zirdMWM` |
+
+### Functional
+
+- [zlib exports](../../../core/libs/prx/libSceNKWebKitRequirements/Zlib.cpp) - console ABI, version and exact compressed bytes remain unverified. The named NIDs and upstream prototypes imply an LP64 112-byte stream; Linux and Windows use an explicit host-stream bridge. The backend is pinned upstream zlib 1.3.2, including gzip and automatic format detection. Bounds and compressed bytes can differ from older console versions. Host bookkeeping does not use guest `zalloc`; Windows clears a guest-set upper half of `adler` when synchronizing the host checksum. `uncompress` with a null length throws.

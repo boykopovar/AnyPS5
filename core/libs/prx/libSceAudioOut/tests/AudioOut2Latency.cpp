@@ -161,7 +161,7 @@ void TestMasteringGetState() {
 
 void TestLegacyMasteringInit() {
     Require(sceAudioOutMasteringInit(0) == 0, "legacy flags 0 must be accepted");
-    Require(ThrowsException([] { sceAudioOutMasteringInit(1); }), "legacy flags SwapEqCompressor must throw");
+    Require(sceAudioOutMasteringInit(1) == static_cast<int>(0x80260201), "legacy flags 1 are refused with 0x80260201");
     Require(sceAudioOutMasteringInit(0) == 0, "a repeated legacy initialization must be accepted");
     Require(ThrowsException([] { sceAudioOutMasteringInit(2); }), "legacy flags bit 1 must throw");
     Require(ThrowsException([] { sceAudioOutMasteringInit(3); }), "legacy flags bits 0 and 1 must throw");
@@ -170,8 +170,8 @@ void TestLegacyMasteringInit() {
 }
 
 void TestLegacyMasteringTerm() {
-    Require(sceAudioOutMasteringTerm() == 0, "legacy termination must be accepted");
-    Require(sceAudioOutMasteringTerm() == 0, "legacy termination must be accepted for each initialization");
+    Require(sceAudioOutMasteringTerm() == 0, "legacy termination after an initialization must be accepted");
+    Require(sceAudioOutMasteringTerm() == static_cast<int>(0x80260203), "legacy termination without an initialization is refused");
 }
 
 void TestLegacyMasteringSetParam() {
@@ -200,6 +200,9 @@ void TestLegacyMasteringGetState() {
     auto* header = reinterpret_cast<std::uint32_t*>(storage);
     std::fill(storage, storage + size, 0xA5);
     *header = 1u;
+    Require(sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)) == static_cast<int>(0x80260203), "legacy states id 1 before an initialization is refused");
+    Require(std::all_of(storage + 4, storage + size, [](std::uint8_t byte) { return byte == 0xA5; }), "a refused legacy state leaves the buffer unmodified");
+    Require(sceAudioOutMasteringInit(0) == 0, "legacy flags 0 must be accepted");
     Require(sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)) == 0, "legacy states id 1 must be accepted");
     Require(*header == 1u, "legacy states id 1 is kept");
     const std::pair<std::size_t, std::size_t> meters[] = {{32, 128}, {128, 224}, {240, 272}, {272, 304}, {304, 336}};
@@ -214,10 +217,13 @@ void TestLegacyMasteringGetState() {
     for (std::uint32_t id : {0u, 2u, 3u, 0x01010001u, 0xFFFFFFFFu}) {
         std::fill(storage, storage + size, 0xA5);
         *header = id;
-        Require(ThrowsException([&] { sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)); }), "an unknown legacy states id must throw");
+        Require(sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)) == static_cast<int>(0x80260204), "an unknown legacy states id is refused with 0x80260204");
         Require(*header == id && std::all_of(storage + 4, storage + size, [](std::uint8_t byte) { return byte == 0xA5; }), "a refused legacy states id leaves the buffer unmodified");
     }
     Require(ThrowsException([] { sceAudioOutMasteringGetState(nullptr); }), "a null legacy state must throw");
+    Require(sceAudioOutMasteringTerm() == 0, "legacy termination must be accepted");
+    *header = 1u;
+    Require(sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)) == static_cast<int>(0x80260203), "legacy states id 1 after termination is refused");
 }
 
 void TestSetSystemDebugState() {
@@ -255,7 +261,7 @@ void TestLowLatencyService() {
     Require(sceAudioOut2LoInit() == 0, "starting the low-latency service again must be accepted");
     Require(sceAudioOut2LoTerminate() == 0, "stopping the low-latency service returns 0");
     Require(sceAudioOut2LoTerminate() == 0, "stopping a stopped low-latency service returns 0");
-    Require(sceAudioOut2InitializeEx(0) == 0 && sceAudioOut2InitializeEx(1) == 0, "the extended initialization succeeds");
+    Require(sceAudioOut2InitializeEx(0) == static_cast<int>(0x80268004) && sceAudioOut2InitializeEx(1) == static_cast<int>(0x80268004), "the extended initialization fails after sceAudioOutInit and when repeated");
 }
 
 }
