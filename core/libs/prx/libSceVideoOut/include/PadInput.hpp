@@ -29,6 +29,7 @@ public:
     PadInput(const PadInput&) = delete;
     PadInput& operator=(const PadInput&) = delete;
     void HandleEvent(const SDL_Event& event, DisplayWindow& window);
+    void applyHostRequests(DisplayWindow& window, Uint32 windowId, const Pad::InputRequests& requests);
     void Update(const DisplayWindow& window);
     bool MouseModeEnabled() const { return keyboardMouse.MouseMode(); }
     bool SlotOccupied(int slot) const {

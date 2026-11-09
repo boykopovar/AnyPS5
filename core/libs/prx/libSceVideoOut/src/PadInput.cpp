@@ -513,19 +513,24 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     keyboardMouse.SetTitleReadsMouse(MouseIsOpen_nid_no_patch());
     const auto requests = keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now());
     if (requests.reloadInputMapping) reloadInputMapping();
-    if (requests.toggleFullscreen && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) window.ToggleFullscreen();
-    if (requests.togglePerformanceOverlay && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) AgcDriverTogglePerformanceOverlay_nid_postfix();
-    if (requests.screenshot && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) AgcDriverRequestScreenshot_nid_postfix();
-    if (requests.showPadStatus && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) {
+    applyHostRequests(window, event.key.windowID, requests);
+    if (requests.toggleMouse) setMouseMode(!keyboardMouse.MouseMode());
+    if (event.type != SDL_MOUSEMOTION) publish(window.FrameNumber(), 0);
+}
+
+void PadInput::applyHostRequests(DisplayWindow& window, Uint32 windowId, const Pad::InputRequests& requests) {
+    const bool ours = window.Handle() != nullptr && windowId == SDL_GetWindowID(window.Handle());
+    if (requests.toggleFullscreen && ours) window.ToggleFullscreen();
+    if (requests.togglePerformanceOverlay && ours) AgcDriverTogglePerformanceOverlay_nid_postfix();
+    if (requests.screenshot && ours) AgcDriverRequestScreenshot_nid_postfix();
+    if (requests.showPadStatus && ours) {
         AgcDriverPadStatusShow_nid_postfix();
         reportStatus();
     }
-    if (window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) {
+    if (ours) {
         HostVolume volume;
         if (ApplyHostVolumeRequests(requests, &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
     }
-    if (requests.toggleMouse) setMouseMode(!keyboardMouse.MouseMode());
-    if (event.type != SDL_MOUSEMOTION) publish(window.FrameNumber(), 0);
 }
 
 void PadInput::Update(const DisplayWindow& window) {
