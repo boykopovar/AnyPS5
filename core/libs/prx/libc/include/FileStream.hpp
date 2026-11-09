@@ -387,10 +387,7 @@ public:
         } else {
             const int kept = IsHostStandard() ? DuplicateHostDescriptor_nid_no_patch(replaced) : -1;
             if (kept >= 0) ::_lock_file(previous);
-            const auto reopened = [&] {
-                const ClosingDescriptor closing(previous, replaced);
-                return ::_wfreopen(filename.c_str(), wideMode.c_str(), previous);
-            }();
+            const auto reopened = ::_wfreopen(filename.c_str(), wideMode.c_str(), previous);
             StoreHandleAtomic_nid_no_patch(reopened);
             if (kept >= 0) RestoreHostStandard(previous, kept);
         }
