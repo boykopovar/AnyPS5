@@ -399,7 +399,7 @@ void PadInput::startInputMappingWatch() {
     mappingWatchThread = std::thread([this, titleId = std::move(titleId), watch = std::move(watch)]() mutable {
         watchInputMapping(titleId, std::move(watch));
     });
-    APS5_LOG_OUT("Pad: watching the input mapping for changes (ANYPS5_INPUT_WATCH=1)");
+    APS5_LOG_CHARS_OUT("Pad: watching the input mapping for changes (ANYPS5_INPUT_WATCH=1)");
 }
 
 void PadInput::watchInputMapping(std::string titleId, Pad::InputMappingWatch watch) {
@@ -407,7 +407,7 @@ void PadInput::watchInputMapping(std::string titleId, Pad::InputMappingWatch wat
         for (int slice = 0; slice < 10 && !mappingWatchStop; ++slice) std::this_thread::sleep_for(std::chrono::milliseconds(100));
         if (mappingWatchStop) return;
         if (!watch.Poll(Pad::InputMappingFileStamp(titleId))) continue;
-        if (publishInputMapping(mappings, titleId)) APS5_LOG_OUT("Pad: input mapping reloaded from a file change");
+        if (publishInputMapping(mappings, titleId)) APS5_LOG_CHARS_OUT("Pad: input mapping reloaded from a file change");
     }
 }
 
