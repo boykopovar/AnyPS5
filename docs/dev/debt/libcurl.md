@@ -16,7 +16,7 @@
 
 ### Unimplemented exports
 
-- [`curl_formadd`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: LP64 form nodes and length options are not translated to LLP64 host forms.
+- [`curl_formadd`](../../../core/libs/prx/libcurl/Export.cpp) uses curl 7.81.0 to parse guest varargs and option arrays, then copies host form nodes into guest LP64 layouts. On LLP64 hosts, name and content lengths outside host `long` range return `CURL_FORMADD_INCOMPLETE`. Console behavior and malformed guest pointers are unverified.
 - [`curl_formfree`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: LP64 form nodes and length options are not translated to LLP64 host forms.
 - [`curl_formget`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: LP64 form nodes and length options are not translated to LLP64 host forms.
 - [`curl_global_init_mem`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: Allocator callback ownership across repeated initialization and cleanup is not adapted exactly.
