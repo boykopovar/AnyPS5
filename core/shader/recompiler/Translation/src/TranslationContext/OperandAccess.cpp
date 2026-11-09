@@ -168,8 +168,10 @@ IrF32 TranslationContext::flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* 
     if (afterRounding && roundMode == 0u) {
         IrValue& scaled = ir.BitwiseAnd(ir.BitCastU32(ir.Emit(IrOpcode::FPMul32, IrType::F32, {&ir.Emit(IrOpcode::FPMul32, IrType::F32, {lhs, &ir.ConstantF32(0x1p64f)}), rhs})), ir.Constant(0x7fffffffu));
         IrValue* tiny = zeroAddend(&ir.ULessThan(ir.ISub(scaled, ir.Constant(1u)), ir.Constant(0x207fffffu)));
+        IrValue* smallestNormal = zeroAddend(&ir.IEqual(scaled, ir.Constant(0x20800000u)));
         IrValue& sign = ir.BitwiseAnd(ir.BitwiseXor(lhsBits, rhsBits), ir.Constant(0x80000000u));
-        return IrF32(ir.Emit(IrOpcode::SelectF32, IrType::F32, {tiny, &ir.BitCastF32(sign), product}));
+        IrValue& flushed = ir.Emit(IrOpcode::SelectF32, IrType::F32, {tiny, &ir.BitCastF32(sign), product});
+        return IrF32(ir.Emit(IrOpcode::SelectF32, IrType::F32, {smallestNormal, &ir.BitCastF32(ir.BitwiseOr(sign, ir.Constant(0x00800000u))), &flushed}));
     }
     const auto exponent = [&](IrValue& bits) -> IrValue& { return ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&bits, &ir.Constant(23u), &ir.Constant(8u)}); };
     const auto significand = [&](IrValue& bits) -> IrValue& { return ir.BitwiseOr(ir.BitwiseAnd(bits, ir.Constant(0x007fffffu)), ir.Constant(0x00800000u)); };
