@@ -138,8 +138,8 @@ void Codecs() {
     Require(value->release != nullptr, "converter Release slot");
     Require(value->convert != nullptr, "converter Convert slot");
     Require(value->decoder == nullptr, "converter decoder is set");
-    value->pixelFormat = {0x12345678, 0x9abc, 0xdef0, {1, 2, 3, 4, 5, 6, 7, 8}};
-    JxrGuestGuid pixelFormat{};
+    value->pixelFormat = {{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}};
+    Jxr::PixelGuid pixelFormat{};
     Require(value->getPixelFormat(value, &pixelFormat) == 0, "GetPixelFormat failed");
     Require(std::memcmp(&pixelFormat, &value->pixelFormat, sizeof(pixelFormat)) == 0, "GetPixelFormat returned the wrong GUID");
     RequireInvalidArgument([&] { value->getPixelFormat(value, nullptr); }, "null pixel format output is accepted");

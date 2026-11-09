@@ -241,7 +241,7 @@ int APS5_VABI PKFormatConverter_EnumConversions_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-std::int64_t APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix(void* converter, JxrGuestGuid* pixelFormat) {
+std::int64_t APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix(void* converter, Jxr::PixelGuid* pixelFormat) {
     if (!converter || !pixelFormat) APS5_INVALID_ARG_EX;
     const auto& source = static_cast<Jxr::FormatConverter*>(converter)->pixelFormat;
     static_assert(sizeof(source) == sizeof(*pixelFormat));

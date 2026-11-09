@@ -7,6 +7,8 @@
 #include "prx/libSceJxr/Stream.hpp"
 #include "prx/libSceJxr/include/GuidExports.hpp"
 
+namespace Jxr { struct PixelGuid; }
+
 struct tagPKImageEncode;
 struct JxrGuestPostProcInfo {
     std::int32_t mbDc;
@@ -86,7 +88,7 @@ std::int64_t APS5_VABI PKCreateFactory_nid_postfix(void** factory, std::uint32_t
 int APS5_VABI PKFormatConverter_Convert_nid_postfix();
 int APS5_VABI PKFormatConverter_Copy_nid_postfix();
 int APS5_VABI PKFormatConverter_EnumConversions_nid_postfix();
-std::int64_t APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix(void* converter, JxrGuestGuid* pixelFormat);
+std::int64_t APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix(void* converter, Jxr::PixelGuid* pixelFormat);
 int APS5_VABI PKFormatConverter_GetResolution_nid_postfix();
 int APS5_VABI PKFormatConverter_GetSize_nid_postfix();
 int APS5_VABI PKFormatConverter_GetSourcePixelFormat_nid_postfix();
