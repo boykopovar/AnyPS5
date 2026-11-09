@@ -26,6 +26,11 @@ inline std::optional<std::size_t> IndexOfHostButton(int pressed, std::size_t cou
     return static_cast<std::size_t>(pressed);
 }
 
+struct HostBoxAnswer {
+    std::optional<std::size_t> chosen;
+};
+
+
 }
 
 #endif
