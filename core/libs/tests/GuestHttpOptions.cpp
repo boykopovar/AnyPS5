@@ -141,6 +141,7 @@ void CheckEpoll(int context) {
     Require(sceHttpSetEpoll(request, epoll, &marker) == InvalidId, "sceHttpSetEpoll took a destroyed epoll");
     Require(sceHttpGetEpoll(request, &bound, &argument) == 0 && bound == nullptr, "a refused sceHttpSetEpoll changed the binding");
     Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+    Require(sceHttpSetDelayBuildRequestEnabled(request, 1) == InvalidId, "a deleted request still accepted delay build request");
 }
 
 void CheckTermEndsOptions() {
@@ -203,6 +204,8 @@ void CheckUnobservedOptions(int context) {
     Require(sceHttpRemoveRequestHeader(UnknownId, nullptr) == 0, "offline header removal started validating arguments");
     Require(sceHttpCacheRedirectedConnectionEnabled(pattern, 0) == 0 && sceHttpCacheRedirectedConnectionEnabled(request, 1) == 0, "sceHttpCacheRedirectedConnectionEnabled refused a live object");
     Require(sceHttpCacheRedirectedConnectionEnabled(UnknownId, 1) == InvalidId, "sceHttpCacheRedirectedConnectionEnabled took an unknown id");
+    Require(sceHttpSetDelayBuildRequestEnabled(pattern, 1) == 0 && sceHttpSetDelayBuildRequestEnabled(request, 0) == 0, "sceHttpSetDelayBuildRequestEnabled refused a live object");
+    Require(sceHttpSetDelayBuildRequestEnabled(UnknownId, 1) == InvalidId, "sceHttpSetDelayBuildRequestEnabled took an unknown id");
     for (const auto option : {sceHttpsEnableOptionPrivate, sceHttpsDisableOptionPrivate}) {
         Require(option(connection, 0x2dffu) == 0 && option(connection, 0) == 0, "a private SSL option within the mask was refused");
         Require(option(connection, 0x0100u) == 0 && option(connection, 0x2000u) == 0, "a private-only SSL flag was refused");
@@ -218,11 +221,13 @@ void CheckUnobservedOptions(int context) {
     Require(sceHttpSetProxy(UnknownId, 1, 1, "proxy.example", 8080) == InvalidId, "sceHttpSetProxy took an unknown id");
     Require(sceHttpAbortRequestForce(request) == 0, "sceHttpAbortRequestForce failed on a live request");
     Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+    Require(sceHttpSetDelayBuildRequestEnabled(request, 1) == InvalidId, "a deleted request still accepted delay build request");
 }
 
 }
 
 int main() {
+    Require(sceHttpSetDelayBuildRequestEnabled(UnknownId, 1) == BeforeInit, "delay build request was taken before sceHttpInit");
     const int context = sceHttpInit_nid_postfix(1, 1, 0x10000);
     Require(context > 0, "sceHttpInit failed");
     CheckAutoRedirect(context);

@@ -78,11 +78,13 @@ public:
     std::pair<std::uint64_t, std::uint64_t> SerialProgress();
     std::uint64_t FlipSubmissions() const;
     std::vector<AwaitedWait> AwaitedWaits();
+    void WaitForPipelineJournal();
     bool WaitIdleFor(std::chrono::milliseconds timeout);
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void AttachWindow(const PresentationWindow& window);
     void Present(const PresentationWindow& window, const DisplayBuffer* buffer, const DisplayBuffer* plane, bool opaque, void (*gpuReady)(void*), void* context);
+    void TracePresent(std::uint32_t width, std::uint32_t height);
     void ReleaseWindow(void* window);
     void RegisterShader(const Shader* shader);
     void ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive);
@@ -194,12 +196,14 @@ private:
     static bool verifyDrawRecipe();
     static std::size_t drawCacheEntries();
     static bool drawCacheIndirect();
+    static bool drawCachePushWord();
+    static bool verifyDrawPushWord();
     void accountDrawVariant(const DispatchVariant& variant, bool added);
     void insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode, std::uint64_t shape = 0, bool replaceShape = false);
     bool admitDrawKey(std::uint64_t key, std::uint64_t shape);
     void eraseDrawEntry(std::uint64_t key, const std::shared_ptr<DrawEntry>& expected);
-    std::shared_ptr<const DrawRecipe> findDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages);
-    void attachDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages, std::shared_ptr<const DrawRecipe> recipe);
+    std::shared_ptr<const DrawRecipe> findDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages, const std::shared_ptr<DrawEntry>& donor = nullptr);
+    void attachDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages, std::shared_ptr<const DrawRecipe> recipe, const std::shared_ptr<DrawEntry>& donor = nullptr);
     static bool traceDrawCache();
     static void traceInsert(std::unordered_set<std::uint64_t>& set, std::uint64_t key);
     void maybeReportDrawCache(bool profile);
@@ -209,6 +213,7 @@ private:
     void traceDrawKeyLookup(const std::array<std::uint64_t, 5>& components, bool cacheMiss);
     static std::uint64_t drawIdentityKey(const QueueState& queue, const ShaderRegistry& registry);
     static bool drawRelocationEnabled();
+    static void patchForwardedWord(ShaderRecompiler::RecompileResult& result, std::uint32_t slot, std::uint32_t value);
     void learnPendingRelocation();
     void relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches);
     void reportDrawRelocation();
@@ -234,6 +239,7 @@ private:
     void noteLabelPass(std::span<const std::uint32_t> packet, std::uint32_t queue);
     void noteLabelIssue(std::span<const std::uint32_t> packet, std::uint32_t queue);
     void retireLabelTakes(std::uint32_t queue, std::uint64_t received);
+    bool findWaitProducer(std::uint64_t address, std::size_t bytes, std::uint64_t& token);
     bool storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue, std::uint32_t* writer = nullptr);
     static void traceLabel(std::span<const std::uint32_t> packet, std::uint32_t queue);
     static std::array<WriteRecord, 16384>& writeHistory();
@@ -269,7 +275,8 @@ private:
     static IndirectSource& indirectSource();
     static std::string describeIndirectSource();
     std::array<std::uint32_t, 5> readDispatchArguments(std::uint32_t queue, std::uint64_t arguments, std::uint32_t initiator);
-    static bool& sampledRead();
+    static bool sampledRead();
+    static void setSampledRead(bool sampled);
     static bool writeEvidenceEnabled();
     static bool writerKeyedEvidence();
     static bool foreignWriters();
@@ -299,7 +306,7 @@ private:
     void noteForeignWriter(std::uint64_t begin, std::uint64_t end, std::uint32_t queue);
     void noteDrawWriters(std::span<const Graphics::CompiledShader> stages, std::uint32_t queue);
     static std::vector<std::pair<std::uint64_t, std::uint64_t>> drawWriteRanges(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> stages);
-    void commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, const Pm4::DrawParameters& drawParameters, std::span<const Graphics::CompiledShader> stages, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages, std::uint64_t drawKey, VulkanDevice::DrawTraceContext trace = {}, std::uint64_t shape = 0);
+    void commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, const Pm4::DrawParameters& drawParameters, std::span<const Graphics::CompiledShader> stages, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages, std::uint64_t drawKey, const std::shared_ptr<DrawEntry>& recipeDonor, VulkanDevice::DrawTraceContext trace = {}, std::uint64_t shape = 0);
     bool labelPacketQueues(std::span<const std::uint32_t> packet, std::uint32_t opcode);
     bool enqueueLabelPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue, std::optional<std::uint32_t> interrupt);
     bool enqueueDmaPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue, const QueueState& state);
@@ -397,6 +404,7 @@ private:
     static std::optional<std::uint32_t> releaseInterrupt(std::span<const std::uint32_t> packet, std::uint32_t opcode, bool carriesFlip);
     void markCompleted(std::uint64_t serial);
     static const std::atomic<std::uint64_t>*& workerQueued();
+    static std::atomic<std::uint64_t>*& workerPacket();
     void reapCompletionLabels();
     void run(std::uint32_t id) noexcept;
 
@@ -469,7 +477,7 @@ private:
     std::map<std::uint32_t, QueueState> queues;
     std::map<std::uint32_t, std::shared_ptr<IVideoOutput>> outputs;
     struct EopFlip {
-        std::uint32_t handle;
+        FlipInfo info;
         std::shared_ptr<IFlipRequest> request;
     };
     std::map<std::uint32_t, EopFlip> eopFlips;

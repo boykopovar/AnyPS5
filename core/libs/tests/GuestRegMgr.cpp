@@ -54,5 +54,36 @@ int main() {
     Require(sceRegMgrGetBin(-1, binBuf, 1) == static_cast<int>(0x80820002));
     Require(binBuf[0] == 0x77);
 
+    Require(sceRegMgrSetInt(0x2000, 0x12345678) == 0);
+    Require(sceRegMgrGetInt(0x2000, &intVal) == 0 && intVal == 0x12345678);
+    Require(sceRegMgrSetInt(0x2000, -7) == 0);
+    Require(sceRegMgrGetInt(0x2000, &intVal) == 0 && intVal == -7);
+    Require(sceRegMgrSetStr(0x2001, "hello", 6) == 0);
+    std::memset(strBuf, 0, sizeof(strBuf));
+    Require(sceRegMgrGetStr(0x2001, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "hello") == 0);
+    Require(sceRegMgrSetStr(0x2001, "world", 6) == 0);
+    Require(sceRegMgrGetStr(0x2001, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "world") == 0);
+    const std::uint8_t data[] = {1, 2, 3, 4};
+    Require(sceRegMgrSetBin(0x2002, data, sizeof(data)) == 0);
+    std::memset(binBuf, 0, sizeof(binBuf));
+    Require(sceRegMgrGetBin(0x2002, binBuf, sizeof(binBuf)) == 0);
+    Require(std::memcmp(binBuf, data, sizeof(data)) == 0);
+    const std::uint8_t shorter[] = {9, 8};
+    Require(sceRegMgrSetBin(0x2002, shorter, sizeof(shorter)) == 0);
+    std::memset(binBuf, 0, sizeof(binBuf));
+    Require(sceRegMgrGetBin(0x2002, binBuf, sizeof(binBuf)) == 0);
+    Require(binBuf[0] == 9 && binBuf[1] == 8 && binBuf[2] == 0);
+    Require(sceRegMgrSetInt(0x2001, 1) == static_cast<int>(0x80820006));
+    Require(sceRegMgrSetStr(0x2000, "x", 2) == static_cast<int>(0x80820006));
+    Require(sceRegMgrSetBin(0x2000, data, sizeof(data)) == static_cast<int>(0x80820006));
+    Require(sceRegMgrSetStr(0x2003, nullptr, 5) == static_cast<int>(0x80820001));
+    Require(sceRegMgrSetBin(0x2003, nullptr, 5) == static_cast<int>(0x80820001));
+    Require(sceRegMgrSetInt(static_cast<int32_t>(0xC0808000u), 5) == 0);
+    intVal = 0;
+    Require(sceRegMgrGetInt(3229646848, &intVal) == 0 && intVal == 5);
+    Require(sceRegMgrSetStr(static_cast<int32_t>(0xC0808001u), "hi", 3) == 0);
+    std::memset(strBuf, 0, sizeof(strBuf));
+    Require(sceRegMgrGetStr(3229646849, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "hi") == 0);
+
     return 0;
 }

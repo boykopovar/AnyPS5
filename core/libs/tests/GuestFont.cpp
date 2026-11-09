@@ -603,10 +603,10 @@ int main() {
     FontLibrary library = nullptr;
     Require(sceFontCreateLibrary(&memory, nullptr, &library) == SCE_FONT_ERROR_INVALID_PARAMETER && library == nullptr);
     Require(sceFontCreateLibrary(&memory, sceFontSelectLibraryFt(0), &library) == SCE_FONT_OK && library != nullptr);
-    Require(sceFontFtSupportBdf(library) == 0 && sceFontFtSupportCid(library) == 0 && sceFontFtSupportOpenType(library) == 0 && sceFontFtSupportOpenTypeOtf(library) == 0 && sceFontFtSupportOpenTypeTtf(library) == 0 && sceFontFtSupportPcf(library) == 0 && sceFontFtSupportPfr(library) == 0 && sceFontFtSupportTrueType(library) == 0 && sceFontFtSupportTrueTypeGx(library) == 0 && sceFontFtSupportType1(library) == 0 && sceFontFtSupportType42(library) == 0 && sceFontFtSupportWinFonts(library) == 0);
+    Require(sceFontFtSupportBdf(library) == 0 && sceFontFtSupportCid(library) == 0 && sceFontFtSupportOpenType(library) == 0 && sceFontFtSupportSystemFonts(library) == 0 && sceFontFtSupportOpenTypeOtf(library) == 0 && sceFontFtSupportOpenTypeTtf(library) == 0 && sceFontFtSupportPcf(library) == 0 && sceFontFtSupportPfr(library) == 0 && sceFontFtSupportTrueType(library) == 0 && sceFontFtSupportTrueTypeGx(library) == 0 && sceFontFtSupportType1(library) == 0 && sceFontFtSupportType42(library) == 0 && sceFontFtSupportWinFonts(library) == 0);
     const auto* nativeLibrary = static_cast<const Font::FontLibNative*>(library);
     const auto savedLock = nativeLibrary->lock_word;
-    for (auto support : {sceFontFtSupportBdf, sceFontFtSupportCid, sceFontFtSupportOpenType, sceFontFtSupportOpenTypeOtf, sceFontFtSupportOpenTypeTtf, sceFontFtSupportPcf, sceFontFtSupportPfr, sceFontFtSupportTrueType, sceFontFtSupportTrueTypeGx, sceFontFtSupportType1, sceFontFtSupportType42, sceFontFtSupportWinFonts}) {
+    for (auto support : {sceFontFtSupportBdf, sceFontFtSupportCid, sceFontFtSupportOpenType, sceFontFtSupportSystemFonts, sceFontFtSupportOpenTypeOtf, sceFontFtSupportOpenTypeTtf, sceFontFtSupportPcf, sceFontFtSupportPfr, sceFontFtSupportTrueType, sceFontFtSupportTrueTypeGx, sceFontFtSupportType1, sceFontFtSupportType42, sceFontFtSupportWinFonts}) {
         Font::FontLibNative invalidLibrary{};
         Require(support(nullptr) == SCE_FONT_ERROR_INVALID_LIBRARY);
         Require(support(&invalidLibrary) == SCE_FONT_ERROR_INVALID_LIBRARY);
@@ -1023,5 +1023,14 @@ int main() {
     syllableState = -1;
     Require(sceFontCharacterGetSyllableStringState(nullptr, &syllableState) == SCE_FONT_ERROR_INVALID_PARAMETER && syllableState == 0);
     Require(sceFontCharacterGetSyllableStringState(&character, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+
+    const auto* glyphs0 = sceFontSelectGlyphsFt(0);
+    Require(glyphs0 != nullptr);
+    const auto* glyphTable = reinterpret_cast<const std::uint32_t*>(glyphs0);
+    Require(glyphTable[0] == 0x0F1F);
+    Require(glyphTable[1] == 0x0F03);
+    Require(sceFontSelectGlyphsFt(1) == nullptr);
+    Require(sceFontSelectGlyphsFt(-1) == nullptr);
+
     std::filesystem::remove_all(fontRoot);
 }
