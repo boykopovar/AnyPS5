@@ -514,6 +514,8 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     keyboardMouse.SetTitleReadsMouse(MouseIsOpen_nid_no_patch());
     static const bool mouseTouchpad = std::getenv("ANYPS5_MOUSE_TOUCHPAD") != nullptr && std::string_view(std::getenv("ANYPS5_MOUSE_TOUCHPAD")) == "1";
     keyboardMouse.SetMouseTouchpad(mouseTouchpad);
+    static const bool mouseGyro = std::getenv("ANYPS5_MOUSE_GYRO") != nullptr && std::string_view(std::getenv("ANYPS5_MOUSE_GYRO")) == "1";
+    keyboardMouse.SetMouseGyro(mouseGyro);
     int viewportWidth = 0;
     int viewportHeight = 0;
     if (window.Handle() != nullptr) SDL_GetWindowSize(window.Handle(), &viewportWidth, &viewportHeight);
