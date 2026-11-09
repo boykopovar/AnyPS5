@@ -718,9 +718,11 @@ private:
         std::uint64_t inertProgram = 0;
         std::vector<std::uint32_t> owned;
         VkShaderStageFlags laidOutFor = 0;
+        std::uint64_t pushedUserWords = 0;
+        std::uint32_t pushedPlaced = 0;
     };
     std::array<HeapStageState, ShaderRecompiler::RuntimeAbi::StageCount> heapStages;
-    std::uint64_t heapSpan(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words);
+    std::uint64_t heapSpan(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words, std::uint64_t pushed = 0);
     bool ownsHeapBinding(const Binding& binding, VkShaderStageFlags stageBit) const;
     VkImageView heapPlaceholderView(std::uint32_t kind) const;
     VkImageView heapSampledView(std::size_t index) const;

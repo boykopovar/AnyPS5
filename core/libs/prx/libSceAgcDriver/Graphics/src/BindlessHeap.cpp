@@ -79,6 +79,7 @@ std::atomic<std::uint64_t> heapComputeStages{0};
 std::atomic<bool> descriptorHeapDevice{false};
 std::atomic<std::uint64_t> imageTableBuilds{0};
 std::atomic<std::uint64_t> dataAddressPushes{0};
+std::atomic<std::uint64_t> pushedUserDataKeeps{0};
 std::atomic<std::uint64_t> embeddedSamplerMappings{0};
 std::atomic<std::uint64_t> slotPressureSubmits{0};
 std::atomic<std::uint64_t> heapSlotEvictions{0};
@@ -105,6 +106,14 @@ void NoteDataAddressPush() {
 
 std::uint64_t DataAddressPushes() {
     return dataAddressPushes.load(std::memory_order_relaxed);
+}
+
+void NotePushedUserDataKeep() {
+    pushedUserDataKeeps.fetch_add(1, std::memory_order_relaxed);
+}
+
+std::uint64_t PushedUserDataKeeps() {
+    return pushedUserDataKeeps.load(std::memory_order_relaxed);
 }
 
 std::uint64_t EmbeddedSamplerMappings() {
@@ -1363,14 +1372,18 @@ void reportHeapStatistics() {
     const auto poolRecycled = windowDelta(totals.poolBlocksRecycled, lastTotals.poolBlocksRecycled);
     const auto poolFreed = windowDelta(totals.poolBlocksFreed, lastTotals.poolBlocksFreed);
     lastTotals = totals;
+    static std::uint64_t lastPushedKeeps = 0;
+    const auto pushedKeepsTotal = PushedUserDataKeeps();
+    const auto pushedKeeps = windowDelta(pushedKeepsTotal, lastPushedKeeps);
+    lastPushedKeeps = pushedKeepsTotal;
     const auto templates = ShaderRecompiler::HeapTemplateCounts();
     std::fprintf(stderr,
                  "[gpu-heap] (10 s): draws %llu heap / %llu plain, dispatches %llu heap / %llu plain; "
                  "heap binds %llu over %llu command buffers; set binds:%s; excluded:%s; draw stages:%s; "
-                 "CPU buffer copies %llu (%llu MiB); spans %llu written / %llu kept / %llu expired; data pool %llu MiB written, %llu blocks (%llu MiB), %llu made / %llu recycled / %llu freed, since start at most %llu KiB per batch and %llu KiB per span; image descriptors %llu encoded / %llu copied; image slots %llu of %u held, %llu evicted (%llu waits); samplers evicted %llu; slot pressure submits %llu; templates %llu (%llu MiB, %llu evicted)\n",
+                 "CPU buffer copies %llu (%llu MiB); spans %llu written / %llu kept (%llu for pushed user data only) / %llu expired; data pool %llu MiB written, %llu blocks (%llu MiB), %llu made / %llu recycled / %llu freed, since start at most %llu KiB per batch and %llu KiB per span; image descriptors %llu encoded / %llu copied; image slots %llu of %u held, %llu evicted (%llu waits); samplers evicted %llu; slot pressure submits %llu; templates %llu (%llu MiB, %llu evicted)\n",
                  printed(heapDraws), printed(plainDraws), printed(heapDispatches), printed(plainDispatches), printed(heapBindsSeen),
                  printed(commandBuffers), binds.c_str(), excluded.c_str(), stageReasons.c_str(), printed(copies), printed(copiedMiB),
-                 printed(spansWritten), printed(spansKept), printed(spansExpired), printed(poolMiB), printed(totals.poolBlocksHeld), printed(totals.poolBlockBytes >> 20u), printed(poolMade), printed(poolRecycled), printed(poolFreed), printed(totals.poolBatchPeakBytes >> 10u), printed(totals.spanPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(samplersEvicted), printed(slotPressureSubmits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
+                 printed(spansWritten), printed(spansKept), printed(pushedKeeps), printed(spansExpired), printed(poolMiB), printed(totals.poolBlocksHeld), printed(totals.poolBlockBytes >> 20u), printed(poolMade), printed(poolRecycled), printed(poolFreed), printed(totals.poolBatchPeakBytes >> 10u), printed(totals.spanPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(samplersEvicted), printed(slotPressureSubmits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
 }
 
 void forgetHeapBinding(VkCommandBuffer commands) {

@@ -7067,7 +7067,9 @@ void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConsta
 void ShaderResources::writePushedData(std::span<std::byte, PipelinePushConstantBytes> bytes, const CompiledShader& shader, ShaderRecompiler::RuntimeAbi::PushedPlacement placement) const {
     const auto& program = *shader.program;
     if (placement.count == 0u) return;
-    const auto& words = heapStages[HeapStageIndex(shader.stage)].data.words;
+    const auto& stageState = heapStages[HeapStageIndex(shader.stage)];
+    const auto& words = stageState.data.words;
+    Require(stageState.pushedUserWords == 0u || placement.count >= stageState.pushedPlaced, "a stage's shader data was kept for user data its pipeline does not push");
     Require(placement.count <= program.pushedData.size() && (placement.base + placement.count) * sizeof(std::uint32_t) <= bytes.size(), "a stage's pushed shader data does not fit");
     for (std::uint32_t index = 0; index < placement.count; ++index) {
         const auto dword = program.pushedData[index];
@@ -7169,9 +7171,22 @@ void ShaderResources::writeHeapTableMap(const BindlessHeap::SpanScope& spans, Bi
     heapTableMapSet[stageIndex] = true;
 }
 
-std::uint64_t ShaderResources::heapSpan(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words) {
-    const auto span = heap.KeepOrAllocate(spans, words.size(), kept.mark, std::ranges::equal(kept.words, words));
-    if (!span) return kept.mark.address;
+std::uint64_t ShaderResources::heapSpan(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words, std::uint64_t pushed) {
+    const bool same = std::ranges::equal(kept.words, words);
+    bool pushedOnly = false;
+    if (!same && pushed != 0u && kept.words.size() == words.size()) {
+        const auto prefix = std::min<std::size_t>(words.size(), 64u);
+        pushedOnly = std::equal(words.begin() + static_cast<std::ptrdiff_t>(prefix), words.end(), kept.words.begin() + static_cast<std::ptrdiff_t>(prefix));
+        for (std::size_t index = 0; pushedOnly && index < prefix; ++index) pushedOnly = kept.words[index] == words[index] || ((pushed >> index) & 1u) != 0u;
+    }
+    const auto span = heap.KeepOrAllocate(spans, words.size(), kept.mark, same || pushedOnly);
+    if (!span) {
+        if (pushedOnly) {
+            std::copy(words.begin(), words.end(), kept.words.begin());
+            NotePushedUserDataKeep();
+        }
+        return kept.mark.address;
+    }
     BindlessHeap::Write(*span, words);
     kept.words.assign(words.begin(), words.end());
     return span->address;
@@ -7205,7 +7220,11 @@ VkImageView ShaderResources::heapStorageView(std::size_t index, std::uint32_t bi
 }
 
 void ShaderResources::layOutHeapStages(std::span<const CompiledShader> shaders) {
-    for (const auto& shader : shaders) {
+    static const bool keepPushedUserData = std::getenv("APS5_NO_PUSHED_USER_DATA_KEEP") == nullptr;
+    const bool addressed = keepPushedUserData && std::ranges::any_of(shaders, [](const CompiledShader& shader) { return HeapShader(shader) && shader.program->dataAddressPush; });
+    const auto placements = addressed ? PushDataPlacements(shaders) : std::vector<ShaderRecompiler::StagePushPlacement>{};
+    for (std::size_t shaderIndex = 0; shaderIndex < shaders.size(); ++shaderIndex) {
+        const auto& shader = shaders[shaderIndex];
         if (!HeapShader(shader)) continue;
         const VkShaderStageFlags stageBit = VulkanStage(shader.stage);
         auto& state = heapStages[HeapStageIndex(shader.stage)];
@@ -7214,6 +7233,17 @@ void ShaderResources::layOutHeapStages(std::span<const CompiledShader> shaders) 
             if (ownsHeapBinding(bindings[index], stageBit)) state.owned.push_back(static_cast<std::uint32_t>(index));
         }
         state.laidOutFor = stageBit;
+        state.pushedUserWords = 0;
+        state.pushedPlaced = 0;
+        if (placements.empty() || !shader.program->dataAddressPush) continue;
+        const auto& program = *shader.program;
+        const auto placed = std::min<std::size_t>(placements[shaderIndex].pushed.count, program.pushedData.size());
+        const auto userWords = std::max(program.heapUserWords.size(), program.shaderDataUserWords.size());
+        for (std::size_t item = 0; item < placed; ++item) {
+            const auto dword = program.pushedData[item];
+            if (dword < userWords && dword < 64u) state.pushedUserWords |= std::uint64_t{1} << dword;
+        }
+        state.pushedPlaced = static_cast<std::uint32_t>(placed);
     }
     for (auto& elements : addressedElements) elements.clear();
     for (const auto& binding : bindings) {
@@ -7479,17 +7509,30 @@ void ShaderResources::writeHeapStage(const BindlessHeap::SpanScope& spans, Bindl
         const auto& words = heapFlattened ? shader.heap->flattenedSrt : DrawGuestWords(shader, binding);
         const auto userData =
             shader.heap != nullptr ? std::span<const std::uint32_t>(shader.heap->userData) : std::span<const std::uint32_t>{};
-        const bool sameInput =
+        const auto userFront = static_cast<std::ptrdiff_t>(std::min(userData.size(), words.size()));
+        const bool sameWords =
             binding.role == ShaderRecompiler::DescriptorRole::ShaderData && current &&
             stageState.dataInput.size() == words.size() + userData.size() &&
-            std::equal(words.begin(), words.end(), stageState.dataInput.begin()) &&
-            std::equal(userData.begin(), userData.end(), stageState.dataInput.begin() + static_cast<std::ptrdiff_t>(words.size()));
+            std::equal(words.begin() + userFront, words.end(), stageState.dataInput.begin() + userFront);
+        const auto userInput = stageState.dataInput.begin() + static_cast<std::ptrdiff_t>(words.size());
+        const bool sameInput = sameWords && std::equal(userData.begin(), userData.end(), userInput);
         if (sameInput && !verifySlots) {
             if (heap.Held(stageState.data.mark)) {
                 heapOffsets[dataIndex] = stageState.data.mark.address;
                 continue;
             }
             stageState.data.mark.entry = 0;
+        }
+        if (sameWords && !sameInput && !verifySlots && stageState.pushedUserWords != 0u && userData.size() <= 64u && stageState.data.words.size() >= userData.size()) {
+            bool pushedOnly = std::ranges::none_of(stageState.dataPatches, [&](const auto& patch) { return patch.first < userData.size() * sizeof(std::uint32_t); });
+            for (std::size_t index = 0; pushedOnly && index < userData.size(); ++index) pushedOnly = userData[index] == userInput[static_cast<std::ptrdiff_t>(index)] || ((stageState.pushedUserWords >> index) & 1u) != 0u;
+            if (pushedOnly && heap.Held(stageState.data.mark)) {
+                std::copy(userData.begin(), userData.end(), stageState.data.words.begin());
+                std::copy(userData.begin(), userData.end(), userInput);
+                heapOffsets[dataIndex] = stageState.data.mark.address;
+                NotePushedUserDataKeep();
+                continue;
+            }
         }
         if (!shaderData) {
             heapOffsets[flatIndex] = heapSpan(spans, heap, stageState.flat, words);
@@ -7509,7 +7552,9 @@ void ShaderResources::writeHeapStage(const BindlessHeap::SpanScope& spans, Bindl
         patchHeapSlotWords(shader, stageState, patched, current);
         if (verifySlots && sameInput && !std::ranges::equal(stageState.data.words, patched))
             throw std::runtime_error("AGC graphics: a GPU-mode stage's shader data changed although its inputs and slots did not");
-        heapOffsets[dataIndex] = heapSpan(spans, heap, stageState.data, patched);
+        const auto userWords = std::min<std::size_t>(userData.size(), 64u);
+        const auto pushedUser = stageState.pushedUserWords & (userWords == 64u ? ~std::uint64_t{0} : (std::uint64_t{1} << userWords) - 1u);
+        heapOffsets[dataIndex] = heapSpan(spans, heap, stageState.data, patched, pushedUser);
         stageState.dataInput.assign(words.begin(), words.end());
         stageState.dataInput.insert(stageState.dataInput.end(), userData.begin(), userData.end());
     }

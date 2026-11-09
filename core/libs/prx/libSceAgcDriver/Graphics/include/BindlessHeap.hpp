@@ -287,6 +287,8 @@ std::uint64_t HeapComputeStages();
 void NoteImageTableBuild();
 std::uint64_t ImageTableBuilds();
 void NoteDataAddressPush();
+void NotePushedUserDataKeep();
+std::uint64_t PushedUserDataKeeps();
 void NoteEmptyResourceSet();
 std::uint64_t EmptyResourceSets();
 std::uint64_t DataAddressPushes();
