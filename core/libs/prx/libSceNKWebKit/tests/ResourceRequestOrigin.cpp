@@ -19,10 +19,13 @@ static HTTPHeaderMap& Headers(ResourceRequestBase& request) {
 }
 
 static void TestRemovalAndInvalidation() {
-    ResourceRequestBase request{};
+    ResourceRequestBase request;
     request.resourceRequestUpdated = true;
     request.platformRequestUpdated = true;
-    CommonHeader entries[] {{HTTPHeaderName::Origin, {}}, {HTTPHeaderName::Accept, {}}};
+    CommonHeader entries[] {
+        {HTTPHeaderName::Origin, NKWebKit::WtfAbi::String{}},
+        {HTTPHeaderName::Accept, NKWebKit::WtfAbi::String{}},
+    };
     Headers(request) = {{entries, 2, 2}, {nullptr, 0, 0}};
 
     _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv(&request);
@@ -33,7 +36,8 @@ static void TestRemovalAndInvalidation() {
 }
 
 static void TestInvalidSynchronizationState() {
-    ResourceRequestBase request{};
+    ResourceRequestBase request;
+    request.resourceRequestUpdated = false;
     bool threw = false;
     try {
         _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv(&request);
