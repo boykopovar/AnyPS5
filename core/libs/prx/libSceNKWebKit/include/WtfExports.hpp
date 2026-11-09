@@ -129,6 +129,7 @@ void APS5_VABI _ZN3WTF20initializeMainThreadEv();
 bool APS5_VABI _ZN3WTF20protocolIsJavaScriptENS_10StringViewE(NKWebKit::WtfAbi::StringView view);
 void APS5_VABI _ZN3WTF20setProcessPrivilegesENS_9OptionSetINS_16ProcessPrivilegeEEE(NKWebKit::WtfAbi::ProcessPrivileges privileges);
 void* APS5_VABI _ZN3WTF20tryFastAlignedMallocEmm(std::size_t alignment, std::size_t size);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF21makeRFC2822DateStringEjjjjjjji(unsigned dayOfWeek, unsigned day, unsigned month, unsigned year, unsigned hours, unsigned minutes, unsigned seconds, int utcOffset);
 bool APS5_VABI _ZN3WTF22equalIgnoringASCIICaseEPKNS_10StringImplES2_(const NKWebKit::WtfAbi::StringImpl* a, const NKWebKit::WtfAbi::StringImpl* b);
 bool APS5_VABI _ZN3WTF22equalRespectingNullityENS_10StringViewES0_(NKWebKit::WtfAbi::StringView a, NKWebKit::WtfAbi::StringView b);
 bool APS5_VABI _ZN3WTF22isMainThreadOrGCThreadEv();
@@ -216,6 +217,7 @@ NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTFlsERNS_10TextStreamENS_7SecondsE(
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTFlsERNS_10TextStreamERKNS_3URLE(NKWebKit::WtfAbi::TextStream& stream, const NKWebKit::WtfAbi::URL& url);
 bool APS5_VABI _ZN3WTFltERKNS_7CStringES2_(const NKWebKit::WtfAbi::CString& a, const NKWebKit::WtfAbi::CString& b);
 bool APS5_VABI _ZN7WebCore21isBackForwardLoadTypeENS_13FrameLoadTypeE(std::uint8_t type);
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore10CookieUtil17defaultPathForURLERKN3WTF3URLE(const NKWebKit::WtfAbi::URL* url);
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore14foldQuoteMarksERKN3WTF6StringE(const NKWebKit::WtfAbi::String* string);
 const NKWebKit::WtfAbi::String& APS5_VABI _ZN7WebCore15defaultMIMETypeEv();
 NKWebKit::WtfAbi::HTMLNonNegativeIntegerResult APS5_VABI _ZN7WebCore27parseHTMLNonNegativeIntegerEN3WTF10StringViewE(NKWebKit::WtfAbi::StringView input);

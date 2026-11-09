@@ -137,6 +137,7 @@ struct Resampler {
 };
 
 struct Instance {
+    std::uint32_t context = 0;
     std::uint32_t codec = 0;
     std::uint64_t flags = 0;
     void* decoder = nullptr;
@@ -1937,7 +1938,8 @@ bool ReadConsoleJob(std::uint32_t instance, const std::uint8_t* job, const std::
 extern "C" {
 
 int APS5_VABI sceAjmInitialize(int64_t reserved, uint32_t* context) {
-    if (reserved != 0 || !context) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    (void)reserved;
+    if (!context) return SCE_AJM_ERROR_INVALID_PARAMETER;
     *context = g_nextContext.fetch_add(1, std::memory_order_relaxed);
     return 0;
 }
@@ -1974,9 +1976,10 @@ int APS5_VABI sceAjmMemoryUnregister(uint32_t context, void* ptr) {
 }
 
 int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t flags, uint32_t* instance) {
-    (void)context;
+    if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
     if (!instance) return SCE_AJM_ERROR_INVALID_PARAMETER;
     auto created = std::make_unique<Instance>();
+    created->context = context;
     created->codec = codec;
     created->flags = flags;
     if (codec == CODEC_MP3) {
@@ -1997,10 +2000,13 @@ int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t fl
 }
 
 int APS5_VABI sceAjmInstanceDestroy(uint32_t context, uint32_t instance) {
-    (void)context;
+    if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
     AJM_TRACE("[ajm] instance %u destroy\n", instance);
     std::lock_guard lock(g_lock);
-    return g_instances.erase(instance) ? 0 : SCE_AJM_ERROR_INVALID_INSTANCE;
+    const auto found = g_instances.find(instance);
+    if (found == g_instances.end() || found->second->context != context) return SCE_AJM_ERROR_INVALID_INSTANCE;
+    g_instances.erase(found);
+    return 0;
 }
 
 int APS5_VABI sceAjmDecAt9ParseConfigData(const void* config_data, AjmDecAt9ConfigDataInfo* config_info) {
