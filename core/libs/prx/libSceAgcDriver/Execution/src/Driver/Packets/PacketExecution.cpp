@@ -264,9 +264,13 @@ void Driver::execute(const Submission& submission) {
     auto& packetCounters = PacketCounters::ThisThread();
 
     static const bool epochEach = std::getenv("APS5_SUBMISSION_EPOCH_EACH") != nullptr;
+    const bool orderedAtSubmit = submission.rewindTail == nullptr && submission.enqueuedAt != std::chrono::steady_clock::time_point{};
+    const auto submittedAt = orderedAtSubmit ? static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(submission.enqueuedAt.time_since_epoch()).count()) : 0;
     if (epochEach || submission.enqueuedAt == std::chrono::steady_clock::time_point{} || submission.enqueuedAt > lastEpochBump()) {
         if (!epochEach) noteReleasedTails(submission);
-        bumpEpoch(&EpochBumps::submissions);
+        bumpEpochSince(&EpochBumps::submissions, submittedAt);
+    } else {
+        raiseEpochSince(submittedAt);
     }
     clearResolvedAhead();
     gateOpened() = true;
@@ -325,7 +329,7 @@ void Driver::execute(const Submission& submission) {
                 continue;
             }
             if (!DrawPipeline::Queue0().Overlaps(awaited, awaitedBytes) && Pm4::WaitSatisfiedUnchecked(packet) && !OwnStoreRejects(packet, awaited, awaitedBytes, submission.queue)) {
-                bumpEpoch(&EpochBumps::waits);
+                bumpEpochSince(&EpochBumps::waits, storeOrderingSince(packet, awaited, awaitedBytes, submission.received, submission.queue));
                 ++waitOutcomes().atEntry;
                 gateOpened() = true;
                 noteLabelPass(packet, submission.queue);
@@ -347,7 +351,9 @@ void Driver::execute(const Submission& submission) {
         if (predicated) {
             landPendingWaits(submission.queue);
             recordQueuedLabelsBeforeRead(submission.queue);
-            if (!Pm4::PredicationPasses(queue)) {
+            const bool passes = Pm4::PredicationPasses(queue);
+            publishReadPoint();
+            if (!passes) {
                 cursor = opcode == 0x3f ? submission.conditionalEnds.at(cursor) : nextCursor;
                 continue;
             }
