@@ -6,27 +6,37 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+void* LogFunction = nullptr;
+int LogLevel = 0;
+
+struct MemoryManager {
+    void* allocate = nullptr;
+    void* deallocate = nullptr;
+    void* reallocate = nullptr;
+};
+MemoryManager memoryManager;
+
+}
+
 extern "C" {
 
 APS5_DUMMY_FUN
 int APS5_VABI bemp2sys_logprintf_getlevel_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return LogLevel;
 }
 
-int APS5_VABI bemp2sys_logprintf_setfunc_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI bemp2sys_logprintf_setfunc_nid_postfix(void* function) {
+    LogFunction = function;
 }
 
-int APS5_VABI bemp2sys_logprintf_setlevel_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI bemp2sys_logprintf_setlevel_nid_postfix(int level) {
+    if (static_cast<unsigned int>(level) <= 3u) LogLevel = level;
 }
 
-int APS5_VABI bemp2sys_memmanager_set_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI bemp2sys_memmanager_set_nid_postfix(void* allocate, void* deallocate, void* reallocate) {
+    memoryManager = {allocate, deallocate, reallocate};
 }
 
 int APS5_VABI bemp2sys_packetizer_create_nid_postfix(void) {
@@ -99,10 +109,7 @@ int APS5_VABI bemp2sys_psdecoder_readpacket_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI bemp2sys_psdecoder_release_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI bemp2sys_psdecoder_release_nid_postfix(void) {}
 
 int APS5_VABI bemp2sys_psdecoder_sendmessage_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -129,10 +136,7 @@ int APS5_VABI bemp2sys_tsdecoder_readpacket_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI bemp2sys_tsdecoder_release_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI bemp2sys_tsdecoder_release_nid_postfix(void) {}
 
 int APS5_VABI bemp2sys_tsdecoder_sendmessage_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
