@@ -65,8 +65,20 @@ void APS5_VABI ValueWriteJSON(const Value* self, StringBuilder& output) {
     throw std::invalid_argument("unknown WTF JSON value type");
 }
 
-void APS5_VABI ArrayWriteJSON(const Value*, StringBuilder&) {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI ArrayWriteJSON(const Value* self, StringBuilder& output) {
+    const auto& array = static_cast<const ArrayBase&>(Checked(self));
+    if (array.elements.size > array.elements.capacity || (array.elements.size && !array.elements.buffer))
+        throw std::invalid_argument("invalid WTF JSON array storage");
+
+    NKWebKit::WtfAbi::AppendCharacter(output, '[');
+    for (unsigned i = 0; i < array.elements.size; ++i) {
+        if (i) NKWebKit::WtfAbi::AppendCharacter(output, ',');
+        const auto* value = array.elements.buffer[i].ptr;
+        if (!value || !value->vptr || !value->vptr->writeJSON)
+            throw std::invalid_argument("invalid WTF JSON array value");
+        value->vptr->writeJSON(value, output);
+    }
+    NKWebKit::WtfAbi::AppendCharacter(output, ']');
 }
 
 RefPtr<Object> APS5_VABI ValueAsObject(Value* self) {
