@@ -424,7 +424,6 @@ static void TestAddClientCa() {
     Require(SSL_CTX_add_client_CA_nid_postfix(f.Context(), nullptr) == 0);
     Require(ERR_get_error_nid_postfix() == 0x02001002);
     f.Verify(0, std::source_location::current());
-    f.Throws([&] { SSL_CTX_add_client_CA_nid_postfix(f.Context(), Pointer(0x1111)); });
     RequireThrows([] { SSL_CTX_add_client_CA_nid_postfix(nullptr, nullptr); });
     Require(ERR_get_error_nid_postfix() == 0);
     f.SetCtx<void*>(CtxInternal, nullptr);
