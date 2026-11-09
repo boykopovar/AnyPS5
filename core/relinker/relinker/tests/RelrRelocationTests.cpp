@@ -118,6 +118,16 @@ int main() try {
         input.Headers.push_back({1, 6, 0, address, 0, 0, 0x38, 1});
         input.SetWords({address, 1});
     }, "bitmap address overflow");
+    {
+        Fixture negativeAddendFixture;
+        Io::WriteU64(negativeAddendFixture.Bytes, 0x200, std::numeric_limits<std::uint64_t>::max());
+        try {
+            Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(negativeAddendFixture.Bytes);
+            throw std::runtime_error("Negative addend in relative relocation index was accepted");
+        } catch (const Domain::RelinkerException& error) {
+            Require(std::string_view(error.what()).find("Relative relocation target address is negative") != std::string_view::npos);
+        }
+    }
     std::cout << "RELR address, bitmap, bounds, addend and reachability tests passed\n";
 } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

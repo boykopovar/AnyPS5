@@ -95,6 +95,9 @@ void collectRelativeEntries(
         if (rAddend < 0)
             throw RelinkerException("Relative relocation target address is negative", rOffset);
 
+        if (rOffset > std::numeric_limits<VirtualAddress>::max() - 8)
+            throw RelinkerException("Relocation target address overflow", rOffset);
+
         auto [it, inserted] = out.emplace(static_cast<VirtualAddress>(rOffset), static_cast<VirtualAddress>(rAddend));
         if (!inserted && it->second != static_cast<VirtualAddress>(rAddend))
             throw RelinkerException("Conflicting relative relocation targets for slot", rOffset);
