@@ -33,6 +33,7 @@ layout(constant_id = 22) const uint SPLIT0 = 0u;
 layout(constant_id = 23) const uint SPLIT1 = 0u;
 layout(constant_id = 24) const uint SPLIT2 = 0u;
 layout(constant_id = 25) const uint SPLIT3 = 0u;
+layout(constant_id = 26) const uint SINGLE_BLOCKS = 0u;
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -207,6 +208,10 @@ void copyElement(uint src, uint dst) {
 }
 #endif
 
+uint blockSource(uint offset) {
+    return SINGLE_BLOCKS != 0u && RETILE == 0u ? offset & ~255u : offset;
+}
+
 bool locate(uvec2 p, out uint src, out uint dst, out uint ranged) {
     uint linearOffset = p.y * params.pitchBytes + p.x * ELEMENT_BYTES;
 
@@ -216,14 +221,14 @@ bool locate(uvec2 p, out uint src, out uint dst, out uint ranged) {
             return false;
         }
 #ifdef LINEAR_IMAGE
-        src = params.srcBase + linearOffset - params.tiledBase;
+        src = params.srcBase + blockSource(linearOffset) - params.tiledBase;
         dst = params.dstBase + linearOffset - params.tiledBase;
 #else
         if (RETILE != 0u) {
             src = params.srcBase + linearOffset - params.linearBase;
             dst = params.dstBase + linearOffset - params.tiledBase;
         } else {
-            src = params.srcBase + linearOffset - params.tiledBase;
+            src = params.srcBase + blockSource(linearOffset) - params.tiledBase;
             dst = params.dstBase + linearOffset - params.linearBase;
         }
 #endif
@@ -248,18 +253,19 @@ bool locate(uvec2 p, out uint src, out uint dst, out uint ranged) {
     if (tiledOffset < params.rangeBegin || tiledOffset >= params.rangeEnd) {
         return false;
     }
+    uint readOffset = blockSource(tiledOffset) - params.tiledBase;
     tiledOffset -= params.tiledBase;
     linearOffset -= params.linearBase;
 
 #ifdef LINEAR_IMAGE
-    src = params.srcBase + tiledOffset;
+    src = params.srcBase + readOffset;
     dst = params.dstBase + tiledOffset;
 #else
     if (RETILE != 0u) {
         src = params.srcBase + linearOffset;
         dst = params.dstBase + tiledOffset;
     } else {
-        src = params.srcBase + tiledOffset;
+        src = params.srcBase + readOffset;
         dst = params.dstBase + linearOffset;
     }
 #endif

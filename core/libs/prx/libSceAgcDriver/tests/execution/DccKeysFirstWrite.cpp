@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -538,6 +539,13 @@ void RunSingleKeys(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
 }
 
 void RunUniformSingleClear(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+    using AgcDriver::Graphics::RuntimeSwitch;
+    namespace RuntimeSwitches = AgcDriver::Graphics::RuntimeSwitches;
+    struct Restore {
+        bool set;
+        ~Restore() { RuntimeSwitches::Assign(RuntimeSwitch::NoGpuSingleKeys, set); }
+    } restore{RuntimeSwitches::Set(RuntimeSwitch::NoGpuSingleKeys)};
+    RuntimeSwitches::Assign(RuntimeSwitch::NoGpuSingleKeys, true);
     auto* texels = block;
     auto* keys = block + KeysOffset;
     const auto surface = AddressOf(texels);
@@ -574,6 +582,57 @@ void RunUniformSingleClear(AgcDriver::VulkanDevice& device, std::uint8_t* block)
     }
     char message[256];
     std::snprintf(message, sizeof(message), "uniform single-key clear: %zu of %u written-back texels are neither the kernel's write nor the proved clear color 0x%08x", wrong, Side * Side, color);
+    Require(wrong == 0, message);
+}
+
+void RunGpuSingleKeys(AgcDriver::VulkanDevice& device, std::uint8_t* block, bool uniform, bool gpu) {
+    using AgcDriver::Graphics::RuntimeSwitch;
+    namespace RuntimeSwitches = AgcDriver::Graphics::RuntimeSwitches;
+    auto* texels = block;
+    auto* keys = block + KeysOffset;
+    const auto surface = AddressOf(texels);
+    std::vector<std::uint32_t> original(SurfaceBytes / 4, 0x55555555u);
+    for (std::size_t index = 0; index < original.size(); index += 64) original[index] = uniform ? 0x11223344u : 0x01000000u + static_cast<std::uint32_t>(index);
+    std::memcpy(texels, original.data(), SurfaceBytes);
+    std::memset(keys, 0x10, KeyBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto texture = TextureDescriptor(texels, keys);
+    std::vector<std::uint32_t> writeData(16, 0u);
+    std::copy(texture.begin(), texture.end(), writeData.begin() + 4);
+    struct Restore {
+        bool set;
+        ~Restore() { RuntimeSwitches::Assign(RuntimeSwitch::NoGpuSingleKeys, set); }
+    } restore{RuntimeSwitches::Set(RuntimeSwitch::NoGpuSingleKeys)};
+    RuntimeSwitches::Assign(RuntimeSwitch::NoGpuSingleKeys, !gpu);
+    std::lock_guard gpuLock(AgcDriver::GuestMemory::GpuMutex());
+    const bool imported = AgcDriver::Graphics::HostImportFor(device.graphicsContext(), surface, SurfaceBytes) != nullptr && AgcDriver::GuestMemory::Watched(surface, SurfaceBytes);
+    const auto uploads = AgcDriver::Graphics::ThreadLookupOutcomes().counts;
+    Dispatch(device, WriteCode, writeData);
+    const auto image = StorageTexture::FindPending(surface, SurfaceBytes);
+    Require(image != nullptr && image->UploadedKeys() == DccKeys::Uncompressed, "comp-to-single keys expanded on the GPU: the first write did not store the keys uncompressed");
+    RequireKeys(keys, 0xff, "comp-to-single keys expanded on the GPU: the keys after the first write");
+    const auto& uploaded = AgcDriver::Graphics::ThreadLookupOutcomes().counts;
+    const auto added = [&](LookupOutcomes::Kind kind) { return uploaded[kind] - uploads[kind]; };
+    char outcome[256];
+    std::snprintf(outcome, sizeof(outcome), "comp-to-single keys (%s, switch %s, %s): the first write uploaded %llu direct, %llu cleared and %llu read on the CPU", uniform ? "uniform" : "per block", gpu ? "on" : "off", imported ? "imported and watched" : "not imported or not watched", static_cast<unsigned long long>(added(LookupOutcomes::UploadDirect)), static_cast<unsigned long long>(added(LookupOutcomes::UploadClear)), static_cast<unsigned long long>(added(LookupOutcomes::UploadCpu)));
+    if (gpu && imported) Require(added(LookupOutcomes::UploadDirect) == 1 && added(LookupOutcomes::UploadClear) == 0 && added(LookupOutcomes::UploadCpu) == 0, outcome);
+    else if (uniform) Require(added(LookupOutcomes::UploadClear) == 1 && added(LookupOutcomes::UploadCpu) == 0, outcome);
+    else Require(added(LookupOutcomes::UploadCpu) == 1 && added(LookupOutcomes::UploadClear) == 0, outcome);
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test comp-to-single keys expanded on the GPU");
+    device.WaitIdle();
+    const AgcDriver::Graphics::ColorTargetLayout layout(Side, Side, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
+    std::size_t wrong = 0;
+    for (std::uint32_t y = 0; y < Side; ++y) {
+        for (std::uint32_t x = 0; x < Side; ++x) {
+            const auto offset = layout.Offset(x, y);
+            std::uint32_t texel = 0;
+            std::memcpy(&texel, texels + offset, 4);
+            const auto expected = y == 0 && x < Threads ? 0xffffffffu : original[offset / 256 * 64];
+            if (texel != expected) ++wrong;
+        }
+    }
+    char message[320];
+    std::snprintf(message, sizeof(message), "comp-to-single keys (%s, switch %s): %zu of %u written-back texels are neither the kernel's write nor the first texel of their 256-byte block", uniform ? "uniform" : "per block", gpu ? "on" : "off", wrong, Side * Side);
     Require(wrong == 0, message);
 }
 
@@ -1092,6 +1151,17 @@ int main(int argc, char** argv) {
             pendingSingle.emplace(true);
 #endif
             RunSingleKeysOverPendingImage(*device, pendingSingle->Data(), sampledOutput->Data());
+            for (const bool gpu : {false, true}) {
+                for (const bool uniformSurface : {false, true}) {
+                    std::optional<GuestBlock> gpuSingle;
+#ifdef _WIN32
+                    gpuSingle.emplace(true, true);
+#else
+                    gpuSingle.emplace(true);
+#endif
+                    RunGpuSingleKeys(*device, gpuSingle->Data(), uniformSurface, gpu);
+                }
+            }
 #ifndef _WIN32
             window.emplace(true);
             RunImportWindow(*device, window->Data());

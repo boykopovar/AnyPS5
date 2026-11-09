@@ -34,6 +34,7 @@ namespace AgcDriver::Graphics {
         std::uint32_t rowBegin = 0;
         std::uint32_t rowEnd = 0;
         std::uint32_t pipeBankXor = 0;
+        bool singleBlocks = false;
     };
 
     class TextureDetiler {
@@ -61,7 +62,7 @@ namespace AgcDriver::Graphics {
     private:
         VkPipeline multisampleReadbackPipeline(std::uint32_t elementBytes, bool depth);
         VkPipeline multisampleUploadPipeline(std::uint32_t elementBytes);
-        VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false);
+        VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false, bool singleBlocks = false);
         void release() noexcept;
         struct DescriptorRing {
             std::vector<VkDescriptorPool> pools;

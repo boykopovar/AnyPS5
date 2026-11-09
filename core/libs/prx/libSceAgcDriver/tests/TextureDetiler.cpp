@@ -176,6 +176,23 @@ void RunTextureDetilerTests(const Context& context, const TextureDetilerTestAcce
     Require(equationSpecialization[0] == 4 && equationSpecialization[1] == 4096 && equationSpecialization[2] == 2, "SW_4KB_D_X detiling must select the equation family over 4 KiB blocks");
 
     {
+        const auto plainPipelines = access.pipelineCount();
+        detiler.Dispatch(commands, TextureTileMode::kD4KBX, 4, source, 0, destination, 0, layout, false, 0, false, {.pipeBankXor = 0xa00u});
+        const auto plain = decodePush(access.lastDispatch().pushConstants);
+        Require(access.pipelineCount() == plainPipelines, "a detile without single-key blocks must keep its pipeline");
+        detiler.Dispatch(commands, TextureTileMode::kD4KBX, 4, source, 0, destination, 0, layout, false, 0, false, {.pipeBankXor = 0xa00u, .singleBlocks = true});
+        Require(access.pipelineCount() == plainPipelines + 1, "a detile expanding single-key blocks must use a pipeline of its own");
+        const auto expanded = decodePush(access.lastDispatch().pushConstants);
+        Require(std::memcmp(&plain, &expanded, sizeof(Push)) == 0, "expanding single-key blocks changed the detile push constants");
+        Require(access.lastSpecialization() == equationSpecialization, "expanding single-key blocks changed the detile's element size, block size or family");
+        detiler.Dispatch(commands, TextureTileMode::kD4KBX, 4, source, 0, destination, 0, layout, false, 0, false, {.pipeBankXor = 0xa00u, .singleBlocks = true});
+        Require(access.pipelineCount() == plainPipelines + 1, "a repeated single-key block expansion must reuse its pipeline");
+        detiler.Dispatch(commands, TextureTileMode::kD4KBX, 4, source, 0, destination, 0, layout, false, 0, false, {.pipeBankXor = 0xa00u});
+        Require(access.pipelineCount() == plainPipelines + 1, "a detile after a single-key block expansion must return to its pipeline");
+        reject([&] { detiler.Dispatch(commands, TextureTileMode::kD4KBX, 4, source, 0, destination, 0, layout, true, 0, false, {.singleBlocks = true}); }, "only expanded by a detile");
+    }
+
+    {
         const auto mip = ComputeColorTargetMipLayout(ColorTileMode::RenderTarget, 4, 1024, 1024, 11, 4);
         Require(mip.width == 64 && mip.height == 64 && mip.tail, "the first packed render-target mip has the wrong extent");
         Require(mip.tiledOffset == 0 && mip.tiledSize == 65536 && mip.tailX == 64 && mip.tailY == 0, "the first packed render-target mip lost its shared-block origin");
