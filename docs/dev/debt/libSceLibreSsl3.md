@@ -63,6 +63,7 @@
 - [BN_div](../../../core/libs/prx/libSceLibreSsl3/src/BignumDivide.cpp) (libSceLibreSsl3) - nothing is checked on the console. It follows [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/bn/bn_div.c) `bn_div.c` on libSceLibreSsl's 24-byte BIGNUM: truncated quotient, remainder with the numerator's sign, either output optional, the same order of writes when outputs alias, `BN_R_DIV_BY_ZERO`, `BN_R_NOT_INITIALIZED` and the expansion errors, and an ignored remainder expansion failure. Output words come from the guest heap. The `BN_CTX` is not used, so its temporary allocations and their failures are not reproduced. A null numerator, divisor or context, which LibreSSL dereferences, and a divisor with a zero top word throw. Closes when: compared with the console.
 - [OPENSSL_init_ssl](../../../core/libs/prx/libSceLibreSsl3/src/InitSsl.cpp) (libSceLibreSsl3) - `OPENSSL_INIT_LOAD_CONFIG` before the configuration is settled, which loads the console's configuration file, throws `NotImplemented_nid_no_patch`; nothing is checked on the console. Otherwise it returns 1, as [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libssl/ssl_init.c#L29-L58) `ssl_init.c` does: its once-only step runs only `SSL_load_error_strings`, empty in the [firmware 13.42 module](https://github.com/boykopovar/AnyPS5/pull/9535#issuecomment-6407060914), and `SSL_library_init` calls it, not the reverse. As in `crypto_init.c` and `conf_sap.c`, `OPENSSL_INIT_NO_LOAD_CONFIG` settles the configuration and a later `OPENSSL_INIT_LOAD_CONFIG` is a no-op. `OPENSSL_cpuid_setup` is not modelled. Closes when: compared with the console.
 - [X509_ALGOR_get0](../../../core/libs/prx/libSceLibreSsl3/src/X509Algor.cpp) (libSceLibreSsl3) - nothing is checked on the console. It follows [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_algor.c#L239-L264) `x_algor.c`: the value output is cleared first, a missing parameter reports `V_ASN1_UNDEF` and a null value, and the identifier is read only for the outputs requested. 2.5.4 left the value untouched in both cases. `X509_ALGOR` and `ASN1_TYPE` are the 16-byte public structures, the same in 2.5.4 and 4.0.0. A null identifier with an object or type output, which LibreSSL dereferences, throws. Closes when: compared with the console.
+- [ASN1_TIME_new and X509_gmtime_adj](../../../core/libs/prx/libSceLibreSsl3/src/TimeNew.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c) `a_time_tm.c` and `tasn_new.c`, `ASN1_TIME_new` returns a zeroed 24-byte string from the guest heap with type -1 and the multi-string flag, queueing two ASN1 malloc failures when the allocation fails, and `X509_gmtime_adj` writes the host wall clock plus the offset as UTCTime for 1950 to 2049 and GeneralizedTime otherwise, reusing the given string or a new one, and returns null without an error outside years 0 to 9999. The console clock and the heap the guest frees these with are unverified. Closes when: compared with the console.
 
 - [SSL_SESSION_get_timeout, SSL_SESSION_set_time and SSL_SESSION_get_protocol_version](../../../core/libs/prx/libSceLibreSsl3/src/SessionMetadata.cpp) - forwarded session lifecycle interoperability, independent console execution, resumption, serialization and expiry remain unverified. The fields follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libssl). [LibreSSL 2.5.4](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libssl/ssl.h) instead puts timeout/time at 144/152; these accessors must not receive that older layout. Tests use caller-owned storage. A null protocol-version input throws instead of dereferencing it.
 - [Session metadata fields](../../../core/libs/prx/libSceLibreSsl3/src/SessionMetadata.cpp) - other firmware revisions are unverified. [BunnyFl reports disassembly only](https://github.com/boykopovar/AnyPS5/pull/15119#pullrequestreview-5742135511) of firmware 13.42 `system/common/lib/libSceLibreSsl3.sprx` (SHA256 `ee2c529c87fe21b7ef1e5f13d10c47ee90944f52a1f848fe0995e031817c2c3a`): getter `0xf2130` reads 64-bit timeout at 168 with null returning zero; setter `0xf2150` writes 64-bit creation time at 176 and returns it, with null returning zero; getter `0xf2170` reads 32-bit version at 0 without a null check. The module and listing have not been independently acquired or executed here.
@@ -76,7 +77,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 113 still-unimplemented callable exports: 104 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 111 still-unimplemented callable exports: 102 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -137,7 +138,6 @@
 | `SSL_get_peer_quic_transport_params` | `U1dQZ1rXHdA` |
 | `SSL_CTX_set0_chain` | `UHkYqkyfwOs` |
 | `EVP_PKEY2PKCS8` | `UT6E1YgI8mw` |
-| `ASN1_TIME_new` | `UmAPG5bxYYk` |
 | `X509_STORE_load_locations` | `V3JtebYui1A` |
 | `ERR_func_error_string` | `VXuysR7ySzw` |
 | `X509_set_issuer_name` | `XK3FmaTS6pg` |
@@ -145,7 +145,6 @@
 | `X509_add_ext` | `YJ7bfxMHniE` |
 | `tls_connect_socket` | `ZERQN8ewpgk` |
 | `SSL_CTX_set_quic_method` | `ZFeTGo4ybcw` |
-| `X509_gmtime_adj` | `ZQ3b6SakHkc` |
 | `SSL_process_quic_post_handshake` | `aKGUCnoiE+k` |
 | `unknown` | `aLdgrI2jAF0` |
 | `EC_POINT_clear_free` | `aSO3Svp7umY` |
