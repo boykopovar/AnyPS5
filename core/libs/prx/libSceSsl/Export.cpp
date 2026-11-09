@@ -60,6 +60,7 @@ constexpr int ErrorCallbackCheck = static_cast<int>(0x8095f0fd);
 constexpr int ErrorInvalidValue = static_cast<int>(0x8095f007);
 constexpr int ErrorBadLength = static_cast<int>(0x80951773);
 constexpr int ErrorBadRecord = static_cast<int>(0x80951d55);
+constexpr int ErrorNotTls = static_cast<int>(0x80951d78);
 constexpr int ErrorNetBadDescriptor = static_cast<int>(0x80410109);
 constexpr int ErrorNetPipe = static_cast<int>(0x80410120);
 constexpr int ErrorNetReset = static_cast<int>(0x80410136);
@@ -498,9 +499,9 @@ struct Session {
             case MBEDTLS_ERR_NET_CONN_RESET:
                 reset = true;
                 if (operation == Operation::Write) return ErrorNetPipe;
-                if (operation == Operation::Connect) return ErrorSocketClosed;
                 return ErrorNetReset;
             case MBEDTLS_ERR_SSL_CONN_EOF: return operation == Operation::Connect ? ErrorSocketClosed : 0;
+            case MBEDTLS_ERR_SSL_INVALID_RECORD: return operation == Operation::Connect ? ErrorNotTls : 0;
             case MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE: return ErrorFatalAlert;
             case MBEDTLS_ERR_SSL_INVALID_MAC: return operation == Operation::Read ? ErrorBadRecord : 0;
             default: return 0;
