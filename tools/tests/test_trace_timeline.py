@@ -59,6 +59,12 @@ class TimelineTests(unittest.TestCase):
         laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000)
         self.assertEqual(laid["threads"], ["presenter", "queue worker"])
 
+    def test_layout_keeps_the_longest_slices_and_counts_the_rest(self):
+        laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000, max_slices=1)
+        self.assertEqual(len(laid["bars"]), 1)
+        self.assertEqual(laid["bars"][0]["ms"], 6.0)
+        self.assertEqual(laid["left_out"], 2)
+
 
 
 def trace_timeline_slices(items):
