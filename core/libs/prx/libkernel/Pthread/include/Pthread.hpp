@@ -48,6 +48,8 @@ struct PthreadMutexPrivate {
     int _count;
     std::atomic<int> _spinloops = 0;
     std::atomic<int> _yieldloops = 0;
+    int _protocol = 0;
+    std::atomic<int> _ceiling{0};
     std::string _name;
     bool _named = false;
 
@@ -152,7 +154,11 @@ struct PthreadPrivate {
     int cpuClockThread = 0;
     std::atomic<bool> initialThread{false};
 #ifndef _WIN32
+#ifdef __APPLE__
+    unsigned hostMachThread = 0;
+#else
     clockid_t hostCpuClock{};
+#endif
     bool hostCpuClockBound = false;
     void* guestStack = nullptr;
     std::size_t guestStackBytes = 0;

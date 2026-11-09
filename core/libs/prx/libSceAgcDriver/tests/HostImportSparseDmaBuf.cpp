@@ -2,7 +2,7 @@
 #include "AllocationFailure.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
-#ifndef _WIN32
+#ifdef __linux__
 #include "prx/libc/include/GuestArena.hpp"
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -24,7 +24,7 @@
 #include <string_view>
 #include <vector>
 
-#ifdef _WIN32
+#ifndef __linux__
 int main() {
     std::printf("skipped, udmabuf imports are Linux only\n");
     return 77;
@@ -59,6 +59,7 @@ struct MockDevice {
     std::set<VkFence> fences;
     std::set<VkBuffer> sparse;
     std::map<VkBuffer, VkDeviceSize> sizes;
+    std::map<VkBuffer, VkBufferUsageFlags> usages;
     std::map<VkDeviceMemory, VkDeviceSize> memories;
     std::vector<Bind> binds;
     VkResult bindResult = VK_SUCCESS;
@@ -110,6 +111,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateBuffer(VkDevice, const VkBufferCreateIn
     mock.buffers.insert(*buffer);
     if ((info->flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) != 0) mock.sparse.insert(*buffer);
     mock.sizes[*buffer] = info->size;
+    mock.usages[*buffer] = info->usage;
     return VK_SUCCESS;
 }
 
@@ -298,6 +300,20 @@ void SettlingSurvivesDeviceReplacement(bool reverse) {
     ClearHostImports(first.device);
     ClearHostImports(second.device);
     Expect(mock.fences.size() == baselineFences, "repeated device cleanup changed the live fences");
+}
+
+void ImportsASmallRangeForVertexAndIndexInput() {
+    constexpr std::uint64_t bytes = 8u << 20u;
+    SharedRange range(bytes, 0, true);
+    const auto context = mockContext();
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto* import = HostImportFor(context, range.Address(), bytes);
+    Expect(import != nullptr && import->dmaBuf, "a small shared range was not imported as a dma-buf");
+    if (import == nullptr) return;
+    Expect(!mock.sparse.contains(import->buffer), "the small import unexpectedly took the sparse path");
+    const auto usage = mock.usages.at(import->buffer);
+    Expect((usage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) != 0, "a chunked import cannot be bound as a vertex buffer");
+    Expect((usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) != 0, "a chunked import cannot be bound as an index buffer");
 }
 
 void ImportsALargeRangeAsOneSparseBuffer() {
@@ -563,6 +579,7 @@ int main() {
     try {
         SettlingSurvivesDeviceReplacement(false);
         SettlingSurvivesDeviceReplacement(true);
+        ImportsASmallRangeForVertexAndIndexInput();
         ImportsALargeRangeAsOneSparseBuffer();
         UnalignedOffsetStartsAtTheBlockBelow();
         LargerSparseBlockIsDecidedBeforeImporting();

@@ -1,4 +1,5 @@
-target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/Bio.cpp)
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/Bio.cpp ${CMAKE_CURRENT_LIST_DIR}/src/BioFileSocket.cpp)
+target_link_libraries(libSceLibreSsl PRIVATE libc libSceNet)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_bio_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslBio.cpp)
@@ -12,7 +13,8 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
-    add_test_executable(guest_libressl_bio_patched_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslBio.cpp)
+    add_test_executable(guest_libressl_bio_patched_tests NO_RUNTIME_DLL_STAGING
+        ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslBio.cpp)
     target_include_directories(guest_libressl_bio_patched_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_compile_definitions(guest_libressl_bio_patched_tests PRIVATE ANYPS5_BIO_DYNAMIC)
     target_link_libraries(guest_libressl_bio_patched_tests PRIVATE ${CMAKE_DL_LIBS})
@@ -21,7 +23,8 @@ if(BUILD_TESTING)
         target_link_libraries(guest_libressl_bio_patched_tests PRIVATE libc)
     endif()
     add_custom_target(libressl_bio_patched_libraries DEPENDS
-        ${PATCHED_DIR}/libSceLibreSsl.prx ${PATCHED_DIR}/libc.prx ${PATCHED_DIR}/libkernel.prx)
+        ${PATCHED_DIR}/libSceLibreSsl.prx ${PATCHED_DIR}/libc.prx ${PATCHED_DIR}/libkernel.prx
+        ${PATCHED_DIR}/libSceNet.prx ${PATCHED_DIR}/libSceNetCtl.prx)
     add_dependencies(guest_libressl_bio_patched_tests libressl_bio_patched_libraries)
     add_test(NAME guest_libressl_bio_patched COMMAND guest_libressl_bio_patched_tests ${PATCHED_DIR})
     set_tests_properties(guest_libressl_bio_patched PROPERTIES TIMEOUT 30)
