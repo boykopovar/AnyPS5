@@ -1,0 +1,8 @@
+add_test_executable(agc_masked_select_tests EXCLUDE_FROM_ALL tests/MaskedSelect.cpp)
+target_link_libraries(agc_masked_select_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_masked_select_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_masked_select_tests)
+
+if(BUILD_TESTING)
+    agc_add_default_test(agc_masked_select_tests)
+endif()

@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <limits>
+#include <list>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -18,6 +19,7 @@
 #include <system_error>
 #include <thread>
 #include <time.h>
+#include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -384,8 +386,16 @@ int SignalCondition_nid_no_patch(void** handle) {
     return threadSuccess;
 }
 
+static std::atomic<unsigned> registeredProcessorCount{0};
+
+void RegisterProcessorCount_nid_no_patch(unsigned count) {
+    registeredProcessorCount.store(count, std::memory_order_release);
+}
+
 unsigned APS5_VABI _ZNSt6thread20hardware_concurrencyEv_nid_postfix() {
-    return std::thread::hardware_concurrency();
+    const unsigned count = registeredProcessorCount.load(std::memory_order_acquire);
+    if (count == 0) throw std::runtime_error("std::thread::hardware_concurrency: libkernel has not registered the processor count");
+    return count;
 }
 
 int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
@@ -426,22 +436,60 @@ int APS5_VABI _Cnd_signal_nid_postfix(void** handle) {
     return SignalCondition_nid_no_patch(handle);
 }
 
+struct AtThreadExitEntry {
+    std::thread::id thread;
+    DinkumwareCondition* condition;
+    DinkumwareMutex* mutex;
+    int* ready;
+};
+
+static std::mutex atThreadExitLock;
+static std::list<AtThreadExitEntry> atThreadExitEntries;
+
+void APS5_VABI _Cnd_do_broadcast_at_thread_exit_nid_postfix() noexcept {
+    const auto thread = std::this_thread::get_id();
+    std::list<AtThreadExitEntry> pending;
+    {
+        const std::lock_guard<std::mutex> lock(atThreadExitLock);
+        for (auto entry = atThreadExitEntries.begin(); entry != atThreadExitEntries.end();) {
+            if (entry->thread == thread) {
+                auto moved = entry++;
+                pending.splice(pending.end(), atThreadExitEntries, moved);
+            } else {
+                ++entry;
+            }
+        }
+    }
+    for (const auto& entry : pending) {
+        if (entry.ready) *entry.ready = 1;
+        void* condition = entry.condition;
+        _Cnd_broadcast_nid_postfix(&condition);
+        void* mutex = entry.mutex;
+        _Mtx_unlock_nid_postfix(&mutex);
+    }
+}
+
+void APS5_VABI _Cnd_register_at_thread_exit_nid_postfix(void* conditionHandle, void* mutexHandle, int* ready) {
+    auto* condition = ResolveCondition(&conditionHandle, "_Cnd_register_at_thread_exit");
+    auto* mutex = ResolveMutex(&mutexHandle, "_Cnd_register_at_thread_exit");
+    const std::lock_guard<std::mutex> lock(atThreadExitLock);
+    atThreadExitEntries.push_back({std::this_thread::get_id(), condition, mutex, ready});
+}
+
+void APS5_VABI _Cnd_unregister_at_thread_exit_nid_postfix(void* mutexHandle) {
+    auto* mutex = ResolveMutex(&mutexHandle, "_Cnd_unregister_at_thread_exit");
+    const std::lock_guard<std::mutex> lock(atThreadExitLock);
+    atThreadExitEntries.erase(std::remove_if(atThreadExitEntries.begin(), atThreadExitEntries.end(),
+        [mutex](const AtThreadExitEntry& entry) { return entry.mutex == mutex; }), atThreadExitEntries.end());
+}
+
 static_assert(offsetof(GuestPad, condition) == 0x8 && offsetof(GuestPad, mutex) == 0x10 && offsetof(GuestPad, started) == 0x18 && sizeof(GuestPad) == 0x20);
 
 [[noreturn]] void ThrowCppError_nid_no_patch(int code);
 
 static void RequireThrd(int result, const char* what) {
-    switch (result) {
-    case threadSuccess:
-        return;
-    case threadNomem:
-    case threadTimedout:
-        ThrowCppError_nid_no_patch(6);
-    case threadBusy:
-        ThrowCppError_nid_no_patch(0);
-    case threadError:
-        ThrowCppError_nid_no_patch(1);
-    }
+    if (result == threadSuccess) return;
+    _ZSt14_Throw_C_errori_nid_postfix(result);
     throw std::runtime_error(std::string(what) + " failed with " + std::to_string(result));
 }
 
@@ -464,7 +512,9 @@ void RegisterPthreadDetach_nid_no_patch(PthreadDetachFn_nid_no_patch fn) {
 static void* APS5_VABI PadEntry_nid_no_patch(void* argument) {
     auto* pad = static_cast<GuestPad*>(argument);
     const auto go = pad->vtable[0];
-    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(go(pad)));
+    const auto result = go(pad);
+    _Cnd_do_broadcast_at_thread_exit_nid_postfix();
+    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(result));
 }
 
 void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(GuestPad* pad) {
@@ -587,6 +637,7 @@ void* APS5_VABI _Thrd_id_nid_postfix(void) {
 }
 
 [[noreturn]] void APS5_VABI _Thrd_exit_nid_postfix(int code) {
+    _Cnd_do_broadcast_at_thread_exit_nid_postfix();
     ThreadForwards(__func__).exit(reinterpret_cast<void*>(static_cast<std::uintptr_t>(static_cast<unsigned int>(code))));
     std::abort();
 }
@@ -692,6 +743,122 @@ int APS5_VABI _ZNSt8__sce_v211_Cnd_signalEPP12pthread_cond_nid_postfix(void** co
 int APS5_VABI _ZNSt8__sce_v214_Cnd_broadcastEPP12pthread_cond_nid_postfix(void** condition) {
     PthreadSync(__func__).condBroadcast(condition);
     return threadSuccess;
+}
+
+int APS5_VABI _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(const Xtime* target) {
+    if (!target)
+        APS5_INVALID_ARG_EX;
+    const auto ticks = static_cast<std::uint64_t>(_Xtime_get_ticks_nid_postfix());
+    const std::uint64_t nowSeconds = ticks / 1000000;
+    const std::int64_t nowNanos = static_cast<std::int64_t>(ticks % 1000000) * 1000;
+    std::uint64_t seconds = static_cast<std::uint64_t>(target->sec) + static_cast<std::uint64_t>(target->nsec / nanosPerSecond);
+    std::int64_t nanos = target->nsec % nanosPerSecond;
+    if (nanos < 0) {
+        nanos += nanosPerSecond;
+        --seconds;
+    }
+    if (nanos < nowNanos) {
+        nanos += nanosPerSecond;
+        --seconds;
+    }
+    seconds -= nowSeconds;
+    nanos -= nowNanos;
+    if (static_cast<std::int64_t>(seconds) < 0 || (seconds == 0 && nanos <= 0)) {
+        seconds = 0;
+        nanos = 0;
+    }
+    return static_cast<int>(static_cast<std::uint32_t>(seconds) * 1000000u + static_cast<std::uint32_t>((nanos + 999) / 1000));
+}
+
+void APS5_VABI _ZNSt8__sce_v219_Timespec64_get_sysEP8timespec_nid_postfix(Xtime* now) {
+    if (!now)
+        APS5_INVALID_ARG_EX;
+    const auto ticks = static_cast<std::uint64_t>(_Xtime_get_ticks_nid_postfix());
+    now->sec = static_cast<std::int64_t>(ticks / 1000000);
+    now->nsec = static_cast<std::int64_t>(ticks % 1000000) * 1000;
+}
+
+Xtime APS5_VABI _ZNSt8__sce_v222_Timespec64_diff_to_tsEPK8timespec_nid_postfix(const Xtime* target) {
+    if (!target)
+        APS5_INVALID_ARG_EX;
+    constexpr std::uint64_t billion = nanosPerSecond;
+    const auto ticks = static_cast<std::uint64_t>(_Xtime_get_ticks_nid_postfix());
+    const std::uint64_t nowSeconds = ticks / 1000000;
+    const auto nowNanos = static_cast<std::int64_t>(ticks % 1000000) * 1000;
+    std::uint64_t seconds = static_cast<std::uint64_t>(target->sec);
+    std::uint64_t nanos = static_cast<std::uint64_t>(target->nsec);
+    if (static_cast<std::int64_t>(nanos) < 0) {
+        const std::uint64_t lowest = 0 - billion;
+        const std::uint64_t whole = nanos < lowest ? (lowest - nanos - 1) / billion + 1 : 0;
+        seconds -= whole + 1;
+        nanos += (whole + 1) * billion;
+    }
+    if (static_cast<std::int64_t>(nanos) >= nanosPerSecond) {
+        const std::uint64_t whole = ((nanos >= 2 * billion - 1 ? nanos - (2 * billion - 1) : 0) + billion - 1) / billion;
+        seconds += whole + 1;
+        nanos -= (whole + 1) * billion;
+    }
+    if (static_cast<std::int64_t>(nanos) < nowNanos) {
+        seconds += ~nowSeconds;
+        nanos += billion;
+    } else {
+        seconds -= nowSeconds;
+    }
+    nanos -= static_cast<std::uint64_t>(nowNanos);
+    if (static_cast<std::int64_t>(seconds) < 0 || (seconds == 0 && static_cast<std::int64_t>(nanos) <= 0)) return {0, 0};
+    return {static_cast<std::int64_t>(seconds), static_cast<std::int64_t>(nanos)};
+}
+
+static int SharedMutexResult(int result) {
+    if (result == 0) return threadSuccess;
+    if ((static_cast<std::uint32_t>(result) & 0xffff0000u) == 0x80020000u) return result & 0xffff;
+    return 1;
+}
+
+int APS5_VABI _Smtx_init_with_name_nid_postfix(void** smtx, const char* name) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockInit(smtx, nullptr, SyncObjectName(name)));
+}
+
+int APS5_VABI _Smtx_init_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockInit(smtx, nullptr, "SceLibc_V2Smtx"));
+}
+
+int APS5_VABI _Smtx_destroy_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockDestroy(smtx));
+}
+
+int APS5_VABI _Smtx_lock_exclusive_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockWrlock(smtx));
+}
+
+int APS5_VABI _Smtx_lock_shared_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockRdlock(smtx));
+}
+
+int APS5_VABI _Smtx_try_lock_exclusive_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockTrywrlock(smtx));
+}
+
+int APS5_VABI _Smtx_try_lock_shared_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockTryrdlock(smtx));
+}
+
+int APS5_VABI _Smtx_timedlock_exclusive_nid_postfix(void** smtx, const Xtime* target) {
+    const int timeout = _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(target);
+    return SharedMutexResult(PthreadSync(__func__).rwlockTimedwrlock(smtx, static_cast<unsigned int>(timeout)));
+}
+
+int APS5_VABI _Smtx_timedlock_shared_nid_postfix(void** smtx, const Xtime* target) {
+    const int timeout = _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(target);
+    return SharedMutexResult(PthreadSync(__func__).rwlockTimedrdlock(smtx, static_cast<unsigned int>(timeout)));
+}
+
+int APS5_VABI _Smtx_unlock_exclusive_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockUnlock(smtx));
+}
+
+int APS5_VABI _Smtx_unlock_shared_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockUnlock(smtx));
 }
 
 int APS5_VABI _ZNSt8__sce_v212_Thrd_detachEP7pthread_nid_postfix(void* thread) {

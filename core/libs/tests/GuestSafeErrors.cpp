@@ -1,11 +1,15 @@
 #include "prx/libc/include/WindowsFormatting.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/SonyCrt.hpp"
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <string>
 #include <thread>
@@ -23,7 +27,7 @@ thread_local int violations = 0;
 thread_local void* violationBuffer = nullptr;
 
 void APS5_VABI Constraint(const char* message, void* buffer, int error) {
-    Require(message && std::strcmp(message, "strerror_s") == 0, "constraint callback message and ABI");
+    Require(message && std::strcmp(message, "strerror_s: bad argument") == 0, "constraint callback message and ABI");
     Require(error == 22, "constraint callback error");
     violationBuffer = buffer;
     ++violations;
@@ -79,12 +83,18 @@ void CheckConstraints() {
     std::array<char, 16> buffer;
     buffer.fill('!');
     constexpr auto maximum = std::numeric_limits<std::size_t>::max();
-    for (const auto capacity : {std::size_t{0}, (maximum >> 1) + 1, maximum}) {
+    for (const auto capacity : {std::size_t{0}, (maximum >> 3) + 1, (maximum >> 1) + 1, maximum}) {
         const int before = violations;
         Require(strerror_s_nid_postfix(buffer.data(), capacity, 2) == 22, "reject invalid capacity");
-        Require(violations == before + 1 && violationBuffer == buffer.data(), "one callback with destination");
+        Require(violations == before + 1 && violationBuffer == nullptr, "one callback with a null pointer");
         for (const char value : buffer) Require(value == '!', "constraint failure leaves destination untouched");
     }
+    std::array<char, 128> wide;
+    wide.fill('!');
+    const int beforeLargest = violations;
+    Require(strerror_s_nid_postfix(wide.data(), maximum >> 3, 2) == 0, "largest valid capacity");
+    Require(violations == beforeLargest, "largest valid capacity is not a violation");
+    Require(std::strcmp(wide.data(), "No such file or directory") == 0, "largest valid capacity writes the message");
     for (const auto capacity : {std::size_t{0}, std::size_t{1}, maximum}) {
         const int before = violations;
         Require(strerror_s_nid_postfix(nullptr, capacity, 2) == 22, "reject null destination");
@@ -95,6 +105,22 @@ void CheckConstraints() {
     Require(strerror_s_nid_postfix(nullptr, 1, 2) == 22, "installed ignore handler returns to caller");
     set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(Constraint));
 
+}
+
+void CheckDefaultHandler() {
+    const auto filename = "anyps5-default-constraint-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    Require(freopen_nid_postfix(filename.c_str(), "w", __stderrp_nid_postfix) == __stderrp_nid_postfix, "redirect guest stderr");
+    Require(setvbuf_nid_postfix(__stderrp_nid_postfix, nullptr, 2, 0) == 0, "unbuffered guest stderr");
+    auto previous = set_constraint_handler_s_nid_postfix(nullptr);
+    Require(strerror_s_nid_postfix(nullptr, 1, 2) == 22, "default handler returns to the caller");
+    Require(strerror_s_nid_postfix(nullptr, 0, 2) == 22, "default handler returns again");
+    Require(fflush_nid_postfix(__stderrp_nid_postfix) == 0, "flush guest stderr");
+    std::ifstream written(filename, std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>(written), std::istreambuf_iterator<char>()};
+    written.close();
+    Require(text == "strerror_s: bad argument\nstrerror_s: bad argument\n", "default handler writes the message and a newline to stderr");
+    set_constraint_handler_s_nid_postfix(previous);
+    std::remove(filename.c_str());
 }
 
 void CheckThreads() {
@@ -119,6 +145,6 @@ int main() {
     CheckConstraints();
     CheckThreads();
     set_constraint_handler_s_nid_postfix(previous);
-
+    CheckDefaultHandler();
     std::puts("safe error message checks passed");
 }

@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <cerrno>
 #include <cstdarg>
 #include <cstdint>
@@ -85,7 +86,7 @@ static int APS5_VABI PrintWideSecureOutput(const char16_t* format, ...) {
 }
 
 static FileStream* SeededStream(const char* text) {
-    auto* stream = new FileStream(std::tmpfile(), true);
+    auto* stream = new FileStream(TemporaryFile::Open(), true);
     Require(std::fputs(text, stream->GetHandle()) >= 0, "seed a stream");
     std::rewind(stream->GetHandle());
     return stream;
@@ -157,7 +158,7 @@ static std::string Contents(FileStream& stream) {
 }
 
 int main() {
-    FileStream scanned(std::tmpfile());
+    FileStream scanned(TemporaryFile::Open());
     Require(std::fputs("42 answer 7", scanned.GetHandle()) >= 0, "seed the scanned stream");
     std::rewind(scanned.GetHandle());
     int number = 0;
@@ -168,7 +169,7 @@ int main() {
     Require(ScanStream(&scanned, "%d", &number) == EOF && number == 7, "vfscanf at end of file");
     scanned.Close();
 
-    FileStream input(std::tmpfile());
+    FileStream input(TemporaryFile::Open());
     Require(std::fputs("-5 12", input.GetHandle()) >= 0, "seed the standard input stream");
     std::rewind(input.GetHandle());
     FileStream* const standardInput = __stdinp_nid_postfix;
@@ -179,15 +180,15 @@ int main() {
     __stdinp_nid_postfix = standardInput;
     input.Close();
 
-    FileStream written(std::tmpfile());
+    FileStream written(TemporaryFile::Open());
     Require(fwprintf_nid_postfix(&written, u"%d:%ls|", 7, u"été") == 6, "fwprintf counts wide characters");
     Require(PrintWide(&written, u"%5.1f", 2.25) == 5, "vfwprintf counts wide characters");
     Require(Contents(written) == "7:\xc3\xa9t\xc3\xa9|  2.3", "the stream holds the formatted text");
     written.Close();
 
-    FileStream securePlain(std::tmpfile());
-    FileStream secureChecked(std::tmpfile());
-    FileStream secureList(std::tmpfile());
+    FileStream securePlain(TemporaryFile::Open());
+    FileStream secureChecked(TemporaryFile::Open());
+    FileStream secureList(TemporaryFile::Open());
     Require(fprintf_nid_postfix(&securePlain, "%d|%s|%5.2f|%c|%ls", 42, "ab", 3.14159, 'z', u"é") == 16, "fprintf reference");
     Require(fprintf_s_nid_postfix(&secureChecked, "%d|%s|%5.2f|%c|%ls", 42, "ab", 3.14159, 'z', u"é") == 16, "fprintf_s count");
     Require(PrintSecure(&secureList, "%d|%s|%5.2f|%c|%ls", 42, "ab", 3.14159, 'z', u"é") == 16, "vfprintf_s count");
@@ -199,7 +200,7 @@ int main() {
     secureChecked.Close();
     secureList.Close();
 
-    FileStream violations(std::tmpfile());
+    FileStream violations(TemporaryFile::Open());
     signed char marker = -7;
     char sibling[16];
     Require(snprintf_s_nid_postfix(sibling, sizeof(sibling), "ab%hhn", &marker) == -1, "snprintf_s rejects %n");
@@ -219,8 +220,8 @@ int main() {
     Require(PrintSecureOutput("vprintf_s: %d\n", 42) == 14, "vprintf_s counts the bytes written to standard output");
     Require(PrintSecureOutput("%n", &number) == -1 && PrintSecureOutput(static_cast<const char*>(nullptr)) == -1, "vprintf_s violations");
 
-    FileStream wideChecked(std::tmpfile());
-    FileStream wideList(std::tmpfile());
+    FileStream wideChecked(TemporaryFile::Open());
+    FileStream wideList(TemporaryFile::Open());
     int widePosition = -5;
     Require(fwprintf_s_nid_postfix(&wideChecked, u"%05d:%ls|", 42, u"été") == 10, "fwprintf_s counts wide characters");
     Require(PrintWideSecure(&wideList, u"%05d:%ls|", 42, u"été") == 10, "vfwprintf_s counts wide characters");

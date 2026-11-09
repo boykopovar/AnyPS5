@@ -1,6 +1,8 @@
 #include "Ngs2Test.hpp"
 
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -39,10 +41,36 @@ static const PcmFixture Fixtures[] = {
      {-1, -0.5f, -0.25f, 0, 0.25f, 0.5f, 0.75f, 1}},
 };
 
+static constexpr std::uint32_t PcmGrain = 64;
+
+static std::uintptr_t PcmSystem() {
+    Ngs2SystemOption option{};
+    option.size = sizeof(option);
+    option.max_grain_samples = 512;
+    option.num_grain_samples = PcmGrain;
+    option.sample_rate = 48000;
+    option.max_voice_channels = 8;
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2SystemQueryBufferSize(&option, &query) == SCE_NGS2_OK);
+    const auto buffer = Buffer(query);
+    std::uintptr_t system = 0;
+    Require(sceNgs2SystemCreate(&option, &buffer, &system) == SCE_NGS2_OK);
+    return system;
+}
+
+static PcmFixture Canonical(const PcmFixture& fixture) {
+    PcmFixture result{SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 4, {}, fixture.samples};
+    for (float sample : fixture.samples) {
+        const auto bits = std::bit_cast<std::uint32_t>(sample);
+        for (unsigned byte = 0; byte < 4; ++byte) result.data.push_back(static_cast<std::uint8_t>(bits >> (byte * 8)));
+    }
+    return result;
+}
+
 class Playback {
 public:
     Playback(std::uint32_t type, std::uint32_t channels = 1, std::uint32_t rate = 48000)
-        : firstBuffer(usedBuffers), system(CreateSystem()), channels(channels), voice(Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER))) {
+        : firstBuffer(usedBuffers), system(PcmSystem()), channels(channels), voice(Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER))) {
         Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {type, channels, rate, 0, 0, 0}});
         Patch(voice, Mastering(system, channels));
         Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
@@ -50,7 +78,7 @@ public:
 
     ~Playback() {
         Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
-        usedBuffers = firstBuffer;
+        ResetBuffers(firstBuffer);
     }
 
     void Add(const void* data, const Ngs2WaveformBlock* blocks, std::uint32_t count, std::uint32_t flags = 0) {
@@ -58,7 +86,7 @@ public:
     }
 
     std::vector<float> Render() {
-        std::vector<float> output(Grain * channels, 123);
+        std::vector<float> output(PcmGrain * channels, 123);
         const Ngs2RenderBufferInfo info{output.data(), output.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, channels};
         Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
         return output;
@@ -83,40 +111,66 @@ static void RequireThrows(TFunction function) {
     Require(threw);
 }
 
-static void TestFramesAndPositions(const PcmFixture& fixture, std::uint32_t channels) {
-    Playback playback(fixture.type, channels);
-    std::vector<std::uint8_t> data(3, 0xa5);
-    constexpr std::uint32_t skip = 3;
-    for (std::uint32_t frame = 0; frame < skip + Grain * 2; frame++) {
-        for (std::uint32_t channel = 0; channel < channels; channel++) {
-            const auto sample = (frame + channel) % fixture.samples.size();
-            const auto first = fixture.data.begin() + sample * fixture.bytes;
-            data.insert(data.end(), first, first + fixture.bytes);
-        }
+static void SameState(Playback& actual, Playback& reference, const std::uint8_t* actualData,
+                      const std::uint8_t* referenceData, std::uint32_t bytes) {
+    const auto state = actual.State();
+    const auto expected = reference.State();
+    Require(state.voice_state.state_flags == expected.voice_state.state_flags && state.num_decoded_samples == expected.num_decoded_samples);
+    Require(state.decoded_data_size % bytes == 0 && expected.decoded_data_size % 4 == 0);
+    Require(state.decoded_data_size / bytes == expected.decoded_data_size / 4);
+    if (state.waveform_data == nullptr || expected.waveform_data == nullptr) Require(state.waveform_data == nullptr && expected.waveform_data == nullptr);
+    else {
+        const auto offset = reinterpret_cast<std::uintptr_t>(state.waveform_data) - reinterpret_cast<std::uintptr_t>(actualData);
+        const auto expectedOffset = reinterpret_cast<std::uintptr_t>(expected.waveform_data) - reinterpret_cast<std::uintptr_t>(referenceData);
+        Require(offset % bytes == 0 && expectedOffset % 4 == 0 && offset / bytes == expectedOffset / 4);
     }
-    const auto frameBytes = channels * fixture.bytes;
-    const Ngs2WaveformBlock block{2, data.size() - 3, 0, skip, Grain * 2, 0, 0};
-    playback.Add(data.data() + 1, &block, 1);
-    Control(playback.voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{});
-    Require(playback.State().waveform_data == data.data() + 3 + skip * frameBytes);
-    for (std::uint32_t pass = 0; pass < 2; pass++) {
-        const auto output = playback.Render();
-        for (std::uint32_t frame = 0; frame < Grain; frame++) {
-            for (std::uint32_t channel = 0; channel < channels; channel++) {
-                const auto actual = output[frame * channels + channel];
-                const auto expected = fixture.samples[(skip + pass * Grain + frame + channel) % 8];
-                if (actual != expected) {
-                    std::fprintf(stderr, "PCM type %#x frame %u channel %u: got %a, expected %a\n", fixture.type, pass * Grain + frame, channel, actual, expected);
-                }
-                Require(actual == expected);
+}
+
+static void TestFramesAndPositions(const PcmFixture& fixture, std::uint32_t channels) {
+    const auto canonical = Canonical(fixture);
+    constexpr std::uint32_t skip = 3;
+    const auto dataFor = [&](const PcmFixture& input) {
+        std::vector<std::uint8_t> data(3, 0xa5);
+        for (std::uint32_t frame = 0; frame < skip + PcmGrain * 2; ++frame) {
+            for (std::uint32_t channel = 0; channel < channels; ++channel) {
+                const auto index = (frame + channel) % input.samples.size();
+                const auto first = input.data.begin() + index * input.bytes;
+                data.insert(data.end(), first, first + input.bytes);
             }
         }
-        const auto state = playback.State();
-        Require(state.num_decoded_samples == (pass + 1) * Grain);
-        Require(state.decoded_data_size == (pass + 1) * Grain * frameBytes);
-        Require(state.waveform_data == data.data() + 3 + (skip + (pass + 1) * Grain) * frameBytes);
+        return data;
+    };
+    const auto data = dataFor(fixture);
+    const auto expectedData = dataFor(canonical);
+    Playback playback(fixture.type, channels), reference(canonical.type, channels);
+    const Ngs2WaveformBlock block{2, data.size() - 3, 0, skip, PcmGrain * 2, 0, 0};
+    const Ngs2WaveformBlock expectedBlock{2, expectedData.size() - 3, 0, skip, PcmGrain * 2, 0, 0};
+    playback.Add(data.data() + 1, &block, 1);
+    reference.Add(expectedData.data() + 1, &expectedBlock, 1);
+    Control(playback.voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{});
+    Control(reference.voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{});
+    SameState(playback, reference, data.data() + 3, expectedData.data() + 3, fixture.bytes);
+    for (unsigned pass = 0; pass < 3; ++pass) {
+        Require(playback.Render() == reference.Render());
+        SameState(playback, reference, data.data() + 3, expectedData.data() + 3, fixture.bytes);
     }
-    Require(Flags(playback.voice) == 0);
+}
+
+static void TestConstantConversions(const PcmFixture& fixture) {
+    for (unsigned index = 0; index < fixture.samples.size(); ++index) {
+        std::vector<std::uint8_t> data;
+        for (unsigned frame = 0; frame < PcmGrain * 3; ++frame) {
+            const auto first = fixture.data.begin() + index * fixture.bytes;
+            data.insert(data.end(), first, first + fixture.bytes);
+        }
+        Playback playback(fixture.type);
+        const Ngs2WaveformBlock block{0, data.size(), 0, 0, PcmGrain * 3, 0, 0};
+        playback.Add(data.data(), &block, 1);
+        const auto first = playback.Render();
+        for (unsigned frame = 0; frame < PcmGrain; ++frame) Require(first[frame] == (frame < 3 ? 0.0f : fixture.samples[index]));
+        const auto settled = playback.Render();
+        for (float value : settled) Require(value == fixture.samples[index]);
+    }
 }
 
 static std::vector<Ngs2VoiceCallbackInfo> callbacks;
@@ -126,57 +180,85 @@ static void APS5_VABI OnBlock(const Ngs2VoiceCallbackInfo* info) {
 }
 
 static void TestRepeatAndTransition(const PcmFixture& fixture) {
-    Playback playback(fixture.type);
+    for (unsigned repeats : {0u, 1u, 2u, 3u}) for (unsigned skip : {0u, 1u}) {
+        Playback window(fixture.type);
+        const Ngs2WaveformBlock block{0, fixture.data.size(), repeats, skip, 7, 0, 0};
+        window.Add(fixture.data.data(), &block, 1);
+        const auto output = window.Render();
+        const auto length = 7 + skip;
+        const auto passes = std::max(1u, repeats);
+        for (unsigned frame = 0; frame < PcmGrain; ++frame) {
+            const float expected = frame >= 3 && frame - 3 < length * passes ? fixture.samples[(frame - 3) % length] : 0;
+            Require(output[frame] == expected);
+        }
+    }
+    const auto canonical = Canonical(fixture);
+    Playback playback(fixture.type), reference(canonical.type);
     callbacks.clear();
     Control(playback.voice, SCE_NGS2_VOICE_PARAM_CALLBACK,
             Ngs2VoiceCallbackParam{{}, OnBlock, 7, SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_REPEAT | SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
-    const Ngs2WaveformBlock blocks[] = {{0, fixture.bytes * 4, 1, 1, 3, 0, 101}, {fixture.bytes * 4, fixture.bytes * 4, 0, 0, 4, 0, 202}};
+    const Ngs2WaveformBlock blocks[] = {{0, fixture.bytes * 4, 2, 1, 3, 0, 101}, {fixture.bytes * 4, fixture.bytes * 4, 0, 0, 4, 0, 202}};
+    const Ngs2WaveformBlock expectedBlocks[] = {{0, 16, 2, 1, 3, 0, 101}, {16, 16, 0, 0, 4, 0, 202}};
     playback.Add(fixture.data.data(), blocks, 2);
-    const auto first = playback.Render();
-    constexpr std::uint32_t indices[] = {1, 2, 3, 1, 2, 3, 4, 5};
-    for (std::uint32_t i = 0; i < Grain; i++) Require(first[i] == fixture.samples[indices[i]]);
-    auto state = playback.State();
-    Require(state.num_decoded_samples == 8 && state.decoded_data_size == 8 * fixture.bytes);
-    Require(state.waveform_data == fixture.data.data() + 6 * fixture.bytes);
-    const auto last = playback.Render();
-    Require(last[0] == fixture.samples[6] && last[1] == fixture.samples[7]);
-    for (std::uint32_t i = 2; i < Grain; i++) Require(last[i] == 0);
-    state = playback.State();
-    Require(state.num_decoded_samples == 10 && state.decoded_data_size == 10 * fixture.bytes);
-    Require(state.waveform_data == fixture.data.data() + fixture.data.size());
+    reference.Add(canonical.data.data(), expectedBlocks, 2);
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        Require(playback.Render() == reference.Render());
+        SameState(playback, reference, fixture.data.data(), canonical.data.data(), fixture.bytes);
+    }
+    if (callbacks.size() != 3) {
+        std::fprintf(stderr, "PCM type %#x callback count %zu\n", fixture.type, callbacks.size());
+        for (const auto& event : callbacks) std::fprintf(stderr, "event flag=%u user=%llu repeats=%u\n", event.flag, static_cast<unsigned long long>(event.user_data), event.num_repeated);
+    }
     Require(callbacks.size() == 3);
-    Require(callbacks[0].flag == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_REPEAT && callbacks[0].user_data == 101 && callbacks[0].num_repeated == 1);
+    Require(callbacks[0].flag == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_REPEAT && callbacks[0].user_data == 101 && callbacks[0].num_repeated == 0);
     Require(callbacks[1].flag == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END && callbacks[1].user_data == 101);
     Require(callbacks[2].flag == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END && callbacks[2].user_data == 202);
     Require(callbacks[0].block_data == fixture.data.data() && callbacks[2].block_data == fixture.data.data() + fixture.bytes * 4);
 }
 
+static void TestSkipWindowContract() {
+    Playback playback(SCE_NGS2_WAVEFORM_TYPE_PCM_I16L);
+    std::vector<std::int16_t> pcm(256, 8192);
+    pcm[0] = -32768; pcm[1] = -16384; pcm[2] = -8192; pcm[3] = 0; pcm[4] = 16384;
+    callbacks.clear();
+    Control(playback.voice, SCE_NGS2_VOICE_PARAM_CALLBACK,
+            Ngs2VoiceCallbackParam{{}, OnBlock, 7, SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
+    const Ngs2WaveformBlock blocks[] = {{0, 10, 0, 2, 3, 0, 101}, {10, 502, 0, 0, 251, 0, 202}};
+    playback.Add(pcm.data(), blocks, 2);
+    const auto output = playback.Render();
+    const std::array<float, 8> prefix{0, 0, 0, -1, -0.5f, -0.25f, 0, 0.5f};
+    Require(std::equal(prefix.begin(), prefix.end(), output.begin()));
+    for (std::size_t i = prefix.size(); i < output.size(); ++i) Require(output[i] == 0.25f);
+    const auto state = playback.State();
+    Require(state.num_decoded_samples == 62 && state.decoded_data_size == 128);
+    Require(callbacks.size() == 1 && callbacks.front().flag == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END && callbacks.front().user_data == 101);
+}
+
 static void TestResampling(const PcmFixture& fixture) {
-    Playback playback(fixture.type, 1, 24000);
+    const auto canonical = Canonical(fixture);
+    Playback playback(fixture.type, 1, 24000), reference(canonical.type, 1, 24000);
     const Ngs2WaveformBlock blocks[] = {{0, fixture.bytes * 3, 0, 0, 3, 0, 0}, {fixture.bytes * 3, fixture.bytes * 5, 0, 0, 5, 0, 0}};
+    const Ngs2WaveformBlock expectedBlocks[] = {{0, 12, 0, 0, 3, 0, 0}, {12, 20, 0, 0, 5, 0, 0}};
     playback.Add(fixture.data.data(), blocks, 2);
-    for (std::uint32_t pass = 0; pass < 2; pass++) {
-        const auto output = playback.Render();
-        for (std::uint32_t i = 0; i < Grain; i++) {
-            const auto sample = (pass * Grain + i) / 2;
-            const auto next = sample < 7 ? sample + 1 : sample;
-            const auto expected = i % 2 == 0 ? fixture.samples[sample] : std::lerp(fixture.samples[sample], fixture.samples[next], 0.5f);
-            Require(output[i] == expected);
-        }
-        Require(playback.State().decoded_data_size == (pass + 1) * 4 * fixture.bytes);
+    reference.Add(canonical.data.data(), expectedBlocks, 2);
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        Require(playback.Render() == reference.Render());
+        SameState(playback, reference, fixture.data.data(), canonical.data.data(), fixture.bytes);
     }
-    Require(playback.State().num_decoded_samples == 8);
 }
 
 static void TestPitch(const PcmFixture& fixture) {
-    Playback playback(fixture.type);
-    Control(playback.voice, SCE_NGS2_SAMPLER_VOICE_PARAM_PITCH, Ngs2SamplerVoicePitchParam{{}, 2});
+    const auto canonical = Canonical(fixture);
+    Playback playback(fixture.type), reference(canonical.type);
+    for (auto voice : {playback.voice, reference.voice})
+        Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_PITCH, Ngs2SamplerVoicePitchParam{{}, 2});
     const Ngs2WaveformBlock block{0, fixture.data.size(), 1, 0, 8, 0, 0};
+    const Ngs2WaveformBlock expectedBlock{0, canonical.data.size(), 1, 0, 8, 0, 0};
     playback.Add(fixture.data.data(), &block, 1);
-    const auto output = playback.Render();
-    for (std::uint32_t i = 0; i < Grain; i++) Require(output[i] == fixture.samples[(i * 2) % 8]);
-    Require(playback.State().num_decoded_samples == 16 && playback.State().decoded_data_size == 16 * fixture.bytes);
-    Require(Flags(playback.voice) == 0);
+    reference.Add(canonical.data.data(), &expectedBlock, 1);
+    Require(playback.Render() == reference.Render());
+    SameState(playback, reference, fixture.data.data(), canonical.data.data(), fixture.bytes);
+    Require(Flags(playback.voice) == Flags(reference.voice));
 }
 
 static void TestBounds(const PcmFixture& fixture) {
@@ -209,7 +291,9 @@ static void TestNumericEdges() {
 }
 
 int main() {
+    TestSkipWindowContract();
     for (const auto& fixture : Fixtures) {
+        TestConstantConversions(fixture);
         for (const auto channels : {1u, 2u, 6u, 8u}) TestFramesAndPositions(fixture, channels);
         TestRepeatAndTransition(fixture);
         TestResampling(fixture);

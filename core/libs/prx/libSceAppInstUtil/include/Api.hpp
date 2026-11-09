@@ -15,16 +15,25 @@ int APS5_VABI sceAppInstUtilAppIsInUpdating(const char* titleId, bool* updating)
 int APS5_VABI sceAppInstUtilAppExists(const char* titleId, int32_t* exists);
 int APS5_VABI sceAppInstUtilAppGetSize(const char* titleId, std::uint64_t* size);
 int APS5_VABI sceAppInstUtilAppInstallPkg(const char* packagePath, std::uint64_t serviceArgument);
-int APS5_VABI sceAppInstUtilAppPrepareOverwritePkg();
-int APS5_VABI sceAppInstUtilAppRecoverApp();
+int APS5_VABI sceAppInstUtilAppPrepareOverwritePkg(const char* pkgPath);
+int APS5_VABI sceAppInstUtilAppRecoverApp(const char* titleId);
 int APS5_VABI sceAppInstUtilAppUnInstall(const char* titleId);
 int APS5_VABI sceAppInstUtilAppUnInstallAddcont(const char* titleId, const char* contentLabel);
 int APS5_VABI sceAppInstUtilAppUnInstallPat(const char* titleId);
-int APS5_VABI sceAppInstUtilAppUnInstallTheme();
+int APS5_VABI sceAppInstUtilAppUnInstallTheme(const char* contentId);
 int APS5_VABI sceAppInstUtilAppUnInstallTypes(const char* titleId, std::uint32_t types);
 int APS5_VABI sceAppInstUtilGetInstallProgressInfo(const char* titleId, AppInstallProgressInfo* info);
 int APS5_VABI sceAppInstUtilGetInstallProgress(const char* titleId, void* progress);
 int APS5_VABI sceAppInstUtilGetPrimaryAppSlot(const char* titleId, void* slot);
+
+int APS5_VABI sceAppInstUtilCheckLatestPatch2();
+int APS5_VABI sceAppInstUtilAppGetIrremovableAppList2();
+int APS5_VABI sceAppInstUtilGetAddons2();
+int APS5_VABI sceAppInstUtilInstallPatch2();
+int APS5_VABI sceAppInstUtilAppUnInstall3();
+int APS5_VABI sceAppInstUtilGetPatchInstallStatus2();
+int APS5_VABI sceAppInstUtilAppRequestMoveApps2();
+int APS5_VABI sceAppInstUtilGetContentSize3();
 
 int APS5_VABI sceAppInstUtilAppGetAppInstallStatusByAppInfo(void);
 int APS5_VABI sceAppInstUtilAppUnInstall2(void);
@@ -124,5 +133,12 @@ int APS5_VABI sceAppInstUtilRestoreDataSource(void);
 int APS5_VABI sceAppInstUtilGetNeededStorageSize(void);
 int APS5_VABI sceAppInstUtilAppGetStorageDestType(void);
 int APS5_VABI sceAppInstUtilInstallAddons(void);
+int APS5_VABI sceAppInstUtilAppConvertAppDiscToDownload(void);
+int APS5_VABI sceAppInstUtilAppGetCustomThemeInfo(void);
+int APS5_VABI sceAppInstUtilAppGetInstallAddcontFromDiscStatus(void);
+int APS5_VABI sceAppInstUtilAppInstallCloudGame(void);
+int APS5_VABI sceAppInstUtilAppInstallMediaPlayer(void);
+int APS5_VABI sceAppInstUtilAppInstallRequestAddcontFromDisc(void);
+int APS5_VABI sceAppInstUtilAppSetSavedataUploadStatus(void);
 
 }

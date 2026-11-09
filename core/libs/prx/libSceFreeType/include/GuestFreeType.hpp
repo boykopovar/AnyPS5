@@ -115,6 +115,32 @@ struct GuestOutline {
     std::int32_t flags;
 };
 
+struct GuestGlyphRec {
+    void* library;
+    const void* clazz;
+    std::uint32_t format;
+    GuestVector advance;
+};
+
+struct GuestBitmapGlyphRec {
+    GuestGlyphRec root;
+    std::int32_t left;
+    std::int32_t top;
+    GuestBitmap bitmap;
+};
+
+struct GuestOutlineGlyphRec {
+    GuestGlyphRec root;
+    GuestOutline outline;
+};
+
+static_assert(sizeof(GuestGlyphRec) == 40 && alignof(GuestGlyphRec) == 8);
+static_assert(offsetof(GuestGlyphRec, library) == 0 && offsetof(GuestGlyphRec, clazz) == 8);
+static_assert(offsetof(GuestGlyphRec, format) == 16 && offsetof(GuestGlyphRec, advance) == 24);
+static_assert(sizeof(GuestBitmapGlyphRec) == 88 && offsetof(GuestBitmapGlyphRec, root) == 0);
+static_assert(offsetof(GuestBitmapGlyphRec, left) == 40 && offsetof(GuestBitmapGlyphRec, top) == 44 && offsetof(GuestBitmapGlyphRec, bitmap) == 48);
+static_assert(sizeof(GuestOutlineGlyphRec) == 80 && offsetof(GuestOutlineGlyphRec, root) == 0 && offsetof(GuestOutlineGlyphRec, outline) == 40);
+
 struct GuestOutlineFuncs {
     int (APS5_VABI *move_to)(const GuestVector*, void*);
     int (APS5_VABI *line_to)(const GuestVector*, void*);
@@ -147,6 +173,29 @@ struct GuestGlyphSlotRec {
     std::int64_t rsb_delta;
     void* other;
     void* internal;
+};
+
+struct GuestOpenArgs {
+    std::uint32_t flags;
+    const unsigned char* memory_base;
+    std::int64_t memory_size;
+    char* pathname;
+    void* stream;
+    void* driver;
+    std::int32_t num_params;
+    void* params;
+};
+
+struct GuestRasterParams {
+    const GuestBitmap* target;
+    const void* source;
+    std::int32_t flags;
+    void* graySpans;
+    void* blackSpans;
+    void* bitTest;
+    void* bitSet;
+    void* user;
+    GuestBBox clipBox;
 };
 
 struct GuestFaceRec {
@@ -184,7 +233,14 @@ struct GuestFaceRec {
     void* internal;
 };
 
+struct GuestPropIncreaseXHeight {
+    GuestFaceRec* face;
+    std::uint32_t limit;
+};
+
 static_assert(sizeof(GuestMatrix) == 32 && offsetof(GuestMatrix, xy) == 8 && offsetof(GuestMatrix, yx) == 16 && offsetof(GuestMatrix, yy) == 24);
+static_assert(sizeof(GuestOpenArgs) == 64 && offsetof(GuestOpenArgs, memory_base) == 8 && offsetof(GuestOpenArgs, memory_size) == 16 && offsetof(GuestOpenArgs, pathname) == 24 && offsetof(GuestOpenArgs, stream) == 32 && offsetof(GuestOpenArgs, driver) == 40 && offsetof(GuestOpenArgs, num_params) == 48 && offsetof(GuestOpenArgs, params) == 56);
+static_assert(sizeof(GuestRasterParams) == 96 && offsetof(GuestRasterParams, flags) == 16 && offsetof(GuestRasterParams, graySpans) == 24 && offsetof(GuestRasterParams, user) == 56 && offsetof(GuestRasterParams, clipBox) == 64);
 static_assert(sizeof(GuestGeneric) == 16 && offsetof(GuestGeneric, finalizer) == 8);
 static_assert(sizeof(GuestBitmapSize) == 32 && offsetof(GuestBitmapSize, size) == 8);
 static_assert(sizeof(GuestCharMapRec) == 16 && offsetof(GuestCharMapRec, platform_id) == 12);
@@ -196,6 +252,8 @@ static_assert(offsetof(GuestSizeRequestRec, horiResolution) == 24 && offsetof(Gu
 static_assert(sizeof(GuestBitmap) == 40 && offsetof(GuestBitmap, buffer) == 16 && offsetof(GuestBitmap, palette) == 32);
 static_assert(sizeof(GuestOutlineFuncs) == 48 && offsetof(GuestOutlineFuncs, shift) == 32 && offsetof(GuestOutlineFuncs, delta) == 40);
 static_assert(sizeof(GuestOutline) == 40 && offsetof(GuestOutline, points) == 8 && offsetof(GuestOutline, flags) == 32);
+static_assert(sizeof(GuestVector) == 16 && alignof(GuestVector) == 8 && offsetof(GuestVector, y) == 8);
+static_assert(alignof(GuestMatrix) == 8 && offsetof(GuestMatrix, xx) == 0);
 static_assert(offsetof(GuestGlyphSlotRec, glyph_index) == 0x18 && offsetof(GuestGlyphSlotRec, metrics) == 0x30);
 static_assert(offsetof(GuestGlyphSlotRec, advance) == 0x80 && offsetof(GuestGlyphSlotRec, format) == 0x90);
 static_assert(offsetof(GuestGlyphSlotRec, bitmap) == 0x98 && offsetof(GuestGlyphSlotRec, bitmap_left) == 0xc0 && offsetof(GuestGlyphSlotRec, bitmap_top) == 0xc4);
@@ -205,6 +263,7 @@ static_assert(offsetof(GuestFaceRec, num_fixed_sizes) == 56 && offsetof(GuestFac
 static_assert(offsetof(GuestFaceRec, bbox) == 104 && offsetof(GuestFaceRec, units_per_EM) == 136 && offsetof(GuestFaceRec, underline_thickness) == 150);
 static_assert(offsetof(GuestFaceRec, glyph) == 0x98 && offsetof(GuestFaceRec, size) == 0xa0 && offsetof(GuestFaceRec, charmap) == 0xa8);
 static_assert(offsetof(GuestFaceRec, autohint) == 216 && offsetof(GuestFaceRec, internal) == 240 && sizeof(GuestFaceRec) == 248);
+static_assert(sizeof(GuestPropIncreaseXHeight) == 16 && offsetof(GuestPropIncreaseXHeight, face) == 0 && offsetof(GuestPropIncreaseXHeight, limit) == 8);
 
 }
 

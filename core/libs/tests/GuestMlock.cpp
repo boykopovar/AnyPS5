@@ -28,17 +28,6 @@ static void RequireLockAllInvalid(int flags) {
     Require(mlockall_nid_postfix(flags) == -1 && *__error_nid_postfix() == 22);
 }
 
-static void RequireLockAllUnsupported(int flags) {
-    bool rejected = false;
-    try {
-        mlockall_nid_postfix(flags);
-
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-    Require(rejected);
-}
-
 #if defined(__linux__) && !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
 #define HAS_LOCKED_KILOBYTES
 static std::size_t LockedKilobytes() {
@@ -153,6 +142,12 @@ int main() {
     *__error_nid_postfix() = 0;
     Require(munlock_nid_postfix(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), page * 2) == -1);
     Require(*__error_nid_postfix() == 22);
+    constexpr int sceInvalid = static_cast<int>(0x80020016u);
+    Require(sceKernelMlock_nid_postfix(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), page * 2) == sceInvalid);
+    Require(sceKernelMunlock_nid_postfix(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), page * 2) == sceInvalid);
+    Require(sceKernelMlock_nid_postfix(mapped, 0) == 0 && sceKernelMunlock_nid_postfix(mapped, 0) == 0);
+    Require(sceKernelMlock_nid_postfix(bytes + 1, page) == 0);
+    Require(sceKernelMunlock_nid_postfix(bytes + 1, page) == 0);
 
     void* reserved = nullptr;
     Require(sceKernelReserveVirtualRange(&reserved, page, 0, 0) == 0);
@@ -177,9 +172,6 @@ int main() {
     RequireLockAllInvalid(4);
     RequireLockAllInvalid(1 | 4);
     RequireLockAllInvalid(-1);
-    RequireLockAllUnsupported(1);
-    RequireLockAllUnsupported(2);
-    RequireLockAllUnsupported(1 | 2);
 
     *__error_nid_postfix() = untouched;
     Require(munlockall_nid_postfix() == 0);
