@@ -49,11 +49,18 @@ AvPlayerMemAllocator WithGuestHeapFallback(AvPlayerMemAllocator memory) {
 
 std::uint32_t DetectSourceType(std::string_view path) {
     std::string_view name = path;
-    if (name.find("://") != std::string_view::npos) name = name.substr(0, name.find_first_of("?#"));
+    const auto scheme = name.find("://");
+    if (scheme != std::string_view::npos) {
+        name = name.substr(0, name.find_first_of("?#"));
+        const auto pathStart = name.find('/', scheme + 3);
+        if (pathStart == std::string_view::npos) return SourceTypeUnknown;
+        name.remove_prefix(pathStart + 1);
+    }
+    const auto slash = name.rfind('/');
+    if (slash != std::string_view::npos) name.remove_prefix(slash + 1);
     const auto dot = name.rfind('.');
     if (dot == std::string_view::npos) return SourceTypeUnknown;
-    auto extension = name.substr(dot);
-    extension = extension.substr(0, extension.find('/'));
+    const auto extension = name.substr(dot);
     for (const auto mp4 : {".mp4", ".m4v", ".m3d", ".m4a", ".mov"}) {
         if (EqualsIgnoreCase(extension, mp4)) return SourceTypeFileMp4;
     }

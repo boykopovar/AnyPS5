@@ -2270,6 +2270,36 @@ void TestHttpSources(const std::string& base) {
     Check(allocations.blocks.empty(), "HTTP playback allocations leaked");
 }
 
+void TestSourceTypePaths() {
+    HostFile file;
+    auto init = InitData(nullptr);
+    init.file_replacement = {&file, OpenFile, CloseFile, ReadFile, FileSize};
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "source-type test init failed");
+    for (const auto* path : {
+        "https://media.example.test/live.m3u8/segment",
+        "https://media.example.test/clip.mp4/noext",
+        "https://origin.m3u8/path",
+        "https://origin.m3u8?token=123",
+        "app0/live.m3u8/segment",
+    }) {
+        Check(sceAvPlayerAddSource(player, path) == OperationFailed, std::string("parent path was misidentified as HLS: ") + path);
+    }
+    for (const auto* path : {
+        "https://media.example.test/live.M3U8?token=123",
+        "https://media.example.test/clip.mp4/segment.m3u8#part",
+    }) {
+        bool rejected = false;
+        try { sceAvPlayerAddSource(player, path); }
+        catch (const std::runtime_error&) { rejected = true; }
+        Check(rejected, std::string("HLS filename was not rejected: ") + path);
+    }
+    Check(sceAvPlayerAddSource(player, "/app0/replaced.mp4") == 0, "MP4 source was not accepted after rejected paths");
+    Check(sceAvPlayerClose(player) == 0, "source-type test close failed");
+    std::lock_guard lock(allocations.mutex);
+    Check(allocations.blocks.empty(), "source-type test allocations leaked");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -2295,6 +2325,7 @@ int main(int argc, char** argv) {
         }
         Check(argc == 1, "unknown AvPlayer test arguments");
         WriteMovie();
+        TestSourceTypePaths();
         TestLoopWarningAtPlayback();
         TestAudioLoopWarningAtPlayback();
         TestLoopWarningSharedByStreams();
