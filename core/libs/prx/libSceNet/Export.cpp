@@ -184,6 +184,7 @@ constexpr int NET_SO_REUSEPORT = 0x200;
 constexpr int NET_SO_KEEPALIVE = 0x8;
 constexpr int NET_SO_DONTROUTE = 0x10;
 constexpr int NET_SO_BROADCAST = 0x20;
+constexpr int NET_SO_LINGER = 0x80;
 constexpr int NET_SO_ONESBCAST = 0x10000;
 constexpr int NET_SO_OOBINLINE = 0x100;
 constexpr int NET_SO_SNDBUF = 0x1001;
@@ -1846,6 +1847,10 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
     if (!optval || optlen < sizeof(int)) return fail(NET_EINVAL);
     int value = 0;
     std::memcpy(&value, optval, sizeof(value));
+    if (optname == NET_SO_LINGER) {
+        const int error = GuestSocketSetLinger_nid_no_patch(static_cast<std::uintptr_t>(socket.native->value), optval, optlen);
+        return error == 0 ? 0 : fail(error);
+    }
     if (optname == NET_SO_REUSEADDR || optname == NET_SO_REUSEPORT) {
         std::lock_guard lk(g_mutex);
         const auto it = g_socks.find(s);
@@ -1916,6 +1921,10 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         return getsockopt_nid_postfix(s, level, optname, optval, optlen) == 0 ? 0 : fail(*__error_nid_postfix());
     }
     if (optval == nullptr || optlen == nullptr) return fail(NET_EINVAL);
+    if (level == NET_SOL_SOCKET && optname == NET_SO_LINGER) {
+        const int error = GuestSocketGetLinger_nid_no_patch(static_cast<std::uintptr_t>(socket.native->value), optval, optlen);
+        return error == 0 ? 0 : fail(error);
+    }
     if (level == NET_SOL_SOCKET && (optname == NET_SO_REUSEADDR || optname == NET_SO_REUSEPORT)) {
         const int value = socket.reuseFlags & optname;
         const auto count = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
