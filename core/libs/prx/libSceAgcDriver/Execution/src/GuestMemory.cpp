@@ -2804,6 +2804,13 @@ bool UnchangedSinceCollected(std::uint64_t address, std::size_t bytes, std::uint
     return tracker.cpuUnchanged(address, bytes, generation);
 }
 
+bool CpuWroteSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
+    if (generation == 0 || bytes == 0 || CollectWritesUncached(address, bytes) == 0) return false;
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    return tracker.watched && tracker.covers(address, bytes) && !tracker.cpuUnchanged(address, bytes, generation);
+}
+
 bool UnchangedSinceLastCollect(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
     if (bytes == 0u || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
     auto& tracker = Tracker();
