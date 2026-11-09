@@ -14,6 +14,14 @@
 
 namespace AgcDriver::Graphics {
 
+struct VkDrawCounts {
+    std::uint64_t direct = 0;
+    std::uint64_t indexed = 0;
+    std::uint64_t indirect = 0;
+    std::uint64_t mesh = 0;
+};
+VkDrawCounts TakeVkDrawCounts();
+
 struct HostImport;
 
 struct DrawTraceContext {
@@ -56,6 +64,7 @@ struct DrawInputCopy {
     std::size_t from = 0;
     std::uint64_t generation = 0;
     std::uint64_t registryGeneration = 0;
+    Recorder::OwnedDrawInputProof owned;
 };
 DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t from = 0);
 DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes, std::size_t stride = 0);
