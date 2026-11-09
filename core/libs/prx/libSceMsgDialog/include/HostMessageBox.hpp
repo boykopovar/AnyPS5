@@ -30,6 +30,7 @@ struct HostBoxAnswer {
     std::optional<std::size_t> chosen;
 };
 
+std::optional<HostBoxAnswer> ShowHostMessageBox(std::string_view message, const ModalDialogRequest& request);
 
 }
 
