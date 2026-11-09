@@ -5833,7 +5833,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
         // Images the shader only reads have nothing to store back.
         const bool written = element >= binding.imageWritten.size() || binding.imageWritten[element];
-        const bool stored = element < binding.imageWritten.size() && binding.imageWritten[element];
+        const bool stored = written;
         if (stored) claimStoredMultisampleMemory(context, resource, guestBytes, mip);
         // The same surface as the previous element: its image was just looked up and refreshed.
         if (sameAsPrevious && StorageDedupeEnabled()) storageTextures.push_back(storageTextures.back());
