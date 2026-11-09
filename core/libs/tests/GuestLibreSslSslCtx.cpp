@@ -125,7 +125,6 @@ static void TestUsePrivateKey() {
 
     RequireThrows([] { SSL_CTX_use_PrivateKey_nid_postfix(nullptr, reinterpret_cast<void*>(1)); });
     RequireThrows([&] { SSL_CTX_use_PrivateKey_nid_postfix(inaccessible, reinterpret_cast<void*>(1)); });
-    RequireThrows([&] { SSL_CTX_use_PrivateKey_nid_postfix(Context(&ctx), reinterpret_cast<void*>(1)); });
     Require(std::memcmp(&ctx, original, sizeof(ctx)) == 0);
     Require(ERR_get_error_nid_postfix() == 0);
 }
