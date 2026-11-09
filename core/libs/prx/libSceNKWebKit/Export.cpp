@@ -8838,10 +8838,6 @@ int APS5_VABI _ZNK7WebCore9FrameView22absoluteToDocumentRectENS_9FloatRectEN3WTF
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore17FrameLoaderClient52dispatchDidReconnectDOMWindowExtensionToGlobalObjectEPNS_18DOMWindowExtensionE() {
     NotImplemented_nid_no_patch(__func__);
 }
