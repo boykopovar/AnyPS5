@@ -9,6 +9,7 @@
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -49,15 +50,17 @@ int APS5_VABI sceLibcInternalPending4_006_nid_no_patch() {
 }
 APS5_EXPORT("vbgCuYKySLI", sceLibcInternalPending4_006_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_007_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceLibcInternalPending4_007_nid_no_patch(const void* self, const void* name, const void* locale) {
+    (void)self;
+    (void)name;
+    (void)locale;
+    return -1;
 }
 APS5_EXPORT("HeBwePMtuFs", sceLibcInternalPending4_007_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_008_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceLibcInternalPending4_008_nid_no_patch(const void* self, int catalog) {
+    (void)self;
+    (void)catalog;
 }
 APS5_EXPORT("rRmMX83UL1E", sceLibcInternalPending4_008_nid_no_patch);
 
@@ -85,77 +88,19 @@ int APS5_VABI sceLibcInternalPending4_012_nid_no_patch() {
 }
 APS5_EXPORT("UM6rGQxnEMg", sceLibcInternalPending4_012_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_013_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceLibcInternalPending4_013_nid_no_patch(const void* self, const void* name, const void* locale) {
+    (void)self;
+    (void)name;
+    (void)locale;
+    return -1;
 }
 APS5_EXPORT("zSehLdHI0FA", sceLibcInternalPending4_013_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_014_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceLibcInternalPending4_014_nid_no_patch(const void* self, int catalog) {
+    (void)self;
+    (void)catalog;
 }
 APS5_EXPORT("AjkxQBlsOOY", sceLibcInternalPending4_014_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_015_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("cnNz2ftNwEU", sceLibcInternalPending4_015_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_016_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("nRf0VQ++OEw", sceLibcInternalPending4_016_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_017_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("ozLi0i4r6ds", sceLibcInternalPending4_017_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_018_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("klWxQ2nKAHY", sceLibcInternalPending4_018_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_019_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("QGSIlqfIU2c", sceLibcInternalPending4_019_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_020_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("JXzQGOtumdM", sceLibcInternalPending4_020_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_021_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("zv1EMhI7R1c", sceLibcInternalPending4_021_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_022_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("JWplGh2O0Rs", sceLibcInternalPending4_022_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_023_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("fXUuZEw7C24", sceLibcInternalPending4_023_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_024_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("3+VwUA8-QPI", sceLibcInternalPending4_024_nid_no_patch);
 
 int APS5_VABI sceLibcInternalPending4_025_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -604,59 +549,11 @@ int APS5_VABI sceLibcInternalPending4_109_nid_no_patch() {
 }
 APS5_EXPORT("9HILqEoh24E", sceLibcInternalPending4_109_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_110_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("0Ir3jiT4V6Q", sceLibcInternalPending4_110_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_111_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("qiR-4jx1abE", sceLibcInternalPending4_111_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_112_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("QqBWUNEfIAo", sceLibcInternalPending4_112_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_113_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("xSxPHmpcNzY", sceLibcInternalPending4_113_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_114_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("pGxNI4JKfmY", sceLibcInternalPending4_114_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_115_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("ikjnoeemspQ", sceLibcInternalPending4_115_nid_no_patch);
-
 int APS5_VABI sceLibcInternalPending4_116_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 APS5_EXPORT("KDgQWX1eDeo", sceLibcInternalPending4_116_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_117_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("PbCV7juCZVo", sceLibcInternalPending4_117_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_118_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("SQ02ZA5E-UE", sceLibcInternalPending4_118_nid_no_patch);
 
 int APS5_VABI sceLibcInternalPending4_119_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -670,59 +567,11 @@ int APS5_VABI sceLibcInternalPending4_120_nid_no_patch() {
 }
 APS5_EXPORT("Yl10kSufa5k", sceLibcInternalPending4_120_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_121_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("yL8dMdCi4Ys", sceLibcInternalPending4_121_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_122_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("HCB1auZdcmo", sceLibcInternalPending4_122_nid_no_patch);
-
 int APS5_VABI sceLibcInternalPending4_123_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 APS5_EXPORT("Wut42WAe7Rw", sceLibcInternalPending4_123_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_124_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("VSk+sij2mwg", sceLibcInternalPending4_124_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_125_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("EBwahsMLokw", sceLibcInternalPending4_125_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_126_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("o1qlZJqrvmI", sceLibcInternalPending4_126_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_127_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("srwl1hhFoUI", sceLibcInternalPending4_127_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_128_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("O4mPool-pow", sceLibcInternalPending4_128_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_129_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("SdKk439pgjg", sceLibcInternalPending4_129_nid_no_patch);
 
 int APS5_VABI sceLibcInternalPending4_130_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -979,6 +828,12 @@ const char* APS5_VABI _getprogname_nid_postfix() {
     return getprogname_nid_postfix();
 }
 
+void APS5_VABI setprogname_nid_postfix(const char* name) {
+    if (name == nullptr) throw std::invalid_argument("setprogname: null name");
+    const char* slash = std::strrchr(name, '/');
+    __progname_nid_postfix = (slash != nullptr) ? slash + 1 : name;
+}
+
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle) {
     CxaFinalize_nid_no_patch(dsoHandle);
 }
@@ -1052,9 +907,16 @@ int APS5_VABI _Closreg_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Daysto_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _Daysto_nid_postfix(int year, int month) {
+    static constexpr short DaysBeforeMonth[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+    static constexpr short LeapDaysBeforeMonth[12] = {0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335};
+    if (month < 0 || month >= 12) throw std::out_of_range("_Daysto: the month index is outside the twelve-entry tables");
+    const auto bits = static_cast<std::uint32_t>(year);
+    std::uint32_t leapDays = 0;
+    if (year > 0) leapDays = (bits - 1u) >> 2;
+    else if (year <= -4) leapDays = ((4u - bits) >> 2) + 1u;
+    const bool common = (bits & 3u) != 0 || year == 0;
+    return static_cast<int>(leapDays + static_cast<std::uint32_t>(common ? DaysBeforeMonth[month] : LeapDaysBeforeMonth[month]));
 }
 
 int APS5_VABI _Deletegloballocale_nid_postfix() {
@@ -1072,11 +934,10 @@ int APS5_VABI _Dtento_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI sceLibcInternalUnknown_aQURHgjHo_w_nid_no_patch() {
+int APS5_VABI _Erfc_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("aQURHgjHo-w", sceLibcInternalUnknown_aQURHgjHo_w_nid_no_patch);
 
 int APS5_VABI _FAtan_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -1088,17 +949,15 @@ int APS5_VABI _FDtento_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI sceLibcInternalUnknown_qwR1gtp_WS0_nid_no_patch() {
+int APS5_VABI _FErfc_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("qwR1gtp-WS0", sceLibcInternalUnknown_qwR1gtp_WS0_nid_no_patch);
 
-int APS5_VABI sceLibcInternalUnknown_DS03EjPDtFo_nid_no_patch() {
+int APS5_VABI _FHypot_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("DS03EjPDtFo", sceLibcInternalUnknown_DS03EjPDtFo_nid_no_patch);
 
 int APS5_VABI _FLogpoly_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -1117,11 +976,10 @@ int APS5_VABI sceLibcInternalUnknown_IdWhZ0SM7JA_nid_no_patch() {
 }
 APS5_EXPORT("IdWhZ0SM7JA", sceLibcInternalUnknown_IdWhZ0SM7JA_nid_no_patch);
 
-int APS5_VABI sceLibcInternalUnknown_A98W3Iad6xE_nid_no_patch() {
+int APS5_VABI _FPow_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("A98W3Iad6xE", sceLibcInternalUnknown_A98W3Iad6xE_nid_no_patch);
 
 int APS5_VABI _FQuad_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -1133,11 +991,10 @@ int APS5_VABI _FQuadph_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI sceLibcInternalUnknown_TLvAYmLtdVw_nid_no_patch() {
+int APS5_VABI _FRint_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("TLvAYmLtdVw", sceLibcInternalUnknown_TLvAYmLtdVw_nid_no_patch);
 
 int APS5_VABI _FSincos_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -1164,9 +1021,15 @@ int APS5_VABI _FXp_addx_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _FXp_getw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+float APS5_VABI _FXp_getw_nid_postfix(const float* parts, int count) {
+    if (count == 0) return 0.0f;
+    if (count == 1 || parts[0] == 0.0f || parts[1] == 0.0f) return parts[0];
+    if (count == 2 || parts[2] == 0.0f) return parts[0] + parts[1];
+    const float head = parts[0] + parts[1];
+    float tail = parts[2];
+    if (count >= 4) tail += parts[3];
+    if (head - parts[0] == parts[1]) return head + tail;
+    return parts[0] + (parts[1] + tail);
 }
 
 int APS5_VABI _FXp_invx_nid_postfix() {
@@ -1349,15 +1212,13 @@ int APS5_VABI _Getzone_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI sceLibcInternalUnknown_wUa_oPQvFZ0_nid_no_patch() {
+int APS5_VABI _Hypot_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("wUa+oPQvFZ0", sceLibcInternalUnknown_wUa_oPQvFZ0_nid_no_patch);
 
 int APS5_VABI _Isdst_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return -1;
 }
 
 int APS5_VABI _LAtan_nid_postfix() {
@@ -1370,17 +1231,15 @@ int APS5_VABI _LDtento_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI sceLibcInternalUnknown_PG4HVe4X_Oc_nid_no_patch() {
+int APS5_VABI _LErfc_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("PG4HVe4X+Oc", sceLibcInternalUnknown_PG4HVe4X_Oc_nid_no_patch);
 
-int APS5_VABI sceLibcInternalUnknown_IRUFZywbTT0_nid_no_patch() {
+int APS5_VABI _LHypot_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("IRUFZywbTT0", sceLibcInternalUnknown_IRUFZywbTT0_nid_no_patch);
 
 int APS5_VABI _LLogpoly_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -1399,11 +1258,10 @@ int APS5_VABI sceLibcInternalUnknown_gso5X06CFkI_nid_no_patch() {
 }
 APS5_EXPORT("gso5X06CFkI", sceLibcInternalUnknown_gso5X06CFkI_nid_no_patch);
 
-int APS5_VABI sceLibcInternalUnknown_3Z8jD_HTKr8_nid_no_patch() {
+int APS5_VABI _LPow_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("3Z8jD-HTKr8", sceLibcInternalUnknown_3Z8jD_HTKr8_nid_no_patch);
 
 int APS5_VABI _LQuad_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -1415,11 +1273,10 @@ int APS5_VABI _LQuadph_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI sceLibcInternalUnknown_fJmOr59K8QY_nid_no_patch() {
+int APS5_VABI _LRint_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("fJmOr59K8QY", sceLibcInternalUnknown_fJmOr59K8QY_nid_no_patch);
 
 int APS5_VABI _LSincos_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -1551,11 +1408,10 @@ int APS5_VABI _Mbtowc_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI sceLibcInternalUnknown_Ss3108pBuZY_nid_no_patch() {
+int APS5_VABI _Nnl_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("Ss3108pBuZY", sceLibcInternalUnknown_Ss3108pBuZY_nid_no_patch);
 
 int APS5_VABI sceLibcInternalUnknown_1hGmBh83dL8_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -1569,11 +1425,10 @@ int APS5_VABI sceLibcInternalUnknown_hrv1BgM68kU_nid_no_patch() {
 }
 APS5_EXPORT("hrv1BgM68kU", sceLibcInternalUnknown_hrv1BgM68kU_nid_no_patch);
 
-int APS5_VABI sceLibcInternalUnknown_ECh_p_LRG6Y_nid_no_patch() {
+int APS5_VABI _Pow_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("ECh+p-LRG6Y", sceLibcInternalUnknown_ECh_p_LRG6Y_nid_no_patch);
 
 int APS5_VABI _Printf_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
