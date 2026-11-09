@@ -751,13 +751,15 @@ bool LiveGuestThreadExists(std::int64_t tid) {
     return false;
 }
 
-bool LiveGuestThreadName(std::int64_t tid, std::string* name) {
+extern "C" bool LiveGuestThreadName_nid_no_patch(std::int64_t tid, char* name, std::size_t capacity) {
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
     for (const auto& [id, thread] : registry.threads) {
         if (GuestThreadEnded(thread) || thread->tid != tid) continue;
         std::lock_guard nameGuard(thread->nameLock);
-        *name = thread->name;
+        const std::size_t length = std::min(thread->name.size(), capacity - 1);
+        std::memcpy(name, thread->name.data(), length);
+        name[length] = '\0';
         return true;
     }
     return false;
