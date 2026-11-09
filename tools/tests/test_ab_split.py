@@ -201,6 +201,32 @@ class AbSplitTests(unittest.TestCase):
         row = ab_split.parse_report("present", present(90.0, 10.0, presents=30, dropped=10))
         self.assertEqual(row, {"frames": 40, "busy": 90.0, "gaps": 10.0})
 
+    def test_dropped_gpu_ranges_in_a_counted_report_refuse_the_comparison(self):
+        lines = log()
+        index = next(i for i, line in enumerate(lines) if line.startswith("[ab] phase B 1 settled"))
+        index = next(i for i in range(index, len(lines)) if lines[i].startswith("[gputime]"))
+        index = next(i for i in range(index + 1, len(lines)) if lines[i].startswith("[gputime]"))
+        lines[index] = lines[index].replace("0 ranges dropped", "3 ranges dropped")
+        with self.assertRaisesRegex(ValueError, "GPU timing ranges were dropped"):
+            ab_split.split(lines, ["0x1000"], ["staging-in"])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "dropped.log"
+            path.write_text("".join(lines), encoding="utf-8")
+            for script, flags in (("ab_split.py", []), ("ab_split.py", ["--json"]), ("ab_split_csv.py", [])):
+                with self.subTest(script=script, flags=flags):
+                    run = subprocess.run([sys.executable, str(Path(ab_split.__file__).with_name(script)), str(path), *flags],
+                                         capture_output=True, text=True, encoding="utf-8", timeout=5)
+                    self.assertNotEqual(run.returncode, 0)
+                    self.assertEqual(run.stdout, "")
+                    self.assertIn("GPU timing ranges were dropped", run.stderr)
+                    self.assertNotIn("Traceback", run.stderr)
+
+    def test_dropped_gpu_ranges_outside_counted_reports_are_ignored(self):
+        lines = log()
+        index = next(i for i, line in enumerate(lines) if line.startswith("[gputime]"))
+        lines[index] = lines[index].replace("0 ranges dropped", "3 ranges dropped")
+        self.assertTrue(ab_split.split(lines)["metrics"])
+
     def test_unrecognised_reports_are_skipped(self):
         self.assertIsNone(ab_split.parse_report("gputime", "[gputime] disabled"))
         self.assertIsNone(ab_split.parse_report("draw", "[draw] pipelined depth 64"))
