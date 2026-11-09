@@ -1,12 +1,14 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
 using NKWebKit::WebCoreAbi::HistoryItem;
+using NKWebKit::WebCoreAbi::CachedPage;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
 using WebCore::IntPoint;
@@ -139,6 +141,16 @@ static void TestContainers() {
     Require(!_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(&item));
 }
 
+static void TestCachedPageExpiry() {
+    HistoryItem item;
+    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    CachedPage page{nullptr, now + 60};
+    item.cachedPage = &page;
+    Require(!_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(&item));
+    page.expirationTime = now - 1;
+    Require(_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(&item));
+}
+
 static void TestNull() {
     bool threw = false;
     try {
@@ -162,6 +174,7 @@ int main() {
     TestStrings();
     TestScalars();
     TestContainers();
+    TestCachedPageExpiry();
     TestNull();
     return 0;
 }
