@@ -9,7 +9,7 @@ int APS5_VABI libSceVnaWebsocketUnknown_8KzE01OyRog_nid_no_patch();
 int APS5_VABI libSceVnaWebsocketUnknown_94G0OCEujjA_nid_no_patch();
 int APS5_VABI libSceVnaWebsocketUnknown_Bw0_minus_YBkPNm4_nid_no_patch();
 int APS5_VABI libSceVnaWebsocketUnknown_DP4477brt60_nid_no_patch();
-int APS5_VABI libSceVnaWebsocketUnknown_J3fL2giuM_plus_0_nid_no_patch();
+void* APS5_VABI libSceVnaWebsocketUnknown_J3fL2giuM_plus_0_nid_no_patch(void* destination, const void* source);
 int APS5_VABI libSceVnaWebsocketUnknown_J8_minus_VXNQySz0_nid_no_patch();
 int APS5_VABI libSceVnaWebsocketUnknown_JiBSw3cBh2g_nid_no_patch();
 int APS5_VABI libSceVnaWebsocketUnknown_K_minus_logS9LtFw_nid_no_patch();
@@ -20,11 +20,11 @@ int APS5_VABI libSceVnaWebsocketUnknown_OUogBgTPp6E_nid_no_patch();
 int APS5_VABI libSceVnaWebsocketUnknown_PPt1uQ9zOb8_nid_no_patch();
 int APS5_VABI libSceVnaWebsocketUnknown_T4s2VWpD9_minus_g_nid_no_patch();
 int APS5_VABI libSceVnaWebsocketUnknown_es11O5Z1er4_nid_no_patch();
-int APS5_VABI libSceVnaWebsocketUnknown_fxgYzL5aGyw_nid_no_patch();
-int APS5_VABI libSceVnaWebsocketUnknown_hSnmIgcBCMk_nid_no_patch();
+void* APS5_VABI libSceVnaWebsocketUnknown_fxgYzL5aGyw_nid_no_patch(void* destination, const void* source);
+void* APS5_VABI libSceVnaWebsocketUnknown_hSnmIgcBCMk_nid_no_patch(void* value);
 int APS5_VABI libSceVnaWebsocketUnknown_jtTGYZXUOqE_nid_no_patch();
 int APS5_VABI libSceVnaWebsocketUnknown_obO4IYwAPtg_nid_no_patch();
 int APS5_VABI libSceVnaWebsocketUnknown_qUkQKyPORE8_nid_no_patch();
-int APS5_VABI libSceVnaWebsocketUnknown_t534VXlYZI8_nid_no_patch();
+void* APS5_VABI libSceVnaWebsocketUnknown_t534VXlYZI8_nid_no_patch(void* value);
 
 }
