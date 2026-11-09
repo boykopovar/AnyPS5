@@ -11,7 +11,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import select_tests
 
 
-EXPLICIT_ARGS = len(sys.argv) >= 3 and Path(sys.argv[1]).is_dir()
+EXPLICIT_ARGS = (
+    len(sys.argv) >= 3
+    and __name__ == "__main__"
+    and Path(sys.argv[1]).is_dir()
+)
 if EXPLICIT_ARGS:
     SOURCE = Path(sys.argv.pop(1))
     CMAKE = sys.argv.pop(1)
@@ -34,6 +38,8 @@ class Fixture:
         header = root / 'core/libs/prx/libc/include/HostThreadLocal.hpp'
         header.parent.mkdir(parents=True)
         header.write_text('struct FixtureThreadLocal {};\n', encoding='utf-8')
+        slot = root / 'core/libs/prx/libc/include/HostThreadSlot.hpp'
+        slot.write_text('struct FixtureThreadSlot {};\n', encoding='utf-8')
         shared = root / 'core/libs/prx/libc/include/general/AtomicSharedPtr.hpp'
         shared.parent.mkdir(parents=True)
         shared.write_text('struct FixtureAtomicSharedPtr {};\n', encoding='utf-8')

@@ -252,6 +252,28 @@ int ValidateIds(const std::int32_t* id, std::int32_t num, const void* out) {
     return 0;
 }
 
+int CopyStateOut(std::int32_t* out, std::int32_t state) {
+    return GuestCopyOut_nid_no_patch(out, &state, sizeof(state)) ? 0 : SCE_KERNEL_ERROR_EFAULT;
+}
+
+int ApplyToIds(const std::int32_t* guestIds, std::int32_t num, std::int32_t* out, const char* function, bool requireFinished,
+    std::int32_t (*operation)(std::int32_t)) {
+    const int error = ValidateIds(guestIds, num, out);
+    if (error != 0) return error;
+    const std::size_t bytes = static_cast<std::size_t>(num) * sizeof(std::int32_t);
+    std::array<std::int32_t, AioIdNumMax> ids{};
+    if (!GuestCopyIn_nid_no_patch(ids.data(), guestIds, bytes)) return SCE_KERNEL_ERROR_EFAULT;
+    std::array<std::int32_t, AioIdNumMax> states{};
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (requireFinished) {
+            for (std::int32_t i = 0; i < num; ++i) RequireFinishedLocked(ids[i], function);
+        }
+        for (std::int32_t i = 0; i < num; ++i) states[i] = operation(ids[i]);
+    }
+    return GuestCopyOut_nid_no_patch(out, states.data(), bytes) ? 0 : SCE_KERNEL_ERROR_EFAULT;
+}
+
 }
 
 extern "C" {
@@ -271,36 +293,32 @@ void AioAdvanceIdentityForTest_nid_no_patch(std::int64_t next) {
 
 int APS5_VABI sceKernelAioDeleteRequest(int32_t id, int32_t* ret) {
     if (ret == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    std::lock_guard<std::mutex> lock(g_mutex);
-    RequireFinishedLocked(id, __func__);
-    *ret = DeleteLocked(id);
-    return 0;
+    std::int32_t result;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        RequireFinishedLocked(id, __func__);
+        result = DeleteLocked(id);
+    }
+    return CopyStateOut(ret, result);
 }
 
 int APS5_VABI sceKernelAioDeleteRequests(int32_t* id, int32_t num, int32_t* ret) {
-    const int error = ValidateIds(id, num, ret);
-    if (error != 0) return error;
-    std::lock_guard<std::mutex> lock(g_mutex);
-    for (int32_t i = 0; i < num; ++i) RequireFinishedLocked(id[i], __func__);
-    for (int32_t i = 0; i < num; ++i) ret[i] = DeleteLocked(id[i]);
-    return 0;
+    return ApplyToIds(id, num, ret, __func__, true, DeleteLocked);
 }
 
 int APS5_VABI sceKernelAioCancelRequest(int32_t id, int32_t* state) {
     if (state == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    std::lock_guard<std::mutex> lock(g_mutex);
-    RequireFinishedLocked(id, __func__);
-    *state = CancelLocked(id);
-    return 0;
+    std::int32_t result;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        RequireFinishedLocked(id, __func__);
+        result = CancelLocked(id);
+    }
+    return CopyStateOut(state, result);
 }
 
 int APS5_VABI sceKernelAioCancelRequests(int32_t* id, int32_t num, int32_t* state) {
-    const int error = ValidateIds(id, num, state);
-    if (error != 0) return error;
-    std::lock_guard<std::mutex> lock(g_mutex);
-    for (int32_t i = 0; i < num; ++i) RequireFinishedLocked(id[i], __func__);
-    for (int32_t i = 0; i < num; ++i) state[i] = CancelLocked(id[i]);
-    return 0;
+    return ApplyToIds(id, num, state, __func__, true, CancelLocked);
 }
 
 int APS5_VABI sceKernelAioInitializeImpl(void* param, int32_t size) {
@@ -349,9 +367,12 @@ int APS5_VABI sceKernelAioSubmitWriteCommandsMultiple(KernelAioRwRequest* req, i
 
 int APS5_VABI sceKernelAioPollRequest(int32_t id, int32_t* state) {
     if (state == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    std::lock_guard<std::mutex> lock(g_mutex);
-    *state = ReportLocked(id);
-    return 0;
+    std::int32_t result;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        result = ReportLocked(id);
+    }
+    return CopyStateOut(state, result);
 }
 
 int APS5_VABI sceKernelAioWaitRequests(int32_t* id, int32_t num, int32_t* state, uint32_t mode, uint32_t* usec) {
@@ -423,11 +444,7 @@ int APS5_VABI sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec
 }
 
 int APS5_VABI sceKernelAioPollRequests(int32_t* id, int32_t num, int32_t* state) {
-    const int error = ValidateIds(id, num, state);
-    if (error != 0) return error;
-    std::lock_guard<std::mutex> lock(g_mutex);
-    for (int32_t i = 0; i < num; ++i) state[i] = ReportLocked(id[i]);
-    return 0;
+    return ApplyToIds(id, num, state, __func__, false, ReportLocked);
 }
 
 }

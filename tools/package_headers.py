@@ -48,9 +48,11 @@ def public_headers(root):
         if not header.is_file():
             raise RuntimeError(f"Missing public header: {header}")
         visited.add(header)
-        text = header.read_text(encoding="utf-8").replace("\\\n", "").replace("\\\r\n", "")
+        text = header.read_text(encoding="utf-8-sig").replace("\\\n", "").replace("\\\r\n", "")
         text = CPP_TOKEN.sub(lambda match: re.sub(r"[^\n]", " ", match.group()) if match.group("comment") or match.group("raw") else match.group(), text)
-        for line in re.findall(r"^[ \t]*#[ \t]*include\b([^\n]*)", text, re.M):
+        for keyword, line in re.findall(r"^[ \t]*#[ \t]*(include(?:_next)?)\b([^\n]*)", text, re.M):
+            if keyword == "include_next":
+                raise RuntimeError(f"Unsupported include_next in {header}: {line.strip()}")
             match = re.fullmatch(r'\s*(?:"([^"\n]+)"|<([^>\n]+)>)\s*', line)
             if not match:
                 raise RuntimeError(f"Non-literal public include in {header}: {line.strip()}")

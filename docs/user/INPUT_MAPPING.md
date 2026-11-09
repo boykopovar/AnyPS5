@@ -112,6 +112,8 @@ The runtime evaluates scheduled events at each controller read, including their 
 
 Vibration is not part of the input mapping file. The host-side strength of a controller's vibration is set with `ANYPS5_RUMBLE`, described in [Controller vibration strength](USAGE.md#controller-vibration-strength); `0` turns it off for every connected controller.
 
+The identification pulse that tells players' controllers apart is set with `ANYPS5_PAD_IDENTIFY`, described in [Controller identification pulse](USAGE.md#controller-identification-pulse).
+
 ## Analog keyboard input
 
 `StickModifier` has no built-in binding. While a key or mouse button bound to it is held, the keyboard stick bindings tilt the stick by `StickModifierScale` of its range instead of fully, for walking or fine aim. Controller sticks and the mouse stick are not affected, and opposite keys still cancel each other.
@@ -128,6 +130,17 @@ With `TriggerRampMs` above 0, a key or mouse button bound to `L2` or `R2` presse
 ## Shake
 
 While the `Shake` input is held (X by default), the controller reports its acceleration and angular velocity swinging back and forth every 50 ms, for titles that ask the player to shake the controller. A controller's own motion sensors are used otherwise.
+
+## Per-game profiles
+
+A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. The profile has the same format and overrides only what it lists: an action it names replaces the bindings from the shared file, a setting it names replaces the shared value, and everything else stays. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
+
+For example, a profile that gives one title a lower mouse sensitivity and Cross on F:
+
+```ini
+MouseSensitivity = 0.6
+Cross = KEY:F
+```
 
 ## Mouse as an analog stick
 

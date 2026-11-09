@@ -94,17 +94,80 @@ class ExportTests(unittest.TestCase):
         self.assertFalse(set(added) & set(base))
 
     def test_main_exports_have_a_separate_report_section_not_a_fake_pr(self):
-        nid = nid_names.compute_nid("sceKernelRead")
-        prs = {9: {"added_exports": {("core/libs/prx/libkernel", nid): {"sceKernelRead"}}, "removed_exports": {}}}
-        findings = pr_overlap.main_export_findings(prs, {("core/libs/prx/libkernel", nid): {"sceKernelRead"}})
+        candidate_nid = nid_names.compute_nid("FT_Stroker_New")
+        existing_nid = nid_names.compute_nid("legacyStrokerAlias")
+        prs = {9: {"added_exports": {
+            ("core/libs/prx/libSceFreeTypeOt", candidate_nid): {"FT_Stroker_New_nid_postfix"}},
+            "removed_exports": {
+                ("core/libs/prx/libSceFreeTypeOt", candidate_nid): {"sceFreeTypeOtStrokerNew_nid_no_patch"}}}}
+        main = {("core/libs/prx/libSceFreeType", existing_nid): {"FT_Stroker_New_nid_postfix"}}
+        findings = pr_overlap.main_export_findings(prs, main)
         rows = {9: {"added": set()}}
         report = pr_overlap.report(rows, "https://example.invalid/blob/base", findings[9])
-        self.assertIn("Exports introduced here that are already present in `main`", report)
+        self.assertIn("also exported by another library in `main`", report)
+        self.assertIn("`FT_Stroker_New`", report)
+        self.assertIn("libSceFreeType", report)
         self.assertNotIn("PR 0", report)
         self.assertNotIn("PR 9", report)
         self.assertNotIn("Already on `main` |", report)
         self.assertEqual(rows, {9: {"added": set()}})
 
+    def test_same_library_and_nid_already_on_main_is_reported(self):
+        nid = nid_names.compute_nid("sceKernelRead")
+        prs = {9: {"added_exports": {
+            ("core/libs/prx/libkernel", nid): {"sceKernelRead"}},
+            "removed_exports": {}}}
+        main = {("core/libs/prx/libkernel", nid): {"sceKernelRead_nid_postfix"}}
+        findings = pr_overlap.main_export_findings(prs, main)
+        self.assertEqual(findings[9], {
+            "sceKernelRead": {
+                "same_key": {("core/libs/prx/libkernel", nid)},
+                "other_libraries": set(),
+            },
+        })
+        report = pr_overlap.report({9: {"added": set()}}, "https://example.invalid/blob/base", findings[9])
+        self.assertIn("same library/NID already present", report)
+        self.assertIn("libkernel", report)
+        self.assertIn(nid, report)
+
+    def test_same_function_name_in_only_the_same_library_is_not_a_cross_library_duplicate(self):
+        first_nid = nid_names.compute_nid("FT_Stroker_New")
+        second_nid = nid_names.compute_nid("legacyStrokerAlias")
+        prs = {9: {"added_exports": {
+            ("core/libs/prx/libSceFreeTypeOt", first_nid): {"FT_Stroker_New_nid_postfix"}},
+            "removed_exports": {}}}
+        main = {("core/libs/prx/libSceFreeTypeOt", second_nid): {"FT_Stroker_New_nid_postfix"}}
+        self.assertEqual(pr_overlap.main_export_findings(prs, main), {})
+
+
+    def test_rewritten_definition_line_is_not_a_main_duplicate(self):
+        nid = nid_names.compute_nid("sceKernelRead")
+        key = ("core/libs/prx/libkernel", nid)
+        prs = {9: {"added_exports": {key: {"sceKernelRead"}}, "removed_exports": {key: {"sceKernelRead"}}}}
+        self.assertEqual(pr_overlap.main_export_findings(prs, {key: {"sceKernelRead"}}), {})
+
+    def test_export_moved_between_libraries_is_not_a_cross_library_duplicate(self):
+        nid = nid_names.compute_nid("sem_setname")
+        old = ("core/libs/prx/libkernel_sys", nid)
+        new = ("core/libs/prx/libkernel", nid)
+        prs = {9: {"added_exports": {new: {"sem_setname"}}, "removed_exports": {old: {"sem_setname"}}}}
+        self.assertEqual(pr_overlap.main_export_findings(prs, {old: {"sem_setname"}}), {})
+
+    def test_rewritten_export_does_not_hide_a_new_cross_library_duplicate(self):
+        nid = nid_names.compute_nid("sceKernelRead")
+        original = ("core/libs/prx/libkernel", nid)
+        other = ("core/libs/prx/libSceExample", nid)
+        prs = {9: {"added_exports": {
+            original: {"sceKernelRead_nid_postfix"},
+            other: {"sceKernelRead"}},
+            "removed_exports": {original: {"sceKernelRead_nid_postfix"}}}}
+        main = {original: {"sceKernelRead_nid_postfix"}}
+        self.assertEqual(pr_overlap.main_export_findings(prs, main), {
+            9: {"sceKernelRead": {
+                "same_key": set(),
+                "other_libraries": {"core/libs/prx/libkernel"},
+            }},
+        })
 
     def test_explicit_export_aliases_are_collected_by_library_and_nid(self):
         source = ('int APS5_VABI placeholder_nid_no_patch() {\n'

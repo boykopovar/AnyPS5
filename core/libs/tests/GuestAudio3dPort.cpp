@@ -16,6 +16,15 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -168,6 +177,10 @@ void CheckPortWrappers() {
     Require(Open(parameters, &id) == OUT_OF_RESOURCES && id == 7, "open ex takes the only port");
     Require(sceAudio3dPortCreate(0x100, 0, 0, &id) == INVALID_PARAMETER && id == 7, "create is checked before the port count");
     Require(sceAudio3dPortGetStatus(1, &status, nullptr, 0) == INVALID_PORT && status == 7, "status of port 1");
+    errno = 71;
+    Require(sceAudio3dPortGetStatus(0, reinterpret_cast<uint32_t*>(0x10), nullptr, 0) == INVALID_PARAMETER, "unwritable status");
+    Require(sceAudio3dPortGetStatus(0, nullptr, reinterpret_cast<char*>(0x10), 16) == INVALID_PARAMETER, "unwritable description");
+    Require(errno == 71, "errno preserved");
     Require(sceAudio3dPortGetStatus(0, nullptr, nullptr, 0) == 0, "status without outputs");
     char description[32];
     std::memset(description, 'x', sizeof(description));
@@ -655,11 +668,15 @@ int RunAsPs4Process(const char* program) {
         file << std::string("TITLE\0TITLE_ID\0\0\0\0\0\0", 20) << std::string("Example\0", 8) << "CUSA00000" << std::string("\0\0\0", 3);
     }
 #ifdef _WIN32
-    const std::string command = "\"cd /d \"" + directory.string() + "\" && \"" + program + "\" ps4-process\"";
+    static_cast<void>(program);
+    std::wstring executable(32768, L'\0');
+    executable.resize(GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size())));
+    const std::wstring command = L"\"cd /d \"" + directory.wstring() + L"\" && \"" + executable + L"\" ps4-process\"";
+    const int status = _wsystem(command.c_str());
 #else
     const std::string command = "cd \"" + directory.string() + "\" && \"" + program + "\" ps4-process";
-#endif
     const int status = std::system(command.c_str());
+#endif
     std::filesystem::remove_all(directory);
     return status;
 }

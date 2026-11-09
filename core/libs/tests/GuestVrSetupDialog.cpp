@@ -1,5 +1,6 @@
 #include "prx/libSceVrSetupDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
@@ -54,11 +55,18 @@ int main() {
     Require(sceVrSetupDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceVrSetupDialogOpen(nullptr) == static_cast<int>(0x8A7C0003u));
+    Require(sceVrSetupDialogGetResult(nullptr) == kErrArgNull);
     Require(sceVrSetupDialogGetResult(result) == kErrNotFinished);
-    Require(result[0] == kResultUserCanceled && result[1] == -1);
+    Require(result[0] == kResultUserCanceled);
+    Require(result[1] == -1);
+    errno = 71;
+    Require(sceVrSetupDialogGetResult(reinterpret_cast<std::int32_t*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
 
-    param.size = 55;
-    Require(sceVrSetupDialogOpen(&param) == static_cast<int>(0x8A7C0003u));
+    param.size = sizeof(param) - 1;
+    Require(sceVrSetupDialogOpen(&param) == kErrArgNull);
+    param.size = sizeof(param) + 1;
+    Require(sceVrSetupDialogOpen(&param) == kErrArgNull);
     param.size = sizeof(param);
     param.reserved8 = 1;
     Require(sceVrSetupDialogOpen(&param) == static_cast<int>(0x8A7C0003u));
@@ -72,6 +80,9 @@ int main() {
     Require(sceVrSetupDialogUpdateStatus() == kStatusFinished);
 
     Require(sceVrSetupDialogGetResult(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceVrSetupDialogGetResult(reinterpret_cast<std::int32_t*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceVrSetupDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == -1);
@@ -102,6 +113,9 @@ int main() {
     Require(sceVrSetupDialogUpdateStatus() == kStatusInitialized);
     Require(sceVrSetupDialogGetResult(result) == kErrNotFinished);
     Require(result[0] == kResultUserCanceled && result[1] == -1);
+    errno = 71;
+    Require(sceVrSetupDialogGetResult(reinterpret_cast<std::int32_t*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceVrSetupDialogTerminate() == 0);
     Require(sceVrSetupDialogTerminate() == kErrNotInitialized);
     Require(sceVrSetupDialogOpen(nullptr) == kErrArgNull);
