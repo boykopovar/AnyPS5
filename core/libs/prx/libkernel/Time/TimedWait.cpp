@@ -553,15 +553,14 @@ bool Coarse() {
 
 std::uint64_t NowNanos() {
 #ifdef _WIN32
-    static const std::uint64_t frequency = [] {
+    static const TickConverter converter = [] {
         LARGE_INTEGER f{};
         QueryPerformanceFrequency(&f);
-        return static_cast<std::uint64_t>(f.QuadPart);
+        return TickConverter(static_cast<std::uint64_t>(f.QuadPart));
     }();
     LARGE_INTEGER counter{};
     QueryPerformanceCounter(&counter);
-    const std::uint64_t ticks = static_cast<std::uint64_t>(counter.QuadPart);
-    return (ticks / frequency) * 1000000000ULL + (ticks % frequency) * 1000000000ULL / frequency;
+    return converter.Nanos(static_cast<std::uint64_t>(counter.QuadPart));
 #else
     struct timespec ts{};
     clock_gettime(CLOCK_MONOTONIC, &ts);

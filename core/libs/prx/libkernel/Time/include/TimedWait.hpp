@@ -16,6 +16,65 @@
 
 namespace TimedWait {
 
+class TickConverter {
+public:
+    explicit TickConverter(std::uint64_t frequency) : frequency(frequency) {
+        if (frequency == 0) return;
+        if (NANOS_PER_SECOND % frequency == 0) {
+            mode = Mode::Direct;
+            nanosPerTick = NANOS_PER_SECOND / frequency;
+        } else if (frequency <= MAX_RECIPROCAL_FREQUENCY) {
+            mode = Mode::Reciprocal;
+            divider = Reciprocal(frequency);
+        }
+    }
+
+    std::uint64_t Nanos(std::uint64_t ticks) const {
+        switch (mode) {
+        case Mode::Direct:
+            return ticks * nanosPerTick;
+        case Mode::Reciprocal: {
+            const std::uint64_t whole = divider.Divide(ticks);
+            const std::uint64_t remainder = ticks - whole * frequency;
+            return whole * NANOS_PER_SECOND + divider.Divide(remainder * NANOS_PER_SECOND);
+        }
+        default:
+            return (ticks / frequency) * NANOS_PER_SECOND + (ticks % frequency) * NANOS_PER_SECOND / frequency;
+        }
+    }
+
+private:
+    static constexpr std::uint64_t NANOS_PER_SECOND = 1000000000ULL;
+    static constexpr std::uint64_t MAX_RECIPROCAL_FREQUENCY = 1ULL << 34;
+
+    enum class Mode { Division, Direct, Reciprocal };
+
+    class Reciprocal {
+    public:
+        Reciprocal() = default;
+
+        explicit Reciprocal(std::uint64_t divisor) {
+            while (divisor > (std::uint64_t{1} << shift)) ++shift;
+            const unsigned __int128 span = static_cast<unsigned __int128>((std::uint64_t{1} << shift) - divisor) << 64;
+            multiplier = static_cast<std::uint64_t>(span / divisor) + 1;
+        }
+
+        std::uint64_t Divide(std::uint64_t value) const {
+            const auto high = static_cast<std::uint64_t>((static_cast<unsigned __int128>(value) * multiplier) >> 64);
+            return (high + ((value - high) >> 1)) >> (shift - 1);
+        }
+
+    private:
+        std::uint64_t multiplier = 0;
+        unsigned shift = 0;
+    };
+
+    std::uint64_t frequency;
+    std::uint64_t nanosPerTick = 0;
+    Mode mode = Mode::Division;
+    Reciprocal divider;
+};
+
 bool Coarse();
 void BindThreadWaitState(std::atomic<int>* state);
 std::uint64_t NowNanos();
