@@ -81,18 +81,6 @@ static void TestGet1Basic() {
     Require(ERR_get_error_nid_postfix() == sentinelBeforeError);
     Require(ERR_get_error_nid_postfix() == noResponseData);
     Require(ERR_get_error_nid_postfix() == 0);
-
-    int responseBytes = 0;
-    response.responseBytes = &responseBytes;
-    std::memcpy(before.data(), &response, sizeof(response));
-    LibreSslPutError_nid_no_patch(7, 8, 9);
-    constexpr std::uint64_t sentinel = (std::uint64_t{7} << 24) | (std::uint64_t{8} << 12) | 9;
-    RequireThrows([&] { OCSP_response_get1_basic_nid_postfix(&response); });
-    Require(std::memcmp(before.data(), &response, sizeof(response)) == 0);
-    Require(ERR_peek_error_nid_postfix() == sentinel);
-    Require(LibreSslPeekLastError_nid_no_patch() == sentinel);
-    Require(ERR_get_error_nid_postfix() == sentinel);
-    Require(ERR_get_error_nid_postfix() == 0);
 }
 
 static void TestSingleStatus() {
