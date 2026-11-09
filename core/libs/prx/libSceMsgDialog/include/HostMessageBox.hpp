@@ -21,6 +21,11 @@ inline std::string HostMessageLabel(const std::u16string& label) {
     return text;
 }
 
+inline std::optional<std::size_t> IndexOfHostButton(int pressed, std::size_t count, std::size_t) {
+    if (pressed < 0 || static_cast<std::size_t>(pressed) >= count) return std::nullopt;
+    return static_cast<std::size_t>(pressed);
+}
+
 }
 
 #endif
