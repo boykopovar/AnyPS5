@@ -1,13 +1,9 @@
 #pragma once
 
+#include "prx/libwebrtc/include/Buffer.hpp"
+
 #include <cstddef>
 #include <cstdint>
-
-struct WebRtcBuffer {
-    std::uint64_t size;
-    std::uint64_t capacity;
-    std::uint8_t* data;
-};
 
 struct WebRtcRtcpApp {
     const void* vtable;
@@ -17,7 +13,6 @@ struct WebRtcRtcpApp {
     WebRtcBuffer data;
 };
 
-static_assert(sizeof(WebRtcBuffer) == 24);
 static_assert(sizeof(WebRtcRtcpApp) == 48);
 static_assert(offsetof(WebRtcRtcpApp, senderSsrc) == 8);
 static_assert(offsetof(WebRtcRtcpApp, subType) == 12);
