@@ -194,6 +194,10 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
         }
         return {SDL_SCANCODE_UNKNOWN, parseMouseButton(value), action.control, action.button, 0};
     }
+    if (type == "PAD") {
+        if (!isEmulatorAction(action.control)) throw std::runtime_error("PAD chords can only trigger emulator actions");
+        return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, 0, 0, parsePadChord(value)};
+    }
     if (type == "WHEEL") {
         if (action.control != Pad::InputControl::Button) throw std::runtime_error("mouse wheel can only map to a pad button");
         const auto direction = upper(value);
