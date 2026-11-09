@@ -60,7 +60,8 @@ constexpr auto actions = std::array{
     InputAction{"ShowPadStatus", Pad::InputControl::ShowPadStatus, Pad::PadButton::None},
     InputAction{"VolumeUp", Pad::InputControl::VolumeUp, Pad::PadButton::None},
     InputAction{"VolumeDown", Pad::InputControl::VolumeDown, Pad::PadButton::None},
-    InputAction{"ToggleMute", Pad::InputControl::ToggleMute, Pad::PadButton::None}
+    InputAction{"ToggleMute", Pad::InputControl::ToggleMute, Pad::PadButton::None},
+    InputAction{"HostMenu", Pad::InputControl::HostMenu, Pad::PadButton::None}
 };
 
 std::string upper(std::string_view value) {
