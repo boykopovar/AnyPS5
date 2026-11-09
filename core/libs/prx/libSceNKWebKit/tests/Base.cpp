@@ -58,6 +58,7 @@ static void TestTypeIDs() {
     Require(WKAXObjectGetTypeID() == 132);
     WKRenderLayerGetTypeID();
     WKRenderObjectGetTypeID();
+    Require(WKContextGetTypeID() == 85);
 }
 
 static void TestRetainRelease() {
@@ -1743,6 +1744,34 @@ static void TestInspector() {
     }
     Require(threw);
 }
+static void TestContext() {
+    Require(WKContextGetTypeID() == 85);
+
+    const auto* context = WKContextCreate();
+    Require(WKGetTypeID(context) == WKContextGetTypeID());
+    Require(!WKContextGetUsesSingleWebProcess(context));
+    WKContextSetUsesSingleWebProcess(context, true);
+    Require(WKContextGetUsesSingleWebProcess(context));
+    WKRelease(context);
+
+    const auto* config = WKContextConfigurationCreate();
+    const auto* contextFromConfig = WKContextCreateWithConfiguration(config);
+    Require(WKGetTypeID(contextFromConfig) == WKContextGetTypeID());
+    Require(!WKContextGetUsesSingleWebProcess(contextFromConfig));
+    WKRelease(contextFromConfig);
+    WKRelease(config);
+
+    const auto* nullContext = WKContextCreateWithConfiguration(nullptr);
+    Require(WKGetTypeID(nullContext) == WKContextGetTypeID());
+    WKRelease(nullContext);
+
+    auto* pathStr = WKStringCreateWithUTF8CString("/app0/bundle.js");
+    const auto* contextFromPath = WKContextCreateWithInjectedBundlePath(pathStr);
+    Require(WKGetTypeID(contextFromPath) == WKContextGetTypeID());
+    WKRelease(contextFromPath);
+    WKRelease(pathStr);
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -1778,6 +1807,7 @@ int main() {
     }
 
 TestInspector();
+TestContext();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }
