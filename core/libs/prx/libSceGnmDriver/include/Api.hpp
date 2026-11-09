@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceGnmDriver/include/CommandApi.hpp"
 
 extern "C" {
 
