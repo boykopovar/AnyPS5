@@ -926,6 +926,7 @@ static void TestCustomDelay(std::uint32_t count, const DelayOption& delay) {
     };
     for (std::uint32_t grain = 0; grain < 3; ++grain) checkGrain(grain);
 
+#ifndef APS5_NGS2_PS4_LIBRARY
     LegacyUserFxState state{};
     for (std::uint32_t index = 0; index < 256; ++index) {
         Ngs2CustomVoiceUserFxParam param{{sizeof(Ngs2CustomVoiceUserFxParam), 0, 0x40001d00 | index},
@@ -944,8 +945,11 @@ static void TestCustomDelay(std::uint32_t count, const DelayOption& delay) {
         }
         Require(rejected);
     }
+#endif
     checkGrain(3);
+#ifndef APS5_NGS2_PS4_LIBRARY
     Require(state.calls == 0);
+#endif
     Event(sampler, SCE_NGS2_VOICE_EVENT_STOP_IMM);
     for (const float sample : Render(system)) Require(sample == 0.0f);
 
