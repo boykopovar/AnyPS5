@@ -258,6 +258,14 @@ struct NativeSocketHandle : KernelSocketPoll::NativeOwner {
     }
 };
 
+int ReadGuestAddress(const void* address, std::uint32_t length,
+                     std::array<std::uint8_t, sizeof(sockaddr_storage)>& snapshot) {
+    if (!address || length < 2) return NET_EINVAL;
+    if (!GuestSocketReadGuest_nid_no_patch(snapshot.data(), address, std::min<std::size_t>(length, snapshot.size())))
+        return NET_EFAULT;
+    return 0;
+}
+
 bool guest_to_native_address(const void* address, std::uint32_t length,
                              sockaddr_storage& native, NativeLength& native_length) {
     if (!address || length < 2) return false;
@@ -1255,9 +1263,11 @@ int APS5_VABI sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen) 
         socket = it->second;
         if (it->second.bound) return fail(NET_EINVAL);
     }
+    std::array<std::uint8_t, sizeof(sockaddr_storage)> address{};
+    if (const int error = ReadGuestAddress(addr, addrlen, address)) return fail(error);
     sockaddr_storage native{};
     NativeLength native_length = 0;
-    if (!guest_to_native_address(addr, addrlen, native, native_length)) return fail(NET_EINVAL);
+    if (!guest_to_native_address(address.data(), addrlen, native, native_length)) return fail(NET_EINVAL);
     if (native.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
     if (::bind(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length) != 0)
         return fail(native_error());
@@ -1421,13 +1431,15 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
         it->second.reported_error = 0;
         socket = it->second;
     }
-    if (socket.type == NET_SOCK_DGRAM && addr && addrlen >= 2 && static_cast<const std::uint8_t*>(addr)[1] == 0) {
+    std::array<std::uint8_t, sizeof(sockaddr_storage)> address{};
+    if (const int error = ReadGuestAddress(addr, addrlen, address)) return fail(error);
+    if (socket.type == NET_SOCK_DGRAM && address[1] == 0) {
         if (const int error = disconnect_datagram(socket)) return error;
         return fail(NET_EAFNOSUPPORT);
     }
     sockaddr_storage native{};
     NativeLength native_length = 0;
-    if (!guest_to_native_address(addr, addrlen, native, native_length)) return fail(NET_EINVAL);
+    if (!guest_to_native_address(address.data(), addrlen, native, native_length)) return fail(NET_EINVAL);
 #ifdef _WIN32
     if (socket.type == NET_SOCK_STREAM) RefuseClosedLoopbackAtOnce_nid_no_patch(socket.native->value, reinterpret_cast<const sockaddr*>(&native));
 #endif
@@ -2392,15 +2404,22 @@ int APS5_VABI sceNetShowNetstatWithMemory(int memid) {
 }
 
 int APS5_VABI sceNetGetMemoryPoolStats(int memid, NetMemoryPoolStats* stats) {
-    std::lock_guard lk(g_mutex);
-    const auto pool = g_pools.find(memid);
-    if (pool == g_pools.end()) {
-        return fail(NET_EBADF);
+    NetMemoryPoolStats output{};
+    {
+        std::lock_guard lk(g_mutex);
+        const auto pool = g_pools.find(memid);
+        if (pool == g_pools.end()) {
+            return fail(NET_EBADF);
+        }
+        if (stats == nullptr) {
+            return fail(NET_EINVAL);
+        }
+        output = {pool->second, 0, 0};
     }
-    if (stats == nullptr) {
-        return fail(NET_EINVAL);
-    }
-    *stats = {pool->second, 0, 0};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stats, &output, sizeof(output));
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
     return 0;
 }
 
@@ -3103,17 +3122,25 @@ int APS5_VABI sceNetGetAppMemInfo(NetAppMemoryInfo* info, std::uint32_t flags) {
 int APS5_VABI sceNetGetDnsInfo(NetDnsInfo* info, std::uint32_t flags) {
     if (!g_net_inited) return fail(NET_ENOTINIT);
     if (flags != 0 || !info) return fail(NET_EINVAL);
+    NetDnsInfo output{};
+    int count = 0;
     {
         std::lock_guard lock(g_dnsLock);
         if (g_dnsOverridden) {
-            *info = g_dnsOverride;
-            return info->secondaryAddress == 0 ? 1 : 2;
+            output = g_dnsOverride;
+            count = output.secondaryAddress == 0 ? 1 : 2;
         }
     }
-    std::array<std::uint32_t, 2> servers{};
-    const std::size_t count = std::min(NetCtlHostDnsServers_nid_no_patch(servers.data(), servers.size()), servers.size());
-    std::memcpy(info, servers.data(), sizeof(servers));
-    return static_cast<int>(count);
+    if (count == 0) {
+        std::array<std::uint32_t, 2> servers{};
+        count = static_cast<int>(std::min(NetCtlHostDnsServers_nid_no_patch(servers.data(), servers.size()), servers.size()));
+        std::memcpy(&output, servers.data(), sizeof(servers));
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &output, sizeof(output));
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
+    return count;
 }
 
 int APS5_VABI sceNetGetIfList(std::int32_t interfaceId, NetInterfaceInfo* interfaces, std::uint32_t capacity) {
@@ -3199,7 +3226,12 @@ int APS5_VABI sceNetInitParam(const NetInitializeParameter* parameter) {
     std::lock_guard lk(g_mutex);
     if (g_net_init_param_set) return fail(NET_EBUSY);
     if (parameter == nullptr) return fail(NET_EINVAL);
-    std::memcpy(g_net_init_param.data(), parameter, g_net_init_param.size());
+    std::array<std::uint8_t, 32> buffer{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(buffer.data(), parameter, buffer.size());
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
+    g_net_init_param = buffer;
     g_net_init_param_set = true;
     g_net_inited = true;
     return 0;
@@ -3432,10 +3464,17 @@ int APS5_VABI sceNetInetPtonWithScopeId(std::int32_t family, const char* text, v
 int APS5_VABI sceNetGetDns6Info(NetDns6Info* info, std::uint32_t flags) {
     if (!g_net_inited) return fail(NET_ENOTINIT);
     if (flags != 0 || !info) return fail(NET_EINVAL);
-    std::lock_guard lock(g_dnsLock);
-    *info = g_dns6Override;
-    if (IsZeroAddress(info->primaryAddress)) return 0;
-    return IsZeroAddress(info->secondaryAddress) ? 1 : 2;
+    NetDns6Info output{};
+    {
+        std::lock_guard lock(g_dnsLock);
+        output = g_dns6Override;
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &output, sizeof(output));
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
+    if (IsZeroAddress(output.primaryAddress)) return 0;
+    return IsZeroAddress(output.secondaryAddress) ? 1 : 2;
 }
 
 int APS5_VABI sceNetSetDns6InfoToKernel(const NetDns6Info* info, std::uint32_t flags) {
