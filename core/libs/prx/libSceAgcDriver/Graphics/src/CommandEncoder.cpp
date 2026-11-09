@@ -289,7 +289,7 @@ void CommandEncoders::Encode(std::shared_ptr<EncodeTicket> ticket) noexcept {
         std::lock_guard lock(mutex);
         queue.push_back(ticket);
         queued.fetch_add(1, std::memory_order_acq_rel);
-        wakeOne = sleepers != 0 && spinning.load(std::memory_order_acquire) == 0;
+        wakeOne = sleepers != 0 && queue.size() > spinning.load(std::memory_order_acquire);
     } catch (...) {
         ticket->Fail(std::current_exception());
         return;

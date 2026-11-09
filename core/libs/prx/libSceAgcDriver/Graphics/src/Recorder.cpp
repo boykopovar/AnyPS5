@@ -4358,11 +4358,12 @@ void Recorder::Submit() {
         if (submitter == nullptr) submitter = &QueueSubmitter::For(context.device, context.queue, function(queueSubmit, "vkQueueSubmit"), reinterpret_cast<PFN_vkDeviceWaitIdle>(context.deviceProc(context.device, "vkDeviceWaitIdle")));
         if (batchEncoders != nullptr) {
             batch->encode = std::make_shared<EncodeTicket>(std::move(batch->stream), batch->traceId);
-            submitter->Enqueue({VK_NULL_HANDLE, batch->fence, hold, holdValue, timeline, serial, batch->encode});
+            batch->submitPosition = submitter->Enqueue({VK_NULL_HANDLE, batch->fence, hold, holdValue, timeline, serial, batch->encode});
             batchEncoders->Encode(batch->encode);
         } else {
-            submitter->Enqueue({batch->commands, batch->fence, hold, holdValue, timeline, serial});
+            batch->submitPosition = submitter->Enqueue({batch->commands, batch->fence, hold, holdValue, timeline, serial});
         }
+        batch->submitter = submitter;
     } else {
         VkResult result;
         {
@@ -4881,6 +4882,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
             Check(result, "vkWaitForFences recorder");
         }
     }
+    if (batch->submitter != nullptr) batch->submitter->WaitSubmitReturned(batch->submitPosition);
     readGpuTiming(*batch);
     readSamples(*batch);
     if (batch->serial != 0) {

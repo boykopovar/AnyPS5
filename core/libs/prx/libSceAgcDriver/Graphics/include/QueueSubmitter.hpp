@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <vulkan/vulkan.h>
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -31,7 +32,8 @@ public:
     static QueueSubmitter& For(VkDevice device, VkQueue queue, PFN_vkQueueSubmit submit, PFN_vkDeviceWaitIdle waitIdle);
     static QueueSubmitter* Existing(VkQueue queue);
 
-    void Enqueue(Job job);
+    std::uint64_t Enqueue(Job job);
+    void WaitSubmitReturned(std::uint64_t position) const;
     void Drain();
     void RethrowFailure();
     AgcDriver::Mutex& QueueMutex() { return queueMutex; }
@@ -53,6 +55,9 @@ private:
     bool busy = false;
     bool sleeping = false;
     std::uint64_t submitted = 0;
+    std::uint64_t enqueued = 0;
+    std::uint64_t taken = 0;
+    std::atomic<std::uint64_t> returned{0};
     std::exception_ptr failure;
     std::thread thread;
 };

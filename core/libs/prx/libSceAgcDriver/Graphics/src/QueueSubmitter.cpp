@@ -61,15 +61,22 @@ void QueueSubmitter::RethrowFailure() {
     if (stored != nullptr) std::rethrow_exception(stored);
 }
 
-void QueueSubmitter::Enqueue(Job job) {
+std::uint64_t QueueSubmitter::Enqueue(Job job) {
     bool wake = false;
+    std::uint64_t position = 0;
     {
         std::lock_guard lock(mutex);
         if (failure != nullptr) std::rethrow_exception(failure);
         jobs.push_back(std::move(job));
+        position = ++enqueued;
         wake = sleeping;
     }
     if (wake) ready.notify_one();
+    return position;
+}
+
+void QueueSubmitter::WaitSubmitReturned(std::uint64_t position) const {
+    while (returned.load(std::memory_order_acquire) < position) std::this_thread::yield();
 }
 
 void QueueSubmitter::Drain() {
@@ -85,6 +92,7 @@ std::uint64_t QueueSubmitter::Submitted() const {
 void QueueSubmitter::run() {
     for (;;) {
         Job job;
+        std::uint64_t position = 0;
         {
             std::unique_lock lock(mutex);
             while (jobs.empty()) {
@@ -94,6 +102,7 @@ void QueueSubmitter::run() {
             }
             job = std::move(jobs.front());
             jobs.pop_front();
+            position = ++taken;
             busy = true;
         }
         VkCommandBuffer commands = job.commands;
@@ -133,6 +142,7 @@ void QueueSubmitter::run() {
             std::lock_guard queueLock(queueMutex);
             result = submit(queue, 1, &submission, job.fence);
         }
+        returned.store(position, std::memory_order_release);
         if (result == VK_ERROR_DEVICE_LOST && waitIdle != nullptr) {
             const auto idle = waitIdle(device);
             if (idle != VK_SUCCESS && idle != VK_ERROR_DEVICE_LOST) std::terminate();

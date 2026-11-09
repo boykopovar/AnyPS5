@@ -65,6 +65,10 @@ struct MockDevice {
     std::vector<std::string> violations;
     bool gate = false;
     bool gateOpen = false;
+    bool holdSubmitReturn = false;
+    bool submitReturnOpen = false;
+    std::set<VkFence> fencesInSubmit;
+    std::set<VkCommandBuffer> buffersInSubmit;
     VkResult encoderEndResult = VK_SUCCESS;
 
     std::uintptr_t Handle() {
@@ -130,6 +134,7 @@ VKAPI_ATTR void VKAPI_CALL mockFreeCommandBuffers(VkDevice, VkCommandPool pool, 
             continue;
         }
         if (found->second != pool) mock->Violation("a command buffer was freed into a pool that did not allocate it");
+        if (mock->buffersInSubmit.count(commands[index]) != 0) mock->Violation("a command buffer was freed while its vkQueueSubmit had not returned");
         mock->owners.erase(found);
         mock->states.erase(commands[index]);
         ++mock->freed;
@@ -148,6 +153,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockBeginCommandBuffer(VkCommandBuffer commands, 
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     if (mock->gate && owner->second != mock->contextPool) mock->changed.wait(lock, [] { return mock->gateOpen; });
+    if (mock->buffersInSubmit.count(commands) != 0) mock->Violation("a command buffer was begun again while its vkQueueSubmit had not returned");
     mock->states[commands] = BufferState::Recording;
     mock->recorded[commands].clear();
     mock->recordingThreads[commands].clear();
@@ -217,7 +223,8 @@ VKAPI_ATTR void VKAPI_CALL mockCmdBindPipeline(VkCommandBuffer commands, VkPipel
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockQueueSubmit(VkQueue, std::uint32_t count, const VkSubmitInfo* submits, VkFence fence) {
-    std::lock_guard lock(mock->mutex);
+    std::unique_lock lock(mock->mutex);
+    std::vector<VkCommandBuffer> submitted;
     for (std::uint32_t submit = 0; submit < count; ++submit) {
         Submission submission;
         submission.fence = fence;
@@ -232,10 +239,19 @@ VKAPI_ATTR VkResult VKAPI_CALL mockQueueSubmit(VkQueue, std::uint32_t count, con
             if (mock->states[commands] != BufferState::Executable) mock->Violation("a command buffer was submitted before it was ended");
             submission.recorded = mock->recorded[commands];
             submission.recordingThreads = mock->recordingThreads[commands];
+            submitted.push_back(commands);
         }
         mock->submissions.push_back(std::move(submission));
     }
     if (fence != VK_NULL_HANDLE) mock->signaled[fence] = true;
+    if (mock->holdSubmitReturn) {
+        if (fence != VK_NULL_HANDLE) mock->fencesInSubmit.insert(fence);
+        mock->buffersInSubmit.insert(submitted.begin(), submitted.end());
+        mock->changed.notify_all();
+        mock->changed.wait(lock, [] { return mock->submitReturnOpen; });
+        mock->fencesInSubmit.erase(fence);
+        for (const auto commands : submitted) mock->buffersInSubmit.erase(commands);
+    }
     mock->changed.notify_all();
     return VK_SUCCESS;
 }
@@ -249,6 +265,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateFence(VkDevice, const VkFenceCreateInfo
 
 VKAPI_ATTR void VKAPI_CALL mockDestroyFence(VkDevice, VkFence fence, const VkAllocationCallbacks*) {
     std::lock_guard lock(mock->mutex);
+    if (mock->fencesInSubmit.count(fence) != 0) mock->Violation("a fence was destroyed while its vkQueueSubmit had not returned");
     mock->signaled.erase(fence);
 }
 
@@ -269,7 +286,10 @@ VKAPI_ATTR VkResult VKAPI_CALL mockWaitForFences(VkDevice, std::uint32_t count, 
 
 VKAPI_ATTR VkResult VKAPI_CALL mockResetFences(VkDevice, std::uint32_t count, const VkFence* fences) {
     std::lock_guard lock(mock->mutex);
-    for (std::uint32_t index = 0; index < count; ++index) mock->signaled[fences[index]] = false;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (mock->fencesInSubmit.count(fences[index]) != 0) mock->Violation("a fence was reset while its vkQueueSubmit had not returned");
+        mock->signaled[fences[index]] = false;
+    }
     return VK_SUCCESS;
 }
 
@@ -572,6 +592,74 @@ void DiscardedBatchIsNeverEncoded() {
     Expect(after.streams - before.streams == 1, "a discarded deferred batch was encoded");
 }
 
+void RetiredBatchesWaitForTheirSubmitToReturn() {
+    RuntimeSwitches::Assign(RuntimeSwitch::AsyncSubmit, true);
+    for (const bool deferred : {true, false}) {
+        RuntimeSwitches::Assign(RuntimeSwitch::DeferredEncode, deferred);
+        const std::string kind = deferred ? "deferred" : "direct";
+        Fixture fixture;
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            Recorder recorder(fixture.context);
+            {
+                std::lock_guard lock(fixture.device.mutex);
+                fixture.device.holdSubmitReturn = true;
+            }
+            fixture.Fill(recorder, 1);
+            recorder.Submit();
+            bool inSubmit = false;
+            {
+                std::unique_lock lock(fixture.device.mutex);
+                inSubmit = fixture.device.changed.wait_for(lock, std::chrono::seconds(10), [&] { return !fixture.device.fencesInSubmit.empty(); });
+            }
+            std::atomic<bool> opened{false};
+            std::thread opener([&] {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                {
+                    std::lock_guard lock(fixture.device.mutex);
+                    fixture.device.holdSubmitReturn = false;
+                    fixture.device.submitReturnOpen = true;
+                    opened.store(true);
+                }
+                fixture.device.changed.notify_all();
+            });
+            const bool idle = recorder.Reap();
+            const bool openedFirst = opened.load();
+            opener.join();
+            Expect(inSubmit, "the " + kind + " batch never reached vkQueueSubmit");
+            Expect(idle, "a " + kind + " batch whose fence signaled was not retired");
+            Expect(openedFirst, "a " + kind + " batch was retired, and its fence and command buffer reused, before its vkQueueSubmit returned");
+            fixture.Fill(recorder, 2);
+            recorder.Sync();
+            const auto submissions = fixture.Submissions();
+            Expect(submissions.size() == 2 && joined(submissions[1].recorded) == "[fill 2]", "the " + kind + " batch after a held submit was not submitted with its commands");
+        }
+    }
+}
+
+void StaleHandleIsRefusedAfterSubmit() {
+    RuntimeSwitches::Assign(RuntimeSwitch::AsyncSubmit, true);
+    RuntimeSwitches::Assign(RuntimeSwitch::DeferredEncode, true);
+    Fixture fixture;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Recorder recorder(fixture.context);
+        fixture.Fill(recorder, 1);
+        const auto stale = recorder.Commands();
+        recorder.Submit();
+        std::string refused;
+        try {
+            fixture.context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(stale, handleOf<VkBuffer>(0x100), 0, 4, 2);
+        } catch (const std::exception& error) {
+            refused = error.what();
+        }
+        Expect(refused.find("after its batch was closed") != std::string::npos, "a command recorded through a submitted batch's stream handle was not refused: '" + refused + "'");
+        recorder.Sync();
+        const auto submissions = fixture.Submissions();
+        Expect(submissions.size() == 1 && joined(submissions[0].recorded) == "[fill 1]", "the refused command reached the submitted batch: " + (submissions.empty() ? std::string("nothing") : joined(submissions[0].recorded)));
+    }
+}
+
 void VerifyEncodesInline() {
     RuntimeSwitches::Assign(RuntimeSwitch::AsyncSubmit, true);
     RuntimeSwitches::Assign(RuntimeSwitch::DeferredEncode, true);
@@ -615,6 +703,8 @@ int main(int argc, char** argv) {
             DeferredEncodeIsDecidedPerBatch();
             AsyncSubmitOffEncodesInline();
             DiscardedBatchIsNeverEncoded();
+            RetiredBatchesWaitForTheirSubmitToReturn();
+            StaleHandleIsRefusedAfterSubmit();
         }
         RuntimeSwitches::Assign(RuntimeSwitch::AsyncSubmit, false);
         RuntimeSwitches::Assign(RuntimeSwitch::DeferredEncode, false);

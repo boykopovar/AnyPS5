@@ -33,6 +33,7 @@ class Buffer;
 class CommandEncoders;
 class DeviceBuffer;
 class EncodeTicket;
+class QueueSubmitter;
 
 // Accumulates GPU work across guest commands so the CPU does not wait for each one. Dispatches and the
 // copies that feed them record into one open batch; Submit sends it to the queue without waiting and
@@ -626,6 +627,8 @@ private:
         VkCommandBuffer commands = VK_NULL_HANDLE;
         std::unique_ptr<CommandStream> stream;
         std::shared_ptr<EncodeTicket> encode;
+        QueueSubmitter* submitter = nullptr;
+        std::uint64_t submitPosition = 0;
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
         std::size_t keptBytes = 0;
