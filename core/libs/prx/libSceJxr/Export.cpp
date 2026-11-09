@@ -243,7 +243,9 @@ int APS5_VABI PKFormatConverter_EnumConversions_nid_postfix() {
 
 std::int64_t APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix(void* converter, JxrGuestGuid* pixelFormat) {
     if (!converter || !pixelFormat) APS5_INVALID_ARG_EX;
-    *pixelFormat = static_cast<Jxr::FormatConverter*>(converter)->pixelFormat;
+    const auto& source = static_cast<Jxr::FormatConverter*>(converter)->pixelFormat;
+    static_assert(sizeof(source) == sizeof(*pixelFormat));
+    std::memcpy(pixelFormat, &source, sizeof(source));
     return WmpErrSuccess;
 }
 
