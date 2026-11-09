@@ -8,7 +8,7 @@
 
 #include "prx/libSceIme/include/ModalDialog.hpp"
 
-namespace MsgDialog {
+namespace HostBox {
 
 inline bool HostMessageBoxEnabled(const char* value, bool apple) {
     return !apple && value != nullptr && std::string_view(value) == "1";
