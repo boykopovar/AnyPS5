@@ -71,8 +71,6 @@ void Tee::failFile() {
 }
 
 bool Tee::rotate() {
-    Close(_file);
-    _file = NoHandle;
     if (_keep == 0) {
         RemoveFile(_path);
     } else {
@@ -80,6 +78,8 @@ bool Tee::rotate() {
         for (unsigned index = _keep; index > 1; --index) RenameFile(RotatedName(_path, index - 1), RotatedName(_path, index));
         RenameFile(_path, RotatedName(_path, 1));
     }
+    Close(_file);
+    _file = NoHandle;
     Handle file = NoHandle;
     std::string error;
     if (!OpenAppend(_path, file, error)) return false;
