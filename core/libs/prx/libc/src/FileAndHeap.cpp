@@ -1027,7 +1027,10 @@ void* APS5_VABI reallocalign_nid_postfix(void* ptr, size_t size, size_t alignmen
 void* APS5_VABI calloc_nid_postfix(size_t count, size_t size) {
     const auto allocate = [count, size] { return ApplicationHeapCalloc_nid_no_patch(count, size); };
     if (!ApplicationHeapDefault_nid_no_patch()) return allocationOrNull(allocate);
-    if (size != 0 && count > std::numeric_limits<size_t>::max() / size) return nullptr;
+    if (size != 0 && count > std::numeric_limits<size_t>::max() / size) {
+        errno = 12;
+        return nullptr;
+    }
     return defaultHeapAllocation(count * size, 0, allocate);
 }
 
