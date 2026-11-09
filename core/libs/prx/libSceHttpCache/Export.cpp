@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceHttpCache/include/InventoryExports.hpp"
 #include "prx/libSceHttpCache/libSceHttpCache.hpp"
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include <cstring>
 #include <deque>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -156,6 +158,10 @@ std::map<StoreKey, Entry> Store;
 std::int32_t LastCacheId = 0;
 bool UserServiceStarted = false;
 std::uint8_t CacheSharing = 1;
+
+bool CopySystemPath(const char* path, std::string& destination) {
+    return CopyGuestString_nid_no_patch(path, 0x401, destination) == 0 && destination.size() <= 0x400;
+}
 
 Cache* FindCache(std::int32_t cacheId) {
     const auto found = Caches.find(cacheId);
@@ -829,7 +835,7 @@ int APS5_VABI sceHttpCacheReadData(std::int32_t requestId, std::size_t size, voi
     Entry& entry = *request->entry;
     if (entry.pending) return 0;
     const std::size_t remaining = entry.body.size() - entry.readOffset;
-    const std::size_t count = size < remaining ? size : remaining;
+    const std::size_t count = std::min({size, remaining, static_cast<std::size_t>(std::numeric_limits<int>::max())});
     if (count != 0) std::memcpy(data, entry.body.data() + entry.readOffset, count);
     entry.readOffset += count;
     return static_cast<int>(count);
@@ -942,12 +948,14 @@ int APS5_VABI sceHttpCacheSetResponseHeader(std::int32_t requestId, const HttpCa
 }
 
 int APS5_VABI sceHttpCacheSystemClearAll(const char* path) {
+    std::string copiedPath;
+    if (!CopySystemPath(path, copiedPath)) return ErrorInvalidValue;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceHttpCacheSystemInit(const char* path) {
-    NotImplemented_nid_no_patch(__func__);
+    std::string copiedPath;
+    if (!CopySystemPath(path, copiedPath)) return ErrorInvalidValue;
     return 0;
 }
 
@@ -956,7 +964,6 @@ int APS5_VABI sceHttpCacheSystemSendStatistics() {
 }
 
 int APS5_VABI sceHttpCacheSystemShutdown() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

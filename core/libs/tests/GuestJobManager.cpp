@@ -441,6 +441,29 @@ static void NodePoolCase() {
     Require(Shutdown(manager.storage) == 0);
 }
 
+static void SequenceCreateCase() {
+    Block block(SizeFor(2, 2, 2, 1, 1));
+    ManagerObject manager;
+    Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, nullptr) == 0);
+    ISequenceFactory* factory = Factories(manager.storage, 0);
+    ISequence* exhaust = nullptr;
+    Require(factory->Create(&exhaust, 0x7fff, 0x3ff, 0xff, 1, "exhaust") == 0);
+    int result = 0;
+    int accepted = 0;
+    while (accepted < 0x3ff && (result = exhaust->Dispatch(Nothing, nullptr, 1, nullptr)) == 0) ++accepted;
+    Require(result == NoNodes);
+    ISequence* starved = nullptr;
+    Require(factory->Create(&starved, 1, 1, 1, 1, "starved") == NoNodes && starved == nullptr);
+    Require(exhaust->Wait() == Invalid);
+    Require(factory->Destroy(exhaust) == 0);
+    ISequence* second = nullptr;
+    ISequence* third = nullptr;
+    Require(factory->Create(&second, 1, 1, 1, 1, "second") == 0 && second != nullptr);
+    Require(factory->Create(&third, 1, 1, 1, 1, "third") == 0 && third != nullptr && third != second);
+    Require(factory->Destroy(second) == 0 && factory->Destroy(third) == 0);
+    Require(Shutdown(manager.storage) == 0);
+}
+
 struct Order {
     std::atomic<bool> release{false};
     std::atomic<bool> started{false};
@@ -683,8 +706,8 @@ static SpinSample QuietestWorkerSpin(std::uint32_t spin, std::uint32_t rounds, b
 
 static void WorkerSpinCase() {
     constexpr std::uint32_t rounds = 512;
-    const auto parked = MeasureWorkerSpin(0, rounds, true);
-    const auto spinning = MeasureWorkerSpin(50, rounds, true);
+    const auto parked = QuietestWorkerSpin(0, rounds, true);
+    const auto spinning = QuietestWorkerSpin(50, rounds, true);
     const auto noPending = QuietestWorkerSpin(50, rounds, false);
 #ifdef _WIN32
     constexpr const char* units = "cycles";
@@ -898,6 +921,7 @@ int RunJobManagerCase(const char* caseName) {
     else if (name == "ordering") OrderingCase();
     else if (name == "limits") LimitsCase();
     else if (name == "node_pool") NodePoolCase();
+    else if (name == "sequence_create") SequenceCreateCase();
     else if (name == "nested") NestedCase();
     else if (name == "priority") PriorityCase();
     else if (name == "shutdown") ShutdownCase();
