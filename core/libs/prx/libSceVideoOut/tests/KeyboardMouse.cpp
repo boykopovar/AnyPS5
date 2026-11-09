@@ -693,6 +693,44 @@ void testMouseStickTarget() {
 
 }
 
+void testMouseTouchpad() {
+    Pad::KeyboardMouse keyboard(defaults());
+    keyboard.SetViewport(960, 540);
+    const Pad::PadInputState idle{};
+    auto press = [&](int x, int y, Uint8 button, Uint32 type, std::chrono::steady_clock::time_point now) {
+        SDL_Event event{};
+        event.type = type;
+        event.button.button = button;
+        event.button.x = x;
+        event.button.y = y;
+        keyboard.HandleEvent(event, now);
+    };
+    auto move = [&](int x, int y, std::chrono::steady_clock::time_point now) {
+        SDL_Event event{};
+        event.type = SDL_MOUSEMOTION;
+        event.motion.x = x;
+        event.motion.y = y;
+        keyboard.HandleEvent(event, now);
+    };
+    const auto now = std::chrono::steady_clock::now();
+    keyboard.SetMouseTouchpad(false);
+    press(480, 270, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONDOWN, now);
+    check(!keyboard.Compose(idle).touch[0].active, "the mouse does not touch the pad unless the touchpad option is on");
+    press(480, 270, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONUP, now);
+    keyboard.SetMouseTouchpad(true);
+    press(480, 270, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONDOWN, now);
+    const auto pressed = keyboard.Compose(idle).touch[0];
+    check(pressed.active && pressed.x == 960 && pressed.y == 540, "a left press at the middle of a 960x540 window touches the middle of the pad");
+    move(0, 0, now);
+    const auto dragged = keyboard.Compose(idle).touch[0];
+    check(dragged.active && dragged.x == 0 && dragged.y == 0, "a drag moves the touch point with the cursor");
+    press(5000, -10, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONDOWN, now);
+    const auto clamped = keyboard.Compose(idle).touch[0];
+    check(clamped.active && clamped.x == 1918 && clamped.y == 0, "a press outside the window is clamped to the pad edge");
+    press(5000, -10, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONUP, now);
+    check(!keyboard.Compose(idle).touch[0].active, "releasing the left button lifts the touch point");
+}
+
 int main() {
     try {
         const std::pair<const char*, std::function<void()>> tests[] = {
