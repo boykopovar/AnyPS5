@@ -1,0 +1,442 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+#include <olectl.h>
+
+import "ocidl.idl";
+
+#include "shdispid.h"
+
+dispinterface DShellFolderViewEvents;
+interface IAutoComplete;
+interface FolderItem;
+interface FolderItems;
+interface FolderItemVerb;
+interface FolderItemVerbs;
+
+[uuid (50a7e9b0-70ef-11d1-b75a-00a0c90564fe), lcid (0x0000), version (1.0)]
+library Shell32 {
+  importlib ("stdole2.tlb");
+
+  [uuid (9ba05970-F6A8-11cf-A442-00a0c90a8f39), hidden, oleautomation, dual, odl]
+  interface IFolderViewOC : IDispatch {
+    HRESULT SetFolderView ([in] IDispatch *pdisp);
+  }
+
+  [uuid (62112aa2-ebe4-11cf-a5fb-0020afe7292d)]
+  dispinterface DShellFolderViewEvents {
+    properties:
+    methods:
+    [id (DISPID_SELECTIONCHANGED)] void SelectionChanged ();
+    [id (DISPID_FILELISTENUMDONE)] void EnumDone ();
+    [id (DISPID_VERBINVOKED)] VARIANT_BOOL VerbInvoked ();
+    [id (DISPID_DEFAULTVERBINVOKED)] VARIANT_BOOL DefaultVerbInvoked ();
+    [id (DISPID_BEGINDRAG)] VARIANT_BOOL BeginDrag ();
+  }
+
+  [uuid (9ba05971-F6A8-11cf-A442-00a0c90a8f39), hidden]
+  coclass ShellFolderViewOC {
+    [default] interface IFolderViewOC;
+    [default, source] dispinterface DShellFolderViewEvents;
+  }
+
+  [uuid (4a3df050-23bd-11d2-939f-00a0c91eedba), oleautomation, dual]
+  interface DFConstraint : IDispatch {
+    [propget] HRESULT Name ([out, retval] BSTR *pbs);
+    [propget] HRESULT Value ([out, retval] VARIANT *pv);
+  }
+
+  [uuid (BBCBDE60-C3FF-11ce-8350-444553540000), oleautomation, dual]
+  interface Folder : IDispatch {
+    [id (0), propget] HRESULT Title ([out, retval] BSTR *pbs);
+    [propget] HRESULT Application ([out, retval] IDispatch **ppid);
+    [propget] HRESULT Parent ([out, retval] IDispatch **ppid);
+    [propget] HRESULT ParentFolder ([out, retval] Folder **ppsf);
+    HRESULT Items ([out, retval] FolderItems **ppid);
+    HRESULT ParseName ([in] BSTR bName,[out, retval] FolderItem **ppid);
+    HRESULT NewFolder ([in] BSTR bName,[in, optional] VARIANT vOptions);
+    HRESULT MoveHere ([in] VARIANT vItem,[in, optional] VARIANT vOptions);
+    HRESULT CopyHere ([in] VARIANT vItem,[in, optional] VARIANT vOptions);
+    HRESULT GetDetailsOf ([in] VARIANT vItem,[in] int iColumn,[out, retval]BSTR *pbs);
+  }
+
+  [uuid (f0d2d8ef-3890-11d2-bf8b-00c04fb93661), oleautomation, dual]
+  interface Folder2 : Folder {
+    [propget] HRESULT Self ([out, retval] FolderItem **ppfi);
+    [propget] HRESULT OfflineStatus ([out, retval] LONG *pul);
+    HRESULT Synchronize (void);
+    [id (1), propget] HRESULT HaveToShowWebViewBarricade ([out, retval] VARIANT_BOOL *pbHaveToShowWebViewBarricade);
+    HRESULT DismissedWebViewBarricade ();
+  }
+
+  typedef [uuid (35f1a0d0-3e9a-11d2-8499-005345000000)] enum OfflineFolderStatus {
+    OFS_INACTIVE = -1,
+    OFS_ONLINE,
+    OFS_OFFLINE,
+    OFS_SERVERBACK,
+    OFS_DIRTYCACHE,
+  } OfflineFolderStatus;
+
+  [uuid (A7AE5F64-C4D7-4d7f-9307-4d24ee54b841), oleautomation, dual]
+  interface Folder3 : Folder2 {
+    [id (2), propget] HRESULT ShowWebViewBarricade ([out, retval] VARIANT_BOOL *pbShowWebViewBarricade);
+    [id (2), propput] HRESULT ShowWebViewBarricade ([in] VARIANT_BOOL bShowWebViewBarricade);
+  }
+
+  [uuid (FAC32C80-CBE4-11ce-8350-444553540000), oleautomation, dual]
+  interface FolderItem : IDispatch {
+    typedef [unique] FolderItem *LPFOLDERITEM;
+    [propget] HRESULT Application ([out, retval] IDispatch **ppid);
+    [propget] HRESULT Parent ([out, retval] IDispatch **ppid);
+    [id (0), propget] HRESULT Name ([out, retval] BSTR *pbs);
+    [id (0), propput] HRESULT Name ([in] BSTR bs);
+    [propget] HRESULT Path ([out, retval]BSTR *pbs);
+    [propget] HRESULT GetLink ([out, retval] IDispatch **ppid);
+    [propget] HRESULT GetFolder ([out, retval] IDispatch **ppid);
+    [propget] HRESULT IsLink ([out, retval] VARIANT_BOOL *pb);
+    [propget] HRESULT IsFolder ([out, retval] VARIANT_BOOL *pb);
+    [propget] HRESULT IsFileSystem ([out, retval] VARIANT_BOOL *pb);
+    [propget] HRESULT IsBrowsable ([out, retval] VARIANT_BOOL *pb);
+    [propget] HRESULT ModifyDate ([out, retval] DATE *pdt);
+    [propput] HRESULT ModifyDate ([in] DATE dt);
+    [propget] HRESULT Size ([out, retval] LONG *pul);
+    [propget] HRESULT Type ([out, retval] BSTR *pbs);
+    HRESULT Verbs ([out, retval] FolderItemVerbs **ppfic);
+    HRESULT InvokeVerb ([in, optional] VARIANT vVerb);
+  }
+
+  [uuid (edc817aa-92b8-11d1-b075-00c04fc33aa5), oleautomation, dual]
+  interface FolderItem2 : FolderItem {
+    HRESULT InvokeVerbEx ([in, optional] VARIANT vVerb,[in, optional] VARIANT vArgs);
+    HRESULT ExtendedProperty ([in] BSTR bstrPropName,[out, retval] VARIANT *pvRet);
+  }
+
+  [uuid (2fe352ea-fd1f-11d2-b1f4-00c04f8eeb3e), noncreatable]
+  coclass ShellFolderItem {
+    [default] interface FolderItem2;
+  }
+
+  [uuid (744129e0-CBE5-11ce-8350-444553540000), oleautomation, dual]
+  interface FolderItems : IDispatch {
+    [propget] HRESULT Count ([out, retval] long *plCount);
+    [propget] HRESULT Application ([out, retval] IDispatch **ppid);
+    [propget] HRESULT Parent ([out, retval] IDispatch **ppid);
+    HRESULT Item ([in, optional] VARIANT index,[out, retval]FolderItem **ppid);
+    [id (-4)] HRESULT _NewEnum ([out, retval] IUnknown **ppunk);
+  }
+
+  [uuid (C94F0AD0-F363-11d2-A327-00c04f8eec7f), oleautomation, dual, odl]
+  interface FolderItems2 : FolderItems {
+    HRESULT InvokeVerbEx ([in, optional] VARIANT vVerb,[in, optional] VARIANT vArgs);
+  }
+
+  [uuid (eaa7c309-bbec-49d5-821d-64d966cb667f), oleautomation, dual, odl]
+  interface FolderItems3 : FolderItems2 {
+    HRESULT Filter ([in] long grfFlags,[in] BSTR bstrFileSpec);
+    [id (0), propget] HRESULT Verbs ([out, retval] FolderItemVerbs **ppfic);
+  }
+
+  [uuid (08ec3e00-50b0-11cf-960c-0080c7f4ee85), oleautomation, dual]
+  interface FolderItemVerb : IDispatch {
+    [propget] HRESULT Application ([out, retval] IDispatch **ppid);
+    [propget] HRESULT Parent ([out, retval] IDispatch **ppid);
+    [id (0), propget] HRESULT Name ([out, retval] BSTR *pbs);
+    HRESULT DoIt ();
+  }
+
+  [uuid (1f8352c0-50b0-11cf-960c-0080c7f4ee85), oleautomation, dual]
+  interface FolderItemVerbs : IDispatch {
+    [propget] HRESULT Count ([out, retval] long *plCount);
+    [propget] HRESULT Application ([out, retval] IDispatch **ppid);
+    [propget] HRESULT Parent ([out, retval] IDispatch **ppid);
+    HRESULT Item ([in, optional] VARIANT index,[out, retval]FolderItemVerb **ppid);
+    [id (-4)] HRESULT _NewEnum ([out, retval] IUnknown **ppunk);
+  }
+
+  [uuid (88a05c00-F000-11ce-8350-444553540000), oleautomation, dual, hidden]
+  interface IShellLinkDual : IDispatch {
+    [propget] HRESULT Path ([out, retval] BSTR *pbs);
+    [propput] HRESULT Path ([in] BSTR bs);
+    [propget] HRESULT Description ([out, retval] BSTR *pbs);
+    [propput] HRESULT Description ([in] BSTR bs);
+    [propget] HRESULT WorkingDirectory ([out, retval] BSTR *pbs);
+    [propput] HRESULT WorkingDirectory ([in] BSTR bs);
+    [propget] HRESULT Arguments ([out, retval] BSTR *pbs);
+    [propput] HRESULT Arguments ([in] BSTR bs);
+    [propget] HRESULT Hotkey ([out, retval] int *piHK);
+    [propput] HRESULT Hotkey ([in] int iHK);
+    [propget] HRESULT ShowCommand ([out, retval] int *piShowCommand);
+    [propput] HRESULT ShowCommand ([in] int iShowCommand);
+    HRESULT Resolve ([in] int fFlags);
+    HRESULT GetIconLocation ([out] BSTR *pbs,[out, retval] int *piIcon);
+    HRESULT SetIconLocation ([in] BSTR bs,[in] int iIcon);
+    HRESULT Save ([in, optional] VARIANT vWhere);
+  }
+
+  [uuid (317ee249-F12E-11d2-B1E4-00c04f8eeb3e), oleautomation, dual, hidden]
+  interface IShellLinkDual2 : IShellLinkDual {
+    [propget] HRESULT Target ([out, retval] FolderItem **ppfi);
+  }
+
+  [uuid (11219420-1768-11d1-95be-00609797ea4f), noncreatable]
+  coclass ShellLinkObject {
+    [default] interface IShellLinkDual2;
+  }
+
+  [uuid (E7A1AF80-4d96-11cf-960c-0080c7f4ee85), oleautomation, hidden, dual]
+  interface IShellFolderViewDual : IDispatch {
+    [propget] HRESULT Application ([out, retval] IDispatch **ppid);
+    [propget] HRESULT Parent ([out, retval] IDispatch **ppid);
+    [propget] HRESULT Folder ([out, retval] Folder **ppid);
+    HRESULT SelectedItems ([out, retval] FolderItems **ppid);
+    [propget] HRESULT FocusedItem ([out, retval] FolderItem **ppid);
+    HRESULT SelectItem ([in]VARIANT *pvfi,[in] int dwFlags);
+    HRESULT PopupItemMenu ([in]FolderItem *pfi,[in, optional]VARIANT vx,[in, optional]VARIANT vy,[out, retval] BSTR *pbs);
+    [propget] HRESULT Script ([out, retval] IDispatch **ppDisp);
+    [propget] HRESULT ViewOptions ([out, retval] long *plViewOptions);
+  }
+
+  [uuid (31c147b6-0ade-4a3c-B514-DDF932EF6D17), oleautomation, hidden, dual]
+  interface IShellFolderViewDual2 : IShellFolderViewDual {
+    [propget] HRESULT CurrentViewMode ([out, retval] UINT *pViewMode);
+    [propput] HRESULT CurrentViewMode ([in] UINT ViewMode);
+    HRESULT SelectItemRelative ([in] int iRelative);
+  }
+
+  [uuid (29ec8e6c-46d3-411f-BAAA-611a6c9cac66), oleautomation, hidden, dual]
+  interface IShellFolderViewDual3 : IShellFolderViewDual2 {
+    [propget] HRESULT GroupBy ([out, retval] BSTR *pbstrGroupBy);
+    [propput] HRESULT GroupBy ([in] BSTR bstrGroupBy);
+    [propget] HRESULT FolderFlags ([out, retval] DWORD *pdwFlags);
+    [propput] HRESULT FolderFlags ([in] DWORD dwFlags);
+    [propget] HRESULT SortColumns ([out, retval] BSTR *pbstrSortColumns);
+    [propput] HRESULT SortColumns ([in] BSTR bstrSortColumns);
+    [propput] HRESULT IconSize ([in] int iIconSize);
+    [propget] HRESULT IconSize ([out, retval] int *piIconSize);
+    HRESULT FilterView ([in, unique] BSTR bstrFilterText);
+  }
+
+  [uuid (62112aa1-EBE4-11cf-A5FB-0020afe7292d)]
+  coclass ShellFolderView {
+    [default] interface IShellFolderViewDual3;
+    [source, default] dispinterface DShellFolderViewEvents;
+  }
+
+  typedef [uuid (742a99a0-C77E-11d0-A32C-00a0c91eedba)] enum ShellFolderViewOptions {
+    SFVVO_SHOWALLOBJECTS = 0x00000001,
+    SFVVO_SHOWEXTENSIONS = 0x00000002,
+    SFVVO_SHOWCOMPCOLOR = 0x00000008,
+    SFVVO_SHOWSYSFILES = 0x00000020,
+    SFVVO_WIN95CLASSIC = 0x00000040,
+    SFVVO_DOUBLECLICKINWEBVIEW = 0x00000080,
+    SFVVO_DESKTOPHTML = 0x00000200,
+  } ShellFolderViewOptions;
+
+  [uuid (D8F015C0-C278-11ce-A49E-444553540000), oleautomation, hidden, dual]
+  interface IShellDispatch : IDispatch {
+    [propget] HRESULT Application ([out, retval] IDispatch **ppid);
+    [propget] HRESULT Parent ([out, retval] IDispatch **ppid);
+    HRESULT NameSpace ([in] VARIANT vDir,[out, retval] Folder **ppsdf);
+    HRESULT BrowseForFolder ([in] long Hwnd,[in] BSTR Title,[in] long Options,[in, optional] VARIANT RootFolder,[out, retval] Folder **ppsdf);
+    HRESULT Windows ([out, retval] IDispatch **ppid);
+    HRESULT Open ([in] VARIANT vDir);
+    HRESULT Explore ([in] VARIANT vDir);
+    HRESULT MinimizeAll (void);
+    HRESULT UndoMinimizeALL (void);
+    HRESULT FileRun (void);
+    HRESULT CascadeWindows (void);
+    HRESULT TileVertically (void);
+    HRESULT TileHorizontally (void);
+    HRESULT ShutdownWindows (void);
+    HRESULT Suspend (void);
+    HRESULT EjectPC (void);
+    HRESULT SetTime (void);
+    HRESULT TrayProperties (void);
+    HRESULT Help (void);
+    HRESULT FindFiles (void);
+    HRESULT FindComputer (void);
+    HRESULT RefreshMenu (void);
+    HRESULT ControlPanelItem ([in] BSTR bstrDir);
+  }
+
+  [uuid (A4C6892C-3ba9-11d2-9dea-00c04fb16162), oleautomation, hidden, dual]
+  interface IShellDispatch2 : IShellDispatch {
+    HRESULT IsRestricted ([in] BSTR Group,[in] BSTR Restriction,[out, retval] long *plRestrictValue);
+    HRESULT ShellExecute ([in] BSTR File,[in, optional] VARIANT vArgs,[in, optional] VARIANT vDir,[in, optional] VARIANT vOperation,[in, optional] VARIANT vShow);
+    HRESULT FindPrinter ([in, optional] BSTR name,[in, optional] BSTR location,[in, optional] BSTR model);
+    HRESULT GetSystemInformation ([in] BSTR name,[out, retval] VARIANT *pv);
+    HRESULT ServiceStart ([in] BSTR ServiceName,[in] VARIANT Persistent,[out, retval] VARIANT *pSuccess);
+    HRESULT ServiceStop ([in] BSTR ServiceName,[in] VARIANT Persistent,[out, retval] VARIANT *pSuccess);
+    HRESULT IsServiceRunning ([in] BSTR ServiceName,[out, retval] VARIANT *pRunning);
+    HRESULT CanStartStopService ([in] BSTR ServiceName,[out, retval] VARIANT *pCanStartStop);
+    HRESULT ShowBrowserBar ([in]BSTR bstrClsid,[in]VARIANT bShow,[out, retval] VARIANT *pSuccess);
+  }
+
+  [uuid (177160ca-bb5a-411c-841d-bd38facdeaa0), oleautomation, hidden, dual]
+  interface IShellDispatch3 : IShellDispatch2 {
+    HRESULT AddToRecent ([in] VARIANT varFile,[in, optional] BSTR bstrCategory);
+  }
+
+  [uuid (efd84b2d-4bcf-4298-be25-eb542a59fbda), oleautomation, hidden, dual]
+  interface IShellDispatch4 : IShellDispatch3 {
+    HRESULT WindowsSecurity (void);
+    HRESULT ToggleDesktop (void);
+    HRESULT ExplorerPolicy ([in] BSTR bstrPolicyName,[out, retval] VARIANT *pValue);
+    HRESULT GetSetting ([in] long lSetting,[out, retval] VARIANT_BOOL *pResult);
+  }
+
+  [uuid (866738b9-6cf2-4de8-8767-f794ebe74f4e), oleautomation, hidden, dual]
+  interface IShellDispatch5 : IShellDispatch4 {
+    HRESULT WindowSwitcher (void);
+  }
+
+  cpp_quote("#if NTDDI_VERSION >= NTDDI_WIN8")
+  [uuid (286e6f1b-7113-4355-9562-96b7e9d64c54), oleautomation, hidden, dual]
+  interface IShellDispatch6 : IShellDispatch5 {
+    HRESULT SearchCommand (void);
+  }
+  cpp_quote("#endif")
+
+    [uuid (13709620-C279-11ce-A49E-444553540000)]
+  coclass Shell {
+    [default] interface IShellDispatch6;
+  }
+
+  [uuid (0a89a860-D7B1-11ce-8350-444553540000), hidden]
+  coclass ShellDispatchInproc {
+    interface IUnknown;
+  }
+
+  typedef [uuid (CA31EA20-48d0-11cf-8350-444553540000)] enum ShellSpecialFolderConstants {
+    ssfDESKTOP = 0x0000,
+    ssfPROGRAMS = 0x0002,
+    ssfCONTROLS = 0x0003,
+    ssfPRINTERS = 0x0004,
+    ssfPERSONAL = 0x0005,
+    ssfFAVORITES = 0x0006,
+    ssfSTARTUP = 0x0007,
+    ssfRECENT = 0x0008,
+    ssfSENDTO = 0x0009,
+    ssfBITBUCKET = 0x000a,
+    ssfSTARTMENU = 0x000b,
+    ssfDESKTOPDIRECTORY = 0x0010,
+    ssfDRIVES = 0x0011,
+    ssfNETWORK = 0x0012,
+    ssfNETHOOD = 0x0013,
+    ssfFONTS = 0x0014,
+    ssfTEMPLATES = 0x0015,
+    ssfCOMMONSTARTMENU = 0x0016,
+    ssfCOMMONPROGRAMS = 0x0017,
+    ssfCOMMONSTARTUP = 0x0018,
+    ssfCOMMONDESKTOPDIR = 0x0019,
+    ssfAPPDATA = 0x001a,
+    ssfPRINTHOOD = 0x001b,
+    ssfLOCALAPPDATA = 0x001c,
+    ssfALTSTARTUP = 0x001d,
+    ssfCOMMONALTSTARTUP = 0x001e,
+    ssfCOMMONFAVORITES = 0x001f,
+    ssfINTERNETCACHE = 0x0020,
+    ssfCOOKIES = 0x0021,
+    ssfHISTORY = 0x0022,
+    ssfCOMMONAPPDATA = 0x0023,
+    ssfWINDOWS = 0x0024,
+    ssfSYSTEM = 0x0025,
+    ssfPROGRAMFILES = 0x0026,
+    ssfMYPICTURES = 0x0027,
+    ssfPROFILE = 0x0028,
+    ssfSYSTEMx86 = 0x0029,
+    ssfPROGRAMFILESx86 = 0x0030,
+  } ShellSpecialFolderConstants;
+
+  [uuid (2d91eea1-9932-11d2-BE86-00a0c9a83da1), oleautomation, dual, hidden, pointer_default (unique)]
+  interface IFileSearchBand : IDispatch {
+    [id (1)] HRESULT SetFocus (void);
+    [id (2)] HRESULT SetSearchParameters ([in] BSTR *pbstrSearchID,[in]VARIANT_BOOL bNavToResults,[in, optional] VARIANT *pvarScope,[in, optional]VARIANT *pvarQueryFile);
+    [id (3), propget] HRESULT SearchID ([out, retval] BSTR *pbstrSearchID);
+    [id (4), propget] HRESULT Scope ([out, retval] VARIANT *pvarScope);
+    [id (5), propget] HRESULT QueryFile ([out, retval] VARIANT *pvarFile);
+  };
+
+  [uuid (C4EE31F3-4768-11d2-BE5C-00a0c9a83da1), hidden]
+  coclass FileSearchBand {
+    [default] interface IFileSearchBand;
+  };
+
+  [uuid (18bcc359-4990-4bfb-b951-3c83702be5f9), object, dual]
+  interface IWebWizardHost : IDispatch {
+    [id (0)] HRESULT FinalBack ();
+    [id (1)] HRESULT FinalNext ();
+    [id (2)] HRESULT Cancel ();
+    [id (3), propput] HRESULT Caption ([in] BSTR bstrCaption);
+    [id (3), propget] HRESULT Caption ([out, retval] BSTR *pbstrCaption);
+    [id (4), propput] HRESULT Property ([in] BSTR bstrPropertyName,[in] VARIANT *pvProperty);
+    [id (4), propget] HRESULT Property ([in] BSTR bstrPropertyName,[out, retval] VARIANT *pvProperty);
+    [id (5)] HRESULT SetWizardButtons ([in] VARIANT_BOOL vfEnableBack,[in] VARIANT_BOOL vfEnableNext,[in] VARIANT_BOOL vfLastPage);
+    [id (6)] HRESULT SetHeaderText ([in] BSTR bstrHeaderTitle,[in] BSTR bstrHeaderSubtitle);
+  };
+  [uuid (0751c551-7568-41c9-8e5b-e22e38919236), object, dual]
+  interface INewWDEvents: IWebWizardHost {
+    [id (7)] HRESULT PassportAuthenticate ([in] BSTR bstrSignInUrl,[out, retval] VARIANT_BOOL *pvfAuthenitcated);
+  };
+};
+
+[local, object, uuid (00bb2762-6a77-11d0-a535-00c04fd7d062), pointer_default (unique)]
+interface IAutoComplete : IUnknown {
+  typedef [unique] IAutoComplete *LPAUTOCOMPLETE;
+
+  HRESULT Init ([in] HWND hwndEdit,[in, unique] IUnknown *punkACL,[in, unique] LPCWSTR pwszRegKeyPath,[in] LPCWSTR pwszQuickComplete);
+  HRESULT Enable ([in] BOOL fEnable);
+}
+
+[local, object, uuid (EAC04BC0-3791-11d2-BB95-0060977b464c), pointer_default (unique)]
+interface IAutoComplete2 : IAutoComplete {
+  typedef [unique] IAutoComplete2 *LPAUTOCOMPLETE2;
+  typedef enum _tagAUTOCOMPLETEOPTIONS {
+    ACO_NONE = 0x00,
+    ACO_AUTOSUGGEST = 0x01,
+    ACO_AUTOAPPEND = 0x02,
+    ACO_SEARCH = 0x04,
+    ACO_FILTERPREFIXES = 0x08,
+    ACO_USETAB = 0x10,
+    ACO_UPDOWNKEYDROPSLIST = 0x20,
+    ACO_RTLREADING = 0x40,
+    ACO_WORD_FILTER = 0x80,
+    ACO_NOPREFIXFILTERING = 0x100,
+  } AUTOCOMPLETEOPTIONS;
+
+  HRESULT SetOptions ([in] DWORD dwFlag);
+  HRESULT GetOptions ([out] DWORD *pdwFlag);
+}
+
+cpp_quote("")
+[local, object, uuid (8e74c210-CF9D-4eaf-A403-7356428f0a5a), pointer_default (unique)]
+interface IEnumACString : IEnumString {
+  typedef [unique] IEnumACString *PENUMACSTRING;
+  typedef [unique] IEnumACString *LPENUMACSTRING;
+  typedef enum _tagACENUMOPTION {
+    ACEO_NONE = 0x0000,
+    ACEO_MOSTRECENTFIRST = 0x1,
+    ACEO_FIRSTUNUSED = 0x10000,
+  } ACENUMOPTION;
+
+  HRESULT NextItem ([out, string, unique, size_is (cchMax)] LPWSTR pszUrl,[in] ULONG cchMax,[out] ULONG *pulSortIndex);
+  HRESULT SetEnumOptions ([in] DWORD dwOptions);
+  HRESULT GetEnumOptions ([out] DWORD *pdwOptions);
+}
+
+[uuid (3d8b0590-F691-11d2-8ea9-006097df5bd4), object]
+interface IDataObjectAsyncCapability : IUnknown {
+  HRESULT SetAsyncMode ([in] BOOL fDoOpAsync);
+  HRESULT GetAsyncMode ([out] BOOL *pfIsOpAsync);
+  HRESULT StartOperation ([in, unique, optional] IBindCtx *pbcReserved);
+  HRESULT InOperation ([out] BOOL *pfInAsyncOp);
+  HRESULT EndOperation ([in] HRESULT hResult,[in, unique] IBindCtx *pbcReserved,[in] DWORD dwEffects);
+}
+
+cpp_quote("#endif")

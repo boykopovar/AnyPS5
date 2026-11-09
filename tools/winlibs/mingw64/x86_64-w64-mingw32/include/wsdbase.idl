@@ -1,0 +1,225 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+import "objidl.idl";
+import "wincrypt.idl";
+
+cpp_quote("")
+interface IWSDAddress;
+interface IWSDMessageParameters;
+interface IWSDUdpAddress;
+interface IWSDUdpMessageParameters;
+interface IWSDHttpAddress;
+interface IWSDHttpMessageParameters;
+
+cpp_quote("")
+cpp_quote("#if WINVER >= 0x601")
+typedef enum {
+  WSD_CONFIG_MAX_INBOUND_MESSAGE_SIZE = 1,
+  WSD_CONFIG_MAX_OUTBOUND_MESSAGE_SIZE = 2,
+  WSD_SECURITY_SSL_CERT_FOR_CLIENT_AUTH = 3,
+  WSD_SECURITY_SSL_SERVER_CERT_VALIDATION = 4,
+  WSD_SECURITY_SSL_CLIENT_CERT_VALIDATION = 5,
+  WSD_SECURITY_SSL_NEGOTIATE_CLIENT_CERT = 6,
+  WSD_SECURITY_COMPACTSIG_SIGNING_CERT = 7,
+  WSD_SECURITY_COMPACTSIG_VALIDATION = 8,
+  WSD_CONFIG_HOSTING_ADDRESSES = 9,
+  WSD_CONFIG_DEVICE_ADDRESSES = 10,
+  WSD_SECURITY_REQUIRE_HTTP_CLIENT_AUTH = 11,
+  WSD_SECURITY_REQUIRE_CLIENT_CERT_OR_HTTP_CLIENT_AUTH = 12,
+  WSD_SECURITY_USE_HTTP_CLIENT_AUTH = 13
+} WSD_CONFIG_PARAM_TYPE;
+
+typedef struct _WSD_CONFIG_PARAM {
+  WSD_CONFIG_PARAM_TYPE configParamType;
+  PVOID pConfigData;
+  DWORD dwConfigDataSize;
+} WSD_CONFIG_PARAM,*PWSD_CONFIG_PARAM;
+
+typedef struct _WSD_SECURITY_CERT_VALIDATION_V1 {
+  PCCERT_CONTEXT *certMatchArray;
+  DWORD dwCertMatchArrayCount;
+  HCERTSTORE hCertMatchStore;
+  HCERTSTORE hCertIssuerStore;
+  DWORD dwCertCheckOptions;
+} WSD_SECURITY_CERT_VALIDATION_V1;
+
+cpp_quote("#if _WIN32_WINNT >= 0x602")
+typedef struct _WSD_SECURITY_CERT_VALIDATION {
+  PCCERT_CONTEXT *certMatchArray;
+  DWORD dwCertMatchArrayCount;
+  HCERTSTORE hCertMatchStore;
+  HCERTSTORE hCertIssuerStore;
+  DWORD dwCertCheckOptions;
+  LPCWSTR pszCNGHashAlgId;
+  BYTE *pbCertHash;
+  DWORD dwCertHashSize;
+} WSD_SECURITY_CERT_VALIDATION;
+cpp_quote("#else")
+cpp_quote("typedef WSD_SECURITY_CERT_VALIDATION_V1 WSD_SECURITY_CERT_VALIDATION;")
+cpp_quote("#endif")
+
+cpp_quote("")
+typedef WSD_SECURITY_CERT_VALIDATION *PWSD_SECURITY_CERT_VALIDATION;
+
+typedef struct _WSD_SECURITY_SIGNATURE_VALIDATION {
+  PCCERT_CONTEXT *signingCertArray;
+  DWORD dwSigningCertArrayCount;
+  HCERTSTORE hSigningCertStore;
+  DWORD dwFlags;
+} WSD_SECURITY_SIGNATURE_VALIDATION,*PWSD_SECURITY_SIGNATURE_VALIDATION;
+
+typedef DWORD WSD_SECURITY_HTTP_AUTH_SCHEMES,*PWSD_SECURITY_HTTP_AUTH_SCHEMES;
+
+cpp_quote("")
+cpp_quote("#define WSDAPI_SSL_CERT_APPLY_DEFAULT_CHECKS 0x0")
+cpp_quote("#define WSDAPI_SSL_CERT_IGNORE_REVOCATION 0x1")
+cpp_quote("#define WSDAPI_SSL_CERT_IGNORE_EXPIRY 0x2")
+cpp_quote("#define WSDAPI_SSL_CERT_IGNORE_WRONG_USAGE 0x4")
+cpp_quote("#define WSDAPI_SSL_CERT_IGNORE_UNKNOWN_CA 0x8")
+cpp_quote("#define WSDAPI_SSL_CERT_IGNORE_INVALID_CN 0x10")
+cpp_quote("")
+cpp_quote("#define WSDAPI_COMPACTSIG_ACCEPT_ALL_MESSAGES 0x1")
+cpp_quote("")
+cpp_quote("#define WSD_SECURITY_HTTP_AUTH_SCHEME_NEGOTIATE 0x1")
+cpp_quote("#define WSD_SECURITY_HTTP_AUTH_SCHEME_NTLM 0x2")
+cpp_quote("")
+
+typedef struct _WSD_CONFIG_ADDRESSES {
+  IWSDAddress **addresses;
+  DWORD dwAddressCount;
+} WSD_CONFIG_ADDRESSES,*PWSD_CONFIG_ADDRESSES;
+cpp_quote("#endif")
+
+cpp_quote("#define WSDAPI_ADDRESSFAMILY_IPV4 1")
+cpp_quote("#define WSDAPI_ADDRESSFAMILY_IPV6 2")
+
+[object, uuid (b9574c6c-12a6-4f74-93a1-3318ff605759), local]
+interface IWSDAddress : IUnknown {
+  HRESULT Serialize ([out, size_is (cchLength)] LPWSTR pszBuffer,[in] DWORD cchLength,[in] BOOL fSafe);
+  HRESULT Deserialize ([in] LPCWSTR pszBuffer);
+}
+
+[object, uuid (70d23498-4ee6-4340-a3df-d845d2235467), local]
+interface IWSDTransportAddress : IWSDAddress {
+  HRESULT GetPort ([out] WORD *pwPort);
+  HRESULT SetPort ([in] WORD wPort);
+  HRESULT GetTransportAddress ([out] LPCWSTR *ppszAddress);
+  HRESULT GetTransportAddressEx ([in] BOOL fSafe,[out] LPCWSTR *ppszAddress);
+  HRESULT SetTransportAddress ([in] LPCWSTR pszAddress);
+}
+
+[object, uuid (1fafe8a2-e6fc-4b80-b6cf-b7d45c416d7c)]
+interface IWSDMessageParameters : IUnknown {
+  HRESULT GetLocalAddress ([out] IWSDAddress **ppAddress);
+  HRESULT SetLocalAddress ([in] IWSDAddress *pAddress);
+  HRESULT GetRemoteAddress ([out] IWSDAddress **ppAddress);
+  HRESULT SetRemoteAddress ([in] IWSDAddress *pAddress);
+  HRESULT GetLowerParameters ([out] IWSDMessageParameters **ppTxParams);
+}
+
+cpp_quote("HRESULT WINAPI")
+cpp_quote("WSDCreateUdpMessageParameters(")
+cpp_quote("IWSDUdpMessageParameters** ppTxParams);")
+
+typedef struct _WSDUdpRetransmitParams {
+  ULONG ulSendDelay;
+  ULONG ulRepeat;
+  ULONG ulRepeatMinDelay;
+  ULONG ulRepeatMaxDelay;
+  ULONG ulRepeatUpperDelay;
+} WSDUdpRetransmitParams;
+
+[object, uuid (9934149f-8f0c-447b-aa0b-73124b0ca7f0)]
+interface IWSDUdpMessageParameters : IWSDMessageParameters {
+  HRESULT SetRetransmitParams ([in] const WSDUdpRetransmitParams *pParams);
+  HRESULT GetRetransmitParams ([out] WSDUdpRetransmitParams *pParams);
+}
+
+cpp_quote("HRESULT WINAPI")
+cpp_quote("WSDCreateUdpAddress(")
+cpp_quote(" IWSDUdpAddress** ppAddress);")
+
+#ifndef SOCKADDR_STORAGE
+cpp_quote("#if 1")
+cpp_quote("")
+cpp_quote("#ifndef __CSADDR_DEFINED__")
+cpp_quote("struct SOCKADDR_STORAGE;")
+cpp_quote("#endif")
+cpp_quote("#else")
+typedef void SOCKADDR_STORAGE;
+cpp_quote("#endif")
+#endif
+
+typedef enum _WSDUdpMessageType {
+  ONE_WAY,
+  TWO_WAY
+} WSDUdpMessageType;
+
+[object, local, uuid (74d6124a-a441-4f78-a1eb-97a8d1996893)]
+interface IWSDUdpAddress : IWSDTransportAddress {
+  HRESULT SetSockaddr ([in] const SOCKADDR_STORAGE *pSockAddr);
+  HRESULT GetSockaddr ([out] SOCKADDR_STORAGE *pSockAddr);
+  HRESULT SetExclusive ([in] BOOL fExclusive);
+  HRESULT GetExclusive ();
+  HRESULT SetMessageType ([in] WSDUdpMessageType messageType);
+  HRESULT GetMessageType ([out] WSDUdpMessageType *pMessageType);
+  HRESULT SetTTL ([in] DWORD dwTTL);
+  HRESULT GetTTL ([out] DWORD *pdwTTL);
+  HRESULT SetAlias ([in] const GUID *pAlias);
+  HRESULT GetAlias ([out] GUID *pAlias);
+}
+
+[object, local, uuid (540bd122-5c83-4dec-b396-ea62a2697fdf)]
+interface IWSDHttpMessageParameters : IWSDMessageParameters {
+  HRESULT SetInboundHttpHeaders ([in] LPCWSTR pszHeaders);
+  HRESULT GetInboundHttpHeaders ([out] LPCWSTR *ppszHeaders);
+  HRESULT SetOutboundHttpHeaders ([in] LPCWSTR pszHeaders);
+  HRESULT GetOutboundHttpHeaders ([out] LPCWSTR *ppszHeaders);
+  HRESULT SetID ([in] LPCWSTR pszId);
+  HRESULT GetID ([out] LPCWSTR *ppszId);
+  HRESULT SetContext ([in] IUnknown *pContext);
+  HRESULT GetContext ([out] IUnknown **ppContext);
+  HRESULT Clear ();
+}
+
+[object, local, uuid (d09ac7bd-2a3e-4b85-8605-2737ff3e4ea0)]
+interface IWSDHttpAddress : IWSDTransportAddress {
+  HRESULT GetSecure ();
+  HRESULT SetSecure ([in] BOOL fSecure);
+  HRESULT GetPath ([out] LPCWSTR *ppszPath);
+  HRESULT SetPath ([in] LPCWSTR pszPath);
+}
+
+cpp_quote("#if WINVER >= 0x601")
+[object, local, uuid (de105e87-a0da-418e-98ad-27b9eed87bdc)]
+interface IWSDSSLClientCertificate : IUnknown {
+  HRESULT GetClientCertificate ([in, out] PCCERT_CONTEXT *ppCertContext);
+  HRESULT GetMappedAccessToken ([in, out] HANDLE *phToken);
+}
+
+[object, local, uuid (0b476df0-8dac-480d-b05c-99781a5884aa)]
+interface IWSDHttpAuthParameters: IUnknown {
+  HRESULT GetClientAccessToken ([out] HANDLE *phToken);
+  HRESULT GetAuthType ([out] PWSD_SECURITY_HTTP_AUTH_SCHEMES pAuthType);
+}
+
+[object, local, uuid (03ce20aa-71c4-45e2-b32e-3766c61c790f), pointer_default (unique), restricted]
+interface IWSDSignatureProperty : IUnknown {
+  HRESULT IsMessageSigned ([out] BOOL *pbSigned);
+  HRESULT IsMessageSignatureTrusted ([out] BOOL *pbSignatureTrusted);
+  HRESULT GetKeyInfo ([out, size_is (*pdwKeyInfoSize)] BYTE *pbKeyInfo,[in, out] DWORD *pdwKeyInfoSize);
+  HRESULT GetSignature ([out, size_is (*pdwSignatureSize)] BYTE *pbSignature,[in, out] DWORD *pdwSignatureSize);
+  HRESULT GetSignedInfoHash ([out, size_is (*pdwHashSize)] BYTE *pbSignedInfoHash,[in, out] DWORD *pdwHashSize);
+}
+cpp_quote("#endif")
+
+cpp_quote("HRESULT WINAPI WSDCreateHttpAddress(IWSDHttpAddress **ppAdress);")
+cpp_quote("HRESULT WINAPI WSDCreateHttpMessageParameters(IWSDHttpMessageParameters **ppTxParams);")
+
+cpp_quote("#endif")

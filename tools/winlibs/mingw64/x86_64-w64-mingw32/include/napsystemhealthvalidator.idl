@@ -1,0 +1,43 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+import "naptypes.idl";
+import "unknwn.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+interface INapServerCallback;
+interface INapSystemHealthValidator;
+interface INapSystemHealthValidationRequest;
+
+[object, uuid (EF43D87C-5b6d-4820-8620-868907fe07d3), async_uuid (2516031a-A391-454d-B53D-C5DC84C7F2DB), pointer_default (unique)]
+interface INapSystemHealthValidator : IUnknown {
+  HRESULT Validate ([in] INapSystemHealthValidationRequest *request,[in] UINT32 hintTimeOutInMsec,[in] INapServerCallback *callback);
+};
+
+[object, uuid (09c20568-F30C-489b-AE9C-4930ad7f165f), pointer_default (unique)]
+interface INapServerCallback : IUnknown {
+  HRESULT OnComplete ([in] INapSystemHealthValidationRequest *request,[in] HRESULT errorCode);
+};
+
+[object, uuid (ADACB3A0-D4F4-4f17-8933-51d60fcca606), pointer_default (unique)]
+interface INapSystemHealthValidationRequest : IUnknown {
+  HRESULT GetCorrelationId ([out] CorrelationId *correlationId);
+  HRESULT GetStringCorrelationId ([out] StringCorrelationId **correlationId);
+  HRESULT GetMachineName ([out] CountedString **machineName);
+  HRESULT GetSoHRequest ([out] SoHRequest **sohRequest,[out] WINBOOL *napSystemGenerated);
+  HRESULT SetSoHResponse ([in] const SoHResponse *sohResponse);
+  HRESULT GetSoHResponse ([out] SoHResponse **sohResponse);
+  HRESULT SetPrivateData ([in] const PrivateData *privateData);
+  HRESULT GetPrivateData ([out] PrivateData **privateData);
+};
+
+[object, uuid (91a5d706-0cb4-4a84-8315-9380d453e385), pointer_default (unique)]
+interface INapSystemHealthValidationRequest2 : INapSystemHealthValidationRequest {
+  HRESULT GetConfigID ([out] UINT32 *configID);
+};
+cpp_quote("#endif")

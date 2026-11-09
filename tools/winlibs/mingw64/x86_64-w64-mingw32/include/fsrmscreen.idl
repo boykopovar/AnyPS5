@@ -1,0 +1,123 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+import "oaidl.idl";
+import "fsrmenums.idl";
+import "fsrm.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+interface IFsrmFileGroup;
+interface IFsrmFileGroupImported;
+interface IFsrmFileGroupManager;
+interface IFsrmFileScreen;
+interface IFsrmFileScreenBase;
+interface IFsrmFileScreenException;
+interface IFsrmFileScreenManager;
+interface IFsrmFileScreenTemplate;
+interface IFsrmFileScreenTemplateImported;
+interface IFsrmFileScreenTemplateManager;
+
+const DISPID FSRM_DISPID_FILEGROUP = FSRM_DISPID_FEATURE_FILESCREEN | 0x100000;
+const DISPID FSRM_DISPID_FILEGROUP_IMPORTED = FSRM_DISPID_FILEGROUP | 0x10000;
+const DISPID FSRM_DISPID_FILEGROUP_MANAGER = FSRM_DISPID_FEATURE_FILESCREEN | 0x200000;
+const DISPID FSRM_DISPID_FILESCREEN_BASE = FSRM_DISPID_FEATURE_FILESCREEN | 0x300000;
+const DISPID FSRM_DISPID_FILESCREEN = FSRM_DISPID_FILESCREEN_BASE | 0x10000;
+const DISPID FSRM_DISPID_FILESCREEN_TEMPLATE = FSRM_DISPID_FILESCREEN_BASE | 0x20000;
+const DISPID FSRM_DISPID_FILESCREEN_TEMPLATE_IMPORTED = FSRM_DISPID_FILESCREEN_TEMPLATE | 0x1000;
+const DISPID FSRM_DISPID_FILESCREEN_EXCEPTION = FSRM_DISPID_FEATURE_FILESCREEN | 0x400000;
+const DISPID FSRM_DISPID_FILESCREEN_MANAGER = FSRM_DISPID_FEATURE_FILESCREEN | 0x500000;
+const DISPID FSRM_DISPID_FILESCREEN_TEMPLATE_MANAGER = FSRM_DISPID_FEATURE_FILESCREEN | 0x600000;
+
+[object, uuid (426677d5-018c-485c-8a51-20b86d00bdc4), dual, pointer_default (unique)]
+interface IFsrmFileGroupManager : IDispatch {
+  [id (FSRM_DISPID_FILEGROUP_MANAGER | 0x1)] HRESULT CreateFileGroup ([out, retval] IFsrmFileGroup **fileGroup);
+  [id (FSRM_DISPID_FILEGROUP_MANAGER | 0x2)] HRESULT GetFileGroup ([in] BSTR name,[out, retval] IFsrmFileGroup **fileGroup);
+  [id (FSRM_DISPID_FILEGROUP_MANAGER | 0x3)] HRESULT EnumFileGroups ([in, defaultvalue (FsrmEnumOptions_None)] FsrmEnumOptions options,[out, retval] IFsrmCommittableCollection **fileGroups);
+  [id (FSRM_DISPID_FILEGROUP_MANAGER | 0x4)] HRESULT ExportFileGroups ([in, defaultvalue (NULL)] VARIANT *fileGroupNamesArray,[out, retval] BSTR *serializedFileGroups);
+  [id (FSRM_DISPID_FILEGROUP_MANAGER | 0x5)] HRESULT ImportFileGroups ([in] BSTR serializedFileGroups,[in, defaultvalue (NULL)] VARIANT *fileGroupNamesArray,[out, retval] IFsrmCommittableCollection **fileGroups);
+};
+
+[object, uuid (ff4fa04e-5a94-4bda-a3a0-d5b4d3c52eba), dual, pointer_default (unique)]
+interface IFsrmFileScreenManager : IDispatch {
+  [propget, id (FSRM_DISPID_FILESCREEN_MANAGER | 0x81)] HRESULT ActionVariables ([out, retval] SAFEARRAY (VARIANT) *variables);
+  [propget, id (FSRM_DISPID_FILESCREEN_MANAGER | 0x82)] HRESULT ActionVariableDescriptions ([out, retval] SAFEARRAY (VARIANT) *descriptions);
+  [id (FSRM_DISPID_FILESCREEN_MANAGER | 0x1)] HRESULT CreateFileScreen ([in] BSTR path,[out, retval] IFsrmFileScreen **fileScreen);
+  [id (FSRM_DISPID_FILESCREEN_MANAGER | 0x2)] HRESULT GetFileScreen ([in] BSTR path,[out, retval] IFsrmFileScreen **fileScreen);
+  [id (FSRM_DISPID_FILESCREEN_MANAGER | 0x3)] HRESULT EnumFileScreens ([in, defaultvalue (L"")] BSTR path,[in, defaultvalue (FsrmEnumOptions_None)] FsrmEnumOptions options,[out, retval] IFsrmCommittableCollection **fileScreens);
+  [id (FSRM_DISPID_FILESCREEN_MANAGER | 0x4)] HRESULT CreateFileScreenException ([in] BSTR path,[out, retval] IFsrmFileScreenException **fileScreenException);
+  [id (FSRM_DISPID_FILESCREEN_MANAGER | 0x5)] HRESULT GetFileScreenException ([in] BSTR path,[out, retval] IFsrmFileScreenException **fileScreenException);
+  [id (FSRM_DISPID_FILESCREEN_MANAGER | 0x6)] HRESULT EnumFileScreenExceptions ([in, defaultvalue (L"")] BSTR path,[in, defaultvalue (FsrmEnumOptions_None)] FsrmEnumOptions options,[out, retval] IFsrmCommittableCollection **fileScreenExceptions);
+  [id (FSRM_DISPID_FILESCREEN_MANAGER | 0x7)] HRESULT CreateFileScreenCollection ([out, retval] IFsrmCommittableCollection **collection);
+};
+
+[object, uuid (cfe36cba-1949-4e74-a14f-f1d580ceaf13), dual, pointer_default (unique)]
+interface IFsrmFileScreenTemplateManager : IDispatch {
+  [id (FSRM_DISPID_FILESCREEN_TEMPLATE_MANAGER | 0x1)] HRESULT CreateTemplate ([out, retval] IFsrmFileScreenTemplate **fileScreenTemplate);
+  [id (FSRM_DISPID_FILESCREEN_TEMPLATE_MANAGER | 0x2)] HRESULT GetTemplate ([in] BSTR name,[out, retval] IFsrmFileScreenTemplate **fileScreenTemplate);
+  [id (FSRM_DISPID_FILESCREEN_TEMPLATE_MANAGER | 0x3)] HRESULT EnumTemplates ([in, defaultvalue (FsrmEnumOptions_None)] FsrmEnumOptions options,[out, retval] IFsrmCommittableCollection **fileScreenTemplates);
+  [id (FSRM_DISPID_FILESCREEN_TEMPLATE_MANAGER | 0x4)] HRESULT ExportTemplates ([in, defaultvalue (NULL)] VARIANT *fileScreenTemplateNamesArray,[out, retval] BSTR *serializedFileScreenTemplates);
+  [id (FSRM_DISPID_FILESCREEN_TEMPLATE_MANAGER | 0x5)] HRESULT ImportTemplates ([in] BSTR serializedFileScreenTemplates,[in, defaultvalue (NULL)] VARIANT *fileScreenTemplateNamesArray,[out, retval] IFsrmCommittableCollection **fileScreenTemplates);
+};
+
+[object, uuid (8dd04909-0e34-4d55-afaa-89e1f1a1bbb9), dual, pointer_default (unique)]
+interface IFsrmFileGroup : IFsrmObject {
+  [propget, id (FSRM_DISPID_FILEGROUP | 0x81)] HRESULT Name ([out, retval] BSTR *name);
+  [propput, id (FSRM_DISPID_FILEGROUP | 0x81)] HRESULT Name ([in] BSTR name);
+  [propget, id (FSRM_DISPID_FILEGROUP | 0x82)] HRESULT Members ([out, retval] IFsrmMutableCollection **members);
+  [propput, id (FSRM_DISPID_FILEGROUP | 0x82)] HRESULT Members ([in] IFsrmMutableCollection *members);
+  [propget, id (FSRM_DISPID_FILEGROUP | 0x83)] HRESULT NonMembers ([out, retval] IFsrmMutableCollection **nonMembers);
+  [propput, id (FSRM_DISPID_FILEGROUP | 0x83)] HRESULT NonMembers ([in] IFsrmMutableCollection *nonMembers);
+};
+
+[object, uuid (f3637e80-5b22-4a2b-a637-bbb642b41cfc), dual, pointer_default (unique)]
+interface IFsrmFileScreenBase : IFsrmObject {
+  [propget, id (FSRM_DISPID_FILESCREEN_BASE | 0x81)] HRESULT BlockedFileGroups ([out, retval] IFsrmMutableCollection **blockList);
+  [propput, id (FSRM_DISPID_FILESCREEN_BASE | 0x81)] HRESULT BlockedFileGroups ([in] IFsrmMutableCollection *blockList);
+  [propget, id (FSRM_DISPID_FILESCREEN_BASE | 0x82)] HRESULT FileScreenFlags ([out, retval] long *fileScreenFlags);
+  [propput, id (FSRM_DISPID_FILESCREEN_BASE | 0x82)] HRESULT FileScreenFlags ([in] long fileScreenFlags);
+  [id (FSRM_DISPID_FILESCREEN_BASE | 0x1)] HRESULT CreateAction ([in] FsrmActionType actionType,[out, retval] IFsrmAction **action);
+  [id (FSRM_DISPID_FILESCREEN_BASE | 0x2)] HRESULT EnumActions ([out, retval] IFsrmCollection **actions);
+};
+
+[object, uuid (bee7ce02-df77-4515-9389-78f01c5afc1a), dual, pointer_default (unique)]
+interface IFsrmFileScreenException : IFsrmObject {
+  [propget, id (FSRM_DISPID_FILESCREEN_EXCEPTION | 0x81)] HRESULT Path ([out, retval] BSTR *path);
+  [propget, id (FSRM_DISPID_FILESCREEN_EXCEPTION | 0x82)] HRESULT AllowedFileGroups ([out, retval] IFsrmMutableCollection **allowList);
+  [propput, id (FSRM_DISPID_FILESCREEN_EXCEPTION | 0x82)] HRESULT AllowedFileGroups ([in] IFsrmMutableCollection *allowList);
+};
+
+[object, uuid (5f6325d3-ce88-4733-84c1-2d6aefc5ea07), dual, pointer_default (unique)]
+interface IFsrmFileScreen : IFsrmFileScreenBase {
+  [propget, id (FSRM_DISPID_FILESCREEN | 0x81)] HRESULT Path ([out, retval] BSTR *path);
+  [propget, id (FSRM_DISPID_FILESCREEN | 0x82)] HRESULT SourceTemplateName ([out, retval] BSTR *fileScreenTemplateName);
+  [propget, id (FSRM_DISPID_FILESCREEN | 0x83)] HRESULT MatchesSourceTemplate ([out, retval] VARIANT_BOOL *matches);
+  [propget, id (FSRM_DISPID_FILESCREEN | 0x84)] HRESULT UserSid ([out, retval] BSTR *userSid);
+  [propget, id (FSRM_DISPID_FILESCREEN | 0x85)] HRESULT UserAccount ([out, retval] BSTR *userAccount);
+  [id (FSRM_DISPID_FILESCREEN | 0x1)] HRESULT ApplyTemplate ([in] BSTR fileScreenTemplateName);
+};
+
+[object, uuid (ad55f10b-5f11-4be7-94ef-d9ee2e470ded), dual, pointer_default (unique)]
+interface IFsrmFileGroupImported : IFsrmFileGroup {
+  [propget, id (FSRM_DISPID_FILEGROUP_IMPORTED | 0x81)] HRESULT OverwriteOnCommit ([out, retval] VARIANT_BOOL *overwrite);
+  [propput, id (FSRM_DISPID_FILEGROUP_IMPORTED | 0x81)] HRESULT OverwriteOnCommit ([in] VARIANT_BOOL overwrite);
+};
+
+[object, uuid (205bebf8-dd93-452a-95a6-32b566b35828), dual, pointer_default (unique)]
+interface IFsrmFileScreenTemplate : IFsrmFileScreenBase {
+  [propget, id (FSRM_DISPID_FILESCREEN_TEMPLATE | 0x81)] HRESULT Name ([out, retval] BSTR *name);
+  [propput, id (FSRM_DISPID_FILESCREEN_TEMPLATE | 0x81)] HRESULT Name ([in] BSTR name);
+  [id (FSRM_DISPID_FILESCREEN_TEMPLATE | 0x1)] HRESULT CopyTemplate ([in] BSTR fileScreenTemplateName);
+  [id (FSRM_DISPID_FILESCREEN_TEMPLATE | 0x2)] HRESULT CommitAndUpdateDerived ([in] FsrmCommitOptions commitOptions,[in] FsrmTemplateApplyOptions applyOptions,[out, retval] IFsrmDerivedObjectsResult **derivedObjectsResult);
+};
+
+[object, uuid (e1010359-3e5d-4ecd-9fe4-ef48622fdf30), dual, pointer_default (unique)]
+interface IFsrmFileScreenTemplateImported : IFsrmFileScreenTemplate {
+  [propget, id (FSRM_DISPID_FILESCREEN_TEMPLATE_IMPORTED | 0x81)] HRESULT OverwriteOnCommit ([out, retval] VARIANT_BOOL *overwrite);
+  [propput, id (FSRM_DISPID_FILESCREEN_TEMPLATE_IMPORTED | 0x81)] HRESULT OverwriteOnCommit ([in] VARIANT_BOOL overwrite);
+};
+cpp_quote("#endif")

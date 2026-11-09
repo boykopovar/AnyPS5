@@ -1,0 +1,12 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+
+#ifndef DO_NO_IMPORTS
+import "wtypes.idl";
+#endif
+
+#define BUILDING_UNKNWN_IDL
+#include "unknwnbase.idl"

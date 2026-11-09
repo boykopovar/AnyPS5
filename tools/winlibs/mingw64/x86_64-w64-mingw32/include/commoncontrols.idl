@@ -1,0 +1,155 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+
+import "oaidl.idl";
+import "ocidl.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+cpp_quote("#ifndef WINCOMMCTRLAPI")
+cpp_quote("#ifndef _COMCTL32_")
+cpp_quote("#define WINCOMMCTRLAPI DECLSPEC_IMPORT")
+cpp_quote("#else")
+cpp_quote("#define WINCOMMCTRLAPI")
+cpp_quote("#endif")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifdef __WIDL__")
+
+typedef DWORD RGBQUAD;
+typedef IUnknown *HIMAGELIST;
+cpp_quote("typedef struct _IMAGELIST *HIMAGELIST;")
+
+typedef struct _IMAGELISTDRAWPARAMS {
+  DWORD cbSize;
+  HIMAGELIST himl;
+  int i;
+  HDC hdcDst;
+  int x;
+  int y;
+  int cx;
+  int cy;
+  int xBitmap;
+  int yBitmap;
+  COLORREF rgbBk;
+  COLORREF rgbFg;
+  UINT fStyle;
+  DWORD dwRop;
+  DWORD fState;
+  DWORD Frame;
+  COLORREF crEffect;
+} IMAGELISTDRAWPARAMS;
+
+typedef IMAGELISTDRAWPARAMS *LPIMAGELISTDRAWPARAMS;
+
+typedef struct tagIMAGEINFO {
+  HBITMAP hbmImage;
+  HBITMAP hbmMask;
+  int Unused1;
+  int Unused2;
+  RECT rcImage;
+} IMAGEINFO;
+
+typedef IMAGEINFO *LPIMAGEINFO;
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#define ILIF_ALPHA 0x1")
+cpp_quote("#define ILIF_LOWQUALITY 0x2")
+cpp_quote("")
+cpp_quote("#define ILDRF_IMAGELOWQUALITY 0x1")
+cpp_quote("#define ILDRF_OVERLAYLOWQUALITY 0x10")
+cpp_quote("")
+cpp_quote("#define ILR_DEFAULT 0x0")
+cpp_quote("#define ILR_HORIZONTAL_LEFT  0x0")
+cpp_quote("#define ILR_HORIZONTAL_CENTER 0x1")
+cpp_quote("#define ILR_HORIZONTAL_RIGHT 0x2")
+cpp_quote("#define ILR_VERTICAL_TOP 0x0")
+cpp_quote("#define ILR_VERTICAL_CENTER 0x10")
+cpp_quote("#define ILR_VERTICAL_BOTTOM 0x20")
+cpp_quote("#define ILR_SCALE_CLIP               0x0")
+cpp_quote("#define ILR_SCALE_ASPECTRATIO        0x100")
+cpp_quote("")
+cpp_quote("#define ILGOS_ALWAYS 0x0")
+cpp_quote("#define ILGOS_FROMSTANDBY 0x1")
+cpp_quote("")
+cpp_quote("#define ILFIP_ALWAYS 0x0")
+cpp_quote("#define ILFIP_FROMSTANDBY 0x1")
+cpp_quote("")
+cpp_quote("#define ILDI_PURGE 0x1")
+cpp_quote("#define ILDI_STANDBY 0x2")
+cpp_quote("#define ILDI_RESETACCESS 0x4")
+cpp_quote("#define ILDI_QUERYACCESS 0x8")
+
+cpp_quote("")
+cpp_quote("#if NTDDI_VERSION >= 0x06000000")
+cpp_quote("WINCOMMCTRLAPI HRESULT WINAPI ImageList_CoCreateInstance (REFCLSID rclsid, const IUnknown *punkOuter, REFIID riid, void **ppv);")
+cpp_quote("#endif")
+
+typedef struct tagIMAGELISTSTATS {
+  DWORD cbSize;
+  int cAlloc;
+  int cUsed;
+  int cStandby;
+} IMAGELISTSTATS;
+
+[local, uuid (46eb5926-582e-4017-9fdf-E8998DAA0950)]
+interface IImageList : IUnknown {
+  HRESULT Add ([in] HBITMAP hbmImage,[in, unique] HBITMAP hbmMask,[out] int *pi);
+  HRESULT ReplaceIcon (int i,[in] HICON hicon,[out] int *pi);
+  HRESULT SetOverlayImage (int iImage, int iOverlay);
+  HRESULT Replace (int i,[in] HBITMAP hbmImage,[in, unique] HBITMAP hbmMask);
+  HRESULT AddMasked ([in] HBITMAP hbmImage, COLORREF crMask,[out] int *pi);
+  HRESULT Draw ([in] IMAGELISTDRAWPARAMS *pimldp);
+  HRESULT Remove (int i);
+  HRESULT GetIcon (int i, UINT flags,[out] HICON *picon);
+  HRESULT GetImageInfo (int i,[out] IMAGEINFO *pImageInfo);
+  HRESULT Copy (int iDst,[in] IUnknown *punkSrc, int iSrc, UINT uFlags);
+  HRESULT Merge (int i1,[in] IUnknown *punk2, int i2, int dx, int dy, REFIID riid,[out, iid_is (riid)] void **ppv);
+  HRESULT Clone (REFIID riid,[out, iid_is (riid)] void **ppv);
+  HRESULT GetImageRect (int i,[out] RECT *prc);
+  HRESULT GetIconSize ([out] int *cx,[out] int *cy);
+  HRESULT SetIconSize (int cx, int cy);
+  HRESULT GetImageCount ([out] int *pi);
+  HRESULT SetImageCount (UINT uNewCount);
+  HRESULT SetBkColor (COLORREF clrBk,[out] COLORREF *pclr);
+  HRESULT GetBkColor ([out] COLORREF *pclr);
+  HRESULT BeginDrag (int iTrack, int dxHotspot, int dyHotspot);
+  HRESULT EndDrag ();
+  HRESULT DragEnter ([in, unique] HWND hwndLock, int x, int y);
+  HRESULT DragLeave ([in, unique] HWND hwndLock);
+  HRESULT DragMove (int x, int y);
+  HRESULT SetDragCursorImage ([in] IUnknown *punk, int iDrag, int dxHotspot, int dyHotspot);
+  HRESULT DragShowNolock (WINBOOL fShow);
+  HRESULT GetDragImage ([out] POINT *ppt,[out] POINT *pptHotspot, REFIID riid,[out, iid_is (riid)] void **ppv);
+  HRESULT GetItemFlags (int i,[out] DWORD *dwFlags);
+  HRESULT GetOverlayImage (int iOverlay,[out] int *piIndex);
+};
+
+[local, uuid (192b9d83-50fc-457b-90a0-2b82a8b5dae1)]
+interface IImageList2 : IImageList {
+  HRESULT Resize (int cxNewIconSize, int cyNewIconSize);
+  HRESULT GetOriginalSize ([in] int iImage,[in] DWORD dwFlags,[out] int *pcx,[out] int *pcy);
+  HRESULT SetOriginalSize ([in] int iImage,[in] int cx,[in] int cy);
+  HRESULT SetCallback ([in, unique] IUnknown *punk);
+  HRESULT GetCallback ([in] REFIID riid,[out, iid_is (riid)] void **ppv);
+  HRESULT ForceImagePresent ([in] int iImage, DWORD dwFlags);
+  HRESULT DiscardImages ([in] int iFirstImage,[in] int iLastImage,[in] DWORD dwFlags);
+  HRESULT PreloadImages ([in] IMAGELISTDRAWPARAMS *pimldp);
+  HRESULT GetStatistics ([in, out] IMAGELISTSTATS *pils);
+  HRESULT Initialize ([in] int cx,[in] int cy,[in] UINT flags,[in] int cInitial,[in] int cGrow);
+  HRESULT Replace2 ([in] int i,[in] HBITMAP hbmImage,[in, unique] HBITMAP hbmMask,[in, unique] IUnknown *punk,[in] DWORD dwFlags);
+  HRESULT ReplaceFromImageList ([in] int i,[in] IImageList *pil,[in] int iSrc,[in, unique] IUnknown *punk,[in] DWORD dwFlags);
+};
+
+[uuid (BCADA15B-B428-420c-8d28-023590924c9f)]
+library CommonControlObjects {
+  [uuid (7c476ba2-02b1-48f4-8048-B24619DDC058)]
+  coclass ImageList {
+    interface IImageList;
+    interface IImageList2;
+  }
+};
+cpp_quote("#endif")

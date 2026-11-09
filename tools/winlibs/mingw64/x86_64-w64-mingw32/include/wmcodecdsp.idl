@@ -1,0 +1,429 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+import "mediaobj.idl";
+import "strmif.idl";
+
+[
+    object,
+    uuid(e6a49e22-c099-421d-aad3-c061fb4ae85b),
+    pointer_default(unique)
+]
+interface IWMColorConvProps : IUnknown
+{
+    HRESULT SetMode([in] LONG mode);
+    HRESULT SetFullCroppingParam(
+        [in] LONG src_left,
+        [in] LONG src_top,
+        [in] LONG dst_left,
+        [in] LONG dst_top,
+        [in] LONG width,
+        [in] LONG height);
+}
+
+[
+    object,
+    uuid(cee3def2-3808-414d-be66-fafd472210bc),
+    pointer_default(unique)
+]
+interface IWMValidate : IUnknown
+{
+    HRESULT SetIdentifier([in] GUID guidValidationID);
+}
+
+cpp_quote("DEFINE_GUID(MEDIASUBTYPE_I420,0x30323449,0x0000,0x0010,0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71);")
+cpp_quote("DEFINE_GUID(MEDIASUBTYPE_RAW_AAC1,0x000000ff,0x0000,0x0010,0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71);")
+cpp_quote("DEFINE_GUID(MEDIASUBTYPE_DVM,0x00002000,0x0000,0x0010,0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71);")
+cpp_quote("DEFINE_GUID(MEDIASUBTYPE_H264,0x34363248,0x0000,0x0010,0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71);")
+cpp_quote("DEFINE_GUID(MEDIASUBTYPE_h264,0x34363268,0x0000,0x0010,0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71);")
+cpp_quote("DEFINE_GUID(MEDIASUBTYPE_AVC1,0x31435641,0x0000,0x0010,0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71);")
+cpp_quote("DEFINE_GUID(MEDIASUBTYPE_X264,0x34363258,0x0000,0x0010,0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71);")
+cpp_quote("DEFINE_GUID(MEDIASUBTYPE_x264,0x34363278,0x0000,0x0010,0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71);")
+
+[
+    uuid(f371728a-6052-4d47-827c-d039335dfe0a)
+]
+coclass CMpeg4DecMediaObject {}
+
+[
+    uuid(cba9e78b-49a3-49ea-93d4-6bcba8c4de07)
+]
+coclass CMpeg43DecMediaObject {}
+
+[
+    uuid(2a11bae2-fe6e-4249-864b-9e9ed6e8dbc2)
+]
+coclass CMpeg4sDecMediaObject {}
+
+[
+    uuid(5686a0d9-fe39-409f-9dff-3fdbc849f9f5)
+]
+coclass CMpeg4sDecMFT {}
+
+[
+    uuid(c56fc25c-0fc6-404a-9503-b10bF51a8ab9)
+]
+coclass CZuneM4S2DecMediaObject {}
+
+[
+    uuid(24f258d8-c651-4042-93e4-ca654abb682c)
+]
+coclass CMpeg4EncMediaObject {}
+
+[
+    uuid(6ec5a7be-d81e-4f9e-ada3-cd1bf262b6d8)
+]
+coclass CMpeg4sEncMediaObject {}
+
+[
+    uuid(7bafb3b1-d8f4-4279-9253-27da423108de)
+]
+coclass CMSSCDecMediaObject {}
+
+[
+    uuid(8cb9cc06-d139-4ae6-8bb4-41e612e141d5)
+]
+coclass CMSSCEncMediaObject {}
+
+[
+    uuid(f7ffe0a0-a4f5-44b5-949e-15ed2bc66f9d)
+]
+coclass CMSSCEncMediaObject2 {}
+
+[
+    uuid(2eeb4adf-4578-4d10-bca7-bb955f56320a)
+]
+coclass CWMADecMediaObject {}
+
+[
+    uuid(70f598e9-f4ab-495a-99e2-a7c4d3d89abf)
+]
+coclass CWMAEncMediaObject {}
+
+[
+    uuid(edcad9cb-3127-40df-b527-0152ccb3f6f5)
+]
+coclass CWMATransMediaObject {}
+
+[
+    uuid(874131cb-4ecc-443b-8948-746b89595d20)
+]
+coclass CWMSPDecMediaObject {}
+
+[
+    uuid(67841b03-c689-4188-ad3f-4c9ebeec710b)
+]
+coclass CWMSPEncMediaObject {}
+
+[
+    uuid(1f1f4e1a-2252-4063-84bb-eee75f8856d5)
+]
+coclass CWMSPEncMediaObject2 {}
+
+[
+    uuid(f9dbc64e-2dd0-45dd-9b52-66642ef94431)
+]
+coclass CWMTDecMediaObject {}
+
+[
+    uuid(60b67652-e46b-4e44-8609-f74bffdc083c)
+]
+coclass CWMTEncMediaObject {}
+
+[
+    uuid(82d353df-90bd-4382-8bc2-3f6192b76e34)
+]
+coclass CWMVDecMediaObject {}
+
+[
+    uuid(96b57cdd-8966-410c-bb1f-c97eea765c04)
+]
+coclass CWMVEncMediaObject2 {}
+
+[
+    uuid(7e320092-596a-41b2-bbeb-175d10504eb6)
+]
+coclass CWMVXEncMediaObject {}
+
+[
+    uuid(d23b90d0-144f-46bd-841d-59e4eb19dc59)
+]
+coclass CWMV9EncMediaObject {}
+
+[
+    uuid(c9bfbccf-e60e-4588-a3df-5a03b1fd9585)
+]
+coclass CWVC1DecMediaObject {}
+
+[
+    uuid(44653d0d-8cca-41e7-baca-884337b747ac)
+]
+coclass CWVC1EncMediaObject {}
+
+[
+    uuid(49034c05-f43c-400f-84c1-90a683195a3a)
+]
+coclass CDeColorConvMediaObject {}
+
+[
+    uuid(e54709c5-1e17-4c8d-94e7-478940433584)
+]
+coclass CDVDecoderMediaObject {}
+
+[
+    uuid(c82ae729-c327-4cce-914d-8171fefebefb)
+]
+coclass CDVEncoderMediaObject {}
+
+[
+    uuid(863d66cd-cdce-4617-b47f-c8929cfc28a6)
+]
+coclass CMpeg2DecMediaObject {}
+
+[
+    uuid(9910c5cd-95c9-4e06-865a-efa1c8016bf4)
+]
+coclass CPK_DS_MPEG2Decoder {}
+
+[
+    uuid(03d7c802-ecfa-47d9-b268-5fb3e310dee4)
+]
+coclass CAC3DecMediaObject {}
+
+[
+    uuid(6c9c69d6-0ffc-4481-afdb-cdf1c79c6f3e)
+]
+coclass CPK_DS_AC3Decoder {}
+
+[
+    uuid(bbeea841-0a63-4f52-a7ab-a9b3a84ed38a)
+]
+coclass CMP3DecMediaObject {}
+
+[
+    uuid(f447b69e-1884-4a7e-8055-346f74d6edb3)
+]
+coclass CResamplerMediaObject {}
+
+[
+    uuid(d3ec8b8b-7728-4fd8-9fe0-7b67d19f73a3)
+]
+coclass CResizerMediaObject {}
+
+[
+    uuid(b5a89c80-4901-407b-9abc-90d9a644bb46)
+]
+coclass CInterlaceMediaObject {}
+
+[
+    uuid(62dc1a93-ae24-464c-a43e-452f824c4250)
+]
+coclass CWMAudioLFXAPO {}
+
+[
+    uuid(637c490d-eee3-4c0a-973f-371958802da2)
+]
+coclass CWMAudioGFXAPO {}
+
+[
+    uuid(5210f8e4-b0bb-47c3-a8d9-7b2282cc79ed)
+]
+coclass CWMAudioSpdTxDMO {}
+
+[
+    uuid(745057c7-f353-4f2d-a7ee-58434477730e)
+]
+coclass CWMAudioAEC {}
+
+[
+    uuid(36e820c4-165a-4521-863c-619e1160d4d4)
+]
+coclass CClusterDetectorDmo{}
+
+[
+    uuid(798059f0-89ca-4160-b325-aeb48efe4f9a)
+]
+coclass CColorControlDmo {}
+
+[
+    uuid(98230571-0087-4204-b020-3282538e57d3)
+]
+coclass CColorConvertDMO {}
+
+[
+    uuid(fdfaa753-e48e-4e33-9c74-98a27fc6726a)
+]
+coclass CColorLegalizerDmo {}
+
+[
+    uuid(0a7cfe1b-6ab5-4334-9ed8-3f97cb37daa1)
+]
+coclass CFrameInterpDMO {}
+
+[
+    uuid(01f36ce2-0907-4d8b-979d-f151be91c883)
+]
+coclass CFrameRateConvertDmo {}
+
+[
+    uuid(1ea1ea14-48f4-4054-ad1a-e8aee10ac805)
+]
+coclass CResizerDMO {}
+
+[
+    uuid(56aefacd-110c-4397-9292-b0a0c61b6750)
+]
+coclass CShotDetectorDmo {}
+
+[
+    uuid(bde6388b-da25-485d-ba7f-fabc28b20318)
+]
+coclass CSmpteTransformsDmo {}
+
+[
+    uuid(559c6bad-1ea8-4963-a087-8a6810f9218b)
+]
+coclass CThumbnailGeneratorDmo {}
+
+[
+    uuid(4dda1941-77a0-4fb1-a518-e2185041d70c)
+]
+coclass CTocGeneratorDmo {}
+
+[
+    uuid(8DDE1772-EDAD-41c3-B4BE-1F30FB4EE0D6)
+]
+coclass CMPEGAACDecMediaObject {}
+
+[
+    uuid(3CB2BDE4-4E29-4c44-A73E-2D7C2C46D6EC)
+]
+coclass CNokiaAACDecMediaObject {}
+
+[
+    uuid(7F36F942-DCF3-4d82-9289-5B1820278F7C)
+]
+coclass CVodafoneAACDecMediaObject {}
+
+[
+    uuid(A74E98F2-52D6-4b4e-885B-E0A6CA4F187A)
+]
+coclass CZuneAACCCDecMediaObject {}
+
+[
+    uuid(EABF7A6F-CCBA-4d60-8620-B152CC977263)
+]
+coclass CNokiaAACCCDecMediaObject {}
+
+[
+    uuid(7E76BF7F-C993-4e26-8FAB-470A70C0D59C)
+]
+coclass CVodafoneAACCCDecMediaObject {}
+
+[
+    uuid(5F5AFF4A-2F7F-4279-88C2-CD88EB39D144)
+]
+coclass CMPEG2EncoderDS {}
+
+[
+    uuid(42150cd9-ca9a-4ea5-9939-30ee037f6e74)
+]
+coclass CMPEG2EncoderVideoDS {}
+
+[
+    uuid(acd453bc-c58a-44d1-bbf5-bfb325be2d78)
+]
+coclass CMPEG2EncoderAudioDS {}
+
+[
+    uuid(E1F1A0B8-BEEE-490d-BA7C-066C40B5E2B9)
+]
+coclass CMPEG2AudDecoderDS {}
+
+[
+    uuid(212690FB-83E5-4526-8FD7-74478B7939CD)
+]
+coclass CMPEG2VidDecoderDS {}
+
+[
+    uuid(8E269032-FE03-4753-9B17-18253C21722E)
+]
+coclass CDTVAudDecoderDS {}
+
+[
+    uuid(64777DC8-4E24-4beb-9D19-60A35BE1DAAF)
+]
+coclass CDTVVidDecoderDS {}
+
+[
+    uuid(C6B400E2-20A7-4e58-A2FE-24619682CE6C)
+]
+coclass CMSAC3Enc {}
+
+[
+    uuid(62ce7e72-4c71-4d20-b15d-452831a87d9d)
+]
+coclass CMSH264DecoderMFT {}
+
+[
+    uuid(6ca50344-051a-4ded-9779-a43305165e35)
+]
+coclass CMSH264EncoderMFT {}
+
+[
+    uuid(05a47ebb-8Bf0-4cbf-ad2f-3b71d75866f5)
+]
+coclass CMSH264RemuxMFT {}
+
+[
+    uuid(32d186a7-218f-4c75-8876-dd77273a8999)
+]
+coclass CMSAACDecMFT {}
+
+[
+    uuid(93af0c51-2275-45d2-a35b-f2ba21caed00)
+]
+coclass AACMFTEncoder {}
+
+[
+    uuid(177c0afe-900b-48d4-9e4c-57add250b3d4)
+]
+coclass CMSDDPlusDecMFT {}
+
+[
+    uuid(e6335f02-80b7-4dc4-adfa-dfe7210d20d5)
+]
+coclass CMPEG2VideoEncoderMFT {}
+
+[
+    uuid(46a4dd5c-73f8-4304-94df-308f760974f4)
+]
+coclass CMPEG2AudioEncoderMFT {}
+
+[
+    uuid(2d709e52-123f-49b5-9cbc-9af5cde28fb9)
+]
+coclass CMSMPEGDecoderMFT {}
+
+[
+    uuid(70707b39-b2ca-4015-abea-f8447d22d88B)
+]
+coclass CMSMPEGAudDecMFT {}
+
+[
+    uuid(ac3315c9-f481-45d7-826C-0b406c1f64b8)
+]
+coclass CMSDolbyDigitalEncMFT {}
+
+[
+    uuid(11103421-354c-4cca-a7a3-1aff9a5b6701)
+]
+coclass MP3ACMCodecWrapper {}
+
+[
+    uuid(51571744-7fe4-4ff2-a498-2dc34ff74f1b)
+]
+coclass CMSVideoDSPMFT {}

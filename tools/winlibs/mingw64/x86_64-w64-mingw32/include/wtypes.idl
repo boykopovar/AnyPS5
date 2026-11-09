@@ -1,0 +1,581 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+
+import "wtypesbase.idl";
+
+cpp_quote("")
+[uuid (D3980A60-910c-1068-9341-00dd010f2f1c), version (0.1), pointer_default (unique)]
+interface IWinTypes {
+  typedef struct tagRemHGLOBAL {
+    long fNullHGlobal;
+    unsigned long cbData;
+    [size_is (cbData)] byte data[];
+  } RemHGLOBAL;
+
+cpp_quote("")
+  typedef struct tagRemHMETAFILEPICT {
+    long mm;
+    long xExt;
+    long yExt;
+    unsigned long cbData;
+    [size_is (cbData)] byte data[];
+  } RemHMETAFILEPICT;
+
+cpp_quote("")
+  typedef struct tagRemHENHMETAFILE {
+    unsigned long cbData;
+    [size_is (cbData)] byte data[];
+  } RemHENHMETAFILE;
+  typedef struct tagRemHBITMAP {
+    unsigned long cbData;
+    [size_is (cbData)] byte data[];
+  } RemHBITMAP;
+
+cpp_quote("")
+  typedef struct tagRemHPALETTE {
+    unsigned long cbData;
+    [size_is (cbData)] byte data[];
+  } RemHPALETTE;
+
+cpp_quote("")
+  typedef struct tagRemBRUSH {
+    unsigned long cbData;
+    [size_is (cbData)] byte data[];
+  } RemHBRUSH;
+
+  cpp_quote("#if 0")
+  typedef UINT_PTR WPARAM;
+  typedef LONG_PTR LPARAM;
+  typedef LONG_PTR LRESULT;
+
+#define DECLARE_WIREM_HANDLE(name) typedef [wire_marshal (wire ## name)] void *name
+#define DECLARE_HANDLE(name) typedef void *name
+
+  DECLARE_HANDLE (HMODULE);
+  DECLARE_HANDLE (HINSTANCE);
+  DECLARE_HANDLE (HTASK);
+  DECLARE_HANDLE (HKEY);
+  DECLARE_HANDLE (HDESK);
+  DECLARE_HANDLE (HMF);
+  DECLARE_HANDLE (HEMF);
+  DECLARE_HANDLE (HPEN);
+  DECLARE_HANDLE (HRSRC);
+  DECLARE_HANDLE (HSTR);
+  DECLARE_HANDLE (HWINSTA);
+  DECLARE_HANDLE (HKL);
+  DECLARE_HANDLE (HGDIOBJ);
+  typedef HANDLE HDWP;
+  typedef INT HFILE;
+
+  typedef DWORD COLORREF;
+  typedef DWORD *LPCOLORREF;
+
+  typedef struct _RECTL {
+    LONG left;
+    LONG top;
+    LONG right;
+    LONG bottom;
+  } RECTL,*PRECTL,*LPRECTL;
+
+  typedef struct tagPOINT {
+    LONG x;
+    LONG y;
+  } POINT,*PPOINT,*LPPOINT;
+
+  typedef struct _POINTL {
+    LONG x;
+    LONG y;
+  } POINTL,*PPOINTL;
+
+  typedef struct tagSIZE {
+    LONG cx;
+    LONG cy;
+  } SIZE,*PSIZE,*LPSIZE;
+
+  typedef struct tagSIZEL {
+    LONG cx;
+    LONG cy;
+  } SIZEL,*PSIZEL,*LPSIZEL;
+
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#ifndef _PALETTEENTRY_DEFINED")
+  cpp_quote("#define _PALETTEENTRY_DEFINED")
+  cpp_quote("")
+  typedef struct tagPALETTEENTRY {
+    BYTE peRed;
+    BYTE peGreen;
+    BYTE peBlue;
+    BYTE peFlags;
+  } PALETTEENTRY,*PPALETTEENTRY,*LPPALETTEENTRY;
+  cpp_quote("#endif")
+  cpp_quote("")
+  cpp_quote("#ifndef _LOGPALETTE_DEFINED")
+  cpp_quote("#define _LOGPALETTE_DEFINED")
+  cpp_quote("")
+  typedef struct tagLOGPALETTE {
+    WORD palVersion;
+    WORD palNumEntries;
+    [size_is (palNumEntries)] PALETTEENTRY palPalEntry[];
+  } LOGPALETTE,*PLOGPALETTE,*LPLOGPALETTE;
+  cpp_quote("#endif")
+  cpp_quote("")
+  cpp_quote("#ifndef _WINDEF_")
+  typedef const RECTL *LPCRECTL;
+  typedef struct tagRECT {
+    LONG left;
+    LONG top;
+    LONG right;
+    LONG bottom;
+  } RECT,*PRECT,*LPRECT;
+  typedef const RECT *LPCRECT;
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#if 0")
+  typedef FMTID *REFFMTID;
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#ifndef _ROTFLAGS_DEFINED")
+  cpp_quote("#define _ROTFLAGS_DEFINED")
+  cpp_quote("#define ROTFLAGS_REGISTRATIONKEEPSALIVE 0x1")
+  cpp_quote("#define ROTFLAGS_ALLOWANYCLIENT 0x2")
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#ifndef _ROT_COMPARE_MAX_DEFINED")
+  cpp_quote("#define _ROT_COMPARE_MAX_DEFINED")
+  cpp_quote("#define ROT_COMPARE_MAX 2048")
+  cpp_quote("#endif")
+
+cpp_quote("")
+  typedef enum tagDVASPECT {
+    DVASPECT_CONTENT = 1,
+    DVASPECT_THUMBNAIL = 2,
+    DVASPECT_ICON = 4,
+    DVASPECT_DOCPRINT = 8
+  } DVASPECT;
+
+  cpp_quote("")
+  typedef enum tagSTGC {
+    STGC_DEFAULT = 0,
+    STGC_OVERWRITE = 1,
+    STGC_ONLYIFCURRENT = 2,
+    STGC_DANGEROUSLYCOMMITMERELYTODISKCACHE = 4,
+    STGC_CONSOLIDATE = 8
+  } STGC;
+
+cpp_quote("")
+  typedef enum tagSTGMOVE {
+    STGMOVE_MOVE = 0,
+    STGMOVE_COPY = 1,
+    STGMOVE_SHALLOWCOPY = 2
+  } STGMOVE;
+
+cpp_quote("")
+  typedef enum tagSTATFLAG {
+    STATFLAG_DEFAULT = 0,
+    STATFLAG_NONAME = 1,
+    STATFLAG_NOOPEN = 2
+  } STATFLAG;
+  typedef [context_handle] void *HCONTEXT;
+cpp_quote("")
+  cpp_quote("#ifndef _LCID_DEFINED")
+  cpp_quote("#define _LCID_DEFINED")
+  typedef DWORD LCID;
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#ifndef _LANGID_DEFINED")
+  cpp_quote("#define _LANGID_DEFINED")
+  typedef USHORT LANGID;
+  cpp_quote("#endif")
+
+cpp_quote("")
+  const unsigned long WDT_INPROC_CALL = 0x48746457;
+  const unsigned long WDT_REMOTE_CALL = 0x52746457;
+  const unsigned long WDT_INPROC64_CALL = 0x50746457;
+
+cpp_quote("")
+  typedef union _userCLIPFORMAT switch (long fContext) u {
+    case WDT_INPROC_CALL: DWORD dwValue;
+    case WDT_REMOTE_CALL: [string] wchar_t *pwszName;
+  } userCLIPFORMAT;
+cpp_quote("")
+  typedef [unique] userCLIPFORMAT *wireCLIPFORMAT;
+  typedef [wire_marshal (wireCLIPFORMAT)] WORD CLIPFORMAT;
+cpp_quote("")
+  typedef union _GDI_NONREMOTE switch (long fContext) u {
+    case WDT_INPROC_CALL: long hInproc;
+    case WDT_REMOTE_CALL: DWORD_BLOB *hRemote;
+  } GDI_NONREMOTE;
+cpp_quote("")
+  typedef union _userHGLOBAL switch (long fContext) u {
+    case WDT_INPROC_CALL: long hInproc;
+    case WDT_REMOTE_CALL: FLAGGED_BYTE_BLOB *hRemote;
+    case WDT_INPROC64_CALL: __int64 hInproc64;
+  } userHGLOBAL;
+cpp_quote("")
+  typedef [unique] userHGLOBAL *wireHGLOBAL;
+cpp_quote("")
+  typedef union _userHMETAFILE switch (long fContext) u {
+    case WDT_INPROC_CALL: long hInproc;
+    case WDT_REMOTE_CALL: BYTE_BLOB *hRemote;
+    case WDT_INPROC64_CALL: __int64 hInproc64;
+  } userHMETAFILE;
+cpp_quote("")
+  typedef struct _remoteMETAFILEPICT {
+    long mm;
+    long xExt;
+    long yExt;
+    userHMETAFILE *hMF;
+  } remoteMETAFILEPICT;
+cpp_quote("")
+  typedef union _userHMETAFILEPICT switch (long fContext) u {
+    case WDT_INPROC_CALL: long hInproc;
+    case WDT_REMOTE_CALL: remoteMETAFILEPICT *hRemote;
+    case WDT_INPROC64_CALL: __int64 hInproc64;
+  } userHMETAFILEPICT;
+cpp_quote("")
+  typedef union _userHENHMETAFILE switch (long fContext) u {
+    case WDT_INPROC_CALL: long hInproc;
+    case WDT_REMOTE_CALL: BYTE_BLOB *hRemote;
+    case WDT_INPROC64_CALL: __int64 hInproc64;
+  } userHENHMETAFILE;
+cpp_quote("")
+  typedef struct _userBITMAP {
+    LONG bmType;
+    LONG bmWidth;
+    LONG bmHeight;
+    LONG bmWidthBytes;
+    WORD bmPlanes;
+    WORD bmBitsPixel;
+    ULONG cbSize;
+    [size_is (cbSize)] byte pBuffer[];
+  } userBITMAP;
+cpp_quote("")
+  typedef union _userHBITMAP switch (long fContext) u {
+    case WDT_INPROC_CALL: long hInproc;
+    case WDT_REMOTE_CALL: userBITMAP *hRemote;
+    case WDT_INPROC64_CALL: __int64 hInproc64;
+  } userHBITMAP;
+cpp_quote("")
+  typedef union _userHPALETTE switch (long fContext) u {
+    case WDT_INPROC_CALL: long hInproc;
+    case WDT_REMOTE_CALL: LOGPALETTE *hRemote;
+    case WDT_INPROC64_CALL: __int64 hInproc64;
+  } userHPALETTE;
+cpp_quote("")
+  typedef union _RemotableHandle switch (long fContext) u {
+    case WDT_INPROC_CALL: long hInproc;
+    case WDT_REMOTE_CALL: long hRemote;
+  } RemotableHandle;
+cpp_quote("")
+  typedef [unique] RemotableHandle *wireHWND;
+  typedef [unique] RemotableHandle *wireHMENU;
+  typedef [unique] RemotableHandle *wireHACCEL;
+  typedef [unique] RemotableHandle *wireHBRUSH;
+  typedef [unique] RemotableHandle *wireHFONT;
+  typedef [unique] RemotableHandle *wireHDC;
+  typedef [unique] RemotableHandle *wireHICON;
+  typedef [unique] RemotableHandle *wireHRGN;
+  typedef [unique] RemotableHandle *wireHMONITOR;
+cpp_quote("")
+  cpp_quote("#if 0")
+#ifndef _MIDL_DECLARE_WIREM_HANDLE
+  DECLARE_WIREM_HANDLE (HWND);
+  DECLARE_WIREM_HANDLE (HMENU);
+  DECLARE_WIREM_HANDLE (HACCEL);
+  DECLARE_WIREM_HANDLE (HBRUSH);
+  DECLARE_WIREM_HANDLE (HFONT);
+  DECLARE_WIREM_HANDLE (HDC);
+  DECLARE_WIREM_HANDLE (HICON);
+  DECLARE_WIREM_HANDLE (HRGN);
+  DECLARE_WIREM_HANDLE (HMONITOR);
+#endif
+
+cpp_quote("")
+  cpp_quote("#ifndef _HCURSOR_DEFINED")
+  cpp_quote("#define _HCURSOR_DEFINED")
+  typedef HICON HCURSOR;
+  cpp_quote("#endif")
+  cpp_quote("")
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#ifndef _TEXTMETRIC_DEFINED")
+  cpp_quote("#define _TEXTMETRIC_DEFINED")
+cpp_quote("")
+  typedef struct tagTEXTMETRICW {
+    LONG tmHeight;
+    LONG tmAscent;
+    LONG tmDescent;
+    LONG tmInternalLeading;
+    LONG tmExternalLeading;
+    LONG tmAveCharWidth;
+    LONG tmMaxCharWidth;
+    LONG tmWeight;
+    LONG tmOverhang;
+    LONG tmDigitizedAspectX;
+    LONG tmDigitizedAspectY;
+    WCHAR tmFirstChar;
+    WCHAR tmLastChar;
+    WCHAR tmDefaultChar;
+    WCHAR tmBreakChar;
+    BYTE tmItalic;
+    BYTE tmUnderlined;
+    BYTE tmStruckOut;
+    BYTE tmPitchAndFamily;
+    BYTE tmCharSet;
+  } TEXTMETRICW,*PTEXTMETRICW,*LPTEXTMETRICW;
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#ifndef _WIN32")
+  cpp_quote("#ifndef WINAPI")
+  typedef struct tagMSG {
+    HWND hwnd;
+    UINT message;
+    WPARAM wParam;
+    LPARAM lParam;
+    DWORD time;
+    POINT pt;
+  } MSG,*PMSG,*NPMSG,*LPMSG;
+  cpp_quote("#endif")
+  cpp_quote("#endif")
+
+cpp_quote("")
+  typedef [unique] userHBITMAP *wireHBITMAP;
+  typedef [unique] userHPALETTE *wireHPALETTE;
+  typedef [unique] userHENHMETAFILE *wireHENHMETAFILE;
+  typedef [unique] userHMETAFILE *wireHMETAFILE;
+  typedef [unique] userHMETAFILEPICT *wireHMETAFILEPICT;
+cpp_quote("")
+  cpp_quote("#if 0")
+  DECLARE_WIREM_HANDLE (HGLOBAL);
+  typedef HGLOBAL HLOCAL;
+  DECLARE_WIREM_HANDLE (HBITMAP);
+  DECLARE_WIREM_HANDLE (HPALETTE);
+  DECLARE_WIREM_HANDLE (HENHMETAFILE);
+  DECLARE_WIREM_HANDLE (HMETAFILE);
+  cpp_quote("#endif")
+cpp_quote("")
+  DECLARE_WIREM_HANDLE (HMETAFILEPICT);
+}
+
+cpp_quote("")
+typedef double DATE;
+cpp_quote("")
+cpp_quote("#ifndef _tagCY_DEFINED")
+cpp_quote("#define _tagCY_DEFINED")
+cpp_quote("#define _CY_DEFINED")
+cpp_quote("")
+cpp_quote("#if 0")
+typedef struct tagCY {
+  LONGLONG int64;
+} CY;
+cpp_quote("#else")
+cpp_quote("typedef union tagCY {")
+cpp_quote("  __C89_NAMELESS struct {")
+cpp_quote("    unsigned __LONG32 Lo;")
+cpp_quote("    __LONG32 Hi;")
+cpp_quote("  } DUMMYSTRUCTNAME;")
+cpp_quote("  LONGLONG int64;")
+cpp_quote("} CY;")
+cpp_quote("#endif")
+cpp_quote("#endif")
+
+cpp_quote("")
+typedef CY *LPCY;
+cpp_quote("")
+cpp_quote("#if 0")
+typedef struct tagDEC {
+  USHORT wReserved;
+  BYTE scale;
+  BYTE sign;
+  ULONG Hi32;
+  ULONGLONG Lo64;
+} DECIMAL;
+cpp_quote("#else")
+cpp_quote("typedef struct tagDEC {")
+cpp_quote("  USHORT wReserved;")
+cpp_quote("  __C89_NAMELESS union {")
+cpp_quote("    __C89_NAMELESS struct {")
+cpp_quote("      BYTE scale;")
+cpp_quote("      BYTE sign;")
+cpp_quote("    } DUMMYSTRUCTNAME;")
+cpp_quote("    USHORT signscale;")
+cpp_quote("  } DUMMYUNIONNAME;")
+cpp_quote("  ULONG Hi32;")
+cpp_quote("  __C89_NAMELESS union {")
+cpp_quote("    __C89_NAMELESS struct {")
+cpp_quote("      ULONG Lo32;")
+cpp_quote("      ULONG Mid32;")
+cpp_quote("    } DUMMYSTRUCTNAME2;")
+cpp_quote("    ULONGLONG Lo64;")
+cpp_quote("  } DUMMYUNIONNAME2;")
+cpp_quote("} DECIMAL;")
+
+cpp_quote("")
+cpp_quote("#define DECIMAL_NEG ((BYTE)0x80)")
+cpp_quote("#define DECIMAL_SETZERO(dec) { (dec).Lo64 = 0; (dec).Hi32 = 0; (dec).signscale = 0; }")
+cpp_quote("#endif")
+
+cpp_quote("")
+typedef DECIMAL *LPDECIMAL;
+
+cpp_quote("")
+typedef [unique] FLAGGED_WORD_BLOB *wireBSTR;
+typedef [wire_marshal (wireBSTR)] OLECHAR *BSTR;
+cpp_quote("")
+typedef BSTR *LPBSTR;
+cpp_quote("")
+typedef short VARIANT_BOOL;
+cpp_quote("#if 0")
+typedef VARIANT_BOOL _VARIANT_BOOL;
+cpp_quote("#else")
+cpp_quote("#define _VARIANT_BOOL /##/")
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#ifndef _tagBSTRBLOB_DEFINED")
+cpp_quote("#define _tagBSTRBLOB_DEFINED")
+cpp_quote("")
+typedef struct tagBSTRBLOB {
+  ULONG cbSize;
+  [size_is (cbSize)] BYTE *pData;
+} BSTRBLOB,*LPBSTRBLOB;
+cpp_quote("#endif")
+cpp_quote("")
+
+cpp_quote("#define VARIANT_TRUE ((VARIANT_BOOL)-1)")
+cpp_quote("#define VARIANT_FALSE ((VARIANT_BOOL)0)")
+
+cpp_quote("")
+typedef struct tagCLIPDATA {
+  ULONG cbSize;
+  long ulClipFmt;
+  [size_is (cbSize-4)] BYTE *pClipData;
+} CLIPDATA;
+cpp_quote("")
+cpp_quote("#define CBPCLIPDATA(clipdata) ((clipdata).cbSize - sizeof((clipdata).ulClipFmt))")
+
+cpp_quote("")
+typedef unsigned short VARTYPE;
+
+cpp_quote("")
+enum VARENUM {
+  VT_EMPTY = 0,
+  VT_NULL = 1,
+  VT_I2 = 2,
+  VT_I4 = 3,
+  VT_R4 = 4,
+  VT_R8 = 5,
+  VT_CY = 6,
+  VT_DATE = 7,
+  VT_BSTR = 8,
+  VT_DISPATCH = 9,
+  VT_ERROR = 10,
+  VT_BOOL = 11,
+  VT_VARIANT = 12,
+  VT_UNKNOWN = 13,
+  VT_DECIMAL = 14,
+  VT_I1 = 16,
+  VT_UI1 = 17,
+  VT_UI2 = 18,
+  VT_UI4 = 19,
+  VT_I8 = 20,
+  VT_UI8 = 21,
+  VT_INT = 22,
+  VT_UINT = 23,
+  VT_VOID = 24,
+  VT_HRESULT = 25,
+  VT_PTR = 26,
+  VT_SAFEARRAY = 27,
+  VT_CARRAY = 28,
+  VT_USERDEFINED = 29,
+  VT_LPSTR = 30,
+  VT_LPWSTR = 31,
+  VT_RECORD = 36,
+  VT_INT_PTR = 37,
+  VT_UINT_PTR = 38,
+  VT_FILETIME = 64,
+  VT_BLOB = 65,
+  VT_STREAM = 66,
+  VT_STORAGE = 67,
+  VT_STREAMED_OBJECT = 68,
+  VT_STORED_OBJECT = 69,
+  VT_BLOB_OBJECT = 70,
+  VT_CF = 71,
+  VT_CLSID = 72,
+  VT_VERSIONED_STREAM= 73,
+  VT_BSTR_BLOB = 0x0fff,
+  VT_VECTOR = 0x1000,
+  VT_ARRAY = 0x2000,
+  VT_BYREF = 0x4000,
+  VT_RESERVED = 0x8000,
+  VT_ILLEGAL = 0xffff,
+  VT_ILLEGALMASKED = 0x0fff,
+  VT_TYPEMASK = 0x0fff
+};
+cpp_quote("")
+typedef ULONG PROPID;
+cpp_quote("")
+cpp_quote("#ifndef PROPERTYKEY_DEFINED")
+cpp_quote("#define PROPERTYKEY_DEFINED")
+cpp_quote("")
+typedef struct _tagpropertykey {
+  GUID fmtid;
+  DWORD pid;
+} PROPERTYKEY;
+cpp_quote("#endif")
+
+cpp_quote("")
+typedef struct tagCSPLATFORM {
+  DWORD dwPlatformId;
+  DWORD dwVersionHi;
+  DWORD dwVersionLo;
+  DWORD dwProcessorArch;
+} CSPLATFORM;
+
+cpp_quote("")
+typedef struct tagQUERYCONTEXT {
+  DWORD dwContext;
+  CSPLATFORM Platform;
+  LCID Locale;
+  DWORD dwVersionHi;
+  DWORD dwVersionLo;
+} QUERYCONTEXT;
+
+cpp_quote("")
+typedef [v1_enum] enum tagTYSPEC {
+  TYSPEC_CLSID,
+  TYSPEC_FILEEXT,
+  TYSPEC_MIMETYPE,
+  TYSPEC_FILENAME,
+  TYSPEC_PROGID,
+  TYSPEC_PACKAGENAME,
+  TYSPEC_OBJECTID
+} TYSPEC;
+
+cpp_quote("")
+typedef union switch (DWORD tyspec) {
+  case TYSPEC_CLSID: CLSID clsid;
+  case TYSPEC_FILEEXT: LPOLESTR pFileExt;
+  case TYSPEC_MIMETYPE: LPOLESTR pMimeType;
+  case TYSPEC_PROGID: LPOLESTR pProgId;
+  case TYSPEC_FILENAME: LPOLESTR pFileName;
+  case TYSPEC_PACKAGENAME: struct {
+    LPOLESTR pPackageName;
+    GUID PolicyId;
+  } ByName;
+  case TYSPEC_OBJECTID: struct {
+    GUID ObjectId;
+    GUID PolicyId;
+  } ByObjectId;
+} uCLSSPEC;

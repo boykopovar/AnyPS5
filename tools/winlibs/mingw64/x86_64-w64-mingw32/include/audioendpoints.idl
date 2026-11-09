@@ -1,0 +1,20 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+
+import "unknwn.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+[object, local, uuid (784cfd40-9f89-456e-A1A6-873b006a664e), nonextensible, helpstring ("IAudioEndpointFormat interface"), pointer_default (unique)]
+interface IAudioEndpointFormatControl : IUnknown {
+  [helpstring ("method ResetToDefault")]
+  HRESULT ResetToDefault ([in] DWORD ResetFlags);
+};
+
+cpp_quote("")
+cpp_quote("#define ENDPOINT_FORMAT_RESET_MIX_ONLY 0x1")
+cpp_quote("#endif")

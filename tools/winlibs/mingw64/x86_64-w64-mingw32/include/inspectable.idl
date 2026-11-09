@@ -1,0 +1,46 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+import "wtypes.idl";
+import "hstring.idl";
+import "unknwn.idl";
+
+typedef enum TrustLevel { 
+  BaseTrust     = 0,
+  PartialTrust  = 1,
+  FullTrust     = 2
+} TrustLevel;
+
+[
+    object,
+    uuid(af86e2e0-b12d-4c6a-9c5a-d7aa65101e90),
+    pointer_default(unique)
+]
+interface IInspectable : IUnknown
+{
+    HRESULT GetIids(
+            [out] ULONG *iidCount,
+            [out, size_is(*iidCount)]  IID **iids);
+
+    HRESULT GetRuntimeClassName(
+            [out] HSTRING *className);
+
+    HRESULT GetTrustLevel(
+            [out] TrustLevel *trustLevel);
+}
+
+cpp_quote("")
+cpp_quote("#if !defined (CINTERFACE) && defined (__cplusplus)")
+cpp_quote("extern \"C++\" {")
+cpp_quote("  template<typename T> void **IID_INS_ARGS_internal (T **p) {")
+cpp_quote("    static_cast<IInspectable *> (*p);")
+cpp_quote("    return reinterpret_cast<void **> (p);")
+cpp_quote("  }")
+cpp_quote("}")
+cpp_quote("")
+cpp_quote("#define IID_INS_ARGS(P) __uuidof(**(P)), IID_INS_ARGS_internal(P)")
+cpp_quote("#endif")
+

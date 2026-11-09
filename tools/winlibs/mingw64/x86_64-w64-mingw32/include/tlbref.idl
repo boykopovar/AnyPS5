@@ -1,0 +1,20 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+
+import "oaidl.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+[object, uuid (8f026edb-785e-4470-A8E1-B4E84E9D1779), pointer_default (unique)]
+interface ITypeLibResolver : IUnknown {
+  HRESULT ResolveTypeLib ([in] BSTR bstrSimpleName,[in] GUID tlbid,[in] LCID lcid,[in] USHORT wMajorVersion,[in] USHORT wMinorVersion,[in] SYSKIND syskind,[out] BSTR *pbstrResolvedTlbName);
+};
+
+cpp_quote("STDAPI LoadTypeLibWithResolver (LPCOLESTR szFile, REGKIND regkind, ITypeLibResolver *pTlbResolver, ITypeLib **pptlib);")
+cpp_quote("STDAPI GetTypeLibInfo (LPWSTR szFile, GUID *pTypeLibID, LCID *pTypeLibLCID, SYSKIND *pTypeLibPlatform, USHORT *pTypeLibMajorVer, USHORT *pTypeLibMinorVer);")
+
+cpp_quote("#endif")

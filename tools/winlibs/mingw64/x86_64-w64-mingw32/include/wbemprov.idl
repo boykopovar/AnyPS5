@@ -1,0 +1,161 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+
+import "objidl.idl";
+import "oleidl.idl";
+import "oaidl.idl";
+import "wbemcli.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+typedef VARIANT WBEM_VARIANT;
+typedef [string] LPWSTR WBEM_WSTR;
+typedef [string] LPCWSTR WBEM_CWSTR;
+
+typedef [v1_enum] enum tag_WBEM_PROVIDER_REQUIREMENTS_TYPE {
+  WBEM_REQUIREMENTS_START_POSTFILTER = 0,
+  WBEM_REQUIREMENTS_STOP_POSTFILTER = 1,
+  WBEM_REQUIREMENTS_RECHECK_SUBSCRIPTIONS = 2
+} WBEM_PROVIDER_REQUIREMENTS_TYPE;
+
+interface IWbemPropertyProvider;
+interface IWbemUnboundObjectSink;
+interface IWbemEventProvider;
+interface IWbemEventProviderQuerySink;
+interface IWbemEventProviderSecurity;
+interface IWbemEventConsumerProvider;
+interface IWbemProviderInitSink;
+interface IWbemProviderInit;
+interface IWbemHiPerfProvider;
+interface IWbemDecoupledRegistrar;
+
+[uuid (092df710-7010-11d1-ad90-00c04fd8fdff)]
+library WbemProviders_v1 {
+  [uuid (cb8555cc-9128-11d1-ad9b-00c04fd8fdff)]
+  coclass WbemAdministrativeLocator {
+    interface IWbemLocator;
+  };
+
+  [uuid (cd184336-9128-11d1-ad9b-00c04fd8fdff)]
+  coclass WbemAuthenticatedLocator {
+    interface IWbemLocator;
+  };
+
+  [uuid (443e7b79-DE31-11d2-B340-00104bcc4b4a)]
+  coclass WbemUnauthenticatedLocator {
+    interface IWbemLocator;
+  };
+
+  [uuid (4cfc7932-0f9d-4bef-9c32-8ea2a6b56fcb)]
+  coclass WbemDecoupledRegistrar {
+    interface IWbemDecoupledRegistrar;
+  };
+
+  [uuid (f5f75737-2843-4f22-933d-c76a97cda62f)]
+  coclass WbemDecoupledBasicEventProvider {
+    interface IWbemDecoupledBasicEventProvider;
+  };
+};
+
+typedef [v1_enum] enum tag_WBEM_BATCH_TYPE {
+  WBEM_FLAG_BATCH_IF_NEEDED = 0,
+  WBEM_FLAG_MUST_BATCH = 0x1,
+  WBEM_FLAG_MUST_NOT_BATCH = 0x2
+} WBEM_BATCH_TYPE;
+
+typedef enum tag_WBEM_PROVIDER_FLAGS {
+  WBEM_FLAG_OWNER_UPDATE = 0x10000
+} WBEM_PROVIDER_FLAGS;
+
+typedef enum tag_WBEM_EXTRA_RETURN_CODES {
+  WBEM_S_INITIALIZED = 0,
+  WBEM_S_LIMITED_SERVICE = 0x43001,
+  WBEM_S_INDIRECTLY_UPDATED,
+  WBEM_S_SUBJECT_TO_SDS,
+  WBEM_E_RETRY_LATER = 0x80043001,
+  WBEM_E_RESOURCE_CONTENTION
+} WBEM_EXTRA_RETURN_CODES;
+
+[object, restricted, uuid (e246107b-b06e-11d0-ad61-00c04fd8fdff)]
+interface IWbemUnboundObjectSink : IUnknown {
+  HRESULT IndicateToConsumer ([in] IWbemClassObject *pLogicalConsumer,[in] long lNumObjects,[in, size_is (lNumObjects)] IWbemClassObject **apObjects);
+};
+
+[object, restricted, uuid (ce61e841-65bc-11d0-b6bd-00aa003240c7)]
+interface IWbemPropertyProvider : IUnknown {
+  HRESULT GetProperty ([in] long lFlags,[in] const BSTR strLocale,[in] const BSTR strClassMapping,[in] const BSTR strInstMapping,[in] const BSTR strPropMapping,[out] VARIANT *pvValue);
+  HRESULT PutProperty ([in] long lFlags,[in] const BSTR strLocale,[in] const BSTR strClassMapping,[in] const BSTR strInstMapping,[in] const BSTR strPropMapping,[in] const VARIANT *pvValue);
+};
+
+[object, restricted, uuid (e245105b-b06e-11d0-ad61-00c04fd8fdff)]
+interface IWbemEventProvider : IUnknown {
+  HRESULT ProvideEvents ([in] IWbemObjectSink *pSink,[in] long lFlags);
+};
+
+[object, restricted, uuid (580acaf8-fa1c-11d0-ad72-00c04fd8fdff)]
+interface IWbemEventProviderQuerySink : IUnknown {
+  HRESULT NewQuery ([in] unsigned long dwId,[in] WBEM_WSTR wszQueryLanguage,[in] WBEM_WSTR wszQuery);
+  HRESULT CancelQuery ([in] unsigned long dwId);
+};
+
+[object, restricted, uuid (631f7d96-d993-11d2-b339-00105a1f4aaf)]
+interface IWbemEventProviderSecurity : IUnknown {
+  HRESULT AccessCheck ([in] WBEM_CWSTR wszQueryLanguage,[in] WBEM_CWSTR wszQuery,[in] long lSidLength,[in, size_is (lSidLength), unique] const BYTE *pSid);
+};
+
+[object, restricted, uuid (631f7d97-d993-11d2-b339-00105a1f4aaf)]
+interface IWbemProviderIdentity : IUnknown {
+  HRESULT SetRegistrationObject ([in] long lFlags,[in] IWbemClassObject *pProvReg);
+};
+
+[object, restricted, uuid (e246107a-b06e-11d0-ad61-00c04fd8fdff)]
+interface IWbemEventConsumerProvider : IUnknown {
+  HRESULT FindConsumer ([in] IWbemClassObject *pLogicalConsumer,[out] IWbemUnboundObjectSink **ppConsumer);
+};
+
+[object, uuid (1be41571-91dd-11d1-aeb2-00c04fb68820)]
+interface IWbemProviderInitSink : IUnknown {
+  HRESULT SetStatus ([in] LONG lStatus,[in] LONG lFlags);
+};
+
+[object, uuid (1be41572-91dd-11d1-aeb2-00c04fb68820)]
+interface IWbemProviderInit : IUnknown {
+  HRESULT Initialize ([in, unique, string] LPWSTR wszUser,[in] LONG lFlags,[in, string] LPWSTR wszNamespace,[in, unique, string] LPWSTR wszLocale,[in] IWbemServices *pNamespace,[in] IWbemContext *pCtx,[in] IWbemProviderInitSink *pInitSink);
+};
+
+[object, local, restricted, uuid (49353c93-516b-11d1-aea6-00c04fb68820)]
+interface IWbemHiPerfProvider : IUnknown {
+  HRESULT QueryInstances ([in] IWbemServices *pNamespace,[in, string] WCHAR *wszClass,[in] long lFlags,[in] IWbemContext *pCtx,[in] IWbemObjectSink *pSink);
+  HRESULT CreateRefresher ([in] IWbemServices *pNamespace,[in] long lFlags,[out] IWbemRefresher **ppRefresher);
+  HRESULT CreateRefreshableObject ([in] IWbemServices *pNamespace,[in] IWbemObjectAccess *pTemplate,[in] IWbemRefresher *pRefresher,[in] long lFlags,[in] IWbemContext *pContext,[out] IWbemObjectAccess **ppRefreshable,[out] long *plId);
+  HRESULT StopRefreshing ([in] IWbemRefresher *pRefresher,[in] long lId,[in] long lFlags);
+  HRESULT CreateRefreshableEnum ([in] IWbemServices *pNamespace,[in, string] LPCWSTR wszClass,[in] IWbemRefresher *pRefresher,[in] long lFlags,[in] IWbemContext *pContext,[in] IWbemHiPerfEnum *pHiPerfEnum,[out] long *plId);
+  HRESULT GetObjects ([in] IWbemServices *pNamespace,[in] long lNumObjects,[in, out, size_is (lNumObjects)] IWbemObjectAccess **apObj,[in] long lFlags,[in] IWbemContext *pContext);
+};
+
+[object, local, uuid (1005cbcf-e64f-4646-bcd3-3a089d8a84b4)]
+interface IWbemDecoupledRegistrar : IUnknown {
+  HRESULT Register ([in] long a_Flags,[in] IWbemContext *a_Context,[in] LPCWSTR a_User,[in] LPCWSTR a_Locale,[in] LPCWSTR a_Scope,[in] LPCWSTR a_Registration,[in] IUnknown *pIUnknown);
+  HRESULT UnRegister ();
+};
+
+[object, local, uuid (86336d20-ca11-4786-9ef1-bc8a946b42fc)]
+interface IWbemDecoupledBasicEventProvider : IWbemDecoupledRegistrar {
+  HRESULT GetSink ([in] long a_Flags,[in] IWbemContext *a_Context,[out] IWbemObjectSink **a_Sink);
+  HRESULT GetService ([in] long a_Flags,[in] IWbemContext *a_Context,[out] IWbemServices **a_Service);
+};
+
+[object, restricted, uuid (3ae0080a-7e3a-4366-bf89-0feedc931659)]
+interface IWbemEventSink : IWbemObjectSink {
+  HRESULT SetSinkSecurity ([in] long lSDLength,[in, size_is (lSDLength)] BYTE *pSD);
+  HRESULT IsActive ();
+  HRESULT GetRestrictedSink ([in] long lNumQueries,[in, size_is (lNumQueries), string] const LPCWSTR *awszQueries,[in] IUnknown *pCallback,[out] IWbemEventSink **ppSink);
+  HRESULT SetBatchingParameters ([in] LONG lFlags,[in] DWORD dwMaxBufferSize,[in] DWORD dwMaxSendLatency);
+};
+
+cpp_quote("#endif")

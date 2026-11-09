@@ -1,0 +1,234 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+cpp_quote("")
+
+import "ocidl.idl";
+import "oleidl.idl";
+
+cpp_quote("")
+interface IDebugProperty;
+interface IDebugExtendedProperty;
+interface IEnumDebugPropertyInfo;
+interface IEnumDebugExtendedPropertyInfo;
+interface IPerPropertyBrowsing2;
+cpp_quote("")
+cpp_quote("extern GUID guidDocument;")
+cpp_quote("extern GUID guidCodeContext;")
+
+cpp_quote("")
+enum {
+  DBGPROP_ATTRIB_NO_ATTRIB = 0x0,
+  DBGPROP_ATTRIB_VALUE_IS_INVALID = 0x8,
+  DBGPROP_ATTRIB_VALUE_IS_EXPANDABLE =0x10,
+  DBGPROP_ATTRIB_VALUE_IS_FAKE = 0x20,
+  DBGPROP_ATTRIB_VALUE_IS_METHOD = 0x100,
+  DBGPROP_ATTRIB_VALUE_IS_EVENT = 0x200,
+  DBGPROP_ATTRIB_VALUE_IS_RAW_STRING = 0x400,
+  DBGPROP_ATTRIB_VALUE_READONLY = 0x800,
+  DBGPROP_ATTRIB_ACCESS_PUBLIC = 0x1000,
+  DBGPROP_ATTRIB_ACCESS_PRIVATE = 0x2000,
+  DBGPROP_ATTRIB_ACCESS_PROTECTED = 0x4000,
+  DBGPROP_ATTRIB_ACCESS_FINAL = 0x8000,
+  DBGPROP_ATTRIB_STORAGE_GLOBAL = 0x10000,
+  DBGPROP_ATTRIB_STORAGE_STATIC = 0x20000,
+  DBGPROP_ATTRIB_STORAGE_FIELD = 0x40000,
+  DBGPROP_ATTRIB_STORAGE_VIRTUAL = 0x80000,
+  DBGPROP_ATTRIB_TYPE_IS_CONSTANT = 0x100000,
+  DBGPROP_ATTRIB_TYPE_IS_SYNCHRONIZED = 0x200000,
+  DBGPROP_ATTRIB_TYPE_IS_VOLATILE = 0x400000,
+  DBGPROP_ATTRIB_HAS_EXTENDED_ATTRIBS = 0x800000
+};
+
+cpp_quote("")
+typedef DWORD DBGPROP_ATTRIB_FLAGS;
+
+cpp_quote("")
+enum {
+  DBGPROP_INFO_NAME = 0x1,
+  DBGPROP_INFO_TYPE = 0x2,
+  DBGPROP_INFO_VALUE = 0x4,
+  DBGPROP_INFO_FULLNAME = 0x20,
+  DBGPROP_INFO_ATTRIBUTES = 0x8,
+  DBGPROP_INFO_DEBUGPROP = 0x10,
+  DBGPROP_INFO_BEAUTIFY = 0x2000000,
+  DBGPROP_INFO_CALLTOSTRING = 0x4000000,
+  DBGPROP_INFO_AUTOEXPAND = 0x8000000
+};
+
+cpp_quote("")
+typedef DWORD DBGPROP_INFO_FLAGS;
+
+cpp_quote("")
+const DBGPROP_INFO_FLAGS DBGPROP_INFO_STANDARD = DBGPROP_INFO_NAME | DBGPROP_INFO_TYPE | DBGPROP_INFO_VALUE | DBGPROP_INFO_ATTRIBUTES;
+const DBGPROP_INFO_FLAGS DBGPROP_INFO_ALL = DBGPROP_INFO_NAME | DBGPROP_INFO_TYPE | DBGPROP_INFO_VALUE | DBGPROP_INFO_FULLNAME | DBGPROP_INFO_ATTRIBUTES | DBGPROP_INFO_DEBUGPROP;
+
+cpp_quote("")
+typedef enum tagOBJECT_ATTRIB_FLAG {
+  OBJECT_ATTRIB_NO_ATTRIB = 0x0,
+  OBJECT_ATTRIB_NO_NAME = 0x1,
+  OBJECT_ATTRIB_NO_TYPE = 0x2,
+  OBJECT_ATTRIB_NO_VALUE = 0x4,
+  OBJECT_ATTRIB_VALUE_IS_INVALID = 0x8,
+  OBJECT_ATTRIB_VALUE_IS_OBJECT = 0x10,
+  OBJECT_ATTRIB_VALUE_IS_ENUM = 0x20,
+  OBJECT_ATTRIB_VALUE_IS_CUSTOM = 0x40,
+  OBJECT_ATTRIB_OBJECT_IS_EXPANDABLE =0x070,
+  OBJECT_ATTRIB_VALUE_HAS_CODE = 0x80,
+
+  OBJECT_ATTRIB_TYPE_IS_OBJECT = 0x100,
+  OBJECT_ATTRIB_TYPE_HAS_CODE = 0x200,
+  OBJECT_ATTRIB_TYPE_IS_EXPANDABLE = 0x100,
+  OBJECT_ATTRIB_SLOT_IS_CATEGORY = 0x400,
+  OBJECT_ATTRIB_VALUE_READONLY = 0x800,
+  OBJECT_ATTRIB_ACCESS_PUBLIC = 0x1000,
+  OBJECT_ATTRIB_ACCESS_PRIVATE = 0x2000,
+  OBJECT_ATTRIB_ACCESS_PROTECTED = 0x4000,
+  OBJECT_ATTRIB_ACCESS_FINAL = 0x8000,
+  OBJECT_ATTRIB_STORAGE_GLOBAL = 0x10000,
+  OBJECT_ATTRIB_STORAGE_STATIC = 0x20000,
+  OBJECT_ATTRIB_STORAGE_FIELD = 0x40000,
+  OBJECT_ATTRIB_STORAGE_VIRTUAL = 0x80000,
+  OBJECT_ATTRIB_TYPE_IS_CONSTANT = 0x100000,
+  OBJECT_ATTRIB_TYPE_IS_SYNCHRONIZED = 0x200000,
+  OBJECT_ATTRIB_TYPE_IS_VOLATILE = 0x400000,
+  OBJECT_ATTRIB_HAS_EXTENDED_ATTRIBS = 0x800000,
+  OBJECT_ATTRIB_IS_CLASS = 0x1000000,
+  OBJECT_ATTRIB_IS_FUNCTION = 0x2000000,
+  OBJECT_ATTRIB_IS_VARIABLE = 0x4000000,
+  OBJECT_ATTRIB_IS_PROPERTY = 0x8000000,
+  OBJECT_ATTRIB_IS_MACRO = 0x10000000,
+  OBJECT_ATTRIB_IS_TYPE = 0x20000000,
+  OBJECT_ATTRIB_IS_INHERITED = 0x40000000,
+  OBJECT_ATTRIB_IS_INTERFACE = 0x80000000
+} OBJECT_ATTRIB_FLAGS;
+
+cpp_quote("")
+typedef enum tagPROP_INFO_FLAGS {
+  PROP_INFO_NAME = 0x1,
+  PROP_INFO_TYPE = 0x2,
+  PROP_INFO_VALUE = 0x4,
+  PROP_INFO_FULLNAME = 0x20,
+  PROP_INFO_ATTRIBUTES = 0x8,
+  PROP_INFO_DEBUGPROP = 0x10,
+  PROP_INFO_AUTOEXPAND = 0x8000000
+} PROP_INFO_FLAGS;
+
+cpp_quote("")
+const DWORD PROP_INFO_STANDARD = PROP_INFO_NAME | PROP_INFO_TYPE | PROP_INFO_VALUE | PROP_INFO_ATTRIBUTES;
+const DWORD PROP_INFO_ALL = PROP_INFO_NAME | PROP_INFO_TYPE | PROP_INFO_VALUE | PROP_INFO_FULLNAME | PROP_INFO_ATTRIBUTES | PROP_INFO_DEBUGPROP;
+
+cpp_quote("")
+typedef struct tagDebugPropertyInfo {
+  DWORD m_dwValidFields;
+  BSTR m_bstrName;
+  BSTR m_bstrType;
+  BSTR m_bstrValue;
+  BSTR m_bstrFullName;
+  DWORD m_dwAttrib;
+  IDebugProperty *m_pDebugProp;
+} DebugPropertyInfo;
+
+cpp_quote("")
+typedef enum tagEX_PROP_INFO_FLAGS {
+  EX_PROP_INFO_ID = 0x100,
+  EX_PROP_INFO_NTYPE = 0x200,
+  EX_PROP_INFO_NVALUE = 0x400,
+  EX_PROP_INFO_LOCKBYTES = 0x800,
+  EX_PROP_INFO_DEBUGEXTPROP = 0x1000,
+} EX_PROP_INFO_FLAGS;
+typedef struct tagExtendedDebugPropertyInfo {
+  DWORD dwValidFields;
+  LPOLESTR pszName;
+  LPOLESTR pszType;
+  LPOLESTR pszValue;
+  LPOLESTR pszFullName;
+  DWORD dwAttrib;
+  IDebugProperty *pDebugProp;
+  DWORD nDISPID;
+  DWORD nType;
+  VARIANT varValue;
+  ILockBytes *plbValue;
+  IDebugExtendedProperty *pDebugExtProp;
+} ExtendedDebugPropertyInfo;
+
+cpp_quote("")
+[object, uuid (51973c50-CB0C-11d0-B5C9-00a0244a0e7a),, pointer_default (unique)]
+interface IDebugProperty : IUnknown {
+  [local] HRESULT GetPropertyInfo ([in] DWORD dwFieldSpec,[in] UINT nRadix,[out] DebugPropertyInfo *pPropertyInfo);
+  [call_as (GetPropertyInfo)] HRESULT RemoteGetPropertyInfo ([in] DWORD dwFieldSpec,[in] UINT nRadix,[out] DWORD *dwValidFields,[out] BSTR *pbstrName,[out] BSTR *pbstrType,[out] BSTR *pbstrValue,[out] BSTR *pbstrFullName,[out] DWORD *pdwAttrib,[in, out, unique] IDebugProperty **ppDebugProperty);
+  HRESULT GetExtendedInfo ([in] ULONG cInfos,[in, size_is (cInfos)] GUID *rgguidExtendedInfo,[out, size_is (cInfos)] VARIANT *rgvar);
+  HRESULT SetValueAsString ([in] LPCOLESTR pszValue,[in] UINT nRadix);
+  HRESULT EnumMembers ([in] DWORD dwFieldSpec,[in] UINT nRadix,[in] REFIID refiid,[out] IEnumDebugPropertyInfo **ppepi);
+  HRESULT GetParent ([out] IDebugProperty **ppDebugProp);
+};
+
+cpp_quote("")
+[object, uuid (51973c51-CB0C-11d0-B5C9-00a0244a0e7a), pointer_default (unique)]
+interface IEnumDebugPropertyInfo : IUnknown {
+  [local] HRESULT Next ([in] ULONG celt,[out] DebugPropertyInfo *pi,[out] ULONG *pcEltsfetched);
+  [call_as (Next)]
+  HRESULT __stdcall RemoteNext ([in] ULONG celt,[in, out, unique, size_is (celt), length_is (*pcEltsfetched)] DebugPropertyInfo *pinfo,[out] ULONG *pcEltsfetched);
+  HRESULT Skip ([in] ULONG celt);
+  HRESULT Reset (void);
+  HRESULT Clone ([out] IEnumDebugPropertyInfo **ppepi);
+  HRESULT GetCount ([out] ULONG *pcelt);
+};
+
+cpp_quote("")
+[object, uuid (51973c52-CB0C-11d0-B5C9-00a0244a0e7a), pointer_default (unique)]
+interface IDebugExtendedProperty : IDebugProperty {
+  HRESULT GetExtendedPropertyInfo ([in] DWORD dwFieldSpec,[in] UINT nRadix,[out] ExtendedDebugPropertyInfo *pExtendedPropertyInfo);
+  HRESULT EnumExtendedMembers ([in] DWORD dwFieldSpec,[in] UINT nRadix,[out] IEnumDebugExtendedPropertyInfo **ppeepi);
+};
+
+cpp_quote("")
+[object, uuid (51973c53-CB0C-11d0-B5C9-00a0244a0e7a), pointer_default (unique)]
+interface IEnumDebugExtendedPropertyInfo : IUnknown {
+  HRESULT Next ([in] ULONG celt,[out, size_is (celt), length_is (*pceltFetched)] ExtendedDebugPropertyInfo *rgExtendedPropertyInfo,[out] ULONG *pceltFetched);
+  HRESULT Skip ([in] ULONG celt);
+  HRESULT Reset (void);
+  HRESULT Clone ([out] IEnumDebugExtendedPropertyInfo **pedpe);
+  HRESULT GetCount ([out] ULONG *pcelt);
+};
+
+cpp_quote("")
+[object, uuid (51973c54-CB0C-11d0-B5C9-00a0244a0e7a), pointer_default (unique)]
+interface IPerPropertyBrowsing2 : IUnknown {
+  HRESULT GetDisplayString ([in] DISPID dispid,[out] BSTR *pBstr);
+  HRESULT MapPropertyToPage ([in] DISPID dispid,[out] CLSID *pClsidPropPage);
+  HRESULT GetPredefinedStrings ([in] DISPID dispid,[out] CALPOLESTR *pCaStrings,[out] CADWORD *pCaCookies);
+  HRESULT SetPredefinedValue ([in] DISPID dispid,[in] DWORD dwCookie);
+};
+
+cpp_quote("")
+[object, uuid (51973c55-CB0C-11d0-B5C9-00a0244a0e7a), pointer_default (unique)]
+interface IDebugPropertyEnumType_All : IUnknown {
+  HRESULT GetName ([out] BSTR *);
+};
+
+cpp_quote("")
+[object, uuid (51973c56-CB0C-11d0-B5C9-00a0244a0e7a), pointer_default (unique)]
+interface IDebugPropertyEnumType_Locals : IDebugPropertyEnumType_All {
+};
+
+cpp_quote("")
+[object, uuid (51973c57-CB0C-11d0-B5C9-00a0244a0e7a), pointer_default (unique)]
+interface IDebugPropertyEnumType_Arguments : IDebugPropertyEnumType_All {
+};
+
+cpp_quote("")
+[object, uuid (51973c58-CB0C-11d0-B5C9-00a0244a0e7a), pointer_default (unique)]
+interface IDebugPropertyEnumType_LocalsPlusArgs : IDebugPropertyEnumType_All {
+};
+
+cpp_quote("")
+[object, uuid (51973c59-CB0C-11d0-B5C9-00a0244a0e7a), pointer_default (unique)]
+interface IDebugPropertyEnumType_Registers : IDebugPropertyEnumType_All {
+};
+cpp_quote("#endif")

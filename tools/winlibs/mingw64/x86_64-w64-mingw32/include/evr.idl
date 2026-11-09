@@ -1,0 +1,279 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+import "unknwn.idl";
+import "propidl.idl";
+import "mfidl.idl";
+import "mftransform.idl";
+import "mediaobj.idl";
+import "strmif.idl";
+
+interface IMFTrackedSample;
+interface IMFVideoDisplayControl;
+interface IMFVideoPresenter;
+interface IMFVideoPositionMapper;
+interface IMFDesiredSample;
+interface IMFVideoMixerControl;
+interface IMFVideoRenderer;
+interface IMFVideoDeviceID;
+interface IEVRFilterConfig;
+
+cpp_quote("#if defined(__midl)")
+
+#ifndef MAKEFOURCC
+#define MAKEFOURCC(ch0, ch1, ch2, ch3)                              \
+            ((DWORD)(BYTE)(ch0) | ((DWORD)(BYTE)(ch1) << 8) |       \
+            ((DWORD)(BYTE)(ch2) << 16) | ((DWORD)(BYTE)(ch3) << 24 ))
+#endif
+
+#ifndef D3DFORMAT
+cpp_quote("")
+typedef enum _D3DFORMAT {
+  D3DFMT_UNKNOWN = 0,
+  D3DFMT_R8G8B8 = 20,
+  D3DFMT_A8R8G8B8 = 21,
+  D3DFMT_X8R8G8B8 = 22,
+  D3DFMT_R5G6B5 = 23,
+  D3DFMT_X1R5G5B5 = 24,
+  D3DFMT_A1R5G5B5 = 25,
+  D3DFMT_A4R4G4B4 = 26,
+  D3DFMT_R3G3B2 = 27,
+  D3DFMT_A8 = 28,
+  D3DFMT_A8R3G3B2 = 29,
+  D3DFMT_X4R4G4B4 = 30,
+  D3DFMT_A2B10G10R10 = 31,
+  D3DFMT_G16R16 = 34,
+  D3DFMT_A8P8 = 40,
+  D3DFMT_P8 = 41,
+  D3DFMT_L8 = 50,
+  D3DFMT_A8L8 = 51,
+  D3DFMT_A4L4 = 52,
+  D3DFMT_V8U8 = 60,
+  D3DFMT_L6V5U5 = 61,
+  D3DFMT_X8L8V8U8 = 62,
+  D3DFMT_Q8W8V8U8 = 63,
+  D3DFMT_V16U16 = 64,
+  D3DFMT_W11V11U10 = 65,
+  D3DFMT_A2W10V10U10 = 67,
+  D3DFMT_D16_LOCKABLE = 70,
+  D3DFMT_D32 = 71,
+  D3DFMT_D15S1 = 73,
+  D3DFMT_D24S8 = 75,
+  D3DFMT_D16 = 80,
+  D3DFMT_D24X8 = 77,
+  D3DFMT_D24X4S4 = 79,
+  D3DFMT_VERTEXDATA = 100,
+  D3DFMT_INDEX16 = 101,
+  D3DFMT_INDEX32 = 102,
+  D3DFMT_FORCE_DWORD = 0x7fffffff
+} D3DFORMAT;
+#endif
+cpp_quote("#endif")
+
+cpp_quote("")
+typedef enum MFVideoAspectRatioMode {
+  MFVideoARMode_None = 0x00,
+  MFVideoARMode_PreservePicture = 0x01,
+  MFVideoARMode_PreservePixel = 0x02,
+  MFVideoARMode_NonLinearStretch = 0x04,
+  MFVideoARMode_Mask = 0x07
+} MFVideoAspectRatioMode;
+
+cpp_quote("")
+typedef enum MFVideoRenderPrefs {
+  MFVideoRenderPrefs_DoNotRenderBorder = 0x01,
+  MFVideoRenderPrefs_DoNotClipToDevice = 0x02,
+  MFVideoRenderPrefs_AllowOutputThrottling = 0x04,
+  MFVideoRenderPrefs_ForceOutputThrottling = 0x08,
+  MFVideoRenderPrefs_ForceBatching = 0x10,
+  MFVideoRenderPrefs_AllowBatching = 0x20,
+  MFVideoRenderPrefs_ForceScaling = 0x40,
+  MFVideoRenderPrefs_AllowScaling = 0x80,
+  MFVideoRenderPrefs_DoNotRepaintOnStop = 0x100,
+  MFVideoRenderPrefs_Mask = 0x1ff
+} MFVideoRenderPrefs;
+
+cpp_quote("")
+cpp_quote("#ifndef _MFVideoNormalizedRect_")
+cpp_quote("#define _MFVideoNormalizedRect_")
+typedef struct MFVideoNormalizedRect {
+  float left;
+  float top;
+  float right;
+  float bottom;
+} MFVideoNormalizedRect;
+cpp_quote("#endif")
+
+cpp_quote("")
+typedef enum MFVP_MESSAGE_TYPE {
+  MFVP_MESSAGE_FLUSH = 0x00,
+  MFVP_MESSAGE_INVALIDATEMEDIATYPE = 0x01,
+  MFVP_MESSAGE_PROCESSINPUTNOTIFY = 0x02,
+  MFVP_MESSAGE_BEGINSTREAMING = 0x03,
+  MFVP_MESSAGE_ENDSTREAMING = 0x04,
+  MFVP_MESSAGE_ENDOFSTREAM = 0x05,
+  MFVP_MESSAGE_STEP = 0x06,
+  MFVP_MESSAGE_CANCELSTEP = 0x07
+} MFVP_MESSAGE_TYPE;
+
+cpp_quote("")
+typedef enum _MFVideoMixPrefs {
+  MFVideoMixPrefs_ForceHalfInterlace = 0x01,
+  MFVideoMixPrefs_AllowDropToHalfInterlace = 0x02,
+  MFVideoMixPrefs_AllowDropToBob = 0x04,
+  MFVideoMixPrefs_ForceBob = 0x08,
+  MFVideoMixPrefs_EnableRotation = 0x10,
+  MFVideoMixPrefs_Mask = 0x1f
+} MFVideoMixPrefs;
+
+cpp_quote("")
+typedef enum _EVRFilterConfig_Prefs {
+  EVRFilterConfigPrefs_EnableQoS = 0x01,
+  EVRFilterConfigPrefs_Mask = 0x01
+} EVRFilterConfigPrefs;
+
+cpp_quote("")
+typedef enum _MF_SERVICE_LOOKUP_TYPE {
+  MF_SERVICE_LOOKUP_UPSTREAM,
+  MF_SERVICE_LOOKUP_UPSTREAM_DIRECT,
+  MF_SERVICE_LOOKUP_DOWNSTREAM,
+  MF_SERVICE_LOOKUP_DOWNSTREAM_DIRECT,
+  MF_SERVICE_LOOKUP_ALL,
+  MF_SERVICE_LOOKUP_GLOBAL
+} MF_SERVICE_LOOKUP_TYPE;
+
+cpp_quote("")
+cpp_quote("DEFINE_GUID(MR_VIDEO_RENDER_SERVICE, 0x1092a86c, 0xab1a, 0x459a, 0xa3, 0x36, 0x83, 0x1f, 0xbc, 0x4d, 0x11, 0xff);")
+cpp_quote("DEFINE_GUID(MR_VIDEO_MIXER_SERVICE, 0x73cd2fc, 0x6cf4, 0x40b7, 0x88, 0x59, 0xe8, 0x95, 0x52, 0xc8, 0x41, 0xf8);")
+cpp_quote("DEFINE_GUID(MR_VIDEO_ACCELERATION_SERVICE, 0xefef5175, 0x5c7d, 0x4ce2, 0xbb, 0xbd, 0x34, 0xff, 0x8b, 0xca, 0x65, 0x54);")
+cpp_quote("DEFINE_GUID(MR_BUFFER_SERVICE, 0xa562248c, 0x9ac6, 0x4ffc, 0x9f, 0xba, 0x3a, 0xf8, 0xf8, 0xad, 0x1a, 0x4d);")
+cpp_quote("DEFINE_GUID(VIDEO_ZOOM_RECT, 0x7aaa1638, 0x1b7f, 0x4c93, 0xbd, 0x89, 0x5b, 0x9c, 0x9f, 0xb6, 0xfc, 0xf0);")
+
+cpp_quote("")
+[object, uuid(1F6A9F17-E70B-4e24-8AE4-0B2C3BA7A4AE), helpstring("IMFVideoPositionMapper Interface"), local]
+interface IMFVideoPositionMapper : IUnknown {
+  HRESULT MapOutputCoordinateToInputStream ([in] float xOut, [in] float yOut, [in] DWORD dwOutputStreamIndex, [in] DWORD dwInputStreamIndex, [out] float* pxIn, [out] float* pyIn);
+};
+
+cpp_quote("")
+[object, uuid(A38D9567-5A9C-4f3c-B293-8EB415B279BA), helpstring("IMFVideoDeviceID Interface"), local]
+interface IMFVideoDeviceID : IUnknown {
+  HRESULT GetDeviceID ([out] IID* pDeviceID);
+};
+
+cpp_quote("")
+[object, uuid(a490b1e4-ab84-4d31-a1b2-181e03b1077a), helpstring("IMFVideoDisplayControl Interface")]
+interface IMFVideoDisplayControl : IUnknown {
+  HRESULT GetNativeVideoSize ([in, out, unique] SIZE* pszVideo, [in, out, unique] SIZE* pszARVideo);
+  HRESULT GetIdealVideoSize ([in, out, unique] SIZE* pszMin, [in, out, unique] SIZE* pszMax);
+  HRESULT SetVideoPosition ([in, unique] const MFVideoNormalizedRect* pnrcSource, [in, unique] const LPRECT prcDest);
+  HRESULT GetVideoPosition ([out] MFVideoNormalizedRect* pnrcSource, [out] LPRECT prcDest);
+  HRESULT SetAspectRatioMode ([in] DWORD dwAspectRatioMode);
+  HRESULT GetAspectRatioMode ([out] DWORD* pdwAspectRatioMode);
+  HRESULT SetVideoWindow ([in] HWND hwndVideo);
+  HRESULT GetVideoWindow ([out] HWND* phwndVideo);
+  HRESULT RepaintVideo ();
+  HRESULT GetCurrentImage ([in, out] BITMAPINFOHEADER* pBih,[out, size_is(, *pcbDib)] BYTE** pDib, [out] DWORD* pcbDib, [in, out, unique] LONGLONG* pTimeStamp);
+  HRESULT SetBorderColor ([in] COLORREF Clr);
+  HRESULT GetBorderColor ([out] COLORREF* pClr);
+  HRESULT SetRenderingPrefs ([in] DWORD dwRenderFlags);
+  HRESULT GetRenderingPrefs ([out] DWORD* pdwRenderFlags);
+  HRESULT SetFullscreen ([in] BOOL fFullscreen);
+  HRESULT GetFullscreen ([out] BOOL* pfFullscreen);
+};
+
+cpp_quote("")
+[object, uuid(29AFF080-182A-4a5d-AF3B-448F3A6346CB), helpstring("IMFVideoPresenter Interface"), local]
+interface IMFVideoPresenter : IMFClockStateSink {
+  HRESULT ProcessMessage (MFVP_MESSAGE_TYPE eMessage, ULONG_PTR ulParam);
+  HRESULT GetCurrentMediaType ([out] IMFVideoMediaType** ppMediaType);
+};
+
+cpp_quote("")
+[object, uuid(56C294D0-753E-4260-8D61-A3D8820B1D54), helpstring("IMFDesiredSample Interface"), local]
+interface IMFDesiredSample : IUnknown {
+  HRESULT GetDesiredSampleTimeAndDuration ([out] LONGLONG *phnsSampleTime, [out] LONGLONG *phnsSampleDuration);
+  void SetDesiredSampleTimeAndDuration ([in] LONGLONG hnsSampleTime, [in] LONGLONG hnsSampleDuration);
+  void Clear();
+};
+
+cpp_quote("")
+[object, uuid(245BF8E9-0755-40f7-88A5-AE0F18D55E17), helpstring("IMFTrackedSample Interface"), local]
+interface IMFTrackedSample : IUnknown {
+  HRESULT SetAllocator ([in] IMFAsyncCallback *pSampleAllocator, [in, unique] IUnknown *pUnkState);
+};
+
+cpp_quote("")
+[object, uuid(A5C6C53F-C202-4aa5-9695-175BA8C508A5), helpstring("IMFVideoMixerControl Interface")]
+interface IMFVideoMixerControl : IUnknown {
+  HRESULT SetStreamZOrder ([in] DWORD dwStreamID, [in] DWORD dwZ);
+  HRESULT GetStreamZOrder ([in] DWORD dwStreamID, [out] DWORD *pdwZ);
+  HRESULT SetStreamOutputRect ([in] DWORD dwStreamID, [in] const MFVideoNormalizedRect *pnrcOutput);
+  HRESULT GetStreamOutputRect ([in] DWORD dwStreamID, [out] MFVideoNormalizedRect *pnrcOutput);
+};
+
+cpp_quote("")
+[object, uuid(8459616d-966e-4930-b658-54fa7e5a16d3), helpstring("IMFVideoMixerControl2 Interface")]
+interface IMFVideoMixerControl2 : IMFVideoMixerControl {
+  HRESULT SetMixingPrefs ([in] DWORD dwMixFlags);
+  HRESULT GetMixingPrefs ([out] DWORD *pdwMixFlags);
+};
+
+cpp_quote("")
+[object, uuid(DFDFD197-A9CA-43d8-B341-6AF3503792CD), helpstring("IMFVideoRenderer Interface"), local]
+interface IMFVideoRenderer : IUnknown {
+  HRESULT InitializeRenderer ([in, unique] IMFTransform* pVideoMixer, [in, unique] IMFVideoPresenter* pVideoPresenter);
+};
+
+cpp_quote("")
+[object, uuid(83E91E85-82C1-4ea7-801D-85DC50B75086), helpstring("IEVRFilterConfig Interface"), local]
+interface IEVRFilterConfig : IUnknown {
+  HRESULT SetNumberOfStreams ([in] DWORD dwMaxStreams);
+  HRESULT GetNumberOfStreams ([out,] DWORD* pdwMaxStreams);
+};
+
+cpp_quote("")
+[object, uuid(aea36028-796d-454f-beee-b48071e24304), helpstring("IEVRFilterConfigEx Interface")]
+interface IEVRFilterConfigEx : IEVRFilterConfig {
+  HRESULT SetConfigPrefs ([in] DWORD dwConfigFlags);
+  HRESULT GetConfigPrefs ([out] DWORD* pdwConfigFlags);
+};
+
+cpp_quote("")
+[object, uuid(fa993889-4383-415a-a930-dd472a8cf6f7), helpstring("IMFTopologyServiceLookup Interface"), local]
+interface IMFTopologyServiceLookup : IUnknown {
+  HRESULT LookupService([in] MF_SERVICE_LOOKUP_TYPE Type, [in] DWORD dwIndex, [in] REFGUID guidService, [in] REFIID riid, [out, iid_is(riid)] LPVOID *ppvObjects, [in, out] DWORD *pnObjects);
+};
+
+cpp_quote("")
+[local, object, uuid(fa99388a-4383-415a-a930-dd472a8cf6f7)]
+interface IMFTopologyServiceLookupClient : IUnknown {
+  HRESULT InitServicePointers ([in] IMFTopologyServiceLookup * pLookup);
+  HRESULT ReleaseServicePointers ();
+};
+
+cpp_quote("")
+[object, uuid(83A4CE40-7710-494b-A893-A472049AF630), helpstring("IEVRTrustedVideoPlugin Interface"), local]
+interface IEVRTrustedVideoPlugin: IUnknown {
+  HRESULT IsInTrustedVideoMode ([out] BOOL *pYes);
+  HRESULT CanConstrict ([out] BOOL *pYes);
+  HRESULT SetConstriction (DWORD dwKPix);
+  HRESULT DisableImageExport (BOOL bDisable);
+};
+
+cpp_quote("")
+cpp_quote("HRESULT WINAPI MFCreateVideoPresenter(IUnknown *pOwner, REFIID riidDevice, REFIID riid, void **ppVideoPresenter);")
+cpp_quote("HRESULT WINAPI MFCreateVideoMixer(IUnknown *pOwner, REFIID riidDevice, REFIID riid, void **ppv);")
+cpp_quote("HRESULT WINAPI MFCreateVideoMixerAndPresenter(IUnknown *pMixerOwner, IUnknown *pPresenterOwner, REFIID riidMixer, void **ppvVideoMixer, REFIID riidPresenter, void **ppvVideoPresenter);")
+cpp_quote("HRESULT WINAPI MFCreateVideoRenderer( REFIID riidRenderer, void **ppVideoRenderer );")
+cpp_quote("HRESULT WINAPI MFCreateVideoSampleFromSurface(IUnknown *pUnkSurface, IMFSample **ppSample);")
+cpp_quote("HRESULT WINAPI MFCreateVideoSampleAllocator(REFIID riid, void **ppSampleAllocator);")
+
+cpp_quote("#endif /* WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP) */")
+cpp_quote("")

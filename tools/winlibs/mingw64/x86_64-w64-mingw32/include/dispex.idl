@@ -1,0 +1,119 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+
+interface IDispatchEx;
+interface IDispError;
+interface IVariantChangeType;
+
+#ifndef DO_NO_IMPORTS
+import "ocidl.idl";
+import "oleidl.idl";
+import "oaidl.idl";
+import "servprov.idl";
+#endif
+
+cpp_quote("#ifndef DISPEX_H_")
+cpp_quote("#define DISPEX_H_")
+cpp_quote("")
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+cpp_quote("")
+cpp_quote("#include \"servprov.h\"")
+cpp_quote("")
+cpp_quote("#ifndef _NO_DISPATCHEX_GUIDS")
+cpp_quote("")
+
+cpp_quote("DEFINE_GUID(SID_VariantConversion, 0x1f101481, 0xbccd, 0x11d0, 0x93, 0x36, 0x0, 0xa0, 0xc9, 0xd, 0xca, 0xa9);")
+cpp_quote("DEFINE_GUID(SID_GetCaller, 0x4717cc40, 0xbcb9, 0x11d0, 0x93, 0x36, 0x0, 0xa0, 0xc9, 0xd, 0xca, 0xa9);")
+cpp_quote("DEFINE_GUID(SID_ProvideRuntimeContext, 0x74a5040c, 0xdd0c, 0x48f0, 0xac, 0x85, 0x19, 0x4c, 0x32, 0x59, 0x18, 0xa);")
+cpp_quote("")
+cpp_quote("#define SID_GetScriptSite IID_IActiveScriptSite")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifndef _NO_DISPATCHEX_CONSTS")
+cpp_quote("")
+cpp_quote("#define fdexNameCaseSensitive 0x1")
+cpp_quote("#define fdexNameEnsure 0x2")
+cpp_quote("#define fdexNameImplicit 0x4")
+cpp_quote("#define fdexNameCaseInsensitive 0x8")
+cpp_quote("#define fdexNameInternal 0x10")
+cpp_quote("#define fdexNameNoDynamicProperties 0x20")
+cpp_quote("")
+cpp_quote("#define fdexPropCanGet 0x1")
+cpp_quote("#define fdexPropCannotGet 0x2")
+cpp_quote("#define fdexPropCanPut 0x4")
+cpp_quote("#define fdexPropCannotPut 0x8")
+cpp_quote("#define fdexPropCanPutRef 0x10")
+cpp_quote("#define fdexPropCannotPutRef 0x20")
+cpp_quote("#define fdexPropNoSideEffects 0x40")
+cpp_quote("#define fdexPropDynamicType 0x80")
+cpp_quote("#define fdexPropCanCall 0x100")
+cpp_quote("#define fdexPropCannotCall 0x200")
+cpp_quote("#define fdexPropCanConstruct 0x400")
+cpp_quote("#define fdexPropCannotConstruct 0x800")
+cpp_quote("#define fdexPropCanSourceEvents 0x1000")
+cpp_quote("#define fdexPropCannotSourceEvents 0x02000")
+cpp_quote("")
+cpp_quote("#define grfdexPropCanAll (fdexPropCanGet | fdexPropCanPut | fdexPropCanPutRef | fdexPropCanCall | fdexPropCanConstruct | fdexPropCanSourceEvents)")
+cpp_quote("#define grfdexPropCannotAll (fdexPropCannotGet | fdexPropCannotPut | fdexPropCannotPutRef | fdexPropCannotCall | fdexPropCannotConstruct | fdexPropCannotSourceEvents)")
+cpp_quote("#define grfdexPropExtraAll (fdexPropNoSideEffects | fdexPropDynamicType)")
+cpp_quote("#define grfdexPropAll (grfdexPropCanAll | grfdexPropCannotAll | grfdexPropExtraAll)")
+cpp_quote("")
+cpp_quote("#define fdexEnumDefault 0x1")
+cpp_quote("#define fdexEnumAll 0x2")
+cpp_quote("")
+cpp_quote("#define DISPATCH_CONSTRUCT 0x4000")
+cpp_quote("#define DISPID_THIS (-613)")
+cpp_quote("#define DISPID_STARTENUM DISPID_UNKNOWN")
+cpp_quote("#endif")
+cpp_quote("")
+
+[object, uuid (a6ef9860-c720-11d0-9337-00a0c90dcaa9), pointer_default (unique)]
+interface IDispatchEx : IDispatch {
+  HRESULT GetDispID ([in] BSTR bstrName,[in] DWORD grfdex,[out] DISPID *pid);
+  [local] HRESULT InvokeEx ([in] DISPID id,[in] LCID lcid,[in] WORD wFlags,[in] DISPPARAMS *pdp,[out] VARIANT *pvarRes,[out] EXCEPINFO *pei,[in, unique] IServiceProvider *pspCaller);
+  [call_as (InvokeEx)] HRESULT RemoteInvokeEx ([in] DISPID id,[in] LCID lcid,[in] DWORD dwFlags,[in] DISPPARAMS *pdp,[out] VARIANT *pvarRes,[out] EXCEPINFO *pei,[in, unique] IServiceProvider *pspCaller,[in] UINT cvarRefArg,[in, size_is (cvarRefArg)] UINT *rgiRefArg,[in, out, size_is (cvarRefArg)] VARIANT *rgvarRefArg);
+  HRESULT DeleteMemberByName ([in] BSTR bstrName,[in] DWORD grfdex);
+  HRESULT DeleteMemberByDispID ([in] DISPID id);
+  HRESULT GetMemberProperties ([in] DISPID id,[in] DWORD grfdexFetch,[out] DWORD *pgrfdex);
+  HRESULT GetMemberName ([in] DISPID id,[out] BSTR *pbstrName);
+  HRESULT GetNextDispID ([in] DWORD grfdex,[in] DISPID id,[out] DISPID *pid);
+  HRESULT GetNameSpaceParent ([out] IUnknown **ppunk);
+};
+
+[object, uuid (a6ef9861-c720-11d0-9337-00a0c90dcaa9), pointer_default (unique)]
+interface IDispError : IUnknown {
+  HRESULT QueryErrorInfo ([in] GUID guidErrorType,[out] IDispError **ppde);
+  HRESULT GetNext ([out] IDispError **ppde);
+  HRESULT GetHresult ([out] HRESULT *phr);
+  HRESULT GetSource ([out] BSTR *pbstrSource);
+  HRESULT GetHelpInfo ([out] BSTR *pbstrFileName,[out] DWORD *pdwContext);
+  HRESULT GetDescription ([out] BSTR *pbstrDescription);
+};
+
+[object, uuid (a6ef9862-c720-11d0-9337-00a0c90dcaa9), pointer_default (unique)]
+interface IVariantChangeType : IUnknown {
+  HRESULT ChangeType ([in, out, unique] VARIANT *pvarDst,[in, unique] VARIANT *pvarSrc,[in] LCID lcid,[in] VARTYPE vtNew);
+};
+
+[object, uuid (ca04b7e6-0d21-11d1-8cc5-00c04fc2b085), pointer_default (unique)]
+interface IObjectIdentity : IUnknown {
+  HRESULT IsEqualObject ([in] IUnknown *punk);
+};
+
+[object, uuid (c5598e60-b307-11d1-b27d-006008c3fbfb), pointer_default (unique)]
+interface ICanHandleException : IUnknown {
+  HRESULT CanHandleException ([in] EXCEPINFO *pExcepInfo,[in] VARIANT *pvar);
+};
+
+[object, uuid (10e2414a-ec59-49d2-bc51-5add2c36febc), pointer_default (unique)]
+interface IProvideRuntimeContext : IUnknown {
+  HRESULT GetCurrentSourceContext ([out] DWORD_PTR *pdwContext,[out] VARIANT_BOOL *pfExecutingGlobalCode);
+};
+
+cpp_quote("#endif")
+cpp_quote("#endif")

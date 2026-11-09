@@ -1,0 +1,114 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+import "oaidl.idl";
+import "ocidl.idl";
+import "wsdxmldom.h";
+import "wsdtypes.h";
+
+cpp_quote("")
+interface IWSDAddress;
+interface IWSDXMLContext;
+interface IWSDiscoveredService;
+interface IWSDDeviceProxy;
+interface IWSDServiceProxy;
+interface IWSDEndpointProxy;
+interface IWSDAsyncResult;
+interface IWSDAsyncCallback;
+interface IWSDMetadataExchange;
+interface IWSDEventingStatus;
+
+[object, local, restricted, uuid (11a9852a-8dd8-423e-b537-9356db4fbfb8), pointer_default (unique)]
+interface IWSDAsyncResult : IUnknown {
+  HRESULT SetCallback ([in] IWSDAsyncCallback *pCallback,[in] IUnknown *pAsyncState);
+  HRESULT SetWaitHandle ([in] HANDLE hWaitHandle);
+  HRESULT HasCompleted ();
+  HRESULT GetAsyncState ([out] IUnknown **ppAsyncState);
+  HRESULT Abort ();
+  HRESULT GetEvent ([out] WSD_EVENT *pEvent);
+  HRESULT GetEndpointProxy ([out] IWSDEndpointProxy **ppEndpoint);
+};
+
+[object, local, restricted, uuid (a63e109d-ce72-49e2-ba98-e845f5ee1666), pointer_default (unique)]
+interface IWSDAsyncCallback : IUnknown {
+  HRESULT AsyncOperationComplete ([in] IWSDAsyncResult *pAsyncResult,[in] IUnknown *pAsyncState);
+};
+
+[object, local, restricted, uuid (06996d57-1d67-4928-9307-3d7833fdb846), pointer_default (unique)]
+interface IWSDMetadataExchange : IUnknown {
+  HRESULT GetMetadata ([out] WSD_METADATA_SECTION_LIST **MetadataOut);
+};
+
+[object, local, restricted, uuid (49b17f52-637a-407a-ae99-fbe82a4d38c0), pointer_default (unique)]
+interface IWSDEventingStatus : IUnknown {
+  void SubscriptionRenewed ([in] LPCWSTR pszSubscriptionAction);
+  void SubscriptionRenewalFailed ([in] LPCWSTR pszSubscriptionAction,[in] HRESULT hr);
+  void SubscriptionEnded ([in] LPCWSTR pszSubscriptionAction);
+};
+
+[object, local, restricted, uuid (1860d430-b24c-4975-9f90-dbb39baa24ec), pointer_default (unique)]
+interface IWSDEndpointProxy : IUnknown {
+  HRESULT SendOneWayRequest ([in] const void *pBody,[in] const WSD_OPERATION *pOperation);
+  HRESULT SendTwoWayRequest ([in] const void *pBody,[in] const WSD_OPERATION *pOperation,[in, optional] const WSD_SYNCHRONOUS_RESPONSE_CONTEXT *pResponseContext);
+  HRESULT SendTwoWayRequestAsync ([in] const void *pBody,[in] const WSD_OPERATION *pOperation,[in] IUnknown *pAsyncState,[in] IWSDAsyncCallback *pCallback,[out] IWSDAsyncResult **pResult);
+  HRESULT AbortAsyncOperation ([in] IWSDAsyncResult *pAsyncResult);
+  HRESULT ProcessFault ([in] const WSD_SOAP_FAULT *pFault);
+  HRESULT GetErrorInfo ([out] LPCWSTR *ppszErrorInfo);
+  HRESULT GetFaultInfo ([out] WSD_SOAP_FAULT **ppFault);
+};
+
+[object, local, restricted, uuid (eee0c031-c578-4c0e-9a3b-973c35f409db), pointer_default (unique)]
+interface IWSDDeviceProxy : IUnknown {
+  HRESULT Init ([in] LPCWSTR pszDeviceId,[in] IWSDAddress *pDeviceAddress,[in] LPCWSTR pszLocalId,[in, optional] IWSDXMLContext *pContext,[in, optional] IWSDDeviceProxy *pSponsor);
+  HRESULT BeginGetMetadata ([out] IWSDAsyncResult **ppResult);
+  HRESULT EndGetMetadata ([in] IWSDAsyncResult *pResult);
+  HRESULT GetHostMetadata ([out] WSD_HOST_METADATA **ppHostMetadata);
+  HRESULT GetThisModelMetadata ([out] WSD_THIS_MODEL_METADATA **ppManufacturerMetadata);
+  HRESULT GetThisDeviceMetadata ([out] WSD_THIS_DEVICE_METADATA **ppThisDeviceMetadata);
+  HRESULT GetAllMetadata ([out] WSD_METADATA_SECTION_LIST **ppMetadata);
+  HRESULT GetServiceProxyById ([in] LPCWSTR pszServiceId,[out] IWSDServiceProxy **ppServiceProxy);
+  HRESULT GetServiceProxyByType ([in] const WSDXML_NAME *pType,[out] IWSDServiceProxy **ppServiceProxy);
+  HRESULT GetEndpointProxy ([out] IWSDEndpointProxy **ppProxy);
+};
+
+[object, local, restricted, uuid (d4c7fb9c-03ab-4175-9d67-094fafebf487), pointer_default (unique)]
+interface IWSDServiceProxy : IWSDMetadataExchange {
+  HRESULT BeginGetMetadata ([out] IWSDAsyncResult **ppResult);
+  HRESULT EndGetMetadata ([in] IWSDAsyncResult *pResult,[out] WSD_METADATA_SECTION_LIST **ppMetadata);
+  HRESULT GetServiceMetadata ([out] WSD_SERVICE_METADATA **ppServiceMetadata);
+  HRESULT SubscribeToOperation ([in] const WSD_OPERATION *pOperation,[in] IUnknown *pUnknown,[in] const WSDXML_ELEMENT *pAny,[out] WSDXML_ELEMENT **ppAny);
+  HRESULT UnsubscribeToOperation ([in] const WSD_OPERATION *pOperation);
+  HRESULT SetEventingStatusCallback ([in, optional] IWSDEventingStatus *pStatus);
+  HRESULT GetEndpointProxy ([out] IWSDEndpointProxy **ppProxy);
+};
+
+cpp_quote("#if WINVER >= 0x601")
+[object, local, restricted, uuid (f9279d6d-1012-4a94-b8cc-fd35d2202bfe), pointer_default (unique)]
+interface IWSDServiceProxyEventing : IWSDServiceProxy {
+  HRESULT SubscribeToMultipleOperations ([in] const WSD_OPERATION *pOperations,[in] DWORD dwOperationCount,[in] IUnknown *pUnknown,[in] const WSD_EVENTING_EXPIRES *pExpires,[in] const WSDXML_ELEMENT *pAny,[out] WSD_EVENTING_EXPIRES **ppExpires,[out] WSDXML_ELEMENT **ppAny);
+  HRESULT BeginSubscribeToMultipleOperations ([in] const WSD_OPERATION *pOperations,[in] DWORD dwOperationCount,[in] IUnknown *pUnknown,[in] const WSD_EVENTING_EXPIRES *pExpires,[in] const WSDXML_ELEMENT *pAny,[in] IUnknown *pAsyncState,[in] IWSDAsyncCallback *pAsyncCallback,[out] IWSDAsyncResult **ppResult);
+  HRESULT EndSubscribeToMultipleOperations ([in] const WSD_OPERATION *pOperations,[in] DWORD dwOperationCount,[in] IWSDAsyncResult *pResult,[out] WSD_EVENTING_EXPIRES **ppExpires,[out] WSDXML_ELEMENT **ppAny);
+  HRESULT UnsubscribeToMultipleOperations ([in] const WSD_OPERATION *pOperations,[in] DWORD dwOperationCount,[in] const WSDXML_ELEMENT *pAny);
+  HRESULT BeginUnsubscribeToMultipleOperations ([in] const WSD_OPERATION *pOperations,[in] DWORD dwOperationCount,[in] const WSDXML_ELEMENT *pAny,[in] IUnknown *pAsyncState,[in] IWSDAsyncCallback *pAsyncCallback,[out] IWSDAsyncResult **ppResult);
+  HRESULT EndUnsubscribeToMultipleOperations ([in] const WSD_OPERATION *pOperations,[in] DWORD dwOperationCount,[in] IWSDAsyncResult *pResult);
+  HRESULT RenewMultipleOperations ([in] const WSD_OPERATION *pOperations,[in] DWORD dwOperationCount,[in] const WSD_EVENTING_EXPIRES *pExpires,[in] const WSDXML_ELEMENT *pAny,[out] WSD_EVENTING_EXPIRES **ppExpires,[out] WSDXML_ELEMENT **ppAny);
+  HRESULT BeginRenewMultipleOperations ([in] const WSD_OPERATION *pOperations,[in] DWORD dwOperationCount,[in] const WSD_EVENTING_EXPIRES *pExpires,[in] const WSDXML_ELEMENT *pAny,[in] IUnknown *pAsyncState,[in] IWSDAsyncCallback *pAsyncCallback,[out] IWSDAsyncResult **ppResult);
+  HRESULT EndRenewMultipleOperations ([in] const WSD_OPERATION *pOperations,[in] DWORD dwOperationCount,[in] IWSDAsyncResult *pResult,[out] WSD_EVENTING_EXPIRES **ppExpires,[out] WSDXML_ELEMENT **ppAny);
+  HRESULT GetStatusForMultipleOperations ([in] const WSD_OPERATION *pOperations,[in] DWORD dwOperationCount,[in] const WSDXML_ELEMENT *pAny,[out] WSD_EVENTING_EXPIRES **ppExpires,[out] WSDXML_ELEMENT **ppAny);
+  HRESULT BeginGetStatusForMultipleOperations ([in] const WSD_OPERATION *pOperations,[in] DWORD dwOperationCount,[in] const WSDXML_ELEMENT *pAny,[in] IUnknown *pAsyncState,[in] IWSDAsyncCallback *pAsyncCallback,[out] IWSDAsyncResult **ppResult);
+  HRESULT EndGetStatusForMultipleOperations ([in] const WSD_OPERATION *pOperations,[in] DWORD dwOperationCount,[in] IWSDAsyncResult *pResult,[out] WSD_EVENTING_EXPIRES **ppExpires,[out] WSDXML_ELEMENT **ppAny);
+};
+cpp_quote("#endif")
+
+cpp_quote("HRESULT WINAPI WSDCreateDeviceProxy(LPCWSTR pszDeviceId, LPCWSTR pszLocalId, IWSDXMLContext *pContext, IWSDDeviceProxy **ppDeviceProxy);")
+cpp_quote("HRESULT WINAPI WSDCreateDeviceProxyAdvanced(LPCWSTR pszDeviceId, IWSDAddress* pDeviceAddress, LPCWSTR pszLocalId, IWSDXMLContext *pContext, IWSDDeviceProxy **ppDeviceProxy);")
+cpp_quote("#if WINVER >= 0x601")
+cpp_quote("HRESULT WINAPI WSDCreateDeviceProxy2(LPCWSTR pszDeviceId, LPCWSTR pszLocalId, IWSDXMLContext *pContext, WSD_CONFIG_PARAM *pConfigParams, DWORD dwConfigParamCount, IWSDDeviceProxy **ppDeviceProxy);")
+cpp_quote("#endif")
+
+cpp_quote("#endif")

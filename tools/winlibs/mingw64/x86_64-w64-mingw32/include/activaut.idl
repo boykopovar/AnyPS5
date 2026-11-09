@@ -1,0 +1,123 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+cpp_quote("")
+cpp_quote("#ifndef __ActivAut_h")
+cpp_quote("#define __ActivAut_h")
+cpp_quote("")
+
+#ifndef DO_NO_IMPORTS
+import "ocidl.idl";
+import "oleidl.idl";
+import "oaidl.idl";
+#endif
+
+cpp_quote("")
+cpp_quote("#ifndef _NO_AUTHOR_GUIDS")
+cpp_quote("DEFINE_GUID(CATID_ActiveScriptAuthor, 0xaee2a92, 0xbcbb, 0x11d0, 0x8c, 0x72, 0x0, 0xc0, 0x4f, 0xc2, 0xb0, 0x85);")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("const DWORD fasaPreferInternalHandler = 1;")
+cpp_quote("const DWORD fasaSupportInternalHandler = 2;")
+cpp_quote("const DWORD fasaCaseSensitive = 4;")
+cpp_quote("")
+cpp_quote("const DWORD SCRIPT_CMPL_NOLIST = 0;")
+cpp_quote("const DWORD SCRIPT_CMPL_MEMBERLIST = 1;")
+cpp_quote("const DWORD SCRIPT_CMPL_ENUMLIST = 2;")
+cpp_quote("const DWORD SCRIPT_CMPL_PARAMTIP = 4;")
+cpp_quote("const DWORD SCRIPT_CMPL_GLOBALLIST = 8;")
+cpp_quote("")
+cpp_quote("const DWORD SCRIPT_CMPL_ENUM_TRIGGER = 1;")
+cpp_quote("const DWORD SCRIPT_CMPL_MEMBER_TRIGGER = 2;")
+cpp_quote("const DWORD SCRIPT_CMPL_PARAM_TRIGGER = 3;")
+cpp_quote("const DWORD SCRIPT_CMPL_COMMIT = 4;")
+cpp_quote("")
+cpp_quote("const DWORD GETATTRTYPE_NORMAL = 0;")
+cpp_quote("const DWORD GETATTRTYPE_DEPSCAN = 1;")
+cpp_quote("")
+cpp_quote("const DWORD GETATTRFLAG_THIS = 0x100;")
+cpp_quote("const DWORD GETATTRFLAG_HUMANTEXT = 0x8000;")
+cpp_quote("")
+cpp_quote("const DWORD SOURCETEXT_ATTR_IDENTIFIER = 0x100;")
+cpp_quote("const DWORD SOURCETEXT_ATTR_MEMBERLOOKUP = 0x200;")
+cpp_quote("const DWORD SOURCETEXT_ATTR_THIS = 0x400;")
+cpp_quote("const DWORD SOURCETEXT_ATTR_HUMANTEXT = 0x8000;")
+cpp_quote("")
+
+interface IActiveScriptAuthor;
+interface IScriptNode;
+interface IScriptEntry;
+interface IScriptScriptlet;
+
+typedef WORD SOURCE_TEXT_ATTR;
+
+[uuid (0aee2a94-BCBB-11d0-8c72-00c04fc2b085), pointer_default (unique)]
+interface IScriptNode : IUnknown {
+  HRESULT Alive (void);
+  HRESULT Delete (void);
+  HRESULT GetParent ([out] IScriptNode **ppsnParent);
+  HRESULT GetIndexInParent ([out] ULONG *pisn);
+  HRESULT GetCookie ([out] DWORD *pdwCookie);
+  HRESULT GetNumberOfChildren ([out] ULONG *pcsn);
+  HRESULT GetChild ([in] ULONG isn,[out] IScriptNode **ppsn);
+  HRESULT GetLanguage ([out] BSTR *pbstr);
+  HRESULT CreateChildEntry ([in] ULONG isn,[in] DWORD dwCookie,[in] LPCOLESTR pszDelimiter,[out] IScriptEntry **ppse);
+  HRESULT CreateChildHandler ([in] LPCOLESTR pszDefaultName,[in, size_is (cpszNames)] LPCOLESTR *prgpszNames,[in] ULONG cpszNames,[in] LPCOLESTR pszEvent,[in] LPCOLESTR pszDelimiter,[in] ITypeInfo *ptiSignature,[in] ULONG iMethodSignature,[in] ULONG isn,[in] DWORD dwCookie,[out] IScriptEntry **ppse);
+}
+
+[uuid (0aee2a95-BCBB-11d0-8c72-00c04fc2b085), pointer_default (unique)]
+interface IScriptEntry : IScriptNode {
+  HRESULT GetText ([out] BSTR *pbstr);
+  HRESULT SetText ([in] LPCOLESTR psz);
+  HRESULT GetBody ([out] BSTR *pbstr);
+  HRESULT SetBody ([in] LPCOLESTR psz);
+  HRESULT GetName ([out] BSTR *pbstr);
+  HRESULT SetName ([in] LPCOLESTR psz);
+  HRESULT GetItemName ([out] BSTR *pbstr);
+  HRESULT SetItemName ([in] LPCOLESTR psz);
+  HRESULT GetSignature ([out] ITypeInfo **ppti,[out] ULONG *piMethod);
+  HRESULT SetSignature ([in] ITypeInfo *pti,[in] ULONG iMethod);
+  HRESULT GetRange ([out] ULONG *pichMin,[out] ULONG *pcch);
+}
+
+[uuid (0aee2a96-BCBB-11d0-8c72-00c04fc2b085), pointer_default (unique)]
+interface IScriptScriptlet : IScriptEntry {
+  HRESULT GetSubItemName ([out] BSTR *pbstr);
+  HRESULT SetSubItemName ([in] LPCOLESTR psz);
+  HRESULT GetEventName ([out] BSTR *pbstr);
+  HRESULT SetEventName ([in] LPCOLESTR psz);
+  HRESULT GetSimpleEventName ([out] BSTR *pbstr);
+  HRESULT SetSimpleEventName ([in] LPCOLESTR psz);
+}
+[uuid (9c109da0-7006-11d1-B36C-00a0c911e8b2), pointer_default (unique)]
+interface IActiveScriptAuthor : IUnknown {
+  HRESULT AddNamedItem ([in] LPCOLESTR pszName,[in] DWORD dwFlags,[in] IDispatch *pdisp);
+  HRESULT AddScriptlet ([in] LPCOLESTR pszDefaultName,[in] LPCOLESTR pszCode,[in] LPCOLESTR pszItemName,[in] LPCOLESTR pszSubItemName,[in] LPCOLESTR pszEventName,[in] LPCOLESTR pszDelimiter,[in] DWORD dwCookie,[in] DWORD dwFlags);
+  HRESULT ParseScriptText ([in] LPCOLESTR pszCode,[in] LPCOLESTR pszItemName,[in] LPCOLESTR pszDelimiter,[in] DWORD dwCookie,[in] DWORD dwFlags);
+  HRESULT GetScriptTextAttributes ([in, size_is (cch)] LPCOLESTR pszCode,[in] ULONG cch,[in] LPCOLESTR pszDelimiter,[in] DWORD dwFlags,[in, out, size_is (cch)] SOURCE_TEXT_ATTR *pattr);
+  HRESULT GetScriptletTextAttributes ([in, size_is (cch)] LPCOLESTR pszCode,[in] ULONG cch,[in] LPCOLESTR pszDelimiter,[in] DWORD dwFlags,[in, out, size_is (cch)] SOURCE_TEXT_ATTR *pattr);
+  HRESULT GetRoot ([out] IScriptNode **ppsp);
+  HRESULT GetLanguageFlags ([out] DWORD *pgrfasa);
+  HRESULT GetEventHandler ([in] IDispatch *pdisp,[in] LPCOLESTR pszItem,[in] LPCOLESTR pszSubItem,[in] LPCOLESTR pszEvent,[out] IScriptEntry **ppse);
+  HRESULT RemoveNamedItem ([in] LPCOLESTR pszName);
+  HRESULT AddTypeLib ([in] REFGUID rguidTypeLib,[in] DWORD dwMajor,[in] DWORD dwMinor,[in] DWORD dwFlags);
+  HRESULT RemoveTypeLib ([in] REFGUID rguidTypeLib,[in] DWORD dwMajor,[in] DWORD dwMinor);
+  HRESULT GetChars ([in] DWORD fRequestedList,[out] BSTR *pbstrChars);
+  HRESULT GetInfoFromContext ([in] LPCOLESTR pszCode,[in] ULONG cchCode,[in] ULONG ichCurrentPosition,[in] DWORD dwListTypesRequested,[out] DWORD *pdwListTypesProvided,[out] ULONG *pichListAnchorPosition,[out] ULONG *pichFuncAnchorPosition,[out] MEMBERID *pmemid,[out] LONG *piCurrentParameter,[out] IUnknown **ppunk);
+
+  HRESULT IsCommitChar ([in] OLECHAR ch,[out] BOOL *pfcommit);
+}
+
+[uuid (7e2d4b70-BD9A-11d0-9336-00a0c90dcaa9), pointer_default (unique)]
+interface IActiveScriptAuthorProcedure : IUnknown {
+  HRESULT ParseProcedureText ([in] LPCOLESTR pszCode,[in] LPCOLESTR pszFormalParams,[in] LPCOLESTR pszProcedureName,[in] LPCOLESTR pszItemName,[in] LPCOLESTR pszDelimiter,[in] DWORD dwCookie,[in] DWORD dwFlags,[in] IDispatch *pdispFor);
+}
+
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#endif")

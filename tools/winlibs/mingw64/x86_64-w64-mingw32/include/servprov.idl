@@ -1,0 +1,46 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+cpp_quote("")
+
+import "objidl.idl";
+
+cpp_quote("")
+interface IServiceProvider;
+
+cpp_quote("")
+[object, uuid (6d5140c1-7436-11ce-8034-00aa006009fa), pointer_default (unique)]
+interface IServiceProvider : IUnknown {
+  typedef [unique] IServiceProvider *LPSERVICEPROVIDER;
+  cpp_quote("#if defined(__cplusplus) && !defined(CINTERFACE)")
+  cpp_quote("EXTERN_C const IID IID_IServiceProvider;")
+  cpp_quote("extern \"C++\" {")
+  cpp_quote("MIDL_INTERFACE(\"6d5140c1-7436-11ce-8034-00aa006009fa\")")
+  cpp_quote("IServiceProvider : public IUnknown {")
+  cpp_quote("public:")
+  cpp_quote("virtual  HRESULT STDMETHODCALLTYPE QueryService(REFGUID guidService, REFIID riid, void **ppvObject) = 0;")
+  cpp_quote("")
+  cpp_quote("template <class Q>")
+  cpp_quote("HRESULT STDMETHODCALLTYPE QueryService(REFGUID guidService, Q **pp) {")
+  cpp_quote("  return QueryService(guidService, __uuidof(Q), (void **)pp);")
+  cpp_quote("}")
+  cpp_quote("};")
+  cpp_quote("}")
+  cpp_quote("")
+  cpp_quote("HRESULT STDMETHODCALLTYPE IServiceProvider_RemoteQueryService_Proxy(IServiceProvider *This, REFGUID guidService, REFIID riid, IUnknown **ppvObject);")
+  cpp_quote("void __RPC_STUB IServiceProvider_RemoteQueryService_Stub(IRpcStubBuffer *This, IRpcChannelBuffer *_pRpcChannelBuffer, PRPC_MESSAGE _pRpcMessage, DWORD *_pdwStubPhase);")
+  cpp_quote("#ifdef __CRT_UUID_DECL")
+  cpp_quote("__CRT_UUID_DECL(IServiceProvider, 0x6d5140c1, 0x7436, 0x11ce, 0x80,0x34, 0x00,0xaa,0x00,0x60,0x09,0xfa)")
+  cpp_quote("#endif")
+  cpp_quote("#else")
+  [local] HRESULT QueryService ([in] REFGUID guidService,[in] REFIID riid,[out] void **ppvObject);
+  [call_as (QueryService)] HRESULT RemoteQueryService ([in] REFGUID guidService,[in] REFIID riid,[out, iid_is (riid)] IUnknown **ppvObject);
+}
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#endif")

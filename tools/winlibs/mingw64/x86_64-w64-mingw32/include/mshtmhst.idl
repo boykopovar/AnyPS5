@@ -1,0 +1,204 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+
+import "ocidl.idl";
+import "objidl.idl";
+import "oleidl.idl";
+import "oaidl.idl";
+import "docobj.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+cpp_quote("#ifndef MSHTMHST_H")
+cpp_quote("#define MSHTMHST_H")
+
+cpp_quote("#define CONTEXT_MENU_DEFAULT 0")
+cpp_quote("#define CONTEXT_MENU_IMAGE 1")
+cpp_quote("#define CONTEXT_MENU_CONTROL 2")
+cpp_quote("#define CONTEXT_MENU_TABLE 3")
+cpp_quote("#define CONTEXT_MENU_TEXTSELECT 4")
+cpp_quote("#define CONTEXT_MENU_ANCHOR 5")
+cpp_quote("#define CONTEXT_MENU_UNKNOWN 6")
+cpp_quote("#define CONTEXT_MENU_IMGDYNSRC 7")
+cpp_quote("#define CONTEXT_MENU_DEBUG 8")
+cpp_quote("#define CONTEXT_MENU_VSCROLL 9")
+cpp_quote("#define CONTEXT_MENU_HSCROLL 10")
+cpp_quote("#define CONTEXT_MENU_MEDIA 11")
+cpp_quote("")
+cpp_quote("#define MENUEXT_SHOWDIALOG 0x1")
+cpp_quote("")
+cpp_quote("#define CMDID_SCRIPTSITE_URL 0")
+cpp_quote("#define CMDID_SCRIPTSITE_HTMLDLGTRUST 1")
+cpp_quote("#define CMDID_SCRIPTSITE_SECSTATE 2")
+cpp_quote("#define CMDID_SCRIPTSITE_SID 3")
+cpp_quote("#define CMDID_SCRIPTSITE_TRUSTEDDOC 4")
+cpp_quote("#define CMDID_SCRIPTSITE_SECURITY_WINDOW 5")
+cpp_quote("#define CMDID_SCRIPTSITE_NAMESPACE 6")
+cpp_quote("#define CMDID_SCRIPTSITE_IURI 7")
+cpp_quote("#define CMDID_HOSTCONTEXT_URL 8")
+cpp_quote("#define CMDID_SCRIPTSITE_ALLOWRECOVERY 9")
+cpp_quote("")
+cpp_quote("#define HTMLDLG_NOUI 0x10")
+cpp_quote("#define HTMLDLG_MODAL 0x20")
+cpp_quote("#define HTMLDLG_MODELESS 0x40")
+cpp_quote("#define HTMLDLG_PRINT_TEMPLATE 0x80")
+cpp_quote("#define HTMLDLG_VERIFY 0x100")
+cpp_quote("#define HTMLDLG_ALLOW_UNKNOWN_THREAD 0x200")
+cpp_quote("")
+cpp_quote("#define PRINT_DONTBOTHERUSER 0x1")
+cpp_quote("#define PRINT_WAITFORCOMPLETION 0x2")
+
+cpp_quote("#define CMDSETID_Forms3 CGID_MSHTML")
+cpp_quote("#define SZ_HTML_CLIENTSITE_OBJECTPARAM L\"{d4db6850-5385-11d0-89e9-00a0c90a90ac}\"")
+
+cpp_quote("EXTERN_C const GUID CGID_ScriptSite;")
+cpp_quote("EXTERN_C const GUID CGID_MSHTML;")
+cpp_quote("EXTERN_C const GUID CLSID_HostDialogHelper;")
+
+cpp_quote("DEFINE_GUID(CGID_DocHostCommandHandler,0xf38bc242,0xb950,0x11d1,0x89,0x18,0x00,0xc0,0x4f,0xc2,0xc8,0x36);")
+
+cpp_quote("#ifndef __IHTMLWindow2_FWD_DEFINED__")
+cpp_quote("#define __IHTMLWindow2_FWD_DEFINED__")
+cpp_quote("typedef interface IHTMLWindow2 IHTMLWindow2;")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("typedef HRESULT STDAPICALLTYPE SHOWHTMLDIALOGFN (HWND hwndParent, IMoniker *pmk, VARIANT *pvarArgIn, WCHAR *pchOptions, VARIANT *pvArgOut);")
+cpp_quote("typedef HRESULT STDAPICALLTYPE SHOWHTMLDIALOGEXFN (HWND hwndParent, IMoniker *pmk, DWORD dwDialogFlags, VARIANT *pvarArgIn, WCHAR *pchOptions, VARIANT *pvArgOut);")
+cpp_quote("typedef HRESULT STDAPICALLTYPE SHOWMODELESSHTMLDIALOGFN (HWND hwndParent, IMoniker *pmk, VARIANT *pvarArgIn, VARIANT *pvarOptions, IHTMLWindow2 **ppWindow);")
+cpp_quote("typedef HRESULT STDAPICALLTYPE IEREGISTERXMLNSFN (LPCWSTR lpszURI, GUID clsid, BOOL fMachine);")
+cpp_quote("typedef HRESULT STDAPICALLTYPE IEISXMLNSREGISTEREDFN (LPCWSTR lpszURI, GUID *pCLSID);")
+cpp_quote("")
+cpp_quote("STDAPI ShowHTMLDialog (HWND hwndParent, IMoniker *pMk, VARIANT *pvarArgIn, LPWSTR pchOptions, VARIANT *pvarArgOut);")
+cpp_quote("STDAPI ShowHTMLDialogEx (HWND hwndParent, IMoniker *pMk, DWORD dwDialogFlags, VARIANT *pvarArgIn, LPWSTR pchOptions, VARIANT *pvarArgOut);")
+cpp_quote("STDAPI ShowModelessHTMLDialog (HWND hwndParent, IMoniker *pMk, VARIANT *pvarArgIn, VARIANT *pvarOptions, IHTMLWindow2 **ppWindow);")
+cpp_quote("#if !defined (_ARM_) && !defined (__arm__)")
+cpp_quote("STDAPI RunHTMLApplication (HINSTANCE hinst, HINSTANCE hPrevInst, LPSTR szCmdLine, int nCmdShow);")
+cpp_quote("#endif")
+cpp_quote("STDAPI CreateHTMLPropertyPage (IMoniker *pmk, IPropertyPage **ppPP);")
+cpp_quote("STDAPI EarlyStartDisplaySystem (void);")
+cpp_quote("STDAPI IERegisterXMLNS (LPCWSTR lpszURI, GUID clsid, BOOL fMachine);")
+cpp_quote("STDAPI IEIsXMLNSRegistered (LPCWSTR lpszURI, GUID *pCLSID);")
+cpp_quote("STDAPI GetColorValueFromString (LPCWSTR lpszColor, BOOL fStrictCSS1, BOOL fIsStandardsCSS, COLORREF *pColor);")
+
+typedef enum tagDOCHOSTUIDBLCLK {
+  DOCHOSTUIDBLCLK_DEFAULT = 0,
+  DOCHOSTUIDBLCLK_SHOWPROPERTIES = 1,
+  DOCHOSTUIDBLCLK_SHOWCODE = 2
+} DOCHOSTUIDBLCLK;
+
+typedef enum tagDOCHOSTUIFLAG {
+  DOCHOSTUIFLAG_DIALOG = 0x1,
+  DOCHOSTUIFLAG_DISABLE_HELP_MENU = 0x2,
+  DOCHOSTUIFLAG_NO3DBORDER = 0x4,
+  DOCHOSTUIFLAG_SCROLL_NO = 0x8,
+  DOCHOSTUIFLAG_DISABLE_SCRIPT_INACTIVE = 0x10,
+  DOCHOSTUIFLAG_OPENNEWWIN = 0x20,
+  DOCHOSTUIFLAG_DISABLE_OFFSCREEN = 0x40,
+  DOCHOSTUIFLAG_FLAT_SCROLLBAR = 0x80,
+  DOCHOSTUIFLAG_DIV_BLOCKDEFAULT = 0x100,
+  DOCHOSTUIFLAG_ACTIVATE_CLIENTHIT_ONLY = 0x200,
+  DOCHOSTUIFLAG_OVERRIDEBEHAVIORFACTORY = 0x400,
+  DOCHOSTUIFLAG_CODEPAGELINKEDFONTS = 0x800,
+  DOCHOSTUIFLAG_URL_ENCODING_DISABLE_UTF8 = 0x1000,
+  DOCHOSTUIFLAG_URL_ENCODING_ENABLE_UTF8 = 0x2000,
+  DOCHOSTUIFLAG_ENABLE_FORMS_AUTOCOMPLETE = 0x4000,
+  DOCHOSTUIFLAG_ENABLE_INPLACE_NAVIGATION = 0x10000,
+  DOCHOSTUIFLAG_IME_ENABLE_RECONVERSION = 0x20000,
+  DOCHOSTUIFLAG_THEME = 0x40000,
+  DOCHOSTUIFLAG_NOTHEME = 0x80000,
+  DOCHOSTUIFLAG_NOPICS = 0x100000,
+  DOCHOSTUIFLAG_NO3DOUTERBORDER = 0x200000,
+  DOCHOSTUIFLAG_DISABLE_EDIT_NS_FIXUP = 0x400000,
+  DOCHOSTUIFLAG_LOCAL_MACHINE_ACCESS_CHECK= 0x800000,
+  DOCHOSTUIFLAG_DISABLE_UNTRUSTEDPROTOCOL = 0x1000000,
+  DOCHOSTUIFLAG_HOST_NAVIGATES = 0x2000000,
+  DOCHOSTUIFLAG_ENABLE_REDIRECT_NOTIFICATION = 0x4000000,
+  DOCHOSTUIFLAG_USE_WINDOWLESS_SELECTCONTROL = 0x8000000,
+  DOCHOSTUIFLAG_USE_WINDOWED_SELECTCONTROL = 0x10000000,
+  DOCHOSTUIFLAG_ENABLE_ACTIVEX_INACTIVATE_MODE = 0x20000000,
+  DOCHOSTUIFLAG_DPI_AWARE = 0x40000000
+} DOCHOSTUIFLAG;
+
+cpp_quote("#define DOCHOSTUIFLAG_BROWSER (DOCHOSTUIFLAG_DISABLE_HELP_MENU | DOCHOSTUIFLAG_DISABLE_SCRIPT_INACTIVE)")
+
+typedef enum tagDOCHOSTUITYPE {
+  DOCHOSTUITYPE_BROWSE = 0,
+  DOCHOSTUITYPE_AUTHOR = 1
+} DOCHOSTUITYPE;
+
+typedef struct _DOCHOSTUIINFO {
+  ULONG cbSize;
+  DWORD dwFlags;
+  DWORD dwDoubleClick;
+  OLECHAR *pchHostCss;
+  OLECHAR *pchHostNS;
+} DOCHOSTUIINFO;
+
+[object, local, uuid (53dec138-A51E-11d2-861e-00c04fa35c89), pointer_default (unique)]
+interface IHostDialogHelper : IUnknown {
+  HRESULT ShowHTMLDialog (HWND hwndParent, IMoniker *pMk, VARIANT *pvarArgIn,[in] WCHAR *pchOptions, VARIANT *pvarArgOut, IUnknown *punkHost);
+};
+
+[uuid (429af92c-A51F-11d2-861e-00c04fa35c89)]
+coclass HostDialogHelper {
+  [default] interface IHostDialogHelper;
+};
+
+[object, local, uuid (bd3f23c0-d43e-11cf-893b-00aa00bdce1a), pointer_default (unique)]
+interface IDocHostUIHandler : IUnknown {
+  HRESULT ShowContextMenu ([in] DWORD dwID,[in] POINT *ppt,[in] IUnknown *pcmdtReserved,[in] IDispatch *pdispReserved);
+  HRESULT GetHostInfo ([in, out] DOCHOSTUIINFO *pInfo);
+  HRESULT ShowUI ([in] DWORD dwID,[in] IOleInPlaceActiveObject *pActiveObject,[in] IOleCommandTarget *pCommandTarget,[in] IOleInPlaceFrame *pFrame,[in] IOleInPlaceUIWindow *pDoc);
+  HRESULT HideUI ();
+  HRESULT UpdateUI ();
+  HRESULT EnableModeless ([in] BOOL fEnable);
+  HRESULT OnDocWindowActivate ([in] BOOL fActivate);
+  HRESULT OnFrameWindowActivate ([in] BOOL fActivate);
+  HRESULT ResizeBorder ([in] LPCRECT prcBorder,[in] IOleInPlaceUIWindow *pUIWindow,[in] BOOL fRameWindow);
+  HRESULT TranslateAccelerator ([in] LPMSG lpMsg,[in] const GUID *pguidCmdGroup,[in] DWORD nCmdID);
+  HRESULT GetOptionKeyPath ([out] LPOLESTR *pchKey,[in] DWORD dw);
+  HRESULT GetDropTarget ([in] IDropTarget *pDropTarget,[out] IDropTarget **ppDropTarget);
+  HRESULT GetExternal ([out] IDispatch **ppDispatch);
+  HRESULT TranslateUrl ([in]DWORD dwTranslate,[in] LPWSTR pchURLIn,[out] LPWSTR *ppchURLOut);
+  HRESULT FilterDataObject ([in] IDataObject *pDO,[out] IDataObject **ppDORet);
+};
+
+[object, local, uuid (3050f6d0-98b5-11cf-bb82-00aa00bdce0b), pointer_default (unique)]
+interface IDocHostUIHandler2 : IDocHostUIHandler {
+  HRESULT GetOverrideKeyPath ([out] LPOLESTR *pchKey,[in] DWORD dw);
+};
+
+[object, local, uuid (3050f3f0-98b5-11cf-bb82-00aa00bdce0b), pointer_default (unique)]
+interface ICustomDoc : IUnknown {
+  HRESULT SetUIHandler ([in] IDocHostUIHandler *pUIHandler);
+};
+
+[object, local, uuid (c4d244b0-d43e-11cf-893b-00aa00bdce1a), pointer_default (unique)]
+interface IDocHostShowUI : IUnknown {
+  HRESULT ShowMessage ([in] HWND hwnd,[in] LPOLESTR lpstrText,[in] LPOLESTR lpstrCaption,[in] DWORD dwType,[in] LPOLESTR lpstrHelpFile,[in] DWORD dwHelpContext,[out] LRESULT *plResult);
+  HRESULT ShowHelp ([in] HWND hwnd,[in] LPOLESTR pszHelpFile,[in] UINT uCommand,[in] DWORD dwData,[in] POINT ptMouse,[out] IDispatch *pDispatchObjectHit);
+};
+
+cpp_quote("#define IClassFactory3 IClassFactoryEx")
+cpp_quote("#define IID_IClassFactory3 IID_IClassFactoryEx")
+cpp_quote("#define SID_SHTMLOMWindowServices IID_IHTMLOMWindowServices")
+
+[object, local, uuid (342d1ea0-AE25-11d1-89c5-006008c3fbfc), pointer_default (unique)]
+interface IClassFactoryEx : IClassFactory {
+  HRESULT CreateInstanceWithContext (IUnknown *punkContext, IUnknown *punkOuter, REFIID riid,[out] void **ppv);
+};
+
+[object, uuid (3050f5fc-98b5-11cf-bb82-00aa00bdce0b), pointer_default (unique)]
+interface IHTMLOMWindowServices : IUnknown {
+  HRESULT moveTo ([in] LONG x,[in] LONG y);
+  HRESULT moveBy ([in] LONG x,[in] LONG y);
+  HRESULT resizeTo ([in] LONG x,[in] LONG y);
+  HRESULT resizeBy ([in] LONG x,[in] LONG y);
+};
+
+cpp_quote("#endif")
+cpp_quote("#endif")

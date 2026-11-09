@@ -1,0 +1,18 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+import "inspectable.idl";
+
+[
+    object,
+    uuid(00000035-0000-0000-c000-000000000046),
+    pointer_default(unique)
+]
+interface IActivationFactory : IInspectable
+{
+    HRESULT ActivateInstance(
+            [out] IInspectable **instance);
+}

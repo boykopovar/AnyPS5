@@ -1,0 +1,261 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+import "oaidl.idl";
+import "ocidl.idl";
+
+import "vss.idl";
+
+typedef enum _VSS_MGMT_OBJECT_TYPE {
+  VSS_MGMT_OBJECT_UNKNOWN = 0,
+  VSS_MGMT_OBJECT_VOLUME,
+  VSS_MGMT_OBJECT_DIFF_VOLUME,
+  VSS_MGMT_OBJECT_DIFF_AREA,
+} VSS_MGMT_OBJECT_TYPE, *PVSS_MGMT_OBJECT_TYPE;
+
+const LONGLONG VSS_ASSOC_NO_MAX_SPACE = -1;
+
+const LONGLONG VSS_ASSOC_REMOVE = 0;
+
+typedef struct _VSS_VOLUME_PROP {
+  VSS_PWSZ m_pwszVolumeName;
+  VSS_PWSZ m_pwszVolumeDisplayName;
+} VSS_VOLUME_PROP, *PVSS_VOLUME_PROP;
+
+typedef struct _VSS_DIFF_VOLUME_PROP {
+  VSS_PWSZ m_pwszVolumeName;
+  VSS_PWSZ m_pwszVolumeDisplayName;
+  LONGLONG m_llVolumeFreeSpace;
+  LONGLONG m_llVolumeTotalSpace;
+} VSS_DIFF_VOLUME_PROP, *PVSS_DIFF_VOLUME_PROP;
+
+typedef struct _VSS_DIFF_AREA_PROP {
+  VSS_PWSZ m_pwszVolumeName;
+  VSS_PWSZ m_pwszDiffAreaVolumeName;
+  LONGLONG m_llMaximumDiffSpace;
+  LONGLONG m_llAllocatedDiffSpace;
+  LONGLONG m_llUsedDiffSpace;
+} VSS_DIFF_AREA_PROP, *PVSS_DIFF_AREA_PROP;
+
+[switch_type(VSS_MGMT_OBJECT_TYPE)]
+typedef union {
+  [case(VSS_MGMT_OBJECT_VOLUME)] VSS_VOLUME_PROP Vol;
+  [case(VSS_MGMT_OBJECT_DIFF_VOLUME)] VSS_DIFF_VOLUME_PROP DiffVol;
+  [case(VSS_MGMT_OBJECT_DIFF_AREA)] VSS_DIFF_AREA_PROP DiffArea;
+  [default];
+} VSS_MGMT_OBJECT_UNION, *PVSS_MGMT_OBJECT_UNION;
+
+typedef struct _VSS_MGMT_OBJECT_PROP {
+  VSS_MGMT_OBJECT_TYPE Type;
+  [switch_is(Type)] VSS_MGMT_OBJECT_UNION Obj;
+} VSS_MGMT_OBJECT_PROP, *PVSS_MGMT_OBJECT_PROP;
+
+typedef enum _VSS_PROTECTION_LEVEL {
+  VSS_PROTECTION_LEVEL_ORIGINAL_VOLUME = 0,
+  VSS_PROTECTION_LEVEL_SNAPSHOT,
+} VSS_PROTECTION_LEVEL, *PVSS_PROTECTION_LEVEL;
+
+typedef enum _VSS_PROTECTION_FAULT {
+  VSS_PROTECTION_FAULT_NONE = 0,
+  VSS_PROTECTION_FAULT_DIFF_AREA_MISSING,
+  VSS_PROTECTION_FAULT_IO_FAILURE_DURING_ONLINE,
+  VSS_PROTECTION_FAULT_META_DATA_CORRUPTION,
+  VSS_PROTECTION_FAULT_MEMORY_ALLOCATION_FAILURE,
+  VSS_PROTECTION_FAULT_MAPPED_MEMORY_FAILURE,
+  VSS_PROTECTION_FAULT_COW_READ_FAILURE,
+  VSS_PROTECTION_FAULT_COW_WRITE_FAILURE,
+  VSS_PROTECTION_FAULT_DIFF_AREA_FULL,
+  VSS_PROTECTION_FAULT_GROW_TOO_SLOW,
+  VSS_PROTECTION_FAULT_GROW_FAILED,
+  VSS_PROTECTION_FAULT_DESTROY_ALL_SNAPSHOTS,
+  VSS_PROTECTION_FAULT_FILE_SYSTEM_FAILURE,
+  VSS_PROTECTION_FAULT_IO_FAILURE,
+  VSS_PROTECTION_FAULT_DIFF_AREA_REMOVED,
+  VSS_PROTECTION_FAULT_EXTERNAL_WRITER_TO_DIFF_AREA,
+  VSS_PROTECTION_FAULT_MOUNT_DURING_CLUSTER_OFFLINE
+} VSS_PROTECTION_FAULT, *PVSS_PROTECTION_FAULT;
+
+typedef struct _VSS_VOLUME_PROTECTION_INFO {
+  VSS_PROTECTION_LEVEL m_protectionLevel;
+  WINBOOL m_volumeIsOfflineForProtection;
+  VSS_PROTECTION_FAULT m_protectionFault;
+  LONG m_failureStatus;
+  WINBOOL m_volumeHasUnusedDiffArea;
+  DWORD m_reserved;
+} VSS_VOLUME_PROTECTION_INFO, *PVSS_VOLUME_PROTECTION_INFO;
+
+interface IVssSnapshotMgmt;
+interface IVssDifferentialSoftwareSnapshotMgmt;
+interface IVssEnumMgmtObject;
+
+[
+  object,
+  uuid(fa7df749-66e7-4986-a27f-e2f04ae53772),
+  pointer_default(unique)
+]
+interface IVssSnapshotMgmt: IUnknown
+{
+  HRESULT GetProviderMgmtInterface(
+    [in] VSS_ID ProviderId,
+    [in] REFIID InterfaceId,
+    [out, iid_is(InterfaceId)] IUnknown **ppItf);
+
+  HRESULT QueryVolumesSupportedForSnapshots(
+    [in] VSS_ID ProviderId,
+    [in] LONG lContext,
+    [out] IVssEnumMgmtObject **ppEnum);
+
+  HRESULT QuerySnapshotsByVolume(
+    [in] VSS_PWSZ pwszVolumeName,
+    [in] VSS_ID ProviderId,
+    [out] IVssEnumObject **ppEnum);
+}
+
+[
+  object,
+  uuid(0f61ec39-fe82-45f2-a3f0-768b5d427102),
+  pointer_default(unique)
+]
+interface IVssSnapshotMgmt2: IUnknown
+{
+  HRESULT GetMinDiffAreaSize(
+    [out] LONGLONG *pllMinDiffAreaSize);
+}
+
+[
+  object,
+  uuid(214a0f28-b737-4026-b847-4f9e37d79529),
+  pointer_default(unique)
+]
+interface IVssDifferentialSoftwareSnapshotMgmt: IUnknown
+{
+    HRESULT AddDiffArea(
+    [in] VSS_PWSZ pwszVolumeName,
+    [in] VSS_PWSZ pwszDiffAreaVolumeName,
+    [in] LONGLONG llMaximumDiffSpace);
+
+  HRESULT ChangeDiffAreaMaximumSize(
+    [in] VSS_PWSZ pwszVolumeName,
+    [in] VSS_PWSZ pwszDiffAreaVolumeName,
+    [in] LONGLONG llMaximumDiffSpace);
+
+  HRESULT QueryVolumesSupportedForDiffAreas(
+    [in] VSS_PWSZ pwszOriginalVolumeName,
+    [out] IVssEnumMgmtObject **ppEnum);
+
+  HRESULT QueryDiffAreasForVolume(
+    [in] VSS_PWSZ pwszVolumeName,
+    [out] IVssEnumMgmtObject **ppEnum);
+
+  HRESULT QueryDiffAreasOnVolume(
+    [in] VSS_PWSZ pwszVolumeName,
+    [out] IVssEnumMgmtObject **ppEnum);
+
+  HRESULT QueryDiffAreasForSnapshot(
+    [in] VSS_ID SnapshotId,
+    [out] IVssEnumMgmtObject **ppEnum);
+}
+
+[
+  object,
+  uuid(949d7353-675f-4275-8969-f044c6277815),
+  pointer_default(unique)
+]
+interface IVssDifferentialSoftwareSnapshotMgmt2 : IVssDifferentialSoftwareSnapshotMgmt
+{
+  HRESULT ChangeDiffAreaMaximumSizeEx(
+    [in] VSS_PWSZ pwszVolumeName,
+    [in] VSS_PWSZ pwszDiffAreaVolumeName,
+    [in] LONGLONG llMaximumDiffSpace,
+    [in] WINBOOL bVolatile);
+
+  HRESULT MigrateDiffAreas(
+    [in] VSS_PWSZ pwszVolumeName,
+    [in] VSS_PWSZ pwszDiffAreaVolumeName,
+    [in] VSS_PWSZ pwszNewDiffAreaVolumeName);
+
+  HRESULT QueryMigrationStatus(
+    [in] VSS_PWSZ pwszVolumeName,
+    [in] VSS_PWSZ pwszDiffAreaVolumeName,
+    [out] IVssAsync **ppAsync);
+
+  HRESULT SetSnapshotPriority(
+    [in] VSS_ID idSnapshot,
+    [in] BYTE priority);
+}
+
+[
+  object,
+  uuid(383f7e71-a4c5-401f-b27f-f826289f8458),
+  pointer_default(unique)
+]
+interface IVssDifferentialSoftwareSnapshotMgmt3 : IVssDifferentialSoftwareSnapshotMgmt2
+{
+  HRESULT SetVolumeProtectLevel(
+    [in] VSS_PWSZ pwszVolumeName,
+    [in] VSS_PROTECTION_LEVEL protectionLevel);
+
+  HRESULT GetVolumeProtectLevel(
+    [in] VSS_PWSZ pwszVolumeName,
+    [out] VSS_VOLUME_PROTECTION_INFO *protectionLevel);
+
+  HRESULT ClearVolumeProtectFault(
+    [in] VSS_PWSZ pwszVolumeName);
+
+  HRESULT DeleteUnusedDiffAreas(
+    [in] VSS_PWSZ pwszDiffAreaVolumeName);
+
+  HRESULT QuerySnapshotDeltaBitmap(
+    [in] VSS_ID idSnapshotOlder,
+    [in] VSS_ID idSnapshotYounger,
+    [out] ULONG *pcBlockSizePerBit,
+    [out] ULONG *pcBitmapLength,
+    [out, size_is(, *pcBitmapLength)] BYTE **ppbBitmap);
+}
+
+[
+  object,
+  uuid(01954e6b-9254-4e6e-808c-c9e05d007696),
+  pointer_default(unique)
+]
+interface IVssEnumMgmtObject : IUnknown
+{
+  HRESULT Next(
+    [in] ULONG celt,
+    [out, size_is(celt), length_is(*pceltFetched)] VSS_MGMT_OBJECT_PROP *rgelt,
+    [out] ULONG *pceltFetched);
+
+  HRESULT Skip(
+    [in] ULONG celt);
+
+  HRESULT Reset();
+
+  HRESULT Clone(
+    [in, out] IVssEnumMgmtObject **ppenum);
+}
+
+[
+  uuid(84015c41-291d-49e6-bf7f-dd40ae93632b),
+  version(1.0)
+]
+library VSMGMT
+{
+  importlib("stdole2.tlb");
+
+  [
+    uuid(0b5a2c52-3eb9-470a-96e2-6c6d4570e40f)
+  ]
+  coclass VssSnapshotMgmt
+  {
+    [default] interface IVssSnapshotMgmt;
+    interface IVssSnapshotMgmt2;
+  }
+}
+
+cpp_quote("#endif /* WINAPI_PARTITION_DESKTOP */")

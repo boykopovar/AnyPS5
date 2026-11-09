@@ -1,0 +1,249 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+cpp_quote("#include <winapifamily.h>")
+
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+import "oaidl.idl";
+import "ocidl.idl";
+
+import "vss.idl";
+import "vdslun.idl";
+
+interface IVssSnapshotProvider;
+interface IVssProviderNotifications;
+
+typedef VSS_PWSZ *PVSS_PWSZ;
+
+[
+  object,
+  uuid(609e123e-2c5a-44d3-8f01-0b1d9a47d1ff),
+  pointer_default(unique)
+]
+interface IVssSoftwareSnapshotProvider : IUnknown
+{
+  HRESULT SetContext(
+    [in] LONG lContext);
+
+  HRESULT GetSnapshotProperties(
+    [in] VSS_ID SnapshotId,
+    [out] VSS_SNAPSHOT_PROP *pProp);
+
+  HRESULT Query(
+    [in] VSS_ID QueriedObjectId,
+    [in] VSS_OBJECT_TYPE eQueriedObjectType,
+    [in] VSS_OBJECT_TYPE eReturnedObjectsType,
+    [out] IVssEnumObject **ppEnum);
+
+  HRESULT DeleteSnapshots(
+    [in] VSS_ID SourceObjectId,
+    [in] VSS_OBJECT_TYPE eSourceObjectType,
+    [in] WINBOOL bForceDelete,
+    [out] LONG *plDeletedSnapshots,
+    [out] VSS_ID *pNondeletedSnapshotID);
+
+  HRESULT BeginPrepareSnapshot(
+    [in] VSS_ID SnapshotSetId,
+    [in] VSS_ID SnapshotId,
+    [in] VSS_PWSZ pwszVolumeName,
+    [in] LONG lNewContext);
+
+  HRESULT IsVolumeSupported(
+    [in] VSS_PWSZ pwszVolumeName,
+    [out] WINBOOL *pbSupportedByThisProvider);
+
+  HRESULT IsVolumeSnapshotted(
+    [in] VSS_PWSZ pwszVolumeName,
+    [out] WINBOOL *pbSnapshotsPresent,
+    [out] LONG *plSnapshotCompatibility);
+
+  HRESULT SetSnapshotProperty(
+    [in] VSS_ID SnapshotId,
+    [in] VSS_SNAPSHOT_PROPERTY_ID eSnapshotPropertyId,
+    [in] VARIANT vProperty);
+
+  HRESULT RevertToSnapshot(
+    [in] VSS_ID SnapshotId);
+
+  HRESULT QueryRevertStatus(
+    [in] VSS_PWSZ pwszVolume,
+    [out] IVssAsync **ppAsync);
+}
+
+[
+  object,
+  uuid(5f894e5b-1e39-4778-8e23-9abad9f0e08c),
+  pointer_default(unique)
+]
+interface IVssProviderCreateSnapshotSet : IUnknown
+{
+  HRESULT EndPrepareSnapshots(
+    [in] VSS_ID SnapshotSetId);
+
+  HRESULT PreCommitSnapshots(
+    [in] VSS_ID SnapshotSetId);
+
+  HRESULT CommitSnapshots(
+    [in] VSS_ID SnapshotSetId);
+
+  HRESULT PostCommitSnapshots(
+    [in] VSS_ID SnapshotSetId,
+    [in] LONG lSnapshotsCount);
+
+  HRESULT PreFinalCommitSnapshots(
+    [in] VSS_ID SnapshotSetId);
+
+  HRESULT PostFinalCommitSnapshots(
+    [in] VSS_ID SnapshotSetId);
+
+  HRESULT AbortSnapshots(
+    [in] VSS_ID SnapshotSetId);
+}
+
+[
+  object,
+  uuid(e561901f-03a5-4afe-86d0-72baeece7004),
+  pointer_default(unique)
+]
+interface IVssProviderNotifications : IUnknown
+{
+  HRESULT OnLoad(
+    [in,unique] IUnknown *pCallback);
+
+  HRESULT OnUnload(
+    [in] WINBOOL bForceUnload);
+}
+
+[
+  object,
+  uuid(9593a157-44e9-4344-bbeb-44fbf9b06b10),
+  pointer_default(unique)
+]
+interface IVssHardwareSnapshotProvider : IUnknown
+{
+  HRESULT AreLunsSupported(
+    [in] LONG lLunCount,
+    [in] LONG lContext,
+    [in, unique, size_is(lLunCount)] VSS_PWSZ *rgwszDevices,
+    [in, out, size_is(lLunCount)] VDS_LUN_INFORMATION *pLunInformation,
+    [out] WINBOOL *pbIsSupported);
+
+  HRESULT FillInLunInfo(
+    [in] VSS_PWSZ wszDeviceName,
+    [in, out] VDS_LUN_INFORMATION *pLunInfo,
+    [out] WINBOOL *pbIsSupported);
+
+  HRESULT BeginPrepareSnapshot(
+    [in] VSS_ID SnapshotSetId,
+    [in] VSS_ID SnapshotId,
+    [in] LONG lContext,
+    [in] LONG lLunCount,
+    [in, unique, size_is(lLunCount)] VSS_PWSZ *rgDeviceNames,
+    [in, out, size_is(lLunCount)] VDS_LUN_INFORMATION *rgLunInformation);
+
+  HRESULT GetTargetLuns(
+    [in] LONG lLunCount,
+    [in, unique, size_is(lLunCount)] VSS_PWSZ *rgDeviceNames,
+    [in, unique, size_is(lLunCount)] VDS_LUN_INFORMATION *rgSourceLuns,
+    [in, out, size_is(lLunCount)] VDS_LUN_INFORMATION *rgDestinationLuns);
+
+  HRESULT LocateLuns(
+    [in] LONG lLunCount,
+    [in, unique, size_is(lLunCount)] VDS_LUN_INFORMATION *rgSourceLuns);
+
+  HRESULT OnLunEmpty(
+    [in, unique] VSS_PWSZ wszDeviceName,
+    [in, unique] VDS_LUN_INFORMATION *pInformation);
+}
+
+[
+  object,
+  uuid(7f5ba925-cdb1-4d11-a71f-339eb7e709fd),
+  pointer_default(unique)
+]
+interface IVssHardwareSnapshotProviderEx : IVssHardwareSnapshotProvider
+{
+  HRESULT GetProviderCapabilities(
+    [out] ULONGLONG *pllOriginalCapabilityMask);
+
+  HRESULT OnLunStateChange(
+    [in, unique, size_is(dwCount)] VDS_LUN_INFORMATION *pSnapshotLuns,
+    [in, unique, size_is(dwCount)] VDS_LUN_INFORMATION *pOriginalLuns,
+    [in] DWORD dwCount,
+    [in] DWORD dwFlags);
+
+  HRESULT ResyncLuns(
+    [in, unique, size_is(dwCount)] VDS_LUN_INFORMATION *pSourceLuns,
+    [in, unique, size_is(dwCount)] VDS_LUN_INFORMATION *pTargetLuns,
+    [in] DWORD dwCount,
+    [out] IVssAsync ** ppAsync);
+
+  HRESULT OnReuseLuns(
+    [in, unique, size_is(dwCount)] VDS_LUN_INFORMATION *pSnapshotLuns,
+    [in, unique, size_is(dwCount)] VDS_LUN_INFORMATION *pOriginalLuns,
+    [in] DWORD dwCount);
+}
+
+[
+  object,
+  uuid(c8636060-7c2e-11df-8c4a-0800200c9a66),
+  pointer_default(unique)
+]
+interface IVssFileShareSnapshotProvider : IUnknown
+{
+  HRESULT SetContext(
+    [in] LONG lContext);
+
+  HRESULT GetSnapshotProperties(
+    [in] VSS_ID SnapshotId,
+    [out] VSS_SNAPSHOT_PROP *pProp);
+
+  HRESULT Query(
+    [in] VSS_ID QueriedObjectId,
+    [in] VSS_OBJECT_TYPE eQueriedObjectType,
+    [in] VSS_OBJECT_TYPE eReturnedObjectsType,
+    [out] IVssEnumObject **ppEnum);
+
+  HRESULT DeleteSnapshots(
+    [in] VSS_ID SourceObjectId,
+    [in] VSS_OBJECT_TYPE eSourceObjectType,
+    [in] WINBOOL bForceDelete,
+    [out] LONG *plDeletedSnapshots,
+    [out] VSS_ID *pNondeletedSnapshotID);
+
+  HRESULT BeginPrepareSnapshot(
+    [in] VSS_ID SnapshotSetId,
+    [in] VSS_ID SnapshotId,
+    [in] VSS_PWSZ pwszSharePath,
+    [in] LONG lNewContext,
+    [in] VSS_ID ProviderId);
+
+  HRESULT IsPathSupported(
+    [in] VSS_PWSZ pwszSharePath,
+    [out] WINBOOL *pbSupportedByThisProvider);
+
+  HRESULT IsPathSnapshotted(
+    [in] VSS_PWSZ pwszSharePath,
+    [out] WINBOOL *pbSnapshotsPresent,
+    [out] LONG *plSnapshotCompatibility);
+
+  HRESULT SetSnapshotProperty(
+    [in] VSS_ID SnapshotId,
+    [in] VSS_SNAPSHOT_PROPERTY_ID eSnapshotPropertyId,
+    [in] VARIANT vProperty);
+}
+
+[
+  uuid(73c8b4c1-6e9d-4fc2-b304-030ec763fe81),
+  version(1.0)
+]
+library VSSProvider
+{
+  importlib("stdole2.tlb");
+}
+
+cpp_quote("#endif /* WINAPI_PARTITION_DESKTOP */")

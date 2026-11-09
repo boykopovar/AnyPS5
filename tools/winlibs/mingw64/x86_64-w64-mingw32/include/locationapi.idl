@@ -1,0 +1,94 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+import "oaidl.idl";
+import "ocidl.idl";
+import "sensorsapi.idl";
+
+cpp_quote("#include <propkeydef.h>")
+
+typedef enum LOCATION_REPORT_STATUS {
+    REPORT_NOT_SUPPORTED = 0,
+    REPORT_ERROR         = 1,
+    REPORT_ACCESS_DENIED = 2,
+    REPORT_INITIALIZING  = 3,
+    REPORT_RUNNING       = 4
+} LOCATION_REPORT_STATUS;
+
+[
+    uuid(c8b7f7ee-75d0-4db9-b62d-7a0f369ca456),
+    object
+]
+interface ILocationReport : IUnknown {
+    HRESULT GetSensorID([out, retval] SENSOR_ID *pSensorID);
+    HRESULT GetTimestamp([out, retval] SYSTEMTIME *pCreationTime);
+    HRESULT GetValue([in] REFPROPERTYKEY pKey, [out, retval] PROPVARIANT *pValue);
+}
+
+[
+    uuid(c0b19f70-4adf-445d-87f2-cad8fd711792),
+    object
+]
+interface ICivicAddressReport : ILocationReport {
+    HRESULT GetAddressLine1([out, retval] BSTR *pbstrAddress1);
+    HRESULT GetAddressLine2([out, retval] BSTR *pbstrAddress2);
+    HRESULT GetCity([out, retval] BSTR *pbstrCity);
+    HRESULT GetStateProvince([out, retval] BSTR *pbstrStateProvince);
+    HRESULT GetPostalCode([out, retval] BSTR *pbstrPostalCode);
+    HRESULT GetCountryRegion([out, retval] BSTR *pbstrCountryRegion);
+    HRESULT GetDetailLevel([out, retval] DWORD *pDetailLevel);
+}
+
+[
+    uuid(7fed806d-0ef8-4f07-80ac-36a0beae3134),
+    object
+]
+interface ILatLongReport : ILocationReport {
+    HRESULT GetLatitude([out, retval] DOUBLE *pLatitude);
+    HRESULT GetLongitude([out, retval] DOUBLE *pLongitude);
+    HRESULT GetErrorRadius([out, retval] DOUBLE *pErrorRadius);
+    HRESULT GetAltitude([out, retval] DOUBLE *pAltitude);
+    HRESULT GetAltitudeError([out, retval] DOUBLE *pAltitudeError);
+}
+
+[
+    uuid(a65aF77e-969a-4a2e-8aca-33bb7cbb1235),
+    object
+]
+interface IDefaultLocation : IUnknown {
+    HRESULT SetReport([in] REFIID reportType, [in] ILocationReport *pLocationReport);
+    HRESULT GetReport([in] REFIID reportType, [out, retval] ILocationReport **ppLocationReport);
+}
+
+[
+    uuid(cae02bbf-798b-4508-a207-35a7906dc73d),
+    object
+]
+interface ILocationEvents : IUnknown {
+    HRESULT OnLocationChanged([in] REFIID reportType, [in] ILocationReport *pLocationReport);
+    HRESULT OnStatusChanged([in] REFIID reportType, [in] LOCATION_REPORT_STATUS newStatus);
+}
+
+[
+    uuid(ab2ece69-56d9-4f28-b525-de1B0ee44237),
+    object
+]
+interface ILocation : IUnknown {
+    HRESULT RegisterForReport([in] ILocationEvents *pEvents, [in] REFIID reportType, [in] DWORD dwRequestedReportInterval);
+    HRESULT UnregisterForReport([in] REFIID reportType);
+    HRESULT GetReport([in] REFIID reportType, [out, retval] ILocationReport **ppLocationReport);
+    HRESULT GetReportStatus([in] REFIID reportType, [out, retval] LOCATION_REPORT_STATUS *pStatus);
+    HRESULT GetReportInterval([in] REFIID reportType, [out, retval] DWORD *pMilliseconds);
+    HRESULT SetReportInterval([in] REFIID reportType, [in] DWORD millisecondsRequested);
+    HRESULT GetDesiredAccuracy([in] REFIID reportType, [out, retval] LOCATION_DESIRED_ACCURACY *pDesiredAccuracy);
+    HRESULT SetDesiredAccuracy([in] REFIID reportType, [in] LOCATION_DESIRED_ACCURACY desiredAccuracy);
+    HRESULT RequestPermissions([in, unique] HWND hParent, [in, size_is(count)] IID pReportTypes[], [in] ULONG count, [in] BOOL fModal);
+}
+
+[
+    uuid(e5B8e079-ee6d-4e33-a438-c87f2e959254)
+]
+coclass Location {}

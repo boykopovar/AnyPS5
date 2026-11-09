@@ -1,0 +1,47 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+import "naptypes.idl";
+import "unknwn.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+[object, uuid (a9e0af1a-3713-478e-ae03-8edd272d21fa), pointer_default (unique)]
+interface INapComponentConfig : IUnknown {
+  HRESULT IsUISupported ([out] BOOL *isSupported);
+  HRESULT InvokeUI ([in, unique] HWND hwndParent);
+  HRESULT GetConfig ([out] UINT16 *bCount,[out, size_is (,*bCount)] BYTE **data);
+  HRESULT SetConfig ([in] UINT16 bCount,[in, size_is (bCount)] BYTE *data);
+};
+
+[object, uuid (b475f925-e3f7-414c-8c72-1cee64b9d8f6), pointer_default (unique)]
+interface INapComponentInfo : IUnknown {
+  HRESULT GetFriendlyName ([out] MessageId *friendlyName);
+  HRESULT GetDescription ([out] MessageId *description);
+  HRESULT GetVendorName ([out] MessageId *vendorName);
+  HRESULT GetVersion ([out] MessageId *version);
+  HRESULT GetIcon ([out] CountedString **dllFilePath,[out] UINT32 *iconResourceId);
+  HRESULT ConvertErrorCodeToMessageId ([in] HRESULT errorCode,[out] MessageId *msgId);
+  HRESULT GetLocalizedString ([in] MessageId msgId,[out] CountedString **string);
+};
+
+[object, uuid (47cbdb9e-1972-4f5e-bd3c-5eb6230614b5), pointer_default (unique)]
+interface INapComponentConfig2 : INapComponentConfig {
+  HRESULT IsRemoteConfigSupported ([out] BOOL *isSupported,[out] UINT8 *remoteConfigType);
+  HRESULT InvokeUIForMachine ([in, unique] HWND hwndParent,[in, unique] CountedString *machineName);
+  HRESULT InvokeUIFromConfigBlob ([in, unique] HWND hwndParent,[in] UINT16 inbCount,[in, size_is (inbCount)] BYTE *inData,[out] UINT16 *outbCount,[out, size_is (,*outbCount)] BYTE **outdata,[out] BOOL *fConfigChanged);
+};
+
+[object, uuid (9c4a8101-8cfe-4332-876e-C4A49D1D3F77), pointer_default (unique)]
+interface INapComponentConfig3 : INapComponentConfig2 {
+  HRESULT NewConfig (UINT32 configID);
+  HRESULT DeleteConfig (UINT32 configID);
+  HRESULT DeleteAllConfig ();
+  HRESULT GetConfigFromID ([in] UINT32 configID,[out] UINT16 *count,[out, size_is (,*count)]BYTE **outdata);
+  HRESULT SetConfigToID ([in] UINT32 configID,[in] UINT16 count,[in, size_is (count)]BYTE *data);
+};
+cpp_quote("#endif")

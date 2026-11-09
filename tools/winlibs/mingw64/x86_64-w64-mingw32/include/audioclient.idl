@@ -1,0 +1,264 @@
+/*
+ * Core Audio audioclient definitions
+ *
+ * (c) 2013 Corrected, and extended by mingw-w64 team
+ * base on version Copyright 2009 Maarten Lankhorst
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+ *
+ */
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+
+import "wtypes.idl";
+import "unknwn.idl";
+
+cpp_quote("")
+cpp_quote("#if 0")
+typedef [restricted, hidden] struct WAVEFORMATEX {
+  WORD wFormatTag;
+  WORD nChannels;
+  DWORD nSamplesPerSec;
+  DWORD nAvgBytesPerSec;
+  WORD nBlockAlign;
+  WORD wBitsPerSample;
+  WORD cbSize;
+} WAVEFORMATEX;
+
+cpp_quote("")
+typedef [restricted, hidden] LONGLONG REFERENCE_TIME;
+cpp_quote("#else")
+cpp_quote("#define _IKsControl_")
+cpp_quote("")
+cpp_quote("#include <mmreg.h>")
+cpp_quote("#include <ks.h>")
+cpp_quote("#include <ksmedia.h>")
+cpp_quote("#endif")
+
+cpp_quote("")
+
+import "audiosessiontypes.h";
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+enum _AUDCLNT_BUFFERFLAGS {
+ AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY = 0x1,
+ AUDCLNT_BUFFERFLAGS_SILENT = 0x2,
+ AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR = 0x4
+};
+
+typedef [v1_enum] enum AUDCLNT_STREAMOPTIONS {
+  AUDCLNT_STREAMOPTIONS_NONE = 0x0,
+  AUDCLNT_STREAMOPTIONS_RAW = 0x1,
+  AUDCLNT_STREAMOPTIONS_MATCH_FORMAT = 0x2,
+  AUDCLNT_STREAMOPTIONS_AMBISONICS = 0x4
+} AUDCLNT_STREAMOPTIONS;
+cpp_quote("DEFINE_ENUM_FLAG_OPERATORS(AUDCLNT_STREAMOPTIONS);")
+
+typedef enum AMBISONICS_TYPE {
+  AMBISONICS_TYPE_FULL3D = 0x0
+} AMBISONICS_TYPE;
+
+typedef enum AMBISONICS_CHANNEL_ORDERING {
+  AMBISONICS_CHANNEL_ORDERING_ACN = 0x0
+} AMBISONICS_CHANNEL_ORDERING;
+
+typedef enum AMBISONICS_NORMALIZATION {
+  AMBISONICS_NORMALIZATION_SN3D = 0x0,
+  AMBISONICS_NORMALIZATION_N3D = 0x1
+} AMBISONICS_NORMALIZATION;
+
+cpp_quote("")
+typedef struct AudioClientProperties {
+  UINT32 cbSize;
+  WINBOOL bIsOffload;
+  AUDIO_STREAM_CATEGORY eCategory;
+  AUDCLNT_STREAMOPTIONS Options;
+} AudioClientProperties;
+
+typedef struct AudioClient3ActivationParams {
+  GUID tracingContextId;
+} AudioClient3ActivationParams;
+
+typedef struct AMBISONICS_PARAMS {
+  UINT32 u32Size;
+  UINT32 u32Version;
+  AMBISONICS_TYPE u32Type;
+  AMBISONICS_CHANNEL_ORDERING u32ChannelOrdering;
+  AMBISONICS_NORMALIZATION u32Normalization;
+  UINT32 u32Order;
+  UINT32 u32NumChannels;
+  UINT32 *pu32ChannelMap;
+} AMBISONICS_PARAMS;
+
+cpp_quote("")
+[object, local, uuid (1cb9ad4c-DBFA-4c32-B178-C2F568A703B2), pointer_default (unique)]
+interface IAudioClient : IUnknown {
+  HRESULT Initialize ([in] AUDCLNT_SHAREMODE ShareMode,[in] DWORD StreamFlags,[in] REFERENCE_TIME hnsBufferDuration,[in] REFERENCE_TIME hnsPeriodicity,[in] const WAVEFORMATEX *pFormat,[in] LPCGUID AudioSessionGuid);
+  HRESULT GetBufferSize ([out] UINT32 *pNumBufferFrames);
+  HRESULT GetStreamLatency ([out] REFERENCE_TIME *phnsLatency);
+  HRESULT GetCurrentPadding ([out] UINT32 *pNumPaddingFrames);
+  HRESULT IsFormatSupported ([in] AUDCLNT_SHAREMODE ShareMode,[in] const WAVEFORMATEX *pFormat,[out, unique] WAVEFORMATEX **ppClosestMatch);
+  HRESULT GetMixFormat ([out] WAVEFORMATEX **ppDeviceFormat);
+  HRESULT GetDevicePeriod ([out] REFERENCE_TIME *phnsDefaultDevicePeriod,[out] REFERENCE_TIME *phnsMinimumDevicePeriod);
+  HRESULT Start ();
+  HRESULT Stop ();
+  HRESULT Reset ();
+  HRESULT SetEventHandle ([in] HANDLE eventHandle);
+  HRESULT GetService ([in] REFIID riid,[out, iid_is (riid)] void **ppv);
+}
+
+cpp_quote("")
+[object, local, uuid (726778cd-F60A-4eda-82de-E47610CD78AA), pointer_default (unique)]
+interface IAudioClient2 : IAudioClient {
+  HRESULT IsOffloadCapable ([in] AUDIO_STREAM_CATEGORY Category,[in] WINBOOL *pbOffloadCapable);
+  HRESULT SetClientProperties ([in] const AudioClientProperties *pProperties);
+  HRESULT GetBufferSizeLimits ([in] const WAVEFORMATEX *pFormat,[in] WINBOOL bEventDriven,[in] REFERENCE_TIME *phnsMinBufferDuration,[in] REFERENCE_TIME *phnsMaxBufferDuration);
+}
+
+[object, local, uuid (7ed4ee07-8e67-4cd4-8c1a-2b7a5987ad42), pointer_default (unique)]
+interface IAudioClient3 : IAudioClient2 {
+  HRESULT GetSharedModeEnginePeriod ([in] const WAVEFORMATEX *pFormat, [out] UINT32 *pDefaultPeriodInFrames, [out] UINT32 *pFundamentalPeriodInFrames, [out] UINT32 *pMinPeriodInFrames, [out] UINT32 *pMaxPeriodInFrames);
+  HRESULT GetCurrentSharedModeEnginePeriod ([out, unique] WAVEFORMATEX **ppFormat, [out] UINT32 *pCurrentPeriodInFrames);
+  HRESULT InitializeSharedAudioStream ([in] DWORD StreamFlags, [in] UINT32 PeriodInFrames, [in] const WAVEFORMATEX *pFormat, [in] LPCGUID AudioSessionGuid);
+}
+
+cpp_quote("")
+[object, local, uuid (F294ACFC-3146-4483-A7BF-ADDCA7C260E2), helpstring ("IAudioRenderClient Interface"), pointer_default (unique)]
+interface IAudioRenderClient : IUnknown {
+  HRESULT GetBuffer ([in] UINT32 NumFramesRequested,[out] BYTE **ppData);
+  HRESULT ReleaseBuffer ([in] UINT32 NumFramesWritten,[in] DWORD dwFlags);
+}
+
+cpp_quote("")
+[object, local, uuid (C8ADBD64-E71E-48a0-A4DE-185c395cd317), helpstring ("IAudioCaptureClient Interface"), pointer_default (unique)]
+interface IAudioCaptureClient : IUnknown {
+  HRESULT GetBuffer ([out] BYTE **ppData,[out] UINT32 *pNumFramesToRead,[out] DWORD *pdwFlags,[out, unique] UINT64 *pu64DevicePosition,[out, unique] UINT64 *pu64QPCPosition);
+  HRESULT ReleaseBuffer ([in] UINT32 NumFramesRead);
+  HRESULT GetNextPacketSize ([out] UINT32 *pNumFramesInNextPacket);
+}
+
+cpp_quote("")
+cpp_quote("#define AUDIOCLOCK_CHARACTERISTIC_FIXED_FREQ  0x1")
+
+cpp_quote("")
+[object, local, uuid (CD63314F-3fba-4a1b-812c-EF96358728E7), pointer_default (unique)]
+interface IAudioClock : IUnknown {
+  HRESULT GetFrequency ([out] UINT64 *pu64Frequency);
+  HRESULT GetPosition ([out] UINT64 *pu64Position,[out, unique] UINT64 *pu64QPCPosition);
+  HRESULT GetCharacteristics ([out] DWORD *pdwCharacteristics);
+};
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+[object, local, uuid (6f49ff73-6727-49ac-a008-d98cf5e70048), pointer_default (unique)]
+interface IAudioClock2 : IUnknown {
+  HRESULT GetDevicePosition ([out] UINT64 *DevicePosition,[out, unique] UINT64 *QPCPosition);
+};
+
+cpp_quote("")
+[local, uuid (f6e4c0a0-46d9-4fb8-be21-57a3ef2b626c), pointer_default (unique)]
+interface IAudioClockAdjustment : IUnknown {
+  HRESULT SetSampleRate ([in] float flSampleRate);
+};
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+[object, local, uuid (87ce5498-68d6-44e5-9215-6da47ef883d8), pointer_default (unique)]
+interface ISimpleAudioVolume : IUnknown {
+  HRESULT SetMasterVolume ([in] float fLevel,[in, unique] LPCGUID EventContext);
+  HRESULT GetMasterVolume ([out] float *pfLevel);
+  HRESULT SetMute ([in] const WINBOOL bMute,[in, unique] LPCGUID EventContext);
+  HRESULT GetMute ([out] WINBOOL *pbMute);
+}
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+[object, local, uuid (93014887-242d-4068-8a15-CF5E93B90FE3), pointer_default (unique)]
+interface IAudioStreamVolume : IUnknown {
+  HRESULT GetChannelCount ([out] UINT32 *pdwCount);
+  HRESULT SetChannelVolume ([in] UINT32 dwIndex,[in] const float fLevel);
+  HRESULT GetChannelVolume ([in] UINT32 dwIndex,[out] float *pfLevel);
+  HRESULT SetAllVolumes ([in] UINT32 dwCount,[in, size_is (dwCount)] const float *pfVolumes);
+  HRESULT GetAllVolumes ([in] UINT32 dwCount,[out, size_is (dwCount),] float *pfVolumes);
+}
+
+[object, local, uuid (28724c91-df35-4856-9f76-d6a26413f3df), pointer_default (unique)]
+interface IAudioAmbisonicsControl : IUnknown {
+    HRESULT SetData([in] const AMBISONICS_PARAMS *pAmbisonicsParams, [in] UINT32 cbAmbisonicsParams);
+    HRESULT SetHeadTracking([in] WINBOOL bEnableHeadTracking);
+    HRESULT GetHeadTracking([out] WINBOOL *pbEnableHeadTracking);
+    HRESULT SetRotation([in] float X, [in] float Y, [in] float Z, [in] float W);
+}
+
+cpp_quote("")
+[object, local, uuid (1c158861-B533-4b30-B1CF-E853E51C59B8), pointer_default (unique)]
+interface IChannelAudioVolume : IUnknown {
+  HRESULT GetChannelCount ([out] UINT32 *pdwCount);
+  HRESULT SetChannelVolume ([in] UINT32 dwIndex,[in] const float fLevel,[in, unique] LPCGUID EventContext);
+  HRESULT GetChannelVolume ([in] UINT32 dwIndex,[out] float *pfLevel);
+  HRESULT SetAllVolumes ([in] UINT32 dwCount,[in, size_is (dwCount)] const float *pfVolumes,[in, unique] LPCGUID EventContext);
+  HRESULT GetAllVolumes ([in] UINT32 dwCount,[out, size_is (dwCount),] float *pfVolumes);
+}
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+cpp_quote("#define AUDCLNT_ERR(n) MAKE_HRESULT(SEVERITY_ERROR, FACILITY_AUDCLNT, n)")
+cpp_quote("#define AUDCLNT_SUCCESS(n) MAKE_SCODE(SEVERITY_SUCCESS, FACILITY_AUDCLNT, n)")
+cpp_quote("")
+cpp_quote("#define AUDCLNT_E_NOT_INITIALIZED AUDCLNT_ERR(0x1)")
+cpp_quote("#define AUDCLNT_E_ALREADY_INITIALIZED AUDCLNT_ERR(0x2)")
+cpp_quote("#define AUDCLNT_E_WRONG_ENDPOINT_TYPE AUDCLNT_ERR(0x3)")
+cpp_quote("#define AUDCLNT_E_DEVICE_INVALIDATED AUDCLNT_ERR(0x4)")
+cpp_quote("#define AUDCLNT_E_NOT_STOPPED AUDCLNT_ERR(0x5)")
+cpp_quote("#define AUDCLNT_E_BUFFER_TOO_LARGE AUDCLNT_ERR(0x6)")
+cpp_quote("#define AUDCLNT_E_OUT_OF_ORDER AUDCLNT_ERR(0x7)")
+cpp_quote("#define AUDCLNT_E_UNSUPPORTED_FORMAT AUDCLNT_ERR(0x8)")
+cpp_quote("#define AUDCLNT_E_INVALID_SIZE AUDCLNT_ERR(0x9)")
+cpp_quote("#define AUDCLNT_E_DEVICE_IN_USE AUDCLNT_ERR(0xa)")
+cpp_quote("#define AUDCLNT_E_BUFFER_OPERATION_PENDING AUDCLNT_ERR(0xb)")
+cpp_quote("#define AUDCLNT_E_THREAD_NOT_REGISTERED AUDCLNT_ERR(0xc)")
+cpp_quote("#define AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED AUDCLNT_ERR(0xe)")
+cpp_quote("#define AUDCLNT_E_ENDPOINT_CREATE_FAILED AUDCLNT_ERR(0xf)")
+cpp_quote("#define AUDCLNT_E_SERVICE_NOT_RUNNING AUDCLNT_ERR(0x10)")
+cpp_quote("#define AUDCLNT_E_EVENTHANDLE_NOT_EXPECTED AUDCLNT_ERR(0x11)")
+cpp_quote("#define AUDCLNT_E_EXCLUSIVE_MODE_ONLY AUDCLNT_ERR(0x12)")
+cpp_quote("#define AUDCLNT_E_BUFDURATION_PERIOD_NOT_EQUAL AUDCLNT_ERR(0x13)")
+cpp_quote("#define AUDCLNT_E_EVENTHANDLE_NOT_SET AUDCLNT_ERR(0x14)")
+cpp_quote("#define AUDCLNT_E_INCORRECT_BUFFER_SIZE AUDCLNT_ERR(0x15)")
+cpp_quote("#define AUDCLNT_E_BUFFER_SIZE_ERROR AUDCLNT_ERR(0x16)")
+cpp_quote("#define AUDCLNT_E_CPUUSAGE_EXCEEDED AUDCLNT_ERR(0x17)")
+cpp_quote("#define AUDCLNT_E_BUFFER_ERROR AUDCLNT_ERR(0x18)")
+cpp_quote("#define AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED AUDCLNT_ERR(0x19)")
+cpp_quote("#define AUDCLNT_E_INVALID_DEVICE_PERIOD AUDCLNT_ERR(0x20)")
+cpp_quote("#define AUDCLNT_E_INVALID_STREAM_FLAG AUDCLNT_ERR(0x21)")
+cpp_quote("#define AUDCLNT_E_ENDPOINT_OFFLOAD_NOT_CAPABLE AUDCLNT_ERR(0x22)")
+cpp_quote("#define AUDCLNT_E_OUT_OF_OFFLOAD_RESOURCES AUDCLNT_ERR(0x23)")
+cpp_quote("#define AUDCLNT_E_OFFLOAD_MODE_ONLY AUDCLNT_ERR(0x24)")
+cpp_quote("#define AUDCLNT_E_NONOFFLOAD_MODE_ONLY AUDCLNT_ERR(0x25)")
+cpp_quote("#define AUDCLNT_E_RESOURCES_INVALIDATED AUDCLNT_ERR(0x26)")
+cpp_quote("#define AUDCLNT_E_RAW_MODE_UNSUPPORTED AUDCLNT_ERR(0x027)")
+cpp_quote("#define AUDCLNT_E_ENGINE_PERIODICITY_LOCKED AUDCLNT_ERR(0x028)")
+cpp_quote("#define AUDCLNT_E_ENGINE_FORMAT_LOCKED AUDCLNT_ERR(0x029)")
+cpp_quote("#define AUDCLNT_E_HEADTRACKING_ENABLED AUDCLNT_ERR(0x030)")
+cpp_quote("#define AUDCLNT_E_HEADTRACKING_UNSUPPORTED AUDCLNT_ERR(0x040)")
+cpp_quote("#define AUDCLNT_S_BUFFER_EMPTY AUDCLNT_SUCCESS(0x1)")
+cpp_quote("#define AUDCLNT_S_THREAD_ALREADY_REGISTERED AUDCLNT_SUCCESS(0x2)")
+cpp_quote("#define AUDCLNT_S_POSITION_STALLED AUDCLNT_SUCCESS(0x3)")
+
+cpp_quote("#endif")

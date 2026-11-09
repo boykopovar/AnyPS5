@@ -1,0 +1,47 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+import "objidl.idl";
+import "oaidl.idl";
+import "ocidl.idl";
+import "xpsobjectmodel.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+cpp_quote("#if NTDDI_VERSION >= 0x06010000")
+
+typedef enum {
+  XPS_JOB_IN_PROGRESS = 0,
+  XPS_JOB_COMPLETED = 1,
+  XPS_JOB_CANCELLED = 2,
+  XPS_JOB_FAILED = 3
+} XPS_JOB_COMPLETION;
+
+typedef struct {
+  UINT32 jobId;
+  INT32 currentDocument;
+  INT32 currentPage;
+  INT32 currentPageTotal;
+  XPS_JOB_COMPLETION completion;
+  HRESULT jobStatus;
+} XPS_JOB_STATUS;
+
+[object, uuid (7a77dc5f-45d6-4dff-9307-d8cb846347ca), pointer_default (unique)]
+interface IXpsPrintJobStream : ISequentialStream {
+  [local] HRESULT Close ();
+}
+
+[object, uuid (5ab89b06-8194-425f-ab3b-d7a96e350161), pointer_default (unique)]
+interface IXpsPrintJob : IUnknown {
+  [local] HRESULT Cancel ();
+  [local] HRESULT GetJobStatus ([out, retval] XPS_JOB_STATUS *jobStatus);
+}
+
+cpp_quote("HRESULT WINAPI StartXpsPrintJob (LPCWSTR printerName, LPCWSTR jobName, LPCWSTR outputFileName, HANDLE progressEvent, HANDLE completionEvent, UINT8 *printablePagesOn, UINT32 printablePagesOnCount, IXpsPrintJob **xpsPrintJob, IXpsPrintJobStream **documentStream, IXpsPrintJobStream **printTicketStream);")
+cpp_quote("HRESULT WINAPI StartXpsPrintJob1 (LPCWSTR printerName, LPCWSTR jobName, LPCWSTR outputFileName, HANDLE progressEvent, HANDLE completionEvent, IXpsPrintJob **xpsPrintJob, IXpsOMPackageTarget **printContentReceiver);")
+
+cpp_quote("#endif")
+cpp_quote("#endif")

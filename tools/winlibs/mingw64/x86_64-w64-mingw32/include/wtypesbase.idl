@@ -1,0 +1,414 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+
+import "basetsd.h";
+import "guiddef.h";
+
+cpp_quote("")
+[uuid (B1BEA154-1c2f-4da9-9abf-6e2d24eea1be), version (0.1), pointer_default (unique)]
+interface IWinTypesBase {
+cpp_quote("")
+  cpp_quote("#if 0")
+  typedef byte BYTE;
+  typedef unsigned short WORD;
+  typedef unsigned int UINT;
+  typedef int INT;
+  typedef long BOOL;
+  /*typedef long WINBOOL;*/
+  typedef long LONG;
+  typedef unsigned long DWORD;
+  typedef void *HANDLE;
+  typedef WORD *LPWORD;
+  typedef DWORD *LPDWORD;
+  typedef char CHAR;
+  typedef [string] CHAR *LPSTR;
+  typedef [string] const CHAR *LPCSTR;
+  typedef wchar_t WCHAR;
+  typedef WCHAR TCHAR;
+  typedef [string] WCHAR *LPWSTR;
+  typedef [string] TCHAR *LPTSTR;
+  typedef [string] const WCHAR *LPCWSTR;
+  typedef [string] const TCHAR *LPCTSTR;
+  typedef HANDLE *LPHANDLE;
+  cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if !defined(OLE2ANSI)")
+  typedef WCHAR OLECHAR;
+  typedef [string] OLECHAR *LPOLESTR;
+  typedef [string] const OLECHAR *LPCOLESTR;
+cpp_quote("")
+  cpp_quote("#define OLESTR(str) L##str")
+cpp_quote("#else")
+  cpp_quote("typedef char OLECHAR;")
+  cpp_quote("typedef LPSTR LPOLESTR;")
+  cpp_quote("typedef LPCSTR LPCOLESTR;")
+cpp_quote("")
+  cpp_quote("#define OLESTR(str) str")
+cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#ifndef _WINDEF_")
+  cpp_quote("#ifndef _MINWINDEF_")
+  typedef void *PVOID, *LPVOID;
+  typedef float FLOAT;
+  cpp_quote("#endif")
+  cpp_quote("#endif")
+
+cpp_quote("")
+  typedef unsigned char UCHAR;
+  typedef short SHORT;
+  typedef unsigned short USHORT;
+  typedef DWORD ULONG;
+  typedef double DOUBLE;
+  cpp_quote("#ifndef _DWORDLONG_")
+  typedef unsigned __int64 DWORDLONG;
+  typedef DWORDLONG *PDWORDLONG;
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#ifndef _ULONGLONG_")
+  typedef __int64 LONGLONG;
+  typedef unsigned __int64 ULONGLONG;
+  typedef LONGLONG *PLONGLONG;
+  typedef ULONGLONG *PULONGLONG;
+  cpp_quote("#endif")
+
+  cpp_quote("#if 0")
+  typedef struct _LARGE_INTEGER {
+    LONGLONG QuadPart;
+  } LARGE_INTEGER;
+  typedef LARGE_INTEGER *PLARGE_INTEGER;
+  typedef struct _ULARGE_INTEGER {
+    ULONGLONG QuadPart;
+  } ULARGE_INTEGER;
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#ifndef _WINBASE_")
+  cpp_quote("#ifndef _FILETIME_")
+  cpp_quote("#define _FILETIME_")
+cpp_quote("")
+  typedef struct _FILETIME {
+    DWORD dwLowDateTime;
+    DWORD dwHighDateTime;
+  } FILETIME,*PFILETIME,*LPFILETIME;
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#ifndef _SYSTEMTIME_")
+  cpp_quote("#define _SYSTEMTIME_")
+cpp_quote("")
+  typedef struct _SYSTEMTIME {
+    WORD wYear;
+    WORD wMonth;
+    WORD wDayOfWeek;
+    WORD wDay;
+    WORD wHour;
+    WORD wMinute;
+    WORD wSecond;
+    WORD wMilliseconds;
+  } SYSTEMTIME,*PSYSTEMTIME,*LPSYSTEMTIME;
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#ifndef _SECURITY_ATTRIBUTES_")
+  cpp_quote("#define _SECURITY_ATTRIBUTES_")
+cpp_quote("")
+  typedef struct _SECURITY_ATTRIBUTES {
+    DWORD nLength;
+    LPVOID lpSecurityDescriptor;
+    BOOL bInheritHandle;
+  } SECURITY_ATTRIBUTES,*PSECURITY_ATTRIBUTES,*LPSECURITY_ATTRIBUTES;
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#ifndef SECURITY_DESCRIPTOR_REVISION")
+  typedef USHORT SECURITY_DESCRIPTOR_CONTROL, *PSECURITY_DESCRIPTOR_CONTROL;
+  typedef PVOID PSID;
+cpp_quote("")
+  typedef struct _ACL {
+    UCHAR AclRevision;
+    UCHAR Sbz1;
+    USHORT AclSize;
+    USHORT AceCount;
+    USHORT Sbz2;
+  } ACL;
+cpp_quote("")
+  typedef ACL *PACL;
+cpp_quote("")
+  typedef struct _SECURITY_DESCRIPTOR {
+    UCHAR Revision;
+    UCHAR Sbz1;
+    SECURITY_DESCRIPTOR_CONTROL Control;
+    PSID Owner;
+    PSID Group;
+    PACL Sacl;
+    PACL Dacl;
+  } SECURITY_DESCRIPTOR,*PISECURITY_DESCRIPTOR;
+  cpp_quote("#endif")
+  cpp_quote("#endif")
+
+cpp_quote("")
+  typedef struct _COAUTHIDENTITY {
+    [size_is (UserLength+1)] USHORT *User;
+    [range (0, 256)]ULONG UserLength;
+    [size_is (DomainLength+1)] USHORT *Domain;
+    [range (0, 256)]ULONG DomainLength;
+    [size_is (PasswordLength+1)] USHORT *Password;
+    [range (0, 256)]ULONG PasswordLength;
+    ULONG Flags;
+  } COAUTHIDENTITY;
+
+cpp_quote("")
+  typedef struct _COAUTHINFO {
+    DWORD dwAuthnSvc;
+    DWORD dwAuthzSvc;
+    LPWSTR pwszServerPrincName;
+    DWORD dwAuthnLevel;
+    DWORD dwImpersonationLevel;
+    COAUTHIDENTITY *pAuthIdentityData;
+    DWORD dwCapabilities;
+  } COAUTHINFO;
+
+cpp_quote("")
+  typedef LONG SCODE;
+  typedef SCODE *PSCODE;
+cpp_quote("")
+  cpp_quote("#ifndef _HRESULT_DEFINED")
+  cpp_quote("#define _HRESULT_DEFINED")
+#if defined (_STRICT_HRESULT)
+  typedef struct _HRESULT_STRUCT {
+    DWORD Data1;
+  } HRESULT_STRUCT,*PHRESULT_STRUCT;
+  typedef PHRESULT_STRUCT HRESULT;
+#else
+  cpp_quote("#ifdef __WIDL__")
+  typedef LONG HRESULT;
+  cpp_quote("#else")
+  cpp_quote("typedef __LONG32 HRESULT;")
+  cpp_quote("#endif")
+#endif
+  cpp_quote("#endif")
+
+  cpp_quote("")
+  cpp_quote("#ifndef __OBJECTID_DEFINED")
+  cpp_quote("#define __OBJECTID_DEFINED")
+  cpp_quote("#define _OBJECTID_DEFINED")
+cpp_quote("")
+  typedef struct _OBJECTID {
+    GUID Lineage;
+    unsigned long Uniquifier;
+  } OBJECTID;
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#if 0")
+  typedef GUID *REFGUID;
+  typedef IID *REFIID;
+  typedef CLSID *REFCLSID;
+  cpp_quote("#endif")
+
+cpp_quote("")
+  typedef enum tagMEMCTX {
+    MEMCTX_TASK = 1,
+    MEMCTX_SHARED = 2,
+    MEMCTX_MACSYSTEM = 3,
+    MEMCTX_UNKNOWN = -1,
+    MEMCTX_SAME = -2,
+  } MEMCTX;
+  cpp_quote("#ifndef _ROTREGFLAGS_DEFINED")
+  cpp_quote("#define _ROTREGFLAGS_DEFINED")
+cpp_quote("")
+  cpp_quote("#define ROTREGFLAGS_ALLOWANYCLIENT 0x1")
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#ifndef _APPIDREGFLAGS_DEFINED")
+  cpp_quote("#define _APPIDREGFLAGS_DEFINED")
+cpp_quote("")
+  cpp_quote("#define APPIDREGFLAGS_ACTIVATE_IUSERVER_INDESKTOP 0x1")
+  cpp_quote("#define APPIDREGFLAGS_SECURE_SERVER_PROCESS_SD_AND_BIND 0x2")
+  cpp_quote("#define APPIDREGFLAGS_ISSUE_ACTIVATION_RPC_AT_IDENTIFY 0x4")
+  cpp_quote("#define APPIDREGFLAGS_IUSERVER_UNMODIFIED_LOGON_TOKEN 0x8")
+  cpp_quote("#define APPIDREGFLAGS_IUSERVER_SELF_SID_IN_LAUNCH_PERMISSION 0x10")
+  cpp_quote("#define APPIDREGFLAGS_IUSERVER_ACTIVATE_IN_CLIENT_SESSION_ONLY 0x20")
+  cpp_quote("#define APPIDREGFLAGS_RESERVED1 0x40")
+  cpp_quote("#endif")
+
+cpp_quote("")
+  cpp_quote("#ifndef _DCOMSCM_REMOTECALL_FLAGS_DEFINED")
+  cpp_quote("#define _DCOMSCM_REMOTECALL_FLAGS_DEFINED")
+cpp_quote("")
+  cpp_quote("#define DCOMSCM_ACTIVATION_USE_ALL_AUTHNSERVICES 0x1")
+  cpp_quote("#define DCOMSCM_ACTIVATION_DISALLOW_UNSECURE_CALL 0x2")
+  cpp_quote("#define DCOMSCM_RESOLVE_USE_ALL_AUTHNSERVICES 0x4")
+  cpp_quote("#define DCOMSCM_RESOLVE_DISALLOW_UNSECURE_CALL 0x8")
+  cpp_quote("#define DCOMSCM_PING_USE_MID_AUTHNSERVICE 0x10")
+  cpp_quote("#define DCOMSCM_PING_DISALLOW_UNSECURE_CALL 0x20")
+  cpp_quote("#endif")
+
+cpp_quote("")
+  typedef enum tagCLSCTX {
+    CLSCTX_INPROC_SERVER = 0x01,
+    CLSCTX_INPROC_HANDLER = 0x02,
+    CLSCTX_LOCAL_SERVER = 0x04,
+    CLSCTX_INPROC_SERVER16 = 0x08,
+    CLSCTX_REMOTE_SERVER = 0x10,
+    CLSCTX_INPROC_HANDLER16 = 0x20,
+    CLSCTX_RESERVED1 = 0x40,
+    CLSCTX_RESERVED2 = 0x80,
+    CLSCTX_RESERVED3 = 0x100,
+    CLSCTX_RESERVED4 = 0x200,
+    CLSCTX_NO_CODE_DOWNLOAD = 0x400,
+    CLSCTX_RESERVED5 = 0x800,
+    CLSCTX_NO_CUSTOM_MARSHAL = 0x1000,
+    CLSCTX_ENABLE_CODE_DOWNLOAD = 0x2000,
+    CLSCTX_NO_FAILURE_LOG = 0x4000,
+    CLSCTX_DISABLE_AAA = 0x8000,
+    CLSCTX_ENABLE_AAA = 0x10000,
+    CLSCTX_FROM_DEFAULT_CONTEXT = 0x20000,
+    CLSCTX_ACTIVATE_32_BIT_SERVER = 0x40000,
+    CLSCTX_ACTIVATE_64_BIT_SERVER = 0x80000,
+    CLSCTX_ENABLE_CLOAKING = 0x100000,
+    CLSCTX_APPCONTAINER = 0x400000,
+    CLSCTX_ACTIVATE_AAA_AS_IU = 0x800000,
+    CLSCTX_PS_DLL = (int) 0x80000000,
+  } CLSCTX;
+cpp_quote("")
+  cpp_quote("#define CLSCTX_VALID_MASK (CLSCTX_INPROC_SERVER | CLSCTX_INPROC_HANDLER | CLSCTX_LOCAL_SERVER | CLSCTX_INPROC_SERVER16 | CLSCTX_REMOTE_SERVER | CLSCTX_NO_CODE_DOWNLOAD | CLSCTX_NO_CUSTOM_MARSHAL | CLSCTX_ENABLE_CODE_DOWNLOAD | CLSCTX_NO_FAILURE_LOG | CLSCTX_DISABLE_AAA | CLSCTX_ENABLE_AAA | CLSCTX_FROM_DEFAULT_CONTEXT | CLSCTX_ACTIVATE_32_BIT_SERVER | CLSCTX_ACTIVATE_64_BIT_SERVER | CLSCTX_ENABLE_CLOAKING | CLSCTX_APPCONTAINER | CLSCTX_ACTIVATE_AAA_AS_IU | CLSCTX_PS_DLL)")
+
+cpp_quote("")
+  typedef enum tagMSHLFLAGS {
+    MSHLFLAGS_NORMAL = 0,
+    MSHLFLAGS_TABLESTRONG = 1,
+    MSHLFLAGS_TABLEWEAK = 2,
+    MSHLFLAGS_NOPING = 4,
+    MSHLFLAGS_RESERVED1 = 8,
+    MSHLFLAGS_RESERVED2 = 16,
+    MSHLFLAGS_RESERVED3 = 32,
+    MSHLFLAGS_RESERVED4 = 64
+  } MSHLFLAGS;
+
+cpp_quote("")
+  typedef enum tagMSHCTX {
+    MSHCTX_LOCAL = 0,
+    MSHCTX_NOSHAREDMEM = 1,
+    MSHCTX_DIFFERENTMACHINE = 2,
+    MSHCTX_INPROC = 3,
+    MSHCTX_CROSSCTX = 4
+  } MSHCTX;
+
+cpp_quote("")
+  typedef struct _BYTE_BLOB {
+    unsigned long clSize;
+    [size_is (clSize)] byte abData[];
+  } BYTE_BLOB;
+
+cpp_quote("")
+  typedef [unique] BYTE_BLOB *UP_BYTE_BLOB;
+
+cpp_quote("")
+  typedef struct _WORD_BLOB {
+    unsigned long clSize;
+    [size_is (clSize)] unsigned short asData[];
+  } WORD_BLOB;
+
+cpp_quote("")
+  typedef [unique] WORD_BLOB *UP_WORD_BLOB;
+
+cpp_quote("")
+  typedef struct _DWORD_BLOB {
+    unsigned long clSize;
+    [size_is (clSize)] unsigned long alData[];
+  } DWORD_BLOB;
+
+cpp_quote("")
+  typedef [unique] DWORD_BLOB *UP_DWORD_BLOB;
+
+cpp_quote("")
+  typedef struct _FLAGGED_BYTE_BLOB {
+    unsigned long fFlags;
+    unsigned long clSize;
+    [size_is (clSize)] byte abData[];
+  } FLAGGED_BYTE_BLOB;
+
+cpp_quote("")
+  typedef [unique] FLAGGED_BYTE_BLOB *UP_FLAGGED_BYTE_BLOB;
+
+cpp_quote("")
+  typedef struct _FLAGGED_WORD_BLOB {
+    unsigned long fFlags;
+    unsigned long clSize;
+    [size_is (clSize)] unsigned short asData[];
+  } FLAGGED_WORD_BLOB;
+
+cpp_quote("")
+  typedef [unique] FLAGGED_WORD_BLOB *UP_FLAGGED_WORD_BLOB;
+
+cpp_quote("")
+  typedef struct _BYTE_SIZEDARR {
+    unsigned long clSize;
+    [size_is (clSize)] byte *pData;
+  } BYTE_SIZEDARR;
+
+cpp_quote("")
+  typedef struct _SHORT_SIZEDARR {
+    unsigned long clSize;
+    [size_is (clSize)] unsigned short *pData;
+  } WORD_SIZEDARR;
+
+cpp_quote("")
+  typedef struct _LONG_SIZEDARR {
+    unsigned long clSize;
+    [size_is (clSize)] unsigned long *pData;
+  } DWORD_SIZEDARR;
+
+cpp_quote("")
+  typedef struct _HYPER_SIZEDARR {
+    unsigned long clSize;
+    [size_is (clSize)] hyper *pData;
+  } HYPER_SIZEDARR;
+}
+
+cpp_quote("")
+typedef boolean BOOLEAN;
+cpp_quote("#ifndef _tagBLOB_DEFINED")
+cpp_quote("#define _tagBLOB_DEFINED")
+cpp_quote("#define _BLOB_DEFINED")
+cpp_quote("#define _LPBLOB_DEFINED")
+cpp_quote("")
+typedef struct tagBLOB {
+  ULONG cbSize;
+  [size_is (cbSize)] BYTE *pBlobData;
+} BLOB,*LPBLOB;
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#ifndef SID_IDENTIFIER_AUTHORITY_DEFINED")
+cpp_quote("#define SID_IDENTIFIER_AUTHORITY_DEFINED")
+typedef struct _SID_IDENTIFIER_AUTHORITY {
+  UCHAR Value[6];
+} SID_IDENTIFIER_AUTHORITY,*PSID_IDENTIFIER_AUTHORITY;
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#ifndef SID_DEFINED")
+cpp_quote("#define SID_DEFINED")
+cpp_quote("")
+typedef struct _SID {
+  BYTE Revision;
+  BYTE SubAuthorityCount;
+  SID_IDENTIFIER_AUTHORITY IdentifierAuthority;
+  [size_is (SubAuthorityCount)] ULONG SubAuthority[*];
+} SID,*PISID;
+
+cpp_quote("")
+typedef struct _SID_AND_ATTRIBUTES {
+  SID *Sid;
+  DWORD Attributes;
+} SID_AND_ATTRIBUTES,*PSID_AND_ATTRIBUTES;
+cpp_quote("#endif")

@@ -1,0 +1,209 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+import "oaidl.idl";
+import "ocidl.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+typedef enum _ALG_ADAPTER_TYPE {
+  eALG_PRIVATE = 0x1,
+  eALG_BOUNDARY = 0x2,
+  eALG_FIREWALLED = 0x4
+} ALG_ADAPTER_TYPE;
+
+typedef enum _ALG_CAPTURE {
+  eALG_SOURCE_CAPTURE = 0x1,
+  eALG_DESTINATION_CAPTURE = 0x2
+} ALG_CAPTURE;
+
+typedef enum _ALG_DIRECTION {
+  eALG_INBOUND = 0x1,
+  eALG_OUTBOUND = 0x2,
+  eALG_BOTH = 0x3
+} ALG_DIRECTION;
+
+typedef enum _ALG_NOTIFICATION {
+  eALG_NONE = 0x0,
+  eALG_SESSION_CREATION = 0x1,
+  eALG_SESSION_DELETION = 0x2,
+  eALG_SESSION_BOTH = 0x3
+} ALG_NOTIFICATION;
+
+typedef enum _ALG_PROTOCOL {
+  eALG_TCP = 0x1,
+  eALG_UDP = 0x2
+} ALG_PROTOCOL;
+
+typedef struct _ALG_PRIMARY_CHANNEL_PROPERTIES {
+  ALG_PROTOCOL eProtocol;
+  USHORT usCapturePort;
+  ALG_CAPTURE eCaptureType;
+  BOOL fCaptureInbound;
+  ULONG ulListeningAddress;
+  USHORT usListeningPort;
+  ULONG ulAdapterIndex;
+} ALG_PRIMARY_CHANNEL_PROPERTIES;
+
+typedef struct _ALG_SECONDARY_CHANNEL_PROPERTIES {
+  ALG_PROTOCOL eProtocol;
+  ULONG ulPrivateAddress;
+  USHORT usPrivatePort;
+  ULONG ulPublicAddress;
+  USHORT usPublicPort;
+  ULONG ulRemoteAddress;
+  USHORT usRemotePort;
+  ULONG ulListenAddress;
+  USHORT usListenPort;
+  ALG_DIRECTION eDirection;
+  BOOL fPersistent;
+} ALG_SECONDARY_CHANNEL_PROPERTIES;
+
+typedef struct _ALG_DATA_CHANNEL_PROPERTIES {
+  ALG_PROTOCOL eProtocol;
+  ULONG ulPrivateAddress;
+  USHORT usPrivatePort;
+  ULONG ulPublicAddress;
+  USHORT usPublicPort;
+  ULONG ulRemoteAddress;
+  USHORT usRemotePort;
+  ALG_DIRECTION eDirection;
+  ALG_NOTIFICATION eDesiredNotification;
+} ALG_DATA_CHANNEL_PROPERTIES;
+
+typedef struct _ALG_PERSISTENT_DATA_CHANNEL_PROPERTIES {
+  ALG_PROTOCOL eProtocol;
+  ULONG ulPrivateAddress;
+  USHORT usPrivatePort;
+  ULONG ulPublicAddress;
+  USHORT usPublicPort;
+  ULONG ulRemoteAddress;
+  USHORT usRemotePort;
+  ALG_DIRECTION eDirection;
+} ALG_PERSISTENT_DATA_CHANNEL_PROPERTIES;
+
+const int ALG_MAXIMUM_PORT_RANGE_SIZE = 10;
+
+[object, uuid (480bf94a-09fd-4f8a-a3e0-b0700282d84d), pointer_default (unique)]
+interface IAdapterInfo : IUnknown {
+  HRESULT GetAdapterIndex ([out] ULONG *pulIndex);
+  HRESULT GetAdapterType ([out] ALG_ADAPTER_TYPE *pAdapterType);
+  HRESULT GetAdapterAddresses ([out] ULONG *pulAddressCount,[out, size_is (,*pulAddressCount)] ULONG **prgAddresses);
+};
+
+[object, uuid (B68E5043-3e3d-4cc2-b9c1-5f8f88fee81c), pointer_default (unique)]
+interface IPendingProxyConnection : IUnknown {
+  HRESULT Cancel ();
+};
+
+[object, local, uuid (ad42d12a-4ad0-4856-919e-e854c91d1856), pointer_default (unique)]
+interface IDataChannel : IUnknown {
+  HRESULT Cancel ();
+  HRESULT GetChannelProperties ([out] ALG_DATA_CHANNEL_PROPERTIES **ppProperties);
+  HRESULT GetSessionCreationEventHandle ([out] HANDLE *pHandle);
+  HRESULT GetSessionDeletionEventHandle ([out] HANDLE *pHandle);
+};
+
+[object, uuid (a180e934-d92a-415d-9144-759f8054e8f6), pointer_default (unique)]
+interface IPersistentDataChannel : IUnknown {
+  HRESULT Cancel ();
+  HRESULT GetChannelProperties ([out] ALG_PERSISTENT_DATA_CHANNEL_PROPERTIES **ppProperties);
+};
+
+[object, uuid (1a2e8b62-9012-4be6-84ae-32bd66ba657a), pointer_default (unique)]
+interface IPrimaryControlChannel : IUnknown {
+  HRESULT Cancel ();
+  HRESULT GetChannelProperties ([out] ALG_PRIMARY_CHANNEL_PROPERTIES **ppProperties);
+  HRESULT GetOriginalDestinationInformation ([in] ULONG ulSourceAddress,[in] USHORT usSourcePort,[out] ULONG *pulOriginalDestinationAddress,[out] USHORT *pusOriginalDestinationPort,[out] ULONG *pulRemapDestinationAddress,[out] USHORT *pulRemapDestinationPort,[out] IAdapterInfo **ppReceiveAdapter);
+};
+
+[object, uuid (a23f9d10-714c-41fe-8471-ffb19bc28454), pointer_default (unique)]
+interface ISecondaryControlChannel : IUnknown {
+  HRESULT Cancel ();
+  HRESULT GetChannelProperties ([out] ALG_SECONDARY_CHANNEL_PROPERTIES **ppProperties);
+  HRESULT GetOriginalDestinationInformation ([in] ULONG ulSourceAddress,[in] USHORT usSourcePort,[out] ULONG *pulOriginalDestinationAddress,[out] USHORT *pusOriginalDestinationPort,[out] IAdapterInfo **ppReceiveAdapter);
+};
+
+[object, uuid (a23f9d11-714c-41fe-8471-ffb19bc28454), pointer_default (unique)]
+interface IEnumAdapterInfo : IUnknown {
+  HRESULT Next ([in] ULONG celt,[out, size_is (celt), length_is (*pCeltFetched)] IAdapterInfo **rgAI,[out] ULONG *pCeltFetched);
+  HRESULT Skip ([in] ULONG celt);
+  HRESULT Reset ();
+  HRESULT Clone ([out] IEnumAdapterInfo **ppEnum);
+}
+
+[object, uuid (44ab2dc3-23b2-47de-8228-2e1cceeb9911), pointer_default (unique)]
+interface IAdapterNotificationSink : IUnknown {
+  HRESULT AdapterAdded (IAdapterInfo *pAdapter);
+  HRESULT AdapterRemoved (IAdapterInfo *pAdapter);
+  HRESULT AdapterModified (IAdapterInfo *pAdapter);
+  HRESULT AdapterUpdatePortMapping (IAdapterInfo *pAdapter);
+};
+
+[object, uuid (5134842a-fdce-485d-93cd-de1640643bbe), pointer_default (unique)]
+interface IApplicationGatewayServices : IUnknown {
+  HRESULT CreatePrimaryControlChannel ([in] ULONG uAdapterIndex,[in] ALG_PROTOCOL eProtocol,[in] USHORT usPortToCapture,[in] ALG_CAPTURE eCaptureType,[in] BOOL fCaptureInbound,[in] ULONG ulListenAddress,[in] USHORT usListenPort,[out] IPrimaryControlChannel **ppIControlChannel);
+  HRESULT CreateSecondaryControlChannel ([in] ALG_PROTOCOL eProtocol,[in] ULONG ulPrivateAddress,[in] USHORT usPrivatePort,[in] ULONG ulPublicAddress,[in] USHORT usPublicPort,[in] ULONG ulRemoteAddress,[in] USHORT usRemotePort,[in] ULONG ulListenAddress,[in] USHORT usListenPort,[in] ALG_DIRECTION eDirection,[in] BOOL fPersistent,[out] ISecondaryControlChannel **ppControlChannel);
+  HRESULT GetBestSourceAddressForDestinationAddress ([in] ULONG ulDstAddress,[in] BOOL fDemandDial,[out] ULONG *pulBestSrcAddress);
+  HRESULT PrepareProxyConnection ([in] ALG_PROTOCOL eProtocol,[in] ULONG ulSrcAddress,[in] USHORT usSrcPort,[in] ULONG ulDstAddress,[in] USHORT usDstPort,[in] BOOL fNoTimeout,[out] IPendingProxyConnection **ppPendingConnection);
+  HRESULT PrepareSourceModifiedProxyConnection ([in] ALG_PROTOCOL eProtocol,[in] ULONG ulSrcAddress,[in] USHORT usSrcPort,[in] ULONG ulDstAddress,[in] USHORT usDstPort,[in] ULONG ulNewSrcAddress,[in] USHORT usNewSourcePort,[out] IPendingProxyConnection **ppPendingConnection);
+  HRESULT CreateDataChannel ([in] ALG_PROTOCOL eProtocol,[in] ULONG ulPrivateAddress,[in] USHORT usPrivatePort,[in] ULONG ulPublicAddress,[in] USHORT usPublicPort,[in] ULONG ulRemoteAddress,[in] USHORT usRemotePort,[in] ALG_DIRECTION eDirection,[in] ALG_NOTIFICATION eDesiredNotification,[in] BOOL fNoTimeout,[out] IDataChannel **ppDataChannel);
+  HRESULT CreatePersistentDataChannel ([in] ALG_PROTOCOL eProtocol,[in] ULONG ulPrivateAddress,[in] USHORT usPrivatePort,[in] ULONG ulPublicAddress,[in] USHORT usPublicPort,[in] ULONG ulRemoteAddress,[in] USHORT usRemotePort,[in] ALG_DIRECTION eDirection,[out] IPersistentDataChannel **ppIPersistentDataChannel);
+  HRESULT ReservePort ([in] USHORT usPortCount,[out] USHORT *pusReservedPort);
+  HRESULT ReleaseReservedPort ([in] USHORT usReservedPortBase,[in] USHORT usPortCount);
+  HRESULT EnumerateAdapters ([out] IEnumAdapterInfo **ppIEnumAdapterInfo);
+  HRESULT StartAdapterNotifications ([in] IAdapterNotificationSink *pSink,[in] DWORD *pdwCookie);
+  HRESULT StopAdapterNotifications ([in] DWORD dwCookieOfSink);
+  HRESULT LookupAdapterPortMapping ([in] ULONG ulAdapterIndex,[in] UCHAR Protocol,[in] ULONG ulDestinationAddress,[in] USHORT usDestinationPort,[out] ULONG *pulRemapAddress,[out] USHORT *pusRemapPort);
+};
+
+[object, uuid (5134842b-fdce-485d-93cd-de1640643bbe), pointer_default (unique)]
+interface IApplicationGateway : IUnknown {
+  HRESULT Initialize ([in] IApplicationGatewayServices *pAlgServices);
+  HRESULT Stop (void);
+};
+
+[uuid (b6d1d098-e235-4b99-ba98-7c624fd875db), version (1.0)]
+library ALGLib {
+  importlib ("stdole32.tlb");
+  importlib ("stdole2.tlb");
+
+  [uuid (f8ade1d3-49df-4b75-9005-ef9508e6a337)]
+  coclass ApplicationGatewayServices {
+    [default] interface IApplicationGatewayServices;
+  };
+  [uuid (3ceb5509-C1CD-432f-9d8f-65d1e286aa80)]
+  coclass PrimaryControlChannel {
+    [default] interface IPrimaryControlChannel;
+  };
+  [uuid (7b3181a0-c92F-4567-b0fa-cd9a10ecd7d1)]
+  coclass SecondaryControlChannel {
+    [default] interface ISecondaryControlChannel;
+  };
+  [uuid (6f9942c9-c1b1-4ab5-93da-6058991dc8f3)]
+  coclass AdapterInfo {
+    [default] interface IAdapterInfo;
+  };
+  [uuid (6f9942ca-c1b1-4ab5-93da-6058991dc8f3)]
+  coclass EnumAdapterInfo {
+    [default] interface IEnumAdapterInfo;
+  };
+  [uuid (d8a68e5e-2b37-426c-a329-c117c14c429e)]
+  coclass PendingProxyConnection {
+    [default] interface IPendingProxyConnection;
+  };
+  [uuid (bbb36f15-408d-4056-8c27-920843d40be5)]
+  coclass DataChannel {
+    [default] interface IDataChannel;
+  };
+  [uuid (bc9B54ab-7883-4c13-909f-033d03267990)]
+
+  coclass PersistentDataChannel {
+    [default] interface IPersistentDataChannel;
+  };
+};
+cpp_quote("#endif")

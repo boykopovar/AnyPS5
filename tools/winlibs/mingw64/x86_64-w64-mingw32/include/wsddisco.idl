@@ -1,0 +1,93 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+import "objidl.idl";
+import "wsdxmldom.h";
+import "wsdtypes.h";
+
+cpp_quote("")
+interface IWSDXMLContext;
+interface IWSDiscoveryProvider;
+interface IWSDiscoveryProviderNotify;
+interface IWSDiscoveredService;
+interface IWSDiscoveryPublisher;
+interface IWSDiscoveryPublisherNotify;
+interface IWSDScopeMatchingRule;
+
+[object, local, restricted, uuid (fcafe424-fef5-481a-bd9f-33ce0574256f), pointer_default (unique)]
+interface IWSDScopeMatchingRule : IUnknown {
+  HRESULT GetScopeRule ([out] LPCWSTR *ppszScopeMatchingRule);
+  HRESULT MatchScopes ([in] LPCWSTR pszScope1,[in] LPCWSTR pszScope2,[out] BOOL *pfMatch);
+}
+
+[object, local, restricted, uuid (73ee3ced-b6e6-4329-a546-3e8ad46563d2), pointer_default (unique)]
+interface IWSDiscoveryProviderNotify : IUnknown {
+  HRESULT Add ([in] IWSDiscoveredService *pService);
+  HRESULT Remove ([in] IWSDiscoveredService *pService);
+  HRESULT SearchFailed ([in] HRESULT hr,[in, optional] LPCWSTR pszTag);
+  HRESULT SearchComplete ([in, optional] LPCWSTR pszTag);
+}
+
+[object, local, restricted, uuid (8ffc8e55-F0EB-480f-88b7-B435DD281D45), pointer_default (unique)]
+interface IWSDiscoveryProvider : IUnknown {
+  HRESULT SetAddressFamily ([in] DWORD dwAddressFamily);
+  HRESULT Attach ([in] IWSDiscoveryProviderNotify *pSink);
+  HRESULT Detach ();
+  HRESULT SearchById ([in] LPCWSTR pszId,[in, optional] LPCWSTR pszTag);
+  HRESULT SearchByAddress ([in] LPCWSTR pszAddress,[in, optional] LPCWSTR pszTag);
+  HRESULT SearchByType ([in, optional] const WSD_NAME_LIST *pTypesList,[in, optional] const WSD_URI_LIST *pScopesList,[in, optional] LPCWSTR pszMatchBy,[in, optional] LPCWSTR pszTag);
+  HRESULT GetXMLContext ([out] IWSDXMLContext **ppContext);
+}
+
+[object, local, restricted, uuid (4bad8a3b-B374-4420-9632-AAC945B374AA), pointer_default (unique)]
+interface IWSDiscoveredService : IUnknown {
+  HRESULT GetEndpointReference ([out] WSD_ENDPOINT_REFERENCE **ppEndpointReference);
+  HRESULT GetTypes ([out] WSD_NAME_LIST **ppTypesList);
+  HRESULT GetScopes ([out] WSD_URI_LIST **ppScopesList);
+  HRESULT GetXAddrs ([out] WSD_URI_LIST **ppXAddrsList);
+  HRESULT GetMetadataVersion ([out] ULONGLONG *pullMetadataVersion);
+  HRESULT GetExtendedDiscoXML ([out] WSDXML_ELEMENT **ppHeaderAny,[out] WSDXML_ELEMENT **ppBodyAny);
+  HRESULT GetProbeResolveTag ([out] LPCWSTR *ppszTag);
+  HRESULT GetRemoteTransportAddress ([out] LPCWSTR *ppszRemoteTransportAddress);
+  HRESULT GetLocalTransportAddress ([out] LPCWSTR *ppszLocalTransportAddress);
+  HRESULT GetLocalInterfaceGUID ([out] GUID *pGuid);
+  HRESULT GetInstanceId ([out] ULONGLONG *pullInstanceId);
+}
+
+[object, local, restricted, uuid (e67651b0-337a-4b3c-9758-733388568251), pointer_default (unique)]
+interface IWSDiscoveryPublisherNotify : IUnknown {
+  HRESULT ProbeHandler ([in] const WSD_SOAP_MESSAGE *pSoap,[in] IWSDMessageParameters *pMessageParameters);
+  HRESULT ResolveHandler ([in] const WSD_SOAP_MESSAGE *pSoap,[in] IWSDMessageParameters *pMessageParameters);
+}
+
+[object, local, restricted, uuid (AE01E1A8-3ff9-4148-8116-057cc616fe13), pointer_default (unique)]
+interface IWSDiscoveryPublisher : IUnknown {
+  HRESULT SetAddressFamily ([in] DWORD dwAddressFamily);
+  HRESULT RegisterNotificationSink ([in] IWSDiscoveryPublisherNotify *pSink);
+  HRESULT UnRegisterNotificationSink ([in] IWSDiscoveryPublisherNotify *pSink);
+  HRESULT Publish ([in] LPCWSTR pszId,[in] ULONGLONG ullMetadataVersion,[in] ULONGLONG ullInstanceId,[in] ULONGLONG ullMessageNumber,[in, optional] LPCWSTR pszSessionId,[in, optional] const WSD_NAME_LIST *pTypesList,[in, optional] const WSD_URI_LIST *pScopesList,[in, optional] const WSD_URI_LIST *pXAddrsList);
+  HRESULT UnPublish ([in] LPCWSTR pszId,[in] ULONGLONG ullInstanceId,[in] ULONGLONG ullMessageNumber,[in, optional] LPCWSTR pszSessionId,[in, optional] const WSDXML_ELEMENT *pAny);
+  HRESULT MatchProbe ([in] const WSD_SOAP_MESSAGE *pProbeMessage,[in] IWSDMessageParameters *pMessageParameters,[in] LPCWSTR pszId,[in] ULONGLONG ullMetadataVersion,[in] ULONGLONG ullInstanceId,[in] ULONGLONG ullMessageNumber,[in, optional] LPCWSTR pszSessionId,[in, optional] const WSD_NAME_LIST *pTypesList,[in, optional] const WSD_URI_LIST *pScopesList,[in, optional] const WSD_URI_LIST *pXAddrsList);
+  HRESULT MatchResolve ([in] const WSD_SOAP_MESSAGE *pResolveMessage,[in] IWSDMessageParameters *pMessageParameters,[in] LPCWSTR pszId,[in] ULONGLONG ullMetadataVersion,[in] ULONGLONG ullInstanceId,[in] ULONGLONG ullMessageNumber,[in, optional] LPCWSTR pszSessionId,[in, optional] const WSD_NAME_LIST *pTypesList,[in, optional] const WSD_URI_LIST *pScopesList,[in, optional] const WSD_URI_LIST *pXAddrsList);
+  HRESULT PublishEx ([in] LPCWSTR pszId,[in] ULONGLONG ullMetadataVersion,[in] ULONGLONG ullInstanceId,[in] ULONGLONG ullMessageNumber,[in, optional] LPCWSTR pszSessionId,[in, optional] const WSD_NAME_LIST *pTypesList,[in, optional] const WSD_URI_LIST *pScopesList,[in, optional] const WSD_URI_LIST *pXAddrsList,[in, optional] const WSDXML_ELEMENT *pHeaderAny,[in, optional] const WSDXML_ELEMENT *pReferenceParameterAny,[in, optional] const WSDXML_ELEMENT *pPolicyAny,[in, optional] const WSDXML_ELEMENT *pEndpointReferenceAny,[in, optional] const WSDXML_ELEMENT *pAny);
+  HRESULT MatchProbeEx ([in] const WSD_SOAP_MESSAGE *pProbeMessage,[in] IWSDMessageParameters *pMessageParameters,[in] LPCWSTR pszId,[in] ULONGLONG ullMetadataVersion,[in] ULONGLONG ullInstanceId,[in] ULONGLONG ullMessageNumber,[in, optional] LPCWSTR pszSessionId,[in, optional] const WSD_NAME_LIST *pTypesList,[in, optional] const WSD_URI_LIST *pScopesList,[in, optional] const WSD_URI_LIST *pXAddrsList,[in, optional] const WSDXML_ELEMENT *pHeaderAny,[in, optional] const WSDXML_ELEMENT *pReferenceParameterAny,[in, optional] const WSDXML_ELEMENT *pPolicyAny,[in, optional] const WSDXML_ELEMENT *pEndpointReferenceAny,[in, optional] const WSDXML_ELEMENT *pAny);
+  HRESULT MatchResolveEx ([in] const WSD_SOAP_MESSAGE *pResolveMessage,[in] IWSDMessageParameters *pMessageParameters,[in] LPCWSTR pszId,[in] ULONGLONG ullMetadataVersion,[in] ULONGLONG ullInstanceId,[in] ULONGLONG ullMessageNumber,[in, optional] LPCWSTR pszSessionId,[in, optional] const WSD_NAME_LIST *pTypesList,[in, optional] const WSD_URI_LIST *pScopesList,[in, optional] const WSD_URI_LIST *pXAddrsList,[in, optional] const WSDXML_ELEMENT *pHeaderAny,[in, optional] const WSDXML_ELEMENT *pReferenceParameterAny,[in, optional] const WSDXML_ELEMENT *pPolicyAny,[in, optional] const WSDXML_ELEMENT *pEndpointReferenceAny,[in, optional] const WSDXML_ELEMENT *pAny);
+  HRESULT RegisterScopeMatchingRule ([in] IWSDScopeMatchingRule *pScopeMatchingRule);
+  HRESULT UnRegisterScopeMatchingRule ([in] IWSDScopeMatchingRule *pScopeMatchingRule);
+  HRESULT GetXMLContext ([out] IWSDXMLContext **ppContext);
+}
+
+cpp_quote("HRESULT WINAPI WSDCreateDiscoveryProvider(IWSDXMLContext *pContext, IWSDiscoveryProvider **ppProvider);")
+cpp_quote("HRESULT WINAPI WSDCreateDiscoveryPublisher(IWSDXMLContext* pContext, IWSDiscoveryPublisher **ppPublisher);")
+cpp_quote("#if WINVER >= 0x601")
+cpp_quote("HRESULT WINAPI WSDCreateDiscoveryProvider2(IWSDXMLContext *pContext, WSD_CONFIG_PARAM *pConfigParams, DWORD dwConfigParamCount, IWSDiscoveryProvider **ppProvider);")
+cpp_quote("HRESULT WINAPI WSDCreateDiscoveryPublisher2(IWSDXMLContext *pContext, WSD_CONFIG_PARAM *pConfigParams, DWORD dwConfigParamCount, IWSDiscoveryPublisher **ppPublisher);")
+cpp_quote("#endif")
+
+cpp_quote("#endif")

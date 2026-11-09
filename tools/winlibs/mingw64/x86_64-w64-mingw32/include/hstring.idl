@@ -1,0 +1,20 @@
+import "wtypes.idl";
+
+typedef struct HSTRING__{
+  int unused;
+} HSTRING__;
+typedef [wire_marshal(wireBSTR), unique] HSTRING__ *HSTRING;
+
+cpp_quote("")
+cpp_quote("  typedef struct HSTRING_HEADER {")
+cpp_quote("    __C89_NAMELESS union {")
+cpp_quote("      PVOID Reserved1;")
+cpp_quote("#ifdef _WIN64")
+cpp_quote("      char Reserved2[24];")
+cpp_quote("#else")
+cpp_quote("      char Reserved2[20];")
+cpp_quote("#endif")
+cpp_quote("    } Reserved;")
+cpp_quote("  } HSTRING_HEADER;")
+cpp_quote("")
+cpp_quote("DECLARE_HANDLE(HSTRING_BUFFER);")

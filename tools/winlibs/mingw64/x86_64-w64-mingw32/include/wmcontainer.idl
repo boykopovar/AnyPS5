@@ -1,0 +1,309 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+import "mfidl.idl";
+
+cpp_quote("")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_FILEPROPERTIES_FILE_ID, 0x3de649b4, 0xd76d, 0x4e66, 0x9e, 0xc9, 0x78, 0x12, 0xf, 0xb4, 0xc7, 0xe3);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_FILEPROPERTIES_CREATION_TIME, 0x3de649b6, 0xd76d, 0x4e66, 0x9e, 0xc9, 0x78, 0x12, 0xf, 0xb4, 0xc7, 0xe3);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_FILEPROPERTIES_FLAGS, 0x3de649bb, 0xd76d, 0x4e66, 0x9e, 0xc9, 0x78, 0x12, 0xf, 0xb4, 0xc7, 0xe3);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_FILEPROPERTIES_MAX_PACKET_SIZE, 0x3de649bd, 0xd76d, 0x4e66, 0x9e, 0xc9, 0x78, 0x12, 0xf, 0xb4, 0xc7, 0xe3);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_FILEPROPERTIES_MAX_BITRATE, 0x3de649be, 0xd76d, 0x4e66, 0x9e, 0xc9, 0x78, 0x12, 0xf, 0xb4, 0xc7, 0xe3);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_FILEPROPERTIES_MIN_PACKET_SIZE, 0x3de649bc, 0xd76d, 0x4e66, 0x9e, 0xc9, 0x78, 0x12, 0xf, 0xb4, 0xc7, 0xe3);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_FILEPROPERTIES_PACKETS, 0x3de649b7, 0xd76d, 0x4e66, 0x9e, 0xc9, 0x78, 0x12, 0xf, 0xb4, 0xc7, 0xe3);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_FILEPROPERTIES_PLAY_DURATION, 0x3de649b8, 0xd76d, 0x4e66, 0x9e, 0xc9, 0x78, 0x12, 0xf, 0xb4, 0xc7, 0xe3);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_FILEPROPERTIES_PREROLL, 0x3de649ba, 0xd76d, 0x4e66, 0x9e, 0xc9, 0x78, 0x12, 0xf, 0xb4, 0xc7, 0xe3);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_FILEPROPERTIES_SEND_DURATION, 0x3de649b9, 0xd76d, 0x4e66, 0x9e, 0xc9, 0x78, 0x12, 0xf, 0xb4, 0xc7, 0xe3);")
+cpp_quote("EXTERN_GUID(CLSID_WMDRMSystemID, 0x8948BB22, 0x11BD, 0x4796, 0x93, 0xE3, 0x97, 0x4D, 0x1B, 0x57, 0x56, 0x78);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_CONTENTENCRYPTION_KEYID, 0x8520fe3e, 0x277e, 0x46ea, 0x99, 0xe4, 0xe3, 0xa, 0x86, 0xdb, 0x12, 0xbe);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_CONTENTENCRYPTION_LICENSE_URL, 0x8520fe40, 0x277e, 0x46ea, 0x99, 0xe4, 0xe3, 0xa, 0x86, 0xdb, 0x12, 0xbe);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_CONTENTENCRYPTION_SECRET_DATA, 0x8520fe3f, 0x277e, 0x46ea, 0x99, 0xe4, 0xe3, 0xa, 0x86, 0xdb, 0x12, 0xbe);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_CONTENTENCRYPTION_TYPE, 0x8520fe3d, 0x277e, 0x46ea, 0x99, 0xe4, 0xe3, 0xa, 0x86, 0xdb, 0x12, 0xbe);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_CONTENTENCRYPTIONEX_ENCRYPTION_DATA, 0x62508be5, 0xecdf, 0x4924, 0xa3, 0x59, 0x72, 0xba, 0xb3, 0x39, 0x7b, 0x9d);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_LANGLIST, 0xf23de43c, 0x9977, 0x460d, 0xa6, 0xec, 0x32, 0x93, 0x7f, 0x16, 0xf, 0x7d);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_MARKER, 0x5134330e, 0x83a6, 0x475e, 0xa9, 0xd5, 0x4f, 0xb8, 0x75, 0xfb, 0x2e, 0x31);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_SCRIPT, 0xe29cd0d7, 0xd602, 0x4923, 0xa7, 0xfe, 0x73, 0xfd, 0x97, 0xec, 0xc6, 0x50);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_CODECLIST, 0xe4bb3509, 0xc18d, 0x4df1, 0xbb, 0x99, 0x7a, 0x36, 0xb3, 0xcc, 0x41, 0x19);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_METADATA_IS_VBR, 0x5fc6947a, 0xef60, 0x445d, 0xb4, 0x49, 0x44, 0x2e, 0xcc, 0x78, 0xb4, 0xc1);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_METADATA_V8_VBRPEAK, 0x5fc6947b, 0xef60, 0x445d, 0xb4, 0x49, 0x44, 0x2e, 0xcc, 0x78, 0xb4, 0xc1);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_METADATA_V8_BUFFERAVERAGE, 0x5fc6947c, 0xef60, 0x445d, 0xb4, 0x49, 0x44, 0x2e, 0xcc, 0x78, 0xb4, 0xc1);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_METADATA_LEAKY_BUCKET_PAIRS, 0x5fc6947d, 0xef60, 0x445d, 0xb4, 0x49, 0x44, 0x2e, 0xcc, 0x78, 0xb4, 0xc1);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_DATA_START_OFFSET, 0xe7d5b3e7, 0x1f29, 0x45d3, 0x88, 0x22, 0x3e, 0x78, 0xfa, 0xe2, 0x72, 0xed);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_DATA_LENGTH, 0xe7d5b3e8, 0x1f29, 0x45d3, 0x88, 0x22, 0x3e, 0x78, 0xfa, 0xe2, 0x72, 0xed);")
+cpp_quote("EXTERN_GUID(MF_SD_ASF_EXTSTRMPROP_LANGUAGE_ID_INDEX, 0x48f8a522, 0x305d, 0x422d, 0x85, 0x24, 0x25, 0x2, 0xdd, 0xa3, 0x36, 0x80);")
+cpp_quote("EXTERN_GUID(MF_SD_ASF_EXTSTRMPROP_AVG_DATA_BITRATE, 0x48f8a523, 0x305d, 0x422d, 0x85, 0x24, 0x25, 0x2, 0xdd, 0xa3, 0x36, 0x80);")
+cpp_quote("EXTERN_GUID(MF_SD_ASF_EXTSTRMPROP_AVG_BUFFERSIZE, 0x48f8a524, 0x305d, 0x422d, 0x85, 0x24, 0x25, 0x2, 0xdd, 0xa3, 0x36, 0x80);")
+cpp_quote("EXTERN_GUID(MF_SD_ASF_EXTSTRMPROP_MAX_DATA_BITRATE, 0x48f8a525, 0x305d, 0x422d, 0x85, 0x24, 0x25, 0x2, 0xdd, 0xa3, 0x36, 0x80);")
+cpp_quote("EXTERN_GUID(MF_SD_ASF_EXTSTRMPROP_MAX_BUFFERSIZE, 0x48f8a526, 0x305d, 0x422d, 0x85, 0x24, 0x25, 0x2, 0xdd, 0xa3, 0x36, 0x80);")
+cpp_quote("EXTERN_GUID(MF_SD_ASF_STREAMBITRATES_BITRATE, 0xa8e182ed, 0xafc8, 0x43d0, 0xb0, 0xd1, 0xf6, 0x5b, 0xad, 0x9d, 0xa5, 0x58);")
+cpp_quote("EXTERN_GUID(MF_SD_ASF_METADATA_DEVICE_CONFORMANCE_TEMPLATE, 0x245e929d, 0xc44e, 0x4f7e, 0xbb, 0x3c, 0x77, 0xd4, 0xdf, 0xd2, 0x7f, 0x8a);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_INFO_HAS_AUDIO, 0x80e62295, 0x2296, 0x4a44, 0xb3, 0x1c, 0xd1, 0x3, 0xc6, 0xfe, 0xd2, 0x3c);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_INFO_HAS_VIDEO, 0x80e62296, 0x2296, 0x4a44, 0xb3, 0x1c, 0xd1, 0x3, 0xc6, 0xfe, 0xd2, 0x3c);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_INFO_HAS_NON_AUDIO_VIDEO, 0x80e62297, 0x2296, 0x4a44, 0xb3, 0x1c, 0xd1, 0x3, 0xc6, 0xfe, 0xd2, 0x3c);")
+cpp_quote("#if WINVER >= 0x0601")
+cpp_quote("EXTERN_GUID(MFASFINDEXER_TYPE_TIMECODE, 0x49815231, 0x6bad, 0x44fd, 0x81, 0xa, 0x3f, 0x60, 0x98, 0x4e, 0xc7, 0xfd);")
+cpp_quote("EXTERN_GUID(MF_PD_ASF_LANGLIST_LEGACYORDER, 0xf23de43d, 0x9977, 0x460d, 0xa6, 0xec, 0x32, 0x93, 0x7f, 0x16, 0xf, 0x7d);")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("EXTERN_GUID(MFASFMutexType_Bitrate, 0x72178C2C, 0xE45B, 0x11D5, 0xBC, 0x2A, 0x00, 0xB0, 0xD0, 0xF3, 0xF4, 0xAB);")
+cpp_quote("EXTERN_GUID(MFASFMutexType_Language, 0x72178C2B, 0xE45B, 0x11D5, 0xBC, 0x2A, 0x00, 0xB0, 0xD0, 0xF3, 0xF4, 0xAB);")
+cpp_quote("EXTERN_GUID(MFASFMutexType_Presentation, 0x72178C2D, 0xE45B, 0x11D5, 0xBC, 0x2A, 0x00, 0xB0, 0xD0, 0xF3, 0xF4, 0xAB);")
+cpp_quote("EXTERN_GUID(MFASFMutexType_Unknown, 0x72178C2E, 0xE45B, 0x11D5, 0xBC, 0x2A, 0x00, 0xB0, 0xD0, 0xF3, 0xF4, 0xAB);")
+cpp_quote("EXTERN_GUID(MFASFSampleExtension_ContentType, 0xd590dc20, 0x07bc, 0x436c, 0x9c, 0xf7, 0xf3, 0xbb, 0xfb, 0xf1, 0xa4, 0xdc);")
+cpp_quote("EXTERN_GUID(MFASFSampleExtension_Encryption_SampleID, 0x6698B84E, 0x0AFA, 0x4330, 0xAE, 0xB2, 0x1C, 0x0A, 0x98, 0xD7, 0xA4, 0x4D);")
+cpp_quote("EXTERN_GUID(MFASFSampleExtension_Encryption_KeyID, 0x76376591,  0x795f,  0x4da1, 0x86, 0xed, 0x9d, 0x46, 0xec, 0xa1, 0x09, 0xa9);")
+cpp_quote("EXTERN_GUID(MFASFSampleExtension_FileName, 0xe165ec0e, 0x19ed, 0x45d7, 0xb4, 0xa7, 0x25, 0xcb, 0xd1, 0xe2, 0x8e, 0x9b);")
+cpp_quote("EXTERN_GUID(MFASFSampleExtension_OutputCleanPoint, 0xf72a3c6f, 0x6eb4, 0x4ebc, 0xb1, 0x92, 0x9, 0xad, 0x97, 0x59, 0xe8, 0x28);")
+cpp_quote("EXTERN_GUID(MFASFSampleExtension_PixelAspectRatio, 0x1b1ee554, 0xf9ea, 0x4bc8, 0x82, 0x1a, 0x37, 0x6b, 0x74, 0xe4, 0xc4, 0xb8);")
+cpp_quote("EXTERN_GUID(MFASFSampleExtension_SampleDuration, 0xc6bd9450, 0x867f, 0x4907, 0x83, 0xa3, 0xc7, 0x79, 0x21, 0xb7, 0x33, 0xad);")
+cpp_quote("EXTERN_GUID(MFASFSampleExtension_SMPTE, 0x399595ec, 0x8667, 0x4e2d, 0x8f, 0xdb, 0x98, 0x81, 0x4c, 0xe7, 0x6c, 0x1e);")
+cpp_quote("EXTERN_GUID(MFASFSPLITTER_PACKET_BOUNDARY, 0xfe584a05, 0xe8d6, 0x42e3, 0xb1, 0x76, 0xf1, 0x21, 0x17, 0x5, 0xfb, 0x6f);")
+cpp_quote("EXTERN_GUID(MF_ASFPROFILE_MINPACKETSIZE, 0x22587626, 0x47de, 0x4168, 0x87, 0xf5, 0xb5, 0xaa, 0x9b, 0x12, 0xa8, 0xf0);")
+cpp_quote("EXTERN_GUID(MF_ASFPROFILE_MAXPACKETSIZE, 0x22587627, 0x47de, 0x4168, 0x87, 0xf5, 0xb5, 0xaa, 0x9b, 0x12, 0xa8, 0xf0);")
+cpp_quote("EXTERN_GUID(MF_ASFSTREAMCONFIG_LEAKYBUCKET1, 0xc69b5901, 0xea1a, 0x4c9b, 0xb6, 0x92, 0xe2, 0xa0, 0xd2, 0x9a, 0x8a, 0xdd);")
+cpp_quote("EXTERN_GUID(MF_ASFSTREAMCONFIG_LEAKYBUCKET2, 0xc69b5902, 0xea1a, 0x4c9b, 0xb6, 0x92, 0xe2, 0xa0, 0xd2, 0x9a, 0x8a, 0xdd);")
+
+interface IMFASFProfile;
+interface IMFASFStreamConfig;
+interface IMFASFMutualExclusion;
+interface IMFASFStreamPrioritization;
+
+cpp_quote("#define MFASFINDEXER_PER_ENTRY_BYTES_DYNAMIC 0xffff")
+cpp_quote("#define MFASFINDEXER_NO_FIXED_INTERVAL 0xffffffff")
+cpp_quote("#define MFASFINDEXER_READ_FOR_REVERSEPLAYBACK_OUTOFDATASEGMENT 0xffffffffffffffffll")
+cpp_quote("#define MFASFINDEXER_APPROX_SEEK_TIME_UNKNOWN 0xffffffffffffffffll")
+cpp_quote("")
+cpp_quote("#define MFASF_MIN_HEADER_BYTES (sizeof (GUID) + sizeof (QWORD))")
+cpp_quote("")
+cpp_quote("#define  MFASF_MAX_STREAM_NUMBER 127")
+cpp_quote("#define  MFASF_INVALID_STREAM_NUMBER (MFASF_MAX_STREAM_NUMBER + 1)")
+cpp_quote("#define  MFASF_PAYLOADEXTENSION_MAX_SIZE 0xff")
+cpp_quote("#define  MFASF_PAYLOADEXTENSION_VARIABLE_SIZE 0xffff")
+cpp_quote("#define  MFASF_DEFAULT_BUFFER_WINDOW_MS 3000")
+
+cpp_quote("")
+typedef enum MFASF_SPLITTERFLAGS {
+  MFASF_SPLITTER_REVERSE = 0x00000001,
+  MFASF_SPLITTER_WMDRM = 0x00000002,
+} MFASF_SPLITTERFLAGS;
+
+typedef enum ASF_STATUSFLAGS {
+  ASF_STATUSFLAGS_INCOMPLETE = 0x1
+#if WINVER >= 0x0601
+  ,ASF_STATUSFLAGS_NONFATAL_ERROR = 0x2
+#endif
+} ASF_STATUSFLAGS;
+
+typedef enum MFASF_MULTIPLEXERFLAGS {
+  MFASF_MULTIPLEXER_AUTOADJUST_BITRATE = 0x1
+} MFASF_MULTIPLEXERFLAGS;
+
+typedef enum MFASF_INDEXERFLAGS {
+  MFASF_INDEXER_WRITE_NEW_INDEX = 0x1,
+  MFASF_INDEXER_READ_FOR_REVERSEPLAYBACK = 0x2,
+  MFASF_INDEXER_WRITE_FOR_LIVEREAD = 0x4
+} MFASF_INDEXER_FLAGS;
+
+typedef enum MFASF_STREAMSELECTORFLAGS {
+  MFASF_STREAMSELECTOR_DISABLE_THINNING = 0x00000001,
+  MFASF_STREAMSELECTOR_USE_AVERAGE_BITRATE = 0x00000002,
+} MFASF_STREAMSELECTOR_FLAGS;
+
+typedef enum ASF_SELECTION_STATUS {
+  ASF_STATUS_NOTSELECTED = 0,
+  ASF_STATUS_CLEANPOINTSONLY = 1,
+  ASF_STATUS_ALLDATAUNITS = 2,
+} ASF_SELECTION_STATUS;
+
+typedef enum _MFSINK_WMDRMACTION {
+  MFSINK_WMDRMACTION_UNDEFINED = 0,
+  MFSINK_WMDRMACTION_ENCODE = 1,
+  MFSINK_WMDRMACTION_TRANSCODE = 2,
+  MFSINK_WMDRMACTION_TRANSCRYPT = 3,
+  MFSINK_WMDRMACTION_LAST = 3
+} MFSINK_WMDRMACTION;
+
+cpp_quote("")
+typedef struct ASF_MUX_STATISTICS {
+  DWORD cFramesWritten;
+  DWORD cFramesDropped;
+} ASF_MUX_STATISTICS;
+
+typedef struct _ASF_INDEX_IDENTIFIER {
+  GUID guidIndexType;
+  WORD wStreamNumber;
+} ASF_INDEX_IDENTIFIER;
+
+typedef struct _ASF_INDEX_DESCRIPTOR {
+  ASF_INDEX_IDENTIFIER Identifier;
+  WORD cPerEntryBytes;
+  WCHAR szDescription[32];
+  DWORD dwInterval;
+} ASF_INDEX_DESCRIPTOR;
+
+cpp_quote("")
+[object, uuid (B1DCA5CD-D5DA-4451-8e9e-DB5C59914EAD), local]
+interface IMFASFContentInfo : IUnknown {
+  HRESULT GetHeaderSize ([in] IMFMediaBuffer *pIStartOfContent,[out] QWORD *cbHeaderSize);
+  HRESULT ParseHeader ([in] IMFMediaBuffer *pIHeaderBuffer,[in] QWORD cbOffsetWithinHeader);
+  HRESULT GenerateHeader ([in, out] IMFMediaBuffer *pIHeader,[out] DWORD *pcbHeader);
+  HRESULT GetProfile ([out] IMFASFProfile **ppIProfile);
+  HRESULT SetProfile ([in] IMFASFProfile *pIProfile);
+  HRESULT GeneratePresentationDescriptor ([out] IMFPresentationDescriptor **ppIPresentationDescriptor);
+  HRESULT GetEncodingConfigurationPropertyStore ([in] WORD wStreamNumber,[out] IPropertyStore **ppIStore);
+};
+
+[object, uuid (12558291-E399-11d5-BC2A-00b0d0f3f4ab), local]
+interface IMFASFMutualExclusion : IUnknown {
+  HRESULT GetType ([out] GUID *pguidType);
+  HRESULT SetType ([in] REFGUID guidType);
+  HRESULT GetRecordCount ([out] DWORD *pdwRecordCount);
+  HRESULT GetStreamsForRecord ([in] DWORD dwRecordNumber,[out] WORD *pwStreamNumArray,[in, out] DWORD *pcStreams);
+  HRESULT AddStreamForRecord ([in] DWORD dwRecordNumber,[in] WORD wStreamNumber);
+  HRESULT RemoveStreamFromRecord ([in] DWORD dwRecordNumber,[in] WORD wStreamNumber);
+  HRESULT RemoveRecord ([in] DWORD dwRecordNumber);
+  HRESULT AddRecord ([out] DWORD *pdwRecordNumber);
+  HRESULT Clone ([out] IMFASFMutualExclusion **ppIMutex);
+};
+
+[object, uuid (699bdc27-bbaf-49ff-8e38-9c39c9b5e088), local]
+interface IMFASFStreamPrioritization : IUnknown {
+  HRESULT GetStreamCount ([out] DWORD *pdwStreamCount);
+  HRESULT GetStream ([in] DWORD dwStreamIndex,[out] WORD *pwStreamNumber,[out] WORD *pwStreamFlags);
+  HRESULT AddStream ([in] WORD wStreamNumber,[in] WORD wStreamFlags);
+  HRESULT RemoveStream ([in] DWORD dwStreamIndex);
+  HRESULT Clone ([out] IMFASFStreamPrioritization **ppIStreamPrioritization);
+};
+
+[object, local, uuid (12558295-E399-11d5-BC2A-00b0d0f3f4ab)]
+interface IMFASFSplitter : IUnknown {
+  HRESULT Initialize ([in] IMFASFContentInfo *pIContentInfo);
+  HRESULT SetFlags ([in] DWORD dwFlags);
+  HRESULT GetFlags ([out] DWORD *pdwFlags);
+  HRESULT SelectStreams ([in] WORD *pwStreamNumbers,[in] WORD wNumStreams);
+  HRESULT GetSelectedStreams ([out] WORD *pwStreamNumbers,[in, out] WORD *pwNumStreams);
+  HRESULT ParseData ([in] IMFMediaBuffer *pIBuffer,[in] DWORD cbBufferOffset,[in] DWORD cbLength);
+  HRESULT GetNextSample ([out] DWORD *pdwStatusFlags,[out] WORD *pwStreamNumber,[out] IMFSample **ppISample);
+  HRESULT Flush ();
+  HRESULT GetLastSendTime ([out] DWORD *pdwLastSendTime);
+};
+
+[object, local, uuid (57bdd80a-9b38-4838-B737-C58F670D7D4F)]
+interface IMFASFMultiplexer : IUnknown {
+  HRESULT Initialize ([in] IMFASFContentInfo *pIContentInfo);
+  HRESULT SetFlags ([in] DWORD dwFlags);
+  HRESULT GetFlags ([out] DWORD *pdwFlags);
+  HRESULT ProcessSample ([in] WORD wStreamNumber,[in] IMFSample *pISample,[in] LONGLONG hnsTimestampAdjust);
+  HRESULT GetNextPacket ([out] DWORD *pdwStatusFlags,[out] IMFSample **ppIPacket);
+  HRESULT Flush ();
+  HRESULT End ([in, out] IMFASFContentInfo *pIContentInfo);
+  HRESULT GetStatistics ([in] WORD wStreamNumber,[out] ASF_MUX_STATISTICS *pMuxStats);
+  HRESULT SetSyncTolerance ([in] DWORD msSyncTolerance);
+};
+
+[object, uuid (53590f48-DC3B-4297-813f-787761ad7b3e), local]
+interface IMFASFIndexer : IUnknown {
+  HRESULT SetFlags ([in] DWORD dwFlags);
+  HRESULT GetFlags ([out] DWORD *pdwFlags);
+  HRESULT Initialize ([in] IMFASFContentInfo *pIContentInfo);
+  HRESULT GetIndexPosition ([in] IMFASFContentInfo *pIContentInfo,[out] QWORD *pcbIndexOffset);
+  HRESULT SetIndexByteStreams ([in] IMFByteStream **ppIByteStreams,[in] DWORD cByteStreams);
+  HRESULT GetIndexByteStreamCount ([out] DWORD *pcByteStreams);
+  HRESULT GetIndexStatus ([in] ASF_INDEX_IDENTIFIER *pIndexIdentifier,[out] WINBOOL *pfIsIndexed,[out] BYTE *pbIndexDescriptor,[in, out] DWORD *pcbIndexDescriptor);
+  HRESULT SetIndexStatus ([in] BYTE *pbIndexDescriptor,[in] DWORD cbIndexDescriptor,[in] WINBOOL fGenerateIndex);
+  HRESULT GetSeekPositionForValue ([in] const PROPVARIANT *pvarValue,[in] ASF_INDEX_IDENTIFIER *pIndexIdentifier,[out] QWORD *pcbOffsetWithinData,[out, optional] MFTIME *phnsApproxTime,[out, optional] DWORD *pdwPayloadNumberOfStreamWithinPacket);
+  HRESULT GenerateIndexEntries ([in] IMFSample *pIASFPacketSample);
+  HRESULT CommitIndex ([in] IMFASFContentInfo *pIContentInfo);
+  HRESULT GetIndexWriteSpace ([out] QWORD *pcbIndexWriteSpace);
+  HRESULT GetCompletedIndex ([in] IMFMediaBuffer *pIIndexBuffer,[in] QWORD cbOffsetWithinIndex);
+};
+
+[object, uuid (d01bad4a-4fa0-4a60-9349-c27e62da9d41), local]
+interface IMFASFStreamSelector : IUnknown {
+  HRESULT GetStreamCount ([out] DWORD *pcStreams);
+  HRESULT GetOutputCount ([out] DWORD *pcOutputs);
+  HRESULT GetOutputStreamCount ([in] DWORD dwOutputNum,[out] DWORD *pcStreams);
+  HRESULT GetOutputStreamNumbers ([in] DWORD dwOutputNum,[out] WORD *rgwStreamNumbers);
+  HRESULT GetOutputFromStream ([in] WORD wStreamNum,[out] DWORD *pdwOutput);
+  HRESULT GetOutputOverride ([in] DWORD dwOutputNum,[out] ASF_SELECTION_STATUS *pSelection);
+  HRESULT SetOutputOverride ([in] DWORD dwOutputNum,[in] ASF_SELECTION_STATUS Selection);
+  HRESULT GetOutputMutexCount ([in] DWORD dwOutputNum,[out] DWORD *pcMutexes);
+  HRESULT GetOutputMutex ([in] DWORD dwOutputNum,[in] DWORD dwMutexNum,[out] IUnknown **ppMutex);
+  HRESULT SetOutputMutexSelection ([in] DWORD dwOutputNum,[in] DWORD dwMutexNum,[in] WORD wSelectedRecord);
+  HRESULT GetBandwidthStepCount ([out] DWORD *pcStepCount);
+  HRESULT GetBandwidthStep ([in] DWORD dwStepNum,[out] DWORD *pdwBitrate,[out] WORD *rgwStreamNumbers,[out] ASF_SELECTION_STATUS *rgSelections);
+  HRESULT BitrateToStepNumber ([in] DWORD dwBitrate,[out] DWORD *pdwStepNum);
+  HRESULT SetStreamSelectorFlags ([in] DWORD dwStreamSelectorFlags);
+};
+
+cpp_quote("#if WINVER >= 0x0601")
+[object, uuid (3d1ff0ea-679a-4190-8d46-7fa69e8c7e15)]
+interface IMFDRMNetHelper : IUnknown {
+  HRESULT ProcessLicenseRequest ([in, size_is (cbLicenseRequest)] BYTE *pLicenseRequest,[in] DWORD cbLicenseRequest,[out, size_is (,*pcbLicenseResponse)] BYTE **ppLicenseResponse,[out] DWORD *pcbLicenseResponse,[out] BSTR *pbstrKID);
+  HRESULT GetChainedLicenseResponse ([out, size_is (,*pcbLicenseResponse)] BYTE **ppLicenseResponse,[out] DWORD *pcbLicenseResponse);
+};
+cpp_quote("#endif")
+
+[object, local, uuid (D267BF6A-028b-4e0d-903d-43f0ef82d0d4)]
+interface IMFASFProfile : IMFAttributes {
+  HRESULT GetStreamCount ([out] DWORD *pcStreams);
+  HRESULT GetStream ([in] DWORD dwStreamIndex,[out] WORD *pwStreamNumber,[out] IMFASFStreamConfig **ppIStream);
+  HRESULT GetStreamByNumber ([in] WORD wStreamNumber,[out] IMFASFStreamConfig **ppIStream);
+  HRESULT SetStream ([in] IMFASFStreamConfig *pIStream);
+  HRESULT RemoveStream ([in] WORD wStreamNumber);
+  HRESULT CreateStream ([in] IMFMediaType *pIMediaType,[out] IMFASFStreamConfig **ppIStream);
+  HRESULT GetMutualExclusionCount ([out] DWORD *pcMutexs);
+  HRESULT GetMutualExclusion ([in] DWORD dwMutexIndex,[out] IMFASFMutualExclusion **ppIMutex);
+  HRESULT AddMutualExclusion ([in] IMFASFMutualExclusion *pIMutex);
+  HRESULT RemoveMutualExclusion ([in] DWORD dwMutexIndex);
+  HRESULT CreateMutualExclusion ([out] IMFASFMutualExclusion **ppIMutex);
+  HRESULT GetStreamPrioritization ([out] IMFASFStreamPrioritization **ppIStreamPrioritization);
+  HRESULT AddStreamPrioritization ([in] IMFASFStreamPrioritization *pIStreamPrioritization);
+  HRESULT RemoveStreamPrioritization ();
+  HRESULT CreateStreamPrioritization ([out] IMFASFStreamPrioritization **ppIStreamPrioritization);
+  HRESULT Clone ([out] IMFASFProfile **ppIProfile);
+};
+
+[object, local, uuid (9e8ae8d2-DBBD-4200-9aca-06e6df484913)]
+interface IMFASFStreamConfig : IMFAttributes {
+  HRESULT GetStreamType ([out] GUID *pguidStreamType);
+  WORD GetStreamNumber ();
+  HRESULT SetStreamNumber ([in] WORD wStreamNum);
+  HRESULT GetMediaType ([out] IMFMediaType **ppIMediaType);
+  HRESULT SetMediaType ([in] IMFMediaType *pIMediaType);
+  HRESULT GetPayloadExtensionCount ([out] WORD *pcPayloadExtensions);
+  HRESULT GetPayloadExtension ([in] WORD wPayloadExtensionNumber,[out] GUID *pguidExtensionSystemID,[out] WORD *pcbExtensionDataSize,[out, optional, size_is (*pcbExtensionSystemInfo)] BYTE *pbExtensionSystemInfo,[in, out, optional] DWORD *pcbExtensionSystemInfo);
+  HRESULT AddPayloadExtension ([in] GUID guidExtensionSystemID,[in] WORD cbExtensionDataSize,[in, size_is (cbExtensionSystemInfo)] BYTE *pbExtensionSystemInfo,[in] DWORD cbExtensionSystemInfo);
+  HRESULT RemoveAllPayloadExtensions ();
+  HRESULT Clone ([out] IMFASFStreamConfig **ppIStreamConfig);
+};
+
+  cpp_quote("")
+cpp_quote("EXTERN_C const DECLSPEC_SELECTANY PROPERTYKEY MFPKEY_ASFMEDIASINK_BASE_SENDTIME = { { 0xcddcbc82, 0x3411, 0x4119, 0x91, 0x35, 0x84, 0x23, 0xc4, 0x1b, 0x39, 0x57}, 3  };")
+cpp_quote("EXTERN_C const DECLSPEC_SELECTANY PROPERTYKEY MFPKEY_ASFMEDIASINK_AUTOADJUST_BITRATE = { { 0xcddcbc82, 0x3411, 0x4119, 0x91, 0x35, 0x84, 0x23, 0xc4, 0x1b, 0x39, 0x57}, 4  };")
+cpp_quote("EXTERN_C const DECLSPEC_SELECTANY PROPERTYKEY MFPKEY_ASFMEDIASINK_DRMACTION = { { 0xa1db6f6c, 0x1d0a, 0x4cb6, 0x82, 0x54, 0xcb, 0x36, 0xbe, 0xed, 0xbc, 0x48}, 5  };")
+cpp_quote("EXTERN_C const DECLSPEC_SELECTANY PROPERTYKEY MFPKEY_ASFSTREAMSINK_CORRECTED_LEAKYBUCKET = { { 0xa2f152fb, 0x8ad9, 0x4a11, 0xb3, 0x45, 0x2c, 0xe2, 0xfa, 0xd8, 0x72, 0x3d}, 1  };")
+cpp_quote("")
+cpp_quote("STDAPI MFCreateASFContentInfo(IMFASFContentInfo **ppIContentInfo);")
+cpp_quote("STDAPI MFCreateASFIndexer(IMFASFIndexer **ppIIndexer);")
+cpp_quote("STDAPI MFCreateASFIndexerByteStream(IMFByteStream *pIContentByteStream, QWORD cbIndexStartOffset, IMFByteStream **pIIndexByteStream);")
+cpp_quote("STDAPI MFCreateASFMediaSink(IMFByteStream *pIByteStream, IMFMediaSink **ppIMediaSink);")
+cpp_quote("STDAPI MFCreateASFMediaSinkActivate(LPCWSTR pwszFileName, IMFASFContentInfo *pContentInfo, IMFActivate **ppIActivate);")
+cpp_quote("STDAPI MFCreateASFMultiplexer(IMFASFMultiplexer **ppIMultiplexer);")
+cpp_quote("STDAPI MFCreateASFProfile(IMFASFProfile **ppIProfile);")
+cpp_quote("STDAPI MFCreateASFProfileFromPresentationDescriptor(IMFPresentationDescriptor  *pIPD, IMFASFProfile **ppIProfile);")
+cpp_quote("STDAPI MFCreateASFSplitter(IMFASFSplitter **ppISplitter);")
+cpp_quote("STDAPI MFCreateASFStreamingMediaSink(IMFByteStream *pIByteStream, IMFMediaSink **ppIMediaSink);")
+cpp_quote("STDAPI MFCreateASFStreamingMediaSinkActivate(IMFActivate *pByteStreamActivate, IMFASFContentInfo *pContentInfo, IMFActivate **ppIActivate);")
+cpp_quote("STDAPI MFCreateASFStreamSelector(IMFASFProfile *pIASFProfile, IMFASFStreamSelector **ppSelector);")
+cpp_quote("STDAPI MFCreatePresentationDescriptorFromASFProfile(IMFASFProfile *pIProfile, IMFPresentationDescriptor **ppIPD);")
+cpp_quote("HRESULT STDMETHODCALLTYPE MFCreateWMVEncoderActivate(IMFMediaType *pMediaType, IPropertyStore *pEncodingConfigurationProperties, IMFActivate **ppActivate);")
+cpp_quote("HRESULT STDMETHODCALLTYPE MFCreateWMAEncoderActivate(IMFMediaType *pMediaType, IPropertyStore *pEncodingConfigurationProperties, IMFActivate **ppActivate);")
+
+cpp_quote("#endif")

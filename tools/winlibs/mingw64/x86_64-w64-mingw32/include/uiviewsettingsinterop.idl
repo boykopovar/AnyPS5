@@ -1,0 +1,15 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+import "inspectable.idl";
+
+[
+    uuid(3694dbf9-8f68-44be-8ff5-195c98ede8a6),
+]
+interface IUIViewSettingsInterop : IInspectable
+{
+    HRESULT GetForWindow([in] HWND hwnd, [in] REFIID riid, [out, retval, iid_is(riid)] void **ppv);
+}

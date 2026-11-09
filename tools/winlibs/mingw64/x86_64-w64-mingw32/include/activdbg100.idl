@@ -1,0 +1,134 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+import "activdbg.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+interface IWebAppDiagnosticsSetupEvent;
+
+typedef enum tagAPPLICATION_NODE_EVENT_FILTER {
+  FILTER_EXCLUDE_NOTHING = 0x0,
+  FILTER_EXCLUDE_ANONYMOUS_CODE = 0x1,
+  FILTER_EXCLUDE_EVAL_CODE = 0x2
+} APPLICATION_NODE_EVENT_FILTER;
+
+typedef enum tagSCRIPT_ERROR_DEBUG_EXCEPTION_THROWN_KIND {
+  ETK_FIRST_CHANCE = 0x0,
+  ETK_USER_UNHANDLED = 0x1,
+  ETK_UNHANDLED = 0x2
+} SCRIPT_ERROR_DEBUG_EXCEPTION_THROWN_KIND;
+
+enum SCRIPT_DEBUGGER_OPTIONS {
+  SDO_NONE = 0x0,
+  SDO_ENABLE_FIRST_CHANCE_EXCEPTIONS = 0x1,
+  SDO_ENABLE_WEB_WORKER_SUPPORT = 0x2,
+  SDO_ENABLE_NONUSER_CODE_SUPPORT = 0x4
+};
+
+typedef struct tagTEXT_DOCUMENT_ARRAY {
+  DWORD dwCount;
+  [size_is (dwCount)] IDebugDocumentText **Members;
+} TEXT_DOCUMENT_ARRAY;
+
+cpp_quote("DEFINE_ENUM_FLAG_OPERATORS(SCRIPT_DEBUGGER_OPTIONS)")
+
+cpp_quote("#ifndef DISABLE_ACTIVDBG_INTERFACE_WRAPPERS")
+cpp_quote("#ifdef _WIN64")
+cpp_quote("#define IDebugApplication110 IDebugApplication11064")
+cpp_quote("#define IID_IDebugApplication110 IID_IDebugApplication11064")
+cpp_quote("#define IDebugApplicationThread110 IDebugApplicationThread11064")
+cpp_quote("#define IID_IDebugApplicationThread110 IID_IDebugApplicationThread11064")
+cpp_quote("#else")
+cpp_quote("#define IDebugApplication110 IDebugApplication11032")
+cpp_quote("#define IID_IDebugApplication110 IID_IDebugApplication11032")
+cpp_quote("#define IDebugApplicationThread110 IDebugApplicationThread11032")
+cpp_quote("#define IID_IDebugApplicationThread110 IID_IDebugApplicationThread11032")
+cpp_quote("#endif")
+cpp_quote("#endif")
+
+[object, uuid (90a7734e-841b-4f77-9384-a2891e76e7e2), pointer_default (unique)]
+interface IDebugApplicationNode100 : IUnknown {
+  HRESULT SetFilterForEventSink ([in] DWORD dwCookie,[in] APPLICATION_NODE_EVENT_FILTER filter);
+  HRESULT GetExcludedDocuments ([in] APPLICATION_NODE_EVENT_FILTER filter,[out] TEXT_DOCUMENT_ARRAY *pDocuments);
+  HRESULT QueryIsChildNode ([in] IDebugDocument *pSearchKey);
+};
+
+[object, uuid (379bfbe1-C6C9-432a-93e1-6d17656c538c), pointer_default (unique)]
+interface IWebAppDiagnosticsSetup : IUnknown {
+  HRESULT DiagnosticsSupported ([out, retval] VARIANT_BOOL *pRetVal);
+  HRESULT CreateObjectWithSiteAtWebApp ([in] REFCLSID rclsid,[in] DWORD dwClsContext,[in] REFIID riid,[in] DWORD_PTR hPassToObject);
+};
+
+[object, uuid (d5fe005b-2836-485e-b1f9-89d91aa24fd4), pointer_default (unique)]
+interface IRemoteDebugApplication110 : IUnknown {
+  HRESULT SetDebuggerOptions ([in] enum SCRIPT_DEBUGGER_OPTIONS mask,[in] enum SCRIPT_DEBUGGER_OPTIONS value);
+  HRESULT GetCurrentDebuggerOptions ([out] enum SCRIPT_DEBUGGER_OPTIONS *pCurrentOptions);
+  HRESULT GetMainThread ([out] IRemoteDebugApplicationThread **ppThread);
+}
+
+[object, uuid (bdb3b5de-89f2-4e11-84a5-97445f941c7d), local, pointer_default (unique)]
+interface IDebugApplication11032 : IRemoteDebugApplication110 {
+  HRESULT SynchronousCallInMainThread ([in] IDebugThreadCall32 *pptc,[in] DWORD_PTR dwParam1,[in] DWORD_PTR dwParam2,[in] DWORD_PTR dwParam3);
+  HRESULT AsynchronousCallInMainThread ([in] IDebugThreadCall32 *pptc,[in] DWORD_PTR dwParam1,[in] DWORD_PTR dwParam2,[in] DWORD_PTR dwParam3);
+  HRESULT CallableWaitForHandles ([in] DWORD handleCount,[in, size_is (handleCount)] const HANDLE *pHandles,[out] DWORD *pIndex);
+}
+
+[object, uuid (2039d958-4eeb-496a-87bb-2e5201eadeef), local, pointer_default (unique)]
+interface IDebugApplication11064 : IRemoteDebugApplication110 {
+  HRESULT SynchronousCallInMainThread ([in] IDebugThreadCall64 *pptc,[in] DWORD_PTR dwParam1,[in] DWORD_PTR dwParam2,[in] DWORD_PTR dwParam3);
+  HRESULT AsynchronousCallInMainThread ([in] IDebugThreadCall64 *pptc,[in] DWORD_PTR dwParam1,[in] DWORD_PTR dwParam2,[in] DWORD_PTR dwParam3);
+  HRESULT CallableWaitForHandles ([in] DWORD handleCount,[in, size_is (handleCount)] const HANDLE *pHandles,[out] DWORD *pIndex);
+}
+
+[object, uuid (16ff3a42-A5F5-432b-B625-8e8e16f57e15), local, pointer_default (unique)]
+interface IWebAppDiagnosticsObjectInitialization : IUnknown {
+  HRESULT Initialize ([in] HANDLE_PTR hPassedHandle,[in] IUnknown *pDebugApplication);
+}
+
+[object, uuid (73a3f82a-0fe9-4b33-BA3B-FE095F697E0A), pointer_default (unique)]
+interface IActiveScriptWinRTErrorDebug : IActiveScriptError {
+  HRESULT GetRestrictedErrorString ([out] BSTR *errorString);
+  HRESULT GetRestrictedErrorReference ([out] BSTR *referenceString);
+  HRESULT GetCapabilitySid ([out] BSTR *capabilitySid);
+}
+
+cpp_quote("")
+[object, uuid (516e42b6-89a8-4530-937b-5f0708431442), pointer_default (unique)]
+interface IActiveScriptErrorDebug110 : IUnknown {
+  HRESULT GetExceptionThrownKind ([out] SCRIPT_ERROR_DEBUG_EXCEPTION_THROWN_KIND *pExceptionKind);
+};
+
+[object, local, uuid (84e5e468-D5DA-48a8-83f4-40366429007b), pointer_default (unique)]
+interface IDebugApplicationThreadEvents110 : IUnknown {
+  HRESULT OnSuspendForBreakPoint (void);
+  HRESULT OnResumeFromBreakPoint (void);
+  HRESULT OnThreadRequestComplete (void);
+  HRESULT OnBeginThreadRequest (void);
+}
+
+[object, local, uuid (2194ac5c-6561-404a-a2e9-f57d72de3702), pointer_default (unique)]
+interface IDebugApplicationThread11032 : IUnknown {
+  HRESULT GetActiveThreadRequestCount ([out] UINT *puiThreadRequests);
+  HRESULT IsSuspendedForBreakPoint ([out] BOOL *pfIsSuspended);
+  HRESULT IsThreadCallable ([out] BOOL *pfIsCallable);
+  HRESULT AsynchronousCallIntoThread ([in] IDebugThreadCall32 *pptc,[in] DWORD_PTR dwParam1,[in] DWORD_PTR dwParam2,[in] DWORD_PTR dwParam3);
+}
+
+[object, local, uuid (420aa4cc-EFD8-4dac-983b-47127826917d), pointer_default (unique)]
+interface IDebugApplicationThread11064 : IUnknown {
+  HRESULT GetActiveThreadRequestCount ([out] UINT *puiThreadRequests);
+  HRESULT IsSuspendedForBreakPoint ([out] BOOL *pfIsSuspended);
+  HRESULT IsThreadCallable ([out] BOOL *pfIsCallable);
+  HRESULT AsynchronousCallIntoThread ([in] IDebugThreadCall64 *pptc,[in] DWORD_PTR dwParam1,[in] DWORD_PTR dwParam2,[in] DWORD_PTR dwParam3);
+}
+
+[object, uuid (2f69c611-6b14-47e8-9260-4bb7c52f504b), pointer_default (unique)]
+interface IRemoteDebugCriticalErrorEvent110 : IUnknown {
+  HRESULT GetErrorInfo ([out] BSTR *pbstrSource,[out] int *pMessageId,[out] BSTR *pbstrMessage,[out] IDebugDocumentContext **ppLocation);
+};
+cpp_quote("#endif")

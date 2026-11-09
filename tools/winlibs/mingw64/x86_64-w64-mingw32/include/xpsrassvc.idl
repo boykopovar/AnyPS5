@@ -1,0 +1,55 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+import "objidl.idl";
+import "wincodec.idl";
+import "xpsobjectmodel.idl";
+
+interface IXpsRasterizerNotificationCallback;
+interface IXpsRasterizer;
+interface IXpsRasterizationFactory;
+interface IXpsRasterizationFactory1;
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+typedef enum {
+  XPSRAS_RENDERING_MODE_ANTIALIASED = 0,
+  XPSRAS_RENDERING_MODE_ALIASED = 1
+} XPSRAS_RENDERING_MODE;
+
+cpp_quote("#if NTDDI_VERSION >= 0x06020000")
+  typedef enum {
+    XPSRAS_PIXEL_FORMAT_32BPP_PBGRA_UINT_SRGB = 1,
+    XPSRAS_PIXEL_FORMAT_64BPP_PRGBA_HALF_SCRGB = 2,
+    XPSRAS_PIXEL_FORMAT_128BPP_PRGBA_FLOAT_SCRGB = 3
+  } XPSRAS_PIXEL_FORMAT;
+cpp_quote("#endif")
+
+[object, local, uuid (9ab8fd0d-cb94-49c2-9cb0-97ec1d5469D2), pointer_default (unique)]
+interface IXpsRasterizerNotificationCallback : IUnknown {
+  [local] HRESULT Continue ();
+}
+
+[object, local, uuid (7567cfc8-c156-47a8-9dac-11a2ae5bdd6b), pointer_default (unique)]
+interface IXpsRasterizer : IUnknown {
+  [local] HRESULT RasterizeRect ([in] INT x,[in] INT y,[in] INT width,[in] INT height, [in] IXpsRasterizerNotificationCallback *notificationCallback, [out, retval] IWICBitmap **bitmap);
+  [local] HRESULT SetMinimalLineWidth ([in] INT width);
+}
+
+[object, local, uuid (e094808a-24c6-482b-a3a7-c21ac9B55f17), pointer_default (unique)]
+interface IXpsRasterizationFactory : IUnknown {
+  [local] HRESULT CreateRasterizer ([in,optional] IXpsOMPage *xpsPage, [in] FLOAT DPI, [in] XPSRAS_RENDERING_MODE nonTextRenderingMode, [in] XPSRAS_RENDERING_MODE textRenderingMode, [out, retval] IXpsRasterizer **ppIXPSRasterizer);
+}
+
+cpp_quote("#if NTDDI_VERSION >= 0x06020000")
+[object, local, uuid (2d6e5f77-6414-4a1e-a8e0-d4194ce6a26f), pointer_default (unique)]
+interface IXpsRasterizationFactory1 : IUnknown {
+  [local] HRESULT CreateRasterizer ([in, optional] IXpsOMPage *xpsPage, [in] FLOAT DPI, [in] XPSRAS_RENDERING_MODE nonTextRenderingMode, [in] XPSRAS_RENDERING_MODE textRenderingMode, [in] XPSRAS_PIXEL_FORMAT pixelFormat, [in, retval] IXpsRasterizer **ppIXPSRasterizer);
+}
+cpp_quote("#endif")
+
+cpp_quote("#endif")

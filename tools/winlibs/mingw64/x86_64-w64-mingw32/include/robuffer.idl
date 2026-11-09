@@ -1,0 +1,28 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+#ifdef __WIDL__
+#pragma winrt
+#endif
+
+import "objidl.idl";
+
+cpp_quote("#if NTDDI_VERSION >= NTDDI_WIN8")
+
+namespace Windows.Storage.Streams {
+
+    [
+        uuid(905a0fef-bc53-11df-8c49-001e4fc686da),
+    ]
+    interface IBufferByteAccess : IUnknown
+    {
+        HRESULT Buffer([out, retval] byte **value);
+    }
+
+}
+
+cpp_quote("STDAPI RoGetBufferMarshaler(IMarshal **bufferMarshaler);")
+cpp_quote("#endif")

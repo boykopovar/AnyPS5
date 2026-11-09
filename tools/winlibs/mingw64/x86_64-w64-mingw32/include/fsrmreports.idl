@@ -1,0 +1,184 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+import "oaidl.idl";
+import "fsrmenums.idl";
+import "fsrm.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+interface IFsrmFileManagementJob;
+interface IFsrmFileManagementJobManager;
+interface IFsrmPropertyCondition;
+interface IFsrmReport;
+interface IFsrmReportJob;
+interface IFsrmReportManager;
+
+const DISPID FSRM_DISPID_REPORT_MANAGER = FSRM_DISPID_FEATURE_REPORTS | 0x100000;
+const DISPID FSRM_DISPID_REPORT_JOB = FSRM_DISPID_FEATURE_REPORTS | 0x200000;
+const DISPID FSRM_DISPID_REPORT = FSRM_DISPID_FEATURE_REPORTS | 0x300000;
+const DISPID FSRM_DISPID_REPORT_SCHEDULER = FSRM_DISPID_FEATURE_REPORTS | 0x400000;
+const DISPID FSRM_DISPID_FILE_MANAGEMENT_JOB_MANAGER = FSRM_DISPID_FEATURE_REPORTS | 0x500000;
+const DISPID FSRM_DISPID_FILE_MANAGEMENT_JOB = FSRM_DISPID_FEATURE_REPORTS | 0x600000;
+const DISPID FSRM_DISPID_FILE_MANAGEMENT_NOTIFICATION = FSRM_DISPID_FEATURE_REPORTS | 0x700000;
+const DISPID FSRM_DISPID_PROPERTY_CONDITION = FSRM_DISPID_FEATURE_REPORTS | 0x800000;
+const DISPID FSRM_DISPID_FILE_CONDITION = FSRM_DISPID_FEATURE_REPORTS | 0x900000;
+const DISPID FSRM_DISPID_FILE_CONDITION_PROPERTY = FSRM_DISPID_FEATURE_REPORTS | 0xa00000;
+const DISPID FSRM_DISPID_FILE_MANAGEMENT_JOB_2 = FSRM_DISPID_FEATURE_REPORTS | 0xb00000;
+
+[odl, uuid (d8cc81d9-46b8-4fa4-bfa5-4aa9dec9b638), version (1.0), dual, oleautomation]
+interface IFsrmReport : IDispatch {
+  [propget, id (FSRM_DISPID_REPORT | 0x81)] HRESULT Type ([out, retval] FsrmReportType *reportType);
+  [propget, id (FSRM_DISPID_REPORT | 0x82)] HRESULT Name ([out, retval] BSTR *name);
+  [propput, id (FSRM_DISPID_REPORT | 0x82)] HRESULT Name ([in] BSTR name);
+  [propget, id (FSRM_DISPID_REPORT | 0x83)] HRESULT Description ([out, retval] BSTR *description);
+  [propput, id (FSRM_DISPID_REPORT | 0x83)] HRESULT Description ([in] BSTR description);
+  [propget, id (FSRM_DISPID_REPORT | 0x84)] HRESULT LastGeneratedFileNamePrefix ([out, retval] BSTR *prefix);
+  [id (FSRM_DISPID_REPORT | 0x1)] HRESULT GetFilter ([in] FsrmReportFilter filter,[out, retval] VARIANT *filterValue);
+  [id (FSRM_DISPID_REPORT | 0x2)] HRESULT SetFilter ([in] FsrmReportFilter filter,[in] VARIANT filterValue);
+  [id (FSRM_DISPID_REPORT | 0x3)] HRESULT Delete ();
+};
+
+[odl, uuid (6879caf9-6617-4484-8719-71c3d8645f94), version (1.0), dual, oleautomation]
+interface IFsrmReportScheduler : IDispatch {
+  [id (FSRM_DISPID_REPORT_SCHEDULER | 0x1)] HRESULT VerifyNamespaces ([in] VARIANT *namespacesSafeArray);
+  [id (FSRM_DISPID_REPORT_SCHEDULER | 0x2)] HRESULT CreateScheduleTask ([in] BSTR taskName,[in] VARIANT *namespacesSafeArray,[in] BSTR serializedTask);
+  [id (FSRM_DISPID_REPORT_SCHEDULER | 0x3)] HRESULT ModifyScheduleTask ([in] BSTR taskName,[in] VARIANT *namespacesSafeArray,[in] BSTR serializedTask);
+  [id (FSRM_DISPID_REPORT_SCHEDULER | 0x4)] HRESULT DeleteScheduleTask ([in] BSTR taskName);
+};
+
+[odl, uuid (ee321ecb-d95e-48e9-907c-c7685a013235), version (1.0), dual, oleautomation]
+interface IFsrmFileManagementJobManager : IDispatch {
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB_MANAGER | 0x81)] HRESULT ActionVariables ([out, retval] SAFEARRAY (VARIANT) *variables);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB_MANAGER | 0x82)] HRESULT ActionVariableDescriptions ([out, retval] SAFEARRAY (VARIANT) *descriptions);
+  [id (FSRM_DISPID_FILE_MANAGEMENT_JOB_MANAGER | 0x1)] HRESULT EnumFileManagementJobs ([in, defaultvalue (FsrmEnumOptions_None)] FsrmEnumOptions options,[out, retval] IFsrmCollection **fileManagementJobs);
+  [id (FSRM_DISPID_FILE_MANAGEMENT_JOB_MANAGER | 0x2)] HRESULT CreateFileManagementJob ([out, retval] IFsrmFileManagementJob **fileManagementJob);
+  [id (FSRM_DISPID_FILE_MANAGEMENT_JOB_MANAGER | 0x3)] HRESULT GetFileManagementJob ([in] BSTR name,[out, retval] IFsrmFileManagementJob **fileManagementJob);
+};
+
+[odl, uuid (326af66f-2ac0-4f68-bf8c-4759f054fa29), version (1.0), dual, oleautomation]
+interface IFsrmPropertyCondition : IDispatch {
+  [propget, id (FSRM_DISPID_PROPERTY_CONDITION | 0x81)] HRESULT Name ([out, retval] BSTR *name);
+  [propput, id (FSRM_DISPID_PROPERTY_CONDITION | 0x81)] HRESULT Name ([in] BSTR name);
+  [propget, id (FSRM_DISPID_PROPERTY_CONDITION | 0x82)] HRESULT Type ([out, retval] FsrmPropertyConditionType *type);
+  [propput, id (FSRM_DISPID_PROPERTY_CONDITION | 0x82)] HRESULT Type ([in] FsrmPropertyConditionType type);
+  [propget, id (FSRM_DISPID_PROPERTY_CONDITION | 0x83)] HRESULT Value ([out, retval] BSTR *value);
+  [propput, id (FSRM_DISPID_PROPERTY_CONDITION | 0x83)] HRESULT Value ([in] BSTR value);
+  [id (FSRM_DISPID_PROPERTY_CONDITION | 0x1)] HRESULT Delete ();
+};
+
+[odl, uuid (27b899fe-6ffa-4481-a184-d3daade8a02b), version (1.0), dual, oleautomation]
+interface IFsrmReportManager : IDispatch {
+  [id (FSRM_DISPID_REPORT_MANAGER | 0x1)] HRESULT EnumReportJobs ([in, defaultvalue (FsrmEnumOptions_None)] FsrmEnumOptions options,[out, retval] IFsrmCollection **reportJobs);
+  [id (FSRM_DISPID_REPORT_MANAGER | 0x2)] HRESULT CreateReportJob ([out, retval] IFsrmReportJob **reportJob);
+  [id (FSRM_DISPID_REPORT_MANAGER | 0x3)] HRESULT GetReportJob ([in] BSTR taskName,[out, retval] IFsrmReportJob **reportJob);
+  [id (FSRM_DISPID_REPORT_MANAGER | 0x4)] HRESULT GetOutputDirectory ([in] FsrmReportGenerationContext context,[out, retval] BSTR *path);
+  [id (FSRM_DISPID_REPORT_MANAGER | 0x5)] HRESULT SetOutputDirectory ([in] FsrmReportGenerationContext context,[in] BSTR path);
+  [id (FSRM_DISPID_REPORT_MANAGER | 0x6)] HRESULT IsFilterValidForReportType ([in] FsrmReportType reportType,[in] FsrmReportFilter filter,[out, retval] VARIANT_BOOL *valid);
+  [id (FSRM_DISPID_REPORT_MANAGER | 0x7)] HRESULT GetDefaultFilter ([in] FsrmReportType reportType,[in] FsrmReportFilter filter,[out, retval] VARIANT *filterValue);
+  [id (FSRM_DISPID_REPORT_MANAGER | 0x8)] HRESULT SetDefaultFilter ([in] FsrmReportType reportType,[in] FsrmReportFilter filter,[in] VARIANT filterValue);
+  [id (FSRM_DISPID_REPORT_MANAGER | 0x9)] HRESULT GetReportSizeLimit ([in] FsrmReportLimit limit,[out, retval] VARIANT *limitValue);
+  [id (FSRM_DISPID_REPORT_MANAGER | 0xa)] HRESULT SetReportSizeLimit ([in] FsrmReportLimit limit,[in] VARIANT limitValue);
+};
+
+[odl, uuid (38e87280-715c-4c7d-a280-ea1651a19fef), version (1.0), dual, oleautomation]
+interface IFsrmReportJob : IFsrmObject {
+  [propget, id (FSRM_DISPID_REPORT_JOB | 0x81)] HRESULT Task ([out, retval] BSTR *taskName);
+  [propput, id (FSRM_DISPID_REPORT_JOB | 0x81)] HRESULT Task ([in] BSTR taskName);
+  [propget, id (FSRM_DISPID_REPORT_JOB | 0x82)] HRESULT NamespaceRoots ([out, retval] SAFEARRAY (VARIANT) *namespaceRoots);
+  [propput, id (FSRM_DISPID_REPORT_JOB | 0x82)] HRESULT NamespaceRoots ([in] SAFEARRAY (VARIANT) namespaceRoots);
+  [propget, id (FSRM_DISPID_REPORT_JOB | 0x83)] HRESULT Formats ([out, retval] SAFEARRAY (VARIANT) *formats);
+  [propput, id (FSRM_DISPID_REPORT_JOB | 0x83)] HRESULT Formats ([in] SAFEARRAY (VARIANT) formats);
+  [propget, id (FSRM_DISPID_REPORT_JOB | 0x84)] HRESULT MailTo ([out, retval] BSTR *mailTo);
+  [propput, id (FSRM_DISPID_REPORT_JOB | 0x84)] HRESULT MailTo ([in] BSTR mailTo);
+  [propget, id (FSRM_DISPID_REPORT_JOB | 0x85)] HRESULT RunningStatus ([out, retval] FsrmReportRunningStatus *runningStatus);
+  [propget, id (FSRM_DISPID_REPORT_JOB | 0x86)] HRESULT LastRun ([out, retval] DATE *lastRun);
+  [propget, id (FSRM_DISPID_REPORT_JOB | 0x87)] HRESULT LastError ([out, retval] BSTR *lastError);
+  [propget, id (FSRM_DISPID_REPORT_JOB | 0x88)] HRESULT LastGeneratedInDirectory ([out, retval] BSTR *path);
+  [id (FSRM_DISPID_REPORT_JOB | 0x01)] HRESULT EnumReports ([out, retval] IFsrmCollection **reports);
+  [id (FSRM_DISPID_REPORT_JOB | 0x02)] HRESULT CreateReport ([in] FsrmReportType reportType,[out, retval] IFsrmReport **report);
+  [id (FSRM_DISPID_REPORT_JOB | 0x03)] HRESULT Run ([in] FsrmReportGenerationContext context);
+  [id (FSRM_DISPID_REPORT_JOB | 0x04)] HRESULT WaitForCompletion ([in] long waitSeconds,[out, retval] VARIANT_BOOL *completed);
+  [id (FSRM_DISPID_REPORT_JOB | 0x05)] HRESULT Cancel ();
+};
+
+[odl, uuid (0770687e-9f36-4d6f-8778-599d188461c9), version (1.0), dual, oleautomation]
+interface IFsrmFileManagementJob : IFsrmObject {
+  const LONG FsrmDaysNotSpecified = -1;
+  const DATE FsrmDateNotSpecified = ((DATE) -1);
+
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x81)] HRESULT Name ([out, retval] BSTR *name);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x81)] HRESULT Name ([in] BSTR name);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x82)] HRESULT NamespaceRoots ([out, retval] SAFEARRAY (VARIANT) *namespaceRoots);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x82)] HRESULT NamespaceRoots ([in] SAFEARRAY (VARIANT) namespaceRoots);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x83)] HRESULT Enabled ([out, retval] VARIANT_BOOL *enabled);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x83)] HRESULT Enabled ([in] VARIANT_BOOL enabled);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x84)] HRESULT OperationType ([out, retval] FsrmFileManagementType *operationType);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x84)] HRESULT OperationType ([in] FsrmFileManagementType operationType);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x85)] HRESULT ExpirationDirectory ([out, retval] BSTR *expirationDirectory);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x85)] HRESULT ExpirationDirectory ([in] BSTR expirationDirectory);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x86)] HRESULT CustomAction ([out, retval] IFsrmActionCommand **action);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x87)] HRESULT Notifications ([out, retval] SAFEARRAY (VARIANT) *notifications);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x88)] HRESULT Logging ([out, retval] long *loggingFlags);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x88)] HRESULT Logging ([in] long loggingFlags);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x89)] HRESULT ReportEnabled ([out, retval] VARIANT_BOOL *reportEnabled);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x89)] HRESULT ReportEnabled ([in] VARIANT_BOOL reportEnabled);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x8a)] HRESULT Formats ([out, retval] SAFEARRAY (VARIANT) *formats);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x8a)] HRESULT Formats ([in] SAFEARRAY (VARIANT) formats);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x8b)] HRESULT MailTo ([out, retval] BSTR *mailTo);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x8b)] HRESULT MailTo ([in] BSTR mailTo);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x8c)] HRESULT DaysSinceFileCreated ([out, retval] long *daysSinceCreation);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x8c)] HRESULT DaysSinceFileCreated ([in] long daysSinceCreation);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x8d)] HRESULT DaysSinceFileLastAccessed ([out, retval] long *daysSinceAccess);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x8d)] HRESULT DaysSinceFileLastAccessed ([in] long daysSinceAccess);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x8e)] HRESULT DaysSinceFileLastModified ([out, retval] long *daysSinceModify);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x8e)] HRESULT DaysSinceFileLastModified ([in] long daysSinceModify);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x8f)] HRESULT PropertyConditions ([out, retval] IFsrmCollection **propertyConditions);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x90)] HRESULT FromDate ([out, retval] DATE *fromDate);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x90)] HRESULT FromDate ([in] DATE fromDate);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x91)] HRESULT Task ([out, retval] BSTR *taskName);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x91)] HRESULT Task ([in] BSTR taskName);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x92)] HRESULT Parameters ([out, retval] SAFEARRAY (VARIANT) *parameters);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x92)] HRESULT Parameters ([in] SAFEARRAY (VARIANT) parameters);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x93)] HRESULT RunningStatus ([out, retval] FsrmReportRunningStatus *runningStatus);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x94)] HRESULT LastError ([out, retval] BSTR *lastError);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x95)] HRESULT LastReportPathWithoutExtension ([out, retval] BSTR *path);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x96)] HRESULT LastRun ([out, retval] DATE *lastRun);
+  [propget, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x97)] HRESULT FileNamePattern ([out, retval] BSTR *fileNamePattern);
+  [propput, id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x97)] HRESULT FileNamePattern ([in] BSTR fileNamePattern);
+  [id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x1)] HRESULT Run ([in] FsrmReportGenerationContext context);
+  [id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x2)] HRESULT WaitForCompletion ([in] long waitSeconds,[out, retval] VARIANT_BOOL *completed);
+  [id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x3)] HRESULT Cancel ();
+  [id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x4)] HRESULT AddNotification ([in] long days);
+  [id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x5)] HRESULT DeleteNotification ([in] long days);
+  [id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x6)] HRESULT ModifyNotification ([in] long days,[in] long newDays);
+  [id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x7)] HRESULT CreateNotificationAction ([in] long days,[in] FsrmActionType actionType,[out, retval] IFsrmAction **action);
+  [id (FSRM_DISPID_FILE_MANAGEMENT_JOB | 0x8)] HRESULT EnumNotificationActions ([in] long days,[out, retval] IFsrmCollection **actions);
+  [id (FSRM_DISPID_FILE_MANAGEMENT_JOB_MANAGER | 0x9)] HRESULT CreatePropertyCondition ([in] BSTR name,[out, retval] IFsrmPropertyCondition **propertyCondition);
+  [id (FSRM_DISPID_FILE_MANAGEMENT_JOB_MANAGER | 0xa)] HRESULT CreateCustomAction ([out, retval] IFsrmActionCommand **customAction);
+};
+
+[odl, uuid (70684ffc-691a-4a1a-B922-97752e138cc1), version (1.0), dual, oleautomation]
+interface IFsrmFileCondition : IDispatch {
+  [propget, id (FSRM_DISPID_FILE_CONDITION | 0x81)] HRESULT Type ([out, retval] FsrmFileConditionType *pVal);
+  [id (FSRM_DISPID_FILE_CONDITION | 0x1)] HRESULT Delete ();
+};
+
+[odl, uuid (81926775-B981-4479-988f-da171d627360), version (1.0), dual, oleautomation]
+interface IFsrmFileConditionProperty : IFsrmFileCondition {
+  [propget, id (FSRM_DISPID_FILE_CONDITION_PROPERTY | 0x81)] HRESULT PropertyName ([out, retval] BSTR *pVal);
+  [propput, id (FSRM_DISPID_FILE_CONDITION_PROPERTY | 0x81)] HRESULT PropertyName ([in] BSTR newVal);
+  [propget, id (FSRM_DISPID_FILE_CONDITION_PROPERTY | 0x82)] HRESULT PropertyId ([out, retval] FsrmFileSystemPropertyId *pVal);
+  [propput, id (FSRM_DISPID_FILE_CONDITION_PROPERTY | 0x82)] HRESULT PropertyId ([in] FsrmFileSystemPropertyId newVal);
+  [propget, id (FSRM_DISPID_FILE_CONDITION_PROPERTY | 0x83)] HRESULT Operator ([out, retval] FsrmPropertyConditionType *pVal);
+  [propput, id (FSRM_DISPID_FILE_CONDITION_PROPERTY | 0x83)] HRESULT Operator ([in] FsrmPropertyConditionType newVal);
+  [propget, id (FSRM_DISPID_FILE_CONDITION_PROPERTY | 0x84)] HRESULT ValueType ([out, retval] FsrmPropertyValueType *pVal);
+  [propput, id (FSRM_DISPID_FILE_CONDITION_PROPERTY | 0x84)] HRESULT ValueType ([in] FsrmPropertyValueType newVal);
+  [propget, id (FSRM_DISPID_FILE_CONDITION_PROPERTY | 0x85)] HRESULT Value ([out, retval] VARIANT *pVal);
+  [propput, id (FSRM_DISPID_FILE_CONDITION_PROPERTY | 0x85)] HRESULT Value ([in] VARIANT newVal);
+};
+cpp_quote("#endif")

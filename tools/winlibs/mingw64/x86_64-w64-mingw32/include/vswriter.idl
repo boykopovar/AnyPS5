@@ -1,0 +1,576 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+/**
+ * C++ interfaces, which are not COM interface, are declared with
+ * uuid(00000000-0000-0000-0000-000000000000) to make widl happy
+ */
+
+import "oaidl.idl";
+import "ocidl.idl";
+import "vss.idl";
+
+cpp_quote("#include <winapifamily.h>")
+
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+cpp_quote("#include \"vsserror.h\" ")
+
+typedef enum VSS_USAGE_TYPE {
+  VSS_UT_UNDEFINED = 0,
+  VSS_UT_BOOTABLESYSTEMSTATE,
+  VSS_UT_SYSTEMSERVICE,
+  VSS_UT_USERDATA,
+  VSS_UT_OTHER,
+} VSS_USAGE_TYPE;
+
+typedef enum VSS_SOURCE_TYPE {
+  VSS_ST_UNDEFINED = 0,
+  VSS_ST_TRANSACTEDDB,
+  VSS_ST_NONTRANSACTEDDB,
+  VSS_ST_OTHER,
+} VSS_SOURCE_TYPE;
+
+typedef enum VSS_RESTOREMETHOD_ENUM {
+  VSS_RME_UNDEFINED = 0,
+  VSS_RME_RESTORE_IF_NOT_THERE,
+  VSS_RME_RESTORE_IF_CAN_REPLACE,
+  VSS_RME_STOP_RESTORE_START,
+  VSS_RME_RESTORE_TO_ALTERNATE_LOCATION,
+  VSS_RME_RESTORE_AT_REBOOT,
+  VSS_RME_RESTORE_AT_REBOOT_IF_CANNOT_REPLACE,
+  VSS_RME_CUSTOM,
+  VSS_RME_RESTORE_STOP_START,
+} VSS_RESTOREMETHOD_ENUM;
+
+typedef enum VSS_WRITERRESTORE_ENUM {
+  VSS_WRE_UNDEFINED = 0,
+  VSS_WRE_NEVER,
+  VSS_WRE_IF_REPLACE_FAILS,
+  VSS_WRE_ALWAYS,
+} VSS_WRITERRESTORE_ENUM;
+
+typedef enum VSS_COMPONENT_TYPE {
+  VSS_CT_UNDEFINED = 0,
+  VSS_CT_DATABASE,
+  VSS_CT_FILEGROUP,
+} VSS_COMPONENT_TYPE;
+
+typedef enum VSS_ALTERNATE_WRITER_STATE {
+  VSS_AWS_UNDEFINED = 0,
+  VSS_AWS_NO_ALTERNATE_WRITER,
+  VSS_AWS_ALTERNATE_WRITER_EXISTS,
+  VSS_AWS_THIS_IS_ALTERNATE_WRITER,
+} VSS_ALTERNATE_WRITER_STATE;
+
+typedef enum VSS_SUBSCRIBE_MASK {
+  VSS_SM_POST_SNAPSHOT_FLAG = 0x00000001,
+  VSS_SM_BACKUP_EVENTS_FLAG = 0x00000002,
+  VSS_SM_RESTORE_EVENTS_FLAG = 0x00000004,
+  VSS_SM_IO_THROTTLING_FLAG = 0x00000008,
+  VSS_SM_ALL_FLAGS = 0xffffffff,
+} VSS_SUBSCRIBE_MASK;
+
+typedef enum VSS_RESTORE_TARGET {
+  VSS_RT_UNDEFINED = 0,
+  VSS_RT_ORIGINAL,
+  VSS_RT_ALTERNATE,
+  VSS_RT_DIRECTED,
+  VSS_RT_ORIGINAL_LOCATION,
+} VSS_RESTORE_TARGET;
+
+typedef enum VSS_FILE_RESTORE_STATUS {
+  VSS_RS_UNDEFINED = 0,
+  VSS_RS_NONE,
+  VSS_RS_ALL,
+  VSS_RS_FAILED,
+} VSS_FILE_RESTORE_STATUS;
+
+typedef enum VSS_COMPONENT_FLAGS {
+  VSS_CF_BACKUP_RECOVERY = 0x00000001,
+  VSS_CF_APP_ROLLBACK_RECOVERY = 0x00000002,
+  VSS_CF_NOT_SYSTEM_STATE = 0x00000004,
+} VSS_COMPONENT_FLAGS;
+
+interface IVssExamineWriterMetadata;
+
+[object, uuid(00000000-0000-0000-0000-000000000000), pointer_default(unique)]
+interface IVssWMFiledesc : IUnknown
+{
+  HRESULT GetPath(
+    [out] BSTR *pbstrPath);
+
+  HRESULT GetFilespec(
+    [out] BSTR *pbstrFilespec);
+
+  HRESULT GetRecursive(
+    [out] boolean *pbRecursive);
+
+  HRESULT GetAlternateLocation(
+    [out] BSTR *pbstrAlternateLocation);
+
+  HRESULT GetBackupTypeMask(
+    [out] DWORD *pdwTypeMask);
+}
+
+[object, uuid(00000000-0000-0000-0000-000000000000), pointer_default(unique)]
+interface IVssWMDependency : IUnknown
+{
+  HRESULT GetWriterId(
+    [out] VSS_ID *pWriterId);
+
+  HRESULT GetLogicalPath(
+    [out] BSTR *pbstrLogicalPath);
+
+  HRESULT GetComponentName(
+    [out] BSTR *pbstrComponentName);
+};
+
+[object, uuid(d2c72c96-c121-4518-b627-e5a93d010ead), pointer_default(unique)]
+interface IVssComponent : IUnknown
+{
+  HRESULT GetLogicalPath(
+    [out] BSTR *pbstrPath);
+
+  HRESULT GetComponentType(
+    [out] VSS_COMPONENT_TYPE *pct);
+
+  HRESULT GetComponentName(
+    [out] BSTR *pbstrName);
+
+  HRESULT GetBackupSucceeded(
+    [out] boolean *pbSucceeded);
+
+  HRESULT GetAlternateLocationMappingCount(
+    [out] UINT *pcMappings);
+
+  HRESULT GetAlternateLocationMapping(
+    [in] UINT iMapping,
+    [out] IVssWMFiledesc **ppFiledesc);
+
+  HRESULT SetBackupMetadata(
+    [in] LPCWSTR wszData);
+
+  HRESULT GetBackupMetadata(
+    [out] BSTR *pbstrData);
+
+  HRESULT AddPartialFile(
+    [in] LPCWSTR wszPath,
+    [in] LPCWSTR wszFilename,
+    [in] LPCWSTR wszRanges,
+    [in] LPCWSTR wszMetadata);
+
+  HRESULT GetPartialFileCount(
+    [out] UINT *pcPartialFiles);
+
+  HRESULT GetPartialFile(
+    [in] UINT iPartialFile,
+    [out] BSTR *pbstrPath,
+    [out] BSTR *pbstrFilename,
+    [out] BSTR *pbstrRange,
+    [out] BSTR *pbstrMetadata);
+
+  HRESULT IsSelectedForRestore(
+    [out] boolean *pbSelectedForRestore);
+
+  HRESULT GetAdditionalRestores(
+    [out] boolean *pbAdditionalRestores);
+
+  HRESULT GetNewTargetCount(
+    [out] UINT *pcNewTarget);
+
+  HRESULT GetNewTarget(
+    [in] UINT iNewTarget,
+    [out] IVssWMFiledesc **ppFiledesc);
+
+  HRESULT AddDirectedTarget(
+    [in] LPCWSTR wszSourcePath,
+    [in] LPCWSTR wszSourceFilename,
+    [in] LPCWSTR wszSourceRangeList,
+    [in] LPCWSTR wszDestinationPath,
+    [in] LPCWSTR wszDestinationFilename,
+    [in] LPCWSTR wszDestinationRangeList);
+
+  HRESULT GetDirectedTargetCount(
+    [out] UINT *pcDirectedTarget);
+
+  HRESULT GetDirectedTarget(
+    [in] UINT iDirectedTarget,
+    [out] BSTR *pbstrSourcePath,
+    [out] BSTR *pbstrSourceFileName,
+    [out] BSTR *pbstrSourceRangeList,
+    [out] BSTR *pbstrDestinationPath,
+    [out] BSTR *pbstrDestinationFilename,
+    [out] BSTR *pbstrDestinationRangeList);
+
+  HRESULT SetRestoreMetadata(
+    [in] LPCWSTR wszRestoreMetadata);
+
+  HRESULT GetRestoreMetadata(
+    [out] BSTR *pbstrRestoreMetadata);
+
+   HRESULT SetRestoreTarget(
+    [in] VSS_RESTORE_TARGET target);
+
+  HRESULT GetRestoreTarget(
+    [out] VSS_RESTORE_TARGET *pTarget);
+
+  HRESULT SetPreRestoreFailureMsg(
+    [in] LPCWSTR wszPreRestoreFailureMsg);
+
+  HRESULT GetPreRestoreFailureMsg(
+    [out] BSTR *pbstrPreRestoreFailureMsg);
+
+  HRESULT SetPostRestoreFailureMsg(
+    [in] LPCWSTR wszPostRestoreFailureMsg);
+
+  HRESULT GetPostRestoreFailureMsg(
+    [out] BSTR *pbstrPostRestoreFailureMsg);
+
+  HRESULT SetBackupStamp(
+    [in] LPCWSTR wszBackupStamp);
+
+  HRESULT GetBackupStamp(
+    [out] BSTR *pbstrBackupStamp);
+
+  HRESULT GetPreviousBackupStamp(
+    [out] BSTR *pbstrBackupStamp);
+
+  HRESULT GetBackupOptions(
+    [out] BSTR *pbstrBackupOptions);
+
+  HRESULT GetRestoreOptions(
+    [out] BSTR *pbstrRestoreOptions);
+
+  HRESULT GetRestoreSubcomponentCount(
+    [out] UINT *pcRestoreSubcomponent);
+
+  HRESULT GetRestoreSubcomponent(
+    [in] UINT iComponent,
+    [out] BSTR *pbstrLogicalPath,
+    [out] BSTR *pbstrComponentName,
+    [out] boolean *pbRepair);
+
+  HRESULT GetFileRestoreStatus(
+    [out] VSS_FILE_RESTORE_STATUS *pStatus);
+
+  HRESULT AddDifferencedFilesByLastModifyTime(
+    [in] LPCWSTR wszPath,
+    [in] LPCWSTR wszFilespec,
+    [in] WINBOOL bRecursive,
+    [in] FILETIME ftLastModifyTime);
+
+  HRESULT AddDifferencedFilesByLastModifyLSN(
+    [in] LPCWSTR wszPath,
+    [in] LPCWSTR wszFilespec,
+    [in] WINBOOL bRecursive,
+    [in] BSTR bstrLsnString);
+
+  HRESULT GetDifferencedFilesCount(
+    [out] UINT *pcDifferencedFiles);
+
+  HRESULT GetDifferencedFile(
+    [in] UINT iDifferencedFile,
+    [out] BSTR *pbstrPath,
+    [out] BSTR *pbstrFilespec,
+    [out] WINBOOL *pbRecursive,
+    [out] BSTR *pbstrLsnString,
+    [out] FILETIME *pftLastModifyTime);
+}
+
+[object, uuid(00000000-0000-0000-0000-000000000000), pointer_default(unique)]
+interface IVssWriterComponents
+{
+  HRESULT GetComponentCount(
+    [out] UINT *pcComponents);
+
+  HRESULT GetWriterInfo(
+    [out] VSS_ID *pidInstance,
+    [out] VSS_ID *pidWriter);
+
+  HRESULT GetComponent(
+    [in] UINT iComponent,
+    [out] IVssComponent **ppComponent);
+}
+
+[object, uuid(156c8b5e-f131-4bd7-9c97-d1923be7e1fa), pointer_default(unique)]
+interface IVssComponentEx : IVssComponent
+{
+  HRESULT SetPrepareForBackupFailureMsg(
+    [in] LPCWSTR wszFailureMsg);
+
+  HRESULT SetPostSnapshotFailureMsg(
+    [in] LPCWSTR wszFailureMsg);
+
+  HRESULT GetPrepareForBackupFailureMsg(
+    [out] BSTR *pbstrFailureMsg);
+
+  HRESULT GetPostSnapshotFailureMsg(
+    [out] BSTR *pbstrFailureMsg);
+
+  HRESULT GetAuthoritativeRestore(
+    [out] boolean *pbAuth);
+
+  HRESULT GetRollForward(
+    [out] VSS_ROLLFORWARD_TYPE *pRollType,
+    [out] BSTR *pbstrPoint);
+
+  HRESULT GetRestoreName(
+    [out] BSTR *pbstrName);
+}
+
+[object, uuid(3b5be0f2-07a9-4e4b-bdd3-cfdc8e2c0d2d), pointer_default(unique)]
+interface IVssComponentEx2 : IVssComponentEx
+{
+  HRESULT SetFailure(
+    [in] HRESULT hr,
+    [in] HRESULT hrApplication,
+    [in] LPCWSTR wszApplicationMessage,
+    [in] DWORD dwReserved);
+
+  HRESULT GetFailure(
+    [out] HRESULT *phr,
+    [out] HRESULT *phrApplication,
+    [out] BSTR *pbstrApplicationMessage,
+    [out] DWORD *pdwReserved);
+}
+
+interface IXMLDOMDocument;
+
+[object, uuid(00000000-0000-0000-0000-000000000000), pointer_default(unique)]
+interface IVssCreateWriterMetadata
+{
+  HRESULT AddIncludeFiles(
+    [in] LPCWSTR wszPath,
+    [in] LPCWSTR wszFilespec,
+    [in] boolean bRecursive,
+    [in] LPCWSTR wszAlternateLocation);
+
+  HRESULT AddExcludeFiles(
+    [in] LPCWSTR wszPath,
+    [in] LPCWSTR wszFilespec,
+    [in] boolean bRecursive);
+
+  HRESULT AddComponent(
+    [in] VSS_COMPONENT_TYPE ct,
+    [in] LPCWSTR wszLogicalPath,
+    [in] LPCWSTR wszComponentName,
+    [in] LPCWSTR wszCaption,
+    [in] const BYTE *pbIcon,
+    [in] UINT cbIcon,
+    [in] boolean bRestoreMetadata,
+    [in] boolean bNotifyOnBackupComplete,
+    [in] boolean bSelectable,
+    [in, defaultvalue(0)] boolean bSelectableForRestore,
+    [in, defaultvalue(0)] DWORD dwComponentFlags);
+
+  HRESULT AddDatabaseFiles(
+    [in] LPCWSTR wszLogicalPath,
+    [in] LPCWSTR wszDatabaseName,
+    [in] LPCWSTR wszPath,
+    [in] LPCWSTR wszFilespec,
+    [in, defaultvalue(VSS_FSBT_ALL_BACKUP_REQUIRED | VSS_FSBT_ALL_SNAPSHOT_REQUIRED)] DWORD dwBackupTypeMask);
+
+  HRESULT AddDatabaseLogFiles(
+    [in] LPCWSTR wszLogicalPath,
+    [in] LPCWSTR wszDatabaseName,
+    [in] LPCWSTR wszPath,
+    [in] LPCWSTR wszFilespec,
+    [in, defaultvalue(VSS_FSBT_ALL_BACKUP_REQUIRED | VSS_FSBT_ALL_SNAPSHOT_REQUIRED)] DWORD dwBackupTypeMask);
+
+  HRESULT AddFilesToFileGroup(
+    [in] LPCWSTR wszLogicalPath,
+    [in] LPCWSTR wszGroupName,
+    [in] LPCWSTR wszPath,
+    [in] LPCWSTR wszFilespec,
+    [in] boolean bRecursive,
+    [in] LPCWSTR wszAlternateLocation,
+    [in, defaultvalue(VSS_FSBT_ALL_BACKUP_REQUIRED | VSS_FSBT_ALL_SNAPSHOT_REQUIRED)] DWORD dwBackupTypeMask);
+
+  HRESULT SetRestoreMethod(
+    [in] VSS_RESTOREMETHOD_ENUM method,
+    [in] LPCWSTR wszService,
+    [in] LPCWSTR wszUserProcedure,
+    [in] VSS_WRITERRESTORE_ENUM writerRestore,
+    [in] boolean bRebootRequired);
+
+  HRESULT AddAlternateLocationMapping(
+    [in] LPCWSTR wszSourcePath,
+    [in] LPCWSTR wszSourceFilespec,
+    [in] boolean bRecursive,
+    [in] LPCWSTR wszDestination);
+
+  HRESULT AddComponentDependency(
+    [in] LPCWSTR wszForLogicalPath,
+    [in] LPCWSTR wszForComponentName,
+    [in] VSS_ID onWriterId,
+    [in] LPCWSTR wszOnLogicalPath,
+    [in] LPCWSTR wszOnComponentName);
+
+  HRESULT SetBackupSchema(
+    [in] DWORD dwSchemaMask);
+
+  HRESULT GetDocument(
+    [out] IXMLDOMDocument **pDoc);
+
+  HRESULT SaveAsXML(
+    [in] BSTR *pbstrXML);
+}
+
+[object, uuid(9f21981d-d469-4349-b807-39e64e4674e1), pointer_default(unique)]
+interface IVssCreateWriterMetadataEx : IVssCreateWriterMetadata /* , IUnknown */
+{
+  HRESULT AddExcludeFilesFromSnapshot(
+    [in] LPCWSTR wszPath,
+    [in] LPCWSTR wszFilespec,
+    [in] boolean bRecursive);
+}
+
+[object, uuid(00000000-0000-0000-0000-000000000000), pointer_default(unique)]
+interface IVssWriterImpl : IUnknown
+{
+  HRESULT Initialize(
+    [in] VSS_ID writerId,
+    [in] LPCWSTR wszWriterName,
+    [in] LPCWSTR wszWriterInstanceName,
+    [in] DWORD dwMajorVersion,
+    [in] DWORD dwMinorVersion,
+    [in] VSS_USAGE_TYPE ut,
+    [in] VSS_SOURCE_TYPE st,
+    [in] VSS_APPLICATION_LEVEL nLevel,
+    [in] DWORD dwTimeout,
+    [in] VSS_ALTERNATE_WRITER_STATE aws,
+    [in] boolean bIOThrottlingOnly);
+
+  HRESULT Subscribe(
+    [in] DWORD dwSubscribeTimeout,
+    [in] DWORD dwEventFlags);
+
+  HRESULT Unsubscribe();
+
+  void Uninitialize();
+
+  LPCWSTR *GetCurrentVolumeArray();
+
+  UINT GetCurrentVolumeCount();
+
+  HRESULT GetSnapshotDeviceName(
+    [in] LPCWSTR wszOriginalVolume,
+    [out] LPCWSTR *ppwszSnapshotDevice);
+
+  VSS_ID GetCurrentSnapshotSetId();
+
+  LONG GetContext();
+
+  VSS_APPLICATION_LEVEL GetCurrentLevel();
+
+  boolean IsPathAffected(
+    [in] LPCWSTR wszPath);
+
+  boolean IsBootableSystemStateBackedUp();
+
+  boolean AreComponentsSelected();
+
+  VSS_BACKUP_TYPE GetBackupType();
+
+  VSS_RESTORE_TYPE GetRestoreType();
+
+  HRESULT SetWriterFailure(
+    [in] HRESULT hr);
+
+  boolean IsPartialFileSupportEnabled();
+
+  HRESULT InstallAlternateWriter(
+    [in] VSS_ID idWriter,
+    [in] CLSID clsid);
+
+  IVssExamineWriterMetadata* GetIdentityInformation();
+
+  HRESULT SetWriterFailureEx(
+    [in] HRESULT hr,
+    [in] HRESULT hrApplication,
+    [in] LPCWSTR wszApplicationMessage);
+
+  HRESULT GetSessionId(
+    [out] VSS_ID *idSession);
+
+  boolean IsWriterShuttingDown();
+}
+
+[object, uuid(9c772e77-b26e-427f-92dd-c996f41ea5e3), pointer_default(unique)]
+interface IVssCreateExpressWriterMetadata : IUnknown
+{
+  HRESULT AddExcludeFiles(
+    [in] LPCWSTR wszPath,
+    [in] LPCWSTR wszFilespec,
+    [in] boolean bRecursive);
+
+  HRESULT AddComponent(
+    [in] VSS_COMPONENT_TYPE ct,
+    [in] LPCWSTR wszLogicalPath,
+    [in] LPCWSTR wszComponentName,
+    [in] LPCWSTR wszCaption,
+    [in] const BYTE *pbIcon,
+    [in] UINT cbIcon,
+    [in] boolean bRestoreMetadata,
+    [in] boolean bNotifyOnBackupComplete,
+    [in] boolean bSelectable,
+    [in, defaultvalue(0)] boolean bSelectableForRestore,
+    [in, defaultvalue(0)] DWORD dwComponentFlags);
+
+  HRESULT AddFilesToFileGroup(
+    [in] LPCWSTR wszLogicalPath,
+    [in] LPCWSTR wszGroupName,
+    [in] LPCWSTR wszPath,
+    [in] LPCWSTR wszFilespec,
+    [in] boolean bRecursive,
+    [in] LPCWSTR wszAlternateLocation,
+    [in, defaultvalue(VSS_FSBT_ALL_BACKUP_REQUIRED | VSS_FSBT_ALL_SNAPSHOT_REQUIRED)] DWORD dwBackupTypeMask);
+
+  HRESULT SetRestoreMethod(
+    [in] VSS_RESTOREMETHOD_ENUM method,
+    [in] LPCWSTR wszService,
+    [in] LPCWSTR wszUserProcedure,
+    [in] VSS_WRITERRESTORE_ENUM writerRestore,
+    [in] boolean bRebootRequired);
+
+  HRESULT AddComponentDependency(
+    [in] LPCWSTR wszForLogicalPath,
+    [in] LPCWSTR wszForComponentName,
+    [in] VSS_ID onWriterId,
+    [in] LPCWSTR wszOnLogicalPath,
+    [in] LPCWSTR wszOnComponentName);
+
+  HRESULT SetBackupSchema(
+    [in] DWORD dwSchemaMask);
+
+  HRESULT SaveAsXML(
+    [out] BSTR *pbstrXML);
+}
+
+[object, uuid(e33affdc-59c7-47b1-97d5-4266598f6235), pointer_default(unique)]
+interface IVssExpressWriter : IUnknown
+{
+  HRESULT CreateMetadata(
+    [in] VSS_ID writerId,
+    [in] LPCWSTR writerName,
+    [in] VSS_USAGE_TYPE usageType,
+    [in] DWORD versionMajor,
+    [in] DWORD versionMinor,
+    [in] DWORD reserved,
+    [out] IVssCreateExpressWriterMetadata **ppMetadata);
+
+  HRESULT LoadMetadata(
+    [in] LPCWSTR metadata,
+    [in] DWORD reserved);
+
+  HRESULT Register();
+
+  HRESULT Unregister(
+    [in] VSS_ID writerId);
+}
+
+cpp_quote("#endif /* WINAPI_PARTITION_DESKTOP */")

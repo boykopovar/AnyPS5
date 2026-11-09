@@ -1,0 +1,31 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+import "naptypes.idl";
+import "unknwn.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+cpp_quote("EXTERN_C const CLSID CLSID_NapClientManagement;")
+
+[object, uuid (432a1da5-3888-4b9a-a734-cff1e448c5b9), pointer_default (unique)]
+interface INapClientManagement : IUnknown {
+  HRESULT GetNapClientInfo ([out] WINBOOL *isNapEnabled,[out] CountedString **clientName,[out] CountedString **clientDescription,[out] CountedString **protocolVersion);
+  HRESULT GetSystemIsolationInfo ([out] IsolationInfo **isolationInfo,[out] WINBOOL *unknownConnections);
+  HRESULT RegisterSystemHealthAgent ([in] const NapComponentRegistrationInfo *agent);
+  HRESULT UnregisterSystemHealthAgent ([in] SystemHealthEntityId id);
+  HRESULT RegisterEnforcementClient ([in] const NapComponentRegistrationInfo *enforcer);
+  HRESULT UnregisterEnforcementClient ([in] EnforcementEntityId id);
+  HRESULT GetRegisteredSystemHealthAgents ([out] SystemHealthEntityCount *count,[out, size_is (,*count)] NapComponentRegistrationInfo **agents);
+  HRESULT GetRegisteredEnforcementClients ([out] EnforcementEntityCount *count,[out, size_is (,*count)] NapComponentRegistrationInfo **enforcers);
+};
+
+[object, uuid (07a1127b-18cc-422a-b988-e892600fcc74), pointer_default (unique)]
+interface INapClientManagement2 : INapClientManagement {
+  HRESULT GetSystemIsolationInfoEx ([out] IsolationInfoEx **isolationInfo,[out] WINBOOL *unknownConnections);
+};
+cpp_quote("#endif")

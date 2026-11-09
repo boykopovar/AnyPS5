@@ -1,0 +1,489 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+cpp_quote("")
+
+import "oaidl.idl";
+import "ocidl.idl";
+
+cpp_quote("")
+interface IWdsTransportCacheable;
+interface IWdsTransportClient;
+interface IWdsTransportCollection;
+interface IWdsTransportConfigurationManager;
+interface IWdsTransportConfigurationManager2;
+interface IWdsTransportContent;
+interface IWdsTransportContentProvider;
+interface IWdsTransportDiagnosticsPolicy;
+interface IWdsTransportManager;
+interface IWdsTransportNamespace;
+interface IWdsTransportNamespaceAutoCast;
+interface IWdsTransportNamespaceManager;
+interface IWdsTransportNamespaceScheduledCast;
+interface IWdsTransportNamespaceScheduledCastAutoStart;
+interface IWdsTransportNamespaceScheduledCastManualStart;
+interface IWdsTransportServer;
+interface IWdsTransportServer2;
+interface IWdsTransportServicePolicy;
+interface IWdsTransportServicePolicy2;
+interface IWdsTransportSetupManager;
+interface IWdsTransportSetupManager2;
+interface IWdsTransportTftpManager;
+interface IWdsTransportMulticastSessionPolicy;
+interface IWdsTransportSession;
+interface IWdsTransportTftpClient;
+
+cpp_quote("")
+typedef [v1_enum] enum {
+  WdsTptProtocolUnicast = 0x1,
+  WdsTptProtocolMulticast = 0x2
+} WDSTRANSPORT_PROTOCOL_FLAGS;
+
+cpp_quote("")
+typedef [v1_enum] enum {
+  WdsTptNamespaceTypeUnknown = 0,
+  WdsTptNamespaceTypeAutoCast = 1,
+  WdsTptNamespaceTypeScheduledCastManualStart = 2,
+  WdsTptNamespaceTypeScheduledCastAutoStart = 3
+} WDSTRANSPORT_NAMESPACE_TYPE;
+
+cpp_quote("")
+typedef [v1_enum] enum {
+  WdsTptDisconnectUnknown = 0,
+  WdsTptDisconnectFallback = 1,
+  WdsTptDisconnectAbort = 2
+} WDSTRANSPORT_DISCONNECT_TYPE;
+
+cpp_quote("")
+typedef [v1_enum] enum {
+  WdsTptSlowClientHandlingUnknown = 0,
+  WdsTptSlowClientHandlingNone = 1,
+  WdsTptSlowClientHandlingAutoDisconnect = 2,
+  WdsTptSlowClientHandlingMultistream = 3
+} WDSTRANSPORT_SLOW_CLIENT_HANDLING_TYPE;
+
+cpp_quote("")
+typedef [v1_enum] enum {
+  WdsTptUdpPortPolicyDynamic = 0,
+  WdsTptUdpPortPolicyFixed = 1
+} WDSTRANSPORT_UDP_PORT_POLICY;
+
+cpp_quote("")
+typedef enum {
+  WdsTptTftpCapMaximumBlockSize = 0x1,
+  WdsTptTftpCapVariableWindow = 0x2
+} WDSTRANSPORT_TFTP_CAPABILITY;
+
+cpp_quote("")
+typedef [v1_enum] enum {
+  WdsTptServiceNotifyUnknown = 0,
+  WdsTptServiceNotifyReadSettings = 1
+} WDSTRANSPORT_SERVICE_NOTIFICATION;
+
+cpp_quote("")
+typedef [v1_enum] enum {
+  WdsTptIpAddressUnknown = 0,
+  WdsTptIpAddressIpv4 = 1,
+  WdsTptIpAddressIpv6 = 2
+} WDSTRANSPORT_IP_ADDRESS_TYPE;
+
+cpp_quote("")
+typedef [v1_enum] enum {
+  WdsTptIpAddressSourceUnknown = 0,
+  WdsTptIpAddressSourceDhcp = 1,
+  WdsTptIpAddressSourceRange = 2
+} WDSTRANSPORT_IP_ADDRESS_SOURCE_TYPE;
+
+cpp_quote("")
+typedef [v1_enum] enum {
+  WdsTptNetworkProfileUnknown = 0,
+  WdsTptNetworkProfileCustom = 1,
+  WdsTptNetworkProfile10Mbps = 2,
+  WdsTptNetworkProfile100Mbps = 3,
+  WdsTptNetworkProfile1Gbps = 4
+} WDSTRANSPORT_NETWORK_PROFILE_TYPE;
+
+cpp_quote("")
+typedef [v1_enum] enum {
+  WdsTptFeatureAdminPack = 0x1,
+  WdsTptFeatureTransportServer = 0x2,
+  WdsTptFeatureDeploymentServer = 0x4
+} WDSTRANSPORT_FEATURE_FLAGS;
+cpp_quote("")
+cpp_quote("#define WDSTRANSPORT_FEATURE_FLAGS_ALL (WdsTptFeatureAdminPack | WdsTptFeatureTransportServer | WdsTptFeatureDeploymentServer)")
+
+cpp_quote("")
+typedef [v1_enum] enum {
+  WdsTptDiagnosticsComponentPxe = 0x1,
+  WdsTptDiagnosticsComponentTftp = 0x2,
+  WdsTptDiagnosticsComponentImageServer = 0x4,
+  WdsTptDiagnosticsComponentMulticast = 0x8
+} WDSTRANSPORT_DIAGNOSTICS_COMPONENT_FLAGS;
+cpp_quote("")
+cpp_quote("#define WDSTRANSPORT_DIAGNOSTICS_COMPONENT_FLAGS_ALL (WdsTptDiagnosticsComponentPxe | WdsTptDiagnosticsComponentTftp | WdsTptDiagnosticsComponentImageServer | WdsTptDiagnosticsComponentMulticast)")
+cpp_quote("#define WDSTRANSPORT_RESOURCE_UTILIZATION_UNKNOWN  0xff")
+
+cpp_quote("")
+typedef WDSTRANSPORT_PROTOCOL_FLAGS *PWDSTRANSPORT_PROTOCOL_FLAGS;
+typedef WDSTRANSPORT_NAMESPACE_TYPE *PWDSTRANSPORT_NAMESPACE_TYPE;
+typedef WDSTRANSPORT_DISCONNECT_TYPE *PWDSTRANSPORT_DISCONNECT_TYPE;
+typedef WDSTRANSPORT_SLOW_CLIENT_HANDLING_TYPE *PWDSTRANSPORT_SLOW_CLIENT_HANDLING_TYPE;
+typedef WDSTRANSPORT_UDP_PORT_POLICY *PWDSTRANSPORT_UDP_PORT_POLICY;
+typedef WDSTRANSPORT_TFTP_CAPABILITY *PWDSTRANSPORT_TFTP_CAPABILITY;
+typedef WDSTRANSPORT_SERVICE_NOTIFICATION *PWDSTRANSPORT_SERVICE_NOTIFICATION;
+typedef WDSTRANSPORT_IP_ADDRESS_TYPE *PWDSTRANSPORT_IP_ADDRESS_TYPE;
+typedef WDSTRANSPORT_IP_ADDRESS_SOURCE_TYPE *PWDSTRANSPORT_IP_ADDRESS_SOURCE_TYPE;
+typedef WDSTRANSPORT_NETWORK_PROFILE_TYPE *PWDSTRANSPORT_NETWORK_PROFILE_TYPE;
+typedef WDSTRANSPORT_FEATURE_FLAGS *PWDSTRANSPORT_FEATURE_FLAGS;
+typedef WDSTRANSPORT_DIAGNOSTICS_COMPONENT_FLAGS *PWDSTRANSPORT_DIAGNOSTICS_COMPONENT_FLAGS;
+
+cpp_quote("")
+[object, uuid (46ad894b-0bab-47dc-84b2-7b553f1d8f80), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportCacheable : IDispatch {
+  [propget, id (101)] HRESULT Dirty ([out, retval] VARIANT_BOOL *pbDirty);
+  [id (102)] HRESULT Discard (void);
+  [id (103)] HRESULT Refresh (void);
+  [id (104)] HRESULT Commit (void);
+};
+
+cpp_quote("")
+[object, uuid (B8BA4B1A-2ff4-43ab-996c-B2B10A91A6EB), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportCollection : IDispatch {
+  [propget, id (1)] HRESULT Count ([out, retval] ULONG *pulCount);
+  [propget, id (2)] HRESULT Item ([in] ULONG ulIndex,[out, retval] IDispatch **ppVal);
+  [propget, id (DISPID_NEWENUM)] HRESULT _NewEnum ([out, retval] IUnknown **ppVal);
+};
+
+cpp_quote("")
+[object, uuid (84cc4779-42dd-4792-891e-1321d6d74b44), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportConfigurationManager : IDispatch {
+  [propget, id (1)] HRESULT ServicePolicy ([out, retval] IWdsTransportServicePolicy **ppWdsTransportServicePolicy);
+  [propget, id (2)] HRESULT DiagnosticsPolicy ([out, retval] IWdsTransportDiagnosticsPolicy **ppWdsTransportDiagnosticsPolicy);
+  [propget, id (3)] HRESULT WdsTransportServicesRunning ([in] VARIANT_BOOL bRealtimeStatus,[out, retval] VARIANT_BOOL *pbServicesRunning);
+  [id (4)] HRESULT EnableWdsTransportServices (void);
+  [id (5)] HRESULT DisableWdsTransportServices (void);
+  [id (6)] HRESULT StartWdsTransportServices (void);
+  [id (7)] HRESULT StopWdsTransportServices (void);
+  [id (8)] HRESULT RestartWdsTransportServices (void);
+  [id (9)] HRESULT NotifyWdsTransportServices ([in] WDSTRANSPORT_SERVICE_NOTIFICATION ServiceNotification);
+};
+
+cpp_quote("")
+[object, uuid (13b33efc-7856-4f61-9a59-8de67b6b87b6), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportDiagnosticsPolicy : IWdsTransportCacheable {
+  [propget, id (1)] HRESULT Enabled ([out, retval] VARIANT_BOOL *pbEnabled);
+  [propput, id (1)] HRESULT Enabled ([in] VARIANT_BOOL bEnabled);
+  [propget, id (2)] HRESULT Components ([out, retval] ULONG *pulComponents);
+  [propput, id (2)] HRESULT Components ([in] ULONG ulComponents);
+};
+
+cpp_quote("")
+[object, uuid (D0D85CAF-A153-4f1d-A9DD-96f431c50717), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportConfigurationManager2 : IWdsTransportConfigurationManager {
+  [propget, id (10)] HRESULT MulticastSessionPolicy ([out, retval] IWdsTransportMulticastSessionPolicy **ppWdsTransportMulticastSessionPolicy);
+};
+
+cpp_quote("")
+[object, uuid (5b0d35f5-1b13-4afd-B878-6526dc340b5d), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportManager : IDispatch {
+  [id (1)] HRESULT GetWdsTransportServer ([in] BSTR bszServerName,[out, retval] IWdsTransportServer **ppWdsTransportServer);
+};
+
+cpp_quote("")
+[object, uuid (FA561F57-FBEF-4ed3-B056-127cb1b33b84), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportNamespace : IDispatch {
+  [propget, id (1)] HRESULT Type ([out, retval] WDSTRANSPORT_NAMESPACE_TYPE *pType);
+  [propget, id (2)] HRESULT Id ([out, retval] ULONG *pulId);
+  [propget, id (3)] HRESULT Name ([out, retval] BSTR *pbszName);
+  [propput, id (3)] HRESULT Name ([in] BSTR bszName);
+  [propget, id (4)] HRESULT FriendlyName ([out, retval] BSTR *pbszFriendlyName);
+  [propput, id (4)] HRESULT FriendlyName ([in] BSTR bszFriendlyName);
+  [propget, id (5)] HRESULT Description ([out, retval] BSTR *pbszDescription);
+  [propput, id (5)] HRESULT Description ([in] BSTR bszDescription);
+  [propget, id (6)] HRESULT ContentProvider ([out, retval] BSTR *pbszContentProvider);
+  [propput, id (6)] HRESULT ContentProvider ([in] BSTR bszContentProvider);
+  [propget, id (7)] HRESULT Configuration ([out, retval] BSTR *pbszConfiguration);
+  [propput, id (7)] HRESULT Configuration ([in] BSTR bszConfiguration);
+  [propget, id (8)] HRESULT Registered ([out, retval] VARIANT_BOOL *pbRegistered);
+  [propget, id (9)] HRESULT Tombstoned ([out, retval] VARIANT_BOOL *pbTombstoned);
+  [propget, id (10)] HRESULT TombstoneTime ([out, retval] DATE *pTombstoneTime);
+  [propget, id (11)] HRESULT TransmissionStarted ([out, retval] VARIANT_BOOL *pbTransmissionStarted);
+  [id (12)] HRESULT Register (void);
+  [id (13)] HRESULT Deregister ([in] VARIANT_BOOL bTerminateSessions);
+  [id (14)] HRESULT Clone ([out, retval] IWdsTransportNamespace **ppWdsTransportNamespaceClone);
+  [id (15)] HRESULT Refresh (void);
+  [id (16)] HRESULT RetrieveContents ([out, retval] IWdsTransportCollection **ppWdsTransportContents);
+};
+
+cpp_quote("")
+[object, uuid (AD931A72-C4BD-4c41-8fbc-59c9c748df9e), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportNamespaceAutoCast : IWdsTransportNamespace {
+};
+
+cpp_quote("")
+[object, uuid (3840cecf-D76C-416e-A4CC-31c741d2874b), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportNamespaceScheduledCast : IWdsTransportNamespace {
+  [id (101)] HRESULT StartTransmission (void);
+};
+
+cpp_quote("")
+[object, uuid (013e6e4c-E6A7-4fb5-B7FF-D9F5DA805C31), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportNamespaceScheduledCastManualStart : IWdsTransportNamespaceScheduledCast {
+};
+
+cpp_quote("")
+[object, uuid (D606AF3D-EA9C-4219-961e-7491d618d9b9), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportNamespaceScheduledCastAutoStart : IWdsTransportNamespaceScheduledCast {
+  [propget, id (201)] HRESULT MinimumClients ([out, retval] ULONG *pulMinimumClients);
+  [propput, id (201)] HRESULT MinimumClients ([in] ULONG ulMinimumClients);
+  [propget, id (202)] HRESULT StartTime ([out, retval] DATE *pStartTime);
+  [propput, id (202)] HRESULT StartTime ([in] DATE StartTime);
+};
+
+cpp_quote("")
+[object, uuid (3e22d9f6-3777-4d98-83e1-F98696717BA3), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportNamespaceManager : IDispatch {
+  [id (1)] HRESULT CreateNamespace ([in] WDSTRANSPORT_NAMESPACE_TYPE NamespaceType,[in] BSTR bszNamespaceName,[in] BSTR bszContentProvider,[in] BSTR bszConfiguration,[out, retval] IWdsTransportNamespace **ppWdsTransportNamespace);
+  [id (2)] HRESULT RetrieveNamespace ([in] BSTR bszNamespaceName,[out, retval] IWdsTransportNamespace **ppWdsTransportNamespace);
+  [id (3)] HRESULT RetrieveNamespaces ([in] BSTR bszContentProvider,[in] BSTR bszNamespaceName,[in] VARIANT_BOOL bIncludeTombstones,[out, retval] IWdsTransportCollection **ppWdsTransportNamespaces);
+};
+
+cpp_quote("")
+[object, uuid (09ccd093-830d-4344-A30A-73ae8e8fca90), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportServer : IDispatch {
+  [propget, id (1)] HRESULT Name ([out, retval] BSTR *pbszName);
+  [propget, id (2)] HRESULT SetupManager ([out, retval] IWdsTransportSetupManager **ppWdsTransportSetupManager);
+  [propget, id (3)] HRESULT ConfigurationManager ([out, retval] IWdsTransportConfigurationManager **ppWdsTransportConfigurationManager);
+  [propget, id (4)] HRESULT NamespaceManager ([out, retval] IWdsTransportNamespaceManager **ppWdsTransportNamespaceManager);
+  [id (5)] HRESULT DisconnectClient ([in] ULONG ulClientId, WDSTRANSPORT_DISCONNECT_TYPE DisconnectionType);
+};
+
+cpp_quote("")
+[object, uuid (256e999f-6df4-4538-81b9-857b9ab8fb47), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportServer2 : IWdsTransportServer {
+  [propget, id (6)] HRESULT TftpManager ([out, retval] IWdsTransportTftpManager **ppWdsTransportTftpManager);
+};
+
+cpp_quote("")
+[object, uuid (B9468578-9f2b-48cc-B27A-A60799C2750C), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportServicePolicy : IWdsTransportCacheable {
+  [propget, id (1)] HRESULT IpAddressSource ([in] WDSTRANSPORT_IP_ADDRESS_TYPE AddressType,[out, retval] WDSTRANSPORT_IP_ADDRESS_SOURCE_TYPE *pSourceType);
+  [propput, id (1)] HRESULT IpAddressSource ([in] WDSTRANSPORT_IP_ADDRESS_TYPE AddressType,[in] WDSTRANSPORT_IP_ADDRESS_SOURCE_TYPE SourceType);
+  [propget, id (2)] HRESULT StartIpAddress ([in] WDSTRANSPORT_IP_ADDRESS_TYPE AddressType,[out, retval] BSTR *pbszStartIpAddress);
+  [propput, id (2)] HRESULT StartIpAddress ([in] WDSTRANSPORT_IP_ADDRESS_TYPE AddressType,[in] BSTR bszStartIpAddress);
+  [propget, id (3)] HRESULT EndIpAddress ([in] WDSTRANSPORT_IP_ADDRESS_TYPE AddressType,[out, retval] BSTR *pbszEndIpAddress);
+  [propput, id (3)] HRESULT EndIpAddress ([in] WDSTRANSPORT_IP_ADDRESS_TYPE AddressType,[in] BSTR bszEndIpAddress);
+  [propget, id (4)] HRESULT StartPort ([out, retval] ULONG *pulStartPort);
+  [propput, id (4)] HRESULT StartPort ([in] ULONG ulStartPort);
+  [propget, id (5)] HRESULT EndPort ([out, retval] ULONG *pulEndPort);
+  [propput, id (5)] HRESULT EndPort ([in] ULONG ulEndPort);
+  [propget, id (6)] HRESULT NetworkProfile ([out, retval] WDSTRANSPORT_NETWORK_PROFILE_TYPE *pProfileType);
+  [propput, id (6)] HRESULT NetworkProfile ([in] WDSTRANSPORT_NETWORK_PROFILE_TYPE ProfileType);
+};
+
+cpp_quote("")
+[object, uuid (65c19e5c-AA7E-4b91-8944-91e0e5572797), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportServicePolicy2 : IWdsTransportServicePolicy {
+  [propget, id (7)] HRESULT UdpPortPolicy ([out, retval] WDSTRANSPORT_UDP_PORT_POLICY *pUdpPortPolicy);
+  [propput, id (7)] HRESULT UdpPortPolicy ([in] WDSTRANSPORT_UDP_PORT_POLICY UdpPortPolicy);
+  [propget, id (8)] HRESULT TftpMaximumBlockSize ([out, retval] ULONG *pulTftpMaximumBlockSize);
+  [propput, id (8)] HRESULT TftpMaximumBlockSize ([in] ULONG ulTftpMaximumBlockSize);
+  [propget, id (9)] HRESULT EnableTftpVariableWindowExtension ([out, retval] VARIANT_BOOL *pbEnableTftpVariableWindowExtension);
+  [propput, id (9)] HRESULT EnableTftpVariableWindowExtension ([in] VARIANT_BOOL bEnableTftpVariableWindowExtension);
+};
+
+cpp_quote("")
+[object, uuid (F7238425-EFA8-40a4-AEF9-C98D969C0B75), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportSetupManager : IDispatch {
+  [propget, id (1)] HRESULT Version ([out, retval] ULONGLONG *pullVersion);
+  [propget, id (2)] HRESULT InstalledFeatures ([out, retval] ULONG *pulInstalledFeatures);
+  [propget, id (3)] HRESULT Protocols ([out, retval] ULONG *pulProtocols);
+  [id (4)] HRESULT RegisterContentProvider ([in] BSTR bszName,[in] BSTR bszDescription,[in] BSTR bszFilePath,[in] BSTR bszInitializationRoutine);
+  [id (5)] HRESULT DeregisterContentProvider ([in] BSTR bszName);
+};
+
+cpp_quote("")
+[object, uuid (02be79da-7e9e-4366-8b6e-2aa9a91be47f), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportSetupManager2 : IWdsTransportSetupManager {
+  [propget, id (6)] HRESULT TftpCapabilities ([out, retval] ULONG *pulTftpCapabilities);
+  [propget, id (7)] HRESULT ContentProviders ([out, retval] IWdsTransportCollection **ppProviderCollection);
+};
+
+cpp_quote("")
+[object, uuid (1327a7c8-ae8a-4fb3-8150-136227c37e9a), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportTftpManager : IDispatch {
+  [id (1)] HRESULT RetrieveTftpClients ([out, retval] IWdsTransportCollection **ppWdsTransportTftpClients);
+};
+
+cpp_quote("")
+[object, uuid (4e5753cf-68ec-4504-A951-4a003266606b), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportMulticastSessionPolicy : IWdsTransportCacheable {
+  [propget, id (1)] HRESULT SlowClientHandling ([out, retval] WDSTRANSPORT_SLOW_CLIENT_HANDLING_TYPE *pSlowClientHandling);
+  [propput, id (1)] HRESULT SlowClientHandling ([in] WDSTRANSPORT_SLOW_CLIENT_HANDLING_TYPE SlowClientHandling);
+  [propget, id (2)] HRESULT AutoDisconnectThreshold ([out, retval] ULONG *pulThreshold);
+  [propput, id (2)] HRESULT AutoDisconnectThreshold ([in] ULONG ulThreshold);
+  [propget, id (3)] HRESULT MultistreamStreamCount ([out, retval] ULONG *pulStreamCount);
+  [propput, id (3)] HRESULT MultistreamStreamCount ([in] ULONG ulStreamCount);
+  [propget, id (4)] HRESULT SlowClientFallback ([out, retval] VARIANT_BOOL *pbClientFallback);
+  [propput, id (4)] HRESULT SlowClientFallback ([in] VARIANT_BOOL bClientFallback);
+};
+
+cpp_quote("")
+[object, uuid (D405D711-0296-4ab4-A860-AC7D32E65798), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportContent : IDispatch {
+  [propget, id (1)] HRESULT Namespace ([out, retval] IWdsTransportNamespace **ppWdsTransportNamespace);
+  [propget, id (2)] HRESULT Id ([out, retval] ULONG *pulId);
+  [propget, id (3)] HRESULT Name ([out, retval] BSTR *pbszName);
+  [id (4)] HRESULT RetrieveSessions ([out, retval] IWdsTransportCollection **ppWdsTransportSessions);
+  [id (5)] HRESULT Terminate (void);
+};
+
+cpp_quote("")
+[object, uuid (F4EFEA88-65b1-4f30-A4B9-2793987796fb), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportSession : IDispatch {
+  [propget, id (1)] HRESULT Content ([out, retval] IWdsTransportContent **ppWdsTransportContent);
+  [propget, id (2)] HRESULT Id ([out, retval] ULONG *pulId);
+  [propget, id (3)] HRESULT NetworkInterfaceName ([out, retval] BSTR *pbszNetworkInterfaceName);
+  [propget, id (4)] HRESULT NetworkInterfaceAddress ([out, retval] BSTR *pbszNetworkInterfaceAddress);
+  [propget, id (5)] HRESULT TransferRate ([out, retval] ULONG *pulTransferRate);
+  [propget, id (6)] HRESULT MasterClientId ([out, retval] ULONG *pulMasterClientId);
+  [id (7)] HRESULT RetrieveClients ([out, retval] IWdsTransportCollection **ppWdsTransportClients);
+  [id (8)] HRESULT Terminate (void);
+};
+
+cpp_quote("")
+[object, uuid (B5DBC93A-CABE-46ca-837f-3e44e93c6545), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportClient : IDispatch {
+  [propget, id (1)] HRESULT Session ([out, retval] IWdsTransportSession **ppWdsTransportSession);
+  [propget, id (2)] HRESULT Id ([out, retval] ULONG *pulId);
+  [propget, id (3)] HRESULT Name ([out, retval] BSTR *pbszName);
+  [propget, id (4)] HRESULT MacAddress ([out, retval] BSTR *pbszMacAddress);
+  [propget, id (5)] HRESULT IpAddress ([out, retval] BSTR *pbszIpAddress);
+  [propget, id (6)] HRESULT PercentCompletion ([out, retval] ULONG *pulPercentCompletion);
+  [propget, id (7)] HRESULT JoinDuration ([out, retval] ULONG *pulJoinDuration);
+  [propget, id (8)] HRESULT CpuUtilization ([out, retval] ULONG *pulCpuUtilization);
+  [propget, id (9)] HRESULT MemoryUtilization ([out, retval] ULONG *pulMemoryUtilization);
+  [propget, id (10)] HRESULT NetworkUtilization ([out, retval] ULONG *pulNetworkUtilization);
+  [propget, id (11)] HRESULT UserIdentity ([out, retval] BSTR *pbszUserIdentity);
+  [id (12)] HRESULT Disconnect ([in] WDSTRANSPORT_DISCONNECT_TYPE DisconnectionType);
+};
+
+cpp_quote("")
+[object, uuid (b022d3ae-884d-4d85-b146-53320e76ef62), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportTftpClient : IDispatch {
+  [propget, id (1)] HRESULT FileName ([out, retval] BSTR *pbszFileName);
+  [propget, id (2)] HRESULT IpAddress ([out, retval] BSTR *pbszIpAddress);
+  [propget, id (3)] HRESULT Timeout ([out, retval] ULONG *pulTimeout);
+  [propget, id (4)] HRESULT CurrentFileOffset ([out, retval] ULONG64 *pul64CurrentOffset);
+  [propget, id (5)] HRESULT FileSize ([out, retval] ULONG64 *pul64FileSize);
+  [propget, id (6)] HRESULT BlockSize ([out, retval] ULONG *pulBlockSize);
+  [propget, id (7)] HRESULT WindowSize ([out, retval] ULONG *pulWindowSize);
+};
+
+cpp_quote("")
+[object, uuid (B9489F24-F219-4acf-AAD7-265c7c08a6ae), dual, nonextensible, pointer_default (unique)]
+interface IWdsTransportContentProvider : IDispatch {
+  [propget, id (1)] HRESULT Name ([out, retval] BSTR *pbszName);
+  [propget, id (2)] HRESULT Description ([out, retval] BSTR *pbszDescription);
+  [propget, id (3)] HRESULT FilePath ([out, retval] BSTR *pbszFilePath);
+  [propget, id (4)] HRESULT InitializationRoutine ([out, retval] BSTR *pbszInitializationRoutine);
+};
+
+cpp_quote("")
+[uuid (9212887f-F5BC-45dd-A510-265413a18ed7), version (1.0)]
+library WdsTptMgmtLib {
+  importlib ("stdole2.tlb");
+  [uuid (70590b16-F146-46bd-BD9D-4aaa90084bf5), noncreatable]
+  coclass WdsTransportCacheable {
+    [default] interface IWdsTransportCacheable;
+  };
+  [uuid (C7F18B09-391e-436e-B10B-C3EF46F2C34F), noncreatable]
+  coclass WdsTransportCollection {
+    [default] interface IWdsTransportCollection;
+  };
+  [uuid (F21523F6-837c-4a58-AF99-8a7e27f8ff59)]
+  coclass WdsTransportManager {
+    [default] interface IWdsTransportManager;
+  };
+  [uuid (EA19B643-4adf-4413-942c-14f379118760), noncreatable]
+  coclass WdsTransportServer {
+    [default] interface IWdsTransportServer;
+    interface IWdsTransportServer2;
+  };
+  [uuid (C7BEEAAD-9f04-4923-9f0c-FBF52BC7590F), noncreatable]
+  coclass WdsTransportSetupManager {
+    [default] interface IWdsTransportSetupManager;
+    interface IWdsTransportSetupManager2;
+  };
+  [uuid (8743f674-904c-47ca-8512-35fe98f6b0ac), noncreatable]
+  coclass WdsTransportConfigurationManager {
+    [default] interface IWdsTransportConfigurationManager;
+    interface IWdsTransportConfigurationManager2;
+  };
+  [uuid (F08CDB63-85de-4a28-A1A9-5ca3e7efda73), noncreatable]
+  coclass WdsTransportNamespaceManager {
+    [default] interface IWdsTransportNamespaceManager;
+  };
+  [uuid (65aceadc-2f0b-4f43-9f4d-811865d8cead), noncreatable]
+  coclass WdsTransportServicePolicy {
+    [default] interface IWdsTransportServicePolicy;
+    interface IWdsTransportServicePolicy2;
+  };
+  [uuid (EB3333E1-A7AD-46f5-80d6-6b740204e509), noncreatable]
+  coclass WdsTransportDiagnosticsPolicy {
+    [default] interface IWdsTransportDiagnosticsPolicy;
+  };
+  [uuid (3c6bc3f4-6418-472a-B6F1-52d457195437), noncreatable]
+  coclass WdsTransportMulticastSessionPolicy {
+    [default] interface IWdsTransportMulticastSessionPolicy;
+  };
+  [uuid (D8385768-0732-4ec1-95ea-16da581908a1), noncreatable]
+  coclass WdsTransportNamespace {
+    [default] interface IWdsTransportNamespace;
+  };
+  [uuid (B091F5A8-6a99-478d-B23B-09e8fee04574), noncreatable]
+  coclass WdsTransportNamespaceAutoCast {
+    [default] interface IWdsTransportNamespaceAutoCast;
+  };
+  [uuid (BADC1897-7025-44eb-9108-FB61C4055792), noncreatable]
+  coclass WdsTransportNamespaceScheduledCast {
+    [default] interface IWdsTransportNamespaceScheduledCast;
+  };
+  [uuid (D3E1A2AA-CAAC-460e-B98A-47f9f318a1fa), noncreatable]
+  coclass WdsTransportNamespaceScheduledCastManualStart {
+    [default] interface IWdsTransportNamespaceScheduledCastManualStart;
+  };
+  [uuid (A1107052-122c-4b81-9b7c-386e6855383f), noncreatable]
+  coclass WdsTransportNamespaceScheduledCastAutoStart {
+    [default] interface IWdsTransportNamespaceScheduledCastAutoStart;
+  };
+  [uuid (0a891fe7-4a3f-4c65-B6F2-1467619679ea), noncreatable]
+  coclass WdsTransportContent {
+    [default] interface IWdsTransportContent;
+  };
+  [uuid (749ac4e0-67bc-4743-BFE5-CACB1F26F57F), noncreatable]
+  coclass WdsTransportSession {
+    [default] interface IWdsTransportSession;
+  };
+  [uuid (66d2c5e9-0ff6-49ec-9733-DAFB1E01DF1C), noncreatable]
+  coclass WdsTransportClient {
+    [default] interface IWdsTransportClient;
+  };
+  [uuid (50343925-7c5c-4c8c-96c4-ad9fa5005fba), noncreatable]
+  coclass WdsTransportTftpClient {
+    [default] interface IWdsTransportTftpClient;
+  };
+  [uuid (c8e9dca2-3241-4e4d-b806-bc74019dfeda), noncreatable]
+  coclass WdsTransportTftpManager {
+    [default] interface IWdsTransportTftpManager;
+  };
+  [uuid (E0BE741F-5a75-4eb9-8a2d-5e189b45f327), noncreatable]
+  coclass WdsTransportContentProvider {
+    [default] interface IWdsTransportContentProvider;
+  };
+};
+cpp_quote("#endif")

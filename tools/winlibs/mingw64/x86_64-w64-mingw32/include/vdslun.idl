@@ -1,0 +1,105 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+import "oaidl.idl";
+import "ocidl.idl";
+
+typedef enum _VDS_STORAGE_IDENTIFIER_CODE_SET {
+  VDSStorageIdCodeSetReserved = 0,
+  VDSStorageIdCodeSetBinary = 1,
+  VDSStorageIdCodeSetAscii = 2,
+  VDSStorageIdCodeSetUtf8 = 3
+} VDS_STORAGE_IDENTIFIER_CODE_SET;
+
+typedef enum _VDS_STORAGE_IDENTIFIER_TYPE {
+  VDSStorageIdTypeVendorSpecific = 0,
+  VDSStorageIdTypeVendorId = 1,
+  VDSStorageIdTypeEUI64 = 2,
+  VDSStorageIdTypeFCPHName = 3,
+  VDSStorageIdTypePortRelative = 4,
+  VDSStorageIdTypeTargetPortGroup = 5,
+  VDSStorageIdTypeLogicalUnitGroup = 6,
+  VDSStorageIdTypeMD5LogicalUnitIdentifier = 7,
+  VDSStorageIdTypeScsiNameString = 8
+} VDS_STORAGE_IDENTIFIER_TYPE;
+
+typedef enum _VDS_STORAGE_BUS_TYPE {
+  VDSBusTypeUnknown = 0x00,
+  VDSBusTypeScsi = 0x01,
+  VDSBusTypeAtapi = 0x02,
+  VDSBusTypeAta = 0x03,
+  VDSBusType1394 = 0x04,
+  VDSBusTypeSsa = 0x05,
+  VDSBusTypeFibre = 0x06,
+  VDSBusTypeUsb = 0x07,
+  VDSBusTypeRAID = 0x08,
+  VDSBusTypeiScsi = 0x09,
+  VDSBusTypeSas = 0x0A,
+  VDSBusTypeSata = 0x0B,
+  VDSBusTypeSd = 0x0C,
+  VDSBusTypeMmc = 0x0D,
+  VDSBusTypeMax = 0x0E,
+  VDSBusTypeVirtual = 0x0E,
+  VDSBusTypeFileBackedVirtual = 0x0F,
+  VDSBusTypeSpaces = 0x10,
+  VDSBusTypeNVMe = 0x11,
+  VDSBusTypeScm = 0x12,
+  VDSBusTypeUfs = 0x13,
+  VDSBusTypeMaxReserved = 0x7F
+} VDS_STORAGE_BUS_TYPE;
+
+typedef struct _VDS_STORAGE_IDENTIFIER {
+  VDS_STORAGE_IDENTIFIER_CODE_SET m_CodeSet;
+  VDS_STORAGE_IDENTIFIER_TYPE m_Type;
+  ULONG m_cbIdentifier;
+  [size_is(m_cbIdentifier)] BYTE *m_rgbIdentifier;
+} VDS_STORAGE_IDENTIFIER;
+
+typedef struct _VDS_STORAGE_DEVICE_ID_DESCRIPTOR {
+  ULONG m_version;
+  ULONG m_cIdentifiers;
+  [size_is(m_cIdentifiers)] VDS_STORAGE_IDENTIFIER *m_rgIdentifiers;
+} VDS_STORAGE_DEVICE_ID_DESCRIPTOR;
+
+typedef enum _VDS_INTERCONNECT_ADDRESS_TYPE {
+  VDS_IA_UNKNOWN = 0,
+  VDS_IA_FCFS = 1,
+  VDS_IA_FCPH = 2,
+  VDS_IA_FCPH3 = 3,
+  VDS_IA_MAC = 4,
+  VDS_IA_SCSI = 5
+} VDS_INTERCONNECT_ADDRESS_TYPE;
+
+typedef struct _VDS_INTERCONNECT {
+  VDS_INTERCONNECT_ADDRESS_TYPE m_addressType;
+  ULONG m_cbPort;
+  [size_is(m_cbPort)] BYTE *m_pbPort;
+  ULONG m_cbAddress;
+  [size_is(m_cbAddress)] BYTE *m_pbAddress;
+} VDS_INTERCONNECT;
+
+typedef struct _VDS_LUN_INFORMATION {
+  ULONG m_version;
+  BYTE m_DeviceType;
+  BYTE m_DeviceTypeModifier;
+  WINBOOL m_bCommandQueueing;
+  VDS_STORAGE_BUS_TYPE m_BusType;
+  [string] char *m_szVendorId;
+  [string] char *m_szProductId;
+  [string] char *m_szProductRevision;
+  [string] char *m_szSerialNumber;
+  GUID m_diskSignature;
+  VDS_STORAGE_DEVICE_ID_DESCRIPTOR m_deviceIdDescriptor;
+  ULONG m_cInterconnects;
+  [size_is(m_cInterconnects)] VDS_INTERCONNECT *m_rgInterconnects;
+} VDS_LUN_INFORMATION;
+
+const ULONG VER_VDS_LUN_INFORMATION = 1;
+
+cpp_quote("#endif /* WINAPI_PARTITION_DESKTOP */")

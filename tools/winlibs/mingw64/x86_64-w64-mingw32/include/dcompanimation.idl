@@ -1,0 +1,24 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+import "wtypes.idl";
+import "unknwn.idl";
+
+[
+    local,
+    object,
+    uuid(cbfd91d9-51b2-45e4-b3de-d19ccfb863c5),
+    pointer_default(unique)
+]
+interface IDCompositionAnimation : IUnknown
+{
+    HRESULT Reset();
+    HRESULT SetAbsoluteBeginTime(LARGE_INTEGER);
+    HRESULT AddCubic(double,float,float,float,float);
+    HRESULT AddSinusoidal(double,float,float,float,float);
+    HRESULT AddRepeat(double,double);
+    HRESULT End(double,float);
+}

@@ -1,0 +1,34 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+
+import "oaidl.idl";
+import "ocidl.idl";
+import "wbemdisp.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+[uuid (e503d000-5c7f-11d2-8b74-00104b2afb41), version (1.0)]
+library WMIEXTENSIONLib {
+  importlib ("stdole32.tlb");
+  importlib ("stdole2.tlb");
+
+  interface IWMIExtension;
+
+  [uuid (f0975afe-5c7f-11d2-8b74-00104b2afb41)]
+  coclass WMIExtension {
+    [default] interface IWMIExtension;
+  };
+};
+
+[object, uuid (adc1f06e-5c7e-11d2-8b74-00104b2afb41), dual, pointer_default (unique)]
+interface IWMIExtension : IDispatch {
+  [id (1), propget] HRESULT WMIObjectPath ([out, retval] BSTR *strWMIObjectPath);
+  [id (2)] HRESULT GetWMIObject ([out, retval] ISWbemObject **objWMIObject);
+  [id (3)] HRESULT GetWMIServices ([out, retval] ISWbemServices **objWMIServices);
+};
+cpp_quote("#endif")

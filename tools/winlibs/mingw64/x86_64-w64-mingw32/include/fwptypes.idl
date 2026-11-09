@@ -1,0 +1,399 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+cpp_quote("")
+
+import "wtypes.idl";
+
+#define FWP_BYTE_ARRAY6_SIZE 6
+#define FWP_V6_ADDR_SIZE (16)
+
+cpp_quote("#define FWP_BYTEMAP_ARRAY64_SIZE 8")
+cpp_quote("#define FWP_BYTE_ARRAY6_SIZE 6")
+cpp_quote("#define FWP_V6_ADDR_SIZE (16)")
+cpp_quote("#define FWP_ACTRL_MATCH_FILTER (1)")
+
+cpp_quote("")
+
+cpp_quote("#define FWP_OPTION_VALUE_ALLOW_MULTICAST_STATE (0)")
+cpp_quote("#define FWP_OPTION_VALUE_DENY_MULTICAST_STATE  (1)")
+cpp_quote("#define FWP_OPTION_VALUE_ALLOW_GLOBAL_MULTICAST_STATE (2)")
+
+cpp_quote("")
+
+cpp_quote("#define FWP_OPTION_VALUE_DISABLE_LOOSE_SOURCE (0)")
+cpp_quote("#define FWP_OPTION_VALUE_ENABLE_LOOSE_SOURCE  (1)")
+
+cpp_quote("")
+
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_WIN8)")
+cpp_quote("#define FWP_OPTION_VALUE_DISABLE_LOCAL_ONLY_MAPPING (0)")
+cpp_quote("#define FWP_OPTION_VALUE_ENABLE_LOCAL_ONLY_MAPPING  (1)")
+cpp_quote("#endif")
+
+cpp_quote("")
+
+cpp_quote("#define FWP_ACTION_FLAG_TERMINATING     (0x00001000)")
+cpp_quote("#define FWP_ACTION_FLAG_NON_TERMINATING (0x00002000)")
+cpp_quote("#define FWP_ACTION_FLAG_CALLOUT         (0x00004000)")
+cpp_quote("")
+cpp_quote("#define FWP_ACTION_BLOCK  (0x1 | FWP_ACTION_FLAG_TERMINATING)")
+cpp_quote("#define FWP_ACTION_PERMIT (0x2 | FWP_ACTION_FLAG_TERMINATING)")
+cpp_quote("#define FWP_ACTION_CALLOUT_TERMINATING (0x3 | FWP_ACTION_FLAG_CALLOUT | FWP_ACTION_FLAG_TERMINATING)")
+cpp_quote("#define FWP_ACTION_CALLOUT_INSPECTION (0x4 | FWP_ACTION_FLAG_CALLOUT | FWP_ACTION_FLAG_NON_TERMINATING)")
+cpp_quote("#define FWP_ACTION_CALLOUT_UNKNOWN (0x5 | FWP_ACTION_FLAG_CALLOUT)")
+cpp_quote("#define FWP_ACTION_CONTINUE (0x6 | FWP_ACTION_FLAG_NON_TERMINATING)")
+cpp_quote("#define FWP_ACTION_NONE (0x7)")
+cpp_quote("#define FWP_ACTION_NONE_NO_MATCH (0x8)")
+
+cpp_quote("")
+
+cpp_quote("#define FWP_CONDITION_FLAG_IS_LOOPBACK              (0x00000001)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_IPSEC_SECURED         (0x00000002)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_REAUTHORIZE           (0x00000004)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_WILDCARD_BIND         (0x00000008)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_RAW_ENDPOINT          (0x00000010)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_FRAGMENT              (0x00000020)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_FRAGMENT_GROUP        (0x00000040)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_IPSEC_NATT_RECLASSIFY (0x00000080)")
+cpp_quote("#define FWP_CONDITION_FLAG_REQUIRES_ALE_CLASSIFY    (0x00000100)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_IMPLICIT_BIND         (0x00000200)")
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_WIN6SP1)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_REASSEMBLED           (0x00000400)")
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_WIN7)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_NAME_APP_SPECIFIED    (0x00004000)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_PROMISCUOUS           (0x00008000)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_AUTH_FW               (0x00010000)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_RECLASSIFY            (0x00020000)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_OUTBOUND_PASS_THRU    (0x00040000)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_INBOUND_PASS_THRU     (0x00080000)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_CONNECTION_REDIRECTED (0x00100000)")
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_WIN8)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_PROXY_CONNECTION      (0x00200000)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_APPCONTAINER_LOOPBACK (0x00400000)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_NON_APPCONTAINER_LOOPBACK (0x00800000)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_RESERVED              (0x01000000)")
+cpp_quote("#define FWP_CONDITION_FLAG_IS_HONORING_POLICY_AUTHORIZE (0x02000000)")
+cpp_quote("#endif")
+
+cpp_quote("")
+
+cpp_quote("#define FWP_CONDITION_REAUTHORIZE_REASON_POLICY_CHANGE             (0x00000001)")
+cpp_quote("#define FWP_CONDITION_REAUTHORIZE_REASON_NEW_ARRIVAL_INTERFACE     (0x00000002)")
+cpp_quote("#define FWP_CONDITION_REAUTHORIZE_REASON_NEW_NEXTHOP_INTERFACE     (0x00000004)")
+cpp_quote("#define FWP_CONDITION_REAUTHORIZE_REASON_PROFILE_CROSSING          (0x00000008)")
+cpp_quote("#define FWP_CONDITION_REAUTHORIZE_REASON_CLASSIFY_COMPLETION       (0x00000010)")
+cpp_quote("#define FWP_CONDITION_REAUTHORIZE_REASON_IPSEC_PROPERTIES_CHANGED  (0x00000020)")
+cpp_quote("#define FWP_CONDITION_REAUTHORIZE_REASON_MID_STREAM_INSPECTION     (0x00000040)")
+cpp_quote("#define FWP_CONDITION_REAUTHORIZE_REASON_SOCKET_PROPERTY_CHANGED   (0x00000080)")
+cpp_quote("#define FWP_CONDITION_REAUTHORIZE_REASON_NEW_INBOUND_MCAST_BCAST_PACKET (0x00000100)")
+cpp_quote("#define FWP_CONDITION_REAUTHORIZE_REASON_EDP_POLICY_CHANGED        (0x00000200)")
+cpp_quote("#define FWP_CONDITION_REAUTHORIZE_REASON_PROXY_HANDLE_CHANGED      (0x00004000)")
+cpp_quote("#define FWP_CONDITION_REAUTHORIZE_REASON_CHECK_OFFLOAD             (0x00010000)")
+cpp_quote("")
+cpp_quote("#define FWP_CONDITION_SOCKET_PROPERTY_FLAG_IS_SYSTEM_PORT_RPC      (0x00000001)")
+cpp_quote("#define FWP_CONDITION_SOCKET_PROPERTY_FLAG_ALLOW_EDGE_TRAFFIC      (0x00000002)")
+cpp_quote("#define FWP_CONDITION_SOCKET_PROPERTY_FLAG_DENY_EDGE_TRAFFIC       (0x00000004)")
+cpp_quote("")
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_WIN8)")
+cpp_quote("#define FWP_CONDITION_L2_IS_NATIVE_ETHERNET	 (0x00000001)")
+cpp_quote("#define FWP_CONDITION_L2_IS_WIFI	         (0x00000002)")
+cpp_quote("#define FWP_CONDITION_L2_IS_MOBILE_BROADBAND	 (0x00000004)")
+cpp_quote("#define FWP_CONDITION_L2_IS_WIFI_DIRECT_DATA	 (0x00000008)")
+cpp_quote("#define FWP_CONDITION_L2_IS_VM2VM	         (0x00000010)")
+cpp_quote("#define FWP_CONDITION_L2_IS_MALFORMED_PACKET	 (0x00000020)")
+cpp_quote("#define FWP_CONDITION_L2_IS_IP_FRAGMENT_GROUP (0x00000040)")
+cpp_quote("#define FWP_CONDITION_L2_IF_CONNECTOR_PRESENT (0x00000080)")
+cpp_quote("#endif")
+cpp_quote("#endif")
+cpp_quote("#endif")
+
+cpp_quote("")
+
+cpp_quote("#define FWP_FILTER_ENUM_FLAG_BEST_TERMINATING_MATCH (0x00000001)")
+cpp_quote("#define FWP_FILTER_ENUM_FLAG_SORTED                 (0x00000002)")
+cpp_quote("#define FWP_FILTER_ENUM_FLAG_BOOTTIME_ONLY          (0x00000004)")
+cpp_quote("#define FWP_FILTER_ENUM_FLAG_INCLUDE_BOOTTIME       (0x00000008)")
+cpp_quote("#define FWP_FILTER_ENUM_FLAG_INCLUDE_DISABLED       (0x00000010)")
+
+cpp_quote("")
+
+cpp_quote("#define FWP_FILTER_ENUM_VALID_FLAGS (FWP_FILTER_ENUM_FLAG_BEST_TERMINATING_MATCH | FWP_FILTER_ENUM_FLAG_SORTED)")
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_WIN8)")
+cpp_quote("#define FWP_FILTER_ENUM_FLAG_RESERVED1              (0x00000020)")
+cpp_quote("#endif")
+
+cpp_quote("")
+
+cpp_quote("#define FWP_CALLOUT_FLAG_CONDITIONAL_ON_FLOW         (0x00000001)")
+cpp_quote("#define FWP_CALLOUT_FLAG_ALLOW_OFFLOAD               (0x00000002)")
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_WIN7)")
+cpp_quote("#define FWP_CALLOUT_FLAG_ENABLE_COMMIT_ADD_NOTIFY    (0x00000004)")
+cpp_quote("#define FWP_CALLOUT_FLAG_ALLOW_MID_STREAM_INSPECTION (0x00000008)")
+cpp_quote("#define FWP_CALLOUT_FLAG_ALLOW_RECLASSIFY            (0x00000010)")
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_WIN8)")
+cpp_quote("#define FWP_CALLOUT_FLAG_RESERVED1                   (0x00000020)")
+cpp_quote("#define FWP_CALLOUT_FLAG_ALLOW_RSC                   (0x00000040)")
+cpp_quote("#define FWP_CALLOUT_FLAG_ALLOW_L2_BATCH_CLASSIFY     (0x00000080)")
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_WIN10_19H1)")
+cpp_quote("#define FWP_CALLOUT_FLAG_ALLOW_USO                   (0x00000100)")
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_WIN10_VB)")
+cpp_quote("#define FWP_CALLOUT_FLAG_ALLOW_URO                   (0x00000200)")
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_WIN10_CO)")
+cpp_quote("#define FWP_CALLOUT_FLAG_RESERVED2                   (0x00000400)")
+cpp_quote("#endif /* (NTDDI_VERSION >= NTDDI_WIN10_CO) */")
+cpp_quote("#endif /* (NTDDI_VERSION >= NTDDI_WIN10_VB) */")
+cpp_quote("#endif /* (NTDDI_VERSION >= NTDDI_WIN10_19H1) */")
+cpp_quote("#endif /* (NTDDI_VERSION >= NTDDI_WIN8) */")
+cpp_quote("#endif /* (NTDDI_VERSION >= NTDDI_WIN7) */")
+
+cpp_quote("#ifdef __WIDL__")
+typedef struct _LUID {
+  DWORD LowPart;
+  LONG HighPart;
+} LUID, *PLUID;
+cpp_quote("#endif")
+
+cpp_quote("")
+
+typedef UINT32 FWP_ACTION_TYPE;
+
+cpp_quote("")
+
+cpp_quote("")
+typedef [v1_enum] enum FWP_DIRECTION_ {
+  FWP_DIRECTION_OUTBOUND, FWP_DIRECTION_INBOUND, FWP_DIRECTION_MAX
+} FWP_DIRECTION;
+
+cpp_quote("")
+
+typedef [v1_enum] enum FWP_IP_VERSION_ {
+  FWP_IP_VERSION_V4, FWP_IP_VERSION_V6, FWP_IP_VERSION_NONE, FWP_IP_VERSION_MAX
+} FWP_IP_VERSION;
+
+cpp_quote("")
+
+typedef [v1_enum] enum FWP_NE_FAMILY_ {
+  FWP_AF_INET = FWP_IP_VERSION_V4, FWP_AF_INET6 = FWP_IP_VERSION_V6,
+  FWP_AF_ETHER = FWP_IP_VERSION_NONE, FWP_AF_NONE
+} FWP_AF;
+
+cpp_quote("")
+
+typedef [v1_enum] enum FWP_ETHER_ENCAP_METHOD_ {
+  FWP_ETHER_ENCAP_METHOD_ETHER_V2 = 0, FWP_ETHER_ENCAP_METHOD_SNAP = 1,
+  FWP_ETHER_ENCAP_METHOD_SNAP_W_OUI_ZERO = 3
+} FWP_ETHER_ENCAP_METHOD;
+
+cpp_quote("")
+
+typedef [v1_enum] enum FWP_DATA_TYPE_ {
+  FWP_EMPTY, FWP_UINT8, FWP_UINT16, FWP_UINT32, FWP_UINT64,
+  FWP_INT8, FWP_INT16, FWP_INT32, FWP_INT64,
+  FWP_FLOAT, FWP_DOUBLE,
+  FWP_BYTE_ARRAY16_TYPE, FWP_BYTE_BLOB_TYPE, FWP_SID,
+  FWP_SECURITY_DESCRIPTOR_TYPE, FWP_TOKEN_INFORMATION_TYPE,
+  FWP_TOKEN_ACCESS_INFORMATION_TYPE, FWP_UNICODE_STRING_TYPE,
+  FWP_BYTE_ARRAY6_TYPE, FWP_SINGLE_DATA_TYPE_MAX = 0xff,
+  FWP_V4_ADDR_MASK, FWP_V6_ADDR_MASK, FWP_RANGE_TYPE, FWP_DATA_TYPE_MAX
+} FWP_DATA_TYPE;
+
+cpp_quote("")
+
+typedef [v1_enum] enum FWP_MATCH_TYPE_ {
+  FWP_MATCH_EQUAL, FWP_MATCH_GREATER,
+  FWP_MATCH_LESS, FWP_MATCH_GREATER_OR_EQUAL,
+  FWP_MATCH_LESS_OR_EQUAL, FWP_MATCH_RANGE,
+  FWP_MATCH_FLAGS_ALL_SET, FWP_MATCH_FLAGS_ANY_SET,
+  FWP_MATCH_FLAGS_NONE_SET, FWP_MATCH_EQUAL_CASE_INSENSITIVE,
+  FWP_MATCH_NOT_EQUAL, FWP_MATCH_PREFIX,
+  FWP_MATCH_NOT_PREFIX, FWP_MATCH_TYPE_MAX
+} FWP_MATCH_TYPE;
+
+cpp_quote("")
+
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_WIN8)")
+typedef [v1_enum] enum FWP_VSWITCH_NETWORK_TYPE_ {
+  FWP_VSWITCH_NETWORK_TYPE_UNKNOWN, FWP_VSWITCH_NETWORK_TYPE_PRIVATE,
+  FWP_VSWITCH_NETWORK_TYPE_INTERNAL, FWP_VSWITCH_NETWORK_TYPE_EXTERNAL
+} FWP_VSWITCH_NETWORK_TYPE;
+cpp_quote("#endif")
+
+cpp_quote("")
+
+typedef [v1_enum] enum FWP_CLASSIFY_OPTION_TYPE_ {
+  FWP_CLASSIFY_OPTION_MULTICAST_STATE, FWP_CLASSIFY_OPTION_LOOSE_SOURCE_MAPPING,
+  FWP_CLASSIFY_OPTION_UNICAST_LIFETIME, FWP_CLASSIFY_OPTION_MCAST_BCAST_LIFETIME,
+  FWP_CLASSIFY_OPTION_SECURE_SOCKET_SECURITY_FLAGS, FWP_CLASSIFY_OPTION_SECURE_SOCKET_AUTHIP_MM_POLICY_KEY,
+  FWP_CLASSIFY_OPTION_SECURE_SOCKET_AUTHIP_QM_POLICY_KEY, FWP_CLASSIFY_OPTION_LOCAL_ONLY_MAPPING,
+  FWP_CLASSIFY_OPTION_MAX
+} FWP_CLASSIFY_OPTION_TYPE;
+
+cpp_quote("")
+
+typedef [v1_enum] enum FWP_FILTER_ENUM_TYPE_ {
+  FWP_FILTER_ENUM_FULLY_CONTAINED, FWP_FILTER_ENUM_OVERLAPPING, FWP_FILTER_ENUM_TYPE_MAX
+} FWP_FILTER_ENUM_TYPE;
+
+cpp_quote("")
+
+typedef struct FWP_BYTE_ARRAY6_ {
+  UINT8 byteArray6[6];
+} FWP_BYTE_ARRAY6;
+cpp_quote("")
+typedef struct FWP_BYTE_ARRAY16_ {
+  UINT8 byteArray16[16];
+} FWP_BYTE_ARRAY16;
+
+cpp_quote("")
+
+typedef struct FWP_BYTE_BLOB_ {
+  UINT32 size;
+  [size_is(size), unique] UINT8 *data;
+} FWP_BYTE_BLOB;
+
+cpp_quote("")
+
+typedef struct FWP_TOKEN_INFORMATION_ {
+  ULONG sidCount;
+  [size_is(sidCount)] PSID_AND_ATTRIBUTES sids;
+  ULONG restrictedSidCount;
+  [size_is(restrictedSidCount)] PSID_AND_ATTRIBUTES restrictedSids;
+} FWP_TOKEN_INFORMATION;
+
+cpp_quote("")
+
+typedef struct FWP_VALUE0_ {
+  FWP_DATA_TYPE type;
+  [switch_type(FWP_DATA_TYPE), switch_is(type)]
+  union {
+    [case(FWP_EMPTY)]
+      ;
+    [case(FWP_UINT8)]
+      UINT8 uint8;
+    [case(FWP_UINT16)]
+      UINT16 uint16;
+    [case(FWP_UINT32)]
+      UINT32 uint32;
+    [case(FWP_UINT64)]
+      [unique] UINT64 *uint64;
+    [case(FWP_INT8)]
+      INT8 int8;
+    [case(FWP_INT16)]
+      INT16 int16;
+    [case(FWP_INT32)]
+      INT32 int32;
+    [case(FWP_INT64)]
+      [unique] INT64 *int64;
+    [case(FWP_FLOAT)]
+      float float32;
+    [case(FWP_DOUBLE)]
+      [unique] double *double64;
+    [case(FWP_BYTE_ARRAY16_TYPE)]
+      [unique] FWP_BYTE_ARRAY16 *byteArray16;
+    [case(FWP_BYTE_BLOB_TYPE)]
+      [unique] FWP_BYTE_BLOB *byteBlob;
+    [case(FWP_SID)]
+      [unique] SID *sid;
+    [case(FWP_SECURITY_DESCRIPTOR_TYPE)]
+      [unique] FWP_BYTE_BLOB *sd;
+    [case(FWP_TOKEN_INFORMATION_TYPE)]
+      [unique] FWP_TOKEN_INFORMATION *tokenInformation;
+    [case(FWP_TOKEN_ACCESS_INFORMATION_TYPE)]
+      [unique] FWP_BYTE_BLOB *tokenAccessInformation;
+    [case(FWP_UNICODE_STRING_TYPE)]
+      [string] LPWSTR unicodeString;
+    [case(FWP_BYTE_ARRAY6_TYPE)]
+      [unique] FWP_BYTE_ARRAY6 *byteArray6;
+  };
+} FWP_VALUE0;
+
+cpp_quote("")
+
+typedef struct FWP_V4_ADDR_AND_MASK_ {
+  UINT32 addr;
+  UINT32 mask;
+} FWP_V4_ADDR_AND_MASK;
+
+cpp_quote("")
+
+typedef struct FWP_V6_ADDR_AND_MASK_ {
+  UINT8 addr[FWP_V6_ADDR_SIZE];
+  UINT8 prefixLength;
+} FWP_V6_ADDR_AND_MASK;
+
+cpp_quote("")
+
+typedef struct FWP_RANGE0_ {
+  FWP_VALUE0 valueLow;
+  FWP_VALUE0 valueHigh;
+} FWP_RANGE0;
+
+cpp_quote("")
+
+typedef struct FWP_CONDITION_VALUE0_ {
+  FWP_DATA_TYPE type;
+  [switch_type(FWP_DATA_TYPE), switch_is(type)]
+  union {
+    [case(FWP_EMPTY)]
+      ;
+    [case(FWP_UINT8)]
+      UINT8 uint8;
+    [case(FWP_UINT16)]
+      UINT16 uint16;
+    [case(FWP_UINT32)]
+      UINT32 uint32;
+    [case(FWP_UINT64)]
+      [unique] UINT64 *uint64;
+    [case(FWP_INT8)]
+      INT8 int8;
+    [case(FWP_INT16)]
+      INT16 int16;
+    [case(FWP_INT32)]
+      INT32 int32;
+    [case(FWP_INT64)]
+      [unique] INT64 *int64;
+    [case(FWP_FLOAT)]
+      float float32;
+    [case(FWP_DOUBLE)]
+      [unique] double *double64;
+    [case(FWP_BYTE_ARRAY16_TYPE)]
+      [unique] FWP_BYTE_ARRAY16 *byteArray16;
+    [case(FWP_BYTE_BLOB_TYPE)]
+      [unique] FWP_BYTE_BLOB *byteBlob;
+    [case(FWP_SID)]
+      [unique] SID *sid;
+    [case(FWP_SECURITY_DESCRIPTOR_TYPE)]
+      [unique] FWP_BYTE_BLOB *sd;
+    [case(FWP_TOKEN_INFORMATION_TYPE)]
+      [unique] FWP_TOKEN_INFORMATION *tokenInformation;
+    [case(FWP_TOKEN_ACCESS_INFORMATION_TYPE)]
+      [unique] FWP_BYTE_BLOB *tokenAccessInformation;
+    [case(FWP_UNICODE_STRING_TYPE)]
+      [string] LPWSTR unicodeString;
+    [case(FWP_BYTE_ARRAY6_TYPE)]
+      [unique] FWP_BYTE_ARRAY6 *byteArray6;
+    [case(FWP_V4_ADDR_MASK)]
+      [unique] FWP_V4_ADDR_AND_MASK *v4AddrMask;
+    [case(FWP_V6_ADDR_MASK)]
+      [unique] FWP_V6_ADDR_AND_MASK *v6AddrMask;
+    [case(FWP_RANGE_TYPE)]
+      [unique] FWP_RANGE0 *rangeValue;
+  };
+} FWP_CONDITION_VALUE0;
+
+cpp_quote("")
+
+typedef [v1_enum] enum FWP_NETWORK_CONNECTION_POLICY_SETTING_TYPE_ {
+  FWP_NETWORK_CONNECTION_POLICY_SOURCE_ADDRESS,
+  FWP_NETWORK_CONNECTION_POLICY_NEXT_HOP_INTERFACE,
+  FWP_NETWORK_CONNECTION_POLICY_NEXT_HOP,
+  FWP_NETWORK_CONNECTION_POLICY_MAX
+} FWP_NETWORK_CONNECTION_POLICY_SETTING_TYPE;
+
+cpp_quote("#endif /* WINAPI_PARTITION_DESKTOP. */")

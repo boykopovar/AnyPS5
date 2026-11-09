@@ -1,0 +1,76 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+cpp_quote("#include <winapifamily.h>")
+
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+import "oaidl.idl";
+import "ocidl.idl";
+import "vss.idl";
+
+[
+  object,
+  uuid(77ed5996-2f63-11d3-8a39-00c04f72d8e3),
+  pointer_default(unique)
+]
+interface IVssAdmin : IUnknown
+{
+  HRESULT RegisterProvider(
+    [in] VSS_ID pProviderId,
+    [in] CLSID ClassId,
+    [in] VSS_PWSZ pwszProviderName,
+    [in] VSS_PROVIDER_TYPE eProviderType,
+    [in] VSS_PWSZ pwszProviderVersion,
+    [in] VSS_ID ProviderVersionId);
+
+  HRESULT UnregisterProvider(
+    [in] VSS_ID ProviderId);
+
+  HRESULT QueryProviders(
+    [out] IVssEnumObject **ppEnum);
+
+  HRESULT AbortAllSnapshotsInProgress(void);
+}
+
+[
+  object,
+  uuid(7858a9f8-b1fa-41a6-964f-b9b36b8cd8d8),
+  pointer_default(unique)
+]
+interface IVssAdminEx : IVssAdmin
+{
+  HRESULT GetProviderCapability(
+    [in] VSS_ID pProviderId,
+    [out] ULONGLONG *pllOriginalCapabilityMask);
+
+  HRESULT GetProviderContext(
+    [in] VSS_ID ProviderId,
+    [out] LONG *plContext);
+
+  HRESULT SetProviderContext(
+    [in] VSS_ID ProviderId,
+    [in] LONG lContext);
+}
+
+[
+  uuid(9148a774-0304-4243-b269-a339aa96d264),
+  version(1.0)
+]
+library VSSAdmin
+{
+  importlib("stdole2.tlb");
+  [
+    uuid(e579ab5f-1cc4-44b4-bed9-de0991ff0623),
+  ]
+  coclass VSSCoordinator
+  {
+    [default] interface IVssAdmin;
+    interface IVssAdminEx;
+  }
+}
+
+cpp_quote("#endif /* WINAPI_PARTITION_DESKTOP */")

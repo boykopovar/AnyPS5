@@ -1,0 +1,360 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+
+import "unknwn.idl";
+import "wtypes.idl";
+
+cpp_quote("")
+cpp_quote("#ifndef DUMMYUNIONNAME")
+cpp_quote("#ifdef NONAMELESSUNION")
+cpp_quote("#define DUMMYUNIONNAME   u")
+cpp_quote("#define DUMMYUNIONNAME2  u2")
+cpp_quote("#define DUMMYUNIONNAME3  u3")
+cpp_quote("#define DUMMYUNIONNAME4  u4")
+cpp_quote("#define DUMMYUNIONNAME5  u5")
+cpp_quote("#else")
+cpp_quote("#define DUMMYUNIONNAME")
+cpp_quote("#define DUMMYUNIONNAME2")
+cpp_quote("#define DUMMYUNIONNAME3")
+cpp_quote("#define DUMMYUNIONNAME4")
+cpp_quote("#define DUMMYUNIONNAME5")
+cpp_quote("#endif")
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#include <pshpack1.h>")
+typedef struct _SHITEMID {
+  USHORT cb;
+  BYTE abID[];
+} SHITEMID;
+cpp_quote("#include <poppack.h>")
+
+cpp_quote("")
+cpp_quote("#if (defined(_X86_) && !defined(__x86_64))")
+cpp_quote("#undef __unaligned")
+cpp_quote("#define __unaligned")
+cpp_quote("#endif")
+
+cpp_quote("")
+typedef SHITEMID *LPSHITEMID;
+typedef const SHITEMID *LPCSHITEMID;
+
+cpp_quote("")
+cpp_quote("#include <pshpack1.h>")
+typedef struct _ITEMIDLIST {
+  SHITEMID mkid;
+} ITEMIDLIST;
+
+cpp_quote("")
+cpp_quote("#if defined(STRICT_TYPED_ITEMIDS) && defined(__cplusplus)")
+cpp_quote("  typedef struct _ITEMIDLIST_RELATIVE : ITEMIDLIST { } ITEMIDLIST_RELATIVE;")
+cpp_quote("  typedef struct _ITEMID_CHILD : ITEMIDLIST_RELATIVE { } ITEMID_CHILD;")
+cpp_quote("  typedef struct _ITEMIDLIST_ABSOLUTE : ITEMIDLIST_RELATIVE { } ITEMIDLIST_ABSOLUTE;")
+cpp_quote("#else")
+typedef ITEMIDLIST ITEMIDLIST_RELATIVE;
+typedef ITEMIDLIST ITEMID_CHILD;
+typedef ITEMIDLIST ITEMIDLIST_ABSOLUTE;
+cpp_quote("#endif")
+cpp_quote("#include <poppack.h>")
+
+cpp_quote("")
+typedef [unique] BYTE_BLOB *wirePIDL;
+typedef [wire_marshal (wirePIDL)] ITEMIDLIST *LPITEMIDLIST;
+typedef [wire_marshal (wirePIDL)] const ITEMIDLIST *LPCITEMIDLIST;
+cpp_quote("#if defined(STRICT_TYPED_ITEMIDS) && defined(__cplusplus)")
+typedef [wire_marshal (wirePIDL)] ITEMIDLIST_ABSOLUTE *PIDLIST_ABSOLUTE;
+typedef [wire_marshal (wirePIDL)] const ITEMIDLIST_ABSOLUTE *PCIDLIST_ABSOLUTE;
+typedef [wire_marshal (wirePIDL)] const ITEMIDLIST_ABSOLUTE *PCUIDLIST_ABSOLUTE;
+typedef [wire_marshal (wirePIDL)] ITEMIDLIST_RELATIVE *PIDLIST_RELATIVE;
+typedef [wire_marshal (wirePIDL)] const ITEMIDLIST_RELATIVE *PCIDLIST_RELATIVE;
+typedef [wire_marshal (wirePIDL)] ITEMIDLIST_RELATIVE *PUIDLIST_RELATIVE;
+typedef [wire_marshal (wirePIDL)] const ITEMIDLIST_RELATIVE *PCUIDLIST_RELATIVE;
+typedef [wire_marshal (wirePIDL)] ITEMID_CHILD *PITEMID_CHILD;
+typedef [wire_marshal (wirePIDL)] const ITEMID_CHILD *PCITEMID_CHILD;
+typedef [wire_marshal (wirePIDL)] ITEMID_CHILD *PUITEMID_CHILD;
+typedef [wire_marshal (wirePIDL)] const ITEMID_CHILD *PCUITEMID_CHILD;
+typedef PCUITEMID_CHILD const *PCUITEMID_CHILD_ARRAY;
+typedef PCUIDLIST_RELATIVE const *PCUIDLIST_RELATIVE_ARRAY;
+typedef PCIDLIST_ABSOLUTE const *PCIDLIST_ABSOLUTE_ARRAY;
+typedef PCUIDLIST_ABSOLUTE const *PCUIDLIST_ABSOLUTE_ARRAY;
+cpp_quote("#else")
+cpp_quote("#define PIDLIST_ABSOLUTE LPITEMIDLIST")
+cpp_quote("#define PCIDLIST_ABSOLUTE LPCITEMIDLIST")
+cpp_quote("#define PCUIDLIST_ABSOLUTE LPCITEMIDLIST")
+cpp_quote("#define PIDLIST_RELATIVE LPITEMIDLIST")
+cpp_quote("#define PCIDLIST_RELATIVE LPCITEMIDLIST")
+cpp_quote("#define PUIDLIST_RELATIVE LPITEMIDLIST")
+cpp_quote("#define PCUIDLIST_RELATIVE LPCITEMIDLIST")
+cpp_quote("#define PITEMID_CHILD LPITEMIDLIST")
+cpp_quote("#define PCITEMID_CHILD LPCITEMIDLIST")
+cpp_quote("#define PUITEMID_CHILD LPITEMIDLIST")
+cpp_quote("#define PCUITEMID_CHILD LPCITEMIDLIST")
+cpp_quote("#define PCUITEMID_CHILD_ARRAY LPCITEMIDLIST *")
+cpp_quote("#define PCUIDLIST_RELATIVE_ARRAY LPCITEMIDLIST *")
+cpp_quote("#define PCIDLIST_ABSOLUTE_ARRAY LPCITEMIDLIST *")
+cpp_quote("#define PCUIDLIST_ABSOLUTE_ARRAY LPCITEMIDLIST *")
+cpp_quote("#endif")
+
+#ifndef MAX_PATH
+#define MAX_PATH 260
+#endif
+
+cpp_quote("")
+cpp_quote("#if 0")
+typedef struct _WIN32_FIND_DATAA {
+  DWORD dwFileAttributes;
+  FILETIME ftCreationTime;
+  FILETIME ftLastAccessTime;
+  FILETIME ftLastWriteTime;
+  DWORD nFileSizeHigh;
+  DWORD nFileSizeLow;
+  DWORD dwReserved0;
+  DWORD dwReserved1;
+  CHAR cFileName[MAX_PATH];
+  CHAR cAlternateFileName[14];
+} WIN32_FIND_DATAA,*PWIN32_FIND_DATAA,*LPWIN32_FIND_DATAA;
+
+cpp_quote("")
+typedef struct _WIN32_FIND_DATAW {
+  DWORD dwFileAttributes;
+  FILETIME ftCreationTime;
+  FILETIME ftLastAccessTime;
+  FILETIME ftLastWriteTime;
+  DWORD nFileSizeHigh;
+  DWORD nFileSizeLow;
+  DWORD dwReserved0;
+  DWORD dwReserved1;
+  WCHAR cFileName[MAX_PATH];
+  WCHAR cAlternateFileName[14];
+} WIN32_FIND_DATAW,*PWIN32_FIND_DATAW,*LPWIN32_FIND_DATAW;
+cpp_quote("#endif")
+
+cpp_quote("")
+typedef [v1_enum] enum tagSTRRET_TYPE {
+  STRRET_WSTR = 0x0000,
+  STRRET_OFFSET = 0x0001,
+  STRRET_CSTR = 0x0002
+} STRRET_TYPE;
+
+cpp_quote("")
+cpp_quote("#include <pshpack8.h>")
+typedef struct _STRRET {
+  UINT uType;
+  [switch_type (UINT), switch_is (uType)] union {
+    [case (STRRET_WSTR)][string] LPWSTR pOleStr;
+    [case (STRRET_OFFSET)] UINT uOffset;
+    [case (STRRET_CSTR)] char cStr[MAX_PATH];
+  };
+} STRRET;
+cpp_quote("#include <poppack.h>")
+
+cpp_quote("")
+typedef STRRET *LPSTRRET;
+cpp_quote("")
+cpp_quote("#include <pshpack1.h>")
+typedef struct _SHELLDETAILS {
+  int fmt;
+  int cxChar;
+  STRRET str;
+} SHELLDETAILS,*LPSHELLDETAILS;
+cpp_quote("#include <poppack.h>")
+
+cpp_quote("")
+cpp_quote("#if _WIN32_IE >= _WIN32_IE_IE60SP2")
+typedef [v1_enum] enum tagPERCEIVED {
+  PERCEIVED_TYPE_FIRST = -3,
+  PERCEIVED_TYPE_CUSTOM = -3,
+  PERCEIVED_TYPE_UNSPECIFIED = -2,
+  PERCEIVED_TYPE_FOLDER = -1,
+  PERCEIVED_TYPE_UNKNOWN = 0,
+  PERCEIVED_TYPE_TEXT = 1,
+  PERCEIVED_TYPE_IMAGE = 2,
+  PERCEIVED_TYPE_AUDIO = 3,
+  PERCEIVED_TYPE_VIDEO = 4,
+  PERCEIVED_TYPE_COMPRESSED = 5,
+  PERCEIVED_TYPE_DOCUMENT = 6,
+  PERCEIVED_TYPE_SYSTEM = 7,
+  PERCEIVED_TYPE_APPLICATION = 8,
+  PERCEIVED_TYPE_GAMEMEDIA = 9,
+  PERCEIVED_TYPE_CONTACTS = 10,
+  PERCEIVED_TYPE_LAST = 10
+} PERCEIVED;
+
+cpp_quote("")
+cpp_quote("#define PERCEIVEDFLAG_UNDEFINED 0x0000")
+cpp_quote("#define PERCEIVEDFLAG_SOFTCODED 0x0001")
+cpp_quote("#define PERCEIVEDFLAG_HARDCODED 0x0002")
+cpp_quote("#define PERCEIVEDFLAG_NATIVESUPPORT 0x0004")
+cpp_quote("#define PERCEIVEDFLAG_GDIPLUS 0x0010")
+cpp_quote("#define PERCEIVEDFLAG_WMSDK 0x0020")
+cpp_quote("#define PERCEIVEDFLAG_ZIPFOLDER 0x0040")
+
+cpp_quote("")
+typedef DWORD PERCEIVEDFLAG;
+cpp_quote("#endif")
+
+  cpp_quote("")
+typedef struct _COMDLG_FILTERSPEC {
+  [string] LPCWSTR pszName;
+  [string] LPCWSTR pszSpec;
+} COMDLG_FILTERSPEC;
+
+cpp_quote("")
+typedef GUID KNOWNFOLDERID;
+cpp_quote("")
+cpp_quote("#if 0")
+typedef KNOWNFOLDERID *REFKNOWNFOLDERID;
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("#define REFKNOWNFOLDERID const KNOWNFOLDERID &")
+cpp_quote("#else")
+cpp_quote("#define REFKNOWNFOLDERID const KNOWNFOLDERID * __MIDL_CONST")
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("typedef DWORD KF_REDIRECT_FLAGS;")
+
+cpp_quote("")
+typedef GUID FOLDERTYPEID;
+cpp_quote("")
+cpp_quote("#if 0")
+typedef FOLDERTYPEID *REFFOLDERTYPEID;
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("#define REFFOLDERTYPEID const FOLDERTYPEID &")
+cpp_quote("#else")
+cpp_quote("#define REFFOLDERTYPEID const FOLDERTYPEID * __MIDL_CONST")
+cpp_quote("#endif")
+
+cpp_quote("")
+typedef GUID TASKOWNERID;
+cpp_quote("")
+cpp_quote("#if 0")
+typedef TASKOWNERID *REFTASKOWNERID;
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("#define REFTASKOWNERID const TASKOWNERID &")
+cpp_quote("#else")
+cpp_quote("#define REFTASKOWNERID const TASKOWNERID * __MIDL_CONST")
+cpp_quote("#endif")
+
+cpp_quote("")
+typedef GUID ELEMENTID;
+cpp_quote("")
+cpp_quote("#if 0")
+typedef ELEMENTID *REFELEMENTID;
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("#define REFELEMENTID const ELEMENTID &")
+cpp_quote("#else")
+cpp_quote("#define REFELEMENTID const ELEMENTID * __MIDL_CONST")
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#ifndef LF_FACESIZE")
+
+#define LF_FACESIZE 32
+
+typedef struct tagLOGFONTA {
+  LONG lfHeight;
+  LONG lfWidth;
+  LONG lfEscapement;
+  LONG lfOrientation;
+  LONG lfWeight;
+  BYTE lfItalic;
+  BYTE lfUnderline;
+  BYTE lfStrikeOut;
+  BYTE lfCharSet;
+  BYTE lfOutPrecision;
+  BYTE lfClipPrecision;
+  BYTE lfQuality;
+  BYTE lfPitchAndFamily;
+  CHAR lfFaceName[LF_FACESIZE];
+} LOGFONTA;
+
+cpp_quote("")
+typedef struct tagLOGFONTW {
+  LONG lfHeight;
+  LONG lfWidth;
+  LONG lfEscapement;
+  LONG lfOrientation;
+  LONG lfWeight;
+  BYTE lfItalic;
+  BYTE lfUnderline;
+  BYTE lfStrikeOut;
+  BYTE lfCharSet;
+  BYTE lfOutPrecision;
+  BYTE lfClipPrecision;
+  BYTE lfQuality;
+  BYTE lfPitchAndFamily;
+  WCHAR lfFaceName[LF_FACESIZE];
+} LOGFONTW;
+
+cpp_quote("")
+#ifdef UNICODE
+typedef LOGFONTW LOGFONT;
+#else
+typedef LOGFONTA LOGFONT;
+#endif
+cpp_quote("#endif")
+
+cpp_quote("")
+typedef [v1_enum] enum tagSHCOLSTATE {
+  SHCOLSTATE_DEFAULT = 0x00000000,
+  SHCOLSTATE_TYPE_STR = 0x00000001,
+  SHCOLSTATE_TYPE_INT = 0x00000002,
+  SHCOLSTATE_TYPE_DATE = 0x00000003,
+  SHCOLSTATE_TYPEMASK = 0x0000000f,
+  SHCOLSTATE_ONBYDEFAULT = 0x00000010,
+  SHCOLSTATE_SLOW = 0x00000020,
+  SHCOLSTATE_EXTENDED = 0x00000040,
+  SHCOLSTATE_SECONDARYUI = 0x00000080,
+  SHCOLSTATE_HIDDEN = 0x00000100,
+  SHCOLSTATE_PREFER_VARCMP = 0x00000200,
+  SHCOLSTATE_PREFER_FMTCMP = 0x00000400,
+  SHCOLSTATE_NOSORTBYFOLDERNESS =
+  0x00000800,
+  SHCOLSTATE_VIEWONLY = 0x00010000,
+  SHCOLSTATE_BATCHREAD = 0x00020000,
+  SHCOLSTATE_NO_GROUPBY = 0x00040000,
+  SHCOLSTATE_FIXED_WIDTH = 0x00001000,
+  SHCOLSTATE_NODPISCALE = 0x00002000,
+  SHCOLSTATE_FIXED_RATIO = 0x00004000,
+  SHCOLSTATE_DISPLAYMASK = 0x0000f000
+} SHCOLSTATE;
+
+cpp_quote("")
+typedef DWORD SHCOLSTATEF;
+typedef PROPERTYKEY SHCOLUMNID;
+typedef const SHCOLUMNID *LPCSHCOLUMNID;
+
+cpp_quote("")
+typedef [v1_enum] enum DEVICE_SCALE_FACTOR {
+  DEVICE_SCALE_FACTOR_INVALID = 0,
+  SCALE_100_PERCENT = 100,
+  SCALE_120_PERCENT = 120,
+  SCALE_125_PERCENT = 125,
+  SCALE_140_PERCENT = 140,
+  SCALE_150_PERCENT = 150,
+  SCALE_160_PERCENT = 160,
+  SCALE_175_PERCENT = 175,
+  SCALE_180_PERCENT = 180,
+  SCALE_200_PERCENT = 200,
+  SCALE_225_PERCENT = 225,
+  SCALE_250_PERCENT = 250,
+  SCALE_300_PERCENT = 300,
+  SCALE_350_PERCENT = 350,
+  SCALE_400_PERCENT = 400,
+  SCALE_450_PERCENT = 450,
+  SCALE_500_PERCENT = 500
+} DEVICE_SCALE_FACTOR;

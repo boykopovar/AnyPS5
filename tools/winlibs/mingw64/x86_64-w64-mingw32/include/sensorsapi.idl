@@ -1,0 +1,200 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+import "oaidl.idl";
+import "ocidl.idl";
+import "propsys.idl";
+import "portabledevicetypes.idl";
+
+typedef enum {
+    SENSOR_STATE_MIN           = 0,
+    SENSOR_STATE_READY         = SENSOR_STATE_MIN,
+    SENSOR_STATE_NOT_AVAILABLE = (SENSOR_STATE_READY+1) ,
+    SENSOR_STATE_NO_DATA       = (SENSOR_STATE_NOT_AVAILABLE+1),
+    SENSOR_STATE_INITIALIZING  = (SENSOR_STATE_NO_DATA+1),
+    SENSOR_STATE_ACCESS_DENIED = (SENSOR_STATE_INITIALIZING+1),
+    SENSOR_STATE_ERROR         = (SENSOR_STATE_ACCESS_DENIED+1),
+    SENSOR_STATE_MAX           = SENSOR_STATE_ERROR
+} SensorState;
+
+typedef enum {
+    SENSOR_CONNECTION_TYPE_PC_INTEGRATED = 0,
+    SENSOR_CONNECTION_TYPE_PC_ATTACHED   = (SENSOR_CONNECTION_TYPE_PC_INTEGRATED+1),
+    SENSOR_CONNECTION_TYPE_PC_EXTERNAL   = (SENSOR_CONNECTION_TYPE_PC_ATTACHED+1)
+} SensorConnectionType;
+
+typedef enum LOCATION_DESIRED_ACCURACY {
+    LOCATION_DESIRED_ACCURACY_DEFAULT = 0,
+    LOCATION_DESIRED_ACCURACY_HIGH    = (LOCATION_DESIRED_ACCURACY_DEFAULT+1)
+} LOCATION_DESIRED_ACCURACY;
+
+typedef GUID SENSOR_CATEGORY_ID;
+typedef REFGUID REFSENSOR_CATEGORY_ID;
+
+typedef GUID SENSOR_TYPE_ID;
+typedef REFGUID REFSENSOR_TYPE_ID;
+
+typedef GUID SENSOR_ID;
+typedef REFGUID REFSENSOR_ID;
+
+interface ISensorCollection;
+interface ISensor;
+interface ISensorDataReport;
+interface ISensorManagerEvents;
+interface ISensorEvents;
+
+[
+    uuid(bd77db67-45a8-42dc-8d00-6dcf15f8377a),
+    object
+]
+interface ISensorManager : IUnknown
+{
+    HRESULT GetSensorsByCategory(
+            [in] REFSENSOR_CATEGORY_ID sensorCategory,
+            [out] ISensorCollection **ppSensorsFound);
+
+    HRESULT GetSensorsByType(
+            [in] REFSENSOR_TYPE_ID sensorType,
+            [out] ISensorCollection **ppSensorsFound);
+
+    HRESULT GetSensorByID(
+            [in] REFSENSOR_ID sensorID,
+            [out] ISensor **ppSensor);
+
+    HRESULT SetEventSink([in] ISensorManagerEvents *pEvents);
+
+    HRESULT RequestPermissions(
+            [in] HWND hParent,
+            [in] ISensorCollection *pSensors,
+            [in] BOOL fModal);
+}
+
+[
+    uuid(23571e11-e545-4dd8-a337-b89bf44b10df),
+    object
+]
+interface ISensorCollection : IUnknown
+{
+    HRESULT GetAt(
+            [in] ULONG ulIndex,
+            [out] ISensor **ppSensor) = 0;
+
+    HRESULT GetCount([out] ULONG *pCount);
+    HRESULT Add([in] ISensor *pSensor);
+    HRESULT Remove([in] ISensor *pSensor);
+    HRESULT RemoveByID([in] REFSENSOR_ID sensorID);
+    HRESULT Clear();
+}
+
+[
+    uuid(5fa08f80-2657-458e-af75-46f73fa6ac5c),
+    object
+]
+interface ISensor : IUnknown
+{
+    HRESULT GetID([out] SENSOR_ID *pID);
+    HRESULT GetCategory([out] SENSOR_CATEGORY_ID *pSensorCategory);
+    HRESULT GetType([out] SENSOR_TYPE_ID *pSensorType);
+    HRESULT GetFriendlyName([out] BSTR *pFriendlyName);
+
+    HRESULT GetProperty(
+            [in] REFPROPERTYKEY key,
+            [out] PROPVARIANT *pProperty);
+
+    HRESULT GetProperties(
+            [in] IPortableDeviceKeyCollection *pKeys,
+            [out] IPortableDeviceValues **ppProperties);
+
+    HRESULT GetSupportedDataFields([out] IPortableDeviceKeyCollection **ppDataFields);
+
+    HRESULT SetProperties(
+            [in] IPortableDeviceValues *pProperties,
+            [out] IPortableDeviceValues **ppResults);
+
+    HRESULT SupportsDataField(
+            [in] REFPROPERTYKEY key,
+            [out] VARIANT_BOOL *pIsSupported);
+
+    HRESULT GetState([out] SensorState *pState);
+    HRESULT GetData([out] ISensorDataReport **ppDataReport);
+
+    HRESULT SupportsEvent(
+            [in] REFGUID eventGuid,
+            [out] VARIANT_BOOL *pIsSupported);
+
+    HRESULT GetEventInterest(
+            [size_is(*pCount), out] GUID **ppValues,
+            [out] ULONG *pCount);
+
+    HRESULT SetEventInterest(
+            [size_is(count), in] GUID *pValues,
+            [in] ULONG count);
+
+    HRESULT SetEventSink([in] ISensorEvents *pEvents);
+}
+
+[
+    uuid(0ab9df9b-c4b5-4796-8898-0470706a2e1d),
+    object
+]
+interface ISensorDataReport : IUnknown
+{
+    HRESULT GetTimestamp([out] SYSTEMTIME *pTimeStamp);
+
+    HRESULT GetSensorValue(
+            [in] REFPROPERTYKEY pKey,
+            [out] PROPVARIANT *pValue);
+
+    HRESULT GetSensorValues(
+            [in] IPortableDeviceKeyCollection *pKeys,
+            [out] IPortableDeviceValues **ppValues);
+}
+
+[
+    uuid(9b3b0b86-266a-4aad-b21f-fde5501001b7),
+    local
+]
+interface ISensorManagerEvents : IUnknown
+{
+    HRESULT OnSensorEnter(
+            [in] ISensor *pSensor,
+            [in] SensorState state) ;
+}
+
+[
+    uuid(5d8dcc91-4641-47e7-b7c3-b74f48a6c391),
+    object
+]
+interface ISensorEvents : IUnknown
+{
+    HRESULT OnStateChanged(
+            [in] ISensor *pSensor,
+            [in] SensorState state);
+
+    HRESULT OnDataUpdated(
+            [in] ISensor *pSensor,
+            [in] ISensorDataReport *pNewData);
+
+    HRESULT OnEvent(
+            [in] ISensor *pSensor,
+            [in] REFGUID eventID,
+            [in] IPortableDeviceValues *pEventData);
+
+    HRESULT OnLeave([in] REFSENSOR_ID ID);
+}
+
+[
+    uuid(15092592-5270-4c6c-aaa0-11764f189a8f)
+]
+library SensorsApiLib
+{
+    [
+        uuid(77a1c827-fcd2-4689-8915-9d613cc5fa3e)
+    ]
+    coclass SensorManager {
+        interface SensorManager;
+    }
+}

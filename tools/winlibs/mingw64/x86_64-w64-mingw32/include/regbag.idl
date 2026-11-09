@@ -1,0 +1,21 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+#ifndef DO_NO_IMPORTS
+import "objidl.idl";
+import "oaidl.idl";
+import "ocidl.idl";
+#endif
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+[object, local, hidden, restricted, uuid (8a674b48-1f63-11d3-B64C-00c04f79498e), pointer_default (unique)]
+interface ICreatePropBagOnRegKey : IUnknown {
+  HRESULT Create ([in] HKEY hkey,[in] LPCOLESTR subkey,[in] DWORD ulOptions,[in] DWORD samDesired, REFIID iid,[out] LPVOID *ppBag);
+};
+
+cpp_quote("#endif")

@@ -1,0 +1,427 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+
+#include "winerror.h"
+import "unknwn.idl";
+import "oaidl.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+cpp_quote("")
+cpp_quote("#include <objbase.h>")
+cpp_quote("")
+
+typedef enum COMAdminInUse {
+  COMAdminNotInUse = 0,
+  COMAdminInUseByCatalog = 1,
+  COMAdminInUseByRegistryUnknown = 2,
+  COMAdminInUseByRegistryProxyStub = 3,
+  COMAdminInUseByRegistryTypeLib = 4,
+  COMAdminInUseByRegistryClsid = 5
+} COMAdminInUse;
+
+typedef enum COMAdminErrorCodes {
+  COMAdminErrObjectErrors = COMADMIN_E_OBJECTERRORS,
+  COMAdminErrObjectInvalid = COMADMIN_E_OBJECTINVALID,
+  COMAdminErrKeyMissing = COMADMIN_E_KEYMISSING,
+  COMAdminErrAlreadyInstalled = COMADMIN_E_ALREADYINSTALLED,
+  COMAdminErrAppFileWriteFail = COMADMIN_E_APP_FILE_WRITEFAIL,
+  COMAdminErrAppFileReadFail = COMADMIN_E_APP_FILE_READFAIL,
+  COMAdminErrAppFileVersion = COMADMIN_E_APP_FILE_VERSION,
+  COMAdminErrBadPath = COMADMIN_E_BADPATH,
+  COMAdminErrApplicationExists = COMADMIN_E_APPLICATIONEXISTS,
+  COMAdminErrRoleExists = COMADMIN_E_ROLEEXISTS,
+  COMAdminErrCantCopyFile = COMADMIN_E_CANTCOPYFILE,
+  COMAdminErrNoUser = COMADMIN_E_NOUSER,
+  COMAdminErrInvalidUserids = COMADMIN_E_INVALIDUSERIDS,
+  COMAdminErrNoRegistryCLSID = COMADMIN_E_NOREGISTRYCLSID,
+  COMAdminErrBadRegistryProgID = COMADMIN_E_BADREGISTRYPROGID,
+  COMAdminErrAuthenticationLevel = COMADMIN_E_AUTHENTICATIONLEVEL,
+  COMAdminErrUserPasswdNotValid = COMADMIN_E_USERPASSWDNOTVALID,
+  COMAdminErrCLSIDOrIIDMismatch = COMADMIN_E_CLSIDORIIDMISMATCH,
+  COMAdminErrRemoteInterface = COMADMIN_E_REMOTEINTERFACE,
+  COMAdminErrDllRegisterServer = COMADMIN_E_DLLREGISTERSERVER,
+  COMAdminErrNoServerShare = COMADMIN_E_NOSERVERSHARE,
+  COMAdminErrDllLoadFailed = COMADMIN_E_DLLLOADFAILED,
+  COMAdminErrBadRegistryLibID = COMADMIN_E_BADREGISTRYLIBID,
+  COMAdminErrAppDirNotFound = COMADMIN_E_APPDIRNOTFOUND,
+  COMAdminErrRegistrarFailed = COMADMIN_E_REGISTRARFAILED,
+  COMAdminErrCompFileDoesNotExist = COMADMIN_E_COMPFILE_DOESNOTEXIST,
+  COMAdminErrCompFileLoadDLLFail = COMADMIN_E_COMPFILE_LOADDLLFAIL,
+  COMAdminErrCompFileGetClassObj = COMADMIN_E_COMPFILE_GETCLASSOBJ,
+  COMAdminErrCompFileClassNotAvail = COMADMIN_E_COMPFILE_CLASSNOTAVAIL,
+  COMAdminErrCompFileBadTLB = COMADMIN_E_COMPFILE_BADTLB,
+  COMAdminErrCompFileNotInstallable = COMADMIN_E_COMPFILE_NOTINSTALLABLE,
+  COMAdminErrNotChangeable = COMADMIN_E_NOTCHANGEABLE,
+  COMAdminErrNotDeletable = COMADMIN_E_NOTDELETEABLE,
+  COMAdminErrSession = COMADMIN_E_SESSION,
+  COMAdminErrCompMoveLocked = COMADMIN_E_COMP_MOVE_LOCKED,
+  COMAdminErrCompMoveBadDest = COMADMIN_E_COMP_MOVE_BAD_DEST,
+  COMAdminErrRegisterTLB = COMADMIN_E_REGISTERTLB,
+  COMAdminErrSystemApp = COMADMIN_E_SYSTEMAPP,
+  COMAdminErrCompFileNoRegistrar = COMADMIN_E_COMPFILE_NOREGISTRAR,
+  COMAdminErrCoReqCompInstalled = COMADMIN_E_COREQCOMPINSTALLED,
+  COMAdminErrServiceNotInstalled = COMADMIN_E_SERVICENOTINSTALLED,
+  COMAdminErrPropertySaveFailed = COMADMIN_E_PROPERTYSAVEFAILED,
+  COMAdminErrObjectExists = COMADMIN_E_OBJECTEXISTS,
+  COMAdminErrComponentExists = COMADMIN_E_COMPONENTEXISTS,
+  COMAdminErrRegFileCorrupt = COMADMIN_E_REGFILE_CORRUPT,
+  COMAdminErrPropertyOverflow = COMADMIN_E_PROPERTY_OVERFLOW,
+  COMAdminErrNotInRegistry = COMADMIN_E_NOTINREGISTRY,
+  COMAdminErrObjectNotPoolable = COMADMIN_E_OBJECTNOTPOOLABLE,
+  COMAdminErrApplidMatchesClsid = COMADMIN_E_APPLID_MATCHES_CLSID,
+  COMAdminErrRoleDoesNotExist = COMADMIN_E_ROLE_DOES_NOT_EXIST,
+  COMAdminErrStartAppNeedsComponents = COMADMIN_E_START_APP_NEEDS_COMPONENTS,
+  COMAdminErrRequiresDifferentPlatform = COMADMIN_E_REQUIRES_DIFFERENT_PLATFORM,
+  COMAdminErrQueuingServiceNotAvailable = COMQC_E_QUEUING_SERVICE_NOT_AVAILABLE,
+  COMAdminErrObjectParentMissing = COMADMIN_E_OBJECT_PARENT_MISSING,
+  COMAdminErrObjectDoesNotExist = COMADMIN_E_OBJECT_DOES_NOT_EXIST,
+  COMAdminErrCanNotExportAppProxy = COMADMIN_E_CAN_NOT_EXPORT_APP_PROXY,
+  COMAdminErrCanNotStartApp = COMADMIN_E_CAN_NOT_START_APP,
+  COMAdminErrCanNotExportSystemApp = COMADMIN_E_CAN_NOT_EXPORT_SYS_APP,
+  COMAdminErrCanNotSubscribeToComponent = COMADMIN_E_CANT_SUBSCRIBE_TO_COMPONENT,
+  COMAdminErrAppNotRunning = COMADMIN_E_APP_NOT_RUNNING,
+  COMAdminErrEventClassCannotBeSubscriber = COMADMIN_E_EVENTCLASS_CANT_BE_SUBSCRIBER,
+  COMAdminErrLibAppProxyIncompatible = COMADMIN_E_LIB_APP_PROXY_INCOMPATIBLE,
+  COMAdminErrBasePartitionOnly = COMADMIN_E_BASE_PARTITION_ONLY,
+  COMAdminErrDuplicatePartitionName = COMADMIN_E_CAT_DUPLICATE_PARTITION_NAME,
+  COMAdminErrPartitionInUse = COMADMIN_E_CAT_PARTITION_IN_USE,
+  COMAdminErrImportedComponentsNotAllowed = COMADMIN_E_CAT_IMPORTED_COMPONENTS_NOT_ALLOWED,
+  COMAdminErrRegdbNotInitialized = COMADMIN_E_REGDB_NOTINITIALIZED,
+  COMAdminErrRegdbNotOpen = COMADMIN_E_REGDB_NOTOPEN,
+  COMAdminErrRegdbSystemErr = COMADMIN_E_REGDB_SYSTEMERR,
+  COMAdminErrRegdbAlreadyRunning = COMADMIN_E_REGDB_ALREADYRUNNING,
+  COMAdminErrMigVersionNotSupported = COMADMIN_E_MIG_VERSIONNOTSUPPORTED,
+  COMAdminErrMigSchemaNotFound = COMADMIN_E_MIG_SCHEMANOTFOUND,
+  COMAdminErrCatBitnessMismatch = COMADMIN_E_CAT_BITNESSMISMATCH,
+  COMAdminErrCatUnacceptableBitness = COMADMIN_E_CAT_UNACCEPTABLEBITNESS,
+  COMAdminErrCatWrongAppBitnessBitness = COMADMIN_E_CAT_WRONGAPPBITNESS,
+  COMAdminErrCatPauseResumeNotSupported = COMADMIN_E_CAT_PAUSE_RESUME_NOT_SUPPORTED,
+  COMAdminErrCatServerFault = COMADMIN_E_CAT_SERVERFAULT,
+  COMAdminErrCantRecycleLibraryApps = COMADMIN_E_CANTRECYCLELIBRARYAPPS,
+  COMAdminErrCantRecycleServiceApps = COMADMIN_E_CANTRECYCLESERVICEAPPS,
+  COMAdminErrProcessAlreadyRecycled = COMADMIN_E_PROCESSALREADYRECYCLED,
+  COMAdminErrPausedProcessMayNotBeRecycled = COMADMIN_E_PAUSEDPROCESSMAYNOTBERECYCLED,
+  COMAdminErrInvalidPartition = COMADMIN_E_INVALID_PARTITION,
+  COMAdminErrPartitionMsiOnly = COMADMIN_E_PARTITION_MSI_ONLY,
+  COMAdminErrStartAppDisabled = COMADMIN_E_START_APP_DISABLED,
+  COMAdminErrCompMoveSource = COMADMIN_E_COMP_MOVE_SOURCE,
+  COMAdminErrCompMoveDest = COMADMIN_E_COMP_MOVE_DEST,
+  COMAdminErrCompMovePrivate = COMADMIN_E_COMP_MOVE_PRIVATE,
+  COMAdminErrCannotCopyEventClass = COMADMIN_E_CANNOT_ALIAS_EVENTCLASS
+} COMAdminErrorCodes;
+
+typedef enum COMAdminComponentType {
+  COMAdmin32BitComponent = 0x1,
+  COMAdmin64BitComponent = 0x2
+} COMAdminComponentType;
+
+typedef enum COMAdminApplicationInstallOptions {
+  COMAdminInstallNoUsers = 0,
+  COMAdminInstallUsers = 1,
+  COMAdminInstallForceOverwriteOfFiles = 2
+} COMAdminApplicationInstallOptions;
+
+typedef enum COMAdminApplicationExportOptions {
+  COMAdminExportNoUsers = 0x0,
+  COMAdminExportUsers = 0x1,
+  COMAdminExportApplicationProxy = 0x2,
+  COMAdminExportForceOverwriteOfFiles = 0x4,
+  COMAdminExportIn10Format = 0x10
+} COMAdminApplicationExportOptions;
+
+typedef enum COMAdminThreadingModels {
+  COMAdminThreadingModelApartment = 0,
+  COMAdminThreadingModelFree = 1,
+  COMAdminThreadingModelMain = 2,
+  COMAdminThreadingModelBoth = 3,
+  COMAdminThreadingModelNeutral = 4,
+  COMAdminThreadingModelNotSpecified = 5
+} COMAdminThreadingModels;
+
+typedef enum COMAdminTransactionOptions {
+  COMAdminTransactionIgnored = 0,
+  COMAdminTransactionNone = 1,
+  COMAdminTransactionSupported = 2,
+  COMAdminTransactionRequired = 3,
+  COMAdminTransactionRequiresNew = 4,
+} COMAdminTransactionOptions;
+
+typedef enum COMAdminTxIsolationLevelOptions {
+  COMAdminTxIsolationLevelAny = 0,
+  COMAdminTxIsolationLevelReadUnCommitted,
+  COMAdminTxIsolationLevelReadCommitted,
+  COMAdminTxIsolationLevelRepeatableRead,
+  COMAdminTxIsolationLevelSerializable,
+} COMAdminTxIsolationLevelOptions;
+
+typedef enum COMAdminSynchronizationOptions {
+  COMAdminSynchronizationIgnored = 0,
+  COMAdminSynchronizationNone = 1,
+  COMAdminSynchronizationSupported = 2,
+  COMAdminSynchronizationRequired = 3,
+  COMAdminSynchronizationRequiresNew = 4
+} COMAdminSynchronizationOptions;
+
+typedef enum COMAdminActivationOptions {
+  COMAdminActivationInproc = 0,
+  COMAdminActivationLocal = 1
+} COMAdminActivationOptions;
+
+typedef enum COMAdminAccessChecksLevelOptions {
+  COMAdminAccessChecksApplicationLevel = 0,
+  COMAdminAccessChecksApplicationComponentLevel = 1
+} COMAdminAccessChecksLevelOptions;
+
+typedef enum COMAdminAuthenticationLevelOptions {
+  COMAdminAuthenticationDefault = 0,
+  COMAdminAuthenticationNone = 1,
+  COMAdminAuthenticationConnect = 2,
+  COMAdminAuthenticationCall = 3,
+  COMAdminAuthenticationPacket = 4,
+  COMAdminAuthenticationIntegrity = 5,
+  COMAdminAuthenticationPrivacy = 6
+} COMAdminAuthenticationLevelOptions;
+
+typedef enum COMAdminImpersonationLevelOptions {
+  COMAdminImpersonationAnonymous = 1,
+  COMAdminImpersonationIdentify = 2,
+  COMAdminImpersonationImpersonate = 3,
+  COMAdminImpersonationDelegate = 4
+} COMAdminImpersonationLevelOptions;
+
+typedef enum COMAdminAuthenticationCapabilitiesOptions {
+  COMAdminAuthenticationCapabilitiesNone = 0x0,
+  COMAdminAuthenticationCapabilitiesSecureReference = 0x2,
+  COMAdminAuthenticationCapabilitiesStaticCloaking = 0x20,
+  COMAdminAuthenticationCapabilitiesDynamicCloaking = 0x40
+} COMAdminAuthenticationCapabilitiesOptions;
+
+typedef enum COMAdminOS {
+  COMAdminOSNotInitialized = 0,
+  COMAdminOSWindows3_1 = 1,
+  COMAdminOSWindows9x = 2,
+  COMAdminOSWindows2000 = 3,
+  COMAdminOSWindows2000AdvancedServer = 4,
+  COMAdminOSWindows2000Unknown = 5,
+  COMAdminOSUnknown = 6,
+  COMAdminOSWindowsXPPersonal = 11,
+  COMAdminOSWindowsXPProfessional = 12,
+  COMAdminOSWindowsNETStandardServer = 13,
+  COMAdminOSWindowsNETEnterpriseServer = 14,
+  COMAdminOSWindowsNETDatacenterServer = 15,
+  COMAdminOSWindowsNETWebServer = 16,
+  COMAdminOSWindowsLonghornPersonal = 17,
+  COMAdminOSWindowsLonghornProfessional = 18,
+  COMAdminOSWindowsLonghornStandardServer = 19,
+  COMAdminOSWindowsLonghornEnterpriseServer = 20,
+  COMAdminOSWindowsLonghornDatacenterServer = 21,
+  COMAdminOSWindowsLonghornWebServer = 22,
+  COMAdminOSWindows7Personal = 23,
+  COMAdminOSWindows7Professional = 24,
+  COMAdminOSWindows7StandardServer = 25,
+  COMAdminOSWindows7EnterpriseServer = 26,
+  COMAdminOSWindows7DatacenterServer = 27,
+  COMAdminOSWindows7WebServer = 28,
+  COMAdminOSWindows8Personal = 29,
+  COMAdminOSWindows8Professional = 30,
+  COMAdminOSWindows8StandardServer = 31,
+  COMAdminOSWindows8EnterpriseServer = 32,
+  COMAdminOSWindows8DatacenterServer = 33,
+  COMAdminOSWindows8WebServer = 34
+} COMAdminOS;
+
+typedef enum COMAdminServiceOptions {
+  COMAdminServiceLoadBalanceRouter = 1
+} COMAdminServiceOptions;
+
+typedef enum COMAdminServiceStatusOptions {
+  COMAdminServiceStopped = 0,
+  COMAdminServiceStartPending,
+  COMAdminServiceStopPending,
+  COMAdminServiceRunning,
+  COMAdminServiceContinuePending,
+  COMAdminServicePausePending,
+  COMAdminServicePaused,
+  COMAdminServiceUnknownState
+} COMAdminServiceStatusOptions;
+
+typedef enum COMAdminComponentFlags {
+  COMAdminCompFlagTypeInfoFound = 0x1,
+  COMAdminCompFlagCOMPlusPropertiesFound = 0x2,
+  COMAdminCompFlagProxyFound = 0x4,
+  COMAdminCompFlagInterfacesFound = 0x8,
+  COMAdminCompFlagAlreadyInstalled = 0x10,
+  COMAdminCompFlagNotInApplication = 0x20
+} COMAdminComponentFlags;
+
+typedef enum COMAdminQCMessageAuthenticateOptions {
+  COMAdminQCMessageAuthenticateSecureApps = 0,
+  COMAdminQCMessageAuthenticateOff = 1,
+  COMAdminQCMessageAuthenticateOn = 2
+} COMAdminQCMessageAuthenticateOptions;
+
+typedef enum COMAdminFileFlags {
+  COMAdminFileFlagLoadable = 0x1,
+  COMAdminFileFlagCOM = 0x2,
+  COMAdminFileFlagContainsPS = 0x4,
+  COMAdminFileFlagContainsComp = 0x8,
+  COMAdminFileFlagContainsTLB = 0x10,
+  COMAdminFileFlagSelfReg = 0x20,
+  COMAdminFileFlagSelfUnReg = 0x40,
+  COMAdminFileFlagUnloadableDLL = 0x80,
+  COMAdminFileFlagDoesNotExist = 0x100,
+  COMAdminFileFlagAlreadyInstalled = 0x200,
+  COMAdminFileFlagBadTLB = 0x400,
+  COMAdminFileFlagGetClassObjFailed = 0x800,
+  COMAdminFileFlagClassNotAvailable = 0x1000,
+  COMAdminFileFlagRegistrar = 0x2000,
+  COMAdminFileFlagNoRegistrar = 0x4000,
+  COMAdminFileFlagDLLRegsvrFailed = 0x8000,
+  COMAdminFileFlagRegTLBFailed = 0x10000,
+  COMAdminFileFlagRegistrarFailed = 0x20000,
+  COMAdminFileFlagError = 0x40000
+} COMAdminFileFlags;
+
+[object, uuid (DD662187-DFC2-11d1-a2cf-00805fc79235), dual, pointer_default (unique)]
+interface ICOMAdminCatalog : IDispatch {
+  [id (1)] HRESULT GetCollection ([in] BSTR bstrCollName,[out, retval] IDispatch **ppCatalogCollection);
+  [id (2)] HRESULT Connect ([in] BSTR bstrCatalogServerName,[out, retval] IDispatch **ppCatalogCollection);
+  [propget, id (3)] HRESULT MajorVersion ([out, retval] long *plMajorVersion);
+  [propget, id (4)] HRESULT MinorVersion ([out, retval] long *plMinorVersion);
+  [id (5)] HRESULT GetCollectionByQuery ([in] BSTR bstrCollName,[in] SAFEARRAY (VARIANT) *ppsaVarQuery,[out, retval] IDispatch **ppCatalogCollection);
+  [id (6)] HRESULT ImportComponent ([in] BSTR bstrApplIDOrName,[in] BSTR bstrCLSIDOrProgID);
+  [id (7)] HRESULT InstallComponent ([in] BSTR bstrApplIDOrName,[in] BSTR bstrDLL,[in] BSTR bstrTLB,[in] BSTR bstrPSDLL);
+  [id (8)] HRESULT ShutdownApplication ([in] BSTR bstrApplIDOrName);
+  [id (9)] HRESULT ExportApplication ([in] BSTR bstrApplIDOrName,[in] BSTR bstrApplicationFile,[in] long lOptions);
+  [id (10)] HRESULT InstallApplication ([in] BSTR bstrApplicationFile,[in, optional] BSTR bstrDestinationDirectory,[in, optional] long lOptions,[in, optional] BSTR bstrUserId,[in, optional] BSTR bstrPassword,[in, optional] BSTR bstrRSN);
+  [id (11)] HRESULT StopRouter ();
+  [id (12)] HRESULT RefreshRouter ();
+  [id (13)] HRESULT StartRouter ();
+  [id (14)] HRESULT Reserved1 ();
+  [id (15)] HRESULT Reserved2 ();
+  [id (16)] HRESULT InstallMultipleComponents ([in] BSTR bstrApplIDOrName,[in] SAFEARRAY (VARIANT) *ppsaVarFileNames,[in] SAFEARRAY (VARIANT) *ppsaVarCLSIDs);
+  [id (17)] HRESULT GetMultipleComponentsInfo ([in] BSTR bstrApplIdOrName,[in] SAFEARRAY (VARIANT) *ppsaVarFileNames,[out] SAFEARRAY (VARIANT) *ppsaVarCLSIDs,[out] SAFEARRAY (VARIANT) *ppsaVarClassNames,[out] SAFEARRAY (VARIANT) *ppsaVarFileFlags,[out] SAFEARRAY (VARIANT) *ppsaVarComponentFlags);
+  [id (18)] HRESULT RefreshComponents ();
+  [id (19)] HRESULT BackupREGDB ([in] BSTR bstrBackupFilePath);
+  [id (20)] HRESULT RestoreREGDB ([in] BSTR bstrBackupFilePath);
+  [id (21)] HRESULT QueryApplicationFile ([in] BSTR bstrApplicationFile,[out] BSTR *pbstrApplicationName,[out] BSTR *pbstrApplicationDescription,[out] VARIANT_BOOL *pbHasUsers,[out] VARIANT_BOOL *pbIsProxy,[out] SAFEARRAY (VARIANT) *ppsaVarFileNames);
+  [id (22)] HRESULT StartApplication ([in] BSTR bstrApplIdOrName);
+  [id (23)] HRESULT ServiceCheck ([in] long lService,[out, retval] long *plStatus);
+  [id (24)] HRESULT InstallMultipleEventClasses ([in] BSTR bstrApplIdOrName,[in] SAFEARRAY (VARIANT) *ppsaVarFileNames,[in] SAFEARRAY (VARIANT) *ppsaVarCLSIDS);
+  [id (25)] HRESULT InstallEventClass ([in] BSTR bstrApplIdOrName,[in] BSTR bstrDLL,[in] BSTR bstrTLB,[in] BSTR bstrPSDLL);
+  [id (26)] HRESULT GetEventClassesForIID ([in] BSTR bstrIID,[out] SAFEARRAY (VARIANT) *ppsaVarCLSIDs,[out] SAFEARRAY (VARIANT) *ppsaVarProgIDs,[out] SAFEARRAY (VARIANT) *ppsaVarDescriptions);
+}
+
+[object, uuid (790c6e0b-9194-4cc9-9426-A48A63185696), dual, pointer_default (unique)]
+interface ICOMAdminCatalog2 : ICOMAdminCatalog {
+  [id (27)] HRESULT GetCollectionByQuery2 ([in] BSTR bstrCollectionName,[in] VARIANT *pVarQueryStrings,[out, retval] IDispatch **ppCatalogCollection);
+  [id (28)] HRESULT GetApplicationInstanceIDFromProcessID ([in] long lProcessID,[out, retval] BSTR *pbstrApplicationInstanceID);
+  [id (29)] HRESULT ShutdownApplicationInstances ([in] VARIANT *pVarApplicationInstanceID);
+  [id (30)] HRESULT PauseApplicationInstances ([in] VARIANT *pVarApplicationInstanceID);
+  [id (31)] HRESULT ResumeApplicationInstances ([in] VARIANT *pVarApplicationInstanceID);
+  [id (32)] HRESULT RecycleApplicationInstances ([in] VARIANT *pVarApplicationInstanceID,[in] long lReasonCode);
+  [id (33)] HRESULT AreApplicationInstancesPaused ([in] VARIANT *pVarApplicationInstanceID,[out, retval] VARIANT_BOOL *pVarBoolPaused);
+  [id (34)] HRESULT DumpApplicationInstance ([in] BSTR bstrApplicationInstanceID,[in] BSTR bstrDirectory,[in] long lMaxImages,[out, retval] BSTR *pbstrDumpFile);
+  [propget, id (35)] HRESULT IsApplicationInstanceDumpSupported ([out, retval] VARIANT_BOOL *pVarBoolDumpSupported);
+  [id (36)] HRESULT CreateServiceForApplication ([in] BSTR bstrApplicationIDOrName,[in] BSTR bstrServiceName,[in] BSTR bstrStartType,[in] BSTR bstrErrorControl,[in] BSTR bstrDependencies,[in] BSTR bstrRunAs,[in] BSTR bstrPassword,[in] VARIANT_BOOL bDesktopOk);
+  [id (37)] HRESULT DeleteServiceForApplication ([in] BSTR bstrApplicationIDOrName);
+  [id (38)] HRESULT GetPartitionID ([in] BSTR bstrApplicationIDOrName,[out, retval] BSTR *pbstrPartitionID);
+  [id (39)] HRESULT GetPartitionName ([in] BSTR bstrApplicationIDOrName,[out, retval] BSTR *pbstrPartitionName);
+  [propput, id (40)] HRESULT CurrentPartition ([in] BSTR bstrPartitionIDOrName);
+  [propget, id (41)] HRESULT CurrentPartitionID ([out, retval] BSTR *pbstrPartitionID);
+  [propget, id (42)] HRESULT CurrentPartitionName ([out, retval] BSTR *pbstrPartitionName);
+  [propget, id (43)] HRESULT GlobalPartitionID ([out, retval] BSTR *pbstrGlobalPartitionID);
+  [id (44)] HRESULT FlushPartitionCache ();
+  [id (45)] HRESULT CopyApplications ([in] BSTR bstrSourcePartitionIDOrName,[in] VARIANT *pVarApplicationID,[in] BSTR bstrDestinationPartitionIDOrName);
+  [id (46)] HRESULT CopyComponents ([in] BSTR bstrSourceApplicationIDOrName,[in] VARIANT *pVarCLSIDOrProgID,[in] BSTR bstrDestinationApplicationIDOrName);
+  [id (47)] HRESULT MoveComponents ([in] BSTR bstrSourceApplicationIDOrName,[in] VARIANT *pVarCLSIDOrProgID,[in] BSTR bstrDestinationApplicationIDOrName);
+  [id (48)] HRESULT AliasComponent ([in] BSTR bstrSrcApplicationIDOrName,[in] BSTR bstrCLSIDOrProgID,[in] BSTR bstrDestApplicationIDOrName,[in] BSTR bstrNewProgId,[in] BSTR bstrNewClsid);
+  [id (49)] HRESULT IsSafeToDelete ([in] BSTR bstrDllName,[out, retval] COMAdminInUse *pCOMAdminInUse);
+  [id (50)] HRESULT ImportUnconfiguredComponents ([in] BSTR bstrApplicationIDOrName,[in] VARIANT *pVarCLSIDOrProgID,[in, optional] VARIANT *pVarComponentType);
+  [id (51)] HRESULT PromoteUnconfiguredComponents ([in] BSTR bstrApplicationIDOrName,[in] VARIANT *pVarCLSIDOrProgID,[in, optional] VARIANT *pVarComponentType);
+  [id (52)] HRESULT ImportComponents ([in] BSTR bstrApplicationIDOrName,[in] VARIANT *pVarCLSIDOrProgID,[in, optional] VARIANT *pVarComponentType);
+  [propget, id (53)] HRESULT Is64BitCatalogServer ([out, retval] VARIANT_BOOL *pbIs64Bit);
+  [id (54)] HRESULT ExportPartition ([in] BSTR bstrPartitionIDOrName,[in] BSTR bstrPartitionFileName,[in] long lOptions);
+  [id (55)] HRESULT InstallPartition ([in] BSTR bstrFileName,[in] BSTR bstrDestDirectory,[in] long lOptions,[in] BSTR bstrUserID,[in] BSTR bstrPassword,[in] BSTR bstrRSN);
+  [id (56)] HRESULT QueryApplicationFile2 ([in] BSTR bstrApplicationFile,[out, retval] IDispatch **ppFilesForImport);
+  [id (57)] HRESULT GetComponentVersionCount ([in] BSTR bstrCLSIDOrProgID,[out, retval] long *plVersionCount);
+}
+
+[object, uuid (6eb22871-8a19-11d0-81b6-00a0c9231c29), dual, pointer_default (unique)]
+interface ICatalogObject : IDispatch {
+  [propget, id (1)] HRESULT Value ([in] BSTR bstrPropName,[out, retval] VARIANT *pvarRetVal);
+  [propput, id (1)] HRESULT Value ([in] BSTR bstrPropName,[in] VARIANT val);
+  [propget, id (2)] HRESULT Key ([out, retval] VARIANT *pvarRetVal);
+  [propget, id (3)] HRESULT Name ([out, retval] VARIANT *pvarRetVal);
+  [id (4)] HRESULT IsPropertyReadOnly ([in] BSTR bstrPropName,[out, retval] VARIANT_BOOL *pbRetVal);
+  [propget, id (5)] HRESULT Valid ([out, retval] VARIANT_BOOL *pbRetVal);
+  [id (6)] HRESULT IsPropertyWriteOnly ([in] BSTR bstrPropName,[out, retval] VARIANT_BOOL *pbRetVal);
+}
+
+[object, uuid (6eb22872-8a19-11d0-81b6-00a0c9231c29), dual, pointer_default (unique)]
+interface ICatalogCollection : IDispatch {
+  [propget, restricted, id (DISPID_NEWENUM)] HRESULT _NewEnum ([out, retval] IUnknown **ppEnumVariant);
+  [propget, id (1)] HRESULT Item ([in] long lIndex,[out, retval] IDispatch **ppCatalogObject);
+  [propget] HRESULT Count ([out, retval] long *plObjectCount);
+  HRESULT Remove ([in] long lIndex);
+  HRESULT Add ([out, retval] IDispatch **ppCatalogObject);
+  [id (2)] HRESULT Populate ();
+  [id (3)] HRESULT SaveChanges ([out, retval] long *pcChanges);
+  [id (4)] HRESULT GetCollection ([in] BSTR bstrCollName,[in] VARIANT varObjectKey,[out, retval] IDispatch **ppCatalogCollection);
+  [propget, id (6)] HRESULT Name ([out, retval] VARIANT *pVarNamel);
+  [propget, id (7)] HRESULT AddEnabled ([out, retval] VARIANT_BOOL *pVarBool);
+  [propget, id (8)] HRESULT RemoveEnabled ([out, retval] VARIANT_BOOL *pVarBool);
+  [id (9)] HRESULT GetUtilInterface ([out, retval] IDispatch **ppIDispatch);
+  [propget, id (10)] HRESULT DataStoreMajorVersion ([out, retval] long *plMajorVersion);
+  [propget, id (11)] HRESULT DataStoreMinorVersion ([out, retval] long *plMinorVersionl);
+  [id (12)] HRESULT PopulateByKey ([in] SAFEARRAY (VARIANT) psaKeys);
+  [id (13)] HRESULT PopulateByQuery ([in] BSTR bstrQueryString,[in] long lQueryType);
+}
+
+[uuid (f618c513-dfb8-11d1-a2cf-00805fc79235), version (1.0)]
+library COMAdmin {
+  importlib ("stdole32.tlb");
+
+  [uuid (f618c514-dfb8-11d1-a2cf-00805fc79235)]
+  coclass COMAdminCatalog {
+    [default] interface ICOMAdminCatalog2;
+  }
+
+  [noncreatable, uuid (f618c515-dfb8-11d1-a2cf-00805fc79235)]
+  coclass COMAdminCatalogObject {
+    [default] interface ICatalogObject;
+  }
+  
+  [noncreatable, uuid (f618c516-dfb8-11d1-a2cf-00805fc79235)]
+  coclass COMAdminCatalogCollection {
+    [default] interface ICatalogCollection;
+  }
+
+  const wchar_t *COMAdminCollectionRoot = "Root";
+  const wchar_t *COMAdminCollectionApplications = "Applications";
+  const wchar_t *COMAdminCollectionComponents = "Components";
+  const wchar_t *COMAdminCollectionComputerList = "ComputerList";
+  const wchar_t *COMAdminCollectionApplicationCluster = "ApplicationCluster";
+  const wchar_t *COMAdminCollectionLocalComputer = "LocalComputer";
+  const wchar_t *COMAdminCollectionInprocServers = "InprocServers";
+  const wchar_t *COMAdminCollectionRelatedCollectionInfo = "RelatedCollectionInfo";
+  const wchar_t *COMAdminCollectionPropertyInfo = "PropertyInfo";
+  const wchar_t *COMAdminCollectionRoles = "Roles";
+  const wchar_t *COMAdminCollectionErrorInfo = "ErrorInfo";
+  const wchar_t *COMAdminCollectionInterfacesForComponent = "InterfacesForComponent";
+  const wchar_t *COMAdminCollectionRolesForComponent = "RolesForComponent";
+  const wchar_t *COMAdminCollectionMethodsForInterface = "MethodsForInterface";
+  const wchar_t *COMAdminCollectionRolesForInterface = "RolesForInterface";
+  const wchar_t *COMAdminCollectionRolesForMethod = "RolesForMethod";
+  const wchar_t *COMAdminCollectionUsersInRole = "UsersInRole";
+  const wchar_t *COMAdminCollectionDCOMProtocols = "DCOMProtocols";
+  const wchar_t *COMAdminCollectionPartitions = "Partitions";
+
+}
+
+cpp_quote("#endif")

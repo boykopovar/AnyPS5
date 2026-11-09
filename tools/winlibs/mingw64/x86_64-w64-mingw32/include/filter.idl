@@ -1,0 +1,107 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+import "unknwn.idl";
+import "objidl.idl";
+import "propidl.idl";
+
+interface IFilter;
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+cpp_quote("#ifndef _TAGFULLPROPSPEC_DEFINED_")
+cpp_quote("#define _TAGFULLPROPSPEC_DEFINED_")
+typedef struct tagFULLPROPSPEC {
+  GUID guidPropSet;
+  PROPSPEC psProperty;
+} FULLPROPSPEC;
+cpp_quote("#endif")
+
+cpp_quote("#ifndef _tagIFILTER_INIT_DEFINED")
+cpp_quote("#define _tagIFILTER_INIT_DEFINED")
+typedef enum tagIFILTER_INIT {
+  IFILTER_INIT_CANON_PARAGRAPHS = 0x1,
+  IFILTER_INIT_HARD_LINE_BREAKS = 0x2,
+  IFILTER_INIT_CANON_HYPHENS = 0x4,
+  IFILTER_INIT_CANON_SPACES = 0x8,
+  IFILTER_INIT_APPLY_INDEX_ATTRIBUTES = 0x10,
+  IFILTER_INIT_APPLY_OTHER_ATTRIBUTES = 0x20,
+  IFILTER_INIT_INDEXING_ONLY = 0x40,
+  IFILTER_INIT_SEARCH_LINKS = 0x80,
+  IFILTER_INIT_APPLY_CRAWL_ATTRIBUTES = 0x100,
+  IFILTER_INIT_FILTER_OWNED_VALUE_OK = 0x200,
+  IFILTER_INIT_FILTER_AGGRESSIVE_BREAK = 0x400,
+  IFILTER_INIT_DISABLE_EMBEDDED = 0x800,
+  IFILTER_INIT_EMIT_FORMATTING = 0x1000
+} IFILTER_INIT;
+cpp_quote("#define _IFILTER_INIT_DEFINED")
+cpp_quote("#endif")
+
+cpp_quote("#ifndef _tagIFILTER_FLAGS_DEFINED")
+cpp_quote("#define _tagIFILTER_FLAGS_DEFINED")
+typedef enum tagIFILTER_FLAGS {
+  IFILTER_FLAGS_OLE_PROPERTIES = 1
+} IFILTER_FLAGS;
+cpp_quote("#define _IFILTER_FLAGS_DEFINED")
+cpp_quote("#endif")
+
+cpp_quote("#ifndef _tagCHUNKSTATE_DEFINED")
+cpp_quote("#define _tagCHUNKSTATE_DEFINED")
+typedef enum tagCHUNKSTATE {
+  CHUNK_TEXT = 0x1,
+  CHUNK_VALUE = 0x2,
+  CHUNK_FILTER_OWNED_VALUE = 0x4
+} CHUNKSTATE;
+cpp_quote("#define _CHUNKSTATE_DEFINED")
+cpp_quote("#endif")
+
+cpp_quote("#ifndef _tagCHUNK_BREAKTYPE_DEFINED")
+cpp_quote("#define _tagCHUNK_BREAKTYPE_DEFINED")
+typedef enum tagCHUNK_BREAKTYPE {
+  CHUNK_NO_BREAK = 0,
+  CHUNK_EOW = 1,
+  CHUNK_EOS = 2,
+  CHUNK_EOP = 3,
+  CHUNK_EOC = 4
+} CHUNK_BREAKTYPE;
+cpp_quote("#define _CHUNK_BREAKTYPE_DEFINED")
+cpp_quote("#endif")
+
+cpp_quote("#ifndef _tagFILTERREGION_DEFINED")
+cpp_quote("#define _tagFILTERREGION_DEFINED")
+typedef struct tagFILTERREGION {
+  ULONG idChunk;
+  ULONG cwcStart;
+  ULONG cwcExtent;
+} FILTERREGION;
+cpp_quote("#define _FILTERREGION_DEFINED")
+cpp_quote("#endif")
+
+cpp_quote("#ifndef _tagSTAT_CHUNK_DEFINED")
+cpp_quote("#define _tagSTAT_CHUNK_DEFINED")
+typedef struct tagSTAT_CHUNK {
+  ULONG idChunk;
+  CHUNK_BREAKTYPE breakType;
+  CHUNKSTATE flags;
+  LCID locale;
+  FULLPROPSPEC attribute;
+  ULONG idChunkSource;
+  ULONG cwcStartSource;
+  ULONG cwcLenSource;
+} STAT_CHUNK;
+cpp_quote("#define _STAT_CHUNK_DEFINED")
+cpp_quote("#endif")
+
+[object, uuid (89bcb740-6119-101a-BCB7-00dd010655af), pointer_default (unique)]
+interface IFilter : IUnknown {
+  SCODE Init ([in] ULONG grfFlags,[in] ULONG cAttributes,[in, size_is (cAttributes), unique] FULLPROPSPEC const *aAttributes,[out] ULONG *pFlags);
+  SCODE GetChunk ([out] STAT_CHUNK *pStat);
+  SCODE GetText ([in, out] ULONG *pcwcBuffer,[out, size_is (*pcwcBuffer)] WCHAR *awcBuffer);
+  SCODE GetValue ([out] PROPVARIANT **ppPropValue);
+  [local] SCODE BindRegion ([in] FILTERREGION origPos,[in] REFIID riid,[out] void **ppunk);
+}
+
+cpp_quote("#endif /* WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP) */")

@@ -1,0 +1,125 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+
+import "oaidl.idl";
+import "fsrmenums.idl";
+import "fsrm.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+interface IFsrmAutoApplyQuota;
+interface IFsrmQuota;
+interface IFsrmQuotaBase;
+interface IFsrmQuotaObject;
+interface IFsrmQuotaManager;
+interface IFsrmQuotaTemplate;
+interface IFsrmQuotaTemplateImported;
+interface IFsrmQuotaTemplateManager;
+
+typedef long FSRM_QUOTA_THRESHOLD;
+
+const DISPID FSRM_DISPID_QUOTA_BASE = FSRM_DISPID_FEATURE_QUOTA | 0x100000;
+const DISPID FSRM_DISPID_QUOTA_OBJECT = FSRM_DISPID_QUOTA_BASE | 0x010000;
+const DISPID FSRM_DISPID_QUOTA = FSRM_DISPID_QUOTA_OBJECT | 0x001000;
+const DISPID FSRM_DISPID_AUTOAPPLYQUOTA = FSRM_DISPID_QUOTA_OBJECT | 0x002000;
+const DISPID FSRM_DISPID_QUOTA_TEMPLATE = FSRM_DISPID_QUOTA_BASE | 0x020000;
+const DISPID FSRM_DISPID_QUOTA_TEMPLATE_IMPORTED = FSRM_DISPID_QUOTA_TEMPLATE | 0x001000;
+const DISPID FSRM_DISPID_QUOTA_MANAGER = FSRM_DISPID_FEATURE_QUOTA | 0x200000;
+const DISPID FSRM_DISPID_QUOTA_TEMPLATE_MANAGER = FSRM_DISPID_FEATURE_QUOTA | 0x300000;
+const DISPID FSRM_DISPID_QUOTA_MANAGER_EX = FSRM_DISPID_FEATURE_QUOTA | 0x400000;
+
+const ULONG FsrmMaxNumberThresholds = 16;
+const ULONG FsrmMinThresholdValue = 1;
+const ULONG FsrmMaxThresholdValue = 250;
+const ULONG FsrmMinQuotaLimit = 1024;
+const ULONG FsrmMaxExcludeFolders = 32;
+
+[object, uuid (8bb68c7d-19d8-4ffb-809e-be4fc1734014), dual, pointer_default (unique)]
+interface IFsrmQuotaManager : IDispatch {
+  [propget, id (FSRM_DISPID_QUOTA_MANAGER | 0x81)] HRESULT ActionVariables ([out, retval] SAFEARRAY (VARIANT) *variables);
+  [propget, id (FSRM_DISPID_QUOTA_MANAGER | 0x82)] HRESULT ActionVariableDescriptions ([out, retval] SAFEARRAY (VARIANT) *descriptions);
+  [id (FSRM_DISPID_QUOTA_MANAGER | 0x1)] HRESULT CreateQuota ([in] BSTR path,[out, retval] IFsrmQuota **quota);
+  [id (FSRM_DISPID_QUOTA_MANAGER | 0x2)] HRESULT CreateAutoApplyQuota ([in] BSTR quotaTemplateName,[in] BSTR path,[out, retval] IFsrmAutoApplyQuota **quota);
+  [id (FSRM_DISPID_QUOTA_MANAGER | 0x3)] HRESULT GetQuota ([in] BSTR path,[out, retval] IFsrmQuota **quota);
+  [id (FSRM_DISPID_QUOTA_MANAGER | 0x4)] HRESULT GetAutoApplyQuota ([in] BSTR path,[out, retval] IFsrmAutoApplyQuota **quota);
+  [id (FSRM_DISPID_QUOTA_MANAGER | 0x5)] HRESULT GetRestrictiveQuota ([in] BSTR path,[out, retval] IFsrmQuota **quota);
+  [id (FSRM_DISPID_QUOTA_MANAGER | 0x6)] HRESULT EnumQuotas ([in, defaultvalue (L"")] BSTR path,[in, defaultvalue (FsrmEnumOptions_None)] FsrmEnumOptions options,[out, retval] IFsrmCommittableCollection **quotas);
+  [id (FSRM_DISPID_QUOTA_MANAGER | 0x7)] HRESULT EnumAutoApplyQuotas ([in, defaultvalue (L"")] BSTR path,[in, defaultvalue (FsrmEnumOptions_None)] FsrmEnumOptions options,[out, retval] IFsrmCommittableCollection **quotas);
+  [id (FSRM_DISPID_QUOTA_MANAGER | 0x8)] HRESULT EnumEffectiveQuotas ([in] BSTR path,[in, defaultvalue (FsrmEnumOptions_None)] FsrmEnumOptions options,[out, retval] IFsrmCommittableCollection **quotas);
+  [id (FSRM_DISPID_QUOTA_MANAGER | 0x9)] HRESULT Scan ([in] BSTR strPath);
+  [id (FSRM_DISPID_QUOTA_MANAGER | 0xa)] HRESULT CreateQuotaCollection ([out, retval] IFsrmCommittableCollection **collection);
+};
+
+[object, uuid (4173ac41-172d-4d52-963c-fdc7e415f717), dual, pointer_default (unique)]
+interface IFsrmQuotaTemplateManager : IDispatch {
+  [id (FSRM_DISPID_QUOTA_TEMPLATE_MANAGER | 0x1)] HRESULT CreateTemplate ([out, retval] IFsrmQuotaTemplate **quotaTemplate);
+  [id (FSRM_DISPID_QUOTA_TEMPLATE_MANAGER | 0x2)] HRESULT GetTemplate ([in, defaultvalue (L"")] BSTR name,[out, retval] IFsrmQuotaTemplate **quotaTemplate);
+  [id (FSRM_DISPID_QUOTA_TEMPLATE_MANAGER | 0x3)] HRESULT EnumTemplates ([in, defaultvalue (FsrmEnumOptions_None)] FsrmEnumOptions options,[out, retval] IFsrmCommittableCollection **quotaTemplates);
+  [id (FSRM_DISPID_QUOTA_TEMPLATE_MANAGER | 0x4)] HRESULT ExportTemplates ([in, defaultvalue (NULL)] VARIANT *quotaTemplateNamesArray,[out, retval] BSTR *serializedQuotaTemplates);
+  [id (FSRM_DISPID_QUOTA_TEMPLATE_MANAGER | 0x5)] HRESULT ImportTemplates ([in] BSTR serializedQuotaTemplates,[in, defaultvalue (NULL)] VARIANT *quotaTemplateNamesArray,[out, retval] IFsrmCommittableCollection **quotaTemplates);
+};
+
+[object, uuid (1568a795-3924-4118-b74b-68d8f0fa5daf), dual, pointer_default (unique)]
+interface IFsrmQuotaBase : IFsrmObject {
+  [propget, id (FSRM_DISPID_QUOTA_BASE | 0x81)] HRESULT QuotaLimit ([out, retval] VARIANT *quotaLimit);
+  [propput, id (FSRM_DISPID_QUOTA_BASE | 0x81)] HRESULT QuotaLimit ([in] VARIANT quotaLimit);
+  [propget, id (FSRM_DISPID_QUOTA_BASE | 0x82)] HRESULT QuotaFlags ([out, retval] long *quotaFlags);
+  [propput, id (FSRM_DISPID_QUOTA_BASE | 0x82)] HRESULT QuotaFlags ([in] long quotaFlags);
+  [propget, id (FSRM_DISPID_QUOTA_BASE | 0x83)] HRESULT Thresholds ([out, retval] SAFEARRAY (VARIANT) *thresholds);
+  [id (FSRM_DISPID_QUOTA_BASE | 0x1)] HRESULT AddThreshold ([in] FSRM_QUOTA_THRESHOLD threshold);
+  [id (FSRM_DISPID_QUOTA_BASE | 0x2)] HRESULT DeleteThreshold ([in] FSRM_QUOTA_THRESHOLD threshold);
+  [id (FSRM_DISPID_QUOTA_BASE | 0x3)] HRESULT ModifyThreshold ([in] FSRM_QUOTA_THRESHOLD threshold,[in] FSRM_QUOTA_THRESHOLD newThreshold);
+  [id (FSRM_DISPID_QUOTA_BASE | 0x4)] HRESULT CreateThresholdAction ([in] FSRM_QUOTA_THRESHOLD threshold,[in] FsrmActionType actionType,[out, retval] IFsrmAction **action);
+  [id (FSRM_DISPID_QUOTA_BASE | 0x5)] HRESULT EnumThresholdActions ([in] FSRM_QUOTA_THRESHOLD threshold,[out, retval] IFsrmCollection **actions);
+}
+
+[object, uuid (42dc3511-61d5-48ae-b6dc-59fc00c0a8d6), dual, pointer_default (unique)]
+interface IFsrmQuotaObject : IFsrmQuotaBase {
+  [propget, id (FSRM_DISPID_QUOTA_OBJECT | 0x81)] HRESULT Path ([out, retval] BSTR *path);
+  [propget, id (FSRM_DISPID_QUOTA_OBJECT | 0x82)] HRESULT UserSid ([out, retval] BSTR *userSid);
+  [propget, id (FSRM_DISPID_QUOTA_OBJECT | 0x83)] HRESULT UserAccount ([out, retval] BSTR *userAccount);
+  [propget, id (FSRM_DISPID_QUOTA_OBJECT | 0x84)] HRESULT SourceTemplateName ([out, retval] BSTR *quotaTemplateName);
+  [propget, id (FSRM_DISPID_QUOTA_OBJECT | 0x85)] HRESULT MatchesSourceTemplate ([out, retval] VARIANT_BOOL *matches);
+  [id (FSRM_DISPID_QUOTA_OBJECT | 0x1)] HRESULT ApplyTemplate ([in] BSTR quotaTemplateName);
+};
+
+[object, uuid (a2efab31-295e-46bb-b976-e86d58b52e8b), dual, pointer_default (unique)]
+interface IFsrmQuotaTemplate : IFsrmQuotaBase {
+  [propget, id (FSRM_DISPID_QUOTA_TEMPLATE | 0x81)] HRESULT Name ([out, retval] BSTR *name);
+  [propput, id (FSRM_DISPID_QUOTA_TEMPLATE | 0x81)] HRESULT Name ([in] BSTR name);
+  [id (FSRM_DISPID_QUOTA_TEMPLATE | 0x1)] HRESULT CopyTemplate ([in] BSTR quotaTemplateName);
+  [id (FSRM_DISPID_QUOTA_TEMPLATE | 0x2)] HRESULT CommitAndUpdateDerived ([in] FsrmCommitOptions commitOptions,[in] FsrmTemplateApplyOptions applyOptions,[out, retval] IFsrmDerivedObjectsResult **derivedObjectsResult);
+};
+
+[object, uuid (377f739d-9647-4b8e-97d2-5ffce6d759cd), dual, pointer_default (unique)]
+interface IFsrmQuota : IFsrmQuotaObject {
+  [propget, id (FSRM_DISPID_QUOTA | 0x81)] HRESULT QuotaUsed ([out, retval] VARIANT *used);
+  [propget, id (FSRM_DISPID_QUOTA | 0x82)] HRESULT QuotaPeakUsage ([out, retval] VARIANT *peakUsage);
+  [propget, id (FSRM_DISPID_QUOTA | 0x83)] HRESULT QuotaPeakUsageTime ([out, retval] DATE *peakUsageDateTime);
+  [id (FSRM_DISPID_QUOTA | 0x1)] HRESULT ResetPeakUsage ();
+  [id (FSRM_DISPID_QUOTA | 0x2)] HRESULT RefreshUsageProperties ();
+};
+
+[object, uuid (f82e5729-6aba-4740-bfc7-c7f58f75fb7b), dual, pointer_default (unique)]
+interface IFsrmAutoApplyQuota : IFsrmQuotaObject {
+  [propget, id (FSRM_DISPID_AUTOAPPLYQUOTA | 0x81)] HRESULT ExcludeFolders ([out, retval] SAFEARRAY (VARIANT) *folders);
+  [propput, id (FSRM_DISPID_AUTOAPPLYQUOTA | 0x81)] HRESULT ExcludeFolders ([in] SAFEARRAY (VARIANT) folders);
+  [id (FSRM_DISPID_AUTOAPPLYQUOTA | 0x1)] HRESULT CommitAndUpdateDerived ([in] FsrmCommitOptions commitOptions,[in] FsrmTemplateApplyOptions applyOptions,[out, retval] IFsrmDerivedObjectsResult **derivedObjectsResult);
+};
+
+[object, uuid (4846cb01-d430-494f-abb4-b1054999fb09), dual, pointer_default (unique)]
+interface IFsrmQuotaManagerEx : IFsrmQuotaManager {
+  [id (FSRM_DISPID_QUOTA_MANAGER_EX | 0x1)] HRESULT IsAffectedByQuota ([in] BSTR path,[in, defaultvalue (FsrmEnumOptions_None)] FsrmEnumOptions options,[out, retval] VARIANT_BOOL *affected);
+};
+
+[object, uuid (9a2bf113-a329-44cc-809a-5c00fce8da40), dual, pointer_default (unique)]
+interface IFsrmQuotaTemplateImported : IFsrmQuotaTemplate {
+  [propget, id (FSRM_DISPID_QUOTA_TEMPLATE_IMPORTED | 0x81)] HRESULT OverwriteOnCommit ([out, retval] VARIANT_BOOL *overwrite);
+  [propput, id (FSRM_DISPID_QUOTA_TEMPLATE_IMPORTED | 0x81)] HRESULT OverwriteOnCommit ([in] VARIANT_BOOL overwrite);
+};
+cpp_quote("#endif")

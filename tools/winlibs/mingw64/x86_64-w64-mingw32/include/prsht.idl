@@ -1,0 +1,17 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" *")
+cpp_quote(" * This is no standalone IDL-file to generate prsht.h header!!!")
+cpp_quote(" */")
+cpp_quote("")
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+import "wtypes.idl";
+
+typedef void *HPROPSHEETPAGE;
+typedef BOOL (*LPFNADDPROPSHEETPAGE) (HPROPSHEETPAGE, LPARAM);
+typedef BOOL (*LPFNADDPROPSHEETPAGES) (LPVOID, LPFNADDPROPSHEETPAGE, LPARAM);
+cpp_quote("#endif")

@@ -1,0 +1,69 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+cpp_quote("#include <winapifamily.h>")
+
+import "oaidl.idl";
+import "ocidl.idl";
+import "objidl.idl";
+import "propidl.idl";
+
+cpp_quote("")
+typedef [v1_enum] enum tagCONDITION_TYPE {
+  CT_AND_CONDITION,
+  CT_OR_CONDITION,
+  CT_NOT_CONDITION,
+  CT_LEAF_CONDITION
+} CONDITION_TYPE;
+
+cpp_quote("")
+typedef [v1_enum] enum tagCONDITION_OPERATION {
+  COP_IMPLICIT,
+  COP_EQUAL,
+  COP_NOTEQUAL,
+  COP_LESSTHAN,
+  COP_GREATERTHAN,
+  COP_LESSTHANOREQUAL,
+  COP_GREATERTHANOREQUAL,
+  COP_VALUE_STARTSWITH,
+  COP_VALUE_ENDSWITH,
+  COP_VALUE_CONTAINS,
+  COP_VALUE_NOTCONTAINS,
+  COP_DOSWILDCARDS,
+  COP_WORD_EQUAL,
+  COP_WORD_STARTSWITH,
+  COP_APPLICATION_SPECIFIC
+} CONDITION_OPERATION;
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+[object, uuid (4fdef69c-DBC9-454e-9910-B34F3C64B510), pointer_default (unique),]
+interface IRichChunk : IUnknown {
+  [local] HRESULT GetData ([out, unique] ULONG *pFirstPos,[out, unique] ULONG *pLength,[out, unique] LPWSTR *ppsz,[out, unique] PROPVARIANT *pValue);
+  [call_as (GetData)] HRESULT RemoteGetData ([out] ULONG *pFirstPos,[out] ULONG *pLength,[out] LPWSTR *ppsz,[out] PROPVARIANT *pValue);
+}
+
+cpp_quote("")
+[object, uuid (0fc988d4-C935-4b97-A973-46282ea175c8), pointer_default (unique),]
+interface ICondition : IPersistStream {
+  HRESULT GetConditionType ([out, retval] CONDITION_TYPE *pNodeType);
+  HRESULT GetSubConditions ([in] REFIID riid,[out, retval, iid_is (riid)] void **ppv);
+  [local] HRESULT GetComparisonInfo ([out, unique] LPWSTR *ppszPropertyName,[out, unique] CONDITION_OPERATION *pcop,[out, unique] PROPVARIANT *ppropvar);
+  [call_as (GetComparisonInfo)] HRESULT RemoteGetComparisonInfo ([out] LPWSTR *ppszPropertyName,[out] CONDITION_OPERATION *pcop,[out] PROPVARIANT *ppropvar);
+  HRESULT GetValueType ([out, retval] LPWSTR *ppszValueTypeName);
+  HRESULT GetValueNormalization ([out, retval] LPWSTR *ppszNormalization);
+  [local] HRESULT GetInputTerms ([out, unique] IRichChunk **ppPropertyTerm,[out, unique] IRichChunk **ppOperationTerm,[out, unique] IRichChunk **ppValueTerm);
+  [call_as (GetInputTerms)] HRESULT RemoteGetInputTerms ([out] IRichChunk **ppPropertyTerm,[out] IRichChunk **ppOperationTerm,[out] IRichChunk **ppValueTerm);
+  HRESULT Clone ([out, retval] ICondition **ppc);
+};
+
+cpp_quote("")
+[uuid (0db8851d-2e5b-47eb-9208-D28C325A01D7), object, pointer_default (unique),]
+interface ICondition2 : ICondition {
+  HRESULT GetLocale ([out] LPWSTR *ppszLocaleName);
+  [local] HRESULT GetLeafConditionInfo ([out] PROPERTYKEY *ppropkey,[out] CONDITION_OPERATION *pcop,[out] PROPVARIANT *ppropvar);
+  [call_as (GetLeafConditionInfo)] HRESULT RemoteGetLeafConditionInfo ([out] PROPERTYKEY *ppropkey,[out] CONDITION_OPERATION *pcop,[out] PROPVARIANT *ppropvar);
+}
+cpp_quote("#endif")

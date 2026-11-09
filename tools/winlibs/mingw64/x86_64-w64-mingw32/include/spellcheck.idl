@@ -1,0 +1,157 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+cpp_quote("#ifndef MIN_SPELLING_NTDDI")
+cpp_quote("#define MIN_SPELLING_NTDDI NTDDI_WIN8")
+cpp_quote("#endif")
+
+cpp_quote("#if NTDDI_VERSION >= MIN_SPELLING_NTDDI")
+
+import "oaidl.idl";
+import "ocidl.idl";
+
+cpp_quote("#include <winapifamily.h>")
+
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+
+typedef [v1_enum] enum WORDLIST_TYPE {
+  WORDLIST_TYPE_IGNORE = 0,
+  WORDLIST_TYPE_ADD = 1,
+  WORDLIST_TYPE_EXCLUDE = 2,
+  WORDLIST_TYPE_AUTOCORRECT = 3,
+} WORDLIST_TYPE;
+
+[
+  object,
+  uuid(b7c82d61-fbe8-4b47-9b27-6c0d2e0de0a3),
+  pointer_default(unique)
+]
+interface ISpellingError : IUnknown {
+
+  typedef [v1_enum] enum CORRECTIVE_ACTION {
+    CORRECTIVE_ACTION_NONE = 0,
+    CORRECTIVE_ACTION_GET_SUGGESTIONS = 1,
+    CORRECTIVE_ACTION_REPLACE = 2,
+    CORRECTIVE_ACTION_DELETE = 3,
+  } CORRECTIVE_ACTION;
+
+  [propget] HRESULT StartIndex([out, retval] ULONG *val);
+  [propget] HRESULT Length([out, retval] ULONG *val);
+  [propget] HRESULT CorrectiveAction([out, retval] CORRECTIVE_ACTION *val);
+  [propget] HRESULT Replacement([out, retval] LPWSTR *val);
+}
+
+[
+  object,
+  uuid(803e3bd4-2828-4410-8290-418d1d73c762),
+  pointer_default(unique)
+]
+interface IEnumSpellingError : IUnknown {
+  HRESULT Next([out, retval] ISpellingError **val);
+}
+
+[
+  object,
+  uuid(432e5f85-35cf-4606-a801-6f70277e1d7a),
+  pointer_default(unique)
+]
+interface IOptionDescription : IUnknown {
+  [propget] HRESULT Id([out, retval] LPWSTR *val);
+  [propget] HRESULT Heading([out, retval] LPWSTR *val);
+  [propget] HRESULT Description([out, retval] LPWSTR *val);
+  [propget] HRESULT Labels([out, retval] IEnumString **val);
+}
+
+interface ISpellChecker;
+
+[
+  object,
+  uuid(0b83a5b0-792f-4eab-9799-acf52c5ed08a),
+  pointer_default(unique)
+]
+interface ISpellCheckerChangedEventHandler : IUnknown {
+  HRESULT Invoke([in] ISpellChecker *sender);
+}
+
+[
+  object,
+  uuid(b6fd0b71-e2bc-4653-8d05-f197e412770b),
+  pointer_default(unique)
+]
+interface ISpellChecker : IUnknown {
+  [propget] HRESULT LanguageTag([out, retval] LPWSTR *val);
+  HRESULT Check([in] LPCWSTR text, [out, retval] IEnumSpellingError **val);
+  HRESULT Suggest([in] LPCWSTR word, [out, retval] IEnumString **val);
+  HRESULT Add([in] LPCWSTR word);
+  HRESULT Ignore([in] LPCWSTR word);
+  HRESULT AutoCorrect([in] LPCWSTR from, [in] LPCWSTR to);
+  HRESULT GetOptionValue([in] LPCWSTR option_id, [out, retval] BYTE *val);
+  [propget] HRESULT OptionIds([out, retval] IEnumString **val);
+  [propget] HRESULT Id([out, retval] LPWSTR *val);
+  [propget] HRESULT LocalizedName([out, retval] LPWSTR *val);
+  HRESULT add_SpellCheckerChanged([in] ISpellCheckerChangedEventHandler *handler, [out, retval] DWORD *event_cookie);
+  HRESULT remove_SpellCheckerChanged([in] DWORD event_cookie);
+  HRESULT GetOptionDescription([in] LPCWSTR optionId, [out, retval] IOptionDescription **val);
+  HRESULT ComprehensiveCheck([in] LPCWSTR text, [out, retval] IEnumSpellingError **val);
+}
+
+[
+  object,
+  uuid(e7ed1c71-87f7-4378-a840-c9200dacee47),
+  pointer_default(unique)
+]
+interface ISpellChecker2 : ISpellChecker {
+  HRESULT Remove([in] LPCWSTR word);
+}
+
+[
+  object,
+  uuid(8e018a9d-2415-4677-bf08-794ea61f94bb),
+  pointer_default(unique)
+]
+interface ISpellCheckerFactory : IUnknown {
+  [propget] HRESULT SupportedLanguages([out, retval] IEnumString **val);
+  HRESULT IsSupported([in] LPCWSTR languageTag, [out, retval] WINBOOL *val);
+  HRESULT CreateSpellChecker([in] LPCWSTR languageTag, [out, retval] ISpellChecker **val);
+}
+
+cpp_quote("#endif /* WINAPI_PARTITION_APP */")
+
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+[
+  object,
+  uuid(aa176b85-0e12-4844-8e1a-eef1da77f586),
+  pointer_default(unique)
+]
+interface IUserDictionariesRegistrar : IUnknown {
+  HRESULT RegisterUserDictionary([in] LPCWSTR dictionaryPath, [in] LPCWSTR languageTag);
+  HRESULT UnregisterUserDictionary([in] LPCWSTR dictionaryPath, [in] LPCWSTR languageTag);
+}
+
+cpp_quote("#endif /* WINAPI_PARTITION_DESKTOP */")
+
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+
+[
+  uuid(4a250e01-61ea-400b-a27d-bf3744bcc9f5),
+  version(1.0),
+]
+library MsSpellCheckLib {
+  importlib("stdole2.tlb");
+
+  [
+    uuid(7ab36653-1796-484b-bdfa-e74f1db7c1dc)
+  ]
+  coclass SpellCheckerFactory {
+    [default] interface ISpellCheckerFactory;
+    interface IUserDictionariesRegistrar;
+  };
+}
+
+cpp_quote("#endif /* WINAPI_PARTITION_APP */")
+
+cpp_quote("#endif /* MIN_SPELLING_NTDDI */")

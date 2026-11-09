@@ -1,0 +1,54 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+import "oaidl.idl";
+import "ocidl.idl";
+import "wsdxmldom.h";
+import "wsdtypes.h";
+
+cpp_quote("")
+interface IWSDAddress;
+interface IWSDXMLContext;
+interface IWSDDeviceHost;
+interface IWSDDeviceHostNotify;
+interface IWSDServiceMessaging;
+
+[object, restricted, uuid (b5bee9f9-eeda-41fe-96f7-f45e14990fb0), pointer_default (unique)]
+interface IWSDDeviceHostNotify : IUnknown {
+  HRESULT GetService ([in] LPCWSTR pszServiceId,[out] IUnknown **ppService);
+};
+
+[object, local, restricted, uuid (94974cf4-0cab-460d-a3f6-7a0ad623c0e6), pointer_default (unique)]
+interface IWSDServiceMessaging : IUnknown {
+  HRESULT SendResponse ([in] void *pBody,[in] WSD_OPERATION *pOperation,[in] IWSDMessageParameters *pMessageParameters);
+  HRESULT FaultRequest ([in] WSD_SOAP_HEADER *pRequestHeader,[in] IWSDMessageParameters *pMessageParameters,[in, optional] WSD_SOAP_FAULT *pFault);
+};
+
+[object, local, restricted, uuid (917fe891-3d13-4138-9809-934c8abeb12c), pointer_default (unique)]
+interface IWSDDeviceHost : IUnknown {
+  HRESULT Init ([in] LPCWSTR pszLocalId,[in, optional] IWSDXMLContext *pContext,[in, optional] IWSDAddress **ppHostAddresses,[in, optional] DWORD dwHostAddressCount);
+  HRESULT Start ([in] ULONGLONG ullInstanceId,[in] const WSD_URI_LIST *pScopeList,[in, optional] IWSDDeviceHostNotify *pNotificationSink);
+  HRESULT Stop ();
+  HRESULT Terminate ();
+  HRESULT RegisterPortType ([in] const WSD_PORT_TYPE *pPortType);
+  HRESULT SetMetadata ([in] const WSD_THIS_MODEL_METADATA *pThisModelMetadata,[in] const WSD_THIS_DEVICE_METADATA *pThisDeviceMetadata,[in, optional] const WSD_HOST_METADATA *pHostMetadata,[in, optional] const WSD_METADATA_SECTION_LIST *pCustomMetadata);
+  HRESULT RegisterService ([in] LPCWSTR pszServiceId,[in] IUnknown *pService);
+  HRESULT RetireService ([in] LPCWSTR pszServiceId);
+  HRESULT AddDynamicService ([in] LPCWSTR pszServiceId,[in, optional] LPCWSTR pszEndpointAddress,[in, optional] const WSD_PORT_TYPE *pPortType,[in, optional] const WSDXML_NAME *pPortName,[in, optional] const WSDXML_ELEMENT *pAny,[in, optional] IUnknown *pService);
+  HRESULT RemoveDynamicService ([in] LPCWSTR pszServiceId);
+  HRESULT SetServiceDiscoverable ([in] LPCWSTR pszServiceId,[in] BOOL fDiscoverable);
+  HRESULT SignalEvent ([in] LPCWSTR pszServiceId,[in] const void *pBody,[in] const WSD_OPERATION *pOperation);
+};
+
+cpp_quote("HRESULT WINAPI WSDCreateDeviceHost(LPCWSTR pszLocalId, IWSDXMLContext *pContext, IWSDDeviceHost **ppDeviceHost);")
+cpp_quote("#if WINVER >= 0x601")
+cpp_quote("HRESULT WINAPI WSDCreateDeviceHost2(LPCWSTR pszLocalId, IWSDXMLContext *pContext, WSD_CONFIG_PARAM *pConfigParams, DWORD dwConfigParamCount, IWSDDeviceHost **ppDeviceHost);")
+cpp_quote("#endif")
+cpp_quote("HRESULT WINAPI WSDCreateDeviceHostAdvanced(LPCWSTR pszLocalId, IWSDXMLContext *pContext, IWSDAddress** ppHostAddresses, DWORD dwHostAddressCount, IWSDDeviceHost **ppDeviceHost);")
+
+cpp_quote("#endif")

@@ -1,0 +1,722 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_VISTA && !defined(_WIN32_WINNT))")
+cpp_quote("#define _WIN32_WINNT 0x0600")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_WS03 && !defined(_WIN32_WINNT))")
+cpp_quote("#define _WIN32_WINNT 0x0502")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#if (NTDDI_VERSION >= NTDDI_WINXP && !defined(_WIN32_WINNT))")
+cpp_quote("#define _WIN32_WINNT 0x0501")
+cpp_quote("#endif")
+
+#ifndef DO_NO_IMPORTS
+cpp_quote("")
+
+import "unknwnbase.idl";
+import "wtypesbase.idl";
+#endif
+
+cpp_quote("")
+cpp_quote("#ifndef _OBJIDLBASE_")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+
+interface IStream;
+interface IEnumString;
+interface IMultiQI;
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+interface IAsyncManager;
+interface ICallFactory;
+interface ISynchronize;
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+typedef struct _COSERVERINFO {
+  DWORD dwReserved1;
+  LPWSTR pwszName;
+  COAUTHINFO *pAuthInfo;
+  DWORD dwReserved2;
+} COSERVERINFO;
+
+cpp_quote("")
+[local, object, uuid (00000003-0000-0000-C000-000000000046)]
+interface IMarshal : IUnknown {
+  typedef [unique] IMarshal *LPMARSHAL;
+  HRESULT GetUnmarshalClass ([in] REFIID riid,[in, unique] void *pv,[in] DWORD dwDestContext,[in, unique] void *pvDestContext,[in] DWORD mshlflags,[out] CLSID *pCid);
+  HRESULT GetMarshalSizeMax ([in] REFIID riid,[in, unique] void *pv,[in] DWORD dwDestContext,[in, unique] void *pvDestContext,[in] DWORD mshlflags,[out] DWORD *pSize);
+  HRESULT MarshalInterface ([in, unique] IStream *pStm,[in] REFIID riid,[in, unique] void *pv,[in] DWORD dwDestContext,[in, unique] void *pvDestContext,[in] DWORD mshlflags);
+  HRESULT UnmarshalInterface ([in, unique] IStream *pStm,[in] REFIID riid,[out] void **ppv);
+  HRESULT ReleaseMarshalData ([in, unique] IStream *pStm);
+  HRESULT DisconnectObject ([in] DWORD dwReserved);
+}
+
+cpp_quote("")
+[local, object, uuid (ecc8691b-c1db-4dc0-855e-65f6c551af49)]
+interface INoMarshal : IUnknown {
+}
+
+cpp_quote("")
+[local, object, uuid (94ea2b94-e9cc-49e0-c0ff-ee64ca8f5b90)]
+interface IAgileObject : IUnknown {
+}
+
+[local, object, uuid(c03f6a43-65a4-9818-987e-e0b810d2a6f2), pointer_default(unique)]
+interface IAgileReference : IUnknown
+{
+   HRESULT Resolve([in] REFIID riid, [out, retval, iid_is(riid)] void **ppv);
+}
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+[local, object, uuid (000001cf-0000-0000-C000-000000000046)]
+interface IMarshal2 : IMarshal {
+  typedef [unique] IMarshal2 *LPMARSHAL2;
+}
+
+cpp_quote("")
+[local, object, uuid (00000002-0000-0000-C000-000000000046)]
+interface IMalloc : IUnknown {
+  typedef [unique] IMalloc *LPMALLOC;
+cpp_quote("")
+  void *Alloc ([in] SIZE_T cb);
+  void *Realloc ([in] void *pv,[in] SIZE_T cb);
+  void Free ([in] void *pv);
+  SIZE_T GetSize ([in] void *pv);
+  int DidAlloc ([in] void *pv);
+  void HeapMinimize (void);
+}
+
+cpp_quote("")
+[local, object, uuid (00000018-0000-0000-C000-000000000046)]
+interface IStdMarshalInfo : IUnknown {
+  typedef [unique] IStdMarshalInfo *LPSTDMARSHALINFO;
+cpp_quote("")
+  HRESULT GetClassForHandler ([in] DWORD dwDestContext,[in, unique] void *pvDestContext,[out] CLSID *pClsid);
+}
+
+cpp_quote("")
+[object, local, uuid (00000019-0000-0000-C000-000000000046)]
+interface IExternalConnection : IUnknown {
+  typedef [unique] IExternalConnection *LPEXTERNALCONNECTION;
+cpp_quote("")
+  typedef enum tagEXTCONN {
+    EXTCONN_STRONG = 0x0001,
+    EXTCONN_WEAK = 0x0002,
+    EXTCONN_CALLABLE = 0x0004,
+  } EXTCONN;
+cpp_quote("")
+  DWORD AddConnection ([in] DWORD extconn,[in] DWORD reserved);
+  DWORD ReleaseConnection ([in] DWORD extconn,[in] DWORD reserved,[in] BOOL fLastReleaseCloses);
+}
+
+cpp_quote("")
+typedef [unique] IMultiQI *LPMULTIQI;
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+typedef struct tagMULTI_QI {
+  const IID *pIID;
+  IUnknown *pItf;
+  HRESULT hr;
+} MULTI_QI;
+
+cpp_quote("")
+[object, local, uuid (00000020-0000-0000-C000-000000000046),
+async_uuid (000e0020-0000-0000-C000-000000000046)]
+interface IMultiQI : IUnknown {
+  HRESULT QueryMultipleInterfaces ([in] ULONG cMQIs,[in, out] MULTI_QI *pMQIs);
+}
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+[object, local, uuid (00000021-0000-0000-C000-000000000046)]
+interface IInternalUnknown : IUnknown {
+  HRESULT QueryInternalInterface ([in] REFIID riid,[out] void **ppv);
+}
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+[object, uuid (00000100-0000-0000-C000-000000000046), pointer_default (unique)]
+interface IEnumUnknown : IUnknown {
+  typedef [unique] IEnumUnknown *LPENUMUNKNOWN;
+cpp_quote("")
+  [local] HRESULT Next ([in] ULONG celt,[out] IUnknown **rgelt,[out] ULONG *pceltFetched);
+  [call_as (Next)] HRESULT RemoteNext ([in] ULONG celt,[out, size_is (celt), length_is (*pceltFetched)] IUnknown **rgelt,[out] ULONG *pceltFetched);
+  HRESULT Skip ([in] ULONG celt);
+  HRESULT Reset ();
+  HRESULT Clone ([out] IEnumUnknown **ppenum);
+}
+
+cpp_quote("")
+[object, uuid (00000101-0000-0000-C000-000000000046), pointer_default (unique)]
+interface IEnumString : IUnknown {
+  typedef [unique] IEnumString *LPENUMSTRING;
+cpp_quote("")
+  [local] HRESULT Next ([in] ULONG celt, LPOLESTR *rgelt, ULONG *pceltFetched);
+  [call_as (Next)] HRESULT RemoteNext ([in] ULONG celt,[out, size_is (celt), length_is (*pceltFetched)]LPOLESTR *rgelt,[out] ULONG *pceltFetched);
+  HRESULT Skip ([in] ULONG celt);
+  HRESULT Reset ();
+  HRESULT Clone ([out] IEnumString **ppenum);
+}
+
+cpp_quote("")
+[object, uuid (0c733a30-2a1c-11ce-ade5-00aa0044773d), pointer_default (unique)]
+interface ISequentialStream : IUnknown {
+  [local] HRESULT Read (void *pv,[in] ULONG cb, ULONG *pcbRead);
+  [call_as (Read)] HRESULT RemoteRead ([out, size_is (cb), length_is (*pcbRead)]byte *pv,[in] ULONG cb,[out] ULONG *pcbRead);
+  [local] HRESULT Write (void const *pv,[in] ULONG cb, ULONG *pcbWritten);
+  [call_as (Write)] HRESULT RemoteWrite ([in, size_is (cb)] byte const *pv,[in] ULONG cb,[out] ULONG *pcbWritten);
+}
+
+cpp_quote("")
+[object, uuid (0000000c-0000-0000-C000-000000000046), pointer_default (unique)]
+interface IStream : ISequentialStream {
+  typedef [unique] IStream *LPSTREAM;
+  cpp_quote("")
+  typedef struct tagSTATSTG {
+    LPOLESTR pwcsName;
+    DWORD type;
+    ULARGE_INTEGER cbSize;
+    FILETIME mtime;
+    FILETIME ctime;
+    FILETIME atime;
+    DWORD grfMode;
+    DWORD grfLocksSupported;
+    CLSID clsid;
+    DWORD grfStateBits;
+    DWORD reserved;
+  } STATSTG;
+
+cpp_quote("")
+  typedef enum tagSTGTY {
+    STGTY_STORAGE = 1,
+    STGTY_STREAM = 2,
+    STGTY_LOCKBYTES = 3,
+    STGTY_PROPERTY = 4
+  } STGTY;
+
+cpp_quote("")
+  typedef enum tagSTREAM_SEEK {
+    STREAM_SEEK_SET = 0,
+    STREAM_SEEK_CUR = 1,
+    STREAM_SEEK_END = 2
+  } STREAM_SEEK;
+
+cpp_quote("")
+  typedef enum tagLOCKTYPE {
+    LOCK_WRITE = 1,
+    LOCK_EXCLUSIVE = 2,
+    LOCK_ONLYONCE = 4
+  } LOCKTYPE;
+cpp_quote("")
+  [local] HRESULT Seek ([in] LARGE_INTEGER dlibMove,[in] DWORD dwOrigin, ULARGE_INTEGER *plibNewPosition);
+  [call_as (Seek)] HRESULT RemoteSeek ([in] LARGE_INTEGER dlibMove,[in] DWORD dwOrigin,[out] ULARGE_INTEGER *plibNewPosition);
+  HRESULT SetSize ([in] ULARGE_INTEGER libNewSize);
+  [local] HRESULT CopyTo ([in, unique] IStream *pstm,[in] ULARGE_INTEGER cb, ULARGE_INTEGER *pcbRead, ULARGE_INTEGER *pcbWritten);
+  [call_as (CopyTo)] HRESULT RemoteCopyTo ([in, unique] IStream *pstm,[in] ULARGE_INTEGER cb,[out] ULARGE_INTEGER *pcbRead,[out] ULARGE_INTEGER *pcbWritten);
+  HRESULT Commit ([in] DWORD grfCommitFlags);
+  HRESULT Revert ();
+  HRESULT LockRegion ([in] ULARGE_INTEGER libOffset,[in] ULARGE_INTEGER cb,[in] DWORD dwLockType);
+  HRESULT UnlockRegion ([in] ULARGE_INTEGER libOffset,[in] ULARGE_INTEGER cb,[in] DWORD dwLockType);
+  HRESULT Stat ([out] STATSTG *pstatstg,[in] DWORD grfStatFlag);
+  HRESULT Clone ([out] IStream **ppstm);
+}
+
+cpp_quote("")
+[local, object, uuid (D5F56B60-593b-101a-B569-08002b2dbf7a)]
+interface IRpcChannelBuffer : IUnknown {
+  typedef unsigned long RPCOLEDATAREP;
+cpp_quote("")
+  typedef struct tagRPCOLEMESSAGE {
+    void *reserved1;
+    RPCOLEDATAREP dataRepresentation;
+    void *Buffer;
+    ULONG cbBuffer;
+    ULONG iMethod;
+    void *reserved2[5];
+    ULONG rpcFlags;
+  } RPCOLEMESSAGE;
+cpp_quote("")
+  typedef RPCOLEMESSAGE *PRPCOLEMESSAGE;
+cpp_quote("")
+  HRESULT GetBuffer ([in, out] RPCOLEMESSAGE *pMessage,[in] REFIID riid);
+  HRESULT SendReceive ([in, out] RPCOLEMESSAGE *pMessage,[out] ULONG *pStatus);
+  HRESULT FreeBuffer ([in, out] RPCOLEMESSAGE *pMessage);
+  HRESULT GetDestCtx ([out] DWORD *pdwDestContext,[out] void **ppvDestContext);
+  HRESULT IsConnected (void);
+}
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+[local, object, uuid (594f31d0-7f19-11d0-b194-00a0c90dc8bf)]
+interface IRpcChannelBuffer2 : IRpcChannelBuffer {
+  HRESULT GetProtocolVersion ([out] DWORD *pdwVersion);
+}
+
+cpp_quote("")
+[local, object, uuid (a5029fb6-3c34-11d1-9c99-00c04fb998aa), pointer_default (unique)]
+interface IAsyncRpcChannelBuffer : IRpcChannelBuffer2 {
+  HRESULT Send ([in, out] RPCOLEMESSAGE *pMsg,[in] ISynchronize *pSync,[out] ULONG *pulStatus);
+  HRESULT Receive ([in, out] RPCOLEMESSAGE *pMsg,[out] ULONG *pulStatus);
+  HRESULT GetDestCtxEx ([in] RPCOLEMESSAGE *pMsg,[out] DWORD *pdwDestContext,[out] void **ppvDestContext);
+};
+
+cpp_quote("")
+[local, object, uuid (25b15600-0115-11d0-BF0D-00aa00b8dfd2)]
+interface IRpcChannelBuffer3 : IRpcChannelBuffer2 {
+  HRESULT Send ([in, out] RPCOLEMESSAGE *pMsg,[out] ULONG *pulStatus);
+  HRESULT Receive ([in, out] RPCOLEMESSAGE *pMsg,[in] ULONG ulSize,[out] ULONG *pulStatus);
+  HRESULT Cancel ([in, out] RPCOLEMESSAGE *pMsg);
+  HRESULT GetCallContext ([in] RPCOLEMESSAGE *pMsg,[in] REFIID riid,[out] void **pInterface);
+  HRESULT GetDestCtxEx ([in] RPCOLEMESSAGE *pMsg,[out] DWORD *pdwDestContext,[out] void **ppvDestContext);
+  HRESULT GetState ([in] RPCOLEMESSAGE *pMsg,[out] DWORD *pState);
+  HRESULT RegisterAsync ([in, out] RPCOLEMESSAGE *pMsg,[in] IAsyncManager *pAsyncMgr);
+}
+
+cpp_quote("")
+[local, object, uuid (58a08519-24c8-4935-b482-3fd823333a4f)]
+interface IRpcSyntaxNegotiate : IUnknown {
+  HRESULT NegotiateSyntax ([in, out] RPCOLEMESSAGE *pMsg);
+}
+
+cpp_quote("")
+[local, object, uuid (D5F56A34-593b-101a-B569-08002b2dbf7a)]
+interface IRpcProxyBuffer : IUnknown {
+  HRESULT Connect ([in, unique] IRpcChannelBuffer *pRpcChannelBuffer);
+  void Disconnect (void);
+}
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+[local, object, uuid (D5F56AFC-593b-101a-B569-08002b2dbf7a)]
+interface IRpcStubBuffer : IUnknown {
+  HRESULT Connect ([in] IUnknown *pUnkServer);
+  void Disconnect ();
+  HRESULT Invoke ([in, out] RPCOLEMESSAGE *_prpcmsg,[in] IRpcChannelBuffer *_pRpcChannelBuffer);
+  IRpcStubBuffer *IsIIDSupported ([in] REFIID riid);
+  ULONG CountRefs (void);
+  HRESULT DebugServerQueryInterface ([out] void **ppv);
+  void DebugServerRelease ([in] void *pv);
+}
+
+cpp_quote("")
+[local, object, uuid (D5F569D0-593b-101a-B569-08002b2dbf7a)]
+interface IPSFactoryBuffer : IUnknown {
+  HRESULT CreateProxy ([in] IUnknown *pUnkOuter,[in] REFIID riid,[out] IRpcProxyBuffer **ppProxy,[out] void **ppv);
+  HRESULT CreateStub ([in] REFIID riid,[in, unique] IUnknown *pUnkServer,[out] IRpcStubBuffer **ppStub);
+}
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+cpp_quote("#if  (_WIN32_WINNT >= 0x0400 ) || defined(_WIN32_DCOM)")
+typedef struct SChannelHookCallInfo {
+  IID iid;
+  DWORD cbSize;
+  GUID uCausality;
+  DWORD dwServerPid;
+  DWORD iMethod;
+  void *pObject;
+} SChannelHookCallInfo;
+
+cpp_quote("")
+[local, object, uuid (1008c4a0-7613-11cf-9af1-0020af6e72f4)]
+interface IChannelHook : IUnknown {
+  void ClientGetSize ([in] REFGUID uExtent,[in] REFIID riid,[out] ULONG *pDataSize);
+  void ClientFillBuffer ([in] REFGUID uExtent,[in] REFIID riid,[in, out] ULONG *pDataSize,[in] void *pDataBuffer);
+  void ClientNotify ([in] REFGUID uExtent,[in] REFIID riid,[in] ULONG cbDataSize,[in] void *pDataBuffer,[in] DWORD lDataRep,[in] HRESULT hrFault);
+  void ServerNotify ([in] REFGUID uExtent,[in] REFIID riid,[in] ULONG cbDataSize,[in] void *pDataBuffer,[in] DWORD lDataRep);
+  void ServerGetSize ([in] REFGUID uExtent,[in] REFIID riid,[in] HRESULT hrFault,[out] ULONG *pDataSize);
+  void ServerFillBuffer ([in] REFGUID uExtent,[in] REFIID riid,[in, out] ULONG *pDataSize,[in] void *pDataBuffer,[in] HRESULT hrFault);
+};
+cpp_quote("#endif")
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if  (_WIN32_WINNT >= 0x0400 ) || defined(_WIN32_DCOM)")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+[local, object, uuid (0000013d-0000-0000-C000-000000000046)]
+interface IClientSecurity : IUnknown {
+  typedef struct tagSOLE_AUTHENTICATION_SERVICE {
+    DWORD dwAuthnSvc;
+    DWORD dwAuthzSvc;
+    OLECHAR *pPrincipalName;
+    HRESULT hr;
+  } SOLE_AUTHENTICATION_SERVICE;
+cpp_quote("")
+  typedef SOLE_AUTHENTICATION_SERVICE *PSOLE_AUTHENTICATION_SERVICE;
+cpp_quote("")
+  typedef enum tagEOLE_AUTHENTICATION_CAPABILITIES {
+    EOAC_NONE = 0x0,
+    EOAC_MUTUAL_AUTH = 0x1,
+    EOAC_STATIC_CLOAKING = 0x20,
+    EOAC_DYNAMIC_CLOAKING = 0x40,
+    EOAC_ANY_AUTHORITY = 0x80,
+    EOAC_MAKE_FULLSIC = 0x100,
+    EOAC_DEFAULT = 0x800,
+    EOAC_SECURE_REFS = 0x2,
+    EOAC_ACCESS_CONTROL = 0x4,
+    EOAC_APPID = 0x8,
+    EOAC_DYNAMIC = 0x10,
+    EOAC_REQUIRE_FULLSIC = 0x200,
+    EOAC_AUTO_IMPERSONATE = 0x400,
+    EOAC_NO_CUSTOM_MARSHAL = 0x2000,
+    EOAC_DISABLE_AAA = 0x1000
+  } EOLE_AUTHENTICATION_CAPABILITIES;
+cpp_quote("")
+  const OLECHAR *COLE_DEFAULT_PRINCIPAL = (OLECHAR *) ((INT_PTR) -1);
+  const void *COLE_DEFAULT_AUTHINFO = (void *) ((INT_PTR) -1);
+cpp_quote("")
+  typedef struct tagSOLE_AUTHENTICATION_INFO {
+    DWORD dwAuthnSvc;
+    DWORD dwAuthzSvc;
+    void *pAuthInfo;
+  } SOLE_AUTHENTICATION_INFO,*PSOLE_AUTHENTICATION_INFO;
+cpp_quote("")
+  typedef struct tagSOLE_AUTHENTICATION_LIST {
+    DWORD cAuthInfo;
+    SOLE_AUTHENTICATION_INFO *aAuthInfo;
+  } SOLE_AUTHENTICATION_LIST,*PSOLE_AUTHENTICATION_LIST;
+cpp_quote("")
+  HRESULT QueryBlanket ([in] IUnknown *pProxy,[out] DWORD *pAuthnSvc,[out] DWORD *pAuthzSvc,[out]OLECHAR **pServerPrincName,[out] DWORD *pAuthnLevel,[out] DWORD *pImpLevel,[out] void **pAuthInfo,[out] DWORD *pCapabilites);
+  HRESULT SetBlanket ([in] IUnknown *pProxy,[in] DWORD dwAuthnSvc,[in] DWORD dwAuthzSvc,[in]OLECHAR *pServerPrincName,[in] DWORD dwAuthnLevel,[in] DWORD dwImpLevel,[in] void *pAuthInfo,[in] DWORD dwCapabilities);
+  HRESULT CopyProxy ([in] IUnknown *pProxy,[out] IUnknown **ppCopy);
+}
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+[local, object, uuid (0000013e-0000-0000-C000-000000000046)]
+interface IServerSecurity : IUnknown {
+  HRESULT QueryBlanket ([out] DWORD *pAuthnSvc,[out] DWORD *pAuthzSvc,[out]OLECHAR **pServerPrincName,[out] DWORD *pAuthnLevel,[out] DWORD *pImpLevel,[out] void **pPrivs,[in, out] DWORD *pCapabilities);
+  HRESULT ImpersonateClient ();
+  HRESULT RevertToSelf ();
+  BOOL IsImpersonating ();
+}
+
+cpp_quote("")
+typedef enum tagRPCOPT_PROPERTIES {
+  COMBND_RPCTIMEOUT = 0x01,
+  COMBND_SERVER_LOCALITY = 0x02,
+  COMBND_RESERVED1 = 0x04
+} RPCOPT_PROPERTIES;
+
+cpp_quote("")
+typedef enum tagRPCOPT_SERVER_LOCALITY_VALUES {
+  SERVER_LOCALITY_PROCESS_LOCAL=0,
+  SERVER_LOCALITY_MACHINE_LOCAL=1,
+  SERVER_LOCALITY_REMOTE=2
+} RPCOPT_SERVER_LOCALITY_VALUES;
+
+cpp_quote("")
+[object, local, uuid (00000144-0000-0000-C000-000000000046)]
+interface IRpcOptions : IUnknown {
+  HRESULT Set ([in] IUnknown *pPrx,[in] RPCOPT_PROPERTIES dwProperty,[in] ULONG_PTR dwValue);
+  HRESULT Query ([in] IUnknown *pPrx,[in] RPCOPT_PROPERTIES dwProperty,[out] ULONG_PTR *pdwValue);
+}
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+typedef enum tagGLOBALOPT_PROPERTIES {
+  COMGLB_EXCEPTION_HANDLING = 1,
+  COMGLB_APPID = 2,
+  COMGLB_RPC_THREADPOOL_SETTING = 3,
+  COMGLB_RO_SETTINGS = 4,
+  COMGLB_UNMARSHALING_POLICY = 5,
+} GLOBALOPT_PROPERTIES;
+
+cpp_quote("")
+typedef enum tagGLOBALOPT_EH_VALUES {
+  COMGLB_EXCEPTION_HANDLE=0,
+  COMGLB_EXCEPTION_DONOT_HANDLE_FATAL=1,
+  COMGLB_EXCEPTION_DONOT_HANDLE=COMGLB_EXCEPTION_DONOT_HANDLE_FATAL,
+  COMGLB_EXCEPTION_DONOT_HANDLE_ANY=2
+} GLOBALOPT_EH_VALUES;
+
+cpp_quote("")
+typedef enum tagGLOBALOPT_RPCTP_VALUES {
+  COMGLB_RPC_THREADPOOL_SETTING_DEFAULT_POOL = 0,
+  COMGLB_RPC_THREADPOOL_SETTING_PRIVATE_POOL = 1,
+} GLOBALOPT_RPCTP_VALUES;
+
+cpp_quote("")
+typedef enum tagGLOBALOPT_RO_FLAGS {
+  COMGLB_STA_MODALLOOP_REMOVE_TOUCH_MESSAGES = 0x1,
+  COMGLB_STA_MODALLOOP_SHARED_QUEUE_REMOVE_INPUT_MESSAGES = 0x2,
+  COMGLB_STA_MODALLOOP_SHARED_QUEUE_DONOT_REMOVE_INPUT_MESSAGES = 0x4,
+  COMGLB_FAST_RUNDOWN = 0x8,
+  COMGLB_RESERVED1 = 0x10,
+  COMGLB_RESERVED2 = 0x20,
+  COMGLB_RESERVED3 = 0x40,
+  COMGLB_STA_MODALLOOP_SHARED_QUEUE_REORDER_POINTER_MESSAGES = 0x80
+} GLOBALOPT_RO_FLAGS;
+
+cpp_quote("")
+typedef enum tagGLOBALOPT_UNMARSHALING_POLICY_VALUES {
+  COMGLB_UNMARSHALING_POLICY_NORMAL = 0,
+  COMGLB_UNMARSHALING_POLICY_STRONG = 1,
+  COMGLB_UNMARSHALING_POLICY_HYBRID = 2
+} GLOBALOPT_UNMARSHALING_POLICY_VALUES;
+
+cpp_quote("")
+[object, local, pointer_default (unique), uuid (0000015b-0000-0000-C000-000000000046)]
+interface IGlobalOptions : IUnknown {
+  HRESULT Set ([in] GLOBALOPT_PROPERTIES dwProperty,[in] ULONG_PTR dwValue);
+  HRESULT Query ([in] GLOBALOPT_PROPERTIES dwProperty,[out] ULONG_PTR *pdwValue);
+}
+cpp_quote("#endif")
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+[uuid (00000022-0000-0000-C000-000000000046), version (1.0), pointer_default (unique), object]
+interface ISurrogate : IUnknown {
+  typedef [unique] ISurrogate *LPSURROGATE;
+cpp_quote("")
+  HRESULT LoadDllServer ([in] REFCLSID Clsid);
+  HRESULT FreeSurrogate ();
+}
+
+cpp_quote("")
+[local, object, uuid (00000146-0000-0000-C000-000000000046)]
+interface IGlobalInterfaceTable : IUnknown {
+  typedef [unique] IGlobalInterfaceTable *LPGLOBALINTERFACETABLE;
+cpp_quote("")
+  HRESULT RegisterInterfaceInGlobal ([in] IUnknown *pUnk,[in] REFIID riid,[out] DWORD *pdwCookie);
+  HRESULT RevokeInterfaceFromGlobal ([in] DWORD dwCookie);
+  HRESULT GetInterfaceFromGlobal ([in] DWORD dwCookie,[in] REFIID riid,[out, iid_is (riid)] void **ppv);
+};
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+[object, uuid (00000030-0000-0000-C000-000000000046)]
+interface ISynchronize : IUnknown {
+  HRESULT Wait ([in] DWORD dwFlags,[in] DWORD dwMilliseconds);
+  HRESULT Signal ();
+  HRESULT Reset ();
+}
+
+cpp_quote("")
+[local, object, uuid (00000031-0000-0000-C000-000000000046)]
+interface ISynchronizeHandle : IUnknown {
+  HRESULT GetHandle ([out] HANDLE *ph);
+}
+
+cpp_quote("")
+[local, object, uuid (00000032-0000-0000-C000-000000000046)]
+interface ISynchronizeEvent : ISynchronizeHandle {
+  HRESULT SetEventHandle ([in] HANDLE *ph);
+}
+
+cpp_quote("")
+[local, object, uuid (00000033-0000-0000-C000-000000000046)]
+interface ISynchronizeContainer : IUnknown {
+  HRESULT AddSynchronize ([in] ISynchronize *pSync);
+  HRESULT WaitMultiple ([in] DWORD dwFlags,[in] DWORD dwTimeOut,[out] ISynchronize **ppSync);
+}
+
+cpp_quote("")
+[local, object, uuid (00000025-0000-0000-C000-000000000046)]
+interface ISynchronizeMutex : ISynchronize {
+  HRESULT ReleaseMutex ();
+}
+
+cpp_quote("")
+[local, object, uuid (00000029-0000-0000-C000-000000000046)]
+interface ICancelMethodCalls : IUnknown {
+  typedef [unique] ICancelMethodCalls *LPCANCELMETHODCALLS;
+cpp_quote("")
+  HRESULT Cancel ([in] ULONG ulSeconds);
+  HRESULT TestCancel (void);
+}
+
+cpp_quote("")
+[local, object, uuid (0000002a-0000-0000-C000-000000000046)]
+interface IAsyncManager : IUnknown {
+  typedef enum tagDCOM_CALL_STATE {
+    DCOM_NONE = 0x0,
+    DCOM_CALL_COMPLETE = 0x1,
+    DCOM_CALL_CANCELED = 0x2,
+  } DCOM_CALL_STATE;
+cpp_quote("")
+  HRESULT CompleteCall ([in] HRESULT Result);
+  HRESULT GetCallContext ([in] REFIID riid,[out] void **pInterface);
+  HRESULT GetState ([out] ULONG *pulStateFlags);
+}
+
+cpp_quote("")
+[local, object, uuid (1c733a30-2a1c-11ce-ade5-00aa0044773d), pointer_default (unique)]
+interface ICallFactory : IUnknown {
+  HRESULT CreateCall ([in] REFIID riid,[in] IUnknown *pCtrlUnk,[in] REFIID riid2,[out, iid_is (riid2)] IUnknown **ppv);
+}
+
+cpp_quote("")
+[uuid (00000149-0000-0000-C000-000000000046), version (0.0), pointer_default (unique), local, object]
+interface IRpcHelper : IUnknown {
+  HRESULT GetDCOMProtocolVersion ([out] DWORD *pComVersion);
+  HRESULT GetIIDFromOBJREF ([in] void *pObjRef,[out] IID **piid);
+}
+
+cpp_quote("")
+[local, object, uuid (eb0cb9e8-7996-11d2-872e-0000f8080859),]
+interface IReleaseMarshalBuffers : IUnknown {
+  HRESULT ReleaseMarshalBuffer ([in, out] RPCOLEMESSAGE *pMsg,[in] DWORD dwFlags,[in, unique] IUnknown *pChnl);
+}
+
+cpp_quote("")
+[local, object, uuid (0000002b-0000-0000-C000-000000000046)]
+interface IWaitMultiple : IUnknown {
+  HRESULT WaitMultiple ([in] DWORD timeout,[out] ISynchronize **pSync);
+  HRESULT AddSynchronize ([in] ISynchronize *pSync);
+}
+
+cpp_quote("")
+[local, object, uuid (00000147-0000-0000-C000-000000000046)]
+interface IAddrTrackingControl : IUnknown {
+  typedef [unique] IAddrTrackingControl *LPADDRTRACKINGCONTROL;
+  HRESULT EnableCOMDynamicAddrTracking ();
+  HRESULT DisableCOMDynamicAddrTracking ();
+};
+
+cpp_quote("")
+[local, object, uuid (00000148-0000-0000-C000-000000000046)]
+interface IAddrExclusionControl : IUnknown {
+  typedef [unique] IAddrExclusionControl *LPADDREXCLUSIONCONTROL;
+  HRESULT GetCurrentAddrExclusionList ([in]REFIID riid,[out, iid_is (riid)]void **ppEnumerator);
+  HRESULT UpdateAddrExclusionList ([in]IUnknown *pEnumerator);
+};
+
+#define NEW_PIPE_INTERFACE(iid, async_iid, name, type) [object, uuid (iid), pointer_default (unique)] interface IPipe##name : IUnknown { HRESULT Pull ([out, size_is (cRequest), length_is (*pcReturned)] type *buf,[in] ULONG cRequest,[out] ULONG *pcReturned); HRESULT Push ([in, size_is (cSent)] type *buf,[in] ULONG cSent); }
+
+cpp_quote("")
+NEW_PIPE_INTERFACE (DB2F3ACA-2f86-11d1-8e04-00c04fb9989a, DB2F3ACB-2f86-11d1-8e04-00c04fb9989a, Byte, BYTE)
+cpp_quote("")
+NEW_PIPE_INTERFACE (DB2F3ACC-2f86-11d1-8e04-00c04fb9989a, DB2F3ACD-2f86-11d1-8e04-00c04fb9989a, Long, LONG)
+cpp_quote("")
+NEW_PIPE_INTERFACE (DB2F3ACE-2f86-11d1-8e04-00c04fb9989a, DB2F3ACF-2f86-11d1-8e04-00c04fb9989a, Double, DOUBLE)
+
+cpp_quote("")
+cpp_quote("#if defined USE_COM_CONTEXT_DEF || defined BUILDTYPE_COMSVCS || defined _COMBASEAPI_ || defined _OLE32_")
+
+cpp_quote("")
+typedef DWORD CPFLAGS;
+cpp_quote("")
+typedef struct tagContextProperty {
+  GUID policyId;
+  CPFLAGS flags;
+  [unique] IUnknown *pUnk;
+} ContextProperty;
+
+cpp_quote("")
+[local, object, uuid (000001c1-0000-0000-C000-000000000046), pointer_default (unique)]
+interface IEnumContextProps : IUnknown {
+  typedef [unique] IEnumContextProps *LPENUMCONTEXTPROPS;
+cpp_quote("")
+  HRESULT Next ([in] ULONG celt,[out, size_is (celt), length_is (*pceltFetched)]ContextProperty *pContextProperties,[out] ULONG *pceltFetched);
+  HRESULT Skip ([in] ULONG celt);
+  HRESULT Reset ();
+  HRESULT Clone ([out] IEnumContextProps **ppEnumContextProps);
+  HRESULT Count ([out] ULONG *pcelt);
+}
+
+cpp_quote("")
+[local, object, uuid (000001c0-0000-0000-C000-000000000046), pointer_default (unique)]
+interface IContext : IUnknown {
+  HRESULT SetProperty ([in] REFGUID rpolicyId,[in] CPFLAGS flags,[in] IUnknown *pUnk);
+  HRESULT RemoveProperty ([in] REFGUID rPolicyId);
+  HRESULT GetProperty ([in] REFGUID rGuid,[out] CPFLAGS *pFlags,[out] IUnknown **ppUnk);
+  HRESULT EnumContextProps ([out] IEnumContextProps **ppEnumContextProps);
+}
+cpp_quote("#endif")
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+typedef enum _APTTYPEQUALIFIER {
+  APTTYPEQUALIFIER_NONE = 0,
+  APTTYPEQUALIFIER_IMPLICIT_MTA = 1,
+  APTTYPEQUALIFIER_NA_ON_MTA = 2,
+  APTTYPEQUALIFIER_NA_ON_STA = 3,
+  APTTYPEQUALIFIER_NA_ON_IMPLICIT_MTA = 4,
+  APTTYPEQUALIFIER_NA_ON_MAINSTA = 5,
+  APTTYPEQUALIFIER_APPLICATION_STA = 6,
+} APTTYPEQUALIFIER;
+
+cpp_quote("")
+typedef enum _APTTYPE {
+  APTTYPE_CURRENT = -1,
+  APTTYPE_STA = 0,
+  APTTYPE_MTA = 1,
+  APTTYPE_NA = 2,
+  APTTYPE_MAINSTA = 3
+} APTTYPE;
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+typedef enum _THDTYPE {
+  THDTYPE_BLOCKMESSAGES = 0,
+  THDTYPE_PROCESSMESSAGES = 1
+} THDTYPE;
+
+cpp_quote("")
+typedef DWORD APARTMENTID;
+
+cpp_quote("")
+[local, object, uuid (000001ce-0000-0000-C000-000000000046), pointer_default (unique)]
+interface IComThreadingInfo : IUnknown {
+  HRESULT GetCurrentApartmentType ([out] APTTYPE *pAptType);
+  HRESULT GetCurrentThreadType ([out] THDTYPE *pThreadType);
+  HRESULT GetCurrentLogicalThreadId ([out] GUID *pguidLogicalThreadId);
+  HRESULT SetCurrentLogicalThreadId ([in] REFGUID rguid);
+};
+
+cpp_quote("")
+[object, pointer_default (unique), uuid (72380d55-8d2b-43a3-8513-2b6ef31434e9)]
+interface IProcessInitControl : IUnknown {
+  HRESULT ResetInitializerTimeout ([in] DWORD dwSecondsRemaining);
+};
+
+cpp_quote("")
+[object, local, pointer_default (unique), uuid (00000040-0000-0000-C000-000000000046)]
+interface IFastRundown : IUnknown {
+};
+
+cpp_quote("")
+typedef enum CO_MARSHALING_CONTEXT_ATTRIBUTES {
+  CO_MARSHALING_SOURCE_IS_APP_CONTAINER = 0
+} CO_MARSHALING_CONTEXT_ATTRIBUTES;
+
+cpp_quote("")
+[local, object, uuid (D8F2F5E6-6102-4863-9f26-389a4676efde), pointer_default (unique)]
+interface IMarshalingStream : IStream {
+  HRESULT GetMarshalingContextAttribute ([in] CO_MARSHALING_CONTEXT_ATTRIBUTES attribute,[out] ULONG_PTR *pAttributeValue);
+};
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+cpp_quote("EXTERN_C const GUID  IID_ICallbackWithNoReentrancyToApplicationSTA;")
+cpp_quote("#endif")
+
+cpp_quote("#define _OBJIDLBASE_")
+cpp_quote("#endif")

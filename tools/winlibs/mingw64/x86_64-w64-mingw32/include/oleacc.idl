@@ -1,0 +1,621 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+cpp_quote("#include <_mingw_unicode.h>")
+
+import "oaidl.idl";
+
+cpp_quote("#ifndef __IAccessibleHandler_FWD_DEFINED__")
+cpp_quote("#define __IAccessibleHandler_FWD_DEFINED__")
+cpp_quote("typedef struct IAccessibleHandler IAccessibleHandler;")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifndef __IAccIdentity_FWD_DEFINED__")
+cpp_quote("#define __IAccIdentity_FWD_DEFINED__")
+cpp_quote("typedef struct IAccIdentity IAccIdentity;")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifndef __IAccPropServer_FWD_DEFINED__")
+cpp_quote("#define __IAccPropServer_FWD_DEFINED__")
+cpp_quote("typedef struct IAccPropServer IAccPropServer;")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifndef __IAccPropServices_FWD_DEFINED__")
+cpp_quote("#define __IAccPropServices_FWD_DEFINED__")
+cpp_quote("typedef struct IAccPropServices IAccPropServices;")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifndef __IAccessible_FWD_DEFINED__")
+cpp_quote("#define __IAccessible_FWD_DEFINED__")
+cpp_quote("typedef struct IAccessible IAccessible;")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifndef __IAccessibleHandler_FWD_DEFINED__")
+cpp_quote("#define __IAccessibleHandler_FWD_DEFINED__")
+cpp_quote("typedef struct IAccessibleHandler IAccessibleHandler;")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifndef __IAccIdentity_FWD_DEFINED__")
+cpp_quote("#define __IAccIdentity_FWD_DEFINED__")
+cpp_quote("typedef struct IAccIdentity IAccIdentity;")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifndef __IAccPropServer_FWD_DEFINED__")
+cpp_quote("#define __IAccPropServer_FWD_DEFINED__")
+cpp_quote("typedef struct IAccPropServer IAccPropServer;")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifndef __IAccPropServices_FWD_DEFINED__")
+cpp_quote("#define __IAccPropServices_FWD_DEFINED__")
+cpp_quote("typedef struct IAccPropServices IAccPropServices;")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifndef __CAccPropServices_FWD_DEFINED__")
+cpp_quote("#define __CAccPropServices_FWD_DEFINED__")
+cpp_quote("")
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("typedef class CAccPropServices CAccPropServices;")
+cpp_quote("#else")
+cpp_quote("typedef struct CAccPropServices CAccPropServices;")
+cpp_quote("#endif")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("  typedef LRESULT (WINAPI *LPFNLRESULTFROMOBJECT)(REFIID riid,WPARAM wParam,LPUNKNOWN punk);")
+cpp_quote("  typedef HRESULT (WINAPI *LPFNOBJECTFROMLRESULT)(LRESULT lResult,REFIID riid,WPARAM wParam,void **ppvObject);")
+cpp_quote("  typedef HRESULT (WINAPI *LPFNACCESSIBLEOBJECTFROMWINDOW)(HWND hwnd,DWORD dwId,REFIID riid,void **ppvObject);")
+cpp_quote("  typedef HRESULT (WINAPI *LPFNACCESSIBLEOBJECTFROMPOINT)(POINT ptScreen,IAccessible **ppacc,VARIANT *pvarChild);")
+cpp_quote("  typedef HRESULT (WINAPI *LPFNCREATESTDACCESSIBLEOBJECT)(HWND hwnd,LONG idObject,REFIID riid,void **ppvObject);")
+cpp_quote("  typedef HRESULT (WINAPI *LPFNACCESSIBLECHILDREN)(IAccessible *paccContainer,LONG iChildStart,LONG cChildren,VARIANT *rgvarChildren,LONG *pcObtained);")
+cpp_quote("")
+cpp_quote("  DEFINE_GUID(LIBID_Accessibility,0x1ea4dbf0,0x3c3b,0x11cf,0x81,0x0c,0x00,0xaa,0x00,0x38,0x9b,0x71);")
+cpp_quote("  DEFINE_GUID(IID_IAccessibleHandler,0x03022430,0xABC4,0x11d0,0xBD,0xE2,0x00,0xAA,0x00,0x1A,0x19,0x53);")
+cpp_quote("  DEFINE_GUID(IID_IAccIdentity,0x7852b78d,0x1cfd,0x41c1,0xa6,0x15,0x9c,0x0c,0x85,0x96,0x0b,0x5f);")
+cpp_quote("  DEFINE_GUID(IID_IAccPropServer,0x76c0dbbb,0x15e0,0x4e7b,0xb6,0x1b,0x20,0xee,0xea,0x20,0x01,0xe0);")
+cpp_quote("  DEFINE_GUID(IID_IAccPropServices,0x6e26e776,0x04f0,0x495d,0x80,0xe4,0x33,0x30,0x35,0x2e,0x31,0x69);")
+cpp_quote("  DEFINE_GUID(IID_IAccPropMgrInternal,0x2bd370a9,0x3e7f,0x4edd,0x8a,0x85,0xf8,0xfe,0xd1,0xf8,0xe5,0x1f);")
+cpp_quote("  DEFINE_GUID(CLSID_AccPropServices,0xb5f8350b,0x0548,0x48b1,0xa6,0xee,0x88,0xbd,0x00,0xb4,0xa5,0xe7);")
+cpp_quote("  DEFINE_GUID(IIS_IsOleaccProxy,0x902697fa,0x80e4,0x4560,0x80,0x2a,0xa1,0x3f,0x22,0xa6,0x47,0x09);")
+cpp_quote("")
+cpp_quote("#define GetRoleText __MINGW_NAME_AW(GetRoleText)")
+cpp_quote("#define GetStateText __MINGW_NAME_AW(GetStateText)")
+cpp_quote("#define CreateStdAccessibleProxy __MINGW_NAME_AW(CreateStdAccessibleProxy)")
+cpp_quote("")
+cpp_quote("  STDAPI_(LRESULT) LresultFromObject(REFIID riid,WPARAM wParam,LPUNKNOWN punk);")
+cpp_quote("  STDAPI ObjectFromLresult(LRESULT lResult,REFIID riid,WPARAM wParam,void **ppvObject);")
+cpp_quote("  STDAPI WindowFromAccessibleObject(IAccessible*,HWND *phwnd);")
+cpp_quote("  STDAPI AccessibleObjectFromWindow(HWND hwnd,DWORD dwId,REFIID riid,void **ppvObject);")
+cpp_quote("  STDAPI AccessibleObjectFromEvent(HWND hwnd,DWORD dwId,DWORD dwChildId,IAccessible **ppacc,VARIANT *pvarChild);")
+cpp_quote("  STDAPI AccessibleObjectFromPoint(POINT ptScreen,IAccessible **ppacc,VARIANT *pvarChild);")
+cpp_quote("  STDAPI AccessibleChildren (IAccessible *paccContainer,LONG iChildStart,LONG cChildren,VARIANT *rgvarChildren,LONG *pcObtained);")
+cpp_quote("  STDAPI_(UINT) GetRoleTextA(DWORD lRole,LPSTR lpszRole,UINT cchRoleMax);")
+cpp_quote("  STDAPI_(UINT) GetRoleTextW(DWORD lRole,LPWSTR lpszRole,UINT cchRoleMax);")
+cpp_quote("  STDAPI_(UINT) GetStateTextA(DWORD lStateBit,LPSTR lpszState,UINT cchState);")
+cpp_quote("  STDAPI_(UINT) GetStateTextW(DWORD lStateBit,LPWSTR lpszState,UINT cchState);")
+cpp_quote("  STDAPI_(VOID) GetOleaccVersionInfo(DWORD *pVer,DWORD *pBuild);")
+cpp_quote("  STDAPI CreateStdAccessibleObject(HWND hwnd,LONG idObject,REFIID riid,void **ppvObject);")
+cpp_quote("  STDAPI CreateStdAccessibleProxyA(HWND hwnd,LPCSTR pClassName,LONG idObject,REFIID riid,void **ppvObject);")
+cpp_quote("  STDAPI CreateStdAccessibleProxyW(HWND hwnd,LPCWSTR pClassName,LONG idObject,REFIID riid,void **ppvObject);")
+cpp_quote("")
+cpp_quote("#define MSAA_MENU_SIG __MSABI_LONG(0xAA0DF00D)")
+cpp_quote("")
+cpp_quote("  typedef struct tagMSAAMENUINFO {")
+cpp_quote("    DWORD dwMSAASignature;")
+cpp_quote("    DWORD cchWText;")
+cpp_quote("    LPWSTR pszWText;")
+cpp_quote("  } MSAAMENUINFO,*LPMSAAMENUINFO;")
+cpp_quote("")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_NAME ,0x608d3df8,0x8128,0x4aa7,0xa4,0x28,0xf5,0x5e,0x49,0x26,0x72,0x91);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_VALUE ,0x123fe443,0x211a,0x4615,0x95,0x27,0xc4,0x5a,0x7e,0x93,0x71,0x7a);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_DESCRIPTION ,0x4d48dfe4,0xbd3f,0x491f,0xa6,0x48,0x49,0x2d,0x6f,0x20,0xc5,0x88);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_ROLE ,0xcb905ff2,0x7bd1,0x4c05,0xb3,0xc8,0xe6,0xc2,0x41,0x36,0x4d,0x70);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_STATE ,0xa8d4d5b0,0x0a21,0x42d0,0xa5,0xc0,0x51,0x4e,0x98,0x4f,0x45,0x7b);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_HELP ,0xc831e11f,0x44db,0x4a99,0x97,0x68,0xcb,0x8f,0x97,0x8b,0x72,0x31);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_KEYBOARDSHORTCUT ,0x7d9bceee,0x7d1e,0x4979,0x93,0x82,0x51,0x80,0xf4,0x17,0x2c,0x34);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_DEFAULTACTION ,0x180c072b,0xc27f,0x43c7,0x99,0x22,0xf6,0x35,0x62,0xa4,0x63,0x2b);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_HELPTOPIC ,0x787d1379,0x8ede,0x440b,0x8a,0xec,0x11,0xf7,0xbf,0x90,0x30,0xb3);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_FOCUS ,0x6eb335df,0x1c29,0x4127,0xb1,0x2c,0xde,0xe9,0xfd,0x15,0x7f,0x2b);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_SELECTION ,0xb99d073c,0xd731,0x405b,0x90,0x61,0xd9,0x5e,0x8f,0x84,0x29,0x84);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_PARENT ,0x474c22b6,0xffc2,0x467a,0xb1,0xb5,0xe9,0x58,0xb4,0x65,0x73,0x30);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_NAV_UP ,0x016e1a2b,0x1a4e,0x4767,0x86,0x12,0x33,0x86,0xf6,0x69,0x35,0xec);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_NAV_DOWN ,0x031670ed,0x3cdf,0x48d2,0x96,0x13,0x13,0x8f,0x2d,0xd8,0xa6,0x68);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_NAV_LEFT ,0x228086cb,0x82f1,0x4a39,0x87,0x05,0xdc,0xdc,0x0f,0xff,0x92,0xf5);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_NAV_RIGHT ,0xcd211d9f,0xe1cb,0x4fe5,0xa7,0x7c,0x92,0x0b,0x88,0x4d,0x09,0x5b);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_NAV_PREV ,0x776d3891,0xc73b,0x4480,0xb3,0xf6,0x07,0x6a,0x16,0xa1,0x5a,0xf6);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_NAV_NEXT ,0x1cdc5455,0x8cd9,0x4c92,0xa3,0x71,0x39,0x39,0xa2,0xfe,0x3e,0xee);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_NAV_FIRSTCHILD ,0xcfd02558,0x557b,0x4c67,0x84,0xf9,0x2a,0x09,0xfc,0xe4,0x07,0x49);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_NAV_LASTCHILD ,0x302ecaa5,0x48d5,0x4f8d,0xb6,0x71,0x1a,0x8d,0x20,0xa7,0x78,0x32);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_ROLEMAP ,0xf79acda2,0x140d,0x4fe6,0x89,0x14,0x20,0x84,0x76,0x32,0x82,0x69);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_VALUEMAP ,0xda1c3d79,0xfc5c,0x420e,0xb3,0x99,0x9d,0x15,0x33,0x54,0x9e,0x75);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_STATEMAP ,0x43946c5e,0x0ac0,0x4042,0xb5,0x25,0x07,0xbb,0xdb,0xe1,0x7f,0xa7);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_DESCRIPTIONMAP ,0x1ff1435f,0x8a14,0x477b,0xb2,0x26,0xa0,0xab,0xe2,0x79,0x97,0x5d);")
+cpp_quote("  DEFINE_GUID(PROPID_ACC_DODEFAULTACTION ,0x1ba09523,0x2e3b,0x49a6,0xa0,0x59,0x59,0x68,0x2a,0x3c,0x48,0xfd);")
+cpp_quote("#define NAVDIR_MIN (0)")
+cpp_quote("#define NAVDIR_UP (0x1)")
+cpp_quote("#define NAVDIR_DOWN (0x2)")
+cpp_quote("#define NAVDIR_LEFT (0x3)")
+cpp_quote("#define NAVDIR_RIGHT (0x4)")
+cpp_quote("#define NAVDIR_NEXT (0x5)")
+cpp_quote("#define NAVDIR_PREVIOUS (0x6)")
+cpp_quote("#define NAVDIR_FIRSTCHILD (0x7)")
+cpp_quote("#define NAVDIR_LASTCHILD (0x8)")
+cpp_quote("#define NAVDIR_MAX (0x9)")
+cpp_quote("")
+cpp_quote("#define SELFLAG_NONE (0)")
+cpp_quote("#define SELFLAG_TAKEFOCUS (0x1)")
+cpp_quote("#define SELFLAG_TAKESELECTION (0x2)")
+cpp_quote("#define SELFLAG_EXTENDSELECTION (0x4)")
+cpp_quote("#define SELFLAG_ADDSELECTION (0x8)")
+cpp_quote("#define SELFLAG_REMOVESELECTION (0x10)")
+cpp_quote("#define SELFLAG_VALID (0x1f)")
+cpp_quote("")
+cpp_quote("#ifndef STATE_SYSTEM_UNAVAILABLE")
+cpp_quote("#define STATE_SYSTEM_NORMAL (0)")
+cpp_quote("#define STATE_SYSTEM_UNAVAILABLE (0x1)")
+cpp_quote("#define STATE_SYSTEM_SELECTED (0x2)")
+cpp_quote("#define STATE_SYSTEM_FOCUSED (0x4)")
+cpp_quote("#define STATE_SYSTEM_PRESSED (0x8)")
+cpp_quote("#define STATE_SYSTEM_CHECKED (0x10)")
+cpp_quote("#define STATE_SYSTEM_MIXED (0x20)")
+cpp_quote("#define STATE_SYSTEM_INDETERMINATE (STATE_SYSTEM_MIXED)")
+cpp_quote("#define STATE_SYSTEM_READONLY (0x40)")
+cpp_quote("#define STATE_SYSTEM_HOTTRACKED (0x80)")
+cpp_quote("#define STATE_SYSTEM_DEFAULT (0x100)")
+cpp_quote("#define STATE_SYSTEM_EXPANDED (0x200)")
+cpp_quote("#define STATE_SYSTEM_COLLAPSED (0x400)")
+cpp_quote("#define STATE_SYSTEM_BUSY (0x800)")
+cpp_quote("#define STATE_SYSTEM_FLOATING (0x1000)")
+cpp_quote("#define STATE_SYSTEM_MARQUEED (0x2000)")
+cpp_quote("#define STATE_SYSTEM_ANIMATED (0x4000)")
+cpp_quote("#define STATE_SYSTEM_INVISIBLE (0x8000)")
+cpp_quote("#define STATE_SYSTEM_OFFSCREEN (0x10000)")
+cpp_quote("#define STATE_SYSTEM_SIZEABLE (0x20000)")
+cpp_quote("#define STATE_SYSTEM_MOVEABLE (0x40000)")
+cpp_quote("#define STATE_SYSTEM_SELFVOICING (0x80000)")
+cpp_quote("#define STATE_SYSTEM_FOCUSABLE (0x100000)")
+cpp_quote("#define STATE_SYSTEM_SELECTABLE (0x200000)")
+cpp_quote("#define STATE_SYSTEM_LINKED (0x400000)")
+cpp_quote("#define STATE_SYSTEM_TRAVERSED (0x800000)")
+cpp_quote("#define STATE_SYSTEM_MULTISELECTABLE (0x1000000)")
+cpp_quote("#define STATE_SYSTEM_EXTSELECTABLE (0x2000000)")
+cpp_quote("#define STATE_SYSTEM_ALERT_LOW (0x4000000)")
+cpp_quote("#define STATE_SYSTEM_ALERT_MEDIUM (0x8000000)")
+cpp_quote("#define STATE_SYSTEM_ALERT_HIGH (0x10000000)")
+cpp_quote("#define STATE_SYSTEM_PROTECTED (0x20000000)")
+cpp_quote("#define STATE_SYSTEM_VALID (0x7fffffff)")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifndef STATE_SYSTEM_HASPOPUP")
+cpp_quote("#define STATE_SYSTEM_HASPOPUP (0x40000000)")
+cpp_quote("#endif")
+cpp_quote("#define ROLE_SYSTEM_TITLEBAR (0x1)")
+cpp_quote("#define ROLE_SYSTEM_MENUBAR (0x2)")
+cpp_quote("#define ROLE_SYSTEM_SCROLLBAR (0x3)")
+cpp_quote("#define ROLE_SYSTEM_GRIP (0x4)")
+cpp_quote("#define ROLE_SYSTEM_SOUND (0x5)")
+cpp_quote("#define ROLE_SYSTEM_CURSOR (0x6)")
+cpp_quote("#define ROLE_SYSTEM_CARET (0x7)")
+cpp_quote("#define ROLE_SYSTEM_ALERT (0x8)")
+cpp_quote("#define ROLE_SYSTEM_WINDOW (0x9)")
+cpp_quote("#define ROLE_SYSTEM_CLIENT (0xa)")
+cpp_quote("#define ROLE_SYSTEM_MENUPOPUP (0xb)")
+cpp_quote("#define ROLE_SYSTEM_MENUITEM (0xc)")
+cpp_quote("#define ROLE_SYSTEM_TOOLTIP (0xd)")
+cpp_quote("#define ROLE_SYSTEM_APPLICATION (0xe)")
+cpp_quote("#define ROLE_SYSTEM_DOCUMENT (0xf)")
+cpp_quote("#define ROLE_SYSTEM_PANE (0x10)")
+cpp_quote("#define ROLE_SYSTEM_CHART (0x11)")
+cpp_quote("#define ROLE_SYSTEM_DIALOG (0x12)")
+cpp_quote("#define ROLE_SYSTEM_BORDER (0x13)")
+cpp_quote("#define ROLE_SYSTEM_GROUPING (0x14)")
+cpp_quote("#define ROLE_SYSTEM_SEPARATOR (0x15)")
+cpp_quote("#define ROLE_SYSTEM_TOOLBAR (0x16)")
+cpp_quote("#define ROLE_SYSTEM_STATUSBAR (0x17)")
+cpp_quote("#define ROLE_SYSTEM_TABLE (0x18)")
+cpp_quote("#define ROLE_SYSTEM_COLUMNHEADER (0x19)")
+cpp_quote("#define ROLE_SYSTEM_ROWHEADER (0x1a)")
+cpp_quote("#define ROLE_SYSTEM_COLUMN (0x1b)")
+cpp_quote("#define ROLE_SYSTEM_ROW (0x1c)")
+cpp_quote("#define ROLE_SYSTEM_CELL (0x1d)")
+cpp_quote("#define ROLE_SYSTEM_LINK (0x1e)")
+cpp_quote("#define ROLE_SYSTEM_HELPBALLOON (0x1f)")
+cpp_quote("#define ROLE_SYSTEM_CHARACTER (0x20)")
+cpp_quote("#define ROLE_SYSTEM_LIST (0x21)")
+cpp_quote("#define ROLE_SYSTEM_LISTITEM (0x22)")
+cpp_quote("#define ROLE_SYSTEM_OUTLINE (0x23)")
+cpp_quote("#define ROLE_SYSTEM_OUTLINEITEM (0x24)")
+cpp_quote("#define ROLE_SYSTEM_PAGETAB (0x25)")
+cpp_quote("#define ROLE_SYSTEM_PROPERTYPAGE (0x26)")
+cpp_quote("#define ROLE_SYSTEM_INDICATOR (0x27)")
+cpp_quote("#define ROLE_SYSTEM_GRAPHIC (0x28)")
+cpp_quote("#define ROLE_SYSTEM_STATICTEXT (0x29)")
+cpp_quote("#define ROLE_SYSTEM_TEXT (0x2a)")
+cpp_quote("#define ROLE_SYSTEM_PUSHBUTTON (0x2b)")
+cpp_quote("#define ROLE_SYSTEM_CHECKBUTTON (0x2c)")
+cpp_quote("#define ROLE_SYSTEM_RADIOBUTTON (0x2d)")
+cpp_quote("#define ROLE_SYSTEM_COMBOBOX (0x2e)")
+cpp_quote("#define ROLE_SYSTEM_DROPLIST (0x2f)")
+cpp_quote("#define ROLE_SYSTEM_PROGRESSBAR (0x30)")
+cpp_quote("#define ROLE_SYSTEM_DIAL (0x31)")
+cpp_quote("#define ROLE_SYSTEM_HOTKEYFIELD (0x32)")
+cpp_quote("#define ROLE_SYSTEM_SLIDER (0x33)")
+cpp_quote("#define ROLE_SYSTEM_SPINBUTTON (0x34)")
+cpp_quote("#define ROLE_SYSTEM_DIAGRAM (0x35)")
+cpp_quote("#define ROLE_SYSTEM_ANIMATION (0x36)")
+cpp_quote("#define ROLE_SYSTEM_EQUATION (0x37)")
+cpp_quote("#define ROLE_SYSTEM_BUTTONDROPDOWN (0x38)")
+cpp_quote("#define ROLE_SYSTEM_BUTTONMENU (0x39)")
+cpp_quote("#define ROLE_SYSTEM_BUTTONDROPDOWNGRID (0x3a)")
+cpp_quote("#define ROLE_SYSTEM_WHITESPACE (0x3b)")
+cpp_quote("#define ROLE_SYSTEM_PAGETABLIST (0x3c)")
+cpp_quote("#define ROLE_SYSTEM_CLOCK (0x3d)")
+cpp_quote("#define ROLE_SYSTEM_SPLITBUTTON (0x3e)")
+cpp_quote("#define ROLE_SYSTEM_IPADDRESS (0x3f)")
+cpp_quote("#define ROLE_SYSTEM_OUTLINEBUTTON (0x40)")
+
+[
+  local,
+  object,
+  uuid(618736e0-3c3d-11cf-810c-00aa00389b71),
+  pointer_default(unique)
+]
+interface IAccessible : IDispatch
+{
+    typedef [unique] IAccessible  *LPACCESSIBLE;
+
+    const LONG DISPID_ACC_PARENT            = -5000;
+    const LONG DISPID_ACC_CHILDCOUNT        = -5001;
+    const LONG DISPID_ACC_CHILD             = -5002;
+    const LONG DISPID_ACC_NAME              = -5003;
+    const LONG DISPID_ACC_VALUE             = -5004;
+    const LONG DISPID_ACC_DESCRIPTION       = -5005;
+    const LONG DISPID_ACC_ROLE              = -5006;
+    const LONG DISPID_ACC_STATE             = -5007;
+    const LONG DISPID_ACC_HELP              = -5008;
+    const LONG DISPID_ACC_HELPTOPIC         = -5009;
+    const LONG DISPID_ACC_KEYBOARDSHORTCUT  = -5010;
+    const LONG DISPID_ACC_FOCUS             = -5011;
+    const LONG DISPID_ACC_SELECTION         = -5012;
+    const LONG DISPID_ACC_DEFAULTACTION     = -5013;
+    const LONG DISPID_ACC_SELECT            = -5014;
+    const LONG DISPID_ACC_LOCATION          = -5015;
+    const LONG DISPID_ACC_NAVIGATE          = -5016;
+    const LONG DISPID_ACC_HITTEST           = -5017;
+    const LONG DISPID_ACC_DODEFAULTACTION   = -5018;
+
+    [hidden, propget, id(DISPID_ACC_PARENT)]
+    HRESULT accParent([out, retval] IDispatch **ppdispParent);
+
+    [hidden, propget, id(DISPID_ACC_CHILDCOUNT)]
+    HRESULT accChildCount([out, retval] LONG *pcountChildren);
+
+    [hidden, propget, id(DISPID_ACC_CHILD)]
+    HRESULT accChild(
+            [in] VARIANT varChildID,
+            [out, retval] IDispatch **ppdispChild);
+
+    [hidden, propget, id(DISPID_ACC_NAME)]
+    HRESULT accName(
+           [in]VARIANT varID,
+           [out, retval] BSTR *pszName);
+
+    [hidden, propget, id(DISPID_ACC_VALUE)]
+    HRESULT accValue(
+            [in]VARIANT varID,
+            [out, retval] BSTR *pszValue);
+
+    [hidden, propget, id(DISPID_ACC_DESCRIPTION)]
+    HRESULT accDescription(
+            [in] VARIANT varID,
+            [out, retval] BSTR *pszDescription);
+
+    [hidden, propget, id(DISPID_ACC_ROLE)]
+    HRESULT accRole(
+            [in]VARIANT varID,
+            [out, retval] VARIANT *pvarRole);
+
+    [hidden, propget, id(DISPID_ACC_STATE)]
+    HRESULT accState(
+            [in]VARIANT varID,
+            [out, retval] VARIANT *pvarState);
+
+    [hidden, propget, id(DISPID_ACC_HELP)]
+    HRESULT accHelp(
+            [in]VARIANT varID,
+            [out, retval] BSTR *pszHelp);
+
+    [hidden, propget, id(DISPID_ACC_HELPTOPIC)]
+    HRESULT accHelpTopic(
+            [out] BSTR *pszHelpFile,
+            [in] VARIANT varID,
+            [out, retval] LONG *pidTopic);
+
+    [hidden, propget, id(DISPID_ACC_KEYBOARDSHORTCUT)]
+    HRESULT accKeyboardShortcut(
+            [in] VARIANT varID,
+            [out, retval] BSTR *pszKeyboardShortcut);
+
+    [hidden, propget, id(DISPID_ACC_FOCUS)]
+    HRESULT accFocus([out, retval] VARIANT *pvarID);
+
+    [hidden, propget, id(DISPID_ACC_SELECTION)]
+    HRESULT accSelection([out, retval] VARIANT *pvarID);
+
+    [hidden, propget, id(DISPID_ACC_DEFAULTACTION)]
+    HRESULT accDefaultAction(
+            [in] VARIANT varID,
+            [out, retval] BSTR *pszDefaultAction);
+
+    [hidden, id(DISPID_ACC_SELECT)]
+    HRESULT accSelect(
+            [in] LONG flagsSelect,
+            [in] VARIANT varID);
+
+    [hidden, id(DISPID_ACC_LOCATION)]
+    HRESULT accLocation(
+            [out] LONG *pxLeft,
+            [out] LONG *pyTop,
+            [out] LONG *pcxWidth,
+            [out] LONG *pcyHeight,
+            [in] VARIANT varID);
+
+    [hidden, id(DISPID_ACC_NAVIGATE)]
+    HRESULT accNavigate(
+            [in] LONG navDir,
+            [in] VARIANT varStart,
+            [out, retval] VARIANT *pvarEnd);
+
+    [hidden, id(DISPID_ACC_HITTEST)]
+    HRESULT accHitTest(
+            [in] LONG xLeft,
+            [in] LONG yTop,
+            [out,retval] VARIANT *pvarID);
+
+    [hidden, id(DISPID_ACC_DODEFAULTACTION)]
+    HRESULT accDoDefaultAction([in] VARIANT varID);
+
+    [hidden, propput, id(DISPID_ACC_NAME)]
+    HRESULT accName(
+            [in] VARIANT varID,
+            [in] BSTR pszName);
+
+    [hidden, propput, id(DISPID_ACC_VALUE)]
+    HRESULT accValue(
+            [in] VARIANT varID,
+            [out, retval] BSTR pszValue);
+}
+
+cpp_quote("#ifndef __IAccessibleHandler_INTERFACE_DEFINED__")
+cpp_quote("#define __IAccessibleHandler_INTERFACE_DEFINED__")
+cpp_quote("  typedef IAccessibleHandler *LPACCESSIBLEHANDLER;")
+cpp_quote("")
+cpp_quote("  EXTERN_C const IID IID_IAccessibleHandler;")
+cpp_quote("#if defined(__cplusplus) && !defined(CINTERFACE)")
+cpp_quote("  struct IAccessibleHandler : public IUnknown {")
+cpp_quote("  public:")
+cpp_quote("    virtual HRESULT WINAPI AccessibleObjectFromID(LONG hwnd,LONG lObjectID,LPACCESSIBLE *pIAccessible) = 0;")
+cpp_quote("  };")
+cpp_quote("#else")
+cpp_quote("  typedef struct IAccessibleHandlerVtbl {")
+cpp_quote("    BEGIN_INTERFACE")
+cpp_quote("      HRESULT (WINAPI *QueryInterface)(IAccessibleHandler *This,REFIID riid,void **ppvObject);")
+cpp_quote("      ULONG (WINAPI *AddRef)(IAccessibleHandler *This);")
+cpp_quote("      ULONG (WINAPI *Release)(IAccessibleHandler *This);")
+cpp_quote("      HRESULT (WINAPI *AccessibleObjectFromID)(IAccessibleHandler *This,LONG hwnd,LONG lObjectID,LPACCESSIBLE *pIAccessible);")
+cpp_quote("    END_INTERFACE")
+cpp_quote("  } IAccessibleHandlerVtbl;")
+cpp_quote("  struct IAccessibleHandler {")
+cpp_quote("    CONST_VTBL struct IAccessibleHandlerVtbl *lpVtbl;")
+cpp_quote("  };")
+cpp_quote("#ifdef COBJMACROS")
+cpp_quote("#define IAccessibleHandler_QueryInterface(This,riid,ppvObject) (This)->lpVtbl->QueryInterface(This,riid,ppvObject)")
+cpp_quote("#define IAccessibleHandler_AddRef(This) (This)->lpVtbl->AddRef(This)")
+cpp_quote("#define IAccessibleHandler_Release(This) (This)->lpVtbl->Release(This)")
+cpp_quote("#define IAccessibleHandler_AccessibleObjectFromID(This,hwnd,lObjectID,pIAccessible) (This)->lpVtbl->AccessibleObjectFromID(This,hwnd,lObjectID,pIAccessible)")
+cpp_quote("#endif")
+cpp_quote("#endif")
+cpp_quote("  HRESULT WINAPI IAccessibleHandler_AccessibleObjectFromID_Proxy(IAccessibleHandler *This,LONG hwnd,LONG lObjectID,LPACCESSIBLE *pIAccessible);")
+cpp_quote("  void __RPC_STUB IAccessibleHandler_AccessibleObjectFromID_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("  typedef enum AnnoScope {")
+cpp_quote("    ANNO_THIS = 0,ANNO_CONTAINER = 1")
+cpp_quote("  } AnnoScope;")
+cpp_quote("")
+cpp_quote("  typedef GUID MSAAPROPID;")
+cpp_quote("")
+cpp_quote("  extern RPC_IF_HANDLE __MIDL_itf_oleacc_0116_v0_0_c_ifspec;")
+cpp_quote("  extern RPC_IF_HANDLE __MIDL_itf_oleacc_0116_v0_0_s_ifspec;")
+cpp_quote("")
+cpp_quote("#ifndef __IAccIdentity_INTERFACE_DEFINED__")
+cpp_quote("#define __IAccIdentity_INTERFACE_DEFINED__")
+cpp_quote("  EXTERN_C const IID IID_IAccIdentity;")
+cpp_quote("#if defined(__cplusplus) && !defined(CINTERFACE)")
+cpp_quote("  struct IAccIdentity : public IUnknown {")
+cpp_quote("  public:")
+cpp_quote("    virtual HRESULT WINAPI GetIdentityString(DWORD dwIDChild,BYTE **ppIDString,DWORD *pdwIDStringLen) = 0;")
+cpp_quote("  };")
+cpp_quote("#else")
+cpp_quote("  typedef struct IAccIdentityVtbl {")
+cpp_quote("    BEGIN_INTERFACE")
+cpp_quote("      HRESULT (WINAPI *QueryInterface)(IAccIdentity *This,REFIID riid,void **ppvObject);")
+cpp_quote("      ULONG (WINAPI *AddRef)(IAccIdentity *This);")
+cpp_quote("      ULONG (WINAPI *Release)(IAccIdentity *This);")
+cpp_quote("      HRESULT (WINAPI *GetIdentityString)(IAccIdentity *This,DWORD dwIDChild,BYTE **ppIDString,DWORD *pdwIDStringLen);")
+cpp_quote("    END_INTERFACE")
+cpp_quote("  } IAccIdentityVtbl;")
+cpp_quote("  struct IAccIdentity {")
+cpp_quote("    CONST_VTBL struct IAccIdentityVtbl *lpVtbl;")
+cpp_quote("  };")
+cpp_quote("#ifdef COBJMACROS")
+cpp_quote("#define IAccIdentity_QueryInterface(This,riid,ppvObject) (This)->lpVtbl->QueryInterface(This,riid,ppvObject)")
+cpp_quote("#define IAccIdentity_AddRef(This) (This)->lpVtbl->AddRef(This)")
+cpp_quote("#define IAccIdentity_Release(This) (This)->lpVtbl->Release(This)")
+cpp_quote("#define IAccIdentity_GetIdentityString(This,dwIDChild,ppIDString,pdwIDStringLen) (This)->lpVtbl->GetIdentityString(This,dwIDChild,ppIDString,pdwIDStringLen)")
+cpp_quote("#endif")
+cpp_quote("#endif")
+cpp_quote("  HRESULT WINAPI IAccIdentity_GetIdentityString_Proxy(IAccIdentity *This,DWORD dwIDChild,BYTE **ppIDString,DWORD *pdwIDStringLen);")
+cpp_quote("  void __RPC_STUB IAccIdentity_GetIdentityString_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifndef __IAccPropServer_INTERFACE_DEFINED__")
+cpp_quote("#define __IAccPropServer_INTERFACE_DEFINED__")
+cpp_quote("  EXTERN_C const IID IID_IAccPropServer;")
+cpp_quote("#if defined(__cplusplus) && !defined(CINTERFACE)")
+cpp_quote("  struct IAccPropServer : public IUnknown {")
+cpp_quote("  public:")
+cpp_quote("    virtual HRESULT WINAPI GetPropValue(const BYTE *pIDString,DWORD dwIDStringLen,MSAAPROPID idProp,VARIANT *pvarValue,WINBOOL *pfHasProp) = 0;")
+cpp_quote("  };")
+cpp_quote("#else")
+cpp_quote("  typedef struct IAccPropServerVtbl {")
+cpp_quote("    BEGIN_INTERFACE")
+cpp_quote("      HRESULT (WINAPI *QueryInterface)(IAccPropServer *This,REFIID riid,void **ppvObject);")
+cpp_quote("      ULONG (WINAPI *AddRef)(IAccPropServer *This);")
+cpp_quote("      ULONG (WINAPI *Release)(IAccPropServer *This);")
+cpp_quote("      HRESULT (WINAPI *GetPropValue)(IAccPropServer *This,const BYTE *pIDString,DWORD dwIDStringLen,MSAAPROPID idProp,VARIANT *pvarValue,WINBOOL *pfHasProp);")
+cpp_quote("    END_INTERFACE")
+cpp_quote("  } IAccPropServerVtbl;")
+cpp_quote("  struct IAccPropServer {")
+cpp_quote("    CONST_VTBL struct IAccPropServerVtbl *lpVtbl;")
+cpp_quote("  };")
+cpp_quote("#ifdef COBJMACROS")
+cpp_quote("#define IAccPropServer_QueryInterface(This,riid,ppvObject) (This)->lpVtbl->QueryInterface(This,riid,ppvObject)")
+cpp_quote("#define IAccPropServer_AddRef(This) (This)->lpVtbl->AddRef(This)")
+cpp_quote("#define IAccPropServer_Release(This) (This)->lpVtbl->Release(This)")
+cpp_quote("#define IAccPropServer_GetPropValue(This,pIDString,dwIDStringLen,idProp,pvarValue,pfHasProp) (This)->lpVtbl->GetPropValue(This,pIDString,dwIDStringLen,idProp,pvarValue,pfHasProp)")
+cpp_quote("#endif")
+cpp_quote("#endif")
+cpp_quote("  HRESULT WINAPI IAccPropServer_GetPropValue_Proxy(IAccPropServer *This,const BYTE *pIDString,DWORD dwIDStringLen,MSAAPROPID idProp,VARIANT *pvarValue,WINBOOL *pfHasProp);")
+cpp_quote("  void __RPC_STUB IAccPropServer_GetPropValue_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#ifndef __IAccPropServices_INTERFACE_DEFINED__")
+cpp_quote("#define __IAccPropServices_INTERFACE_DEFINED__")
+cpp_quote("  EXTERN_C const IID IID_IAccPropServices;")
+cpp_quote("#if defined(__cplusplus) && !defined(CINTERFACE)")
+cpp_quote("  struct IAccPropServices : public IUnknown {")
+cpp_quote("  public:")
+cpp_quote("    virtual HRESULT WINAPI SetPropValue(const BYTE *pIDString,DWORD dwIDStringLen,MSAAPROPID idProp,VARIANT var) = 0;")
+cpp_quote("    virtual HRESULT WINAPI SetPropServer(const BYTE *pIDString,DWORD dwIDStringLen,const MSAAPROPID *paProps,int cProps,IAccPropServer *pServer,AnnoScope annoScope) = 0;")
+cpp_quote("    virtual HRESULT WINAPI ClearProps(const BYTE *pIDString,DWORD dwIDStringLen,const MSAAPROPID *paProps,int cProps) = 0;")
+cpp_quote("    virtual HRESULT WINAPI SetHwndProp(HWND hwnd,DWORD idObject,DWORD idChild,MSAAPROPID idProp,VARIANT var) = 0;")
+cpp_quote("    virtual HRESULT WINAPI SetHwndPropStr(HWND hwnd,DWORD idObject,DWORD idChild,MSAAPROPID idProp,LPCWSTR str) = 0;")
+cpp_quote("    virtual HRESULT WINAPI SetHwndPropServer(HWND hwnd,DWORD idObject,DWORD idChild,const MSAAPROPID *paProps,int cProps,IAccPropServer *pServer,AnnoScope annoScope) = 0;")
+cpp_quote("    virtual HRESULT WINAPI ClearHwndProps(HWND hwnd,DWORD idObject,DWORD idChild,const MSAAPROPID *paProps,int cProps) = 0;")
+cpp_quote("    virtual HRESULT WINAPI ComposeHwndIdentityString(HWND hwnd,DWORD idObject,DWORD idChild,BYTE **ppIDString,DWORD *pdwIDStringLen) = 0;")
+cpp_quote("    virtual HRESULT WINAPI DecomposeHwndIdentityString(const BYTE *pIDString,DWORD dwIDStringLen,HWND *phwnd,DWORD *pidObject,DWORD *pidChild) = 0;")
+cpp_quote("    virtual HRESULT WINAPI SetHmenuProp(HMENU hmenu,DWORD idChild,MSAAPROPID idProp,VARIANT var) = 0;")
+cpp_quote("    virtual HRESULT WINAPI SetHmenuPropStr(HMENU hmenu,DWORD idChild,MSAAPROPID idProp,LPCWSTR str) = 0;")
+cpp_quote("    virtual HRESULT WINAPI SetHmenuPropServer(HMENU hmenu,DWORD idChild,const MSAAPROPID *paProps,int cProps,IAccPropServer *pServer,AnnoScope annoScope) = 0;")
+cpp_quote("    virtual HRESULT WINAPI ClearHmenuProps(HMENU hmenu,DWORD idChild,const MSAAPROPID *paProps,int cProps) = 0;")
+cpp_quote("    virtual HRESULT WINAPI ComposeHmenuIdentityString(HMENU hmenu,DWORD idChild,BYTE **ppIDString,DWORD *pdwIDStringLen) = 0;")
+cpp_quote("    virtual HRESULT WINAPI DecomposeHmenuIdentityString(const BYTE *pIDString,DWORD dwIDStringLen,HMENU *phmenu,DWORD *pidChild) = 0;")
+cpp_quote("  };")
+cpp_quote("#else")
+cpp_quote("  typedef struct IAccPropServicesVtbl {")
+cpp_quote("    BEGIN_INTERFACE")
+cpp_quote("      HRESULT (WINAPI *QueryInterface)(IAccPropServices *This,REFIID riid,void **ppvObject);")
+cpp_quote("      ULONG (WINAPI *AddRef)(IAccPropServices *This);")
+cpp_quote("      ULONG (WINAPI *Release)(IAccPropServices *This);")
+cpp_quote("      HRESULT (WINAPI *SetPropValue)(IAccPropServices *This,const BYTE *pIDString,DWORD dwIDStringLen,MSAAPROPID idProp,VARIANT var);")
+cpp_quote("      HRESULT (WINAPI *SetPropServer)(IAccPropServices *This,const BYTE *pIDString,DWORD dwIDStringLen,const MSAAPROPID *paProps,int cProps,IAccPropServer *pServer,AnnoScope annoScope);")
+cpp_quote("      HRESULT (WINAPI *ClearProps)(IAccPropServices *This,const BYTE *pIDString,DWORD dwIDStringLen,const MSAAPROPID *paProps,int cProps);")
+cpp_quote("      HRESULT (WINAPI *SetHwndProp)(IAccPropServices *This,HWND hwnd,DWORD idObject,DWORD idChild,MSAAPROPID idProp,VARIANT var);")
+cpp_quote("      HRESULT (WINAPI *SetHwndPropStr)(IAccPropServices *This,HWND hwnd,DWORD idObject,DWORD idChild,MSAAPROPID idProp,LPCWSTR str);")
+cpp_quote("      HRESULT (WINAPI *SetHwndPropServer)(IAccPropServices *This,HWND hwnd,DWORD idObject,DWORD idChild,const MSAAPROPID *paProps,int cProps,IAccPropServer *pServer,AnnoScope annoScope);")
+cpp_quote("      HRESULT (WINAPI *ClearHwndProps)(IAccPropServices *This,HWND hwnd,DWORD idObject,DWORD idChild,const MSAAPROPID *paProps,int cProps);")
+cpp_quote("      HRESULT (WINAPI *ComposeHwndIdentityString)(IAccPropServices *This,HWND hwnd,DWORD idObject,DWORD idChild,BYTE **ppIDString,DWORD *pdwIDStringLen);")
+cpp_quote("      HRESULT (WINAPI *DecomposeHwndIdentityString)(IAccPropServices *This,const BYTE *pIDString,DWORD dwIDStringLen,HWND *phwnd,DWORD *pidObject,DWORD *pidChild);")
+cpp_quote("      HRESULT (WINAPI *SetHmenuProp)(IAccPropServices *This,HMENU hmenu,DWORD idChild,MSAAPROPID idProp,VARIANT var);")
+cpp_quote("      HRESULT (WINAPI *SetHmenuPropStr)(IAccPropServices *This,HMENU hmenu,DWORD idChild,MSAAPROPID idProp,LPCWSTR str);")
+cpp_quote("      HRESULT (WINAPI *SetHmenuPropServer)(IAccPropServices *This,HMENU hmenu,DWORD idChild,const MSAAPROPID *paProps,int cProps,IAccPropServer *pServer,AnnoScope annoScope);")
+cpp_quote("      HRESULT (WINAPI *ClearHmenuProps)(IAccPropServices *This,HMENU hmenu,DWORD idChild,const MSAAPROPID *paProps,int cProps);")
+cpp_quote("      HRESULT (WINAPI *ComposeHmenuIdentityString)(IAccPropServices *This,HMENU hmenu,DWORD idChild,BYTE **ppIDString,DWORD *pdwIDStringLen);")
+cpp_quote("      HRESULT (WINAPI *DecomposeHmenuIdentityString)(IAccPropServices *This,const BYTE *pIDString,DWORD dwIDStringLen,HMENU *phmenu,DWORD *pidChild);")
+cpp_quote("    END_INTERFACE")
+cpp_quote("  } IAccPropServicesVtbl;")
+cpp_quote("  struct IAccPropServices {")
+cpp_quote("    CONST_VTBL struct IAccPropServicesVtbl *lpVtbl;")
+cpp_quote("  };")
+cpp_quote("#ifdef COBJMACROS")
+cpp_quote("#define IAccPropServices_QueryInterface(This,riid,ppvObject) (This)->lpVtbl->QueryInterface(This,riid,ppvObject)")
+cpp_quote("#define IAccPropServices_AddRef(This) (This)->lpVtbl->AddRef(This)")
+cpp_quote("#define IAccPropServices_Release(This) (This)->lpVtbl->Release(This)")
+cpp_quote("#define IAccPropServices_SetPropValue(This,pIDString,dwIDStringLen,idProp,var) (This)->lpVtbl->SetPropValue(This,pIDString,dwIDStringLen,idProp,var)")
+cpp_quote("#define IAccPropServices_SetPropServer(This,pIDString,dwIDStringLen,paProps,cProps,pServer,annoScope) (This)->lpVtbl->SetPropServer(This,pIDString,dwIDStringLen,paProps,cProps,pServer,annoScope)")
+cpp_quote("#define IAccPropServices_ClearProps(This,pIDString,dwIDStringLen,paProps,cProps) (This)->lpVtbl->ClearProps(This,pIDString,dwIDStringLen,paProps,cProps)")
+cpp_quote("#define IAccPropServices_SetHwndProp(This,hwnd,idObject,idChild,idProp,var) (This)->lpVtbl->SetHwndProp(This,hwnd,idObject,idChild,idProp,var)")
+cpp_quote("#define IAccPropServices_SetHwndPropStr(This,hwnd,idObject,idChild,idProp,str) (This)->lpVtbl->SetHwndPropStr(This,hwnd,idObject,idChild,idProp,str)")
+cpp_quote("#define IAccPropServices_SetHwndPropServer(This,hwnd,idObject,idChild,paProps,cProps,pServer,annoScope) (This)->lpVtbl->SetHwndPropServer(This,hwnd,idObject,idChild,paProps,cProps,pServer,annoScope)")
+cpp_quote("#define IAccPropServices_ClearHwndProps(This,hwnd,idObject,idChild,paProps,cProps) (This)->lpVtbl->ClearHwndProps(This,hwnd,idObject,idChild,paProps,cProps)")
+cpp_quote("#define IAccPropServices_ComposeHwndIdentityString(This,hwnd,idObject,idChild,ppIDString,pdwIDStringLen) (This)->lpVtbl->ComposeHwndIdentityString(This,hwnd,idObject,idChild,ppIDString,pdwIDStringLen)")
+cpp_quote("#define IAccPropServices_DecomposeHwndIdentityString(This,pIDString,dwIDStringLen,phwnd,pidObject,pidChild) (This)->lpVtbl->DecomposeHwndIdentityString(This,pIDString,dwIDStringLen,phwnd,pidObject,pidChild)")
+cpp_quote("#define IAccPropServices_SetHmenuProp(This,hmenu,idChild,idProp,var) (This)->lpVtbl->SetHmenuProp(This,hmenu,idChild,idProp,var)")
+cpp_quote("#define IAccPropServices_SetHmenuPropStr(This,hmenu,idChild,idProp,str) (This)->lpVtbl->SetHmenuPropStr(This,hmenu,idChild,idProp,str)")
+cpp_quote("#define IAccPropServices_SetHmenuPropServer(This,hmenu,idChild,paProps,cProps,pServer,annoScope) (This)->lpVtbl->SetHmenuPropServer(This,hmenu,idChild,paProps,cProps,pServer,annoScope)")
+cpp_quote("#define IAccPropServices_ClearHmenuProps(This,hmenu,idChild,paProps,cProps) (This)->lpVtbl->ClearHmenuProps(This,hmenu,idChild,paProps,cProps)")
+cpp_quote("#define IAccPropServices_ComposeHmenuIdentityString(This,hmenu,idChild,ppIDString,pdwIDStringLen) (This)->lpVtbl->ComposeHmenuIdentityString(This,hmenu,idChild,ppIDString,pdwIDStringLen)")
+cpp_quote("#define IAccPropServices_DecomposeHmenuIdentityString(This,pIDString,dwIDStringLen,phmenu,pidChild) (This)->lpVtbl->DecomposeHmenuIdentityString(This,pIDString,dwIDStringLen,phmenu,pidChild)")
+cpp_quote("#endif")
+cpp_quote("#endif")
+cpp_quote("  HRESULT WINAPI IAccPropServices_SetPropValue_Proxy(IAccPropServices *This,const BYTE *pIDString,DWORD dwIDStringLen,MSAAPROPID idProp,VARIANT var);")
+cpp_quote("  void __RPC_STUB IAccPropServices_SetPropValue_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("  HRESULT WINAPI IAccPropServices_SetPropServer_Proxy(IAccPropServices *This,const BYTE *pIDString,DWORD dwIDStringLen,const MSAAPROPID *paProps,int cProps,IAccPropServer *pServer,AnnoScope annoScope);")
+cpp_quote("  void __RPC_STUB IAccPropServices_SetPropServer_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("  HRESULT WINAPI IAccPropServices_ClearProps_Proxy(IAccPropServices *This,const BYTE *pIDString,DWORD dwIDStringLen,const MSAAPROPID *paProps,int cProps);")
+cpp_quote("  void __RPC_STUB IAccPropServices_ClearProps_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("  HRESULT WINAPI IAccPropServices_SetHwndProp_Proxy(IAccPropServices *This,HWND hwnd,DWORD idObject,DWORD idChild,MSAAPROPID idProp,VARIANT var);")
+cpp_quote("  void __RPC_STUB IAccPropServices_SetHwndProp_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("  HRESULT WINAPI IAccPropServices_SetHwndPropStr_Proxy(IAccPropServices *This,HWND hwnd,DWORD idObject,DWORD idChild,MSAAPROPID idProp,LPCWSTR str);")
+cpp_quote("  void __RPC_STUB IAccPropServices_SetHwndPropStr_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("  HRESULT WINAPI IAccPropServices_SetHwndPropServer_Proxy(IAccPropServices *This,HWND hwnd,DWORD idObject,DWORD idChild,const MSAAPROPID *paProps,int cProps,IAccPropServer *pServer,AnnoScope annoScope);")
+cpp_quote("  void __RPC_STUB IAccPropServices_SetHwndPropServer_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("  HRESULT WINAPI IAccPropServices_ClearHwndProps_Proxy(IAccPropServices *This,HWND hwnd,DWORD idObject,DWORD idChild,const MSAAPROPID *paProps,int cProps);")
+cpp_quote("  void __RPC_STUB IAccPropServices_ClearHwndProps_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("  HRESULT WINAPI IAccPropServices_ComposeHwndIdentityString_Proxy(IAccPropServices *This,HWND hwnd,DWORD idObject,DWORD idChild,BYTE **ppIDString,DWORD *pdwIDStringLen);")
+cpp_quote("  void __RPC_STUB IAccPropServices_ComposeHwndIdentityString_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("  HRESULT WINAPI IAccPropServices_DecomposeHwndIdentityString_Proxy(IAccPropServices *This,const BYTE *pIDString,DWORD dwIDStringLen,HWND *phwnd,DWORD *pidObject,DWORD *pidChild);")
+cpp_quote("  void __RPC_STUB IAccPropServices_DecomposeHwndIdentityString_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("  HRESULT WINAPI IAccPropServices_SetHmenuProp_Proxy(IAccPropServices *This,HMENU hmenu,DWORD idChild,MSAAPROPID idProp,VARIANT var);")
+cpp_quote("  void __RPC_STUB IAccPropServices_SetHmenuProp_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("  HRESULT WINAPI IAccPropServices_SetHmenuPropStr_Proxy(IAccPropServices *This,HMENU hmenu,DWORD idChild,MSAAPROPID idProp,LPCWSTR str);")
+cpp_quote("  void __RPC_STUB IAccPropServices_SetHmenuPropStr_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("  HRESULT WINAPI IAccPropServices_SetHmenuPropServer_Proxy(IAccPropServices *This,HMENU hmenu,DWORD idChild,const MSAAPROPID *paProps,int cProps,IAccPropServer *pServer,AnnoScope annoScope);")
+cpp_quote("  void __RPC_STUB IAccPropServices_SetHmenuPropServer_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("  HRESULT WINAPI IAccPropServices_ClearHmenuProps_Proxy(IAccPropServices *This,HMENU hmenu,DWORD idChild,const MSAAPROPID *paProps,int cProps);")
+cpp_quote("  void __RPC_STUB IAccPropServices_ClearHmenuProps_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("  HRESULT WINAPI IAccPropServices_ComposeHmenuIdentityString_Proxy(IAccPropServices *This,HMENU hmenu,DWORD idChild,BYTE **ppIDString,DWORD *pdwIDStringLen);")
+cpp_quote("  void __RPC_STUB IAccPropServices_ComposeHmenuIdentityString_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("  HRESULT WINAPI IAccPropServices_DecomposeHmenuIdentityString_Proxy(IAccPropServices *This,const BYTE *pIDString,DWORD dwIDStringLen,HMENU *phmenu,DWORD *pidChild);")
+cpp_quote("  void __RPC_STUB IAccPropServices_DecomposeHmenuIdentityString_Stub(IRpcStubBuffer *This,IRpcChannelBuffer *_pRpcChannelBuffer,PRPC_MESSAGE _pRpcMessage,DWORD *_pdwStubPhase);")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("  extern RPC_IF_HANDLE __MIDL_itf_oleacc_0119_v0_0_c_ifspec;")
+cpp_quote("  extern RPC_IF_HANDLE __MIDL_itf_oleacc_0119_v0_0_s_ifspec;")
+cpp_quote("#ifndef __Accessibility_LIBRARY_DEFINED__")
+cpp_quote("#define __Accessibility_LIBRARY_DEFINED__")
+cpp_quote("  EXTERN_C const IID LIBID_Accessibility;")
+cpp_quote("  EXTERN_C const CLSID CLSID_CAccPropServices;")
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("  class CAccPropServices;")
+cpp_quote("#endif")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("  ULONG __RPC_API BSTR_UserSize(ULONG *,ULONG,BSTR *);")
+cpp_quote("  unsigned char *__RPC_API BSTR_UserMarshal(ULONG *,unsigned char *,BSTR *);")
+cpp_quote("  unsigned char *__RPC_API BSTR_UserUnmarshal(ULONG *,unsigned char *,BSTR *);")
+cpp_quote("  void __RPC_API BSTR_UserFree(ULONG *,BSTR *);")
+cpp_quote("  ULONG __RPC_API HMENU_UserSize(ULONG *,ULONG,HMENU *);")
+cpp_quote("  unsigned char *__RPC_API HMENU_UserMarshal(ULONG *,unsigned char *,HMENU *);")
+cpp_quote("  unsigned char *__RPC_API HMENU_UserUnmarshal(ULONG *,unsigned char *,HMENU *);")
+cpp_quote("  void __RPC_API HMENU_UserFree(ULONG *,HMENU *);")
+cpp_quote("  ULONG __RPC_API HWND_UserSize(ULONG *,ULONG,HWND *);")
+cpp_quote("  unsigned char *__RPC_API HWND_UserMarshal(ULONG *,unsigned char *,HWND *);")
+cpp_quote("  unsigned char *__RPC_API HWND_UserUnmarshal(ULONG *,unsigned char *,HWND *);")
+cpp_quote("  void __RPC_API HWND_UserFree(ULONG *,HWND *);")
+cpp_quote("  ULONG __RPC_API VARIANT_UserSize(ULONG *,ULONG,VARIANT *);")
+cpp_quote("  unsigned char *__RPC_API VARIANT_UserMarshal(ULONG *,unsigned char *,VARIANT *);")
+cpp_quote("  unsigned char *__RPC_API VARIANT_UserUnmarshal(ULONG *,unsigned char *,VARIANT *);")
+cpp_quote("  void __RPC_API VARIANT_UserFree(ULONG *,VARIANT *);")

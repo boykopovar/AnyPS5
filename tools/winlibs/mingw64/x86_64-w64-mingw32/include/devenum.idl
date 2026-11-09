@@ -1,0 +1,28 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+cpp_quote("")
+cpp_quote("#define CDEF_CLASS_DEFAULT 0x1")
+cpp_quote("#define CDEF_BYPASS_CLASS_MANAGER 0x2")
+cpp_quote("#define CDEF_MERIT_ABOVE_DO_NOT_USE 0x8")
+cpp_quote("#define CDEF_DEVMON_CMGR_DEVICE 0x10")
+cpp_quote("#define CDEF_DEVMON_DMO 0x20")
+cpp_quote("#define CDEF_DEVMON_PNP_DEVICE 0x40")
+cpp_quote("#define CDEF_DEVMON_FILTER 0x80")
+cpp_quote("")
+cpp_quote("#define CDEF_DEVMON_SELECTIVE_MASK 0xf0")
+cpp_quote("")
+
+import "oaidl.idl";
+
+cpp_quote("")
+[object, local, uuid (29840822-5b84-11d0-BD3B-00a0c911ce86), pointer_default (unique)]
+interface ICreateDevEnum : IUnknown {
+  HRESULT CreateClassEnumerator ([in] REFCLSID clsidDeviceClass,[out] IEnumMoniker **ppEnumMoniker,[in] DWORD dwFlags);
+}
+cpp_quote("#endif")

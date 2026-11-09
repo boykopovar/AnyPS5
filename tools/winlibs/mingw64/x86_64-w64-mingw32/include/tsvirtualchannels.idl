@@ -1,0 +1,102 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+cpp_quote("#include <winapifamily.h>")
+
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+import "unknwn.idl";
+import "oaidl.idl";
+
+interface IWTSPlugin;
+interface IWTSListener;
+interface IWTSListenerCallback;
+interface IWTSVirtualChannelCallback;
+interface IWTSVirtualChannelManager;
+interface IWTSVirtualChannel;
+
+
+cpp_quote("#define WTS_PROPERTY_DEFAULT_CONFIG L\"DefaultConfig\"") 
+
+cpp_quote("#define E_MAPPEDRENDERER_SHUTDOWN HRESULT_FROM_WIN32(ERROR_INVALID_STATE)")
+cpp_quote("#define E_DUPLICATE_WINDOW_HINT HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)")
+
+[object, uuid(a1230201-1439-4e62-a414-190d0ac3d40e), oleautomation]
+interface IWTSPlugin : IUnknown
+{
+  HRESULT Initialize([in] IWTSVirtualChannelManager *pChannelMgr);
+  HRESULT Connected(void);
+  HRESULT Disconnected([in] DWORD dwDisconnectCode);
+  HRESULT Terminated(void);
+}
+
+[object, uuid(a1230206-9a39-4d58-8674-cdb4dff4e73b), oleautomation]
+interface IWTSListener : IUnknown
+{
+  HRESULT GetConfiguration([out] IPropertyBag **ppPropertyBag);
+}
+
+[object, uuid(a1230203-d6a7-11d8-b9fd-000bdbd1f198), oleautomation]
+interface IWTSListenerCallback : IUnknown
+{
+  HRESULT OnNewChannelConnection([in] IWTSVirtualChannel *pChannel, [in,ptr] BSTR data, [out] WINBOOL *pbAccept, [out] IWTSVirtualChannelCallback **ppCallback);
+}
+
+[object, uuid(a1230204-d6a7-11d8-b9fd-000bdbd1f198), oleautomation]
+interface IWTSVirtualChannelCallback : IUnknown
+{
+  HRESULT OnDataReceived([in] ULONG cbSize, [in, size_is(cbSize)] BYTE *pBuffer);
+  HRESULT OnClose(void);
+}
+
+cpp_quote("#define TS_VC_LISTENER_STATIC_CHANNEL 0x00000001")
+[object, uuid(a1230205-d6a7-11d8-b9fd-000bdbd1f198), oleautomation]
+interface IWTSVirtualChannelManager : IUnknown
+{
+  HRESULT CreateListener([in, string] const char *pszChannelName, [in] ULONG uFlags, [in] IWTSListenerCallback *pListenerCallback, [out] IWTSListener **ppListener);
+}
+
+[object, uuid(a1230207-d6a7-11d8-b9fd-000bdbd1f198), oleautomation]
+interface IWTSVirtualChannel : IUnknown
+{
+  HRESULT Write([in] ULONG cbSize, [in, size_is(cbSize)] BYTE *pBuffer, [in] IUnknown *pReserved);
+  HRESULT Close(void);
+}
+
+cpp_quote( "EXTERN_GUID( RDCLIENT_BITMAP_RENDER_SERVICE, 0xe4cc08cb, 0x942e, 0x4b19, 0x85, 0x4, 0xbd, 0x5a, 0x89, 0xa7, 0x47, 0xf5);" )
+
+[object, uuid(d3e07363-087c-476c-86a7-dbb15f46ddb4), oleautomation]
+interface IWTSPluginServiceProvider : IUnknown
+{
+  HRESULT GetService([in] GUID ServiceId, [out] IUnknown **ppunkObject);
+}
+
+typedef struct __BITMAP_RENDERER_STATISTICS {
+  DWORD dwFramesDelivered;
+  DWORD dwFramesDropped;
+} BITMAP_RENDERER_STATISTICS, *PBITMAP_RENDERER_STATISTICS;
+
+[object, uuid(5b7acc97-f3c9-46f7-8c5b-fa685d3441b1), oleautomation]
+interface IWTSBitmapRenderer : IUnknown
+{
+  HRESULT Render([in] GUID imageFormat, [in] DWORD dwWidth, [in] DWORD dwHeight, [in] LONG cbStride, [in] DWORD cbImageBuffer, [in, size_is(cbImageBuffer)] BYTE *pImageBuffer);
+  HRESULT GetRendererStatistics([out] BITMAP_RENDERER_STATISTICS *pStatistics);
+  HRESULT RemoveMapping(void);
+}
+
+[object, uuid(d782928e-fe4e-4e77-ae90-9cd0b3e3b353), oleautomation]
+interface IWTSBitmapRendererCallback : IUnknown
+{
+  HRESULT OnTargetSizeChanged([in] RECT rcNewSize);
+}
+
+[object, uuid(ea326091-05fe-40c1-b49c-3d2ef4626a0e), oleautomation]
+interface IWTSBitmapRenderService : IUnknown
+{
+  HRESULT GetMappedRenderer([in] UINT64 mappingId, [in] IWTSBitmapRendererCallback *pMappedRendererCallback, [out] IWTSBitmapRenderer **ppMappedRenderer);
+}
+
+cpp_quote("#endif /* WINAPI_PARTITION_DESKTOP */")

@@ -1,0 +1,70 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+
+import "objidl.idl";
+import "oleidl.idl";
+import "shtypes.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+cpp_quote("")
+cpp_quote("#define SID_STravelLogCursor IID_ITravelLogStg")
+
+enum tagTLENUMF {
+  TLEF_RELATIVE_INCLUDE_CURRENT = 0x00000001,
+  TLEF_RELATIVE_BACK = 0x00000010,
+  TLEF_RELATIVE_FORE = 0x00000020,
+  TLEF_INCLUDE_UNINVOKEABLE = 0x00000040,
+  TLEF_ABSOLUTE = 0x00000031,
+  TLEF_EXCLUDE_SUBFRAME_ENTRIES = 0x00000080,
+};
+
+typedef struct _WINDOWDATA {
+  DWORD dwWindowID;
+  UINT uiCP;
+  PIDLIST_ABSOLUTE pidl;
+  [string] LPWSTR lpszUrl;
+  [string] LPWSTR lpszUrlLocation;
+  [string] LPWSTR lpszTitle;
+} WINDOWDATA;
+
+typedef DWORD TLENUMF;
+typedef WINDOWDATA *LPWINDOWDATA;
+typedef const WINDOWDATA *LPCWINDOWDATA;
+
+[object, uuid (7ebfdd87-ad18-11d3-a4c5-00c04f72d6b8)]
+interface ITravelLogEntry : IUnknown {
+  HRESULT GetTitle ([out] LPWSTR *ppszTitle);
+  HRESULT GetURL ([out] LPWSTR *ppszURL);
+};
+
+[object, uuid (241c033e-e659-43da-aa4d-4086dbc4758d)]
+interface ITravelLogClient : IUnknown {
+  HRESULT FindWindowByIndex ([in] DWORD dwID,[out] IUnknown **ppunk);
+  HRESULT GetWindowData ([in] IStream *pStream,[out] LPWINDOWDATA pWinData);
+  HRESULT LoadHistoryPosition ([in] LPWSTR pszUrlLocation,[in] DWORD dwPosition);
+};
+
+[object, uuid (7ebfdd85-ad18-11d3-a4c5-00c04f72d6b8)]
+interface IEnumTravelLogEntry : IUnknown {
+  HRESULT Next ([in] ULONG cElt,[out, size_is (cElt), length_is (*pcEltFetched)] ITravelLogEntry **rgElt,[out] ULONG *pcEltFetched);
+  HRESULT Skip ([in] ULONG cElt);
+  HRESULT Reset (void);
+  HRESULT Clone ([out] IEnumTravelLogEntry **ppEnum);
+};
+
+[object, uuid (7ebfdd80-ad18-11d3-a4c5-00c04f72d6b8), pointer_default (unique)]
+interface ITravelLogStg : IUnknown {
+  HRESULT CreateEntry ([in] LPCWSTR pszUrl,[in] LPCWSTR pszTitle,[in] ITravelLogEntry *ptleRelativeTo,[in] BOOL fPrepend,[out] ITravelLogEntry **pptle);
+  HRESULT TravelTo ([in] ITravelLogEntry *ptle);
+  HRESULT EnumEntries ([in] TLENUMF flags,[out] IEnumTravelLogEntry **ppenum);
+  HRESULT FindEntries ([in] TLENUMF flags,[in] LPCWSTR pszUrl,[out] IEnumTravelLogEntry **ppenum);
+  HRESULT GetCount ([in] TLENUMF flags,[out] DWORD *pcEntries);
+  HRESULT RemoveEntry ([in] ITravelLogEntry *ptle);
+  HRESULT GetRelativeEntry ([in] int iOffset,[out] ITravelLogEntry **ptle);
+};
+cpp_quote("#endif")

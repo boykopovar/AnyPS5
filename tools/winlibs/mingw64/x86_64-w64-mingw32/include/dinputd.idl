@@ -1,0 +1,461 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+import "unknwn.idl";
+
+cpp_quote("#include \"winapifamily.h\"")
+
+cpp_quote("#ifndef DIRECTINPUT_VERSION")
+cpp_quote("#define DIRECTINPUT_VERSION 0x0800")
+cpp_quote("#endif")
+
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+cpp_quote("")
+typedef struct DIOBJECTATTRIBUTES {
+  DWORD dwFlags;
+  WORD wUsagePage;
+  WORD wUsage;
+} DIOBJECTATTRIBUTES, *LPDIOBJECTATTRIBUTES;
+typedef const DIOBJECTATTRIBUTES *LPCDIOBJECTATTRIBUTES;
+
+cpp_quote("")
+typedef struct DIFFOBJECTATTRIBUTES {
+  DWORD dwFFMaxForce;
+  DWORD dwFFForceResolution;
+} DIFFOBJECTATTRIBUTES, *LPDIFFOBJECTATTRIBUTES;
+typedef const DIFFOBJECTATTRIBUTES *LPCDIFFOBJECTATTRIBUTES;
+
+cpp_quote("")
+typedef struct DIOBJECTCALIBRATION {
+  LONG lMin;
+  LONG lCenter;
+  LONG lMax;
+} DIOBJECTCALIBRATION, *LPDIOBJECTCALIBRATION;
+typedef const DIOBJECTCALIBRATION *LPCDIOBJECTCALIBRATION;
+
+cpp_quote("")
+typedef struct DIPOVCALIBRATION {
+  LONG lMin[5];
+  LONG lMax[5];
+} DIPOVCALIBRATION, *LPDIPOVCALIBRATION;
+typedef const DIPOVCALIBRATION *LPCDIPOVCALIBRATION;
+
+cpp_quote("")
+typedef struct DIEFFECTATTRIBUTES {
+  DWORD dwEffectId;
+  DWORD dwEffType;
+  DWORD dwStaticParams;
+  DWORD dwDynamicParams;
+  DWORD dwCoords;
+} DIEFFECTATTRIBUTES, *LPDIEFFECTATTRIBUTES;
+typedef const DIEFFECTATTRIBUTES *LPCDIEFFECTATTRIBUTES;
+
+cpp_quote("")
+typedef struct DIFFDEVICEATTRIBUTES {
+  DWORD dwFlags;
+  DWORD dwFFSamplePeriod;
+  DWORD dwFFMinTimeResolution;
+} DIFFDEVICEATTRIBUTES, *LPDIFFDEVICEATTRIBUTES;
+typedef const DIFFDEVICEATTRIBUTES *LPCDIFFDEVICEATTRIBUTES;
+
+cpp_quote("")
+typedef struct DIDRIVERVERSIONS {
+  DWORD dwSize;
+  DWORD dwFirmwareRevision;
+  DWORD dwHardwareRevision;
+  DWORD dwFFDriverVersion;
+} DIDRIVERVERSIONS, *LPDIDRIVERVERSIONS;
+typedef const DIDRIVERVERSIONS *LPCDIDRIVERVERSIONS;
+
+cpp_quote("")
+typedef struct DIDEVICESTATE {
+  DWORD dwSize;
+  DWORD dwState;
+  DWORD dwLoad;
+} DIDEVICESTATE, *LPDIDEVICESTATE;
+
+cpp_quote("#define DEV_STS_EFFECT_RUNNING DIEGES_PLAYING")
+
+cpp_quote("#ifndef DIJ_RINGZERO")
+
+cpp_quote("")
+typedef struct DIHIDFFINITINFO {
+  DWORD dwSize;
+  LPWSTR pwszDeviceInterface;
+  GUID GuidInstance;
+} DIHIDFFINITINFO, *LPDIHIDFFINITINFO;
+
+/* for this idl only, already defined in dinput.h */
+cpp_quote("#if 0")
+typedef struct DIEFFESCAPE DIEFFESCAPE, *LPDIEFFESCAPE;
+typedef struct DIEFFECT DIEFFECT, *LPDIEFFECT;
+typedef const DIEFFECT *LPCDIEFFECT;
+cpp_quote("#endif")
+
+cpp_quote("")
+[object, uuid(02538130-898f-11d0-9ad0-00a0c9a06e35), local]
+interface IDirectInputEffectDriver : IUnknown {
+  HRESULT DeviceID (DWORD, DWORD, DWORD, DWORD, LPVOID);
+  HRESULT GetVersions (LPDIDRIVERVERSIONS);
+  HRESULT Escape (DWORD, DWORD, LPDIEFFESCAPE);
+  HRESULT SetGain (DWORD, DWORD);
+  HRESULT SendForceFeedbackCommand (DWORD, DWORD);
+  HRESULT GetForceFeedbackState (DWORD, LPDIDEVICESTATE);
+  HRESULT DownloadEffect (DWORD, DWORD, LPDWORD, LPCDIEFFECT, DWORD);
+  HRESULT DestroyEffect (DWORD, DWORD);
+  HRESULT StartEffect (DWORD, DWORD, DWORD, DWORD);
+  HRESULT StopEffect (DWORD, DWORD);
+  HRESULT GetEffectStatus (DWORD, DWORD, LPDWORD);
+}
+
+cpp_quote("#endif /* DIJ_RINGZERO */")
+
+cpp_quote("#ifndef JOY_HW_NONE")
+
+cpp_quote("#define JOY_HW_NONE 0")
+cpp_quote("#define JOY_HW_CUSTOM 1")
+cpp_quote("#define JOY_HW_2A_2B_GENERIC 2")
+cpp_quote("#define JOY_HW_2A_4B_GENERIC 3")
+cpp_quote("#define JOY_HW_2B_GAMEPAD 4")
+cpp_quote("#define JOY_HW_2B_FLIGHTYOKE 5")
+cpp_quote("#define JOY_HW_2B_FLIGHTYOKETHROTTLE 6")
+cpp_quote("#define JOY_HW_3A_2B_GENERIC 7")
+cpp_quote("#define JOY_HW_3A_4B_GENERIC 8")
+cpp_quote("#define JOY_HW_4B_GAMEPAD 9")
+cpp_quote("#define JOY_HW_4B_FLIGHTYOKE 10")
+cpp_quote("#define JOY_HW_4B_FLIGHTYOKETHROTTLE 11")
+cpp_quote("#define JOY_HW_TWO_2A_2B_WITH_Y 12")
+cpp_quote("#define JOY_HW_LASTENTRY 13")
+
+cpp_quote("#define JOY_ISCAL_XY 0x00000001")
+cpp_quote("#define JOY_ISCAL_Z 0x00000002")
+cpp_quote("#define JOY_ISCAL_R 0x00000004")
+cpp_quote("#define JOY_ISCAL_U 0x00000008")
+cpp_quote("#define JOY_ISCAL_V 0x00000010")
+cpp_quote("#define JOY_ISCAL_POV 0x00000020")
+
+const USHORT JOY_POVVAL_FORWARD = 0;
+const USHORT JOY_POVVAL_BACKWARD = 1;
+const USHORT JOY_POVVAL_LEFT = 2;
+const USHORT JOY_POVVAL_RIGHT = 3;
+const USHORT JOY_POV_NUMDIRS = 4;
+
+cpp_quote("#define JOY_HWS_HASZ 0x00000001")
+cpp_quote("#define JOY_HWS_HASPOV 0x00000002")
+cpp_quote("#define JOY_HWS_POVISBUTTONCOMBOS 0x00000004")
+cpp_quote("#define JOY_HWS_POVISPOLL 0x00000008")
+cpp_quote("#define JOY_HWS_ISYOKE 0x00000010")
+cpp_quote("#define JOY_HWS_ISGAMEPAD 0x00000020")
+cpp_quote("#define JOY_HWS_ISCARCTRL 0x00000040")
+
+cpp_quote("#define JOY_HWS_XISJ1Y 0x00000080")
+cpp_quote("#define JOY_HWS_XISJ2X 0x00000100")
+cpp_quote("#define JOY_HWS_XISJ2Y 0x00000200")
+
+cpp_quote("#define JOY_HWS_YISJ1X 0x00000400")
+cpp_quote("#define JOY_HWS_YISJ2X 0x00000800")
+cpp_quote("#define JOY_HWS_YISJ2Y 0x00001000")
+
+cpp_quote("#define JOY_HWS_ZISJ1X 0x00002000")
+cpp_quote("#define JOY_HWS_ZISJ1Y 0x00004000")
+cpp_quote("#define JOY_HWS_ZISJ2X 0x00008000")
+
+cpp_quote("#define JOY_HWS_POVISJ1X 0x00010000")
+cpp_quote("#define JOY_HWS_POVISJ1Y 0x00020000")
+cpp_quote("#define JOY_HWS_POVISJ2X 0x00040000")
+
+cpp_quote("#define JOY_HWS_HASR 0x00080000")
+cpp_quote("#define JOY_HWS_RISJ1X 0x00100000")
+cpp_quote("#define JOY_HWS_RISJ1Y 0x00200000")
+cpp_quote("#define JOY_HWS_RISJ2Y 0x00400000")
+
+cpp_quote("#define JOY_HWS_HASU 0x00800000")
+cpp_quote("#define JOY_HWS_HASV 0x01000000")
+
+cpp_quote("#define JOY_US_HASRUDDER 0x00000001")
+cpp_quote("#define JOY_US_PRESENT 0x00000002")
+cpp_quote("#define JOY_US_ISOEM 0x00000004")
+
+cpp_quote("#define JOY_US_RESERVED 0x80000000")
+
+cpp_quote("#define JOYTYPE_ZEROGAMEENUMOEMDATA 0x00000001")
+cpp_quote("#define JOYTYPE_NOAUTODETECTGAMEPORT 0x00000002")
+cpp_quote("#define JOYTYPE_NOHIDDIRECT 0x00000004")
+cpp_quote("#define JOYTYPE_ANALOGCOMPAT 0x00000008")
+cpp_quote("#define JOYTYPE_DEFAULTPROPSHEET 0x80000000")
+
+cpp_quote("#define JOYTYPE_DEVICEHIDE 0x00010000")
+cpp_quote("#define JOYTYPE_MOUSEHIDE 0x00020000")
+cpp_quote("#define JOYTYPE_KEYBHIDE 0x00040000")
+cpp_quote("#define JOYTYPE_GAMEHIDE 0x00080000")
+cpp_quote("#define JOYTYPE_HIDEACTIVE 0x00100000")
+cpp_quote("#define JOYTYPE_INFOMASK 0x00E00000")
+cpp_quote("#define JOYTYPE_INFODEFAULT 0x00000000")
+cpp_quote("#define JOYTYPE_INFOYYPEDALS 0x00200000")
+cpp_quote("#define JOYTYPE_INFOZYPEDALS 0x00400000")
+cpp_quote("#define JOYTYPE_INFOYRPEDALS 0x00600000")
+cpp_quote("#define JOYTYPE_INFOZRPEDALS 0x00800000")
+cpp_quote("#define JOYTYPE_INFOZISSLIDER 0x00200000")
+cpp_quote("#define JOYTYPE_INFOZISZ 0x00400000")
+cpp_quote("#define JOYTYPE_ENABLEINPUTREPORT 0x01000000")
+
+cpp_quote("")
+typedef struct joypos_tag {
+  DWORD dwX;
+  DWORD dwY;
+  DWORD dwZ;
+  DWORD dwR;
+  DWORD dwU;
+  DWORD dwV;
+} JOYPOS, *LPJOYPOS;
+
+cpp_quote("")
+typedef struct joyrange_tag {
+  JOYPOS jpMin;
+  JOYPOS jpMax;
+  JOYPOS jpCenter;
+} JOYRANGE, *LPJOYRANGE;
+
+cpp_quote("")
+typedef struct joyreguservalues_tag {
+  DWORD dwTimeOut;
+  JOYRANGE jrvRanges;
+  JOYPOS jpDeadZone;
+} JOYREGUSERVALUES, *LPJOYREGUSERVALUES;
+
+cpp_quote("")
+typedef struct joyreghwsettings_tag {
+  DWORD dwFlags;
+  DWORD dwNumButtons;
+} JOYREGHWSETTINGS, *LPJOYHWSETTINGS;
+
+cpp_quote("")
+typedef struct joyreghwvalues_tag {
+  JOYRANGE jrvHardware;
+  DWORD dwPOVValues[JOY_POV_NUMDIRS];
+  DWORD dwCalFlags;
+} JOYREGHWVALUES, *LPJOYREGHWVALUES;
+
+cpp_quote("")
+typedef struct joyreghwconfig_tag {
+  JOYREGHWSETTINGS hws;
+  DWORD dwUsageSettings;
+  JOYREGHWVALUES hwv;
+  DWORD dwType;
+  DWORD dwReserved;
+} JOYREGHWCONFIG, *LPJOYREGHWCONFIG;
+
+cpp_quote("")
+typedef struct joycalibrate_tag {
+  UINT wXbase;
+  UINT wXdelta;
+  UINT wYbase;
+  UINT wYdelta;
+  UINT wZbase;
+  UINT wZdelta;
+} JOYCALIBRATE, *LPJOYCALIBRATE;
+
+cpp_quote("#endif /* JOY_HW_NONE */")
+
+cpp_quote("#ifndef DIJ_RINGZERO")
+
+const USHORT MAX_JOYSTRING = 256;
+cpp_quote("typedef WINBOOL (WINAPI *LPDIJOYTYPECALLBACK)(LPCWSTR, LPVOID);")
+
+/* for this idl only */
+cpp_quote("#if 0")
+const USHORT MAX_JOYSTICKOEMVXDNAME = 260;
+cpp_quote("#endif")
+
+cpp_quote("#ifndef MAX_JOYSTICKOEMVXDNAME")
+cpp_quote("#define MAX_JOYSTICKOEMVXDNAME 260")
+cpp_quote("#endif")
+
+cpp_quote("#define DITC_REGHWSETTINGS 0x00000001")
+cpp_quote("#define DITC_CLSIDCONFIG 0x00000002")
+cpp_quote("#define DITC_DISPLAYNAME 0x00000004")
+cpp_quote("#define DITC_CALLOUT 0x00000008")
+cpp_quote("#define DITC_HARDWAREID 0x00000010")
+cpp_quote("#define DITC_FLAGS1 0x00000020")
+cpp_quote("#define DITC_FLAGS2 0x00000040")
+cpp_quote("#define DITC_MAPFILE 0x00000080")
+
+cpp_quote("")
+typedef struct DIJOYTYPEINFO_DX5 {
+  DWORD dwSize;
+  JOYREGHWSETTINGS hws;
+  CLSID clsidConfig;
+  WCHAR wszDisplayName[MAX_JOYSTRING];
+  WCHAR wszCallout[MAX_JOYSTICKOEMVXDNAME];
+} DIJOYTYPEINFO_DX5, *LPDIJOYTYPEINFO_DX5;
+typedef const DIJOYTYPEINFO_DX5 *LPCDIJOYTYPEINFO_DX5;
+
+cpp_quote("")
+typedef struct DIJOYTYPEINFO_DX6 {
+  DWORD dwSize;
+  JOYREGHWSETTINGS hws;
+  CLSID clsidConfig;
+  WCHAR wszDisplayName[MAX_JOYSTRING];
+  WCHAR wszCallout[MAX_JOYSTICKOEMVXDNAME];
+  WCHAR wszHardwareId[MAX_JOYSTRING];
+  DWORD dwFlags1;
+} DIJOYTYPEINFO_DX6, *LPDIJOYTYPEINFO_DX6;
+typedef const DIJOYTYPEINFO_DX6 *LPCDIJOYTYPEINFO_DX6;
+
+cpp_quote("")
+typedef struct DIJOYTYPEINFO {
+  DWORD dwSize;
+  JOYREGHWSETTINGS hws;
+  CLSID clsidConfig;
+  WCHAR wszDisplayName[MAX_JOYSTRING];
+  WCHAR wszCallout[MAX_JOYSTICKOEMVXDNAME];
+  WCHAR wszHardwareId[MAX_JOYSTRING];
+  DWORD dwFlags1;
+  DWORD dwFlags2;
+  WCHAR wszMapFile[MAX_JOYSTRING];
+} DIJOYTYPEINFO, *LPDIJOYTYPEINFO;
+typedef const DIJOYTYPEINFO *LPCDIJOYTYPEINFO;
+
+cpp_quote("#define DIJC_GUIDINSTANCE 0x00000001")
+cpp_quote("#define DIJC_REGHWCONFIGTYPE 0x00000002")
+cpp_quote("#define DIJC_GAIN 0x00000004")
+cpp_quote("#define DIJC_CALLOUT 0x00000008")
+cpp_quote("#define DIJC_WDMGAMEPORT 0x00000010")
+
+cpp_quote("")
+typedef struct DIJOYCONFIG_DX5 {
+  DWORD dwSize;
+  GUID guidInstance;
+  JOYREGHWCONFIG hwc;
+  DWORD dwGain;
+  WCHAR wszType[MAX_JOYSTRING];
+  WCHAR wszCallout[MAX_JOYSTRING];
+} DIJOYCONFIG_DX5, *LPDIJOYCONFIG_DX5;
+typedef const DIJOYCONFIG_DX5 *LPCDIJOYCONFIG_DX5;
+
+cpp_quote("")
+typedef struct DIJOYCONFIG {
+  DWORD dwSize;
+  GUID guidInstance;
+  JOYREGHWCONFIG hwc;
+  DWORD dwGain;
+  WCHAR wszType[MAX_JOYSTRING];
+  WCHAR wszCallout[MAX_JOYSTRING];
+  GUID guidGameport;
+} DIJOYCONFIG, *LPDIJOYCONFIG;
+typedef const DIJOYCONFIG *LPCDIJOYCONFIG;
+
+cpp_quote("#define DIJU_USERVALUES 0x00000001")
+cpp_quote("#define DIJU_GLOBALDRIVER 0x00000002")
+cpp_quote("#define DIJU_GAMEPORTEMULATOR 0x00000004")
+
+cpp_quote("")
+typedef struct DIJOYUSERVALUES {
+  DWORD dwSize;
+  JOYREGUSERVALUES ruv;
+  WCHAR wszGlobalDriver[MAX_JOYSTRING];
+  WCHAR wszGameportEmulator[MAX_JOYSTRING];
+} DIJOYUSERVALUES, *LPDIJOYUSERVALUES;
+typedef const DIJOYUSERVALUES *LPCDIJOYUSERVALUES;
+
+cpp_quote("DEFINE_GUID(GUID_KeyboardClass, 0x4d36e96b,0xe325,0x11ce,0xbf,0xc1,0x08,0x00,0x2b,0xe1,0x03,0x18);")
+cpp_quote("DEFINE_GUID(GUID_MediaClass, 0x4d36e96c,0xe325,0x11ce,0xbf,0xc1,0x08,0x00,0x2b,0xe1,0x03,0x18);")
+cpp_quote("DEFINE_GUID(GUID_MouseClass, 0x4d36e96f,0xe325,0x11ce,0xbf,0xc1,0x08,0x00,0x2b,0xe1,0x03,0x18);")
+cpp_quote("DEFINE_GUID(GUID_HIDClass, 0x745a17a0,0x74d3,0x11d0,0xb6,0xfe,0x00,0xa0,0xc9,0x0f,0x57,0xda);")
+
+cpp_quote("")
+[object, uuid(1de12ab1-c9f5-11cf-bfc7-444553540000), local]
+interface IDirectInputJoyConfig : IUnknown {
+  HRESULT Acquire ();
+  HRESULT Unacquire ();
+  HRESULT SetCooperativeLevel (HWND, DWORD);
+  HRESULT SendNotify ();
+  HRESULT EnumTypes (LPVOID, LPVOID);
+  HRESULT GetTypeInfo (LPCWSTR, LPDIJOYTYPEINFO, DWORD);
+  HRESULT SetTypeInfo (LPCWSTR, LPCDIJOYTYPEINFO, DWORD);
+  HRESULT DeleteType (LPCWSTR);
+  HRESULT GetConfig (UINT, LPDIJOYCONFIG, DWORD);
+  HRESULT SetConfig (UINT, LPCDIJOYCONFIG, DWORD);
+  HRESULT DeleteConfig (UINT);
+  HRESULT GetUserValues (LPDIJOYUSERVALUES, DWORD);
+  HRESULT SetUserValues (LPCDIJOYUSERVALUES, DWORD);
+  HRESULT AddNewHardware (HWND, REFGUID);
+  HRESULT OpenTypeKey (LPCWSTR, DWORD, HKEY*);
+  HRESULT OpenConfigKey (UINT, DWORD, HKEY*);
+}
+
+cpp_quote("")
+[object, uuid(eb0d7dfa-1990-4f27-b4d6-edf2eec4a44c), local]
+interface IDirectInputJoyConfig8 : IUnknown {
+  HRESULT Acquire ();
+  HRESULT Unacquire ();
+  HRESULT SetCooperativeLevel (HWND, DWORD);
+  HRESULT SendNotify ();
+  HRESULT EnumTypes (LPVOID, LPVOID);
+  HRESULT GetTypeInfo (LPCWSTR, LPDIJOYTYPEINFO, DWORD);
+  HRESULT SetTypeInfo (LPCWSTR, LPCDIJOYTYPEINFO, DWORD, LPWSTR);
+  HRESULT DeleteType (LPCWSTR);
+  HRESULT GetConfig (UINT, LPDIJOYCONFIG, DWORD);
+  HRESULT SetConfig (UINT, LPCDIJOYCONFIG, DWORD);
+  HRESULT DeleteConfig (UINT);
+  HRESULT GetUserValues (LPDIJOYUSERVALUES, DWORD);
+  HRESULT SetUserValues (LPCDIJOYUSERVALUES, DWORD);
+  HRESULT AddNewHardware (HWND, REFGUID);
+  HRESULT OpenTypeKey (LPCWSTR, DWORD, HKEY*);
+  HRESULT OpenAppStatusKey (HKEY*);
+}
+
+cpp_quote("#endif /* DIJ_RINGZERO */")
+
+cpp_quote("#define DIRECTINPUT_NOTIFICATION_MSGSTRINGA \"DIRECTINPUT_NOTIFICATION_MSGSTRING\"")
+cpp_quote("#define DIRECTINPUT_NOTIFICATION_MSGSTRINGW L\"DIRECTINPUT_NOTIFICATION_MSGSTRING\"")
+cpp_quote("#define DIRECTINPUT_NOTIFICATION_MSGSTRING __MINGW_NAME_AW(DIRECTINPUT_NOTIFICATION_MSGSTRING)")
+
+cpp_quote("#define DIMSGWP_NEWAPPSTART 0x00000001")
+cpp_quote("#define DIMSGWP_DX8APPSTART 0x00000002")
+cpp_quote("#define DIMSGWP_DX8MAPPERAPPSTART 0x00000003")
+
+cpp_quote("#define DIAPPIDFLAG_NOTIME 0x00000001")
+cpp_quote("#define DIAPPIDFLAG_NOSIZE 0x00000002")
+
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_APPIDFLAGA \"AppIdFlag\"")
+cpp_quote("#define DIRECTINPUT_REGSTR_KEY_LASTAPPA \"MostRecentApplication\"")
+cpp_quote("#define DIRECTINPUT_REGSTR_KEY_LASTMAPAPPA \"MostRecentMapperApplication\"")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_VERSIONA \"Version\"")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_NAMEA \"Name\"")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_IDA \"Id\"")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_MAPPERA \"UsesMapper\"")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_LASTSTARTA \"MostRecentStart\"")
+
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_APPIDFLAGW L\"AppIdFlag\"")
+cpp_quote("#define DIRECTINPUT_REGSTR_KEY_LASTAPPW L\"MostRecentApplication\"")
+cpp_quote("#define DIRECTINPUT_REGSTR_KEY_LASTMAPAPPW L\"MostRecentMapperApplication\"")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_VERSIONW L\"Version\"")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_NAMEW L\"Name\"")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_IDW L\"Id\"")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_MAPPERW L\"UsesMapper\"")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_LASTSTARTW L\"MostRecentStart\"")
+
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_APPIDFLAG __MINGW_NAME_AW(DIRECTINPUT_REGSTR_VAL_APPIDFLAG)")
+cpp_quote("#define DIRECTINPUT_REGSTR_KEY_LASTAPP __MINGW_NAME_AW(DIRECTINPUT_REGSTR_KEY_LASTAPP)")
+cpp_quote("#define DIRECTINPUT_REGSTR_KEY_LASTMAPAPP __MINGW_NAME_AW(DIRECTINPUT_REGSTR_KEY_LASTMAPAPP)")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_VERSION __MINGW_NAME_AW(DIRECTINPUT_REGSTR_VAL_VERSION)")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_NAME __MINGW_NAME_AW(DIRECTINPUT_REGSTR_VAL_NAME)")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_ID __MINGW_NAME_AW(DIRECTINPUT_REGSTR_VAL_ID)")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_MAPPER __MINGW_NAME_AW(DIRECTINPUT_REGSTR_VAL_MAPPER)")
+cpp_quote("#define DIRECTINPUT_REGSTR_VAL_LASTSTART __MINGW_NAME_AW(DIRECTINPUT_REGSTR_VAL_LASTSTART)")
+
+cpp_quote("#define DIERR_NOMOREITEMS MAKE_HRESULT(SEVERITY_ERROR, FACILITY_WIN32, ERROR_NO_MORE_ITEMS)")
+
+cpp_quote("#define DIERR_DRIVERFIRST __MSABI_LONG(0x80040300)")
+cpp_quote("#define DIERR_DRIVERLAST __MSABI_LONG(0x800403FF)")
+cpp_quote("#define DIERR_INVALIDCLASSINSTALLER __MSABI_LONG(0x80040400)")
+cpp_quote("#define DIERR_CANCELLED __MSABI_LONG(0x80040401)")
+cpp_quote("#define DIERR_BADINF __MSABI_LONG(0x80040402)")
+cpp_quote("#define DIDIFT_DELETE __MSABI_LONG(0x01000000)")
+
+cpp_quote("#endif /* WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP) */")

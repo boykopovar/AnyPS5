@@ -1,0 +1,66 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+/* This IDL is not for generation of wincrypt-header.  Instead it is
+   there for having an ability to import wincrypt's types for use in
+   wsdbase.idl file.
+   Therefore DON'T add this IDL-file to Makefile!!!!!
+*/
+
+cpp_quote("#include <winapifamily.h>")
+
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+#ifndef __WIDL__
+#ifndef FARPROC
+typedef int (__stdcall FARPROC) ();
+#endif
+#endif
+
+#ifndef PBYTE
+typedef BYTE *PBYTE;
+#endif
+
+#ifndef PDWORD
+typedef DWORD *PDWORD;
+#endif
+
+#ifndef size_t
+#if defined (_WIN64)
+typedef unsigned int size_t;
+#else
+typedef unsigned __int64 size_t;
+#endif
+#endif
+
+#ifndef VOID
+typedef void VOID;
+#endif
+
+#ifndef ULONG_PTR
+#if defined (_WIN64)
+typedef unsigned __int64 ULONG_PTR;
+#else
+typedef unsigned long ULONG_PTR;
+#endif
+#endif
+
+#ifndef BASETYPES
+#define BASETYPES
+typedef unsigned long ULONG;
+typedef ULONG *PULONG;
+typedef unsigned short USHORT;
+typedef USHORT *PUSHORT;
+typedef unsigned char UCHAR;
+typedef UCHAR *PUCHAR;
+typedef char *PSZ;
+#endif
+
+typedef WCHAR *NWPSTR,*LPWSTR,*PWSTR;
+typedef const WCHAR *LPCWSTR,*PCWSTR;
+
+#include "wincrypt.h"
+
+cpp_quote("#endif")

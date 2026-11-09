@@ -1,0 +1,35 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+cpp_quote("#include <winapifamily.h>")
+
+cpp_quote("#if NTDDI_VERSION >= NTDDI_WIN8")
+
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+
+import "mfobjects.idl";
+
+[object, uuid(3de21209-8ba6-4f2a-a577-2819b56ff14d), local]
+interface IAdvancedMediaCaptureInitializationSettings : IUnknown
+{
+  HRESULT SetDirectxDeviceManager([in] IMFDXGIDeviceManager *pManager);
+}
+
+[object, uuid(24e0485f-a33e-4aa1-b564-6019b1d14f65), local]
+interface IAdvancedMediaCaptureSettings : IUnknown
+{
+  HRESULT GetDirectxDeviceManager([out] IMFDXGIDeviceManager **ppManager);
+}
+
+[object, uuid(d0751585-d216-4344-b5bf-463b68f977bb), local]
+interface IAdvancedMediaCapture: IUnknown
+{
+  HRESULT GetAdvancedMediaCaptureSettings ([out] IAdvancedMediaCaptureSettings **ppSettings);
+}
+
+cpp_quote("#endif /* WINAPI_PARTITION_APP */")
+
+cpp_quote("#endif /* NTDDI >= NTDDI_WIN8 */")

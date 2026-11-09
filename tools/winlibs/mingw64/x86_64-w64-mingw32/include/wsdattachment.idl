@@ -1,0 +1,43 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+import "objidl.idl";
+
+cpp_quote("")
+cpp_quote("#ifndef _INC_WSDAPI")
+cpp_quote("#error Please include wsdapi.h instead of this header. This header cannot be used directly.")
+cpp_quote("#endif")
+cpp_quote("")
+
+interface IWSDAttachment;
+interface IWSDInboundAttachment;
+interface IWSDOutboundAttachment;
+
+cpp_quote("")
+[object, uuid (5d55a616-9df8-4b09-b156-9ba351a48b76)]
+interface IWSDAttachment : IUnknown {
+}
+
+cpp_quote("")
+[object, local, uuid (5bd6ca65-233c-4fb8-9f7a-2641619655c9)]
+interface IWSDInboundAttachment : IWSDAttachment {
+  HRESULT Read ([out, size_is (dwBytesToRead), length_is (*pdwNumberOfBytesRead)] BYTE *pBuffer,[in] DWORD dwBytesToRead,[out] LPDWORD pdwNumberOfBytesRead);
+  HRESULT Close ();
+}
+
+cpp_quote("")
+[object, local, uuid (aa302f8d-5a22-4ba5-b392-aa8486f4c15d)]
+interface IWSDOutboundAttachment : IWSDAttachment {
+  HRESULT Write ([in, size_is (dwBytesToWrite)] const BYTE *pBuffer,[in] DWORD dwBytesToWrite,[out] LPDWORD pdwNumberOfBytesWritten);
+  HRESULT Close ();
+  HRESULT Abort ();
+}
+
+cpp_quote("")
+cpp_quote("HRESULT WINAPI WSDCreateOutboundAttachment(IWSDOutboundAttachment **ppAttachment);")
+cpp_quote("#endif")

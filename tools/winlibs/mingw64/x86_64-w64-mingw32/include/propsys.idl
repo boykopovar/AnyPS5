@@ -1,0 +1,541 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+
+import "objidl.idl";
+import "oleidl.idl";
+import "ocidl.idl";
+import "shtypes.idl";
+import "structuredquerycondition.idl";
+
+cpp_quote("")
+cpp_quote("#ifndef PSSTDAPI")
+cpp_quote("#ifdef _PROPSYS_")
+cpp_quote("#define PSSTDAPI STDAPI")
+cpp_quote("#define PSSTDAPI_(type)   STDAPI_(type)")
+cpp_quote("#else")
+cpp_quote("#define PSSTDAPI EXTERN_C DECLSPEC_IMPORT HRESULT STDAPICALLTYPE")
+cpp_quote("#define PSSTDAPI_(type) EXTERN_C DECLSPEC_IMPORT type STDAPICALLTYPE")
+cpp_quote("#endif")
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#if 0")
+typedef PROPERTYKEY *REFPROPERTYKEY;
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#include <propkeydef.h>")
+
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+[uuid (b7d14566-0509-4cce-a71f-0a554233bd9b), object, pointer_default (unique)]
+interface IInitializeWithFile : IUnknown {
+  HRESULT Initialize ([in, string] LPCWSTR pszFilePath,[in] DWORD grfMode);
+}
+
+cpp_quote("")
+[uuid (b824b49d-22ac-4161-ac8a-9916e8fa3f7f), object, pointer_default (unique)]
+interface IInitializeWithStream : IUnknown {
+  [local] HRESULT Initialize ([in] IStream *pstream,[in] DWORD grfMode);
+  [call_as (Initialize)] HRESULT RemoteInitialize ([in] IStream *pstream,[in] DWORD grfMode);
+}
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+[uuid (886d8eeb-8cf2-4446-8d02-cdba1dbdcf99), helpstring ("Simple Property Store Interface"), object, pointer_default (unique)]
+interface IPropertyStore : IUnknown {
+  HRESULT GetCount ([out] DWORD *cProps);
+  HRESULT GetAt ([in] DWORD iProp,[out] PROPERTYKEY *pkey);
+  HRESULT GetValue ([in] REFPROPERTYKEY key,[out] PROPVARIANT *pv);
+  HRESULT SetValue ([in] REFPROPERTYKEY key,[in] REFPROPVARIANT propvar);
+  HRESULT Commit ();
+}
+
+cpp_quote("")
+typedef [unique] IPropertyStore *LPPROPERTYSTORE;
+cpp_quote("#endif")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+[uuid (71604b0f-97b0-4764-8577-2f13e98a1422), object, pointer_default (unique)]
+interface INamedPropertyStore : IUnknown {
+  HRESULT GetNamedValue ([in, string] LPCWSTR pszName,[out] PROPVARIANT *ppropvar);
+  HRESULT SetNamedValue ([in, string] LPCWSTR pszName,[in] REFPROPVARIANT propvar);
+  HRESULT GetNameCount ([out] DWORD *pdwCount);
+  HRESULT GetNameAt ([in] DWORD iProp,[out] BSTR *pbstrName);
+};
+
+cpp_quote("")
+typedef [v1_enum] enum GETPROPERTYSTOREFLAGS {
+  GPS_DEFAULT = 0x00000000,
+  GPS_HANDLERPROPERTIESONLY = 0x00000001,
+  GPS_READWRITE = 0x00000002,
+  GPS_TEMPORARY = 0x00000004,
+  GPS_FASTPROPERTIESONLY = 0x00000008,
+  GPS_OPENSLOWITEM = 0x00000010,
+  GPS_DELAYCREATION = 0x00000020,
+  GPS_BESTEFFORT = 0x00000040,
+  GPS_NO_OPLOCK = 0x00000080,
+  GPS_PREFERQUERYPROPERTIES = 0x00000100,
+  GPS_MASK_VALID = 0x000001ff
+} GETPROPERTYSTOREFLAGS;
+
+cpp_quote("")
+cpp_quote("DEFINE_ENUM_FLAG_OPERATORS(GETPROPERTYSTOREFLAGS)")
+
+cpp_quote("")
+[object, uuid (fc0ca0a7-c316-4fd2-9031-3e628e6d4f23)]
+interface IObjectWithPropertyKey : IUnknown {
+  HRESULT SetPropertyKey ([in] REFPROPERTYKEY key);
+  HRESULT GetPropertyKey ([out] PROPERTYKEY *pkey);
+}
+
+cpp_quote("")
+typedef [v1_enum] enum PKA_FLAGS {
+  PKA_SET,
+  PKA_APPEND,
+  PKA_DELETE
+} PKA_FLAGS;
+
+cpp_quote("")
+[uuid (f917bc8a-1bba-4478-a245-1bde03eb9431), object, pointer_default (unique)]
+interface IPropertyChange : IObjectWithPropertyKey {
+  HRESULT ApplyToPropVariant ([in] REFPROPVARIANT propvarIn,[out] PROPVARIANT *ppropvarOut);
+}
+
+cpp_quote("")
+[uuid (380f5cad-1b5e-42f2-805d-637fd392d31e), object, pointer_default (unique)]
+interface IPropertyChangeArray : IUnknown {
+  HRESULT GetCount ([out] UINT *pcOperations);
+  HRESULT GetAt ([in] UINT iIndex,[in] REFIID riid,[out, iid_is (riid)] void **ppv);
+  HRESULT InsertAt ([in] UINT iIndex,[in] IPropertyChange *ppropChange);
+  HRESULT Append ([in] IPropertyChange *ppropChange);
+  HRESULT AppendOrReplace ([in] IPropertyChange *ppropChange);
+  HRESULT RemoveAt ([in] UINT iIndex);
+  HRESULT IsKeyInArray ([in] REFPROPERTYKEY key);
+}
+
+cpp_quote("")
+[uuid (c8e2d566-186e-4d49-bf41-6909ead56acc), object, pointer_default (unique)]
+interface IPropertyStoreCapabilities : IUnknown {
+  HRESULT IsPropertyWritable ([in] REFPROPERTYKEY key);
+}
+
+cpp_quote("")
+[uuid (3017056d-9a91-4e90-937d-746c72abbf4f), object, pointer_default (unique)]
+interface IPropertyStoreCache : IPropertyStore {
+  typedef [v1_enum] enum PSC_STATE {
+    PSC_NORMAL = 0,
+    PSC_NOTINSOURCE = 1,
+    PSC_DIRTY = 2,
+    PSC_READONLY = 3
+  } PSC_STATE;
+
+cpp_quote("")
+  HRESULT GetState ([in] REFPROPERTYKEY key,[out] PSC_STATE *pstate);
+  HRESULT GetValueAndState ([in] REFPROPERTYKEY key,[out] PROPVARIANT *ppropvar,[out] PSC_STATE *pstate);
+  HRESULT SetState ([in] REFPROPERTYKEY key,[in] PSC_STATE state);
+  HRESULT SetValueAndState ([in] REFPROPERTYKEY key,[in, unique] const PROPVARIANT *ppropvar,[in] PSC_STATE state);
+}
+
+cpp_quote("")
+[uuid (11e1fbf9-2d56-4a6b-8db3-7cd193a471f2), object, pointer_default (unique)]
+interface IPropertyEnumType : IUnknown {
+  typedef [v1_enum] enum PROPENUMTYPE {
+    PET_DISCRETEVALUE = 0,
+    PET_RANGEDVALUE = 1,
+    PET_DEFAULTVALUE = 2,
+    PET_ENDRANGE = 3
+  } PROPENUMTYPE;
+
+cpp_quote("")
+  HRESULT GetEnumType ([out] PROPENUMTYPE *penumtype);
+  HRESULT GetValue ([out] PROPVARIANT *ppropvar);
+  HRESULT GetRangeMinValue ([out] PROPVARIANT *ppropvarMin);
+  HRESULT GetRangeSetValue ([out] PROPVARIANT *ppropvarSet);
+  HRESULT GetDisplayText ([out] LPWSTR *ppszDisplay);
+}
+
+cpp_quote("")
+[uuid (9b6e051c-5ddd-4321-9070-fe2acb55e794), object, pointer_default (unique)]
+interface IPropertyEnumType2 : IPropertyEnumType {
+  HRESULT GetImageReference ([out] LPWSTR *ppszImageRes);
+}
+
+cpp_quote("")
+[uuid (a99400f4-3d84-4557-94ba-1242fb2cc9a6), object, pointer_default (unique)]
+interface IPropertyEnumTypeList : IUnknown {
+  HRESULT GetCount ([out] UINT *pctypes);
+  HRESULT GetAt ([in] UINT itype,[in] REFIID riid,[out, iid_is (riid)] void **ppv);
+  HRESULT GetConditionAt ([in] UINT nIndex,[in] REFIID riid,[out, iid_is (riid)] void **ppv);
+  HRESULT FindMatchingIndex ([in] REFPROPVARIANT propvarCmp,[out] UINT *pnIndex);
+}
+
+cpp_quote("")
+[uuid (6f79d558-3e96-4549-a1d1-7d75d2288814), object, pointer_default (unique)]
+interface IPropertyDescription : IUnknown {
+  typedef [v1_enum] enum PROPDESC_TYPE_FLAGS {
+    PDTF_DEFAULT = 0x00000000,
+    PDTF_MULTIPLEVALUES = 0x00000001,
+    PDTF_ISINNATE = 0x00000002,
+    PDTF_ISGROUP = 0x00000004,
+    PDTF_CANGROUPBY = 0x00000008,
+    PDTF_CANSTACKBY = 0x00000010,
+    PDTF_ISTREEPROPERTY = 0x00000020,
+    PDTF_INCLUDEINFULLTEXTQUERY = 0x00000040,
+    PDTF_ISVIEWABLE = 0x00000080,
+    PDTF_ISQUERYABLE = 0x00000100,
+    PDTF_CANBEPURGED = 0x00000200,
+    PDTF_SEARCHRAWVALUE = 0x00000400,
+    PDTF_ISSYSTEMPROPERTY = 0x80000000,
+    PDTF_MASK_ALL = 0x800007ff
+  } PROPDESC_TYPE_FLAGS;
+cpp_quote("")
+  cpp_quote("DEFINE_ENUM_FLAG_OPERATORS(PROPDESC_TYPE_FLAGS)")
+
+cpp_quote("")
+  typedef [v1_enum] enum PROPDESC_VIEW_FLAGS {
+    PDVF_DEFAULT = 0x00000000,
+    PDVF_CENTERALIGN = 0x00000001,
+    PDVF_RIGHTALIGN = 0x00000002,
+    PDVF_BEGINNEWGROUP = 0x00000004,
+    PDVF_FILLAREA = 0x00000008,
+    PDVF_SORTDESCENDING = 0x00000010,
+    PDVF_SHOWONLYIFPRESENT = 0x00000020,
+    PDVF_SHOWBYDEFAULT = 0x00000040,
+    PDVF_SHOWINPRIMARYLIST = 0x00000080,
+    PDVF_SHOWINSECONDARYLIST = 0x00000100,
+    PDVF_HIDELABEL = 0x00000200,
+    PDVF_HIDDEN = 0x00000800,
+    PDVF_CANWRAP = 0x00001000,
+    PDVF_MASK_ALL = 0x00001bff
+  } PROPDESC_VIEW_FLAGS;
+cpp_quote("")
+  cpp_quote("DEFINE_ENUM_FLAG_OPERATORS(PROPDESC_VIEW_FLAGS)")
+
+cpp_quote("")
+  typedef [v1_enum] enum PROPDESC_DISPLAYTYPE {
+    PDDT_STRING = 0,
+    PDDT_NUMBER = 1,
+    PDDT_BOOLEAN = 2,
+    PDDT_DATETIME = 3,
+    PDDT_ENUMERATED = 4,
+  } PROPDESC_DISPLAYTYPE;
+
+cpp_quote("")
+  typedef [v1_enum] enum PROPDESC_GROUPING_RANGE {
+    PDGR_DISCRETE = 0,
+    PDGR_ALPHANUMERIC = 1,
+    PDGR_SIZE = 2,
+    PDGR_DYNAMIC = 3,
+    PDGR_DATE = 4,
+    PDGR_PERCENT = 5,
+    PDGR_ENUMERATED = 6
+  } PROPDESC_GROUPING_RANGE;
+
+cpp_quote("")
+  typedef [v1_enum] enum PROPDESC_FORMAT_FLAGS {
+    PDFF_DEFAULT = 0x00000000,
+    PDFF_PREFIXNAME = 0x00000001,
+    PDFF_FILENAME = 0x00000002,
+    PDFF_ALWAYSKB = 0x00000004,
+    PDFF_RESERVED_RIGHTTOLEFT = 0x00000008,
+    PDFF_SHORTTIME = 0x00000010,
+    PDFF_LONGTIME = 0x00000020,
+    PDFF_HIDETIME = 0x00000040,
+    PDFF_SHORTDATE = 0x00000080,
+    PDFF_LONGDATE = 0x00000100,
+    PDFF_HIDEDATE = 0x00000200,
+    PDFF_RELATIVEDATE = 0x00000400,
+    PDFF_USEEDITINVITATION = 0x00000800,
+    PDFF_READONLY = 0x00001000,
+    PDFF_NOAUTOREADINGORDER = 0x00002000
+  } PROPDESC_FORMAT_FLAGS;
+cpp_quote("")
+  cpp_quote("DEFINE_ENUM_FLAG_OPERATORS(PROPDESC_FORMAT_FLAGS)")
+
+cpp_quote("")
+  typedef [v1_enum] enum PROPDESC_SORTDESCRIPTION {
+    PDSD_GENERAL = 0,
+    PDSD_A_Z = 1,
+    PDSD_LOWEST_HIGHEST = 2,
+    PDSD_SMALLEST_BIGGEST = 3,
+    PDSD_OLDEST_NEWEST = 4
+  } PROPDESC_SORTDESCRIPTION;
+
+cpp_quote("")
+  typedef [v1_enum] enum PROPDESC_RELATIVEDESCRIPTION_TYPE {
+    PDRDT_GENERAL = 0,
+    PDRDT_DATE = 1,
+    PDRDT_SIZE = 2,
+    PDRDT_COUNT = 3,
+    PDRDT_REVISION = 4,
+    PDRDT_LENGTH = 5,
+    PDRDT_DURATION = 6,
+    PDRDT_SPEED = 7,
+    PDRDT_RATE = 8,
+    PDRDT_RATING = 9,
+    PDRDT_PRIORITY = 10
+  } PROPDESC_RELATIVEDESCRIPTION_TYPE;
+
+cpp_quote("")
+  typedef [v1_enum] enum PROPDESC_AGGREGATION_TYPE {
+    PDAT_DEFAULT = 0,
+    PDAT_FIRST = 1,
+    PDAT_SUM = 2,
+    PDAT_AVERAGE = 3,
+    PDAT_DATERANGE = 4,
+    PDAT_UNION = 5,
+    PDAT_MAX = 6,
+    PDAT_MIN = 7
+  } PROPDESC_AGGREGATION_TYPE;
+
+cpp_quote("")
+  typedef [v1_enum] enum PROPDESC_CONDITION_TYPE {
+    PDCOT_NONE = 0,
+    PDCOT_STRING = 1,
+    PDCOT_SIZE = 2,
+    PDCOT_DATETIME = 3,
+    PDCOT_BOOLEAN = 4,
+    PDCOT_NUMBER = 5
+  } PROPDESC_CONDITION_TYPE;
+
+cpp_quote("")
+  HRESULT GetPropertyKey ([out] PROPERTYKEY *pkey);
+  HRESULT GetCanonicalName ([out, string] LPWSTR *ppszName);
+  HRESULT GetPropertyType ([out] VARTYPE *pvartype);
+  HRESULT GetDisplayName ([out, string] LPWSTR *ppszName);
+  HRESULT GetEditInvitation ([out, string] LPWSTR *ppszInvite);
+  HRESULT GetTypeFlags ([in] PROPDESC_TYPE_FLAGS mask,[out] PROPDESC_TYPE_FLAGS *ppdtFlags);
+  HRESULT GetViewFlags ([out] PROPDESC_VIEW_FLAGS *ppdvFlags);
+  HRESULT GetDefaultColumnWidth ([out] UINT *pcxChars);
+  HRESULT GetDisplayType ([out] PROPDESC_DISPLAYTYPE *pdisplaytype);
+  HRESULT GetColumnState ([out] SHCOLSTATEF *pcsFlags);
+  HRESULT GetGroupingRange ([out] PROPDESC_GROUPING_RANGE *pgr);
+  HRESULT GetRelativeDescriptionType ([out] PROPDESC_RELATIVEDESCRIPTION_TYPE *prdt);
+  HRESULT GetRelativeDescription ([in] REFPROPVARIANT propvar1,[in] REFPROPVARIANT propvar2,[out, string] LPWSTR *ppszDesc1,[out, string] LPWSTR *ppszDesc2);
+  HRESULT GetSortDescription ([out] PROPDESC_SORTDESCRIPTION *psd);
+  HRESULT GetSortDescriptionLabel ([in] BOOL fDescending,[out, string] LPWSTR *ppszDescription);
+  HRESULT GetAggregationType ([out] PROPDESC_AGGREGATION_TYPE *paggtype);
+  HRESULT GetConditionType ([out] PROPDESC_CONDITION_TYPE *pcontype,[out] CONDITION_OPERATION *popDefault);
+  HRESULT GetEnumTypeList ([in] REFIID riid,[out, iid_is (riid)] void **ppv);
+  [local] HRESULT CoerceToCanonicalValue ([in, out] PROPVARIANT *ppropvar);
+  [call_as (CoerceToCanonicalValue)] HRESULT RemoteCoerceToCanonicalValue ([in] REFPROPVARIANT propvar,[out] PROPVARIANT *ppropvar);
+  HRESULT FormatForDisplay ([in] REFPROPVARIANT propvar,[in] PROPDESC_FORMAT_FLAGS pdfFlags,[out, string] LPWSTR *ppszDisplay);
+  HRESULT IsValueCanonical ([in] REFPROPVARIANT propvar);
+}
+
+cpp_quote("")
+[uuid (57d2eded-5062-400e-b107-5dae79fe57a6), object, pointer_default (unique)]
+interface IPropertyDescription2 : IPropertyDescription {
+  HRESULT GetImageReferenceForValue ([in] REFPROPVARIANT propvar,[out, string] LPWSTR *ppszImageRes);
+}
+
+cpp_quote("")
+[uuid (f67104fc-2af9-46fd-b32d-243c1404f3d1), object, pointer_default (unique)]
+interface IPropertyDescriptionAliasInfo : IPropertyDescription {
+  HRESULT GetSortByAlias ([in] REFIID riid,[out, iid_is (riid)] void **ppv);
+  HRESULT GetAdditionalSortByAliases ([in] REFIID riid,[out, iid_is (riid)] void **ppv);
+};
+
+cpp_quote("")
+[uuid (078f91bd-29a2-440f-924e-46a291524520), object, pointer_default (unique)]
+interface IPropertyDescriptionSearchInfo : IPropertyDescription {
+  typedef [v1_enum] enum PROPDESC_SEARCHINFO_FLAGS {
+    PDSIF_DEFAULT = 0x00000000,
+    PDSIF_ININVERTEDINDEX = 0x00000001,
+    PDSIF_ISCOLUMN = 0x00000002,
+    PDSIF_ISCOLUMNSPARSE = 0x00000004,
+    PDSIF_ALWAYSINCLUDE = 0x00000008,
+    PDSIF_USEFORTYPEAHEAD = 0x00000010,
+  } PROPDESC_SEARCHINFO_FLAGS;
+cpp_quote("")
+  cpp_quote("DEFINE_ENUM_FLAG_OPERATORS(PROPDESC_SEARCHINFO_FLAGS)")
+
+cpp_quote("")
+  typedef [v1_enum] enum PROPDESC_COLUMNINDEX_TYPE {
+    PDCIT_NONE = 0,
+    PDCIT_ONDISK = 1,
+    PDCIT_INMEMORY = 2,
+    PDCIT_ONDEMAND = 3,
+    PDCIT_ONDISKALL = 4,
+    PDCIT_ONDISKVECTOR = 5
+  } PROPDESC_COLUMNINDEX_TYPE;
+cpp_quote("")
+  HRESULT GetSearchInfoFlags ([out] PROPDESC_SEARCHINFO_FLAGS *ppdsiFlags);
+  HRESULT GetColumnIndexType ([out] PROPDESC_COLUMNINDEX_TYPE *ppdciType);
+  HRESULT GetProjectionString ([out] LPWSTR *ppszProjection);
+  HRESULT GetMaxSize ([out] UINT *pcbMaxSize);
+};
+
+cpp_quote("")
+[uuid (507393f4-2a3d-4a60-b59e-d9c75716c2dd), object, pointer_default (unique)]
+interface IPropertyDescriptionRelatedPropertyInfo : IPropertyDescription {
+  HRESULT GetRelatedProperty ([in] LPCWSTR pszRelationshipName,[in] REFIID riid,[out, iid_is (riid)] void **ppv);
+}
+
+cpp_quote("")
+typedef [v1_enum] enum PROPDESC_ENUMFILTER {
+  PDEF_ALL = 0,
+  PDEF_SYSTEM = 1,
+  PDEF_NONSYSTEM = 2,
+  PDEF_VIEWABLE = 3,
+  PDEF_QUERYABLE = 4,
+  PDEF_INFULLTEXTQUERY= 5,
+  PDEF_COLUMN = 6
+} PROPDESC_ENUMFILTER;
+
+cpp_quote("")
+[uuid (ca724e8a-c3e6-442b-88a4-6fb0db8035a3), object, pointer_default (unique)]
+interface IPropertySystem : IUnknown {
+  HRESULT GetPropertyDescription ([in] REFPROPERTYKEY propkey,[in] REFIID riid,[out, iid_is (riid)] void **ppv);
+  HRESULT GetPropertyDescriptionByName ([in, string] LPCWSTR pszCanonicalName,[in] REFIID riid,[out, iid_is (riid)] void **ppv);
+  HRESULT GetPropertyDescriptionListFromString ([in, string] LPCWSTR pszPropList,[in] REFIID riid,[out, iid_is (riid)] void **ppv);
+  HRESULT EnumeratePropertyDescriptions ([in] PROPDESC_ENUMFILTER filterOn,[in] REFIID riid,[out, iid_is (riid)] void **ppv);
+  HRESULT FormatForDisplay ([in] REFPROPERTYKEY key,[in] REFPROPVARIANT propvar,[in] PROPDESC_FORMAT_FLAGS pdff,[out, string, size_is (cchText)] LPWSTR pszText,[in, range (0, 0x8000)] DWORD cchText);
+  HRESULT FormatForDisplayAlloc ([in] REFPROPERTYKEY key,[in] REFPROPVARIANT propvar,[in] PROPDESC_FORMAT_FLAGS pdff,[out, string] LPWSTR *ppszDisplay);
+  HRESULT RegisterPropertySchema ([in, string] LPCWSTR pszPath);
+  HRESULT UnregisterPropertySchema ([in, string] LPCWSTR pszPath);
+  HRESULT RefreshPropertySchema ();
+}
+
+cpp_quote("")
+[uuid (1f9fc1d0-c39b-4b26-817f-011967d3440e), object, pointer_default (unique)]
+interface IPropertyDescriptionList : IUnknown {
+  HRESULT GetCount ([out] UINT *pcElem);
+  HRESULT GetAt ([in] UINT iElem,[in] REFIID riid,[out, iid_is (riid)] void **ppv);
+}
+
+cpp_quote("")
+[uuid (bc110b6d-57e8-4148-a9c6-91015ab2f3a5), object, pointer_default (unique)]
+interface IPropertyStoreFactory : IUnknown {
+  HRESULT GetPropertyStore ([in] GETPROPERTYSTOREFLAGS flags,[in, unique] IUnknown *pUnkFactory,[in] REFIID riid,[out, iid_is (riid)] void **ppv);
+  HRESULT GetPropertyStoreForKeys ([in, unique] const PROPERTYKEY *rgKeys,[in] UINT cKeys,[in] GETPROPERTYSTOREFLAGS flags,[in] REFIID riid,[out, iid_is (riid)] void **ppv);
+}
+
+cpp_quote("")
+[uuid (40d4577f-e237-4bdb-bd69-58f089431b6a), object, pointer_default (unique)]
+interface IDelayedPropertyStoreFactory : IPropertyStoreFactory {
+  HRESULT GetDelayedPropertyStore ([in] GETPROPERTYSTOREFLAGS flags,[in] DWORD dwStoreId,[in] REFIID riid,[out, iid_is (riid)] void **ppv);
+}
+
+cpp_quote("")
+[v1_enum] enum _PERSIST_SPROPSTORE_FLAGS {
+  FPSPS_DEFAULT = 0x00000000,
+  FPSPS_READONLY = 0x00000001,
+  FPSPS_TREAT_NEW_VALUES_AS_DIRTY = 0x00000002,
+};
+
+cpp_quote("")
+typedef int PERSIST_SPROPSTORE_FLAGS;
+typedef struct tagSERIALIZEDPROPSTORAGE SERIALIZEDPROPSTORAGE;
+typedef SERIALIZEDPROPSTORAGE *PUSERIALIZEDPROPSTORAGE;
+typedef const SERIALIZEDPROPSTORAGE *PCUSERIALIZEDPROPSTORAGE;
+
+cpp_quote("")
+[uuid (e318ad57-0aa0-450f-aca5-6fab7103d917), pointer_default (unique), local]
+interface IPersistSerializedPropStorage : IUnknown {
+  HRESULT SetFlags ([in] PERSIST_SPROPSTORE_FLAGS flags);
+  HRESULT SetPropertyStorage ([in] PCUSERIALIZEDPROPSTORAGE psps,[in] DWORD cb);
+  HRESULT GetPropertyStorage ([out] SERIALIZEDPROPSTORAGE **ppsps,[out] DWORD *pcb);
+}
+
+cpp_quote("")
+[uuid (77effa68-4f98-4366-ba72-573b3d880571), pointer_default (unique), local]
+interface IPersistSerializedPropStorage2 : IPersistSerializedPropStorage {
+  HRESULT GetPropertyStorageSize ([out] DWORD *pcb);
+  HRESULT GetPropertyStorageBuffer ([out] SERIALIZEDPROPSTORAGE *psps,[in] DWORD cb,[out] DWORD *pcbWritten);
+}
+
+cpp_quote("")
+[uuid (fa955fd9-38be-4879-a6ce-824cf52d609f), object, pointer_default (unique)]
+interface IPropertySystemChangeNotify : IUnknown {
+  HRESULT SchemaRefreshed ();
+}
+
+cpp_quote("")
+[uuid (75121952-e0d0-43e5-9380-1d80483acf72), pointer_default (unique)]
+interface ICreateObject : IUnknown {
+  HRESULT CreateObject ([in] REFCLSID clsid,[in, unique] IUnknown *pUnkOuter,[in] REFIID riid,[out, iid_is (riid)] void **ppv);
+};
+
+cpp_quote("")
+cpp_quote("#define PKEY_PIDSTR_MAX 10")
+cpp_quote("#define GUIDSTRING_MAX (39)")
+cpp_quote("#define PKEYSTR_MAX (GUIDSTRING_MAX + 1 + PKEY_PIDSTR_MAX)")
+
+cpp_quote("")
+cpp_quote("PSSTDAPI PSCoerceToCanonicalValue(REFPROPERTYKEY key, PROPVARIANT *ppropvar);")
+cpp_quote("PSSTDAPI PSCreateAdapterFromPropertyStore(IPropertyStore *pps, REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSCreateDelayedMultiplexPropertyStore(GETPROPERTYSTOREFLAGS flags, IDelayedPropertyStoreFactory *pdpsf, const DWORD *rgStoreIds, DWORD cStores, REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSCreateMemoryPropertyStore(REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSCreateMultiplexPropertyStore(IUnknown **prgpunkStores, DWORD cStores, REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSCreatePropertyChangeArray(const PROPERTYKEY *rgpropkey, const PKA_FLAGS *rgflags, const PROPVARIANT *rgpropvar, UINT cChanges, REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSCreatePropertyStoreFromObject(IUnknown *punk, DWORD grfMode, REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSCreatePropertyStoreFromPropertySetStorage(IPropertySetStorage *ppss, DWORD grfMode, REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSCreateSimplePropertyChange(PKA_FLAGS flags, REFPROPERTYKEY key, REFPROPVARIANT propvar, REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSEnumeratePropertyDescriptions(PROPDESC_ENUMFILTER filterOn, REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSFormatForDisplay(REFPROPERTYKEY propkey, REFPROPVARIANT propvar, PROPDESC_FORMAT_FLAGS pdfFlags, LPWSTR pwszText, DWORD cchText);")
+cpp_quote("PSSTDAPI PSFormatForDisplayAlloc(REFPROPERTYKEY key, REFPROPVARIANT propvar, PROPDESC_FORMAT_FLAGS pdff, PWSTR *ppszDisplay);")
+cpp_quote("PSSTDAPI PSFormatPropertyValue(IPropertyStore *pps, IPropertyDescription *ppd, PROPDESC_FORMAT_FLAGS pdff, LPWSTR *ppszDisplay);")
+cpp_quote("PSSTDAPI PSGetImageReferenceForValue(REFPROPERTYKEY propkey, REFPROPVARIANT propvar, PWSTR *ppszImageRes);")
+cpp_quote("PSSTDAPI PSGetItemPropertyHandler(IUnknown *punkItem, BOOL fReadWrite, REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSGetItemPropertyHandlerWithCreateObject(IUnknown *punkItem, BOOL fReadWrite, IUnknown *punkCreateObject, REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSGetNamedPropertyFromPropertyStorage(PCUSERIALIZEDPROPSTORAGE psps, DWORD cb, LPCWSTR pszName, PROPVARIANT *ppropvar);")
+cpp_quote("PSSTDAPI PSGetNameFromPropertyKey(REFPROPERTYKEY propkey, PWSTR *ppszCanonicalName);")
+cpp_quote("PSSTDAPI PSGetPropertyDescription(REFPROPERTYKEY propkey, REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSGetPropertyDescriptionByName(LPCWSTR pszCanonicalName, REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSGetPropertyDescriptionListFromString(LPCWSTR pszPropList, REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSGetPropertyFromPropertyStorage(PCUSERIALIZEDPROPSTORAGE psps, DWORD cb, REFPROPERTYKEY rpkey, PROPVARIANT *ppropvar);")
+cpp_quote("PSSTDAPI PSGetPropertyKeyFromName(PCWSTR pszName, PROPERTYKEY *ppropkey);")
+cpp_quote("PSSTDAPI PSGetPropertySystem(REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSGetPropertyValue(IPropertyStore *pps, IPropertyDescription *ppd, PROPVARIANT *ppropvar);")
+cpp_quote("PSSTDAPI PSLookupPropertyHandlerCLSID(PCWSTR pszFilePath, CLSID *pclsid);")
+cpp_quote("PSSTDAPI PSPropertyBag_Delete(IPropertyBag *propBag, LPCWSTR propName);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadBOOL(IPropertyBag *propBag, LPCWSTR propName, BOOL *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadBSTR(IPropertyBag *propBag, LPCWSTR propName, BSTR *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadDWORD(IPropertyBag *propBag, LPCWSTR propName, DWORD *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadGUID(IPropertyBag *propBag, LPCWSTR propName, GUID *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadInt(IPropertyBag *propBag, LPCWSTR propName, INT *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadLONG(IPropertyBag *propBag, LPCWSTR propName, LONG *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadPOINTL(IPropertyBag *propBag, LPCWSTR propName, POINTL *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadPOINTS(IPropertyBag *propBag, LPCWSTR propName, POINTS *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadPropertyKey(IPropertyBag *propBag, LPCWSTR propName, PROPERTYKEY *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadRECTL(IPropertyBag *propBag, LPCWSTR propName, RECTL *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadSHORT(IPropertyBag *propBag, LPCWSTR propName, SHORT *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadStr(IPropertyBag *propBag, LPCWSTR propName, LPWSTR value, int characterCount);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadStrAlloc(IPropertyBag *propBag, LPCWSTR propName, PWSTR *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadStream(IPropertyBag *propBag, LPCWSTR propName, IStream **value);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadType(IPropertyBag *propBag, LPCWSTR propName, VARIANT *var, VARTYPE type);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadULONGLONG(IPropertyBag *propBag, LPCWSTR propName, ULONGLONG *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_ReadUnknown(IPropertyBag *propBag, LPCWSTR propName, REFIID riid, void **ppv);")
+cpp_quote("PSSTDAPI PSPropertyBag_WriteBOOL(IPropertyBag *propBag, LPCWSTR propName, BOOL value);")
+cpp_quote("PSSTDAPI PSPropertyBag_WriteBSTR(IPropertyBag *propBag, LPCWSTR propName, BSTR value);")
+cpp_quote("PSSTDAPI PSPropertyBag_WriteDWORD(IPropertyBag *propBag, LPCWSTR propName, DWORD value);")
+cpp_quote("PSSTDAPI PSPropertyBag_WriteGUID(IPropertyBag *propBag, LPCWSTR propName, const GUID *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_WriteInt(IPropertyBag *propBag, LPCWSTR propName, INT value);")
+cpp_quote("PSSTDAPI PSPropertyBag_WriteLONG(IPropertyBag *propBag, LPCWSTR propName, LONG value);")
+cpp_quote("PSSTDAPI PSPropertyBag_WritePOINTL(IPropertyBag *propBag, LPCWSTR propName, const POINTL *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_WritePOINTS(IPropertyBag *propBag, LPCWSTR propName, const POINTS *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_WritePropertyKey(IPropertyBag *propBag, LPCWSTR propName, REFPROPERTYKEY value);")
+cpp_quote("PSSTDAPI PSPropertyBag_WriteRECTL(IPropertyBag *propBag, LPCWSTR propName, const RECTL *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_WriteSHORT(IPropertyBag *propBag, LPCWSTR propName, SHORT value);")
+cpp_quote("PSSTDAPI PSPropertyBag_WriteStr(IPropertyBag *propBag, LPCWSTR propName, LPCWSTR value);")
+cpp_quote("PSSTDAPI PSPropertyBag_WriteStream(IPropertyBag *propBag, LPCWSTR propName, IStream *value);")
+cpp_quote("PSSTDAPI PSPropertyBag_WriteULONGLONG(IPropertyBag *propBag, LPCWSTR propName, ULONGLONG value);")
+cpp_quote("PSSTDAPI PSPropertyBag_WriteUnknown(IPropertyBag *propBag, LPCWSTR propName, IUnknown *punk);")
+cpp_quote("PSSTDAPI PSPropertyKeyFromString(LPCWSTR pszString, PROPERTYKEY *pkey);")
+cpp_quote("PSSTDAPI PSRefreshPropertySchema(void);")
+cpp_quote("PSSTDAPI PSRegisterPropertySchema(PCWSTR pszPath);")
+cpp_quote("PSSTDAPI PSSetPropertyValue(IPropertyStore *pps, IPropertyDescription *ppd, REFPROPVARIANT propvar);")
+cpp_quote("PSSTDAPI PSStringFromPropertyKey(REFPROPERTYKEY pkey, LPWSTR psz, UINT cch);")
+cpp_quote("PSSTDAPI PSUnregisterPropertySchema(PCWSTR pszPath);")
+
+cpp_quote("")
+[uuid (2cda3294-6c4f-4020-b161-27c530c81fa6), lcid (0x0000), version (1.0)]
+library PropSysObjects {
+  [uuid (9a02e012-6303-4e1e-b9a1-630f802592c5)] coclass InMemoryPropertyStore { interface IPropertyStore; }
+  [uuid (b8967f85-58ae-4f46-9fb2-5d7904798f4b)] coclass PropertySystem { interface IPropertySystem; }
+};
+cpp_quote("#endif")

@@ -1,0 +1,77 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+cpp_quote("#include <winapifamily.h>")
+
+#if !defined (BUILDING_UNKNWN_IDL) && !defined (DO_NO_IMPORTS)
+cpp_quote("")
+import "wtypesbase.idl";
+#endif
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+[local, object, uuid (00000000-0000-0000-C000-000000000046), pointer_default (unique)]
+interface IUnknown {
+  typedef [unique] IUnknown *LPUNKNOWN;
+  cpp_quote("")
+  cpp_quote("#if defined(__cplusplus) && !defined(CINTERFACE)")
+  cpp_quote("EXTERN_C const IID IID_IUnknown;")
+  cpp_quote("")
+  cpp_quote("extern \"C++\" {")
+  cpp_quote("  MIDL_INTERFACE(\"00000000-0000-0000-C000-000000000046\")")
+  cpp_quote("  IUnknown {")
+  cpp_quote("  public:")
+  cpp_quote("    BEGIN_INTERFACE")
+  cpp_quote("    virtual HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObject) = 0;")
+  cpp_quote("    virtual ULONG STDMETHODCALLTYPE AddRef(void) = 0;")
+  cpp_quote("    virtual ULONG STDMETHODCALLTYPE Release(void) = 0;")
+  cpp_quote("")
+  cpp_quote("    template<class Q>")
+  cpp_quote("    HRESULT STDMETHODCALLTYPE QueryInterface(Q **pp) {")
+  cpp_quote("      return QueryInterface(__uuidof(Q), (void **)pp);")
+  cpp_quote("    }")
+  cpp_quote("    END_INTERFACE")
+  cpp_quote("  };")
+  cpp_quote("}")
+  cpp_quote("__CRT_UUID_DECL(IUnknown, 0x00000000, 0x0000, 0x0000, 0xc0,0x00, 0x00,0x00,0x00,0x00,0x00,0x46)")
+  cpp_quote("#else")
+  HRESULT QueryInterface ([in] REFIID riid,[out, iid_is (riid)] void **ppvObject);
+  ULONG AddRef ();
+  ULONG Release ();
+}
+cpp_quote("#endif")
+cpp_quote("HRESULT STDMETHODCALLTYPE IUnknown_QueryInterface_Proxy(IUnknown *This, REFIID riid, void **ppvObject);")
+cpp_quote("void __RPC_STUB IUnknown_QueryInterface_Stub(IRpcStubBuffer *This, IRpcChannelBuffer *_pRpcChannelBuffer, PRPC_MESSAGE _pRpcMessage, DWORD *_pdwStubPhase);")
+cpp_quote("ULONG STDMETHODCALLTYPE IUnknown_AddRef_Proxy(IUnknown *This);")
+cpp_quote("void __RPC_STUB IUnknown_AddRef_Stub(IRpcStubBuffer *This, IRpcChannelBuffer *_pRpcChannelBuffer, PRPC_MESSAGE _pRpcMessage, DWORD *_pdwStubPhase);")
+cpp_quote("ULONG STDMETHODCALLTYPE IUnknown_Release_Proxy(IUnknown *This);")
+cpp_quote("void __RPC_STUB IUnknown_Release_Stub(IRpcStubBuffer *This, IRpcChannelBuffer *_pRpcChannelBuffer, PRPC_MESSAGE _pRpcMessage, DWORD *_pdwStubPhase);")
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+[local, object, uuid (000e0000-0000-0000-C000-000000000046), pointer_default (unique)]
+interface AsyncIUnknown : IUnknown {
+  HRESULT Begin_QueryInterface ([in] REFIID riid);
+  HRESULT Finish_QueryInterface ([out] void **ppvObject);
+  HRESULT Begin_AddRef ();
+  ULONG Finish_AddRef ();
+  HRESULT Begin_Release ();
+  ULONG Finish_Release ();
+}
+cpp_quote("#endif")
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+[object, uuid (00000001-0000-0000-C000-000000000046), pointer_default (unique)]
+interface IClassFactory : IUnknown {
+  typedef [unique] IClassFactory *LPCLASSFACTORY;
+cpp_quote("")
+  [local] HRESULT CreateInstance ([in, unique] IUnknown *pUnkOuter,[in] REFIID riid,[out, iid_is (riid)] void **ppvObject);
+  [call_as (CreateInstance)] HRESULT RemoteCreateInstance ([in] REFIID riid,[out, iid_is (riid)] IUnknown **ppvObject);
+  [local] HRESULT LockServer ([in] BOOL fLock);
+  [call_as (LockServer)] HRESULT __stdcall RemoteLockServer ([in] BOOL fLock);
+}
+cpp_quote("#endif")

@@ -1,0 +1,339 @@
+/*
+ * Copyright (C) 2023 Mohamad Al-Jaf
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+ */
+
+#ifdef __WIDL__
+#pragma winrt ns_prefix
+#endif
+
+import "inspectable.idl";
+import "asyncinfo.idl";
+import "eventtoken.idl";
+import "windowscontracts.idl";
+import "windows.foundation.idl";
+import "windows.foundation.numerics.idl";
+/* import "windows.perception.idl"; */
+import "windows.storage.streams.idl";
+/* import "windows.system.remotesystems.idl"; */
+
+namespace Windows.Perception.Spatial {
+    typedef enum SpatialPerceptionAccessStatus SpatialPerceptionAccessStatus;
+    typedef struct SpatialBoundingBox SpatialBoundingBox;
+    typedef struct SpatialBoundingFrustum SpatialBoundingFrustum;
+    typedef struct SpatialBoundingOrientedBox SpatialBoundingOrientedBox;
+    typedef struct SpatialBoundingSphere SpatialBoundingSphere;
+    typedef enum SpatialAnchorExportPurpose SpatialAnchorExportPurpose;
+
+    interface ISpatialBoundingVolume;
+    interface ISpatialBoundingVolumeStatics;
+    interface ISpatialCoordinateSystem;
+    interface ISpatialAnchorRawCoordinateSystemAdjustedEventArgs;
+    interface ISpatialAnchor;
+    interface ISpatialAnchorStatics;
+    interface ISpatialAnchorExportSufficiency;
+    interface ISpatialAnchorExporter;
+    interface ISpatialAnchorExporterStatics;
+
+    runtimeclass SpatialBoundingVolume;
+    runtimeclass SpatialCoordinateSystem;
+    runtimeclass SpatialAnchorRawCoordinateSystemAdjustedEventArgs;
+    runtimeclass SpatialAnchor;
+    runtimeclass SpatialAnchorExportSufficiency;
+    runtimeclass SpatialAnchorExporter;
+
+    declare {
+        interface Windows.Foundation.Collections.IIterable<Windows.Perception.Spatial.SpatialBoundingVolume *>;
+        interface Windows.Foundation.Collections.IIterator<Windows.Perception.Spatial.SpatialBoundingVolume *>;
+        interface Windows.Foundation.AsyncOperationCompletedHandler<Windows.Perception.Spatial.SpatialPerceptionAccessStatus>;
+        interface Windows.Foundation.IAsyncOperation<Windows.Perception.Spatial.SpatialPerceptionAccessStatus>;
+        interface Windows.Foundation.IReference<Windows.Perception.Spatial.SpatialBoundingBox>;
+        interface Windows.Foundation.IReference<Windows.Perception.Spatial.SpatialBoundingFrustum>;
+        interface Windows.Foundation.IReference<Windows.Perception.Spatial.SpatialBoundingOrientedBox>;
+        interface Windows.Foundation.TypedEventHandler<Windows.Perception.Spatial.SpatialAnchor *, Windows.Perception.Spatial.SpatialAnchorRawCoordinateSystemAdjustedEventArgs *>;
+        interface Windows.Foundation.AsyncOperationCompletedHandler<Windows.Perception.Spatial.SpatialAnchorExportSufficiency *>;
+        interface Windows.Foundation.IAsyncOperation<Windows.Perception.Spatial.SpatialAnchorExportSufficiency *>;
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0)
+    ]
+    enum SpatialPerceptionAccessStatus
+    {
+        Unspecified    = 0,
+        Allowed        = 1,
+        DeniedByUser   = 2,
+        DeniedBySystem = 3,
+    };
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 7.0)
+    ]
+    enum SpatialAnchorExportPurpose
+    {
+        Relocalization = 0,
+        Sharing        = 1
+    };
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0)
+    ]
+    struct SpatialBoundingBox
+    {
+        Windows.Foundation.Numerics.Vector3 Center;
+        Windows.Foundation.Numerics.Vector3 Extents;
+    };
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0)
+    ]
+    struct SpatialBoundingFrustum
+    {
+        Windows.Foundation.Numerics.Plane Near;
+        Windows.Foundation.Numerics.Plane Far;
+        Windows.Foundation.Numerics.Plane Right;
+        Windows.Foundation.Numerics.Plane Left;
+        Windows.Foundation.Numerics.Plane Top;
+        Windows.Foundation.Numerics.Plane Bottom;
+    };
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0)
+    ]
+    struct SpatialBoundingOrientedBox
+    {
+        Windows.Foundation.Numerics.Vector3 Center;
+        Windows.Foundation.Numerics.Vector3 Extents;
+        Windows.Foundation.Numerics.Quaternion Orientation;
+    };
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0)
+    ]
+    struct SpatialBoundingSphere
+    {
+        Windows.Foundation.Numerics.Vector3 Center;
+        FLOAT Radius;
+    };
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0),
+        exclusiveto(Windows.Perception.Spatial.SpatialBoundingVolume),
+        uuid(fb2065da-68c3-33df-b7af-4c787207999c)
+    ]
+    interface ISpatialBoundingVolume : IInspectable
+    {
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0),
+        exclusiveto(Windows.Perception.Spatial.SpatialBoundingVolume),
+        uuid(05889117-b3e1-36d8-b017-566181a5b196)
+    ]
+    interface ISpatialBoundingVolumeStatics : IInspectable
+    {
+        HRESULT FromBox(
+            [in] Windows.Perception.Spatial.SpatialCoordinateSystem *system,
+            [in] Windows.Perception.Spatial.SpatialBoundingBox box,
+            [out, retval] Windows.Perception.Spatial.SpatialBoundingVolume **value
+        );
+        HRESULT FromOrientedBox(
+            [in] Windows.Perception.Spatial.SpatialCoordinateSystem *system,
+            [in] Windows.Perception.Spatial.SpatialBoundingOrientedBox box,
+            [out, retval] Windows.Perception.Spatial.SpatialBoundingVolume **value
+        );
+        HRESULT FromSphere(
+            [in] Windows.Perception.Spatial.SpatialCoordinateSystem *system,
+            [in] Windows.Perception.Spatial.SpatialBoundingSphere sphere,
+            [out, retval] Windows.Perception.Spatial.SpatialBoundingVolume **value
+        );
+        HRESULT FromFrustum(
+            [in] Windows.Perception.Spatial.SpatialCoordinateSystem *system,
+            [in] Windows.Perception.Spatial.SpatialBoundingFrustum frustum,
+            [out, retval] Windows.Perception.Spatial.SpatialBoundingVolume **value
+        );
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0),
+        exclusiveto(Windows.Perception.Spatial.SpatialCoordinateSystem),
+        uuid(69ebca4b-60a3-3586-a653-59a7bd676d07)
+    ]
+    interface ISpatialCoordinateSystem : IInspectable
+    {
+        HRESULT TryGetTransformTo(
+            [in] Windows.Perception.Spatial.SpatialCoordinateSystem *target,
+            [out, retval] Windows.Foundation.IReference<Windows.Foundation.Numerics.Matrix4x4> **value
+        );
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0),
+        exclusiveto(Windows.Perception.Spatial.SpatialAnchor),
+        uuid(a9928642-0174-311c-ae79-0e5107669f16),
+    ]
+    interface ISpatialAnchorStatics : IInspectable
+    {
+        [overload("TryCreateRelativeTo")] HRESULT TryCreateRelativeTo(
+            [in] Windows.Perception.Spatial.SpatialCoordinateSystem *coord_system,
+            [out] [retval] Windows.Perception.Spatial.SpatialAnchor **value
+        );
+        [overload("TryCreateRelativeTo")] HRESULT TryCreateWithPositionRelativeTo(
+            [in] Windows.Perception.Spatial.SpatialCoordinateSystem *coord_system,
+            [in] Windows.Foundation.Numerics.Vector3 position,
+            [out] [retval] Windows.Perception.Spatial.SpatialAnchor **value
+        );
+        [overload("TryCreateRelativeTo")] HRESULT TryCreateWithPositionAndOrientationRelativeTo(
+            [in] Windows.Perception.Spatial.SpatialCoordinateSystem *coord_system,
+            [in] Windows.Foundation.Numerics.Vector3 position,
+            [in] Windows.Foundation.Numerics.Quaternion orientation,
+            [out] [retval] Windows.Perception.Spatial.SpatialAnchor **value
+        );
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0),
+        exclusiveto(Windows.Perception.Spatial.SpatialAnchor),
+        uuid(0529e5ce-1d34-3702-bcec-eabff578a869),
+    ]
+    interface ISpatialAnchor : IInspectable
+    {
+        [propget] HRESULT CoordinateSystem([out] [retval] Windows.Perception.Spatial.SpatialCoordinateSystem **value);
+        [propget] HRESULT RawCoordinateSystem([out] [retval] Windows.Perception.Spatial.SpatialCoordinateSystem **value);
+        [eventadd] HRESULT RawCoordinateSystemAdjusted(
+            [in] Windows.Foundation.TypedEventHandler<Windows.Perception.Spatial.SpatialAnchor *,
+            Windows.Perception.Spatial.SpatialAnchorRawCoordinateSystemAdjustedEventArgs*> *handler,
+            [out] [retval] EventRegistrationToken *cookie
+        );
+        [eventremove] HRESULT RawCoordinateSystemAdjusted([in] EventRegistrationToken cookie);
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 7.0),
+        exclusiveto(Windows.Perception.Spatial.SpatialAnchorExportSufficiency),
+        uuid(77c25b2b-3409-4088-b91b-fdfd05d1648f),
+    ]
+    interface ISpatialAnchorExportSufficiency : IInspectable
+    {
+        [propget] HRESULT IsMinimallySufficient([out] [retval] boolean *value);
+        [propget] HRESULT SufficiencyLevel([out] [retval] DOUBLE *value);
+        [propget] HRESULT RecommendedSufficiencyLevel([out] [retval] DOUBLE *value);
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0),
+        exclusiveto(Windows.Perception.Spatial.SpatialAnchorRawCoordinateSystemAdjustedEventArgs),
+        uuid(a1e81eb8-56c7-3117-a2e4-81e0fcf28e00),
+    ]
+    interface ISpatialAnchorRawCoordinateSystemAdjustedEventArgs : IInspectable
+    {
+        [propget] HRESULT OldRawCoordinateSystemToNewRawCoordinateSystemTransform([out] [retval] Windows.Foundation.Numerics.Matrix4x4 *value);
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 7.0),
+        exclusiveto(Windows.Perception.Spatial.SpatialAnchorExporter),
+        uuid(9a2a4338-24fb-4269-89c5-88304aeef20f),
+    ]
+    interface ISpatialAnchorExporter : IInspectable
+    {
+        HRESULT GetAnchorExportSufficiencyAsync(
+            [in] Windows.Perception.Spatial.SpatialAnchor *anchor,
+            [in] Windows.Perception.Spatial.SpatialAnchorExportPurpose purpose,
+            [out] [retval] Windows.Foundation.IAsyncOperation<Windows.Perception.Spatial.SpatialAnchorExportSufficiency*> **operation
+        );
+        HRESULT TryExportAnchorAsync(
+            [in] Windows.Perception.Spatial.SpatialAnchor* anchor,
+            [in] Windows.Perception.Spatial.SpatialAnchorExportPurpose purpose,
+            [in] Windows.Storage.Streams.IOutputStream* stream,
+            [out] [retval] Windows.Foundation.IAsyncOperation<boolean>** operation
+        );
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 7.0),
+        exclusiveto(Windows.Perception.Spatial.SpatialAnchorExporter),
+        uuid(ed2507b8-2475-439c-85ff-7fed341fdc88),
+    ]
+    interface ISpatialAnchorExporterStatics : IInspectable
+    {
+        HRESULT GetDefault([out] [retval] Windows.Perception.Spatial.SpatialAnchorExporter **value);
+        HRESULT RequestAccessAsync([out] [retval] Windows.Foundation.IAsyncOperation<Windows.Perception.Spatial.SpatialPerceptionAccessStatus> **result);
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0),
+        marshaling_behavior(agile),
+        static(Windows.Perception.Spatial.ISpatialBoundingVolumeStatics, Windows.Foundation.UniversalApiContract, 2.0),
+        threading(both)
+    ]
+    runtimeclass SpatialBoundingVolume
+    {
+        [default] interface Windows.Perception.Spatial.ISpatialBoundingVolume;
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0),
+        marshaling_behavior(agile),
+        threading(both)
+    ]
+    runtimeclass SpatialCoordinateSystem
+    {
+        [default] interface Windows.Perception.Spatial.ISpatialCoordinateSystem;
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0),
+        marshaling_behavior(agile),
+        static(Windows.Perception.Spatial.ISpatialAnchorStatics, Windows.Foundation.UniversalApiContract, 2.0),
+        threading(both),
+    ]
+    runtimeclass SpatialAnchor
+    {
+        [default] interface Windows.Perception.Spatial.ISpatialAnchor;
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 7.0),
+        marshaling_behavior(agile),
+        threading(both),
+    ]
+    runtimeclass SpatialAnchorExportSufficiency
+    {
+        [default] interface Windows.Perception.Spatial.ISpatialAnchorExportSufficiency;
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 2.0),
+        marshaling_behavior(agile),
+        threading(both),
+    ]
+    runtimeclass SpatialAnchorRawCoordinateSystemAdjustedEventArgs
+    {
+        [default] interface Windows.Perception.Spatial.ISpatialAnchorRawCoordinateSystemAdjustedEventArgs;
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 7.0),
+        marshaling_behavior(agile),
+        static(Windows.Perception.Spatial.ISpatialAnchorExporterStatics, Windows.Foundation.UniversalApiContract, 7.0),
+        threading(both),
+    ]
+    runtimeclass SpatialAnchorExporter
+    {
+        [default] interface Windows.Perception.Spatial.ISpatialAnchorExporter;
+    }
+}

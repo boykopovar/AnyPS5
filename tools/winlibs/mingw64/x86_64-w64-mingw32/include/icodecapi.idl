@@ -1,0 +1,42 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)")
+
+import "unknwn.idl";
+import "oaidl.idl";
+
+cpp_quote("")
+struct CodecAPIEventData {
+  GUID guid;
+  DWORD dataLength;
+  DWORD reserved[3];
+};
+
+cpp_quote("")
+interface IStream;
+
+cpp_quote("")
+[object, local, uuid (901db4c7-31ce-41a2-85dc-8fa0bf41b8da), pointer_default (unique)]
+interface ICodecAPI : IUnknown {
+  HRESULT IsSupported ([in] const GUID *Api);
+  HRESULT IsModifiable ([in] const GUID *Api);
+  HRESULT GetParameterRange ([in] const GUID *Api,[out] VARIANT *ValueMin,[out] VARIANT *ValueMax,[out] VARIANT *SteppingDelta);
+  HRESULT GetParameterValues ([in] const GUID *Api,[out, size_is (,*ValuesCount)] VARIANT **Values,[out] ULONG *ValuesCount);
+  HRESULT GetDefaultValue ([in] const GUID *Api,[out] VARIANT *Value);
+  HRESULT GetValue ([in] const GUID *Api,[out] VARIANT *Value);
+  HRESULT SetValue ([in] const GUID *Api,[in] VARIANT *Value);
+  HRESULT RegisterForEvent ([in] const GUID *Api,[in] LONG_PTR userData);
+  HRESULT UnregisterForEvent ([in] const GUID *Api);
+  HRESULT SetAllDefaults (void);
+  HRESULT SetValueWithNotify ([in] const GUID *Api,[in] VARIANT *Value,[out, size_is (,*ChangedParamCount)] GUID **ChangedParam,[out] ULONG *ChangedParamCount);
+  HRESULT SetAllDefaultsWithNotify ([out, size_is (,*ChangedParamCount)] GUID **ChangedParam,[out] ULONG *ChangedParamCount);
+  HRESULT GetAllSettings ([in] IStream *);
+  HRESULT SetAllSettings ([in] IStream *);
+  HRESULT SetAllSettingsWithNotify (IStream *,[out, size_is (,*ChangedParamCount)] GUID **ChangedParam,[out] ULONG *ChangedParamCount);
+}
+cpp_quote("#endif")

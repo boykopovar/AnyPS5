@@ -1,0 +1,102 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+cpp_quote("")
+
+import "objidl.idl";
+import "oleidl.idl";
+import "oaidl.idl";
+import "wbemcli.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+interface IWbemTransport;
+interface IWbemLevel1Login;
+interface IWbemConnectorLogin;
+interface IWbemAddressResolution;
+interface IWbemClientTransport;
+interface IWbemClientConnectionTransport;
+
+typedef enum tag_WBEM_LOGIN_TYPE {
+  WBEM_FLAG_INPROC_LOGIN = 0,
+  WBEM_FLAG_LOCAL_LOGIN = 1,
+  WBEM_FLAG_REMOTE_LOGIN = 2,
+  WBEM_AUTHENTICATION_METHOD_MASK = 0xf,
+  WBEM_FLAG_USE_MULTIPLE_CHALLENGES = 0x10
+} WBEM_LOGIN_TYPE;
+
+typedef /*[size_is (16), length_is (16)]*/ BYTE *WBEM_128BITS;
+
+[uuid (027947f3-d731-11ce-a357-000000000001)]
+library WbemTransports_v1 {
+  [uuid (8bc3f05e-d86b-11d0-a075-00c04fb68820)] /* restricted */
+  coclass WbemLevel1Login {
+    interface IWbemLevel1Login;
+    interface IWbemConnectorLogin;
+  };
+
+  [uuid (a1044801-8f7e-11d1-9e7c-00c04fc324a8)] /* restricted */
+  coclass WbemLocalAddrRes {
+    interface IWbemAddressResolution;
+  };
+
+  [uuid (7a0227f6-7108-11d1-ad90-00c04fd8fdff)] /* restricted */
+  coclass WbemUninitializedClassObject {
+    interface IWbemClassObject;
+    interface IWbemObjectAccess;
+    interface IWbemConstructClassObject;
+  };
+
+  [uuid (f7ce2e13-8c90-11d1-9e7b-00c04fc324a8)] /* restricted */
+  coclass WbemDCOMTransport {
+    interface IWbemClientTransport;
+    interface IWbemClientConnectionTransport;
+  };
+};
+
+[object, restricted, uuid (f309ad18-d86a-11d0-a075-00c04fb68820), pointer_default (unique)]
+interface IWbemLevel1Login : IUnknown {
+  HRESULT EstablishPosition ([in, unique, string] LPWSTR wszLocaleList,[in] DWORD dwNumLocales,[out] DWORD *reserved);
+  HRESULT RequestChallenge ([in, unique, string] LPWSTR wszNetworkResource,[in, unique, string] LPWSTR wszUser,[out] WBEM_128BITS Nonce);
+  HRESULT WBEMLogin ([in, unique, string] LPWSTR wszPreferredLocale,[in, unique] WBEM_128BITS AccessToken,[in] long lFlags,[in] IWbemContext *pCtx,[out] IWbemServices **ppNamespace);
+  HRESULT NTLMLogin ([in, unique, string] LPWSTR wszNetworkResource,[in, unique, string] LPWSTR wszPreferredLocale,[in] long lFlags,[in] IWbemContext *pCtx,[out] IWbemServices **ppNamespace);
+};
+
+[object, restricted, uuid (d8ec9cb1-b135-4f10-8b1b-c7188bb0d186), pointer_default (unique)]
+interface IWbemConnectorLogin : IUnknown {
+  HRESULT ConnectorLogin ([in, unique, string] LPWSTR wszNetworkResource,[in, unique, string] LPWSTR wszPreferredLocale,[in] long lFlags,[in] IWbemContext *pCtx,[in] REFIID riid,[out, iid_is (riid)] void **pInterface);
+};
+
+[object, local, uuid (F7CE2E12-8c90-11d1-9e7b-00c04fc324a8), restricted, pointer_default (unique)]
+interface IWbemAddressResolution : IUnknown {
+  HRESULT Resolve ([in] LPWSTR wszNamespacePath,[out] LPWSTR wszAddressType,[out] DWORD *pdwAddressLength,[out, size_is (,*pdwAddressLength)] BYTE **pabBinaryAddress);
+};
+
+[local, object, restricted, uuid (553fe584-2156-11d0-b6ae-00aa003240c7)]
+interface IWbemTransport : IUnknown {
+  HRESULT Initialize ();
+}
+[local, object, restricted, uuid (9ef76194-70d5-11d1-ad90-00c04fd8fdff)]
+interface IWbemConstructClassObject : IUnknown {
+  HRESULT SetInheritanceChain ([in] long lNumAntecedents,[in, size_is (lNumAntecedents), string] LPWSTR *awszAntecedents);
+  HRESULT SetPropertyOrigin ([in, string] LPCWSTR wszPropertyName,[in] long lOriginIndex);
+  HRESULT SetMethodOrigin ([in, string] LPCWSTR wszMethodName,[in] long lOriginIndex);
+  HRESULT SetServerNamespace ([in, string] LPCWSTR wszServer,[in, string] LPCWSTR wszNamespace);
+};
+
+[object, local, restricted, uuid (f7ce2e11-8c90-11d1-9e7b-00c04fc324a8), pointer_default (unique)]
+interface IWbemClientTransport : IUnknown {
+  HRESULT ConnectServer ([in] BSTR strAddressType,[in] DWORD dwBinaryAddressLength,[in, size_is (dwBinaryAddressLength)] BYTE *abBinaryAddress,[in] BSTR strNetworkResource,[in] BSTR strUser,[in] BSTR strPassword,[in] BSTR strLocale,[in] long lSecurityFlags,[in] BSTR strAuthority,[in] IWbemContext *pCtx,[out] IWbemServices **ppNamespace);
+};
+
+[object, local, restricted, uuid (a889c72a-fcc1-4a9e-af61-ed071333fb5b), pointer_default (unique)]
+interface IWbemClientConnectionTransport : IUnknown {
+  HRESULT Open ([in] BSTR strAddressType,[in] DWORD dwBinaryAddressLength,[in, size_is (dwBinaryAddressLength)] BYTE *abBinaryAddress,[in] const BSTR strObject,[in] const BSTR strUser,[in] const BSTR strPassword,[in] const BSTR strLocale,[in] long lFlags,[in] IWbemContext *pCtx,[in] REFIID riid,[out, iid_is (riid)] void **pInterface,[out] IWbemCallResult **pCallRes);
+  HRESULT OpenAsync ([in] BSTR strAddressType,[in] DWORD dwBinaryAddressLength,[in, size_is (dwBinaryAddressLength)] BYTE *abBinaryAddress,[in] const BSTR strObject,[in] const BSTR strUser,[in] const BSTR strPassword,[in] const BSTR strLocale,[in] long lFlags,[in] IWbemContext *pCtx,[in] REFIID riid,[in] IWbemObjectSink *pResponseHandler);
+  HRESULT Cancel ([in] long lFlags,[in] IWbemObjectSink *pHandler);
+};
+
+cpp_quote("#endif")

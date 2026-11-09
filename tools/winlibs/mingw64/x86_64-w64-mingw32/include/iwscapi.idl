@@ -1,0 +1,122 @@
+/**
+ * This file has no copyright assigned and is placed in the Public Domain.
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER.PD within this package.
+ */
+
+import "oaidl.idl";
+
+typedef enum WSC_SECURITY_PRODUCT_SUBSTATUS {
+    WSC_SECURITY_PRODUCT_SUBSTATUS_NOT_SET = 0,
+    WSC_SECURITY_PRODUCT_SUBSTATUS_NO_ACTION = 1,
+    WSC_SECURITY_PRODUCT_SUBSTATUS_ACTION_RECOMMENDED = 2,
+    WSC_SECURITY_PRODUCT_SUBSTATUS_ACTION_NEEDED = 3,
+} WSC_SECURITY_PRODUCT_SUBSTATUS;
+
+typedef enum WSC_SECURITY_PRODUCT_STATE {
+    WSC_SECURITY_PRODUCT_STATE_ON = 0,
+    WSC_SECURITY_PRODUCT_STATE_OFF = 1,
+    WSC_SECURITY_PRODUCT_STATE_SNOOZED = 2,
+    WSC_SECURITY_PRODUCT_STATE_EXPIRED = 3,
+} WSC_SECURITY_PRODUCT_STATE;
+
+typedef enum _SECURITY_PRODUCT_TYPE {
+    SECURITY_PRODUCT_TYPE_ANTIVIRUS = 0,
+    SECURITY_PRODUCT_TYPE_FIREWALL = 1,
+    SECURITY_PRODUCT_TYPE_ANTISPYWARE = 2,
+} SECURITY_PRODUCT_TYPE;
+
+typedef enum _WSC_SECURITY_SIGNATURE_STATUS {
+    WSC_SECURITY_PRODUCT_OUT_OF_DATE = 0,
+    WSC_SECURITY_PRODUCT_UP_TO_DATE = 1,
+} WSC_SECURITY_SIGNATURE_STATUS;
+
+[
+    local,
+    object,
+    pointer_default(unique),
+    uuid(8c38232e-3a45-4a27-92b0-1a16a975f669)
+]
+interface IWscProduct : IDispatch
+{
+    [propget] HRESULT ProductName([out, retval] BSTR *val);
+    [propget] HRESULT ProductState([out, retval] WSC_SECURITY_PRODUCT_STATE *val);
+    [propget] HRESULT SignatureStatus([out, retval] WSC_SECURITY_SIGNATURE_STATUS *val);
+    [propget] HRESULT RemediationPath([out, retval] BSTR *val);
+    [propget] HRESULT ProductStateTimestamp([out, retval] BSTR *val);
+    [propget] HRESULT ProductGuid([out, retval] BSTR *val);
+    [propget] HRESULT ProductIsDefault([out, retval] BOOL *val);
+}
+
+[
+    local,
+    object,
+    pointer_default(unique),
+    uuid(f896ca54-fe09-4403-86d4-23cb488d81d8)
+]
+interface IWscProduct2 : IWscProduct
+{
+    [propget] HRESULT AntivirusScanSubstatus([out, retval] WSC_SECURITY_PRODUCT_SUBSTATUS *status);
+    [propget] HRESULT AntivirusSettingsSubstatus([out, retval] WSC_SECURITY_PRODUCT_SUBSTATUS *status);
+    [propget] HRESULT AntivirusProtectionUpdateSubstatus([out, retval] WSC_SECURITY_PRODUCT_SUBSTATUS *status);
+    [propget] HRESULT FirewallDomainProfileSubstatus([out, retval] WSC_SECURITY_PRODUCT_SUBSTATUS *status);
+    [propget] HRESULT FirewallPrivateProfileSubstatus([out, retval] WSC_SECURITY_PRODUCT_SUBSTATUS *status);
+    [propget] HRESULT FirewallPublicProfileSubstatus([out, retval] WSC_SECURITY_PRODUCT_SUBSTATUS *status);
+}
+
+[
+    local,
+    object,
+    pointer_default(unique),
+    uuid(55536524-d1d1-4726-8c7c-04996a1904e7)
+]
+interface IWscProduct3 : IWscProduct2
+{
+    [propget] HRESULT AntivirusDaysUntilExpired([out, retval] DWORD *days);
+}
+
+[
+    local,
+    object,
+    pointer_default(unique),
+    uuid(722a338c-6e8e-4e72-ac27-1417fb0c81c2)
+]
+interface IWSCProductList : IDispatch
+{
+    HRESULT Initialize([in] ULONG provider);
+    [propget] HRESULT Count([out, retval] LONG *val);
+    [propget] HRESULT Item([in] ULONG index, [out, retval] IWscProduct **val);
+}
+
+[
+    local,
+    object,
+    pointer_default(unique),
+    uuid(0476d69c-f21a-11e5-9ce9-5e5517507c66)
+]
+interface IWSCDefaultProduct : IDispatch
+{
+    HRESULT SetDefaultProduct([in] SECURITY_PRODUCT_TYPE type, [in] BSTR guid);
+}
+
+[
+    uuid(b52a4496-7753-4f74-be64-c2072e308122)
+]
+library wscAPILib
+{
+    [
+        uuid(17072f7b-9abe-4a74-a261-1eb76b55107a)
+    ]
+    coclass WSCProductList
+    {
+        interface IWSCProductList;
+    }
+
+    [
+        uuid(2981a36e-f22d-11e5-9ce9-5e5517507c66)
+    ]
+    coclass WSCDefaultProduct
+    {
+        interface IWSCDefaultProduct;
+    }
+}

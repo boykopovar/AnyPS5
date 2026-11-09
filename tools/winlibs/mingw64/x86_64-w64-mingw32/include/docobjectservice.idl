@@ -1,0 +1,32 @@
+cpp_quote("/**")
+cpp_quote(" * This file is part of the mingw-w64 runtime package.")
+cpp_quote(" * No warranty is given; refer to the file DISCLAIMER within this package.")
+cpp_quote(" */")
+
+import "objidl.idl";
+import "mshtml.idl";
+
+cpp_quote("")
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+
+interface IDocObjectService;
+
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+[object, uuid (3050f801-98b5-11cf-bb82-00aa00bdce0b)]
+interface IDocObjectService : IUnknown {
+  HRESULT FireBeforeNavigate2 ([in] IDispatch *pDispatch, [in, string] LPCWSTR lpszUrl, [in] DWORD dwFlags, [in, string] LPCWSTR lpszFrameName, [out] BYTE *pPostData, [in] DWORD cbPostData, [in, string] LPCWSTR lpszHeaders, [in] BOOL fPlayNavSound, [out] BOOL *pfCancel);
+  HRESULT FireNavigateComplete2 ([in] IHTMLWindow2 *pHTMLWindow2, [in] DWORD dwFlags);
+  HRESULT FireDownloadBegin ();
+  HRESULT FireDownloadComplete ();
+  HRESULT FireDocumentComplete ([in] IHTMLWindow2 *pHTMLWindow, [in] DWORD dwFlags);
+  HRESULT UpdateDesktopComponent ([in] IHTMLWindow2 *pHTMLWindow);
+  HRESULT GetPendingUrl ([out] BSTR *pbstrPendingUrl);
+  HRESULT ActiveElementChanged ([in] IHTMLElement *pHTMLElement);
+  HRESULT GetUrlSearchComponent ([out] BSTR *pbstrSearch);
+  HRESULT IsErrorUrl ([in, string] LPCWSTR lpszUrl, [out] BOOL *pfIsError);
+};
+
+cpp_quote("#endif")

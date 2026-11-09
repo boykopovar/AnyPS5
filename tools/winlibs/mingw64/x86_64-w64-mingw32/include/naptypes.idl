@@ -1,0 +1,186 @@
+/**
+ * This file is part of the mingw-w64 runtime package.
+ * No warranty is given; refer to the file DISCLAIMER within this package.
+ */
+
+import "oaidl.idl";
+import "ocidl.idl";
+
+cpp_quote("#include <winapifamily.h>")
+cpp_quote("")
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)")
+
+[pointer_default (unique)]
+interface INapTypes {
+  const UINT8 freshSoHRequest = 0x1;
+  const UINT8 shaFixup = 0x1;
+  const UINT8 percentageNotSupported = 101;
+
+  const UINT16 maxSoHAttributeCount = 100;
+  const UINT16 maxSoHAttributeSize = 4000;
+  const UINT16 minNetworkSoHSize = 12;
+  const UINT16 maxNetworkSoHSize = 4000;
+  const UINT16 maxDwordCountPerSoHAttribute = maxSoHAttributeSize / sizeof (DWORD);
+  const UINT16 maxIpv4CountPerSoHAttribute = maxSoHAttributeSize / 4;
+  const UINT16 maxIpv6CountPerSoHAttribute = maxSoHAttributeSize / 16;
+  const UINT16 maxStringLength = 1024;
+  const UINT16 maxStringLengthInBytes = (maxStringLength + 1) * sizeof (WCHAR);
+  const UINT16 maxSystemHealthEntityCount = 20;
+  const UINT16 maxEnforcerCount = 20;
+  const UINT16 maxPrivateDataSize = 200;
+  const UINT16 maxConnectionCountPerEnforcer = 20;
+  const UINT16 maxCachedSoHCount = maxSystemHealthEntityCount * maxEnforcerCount * maxConnectionCountPerEnforcer;
+  const UINT16 failureCategoryCount = 5;
+
+  const UINT32 ComponentTypeEnforcementClientSoH = 0x1;
+  const UINT32 ComponentTypeEnforcementClientRp = 0x2;
+
+  typedef enum tagIsolationState {
+    isolationStateNotRestricted = 1,
+    isolationStateInProbation = 2,
+    isolationStateRestrictedAccess = 3
+  } IsolationState;
+
+  typedef enum tagExtendedIsolationState {
+    extendedIsolationStateNoData = 0x0,
+    extendedIsolationStateTransition = 0x1,
+    extendedIsolationStateInfected = 0x2,
+    extendedIsolationStateUnknown = 0x3
+  } ExtendedIsolationState;
+
+  typedef enum tagNapTracingLevel {
+    tracingLevelUndefined = 0,
+    tracingLevelBasic = 1,
+    tracingLevelAdvanced = 2,
+    tracingLevelDebug = 3
+  } NapTracingLevel;
+
+  typedef enum tagFailureCategory {
+    failureCategoryNone = 0,
+    failureCategoryOther = 1,
+    failureCategoryClientComponent = 2,
+    failureCategoryClientCommunication = 3,
+    failureCategoryServerComponent = 4,
+    failureCategoryServerCommunication = 5
+  } FailureCategory;
+
+  typedef enum tagFixupState {
+    fixupStateSuccess = 0,
+    fixupStateInProgress = 1,
+    fixupStateCouldNotUpdate = 2
+  } FixupState;
+
+  typedef enum tagNapNotifyType {
+    napNotifyTypeUnknown = 0,
+    napNotifyTypeServiceState = 1,
+    napNotifyTypeQuarState = 2
+  } NapNotifyType;
+
+  typedef enum tagRemoteConfigurationType {
+    remoteConfigTypeMachine = 1,
+    remoteConfigTypeConfigBlob
+  } RemoteConfigurationType;
+
+  typedef FILETIME ProbationTime;
+  typedef UINT32 MessageId;
+  typedef UINT32 NapComponentId;
+  typedef NapComponentId SystemHealthEntityId;
+  typedef NapComponentId EnforcementEntityId;
+
+  typedef struct tagCountedString {
+    UINT16 length;
+    [size_is (length + 1), string] WCHAR *string;
+  } CountedString;
+  typedef CountedString StringCorrelationId;
+
+  typedef struct tagIsolationInfo {
+    IsolationState isolationState;
+    ProbationTime probEndTime;
+    CountedString failureUrl;
+  } IsolationInfo;
+
+  typedef struct tagIsolationInfoEx {
+    IsolationState isolationState;
+    ExtendedIsolationState extendedIsolationState;
+    ProbationTime probEndTime;
+    CountedString failureUrl;
+  } IsolationInfoEx;
+
+  typedef struct tagFailureCategoryMapping {
+    BOOL mappingCompliance[failureCategoryCount];
+  } FailureCategoryMapping;
+
+  typedef [range (0, maxSystemHealthEntityCount)] UINT16 SystemHealthEntityCount;
+  typedef [range (0, maxEnforcerCount)] UINT16 EnforcementEntityCount;
+
+  typedef struct tagCorrelationId {
+    GUID connId;
+    FILETIME timeStamp;
+  } CorrelationId;
+
+  typedef GUID ConnectionId;
+
+  typedef [range (0, percentageNotSupported)] UINT8 Percentage;
+
+  typedef struct tagResultCodes {
+    [range (0, maxDwordCountPerSoHAttribute)] UINT16 count;
+    [size_is (count)] HRESULT *results;
+  } ResultCodes;
+
+  typedef struct tagIpv4Address {
+    BYTE addr[4];
+  } Ipv4Address;
+
+  typedef struct tagIpv6Address {
+    BYTE addr[16];
+  } Ipv6Address;
+
+  typedef struct tagFixupInfo {
+    FixupState state;
+    Percentage percentage;
+    ResultCodes resultCodes;
+    MessageId fixupMsgId;
+  } FixupInfo;
+
+  typedef struct tagSystemHealthAgentState {
+    SystemHealthEntityId id;
+    ResultCodes shaResultCodes;
+    FailureCategory failureCategory;
+    FixupInfo fixupInfo;
+  } SystemHealthAgentState;
+
+  typedef struct tagSoHAttribute {
+    UINT16 type;
+    [range (0, maxSoHAttributeSize)] UINT16 size;
+    [size_is (size)] BYTE *value;
+  } SoHAttribute;
+
+  typedef struct tagSoH {
+    [range (0, maxSoHAttributeCount)] UINT16 count;
+    [size_is (count)] SoHAttribute *attributes;
+  } SoH, SoHRequest, SoHResponse;
+
+  typedef struct tagNetworkSoH {
+    [range (minNetworkSoHSize, maxNetworkSoHSize)] UINT16 size;
+    [size_is (size)] BYTE *data;
+  } NetworkSoH, NetworkSoHRequest, NetworkSoHResponse;
+
+  typedef struct tagPrivateData {
+    [range (0, maxPrivateDataSize)] UINT16 size;
+    [size_is (size)] BYTE *data;
+  } PrivateData;
+
+  typedef struct tagNapComponentRegistrationInfo {
+    NapComponentId id;
+    CountedString friendlyName;
+    CountedString description;
+    CountedString version;
+    CountedString vendorName;
+    CLSID infoClsid;
+    CLSID configClsid;
+    FILETIME registrationDate;
+    UINT32 componentType;
+  } NapComponentRegistrationInfo;
+};
+cpp_quote("#endif")
+
