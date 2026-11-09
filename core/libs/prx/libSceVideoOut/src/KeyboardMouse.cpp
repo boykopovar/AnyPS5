@@ -282,6 +282,7 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
         if (binding.control == InputControl::VolumeUp && keyboard && down && !pressed[index]) requests.volumeUp = true;
         if (binding.control == InputControl::VolumeDown && keyboard && down && !pressed[index]) requests.volumeDown = true;
         if (binding.control == InputControl::ToggleMute && keyboard && down && !pressed[index]) requests.toggleMute = true;
+        if (binding.control == InputControl::HostMenu && keyboard && down && !pressed[index]) requests.hostMenu = true;
         if (binding.control == InputControl::ToggleMouse && down && !pressed[index]) requests.toggleMouse = true;
         if (binding.control == InputControl::ReloadInputMapping && keyboard && down && !pressed[index]) requests.reloadInputMapping = true;
         pressed[index] = down;
@@ -349,6 +350,7 @@ PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const
             case InputControl::VolumeDown: break;
             case InputControl::ToggleMute: break;
             case InputControl::ReloadInputMapping: break;
+            case InputControl::HostMenu: break;
         }
     }
     const auto input = stickInput();
