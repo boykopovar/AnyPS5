@@ -147,6 +147,7 @@ int APS5_VABI sceBgftServiceIntDownloadUnregisterTask(int32_t taskId) {
 int APS5_VABI sceBgftServiceIntInit(const BgftInitParam* params) {
     if (g_initialized) return SCE_BGFT_ERROR_ALREADY_INITIALIZED;
     if (params == nullptr) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
+    if (params->heapSize == 0) NotImplemented_nid_no_patch(__func__);
     g_initialized = true;
     return 0;
 }
