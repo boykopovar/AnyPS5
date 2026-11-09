@@ -140,10 +140,6 @@ int APS5_VABI EC_KEY_set_asn1_flag_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EC_POINT_get_affine_coordinates_GFp_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_NAME_add_entry_by_txt_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -179,10 +175,6 @@ int APS5_VABI Unknown_4pEl_minus_5DmrrM_nid_no_patch() {
 APS5_EXPORT("4pEl-5DmrrM", Unknown_4pEl_minus_5DmrrM_nid_no_patch);
 
 int APS5_VABI X509_CRL_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI EC_POINT_set_affine_coordinates_GFp_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
