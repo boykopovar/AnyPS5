@@ -648,6 +648,8 @@ void padChordParse() {
     require(padChordOf(configuration, Pad::InputControl::ToggleFullscreen) == fullscreen, "a pad chord is a mask of its buttons");
     require(padChordOf(configuration, Pad::InputControl::Screenshot) == static_cast<std::uint32_t>(Pad::PadButton::L1), "a single pad button is a chord");
     require(keysFor(Pad::InputControl::ToggleFullscreen).size() == 0, "a pad chord does not bind a key");
+    useConfig("ReloadInputMapping = PAD:L1\n");
+    require(padChordOf(Pad::LoadInputMapping(), Pad::InputControl::ReloadInputMapping) == static_cast<std::uint32_t>(Pad::PadButton::L1), "ReloadInputMapping takes a pad chord");
     require(rejects("Cross = PAD:L1\n"), "a pad chord cannot trigger a pad button");
     require(rejects("ToggleMouse = PAD:L1\n"), "a pad chord cannot trigger ToggleMouse");
     require(rejects("ToggleFullscreen = PAD:Options+\n"), "a pad chord with an empty button is rejected");
