@@ -313,16 +313,6 @@ void APS5_VABI FT_Stroker_ExportForward_nid_no_patch(void* stroker, FreeType::Gu
 }
 APS5_EXPORT("2rcvKZfm5rI", FT_Stroker_ExportForward_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtStrokerExportBorder_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("7cIS2cFG3PE", sceFreeTypeOtStrokerExportBorder_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtStrokerParseOutline_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("RvFx7dv9ThU", sceFreeTypeOtStrokerParseOutline_nid_no_patch);
-
 int APS5_VABI FT_Trace_Get_Count_nid_no_patch() {
     return 0;
 }
