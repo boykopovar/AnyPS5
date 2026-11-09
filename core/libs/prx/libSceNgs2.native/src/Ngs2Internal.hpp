@@ -137,6 +137,12 @@ struct Ngs2VoiceCustomGain {
     bool lifecycleUnknown = false;
 };
 
+struct Ngs2SubmixerCompressor {
+    bool configured = false;
+    Ngs2SubmixerVoiceCompressorParam param{};
+    std::array<float, NGS2_MAX_CHANNELS> gain{};
+};
+
 struct Ngs2QueuedCallback {
     Ngs2VoiceCallbackInfo info;
     std::uint64_t sequence;
@@ -221,6 +227,7 @@ struct Ngs2Voice {
     std::vector<Ngs2UserFx2> userFx;
     std::vector<Ngs2VoiceCustomUserFx> customUserFx;
     std::vector<Ngs2VoiceCustomGain> customGain;
+    Ngs2SubmixerCompressor compressor;
     std::vector<Ngs2PitchShift> customPitchShift;
     Ngs2VoiceTransition outputTransition = Ngs2VoiceTransition::None;
     Ngs2UserFxProcessHandler userFxHandler = nullptr;
