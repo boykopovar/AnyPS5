@@ -98,6 +98,8 @@ private:
     std::thread hapticsThread;
     bool hapticsRumbled = false;
     std::atomic<std::chrono::steady_clock::rep> hapticsReconfigureAt{0};
+    std::thread mappingWatchThread;
+    std::atomic<bool> mappingWatchStop{false};
 };
 
 #endif
