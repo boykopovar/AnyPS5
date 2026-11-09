@@ -872,6 +872,8 @@ int APS5_VABI _umtx_op_nid_postfix(void* object, int operation, std::uint64_t va
         case UMTX_OP_RW_UNLOCK:
             error = RwlockUnlock(static_cast<UserRwlock*>(object));
             break;
+        case UMTX_OP_MAX:
+            break;
         default:
             if (operation < 0 || operation >= UMTX_OP_MAX) {
                 error = GUEST_EINVAL;
