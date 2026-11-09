@@ -2,17 +2,19 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v*', '!v-nightly-*']
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event_name == 'push' && github.ref || 'nightly' }}
   cancel-in-progress: false
 
 env:
-  RELEASE_TAG: ${{ github.ref_name }}
   CONFIGURE: >-
     -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
     -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
@@ -22,8 +24,31 @@ env:
   WINLIBS_SHA256: cb2fbad6162540cdf5e1facdce08d4dac359e8cf64f7f696a99274291763b815
 
 jobs:
+  plan:
+    name: Select release
+    if: >-
+      github.repository == 'boykopovar/AnyPS5' &&
+      (github.event_name == 'push' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      nightly: ${{ steps.plan.outputs.nightly }}
+      build: ${{ steps.plan.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/nightly_release.py plan
+
   build:
     name: Build and test (${{ matrix.platform }})
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -36,6 +61,8 @@ jobs:
             timeout: 60
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
+    env:
+      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
     defaults:
       run:
         shell: bash
@@ -44,6 +71,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           submodules: recursive
+          persist-credentials: false
       - name: Point the WinLibs CMake at the CA bundle of Git for Windows
         if: matrix.platform == 'windows'
         shell: bash
@@ -115,12 +143,17 @@ jobs:
 
   web:
     name: Build and test web converter
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Build web converter
         shell: bash
         run: |
@@ -144,13 +177,15 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [build, web]
+    needs: [plan, build, web]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     env:
       GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+      NIGHTLY: ${{ needs.plan.outputs.nightly }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -172,12 +207,17 @@ jobs:
           test -s "dist/prx-headers-$RELEASE_TAG.zip"
           test -s "dist/prx-headers-$RELEASE_TAG.tar.gz"
           chmod +x "dist/relinker-$RELEASE_TAG"
+      - name: Pin nightly tag after successful builds
+        if: needs.plan.outputs.nightly == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/nightly_release.py ensure-tag
       - name: Prepare release notes
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api --method POST "repos/$GH_REPO/releases/generate-notes" -f tag_name="$RELEASE_TAG" > "$RUNNER_TEMP/release-notes.json"
+          gh api --method POST "repos/$GH_REPO/releases/generate-notes" -f tag_name="$RELEASE_TAG" -f target_commitish="$GITHUB_SHA" > "$RUNNER_TEMP/release-notes.json"
           python tools/prepare_release_notes.py --input "$RUNNER_TEMP/release-notes.json" --body "$RUNNER_TEMP/release-body.md" --full dist/release-notes.md
       - name: Create or refresh draft and upload files
         shell: bash
@@ -186,13 +226,19 @@ jobs:
         run: |
           release_marker="<!-- anyps5-release-workflow:$GITHUB_SHA -->"
           printf '\n%s\n' "$release_marker" >> "$RUNNER_TEMP/release-body.md"
-          release_state="$(
-            gh release list --limit 10000 --json tagName,isDraft |
-              python -c 'import json, os, sys; matches = [release for release in json.load(sys.stdin) if release["tagName"] == os.environ["RELEASE_TAG"]]; print("missing" if not matches else ("draft" if matches[0]["isDraft"] else "published"))'
-          )"
+          release_flags=()
+          if [ "$NIGHTLY" = true ]; then
+            release_state="$(python3 tools/nightly_release.py state)"
+            release_flags=(--prerelease --latest=false --target "$GITHUB_SHA")
+          else
+            release_state="$(
+              gh release list --limit 10000 --json tagName,isDraft |
+                python -c 'import json, os, sys; matches = [release for release in json.load(sys.stdin) if release["tagName"] == os.environ["RELEASE_TAG"]]; print("missing" if not matches else ("draft" if matches[0]["isDraft"] else "published"))'
+            )"
+          fi
           case "$release_state" in
             missing)
-              gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-body.md"
+              gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-body.md" "${release_flags[@]}"
               ;;
             draft)
               release_body="$(gh release view "$RELEASE_TAG" --json body --jq .body)"
@@ -200,7 +246,7 @@ jobs:
                 echo "::error::Draft release $RELEASE_TAG was not created by this workflow for $GITHUB_SHA"
                 exit 1
               fi
-              gh release edit "$RELEASE_TAG" --draft=true --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-body.md"
+              gh release edit "$RELEASE_TAG" --draft=true --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-body.md" "${release_flags[@]}"
               gh release upload "$RELEASE_TAG" dist/* --clobber
               ;;
             published)
@@ -219,6 +265,13 @@ jobs:
             exit 1
           fi
       - name: Publish complete release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$RELEASE_TAG" --draft=false
+        run: |
+          release_flags=()
+          if [ "$NIGHTLY" = true ]; then
+            python3 tools/nightly_release.py ensure-tag
+            release_flags=(--prerelease --latest=false)
+          fi
+          gh release edit "$RELEASE_TAG" --draft=false "${release_flags[@]}"

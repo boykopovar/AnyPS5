@@ -4,14 +4,22 @@ on:
   pull_request:
     paths:
       - .github/workflows/web-release-tools.yml
+      - .github/workflows/release.yml
+      - .github/workflows/pages.yml
       - demo/web/**
       - tools/build_web.py
       - tools/nid_names.py
       - tools/package_headers.py
       - tools/package_release.py
+      - tools/nightly_release.py
+      - tools/prepare_release_notes.py
       - tools/test_web.py
       - tools/tests/test_build_web.py
       - tools/tests/test_web_release.py
+      - tools/tests/test_nightly_release.py
+      - tools/tests/test_release_workflow.py
+      - tools/tests/test_package_release.py
+      - tools/tests/test_release_notes_check.py
       - core/relinker/relinker/tests/guest_import_fixtures.py
       - core/relinker/relinker/tests/test_guest_intel_trampolines.py
       - core/relinker/relinker/tests/test_guest_module_directories.py
@@ -36,3 +44,5 @@ jobs:
         run: python3 tools/tests/test_build_web.py
       - name: Test web release packaging
         run: python3 tools/tests/test_web_release.py
+      - name: Test release planning and publication
+        run: python3 -m unittest discover -s tools/tests -p 'test_*release*.py'

@@ -35,7 +35,11 @@ concurrency:
 
 jobs:
   pages:
-    if: ${{ !github.event.repository.fork && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
+    if: >-
+      !github.event.repository.fork &&
+      (github.event_name != 'release' || !github.event.release.prerelease) &&
+      (github.event_name != 'workflow_run' ||
+        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'))
     runs-on: ubuntu-latest
     environment:
       name: github-pages

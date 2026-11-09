@@ -61,6 +61,14 @@ Pages downloads the converter and both library archives from one release selecte
 
 Changes to the converter or its frontend reach Pages through a release. Progress reports still come from `main`. For local development, build `relinker_web` with Emscripten and run `python3 tools/test_web.py --build build-wasm`. To stage a complete published release without compiling, run `python3 tools/build_web.py --build build-wasm --release`; `--libraries` is an alias for this mode.
 
+## Nightly releases
+
+The Release workflow checks `main` at minutes 17 and 47 of each hour. A maintainer can also run it manually on `main`. GitHub schedules can be delayed; this is not a 30-minute publication deadline. Each run pins the event's full commit ID and uses the existing Linux, Windows and web builds, tests and packaging. Failed builds publish nothing.
+
+Nightlies use `v-nightly-<full-commit-ID>` tags and are prereleases, never the latest stable release. A published commit is skipped before building. An interrupted run can retry its own draft; foreign drafts and conflicting tags fail rather than being overwritten. Tags and published releases are not moved or deleted. Stable `v*` tag pushes keep their existing release path; the nightly prefix is reserved for scheduled and manual runs.
+
+Publishing runs only in `boykopovar/AnyPS5`. Before enabling the schedule, maintainers must permit `GITHUB_TOKEN` with `contents: write` to create the nightly tags and releases under repository rules. No PAT is required and no second workflow is triggered through a tag push. Validate a manual run after merging; local tests mock publication and do not prove repository permissions or runner builds. Nightlies do not trigger Pages deployment, which continues to use the latest stable release.
+
 ## Commands
 
 ```sh
