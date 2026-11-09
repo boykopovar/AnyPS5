@@ -105,7 +105,7 @@ int APS5_VABI sceMsgDialogTerminate(void) {
 }
 int APS5_VABI sceMsgDialogOpen(const void* param) {
  if (param == nullptr) return kErrArgNull;
- std::lock_guard g(g_lock);
+ std::unique_lock g(g_lock);
  if (g_status == kStatusRunning) return kErrBusy;
  const MsgDialog::ParsedParam parsed = MsgDialog::ParseParam(param);
  Inspect(parsed);
