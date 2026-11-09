@@ -60,6 +60,7 @@ Without an `anyps5-input.ini`, or for actions the file does not mention, these b
 | `VolumeUp` | F6 |
 | `ToggleMute` | F8 |
 | `ReloadInputMapping` | F1 |
+| `HostMenu` | F4 (opens a host menu in the window; Up and Down move, Enter runs the chosen action, Escape closes it; while it is open these keys do not reach the title's pad) |
 
 For example, this changes Cross to F or Space, moves the left stick to IJKL, uses the mouse buttons for Square and R2, makes the middle mouse button the only `ToggleMouse` input (the line replaces F7), and keeps all other built-in bindings:
 
