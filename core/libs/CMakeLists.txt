@@ -1559,6 +1559,12 @@ if(BUILD_TESTING)
         set_tests_properties(guest_webrtc_file_wrapper PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
     endif()
+
+    add_test_executable(guest_kernel_sigsuspend_null_mask_tests tests/GuestKernelSigsuspendNullMask.cpp)
+    target_link_libraries(guest_kernel_sigsuspend_null_mask_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_sigsuspend_null_mask_tests)
+    add_test(NAME guest_kernel_sigsuspend_null_mask COMMAND guest_kernel_sigsuspend_null_mask_tests)
+    set_tests_properties(guest_kernel_sigsuspend_null_mask PROPERTIES TIMEOUT 20)
 endif()
 
 include(prx/libSceBeisobmf/Tests.cmake)
