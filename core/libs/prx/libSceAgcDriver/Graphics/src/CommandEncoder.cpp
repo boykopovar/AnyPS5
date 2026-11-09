@@ -367,11 +367,11 @@ CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table) : table(
         break;
     }
     if (slot == Slots) throw std::runtime_error("AGC graphics: every command encoder slot is in use");
+    worker = std::thread([this] { run(); });
     slots()[slot].real = real;
     slots()[slot].device = device;
     installAt(slot, table, std::make_index_sequence<Slots>{});
     slots()[slot].encoder.store(this, std::memory_order_release);
-    worker = std::thread([this] { run(); });
 }
 
 CommandEncoder::~CommandEncoder() {

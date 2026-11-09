@@ -1376,6 +1376,13 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores, DeviceFuncti
         cmdBindPipeline = context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline");
         cmdPushConstants = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
         cmdDispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
+        if (encoder != nullptr) {
+            if (encodedFunctions->cmdUpdateBuffer != nullptr) cmdUpdateBuffer = encodedFunctions->cmdUpdateBuffer;
+            if (encodedFunctions->cmdPipelineBarrier != nullptr) cmdPipelineBarrier = encodedFunctions->cmdPipelineBarrier;
+            if (encodedFunctions->cmdBindPipeline != nullptr) cmdBindPipeline = encodedFunctions->cmdBindPipeline;
+            if (encodedFunctions->cmdPushConstants != nullptr) cmdPushConstants = encodedFunctions->cmdPushConstants;
+            if (encodedFunctions->cmdDispatch != nullptr) cmdDispatch = encodedFunctions->cmdDispatch;
+        }
     }
     if (!timelineSemaphores) return;
     // The timeline starts at 0 and every Submit signals its serial (1, 2, ...): a value that only

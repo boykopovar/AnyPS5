@@ -365,6 +365,30 @@ void LargeRecordsSpanChunks() {
     Compare(expected, "records larger than a chunk");
 }
 
+void UnwindingSettlesQueuedRecording() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x45);
+    CommandEncoder encoder(device, table);
+    const auto commands = Handle<VkCommandBuffer>(0x900);
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(30)); });
+    std::size_t recordedAtCatch = 0;
+    try {
+        encoder.Open(commands);
+        const CommandEncoder::UnwindQuiesce guard(&encoder);
+        table.cmdDraw(commands, 1, 1, 0, 0);
+        table.cmdDraw(commands, 2, 1, 0, 0);
+        encoder.Close();
+        throw std::runtime_error("injected failure after the window closed");
+    } catch (const std::runtime_error&) {
+        std::lock_guard lock(logMutex);
+        recordedAtCatch = recorded[commands].size();
+    }
+    CommandEncoder::SetDelayForTesting({});
+    Require(recordedAtCatch == 2, "unwinding released the owners of a queued draw while the encoder had recorded " + std::to_string(recordedAtCatch) + " of 2 commands");
+    encoder.Quiesce();
+}
+
 }
 
 int main() {
@@ -374,6 +398,7 @@ int main() {
         HookDuringUnencodedOpsWaits();
         NestedWindowKeepsOrder();
         LargeRecordsSpanChunks();
+        UnwindingSettlesQueuedRecording();
         std::cout << "command encoder tests passed\n";
         return 0;
     } catch (const std::exception& error) {
