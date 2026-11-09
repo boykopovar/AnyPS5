@@ -105,6 +105,10 @@ if(BUILD_TESTING)
     add_test(NAME guest_debug_nid_commands COMMAND guest_debug_nid_commands_tests)
     set_tests_properties(guest_debug_nid_commands PROPERTIES TIMEOUT 20)
     if(WIN32)
+        set_tests_properties(guest_debug_nid_commands PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    if(WIN32)
         set_tests_properties(guest_debug_nid_breakpoints PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
