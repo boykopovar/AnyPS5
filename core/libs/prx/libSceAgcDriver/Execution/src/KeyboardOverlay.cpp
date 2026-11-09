@@ -594,6 +594,7 @@ std::optional<HostMenuView> SystemHostMenuView() {
 }
 
 std::optional<OverlayLayout> SystemOverlayLayout(VkExtent2D extent) {
+    if (const auto menu = SystemHostMenuView()) return LayOutHostMenu(*menu, extent);
     if (const auto keyboard = SystemOverlayView()) return LayOutKeyboard(*keyboard, extent);
     if (const auto dialog = SystemDialogView()) return LayOutDialog(*dialog, extent);
     return std::nullopt;
