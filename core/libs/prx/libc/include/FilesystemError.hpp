@@ -65,7 +65,7 @@ inline LinkPrefix_nid_no_patch LinkPrefixState_nid_no_patch(const std::filesyste
         return LinkPrefix_nid_no_patch::Resolves;
     }
     const DWORD code = GetLastError();
-    if (code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND) return LinkPrefix_nid_no_patch::Resolves;
+    if (code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND && code != ERROR_DIRECTORY) return LinkPrefix_nid_no_patch::Resolves;
     std::string text;
     try {
         if (!File::WindowsSymbolicLink::Read(prefix, text, "lookup")) return LinkPrefix_nid_no_patch::Resolves;
