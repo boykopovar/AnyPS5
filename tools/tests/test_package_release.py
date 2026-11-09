@@ -49,8 +49,8 @@ class PublicHeaderPackageTests(unittest.TestCase):
         (self.libs / "Common.hpp").write_text('struct Common {};\n', encoding="utf-8")
         self.umbrella.with_name("Private.hpp").write_text('#include <vendor.h>\n', encoding="utf-8")
 
-    def test_recursive_headers_keep_paths_and_bytes_without_private_files(self):
-        expected = {"include/anyps5/" + path.relative_to(self.libs).as_posix(): path.read_bytes() for path in (self.umbrella, self.api, self.umbrella.with_name("Windows.hpp"), self.libs / "Common.hpp")}
+    def assert_archive_bytes(self, headers):
+        expected = {"include/anyps5/" + path.relative_to(self.libs).as_posix(): path.read_bytes() for path in headers}
         expected["LICENSE"] = (self.source / "LICENSE").read_bytes()
         package_headers.package(self.source, self.output, "v1")
         with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
@@ -58,6 +58,24 @@ class PublicHeaderPackageTests(unittest.TestCase):
             self.assertEqual(len(archive.namelist()), len(expected))
         with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
             self.assertEqual({name: archive.extractfile(name).read() for name in archive.getnames()}, expected)
+
+    def test_recursive_headers_keep_paths_and_bytes_without_private_files(self):
+        self.assert_archive_bytes((self.umbrella, self.api, self.umbrella.with_name("Windows.hpp"), self.libs / "Common.hpp"))
+
+    def test_bom_prefixed_umbrella_and_nested_header_keep_dependencies_and_original_bytes(self):
+        nested = self.umbrella.with_name("Nested.hpp")
+        nested_dep = self.umbrella.with_name("NestedDep.hpp")
+        nested.write_text('#include "NestedDep.hpp"\n', encoding="utf-8")
+        nested_dep.write_text('struct NestedDep {};\n', encoding="utf-8")
+        self.api.write_text('#include "Nested.hpp"\n', encoding="utf-8")
+        for header in (self.umbrella, nested):
+            with self.subTest(bom_header=header.name):
+                original = header.read_bytes()
+                header.write_bytes(b"\xef\xbb\xbf" + original)
+                try:
+                    self.assert_archive_bytes((self.umbrella, self.api, nested, nested_dep, self.libs / "Common.hpp"))
+                finally:
+                    header.write_bytes(original)
 
     def test_forbidden_or_missing_dependencies_preserve_existing_archives(self):
         self.output.mkdir()
@@ -70,6 +88,18 @@ class PublicHeaderPackageTests(unittest.TestCase):
                     package_headers.package(self.source, self.output, "v1")
                 self.assertEqual(list(self.output.iterdir()), [previous])
                 self.assertEqual(previous.read_bytes(), b"previous")
+
+    def test_bom_prefixed_rejected_directives_preserve_existing_archives(self):
+        self.output.mkdir()
+        previous = {name: self.output / name for name in ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")}
+        for path in previous.values():
+            path.write_bytes(b"previous " + path.name.encode("ascii"))
+        for directive in ('#include "Missing.hpp"', '#include <vendor.h>', '#include "../../../3rdparty/vendor.hpp"', '#include MACRO_HEADER', '#include_next <vendor.h>'):
+            with self.subTest(directive=directive):
+                self.api.write_bytes(b"\xef\xbb\xbf" + (directive + "\n").encode("utf-8"))
+                with self.assertRaises(RuntimeError):
+                    package_headers.package(self.source, self.output, "v1")
+                self.assertEqual({path.name: path.read_bytes() for path in self.output.iterdir()}, {name: b"previous " + name.encode("ascii") for name in previous})
 
     def test_ambiguous_quoted_include_is_rejected(self):
         (self.libs / "Api.hpp").write_text("", encoding="utf-8")
