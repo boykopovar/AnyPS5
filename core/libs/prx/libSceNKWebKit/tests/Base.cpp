@@ -9,6 +9,8 @@
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <algorithm>
 #include <cassert>
+#include <chrono>
+#include <thread>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -58,6 +60,7 @@ static void TestTypeIDs() {
     Require(WKAXObjectGetTypeID() == 132);
     WKRenderLayerGetTypeID();
     WKRenderObjectGetTypeID();
+    Require(WKContextGetTypeID() == 85);
 }
 
 static void TestRetainRelease() {
@@ -1733,6 +1736,82 @@ static void TestInspector() {
     }
     Require(threw);
 }
+
+static int s_runLoopCallCount = 0;
+static void* s_runLoopReceivedContext = nullptr;
+
+static void APS5_VABI RunLoopCallback1(void* ctx) {
+    s_runLoopCallCount++;
+    s_runLoopReceivedContext = ctx;
+    WKRunLoopStopMain();
+}
+
+static void APS5_VABI RunLoopCallback2(void* ctx) {
+    auto* count = static_cast<int*>(ctx);
+    (*count) += 10;
+    WKRunLoopStopMain();
+}
+
+static void TestRunLoop() {
+    WKRunLoopInitializeMain();
+    WKRunLoopStopMain();
+    WKRunLoopRunMain();
+
+    WKRunLoopInitializeMain();
+    s_runLoopCallCount = 0;
+    s_runLoopReceivedContext = nullptr;
+
+    WKRunLoopCallOnMainThread(nullptr, nullptr);
+
+    int testContext = 42;
+    WKRunLoopCallOnMainThread(RunLoopCallback1, &testContext);
+
+    WKRunLoopRunMain();
+
+    Require(s_runLoopCallCount == 1);
+    Require(s_runLoopReceivedContext == &testContext);
+
+    WKRunLoopInitializeMain();
+
+    std::thread backgroundThread([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        WKRunLoopCallOnMainThread(RunLoopCallback2, &s_runLoopCallCount);
+    });
+
+    WKRunLoopRunMain();
+    backgroundThread.join();
+
+    Require(s_runLoopCallCount == 11);
+}
+
+static void TestContext() {
+    Require(WKContextGetTypeID() == 85);
+
+    const auto* context = WKContextCreate();
+    Require(WKGetTypeID(context) == WKContextGetTypeID());
+    Require(!WKContextGetUsesSingleWebProcess(context));
+    WKContextSetUsesSingleWebProcess(context, true);
+    Require(WKContextGetUsesSingleWebProcess(context));
+    WKRelease(context);
+
+    const auto* config = WKContextConfigurationCreate();
+    const auto* contextFromConfig = WKContextCreateWithConfiguration(config);
+    Require(WKGetTypeID(contextFromConfig) == WKContextGetTypeID());
+    Require(!WKContextGetUsesSingleWebProcess(contextFromConfig));
+    WKRelease(contextFromConfig);
+    WKRelease(config);
+
+    const auto* nullContext = WKContextCreateWithConfiguration(nullptr);
+    Require(WKGetTypeID(nullContext) == WKContextGetTypeID());
+    WKRelease(nullContext);
+
+    auto* pathStr = WKStringCreateWithUTF8CString("/app0/bundle.js");
+    const auto* contextFromPath = WKContextCreateWithInjectedBundlePath(pathStr);
+    Require(WKGetTypeID(contextFromPath) == WKContextGetTypeID());
+    WKRelease(contextFromPath);
+    WKRelease(pathStr);
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -1760,9 +1839,10 @@ int main() {
     TestFrameHandle();
     TestOpenPanelParameters();
     TestCertificateInfo();
-TestEmptyFrameLoaderClient();
-
-TestInspector();
+    TestEmptyFrameLoaderClient();
+    TestInspector();
+    TestContext();
+    TestRunLoop();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }
