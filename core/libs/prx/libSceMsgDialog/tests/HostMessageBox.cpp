@@ -27,5 +27,6 @@ int main() {
 
     Check(MsgDialog::IndexOfHostButton(0, 2, 1) == 0u, "the first button is not index 0");
     Check(MsgDialog::IndexOfHostButton(1, 2, 1) == 1u, "the second button is not index 1");
+    Check(!MsgDialog::IndexOfHostButton(2, 2, 1).has_value(), "an out-of-range button is accepted");
     return correct ? 0 : 1;
 }
