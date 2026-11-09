@@ -386,15 +386,29 @@ void PadInput::applyMappingSnapshot() {
 }
 
 void PadInput::reloadInputMapping() {
-    Pad::InputConfiguration configuration;
-    std::string error;
-    if (!Pad::TryLoadInputMapping(appTitleId(), configuration, error)) {
-        APS5_LOG_ERR("Pad: input mapping reload rejected, the previous mapping stays active: %s", error.c_str());
-        return;
-    }
-    mappings.Publish(std::move(configuration));
+    if (!publishInputMapping(mappings, appTitleId())) return;
     applyMappingSnapshot();
     APS5_LOG_CHARS_OUT("Pad: input mapping reloaded");
+}
+
+void PadInput::startInputMappingWatch() {
+    const char* enabled = std::getenv("ANYPS5_INPUT_WATCH");
+    if (enabled == nullptr || std::string_view(enabled) != "1") return;
+    auto titleId = appTitleId();
+    auto watch = Pad::InputMappingWatch(Pad::InputMappingFileStamp(titleId));
+    mappingWatchThread = std::thread([this, titleId = std::move(titleId), watch = std::move(watch)]() mutable {
+        watchInputMapping(titleId, std::move(watch));
+    });
+    APS5_LOG_OUT("Pad: watching the input mapping for changes (ANYPS5_INPUT_WATCH=1)");
+}
+
+void PadInput::watchInputMapping(std::string titleId, Pad::InputMappingWatch watch) {
+    while (!mappingWatchStop) {
+        for (int slice = 0; slice < 10 && !mappingWatchStop; ++slice) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (mappingWatchStop) return;
+        if (!watch.Poll(Pad::InputMappingFileStamp(titleId))) continue;
+        if (publishInputMapping(mappings, titleId)) APS5_LOG_OUT("Pad: input mapping reloaded from a file change");
+    }
 }
 
 void PadInput::setMouseMode(bool enabled) {
