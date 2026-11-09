@@ -320,6 +320,14 @@ std::vector<Leaf> relocatedLeaves() {
             0x48, 0x89, 0xf8, 0x50, 0x48, 0x89, 0x34, 0x24, 0x48, 0x89, 0x7c, 0x24, 0xc0, 0x48, 0x03, 0x04,
             0x24, 0x48, 0x03, 0x44, 0x24, 0xc0, 0x48, 0x83, 0xc4, 0x08, 0xc3,
         }, 2 * kA + kB},
+        {"leaf reading a pushed register at rsp and freeing its slot with add instead of a pop", {
+            0x48, 0x89, 0x7c, 0x24, 0xf0, 0x56, 0x48, 0x8b, 0x04, 0x24, 0x48, 0x83, 0xc4, 0x08, 0x48, 0x03,
+            0x44, 0x24, 0xf0, 0xc3,
+        }, kA + kB},
+        {"frame-pointer leaf reading a register pushed after its frame through rbp and freeing it with leave", {
+            0x55, 0x48, 0x89, 0xe5, 0x56, 0x48, 0x89, 0x7d, 0x80, 0x48, 0x8b, 0x45, 0xf8, 0x48, 0x03, 0x45,
+            0x80, 0xc9, 0xc3,
+        }, kA + kB},
     };
 }
 
@@ -481,7 +489,7 @@ int main() {
         const auto backward = runLeaves(backwardStubbedLeaves());
         require(backward.OperandStubs == 2 && backward.StubbedOperands == 3 && backward.MovedOperands == 5, "the leaves comparing at rsp before a branch were framed with " + std::to_string(backward.OperandStubs) + " operand stubs carrying " + std::to_string(backward.StubbedOperands) + " rsp operands and " + std::to_string(backward.MovedOperands) + " moved in place, not 2 carrying 3 and 5");
         const auto relocated = runLeaves(relocatedLeaves(), true);
-        require(relocated.RelocatedOperands == 13, "the relocated leaves moved " + std::to_string(relocated.RelocatedOperands) + " rsp operands, not 13");
+        require(relocated.RelocatedOperands == 16, "the relocated leaves moved " + std::to_string(relocated.RelocatedOperands) + " rsp operands, not 16");
         const auto widened = runLeaves(widenedLeaves());
         require(widened.WidenedPrologues == 8 && widened.WidenedExits == 9 && widened.WidenedOperands == 12, "the leaves with short prologues and exits were framed with " + std::to_string(widened.WidenedPrologues) + " widened prologues, " + std::to_string(widened.WidenedExits) + " widened exits and " + std::to_string(widened.WidenedOperands) + " rsp operands in them, not 8, 9 and 12");
         std::cout << "red-zone framer execution tests passed\n";

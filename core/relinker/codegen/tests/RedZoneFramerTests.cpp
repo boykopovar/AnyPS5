@@ -412,8 +412,24 @@ void relocatesIndirectJumpsWithPushedRegisters() {
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
     require(sites.size() == 1 && report.Relocated == 1, "a leaf jumping through rdi with rbx pushed was not relocated");
     const auto& stub = sites[0].Body;
-    const std::vector<std::uint8_t> moveRaiseJump{0xff, 0xb4, 0x24, 0x00, 0x00, 0x00, 0x00, 0x8f, 0x84, 0x24, 0x90, 0x00, 0x00, 0x00, 0x48, 0x8d, 0xa4, 0x24, 0x90, 0x00, 0x00, 0x00, 0xff, 0xe7};
-    require(std::search(stub.begin(), stub.end(), moveRaiseJump.begin(), moveRaiseJump.end()) != stub.end(), "the relocated leaf does not move its pushed rbx to the slot the original code expects before raising rsp and jumping");
+    const std::vector<std::uint8_t> pushThenStore{0x53, 0xff, 0x34, 0x24, 0x8f, 0x84, 0x24, 0x90, 0x00, 0x00, 0x00};
+    require(std::search(stub.begin(), stub.end(), pushThenStore.begin(), pushThenStore.end()) != stub.end(), "the relocated leaf does not store its pushed rbx at the slot the original code expects");
+    const std::vector<std::uint8_t> loadThenRaiseJump{0x48, 0x8b, 0x84, 0x24, 0x80, 0x00, 0x00, 0x00, 0x48, 0x8d, 0xa4, 0x24, 0x90, 0x00, 0x00, 0x00, 0xff, 0xe7};
+    require(std::search(stub.begin(), stub.end(), loadThenRaiseJump.begin(), loadThenRaiseJump.end()) != stub.end(), "the relocated leaf does not raise rsp right before its indirect jump");
+}
+
+void storesPushedRegistersWhereExplicitOperandsReadThem() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, {0x53, 0x48, 0x8b, 0x04, 0x24, 0x48, 0x83, 0xc4, 0x08});
+    append(body, LoadBelowRsp);
+    const auto input = image({framelessLeaf({}, body, {0xc3})});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(sites.size() == 1 && report.Relocated == 1, "a leaf reading its pushed rbx through [rsp] and freeing it with add was not relocated");
+    const auto& stub = sites[0].Body;
+    const std::vector<std::uint8_t> pushThenStore{0x53, 0xff, 0x34, 0x24, 0x8f, 0x84, 0x24, 0x90, 0x00, 0x00, 0x00, 0x48, 0x8b, 0x84, 0x24, 0x90, 0x00, 0x00, 0x00};
+    require(std::search(stub.begin(), stub.end(), pushThenStore.begin(), pushThenStore.end()) != stub.end(), "the relocated leaf reads [rsp] one shift above its push without storing the pushed rbx there");
 }
 
 void refusesRelocatingIndirectJumpsAfterPushesAndAllocations() {
@@ -1014,6 +1030,7 @@ int main() {
         relocatesLeavesEndingInTheSdkAssertTrap();
         relocatesLeavesTailJumpingThroughARegister();
         relocatesIndirectJumpsWithPushedRegisters();
+        storesPushedRegistersWhereExplicitOperandsReadThem();
         readsAhAsAByteRegisterNotRsp();
         refusesRelocatingIndirectJumpsAfterPushesAndAllocations();
         relocatesFrameLocalsBelowTheSavedRegisterWithADeeperShift();
