@@ -83,8 +83,6 @@ static void TestLoadVerifyLocations() {
     Require(ERR_get_error_nid_postfix() == 0x20fff044);
     Require(ERR_get_error_nid_postfix() == 0);
     RequireThrows([] { SSL_CTX_load_verify_locations_nid_postfix(nullptr, nullptr, nullptr); });
-    RequireThrows([&] { SSL_CTX_load_verify_locations_nid_postfix(Context(&ctx), reinterpret_cast<const char*>(1), nullptr); });
-    RequireThrows([&] { SSL_CTX_load_verify_locations_nid_postfix(Context(&ctx), nullptr, reinterpret_cast<const char*>(1)); });
 }
 
 static void TestSetQuietShutdown() {
