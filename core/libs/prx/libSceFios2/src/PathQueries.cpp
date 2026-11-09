@@ -10,9 +10,9 @@ namespace {
 
 enum class Kind { Any, File, Directory };
 
-SceFiosOp QueryExists(const SceFiosOpAttr* attr, const char* path, bool* outExists, Kind kind) {
+SceFiosOp QueryExists(const SceFiosOpAttr* attr, const char* path, bool* outExists, Kind kind, Fios::ExecutionPolicy policy = Fios::Async) {
     Fios::OpInfo info;
-    if (const std::int32_t error = Fios::CopyPath(path, info.path)) return Fios::SubmitFailed(attr, std::move(info), error);
+    if (const std::int32_t error = Fios::CopyPath(path, info.path)) return Fios::SubmitFailed(attr, std::move(info), error, policy);
     const std::string target = info.path;
     return Fios::Submit(attr, std::move(info), [target, outExists, kind](Fios::Completion& completion) {
         SceFiosStat stat{};
@@ -27,7 +27,7 @@ SceFiosOp QueryExists(const SceFiosOpAttr* attr, const char* path, bool* outExis
         }
         completion.result = exists ? 1 : 0;
         if (outExists != nullptr && !Fios::CopyOut(outExists, &exists, sizeof(exists))) completion.error = SCE_FIOS_ERROR_BAD_PTR;
-    });
+    }, policy);
 }
 
 bool ExistsSync(SceFiosOp op) {
@@ -84,32 +84,32 @@ int APS5_VABI sceFiosPathncmp(const char* left, const char* right, std::size_t c
 }
 
 SceFiosOp APS5_VABI sceFiosExists(const SceFiosOpAttr* attr, const char* path, bool* outExists) {
-    return QueryExists(attr, path, outExists, Kind::Any);
+    return QueryExists(attr, path, outExists, Kind::Any, Fios::Async);
 }
 
 bool APS5_VABI sceFiosExistsSync(const SceFiosOpAttr* attr, const char* path) {
-    return ExistsSync(QueryExists(attr, path, nullptr, Kind::Any));
+    return ExistsSync(QueryExists(attr, path, nullptr, Kind::Any, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosFileExists(const SceFiosOpAttr* attr, const char* path, bool* outExists) {
-    return QueryExists(attr, path, outExists, Kind::File);
+    return QueryExists(attr, path, outExists, Kind::File, Fios::Async);
 }
 
 bool APS5_VABI sceFiosFileExistsSync(const SceFiosOpAttr* attr, const char* path) {
-    return ExistsSync(QueryExists(attr, path, nullptr, Kind::File));
+    return ExistsSync(QueryExists(attr, path, nullptr, Kind::File, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosDirectoryExists(const SceFiosOpAttr* attr, const char* path, bool* outExists) {
-    return QueryExists(attr, path, outExists, Kind::Directory);
+    return QueryExists(attr, path, outExists, Kind::Directory, Fios::Async);
 }
 
 bool APS5_VABI sceFiosDirectoryExistsSync(const SceFiosOpAttr* attr, const char* path) {
-    return ExistsSync(QueryExists(attr, path, nullptr, Kind::Directory));
+    return ExistsSync(QueryExists(attr, path, nullptr, Kind::Directory, Fios::Inline));
 }
 
-static SceFiosOp QuerySize(const SceFiosOpAttr* attr, const char* path) {
+static SceFiosOp QuerySize(const SceFiosOpAttr* attr, const char* path, Fios::ExecutionPolicy policy = Fios::Async) {
     Fios::OpInfo info;
-    if (const std::int32_t error = Fios::CopyPath(path, info.path)) return Fios::SubmitFailed(attr, std::move(info), error);
+    if (const std::int32_t error = Fios::CopyPath(path, info.path)) return Fios::SubmitFailed(attr, std::move(info), error, policy);
     const std::string target = info.path;
     return Fios::Submit(attr, std::move(info), [target](Fios::Completion& completion) {
         SceFiosStat stat{};
@@ -120,20 +120,20 @@ static SceFiosOp QuerySize(const SceFiosOpAttr* attr, const char* path) {
         } else {
             completion.result = stat.fileSize;
         }
-    });
+    }, policy);
 }
 
 SceFiosOp APS5_VABI sceFiosFileGetSize(const SceFiosOpAttr* attr, const char* path) {
-    return QuerySize(attr, path);
+    return QuerySize(attr, path, Fios::Async);
 }
 
 SceFiosSize APS5_VABI sceFiosFileGetSizeSync(const SceFiosOpAttr* attr, const char* path) {
-    return Fios::SyncCount(QuerySize(attr, path));
+    return Fios::SyncCount(QuerySize(attr, path, Fios::Inline));
 }
 
-static SceFiosOp QueryStat(const SceFiosOpAttr* attr, const char* path, SceFiosStat* outStatus) {
+static SceFiosOp QueryStat(const SceFiosOpAttr* attr, const char* path, SceFiosStat* outStatus, Fios::ExecutionPolicy policy = Fios::Async) {
     Fios::OpInfo info;
-    if (const std::int32_t error = Fios::CopyPath(path, info.path)) return Fios::SubmitFailed(attr, std::move(info), error);
+    if (const std::int32_t error = Fios::CopyPath(path, info.path)) return Fios::SubmitFailed(attr, std::move(info), error, policy);
     const std::string target = info.path;
     return Fios::Submit(attr, std::move(info), [target, outStatus](Fios::Completion& completion) {
         SceFiosStat stat{};
@@ -142,15 +142,15 @@ static SceFiosOp QueryStat(const SceFiosOpAttr* attr, const char* path, SceFiosS
         } else if (outStatus == nullptr || !Fios::CopyOut(outStatus, &stat, sizeof(stat))) {
             completion.error = SCE_FIOS_ERROR_BAD_PTR;
         }
-    });
+    }, policy);
 }
 
 SceFiosOp APS5_VABI sceFiosStat(const SceFiosOpAttr* attr, const char* path, SceFiosStat* outStatus) {
-    return QueryStat(attr, path, outStatus);
+    return QueryStat(attr, path, outStatus, Fios::Async);
 }
 
 int APS5_VABI sceFiosStatSync(const SceFiosOpAttr* attr, const char* path, SceFiosStat* outStatus) {
-    return Fios::SyncStatus(QueryStat(attr, path, outStatus));
+    return Fios::SyncStatus(QueryStat(attr, path, outStatus, Fios::Inline));
 }
 
 }
