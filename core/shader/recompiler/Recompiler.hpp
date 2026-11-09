@@ -532,6 +532,7 @@ struct HeapStageWords {
     std::vector<VertexAttribute> vertexAttributes;
     std::vector<std::vector<std::uint32_t>> bindings;
     std::shared_ptr<const HeapStageWords> base;
+    std::uint64_t dataOrigin = 0;
     ResultKeyMemo drawKeyMemo;
     bool memoizeKey = true;
 };

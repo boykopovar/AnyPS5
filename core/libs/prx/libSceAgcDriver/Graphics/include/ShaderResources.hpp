@@ -762,6 +762,8 @@ private:
         };
         KeptSpan data, flat, map;
         std::vector<std::uint32_t> dataInput;
+        std::uint64_t dataOrigin = 0;
+        const void* dataProgram = nullptr;
         std::uint64_t inertProgram = 0;
         std::vector<std::uint32_t> owned;
         VkShaderStageFlags laidOutFor = 0;

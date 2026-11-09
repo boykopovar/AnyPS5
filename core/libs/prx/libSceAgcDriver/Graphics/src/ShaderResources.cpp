@@ -5660,6 +5660,7 @@ void ShaderResources::forgetShaderDataWords(const CompiledShader& shader) {
         auto& stageState = heapStages[HeapStageIndex(shader.stage)];
         stageState.data.mark.entry = 0;
         stageState.dataInput.clear();
+        stageState.dataOrigin = 0;
     }
     if (const auto allocation = shaderDataAllocation(shader)) {
         allocations[*allocation].dataWords.clear();
@@ -7964,10 +7965,12 @@ void ShaderResources::writeHeapStage(const BindlessHeap::SpanScope& spans, Bindl
         const auto userData =
             shader.heap != nullptr ? std::span<const std::uint32_t>(shader.heap->userData) : std::span<const std::uint32_t>{};
         const auto userFront = static_cast<std::ptrdiff_t>(std::min(userData.size(), words.size()));
-        const bool sameWords =
-            binding.role == ShaderRecompiler::DescriptorRole::ShaderData && current &&
-            stageState.dataInput.size() == words.size() + userData.size() &&
-            std::equal(words.begin() + userFront, words.end(), stageState.dataInput.begin() + userFront);
+        const auto origin = shaderData && shader.heap != nullptr ? shader.heap->dataOrigin : 0u;
+        const bool sameShape = shaderData && current && stageState.dataInput.size() == words.size() + userData.size();
+        const bool sameOrigin = sameShape && origin != 0u && origin == stageState.dataOrigin && stageState.dataProgram == shader.program;
+        const bool sameWords = sameShape && (sameOrigin || std::equal(words.begin() + userFront, words.end(), stageState.dataInput.begin() + userFront));
+        if (verifySlots && sameOrigin && !std::equal(words.begin() + userFront, words.end(), stageState.dataInput.begin() + userFront))
+            throw std::runtime_error("AGC graphics: a GPU-mode stage's shader data differs from the data of the same origin");
         const auto userInput = stageState.dataInput.begin() + static_cast<std::ptrdiff_t>(words.size());
         const bool sameInput = sameWords && std::equal(userData.begin(), userData.end(), userInput);
         if (sameInput && !verifySlots) {
@@ -8011,6 +8014,8 @@ void ShaderResources::writeHeapStage(const BindlessHeap::SpanScope& spans, Bindl
         heapOffsets[dataIndex] = heapSpan(spans, heap, stageState.data, patched, pushedUser);
         stageState.dataInput.assign(words.begin(), words.end());
         stageState.dataInput.insert(stageState.dataInput.end(), userData.begin(), userData.end());
+        stageState.dataOrigin = origin;
+        stageState.dataProgram = shader.program;
     }
     const bool unbound = stageState.key.empty() && !dataBindings && !heapTableMapSet[stageIndex] && stageState.imageSlots.empty() && stageState.samplerSlots.empty();
     if (unbound && !addressedBuffers) stageState.inertProgram = programIdentity;

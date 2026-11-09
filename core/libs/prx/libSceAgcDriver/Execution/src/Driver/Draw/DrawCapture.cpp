@@ -272,6 +272,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     if (request.target.gpuResolvedImages) {
         auto words = std::make_shared<ShaderRecompiler::HeapStageWords>();
         if (auto shared = invocation.MaterializeHeap(*capture, *words)) {
+            words->dataOrigin = NextHeapDataOrigin();
             stageCapture.compiled = std::move(shared);
             stageCapture.heapWords = std::move(words);
             stageCapture.direct = true;
@@ -369,6 +370,7 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
                         if (ringTemplate->bindings[index] == program[index].guestDescriptor) ringTemplate->bindings[index].clear();
                     }
                 }
+                ringTemplate->dataOrigin = NextHeapDataOrigin();
                 variant->ringTemplate = std::move(ringTemplate);
             }
             if (vertexInfos[i]) variant->vertexInfo = std::make_shared<const ShaderRecompiler::ShaderVertexStageInfo>(*vertexInfos[i]);

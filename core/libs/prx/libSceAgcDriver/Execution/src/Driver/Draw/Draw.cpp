@@ -62,6 +62,7 @@ std::shared_ptr<ShaderRecompiler::HeapStageWords> RecycledRingWords() {
         candidate->userData.clear();
         candidate->drawKeyMemo.words.store(nullptr, std::memory_order_relaxed);
         candidate->memoizeKey = false;
+        candidate->dataOrigin = 0;
         return candidate;
     }
     auto words = std::make_shared<ShaderRecompiler::HeapStageWords>();
@@ -947,6 +948,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         words->flattenedSrt.clear();
         for (auto& descriptor : words->bindings) descriptor.clear();
         words->base = nullptr;
+        words->dataOrigin = ringTemplate.dataOrigin;
         if (!ringTemplate.flattenedSrt.empty()) {
             words->flattenedSrt = ringTemplate.flattenedSrt;
             if (&variant == matched[i].get() && stageData[i].compiled != nullptr) {
@@ -985,10 +987,12 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             };
             for (const auto& [binding, word, value] : variant.ringDescriptorPatches) {
                 if (binding >= program.size() || word >= program[binding].guestDescriptor.size()) continue;
+                if (program[binding].role == ShaderRecompiler::DescriptorRole::ShaderData && word >= words->userData.size()) words->dataOrigin = 0;
                 auto& descriptor = own(binding);
                 if (word < descriptor.size()) descriptor[word] = value;
             }
             for (const auto& [slot, value] : variant.ringDataPatches) {
+                if (slot >= words->userData.size()) words->dataOrigin = 0;
                 for (std::size_t index = 0; index < program.size(); ++index) {
                     if (program[index].role != ShaderRecompiler::DescriptorRole::ShaderData || slot >= program[index].guestDescriptor.size()) continue;
                     auto& descriptor = own(index);

@@ -620,6 +620,7 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     auto words = std::make_shared<ShaderRecompiler::HeapStageWords>();
     auto result = invocation.MaterializeHeap(*capture, *words);
     if (result == nullptr) result = invocation.Materialize(*capture);
+    words->dataOrigin = NextHeapDataOrigin();
     materializeCost.Stop();
     const bool complete = !reads.failed && result != nullptr;
     HeapStageMaterialized materialized;
@@ -634,6 +635,11 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     return materialized;
 }
 
+
+std::uint64_t NextHeapDataOrigin() {
+    static std::atomic<std::uint64_t> next{0};
+    return next.fetch_add(1, std::memory_order_relaxed) + 1u;
+}
 
 std::uint64_t HeapStagesTaken() {
     return heapStages().load();
