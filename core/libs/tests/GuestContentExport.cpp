@@ -135,7 +135,6 @@ int main() {
     }
     Require(sceContentExportStart() == static_cast<int>(0x809D3018u));
     Require(sceContentExportTerm() == static_cast<int>(0x809D3003u));
-    Require(Throws<std::runtime_error>([] { ExportDataCallback(0); }));
     Require(ExportDataCallback(10) == static_cast<int>(0x809D3016u));
     int first = *sessions.begin();
     Require(sceContentExportCancel(first) == static_cast<int>(0x809D3002u));

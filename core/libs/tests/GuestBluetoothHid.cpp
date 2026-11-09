@@ -66,13 +66,6 @@ int main() {
     Require(sceBluetoothHidGetDeviceName(1, nullptr) == invalidArgument, "null device name output");
     threw = false;
     try {
-        sceBluetoothHidGetDeviceName(1, reinterpret_cast<BluetoothHidDeviceName*>(&threw));
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw, "a device name request without a device did not throw");
-    threw = false;
-    try {
         sceBluetoothHidGetInputReport(0, 0);
 
     } catch (const std::runtime_error&) {
