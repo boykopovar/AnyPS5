@@ -13,6 +13,8 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "prx/libc/include/HostErrno.hpp"
+#include "prx/libkernel/Socket/include/SocketError.hpp"
 #include <cstdint>
 #include <algorithm>
 #include <array>
@@ -146,6 +148,13 @@ bool Ready() {
     return true;
 #endif
 }
+#ifndef _WIN32
+void SetGuestSystemError(int hostError) {
+    const int guestError = GuestErrnoFromHost_nid_no_patch(hostError);
+    errno = guestError == GuestSockets::GuestErrorIo ? GuestSockets::GuestErrorFromHost(hostError) : guestError;
+}
+#endif
+
 int GuestError(int error) {
     if (error == 0) return 0;
     if (error == EAI_AGAIN) return 2;
@@ -158,6 +167,10 @@ int GuestError(int error) {
 #ifdef _WIN32
     if (error == WSAEFAULT) return 14;
 #else
+    if (error == EAI_SYSTEM) {
+        SetGuestSystemError(errno);
+        return 11;
+    }
     if (error == EAI_OVERFLOW) return 14;
 #endif
     return 4;
@@ -199,7 +212,7 @@ GuestResolver::HostEntry* ResolveHost(const char* name) {
         }
         if (error != 0 || !native) {
             *sceNetErrnoLoc() = hostError != 0 ? hostError : 3;
-            if (hostError == -1) errno = error == EAGAIN ? 35 : error;
+            if (hostError == -1) SetGuestSystemError(error ? error : errno);
             return nullptr;
         }
 #endif
@@ -287,6 +300,7 @@ int APS5_VABI scePosixForWebKit_gethostbyname_r(const char* name, GuestResolver:
 }
 
 GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* name, const char* protocol) {
+    if (!name) return nullptr;
     for (const auto& service : Services) {
         bool named = std::strcmp(name, service.name) == 0;
         for (const char* alias : service.aliases)
