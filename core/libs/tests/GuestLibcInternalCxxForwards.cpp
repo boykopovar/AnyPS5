@@ -72,6 +72,7 @@ int main() {
     const std::error_category* const category = sceLibcInternalIostreamCategory_nid_no_patch();
     Require(category != nullptr, "the iostream category exists");
     Require(category == _ZSt17iostream_categoryv_nid_postfix(), "the iostream category is the libc object");
+    Require(category == IostreamCategory_nid_no_patch(), "the forward and the libc export share one body");
     Require(category == sceLibcInternalIostreamCategory_nid_no_patch(), "the iostream category is a singleton");
     Require(std::strcmp(category->name(), "iostream") == 0, "the category is named iostream");
 

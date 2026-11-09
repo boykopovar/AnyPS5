@@ -18,7 +18,7 @@ void APS5_VABI sceLibcInternalSizedNothrowArrayDelete_nid_no_patch(void* pointer
 APS5_EXPORT("7lCihI18N9I", sceLibcInternalSizedNothrowArrayDelete_nid_no_patch);
 
 const std::error_category* APS5_VABI sceLibcInternalIostreamCategory_nid_no_patch() {
-    return _ZSt17iostream_categoryv_nid_postfix();
+    return IostreamCategory_nid_no_patch();
 }
 APS5_EXPORT("V23qt24VPVs", sceLibcInternalIostreamCategory_nid_no_patch);
 
