@@ -59,6 +59,10 @@ namespace AgcDriver::Graphics {
         void DispatchMultisampleImage(VkCommandBuffer commands, std::uint32_t elementBytes, VkBuffer source, std::uint64_t offset, std::uint64_t bytes, VkImageView arrayView, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t firstElement, std::uint32_t elements);
 
     private:
+        struct Retired {};
+        TextureDetiler(const Context& context, Retired);
+        void adopt(TextureDetiler& other) noexcept;
+        bool retireToRecorder();
         VkPipeline multisampleReadbackPipeline(std::uint32_t elementBytes, bool depth);
         VkPipeline multisampleUploadPipeline(std::uint32_t elementBytes);
         VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false);
@@ -101,6 +105,7 @@ namespace AgcDriver::Graphics {
         std::vector<std::pair<std::uint32_t, VkPipeline>> readbackPipelines;
         DescriptorRing readbackDescriptorSets;
         VkShaderModule multisampleUploadModule = VK_NULL_HANDLE;
+        bool recorded = false;
     };
 
 }
