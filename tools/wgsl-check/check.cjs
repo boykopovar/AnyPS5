@@ -19,7 +19,7 @@ async function endpoint(directory, browser) {
   throw new Error('Chromium debug endpoint did not start');
 }
 
-async function evaluate(url, expression) {
+async function evaluate(url, pageUrl, expression) {
   const socket = new WebSocket(url);
   try {
     await new Promise((resolve, reject) => {
@@ -30,15 +30,29 @@ async function evaluate(url, expression) {
     return await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('WebGPU check timed out')), 30000);
       timeout.unref();
-      socket.onerror = reject;
+      const fail = (error) => { clearTimeout(timeout); reject(error); };
+      let committed = false;
+      let evaluated = false;
+      socket.onerror = fail;
       socket.onmessage = (event) => {
         const response = JSON.parse(event.data);
-        if (response.id !== 1) return;
-        clearTimeout(timeout);
-        if (response.error || response.result.exceptionDetails) reject(new Error(JSON.stringify(response.error || response.result.exceptionDetails)));
-        else resolve(response.result.result.value);
+        if (response.error) { fail(new Error(JSON.stringify(response.error))); return; }
+        if (response.id === 1) {
+          socket.send(JSON.stringify({ id: 2, method: 'Page.navigate', params: { url: pageUrl } }));
+        } else if (response.id === 2 && response.result.errorText) {
+          fail(new Error(response.result.errorText));
+        } else if (response.method === 'Page.frameNavigated' && response.params.frame.url === pageUrl) {
+          committed = true;
+        } else if (response.method === 'Page.loadEventFired' && committed && !evaluated) {
+          evaluated = true;
+          socket.send(JSON.stringify({ id: 3, method: 'Runtime.evaluate', params: { expression, awaitPromise: true, returnByValue: true } }));
+        } else if (response.id === 3) {
+          clearTimeout(timeout);
+          if (response.result.exceptionDetails) fail(new Error(JSON.stringify(response.result.exceptionDetails)));
+          else resolve(response.result.result.value);
+        }
       };
-      socket.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, awaitPromise: true, returnByValue: true } }));
+      socket.send(JSON.stringify({ id: 1, method: 'Page.enable' }));
     });
   } finally {
     socket.close();
@@ -60,11 +74,12 @@ async function main(prefixes) {
   browser.stderr.pipe(process.stderr);
   try {
     const port = await endpoint(directory, browser);
-    const target = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(`file://${join(directory, 'blank.html')}`)}`, { method: 'PUT' });
+    const target = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' });
     if (!target.ok) throw new Error(`Chromium target: HTTP ${target.status}`);
     const { webSocketDebuggerUrl } = await target.json();
     if (!webSocketDebuggerUrl) throw new Error('Chromium did not provide a page endpoint');
     const expression = `(async () => {
+      if (!isSecureContext || !navigator.gpu) throw new Error('WebGPU unavailable after loading ' + location.href);
       const adapter = await navigator.gpu.requestAdapter();
       if (!adapter) throw new Error('WebGPU adapter unavailable');
       const device = await adapter.requestDevice();
@@ -79,7 +94,7 @@ async function main(prefixes) {
       }
       return sources.length;
     })()`;
-    const count = await evaluate(webSocketDebuggerUrl, expression);
+    const count = await evaluate(webSocketDebuggerUrl, `file://${join(directory, 'blank.html')}`, expression);
     if (count !== sources.length) throw new Error('not all WGSL pipelines were checked');
     console.log(`WebGPU: ${count}/${sources.length} compute pipelines created`);
   } finally {
