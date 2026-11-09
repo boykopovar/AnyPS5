@@ -466,6 +466,16 @@ PadInputState PadInput::sampleController(int slot) const {
 
 namespace {
 
+int hostMenuKeySlot(SDL_Scancode scancode) {
+    switch (scancode) {
+        case SDL_SCANCODE_UP: return 0;
+        case SDL_SCANCODE_DOWN: return 1;
+        case SDL_SCANCODE_RETURN: return 2;
+        case SDL_SCANCODE_ESCAPE: return 3;
+        default: return -1;
+    }
+}
+
 void printHostMenu(const HostMenu::Menu& menu) {
     if (!menu.IsOpen()) {
         APS5_LOG_ERR("%s", "host menu closed");
@@ -541,6 +551,7 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     if (event.type == SDL_KEYDOWN && ImeCapturesKeyboard_nid_postfix()) return;
     if (event.type != SDL_KEYUP && event.type != SDL_MOUSEBUTTONUP && ModalDialogCapturesInput_nid_postfix()) return;
     if (hostMenu.IsOpen() && event.type == SDL_KEYDOWN && event.key.repeat == 0) {
+        if (const int slot = hostMenuKeySlot(event.key.keysym.scancode); slot >= 0) hostMenuKeysDown[static_cast<std::size_t>(slot)] = true;
         if (event.key.keysym.scancode == SDL_SCANCODE_UP) {
             hostMenu.Up();
             printHostMenu(hostMenu);
