@@ -423,6 +423,13 @@
 
 - [DB_RENDER_CONTROL without a depth plane](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - a depth copy, resummarize or decompress draw with no depth or stencil plane bound changes no modeled state on the hardware and draws nothing; here it is still rejected unless the pass-through resummarize check already skips it. Reserved DB_RENDER_CONTROL bits 14 to 31 are ignored as the hardware does.
 
+- [Owned draw input copies](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp) (libSceAgcDriver) - exact vertex/index copy fallbacks on untracked Windows arena memory can reuse libc write-watch tokens,
+  with driver write stamps and pending-write, registry and mapping checks. In-place inputs and zero-padded reads do not use this path; Linux and refused libc ranges copy normally. Tokens cover whole 64 KiB blocks and
+  every overlapping clearing collect or rearm can discard otherwise unchanged copies. Proofs are captured before reading and checked again when kept, but concurrent guest CPU stores still require the submission
+  synchronization expected by the ordinary copy path; this is not an atomic snapshot. The existing 1 GiB/16,384-entry input cache bounds buffers and token vectors together: a vector has one 8-byte word per covered block,
+  at most two boundary words per entry beyond the buffer-size bound. `APS5_NO_OWNED_DRAW_INPUTS` disables this reuse and `APS5_VERIFY_OWNED_DRAW_INPUTS` compares reused bytes. No title or performance result has been
+  measured.
+
 ### Opt-in draw paths
 
 - [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The Linux main-image page table it adds matches what Windows already does by default.
