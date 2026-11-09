@@ -464,6 +464,23 @@ PadInputState PadInput::sampleController(int slot) const {
     return result;
 }
 
+namespace {
+
+Pad::InputRequests requestsFor(HostMenu::Action action) {
+    Pad::InputRequests requests;
+    switch (action) {
+        case HostMenu::Action::VolumeUp: requests.volumeUp = true; break;
+        case HostMenu::Action::VolumeDown: requests.volumeDown = true; break;
+        case HostMenu::Action::ToggleMute: requests.toggleMute = true; break;
+        case HostMenu::Action::Screenshot: requests.screenshot = true; break;
+        case HostMenu::Action::TogglePerformanceOverlay: requests.togglePerformanceOverlay = true; break;
+        case HostMenu::Action::ShowPadStatus: requests.showPadStatus = true; break;
+    }
+    return requests;
+}
+
+}
+
 void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     applyMappingSnapshot();
     if (event.type == SDL_CONTROLLERDEVICEADDED) {
@@ -518,6 +535,10 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         }
         if (event.key.keysym.scancode == SDL_SCANCODE_DOWN) {
             hostMenu.Down();
+            return;
+        }
+        if (event.key.keysym.scancode == SDL_SCANCODE_RETURN) {
+            if (const auto action = hostMenu.Activate()) applyHostRequests(window, event.key.windowID, requestsFor(*action));
             return;
         }
     }
