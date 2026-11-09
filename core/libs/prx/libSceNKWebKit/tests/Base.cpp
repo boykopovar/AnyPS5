@@ -60,6 +60,7 @@ static void TestTypeIDs() {
     Require(WKAXObjectGetTypeID() == 132);
     WKRenderLayerGetTypeID();
     WKRenderObjectGetTypeID();
+    Require(WKSessionStateGetTypeID() == 19);
     Require(WKContextGetTypeID() == 85);
 }
 
@@ -1659,16 +1660,40 @@ static void TestCertificateInfo() {
     Require(WKCertificateInfoCopyCertificateAtIndex(nullptr, 0) == nullptr);
 }
 
-static void TestEmptyFrameLoaderClient() {
-    _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
-}
-
 static void TestEmptyFrameLoaderResourceCallbacks() {
     _ZN7WebCore22EmptyFrameLoaderClient11prefetchDNSERKN3WTF6StringE();
     _ZN7WebCore22EmptyFrameLoaderClient13startDownloadERKNS_15ResourceRequestERKN3WTF6StringE();
     _ZN7WebCore22EmptyFrameLoaderClient18makeRepresentationEPNS_14DocumentLoaderE();
     _ZN7WebCore22EmptyFrameLoaderClient19dispatchDidFailLoadERKNS_13ResourceErrorE();
     _ZN7WebCore22EmptyFrameLoaderClient33convertMainResourceLoadToDownloadEPNS_14DocumentLoaderERKNS_15ResourceRequestERKNS_16ResourceResponseE();
+}
+
+static void TestEmptyFrameLoaderClient() {
+    _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
+}
+
+static void TestSessionState() {
+    Require(WKSessionStateCreateFromData(nullptr) == nullptr);
+    Require(WKSessionStateCopyData(nullptr) == nullptr);
+
+    const unsigned char raw[] = { 0x12, 0x34, 0x56, 0x78 };
+    auto* d = WKDataCreate(raw, sizeof(raw));
+    auto* sessionState = WKSessionStateCreateFromData(d);
+    Require(sessionState != nullptr);
+    Require(WKGetTypeID(sessionState) == WKSessionStateGetTypeID());
+
+    auto* copiedData = WKSessionStateCopyData(sessionState);
+    Require(copiedData != nullptr);
+    Require(WKGetTypeID(copiedData) == WKDataGetTypeID());
+    Require(WKDataGetSize(copiedData) == sizeof(raw));
+    Require(std::memcmp(WKDataGetBytes(copiedData), raw, sizeof(raw)) == 0);
+
+    WKRetain(sessionState);
+    WKRelease(sessionState);
+
+    WKRelease(copiedData);
+    WKRelease(sessionState);
+    WKRelease(d);
 }
 
 static void TestInspector() {
@@ -1856,6 +1881,7 @@ int main() {
     }
     TestInspector();
     TestContext();
+    TestSessionState();
     TestRunLoop();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
