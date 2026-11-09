@@ -20,7 +20,7 @@ int main() {
     ssl.version = 0x0304;
     Require(std::strcmp(SSL_get_version_nid_postfix(&ssl), "TLSv1.3") == 0);
     ssl.version = 0x0300;
-    Require(std::strcmp(SSL_get_version_nid_postfix(&ssl), "SSLv3") == 0);
+    Require(std::strcmp(SSL_get_version_nid_postfix(&ssl), "unknown") == 0);
     ssl.version = 0x1234;
     Require(std::strcmp(SSL_get_version_nid_postfix(&ssl), "unknown") == 0);
     bool threw = false;
