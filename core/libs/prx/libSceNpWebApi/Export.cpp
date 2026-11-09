@@ -493,7 +493,12 @@ int APS5_VABI sceNpWebApiInitializeForPresence(int libHttpCtxId, std::size_t poo
     return sceNpWebApiInitialize(libHttpCtxId, poolSize);
 }
 
-int APS5_VABI sceNpWebApiIntCreateCtxIndExtdPushEventFilter() {
+int APS5_VABI sceNpWebApiIntCreateCtxIndExtdPushEventFilter(int libCtxId, int handleId, const void* filterParam, std::size_t filterParamNum) {
+    if (!filterParam || filterParamNum == 0) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto context = contexts.find(libCtxId);
+    if (context == contexts.end()) return SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND;
+    if (!context->second.handles.contains(handleId)) return SCE_NP_WEBAPI_ERROR_HANDLE_NOT_FOUND;
     NotImplemented_nid_no_patch(__func__);
 }
 
