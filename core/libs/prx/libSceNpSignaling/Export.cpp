@@ -1,5 +1,6 @@
 #include "prx/libSceNpSignaling/include/InventoryExports.hpp"
 #include "prx/libSceNpSignaling/include/Api.hpp"
+#include "prx/libSceNpSignaling/include/SignalingState.hpp"
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -75,6 +76,11 @@ Context* FindContext(int ctxId) {
 }
 }
 
+extern "C" bool NpSignalingIsInitialized_nid_no_patch() {
+    std::lock_guard lock(signalingMutex);
+    return initialized;
+}
+
 extern "C" {
 
 int APS5_VABI sceNpSignalingActivateConnection(int ctxId, const void* peerNpId, int* outConnId) {
@@ -119,6 +125,17 @@ int APS5_VABI sceNpSignalingGetConnectionInfo(int ctxId, int connId, int infoCod
     if (!outInfo) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     if (!FindContext(ctxId)) return SCE_NP_SIGNALING_ERROR_CTX_NOT_FOUND;
     return SCE_NP_SIGNALING_ERROR_CONN_NOT_FOUND;
+}
+
+int APS5_VABI sceNpSignalingGetPeerNetInfo(int ctxId, const void* peerNpId, std::uint32_t* outReqId) {
+    std::lock_guard lock(signalingMutex);
+    if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
+    if (!peerNpId || !outReqId) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
+    SignalingNpId peer{};
+    if (!ReadNpId(peerNpId, peer)) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
+    const Context* context = FindContext(ctxId);
+    if (!context) return SCE_NP_SIGNALING_ERROR_CTX_NOT_FOUND;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceNpSignalingInitialize(std::int64_t memorySize, int threadPriority, int cpuAffinityMask, std::int64_t threadStackSize) {
@@ -269,15 +286,10 @@ int APS5_VABI sceNpSignalingGetConnectionStatistics(NpSignalingConnectionStatist
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceNpSignalingGetLocalNetInfo() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceNpSignalingGetMemoryInfo() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceNpSignalingGetPeerNetInfo() {
+int APS5_VABI sceNpSignalingGetMemoryInfo(NpSignalingMemoryInfo* info) {
+    std::lock_guard lock(signalingMutex);
+    if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
+    if (!info) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     NotImplemented_nid_no_patch(__func__);
 }
 

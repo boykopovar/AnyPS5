@@ -1,4 +1,5 @@
 #include "prx/libSceNpEntitlementAccess/include/Api.hpp"
+#include "prx/libSceNpEntitlementAccess/EntitlementsIni.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -14,11 +15,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-#ifdef _WIN32
-#include <windows.h>
-#elif defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
 
 static constexpr int SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER = static_cast<int>(0x80558003);
 static constexpr int SCE_NP_ENTITLEMENT_ACCESS_ERROR_NOT_FOUND = static_cast<int>(0x80558007);
@@ -28,51 +24,12 @@ static constexpr std::int32_t USER_ID_INVALID = -1;
 
 namespace {
 
-#ifdef _WIN32
-const wchar_t* ConfiguredEntitlements() { return _wgetenv(L"ANYPS5_ENTITLEMENTS"); }
-#else
-const char* ConfiguredEntitlements() { return std::getenv("ANYPS5_ENTITLEMENTS"); }
-#endif
-
-std::filesystem::path EntitlementsPath() {
-    if (const auto* configured = ConfiguredEntitlements(); configured != nullptr && configured[0] != 0) return configured;
-#ifdef _WIN32
-    wchar_t module[MAX_PATH];
-    const auto length = GetModuleFileNameW(nullptr, module, MAX_PATH);
-    if (length == 0 || length == MAX_PATH) throw std::runtime_error("NpEntitlementAccess: cannot locate the executable");
-    return std::filesystem::path(module).parent_path() / "anyps5-entitlements.ini";
-#elif defined(__APPLE__)
-    std::uint32_t size = 0;
-    _NSGetExecutablePath(nullptr, &size);
-    std::vector<char> executable(size);
-    std::error_code error;
-    std::filesystem::path path;
-    if (_NSGetExecutablePath(executable.data(), &size) == 0) path = std::filesystem::canonical(executable.data(), error);
-    if (path.empty()) throw std::runtime_error("NpEntitlementAccess: cannot locate the executable");
-    return path.parent_path() / "anyps5-entitlements.ini";
-#else
-    return std::filesystem::read_symlink("/proc/self/exe").parent_path() / "anyps5-entitlements.ini";
-#endif
-}
-
 const std::vector<NpEntitlementAccessAddcontEntitlementInfo>& OwnedAddons() {
     static const auto owned = [] {
         std::vector<NpEntitlementAccessAddcontEntitlementInfo> addons;
-        const auto path = EntitlementsPath();
-        std::ifstream file(path);
-        if (!file) {
-            if (ConfiguredEntitlements() != nullptr || std::filesystem::exists(path)) throw std::runtime_error("NpEntitlementAccess: cannot read " + path.string());
-            return addons;
-        }
-        std::string line;
-        while (std::getline(file, line)) {
-            line.erase(std::min(line.find_first_of("#;"), line.size()));
-            const auto first = line.find_first_not_of(" \t\r");
-            if (first == std::string::npos) continue;
-            const auto label = line.substr(first, line.find_last_not_of(" \t\r") + 1 - first);
+        for (const auto& entry : AnyPS5::Entitlements::ParseEntries()) {
             NpEntitlementAccessAddcontEntitlementInfo info{};
-            if (label.size() >= sizeof(info.entitlement_label.data)) throw std::runtime_error("NpEntitlementAccess: entitlement label '" + label + "' in " + path.string() + " is longer than 16 characters");
-            std::memcpy(info.entitlement_label.data, label.data(), label.size());
+            std::memcpy(info.entitlement_label.data, entry.label.data(), entry.label.size());
             info.package_type = 3;
             info.download_status = 4;
             addons.push_back(info);
@@ -97,7 +54,7 @@ std::string PrintableLabel(const std::string& label) {
 }
 
 std::string EntitlementsName() {
-    if (const auto* configured = ConfiguredEntitlements(); configured != nullptr && configured[0] != 0) return EntitlementsPath().string();
+    if (const auto* configured = AnyPS5::Entitlements::ConfiguredEntitlements(); configured != nullptr && configured[0] != 0) return AnyPS5::Entitlements::EntitlementsPath().string();
     return "anyps5-entitlements.ini";
 }
 
@@ -160,8 +117,16 @@ int APS5_VABI sceNpEntitlementAccessGetEntitlementKey(
 }
 
 int APS5_VABI sceNpEntitlementAccessInitialize(const NpEntitlementAccessInitParam* init_param, NpEntitlementAccessBootParam* boot_param) {
-    (void)init_param;
-    (void)boot_param;
+    constexpr int errorParameter = static_cast<int>(0x817D0002);
+    constexpr int errorAlreadyInitialized = static_cast<int>(0x817D0003);
+    static std::mutex mutex;
+    static bool initialized = false;
+    std::lock_guard lock(mutex);
+    if (initialized) return errorAlreadyInitialized;
+    if (init_param == nullptr || boot_param == nullptr) return errorParameter;
+    if (!std::all_of(std::begin(init_param->reserved), std::end(init_param->reserved), [](char value) { return value == 0; })) return errorParameter;
+    if (!std::all_of(std::begin(boot_param->reserved), std::end(boot_param->reserved), [](char value) { return value == 0; })) return errorParameter;
+    initialized = true;
     return 0;
 }
 
