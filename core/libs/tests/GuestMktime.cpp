@@ -135,8 +135,19 @@ static void CheckFailure(Converter convert, int hint = -1) {
     input.tm_gmtoff = 123;
     input.tm_zone = "unchanged";
     const GuestTm original = input;
+    GuestTm expected = original;
+    GuestTm reference = original;
+    if (convert == timelocal_nid_postfix) {
+        expected.tm_isdst = -1;
+        reference.tm_isdst = -1;
+    }
+    errno = EDOM;
+    Require(libc_mktime_nid_postfix(&reference) == -1, "mktime reference accepted an unrepresentable calendar");
+    const int expectedError = errno;
+    errno = EDOM;
     Require(convert(&input) == -1, "mktime accepted an unrepresentable calendar");
-    Require(Equal(input, original), "Failed mktime changed the guest calendar");
+    Require(Equal(input, expected), "Failed conversion changed fields beyond its daylight-hint rule");
+    Require(errno == expectedError, "Failed conversion changed the underlying mktime error");
 }
 
 static void CheckEarlyYearNormalization(Converter convert) {
