@@ -23478,8 +23478,7 @@ int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient36transitionToCommittedFromCach
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient8setTitleERKNS_19StringWithDirectionERKN3WTF3URLE() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient8setTitleERKNS_19StringWithDirectionERKN3WTF3URLE(WebCore::EmptyFrameLoaderClient*, const void*, const NKWebKit::WtfAbi::URL*) {
 }
 
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClientC1ERKS0_() {

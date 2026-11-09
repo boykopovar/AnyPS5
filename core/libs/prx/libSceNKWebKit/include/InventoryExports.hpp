@@ -1,6 +1,11 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
+
+namespace WebCore {
+class EmptyFrameLoaderClient;
+}
 
 extern "C" {
 
@@ -3519,7 +3524,7 @@ int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient36transitionToCommittedFromCach
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient37dispatchDidReachVisuallyNonEmptyStateEv();
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient38dispatchDidLoadResourceFromMemoryCacheEPNS_14DocumentLoaderERKNS_15ResourceRequestERKNS_16ResourceResponseEi();
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient50dispatchDidReceiveServerRedirectForProvisionalLoadEv();
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient8setTitleERKNS_19StringWithDirectionERKN3WTF3URLE();
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient8setTitleERKNS_19StringWithDirectionERKN3WTF3URLE(WebCore::EmptyFrameLoaderClient* self, const void* title, const NKWebKit::WtfAbi::URL* url);
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClientC1ERKS0_();
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClientC1Ev();
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClientC2ERKS0_();
