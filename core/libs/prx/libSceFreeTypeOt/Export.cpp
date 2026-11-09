@@ -6,6 +6,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceFreeTypeOt/include/Calc.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 
 namespace {
 
@@ -243,10 +244,10 @@ int APS5_VABI sceFreeTypeOtPropertySet_nid_no_patch() {
 }
 APS5_EXPORT("LsB538+IPrE", sceFreeTypeOtPropertySet_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_hz_J3hohXW8_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtQAlloc_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("hz-J3hohXW8", sceFreeTypeOtUnknown_hz_J3hohXW8_nid_no_patch);
+APS5_EXPORT("hz-J3hohXW8", sceFreeTypeOtQAlloc_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtUnknown_KVbmKCGGowg_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);

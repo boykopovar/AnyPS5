@@ -94,6 +94,7 @@ int APS5_VABI pthread_set_defaultstacksize_np_nid_postfix(std::size_t size);
 int APS5_VABI scePthreadSetDefaultstacksize(std::size_t size);
 void APS5_VABI scePthreadSetName(Pthread thread, const char* name);
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled);
+int APS5_VABI sceKernelTitleWorkaroundIsEnabled2(const KernelTitleWorkaround* workaround, std::uint64_t selector, std::uint32_t bit, std::int32_t* enabled);
 int APS5_VABI sceKernelGetProcessType(int pid);
 int APS5_VABI amd64_set_fsbase_nid_postfix(void);
 int APS5_VABI blockpool_batch_nid_postfix(void);
