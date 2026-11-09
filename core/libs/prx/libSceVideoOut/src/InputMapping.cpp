@@ -390,7 +390,8 @@ void applyInputStream(Pad::InputConfiguration& configuration, std::istream& file
             const bool duplicate = std::any_of(bindings.begin(), bindings.end(), [&binding](const Pad::InputBinding& existing) {
                 return existing.key == binding.key && existing.mouseButton == binding.mouseButton &&
                     existing.control == binding.control && existing.button == binding.button &&
-                    existing.wheelDirection == binding.wheelDirection && existing.wheelTilt == binding.wheelTilt;
+                    existing.wheelDirection == binding.wheelDirection && existing.wheelTilt == binding.wheelTilt &&
+                    existing.padButtons == binding.padButtons;
             });
             if (!duplicate) bindings.push_back(binding);
         } catch (const std::runtime_error& error) {
