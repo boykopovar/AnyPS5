@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
@@ -100,11 +101,18 @@ void MemoHitSharesWalkedWords(AgcDriver::VulkanDevice& device) {
         Require(walk.result != nullptr && walk.words != nullptr, "a repeated heap walk over valid buffer descriptors declined its stage");
     }
     Require(walks[2].words == walks[1].words, "a heap walk memo hit returned a copy of the walked words instead of the words its walk stored");
+    const auto before = AgcDriver::GuestMemory::TrackerAcquisitions();
+    const auto hit = AgcDriver::DriverDetail::MaterializeHeapStage(*invocation, userData, request.shader.codeAddress);
+    const auto taken = AgcDriver::GuestMemory::TrackerAcquisitions() - before;
+    Require(hit.words == walks[1].words, "a repeated heap walk missed its memo");
+    const std::uint64_t proofs = hit.reads.ranges != nullptr && !hit.reads.ranges->empty() ? 1u : 0u;
+    Require(taken <= proofs, "a heap walk memo hit took the guest write tracker's mutex " + std::to_string(taken) + " times; only its no-stamp proof over its " + std::to_string(proofs) + " range lists needs it");
 }
 
 }
 
 int main() {
+    SetTestEnvironment("APS5_PROFILE_DRAW", "1");
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;

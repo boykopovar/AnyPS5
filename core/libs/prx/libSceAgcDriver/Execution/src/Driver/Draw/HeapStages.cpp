@@ -585,7 +585,7 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     Graphics::HeapCostScope snapshotCost(Graphics::HeapCost::Guards);
     const auto before = Graphics::Recorder::PendingWriteSnapshot();
     snapshotCost.Stop();
-    const auto generation = GuestMemory::TrackerGeneration();
+    const auto generation = GuestMemory::StableTrackerGeneration();
     const bool memoOn = !invocation.Request().context.vertex.has_value();
     std::uint64_t memoKey = 0;
     bool memoKnown = false;
