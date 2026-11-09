@@ -164,7 +164,11 @@ struct KernelMutexLock {
     explicit KernelMutexLock(PthreadMutex* value) : mutex(value) {
         if (mutex && scePthreadMutexLock(mutex)) NotImplemented_nid_no_patch(__func__);
     }
-    ~KernelMutexLock() { if (mutex) scePthreadMutexUnlock(mutex); }
+    ~KernelMutexLock() { Unlock(); }
+    void Unlock() {
+        if (mutex) scePthreadMutexUnlock(mutex);
+        mutex = nullptr;
+    }
     KernelMutexLock(const KernelMutexLock&) = delete;
     KernelMutexLock& operator=(const KernelMutexLock&) = delete;
 };
@@ -1494,19 +1498,25 @@ PthreadMutex* CreateKernelMutex() {
     }
 }
 
-void ReleaseInitialization() {
+void ReleaseRecoveryState() {
     auto& state = State();
     if (!ModernValues() && !state.legacyHandlers) Release(nullptr);
     ReleaseLegacyHandlers();
     if (state.fallback) Destroy(*state.fallback);
     Release(state.fallback);
     state.fallback = nullptr;
+}
+
+void ReleaseKernelResources() {
+    auto& state = State();
     if (ModernValues()) {
-        if (state.recoveryMutex) {
-            scePthreadMutexDestroy(state.recoveryMutex);
+        auto* recoveryMutex = state.recoveryMutex;
+        state.recoveryMutex = nullptr;
+        if (recoveryMutex) {
+            scePthreadMutexDestroy(recoveryMutex);
             state.recoveryMutexRetired = true;
         }
-        Release(state.recoveryMutex);
+        Release(recoveryMutex);
     }
     state.recoveryMutex = nullptr;
     state.recoveryMutexRetired = false;
@@ -1528,6 +1538,11 @@ void ReleaseInitialization() {
     state.floatFormatEnabled = false;
     state.paddedStringGrowth = false;
     state.initialized = false;
+}
+
+void ReleaseInitialization() {
+    ReleaseRecoveryState();
+    ReleaseKernelResources();
 }
 
 template<typename T>
@@ -2605,6 +2620,7 @@ int APS5_VABI _ZN3sce4Json19InternalInitializer20initialize_staticlibEPKNS0_13In
 int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     auto& state = State();
     std::lock_guard callbackLock(state.callbackMutex);
+    KernelMutexLock recoveryLock(state.recoveryMutex);
     std::lock_guard lock(state.mutex);
     if (!state.initialized || !*static_cast<const std::uint8_t*>(self)) return JsonErrorNotInitialized;
     if (state.internalMutexRetired || state.recoveryMutexRetired || state.retiredDefaultHeaders) NotImplemented_nid_no_patch(__func__);
@@ -2613,7 +2629,9 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     state.callback = nullptr;
     state.context = nullptr;
     state.handlers = {};
-    ReleaseInitialization();
+    ReleaseRecoveryState();
+    recoveryLock.Unlock();
+    ReleaseKernelResources();
     *static_cast<std::uint8_t*>(self) = 0;
     return 0;
 }

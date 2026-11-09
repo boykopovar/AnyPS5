@@ -386,4 +386,5 @@ include("${CMAKE_CURRENT_LIST_DIR}/MemoryRecord.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/ModuleProperties.cmake")
 
+include("${CMAKE_CURRENT_LIST_DIR}/MemoryAllocation.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/StrokerOutputs.cmake")

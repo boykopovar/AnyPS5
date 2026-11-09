@@ -286,6 +286,41 @@ bool Driver::WaitIdleFor(std::chrono::milliseconds timeout) {
     return idle;
 }
 
+bool Driver::WaitSettledFor(std::chrono::milliseconds timeout) {
+    require(!onWorkerThread(), "worker cannot wait for itself");
+    std::unique_lock lock(mutex);
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto settled = [&] {
+        if (failure != nullptr || stopping) return true;
+        captureHold.store(true, std::memory_order_relaxed);
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+        if (completed >= accepted || parkedOnTitle()) return true;
+        captureHold.store(false, std::memory_order_relaxed);
+        return false;
+    };
+    ++idleWaiters;
+    bool done = settled();
+    while (!done && std::chrono::steady_clock::now() < deadline) done = changed.wait_for(lock, std::chrono::milliseconds(1), settled);
+    --idleWaiters;
+    rethrowFailure();
+    checkStopping();
+    return done;
+}
+
+bool Driver::Settled() {
+    std::lock_guard lock(mutex);
+    return failure != nullptr || stopping || completed >= accepted || parkedOnTitle();
+}
+
+void Driver::ReleaseSettled() {
+    if (!captureHold.load(std::memory_order_relaxed)) return;
+    {
+        std::lock_guard lock(mutex);
+        captureHold.store(false, std::memory_order_relaxed);
+    }
+    changed.notify_all();
+}
+
 std::vector<AwaitedWait> Driver::AwaitedWaits() {
     std::vector<AwaitedWait> result;
     for (const auto& slot : awaitedSlots) {
