@@ -1,0 +1,19 @@
+## What
+- Implemented standalone guest unit test `core/libs/tests/GuestKernelMprotectOverflow.cpp` to audit `mprotect` invalid address alignment and overflow rejection bounds.
+- Registered the test executable in `core/libs/CMakeLists.txt`.
+
+## Tested
+- Verified conventions check passes with `python tools/check_conventions.py --base origin/main`.
+- Verified local build and test execution of the unit test suite.
+
+## Depends on
+- None
+
+## Unblocks
+- Title ID compatibility and robust libkernel memory protection validation.
+
+## GPUs tested
+- n/a
+
+## AI-assisted
+- Yes
