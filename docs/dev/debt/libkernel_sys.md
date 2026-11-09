@@ -258,7 +258,6 @@
 | `Unknown` | `drv94FQk-Qw` |
 | `Unknown` | `e7oZmNPlBbU` |
 | `Unknown` | `eSgYzXvTPQI` |
-| `sceKernelTraceMarkerPlot` | `eu1IgkLPYh8` |
 | `Unknown` | `ftHBlCfIEQo` |
 | `Unknown` | `g7MGwZ5UxBE` |
 | `Unknown` | `gBiaAGKEvHM` |

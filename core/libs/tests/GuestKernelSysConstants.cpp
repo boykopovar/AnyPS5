@@ -31,6 +31,7 @@ int main() {
     Require(sceKernelDeleteEport() == SCE_KERNEL_ERROR_EPERM);
     Require(sceKernelOpenEport() == SCE_KERNEL_ERROR_EPERM);
     Require(sceKernelCloseEport() == SCE_KERNEL_ERROR_EPERM);
+    Require(sceKernelTraceMarkerPlot() == 0);
     Require(sceKernelTriggerEport() == SCE_KERNEL_ERROR_EPERM);
 
     Require(sceKernelQueryTraceMemory() == SCE_KERNEL_ERROR_ENOENT);

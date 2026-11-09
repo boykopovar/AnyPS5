@@ -1240,7 +1240,7 @@ int APS5_VABI libkernel_sysUnknown_eSgYzXvTPQI_nid_no_patch() {
 APS5_EXPORT("eSgYzXvTPQI", libkernel_sysUnknown_eSgYzXvTPQI_nid_no_patch);
 
 int APS5_VABI sceKernelTraceMarkerPlot() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 
