@@ -230,6 +230,25 @@ void Pad::KeyboardMouse::Release() {
     triggerAxes = {};
 }
 
+void Pad::KeyboardMouse::SetMouseTouchpad(bool enabled) {
+    mouseTouchpad = enabled;
+    if (!enabled) mouseTouch.reset();
+}
+
+void Pad::KeyboardMouse::SetViewport(int width, int height) {
+    viewportWidth = width;
+    viewportHeight = height;
+}
+
+std::optional<Pad::PadTouchPoint> Pad::KeyboardMouse::touchAt(int x, int y) const {
+    if (viewportWidth <= 0 || viewportHeight <= 0) return std::nullopt;
+    const auto clampedX = std::clamp(x, 0, viewportWidth - 1);
+    const auto clampedY = std::clamp(y, 0, viewportHeight - 1);
+    const auto padX = std::min<std::int64_t>(static_cast<std::int64_t>(clampedX) * kTouchPadWidth / viewportWidth, kTouchPadWidth - 1);
+    const auto padY = std::min<std::int64_t>(static_cast<std::int64_t>(clampedY) * kTouchPadHeight / viewportHeight, kTouchPadHeight - 1);
+    return PadTouchPoint{true, static_cast<std::uint16_t>(padX), static_cast<std::uint16_t>(padY), 0};
+}
+
 Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock::time_point now) {
     InputRequests requests;
     if (event.type == SDL_WINDOWEVENT) {
