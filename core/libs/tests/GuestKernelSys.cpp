@@ -2056,6 +2056,26 @@ int main() {
         Require(createHostLink(upDirectory, L"prefix-up\\deep", SYMBOLIC_LINK_FLAG_DIRECTORY) && createHostLink(upFile, L"..\\f2\\x", 0));
         const auto belowUp = upDirectory + "/pa/child";
         Require(stat_nid_postfix(belowUp.c_str(), &prefixStatus) == -1 && Error() == 20);
+        const std::array<std::tuple<const char*, const wchar_t*, DWORD, int>, 7> directoryPrefixes{{
+            {"prefix-directory-file", L"file.txt", SYMBOLIC_LINK_FLAG_DIRECTORY, 20},
+            {"prefix-directory-through-file", L"file.txt\\sub", SYMBOLIC_LINK_FLAG_DIRECTORY, 20},
+            {"prefix-directory-chain", L"prefix-directory-file", SYMBOLIC_LINK_FLAG_DIRECTORY, 20},
+            {"prefix-directory-chain-through-file", L"prefix-directory-through-file", SYMBOLIC_LINK_FLAG_DIRECTORY, 20},
+            {"prefix-directory-missing", L"prefix-missing", SYMBOLIC_LINK_FLAG_DIRECTORY, 2},
+            {"prefix-file-control", L"file.txt", 0, 20},
+            {"prefix-directory-control", L"prefix-up\\deep", SYMBOLIC_LINK_FLAG_DIRECTORY, 2}
+        }};
+        for (const auto& [name, target, flags, expected] : directoryPrefixes) {
+            Require(createHostLink((root / name).string(), target, flags));
+        }
+        Require(access_nid_postfix((root / "prefix-file-control").string().c_str(), 0) == 0);
+        Require(access_nid_postfix((root / "prefix-directory-control").string().c_str(), 0) == 0);
+        for (const auto& [name, target, flags, expected] : directoryPrefixes) {
+            Require(access_nid_postfix((root / name / "child").string().c_str(), 0) == -1 && Error() == expected);
+        }
+        for (const auto& [name, target, flags, expected] : directoryPrefixes) {
+            Require(RemoveSymlink((root / name).string()));
+        }
         Require(RemoveSymlink(upFile) && RemoveSymlink(upDirectory));
 #endif
         const auto prefixChainEnd = (root / "prefix-chain-end").string();
