@@ -1645,9 +1645,8 @@ static bool OpenIovecs(const KernelIovec* iov, int iovcnt, std::deque<GuestArena
 }
 
 static std::int64_t KqueueIovecsResult(const KernelIovec* iov, int iovcnt, bool write) {
-    std::size_t total = 0;
-    for (int i = 0; i < iovcnt; ++i) total += iov[i].length;
-    return write || total != 0 ? SCE_KERNEL_ERROR_EOPNOTSUPP : 0;
+    const bool empty = std::none_of(iov, iov + iovcnt, [](const KernelIovec& vector) { return vector.length != 0; });
+    return write || !empty ? SCE_KERNEL_ERROR_EOPNOTSUPP : 0;
 }
 
 static void PrepareWriteIovecs(const KernelIovec* iov, int iovcnt) {
