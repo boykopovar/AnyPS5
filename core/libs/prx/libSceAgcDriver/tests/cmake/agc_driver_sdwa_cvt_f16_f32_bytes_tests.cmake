@@ -1,0 +1,1 @@
+add_test(NAME agc_driver_sdwa_cvt_f16_f32_bytes_tests_wave64 COMMAND agc_driver_sdwa_cvt_f16_f32_bytes_tests wave64)
