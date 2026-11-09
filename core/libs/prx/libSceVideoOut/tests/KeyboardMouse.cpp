@@ -774,6 +774,7 @@ int main() {
             {"poll rate independence", testPollRateIndependence},
             {"vertical scale", testVerticalScale},
             {"mouse touchpad", testMouseTouchpad},
+            {"mouse gyro", testMouseGyro},
             {"mouse mode off", testMouseModeOff},
             {"keyboard sticks unchanged", testKeyboardSticksUnchanged},
             {"stick modifier", testStickModifier},
