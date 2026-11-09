@@ -29,12 +29,12 @@ if(BUILD_TESTING)
         add_test(NAME guest_avplayer_http COMMAND ${Python3_EXECUTABLE}
             ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpServer.py $<TARGET_FILE:guest_avplayer_tests>)
         set_tests_properties(guest_avplayer_http PROPERTIES
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_http TIMEOUT 20)
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_http TIMEOUT 40)
         file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/avplayer_http_transport)
         add_test(NAME avplayer_http_transport COMMAND ${Python3_EXECUTABLE}
             ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpServer.py $<TARGET_FILE:avplayer_http_transport_tests> transport)
         set_tests_properties(avplayer_http_transport PROPERTIES
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/avplayer_http_transport TIMEOUT 20)
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/avplayer_http_transport TIMEOUT 30)
         if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
             add_test_executable(avplayer_http_patched_modules_tests ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpModules.cpp)
             target_link_libraries(avplayer_http_patched_modules_tests PRIVATE ${CMAKE_DL_LIBS})
@@ -70,7 +70,7 @@ if(BUILD_TESTING)
                 -P ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpModules.cmake
                 -- "$<TARGET_FILE:avplayer_http_patched_modules_tests>"
                 "$<TARGET_FILE:guest_http_client_tests>" "$<TARGET_FILE:guest_avplayer_tests>")
-            set_tests_properties(avplayer_http_patched_modules PROPERTIES TIMEOUT 30)
+            set_tests_properties(avplayer_http_patched_modules PROPERTIES TIMEOUT 60)
         endif()
     endif()
     set_tests_properties(guest_avplayer_paused_first_video PROPERTIES

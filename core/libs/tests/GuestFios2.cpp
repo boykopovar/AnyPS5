@@ -392,6 +392,21 @@ static void CheckSuspension(const std::string& file) {
     sceFiosResume();
     sceFiosResume();
     REQUIRE(sceFiosGetSuspendCount() == 0);
+
+    std::atomic<bool> returned{false};
+    std::thread watchdog([&] {
+        for (int waited = 0; waited < 200 && !returned.load(); ++waited) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (!returned.load()) {
+            std::fputs("guest_fios2: sceFiosFileGetSizeSync did not return while suspended\n", stderr);
+            std::_Exit(1);
+        }
+    });
+    sceFiosSuspend();
+    const SceFiosSize syncSize = sceFiosFileGetSizeSync(&attr, file.c_str());
+    sceFiosResume();
+    returned.store(true);
+    watchdog.join();
+    REQUIRE(syncSize == 10 && sceFiosGetSuspendCount() == 0 && sceFiosIsIdle());
 }
 
 static void CheckMutations(const std::string& directory) {
@@ -671,6 +686,14 @@ static void CheckDates() {
     SceFiosTm normalized{};
     sceFiosDateToComponents(sceFiosDateFromComponents(&overflow), &normalized);
     REQUIRE(normalized.tm_year == 100 && normalized.tm_mon == 1 && normalized.tm_mday == 2 && normalized.tm_hour == 1 && normalized.tm_min == 1 && normalized.tm_sec == 0);
+    SceFiosTm far{};
+    far.tm_year = 500;
+    far.tm_mday = 1;
+    const SceFiosDate farDate = sceFiosDateFromComponents(&far);
+    SceFiosTm farBack{};
+    REQUIRE(farDate != 0 && sceFiosDateToComponents(farDate, &farBack) == &farBack && farBack.tm_year == 500 && farBack.tm_mon == 0 && farBack.tm_mday == 1);
+    far.tm_year = 1000;
+    REQUIRE(sceFiosDateFromComponents(&far) == 0);
     SceFiosTm negative{};
     negative.tm_year = 70;
     negative.tm_mon = -1;

@@ -1110,7 +1110,7 @@ int APS5_VABI sceNpSetContentRestriction(const NpContentRestriction* restriction
     if (!restriction) return SCE_NP_ERROR_INVALID_ARGUMENT;
     const auto* fields = reinterpret_cast<const Fields*>(restriction);
     if (fields->size != sizeof(Fields)) return SCE_NP_ERROR_INVALID_SIZE;
-    if (fields->defaultAgeRestriction < 0 || fields->ageRestrictionCount > 0x100) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (fields->defaultAgeRestriction < 0 || fields->ageRestrictionCount < 0 || fields->ageRestrictionCount > 0x100) return SCE_NP_ERROR_INVALID_ARGUMENT;
     if (fields->ageRestrictionCount > 0 && !fields->ageRestrictions) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
