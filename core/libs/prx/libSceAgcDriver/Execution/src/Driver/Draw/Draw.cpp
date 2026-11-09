@@ -972,6 +972,30 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             words->bindings.clear();
         }
         ShaderRecompiler::CompleteHeapDataWords(*variant.compiled, *words);
+        if (!variant.ringDescriptorPatches.empty() || !variant.ringDataPatches.empty()) {
+            const auto& program = variant.compiled->bindings;
+            if (words->bindings.empty()) words->bindings.resize(program.size());
+            const auto own = [&](std::size_t index) -> std::vector<std::uint32_t>& {
+                auto& descriptor = words->bindings[index];
+                if (descriptor.empty()) {
+                    const auto& source = Graphics::DrawGuestWords(*variant.compiled, words.get(), program[index]);
+                    descriptor.assign(source.begin(), source.end());
+                }
+                return descriptor;
+            };
+            for (const auto& [binding, word, value] : variant.ringDescriptorPatches) {
+                if (binding >= program.size() || word >= program[binding].guestDescriptor.size()) continue;
+                auto& descriptor = own(binding);
+                if (word < descriptor.size()) descriptor[word] = value;
+            }
+            for (const auto& [slot, value] : variant.ringDataPatches) {
+                for (std::size_t index = 0; index < program.size(); ++index) {
+                    if (program[index].role != ShaderRecompiler::DescriptorRole::ShaderData || slot >= program[index].guestDescriptor.size()) continue;
+                    auto& descriptor = own(index);
+                    if (slot < descriptor.size()) descriptor[slot] = value;
+                }
+            }
+        }
         if (words->vertexAttributes.empty()) return words;
         decodeVertexInfo(i);
         require(vertexInfos[i].has_value(), "a ring vertex hit has no vertex stage info");

@@ -336,6 +336,8 @@ void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std
             copy->pushOffset = variant->pushOffset;
             copy->vertexInfo = variant->vertexInfo;
             copy->ringTemplate = variant->ringTemplate;
+            copy->ringDescriptorPatches = variant->ringDescriptorPatches;
+            copy->ringDataPatches = variant->ringDataPatches;
             for (const auto& move : moves) {
                 if (move.program != i) continue;
                 const auto delta = AlignedWord(move.to) - AlignedWord(move.from);
@@ -363,40 +365,28 @@ void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std
 
 void Driver::applyShaderDataPatches(DispatchVariant& variant) {
     if (variant.shaderDataPatches.empty() && variant.descriptorPatches.empty()) return;
-    const bool templateOnly = variant.ringTemplate != nullptr && variant.shaderDataPatches.empty() &&
-                              std::all_of(variant.descriptorPatches.begin(), variant.descriptorPatches.end(), [&](const std::array<std::uint32_t, 3>& patch) {
-                                  if (patch[0] >= variant.compiled->bindings.size()) return true;
-                                  const auto role = variant.compiled->bindings[patch[0]].role;
-                                  return role != ShaderRecompiler::DescriptorRole::FlattenedSrt && role != ShaderRecompiler::DescriptorRole::ShaderData;
-                              });
-    if (templateOnly) {
-        auto ringTemplate = std::make_shared<ShaderRecompiler::HeapStageWords>(*variant.ringTemplate);
-        if (ringTemplate->bindings.empty()) ringTemplate->bindings.resize(variant.compiled->bindings.size());
-        for (const auto& [binding, word, value] : variant.descriptorPatches) {
-            if (binding >= ringTemplate->bindings.size()) continue;
-            auto& words = ringTemplate->bindings[binding];
-            if (words.empty()) words = variant.compiled->bindings[binding].guestDescriptor;
-            if (word < words.size()) words[word] = value;
+    const auto& compiled = *variant.compiled;
+    if (variant.ringTemplate != nullptr) {
+        const bool templateSrt = !variant.ringTemplate->flattenedSrt.empty();
+        bool programWords = false;
+        for (const auto& patch : variant.descriptorPatches) {
+            if (!templateSrt && patch[0] < compiled.bindings.size() && compiled.bindings[patch[0]].role == ShaderRecompiler::DescriptorRole::FlattenedSrt) programWords = true;
+            else variant.ringDescriptorPatches.push_back(patch);
         }
-        variant.ringTemplate = std::move(ringTemplate);
-        variant.descriptorPatches.clear();
-        return;
+        for (const auto& patch : variant.shaderDataPatches) {
+            variant.ringDataPatches.push_back(patch);
+            if (!compiled.dataAddressPush && static_cast<std::size_t>(patch.first) * sizeof(std::uint32_t) + sizeof(std::uint32_t) <= compiled.pushConstants.size()) programWords = true;
+        }
+        if (!programWords) {
+            variant.shaderDataPatches.clear();
+            variant.descriptorPatches.clear();
+            return;
+        }
     }
-    auto rebased = std::make_shared<ShaderRecompiler::RecompileResult>(*variant.compiled);
+    auto rebased = std::make_shared<ShaderRecompiler::RecompileResult>(compiled);
     for (const auto& [slot, value] : variant.shaderDataPatches) patchForwardedWord(*rebased, slot, value);
     for (const auto& [binding, word, value] : variant.descriptorPatches) {
         if (binding < rebased->bindings.size() && word < rebased->bindings[binding].guestDescriptor.size()) rebased->bindings[binding].guestDescriptor[word] = value;
-    }
-    if (variant.ringTemplate != nullptr && !variant.descriptorPatches.empty()) {
-        auto ringTemplate = std::make_shared<ShaderRecompiler::HeapStageWords>(*variant.ringTemplate);
-        if (ringTemplate->bindings.empty()) ringTemplate->bindings.resize(variant.compiled->bindings.size());
-        for (const auto& [binding, word, value] : variant.descriptorPatches) {
-            if (binding >= ringTemplate->bindings.size()) continue;
-            auto& words = ringTemplate->bindings[binding];
-            if (words.empty()) words = variant.compiled->bindings[binding].guestDescriptor;
-            if (word < words.size()) words[word] = value;
-        }
-        variant.ringTemplate = std::move(ringTemplate);
     }
     variant.compiled = std::move(rebased);
     variant.shaderDataPatches.clear();
