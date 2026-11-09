@@ -2298,10 +2298,6 @@ int APS5_VABI _ZNK7WebCore24RotateTransformOperation27isAffectedByTransformOrigi
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore9FloatSizeC1ERKNS_7IntSizeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore15SQLiteStatement15getColumnDoubleEi() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -3246,10 +3242,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_J9u8UeS_plus_3ZU_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("J9u8UeS+3ZU", libSceNKWebKitLegacyUnknown_J9u8UeS_plus_3ZU_nid_no_patch);
-
-int APS5_VABI _ZN7WebCore9FloatSizeC2ERKNS_7IntSizeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement12getColumnIntEi() {
     NotImplemented_nid_no_patch(__func__);
