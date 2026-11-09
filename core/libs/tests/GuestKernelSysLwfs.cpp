@@ -56,5 +56,11 @@ int main() {
     ExpectAll(sock, SceEaddrnotavail, 49);
     Require(close_nid_postfix(sock) == 0);
     ExpectAll(sock, SceEbadf, 9);
+
+    const int queue = kqueue_nid_postfix();
+    Require(queue >= 0);
+    ExpectAll(queue, SceEnotty, 25);
+    Require(close_nid_postfix(queue) == 0);
+    ExpectAll(queue, SceEbadf, 9);
     return 0;
 }

@@ -1,6 +1,5 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
-#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -15,11 +14,10 @@ constexpr int GuestEbadf = 9;
 constexpr int GuestEnotty = 25;
 constexpr int GuestEaddrnotavail = 49;
 
-int Reject(const char* name, int32_t fd) {
-    if (IsKqueueDescriptor_nid_no_patch(fd)) NotImplemented_nid_no_patch(name);
+int Reject(int32_t fd) {
     int error = GuestEbadf;
     if (GuestSockets::IsOpen(fd)) error = GuestEaddrnotavail;
-    else if (File::IsDirectoryDescriptor(fd) || DescriptorIsOpen_nid_no_patch(fd)) error = GuestEnotty;
+    else if (IsKqueueDescriptor_nid_no_patch(fd) || File::IsDirectoryDescriptor(fd) || DescriptorIsOpen_nid_no_patch(fd)) error = GuestEnotty;
     *__error_nid_postfix() = error;
     return SceKernelError(error);
 }
@@ -27,17 +25,17 @@ int Reject(const char* name, int32_t fd) {
 } // namespace
 
 int APS5_VABI sceKernelLwfsAllocateBlock(int32_t fd, int64_t size) {
-    return Reject(__func__, fd);
+    return Reject(fd);
 }
 
 int64_t APS5_VABI sceKernelLwfsLseek(int32_t fd, int64_t offset, int32_t whence) {
-    return Reject(__func__, fd);
+    return Reject(fd);
 }
 
 int APS5_VABI sceKernelLwfsSetAttribute(int32_t fd, int32_t attribute) {
-    return Reject(__func__, fd);
+    return Reject(fd);
 }
 
 int64_t APS5_VABI sceKernelLwfsWrite(int32_t fd, const void* data, std::size_t size) {
-    return Reject(__func__, fd);
+    return Reject(fd);
 }
