@@ -185,6 +185,21 @@ int APS5_VABI FT_Load_GlyphForward_nid_no_patch(FreeType::GuestFaceRec* face, st
 }
 APS5_EXPORT("M156RuYoUbU", FT_Load_GlyphForward_nid_no_patch);
 
+int APS5_VABI FT_Open_FaceForward_nid_no_patch(FreeType::GuestLibrary* library, const FreeType::GuestOpenArgs* args, std::int64_t faceIndex, FreeType::GuestFaceRec** face) {
+    return FT_Open_Face_nid_postfix(library, args, faceIndex, face);
+}
+APS5_EXPORT("OeNH41MA2Vs", FT_Open_FaceForward_nid_no_patch);
+
+void APS5_VABI FT_GlyphSlot_ObliqueForward_nid_no_patch(FreeType::GuestGlyphSlotRec* slot) {
+    return FT_GlyphSlot_Oblique_nid_postfix(slot);
+}
+APS5_EXPORT("wBKAYO7yEXw", FT_GlyphSlot_ObliqueForward_nid_no_patch);
+
+void APS5_VABI FT_GlyphSlot_EmboldenForward_nid_no_patch(FreeType::GuestGlyphSlotRec* slot) {
+    return FT_GlyphSlot_Embolden_nid_postfix(slot);
+}
+APS5_EXPORT("73vg+nRH68g", FT_GlyphSlot_EmboldenForward_nid_no_patch);
+
 int APS5_VABI FT_Load_Sfnt_TableForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint64_t tag, std::int64_t offset, unsigned char* buffer, std::uint64_t* length) {
     return FT_Load_Sfnt_Table_nid_postfix(face, tag, offset, buffer, length);
 }
