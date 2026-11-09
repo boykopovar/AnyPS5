@@ -44,8 +44,38 @@ int APS5_VABI Sha224Final(DigestContext* context, unsigned char* digest) {
     return SHA224_Final_nid_postfix(digest, static_cast<Sha256Context*>(RequireData(context, __func__)));
 }
 
+int APS5_VABI Sha512_256Init(DigestContext* context) {
+    static constexpr std::uint64_t initial[8] {
+        0x22312194fc2bf72c, 0x9f555fa3c84c64c2, 0x2393b86b6f53b151, 0x963877195940eabd,
+        0x96283ee2a88effe3, 0xbe5e1e2553863992, 0x2b0199fc2c85b8aa, 0x0eb72ddc81c52ca2,
+    };
+    auto& c = *static_cast<Sha512Context*>(RequireData(context, __func__));
+    std::memcpy(c.h, initial, sizeof(initial));
+    c.Nl = 0;
+    c.Nh = 0;
+    c.num = 0;
+    c.mdLength = 32;
+    return 1;
+}
+
+int APS5_VABI Sha512_256Update(DigestContext* context, const void* data, std::size_t length) {
+    if (context && !length) return 1;
+    return SHA512_Update_nid_postfix(static_cast<Sha512Context*>(RequireData(context, __func__)), data, length);
+}
+
+int APS5_VABI Sha512_256Final(DigestContext* context, unsigned char* digest) {
+    Sha512Context copy = *static_cast<Sha512Context*>(RequireData(context, __func__));
+    copy.mdLength = 64;
+    unsigned char full[64];
+    if (!SHA512_Final_nid_postfix(full, &copy)) return 0;
+    if (!digest) return 0;
+    std::memcpy(digest, full, 32);
+    return 1;
+}
+
 constexpr DigestMethod Sha1{64, 65, 20, 8, Sha1Init, Sha1Update, Sha1Final, nullptr, nullptr, nullptr, nullptr, {6, 19, 0, 0, 0}, 64, 104, nullptr};
 constexpr DigestMethod Sha224{675, 671, 28, 8, Sha224Init, Sha224Update, Sha224Final, nullptr, nullptr, nullptr, nullptr, {6, 19, 0, 0, 0}, 64, 120, nullptr};
+constexpr DigestMethod Sha512_256{1030, 1026, 32, 8, Sha512_256Init, Sha512_256Update, Sha512_256Final, nullptr, nullptr, nullptr, nullptr, {6, 19, 0, 0, 0}, 128, 224, nullptr};
 
 void Clear(void* memory, std::size_t size) {
     auto* bytes = static_cast<volatile unsigned char*>(memory);
@@ -62,6 +92,10 @@ const DigestMethod* APS5_VABI EVP_sha1_nid_postfix() {
 
 const DigestMethod* APS5_VABI EVP_sha224_nid_postfix() {
     return &Sha224;
+}
+
+const DigestMethod* APS5_VABI EVP_sha512_256_nid_postfix() {
+    return &Sha512_256;
 }
 
 DigestContext* APS5_VABI EVP_MD_CTX_new_nid_postfix() {

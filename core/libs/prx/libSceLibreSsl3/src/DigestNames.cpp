@@ -159,6 +159,8 @@ const void* Resolve(Digest digest) {
         return EVP_sha384_nid_postfix();
     case Digest::Sha512:
         return EVP_sha512_nid_postfix();
+    case Digest::Sha512_256:
+        return EVP_sha512_256_nid_postfix();
     case Digest::Md4:
         Missing("EVP_md4");
     case Digest::Md5Sha1:
@@ -167,8 +169,6 @@ const void* Resolve(Digest digest) {
         Missing("EVP_ripemd160");
     case Digest::Sha512_224:
         Missing("EVP_sha512_224");
-    case Digest::Sha512_256:
-        Missing("EVP_sha512_256");
     case Digest::Sha3_224:
         Missing("EVP_sha3_224");
     case Digest::Sha3_256:
