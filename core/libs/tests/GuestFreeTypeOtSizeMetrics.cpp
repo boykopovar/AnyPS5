@@ -20,6 +20,9 @@ struct Fixture {
 
     explicit Fixture(std::int64_t flags) {
         std::memset(&size, 0x5A, sizeof(size));
+        // The metrics are copied into a host FT_Long, which is 32-bit on Windows; keep the sentinels inside it.
+        size.metrics.x_scale = size.metrics.y_scale = size.metrics.ascender = 0x5A5A5A5A;
+        size.metrics.descender = size.metrics.height = size.metrics.max_advance = 0x5A5A5A5A;
         face.size = &size;
         face.face_flags = flags;
         face.units_per_EM = 2048;
