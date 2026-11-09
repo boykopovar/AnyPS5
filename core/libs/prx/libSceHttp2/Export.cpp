@@ -413,7 +413,7 @@ int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* 
 }
 
 int APS5_VABI sceHttp2AbortRequest(int req_id) {
-    const auto request = Transport(req_id, false);
+    const auto request = Transport(req_id, !IsWebSocket(req_id));
     if (!request) return ERROR_INVALID_ID;
     request->Cancel();
     return 0;
