@@ -37,6 +37,19 @@ void ExpectAll(int fd, std::int64_t sceError, int guestErrno, std::source_locati
     Require(*__error_nid_postfix() == guestErrno, location);
 }
 
+void ExpectCompression(int fd, std::int64_t sceError, int guestErrno, std::source_location location = std::source_location::current()) {
+    for (const int attribute : {0, 1}) {
+        *__error_nid_postfix() = 0;
+        Require(sceKernelSetCompressionAttribute(fd, attribute) == sceError, location);
+        Require(*__error_nid_postfix() == guestErrno, location);
+    }
+    for (const int attribute : {-1, 2, 3, 255}) {
+        *__error_nid_postfix() = 0;
+        Require(sceKernelSetCompressionAttribute(fd, attribute) == static_cast<std::int32_t>(0x80020016u), location);
+        Require(*__error_nid_postfix() == 0, location);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -62,5 +75,22 @@ int main() {
     ExpectAll(queue, SceEnotty, 25);
     Require(close_nid_postfix(queue) == 0);
     ExpectAll(queue, SceEbadf, 9);
+
+    ExpectCompression(-1, SceEbadf, 9);
+    ExpectCompression(100000, SceEbadf, 9);
+    int compressionPipe[2]{-1, -1};
+    Require(pipe_nid_postfix(compressionPipe) == 0);
+    ExpectCompression(compressionPipe[0], SceEnotty, 25);
+    Require(close_nid_postfix(compressionPipe[0]) == 0);
+    Require(close_nid_postfix(compressionPipe[1]) == 0);
+    ExpectCompression(compressionPipe[0], SceEbadf, 9);
+    const int compressionSocket = socket_nid_postfix(2, 1, 0);
+    Require(compressionSocket >= 0);
+    ExpectCompression(compressionSocket, SceEaddrnotavail, 49);
+    Require(close_nid_postfix(compressionSocket) == 0);
+    const int compressionQueue = kqueue_nid_postfix();
+    Require(compressionQueue >= 0);
+    ExpectCompression(compressionQueue, SceEnotty, 25);
+    Require(close_nid_postfix(compressionQueue) == 0);
     return 0;
 }

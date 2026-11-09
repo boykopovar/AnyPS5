@@ -11,6 +11,7 @@
 namespace {
 
 constexpr int GuestEbadf = 9;
+constexpr int GuestEinval = 22;
 constexpr int GuestEnotty = 25;
 constexpr int GuestEaddrnotavail = 49;
 
@@ -37,5 +38,10 @@ int APS5_VABI sceKernelLwfsSetAttribute(int32_t fd, int32_t attribute) {
 }
 
 int64_t APS5_VABI sceKernelLwfsWrite(int32_t fd, const void* data, std::size_t size) {
+    return Reject(fd);
+}
+
+int APS5_VABI sceKernelSetCompressionAttribute(int32_t fd, int32_t attribute) {
+    if (attribute != 0 && attribute != 1) return SceKernelError(GuestEinval);
     return Reject(fd);
 }

@@ -1579,11 +1579,6 @@ int APS5_VABI sceKernelSetCallRecord(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelSetCompressionAttribute(int32_t fd, int32_t attribute) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelSetCoredumpAppInfo(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
