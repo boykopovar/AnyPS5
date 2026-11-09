@@ -113,7 +113,7 @@ void TestHasExpiredRejectsObjectsUpstreamWouldDereference() {
     identity.vtable = identityVTable.data();
     RequireInvalidArgument([&] { _ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(&certificate, 0); });
 
-    const std::array<const void*, 1> certificateVTable{};
+    const std::array<const void*, 8> certificateVTable{};
     FakeCertificate nativeCertificate{certificateVTable.data()};
     const std::array<const void*, 3> validIdentityVTable{
         nullptr, nullptr, reinterpret_cast<const void*>(&IdentityCertificate)};
