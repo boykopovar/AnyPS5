@@ -20,4 +20,31 @@ void APS5_VABI sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch(void* se
 }
 APS5_EXPORT("xiqd+QkuYXc", sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch);
 
+void APS5_VABI sceLibcInternalFutureErrorCategoryDeletingDestructor_nid_no_patch(void* self) {
+    _ZNSt14error_categoryD2Ev_nid_postfix(static_cast<LibcException::CategoryObject*>(self));
+    _ZdlPv_nid_postfix(self);
+}
+APS5_EXPORT("WDKzMM-uuLE", sceLibcInternalFutureErrorCategoryDeletingDestructor_nid_no_patch);
+
+void APS5_VABI sceLibcInternalSystemErrorCategoryDeletingDestructor_nid_no_patch(void* self) {
+    _ZNSt14error_categoryD2Ev_nid_postfix(static_cast<LibcException::CategoryObject*>(self));
+    _ZdlPv_nid_postfix(self);
+}
+APS5_EXPORT("Dc4ZMWmPMl8", sceLibcInternalSystemErrorCategoryDeletingDestructor_nid_no_patch);
+
+void APS5_VABI sceLibcInternalSystemErrorCategoryDestructor_nid_no_patch(void* self) {
+    _ZNSt14error_categoryD2Ev_nid_postfix(static_cast<LibcException::CategoryObject*>(self));
+}
+APS5_EXPORT("hVQgfGhJz3U", sceLibcInternalSystemErrorCategoryDestructor_nid_no_patch);
+
+void APS5_VABI sceLibcInternalGenericErrorCategoryDestructor_nid_no_patch(void* self) {
+    _ZNSt14error_categoryD2Ev_nid_postfix(static_cast<LibcException::CategoryObject*>(self));
+}
+APS5_EXPORT("MAalgQhejPc", sceLibcInternalGenericErrorCategoryDestructor_nid_no_patch);
+
+[[noreturn]] void APS5_VABI sceLibcInternalXoverflowError_nid_no_patch(const char* message) {
+    LibcThrowOverflowError_nid_no_patch(message);
+}
+APS5_EXPORT("saSUnPWLq9E", sceLibcInternalXoverflowError_nid_no_patch);
+
 }

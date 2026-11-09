@@ -77,6 +77,9 @@ struct String {
     std::uint64_t capacity;
 };
 
+constexpr std::size_t StringInlineCapacity = 15;
+constexpr std::size_t StringCapacityMask = 15;
+
 void* AllocateStringStorage(std::size_t bytes);
 void ReleaseStringStorage(String& string);
 

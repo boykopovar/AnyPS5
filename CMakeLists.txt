@@ -290,6 +290,8 @@ if(BUILD_TESTING)
                 endif()
             endforeach()
         endif()
+        add_test(NAME export_gap COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_export_gap.py)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
         add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
@@ -422,6 +424,9 @@ if(BUILD_TESTING)
                 set_tests_properties(select_tests_${test_class} PROPERTIES TIMEOUT 30)
             endif()
         endforeach()
+        add_test(NAME relinker_fuzz_configurations COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_configurations.py)
+        set_tests_properties(relinker_fuzz_configurations PROPERTIES TIMEOUT 30)
         add_test(NAME configure_seed COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedTests)
         add_test(NAME configure_seed_paths COMMAND ${Python3_EXECUTABLE}
