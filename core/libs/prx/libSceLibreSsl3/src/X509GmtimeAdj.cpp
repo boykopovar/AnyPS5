@@ -13,12 +13,9 @@ namespace {
 constexpr std::int32_t UtcTime = 23;
 constexpr std::int32_t GeneralizedTime = 24;
 constexpr std::int64_t Borrowed = 0x10;
-constexpr std::int64_t MultiString = 0x40;
 constexpr int Asn1Library = 13;
 constexpr int AnyFunction = 0xfff;
-constexpr int MallocFailure = 65;
 constexpr int IllegalTimeValue = 184;
-constexpr std::int64_t First1900 = -2208988800LL;
 constexpr std::int64_t First1950 = -631152000LL;
 constexpr std::int64_t First10000 = 253402300800LL;
 
@@ -58,8 +55,7 @@ extern "C" Asn1String* APS5_VABI X509_gmtime_adj_nid_postfix(Asn1String* time, s
         return nullptr;
     }
     const auto seconds = now + adjustment;
-    if (seconds < First1900 || seconds >= First10000) return nullptr;
-    if (seconds < First1950) {
+    if (seconds < First1950 || seconds >= First10000) {
         PutError(IllegalTimeValue);
         return nullptr;
     }
@@ -77,20 +73,15 @@ extern "C" Asn1String* APS5_VABI X509_gmtime_adj_nid_postfix(Asn1String* time, s
     else
         std::snprintf(reinterpret_cast<char*>(data), static_cast<std::size_t>(length) + 1, "%04d%02d%02d%02d%02d%02dZ",
             broken.year, broken.month, broken.day, broken.hour, broken.minute, broken.second);
-    if (!time) {
-        time = static_cast<Asn1String*>(malloc_nid_postfix(sizeof(Asn1String)));
-        if (!time) {
-            free_nid_postfix(data);
-            PutError(MallocFailure);
-            return nullptr;
-        }
-        time->flags = MultiString;
-    } else if (time->data && !(time->flags & Borrowed)) {
-        free_nid_postfix(time->data);
+    auto* target = time ? time : ASN1_TIME_new_nid_postfix();
+    if (!target) {
+        free_nid_postfix(data);
+        return nullptr;
     }
-    time->data = data;
-    time->length = length;
-    time->type = utc ? UtcTime : GeneralizedTime;
-    time->flags &= ~Borrowed;
-    return time;
+    if (time && time->data && !(time->flags & Borrowed)) free_nid_postfix(time->data);
+    target->data = data;
+    target->length = length;
+    target->type = utc ? UtcTime : GeneralizedTime;
+    target->flags &= ~Borrowed;
+    return target;
 }
