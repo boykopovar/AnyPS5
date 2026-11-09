@@ -1749,6 +1749,7 @@ public:
 
 private:
     static constexpr std::size_t StackBytes = 64u << 20u;
+    static constexpr unsigned ForegroundBeforeBackground = 8;
 
     void moveToFront(const PreparedShaders& prepared) {
         const auto found = std::ranges::find_if(tasks, [&](const auto& task) { return task.prepared == &prepared; });
@@ -1825,20 +1826,24 @@ private:
             {
                 std::unique_lock lock(pool.mutex);
                 auto next = pool.tasks.end();
+                bool fromBackground = false;
                 pool.ready.wait(lock, [&] {
                     next = std::ranges::find_if(pool.tasks, [&](const Task& queued) { return !queued.budgeted || pool.budgetedRunning < pool.budgetedLimit; });
-                    return next != pool.tasks.end() || !pool.background.empty() || (pool.closed && pool.tasks.empty());
+                    fromBackground = !pool.background.empty() && (next == pool.tasks.end() || pool.foregroundRun >= ForegroundBeforeBackground);
+                    return fromBackground || next != pool.tasks.end() || (pool.closed && pool.tasks.empty());
                 });
-                if (next != pool.tasks.end()) {
-                    task = std::move(*next);
-                    pool.tasks.erase(next);
-                    if (task.program != 0) pool.waitingPrograms.fetch_sub(1, std::memory_order_relaxed);
-                } else if (!pool.background.empty()) {
+                if (fromBackground) {
                     task = std::move(pool.background.front());
                     pool.background.pop_front();
-                } else {
+                    pool.foregroundRun = 0;
+                } else if (next == pool.tasks.end()) {
                     liveWorkers.fetch_sub(1, std::memory_order_acq_rel);
                     return nullptr;
+                } else {
+                    task = std::move(*next);
+                    pool.tasks.erase(next);
+                    if (!pool.background.empty()) ++pool.foregroundRun;
+                    if (task.program != 0) pool.waitingPrograms.fetch_sub(1, std::memory_order_relaxed);
                 }
                 ++pool.running;
                 if (task.budgeted) ++pool.budgetedRunning;
@@ -1880,6 +1885,7 @@ private:
     std::deque<Task> tasks;
     std::atomic<std::size_t> waitingPrograms{0};
     std::deque<Task> background;
+    unsigned foregroundRun = 0;
     std::vector<Worker> workers;
     unsigned threads = 0;
     inline static std::atomic<unsigned> liveWorkers{0};
