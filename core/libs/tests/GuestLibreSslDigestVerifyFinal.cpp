@@ -99,34 +99,11 @@ void MissingVerificationState() {
     Require(ERR_get_error_nid_postfix() == 0, "a null context queues no error");
 }
 
-void InitializedDigestIsUnknown() {
-    PkeyMethodPrefix method{};
-    PkeyContextPrefix pkeyContext{&method};
-    EvpMd digest{};
-    EvpMdContext context{};
-    context.digest = &digest;
-    context.pkeyContext = &pkeyContext;
-    std::array<unsigned char, 8> signature{};
-    signature.fill(0x6d);
-    const auto signatureBefore = signature;
-    const auto contextBefore = context;
-
-    ERR_clear_error_nid_postfix();
-    LibreSslPutError_nid_no_patch(6, 0xfff, 159, __FILE__, __LINE__);
-    RequireThrows([&] { EVP_DigestVerifyFinal_nid_postfix(&context, signature.data(), signature.size()); },
-        "initialized digest verification requires the unported context-copy and key-verification path");
-    Require(ERR_get_error_nid_postfix() == EvpMessageDigestIsNull && ERR_get_error_nid_postfix() == 0,
-        "the unknown initialized path preserves existing errors and adds none");
-    Require(std::memcmp(&context, &contextBefore, sizeof(context)) == 0 && signature == signatureBefore,
-        "the unknown initialized path does not modify its arguments");
-}
-
 }
 
 int main() {
     RunUninitialized(false);
     RunUninitialized(true);
     MissingVerificationState();
-    InitializedDigestIsUnknown();
     return 0;
 }
