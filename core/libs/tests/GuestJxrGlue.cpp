@@ -1,16 +1,19 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceJxr/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <limits>
 #include <stdexcept>
 
 extern "C" const void* GetPixelFormatFromHash(unsigned char hash);
+extern "C" std::int64_t PKCodecFactory_CreateDecoderFromFile(const char* filename, void** decoder);
 
 namespace {
 
@@ -134,6 +137,24 @@ void TestImageIids() {
     });
 }
 
+void TestCreateDecoderFromFileErrors() {
+    void* expected = reinterpret_cast<void*>(std::uintptr_t{1});
+    void* actual = expected;
+    const char* unsupported = "anyps5-decoder-file.unsupported";
+    const auto expectedUnsupported = PKCodecFactory_CreateDecoderFromFile(unsupported, &expected);
+    const auto actualUnsupported = PKCodecFactory_CreateDecoderFromFile_nid_postfix(unsupported, &actual);
+    Require(actualUnsupported == expectedUnsupported && actual == expected);
+
+    constexpr const char* missing = "anyps5-decoder-file-does-not-exist.jxr";
+    const auto hostPath = ResolvePath_nid_no_patch(missing).string();
+    expected = reinterpret_cast<void*>(std::uintptr_t{1});
+    actual = expected;
+    const auto expectedMissing = PKCodecFactory_CreateDecoderFromFile(hostPath.c_str(), &expected);
+    const auto actualMissing = PKCodecFactory_CreateDecoderFromFile_nid_postfix(missing, &actual);
+    Require(actualMissing == expectedMissing && actual == expected);
+    RequireThrows([] { PKCodecFactory_CreateDecoderFromFile_nid_postfix(nullptr, nullptr); });
+}
+
 void TestAlignedAllocation() {
     for (std::size_t alignment : {std::size_t{8}, std::size_t{16}, std::size_t{24}, std::size_t{64},
                                   std::size_t{4096}}) {
@@ -194,6 +215,7 @@ int main() {
     InitializeHeap();
     TestPixelFormatHash();
     TestImageIids();
+    TestCreateDecoderFromFileErrors();
     TestAlignedAllocation();
     Require(IDPEmpty_nid_postfix(nullptr) == 0);
     int codec = 0;
