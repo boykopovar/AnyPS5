@@ -1405,6 +1405,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
 
+    add_test_executable(guest_kernel_getresuid_saved_tests tests/GuestKernelGetresuidSaved.cpp)
+    target_include_directories(guest_kernel_getresuid_saved_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_getresuid_saved_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_getresuid_saved_tests)
+    add_test(NAME guest_kernel_getresuid_saved COMMAND guest_kernel_getresuid_saved_tests)
+    set_tests_properties(guest_kernel_getresuid_saved PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_getresuid_saved PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+
     add_test_executable(guest_kernel_sys_cpuset_tests tests/GuestKernelSysCpuset.cpp)
     target_include_directories(guest_kernel_sys_cpuset_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_cpuset_tests PRIVATE libkernel libc)
