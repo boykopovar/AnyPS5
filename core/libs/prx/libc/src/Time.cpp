@@ -9,12 +9,11 @@
 #include <cstring>
 #include <cstdio>
 #include <limits>
-#include <string>
-#include <string_view>
 #include <mutex>
 #include <type_traits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -391,7 +390,7 @@ const ConversionFormats& cConversionFormats() {
 
 const ConversionFormats& hostConversionFormats() {
     static const ConversionFormats formats = [] {
-        ConversionFormats result{"%a %b %e %H:%M:%S %Y", "%m/%d/%y", "%H:%M:%S"};
+        ConversionFormats result = cConversionFormats();
 #ifndef _WIN32
         locale_t host = newlocale(LC_TIME_MASK, "", static_cast<locale_t>(0));
         if (host != static_cast<locale_t>(0)) {
@@ -433,8 +432,8 @@ bool addConversion(FormatBuffer<TChar>& buffer, TFormatChar conversion, const Gu
     case 'c': formatTime(buffer, conversionFormats().dateTime.c_str(), time); return true;
     case 'C': addNumber(buffer, time.tm_year / 100 + YEAR_BASE / 100, 100, "%02d"); return true;
     case 'd': addNumber(buffer, time.tm_mday, 100, "%02d"); return true;
-    case 'D':
-    case 'x': formatTime(buffer, "%m/%d/%y", time); return true;
+    case 'D': formatTime(buffer, "%m/%d/%y", time); return true;
+    case 'x': formatTime(buffer, conversionFormats().date.c_str(), time); return true;
     case 'e': addNumber(buffer, time.tm_mday, 100, "%2d"); return true;
     case 'F': formatTime(buffer, "%Y-%m-%d", time); return true;
     case 'g': addNumber(buffer, twoDigitYear(isoWeek(time).year), 100, "%02d"); return true;
@@ -450,8 +449,8 @@ bool addConversion(FormatBuffer<TChar>& buffer, TFormatChar conversion, const Gu
     case 'R': formatTime(buffer, "%H:%M", time); return true;
     case 'S': addNumber(buffer, time.tm_sec, 100, "%02d"); return true;
     case 't': addText(buffer, "\t"); return true;
-    case 'T':
-    case 'X': formatTime(buffer, "%H:%M:%S", time); return true;
+    case 'T': formatTime(buffer, "%H:%M:%S", time); return true;
+    case 'X': formatTime(buffer, conversionFormats().clock.c_str(), time); return true;
     case 'u': addNumber(buffer, time.tm_wday == 0 ? 7 : time.tm_wday, 10, "%d"); return true;
     case 'U': addNumber(buffer, weekOfYear(time, 7), 100, "%02d"); return true;
     case 'V': addNumber(buffer, isoWeek(time).week, 100, "%02d"); return true;
