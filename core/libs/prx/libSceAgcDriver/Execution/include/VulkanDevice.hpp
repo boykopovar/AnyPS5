@@ -80,6 +80,8 @@ public:
     VulkanDevice& operator=(const VulkanDevice&) = delete;
     std::string DeviceName() const;
     std::string DriverInfo() const;
+    enum class PipelineBinaryStatus { Unavailable, Disabled, Ready };
+    PipelineBinaryStatus PipelineBinariesStatus() const;
     bool SupportsImageFormat(VkFormat format, VkImageUsageFlags usage) const;
     bool BdaAtomicsUsable() const;
     bool RasterOrderGroupUsable() const;
@@ -295,6 +297,7 @@ public:
         std::uint64_t checked, presyncs, keyChecks, keyWaits;
     };
     static PresyncStatistics PresyncCounts();
+    static std::uint64_t UpscaledPresents();
     // Stage A of a dispatch's resource build, run WITHOUT GuestMemory::GpuMutex before Dispatch or
     // DispatchIndirect: the binding plan, data buffers, imports already serving the guest buffers,
     // read-only copies and the descriptor set (see ShaderResources). The dispatch completes it
@@ -354,6 +357,7 @@ public:
     enum class DrawRecipePrecheck : std::size_t { NoRecipe, Device };
     static void NoteDrawRecipeMiss(DrawRecipePrecheck miss);
     using DrawTraceContext = Graphics::DrawTraceContext;
+    static std::uint64_t DrawRecipeHits();
     // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, direct draw
     // built for its draw-cache entry (design_cpu_final M8); null otherwise.
     void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0);
