@@ -5953,6 +5953,17 @@ void ownedDrawInputTests(const Device& device, Recorder& recorder) {
     Require(!crossing.reused && crossing.owned.words.size() == 2, "a draw input spanning two blocks did not arm both");
     KeepDrawInput(&recorder, address + 65536 - 128, crossing, Use::Index32, 0);
     Require(copy(Use::Index32, 256, 65536 - 128).reused, "a two-block owned input was not reused");
+    constexpr std::size_t windowAt = 8192;
+    constexpr std::size_t windowBytes = 1024;
+    constexpr std::size_t windowFrom = 512;
+    const auto* windowGuest = static_cast<const std::byte*>(block) + windowAt;
+    const auto windowed = CopyDrawInput(context, &recorder, address + windowAt, windowBytes, 1, Use::Vertex, windowFrom);
+    Require(!windowed.reused && !windowed.owned.words.empty() && std::memcmp(windowed.buffer->Bytes().data() + windowFrom, windowGuest + windowFrom, windowBytes - windowFrom) == 0, "a windowed vertex input was not armed as an owned copy");
+    KeepDrawInput(&recorder, address + windowAt, windowed, Use::Vertex, 0);
+    const auto inside = CopyDrawInput(context, &recorder, address + windowAt, windowBytes, 1, Use::Vertex, windowFrom + 64);
+    Require(inside.reused && inside.buffer == windowed.buffer, "an owned vertex window was not reused by a draw that starts inside it");
+    const auto below = CopyDrawInput(context, &recorder, address + windowAt, windowBytes, 1, Use::Vertex);
+    Require(!below.reused && std::memcmp(below.buffer->Bytes().data(), windowGuest, windowBytes) == 0, "an owned vertex window served a draw that starts below it");
 #endif
     recorder.Sync();
 }
