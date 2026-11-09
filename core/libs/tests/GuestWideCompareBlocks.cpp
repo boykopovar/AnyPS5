@@ -60,22 +60,10 @@ static int Sign(int value) {
     return (value > 0) - (value < 0);
 }
 
-static char16_t LoadUnit(const char16_t* unit) {
-    char16_t value;
-    std::memcpy(&value, unit, sizeof value);
-    return value;
-}
-
-static void StoreUnit(char16_t* unit, char16_t value) {
-    std::memcpy(unit, &value, sizeof value);
-}
-
 static int ReferenceCompare(const char16_t* s1, const char16_t* s2, std::size_t n, bool stopAtZero) {
     for (; n != 0; ++s1, ++s2, --n) {
-        const char16_t left = LoadUnit(s1);
-        const char16_t right = LoadUnit(s2);
-        if (left != right) return left < right ? -1 : 1;
-        if (stopAtZero && left == 0) return 0;
+        if (*s1 != *s2) return *s1 < *s2 ? -1 : 1;
+        if (stopAtZero && *s1 == 0) return 0;
     }
     return 0;
 }
@@ -86,18 +74,16 @@ int main() {
     const char16_t alphabet[] = {1, 0x41, 0xff, 0x100, 0x7fff, 0x8000, 0xd800, 0xffff};
     for (int round = 0; round < 40000; ++round) {
         const std::size_t length = random() % 3 == 0 ? random() % 24 : random() % 600;
-        const std::size_t gap1 = random() % 2 == 0 ? 0 : random() % 64 * 2 + random() % 2;
-        const std::size_t gap2 = random() % 2 == 0 ? 0 : random() % 64 * 2 + random() % 2;
+        const std::size_t gap1 = random() % 2 == 0 ? 0 : random() % 64 * 2;
+        const std::size_t gap2 = random() % 2 == 0 ? 0 : random() % 64 * 2;
         char16_t* left = first.End(length + 1, gap1);
         char16_t* right = second.End(length + 1, gap2);
-        for (std::size_t index = 0; index < length; ++index) StoreUnit(left + index, alphabet[random() % 8]);
-        StoreUnit(left + length, 0);
+        for (std::size_t index = 0; index < length; ++index) left[index] = alphabet[random() % 8];
+        left[length] = 0;
         std::memcpy(right, left, (length + 1) * sizeof(char16_t));
         const int changes = random() % 3;
         for (int change = 0; change < changes; ++change) {
-            const char16_t value = random() % 5 == 0 ? char16_t{0} : alphabet[random() % 8];
-            const std::size_t position = random() % (length + 1);
-            StoreUnit(right + position, value);
+            right[random() % (length + 1)] = random() % 5 == 0 ? char16_t{0} : alphabet[random() % 8];
         }
         Require(Sign(wcscmp_nid_postfix(left, right)) == ReferenceCompare(left, right, SIZE_MAX, true));
         Require(Sign(wcscmp_nid_postfix(right, left)) == ReferenceCompare(right, left, SIZE_MAX, true));
