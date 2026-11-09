@@ -267,6 +267,7 @@ static void DefaultSubstitute() {
     CHECK(HasBool(pattern, "embeddedbitmap", 1));
     CHECK(HasBool(pattern, "decorative", 0));
     CHECK(HasBool(pattern, "symbol", 0));
+    CHECK(HasBool(pattern, "variable", 0));
     CHECK(HasDouble(pattern, "size", 12.0));
     CHECK(HasDouble(pattern, "scale", 1.0));
     CHECK(HasDouble(pattern, "dpi", 75.0));
@@ -278,7 +279,9 @@ static void DefaultSubstitute() {
         CHECK(Count(pattern, object) == 2);
         CHECK(HasString(pattern, object, 0, "en") && HasString(pattern, object, 1, "en-us"));
     }
+    CHECK(HasInteger(pattern, "order", 0));
     CHECK(Count(pattern, "prgname") == 0);
+    CHECK(Count(pattern, "desktop") == 0);
     auto* again = FcPatternDuplicate(pattern);
     CHECK(again);
     FcDefaultSubstitute(again);
@@ -295,7 +298,11 @@ static void DefaultSubstitute() {
     CHECK(FcPatternAddDouble(pattern, "dpi", 144.0));
     CHECK(FcPatternAddString(pattern, "namelang", Text("ja")));
     CHECK(FcPatternAddString(pattern, "stylelang", Text("de")));
+    CHECK(FcPatternAddBool(pattern, "variable", 1));
+    CHECK(FcPatternAddInteger(pattern, "order", 7));
     FcDefaultSubstitute(pattern);
+    CHECK(HasBool(pattern, "variable", 1));
+    CHECK(HasInteger(pattern, "order", 7));
     CHECK(HasInteger(pattern, "weight", 200));
     CHECK(HasBool(pattern, "hinting", 0));
     CHECK(HasDouble(pattern, "size", 20.0));

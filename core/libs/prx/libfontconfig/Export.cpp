@@ -156,9 +156,9 @@ void APS5_VABI FcDefaultSubstitute(FcPattern* pattern) {
     if (absent("weight")) FcPatternAddInteger(pattern, "weight", 80);
     if (absent("slant")) FcPatternAddInteger(pattern, "slant", 0);
     if (absent("width")) FcPatternAddInteger(pattern, "width", 100);
-    static constexpr std::array<std::pair<const char*, FcBool>, 7> booleans{{
+    static constexpr std::array<std::pair<const char*, FcBool>, 8> booleans{{
         {"hinting", 1}, {"verticallayout", 0}, {"autohint", 0}, {"globaladvance", 1},
-        {"embeddedbitmap", 1}, {"decorative", 0}, {"symbol", 0},
+        {"embeddedbitmap", 1}, {"decorative", 0}, {"symbol", 0}, {"variable", 0},
     }};
     for (const auto& [object, fallback] : booleans)
         if (absent(object)) FcPatternAddBool(pattern, object, fallback);
@@ -180,13 +180,15 @@ void APS5_VABI FcDefaultSubstitute(FcPattern* pattern) {
     if (absent("hintstyle")) FcPatternAddInteger(pattern, "hintstyle", 3);
     if (absent("namelang")) FcPatternAddString(pattern, "namelang", reinterpret_cast<const FcChar8*>("en"));
     FcChar8* found = nullptr;
-    if (FcPatternGetString(pattern, "namelang", 0, &found) != FcResultMatch) return;
-    const std::string namelang(reinterpret_cast<const char*>(found));
-    for (const char* object : {"familylang", "stylelang", "fullnamelang"}) {
-        if (!absent(object)) continue;
-        FcPatternAddString(pattern, object, reinterpret_cast<const FcChar8*>(namelang.c_str()));
-        FcPatternAddString(pattern, object, reinterpret_cast<const FcChar8*>("en-us"));
+    if (FcPatternGetString(pattern, "namelang", 0, &found) == FcResultMatch) {
+        const std::string namelang(reinterpret_cast<const char*>(found));
+        for (const char* object : {"familylang", "stylelang", "fullnamelang"}) {
+            if (!absent(object)) continue;
+            FcPatternAddString(pattern, object, reinterpret_cast<const FcChar8*>(namelang.c_str()));
+            FcPatternAddString(pattern, object, reinterpret_cast<const FcChar8*>("en-us"));
+        }
     }
+    if (absent("order")) FcPatternAddInteger(pattern, "order", 0);
 }
 
 int APS5_VABI FcPatternAddLangSet() {
