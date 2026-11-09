@@ -4907,9 +4907,21 @@ DescriptorCache::SetAllocation DescriptorCache::Allocate(VkDescriptorSetLayout l
     return {set, pool, chain.size() - 1, updateAfterBind, VK_NULL_HANDLE, {}, variableCount, {}};
 }
 
+namespace {
+std::atomic<std::uint64_t>& rewrittenSets() {
+    static std::atomic<std::uint64_t> sets{0};
+    return sets;
+}
+}
+
+std::uint64_t DescriptorCache::RewrittenSets() {
+    return rewrittenSets().load(std::memory_order_relaxed);
+}
+
 DescriptorCache::SetAllocation DescriptorCache::AllocateRewritten(VkDescriptorSetLayout layout, std::span<const VkDescriptorPoolSize> sizes, bool updateAfterBind, std::optional<std::uint32_t> variableCount) {
     {
         std::lock_guard lock(mutex);
+        rewrittenSets().store(rewrittenSets().load(std::memory_order_relaxed) + 1u, std::memory_order_relaxed);
         if (const auto found = recycled.find({layout, variableCount.value_or(0u)}); found != recycled.end() && !found->second.empty()) {
             const auto allocation = found->second.back();
             found->second.pop_back();
@@ -6637,6 +6649,28 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
 }
 
 void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord, std::span<const std::pair<std::size_t, VkDeviceAddressRangeEXT>> inPlace) const {
+    if (!heapStage) writeRewrittenSets(result, selected, faultRecord);
+    if (addressedBuffers) {
+        std::vector<VkDeviceAddressRangeEXT> overrides(allocations.size(), VkDeviceAddressRangeEXT{0, 0});
+        bool overridden = false;
+        for (std::size_t index = 0; index < selected.size(); ++index) {
+            const auto& snapshot = result.snapshots[index];
+            overrides[selected[index]] = {snapshot.buffer->DeviceAddress() + snapshot.offset, snapshot.bytes};
+        }
+        for (const auto& [index, range] : inPlace) overrides[index] = range;
+        for (const auto& binding : bindings) {
+            if (!binding.addressed) continue;
+            for (const auto allocation : binding.allocations) overridden = overridden || overrides[allocation].address != 0;
+        }
+        if (overridden) {
+            result.heapOffsets = heapOffsets;
+            result.addressOffsets = true;
+            result.addressOverrides = std::move(overrides);
+        }
+    }
+}
+
+void ShaderResources::writeRewrittenSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord) const {
     Require(context.descriptorCache != nullptr, "draw snapshots require a descriptor cache");
     std::array<bool, 2> described{};
     thread_local std::array<std::vector<VkDescriptorPoolSize>, 2>* countsSlot = nullptr;
@@ -6699,24 +6733,6 @@ void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::s
         }
     }
     Require(nextWrite == writes.end(), "draw snapshot writes disagree with their descriptor bindings");
-    if (addressedBuffers) {
-        std::vector<VkDeviceAddressRangeEXT> overrides(allocations.size(), VkDeviceAddressRangeEXT{0, 0});
-        bool overridden = false;
-        for (std::size_t index = 0; index < selected.size(); ++index) {
-            const auto& snapshot = result.snapshots[index];
-            overrides[selected[index]] = {snapshot.buffer->DeviceAddress() + snapshot.offset, snapshot.bytes};
-        }
-        for (const auto& [index, range] : inPlace) overrides[index] = range;
-        for (const auto& binding : bindings) {
-            if (!binding.addressed) continue;
-            for (const auto allocation : binding.allocations) overridden = overridden || overrides[allocation].address != 0;
-        }
-        if (overridden) {
-            result.heapOffsets = heapOffsets;
-            result.addressOffsets = true;
-            result.addressOverrides = std::move(overrides);
-        }
-    }
     context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
 

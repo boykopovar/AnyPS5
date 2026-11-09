@@ -130,6 +130,7 @@ public:
         std::uint64_t reusedSets = 0;
     };
     Stats Counters() const;
+    static std::uint64_t RewrittenSets();
 
 private:
     Context context;
@@ -776,6 +777,7 @@ private:
     std::vector<FaultDescriptor> faultDescriptors;
     void prepareFaultSlot() const;
     void writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord, std::span<const std::pair<std::size_t, VkDeviceAddressRangeEXT>> inPlace = {}) const;
+    void writeRewrittenSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord) const;
     std::shared_ptr<std::atomic<bool>> ownRecordBusy = std::make_shared<std::atomic<bool>>(false);
     mutable std::vector<VkDescriptorPoolSize> drawPoolSizes;
     // Guest buffer elements bound read-only: each use of this object skips that many pending-write
