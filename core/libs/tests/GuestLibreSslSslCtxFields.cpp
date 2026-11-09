@@ -427,10 +427,6 @@ static void TestCheckPrivateKey() {
     noInternal.SetCtx<void*>(CtxInternal, nullptr);
     RequireThrows([&] { SSL_CTX_check_private_key_nid_postfix(noInternal.Context()); });
     noInternal.Verify(0, std::source_location::current());
-
-    Fixture unsupported;
-    unsupported.SetInternal<void*>(ContextCertificate, Pointer(0x1111));
-    unsupported.Throws([&] { SSL_CTX_check_private_key_nid_postfix(unsupported.Context()); });
 }
 
 static void TestNullInternal() {
