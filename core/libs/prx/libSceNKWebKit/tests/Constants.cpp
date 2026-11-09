@@ -112,7 +112,13 @@ int main() {
     Require(_ZN7WebCore20ISOOriginalFormatBox11boxTypeNameEv() == static_cast<int>(0x66726d61u));
     Require(_ZN7WebCore21ISOTrackEncryptionBox11boxTypeNameEv() == static_cast<int>(0x74656e63u));
     Require(_ZN7WebCore21PlatformKeyboardEvent20currentCapsLockStateEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient12dispatchShowEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient13didFinishLoadEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient16restoreViewStateEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient17cancelPolicyCheckEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient17dispatchWillCloseEv() == 0);
     Require(_ZN7WebCore22EmptyFrameLoaderClient17objectContentTypeERKN3WTF3URLERKNS1_6StringE() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient17setCopiesOnScrollEv() == 0);
     Require(_ZN7WebCore22EmptyFrameLoaderClient29hasFrameSpecificStorageAccessEv() == 0);
     Require(_ZN7WebCore22EmptyFrameLoaderClient38dispatchDidLoadResourceFromMemoryCacheEPNS_14DocumentLoaderERKNS_15ResourceRequestERKNS_16ResourceResponseEi() == 0);
     Require(_ZN7WebCore23ISOSchemeInformationBox11boxTypeNameEv() == static_cast<int>(0x73636869u));
