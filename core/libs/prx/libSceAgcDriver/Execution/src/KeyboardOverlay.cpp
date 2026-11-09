@@ -553,6 +553,35 @@ OverlayLayout LayOutDialog(const ModalDialogView& view, VkExtent2D extent) {
     return layout;
 }
 
+OverlayLayout LayOutHostMenu(const HostMenuView& view, VkExtent2D extent) {
+    Graphics::Require(extent.width != 0 && extent.height != 0, "the host menu needs a destination");
+    Graphics::Require(!view.lines.empty() && view.cursor < view.lines.size(), "the host menu needs lines and a cursor on one of them");
+    std::size_t columns = 0;
+    for (const auto& text : view.lines) columns = std::max(columns, text.size());
+    const auto width = lineWidth(columns) + 2 * DialogMetrics::Padding;
+    const auto height = 2 * DialogMetrics::Padding + static_cast<std::int32_t>(view.lines.size()) * DialogMetrics::LineHeight;
+    auto scale = std::max<std::int32_t>(1, static_cast<std::int32_t>(extent.height / KeyboardMetrics::LinesPerScale));
+    while (scale > 1 && (static_cast<std::int64_t>(width) * scale > extent.width || static_cast<std::int64_t>(height) * scale > extent.height)) --scale;
+    OverlayLayout layout;
+    layout.scale = scale;
+    const auto left = std::max(0, (static_cast<std::int32_t>(extent.width) - width * scale) / 2);
+    const auto top = std::max(0, (static_cast<std::int32_t>(extent.height) - height * scale) / 2);
+    layout.bounds = {left, top, width * scale, height * scale, static_cast<std::uint32_t>(OverlayColor::Panel)};
+    layout.rects.push_back(layout.bounds);
+    for (std::size_t index = 0; index < view.lines.size(); ++index) {
+        const auto y = DialogMetrics::Padding + static_cast<std::int32_t>(index) * DialogMetrics::LineHeight;
+        if (index == view.cursor) {
+            layout.rects.push_back({left + KeyboardMetrics::Border * scale, top + (y - 1) * scale, (width - 2 * KeyboardMetrics::Border) * scale, DialogMetrics::LineHeight * scale, static_cast<std::uint32_t>(OverlayColor::Accent)});
+            layout.rects.push_back({left + 2 * KeyboardMetrics::Border * scale, top + y * scale, (width - 4 * KeyboardMetrics::Border) * scale, (DialogMetrics::LineHeight - 2) * scale, static_cast<std::uint32_t>(OverlayColor::Key)});
+        }
+        for (std::size_t column = 0; column < view.lines[index].size(); ++column) {
+            const auto x = DialogMetrics::Padding + static_cast<std::int32_t>(column) * KeyboardMetrics::Advance;
+            glyph(layout, KeyboardGlyph(view.lines[index][column]), left + x * scale, top + y * scale, scale, OverlayColor::Text);
+        }
+    }
+    return layout;
+}
+
 std::optional<ModalDialogView> SystemDialogView() {
     std::lock_guard lock(systemOverlayMutex);
     return systemDialog;
