@@ -18,6 +18,7 @@ constexpr std::int32_t EvpPkeyUnknown = 9999;
 constexpr int EvpRExpectingAnRsaKey = 127;
 constexpr int EvpRExpectingADhKey = 128;
 constexpr int EvpRExpectingADsaKey = 129;
+constexpr int EvpRExpectingAnEcKey = 142;
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -179,6 +180,27 @@ void RunTests() {
     Require(errno == 801);
     CheckError(ERR_peek_last_error_nid_postfix(), EvpRExpectingADhKey);
 
+    LibreSsl3EvpPkey* ecMismatches[] = {&rsaKey, &rsaPssKey, &dsaKey, &dhKey, &unknownKey};
+    for (auto* mismatchKey : ecMismatches) {
+        const auto originalType = mismatchKey->type;
+        const auto* originalInner = mismatchKey->key;
+        errno = 901;
+        Require(EVP_PKEY_get0_EC_KEY_nid_postfix(mismatchKey) == nullptr);
+        Require(errno == 901);
+        Require(mismatchKey->references == 1);
+        Require(mismatchKey->type == originalType);
+        Require(mismatchKey->key == originalInner);
+        CheckError(ERR_peek_last_error_nid_postfix(), EvpRExpectingAnEcKey);
+    }
+
+    errno = 902;
+    Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&ecKey) == &ec);
+    Require(errno == 902);
+    CheckError(ERR_peek_last_error_nid_postfix(), EvpRExpectingAnEcKey);
+    Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&emptyEc) == nullptr);
+    Require(errno == 902);
+    CheckError(ERR_peek_last_error_nid_postfix(), EvpRExpectingAnEcKey);
+
     const auto mainThreadLast = ERR_peek_last_error_nid_postfix();
     std::thread worker([&]() {
         Require(ERR_peek_last_error_nid_postfix() == 0);
@@ -195,11 +217,13 @@ void RunTests() {
     Require(EVP_PKEY_get0_DSA_nid_postfix(&rsaKey) == nullptr);
     Require(EVP_PKEY_get0_RSA_nid_postfix(&rsaKey) == &rsa);
     Require(EVP_PKEY_get0_DSA_nid_postfix(&emptyDsa) == nullptr);
+    Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&dhKey) == nullptr);
     CheckError(ERR_peek_error_nid_postfix(), EvpRExpectingAnRsaKey);
-    CheckError(ERR_peek_last_error_nid_postfix(), EvpRExpectingADsaKey);
+    CheckError(ERR_peek_last_error_nid_postfix(), EvpRExpectingAnEcKey);
     CheckError(ERR_get_error_nid_postfix(), EvpRExpectingAnRsaKey);
     CheckError(ERR_get_error_nid_postfix(), EvpRExpectingADhKey);
     CheckError(ERR_get_error_nid_postfix(), EvpRExpectingADsaKey);
+    CheckError(ERR_get_error_nid_postfix(), EvpRExpectingAnEcKey);
     Require(ERR_get_error_nid_postfix() == 0);
 }
 
