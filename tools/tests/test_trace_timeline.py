@@ -55,6 +55,10 @@ class TimelineTests(unittest.TestCase):
         self.assertAlmostEqual(first["w"], 500.0)
         self.assertEqual(tiny["w"], 1.0)
 
+    def test_layout_orders_rows_by_thread_name(self):
+        laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000)
+        self.assertEqual(laid["threads"], ["presenter", "queue worker"])
+
 
 
 def trace_timeline_slices(items):
