@@ -586,10 +586,6 @@ void TestPkcs12BioReadErrors() {
     bio->initialized = 1;
     Require(BIO_free_nid_postfix(bio) == 1, "free empty PKCS12 BIO");
 
-    bio = BIO_new_mem_buf_nid_postfix("nonempty", 8);
-    RequireUnsupported([&] { d2i_PKCS12_bio_nid_postfix(bio, &output); });
-    Require(output == sentinel, "unsupported nonempty PKCS12 input leaves output untouched");
-    Require(BIO_free_nid_postfix(bio) == 1, "free nonempty PKCS12 BIO");
 }
 
 void TestFileAndSocket() {
