@@ -46,6 +46,15 @@ class TimelineTests(unittest.TestCase):
         slices = trace_timeline.window_slices(trace_of(self.items), 0, 10000, threads=["presenter"])
         self.assertEqual([slice_["name"] for slice_ in slices], ["Driver.Present"])
 
+    def test_layout_places_bars_and_gives_tiny_slices_a_pixel(self):
+        items = [complete(1, "Driver.Packet", 0, 5000), complete(1, "Tiny", 6000, 1)]
+        laid = trace_timeline.layout(trace_timeline_slices(items), 0, 10000, 1000)
+        first = next(bar for bar in laid["bars"] if bar["name"] == "Driver.Packet")
+        tiny = next(bar for bar in laid["bars"] if bar["name"] == "Tiny")
+        self.assertAlmostEqual(first["x"], trace_timeline.LABEL_WIDTH)
+        self.assertAlmostEqual(first["w"], 500.0)
+        self.assertEqual(tiny["w"], 1.0)
+
 
 
 def trace_timeline_slices(items):
