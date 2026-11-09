@@ -21,6 +21,7 @@ endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_freetype_ot_glyph_cbox_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtGlyphCBox.cpp)
+    target_include_directories(guest_freetype_ot_glyph_cbox_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_ot_glyph_cbox_tests PRIVATE libSceFreeTypeOt freetype)
     if(WIN32)
         target_link_libraries(guest_freetype_ot_glyph_cbox_tests PRIVATE libc)
