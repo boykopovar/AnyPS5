@@ -968,10 +968,15 @@ int APS5_VABI sysarch(int operation, void* parameters) {
     constexpr int getFsBase = 128;
     constexpr int getGsBase = 130;
     constexpr int setGsBase = 131;
+    constexpr std::array<int, 2> xfpuStateOperations{11, 132};
     constexpr std::uint64_t userAddressEnd = 0x0000800000000000ull;
     constexpr std::array<int, 14> definedOperations{0, 1, 3, 4, 7, 8, 9, 10, 11, 128, 129, 130, 131, 132};
     if (std::find(definedOperations.begin(), definedOperations.end(), operation) == definedOperations.end()) {
         *__error_nid_postfix() = guestInvalid;
+        return -1;
+    }
+    if (parameters == nullptr && std::find(xfpuStateOperations.begin(), xfpuStateOperations.end(), operation) != xfpuStateOperations.end()) {
+        *__error_nid_postfix() = guestFault;
         return -1;
     }
     const bool i386 = operation == i386GetFsBase || operation == i386GetGsBase;
