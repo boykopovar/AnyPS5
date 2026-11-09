@@ -12,11 +12,12 @@
 
 - [sceNpSignalingGetMemoryInfo](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - a call that passes the checks throws: the pool statistics are not modelled. Initialization and a null output (`INVALID_ARGUMENT`) are checked as in [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/98ef621decb6a35dba62e367a8a89186f5d49dcc/src/core/libraries/np/np_signaling/np_signaling.cpp#L793-L804), whose returned sizes are not reproduced. The three 64-bit fields follow its [memory-info layout](https://github.com/shadps4-emu/shadPS4/blob/98ef621decb6a35dba62e367a8a89186f5d49dcc/src/core/libraries/np/np_types2.h#L1102-L1107); no PS5 layout or behavior measurement was made.
 
+- [sceNpSignalingGetPeerNetInfo](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - a request that passes the checks throws: no peer information request is staged offline. Initialization, null pointers, an invalid NpId (`INVALID_ARGUMENT`) and then the context (`CTX_NOT_FOUND`) are checked in [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/98ef621decb6a35dba62e367a8a89186f5d49dcc/src/core/libraries/np/np_signaling/np_signaling.cpp#L688-L717)'s order. Not measured on a PS5.
+
 ### Additional callable export inventory
 
-- [Additional callable exports](../../../core/libs/prx/libSceNpSignaling/Export.cpp) - 2 entries have import-resolution declarations only. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime support, implemented-function increase or title unblock is claimed.
+- [Additional callable exports](../../../core/libs/prx/libSceNpSignaling/Export.cpp) - 1 entry has import-resolution declarations only. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime support, implemented-function increase or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
 | `sceNpSignalingGetLocalNetInfo` | `U8AQMlOFBc8` |
-| `sceNpSignalingGetPeerNetInfo` | `zFgFHId7vAE` |

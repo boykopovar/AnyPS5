@@ -5,6 +5,5 @@
 extern "C" {
 
 int APS5_VABI sceNpSignalingGetLocalNetInfo();
-int APS5_VABI sceNpSignalingGetPeerNetInfo();
 
 }
