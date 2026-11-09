@@ -473,19 +473,14 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
     std::vector<std::pair<std::uint64_t, std::uint64_t>> blocks;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
     for (auto& span : spans) {
-        auto since = std::numeric_limits<std::uint64_t>::max();
+        if (const auto since = GuestMemory::CollectWrittenBlocks(span.address, static_cast<std::size_t>(span.bytes), span.since, written); since != 0) span.since = since;
+        blocks.insert(blocks.end(), written.begin(), written.end());
         for (std::uint64_t offset = 0; offset < span.bytes;) {
             const auto at = span.address + offset;
             const auto bytes = static_cast<std::size_t>(std::min<std::uint64_t>(FrameCaptureWriter::BlockBytes, span.bytes - offset));
-            if (GuestMemory::Watched(at, bytes)) {
-                since = std::min(since, GuestMemory::CollectWrittenBlocks(at, bytes, span.since, written));
-                blocks.insert(blocks.end(), written.begin(), written.end());
-            } else {
-                blocks.emplace_back(at, at + bytes);
-            }
+            if (!GuestMemory::Watched(at, bytes)) blocks.emplace_back(at, at + bytes);
             offset += bytes;
         }
-        if (since != std::numeric_limits<std::uint64_t>::max()) span.since = since;
     }
     const auto group = deltaGroups + 1;
     bool any = false;
