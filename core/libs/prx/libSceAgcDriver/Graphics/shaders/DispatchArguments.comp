@@ -1,0 +1,39 @@
+#version 450
+#extension GL_EXT_buffer_reference : require
+
+layout(local_size_x = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Words { uint words[]; };
+layout(push_constant) uniform Parameters {
+    Words source;
+    Words arguments;
+    uint maxX;
+    uint maxY;
+    uint maxZ;
+    uint threadDimensions;
+    uint groupX;
+    uint groupY;
+    uint groupZ;
+    uint unused;
+} parameters;
+
+uint groups(uint threads, uint group) {
+    return threads / group + (threads % group != 0u ? 1u : 0u);
+}
+
+void main() {
+    uint x = parameters.source.words[0];
+    uint y = parameters.source.words[1];
+    uint z = parameters.source.words[2];
+    if (parameters.threadDimensions != 0u) {
+        parameters.arguments.words[3] = x;
+        parameters.arguments.words[4] = y;
+        parameters.arguments.words[5] = z;
+        x = groups(x, parameters.groupX);
+        y = groups(y, parameters.groupY);
+        z = groups(z, parameters.groupZ);
+    }
+    bool valid = x <= parameters.maxX && y <= parameters.maxY && z <= parameters.maxZ;
+    parameters.arguments.words[0] = valid ? x : 0u;
+    parameters.arguments.words[1] = valid ? y : 0u;
+    parameters.arguments.words[2] = valid ? z : 0u;
+}

@@ -1,0 +1,15 @@
+add_library(libSceProprietaryVoiceChatHelperPrx SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceProprietaryVoiceChatHelperPrx PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceProprietaryVoiceChatHelperPrx)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_proprietary_voice_chat_helper_tests ${LIBS_INCLUDE_DIR}/tests/GuestProprietaryVoiceChatHelper.cpp)
+    target_include_directories(guest_proprietary_voice_chat_helper_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_proprietary_voice_chat_helper_tests PRIVATE libSceProprietaryVoiceChatHelperPrx libc)
+    configure_windows_unwind(guest_proprietary_voice_chat_helper_tests)
+    add_test(NAME guest_proprietary_voice_chat_helper COMMAND guest_proprietary_voice_chat_helper_tests)
+    if(WIN32)
+        set_tests_properties(guest_proprietary_voice_chat_helper PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceProprietaryVoiceChatHelperPrx>")
+    endif()
+endif()

@@ -1,0 +1,43 @@
+
+name: Labels
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/labels.yml']
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - run: |
+          existing=$(gh label list --limit 1000 --json name --jq '.[].name')
+          label() { grep -qixF -- "$1" <<< "$existing" || gh label create "$1" --color "$2" --description "$3"; }
+          force_label() { gh label create "$1" --color "$2" --description "$3" --force; }
+
+          force_label 'needs rebase' b60205 'Conflicts with main, rebase needed'
+          force_label 'open PR limit' d93f0b 'Closed over the open PR limit: 1 without merged PRs, 20 with at least 1, none from 20'
+          force_label ci            5319e7 '.github'
+          force_label agc           1d76db 'libSceAgc*'
+          force_label shader        1d76db 'core/shader'
+          force_label 'unblocks title' 0e8a16 'Names a title ID on the Unblocks line'
+          force_label perf          fef2c0 'Performance change'
+          force_label 'perf numbers missing' e99695 'perf pull request without a before and after summary line'
+          force_label 'review queue' 1d76db 'Next in the maintainer review queue: checks pass, no open change request, no conflict'
+
+          label relinker  5319e7 'core/relinker'
+          label libc      fbca04 'libc'
+          label libkernel d93f0b 'libkernel'
+          label prx       c5def5 'Other PRX libraries'
+          label build     bfd4f2 'CMake, submodules, 3rdparty'
+          label docs      0075ca 'Documentation'
+          label 'fix error' d73a4a 'Closes an issue (Fixes #N)'
+          label stale     ededed 'Conflicting with main and no activity for 7 days'

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Game bring-up
+    url: https://github.com/boykopovar/AnyPS5/discussions/categories/game-bring-up
+    about: Progress of one title, one thread per title ID
+  - name: Question
+    url: https://github.com/boykopovar/AnyPS5/discussions/categories/q-a
+    about: Building, converting and running

@@ -1,0 +1,85 @@
+cmake_minimum_required(VERSION 3.20)
+if(NOT DEFINED REPLAY OR NOT DEFINED OUTPUT_ROOT)
+    message(FATAL_ERROR "Missing replay tool or output root")
+endif()
+string(RANDOM LENGTH 12 ALPHABET 0123456789abcdef runId)
+set(runDirectory "${OUTPUT_ROOT}/compute-inspect-${runId}")
+file(MAKE_DIRECTORY "${runDirectory}")
+if(NOT DEFINED ENV{ANYPS5_REQUIRE_VULKAN} AND DEFINED VULKAN_PROBE)
+    execute_process(
+            COMMAND "${CMAKE_COMMAND}" -E env "APS5_PIPELINE_STATS=0" "${VULKAN_PROBE}"
+            WORKING_DIRECTORY "${runDirectory}"
+            RESULT_VARIABLE probeResult OUTPUT_VARIABLE probeOutput ERROR_VARIABLE probeError TIMEOUT 20
+    )
+    file(WRITE "${runDirectory}/vulkan-probe.log" "${probeOutput}\n${probeError}")
+    if(probeResult STREQUAL "77")
+        message(STATUS "compute pipeline inspection: skipped, no usable Vulkan device")
+        return()
+    endif()
+endif()
+set(report "${runDirectory}/inspection.json")
+execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env "APS5_PIPELINE_STATS=1" "${REPLAY}" --fixture --inspect --output "${report}"
+        WORKING_DIRECTORY "${runDirectory}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 20
+)
+file(WRITE "${runDirectory}/inspection.log" "${output}\n${error}")
+message("${error}")
+if(error MATCHES "APS5_PIPELINE_STATS requires VK_KHR_pipeline_executable_properties")
+    message(STATUS "compute pipeline inspection: skipped, the device reports no executable statistics")
+    return()
+endif()
+if(NOT result STREQUAL "0" OR NOT EXISTS "${report}")
+    message(FATAL_ERROR "Inspection failed: ${result}\n${output}\n${error}")
+endif()
+file(READ "${report}" inspection)
+string(JSON mode GET "${inspection}" mode)
+string(JSON statistics GET "${inspection}" pipeline_statistics)
+string(JSON timingType TYPE "${inspection}" milliseconds)
+string(JSON flags GET "${inspection}" replay_pipeline_flags)
+string(JSON dispatches GET "${inspection}" dispatch_count)
+math(EXPR statisticsFlag "${flags} & 64")
+if(NOT mode STREQUAL "inspection" OR NOT statistics OR NOT timingType STREQUAL "NULL" OR statisticsFlag EQUAL 0 OR NOT dispatches EQUAL 0)
+    message(FATAL_ERROR "Inspection report mixes counters and benchmark data: ${inspection}")
+endif()
+if(NOT error MATCHES "\\[pipeline-stats\\] executable=0 stages=")
+    message(FATAL_ERROR "Inspection did not query an executable: ${error}")
+endif()
+set(normalReport "${runDirectory}/normal.json")
+execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env "APS5_PIPELINE_STATS=0" "${REPLAY}" --fixture --output "${normalReport}"
+        WORKING_DIRECTORY "${runDirectory}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 20
+)
+file(WRITE "${runDirectory}/normal.log" "${output}\n${error}")
+message("${error}")
+if(NOT result STREQUAL "0" OR NOT EXISTS "${normalReport}")
+    message(FATAL_ERROR "Normal replay failed: ${result}\n${output}\n${error}")
+endif()
+file(READ "${normalReport}" normal)
+string(JSON mode GET "${normal}" mode)
+string(JSON statistics GET "${normal}" pipeline_statistics)
+string(JSON timingType TYPE "${normal}" milliseconds)
+string(JSON originalIdentity GET "${inspection}" capture_identity)
+string(JSON normalIdentity GET "${normal}" capture_identity)
+string(JSON originalFlags GET "${inspection}" pipeline_flags)
+string(JSON normalFlags GET "${normal}" pipeline_flags)
+if(NOT mode STREQUAL "benchmark" OR statistics OR NOT timingType STREQUAL "OBJECT" OR NOT originalIdentity STREQUAL normalIdentity OR NOT originalFlags EQUAL normalFlags)
+    message(FATAL_ERROR "Replay mode changed the input identity or benchmark report")
+endif()
+function(expectFailure name statistics expected)
+    execute_process(
+            COMMAND "${CMAKE_COMMAND}" -E env "APS5_PIPELINE_STATS=${statistics}" "${REPLAY}" ${ARGN}
+            WORKING_DIRECTORY "${runDirectory}"
+            RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 10
+    )
+    file(WRITE "${runDirectory}/${name}.log" "${output}\n${error}")
+    if(result STREQUAL "0" OR NOT error MATCHES "${expected}")
+        message(FATAL_ERROR "${name} was not rejected explicitly: ${result}\n${output}\n${error}")
+    endif()
+endfunction()
+expectFailure(benchmark-guard 1 "unset APS5_PIPELINE_STATS before benchmarking" --fixture)
+expectFailure(missing-statistics 0 "requires APS5_PIPELINE_STATS=1" --fixture --inspect)
+expectFailure(repeated-mode 1 "unknown or repeated argument" --fixture --inspect --inspect)
+expectFailure(fixture-options 1 "cannot be combined with replay options" --write-fixture "${runDirectory}/fixture" --inspect)
+message(STATUS "compute pipeline inspection: counters queried, input identity retained, timings separated and benchmark guards preserved")

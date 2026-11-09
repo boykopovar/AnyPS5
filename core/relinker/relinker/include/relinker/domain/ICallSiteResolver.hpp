@@ -1,0 +1,24 @@
+#ifndef RELINKER_DOMAIN_ICALLSITERESOLVER_HPP
+#define RELINKER_DOMAIN_ICALLSITERESOLVER_HPP
+
+#include <relinker/domain/Types.hpp>
+#include <vector>
+
+namespace Relinker {
+
+class ICallSiteResolver {
+public:
+    virtual ~ICallSiteResolver() = default;
+
+    virtual std::vector<FileByteOffset> ResolveCallSites(
+        const std::vector<std::uint8_t>& textSection,
+        FileByteOffset textSectionVAddr,
+        VirtualAddress targetGotOrPltAddress,
+        ByteCount targetGotOrPltSize,
+        const std::vector<CodeRange>& unwindRanges = {}
+    ) = 0;
+};
+
+}
+
+#endif

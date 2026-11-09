@@ -1,0 +1,65 @@
+#ifndef CORE_LIBS_PRX_LIBC_INCLUDE_EXCEPTIONS_RUNTIME_HPP
+#define CORE_LIBS_PRX_LIBC_INCLUDE_EXCEPTIONS_RUNTIME_HPP
+
+#include <atomic>
+#include <typeinfo>
+
+#include "prx/libc/include/exceptions/Unwind.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/specifics/itanium/CxxAbi.hpp"
+
+namespace LibcException {
+struct Header {
+    std::type_info* type {};
+    void (*destructor)(void*) {};
+    void (*unexpected)() {};
+    void (*terminate)() {};
+    Header* next {};
+    int handlers {};
+    int selector {};
+    std::uint32_t _pad {};
+    std::uint32_t _pad2 {};
+    const unsigned char* action {};
+    const unsigned char* lsda {};
+    std::uintptr_t landing {};
+    void* adjusted {};
+    _Unwind_Exception unwind {};
+};
+struct alignas(16) Allocation {
+    std::atomic<std::size_t> references {1};
+    Header header {};
+};
+struct Globals { Header* caught {}; unsigned uncaught {}; };
+inline thread_local Globals globals;
+inline constexpr std::uint64_t PrimaryClass = 0x414e5950432b2b00;
+inline constexpr std::uint64_t DependentClass = PrimaryClass | 1;
+inline constexpr std::uint64_t GnuClass = 0x474e5543432b2b00;
+
+inline Header* FromUnwind(_Unwind_Exception* e) {
+    return reinterpret_cast<Header*>(reinterpret_cast<unsigned char*>(e) - offsetof(Header, unwind));
+}
+inline Header* FromObject(void* p) { return static_cast<Header*>(p) - 1; }
+inline Allocation* AllocationOf(Header* header) {
+    return reinterpret_cast<Allocation*>(reinterpret_cast<unsigned char*>(header) - offsetof(Allocation, header));
+}
+inline bool Native(std::uint64_t value) { return (value & ~std::uint64_t(1)) == PrimaryClass; }
+inline bool Gnu(std::uint64_t value) { return (value & ~std::uint64_t(1)) == GnuClass; }
+inline Header* Primary(Header* header) {
+    return header->unwind.exception_class == DependentClass ? FromObject(reinterpret_cast<void*>(header->type)) : header;
+}
+const char* Kind(const std::type_info*);
+bool Match(const std::type_info* caught, const std::type_info* thrown, void*& object);
+void Release(void*);
+[[noreturn]] void Terminate();
+}
+
+extern "C" {
+void* APS5_VABI __cxa_allocate_exception_nid_postfix(std::size_t);
+void APS5_VABI __cxa_free_exception_nid_postfix(void*);
+[[noreturn]] void APS5_VABI __cxa_throw_nid_postfix(void*, std::type_info*, void (*)(void*));
+[[noreturn]] void APS5_VABI __cxa_rethrow_nid_postfix();
+void* APS5_VABI __cxa_begin_catch_nid_postfix(void*);
+void APS5_VABI __cxa_end_catch_nid_postfix();
+}
+
+#endif

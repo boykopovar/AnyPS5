@@ -1,0 +1,68 @@
+foreach(required IN ITEMS FIXTURE REPLAY OUTPUT_ROOT)
+    if(NOT DEFINED ${required})
+        message(FATAL_ERROR "Missing ${required}")
+    endif()
+endforeach()
+string(RANDOM LENGTH 16 ALPHABET 0123456789abcdef runId)
+set(runDirectory "${OUTPUT_ROOT}/compute-capture-${runId}")
+set(captureDirectory "${runDirectory}/captures")
+file(MAKE_DIRECTORY "${runDirectory}")
+execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env "ANYPS5_NO_SHADER_CACHE=1" "APS5_PIPELINE_STATS=0" "APS5_DUMP_COMPUTE_PIPELINES=" "APS5_DUMP_COMPUTE_MIN_WORDS=0" "${FIXTURE}"
+        WORKING_DIRECTORY "${runDirectory}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 20
+)
+file(WRITE "${runDirectory}/normal.log" "${output}\n${error}")
+if(result STREQUAL "77" AND NOT DEFINED ENV{ANYPS5_REQUIRE_VULKAN})
+    message(STATUS "compute pipeline capture run: skipped, no usable Vulkan device")
+    file(REMOVE_RECURSE "${runDirectory}")
+    return()
+endif()
+if(NOT result STREQUAL "0" OR NOT output MATCHES "branch past endpgm tests passed")
+    message(FATAL_ERROR "Normal compute fixture failed: ${result}\n${output}\n${error}")
+endif()
+execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env "ANYPS5_REQUIRE_VULKAN=1" "ANYPS5_NO_SHADER_CACHE=1" "APS5_PIPELINE_STATS=0" "APS5_DUMP_COMPUTE_PIPELINES=${captureDirectory}" "APS5_DUMP_COMPUTE_MIN_WORDS=0" "${FIXTURE}"
+        WORKING_DIRECTORY "${runDirectory}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 20
+)
+file(WRITE "${runDirectory}/capture.log" "${output}\n${error}")
+if(NOT result STREQUAL "0" OR NOT output MATCHES "branch past endpgm tests passed")
+    message(FATAL_ERROR "Captured compute fixture failed: ${result}\n${output}\n${error}")
+endif()
+file(GLOB captures "${captureDirectory}/compute-*/capture.aps5cp")
+list(LENGTH captures count)
+if(count LESS 1 OR count GREATER 12)
+    message(FATAL_ERROR "Expected 1 to 12 compute captures, found ${count}")
+endif()
+foreach(capture IN LISTS captures)
+    get_filename_component(recordDirectory "${capture}" DIRECTORY)
+    get_filename_component(recordName "${recordDirectory}" NAME)
+    string(REPLACE "compute-" "" identity "${recordName}")
+    set(report "${runDirectory}/${recordName}.json")
+    execute_process(
+            COMMAND "${CMAKE_COMMAND}" -E env "APS5_PIPELINE_STATS=0" "APS5_DUMP_COMPUTE_PIPELINES=" "${REPLAY}" "${capture}" --output "${report}"
+            WORKING_DIRECTORY "${runDirectory}"
+            RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 20
+    )
+    file(WRITE "${runDirectory}/${recordName}.log" "${output}\n${error}")
+    if(NOT result STREQUAL "0")
+        message(FATAL_ERROR "Captured pipeline replay failed: ${result}\n${output}\n${error}")
+    endif()
+    file(READ "${report}" reportJson)
+    string(JSON reportIdentity GET "${reportJson}" capture_identity)
+    string(JSON words GET "${reportJson}" spirv_words)
+    string(JSON sets GET "${reportJson}" descriptor_sets)
+    string(JSON ranges GET "${reportJson}" push_constant_ranges)
+    string(JSON dispatches GET "${reportJson}" dispatch_count)
+    string(JSON policy GET "${reportJson}" application_cache_policy)
+    string(JSON capturedDevice GET "${reportJson}" captured_device device_id)
+    string(JSON replayDevice GET "${reportJson}" replay_device device_id)
+    string(JSON capturedDriver GET "${reportJson}" captured_device driver_version_raw)
+    string(JSON replayDriver GET "${reportJson}" replay_device driver_version_raw)
+    if(NOT reportIdentity STREQUAL identity OR words LESS 54 OR sets LESS 1 OR ranges LESS 1 OR NOT dispatches EQUAL 0 OR NOT policy STREQUAL "fresh" OR NOT capturedDevice STREQUAL replayDevice OR NOT capturedDriver STREQUAL replayDriver)
+        message(FATAL_ERROR "Captured pipeline metadata mismatch: ${reportJson}")
+    endif()
+endforeach()
+message(STATUS "Normal and captured compute output verified; ${count} captured pipelines replayed without dispatch")
+file(REMOVE_RECURSE "${runDirectory}")

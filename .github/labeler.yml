@@ -1,0 +1,45 @@
+relinker:
+  - changed-files:
+      - any-glob-to-any-file: 'core/relinker/**'
+
+shader:
+  - changed-files:
+      - any-glob-to-any-file: 'core/shader/**'
+
+agc:
+  - changed-files:
+      - any-glob-to-any-file: 'core/libs/prx/libSceAgc*/**'
+
+libc:
+  - changed-files:
+      - any-glob-to-any-file: 'core/libs/prx/libc/**'
+
+libkernel:
+  - changed-files:
+      - any-glob-to-any-file: 'core/libs/prx/libkernel/**'
+
+prx:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'core/libs/prx/**'
+          - '!core/libs/prx/libSceAgc*/**'
+          - '!core/libs/prx/libc/**'
+          - '!core/libs/prx/libkernel/**'
+
+build:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/CMakeLists.txt'
+          - '**/*.cmake'
+          - '.gitmodules'
+          - '3rdparty/**'
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'docs/**'
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'

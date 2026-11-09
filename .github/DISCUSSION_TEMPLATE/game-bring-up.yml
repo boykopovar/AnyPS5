@@ -1,0 +1,81 @@
+title: "Game name (PPSA00000)"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One thread per title, for every platform: search this category for the title ID first. If a thread exists, reply there, also when your OS or GPU differs from the one it reports.
+        Name the discussion `Game name (title ID)`, for example `DOOM Shareware (PPSA99666)`, without the platform.
+        Bug reports and implementation work belong in issues and pull requests; link them here as the blocker.
+        Only share material you have the right to distribute.
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Existing thread
+      options:
+        - label: I searched this category for the title ID and no thread exists for this title on any platform.
+          required: true
+  - type: input
+    id: title
+    attributes:
+      label: Title
+      description: Name and title ID from `sce_sys/param.json`.
+      placeholder: DOOM Shareware (PPSA99666)
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        ### First report
+        The fields below describe one run. Other systems and content versions are added to the thread as replies.
+  - type: input
+    id: version
+    attributes:
+      label: Content version tested
+      description: The content version from `sce_sys/param.json`.
+      placeholder: 01.001.001
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: AnyPS5 commit
+      description: The `main` commit that was built, or the release that was used, and any pull requests merged on top.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System tested
+      description: OS, GPU and driver version, and the compiler if you built it yourself.
+      placeholder: Arch Linux, GCC 16.2.1, RTX 5080 (NVIDIA 615.78.08)
+    validations:
+      required: true
+  - type: dropdown
+    id: reached
+    attributes:
+      label: Furthest point
+      options:
+        - Does not convert
+        - Stops before the first frame
+        - Logos or loading screen
+        - Menu
+        - In game
+    validations:
+      required: true
+  - type: textarea
+    id: seen
+    attributes:
+      label: What is shown
+      description: The last screen that was seen, the frame rate there, and what works or is missing (picture, audio, input).
+    validations:
+      required: true
+  - type: textarea
+    id: blocker
+    attributes:
+      label: Current blocker
+      description: The line where it stops, the issue that tracks it, and the open pull requests and local changes the title still needs.
+  - type: textarea
+    id: steps
+    attributes:
+      label: How it was run
+      description: Commands and environment variables, and what the title needed beyond the usage guide.

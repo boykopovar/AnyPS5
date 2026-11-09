@@ -1,0 +1,27 @@
+add_library(libSceRandom SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceRandom PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceRandom)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_random_extent_tests ${LIBS_INCLUDE_DIR}/tests/GuestRandomExtent.cpp)
+    target_include_directories(guest_random_extent_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_random_extent_tests PRIVATE libSceRandom libc)
+    configure_windows_unwind(guest_random_extent_tests)
+    add_test(NAME guest_random_extent COMMAND guest_random_extent_tests)
+    set_tests_properties(guest_random_extent PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_random_extent PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRandom>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_random_tests ${LIBS_INCLUDE_DIR}/tests/GuestRandom.cpp)
+    target_include_directories(guest_random_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_random_tests PRIVATE libSceRandom)
+    add_test(NAME guest_random COMMAND guest_random_tests)
+    if(WIN32)
+        set_tests_properties(guest_random PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRandom>")
+    endif()
+endif()

@@ -1,0 +1,31 @@
+name: Conventions
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conventions-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  conventions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch pull request objects without checking out its code
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git fetch --no-tags origin "$HEAD_SHA"
+      - name: Check conventions with the current base branch script
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 -I tools/check_conventions.py --base HEAD --head "$HEAD_SHA"
