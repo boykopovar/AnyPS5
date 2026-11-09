@@ -169,8 +169,9 @@ bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
     if (drawCache.contains(key)) return true;
     if (!drawKeySightings) drawKeySightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
     bool seen = drawKeySightings->SeenBefore(key);
-    const auto& pending = drawRelocationPending;
-    if (pending.key == key && pending.identity != 0) {
+    const auto pendingOf = drawRelocationsPending.find(key);
+    if (pendingOf != drawRelocationsPending.end() && pendingOf->second.identity != 0) {
+        const auto& pending = pendingOf->second;
         if (pending.alias != 0) {
             const auto trial = drawRelocationTrials.find(pending.identity);
             if (drawKeySightings->SeenBefore(pending.alias ^ 0x9e3779b97f4a7c15ull) && trial != drawRelocationTrials.end()) {
@@ -245,6 +246,11 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         replacement->order = found->second->order;
         drawOrder.splice(drawOrder.begin(), drawOrder, replacement->order);
         found->second = std::move(replacement);
+    }
+    if (const auto pending = drawRelocationsPending.find(key); pending != drawRelocationsPending.end()) {
+        const auto learned = pending->second;
+        drawRelocationsPending.erase(pending);
+        learnPendingRelocation(learned);
     }
     while (drawCache.size() > drawCacheEntries() || (drawCache.size() > 1 && drawCacheVariantBytes > DrawCacheBytes())) {
         const bool overBytes = drawCache.size() <= drawCacheEntries();
