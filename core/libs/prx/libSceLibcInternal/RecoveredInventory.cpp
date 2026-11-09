@@ -94,19 +94,11 @@ int APS5_VABI __std_minmax_4i_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __std_atomic_wait_get_deadline_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI __std_max_2i_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceLibcInternalPrimitiveMallocStatsFast_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __std_atomic_wait_get_remaining_timeout_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
