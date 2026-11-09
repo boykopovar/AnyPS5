@@ -36,14 +36,7 @@ int main() {
 
     menu.Toggle();
     menu.Up();
-    menu.Up();
-    menu.Up();
-    menu.Up();
-    menu.Up();
-    menu.Up();
-    menu.Up();
-    menu.Up();
-    menu.Down();
+    Check(menu.Cursor() == menu.Entries().size() - 1, "the cursor is not on CLOSE after moving up from the first entry");
     const auto closing = menu.Activate();
     Check(!closing.has_value() && !menu.IsOpen(), "the Close entry does not close the menu without an action");
 
