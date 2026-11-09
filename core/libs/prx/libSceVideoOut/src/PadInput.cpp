@@ -514,6 +514,7 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     keyboardMouse.SetTitleReadsMouse(MouseIsOpen_nid_no_patch());
     const auto requests = keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now());
     const bool targetsWindow = window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle());
+    if (requests.hostMenu && targetsWindow) hostMenu.Toggle();
     applyRequests(requests, targetsWindow, window);
     if (requests.toggleMouse) setMouseMode(!keyboardMouse.MouseMode());
     if (event.type != SDL_MOUSEMOTION) publish(window.FrameNumber(), 0);
