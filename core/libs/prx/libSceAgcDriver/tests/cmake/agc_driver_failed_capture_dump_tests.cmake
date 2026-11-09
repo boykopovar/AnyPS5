@@ -1,1 +1,0 @@
-target_include_directories(agc_driver_failed_capture_dump_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)

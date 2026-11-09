@@ -1,5 +1,0 @@
-LIBRARY msvcrt.dll
-EXPORTS
-    __iob_func
-    fputs
-    fflush

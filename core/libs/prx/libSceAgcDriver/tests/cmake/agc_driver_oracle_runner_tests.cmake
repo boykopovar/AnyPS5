@@ -1,1 +1,0 @@
-target_link_libraries(agc_driver_oracle_runner_tests PRIVATE agc_oracle_support)

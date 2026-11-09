@@ -1,1 +1,0 @@
-target_link_libraries(agc_driver_preparation_scope_settle_tests PRIVATE libSceAgc)
