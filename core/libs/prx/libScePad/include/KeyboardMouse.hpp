@@ -104,6 +104,11 @@ private:
     bool axesAdvanced = false;
     bool mouseMode = false;
     bool titleReadsMouse = false;
+    bool mouseTouchpad = false;
+    int viewportWidth = 0;
+    int viewportHeight = 0;
+    std::optional<PadTouchPoint> mouseTouch;
+    std::optional<PadTouchPoint> touchAt(int x, int y) const;
 };
 
 std::uint8_t StickByte(double deflection);
