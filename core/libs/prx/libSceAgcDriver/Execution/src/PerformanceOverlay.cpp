@@ -726,8 +726,8 @@ std::optional<std::uint64_t> ReadPhysicalMemoryBytes() {
 #endif
 }
 
-std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content) {
-    auto scale = std::max<std::int32_t>(1, static_cast<std::int32_t>((extent.height + 240) / 480));
+std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content, std::int32_t requested) {
+    auto scale = requested > 0 ? requested : std::max<std::int32_t>(1, static_cast<std::int32_t>((extent.height + 240) / 480));
     while (scale > 1 && !fits(extent, content, scale)) --scale;
     return scale;
 }
