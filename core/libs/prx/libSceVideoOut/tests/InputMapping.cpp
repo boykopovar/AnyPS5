@@ -545,7 +545,7 @@ Pad::InputConfiguration defaultConfiguration() {
 }
 
 bool sameBinding(const Pad::InputBinding& left, const Pad::InputBinding& right) {
-    return left.key == right.key && left.mouseButton == right.mouseButton && left.control == right.control && left.button == right.button && left.wheelDirection == right.wheelDirection && left.padButtons == right.padButtons;
+    return left.key == right.key && left.mouseButton == right.mouseButton && left.control == right.control && left.button == right.button && left.wheelDirection == right.wheelDirection;
 }
 
 bool sameConfiguration(const Pad::InputConfiguration& left, const Pad::InputConfiguration& right) {
