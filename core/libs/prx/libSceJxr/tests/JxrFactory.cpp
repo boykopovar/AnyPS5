@@ -132,6 +132,13 @@ void Codecs() {
         factory->createCodec(&iid, nullptr);
     }, "null codec pointer is accepted");
 
+    const int blocksBeforeDecoder = liveBlocks;
+    void* decoder = nullptr;
+    const auto decodeIid = JxrGuest_IID_PKImageWmpDecode_nid_no_patch;
+    Require(factory->createCodec(&decodeIid, &decoder) == 0 && decoder, "WMP decoder creation fails");
+    Require(PKImageDecode_Release_nid_postfix(&decoder) == 0 && !decoder, "WMP decoder release fails");
+    Require(liveBlocks == blocksBeforeDecoder, "WMP decoder allocations leak");
+
     void* converter = nullptr;
     Require(factory->createFormatConverter(&converter) == 0 && converter, "converter creation fails");
     auto* value = static_cast<Jxr::FormatConverter*>(converter);
