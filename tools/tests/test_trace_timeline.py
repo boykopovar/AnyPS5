@@ -65,6 +65,12 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(laid["bars"][0]["ms"], 6.0)
         self.assertEqual(laid["left_out"], 2)
 
+    def test_svg_escapes_slice_names(self):
+        laid = trace_timeline.layout(trace_timeline_slices([complete(1, "<script>", 0, 1000)]), 0, 2000, 1000)
+        text = trace_timeline.svg(laid)
+        self.assertIn("&lt;script&gt;", text)
+        self.assertNotIn("<script>", text)
+
 
 
 def trace_timeline_slices(items):
