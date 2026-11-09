@@ -14,6 +14,11 @@ if(BUILD_TESTING)
     configure_host_test_executable(msg_dialog_text_tests)
     add_test(NAME msg_dialog_text COMMAND msg_dialog_text_tests)
 
+    add_test_executable(msg_dialog_host_box_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/HostMessageBox.cpp)
+    target_include_directories(msg_dialog_host_box_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(msg_dialog_host_box_tests)
+    add_test(NAME msg_dialog_host_box COMMAND msg_dialog_host_box_tests)
+
     add_test_executable(msg_dialog_request_tests ${LIBS_INCLUDE_DIR}/tests/MsgDialogRequest.cpp)
     target_include_directories(msg_dialog_request_tests PRIVATE ${LIBS_INCLUDE_DIR})
     configure_host_test_executable(msg_dialog_request_tests)
