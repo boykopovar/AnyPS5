@@ -18,6 +18,7 @@ int main() {
     Require(scePlayGoDialogClose() == notInitialized);
     Require(scePlayGoDialogOpen(nullptr) == paramInvalid);
     Require(scePlayGoDialogGetResult(nullptr) == paramInvalid);
+    Require(scePlayGoDialogGetResult(reinterpret_cast<PlayGoDialogResult*>(0x10)) == paramInvalid);
 
     const int openParam = 1;
     Require(scePlayGoDialogOpen(&openParam) == notInitialized);
@@ -57,10 +58,13 @@ int main() {
     Require(scePlayGoDialogUpdateStatus() == 3);
     Require(scePlayGoDialogOpen(nullptr) == paramInvalid);
     Require(scePlayGoDialogOpen(&openParam) == 0);
+    Require(scePlayGoDialogGetResult(reinterpret_cast<PlayGoDialogResult*>(0x10)) == paramInvalid);
 
     PlayGoDialogResult result{};
     Require(scePlayGoDialogGetResult(&result) == 0);
     Require(result.result == 0 && result.errorCode == 0);
+    for (const auto byte : result.reserved) Require(byte == 0);
+
     result.errorCode = 7;
     result.result = 9;
     result.reserved[0] = 1;
@@ -73,6 +77,7 @@ int main() {
     Require(scePlayGoDialogOpen(nullptr) == paramInvalid);
     Require(scePlayGoDialogOpen(&openParam) == notInitialized);
     Require(scePlayGoDialogGetResult(nullptr) == paramInvalid);
+    Require(scePlayGoDialogGetResult(reinterpret_cast<PlayGoDialogResult*>(0x10)) == paramInvalid);
     Require(scePlayGoDialogGetResult(&result) == static_cast<std::int32_t>(0x80B8000Au));
     result.reserved[0] = 0;
     Require(scePlayGoDialogGetResult(&result) == notInitialized);
