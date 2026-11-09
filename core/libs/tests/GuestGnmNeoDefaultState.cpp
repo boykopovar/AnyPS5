@@ -29,6 +29,7 @@ void RequireUntouchedFrom(std::uint32_t at) {
 }
 
 void CheckHardwareState(StateWriter writer, std::uint32_t stateWords, std::initializer_list<std::uint32_t> tail) {
+    Require(writer(nullptr, 0x100) == -1);
     Require(writer(Fresh(), 0xff) == 0);
     RequireUntouchedFrom(0);
 
@@ -47,6 +48,7 @@ void CheckHardwareState(StateWriter writer, std::uint32_t stateWords, std::initi
 }
 
 void CheckContextState(StateWriter writer, std::uint32_t packetWords, std::uint32_t stateWords, std::initializer_list<std::uint32_t> tail) {
+    Require(writer(nullptr, packetWords) == -1);
     Require(writer(Fresh(), packetWords - 1) == 0);
     RequireUntouchedFrom(0);
     Require(writer(Fresh(), packetWords + 1) == 0);
