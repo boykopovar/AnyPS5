@@ -190,6 +190,11 @@ void APS5_VABI WKRenderLayerGetTypeID();
 void APS5_VABI WKRenderObjectGetTypeID();
 std::uint32_t APS5_VABI WKResourceCacheManagerGetTypeID();
 const void* APS5_VABI WKRetain(const void* object);
+typedef void (APS5_VABI *WKRunLoopFunction)(void* context);
+void APS5_VABI WKRunLoopCallOnMainThread(WKRunLoopFunction function, void* context);
+void APS5_VABI WKRunLoopInitializeMain();
+void APS5_VABI WKRunLoopRunMain();
+void APS5_VABI WKRunLoopStopMain();
 const void* APS5_VABI WKSecurityOriginCreate(const void* protocol, const void* host, int port);
 const void* APS5_VABI WKSecurityOriginCopyProtocol(const void* value);
 const void* APS5_VABI WKSecurityOriginCopyHost(const void* value);
@@ -257,6 +262,9 @@ std::uint32_t APS5_VABI WKWebsiteDataStoreGetTypeID();
 std::uint32_t APS5_VABI WKWebsitePoliciesGetTypeID();
 std::uint32_t APS5_VABI WKWindowFeaturesGetTypeID();
 
+void APS5_VABI WKClearMockMediaDevices();
+void APS5_VABI WKRemoveMockMediaDevice(const void* persistentIdRef);
+void APS5_VABI WKResetMockMediaDevices();
 void APS5_VABI WKUserMediaPermissionRequestAllow(const void* requestRef);
 void APS5_VABI WKUserMediaPermissionRequestDeny(const void* requestRef);
 
