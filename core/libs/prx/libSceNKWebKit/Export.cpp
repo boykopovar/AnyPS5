@@ -11196,27 +11196,11 @@ int APS5_VABI WKConnectionSetConnectionClient() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextAddVisitedLink() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKContextAllowSpecificHTTPSCertificateForHost() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI WKContextClearCurrentModifierStateForTesting() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextClearVisitedLinks() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextDisableProcessTermination() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextEnableProcessTermination() {
     NotImplemented_nid_no_patch(__func__);
 }
 
