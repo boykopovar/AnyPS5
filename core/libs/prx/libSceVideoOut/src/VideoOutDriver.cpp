@@ -38,6 +38,10 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libc/include/RunReport.hpp"
+#include "prx/libc/include/RunReportComponent.hpp"
+
+APS5_RUN_REPORT_COMPONENT("libSceVideoOut")
 
 namespace {
 
@@ -409,19 +413,30 @@ void VideoOutDriver::Shutdown() {
 }
 
 int VideoOutDriver::Open(int busType) {
-    std::lock_guard lock(mutex);
-    {
-        std::lock_guard queueLock(flipQueue->mutex);
-        if (flipQueue->failure) std::rethrow_exception(flipQueue->failure);
-        if (flipQueue->stopping || LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
-    }
+    std::unique_lock lock(mutex);
     const int handle = busType + 1;
-    require(handle > 0 && handle < VIDEO_OUT_NUM_MAX, "invalid output bus");
-    auto previous = contexts[handle];
+    std::shared_ptr<VideoOutConfig> previous;
+    for (std::shared_ptr<VideoOutConfig> settled;; settled = previous) {
+        {
+            std::lock_guard queueLock(flipQueue->mutex);
+            if (flipQueue->failure) std::rethrow_exception(flipQueue->failure);
+            if (flipQueue->stopping || LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
+        }
+        require(handle > 0 && handle < VIDEO_OUT_NUM_MAX, "invalid output bus");
+        previous = contexts[handle];
+        if (!previous) break;
+        {
+            std::lock_guard cfgLock(previous->mutex);
+            if (previous->opened) return -1;
+        }
+        if (previous == settled) break;
+        lock.unlock();
+        AgcDriverWaitIdle_nid_postfix();
+        lock.lock();
+    }
     uint64_t generation = 1;
     if (previous) {
         std::lock_guard cfgLock(previous->mutex);
-        if (previous->opened) return -1;
         require(previous->generation != std::numeric_limits<uint64_t>::max(), "port generation overflow");
         generation = previous->generation + 1;
     }
@@ -794,6 +809,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 return false;
             });
             if (quit) {
+                LibcRunReportQuitRequested_nid_no_patch();
                 LibcRequestExit_nid_postfix(0);
                 throw ProcessShutdown{};
             }

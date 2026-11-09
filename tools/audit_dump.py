@@ -130,10 +130,17 @@ def main(argv=None):
         report = Path(args.json)
         try:
             overlaps = report_overlaps_dump(report, dump)
+            relinker_alias = comparison_path(report) == comparison_path(relinker) or (report.exists() and report.samefile(relinker))
         except (OSError, RuntimeError) as error:
             parser.error(f"{report}: cannot check JSON output against the input dump: {error}")
+        if relinker_alias:
+            parser.error(f"{report}: JSON output would overwrite the relinker")
         if overlaps:
             parser.error(f"{report}: JSON output overlaps the input dump")
+        if report.is_dir():
+            parser.error(f"{report}: JSON output is a directory")
+        if not report.resolve().parent.is_dir():
+            parser.error(f"{report.resolve().parent}: no such directory")
     with tempfile.TemporaryDirectory() as temporary:
         work = Path(args.work) if args.work else Path(temporary)
         source, output = work / "source", work / "output"
