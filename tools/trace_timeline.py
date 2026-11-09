@@ -64,3 +64,13 @@ def page(svg_text, title, notes):
             "<h1>" + html.escape(title) + "</h1><ul>" + note_items + "</ul>" + svg_text + "</body></html>\n")
 
 
+def nonnegative_number(value):
+    try:
+        number = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a number")
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be a number")
+    return number
+
+
