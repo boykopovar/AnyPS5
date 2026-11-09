@@ -280,6 +280,7 @@ void restoreSnapshot(const FrameCaptureReader& reader, const Skipped& skipped) {
 }
 
 Skipped restoreMemory(const FrameCaptureReader& reader) {
+    if (reader.Version() < 2) throw std::runtime_error("frame replay: calls format 1 does not record whether GPU writes had landed before each memory delta was read; record the capture again");
     std::uintptr_t base = 0;
     std::size_t size = 0;
     GuestArena::GuestArenaRange_nid_postfix(&base, &size);

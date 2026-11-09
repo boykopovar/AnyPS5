@@ -54,6 +54,7 @@ private:
         std::uint32_t protection = 0;
         std::uint32_t access = 0;
         bool readable = false;
+        std::uint64_t since = 0;
     };
 
     FrameRecorder(std::filesystem::path directory, std::filesystem::path trigger, std::uint64_t atBoundary, std::uint64_t frames);
@@ -69,7 +70,7 @@ private:
     void emitDelta();
     static void collectShaderPages(std::span<const Shader* const> shaders, std::set<std::uint64_t>& blocks, std::set<std::uint64_t>& hostPages);
     void emitShaderDelta(std::span<const Shader* const> shaders);
-    void writeDelta(std::span<const Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added = {});
+    void writeDelta(std::span<Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added = {});
     bool triggered();
     void start();
     void finish();
@@ -81,6 +82,7 @@ private:
     std::string header() const;
     std::vector<Range> committedRanges();
     std::vector<Range> newRanges();
+    std::uint64_t blockSince(std::uint64_t block) const;
 
     std::filesystem::path directory;
     std::filesystem::path trigger;
@@ -101,7 +103,7 @@ private:
     std::uint64_t boundaries = 0;
     std::uint64_t startBoundary = 0;
     std::uint64_t recordedFrames = 0;
-    std::uint64_t generation = 0;
+    std::uint64_t startGeneration = 0;
     std::uint64_t deltaGroups = 0;
     std::uint64_t deltaBytes = 0;
     std::uint64_t snapshotBytes = 0;
