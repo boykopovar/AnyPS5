@@ -5,6 +5,7 @@
 #include "prx/libSceCommonDialog/include/DialogUse.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -132,6 +133,9 @@ void TestCanceled() {
 
     result = InvitationDialogResult{};
     Require(sceInvitationDialogGetResult(&result) == 0 && result.recipients == nullptr, "result without a recipient list");
+    errno = 71;
+    Require(sceInvitationDialogGetResult(reinterpret_cast<InvitationDialogResult*>(0x10)) == ArgNull, "unwritable result pointer");
+    Require(errno == 71, "errno preserved");
 
     const InvitationDialogParam receive = MakeParam(ModeRecv, &second);
     Require(sceInvitationDialogOpen(&receive) == 0, "open again to receive");

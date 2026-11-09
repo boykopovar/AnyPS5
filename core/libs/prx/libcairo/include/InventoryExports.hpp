@@ -135,7 +135,6 @@ int APS5_VABI cairo_ft_font_face_create_for_ft_face();
 int APS5_VABI cairo_get_dash_count();
 int APS5_VABI cairo_pattern_destroy();
 int APS5_VABI cairo_pattern_set_matrix();
-int APS5_VABI cairo_surface_set_user_data();
 int APS5_VABI cairo_set_dash();
 int APS5_VABI cairo_pattern_set_filter();
 int APS5_VABI cairo_new_path();
