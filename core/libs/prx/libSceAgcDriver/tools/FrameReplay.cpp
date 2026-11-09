@@ -301,6 +301,7 @@ void requireWatch(const FrameMemoryChunk& chunk) {
 #endif
 
 Skipped restoreMemory(const FrameCaptureReader& reader) {
+    if (reader.Version() < 2) throw std::runtime_error("frame replay: calls format 1 does not record whether GPU writes had landed before each memory delta was read; record the capture again");
     std::uintptr_t base = 0;
     std::size_t size = 0;
     GuestArena::GuestArenaRange_nid_postfix(&base, &size);
@@ -865,6 +866,7 @@ struct Replay {
             auto bytes = reader.Read(*chunk);
             std::vector<std::size_t> held;
             auto* const target = reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(chunk->address));
+            AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, static_cast<std::size_t>(chunk->bytes));
             const auto first = static_cast<std::size_t>((4 - chunk->address % 4) % 4);
             for (auto at = first; at + 4 <= bytes.size(); at += 4) {
                 std::uint32_t header = 0;
