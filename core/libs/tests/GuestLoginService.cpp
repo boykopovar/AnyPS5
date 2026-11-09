@@ -23,6 +23,7 @@ int main() {
 
     Require(sceLoginServiceInitialize() == 0);
     Require(sceLoginServiceRequestDevices(nullptr) == kErrInvalidArg);
+    Require(sceLoginServiceRequestDevices(request) == 0);
 
     Require(sceLoginServiceTerminate() == 0);
     Require(sceLoginServiceRequestDevices(nullptr) == kErrInvalidArg);
