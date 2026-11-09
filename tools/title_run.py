@@ -141,11 +141,14 @@ def frame_is_uniform(path, tolerance=8):
     try:
         offset = struct.unpack_from("<I", data, 10)[0]
         width, height = struct.unpack_from("<ii", data, 18)
-        channels = struct.unpack_from("<H", data, 28)[0] // 8
+        bits = struct.unpack_from("<H", data, 28)[0]
     except struct.error:
         return None
+    if bits not in (24, 32):
+        return None
+    channels = bits // 8
     stride = (width * channels + 3) & ~3
-    if channels < 3 or len(data) < offset + stride * abs(height) - (stride - width * channels):
+    if len(data) < offset + stride * abs(height) - (stride - width * channels):
         return None
     first = data[offset:offset + 3]
     for row in range(abs(height)):
