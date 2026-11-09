@@ -66,7 +66,7 @@ VkDescriptorSet TextureDetiler::allocateFrom(DescriptorRing& ring, VkDescriptorS
 
 VkDescriptorSet TextureDetiler::allocateSet(bool image) {
     if (image) return allocateFrom(imageDescriptorSets, imageDescriptorLayout, {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 64}}, "vkCreateDescriptorPool texture detiler", "vkAllocateDescriptorSets texture detiler", "vkResetDescriptorPool texture detiler");
-    return allocateFrom(descriptorSets, descriptorLayout, {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64 * 2}}, "vkCreateDescriptorPool texture detiler", "vkAllocateDescriptorSets texture detiler", "vkResetDescriptorPool texture detiler");
+    return allocateFrom(descriptorSets, descriptorLayout, {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64 * 3}}, "vkCreateDescriptorPool texture detiler", "vkAllocateDescriptorSets texture detiler", "vkResetDescriptorPool texture detiler");
 }
 
 }
