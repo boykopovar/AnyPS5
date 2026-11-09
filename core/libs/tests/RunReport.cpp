@@ -1235,7 +1235,7 @@ void RecipeEnvironmentTest() {
     Require(RunReport::RecipeVariableAllowed("ANYPS5_GPU"), "an ANYPS5 variable is kept");
     Require(!RunReport::RecipeVariableAllowed("PATH"), "a variable outside ANYPS5_ is not recorded");
     Require(!RunReport::RecipeVariableAllowed("anyps5_gpu"), "the prefix is case sensitive");
-    for (const char* name : {"ANYPS5_API_TOKEN", "ANYPS5_KEYFILE", "ANYPS5_DB_PASSWORD", "ANYPS5_client_secret", "ANYPS5_secret"}) {
+    for (const char* name : {"ANYPS5_API_TOKEN", "ANYPS5_KEYFILE", "ANYPS5_DB_PASSWORD", "ANYPS5_client_secret", "ANYPS5_secret", "ANYPS5_PSN_PASSCODE", "ANYPS5_NP_AUTH", "ANYPS5_SESSION_COOKIE"}) {
         Require(!RunReport::RecipeVariableAllowed(name), std::string("a secret-named variable was allowed: ") + name);
     }
     const RunReport::EnvironmentVariables all{{"ANYPS5_ZETA", "1"}, {"ANYPS5_API_TOKEN", "x"}, {"HOME", "/root"}, {"ANYPS5_ALPHA", "0"}};
