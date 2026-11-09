@@ -769,14 +769,14 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
 int32_t APS5_VABI sceKernelMapNamedSystemFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
     constexpr size_t MaximumNameLength = 32;
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
-    if (name == nullptr) throw std::runtime_error("sceKernelMapNamedSystemFlexibleMemory: null name");
     std::string copy;
-    const int error = CopyRangeName(name, MaximumNameLength, copy);
-    if (error == 63) throw std::runtime_error("sceKernelMapNamedSystemFlexibleMemory: name of 32 bytes or more");
-    if (error != 0) throw std::runtime_error("sceKernelMapNamedSystemFlexibleMemory: unreadable name");
+    const int error = name == nullptr ? 0 : CopyRangeName(name, MaximumNameLength, copy);
+    if (name != nullptr && error != 0 && error != 63) throw std::runtime_error("sceKernelMapNamedSystemFlexibleMemory: unreadable name");
     const int result = DoMapAnon(addr_in_out, len, prot, flags);
     if (result != 0) return result;
     _releaseFlexible(reinterpret_cast<uintptr_t>(*addr_in_out), len);
+    if (name == nullptr) return SCE_KERNEL_ERROR_EFAULT;
+    if (error == 63) return SCE_KERNEL_ERROR_ENAMETOOLONG;
     NameVirtualRange(*addr_in_out, len, std::move(copy));
     return 0;
 }
