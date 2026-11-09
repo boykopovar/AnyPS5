@@ -55,6 +55,7 @@
 - [X509_get0_extensions, X509_get_ext_count, X509_get_ext](../../../core/libs/prx/libSceLibreSsl3/src/X509Extensions.cpp) (libSceLibreSsl3) - nothing is checked on the console. The `X509`, `X509_CINF` and stack layouts and the results follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto) `x509_local.h`, `stack_local.h`, `x509_set.c`, `x509_ext.c`, `x509_v3.c` and `stack.c`, the version in the [firmware 13.40 measurements](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214). No export of this module creates a certificate yet, so only certificates the caller builds reach them. A null certificate or certificate info, and an extension stack with a positive count and a null entry array, which LibreSSL dereferences, throw
 - [RSA_get0_key, DH_get0_pqg, DH_get0_key, DSA_get0_pqg, DSA_get0_key](../../../core/libs/prx/libSceLibreSsl3/src/KeyComponents.cpp) (libSceLibreSsl3) - no export of this library creates a key yet. `RSA_new`, `d2i_RSA_PUBKEY`, `EVP_PKEY_get1_RSA` and `PEM_read_RSAPrivateKey` throw here, so their imports no longer [bind to libSceLibreSsl](https://github.com/boykopovar/AnyPS5/pull/10490#pullrequestreview-5644839495)'s 2.5.4 layout. `RSA_set0_key`, exported by firmware 13.42, is implemented in `RsaSetters.cpp` without console verification. The layouts follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto) `rsa_local.h`, `dh_local.h` and `dsa_local.h`, as [firmware 13.42's module run on a PC](https://github.com/boykopovar/AnyPS5/pull/10490#issuecomment-6405344642) uses. A null key throws when an output is requested, where LibreSSL dereferences it
 - [X509_getm_notBefore, X509_getm_notAfter, X509_get0_notBefore, X509_get0_notAfter, X509_get0_signature](../../../core/libs/prx/libSceLibreSsl3/src/X509Validity.cpp) (libSceLibreSsl3) - nothing is checked on the console. The `X509`, `X509_CINF` and `X509_VAL` layouts and the results follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto) `x509_local.h`, `x509_set.c` and `x_x509.c`, the version in the [firmware 13.40 measurements](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214). No export of this module creates a certificate yet, so only certificates the caller builds reach them. A null certificate in `X509_get0_signature` throws when an output is requested, where LibreSSL dereferences it; with both outputs null the call returns without reading the certificate, as in LibreSSL
+- [X509_get_X509_PUBKEY, X509_get_signature_nid and X509_get_ext_by_NID](../../../core/libs/prx/libSceLibreSsl3/src/X509Accessors.cpp) (libSceLibreSsl3) - nothing is checked on the console. The forwarded 2.5.4 `OBJ_create` numbers objects from 956, which [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/objects/obj_dat.c) gives to built-in objects, so `X509_get_ext_by_NID` reaches an added object only from NID 1056. Otherwise they follow 4.0.0 `x509_set.c`, `x_x509.c`, `x509_v3.c` and `obj_dat.c`. [Objects.cpp](../../../core/libs/prx/libSceLibreSsl3/src/Objects.cpp) adds 4.0.0's 100 newer objects to libSceLibreSsl's 2.5.4 table; a BSD `bsearch` gives NID 676 for the OID 1.3 it shares with 379. Null pointers it dereferences, a last position of `INT_MAX` and, once objects are added, a length that overflows its hash throw. Closes when: compared with the console.
 
 - [ASN1_TIME_diff](../../../core/libs/prx/libSceLibreSsl3/src/Time.cpp) has no console ABI or behavior verification. Its signature and date rules follow LibreSSL 4.0.0 [a_time.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time.c), [a_time_tm.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c) and [a_time_posix.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_posix.c), using the existing 24-byte string layout. Null inputs use the host wall clock; the console clock relationship is unverified. Null output pointers throw after valid input parsing, where the reference dereferences them. Closes when: measured on a PS5.
 - [EVP_chacha20 and EVP_chacha20_poly1305](../../../core/libs/prx/libSceLibreSsl3/src/ChaCha.cpp) (libSceLibreSsl3) - nothing is checked on the console. They run inside libSceLibreSsl's forwarded 2.5.4 `EVP_*Update`, which passes a zero-length update to the cipher: with a null input, `EVP_chacha20_poly1305` takes it as the final call and computes or checks the tag early, where LibreSSL 4.0.0 returns 1 without calling the cipher. Otherwise they follow [4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp) `e_chacha.c` and `e_chacha20poly1305.c`, with Poly1305 from mbedtls; a zero-length update with an input, or a negative length, leaves the state alone. A null input or output with a non-zero length, or a null pointer for `EVP_CTRL_AEAD_GET_IVLEN`, `EVP_CTRL_AEAD_GET_TAG` or `EVP_CTRL_AEAD_SET_IV_FIXED`, which LibreSSL dereferences, throws. Closes when: compared with the console.
@@ -79,7 +80,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 105 still-unimplemented callable exports: 96 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 102 still-unimplemented callable exports: 93 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -106,7 +107,6 @@
 | `ERR_load_X509_strings` | `A0lZtFjhcTw` |
 | `unknown` | `AiNud8LR8B4` |
 | `X509_cmp_current_time` | `Ax+Uu++rnrA` |
-| `X509_get_ext_by_NID` | `BRjfzlGULmU` |
 | `X509_check_akid` | `C7eFtWPfLdk` |
 | `SSL_set_quic_use_legacy_codepoint` | `CFRaBB2+R+s` |
 | `SSL_CTX_set_default_verify_paths` | `DZ6fywqpaik` |
@@ -129,7 +129,6 @@
 | `X509_new` | `PNfwr3s6dEs` |
 | `SSL_get0_verified_chain` | `QKIOxHfZLh8` |
 | `EVP_PKEY_derive` | `QYEjNnn6PT4` |
-| `X509_get_signature_nid` | `QnjD8S6Rgk4` |
 | `BN_dup` | `RMhEgJs6KLI` |
 | `EVP_sha512_256` | `Sea+FOS2GOI` |
 | `EVP_PKEY_derive_init` | `Ssfu1yw4Em4` |
@@ -186,7 +185,6 @@
 | `SSL_set_quic_transport_params` | `xf6anoZpWRM` |
 | `X509_get0_pubkey` | `xj7cFYOV4+Y` |
 | `SSL_is_quic` | `xpB+BNkO2Z0` |
-| `X509_get_X509_PUBKEY` | `yLm956jsJpc` |
 | `EVP_MD_block_size` | `zCa75KLWWn4` |
 
 - The formerly NID-only exports named in the inventory above and in [API declarations](../../../core/libs/prx/libSceLibreSsl3/include/Api.hpp) use LibreSSL names whose `tools/nid_names.py` hash equals the NID; the names were taken from the identifiers of the LibreSSL 3.8.4 and 4.0.0 `include`, `crypto`, `ssl` and `tls` sources. A name match does not show that the console function has LibreSSL's prototype or behavior. Unimplemented entries keep the no-parameter import-resolution convention and throw through `NotImplemented_nid_no_patch`; the implemented contracts and remaining gaps are listed above. `AES_wrap_key`, `ECDSA_SIG_free`, `ECDSA_do_verify`, `ERR_load_ERR_strings`, `ERR_print_errors_fp` and `i2d_PUBKEY` also hash to the NIDs of six `unknown` rows, which keep their NID names; `PBYz0kpXwg8` hashes to no identifier of those sources.
