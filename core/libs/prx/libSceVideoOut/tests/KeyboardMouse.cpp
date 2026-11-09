@@ -696,7 +696,7 @@ void testMouseStickTarget() {
 void testMouseTouchpad() {
     Pad::KeyboardMouse keyboard(defaults());
     keyboard.SetViewport(960, 540);
-    const Pad::PadInputState idle{};
+    const PadInputState idle{};
     auto press = [&](int x, int y, Uint8 button, Uint32 type, std::chrono::steady_clock::time_point now) {
         SDL_Event event{};
         event.type = type;
