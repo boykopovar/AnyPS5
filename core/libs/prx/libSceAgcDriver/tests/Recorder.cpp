@@ -13311,30 +13311,36 @@ bool sampledImportPiecesTests(const Device& device, Recorder& recorder) {
         Require(imported != nullptr && imported->base == address + window * unit && imported->bytes == unit, "the sampled texture windows were not imported separately");
     }
     for (std::uint32_t phase = 0; phase < 2; ++phase) {
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        for (std::size_t half = 0; half < 8; ++half) {
+            const auto begin = address + half * unit / 2u;
+            const auto* imported = ExistingHostImportFor(context, begin, unit / 2u);
+            Require(imported != nullptr, "a sampled texture half lost its existing import");
+            const auto value = static_cast<std::uint32_t>(16u + half * 16u + phase * 4u) * 0x01010101u;
+            context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, imported->buffer, HostImportOffset(*imported, begin), unit / 2u, value);
+        }
+        recorder.NotePendingWrite(address, bytes);
+        static_cast<void>(AgcDriver::GuestMemory::MarkPossiblyWritten(address, bytes));
+        const auto submissions = recorder.Submissions();
+        std::vector<std::shared_ptr<ShaderResources>> uploaded;
+        std::shared_ptr<DeviceBuffer> scratch;
         for (const auto offset : {std::size_t{0}, unit / 2u}) {
             Require(ExistingHostImportFor(context, address + offset, 3u * unit) == nullptr, "the sampled array unexpectedly fits one import");
-            const auto commands = recorder.Commands();
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
-            for (std::size_t half = 0; half < 8; ++half) {
-                const auto begin = address + half * unit / 2u;
-                const auto* imported = ExistingHostImportFor(context, begin, unit / 2u);
-                Require(imported != nullptr, "a sampled texture half lost its existing import");
-                const auto value = static_cast<std::uint32_t>(16u + half * 16u + phase * 4u) * 0x01010101u;
-                context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, imported->buffer, HostImportOffset(*imported, begin), unit / 2u, value);
-            }
-            recorder.NotePendingWrite(address, bytes);
-            static_cast<void>(AgcDriver::GuestMemory::MarkPossiblyWritten(address, bytes));
             const auto program = request(address + offset);
             const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
             const auto before = SampledTexturesImported();
-            const auto submissions = recorder.Submissions();
             auto resources = std::make_shared<ShaderResources>(context, shader);
             Require(SampledTexturesImported() == before + 1, "a sampled array spanning existing imports was not uploaded on the GPU");
             Require(recorder.Submissions() == submissions, "a sampled array waited for its imported GPU writes");
-            check(resources, offset, phase);
+            const auto reused = recorder.UploadScratchBuffer(Recorder::UploadScratch::Tiled, 3u * unit);
+            Require(scratch == nullptr || scratch == reused, "consecutive imported uploads did not reuse tiled scratch");
+            scratch = reused;
+            uploaded.push_back(std::move(resources));
         }
+        for (std::size_t index = 0; index < uploaded.size(); ++index) check(uploaded[index], index * unit / 2u, phase);
     }
-    std::cout << "sampled import pieces: gapped fallback, GPU ordering, boundary texels and repeated writes passed\n";
+    std::cout << "sampled import pieces: gapped fallback, consecutive scratch reuse, boundary texels and repeated writes passed\n";
     return true;
 }
 

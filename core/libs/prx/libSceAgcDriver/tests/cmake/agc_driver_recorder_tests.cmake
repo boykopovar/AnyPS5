@@ -50,7 +50,9 @@ add_custom_command(
 target_sources(agc_driver_recorder_tests PRIVATE "${agcSampleImportOriginHeader}")
 if(BUILD_TESTING)
     add_test(NAME agc_sampled_import_pieces COMMAND agc_driver_recorder_tests --sampled-import-pieces)
-    set_tests_properties(agc_sampled_import_pieces PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    set_tests_properties(agc_sampled_import_pieces PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
+        FAIL_REGULAR_EXPRESSION "SYNC-HAZARD|VUID-"
+        ENVIRONMENT "VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT")
     if(WIN32)
         set_tests_properties(agc_sampled_import_pieces PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
