@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace MsgDialog {
+namespace HostBox {
 
 std::optional<HostBoxAnswer> ShowHostMessageBox(std::string_view message, const ModalDialogRequest& request) {
     std::vector<std::string> labels;
