@@ -17,5 +17,6 @@ void Check(bool condition, const char* message) {
 
 int main() {
     Check(!MsgDialog::HostMessageBoxEnabled(nullptr, false), "an unset variable enables the host box");
+    Check(MsgDialog::HostMessageBoxEnabled("1", false), "1 does not enable the host box");
     return correct ? 0 : 1;
 }
