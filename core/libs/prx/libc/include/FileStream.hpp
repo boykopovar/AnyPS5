@@ -27,9 +27,13 @@ struct UcrtStreamState {
     char* base;
     int count;
     long flags;
+    long descriptor;
+    int characterBuffer;
+    int bufferSize;
 };
-extern "C" void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wchar_t* path), void (*forget)(int descriptor));
+extern "C" void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wchar_t* path), void (*forget)(int descriptor), void (*duplicate)(int from, int to));
 extern "C" void ForgetDirectoryStream_nid_no_patch(int descriptor);
+extern "C" void DuplicateDirectoryStream_nid_no_patch(int from, int to);
 #else
 #include <unistd.h>
 #endif
@@ -281,7 +285,8 @@ public:
     }
 
     bool Reopen(const std::filesystem::path& filename, const char* mode,
-        [[maybe_unused]] std::FILE* (*open)(const std::filesystem::path&, const std::string&) = nullptr) {
+        [[maybe_unused]] std::FILE* (*open)(const std::filesystem::path&, const std::string&) = nullptr,
+        [[maybe_unused]] bool directoryStream = false) {
         struct SynchronizeAliases {
             FileStream* source;
             ~SynchronizeAliases() { SynchronizeFileStreamAliases_nid_no_patch(source); }
@@ -313,18 +318,35 @@ public:
         const int error = errno;
         if (IsHostStandard() && replaced == 1 && KeepHostStandardOutput_nid_no_patch() < 0) errno = error;
         if (IsHostStandard() && replaced == 2 && KeepHostStandardError_nid_no_patch() < 0) errno = error;
+        std::optional<ClosingDescriptor> closing(std::in_place, previous, replaced);
+        errno = error;
         if (open && !filename.empty()) {
             if (!IsHostStandard()) {
                 StoreHandleAtomic_nid_no_patch(nullptr);
                 std::erase(wideMode, L'x');
-                std::optional<ClosingDescriptor> closing(std::in_place, previous, replaced);
                 std::unique_ptr<std::FILE, int (*)(std::FILE*)> original(
                     ::_wfreopen(L"NUL", wideMode.c_str(), previous), std::fclose);
                 closing.reset();
                 if (original) {
                     std::unique_ptr<std::FILE, int (*)(std::FILE*)> replacement(open(filename, mode), std::fclose);
-                    if (replacement && ::_dup2(::_fileno(replacement.get()), ::_fileno(original.get())) == 0)
-                        StoreHandleAtomic_nid_no_patch(original.release());
+                    if (replacement) {
+                        const int source = ::_fileno(replacement.get());
+                        const int destination = ::_fileno(original.get());
+                        const int moved = ::_dup2(source, destination);
+                        const int error = errno;
+                        if (directoryStream) {
+                            try {
+                                if (moved == 0) DuplicateDirectoryStream_nid_no_patch(source, destination);
+                            } catch (...) {
+                                ForgetDirectoryStream_nid_no_patch(source);
+                                errno = error;
+                                throw;
+                            }
+                            ForgetDirectoryStream_nid_no_patch(source);
+                        }
+                        if (moved == 0) StoreHandleAtomic_nid_no_patch(original.release());
+                        errno = error;
+                    }
                     const int error = errno;
                     replacement.reset();
                     original.reset();
@@ -340,14 +362,13 @@ public:
                 try {
                     std::FILE* const replacement = open(filename, mode);
                     if (replacement) {
-                        const auto reset = [&] {
-                            const ClosingDescriptor closing(previous, replaced);
-                            return ::_wfreopen(L"NUL", resetMode.c_str(), previous);
-                        }();
-                        if (reset == previous) {
-                            const int moved = ::_dup2(_fileno(replacement), replaced);
+                        const int source = ::_fileno(replacement);
+                        if (::_wfreopen(L"NUL", resetMode.c_str(), previous) == previous) {
+                            const int moved = ::_dup2(source, replaced);
                             const int error = errno;
+                            if (moved == 0 && directoryStream) DuplicateDirectoryStream_nid_no_patch(source, replaced);
                             std::fclose(replacement);
+                            if (moved == 0 && directoryStream) ForgetDirectoryStream_nid_no_patch(source);
                             if (moved == 0) StoreHandleAtomic_nid_no_patch(previous);
                             else errno = error;
                         } else {
@@ -386,6 +407,7 @@ public:
         }
         const ClosingDescriptor closing(previous, ::fileno(previous));
         const int kept = IsHostStandard() ? DuplicateHostDescriptor_nid_no_patch(::fileno(previous)) : -1;
+        errno = error;
         if (kept >= 0) ::flockfile(previous);
         StoreHandleAtomic_nid_no_patch(std::freopen(filename.c_str(), mode, previous));
         if (kept >= 0) RestoreHostStandard(previous, kept);
@@ -442,6 +464,8 @@ public:
         constexpr long UcrtUpdate = 0x0004;
         std::atomic_ref<long> state(reinterpret_cast<UcrtStreamState*>(GetHandle())->flags);
         return (state.load() & (UcrtReading | UcrtUpdate)) != 0;
+#elif defined(__GLIBC__)
+        return ::__freadable(GetHandle()) != 0;
 #else
         return true;
 #endif
@@ -467,7 +491,13 @@ public:
         return switched;
 #elif defined(__GLIBC__)
         auto* native = GetHandle();
-        if (!::__freadable(native) || !::__fwriting(native)) return true;
+        if (!::__freadable(native)) {
+            errno = 9;
+            guestError = true;
+            SyncUnlockedStatus();
+            return false;
+        }
+        if (!::__fwriting(native)) return true;
         const bool switched = ::_IO_switch_to_get_mode(native) == 0;
         SyncUnlockedStatus();
         return switched;
@@ -620,6 +650,7 @@ inline FileStreamLease_nid_no_patch AcquireFileStreamLease_nid_no_patch(FileStre
 }
 
 extern "C" {
+extern FileStream* __stdinp_nid_postfix;
 extern FileStream _Stdout_nid_postfix;
 extern FileStream _Stderr_nid_postfix;
 }
