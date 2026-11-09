@@ -240,6 +240,15 @@ void Pad::KeyboardMouse::SetMouseTouchpad(bool enabled) {
     if (!enabled) mouseTouch.reset();
 }
 
+void Pad::KeyboardMouse::SetMouseGyro(bool enabled) {
+    mouseGyro = enabled;
+    if (!enabled) {
+        gyroCountsX = 0.0;
+        gyroCountsY = 0.0;
+        gyroRate = {};
+    }
+}
+
 void Pad::KeyboardMouse::SetViewport(int width, int height) {
     viewportWidth = width;
     viewportHeight = height;
