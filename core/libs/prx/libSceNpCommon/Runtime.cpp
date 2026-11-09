@@ -382,6 +382,7 @@ int SkipAll(NpStreamReader* self, void* handle, NpStreamCtx* ctx, std::int64_t* 
     while (true) {
         std::size_t got = 0;
         int result = StreamRead(self, handle, buffer, sizeof(buffer), &got);
+        if (result >= 0 && got > sizeof(buffer)) return NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         if (result >= 0) result = StreamNotify(ctx, buffer, got);
         if (skipped != nullptr) *skipped += static_cast<std::int64_t>(got);
         if (result < 0) return result;
@@ -396,6 +397,7 @@ int ReadData(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, st
     int result = 0;
     do {
         result = StreamRead(self, handle, bytes + total, size - total, &got);
+        if (result >= 0 && got > size - total) result = NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         if (result >= 0) result = StreamNotify(ctx, bytes + total, got);
         if (result < 0) break;
         total += got;
@@ -423,8 +425,10 @@ int WriteFilledData(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, char f
     std::memset(buffer, static_cast<std::uint8_t>(fill), sizeof(buffer));
     while (size > 0) {
         std::size_t written = 0;
-        int result = StreamWrite(self, handle, buffer, std::min(static_cast<std::size_t>(size), sizeof(buffer)), &written);
+        const std::size_t chunk = std::min(static_cast<std::size_t>(size), sizeof(buffer));
+        int result = StreamWrite(self, handle, buffer, chunk, &written);
         if (result < 0) return result;
+        if (written > chunk) return NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         result = StreamNotify(ctx, buffer, written);
         if (result < 0) return result;
         size -= static_cast<std::int64_t>(written);
@@ -439,6 +443,7 @@ int WriteData(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, const void* 
     int result = 0;
     while (total < size) {
         result = StreamWrite(self, handle, bytes + total, size - total, &got);
+        if (result >= 0 && got > size - total) result = NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         if (result >= 0) result = StreamNotify(ctx, bytes + total, got);
         if (result < 0) break;
         total += got;

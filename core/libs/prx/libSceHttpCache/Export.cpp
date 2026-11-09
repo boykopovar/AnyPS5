@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceHttpCache/include/InventoryExports.hpp"
 #include "prx/libSceHttpCache/libSceHttpCache.hpp"
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include <cstring>
 #include <deque>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -833,7 +835,7 @@ int APS5_VABI sceHttpCacheReadData(std::int32_t requestId, std::size_t size, voi
     Entry& entry = *request->entry;
     if (entry.pending) return 0;
     const std::size_t remaining = entry.body.size() - entry.readOffset;
-    const std::size_t count = size < remaining ? size : remaining;
+    const std::size_t count = std::min({size, remaining, static_cast<std::size_t>(std::numeric_limits<int>::max())});
     if (count != 0) std::memcpy(data, entry.body.data() + entry.readOffset, count);
     entry.readOffset += count;
     return static_cast<int>(count);
