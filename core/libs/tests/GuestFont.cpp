@@ -1026,9 +1026,11 @@ int main() {
 
     const auto* glyphs0 = sceFontSelectGlyphsFt(0);
     Require(glyphs0 != nullptr);
-    const auto* glyphTable = reinterpret_cast<const std::uint32_t*>(glyphs0);
+    const auto* glyphTable = reinterpret_cast<const std::uint16_t*>(glyphs0);
     Require(glyphTable[0] == 0x0F1F);
-    Require(glyphTable[1] == 0x0F03);
+    Require(glyphTable[1] == 0xF200);
+    Require(glyphTable[2] == 0x0F03);
+    Require(glyphTable[3] == 0xF8F0);
     Require(sceFontSelectGlyphsFt(1) == nullptr);
     Require(sceFontSelectGlyphsFt(-1) == nullptr);
 
