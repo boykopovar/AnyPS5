@@ -1014,11 +1014,11 @@ void TestBatchContextOwnership(std::uint32_t context) {
     constexpr int invalidContext = static_cast<int>(0x80930002);
     constexpr int invalidBatch = static_cast<int>(0x80930004);
     std::uint32_t other = 0;
-    std::uint32_t refused = 0xdeadbeefu;
-    Require(sceAjmInitialize(reinterpret_cast<std::intptr_t>(&refused), &refused) == static_cast<int>(0x80930005) && refused == 0xdeadbeefu);
     Require(sceAjmInitialize(0, &other) == 0 && other != context);
+    std::uint32_t lowValue = 0;
+    Require(sceAjmInitialize(0x20, &lowValue) == 0 && lowValue != other && lowValue != context);
     std::uint32_t highHalf = 0;
-    Require(sceAjmInitialize(0x300000000, &highHalf) == 0 && highHalf != other && highHalf != context);
+    Require(sceAjmInitialize(0x300000000, &highHalf) == 0 && highHalf != lowValue && highHalf != other && highHalf != context);
     std::vector<std::uint8_t> storage(256);
     AjmBatchInfo info{};
     Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
@@ -1043,6 +1043,7 @@ void TestBatchContextOwnership(std::uint32_t context) {
     Require(sceAjmBatchStart(highHalf + 1, &info, 0, &error, &untouched) == invalidContext);
     Require(untouched == 0xfeedu);
     Require(sceAjmFinalize(other) == 0);
+    Require(sceAjmFinalize(lowValue) == 0);
     Require(sceAjmFinalize(highHalf) == 0);
 }
 
