@@ -2,7 +2,7 @@
 
 ### Unknown function info
 
-- The FT_Glyph_Copy, FT_Glyph_Get_CBox, FT_Outline_Get_Orientation, FT_Request_Size, FT_Sin, FT_Tan, FT_Vector_Unit, FT_New_Size, FT_Outline_Copy, FT_Outline_Decompose, FT_Stroker_New, FT_Stroker_Done, FT_Stroker_GetCounts, FT_Stroker_BeginSubPath, FT_Stroker_LineTo, FT_Stroker_EndSubPath, FT_Stroker_Set, FT_Stroker_Rewind, FT_Stroker_GetBorderCounts, FT_Stroker_ConicTo, FT_Stroker_CubicTo, FT_Library_SetLcdFilter, FT_Library_SetLcdFilterWeights, FT_Remove_Module, FT_GlyphSlot_Oblique, FT_GlyphSlot_Embolden, FT_Outline_Embolden, FT_Outline_EmboldenXY, FT_Outline_Transform, FT_Vector_Length, FT_Vector_Rotate, FT_Vector_Polarize, FT_Vector_From_Polar, FT_Outline_Get_Bitmap, FT_Open_Face and FT_Outline_Render NIDs in [Export.cpp](../../../core/libs/prx/libSceFreeTypeOt/Export.cpp) are identified, but their provider-specific prototypes and behavior remain unverified. Their named helpers retain the explicit inventory aliases and throw; the separate libSceFreeType implementations do not supply this provider.
+- The FT_Glyph_Copy, FT_Glyph_Get_CBox, FT_Outline_Get_Orientation, FT_Sin, FT_Tan, FT_Vector_Unit, FT_Outline_Copy, FT_Outline_Decompose, FT_Library_SetLcdFilter, FT_Library_SetLcdFilterWeights, FT_Remove_Module, FT_GlyphSlot_Oblique, FT_GlyphSlot_Embolden, FT_Outline_Embolden, FT_Outline_EmboldenXY, FT_Outline_Transform, FT_Vector_Length, FT_Vector_Rotate, FT_Vector_Polarize, FT_Vector_From_Polar, FT_Outline_Get_Bitmap, FT_Open_Face and FT_Outline_Render NIDs in [Export.cpp](../../../core/libs/prx/libSceFreeTypeOt/Export.cpp) are identified, but their provider-specific prototypes and behavior remain unverified. Their named helpers retain the explicit inventory aliases and throw; the separate libSceFreeType implementations do not supply this provider.
 - The 36 `sceFreeTypeOtUnknown_*_nid_no_patch` exports in [Export.cpp](../../../core/libs/prx/libSceFreeTypeOt/Export.cpp) are present in the PS5 3.20 export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Their prototypes and behavior are unverified. Each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`; these declarations make no ABI or behavior claim.
 - Console runtime and other firmware versions are unverified for [FT_Trace_Get_Count and FT_Trace_Get_Name](../../../core/libs/prx/libSceFreeTypeOt/Export.cpp). The [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceFreeTypeOt.c#L2708) identifies NIDs `08-mhD-AAds` and `64XMq6sDxUo`; FreeType declares an integer count and a `const char*` name lookup taking an integer index. Firmware 13.60 shows `xor eax,eax; ret` at `0x10410` and `0x10420`, matching the disabled-tracing return values 0 and null. Both implementations are fixed constants independent of host tracing.
 
@@ -13,6 +13,41 @@ The two return-only bodies do not establish parameter counts or parameter widths
 - [FT_Stream calls](../../../core/libs/prx/libSceFreeTypeOt/Stream.cpp) (libSceFreeTypeOt) - console signatures and FreeType version are unverified. The [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceFreeTypeOt.c) has both the signed readers FreeType removed in 2.4.5 and their unsigned replacements; the 36 calls follow 2.4.12 [ftstream.c](https://github.com/freetype/freetype/blob/cecf93ef90c660a8b0b45e5adbbfb5ea443fb6b9/src/base/ftstream.c) and [ftobjs.c](https://github.com/freetype/freetype/blob/cecf93ef90c660a8b0b45e5adbbfb5ea443fb6b9/src/base/ftobjs.c#L205-L219), the signed readers 2.4.4, on the 80-byte LP64 record with guest callbacks. A null pointer FreeType would dereference throws before any allocation, read or frame is left behind, as does `FT_Stream_ReadFields` with a null stream, whose error changed in 2.5.4. `FT_Stream_New` and `FT_Stream_Open` still throw.
 
 - The import-resolution helpers in [Export.cpp](../../../core/libs/prx/libSceFreeTypeOt/Export.cpp) retain the PS5 3.20 NIDs from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs), including identified names and still-unidentified exports. Their provider-specific prototypes and behavior are unverified. Each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`; these declarations make no ABI or behavior claim.
+
+- [Forwarded FreeType exports](../../../core/libs/prx/libSceFreeTypeOt/ForwardExports.cpp) use the existing typed guest wrappers in a single libSceFreeType dependency. Windows exports explicit typed thunks; macOS and Linux retain the dependency and resolve its exports without duplicating wrappers or ownership state. This preserves the existing wrapper contracts; it does not establish equivalence with every firmware revision.
+
+### Missing data exports
+
+The following 13.60 data exports remain unavailable. Their guest structure layout, function-pointer ABI and lifetime are unverified. Host FreeType tables are not guest-compatible globals merely because their names match. No placeholder storage is provided.
+
+| Name | NID | Bytes |
+| --- | --- | --- |
+| `sfnt_module_class` | `6wWrq5tb+yk` | 72 |
+| `tt_cmap0_class_rec` | `yS-FJI-37oc` | 104 |
+| `tt_cmap2_class_rec` | `ZDvHK6T-sh4` | 104 |
+| `tt_cmap4_class_rec` | `GBl3n8k9jWY` | 104 |
+| `tt_cmap6_class_rec` | `fIVxKQHldfk` | 104 |
+| `tt_cmap8_class_rec` | `RIRv-1FA-yU` | 104 |
+| `tt_cmap10_class_rec` | `XX2pm0bprEc` | 104 |
+| `tt_cmap12_class_rec` | `BQs6Wk0OSiw` | 104 |
+| `tt_cmap13_class_rec` | `q6EWScb8SvU` | 104 |
+| `tt_cmap14_class_rec` | `UM6KCdqJmqs` | 104 |
+| `cff_driver_class` | `QCHORyo4-Aw` | 208 |
+| `cff_cmap_encoding_class_rec` | `TVapRR2giTo` | 80 |
+| `cff_cmap_unicode_class_rec` | `HhAxSe0AxGc` | 80 |
+| `psnames_module_class` | `yuOrMQkmgZg` | 72 |
+| `otv_module_class` | `SwB8EH71bIU` | 72 |
+| `gxv_module_class` | `1j+o52TClOU` | 72 |
+| `tt_driver_class` | `KrftZ0w-4Ds` | 208 |
+| `ft_smooth_renderer_class` | `s1e88GPYMYQ` | 120 |
+| `ft_smooth_lcd_renderer_class` | `VVDUxERNatk` | 120 |
+| `ft_smooth_lcdv_renderer_class` | `DRP2CWLtObo` | 120 |
+
+### Pending dependency exports
+
+Additional callable NIDs not supplied here remain reserved for open libSceFreeType implementation or export changes. They are not supplied by this batch. Once their base implementations land, Windows requires matching Ot forwarding entries; macOS and Linux must be checked through the retained dependency. Introducing child stubs for those entries would shadow future working providers.
+
+Windows provider wiring for `FT_Cos`, `FT_Angle_Diff`, `FT_Sin`, `FT_Tan`, `FT_Vector_Unit`, `FT_Outline_Copy`, `FT_Outline_Decompose` and `FT_Outline_Get_Orientation` is reserved for [#11613](https://github.com/boykopovar/AnyPS5/pull/11613). This branch adds no competing Windows thunks for these eight NIDs and retains existing throwing placeholders until that provider change lands; it must be rebased after the provider change. Non-Windows dependency lookup is not a claim of Windows availability before that prerequisite.
 
 - [ft_corner_is_flat, ft_corner_orientation](../../../core/libs/prx/libSceFreeTypeOt/Export.cpp) (libSceFreeTypeOt) - console prototypes and FreeType version equivalence are unverified. The LP64 signatures and 64-bit coordinate calculations follow bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftcalc.c): orientation returns +1 for counter-clockwise turns, -1 for clockwise turns and 0 for collinear inputs using 64-bit coordinate cross-products; flatness compares hypotenuse approximations via the alpha-max-plus-beta-min metric and returns 1 when the corner angle deviation does not exceed the threshold, 0 otherwise.
 
