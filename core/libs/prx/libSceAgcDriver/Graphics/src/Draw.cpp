@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/StagedMerge.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
@@ -65,7 +66,7 @@ bool DrawFaultTokens() {
     return enabled;
 }
 
-void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuffer commands, std::span<const CompiledShader> shaders, const Pm4::DrawParameters& draw, bool indirect) {
+void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuffer commands, std::span<const CompiledShader> shaders, const Pm4::DrawParameters& draw, std::uint32_t stage, const Pm4::DrawParameters::IndirectDraw* args) {
     try {
         if (!DrawFaultTokens()) return;
         const auto queue = GuestMemory::GpuLockThreadTag();
@@ -80,7 +81,29 @@ void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuf
                 if (shader.program != nullptr && (variant == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) variant = shader.program->variantId;
             }
             entry->variantId = variant;
-            std::snprintf(entry->desc, sizeof(entry->desc), "draw%s%s c=%u i=%u", draw.indexed ? " indexed" : "", indirect ? " indirect" : "", draw.indexCount, draw.instanceCount);
+            entry->stage = stage;
+            entry->argBuffer = 0;
+            entry->argOffset = 0;
+            entry->argStride = 0;
+            entry->argCount = 0;
+            for (auto& word : entry->argWords) word = 0;
+            if (args != nullptr) {
+                entry->argBuffer = args->arguments;
+                entry->argOffset = 0;
+                entry->argStride = args->stride;
+                try {
+                    constexpr std::uint32_t argWordLimit = 4;
+                    const auto first = Pm4::ReadDrawArgumentsUnsynced(*args, 0);
+                    entry->argWords[0] = first.count;
+                    entry->argWords[1] = first.instances;
+                    entry->argWords[2] = first.firstVertexOrIndex;
+                    entry->argWords[3] = draw.indexed ? first.vertexOffset : first.firstInstance;
+                    entry->argCount = argWordLimit;
+                } catch (...) {
+                    entry->argCount = 0;
+                }
+            }
+            std::snprintf(entry->desc, sizeof(entry->desc), "draw%s%s c=%u i=%u", draw.indexed ? " indexed" : "", args != nullptr ? " indirect" : "", draw.indexCount, draw.instanceCount);
             recorder.NoteFaultToken(faultToken);
             std::atomic_ref<AgcDriver::FaultToken>(entry->token).store(faultToken, std::memory_order_release);
         }
@@ -1422,9 +1445,20 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
     DrawInputCopy copy;
     if (recorder != nullptr && bytes != 0) {
         GuestMemory::FlushGpuWrites(address, bytes);
+#ifdef _WIN32
+        const bool owned = !RuntimeSwitches::Set(RuntimeSwitch::NoOwnedDrawInputs);
+#else
+        constexpr bool owned = false;
+#endif
+        if (owned) copy.buffer = recorder->ReusableOwnedDrawInput(address, bytes, use, &copy.derived);
+        if (copy.buffer != nullptr) {
+            copy.reused = true;
+            return copy;
+        }
         copy.registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         copy.generation = GuestMemory::CollectWrites(address, bytes);
         if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived);
+        else if (owned) copy.owned = recorder->ArmOwnedDrawInput(address, bytes);
         if (copy.buffer != nullptr) {
             copy.reused = true;
             return copy;
@@ -1467,7 +1501,11 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
 }
 
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived) {
-    if (recorder == nullptr || copy.reused || copy.generation == 0 || copy.buffer == nullptr) return;
+    if (recorder == nullptr || copy.reused || copy.buffer == nullptr) return;
+    if (copy.generation == 0) {
+        if (!copy.owned.words.empty() && !RuntimeSwitches::Set(RuntimeSwitch::NoOwnedDrawInputs)) recorder->KeepOwnedDrawInput(address, copy.buffer->Bytes().size(), copy.owned, copy.buffer, use, derived);
+        return;
+    }
     recorder->KeepDrawSnapshot(address, copy.buffer->Bytes().size(), copy.generation, copy.registryGeneration, copy.buffer, use, derived);
 }
 
@@ -2900,7 +2938,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         }
         eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
     }
-    noteDrawFaultToken(context, *recorder, commands, shaders, draw, record.indirect != nullptr);
+    noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), record.indirect != nullptr ? record.indirect->args : nullptr);
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
         recordStencilReplay(context, commands, state, draw, inputs, record.stencilReplay, shaders, resources, record.pushBytes, record.pushStages);
@@ -3888,7 +3926,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     pushDrawConstants(*pipeline, commands, state, draw, shaders, *resources, nullptr, 0, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     std::uint32_t subdraw = 0;
-    if (recorded) noteDrawFaultToken(context, *recorder, commands, shaders, draw, args != nullptr);
+    if (recorded) noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), args);
     if (stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     else {
         recordStencilReplay(context, commands, state, draw, inputs, stencilReplay, shaders, *resources);
