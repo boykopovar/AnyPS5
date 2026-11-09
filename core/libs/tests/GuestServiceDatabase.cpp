@@ -49,6 +49,8 @@ int main() {
     Require(getservbyname_nid_postfix("domain", "sctp") == nullptr);
     Require(getservbyname_nid_postfix("ntp", "TCP") == nullptr);
     Require(getservbyname_nid_postfix("HTTP", "tcp") == nullptr);
+    Require(getservbyname_nid_postfix(nullptr, "tcp") == nullptr);
+    Require(getservbyname_nid_postfix(nullptr, nullptr) == nullptr);
 
     auto* ntp = getservbyname_nid_postfix("ntp", "udp");
     Require(ntp && NetworkPort(ntp, 123));

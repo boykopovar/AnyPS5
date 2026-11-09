@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAcm/include/InventoryExports.hpp"
 #include "prx/libSceAcm/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -225,8 +226,17 @@ int APS5_VABI sceAcmBatchStartBuffer(AcmContextId context, const void* batch_com
     if (!g_contexts.contains(context)) return SCE_ACM_ERROR_BAD_CONTEXT;
     AcmBatchId id = g_nextId.fetch_add(1, std::memory_order_relaxed);
     while (id == 0) id = g_nextId.fetch_add(1, std::memory_order_relaxed);
-    if (batch_error) std::memset(batch_error, 0, sizeof(*batch_error));
-    *batch = id;
+    if (batch_error) {
+        AcmBatchError err{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(batch_error, &err, sizeof(err));
+        errno = savedErrno;
+        if (!copied) return SCE_ACM_ERROR_BAD_POINTER;
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(batch, &id, sizeof(id));
+    errno = savedErrno;
+    if (!copied) return SCE_ACM_ERROR_BAD_POINTER;
     return 0;
 }
 
@@ -239,8 +249,17 @@ int APS5_VABI sceAcmBatchStartBuffers(AcmContextId context, uint32_t batch_info_
     if (!g_contexts.contains(context)) return SCE_ACM_ERROR_BAD_CONTEXT;
     AcmBatchId id = g_nextId.fetch_add(1, std::memory_order_relaxed);
     while (id == 0) id = g_nextId.fetch_add(1, std::memory_order_relaxed);
-    if (batch_error) std::memset(batch_error, 0, sizeof(*batch_error));
-    *batch = id;
+    if (batch_error) {
+        AcmBatchError err{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(batch_error, &err, sizeof(err));
+        errno = savedErrno;
+        if (!copied) return SCE_ACM_ERROR_BAD_POINTER;
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(batch, &id, sizeof(id));
+    errno = savedErrno;
+    if (!copied) return SCE_ACM_ERROR_BAD_POINTER;
     return 0;
 }
 
@@ -261,7 +280,14 @@ int APS5_VABI sceAcmContextCreate(AcmContextId* context) {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_contexts.insert(id);
     }
-    *context = id;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(context, &id, sizeof(id));
+    errno = savedErrno;
+    if (!copied) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_contexts.erase(id);
+        return SCE_ACM_ERROR_BAD_POINTER;
+    }
     return 0;
 }
 
@@ -283,6 +309,8 @@ int APS5_VABI sceAcm_ConvReverb_SharedInput(AcmBatchInfo* batch, std::uint32_t m
     }
     const auto blockCount = input->blockCount;
     if (!input->history || blockCount == 0) return SCE_ACM_ERROR_BAD_POINTER;
+    if (input->availableBlocks != 0 && input->currentBlock != 0 && input->currentBlock > blockCount) return SCE_ACM_ERROR_BAD_POINTER;
+    if (std::uint64_t{blockCount} * blockSize * (input->sampleFormat == 0 ? 8 : 4) > 0xFFFFFFFFu) return SCE_ACM_ERROR_BAD_POINTER;
     input->currentBlock = (input->availableBlocks == 0 || input->currentBlock == 0 ? blockCount : input->currentBlock) - 1;
     input->availableBlocks = std::min(input->availableBlocks + 1, blockCount);
     const auto channelCount = input->channelCount;
@@ -411,7 +439,6 @@ int APS5_VABI sceAcmBatchJobPriority(AcmBatchInfo* batch, std::uint32_t priority
 
 int APS5_VABI sceAcm_ConvReverb_SharedIr() {
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAcm_IFFT(AcmBatchInfo* batch, std::int32_t transformSize, std::uint32_t transformCount, std::int32_t inputFormat, const void* const* inputs, std::int32_t outputFormat, void* const* outputs, std::int32_t flags) {

@@ -40,6 +40,7 @@ int APS5_VABI sceKeyboardGetKey2Char(std::int32_t handle, std::int32_t arrange, 
 }
 
 int APS5_VABI sceKeyboardConnectPort(std::int32_t first, std::int32_t second) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -49,6 +50,7 @@ int APS5_VABI sceKeyboardDebugGetDeviceId(std::int32_t handle, std::int32_t* dev
 }
 
 int APS5_VABI sceKeyboardDeviceOpen(std::uint64_t deviceId, std::int32_t index, std::uint32_t options) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -58,36 +60,44 @@ int APS5_VABI sceKeyboardDisconnectAll(void) {
 }
 
 int APS5_VABI sceKeyboardDisconnectDevice(std::int32_t deviceId) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceKeyboardDisconnectPort(std::int32_t first, std::int32_t second) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceKeyboardGetDeviceInfo(std::int32_t deviceId, KeyboardDeviceInfo* info) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceKeyboardGetHandle(std::int32_t userId, std::int32_t type, std::int32_t index) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceKeyboardMbusInit(void) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
+
 int APS5_VABI sceKeyboardSetProcessFocus(const KeyboardProcessFocus* focus) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceKeyboardSetProcessPrivilege(std::uint8_t privilege) {
+    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

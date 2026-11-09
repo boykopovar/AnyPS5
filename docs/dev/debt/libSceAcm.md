@@ -6,6 +6,7 @@
 
 ### Unknown function info
 
+- [sceAcmBatchStartBuffer, sceAcmBatchStartBuffers and sceAcmContextCreate](../../../core/libs/prx/libSceAcm/Export.cpp) (libSceAcm) - returning `0x81940006` for unwritable output pointers is a host-safety fallback with console behavior unmeasured.
 - [Additional ACM exports](../../../core/libs/prx/libSceAcm/Export.cpp) - the eleven name/NID pairs below are defined exports in the [firmware 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceacm-a3566cc281.jsonl). Their ABIs and behaviour are unknown. Parameterless `int` declarations are import-resolution placeholders, not established signatures; every call throws `NotImplemented_nid_no_patch`. No audio-chain, reverb or telemetry behaviour is implemented.
 
 | Name | NID |
@@ -29,6 +30,7 @@
 - [`sceAcmBatchJobNotification`](../../../core/libs/prx/libSceAcm/Export.cpp) is a parameterless pending declaration for import resolution. Its signature and behavior are unverified; it throws through `NotImplemented_nid_no_patch`.
 
 - [`sceAcm_ConvReverb_SharedInput`](../../../core/libs/prx/libSceAcm/Export.cpp) encodes the reverb jobs as `libSceAcm.sprx` does on firmware 13.40 (read from the module's code and compared with that code run on x86-64, not measured on a console). PPSA01317 calls it during boot with 512-sample blocks. Its input stage appends one `sceAcm_FFT` job of twice the block size (256 points for 128-sample blocks). The meaning of the reverb descriptor's block metadata for the DSP is unverified.
+- [`sceAcm_ConvReverb_SharedInput`](../../../core/libs/prx/libSceAcm/Export.cpp) returns `BadPointer` before changing any state for a ring whose `currentBlock` is above `blockCount` (while `availableBlocks` is non-zero), and for a history whose `blockCount` times its slot size exceeds 32 bits. The console's result for these inputs is not measured.
 
 ### Additional callable exports
 
