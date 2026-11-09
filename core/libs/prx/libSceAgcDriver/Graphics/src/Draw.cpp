@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/StagedMerge.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
@@ -53,13 +54,19 @@ void WriteCheckpointMarker(const Context& context, VkCommandBuffer commands, std
 void WriteNvCheckpointToken(const Context& context, VkCommandBuffer commands, std::uint64_t token, std::uint32_t queue);
 
 namespace {
+enum class VkDrawKind : std::size_t { Direct, Indexed, Indirect, Mesh, Count };
+std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(VkDrawKind::Count)> vkDrawCounts{};
+void CountVkDraw(VkDrawKind kind) {
+    vkDrawCounts[static_cast<std::size_t>(kind)].fetch_add(1, std::memory_order_relaxed);
+}
+
 
 bool DrawFaultTokens() {
     static const bool enabled = std::getenv("APS5_GPU_CHECKPOINTS") != nullptr;
     return enabled;
 }
 
-void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuffer commands, std::span<const CompiledShader> shaders, const Pm4::DrawParameters& draw, bool indirect) {
+void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuffer commands, std::span<const CompiledShader> shaders, const Pm4::DrawParameters& draw, std::uint32_t stage, const Pm4::DrawParameters::IndirectDraw* args) {
     try {
         if (!DrawFaultTokens()) return;
         const auto queue = GuestMemory::GpuLockThreadTag();
@@ -74,7 +81,29 @@ void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuf
                 if (shader.program != nullptr && (variant == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) variant = shader.program->variantId;
             }
             entry->variantId = variant;
-            std::snprintf(entry->desc, sizeof(entry->desc), "draw%s%s c=%u i=%u", draw.indexed ? " indexed" : "", indirect ? " indirect" : "", draw.indexCount, draw.instanceCount);
+            entry->stage = stage;
+            entry->argBuffer = 0;
+            entry->argOffset = 0;
+            entry->argStride = 0;
+            entry->argCount = 0;
+            for (auto& word : entry->argWords) word = 0;
+            if (args != nullptr) {
+                entry->argBuffer = args->arguments;
+                entry->argOffset = 0;
+                entry->argStride = args->stride;
+                try {
+                    constexpr std::uint32_t argWordLimit = 4;
+                    const auto first = Pm4::ReadDrawArgumentsUnsynced(*args, 0);
+                    entry->argWords[0] = first.count;
+                    entry->argWords[1] = first.instances;
+                    entry->argWords[2] = first.firstVertexOrIndex;
+                    entry->argWords[3] = draw.indexed ? first.vertexOffset : first.firstInstance;
+                    entry->argCount = argWordLimit;
+                } catch (...) {
+                    entry->argCount = 0;
+                }
+            }
+            std::snprintf(entry->desc, sizeof(entry->desc), "draw%s%s c=%u i=%u", draw.indexed ? " indexed" : "", args != nullptr ? " indirect" : "", draw.indexCount, draw.instanceCount);
             recorder.NoteFaultToken(faultToken);
             std::atomic_ref<AgcDriver::FaultToken>(entry->token).store(faultToken, std::memory_order_release);
         }
@@ -405,21 +434,6 @@ std::uint64_t DrawRenderPassKey(const Context& context, const State& state, std:
     if (!context.provokingVertexModePerPipeline) mix(state.provokingVertexMode);
     if (state.rasterizerDiscard) mix(0x6469736361726400ull);
     return key;
-}
-
-namespace {
-
-GuestTextureResource ArraySurfaceForTarget(const ColorTarget& color) {
-    Require(color.arrayLastSlice != 0, "the color target is not a view of a 2D array");
-    auto surface = SurfaceForTarget(color);
-    surface.baseAddress = color.arrayAddress;
-    surface.width = color.surfaceExtent.width;
-    surface.height = color.surfaceExtent.height;
-    surface.depthOrLastArray = color.arrayLastSlice;
-    surface.dimension = TextureDimension::k2DArray;
-    return surface;
-}
-
 }
 
 namespace {
@@ -1396,6 +1410,12 @@ struct DrawTimer {
         us[which] += std::chrono::duration<double, std::micro>(now - phaseStart).count();
         phaseStart = now;
     }
+    void charge(DrawPhase which, std::chrono::steady_clock::time_point start) {
+        if (!profile) return;
+        const auto now = std::chrono::steady_clock::now();
+        us[which] += std::chrono::duration<double, std::micro>(now - start).count();
+        phaseStart += now - start;
+    }
 };
 
 // One line per draw with the phases that took time (APS5_TRACE_DRAWS), and the 10 s totals.
@@ -1425,9 +1445,20 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
     DrawInputCopy copy;
     if (recorder != nullptr && bytes != 0) {
         GuestMemory::FlushGpuWrites(address, bytes);
+#ifdef _WIN32
+        const bool owned = !RuntimeSwitches::Set(RuntimeSwitch::NoOwnedDrawInputs);
+#else
+        constexpr bool owned = false;
+#endif
+        if (owned) copy.buffer = recorder->ReusableOwnedDrawInput(address, bytes, use, &copy.derived);
+        if (copy.buffer != nullptr) {
+            copy.reused = true;
+            return copy;
+        }
         copy.registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         copy.generation = GuestMemory::CollectWrites(address, bytes);
         if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived);
+        else if (owned) copy.owned = recorder->ArmOwnedDrawInput(address, bytes);
         if (copy.buffer != nullptr) {
             copy.reused = true;
             return copy;
@@ -1440,13 +1471,13 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
 
 DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes, std::size_t stride) {
     Require(validBytes <= bytes, "the valid bytes of a vertex fetch exceed the fetch");
-    GuestMemory::FlushGpuWrites(address, bytes);
     auto readable = validBytes;
     if (stride != 0 && !GuestMemory::Accessible(reinterpret_cast<const void*>(address), validBytes)) {
         const auto ranges = GuestMemory::CommittedRanges(address, validBytes);
         const std::size_t prefix = !ranges.empty() && ranges.front().first == address ? static_cast<std::size_t>(ranges.front().second - address) : 0;
         if (validBytes - prefix < stride) readable = prefix;
     }
+    if (readable != 0) GuestMemory::FlushGpuWrites(address, readable);
     DrawInputCopy copy;
     auto* recorder = context.recorder;
     const bool keep = recorder != nullptr && readable != 0 && readable <= std::numeric_limits<std::uint32_t>::max();
@@ -1470,7 +1501,11 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
 }
 
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived) {
-    if (recorder == nullptr || copy.reused || copy.generation == 0 || copy.buffer == nullptr) return;
+    if (recorder == nullptr || copy.reused || copy.buffer == nullptr) return;
+    if (copy.generation == 0) {
+        if (!copy.owned.words.empty() && !RuntimeSwitches::Set(RuntimeSwitch::NoOwnedDrawInputs)) recorder->KeepOwnedDrawInput(address, copy.buffer->Bytes().size(), copy.owned, copy.buffer, use, derived);
+        return;
+    }
     recorder->KeepDrawSnapshot(address, copy.buffer->Bytes().size(), copy.generation, copy.registryGeneration, copy.buffer, use, derived);
 }
 
@@ -1561,15 +1596,28 @@ std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, std::size_t byt
 // Draw's validation, index and vertex phases. With `recipe` the fragment outputs, the pipeline
 // stages and the vertex input layout are the recipe's (derived from the same compiled stages)
 // instead of computed.
-DrawInputs prepareDrawInputs(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, DrawOutcome& outcome, DrawTimer& timer, PerformanceTimer& timing, const DrawRecipe* recipe) {
-    DrawInputs inputs;
+struct DrawPlan {
+    bool nothing = false;
+    std::uint64_t indexBytes = 0;
+    std::uint32_t fragmentOutputs = 0;
+    VkPipelineStageFlags shaderStages = 0;
+    std::uint32_t meshGroups = 0;
+    std::uint32_t meshLayers = 1;
+    std::uint32_t meshLayerStride = 0;
+    VertexInputLayout vertexInput;
+    std::shared_ptr<const VertexInputLayout> retainedVertexInput;
+    bool candidate = false;
+    bool keyed = false;
+    ResourceCache::Key contentKey;
+    const VertexInputLayout& VertexLayout() const { return retainedVertexInput != nullptr ? *retainedVertexInput : vertexInput; }
+};
+
+DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawRecipe* recipe, DrawOutcome& outcome, DrawTimer& timer) {
+    DrawPlan plan;
     APS5_LOG_OUT_DEBUG("Draw indices=%u instances=%u indexSize=%u flags=%u indexAddress=0x%llx", draw.indexCount, draw.instanceCount, draw.indexSize, draw.flags, static_cast<unsigned long long>(draw.indexAddress));
     APS5_LOG_OUT_DEBUG("State colorTarget=%u render=%ux%u colorAddress=0x%llx colorBytes=%llu colorExtent=%ux%u", state.hasColorTarget ? 1u : 0u, state.renderExtent.width, state.renderExtent.height, static_cast<unsigned long long>(state.color.address), static_cast<unsigned long long>(state.color.bytes), state.color.extent.width, state.color.extent.height);
     APS5_LOG_OUT_DEBUG("Viewport x=%f y=%f w=%f h=%f minDepth=%f maxDepth=%f", state.viewport.x, state.viewport.y, state.viewport.width, state.viewport.height, state.viewport.minDepth, state.viewport.maxDepth);
     APS5_LOG_OUT_DEBUG("Scissor x=%d y=%d w=%u h=%u topology=%u cullMode=0x%x frontFace=%u", state.scissor.offset.x, state.scissor.offset.y, state.scissor.extent.width, state.scissor.extent.height, static_cast<unsigned>(state.topology), static_cast<unsigned>(state.cullMode), static_cast<unsigned>(state.frontFace));
-    // An indirect draw: the counts live in guest memory records (Pm4::DrawParameters::IndirectDraw),
-    // read by the GPU from the host import or, when the GPU could not see their current bytes, by
-    // the CPU (Draw's `records`). The driver resolved every non-vertex-path draw before this.
     const auto* args = draw.indirect ? &*draw.indirect : nullptr;
     Require(draw.indexed ? draw.flags == 0 : (draw.flags & ~0x20u) == 0, "draw modifiers are unsupported");
     if (draw.indexed) {
@@ -1578,8 +1626,8 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         Require(draw.indexAddress == 0 && draw.indexSize == 0, "auto draw must not reference an index buffer");
         if (args == nullptr) {
             if (draw.indexCount == 0 || draw.instanceCount == 0) {
-                inputs.nothing = true;
-                return inputs;
+                plan.nothing = true;
+                return plan;
             }
             Require(draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - (draw.indexCount - 1u), "auto draw vertex range overflow");
             Require(draw.firstInstance <= std::numeric_limits<std::uint32_t>::max() - (draw.instanceCount - 1u), "auto draw instance range overflow");
@@ -1587,32 +1635,25 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     }
     if (args == nullptr) {
         if (draw.indexCount == 0 || draw.instanceCount == 0) {
-            inputs.nothing = true;
-            return inputs;
+            plan.nothing = true;
+            return plan;
         }
     } else Require((!state.stages.mesh || draw.indexed) && !state.stages.tessellation && !state.quadList, "indirect draw on a non-vertex path must be resolved by the driver");
-    inputs.indexBytes = static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize;
-    const auto indexBytes = inputs.indexBytes;
+    plan.indexBytes = static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize;
+    const auto indexBytes = plan.indexBytes;
     APS5_LOG_OUT_DEBUG("Index buffer bytes=%llu", static_cast<unsigned long long>(indexBytes));
     Require(indexBytes <= std::numeric_limits<std::size_t>::max(), "index buffer size overflow");
-    if (draw.indexed) GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
-    APS5_LOG_CHARS_OUT_DEBUG("Index buffer range OK");
     Require(!draw.indexed || !state.hasColorTarget || draw.indexAddress + indexBytes <= state.color.MemoryAddress() || state.color.MemoryAddress() + state.color.bytes <= draw.indexAddress, "index buffer aliases the render target");
-    if (draw.indexed) RequireNoMultisampleTarget(draw.indexAddress, static_cast<std::size_t>(indexBytes), "an index buffer read");
-    if (state.pixelKill && !state.pixelEarlyZ && std::ranges::any_of(state.colors, [](const ColorTarget& color) { return color.partialWriteMask != 0; })) {
-        const auto* recorder = Recorder::Active();
-        Require(recorder == nullptr || !recorder->CountingSamples(), "a partial write of a packed color target merges inside the pixel shader after early depth and stencil tests, which a shader that kills pixels under late tests cannot use while occlusion queries count samples: the early tests would count the pixels it kills");
-    }
     APS5_LOG_CHARS_OUT_DEBUG("ValidateShaders");
     if (recipe != nullptr) {
-        inputs.fragmentOutputs = recipe->fragmentOutputs;
-        inputs.shaderStages = recipe->shaderStages;
+        plan.fragmentOutputs = recipe->fragmentOutputs;
+        plan.shaderStages = recipe->shaderStages;
     } else {
-        inputs.fragmentOutputs = CachedFragmentOutputs(context, shaders, state, outcome.validateMemoized, outcome.validateHit);
-        inputs.shaderStages = PipelineStages(shaders);
+        plan.fragmentOutputs = CachedFragmentOutputs(context, shaders, state, outcome.validateMemoized, outcome.validateHit);
+        plan.shaderStages = PipelineStages(shaders);
     }
     APS5_LOG_CHARS_OUT_DEBUG("ValidateShaders OK");
-    APS5_LOG_OUT_DEBUG("PipelineStages=0x%x", static_cast<unsigned>(inputs.shaderStages));
+    APS5_LOG_OUT_DEBUG("PipelineStages=0x%x", static_cast<unsigned>(plan.shaderStages));
     if (state.stages.mesh) {
         APS5_LOG_CHARS_OUT_DEBUG("Mesh path");
         Require(context.meshShader, "device does not support mesh shaders");
@@ -1621,8 +1662,8 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         Require(mesh.primitivesPerGroup != 0, "mesh pipeline groups no primitive (zero primitives per group)");
         Require(((state.stages.registerValue >> 19u) & 3u) == 0 || !draw.indexed, "indexed fast-launch draws are unsupported");
         if (args == nullptr && draw.indexCount < inputSize) {
-            inputs.nothing = true;
-            return inputs;
+            plan.nothing = true;
+            return plan;
         }
         if (args == nullptr) {
             const auto step = mesh.inputPrimitive == 5 || mesh.inputPrimitive == 6 ? 1u : inputSize;
@@ -1631,16 +1672,73 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             const auto grid = MeshGridFor(context, groups, draw.instanceCount);
             Require(grid.has_value(), "mesh draw exceeds workgroup count limits");
             APS5_LOG_OUT_DEBUG("Mesh primitives=%u groups=%u as %u x %u", primitives, groups, grid->groups, grid->layers);
-            inputs.meshGroups = grid->groups;
-            inputs.meshLayers = grid->layers;
-            inputs.meshLayerStride = grid->layerStride;
+            plan.meshGroups = grid->groups;
+            plan.meshLayers = grid->layers;
+            plan.meshLayerStride = grid->layerStride;
         }
     }
     if (state.stages.tessellation) Require(draw.indexCount % state.stages.tessellation->inputControlPoints == 0, "incomplete tessellation patch");
-    // Viewport and scissor are dynamic pipeline state, so their limits are checked here per draw.
     ValidateViewport(context, state.viewport);
     ValidateDepthBounds(context, state);
     ValidateSampleMask(context, state, shaders);
+    timer.phase(PhaseValidate);
+    const auto layoutStart = timer.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto& attributes = shaders.front().program->vertexAttributes;
+    if (recipe != nullptr) {
+        plan.vertexInput = recipe->vertexInput;
+    } else if (!attributes.empty()) {
+        if (context.vertexInputs != nullptr) plan.retainedVertexInput = context.vertexInputs->TryGet(shaders.front().program->variantId, attributes);
+        if (plan.retainedVertexInput == nullptr) plan.vertexInput = BuildVertexInputLayout(context, attributes);
+    }
+    timer.charge(PhaseVertex, layoutStart);
+    static const bool noDrawResourceCache = std::getenv("APS5_NO_DRAW_RESOURCE_CACHE") != nullptr;
+    static const bool noTextureCache = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
+    static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
+    plan.candidate = recipe == nullptr && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; });
+    plan.keyed = plan.candidate && !ShaderResources::NeverReusable(shaders);
+    if (plan.keyed) {
+        const auto keyStart = timer.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        plan.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+        timer.charge(PhaseLookup, keyStart);
+    }
+    return plan;
+}
+
+bool VerifyDrawPlan() {
+    static const bool verify = std::getenv("APS5_VERIFY_DRAW_PLAN") != nullptr;
+    return verify;
+}
+
+void requireDrawPlanRepeats(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& plan) {
+    DrawOutcome scratch;
+    DrawTimer scratchTimer(false);
+    const auto again = planDraw(context, state, draw, shaders, nullptr, scratch, scratchTimer);
+    const auto sameBinding = [](const VkVertexInputBindingDescription& a, const VkVertexInputBindingDescription& b) { return a.binding == b.binding && a.stride == b.stride && a.inputRate == b.inputRate; };
+    const auto sameAttribute = [](const VkVertexInputAttributeDescription& a, const VkVertexInputAttributeDescription& b) { return a.location == b.location && a.binding == b.binding && a.format == b.format && a.offset == b.offset; };
+    const auto& layout = plan.VertexLayout();
+    const auto& repeated = again.VertexLayout();
+    Require(again.nothing == plan.nothing && again.indexBytes == plan.indexBytes && again.fragmentOutputs == plan.fragmentOutputs && again.shaderStages == plan.shaderStages && again.meshGroups == plan.meshGroups && again.meshLayers == plan.meshLayers && again.meshLayerStride == plan.meshLayerStride && again.candidate == plan.candidate && again.keyed == plan.keyed && again.contentKey == plan.contentKey && std::ranges::equal(repeated.bindings, layout.bindings, sameBinding) && std::ranges::equal(repeated.attributes, layout.attributes, sameAttribute), "APS5_VERIFY_DRAW_PLAN: the plan built after the draw's record-time work differs from the plan the draw used");
+}
+
+DrawInputs prepareDrawInputs(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& drawPlan, DrawTimer& timer, PerformanceTimer& timing) {
+    DrawInputs inputs;
+    inputs.indexBytes = drawPlan.indexBytes;
+    inputs.fragmentOutputs = drawPlan.fragmentOutputs;
+    inputs.shaderStages = drawPlan.shaderStages;
+    inputs.meshGroups = drawPlan.meshGroups;
+    inputs.meshLayers = drawPlan.meshLayers;
+    inputs.meshLayerStride = drawPlan.meshLayerStride;
+    inputs.vertexInput = drawPlan.vertexInput;
+    inputs.retainedVertexInput = drawPlan.retainedVertexInput;
+    const auto* args = draw.indirect ? &*draw.indirect : nullptr;
+    const auto indexBytes = inputs.indexBytes;
+    if (draw.indexed) GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
+    APS5_LOG_CHARS_OUT_DEBUG("Index buffer range OK");
+    if (draw.indexed) RequireNoMultisampleTarget(draw.indexAddress, static_cast<std::size_t>(indexBytes), "an index buffer read");
+    if (state.pixelKill && !state.pixelEarlyZ && std::ranges::any_of(state.colors, [](const ColorTarget& color) { return color.partialWriteMask != 0; })) {
+        const auto* recorder = Recorder::Active();
+        Require(recorder == nullptr || !recorder->CountingSamples(), "a partial write of a packed color target merges inside the pixel shader after early depth and stencil tests, which a shader that kills pixels under late tests cannot use while occlusion queries count samples: the early tests would count the pixels it kills");
+    }
     timer.phase(PhaseValidate);
     timing.Mark("validate");
     inputs.maxIndex = draw.indexed ? 0u : draw.firstVertex + draw.indexCount - 1u;
@@ -1815,13 +1913,6 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     APS5_LOG_CHARS_OUT_DEBUG("Index validation OK");
     timing.Mark("index_upload");
     const auto& attributes = shaders.front().program->vertexAttributes;
-    // Validates the vertex descriptors; the layout also keys and builds the pipeline.
-    if (recipe != nullptr) {
-        inputs.vertexInput = recipe->vertexInput;
-    } else if (!attributes.empty()) {
-        if (context.vertexInputs != nullptr) inputs.retainedVertexInput = context.vertexInputs->TryGet(shaders.front().program->variantId, attributes);
-        if (inputs.retainedVertexInput == nullptr) inputs.vertexInput = BuildVertexInputLayout(context, attributes);
-    }
     inputs.vertexOffsets.assign(attributes.size(), 0);
     inputs.vertexHandles.reserve(attributes.size());
     // An indexed draw's vertex offset moves every fetch: the copy must reach the last one.
@@ -2020,7 +2111,7 @@ bool drawStagingEnabled() {
     return !disabled;
 }
 
-ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
+ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, const DrawPlan& plan, DrawOutcome& outcome, DrawTimer& timer) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
     // A recordable draw whose stages' compiled content repeats an earlier one binds that build's
@@ -2029,19 +2120,17 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     // object must never do. Revalidate proves a hit by texture identity, which needs the texture
     // caches. Push constants still come from this draw's stages. APS5_NO_DRAW_RESOURCE_CACHE=1
     // builds every draw's resources as before.
-    static const bool noDrawResourceCache = std::getenv("APS5_NO_DRAW_RESOURCE_CACHE") != nullptr;
-    static const bool noTextureCache = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     // The render target and index ranges stay out of the key (see DrawResourceKey); a hit repeats
     // the alias checks instead. Debug aid: APS5_NO_DRAW_KEY_TRIM=1 keys them as before.
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
-    const bool candidate = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; });
-    resolved.cacheable = candidate && !ShaderResources::NeverReusable(shaders);
+    const bool candidate = recordable && plan.candidate;
+    resolved.cacheable = recordable && plan.keyed;
     const auto address = candidate && !ShaderResources::SpaceReuseDisabled() ? addressStages(shaders) : AddressStages::None;
     std::optional<AddressDrawReuse> reuse;
     if (address == AddressStages::Storing) reuse = AddressDrawReuse::NotReadOnly;
     else if (address == AddressStages::ReadOnly && !resolved.cacheable) reuse = AddressDrawReuse::NotSpaceOnly;
     if (resolved.cacheable) {
-        resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+        resolved.contentKey = plan.contentKey;
         if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
             const auto releaseSpace = [](ShaderResources* resources) { static_cast<void>(resources->ReleaseSpace()); };
             std::unique_ptr<ShaderResources, decltype(releaseSpace)> heldSpace(nullptr, releaseSpace);
@@ -2171,6 +2260,7 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
     };
     const auto* args = indirect != nullptr ? indirect->args : nullptr;
     if (state.stages.mesh && (args != nullptr || state.tessellationCapture != nullptr)) {
+        CountVkDraw(VkDrawKind::Mesh);
         context.Function<PFN_vkCmdDrawMeshTasksIndirectEXT>("vkCmdDrawMeshTasksIndirectEXT")(commands, argumentBuffer, argumentOffset, 1, sizeof(VkDrawMeshTasksIndirectCommandEXT));
         recorded(subdraw++);
         emitted = true;
@@ -2178,6 +2268,7 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
     }
     if (state.stages.mesh) {
         APS5_LOG_OUT_DEBUG("vkCmdDrawMeshTasksEXT groups=%u instances=%u layers=%u", inputs.meshGroups, draw.instanceCount, inputs.meshLayers);
+        CountVkDraw(VkDrawKind::Mesh);
         context.Function<PFN_vkCmdDrawMeshTasksEXT>("vkCmdDrawMeshTasksEXT")(commands, inputs.meshGroups, draw.instanceCount, inputs.meshLayers);
         recorded(subdraw++);
         emitted = true;
@@ -2186,6 +2277,7 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
     if (!inputs.vertexHandles.empty()) context.Resolved(&DeviceFunctions::cmdBindVertexBuffers, "vkCmdBindVertexBuffers")(commands, 0, static_cast<std::uint32_t>(inputs.vertexHandles.size()), inputs.vertexHandles.data(), inputs.vertexOffsets.data());
     if (inputs.expandedIndexCount != 0u) {
         context.Resolved(&DeviceFunctions::cmdBindIndexBuffer, "vkCmdBindIndexBuffer")(commands, inputs.indexHandle, inputs.indexOffset, VK_INDEX_TYPE_UINT32);
+        CountVkDraw(VkDrawKind::Indexed);
         context.Resolved(&DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed")(commands, inputs.expandedIndexCount, draw.instanceCount, 0, static_cast<std::int32_t>(draw.firstVertex), draw.firstInstance);
         emitted = true;
         return true;
@@ -2193,10 +2285,12 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
     if (draw.indexed) context.Resolved(&DeviceFunctions::cmdBindIndexBuffer, "vkCmdBindIndexBuffer")(commands, inputs.indexHandle, inputs.indexOffset, draw.indexSize == 2 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
     if (args == nullptr) {
         if (draw.indexed) {
+            CountVkDraw(VkDrawKind::Indexed);
             context.Resolved(&DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed")(commands, pieceFirstIndex ? draw.indexCount : inputs.indexCount.value_or(draw.indexCount), draw.instanceCount, pieceFirstIndex.value_or(0u), static_cast<std::int32_t>(draw.firstVertex), draw.firstInstance);
             recorded(subdraw++);
             emitted = true;
         } else {
+            CountVkDraw(VkDrawKind::Direct);
             context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, draw.indexCount, draw.instanceCount, draw.firstVertex, draw.firstInstance);
             recorded(subdraw++);
             emitted = true;
@@ -2204,14 +2298,17 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
     } else if (indirect->path == IndirectDrawPath::Gpu) {
         emitted = true;
         if (args->countIndirect) {
+            CountVkDraw(VkDrawKind::Indirect);
             if (draw.indexed) context.Function<PFN_vkCmdDrawIndexedIndirectCountKHR>("vkCmdDrawIndexedIndirectCountKHR")(commands, argumentBuffer, argumentOffset, indirect->countImport->buffer, HostImportOffset(*indirect->countImport, args->countAddress), args->count, args->stride);
             else context.Function<PFN_vkCmdDrawIndirectCountKHR>("vkCmdDrawIndirectCountKHR")(commands, argumentBuffer, argumentOffset, indirect->countImport->buffer, HostImportOffset(*indirect->countImport, args->countAddress), args->count, args->stride);
         } else if (args->count <= 1 || context.multiDrawIndirect) {
+            CountVkDraw(VkDrawKind::Indirect);
             if (draw.indexed) context.Resolved(&DeviceFunctions::cmdDrawIndexedIndirect, "vkCmdDrawIndexedIndirect")(commands, argumentBuffer, argumentOffset, args->count, args->stride);
             else context.Resolved(&DeviceFunctions::cmdDrawIndirect, "vkCmdDrawIndirect")(commands, argumentBuffer, argumentOffset, args->count, args->stride);
         } else {
             for (std::uint32_t record = 0; record < args->count; ++record) {
                 const auto offset = argumentOffset + static_cast<VkDeviceSize>(record) * args->stride;
+                CountVkDraw(VkDrawKind::Indirect);
                 if (draw.indexed) context.Resolved(&DeviceFunctions::cmdDrawIndexedIndirect, "vkCmdDrawIndexedIndirect")(commands, argumentBuffer, offset, 1, args->stride);
                 else context.Resolved(&DeviceFunctions::cmdDrawIndirect, "vkCmdDrawIndirect")(commands, argumentBuffer, offset, 1, args->stride);
             }
@@ -2229,10 +2326,12 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
                 if (record.firstVertexOrIndex >= boundCount) continue;
                 const auto vertexOffset = args->vertexRule == Rule::InPlace ? record.vertexOffset : args->vertexConstant;
                 emitted = true;
+                CountVkDraw(VkDrawKind::Indexed);
                 context.Resolved(&DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed")(commands, std::min(record.count, boundCount - record.firstVertexOrIndex), record.instances, record.firstVertexOrIndex, static_cast<std::int32_t>(vertexOffset), firstInstance);
             } else {
                 const auto firstVertex = args->vertexRule == Rule::InPlace ? record.firstVertexOrIndex : args->vertexConstant;
                 emitted = true;
+                CountVkDraw(VkDrawKind::Direct);
                 context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, record.count, record.instances, firstVertex, firstInstance);
             }
         }
@@ -2839,7 +2938,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         }
         eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
     }
-    noteDrawFaultToken(context, *recorder, commands, shaders, draw, record.indirect != nullptr);
+    noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), record.indirect != nullptr ? record.indirect->args : nullptr);
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
         recordStencilReplay(context, commands, state, draw, inputs, record.stencilReplay, shaders, resources, record.pushBytes, record.pushStages);
@@ -3206,8 +3305,13 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto& ownWaitedMs = prepared.ownWaitedMs;
     const auto report = [&](const char* suffix) { reportDrawEnd(state, timer, built, outcome, waitedBefore, ownWaitedMs, suffix); };
     auto& inputs = prepared.inputs;
-    inputs = prepareDrawInputs(context, state, draw, shaders, outcome, timer, timing, nullptr);
-    if (inputs.nothing) return false;
+    const auto plan = planDraw(context, state, draw, shaders, nullptr, outcome, timer);
+    if (plan.nothing) return false;
+    inputs = prepareDrawInputs(context, state, draw, shaders, plan, timer, timing);
+    if (inputs.nothing) {
+        if (VerifyDrawPlan()) requireDrawPlanRepeats(context, state, draw, shaders, plan);
+        return false;
+    }
     const auto* args = prepared.args = draw.indirect ? &*draw.indirect : nullptr;
     const auto indexBytes = inputs.indexBytes;
     const int dumpLimit = prepared.dumpLimit = DumpTargetLimit();
@@ -3225,6 +3329,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             if (color.staged) {
                 const auto packed = StagedMergeTarget(color);
                 binding.stagedTemporary = AcquireStagedTemporary(context, color.extent, color.samples);
+                PrepareMultisampleTargetForDraw_nid_no_patch(context, packed);
                 static_cast<void>(MultisampleTargetView(context, packed, binding.multisampleOwner, &binding.multisampleImage));
                 binding.stagedTarget = MultisampleTargetStorageView(context, TargetMergeSurface(packed));
                 Require(MultisampleTargetStorable(context, packed), "a partial write of a multisampled packed color target needs a multisample image of this form to allow storage");
@@ -3232,6 +3337,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                 timer.phase(PhaseReadTarget);
                 continue;
             }
+            PrepareMultisampleTargetForDraw_nid_no_patch(context, color);
             targetViews.push_back(MultisampleTargetView(context, color, binding.multisampleOwner, &binding.multisampleImage));
             timer.phase(PhaseReadTarget);
             continue;
@@ -3347,7 +3453,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto* recorder = prepared.recorder = Recorder::Active();
     bool recordable = recordDraws && recorder != nullptr && dumpLimit == 0 && std::all_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.resident != nullptr || binding.multisampled; });
     auto& resolved = prepared.resolved;
-    resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
+    resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, plan, outcome, timer);
     if (stopAfterResolve.load(std::memory_order_relaxed) != 0) {
         const auto stop = stopAfterResolve.exchange(0, std::memory_order_relaxed);
         if (stop == 1) return false;
@@ -3588,6 +3694,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     prepared.depthLocations = passDepthLocations(context, pipelineState, *pipeline);
     timer.phase(PhasePipeline);
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline created");
+    if (VerifyDrawPlan()) requireDrawPlanRepeats(context, state, draw, shaders, plan);
     return true;
 }
 
@@ -3819,7 +3926,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     pushDrawConstants(*pipeline, commands, state, draw, shaders, *resources, nullptr, 0, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     std::uint32_t subdraw = 0;
-    if (recorded) noteDrawFaultToken(context, *recorder, commands, shaders, draw, args != nullptr);
+    if (recorded) noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), args);
     if (stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     else {
         recordStencilReplay(context, commands, state, draw, inputs, stencilReplay, shaders, *resources);
@@ -4123,7 +4230,10 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     if (recipe.hasDepth != state.depth.has_value()) return miss(DrawRecipeMiss::TargetGone);
     const std::size_t expectedViews = state.colors.size() + (recipe.hasDepth ? 1u : 0u);
     Require(recipe.targets.size() == state.colors.size() && recipe.targetViews.size() == expectedViews, "draw recipe targets do not match the state");
-    auto inputs = prepareDrawInputs(context, state, draw, shaders, outcome, timer, timing, &recipe);
+    const auto plan = planDraw(context, state, draw, shaders, &recipe, outcome, timer);
+    DrawInputs inputs;
+    if (plan.nothing) inputs.nothing = true;
+    else inputs = prepareDrawInputs(context, state, draw, shaders, plan, timer, timing);
     if (inputs.nothing) {
         result.recorded = true;
         return result;
@@ -4203,7 +4313,12 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     record.targetViews = recipe.targetViews;
     record.targets = std::move(targets);
     for (const auto& color : state.colors) record.targetSlices.emplace_back(color.arraySlice, color.arrayLastSlice != 0 ? color.layers : 1u);
-    record.pushBytes = &recipe.pushBytes;
+    auto pushBytes = recipe.pushBytes;
+    if (recipe.pushStages != 0) {
+        pushBytes = AssemblePushConstants(shaders);
+        record.resources->PatchPushConstants(pushBytes);
+    }
+    record.pushBytes = &pushBytes;
     record.pushStages = recipe.pushStages;
     record.depthLocations = passDepthLocations(context, state, *record.pipeline);
     recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs, trace);
@@ -4323,6 +4438,16 @@ bool DrawPipelineEnabled() {
 
 bool CommitTrims() {
     return DrawPipelineEnabled();
+}
+
+
+VkDrawCounts TakeVkDrawCounts() {
+    VkDrawCounts counts;
+    counts.direct = vkDrawCounts[static_cast<std::size_t>(VkDrawKind::Direct)].exchange(0, std::memory_order_relaxed);
+    counts.indexed = vkDrawCounts[static_cast<std::size_t>(VkDrawKind::Indexed)].exchange(0, std::memory_order_relaxed);
+    counts.indirect = vkDrawCounts[static_cast<std::size_t>(VkDrawKind::Indirect)].exchange(0, std::memory_order_relaxed);
+    counts.mesh = vkDrawCounts[static_cast<std::size_t>(VkDrawKind::Mesh)].exchange(0, std::memory_order_relaxed);
+    return counts;
 }
 
 }

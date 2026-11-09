@@ -98,6 +98,7 @@ std::uint32_t EmitSharedIncDec(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitAppendConsume(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitBpermuteU32(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitPermuteU32(SpirvValueEmitContext& ctx, const IrValue& inst);
+std::uint32_t EmitHalfSwapU32(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitReadConst(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitReadConstBuffer(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitSwizzleU32(SpirvValueEmitContext& ctx, const IrValue& inst);
@@ -186,6 +187,7 @@ std::uint32_t EmitFPAdd64(SpirvEmitterState& state, std::uint32_t arg0, std::uin
 std::uint32_t EmitFPMul64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitFPFma64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2);
 std::uint32_t EmitFPFmaScale64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3);
+std::uint32_t EmitFPFmaScale32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3);
 std::uint32_t EmitFPMin64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitFPMax64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitFPSaturate64(SpirvEmitterState& state, std::uint32_t arg0);
