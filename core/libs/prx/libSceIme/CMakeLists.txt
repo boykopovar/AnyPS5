@@ -3,6 +3,11 @@ target_include_directories(libSceIme PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceIme)
 
 if(BUILD_TESTING)
+    add_test_executable(ime_clipboard_tests tests/ImeClipboard.cpp)
+    target_include_directories(ime_clipboard_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(ime_clipboard_tests)
+    add_test(NAME ime_clipboard COMMAND ime_clipboard_tests)
+
     add_test_executable(guest_ime_parameters_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeParameters.cpp)
     target_include_directories(guest_ime_parameters_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_ime_parameters_tests PRIVATE libSceIme libc)
