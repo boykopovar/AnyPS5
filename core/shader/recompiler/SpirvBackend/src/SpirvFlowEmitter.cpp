@@ -804,29 +804,17 @@ bool RegionArithmetic(const IrValue* inst) {
     }
 }
 
-bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>& region, const std::unordered_set<const IrValue*>& metadata) {
+bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>& region) {
     std::unordered_set<const IrValue*> members(region.begin(), region.end());
-    std::vector<const IrValue*> outputs;
-    for (const auto* value : region) {
-        bool outside = metadata.contains(value);
-        for (const auto& use : value->OperandUses()) outside |= !members.contains(use.user);
-        if (outside) outputs.push_back(value);
-    }
-    std::unordered_set<const IrValue*> live;
     std::unordered_set<const IrValue*> uniqueSources;
     std::vector<const IrValue*> sources;
     std::unordered_set<const IrValue*> bypassed;
-    const auto mark = [&](const auto& self, const IrValue* value) -> void {
-        value = value->Resolve();
-        if (!members.contains(value) || !live.insert(value).second) return;
+    for (const auto* value : region) {
         if (const auto* source = RegionNanSource(value)) {
             bypassed.insert(value);
             if (uniqueSources.insert(source).second) sources.push_back(source);
-            self(self, source);
-            self(self, value->Argument(2));
-        } else for (const auto* argument : value->Arguments()) self(self, argument);
-    };
-    for (const auto* output : outputs) mark(mark, output);
+        }
+    }
     if (bypassed.size() < 2u) return false;
     auto exact = ctx;
     auto& state = ctx.state;
@@ -837,7 +825,6 @@ bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>
     };
     for (const auto* value : sources) if (!members.contains(value)) accumulate(value);
     for (const auto* value : region) {
-        if (!live.contains(value)) continue;
         if (bypassed.contains(value)) ctx.Define(*value, ctx.Def(value->Argument(2)));
         else EmitDirectInstruction(ctx, *value);
         if (uniqueSources.contains(value)) accumulate(value);
@@ -853,7 +840,7 @@ bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>
     const auto exactLabel = state.currentLabel;
     state.module.AddFunction(spv::OpBranch, merge);
     EmitLabel(state, merge);
-    for (const auto* output : outputs) {
+    for (const auto* output : region) {
         const auto result = state.module.AllocateId();
         state.module.AddFunction(spv::OpPhi, TypeId(state, output->Type()), result, ctx.Def(output), fastLabel, exact.Def(output), exactLabel);
         ctx.definitions[output] = result;
@@ -865,11 +852,6 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
     auto& state = ctx.state;
     state.currentBlock = block;
     EmitLabel(state, ctx.Label(block));
-    std::unordered_set<const IrValue*> metadata;
-    const auto retain = [&](const IrValue* value) { if (value != nullptr) metadata.insert(value->Resolve()); };
-    for (const auto& info : state.program.Metadata().blockInfo) { retain(info.condition); retain(info.indirectTarget); }
-    for (const auto* value : state.program.Metadata().dynamicReads) retain(value);
-    for (const auto& descriptor : state.program.Resources().descriptorSources) for (const auto* value : descriptor.dwords) retain(value);
     std::unordered_map<const IrValue*, std::vector<const IrValue*>> regions;
     std::unordered_set<const IrValue*> grouped;
     const auto* info = BlockInfoFor(state.program, block);
@@ -899,7 +881,7 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
     bool ldsRead = false;
     for (const IrValue* inst : block->Instructions()) {
         if (const auto found = regions.find(inst); found != regions.end()) {
-            if (!EmitNanRegion(ctx, found->second, metadata)) for (const auto* value : found->second) EmitDirectInstruction(ctx, *value);
+            if (!EmitNanRegion(ctx, found->second)) for (const auto* value : found->second) EmitDirectInstruction(ctx, *value);
         }
         if (grouped.contains(inst)) { emittedNonPhi = true; continue; }
         if (inst->Opcode() == IrOpcode::Phi) {
