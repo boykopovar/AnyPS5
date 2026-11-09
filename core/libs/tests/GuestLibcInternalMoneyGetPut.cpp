@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <string>
 #include <type_traits>
 #ifdef _WIN32
 #include <windows.h>
@@ -41,14 +40,13 @@ void* g_library = nullptr;
 #endif
 
 template<typename TFunction>
-TFunction Export(const char* nid) {
-    const std::string name = std::string(nid) + "_nid_no_patch_cut";
+TFunction Export(const char* name) {
 #ifdef _WIN32
-    auto* address = reinterpret_cast<void*>(GetProcAddress(g_library, name.c_str()));
+    auto* address = reinterpret_cast<void*>(GetProcAddress(g_library, name));
 #else
-    void* address = dlsym(g_library, name.c_str());
+    void* address = dlsym(g_library, name);
 #endif
-    Require(address != nullptr, "missing export");
+    Require(address != nullptr, name);
     return reinterpret_cast<TFunction>(address);
 }
 
@@ -130,8 +128,8 @@ template<typename TValue>
 using MoneyGetExport = GuestLocale::InputIterator (APS5_VABI*)(const GuestLocale::Facet*, GuestLocale::InputIterator, GuestLocale::InputIterator, bool, GuestLocale::IosBase*, std::int32_t*, TValue*);
 
 template<typename TValue, typename TVtable>
-void CheckGet(const char* nid, int slot, const TVtable& base, const TVtable& derived) {
-    const auto get = Export<MoneyGetExport<TValue>>(nid);
+void CheckGet(const char* export_name, int slot, const TVtable& base, const TVtable& derived) {
+    const auto get = Export<MoneyGetExport<TValue>>(export_name);
     for (const TVtable* vtable : {&base, &derived}) {
         for (const bool international : {false, true}) {
             const int expected = slot + (vtable == &derived ? kDerived : 0);
@@ -156,9 +154,9 @@ void CheckGet(const char* nid, int slot, const TVtable& base, const TVtable& der
 }
 
 template<typename TCharacter, typename TVtable>
-void CheckPutLongDouble(const char* nid, const TVtable& base, const TVtable& derived, TCharacter fill) {
+void CheckPutLongDouble(const char* export_name, const TVtable& base, const TVtable& derived, TCharacter fill) {
     using Function = GuestLocale::OutputIterator (APS5_VABI*)(const GuestLocale::Facet*, GuestLocale::OutputIterator, bool, GuestLocale::IosBase*, TCharacter, long double);
-    const auto put = Export<Function>(nid);
+    const auto put = Export<Function>(export_name);
     for (const TVtable* vtable : {&base, &derived}) {
         for (const bool international : {false, true}) {
             const int expected = vtable == &derived ? kDerived : 0;
@@ -178,9 +176,9 @@ void CheckPutLongDouble(const char* nid, const TVtable& base, const TVtable& der
 }
 
 template<typename TCharacter, typename TString, typename TVtable>
-void CheckPutString(const char* nid, const TVtable& base, const TVtable& derived, TCharacter fill) {
+void CheckPutString(const char* export_name, const TVtable& base, const TVtable& derived, TCharacter fill) {
     using Function = GuestLocale::OutputIterator (APS5_VABI*)(const GuestLocale::Facet*, GuestLocale::OutputIterator, bool, GuestLocale::IosBase*, TCharacter, const TString*);
-    const auto put = Export<Function>(nid);
+    const auto put = Export<Function>(export_name);
     for (const TVtable* vtable : {&base, &derived}) {
         for (const bool international : {false, true}) {
             const int expected = 1 + (vtable == &derived ? kDerived : 0);
@@ -220,14 +218,14 @@ int main(int argc, char** argv) {
         reinterpret_cast<void*>(&TestPosixAlign), nullptr, nullptr, nullptr};
     ApplicationHeapRegister_nid_no_patch(api.data());
 
-    CheckGet<long double>("G84okRnyJJg", 0, g_charGet, g_charGetDerived);
-    CheckGet<GuestLocale::String>("2fxdcyt5tGs", 1, g_charGet, g_charGetDerived);
-    CheckGet<long double>("cx-1THpef1A", 0, g_wideGet, g_wideGetDerived);
-    CheckGet<void>("wWIsjOqfcSc", 1, g_wideGet, g_wideGetDerived);
-    CheckPutLongDouble<char>("65cvm2NDLmU", g_charPut, g_charPutDerived, '*');
-    CheckPutString<char, GuestLocale::String>("DR029KeWsHw", g_charPut, g_charPutDerived, static_cast<char>(0xa4));
-    CheckPutLongDouble<std::uint16_t>("fsF-tGtGsD4", g_widePut, g_widePutDerived, 0x20ac);
-    CheckPutString<std::uint16_t, void>("JruBeQgsAaU", g_widePut, g_widePutDerived, 0xffe5);
+    CheckGet<long double>("_ZNKSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERe_nid_postfix", 0, g_charGet, g_charGetDerived);
+    CheckGet<GuestLocale::String>("2fxdcyt5tGs_nid_no_patch_cut", 1, g_charGet, g_charGetDerived);
+    CheckGet<long double>("_ZNKSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE3getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERe_nid_postfix", 0, g_wideGet, g_wideGetDerived);
+    CheckGet<void>("_ZNKSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE3getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERSbIwS2_SaIwEE_nid_postfix", 1, g_wideGet, g_wideGetDerived);
+    CheckPutLongDouble<char>("_ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_bRSt8ios_basece_nid_postfix", g_charPut, g_charPutDerived, '*');
+    CheckPutString<char, GuestLocale::String>("_ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_bRSt8ios_basecRKSs_nid_postfix", g_charPut, g_charPutDerived, static_cast<char>(0xa4));
+    CheckPutLongDouble<std::uint16_t>("_ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE3putES3_bRSt8ios_basewe_nid_postfix", g_widePut, g_widePutDerived, 0x20ac);
+    CheckPutString<std::uint16_t, void>("_ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE3putES3_bRSt8ios_basewRKSbIwS2_SaIwEE_nid_postfix", g_widePut, g_widePutDerived, 0xffe5);
 
     std::puts("libc internal money_get and money_put checks passed");
     return 0;
