@@ -4,7 +4,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
+#include <limits>
 #include <stdexcept>
+#include <string>
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -39,6 +42,62 @@ static bool Throws(TFunction function) {
     return false;
 }
 
+struct ScopedTimeZone {
+    explicit ScopedTimeZone(const char* zone) {
+        const char* original = std::getenv("TZ");
+        if (original != nullptr) {
+            saved = original;
+            hadZone = true;
+        }
+#ifdef _WIN32
+        savedBias = *__dstbias();
+#endif
+        apply(zone);
+    }
+
+    ~ScopedTimeZone() {
+        if (hadZone) {
+            apply(saved.c_str());
+        } else {
+            clear();
+        }
+#ifdef _WIN32
+        *__dstbias() = savedBias;
+#endif
+    }
+
+    ScopedTimeZone(const ScopedTimeZone&) = delete;
+    ScopedTimeZone& operator=(const ScopedTimeZone&) = delete;
+
+private:
+    static void apply(const char* zone) {
+#ifdef _WIN32
+        _putenv((std::string("TZ=") + zone).c_str());
+        _tzset();
+        *__dstbias() = -3600;
+#else
+        setenv("TZ", zone, 1);
+        tzset();
+#endif
+    }
+
+    static void clear() {
+#ifdef _WIN32
+        _putenv("TZ=");
+        _tzset();
+#else
+        unsetenv("TZ");
+        tzset();
+#endif
+    }
+
+    std::string saved{};
+    bool hadZone{false};
+#ifdef _WIN32
+    long savedBias{0};
+#endif
+};
+
 static void LegacyDates() {
     Date("Sat, 01 Jan 2000 08:00:00 GMT", 946713600000.0, false);
     Date("Tuesday, 09-Nov-99 23:12:40 GMT", 942189160000.0, false);
@@ -63,15 +122,135 @@ static void LegacyDates() {
     DateInvalid("Jan 1 2000 GMT+9960");
 }
 
+static void SingleArgumentDates() {
+    Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("Sat, 01 Jan 2000 08:00:00 GMT"), 946713600000.0));
+    Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("Tuesday, 09-Nov-99 23:12:40 GMT"), 942189160000.0));
+    Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("01 Jan 99 22:00 +0100"), 915224400000.0));
+    Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("Mon Jan 1 2000 10:00:00 GMT+05:30"), 946701000000.0));
+
+    {
+        ScopedTimeZone tz("EST5EDT,M3.2.0/2,M11.1.0/2");
+
+        Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("01/01/2026 12:00"), 1767286800000.0));
+        Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("07/01/2026 12:00"), 1782921600000.0));
+        Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("Jan 1 2026 12:00"), 1767286800000.0));
+        Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("Jul 1 2026 12:00"), 1782921600000.0));
+        Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("Jan 1 2000 12:30 am"), 946704600000.0));
+
+        Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("01/01/2026 12:00 GMT"), 1767268800000.0));
+        Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("07/01/2026 12:00 GMT"), 1782907200000.0));
+        Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("Jan 1 2026 12:00 GMT"), 1767268800000.0));
+        Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("Jul 1 2026 12:00 GMT"), 1782907200000.0));
+
+        WTF::LocalTimeOffset at = _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(4102444740000.0, WTF::TimeType::UTCTime);
+        WTF::LocalTimeOffset above = _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(4102444741000.0, WTF::TimeType::UTCTime);
+        WTF::LocalTimeOffset below = _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(4102444739000.0, WTF::TimeType::UTCTime);
+        WTF::LocalTimeOffset clampedHuge = _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(1e25, WTF::TimeType::UTCTime);
+        WTF::LocalTimeOffset clampedInt64 = _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(static_cast<double>(std::numeric_limits<std::time_t>::max()) * 1000.0, WTF::TimeType::UTCTime);
+        Require(at.offset == -18000000 && !at.isDST);
+        Require(above.offset == at.offset && above.isDST == at.isDST);
+        Require(below.offset == at.offset && below.isDST == at.isDST);
+        Require(clampedHuge.offset == at.offset && clampedHuge.isDST == at.isDST);
+        Require(clampedInt64.offset == at.offset && clampedInt64.isDST == at.isDST);
+
+        WTF::LocalTimeOffset epochUtc = _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(0.0, WTF::TimeType::UTCTime);
+        WTF::LocalTimeOffset afterEpochUtc = _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(1000.0, WTF::TimeType::UTCTime);
+        WTF::LocalTimeOffset beforeEpochUtc = _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(-1000.0, WTF::TimeType::UTCTime);
+        WTF::LocalTimeOffset dayBeforeEpochUtc = _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(-86400000.0, WTF::TimeType::UTCTime);
+        Require(epochUtc.offset == -18000000 && !epochUtc.isDST);
+        Require(afterEpochUtc.offset == -18000000 && !afterEpochUtc.isDST);
+        Require(beforeEpochUtc.offset == -18000000 && !beforeEpochUtc.isDST);
+        Require(dayBeforeEpochUtc.offset == -18000000 && !dayBeforeEpochUtc.isDST);
+
+        WTF::LocalTimeOffset epochLocal = _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(0.0, WTF::TimeType::LocalTime);
+        WTF::LocalTimeOffset beforeEpochLocal = _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(-1000.0, WTF::TimeType::LocalTime);
+        WTF::LocalTimeOffset crossDateLocal = _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(-19000000.0, WTF::TimeType::LocalTime);
+        Require(epochLocal.offset == -18000000 && !epochLocal.isDST);
+        Require(beforeEpochLocal.offset == -18000000 && !beforeEpochLocal.isDST);
+        Require(crossDateLocal.offset == -18000000 && !crossDateLocal.isDST);
+    }
+
+    Require(std::isnan(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("")));
+    Require(std::isnan(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("foo")));
+    Require(std::isnan(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("Jan 1 2000 garbage")));
+    Require(std::isnan(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("Jan 32 2000")));
+    Require(std::isnan(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("13/01/2000")));
+}
+
 static void UndefinedInWebKit() {
     bool isLocalTime = false;
     Require(Throws<std::overflow_error>([&] { _ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb("2000/12/9223372036854775800", &isLocalTime); }));
     Require(Throws<std::overflow_error>([&] { _ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb("Jan 1 2000 GMT+05:2147483600", &isLocalTime); }));
     Require(Throws<std::invalid_argument>([&] { _ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb(nullptr, &isLocalTime); }));
     Require(Throws<std::invalid_argument>([&] { _ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb("2000", nullptr); }));
+    Require(Throws<std::invalid_argument>([&] { _ZN3WTF37parseDateFromNullTerminatedCharactersEPKc(nullptr); }));
+    Require(Throws<std::overflow_error>([&] { _ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("2000/12/9223372036854775800"); }));
+    Require(Throws<std::invalid_argument>([&] { _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(std::numeric_limits<double>::quiet_NaN(), WTF::TimeType::UTCTime); }));
+    Require(Throws<std::invalid_argument>([&] { _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(std::numeric_limits<double>::infinity(), WTF::TimeType::UTCTime); }));
+    Require(Throws<std::invalid_argument>([&] { _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(-std::numeric_limits<double>::infinity(), WTF::TimeType::UTCTime); }));
+    Require(Throws<std::overflow_error>([&] { _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(-9223372036854777905152.0, WTF::TimeType::UTCTime); }));
+    Require(Throws<std::overflow_error>([&] { _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(-1e25, WTF::TimeType::UTCTime); }));
+}
+
+static void CheckRFC2822(
+    unsigned dayOfWeek,
+    unsigned day,
+    unsigned month,
+    unsigned year,
+    unsigned hours,
+    unsigned minutes,
+    unsigned seconds,
+    int utcOffset,
+    const char* expected) {
+    auto result = _ZN3WTF21makeRFC2822DateStringEjjjjjjji(dayOfWeek, day, month, year, hours, minutes, seconds, utcOffset);
+    Require(result.impl != nullptr);
+    Require((result.impl->hashAndFlags & 4) != 0);
+    Require(result.impl->length == std::strlen(expected));
+    Require(std::memcmp(result.impl->data, expected, result.impl->length) == 0);
+}
+
+static void RFC2822Dates() {
+    CheckRFC2822(0, 1, 0, 2001, 0, 0, 0, 0, "Mon, 1 Jan 2001 00:00:00 -0000");
+    CheckRFC2822(1, 2, 1, 2002, 1, 2, 3, 60, "Tue, 2 Feb 2002 01:02:03 +0100");
+    CheckRFC2822(2, 3, 2, 2003, 10, 20, 30, -60, "Wed, 3 Mar 2003 10:20:30 -0100");
+    CheckRFC2822(3, 4, 3, 2004, 8, 5, 9, 330, "Thu, 4 Apr 2004 08:05:09 +0530");
+    CheckRFC2822(4, 5, 4, 2005, 23, 59, 59, -480, "Fri, 5 May 2005 23:59:59 -0800");
+    CheckRFC2822(5, 6, 5, 2006, 12, 34, 56, 720, "Sat, 6 Jun 2006 12:34:56 +1200");
+    CheckRFC2822(6, 7, 6, 2007, 7, 8, 9, -720, "Sun, 7 Jul 2007 07:08:09 -1200");
+    CheckRFC2822(0, 8, 7, 2008, 10, 0, 0, 780, "Mon, 8 Aug 2008 10:00:00 +1300");
+    CheckRFC2822(1, 9, 8, 2009, 11, 0, 0, 840, "Tue, 9 Sep 2009 11:00:00 +1400");
+    CheckRFC2822(2, 10, 9, 2010, 12, 0, 0, 5999, "Wed, 10 Oct 2010 12:00:00 +9959");
+    CheckRFC2822(3, 11, 10, 2011, 13, 0, 0, -5999, "Thu, 11 Nov 2011 13:00:00 -9959");
+    CheckRFC2822(0, 15, 7, 2008, 0, 0, 0, 0, "Mon, 15 Aug 2008 00:00:00 -0000");
+    CheckRFC2822(1, 16, 8, 2009, 0, 0, 0, 0, "Tue, 16 Sep 2009 00:00:00 -0000");
+    CheckRFC2822(2, 17, 9, 2010, 0, 0, 0, 0, "Wed, 17 Oct 2010 00:00:00 -0000");
+    CheckRFC2822(3, 18, 10, 2011, 0, 0, 0, 0, "Thu, 18 Nov 2011 00:00:00 -0000");
+    CheckRFC2822(4, 19, 11, 2012, 0, 0, 0, 0, "Fri, 19 Dec 2012 00:00:00 -0000");
+    CheckRFC2822(6, 31, 11, 2026, 23, 59, 59, 0, "Sun, 31 Dec 2026 23:59:59 -0000");
+
+    Require(Throws<std::invalid_argument>([] { _ZN3WTF21makeRFC2822DateStringEjjjjjjji(7, 1, 0, 2001, 0, 0, 0, 0); }));
+    Require(Throws<std::invalid_argument>([] { _ZN3WTF21makeRFC2822DateStringEjjjjjjji(0, 0, 0, 2001, 0, 0, 0, 0); }));
+    Require(Throws<std::invalid_argument>([] { _ZN3WTF21makeRFC2822DateStringEjjjjjjji(0, 32, 0, 2001, 0, 0, 0, 0); }));
+    Require(Throws<std::invalid_argument>([] { _ZN3WTF21makeRFC2822DateStringEjjjjjjji(0, 1, 12, 2001, 0, 0, 0, 0); }));
+    Require(Throws<std::invalid_argument>([] { _ZN3WTF21makeRFC2822DateStringEjjjjjjji(0, 1, 0, 2001, 24, 0, 0, 0); }));
+    Require(Throws<std::invalid_argument>([] { _ZN3WTF21makeRFC2822DateStringEjjjjjjji(0, 1, 0, 2001, 0, 60, 0, 0); }));
+    Require(Throws<std::invalid_argument>([] { _ZN3WTF21makeRFC2822DateStringEjjjjjjji(0, 1, 0, 2001, 0, 0, 60, 0); }));
+    Require(Throws<std::invalid_argument>([] { _ZN3WTF21makeRFC2822DateStringEjjjjjjji(0, 1, 0, 2001, 0, 0, 0, -6000); }));
+    Require(Throws<std::invalid_argument>([] { _ZN3WTF21makeRFC2822DateStringEjjjjjjji(0, 1, 0, 2001, 0, 0, 0, 6000); }));
+    Require(Throws<std::invalid_argument>([] { _ZN3WTF21makeRFC2822DateStringEjjjjjjji(0, 1, 0, 2001, 0, 0, 0, std::numeric_limits<int>::min()); }));
+    Require(Throws<std::invalid_argument>([] { _ZN3WTF21makeRFC2822DateStringEjjjjjjji(0, 1, 0, 2001, 0, 0, 0, std::numeric_limits<int>::max()); }));
+
+    {
+        auto original = _ZN3WTF21makeRFC2822DateStringEjjjjjjji(0, 1, 0, 2026, 12, 0, 0, 0);
+        auto copy = original;
+        Require(original.impl != nullptr);
+        Require(copy.impl == original.impl);
+    }
 }
 
 int main() {
     LegacyDates();
+    SingleArgumentDates();
     UndefinedInWebKit();
+    RFC2822Dates();
 }
