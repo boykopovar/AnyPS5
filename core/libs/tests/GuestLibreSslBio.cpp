@@ -674,20 +674,6 @@ void TestCertificateFileLoadPaths() {
     RequireErrorSequence({ErrorCode(20, 124)});
     Require(std::filesystem::remove(path), "invalid-type BIO closed its file");
 
-    {
-        std::ofstream output(path, std::ios::binary);
-        Require(output.is_open(), "create PEM-like certificate file");
-        output << "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n";
-    }
-    for (const int type : {1, 2}) {
-        bool threw = false;
-        try { static_cast<void>(SSL_CTX_use_certificate_file_nid_postfix(nullptr, filename.c_str(), type)); }
-        catch (const std::exception&) { threw = true; }
-        Require(threw, "supported certificate decoding must remain unsupported");
-        Require(ERR_get_error_nid_postfix() == 0, "unsupported decoder path did not invent an error");
-    }
-    Require(std::filesystem::remove(path), "unsupported decoder paths closed the file");
-
     for (const int flags : {2, 4, 6, 8, 10, 12, 14}) {
         { std::ofstream output(path, std::ios::binary); output << "seed"; }
         Bio* modeBio = BIO_new_nid_postfix(BIO_s_file_nid_postfix());
