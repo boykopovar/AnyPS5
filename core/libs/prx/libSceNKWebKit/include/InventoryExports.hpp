@@ -661,9 +661,7 @@ int APS5_VABI WKUserContentExtensionStoreCompile();
 int APS5_VABI WKUserContentExtensionStoreCreate();
 int APS5_VABI WKUserContentExtensionStoreLookup();
 int APS5_VABI WKUserMediaPermissionCheckSetUserMediaAccessInfo();
-int APS5_VABI WKUserMediaPermissionRequestAllow();
 int APS5_VABI WKUserMediaPermissionRequestAudioDeviceUIDs();
-int APS5_VABI WKUserMediaPermissionRequestDeny();
 int APS5_VABI WKUserMediaPermissionRequestVideoDeviceUIDs();
 int APS5_VABI WKViewAccessibilityFocusedObject();
 int APS5_VABI WKViewAccessibilityHitTest();
@@ -3793,7 +3791,6 @@ int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager29applicationWillBecomeIna
 int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager30applicationWillEnterForegroundEb();
 int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager31setShouldDeactivateAudioSessionEb();
 int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager32setIsPlayingToAutomotiveHeadUnitEb();
-int APS5_VABI _ZN7WebCore27parseCacheControlDirectivesERKNS_13HTTPHeaderMapE();
 int APS5_VABI _ZN7WebCore27screenSupportsExtendedColorEPNS_6WidgetE();
 int APS5_VABI _ZN7WebCore27withinTextUnitOfGranularityERKNS_15VisiblePositionENS_15TextGranularityENS_18SelectionDirectionE();
 int APS5_VABI _ZN7WebCore28BackingStoreBackendCairoImplC1ERKNS_7IntSizeEf();

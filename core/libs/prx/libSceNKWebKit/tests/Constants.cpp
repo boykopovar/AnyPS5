@@ -140,7 +140,15 @@ int main() {
     Require(_ZN7WebCore22EmptyFrameLoaderClient21forceLayoutForNonHTMLEv() == 0);
     Require(_ZN7WebCore22EmptyFrameLoaderClient22provisionalLoadStartedEv() == 0);
     Require(_ZN7WebCore22EmptyFrameLoaderClient25didDisplayInsecureContentEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient26didReplaceMultipartContentEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient27willReplaceMultipartContentEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient29dispatchDidFinishDocumentLoadEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient29dispatchDidPopStateWithinPageEv() == 0);
     Require(_ZN7WebCore22EmptyFrameLoaderClient29hasFrameSpecificStorageAccessEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient30didRestoreFromBackForwardCacheEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient30dispatchDidPushStateWithinPageEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient31dispatchDidCancelClientRedirectEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient31dispatchDidDispatchOnloadEventsEv() == 0);
     Require(_ZN7WebCore22EmptyFrameLoaderClient38dispatchDidLoadResourceFromMemoryCacheEPNS_14DocumentLoaderERKNS_15ResourceRequestERKNS_16ResourceResponseEi() == 0);
     Require(_ZN7WebCore23ISOSchemeInformationBox11boxTypeNameEv() == static_cast<int>(0x73636869u));
     Require(_ZN7WebCore26ISOProtectionSchemeInfoBox11boxTypeNameEv() == static_cast<int>(0x73696e66u));
