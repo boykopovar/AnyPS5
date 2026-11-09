@@ -206,9 +206,55 @@ class AbSplitTests(unittest.TestCase):
         self.assertIsNone(ab_split.parse_report("draw", "[draw] pipelined depth 64"))
         self.assertIsNone(ab_split.parse_report("present", "[present] flip 3"))
 
+    def test_missing_program_in_a_full_top_twelve_is_not_treated_as_zero(self):
+        full = " ".join(f"0x{index:x} x1 1ms" for index in range(1, 13))
+        line = gputime(400.0, 40.0, 8.0)
+        line = line.split("by program:")[0] + "by program: " + full + "; by class:"
+        truncated = ab_split.parse_report("gputime", line)
+        short = ab_split.parse_report("gputime", gputime(400.0, 40.0, 8.0))
+        phase = {"settled": None, "end": None, "reports": {name: [] for name, _ in ab_split.KINDS}}
+        phase["reports"]["gputime"] = [short, truncated]
+        metrics = ab_split.metrics(phase, ["0x1000", "0x1", "0xff"], [])
+        self.assertNotIn("0x1000 ms/present", metrics)
+        self.assertNotIn("0xff ms/present", metrics)
+        self.assertAlmostEqual(metrics["0x1 ms/present"], 1.0 / 80)
+        phase["reports"]["gputime"] = [short]
+        self.assertEqual(ab_split.metrics(phase, ["0xff"], [])["0xff ms/present"], 0)
+
+    def test_draw_entries_occupy_top_twelve_slots(self):
+        short = ab_split.parse_report("gputime", gputime(400.0, 40.0, 8.0))
+        for draws in (1, 6, 12):
+            entries = [f"draw 0x{index:x} x1 1ms" for index in range(1, draws + 1)]
+            entries += [f"0x{index:x} x1 1ms" for index in range(draws + 1, 13)]
+            line = gputime(400.0, 40.0, 8.0)
+            line = line.split("by program:")[0] + "by program: " + " ".join(entries) + "; by class:" + line.split("; by class:")[1]
+            report = ab_split.parse_report("gputime", line)
+            self.assertTrue(report["programs_truncated"])
+            phase = {"settled": None, "end": None, "reports": {name: [] for name, _ in ab_split.KINDS}}
+            phase["reports"]["gputime"] = [short, report]
+            self.assertNotIn("0xff ms/present", ab_split.metrics(phase, ["0xff"], []))
+
     def test_a_log_without_phases_is_refused(self):
         with self.assertRaisesRegex(ValueError, "no \\[ab\\] phase lines"):
             ab_split.split([present(1.0, 1.0) + "\n"])
+
+    def test_command_line_accepts_utf8_bom(self):
+        lines = log()[1:]
+        first_phase = next(index for index, line in enumerate(lines) if line.startswith("[ab] phase"))
+        with tempfile.TemporaryDirectory() as directory:
+            plain = Path(directory) / "plain.log"
+            bom = Path(directory) / "bom.log"
+            for source in (lines, lines[first_phase:]):
+                plain.write_text("".join(source), encoding="utf-8")
+                bom.write_text("".join(source), encoding="utf-8-sig")
+                for flags in ([], ["--json"]):
+                    with self.subTest(configuration=source is lines, flags=flags):
+                        runs = [subprocess.run([sys.executable, str(Path(ab_split.__file__)), str(path), *flags],
+                                               capture_output=True, text=True, encoding="utf-8", timeout=10)
+                                for path in (plain, bom)]
+                        for run in runs:
+                            self.assertEqual(run.returncode, 0, run.stderr)
+                        self.assertEqual(runs[1].stdout, runs[0].stdout)
 
     def test_command_line(self):
         with tempfile.TemporaryDirectory() as directory:

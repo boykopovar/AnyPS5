@@ -108,4 +108,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_ime_open PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
     endif()
+
+    add_test_executable(guest_ime_for_test_function_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeForTestFunction.cpp)
+    target_include_directories(guest_ime_for_test_function_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ime_for_test_function_tests PRIVATE libSceIme libc)
+    configure_windows_unwind(guest_ime_for_test_function_tests)
+    add_test(NAME guest_ime_for_test_function COMMAND guest_ime_for_test_function_tests)
+    if(WIN32)
+        set_tests_properties(guest_ime_for_test_function PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
+    endif()
 endif()
