@@ -14,6 +14,11 @@ struct HistoryItemVectorStorage {
     unsigned size;
 };
 
+struct CachedPage {
+    void* page;
+    double expirationTime;
+};
+
 struct HistoryItem {
     unsigned refCount{};
     WtfAbi::String urlString;
@@ -42,6 +47,9 @@ struct HistoryItem {
 };
 
 static_assert(sizeof(HistoryItemVectorStorage) == 16);
+static_assert(sizeof(CachedPage) == 16);
+static_assert(offsetof(CachedPage, page) == 0);
+static_assert(offsetof(CachedPage, expirationTime) == 8);
 static_assert(offsetof(HistoryItem, refCount) == 0);
 static_assert(offsetof(HistoryItem, urlString) == 8);
 static_assert(offsetof(HistoryItem, originalURLString) == 16);
