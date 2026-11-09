@@ -219,7 +219,6 @@
 | `Unknown` | `SEKlG1AMRGQ` |
 | `sceKernelGetContentVersion` | `SP37+6t8PUw` |
 | `Unknown` | `Sesgl6Zl8YI` |
-| `sceKernelTraceMarkerPop` | `SgxG1rkVqu8` |
 | `sceKernelInternalLockMapperMemory` | `TC+IFjP+pJc` |
 | `Unknown` | `TVB77yVa+RU` |
 | `Unknown` | `Tca8tetUZCw` |
