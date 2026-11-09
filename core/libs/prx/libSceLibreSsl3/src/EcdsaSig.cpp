@@ -97,6 +97,29 @@ void FreeString(Asn1String* value) {
     free_nid_postfix(value);
 }
 
+bool ReadDerLength(const unsigned char*& cursor, const unsigned char* end, std::size_t& length) {
+    if (cursor == end) return false;
+    const unsigned char first = *cursor++;
+    if (first < 0x80) {
+        length = first;
+        return true;
+    }
+    const int count = first & 0x7f;
+    if (count == 0 || count > 2 || end - cursor < count) return false;
+    length = 0;
+    for (int index = 0; index < count; ++index) length = (length << 8) | *cursor++;
+    return true;
+}
+
+Bignum* ReadDerInteger(const unsigned char*& cursor, const unsigned char* end) {
+    std::size_t length = 0;
+    if (cursor == end || *cursor++ != 0x02 || !ReadDerLength(cursor, end, length)) return nullptr;
+    if (length == 0 || static_cast<std::size_t>(end - cursor) < length) return nullptr;
+    Bignum* value = BN_bin2bn_nid_postfix(cursor, static_cast<int>(length), nullptr);
+    cursor += length;
+    return value;
+}
+
 void FreeObject(LibreSslAsn1Object* object) {
     if (!object) return;
     if (object->flags & 0x04) {
@@ -161,6 +184,31 @@ int APS5_VABI ECDSA_SIG_set0_nid_postfix(LibreSsl3EcdsaSig* signature, Bignum* r
     signature->r = r;
     signature->s = s;
     return 1;
+}
+
+LibreSsl3EcdsaSig* APS5_VABI ECDSA_do_sign_nid_postfix(const unsigned char* digest, int digestLength, EcKey* key) {
+    if (!key) throw std::invalid_argument(std::string(__func__) + ": null key");
+    const int size = ECDSA_size_nid_postfix(key);
+    if (size <= 0) return nullptr;
+    std::vector<unsigned char> encoded(static_cast<std::size_t>(size));
+    unsigned int length = 0;
+    if (ECDSA_sign_nid_postfix(0, digest, digestLength, encoded.data(), &length, key) != 1) return nullptr;
+    if (length > encoded.size()) NotImplemented_nid_no_patch(__func__);
+    const unsigned char* cursor = encoded.data();
+    const unsigned char* end = cursor + length;
+    std::size_t sequenceLength = 0;
+    if (cursor == end || *cursor++ != 0x30 || !ReadDerLength(cursor, end, sequenceLength) || sequenceLength != static_cast<std::size_t>(end - cursor))
+        NotImplemented_nid_no_patch(__func__);
+    Bignum* r = ReadDerInteger(cursor, end);
+    Bignum* s = r ? ReadDerInteger(cursor, end) : nullptr;
+    LibreSsl3EcdsaSig* signature = s && cursor == end ? ECDSA_SIG_new_nid_postfix() : nullptr;
+    if (!signature) {
+        BN_free_nid_postfix(r);
+        BN_free_nid_postfix(s);
+        return nullptr;
+    }
+    ECDSA_SIG_set0_nid_postfix(signature, r, s);
+    return signature;
 }
 
 void APS5_VABI ECDSA_SIG_free_nid_postfix(LibreSsl3EcdsaSig* signature) {
