@@ -59,6 +59,28 @@ int main() {
     Require(rename_nid_postfix(renamed.string().c_str(), nullptr) == -1 && *__error_nid_postfix() == 14);
     Require(rename_nid_postfix("", renamed.string().c_str()) == -1 && *__error_nid_postfix() == 2);
     Require(rename_nid_postfix(renamed.string().c_str(), "") == -1 && *__error_nid_postfix() == 2);
+    const auto dir = root / "dir";
+    Require(std::filesystem::create_directory(dir));
+    const std::string slashDest = (root / "new").string() + "/";
+    Require(rename_nid_postfix(dir.string().c_str(), slashDest.c_str()) == 0);
+    Require(!std::filesystem::exists(dir) && std::filesystem::is_directory(root / "new"));
+    const auto multiDir = root / "multi";
+    Require(std::filesystem::create_directory(multiDir));
+    const std::string multiSlashDest = (root / "multi_new").string() + "///";
+    Require(rename_nid_postfix(multiDir.string().c_str(), multiSlashDest.c_str()) == 0);
+    Require(!std::filesystem::exists(multiDir) && std::filesystem::is_directory(root / "multi_new"));
+    const auto existingEmpty = root / "existing_empty";
+    Require(std::filesystem::create_directory(existingEmpty));
+    const std::string slashExistingDest = existingEmpty.string() + "/";
+    const auto toReplace = root / "to_replace";
+    Require(std::filesystem::create_directory(toReplace));
+    Require(rename_nid_postfix(toReplace.string().c_str(), slashExistingDest.c_str()) == 0);
+    Require(!std::filesystem::exists(toReplace) && std::filesystem::is_directory(existingEmpty));
+    const auto plain = root / "plain.txt";
+    { std::ofstream stream(plain); stream << "guarded"; }
+    const std::string slashFileDest = (root / "gone").string() + "/";
+    Require(rename_nid_postfix(plain.string().c_str(), slashFileDest.c_str()) == -1 && *__error_nid_postfix() == 2);
+    Require(std::filesystem::exists(plain));
     std::filesystem::remove_all(root);
     return 0;
 }

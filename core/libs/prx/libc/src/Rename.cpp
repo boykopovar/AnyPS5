@@ -110,17 +110,28 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
     std::error_code verbatimError;
     const auto verbatimSource = NativeVerbatimPath_nid_no_patch(source, verbatimError);
     const auto& actualSource = verbatimError ? source : verbatimSource;
-    const auto verbatimDest = NativeVerbatimPath_nid_no_patch(destination, verbatimError);
-    const auto& actualDest = verbatimError ? destination : verbatimDest;
 #else
     const auto& actualSource = source;
-    const auto& actualDest = destination;
 #endif
     const auto sourceStatus = LinkStatus(actualSource, error);
     if (error && error != std::errc::no_such_file_or_directory) return FilesystemError(error);
     if (sourceStatus.type() == fs::file_type::not_found) return GuestEnoent;
+    const bool hadTrailingSlash = destination.filename().empty() || destination.filename() == ".";
+    fs::path effectiveDest = destination;
+    if (fs::is_directory(sourceStatus) && !IsWindowsLink(source)) {
+        while ((effectiveDest.filename().empty() || effectiveDest.filename() == ".") && !effectiveDest.parent_path().empty() && effectiveDest.parent_path() != effectiveDest) {
+            effectiveDest = effectiveDest.parent_path();
+        }
+    }
+#ifdef _WIN32
+    const auto verbatimDest = NativeVerbatimPath_nid_no_patch(effectiveDest, verbatimError);
+    if (!verbatimError) effectiveDest = verbatimDest;
+    if (effectiveDest.filename() == "." && !effectiveDest.parent_path().empty() && effectiveDest.parent_path() != effectiveDest) {
+        effectiveDest = effectiveDest.parent_path();
+    }
+#endif
 
-    const auto parent = actualDest.parent_path().empty() ? fs::path(".") : actualDest.parent_path();
+    const auto parent = effectiveDest.parent_path().empty() ? fs::path(".") : effectiveDest.parent_path();
     error.clear();
     const auto parentStatus = fs::status(parent, error);
     if (error) return FilesystemError(error);
@@ -128,15 +139,16 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
     if (!fs::is_directory(parentStatus)) return GuestEnotdir;
 
     error.clear();
-    const auto destinationStatus = LinkStatus(actualDest, error);
+    const auto destinationStatus = LinkStatus(effectiveDest, error);
     if (error && error != std::errc::no_such_file_or_directory) return FilesystemError(error);
     const bool destinationExists = destinationStatus.type() != fs::file_type::not_found;
     const bool sourceIsDirectory = fs::is_directory(sourceStatus) && !IsWindowsLink(source);
-    const bool destinationIsDirectory = destinationExists && fs::is_directory(destinationStatus) && !IsWindowsLink(destination);
+    if (hadTrailingSlash && !sourceIsDirectory && !destinationExists) return GuestEnoent;
+    const bool destinationIsDirectory = destinationExists && fs::is_directory(destinationStatus) && !IsWindowsLink(effectiveDest);
     bool sameFile = false;
     if (destinationExists) {
         error.clear();
-        sameFile = fs::equivalent(actualSource, actualDest, error);
+        sameFile = fs::equivalent(actualSource, effectiveDest, error);
         if (error == std::errc::no_such_file_or_directory) error.clear();
 #ifdef __APPLE__
         if (error == std::errc::not_supported) error.clear();
@@ -149,18 +161,18 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
         error.clear();
         const auto canonicalSource = fs::weakly_canonical(actualSource, error);
         if (error) return FilesystemError(error);
-        const auto canonicalDestination = fs::weakly_canonical(actualDest, error);
+        const auto canonicalDestination = fs::weakly_canonical(effectiveDest, error);
         if (error) return FilesystemError(error);
         const auto relative = canonicalDestination.lexically_relative(canonicalSource);
         if (!relative.empty() && *relative.begin() != "..") return GuestEinval;
     }
     if (destinationExists && !sameFile && destinationIsDirectory) {
         error.clear();
-        if (!fs::is_empty(actualDest, error)) {
+        if (!fs::is_empty(effectiveDest, error)) {
             return error ? FilesystemError(error) : GuestEnotempty;
         }
     }
-    error = RenameNative_nid_no_patch(actualSource, actualDest, destinationExists && (!sourceIsDirectory || !sameFile));
+    error = RenameNative_nid_no_patch(actualSource, effectiveDest, destinationExists && (!sourceIsDirectory || !sameFile));
     return error ? FilesystemError(error) : 0;
 }
 
