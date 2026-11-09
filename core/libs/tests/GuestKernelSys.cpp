@@ -1112,6 +1112,23 @@ static void CheckProcessQueries() {
         Require(query(&workaround, 0x7E, &enabled) == 0 && enabled == 0);
         Require(query(&workaround, 0x7F, &enabled) == 0 && enabled == 1);
     }
+    for (const std::uint64_t selector : {std::uint64_t{0}, std::uint64_t{0x28}}) {
+        std::int32_t enabled = -1;
+        Require(sceKernelTitleWorkaroundIsEnabled2(nullptr, selector, 3, &enabled) == static_cast<int>(0x8002000E) && enabled == -1);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 3, nullptr) == static_cast<int>(0x8002000E));
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 0x80, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 0xFFFFFFFFu, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 3, &enabled) == 0 && enabled == 1);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 4, &enabled) == 0 && enabled == 0);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 64, &enabled) == 0 && enabled == 1);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 0x7F, &enabled) == 0 && enabled == 1);
+    }
+    for (const std::uint64_t selector : {std::uint64_t{0x29}, std::uint64_t{0x2A}, ~std::uint64_t{0}}) {
+        std::int32_t enabled = -1;
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 3, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+        Require(sceKernelTitleWorkaroundIsEnabled2(nullptr, selector, 3, &enabled) == static_cast<int>(0x8002000E));
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 3, nullptr) == static_cast<int>(0x8002000E));
+    }
     Require(sceKernelGetProcessType(getpid_nid_postfix()) == 0);
     Require(sceKernelGetProcessType(-1) == 0 && sceKernelGetProcessType(0) == 0);
     Require(sceKernelGetProcessType(getpid_nid_postfix() + 1) == static_cast<int>(0x80020003));
