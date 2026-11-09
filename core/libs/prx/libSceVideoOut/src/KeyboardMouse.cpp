@@ -386,6 +386,11 @@ PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const
         state.analogButtonsL2 = std::max(state.analogButtonsL2, triggerByte(triggerAxes[0]));
         state.analogButtonsR2 = std::max(state.analogButtonsR2, triggerByte(triggerAxes[1]));
     }
+    if (mouseGyro && mouseMode && (gyroRate[0] != 0.0 || gyroRate[1] != 0.0)) {
+        state.hasMotion = true;
+        state.gyro[1] += static_cast<float>(gyroRate[1] * MouseGyroRadiansPerCount);
+        state.gyro[2] += static_cast<float>(gyroRate[0] * MouseGyroRadiansPerCount);
+    }
     if (mouseTouch) {
         if (!state.touch[0].active) state.touch[0] = *mouseTouch;
         else if (!state.touch[1].active) state.touch[1] = *mouseTouch;
