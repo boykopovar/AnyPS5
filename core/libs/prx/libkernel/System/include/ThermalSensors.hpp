@@ -3,4 +3,8 @@
 
 extern "C" void ReadThermalSensors_nid_no_patch(const char* root, int celsius[3]);
 
+inline void Plausible(int& value) {
+    if (value < 0 || value > 130) value = -1;
+}
+
 #endif
