@@ -190,7 +190,19 @@ int APS5_VABI WKIconDatabaseCopyIconURLForPageURL() {
     return 0;
 }
 
+int APS5_VABI WKKeyValueStorageManagerDeleteAllEntries() {
+    return 0;
+}
+
+int APS5_VABI WKKeyValueStorageManagerDeleteEntriesForOrigin() {
+    return 0;
+}
+
 int APS5_VABI WKKeyValueStorageManagerGetCreationTimeKey() {
+    return 0;
+}
+
+int APS5_VABI WKKeyValueStorageManagerGetKeyValueStorageOrigins() {
     return 0;
 }
 
@@ -199,6 +211,10 @@ int APS5_VABI WKKeyValueStorageManagerGetModificationTimeKey() {
 }
 
 int APS5_VABI WKKeyValueStorageManagerGetOriginKey() {
+    return 0;
+}
+
+int APS5_VABI WKKeyValueStorageManagerGetStorageDetailsByOrigin() {
     return 0;
 }
 
@@ -459,6 +475,62 @@ int APS5_VABI _ZNK7WebCore20LowPowerModeNotifier21isLowPowerModeEnabledEv() {
 }
 
 int APS5_VABI _ZNK7WebCore20ScrollingCoordinator25scrollableContainerNodeIDERKNS_12RenderObjectE() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient12dispatchShowEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient13didFinishLoadEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient16restoreViewStateEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient17cancelPolicyCheckEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient17dispatchWillCloseEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient17setCopiesOnScrollEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient18frameLoadCompletedEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient19detachedFromParent2Ev() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient19detachedFromParent3Ev() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient19updateGlobalHistoryEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient21dispatchDidFinishLoadEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient21forceLayoutForNonHTMLEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient22provisionalLoadStartedEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient25didDisplayInsecureContentEv() {
     return 0;
 }
 
