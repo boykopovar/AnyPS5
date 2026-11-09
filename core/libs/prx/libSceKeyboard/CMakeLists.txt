@@ -4,6 +4,7 @@ add_library(libSceKeyboard SHARED EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/src/keyboard_impl.cpp
 )
 target_include_directories(libSceKeyboard PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceKeyboard PRIVATE libSceUserService)
 set_target_properties(libSceKeyboard PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libSceKeyboard)
 

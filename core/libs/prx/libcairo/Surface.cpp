@@ -1,10 +1,12 @@
 #include "prx/libcairo/include/Surface.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <vector>
 
 namespace {
 
@@ -63,6 +65,12 @@ int Stride(int format, int width) {
 }
 
 struct CairoSurfaceState {
+    struct UserDataSlot {
+        const CairoUserDataKey* key{};
+        void* data{};
+        CairoDestroyFunc destroy{};
+    };
+    std::vector<UserDataSlot> userData;
     std::atomic<unsigned> references{1};
     int status{kSuccess};
     int format{kInvalidFormatValue};
@@ -100,6 +108,8 @@ void ReleaseSurface(CairoSurface* surface);
 CairoSurfaceState::~CairoSurfaceState() {
     if (ownsData) delete[] data;
     if (parent) ReleaseSurface(parent);
+    for (auto slot = userData.rbegin(); slot != userData.rend(); ++slot)
+        if (slot->data && slot->destroy) slot->destroy(slot->data);
 }
 
 namespace {
@@ -225,6 +235,35 @@ CairoSurface* APS5_VABI cairo_surface_reference(CairoSurface* surface) {
 void APS5_VABI cairo_surface_destroy(CairoSurface* surface) {
 
     ReleaseSurface(surface);
+}
+
+int APS5_VABI cairo_surface_set_user_data(CairoSurface* surface, const CairoUserDataKey* key,
+                                          void* data, CairoDestroyFunc destroy) {
+    if (!surface) NotImplemented_nid_no_patch(__func__);
+    auto* state = State(surface);
+    if (state->status != kSuccess) return state->status;
+    if (state->references.load(std::memory_order_relaxed) == 0) return 12;
+    CairoSurfaceState::UserDataSlot* selected = nullptr;
+    for (auto& slot : state->userData) {
+        if (slot.key == key) {
+            selected = &slot;
+            break;
+        }
+        if (data && !slot.data) selected = &slot;
+    }
+    if (selected) {
+        if (selected->data && selected->destroy) selected->destroy(selected->data);
+        *selected = data ? CairoSurfaceState::UserDataSlot{key, data, destroy}
+                         : CairoSurfaceState::UserDataSlot{};
+    } else if (data) {
+        if (state->userData.size() == state->userData.max_size()) return kNoMemory;
+        try {
+            state->userData.push_back({key, data, destroy});
+        } catch (const std::bad_alloc&) {
+            return kNoMemory;
+        }
+    }
+    return kSuccess;
 }
 
 int APS5_VABI cairo_surface_status(CairoSurface* surface) {
