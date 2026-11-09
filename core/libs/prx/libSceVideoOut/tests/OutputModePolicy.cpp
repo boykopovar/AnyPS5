@@ -39,12 +39,5 @@ int main() {
     changed = options;
     changed.internalData[3] = 0xffffffff;
     Require(ValidateVideoOutOutputMode_nid_no_patch(15, &changed, 120) == 0, "mode 15 rejected the free options word");
-    bool thrown = false;
-    try {
-        ValidateVideoOutOutputMode_nid_no_patch(18, &options, 120);
-    } catch (const std::runtime_error&) {
-        thrown = true;
-    }
-    Require(thrown, "unsettled mode 18 did not throw");
-
+    Require(ValidateVideoOutOutputMode_nid_no_patch(18, &options, 120) == unknownMode, "mode 18 was not answered with the unknown-mode code");
 }
