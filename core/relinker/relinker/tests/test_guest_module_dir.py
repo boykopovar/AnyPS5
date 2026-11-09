@@ -267,7 +267,8 @@ def main():
             for rejected, message in ((str(plugins), "inside the guest module parent directory"),
                                       ("../outside", "inside the guest module parent directory"),
                                       ("Media/Missing", "not a directory"),
-                                      ("sce_module", "Duplicate guest module directory")):
+                                      ("sce_module", "Duplicate guest module directory"),
+                                      ("sce_module", "sce_module, sce_modules and prx are relinked without --module-dir")):
                 result, output = convert(case, windows, ["--module-dir", rejected])
                 assert result.returncode == 2 and message in result.stderr, (rejected, result.stderr)
 
@@ -278,6 +279,7 @@ def main():
             for names in aliases:
                 result, output = convert(case, windows, [option for name in names for option in ("--module-dir", name)])
                 assert result.returncode == 2 and "Duplicate guest module directory" in result.stderr, (names, result.stderr)
+                assert ("relinked without --module-dir" in result.stderr) == (names != ["Media/Plugins", "media/plugins"]), (names, result.stderr)
             if not (case / "MEDIA").exists():
                 (case / "SCE_MODULE").mkdir()
                 result, output = convert(case, windows, ["--module-dir", "SCE_MODULE"])

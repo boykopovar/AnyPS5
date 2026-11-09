@@ -16,6 +16,8 @@ target_include_directories(agc_driver_recorder_tests PRIVATE
         ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
 )
 
+set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/tests/Recorder.cpp APPEND PROPERTY COMPILE_DEFINITIONS VK_ENABLE_BETA_EXTENSIONS)
+
 target_link_libraries(agc_driver_recorder_tests PRIVATE
         libSceAgc
         libkernel
@@ -374,6 +376,10 @@ if(BUILD_TESTING)
     set_tests_properties(agc_changed_copy PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     add_test(NAME agc_unit_shadow COMMAND agc_driver_recorder_tests --unit-shadow-only)
     set_tests_properties(agc_unit_shadow PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30 ENVIRONMENT "APS5_PIN_WAIT_MS=3000")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME agc_idle_publish_dmabuf_wait COMMAND agc_driver_recorder_tests --idle-publish-dmabuf-wait-only)
+        set_tests_properties(agc_idle_publish_dmabuf_wait PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30 ENVIRONMENT "APS5_PIN_WAIT_MS=3000;APS5_WRITE_WATCH_IMPORTS=probe")
+    endif()
     add_test(NAME agc_idle_publish_wait COMMAND agc_driver_recorder_tests --idle-publish-wait-only)
     set_tests_properties(agc_idle_publish_wait PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30 ENVIRONMENT "APS5_PIN_WAIT_MS=3000;APS5_WRITE_WATCH_IMPORTS=watch")
     add_test(NAME agc_driver_bda_reads_shadowed_results COMMAND agc_driver_recorder_tests --bda-shadowed-results-only)
