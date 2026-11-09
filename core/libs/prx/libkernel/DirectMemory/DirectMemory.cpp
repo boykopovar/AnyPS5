@@ -707,16 +707,20 @@ void RequireNotReleasing(std::uint64_t phys, std::size_t len) {
 void WatchMapping(std::uintptr_t address, std::size_t len) {
     GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(reinterpret_cast<const void*>(address), len);
     const auto end = address + len;
-    for (auto added = g_directMappings.lower_bound(address); added != g_directMappings.end() && added->first < end; ++added) {
-        const auto addedPhys = added->second.phys;
-        const auto addedPhysEnd = addedPhys + (added->second.end - added->first);
+    auto added = g_directMappings.lower_bound(address);
+    if (added != g_directMappings.begin() && std::prev(added)->second.end > address) --added;
+    for (; added != g_directMappings.end() && added->first < end; ++added) {
+        const auto low = std::max<std::uintptr_t>(added->first, address);
+        const auto high = std::min<std::uintptr_t>(added->second.end, end);
+        const auto addedPhys = added->second.phys + (low - added->first);
+        const auto addedPhysEnd = addedPhys + (high - low);
         for (const auto base : MappingsSharingPhys(addedPhys, addedPhysEnd)) {
             const auto& other = g_directMappings.at(base);
-            if ((base >= address && base < end) || other.backing != added->second.backing) continue;
+            if (base == added->first || (base >= address && base < end) || other.backing != added->second.backing) continue;
             const auto first = std::max(addedPhys, other.phys);
             const auto last = std::min(addedPhysEnd, other.phys + (other.end - base));
             if (first >= last) continue;
-            const auto* addedAt = reinterpret_cast<const void*>(added->first + (first - addedPhys));
+            const auto* addedAt = reinterpret_cast<const void*>(low + (first - addedPhys));
             const auto* otherAt = reinterpret_cast<const void*>(base + (first - other.phys));
             if (GuestWriteWatch::GuestWriteWatchAlias_nid_postfix(addedAt, otherAt, last - first)) continue;
             GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(addedAt, last - first);

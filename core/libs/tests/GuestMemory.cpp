@@ -3389,6 +3389,12 @@ static void CheckDirectMemoryWriteWatch() {
     Require(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(address, page * 3));
     Require(CollectPages(first, 0, page * 3) == Joined(PagesOfRange(alias, 0, page), PagesOfRange(first, page, page)));
     Require(CollectPages(first, 0, page * 3).empty());
+    void* same = static_cast<unsigned char*>(first) + page;
+    Require(sceKernelMapDirectMemory(&same, page, 3, 0x10, phys + page, 0) == 0 && same == static_cast<unsigned char*>(first) + page);
+    Require(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(aliasAddress, page) && GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(address, page * 3));
+    static_cast<void>(CollectPages(first, 0, page * 3));
+    static_cast<volatile unsigned char*>(alias)[small] = 6;
+    Require(CollectPages(first, 0, page * 3) == PagesOf({{alias, small}, {first, page + small}}));
     bytes[0] = 2;
     static_cast<volatile unsigned char*>(alias)[7] = 3;
     Require(bytes[page + 7] == 3);
