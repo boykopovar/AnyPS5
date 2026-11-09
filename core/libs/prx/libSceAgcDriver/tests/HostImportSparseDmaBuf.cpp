@@ -307,7 +307,8 @@ void SettlingSurvivesDeviceReplacement(bool reverse) {
     const auto baselineBuffers = mock.buffers.size();
     const auto baselineMemories = mock.memories.size();
     const auto baselineFences = mock.fences.size();
-    SharedRange range(8u << 20u, 0, true);
+    constexpr std::uint64_t bytes = 8u << 20u;
+    SharedRange range(bytes, 0, true);
     auto first = mockContext();
     first.device = reinterpret_cast<VkDevice>(mock.next++);
     first.settleQueue = reinterpret_cast<VkQueue>(mock.next++);
@@ -319,7 +320,7 @@ void SettlingSurvivesDeviceReplacement(bool reverse) {
     second.settlePool = reinterpret_cast<VkCommandPool>(mock.next++);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     for (const auto& context : {first, second, first}) {
-        const auto* imported = HostImportFor(context, range.Address(), 4096);
+        const auto* imported = HostImportFor(context, range.Address(), bytes);
         ExpectBackingClosed("a chunk import retained the backing descriptor");
         Expect(imported != nullptr && imported->dmaBuf, "replacement device did not settle its dma-buf import");
     }
