@@ -1,9 +1,12 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "prx/libSceNKWebKit/src/HttpHeaderMapAbi.hpp"
 
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 using NKWebKit::WebCoreAbi::ResourceRequestBase;
 using NKWebKit::WtfAbi::StringImpl;
@@ -164,11 +167,50 @@ static void TestDefaultTimeout() {
     Require(_ZN7WebCore19ResourceRequestBase22defaultTimeoutIntervalEv() == 0);
 }
 
+static void TestConditional() {
+    using NKWebKit::HttpAbi::CommonHeader;
+    using NKWebKit::HttpAbi::HTTPHeaderName;
+    using NKWebKit::HttpAbi::HTTPHeaderMap;
+    using NKWebKit::WtfAbi::String;
+
+    ResourceRequestBase request{};
+    request.resourceRequestUpdated = true;
+    auto* headers = reinterpret_cast<HTTPHeaderMap*>(&request.httpHeaderFields);
+    std::array<CommonHeader, 1> entry{{{HTTPHeaderName::Accept, String{}}}};
+    headers->common = {entry.data(), 1, 1};
+
+    constexpr HTTPHeaderName conditional[] = {
+        HTTPHeaderName::IfMatch,
+        HTTPHeaderName::IfModifiedSince,
+        HTTPHeaderName::IfNoneMatch,
+        HTTPHeaderName::IfRange,
+        HTTPHeaderName::IfUnmodifiedSince,
+    };
+    for (auto name : conditional) {
+        entry[0].key = name;
+        Require(_ZNK7WebCore19ResourceRequestBase13isConditionalEv(&request));
+    }
+    entry[0].key = HTTPHeaderName::Accept;
+    Require(!_ZNK7WebCore19ResourceRequestBase13isConditionalEv(&request));
+    headers->common = {};
+    Require(!_ZNK7WebCore19ResourceRequestBase13isConditionalEv(&request));
+
+    ResourceRequestBase stale{};
+    bool threw = false;
+    try {
+        _ZNK7WebCore19ResourceRequestBase13isConditionalEv(&stale);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 int main() {
     TestURL();
     TestFirstParty();
     TestMethod();
     TestScalars();
     TestDefaultTimeout();
+    TestConditional();
     return 0;
 }
