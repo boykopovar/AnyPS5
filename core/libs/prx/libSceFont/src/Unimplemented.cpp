@@ -349,11 +349,6 @@ void APS5_VABI sceFontSetGraphicsErrorCallback(Font::GraphicsErrorCallback callb
     Font::SetGraphicsErrorCallback(callback);
 }
 
-int APS5_VABI sceFontSupportGlyphs(const FontGlyphSupport* support) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceFontWordsFindWordCharacters(FontWords* words, FontTextCharacter* firstCharacter, FontTextCharacter* endCharacter, FontTextCharacter** lastCharacter, FontTextCharacter** nextCharacter) {
     return Font::WordsFindWordCharacters(words, firstCharacter, endCharacter, lastCharacter, nextCharacter);
 }

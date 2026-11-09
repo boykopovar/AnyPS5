@@ -262,7 +262,14 @@ std::uint32_t APS5_VABI WKWebsiteDataStoreGetTypeID();
 std::uint32_t APS5_VABI WKWebsitePoliciesGetTypeID();
 std::uint32_t APS5_VABI WKWindowFeaturesGetTypeID();
 
+void APS5_VABI WKClearMockMediaDevices();
+void APS5_VABI WKRemoveMockMediaDevice(const void* persistentIdRef);
+void APS5_VABI WKResetMockMediaDevices();
 void APS5_VABI WKUserMediaPermissionRequestAllow(const void* requestRef);
 void APS5_VABI WKUserMediaPermissionRequestDeny(const void* requestRef);
+std::uint32_t APS5_VABI WKContextGetCacheModel(const void* contextRef);
+void APS5_VABI WKContextSetCacheModel(const void* contextRef, std::uint32_t cacheModel);
+bool APS5_VABI WKContextGetAccessibilityEnabled(const void* contextRef);
+void APS5_VABI WKContextSetAccessibilityEnabled(const void* contextRef, bool enabled);
 
 }
