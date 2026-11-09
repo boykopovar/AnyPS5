@@ -158,6 +158,10 @@ static void TestScalars() {
 
 static void TestDefaultTimeout() {
     Require(_ZN7WebCore19ResourceRequestBase22defaultTimeoutIntervalEv() == 0);
+    WKURLRequestSetDefaultTimeoutInterval(45.5);
+    Require(_ZN7WebCore19ResourceRequestBase22defaultTimeoutIntervalEv() == 45.5);
+    WKURLRequestSetDefaultTimeoutInterval(0);
+    Require(_ZN7WebCore19ResourceRequestBase22defaultTimeoutIntervalEv() == 0);
     _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(30.25);
     Require(_ZN7WebCore19ResourceRequestBase22defaultTimeoutIntervalEv() == 30.25);
     _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(0);
