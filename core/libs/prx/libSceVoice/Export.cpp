@@ -236,8 +236,8 @@ int APS5_VABI sceVoiceDisconnectIPortFromOPort(uint32_t input_port_id, uint32_t 
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
     RequirePort(voice, input_port_id, __func__);
-    RequirePort(voice, output_port_id, __func__);
-    if (voice.connections.erase({input_port_id, output_port_id}) == 0) Fail(__func__, "ports are not connected");
+    if (output_port_id > 127) Fail(__func__, "the result for a second port id above 127 is unknown");
+    if (!voice.ports.contains(output_port_id) || voice.connections.erase({input_port_id, output_port_id}) == 0) return PortNotFound;
     return 0;
 }
 
