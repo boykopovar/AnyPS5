@@ -52,8 +52,16 @@ private:
     mutable PrimedSharedMutex mutex;
 };
 
-inline void Require(bool condition, const std::string& reason) {
-    if (!condition) throw std::runtime_error("AGC graphics: " + reason);
+[[noreturn, gnu::cold, gnu::noinline]] inline void RequireFailed(const std::string& reason) {
+    throw std::runtime_error("AGC graphics: " + reason);
+}
+
+[[noreturn, gnu::cold, gnu::noinline]] inline void RequireFailed(const char* reason) {
+    throw std::runtime_error(std::string("AGC graphics: ") + reason);
+}
+
+[[gnu::always_inline]] inline void Require(bool condition, const std::string& reason) {
+    if (!condition) [[unlikely]] RequireFailed(reason);
 }
 
 inline std::function<void()>& DeviceLostHook() {
@@ -87,8 +95,8 @@ inline VkShaderModule CreateShaderModule(PFN_vkCreateShaderModule create, VkDevi
     return module;
 }
 
-inline void Require(bool condition, const char* reason) {
-    if (!condition) throw std::runtime_error(std::string("AGC graphics: ") + reason);
+[[gnu::always_inline]] inline void Require(bool condition, const char* reason) {
+    if (!condition) [[unlikely]] RequireFailed(reason);
 }
 
 struct DescriptorRejected : std::runtime_error {
