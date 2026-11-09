@@ -17,8 +17,8 @@ constexpr int GuestEaddrnotavail = 49;
 
 int Reject(int32_t fd) {
     int error = GuestEbadf;
-    if (GuestSockets::IsOpen(fd)) error = GuestEaddrnotavail;
-    else if (IsKqueueDescriptor_nid_no_patch(fd) || File::IsDirectoryDescriptor(fd) || DescriptorIsOpen_nid_no_patch(fd)) error = GuestEnotty;
+    if (GuestSocketIsOpen_nid_no_patch(fd)) error = GuestEaddrnotavail;
+    else if (IsKqueueDescriptor_nid_no_patch(fd) || IsDirectoryDescriptor_nid_no_patch(fd) != 0 || DescriptorIsOpen_nid_no_patch(fd)) error = GuestEnotty;
     *__error_nid_postfix() = error;
     return SceKernelError(error);
 }
