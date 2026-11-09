@@ -61,6 +61,16 @@ void MutexTryLock() {
     CHECK(sceUltMutexUnlock(&mutex) == Ok);
     CHECK(sceUltMutexDestroy(&mutex) == Ok);
     CHECK(sceUltMutexTryLock(&mutex) == State);
+    CHECK(sceUltMutexCreate(&mutex, "plain", nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltMutexTryLock(&mutex) == Ok);
+    CHECK(sceUltMutexTryLock(&mutex) == State);
+    CHECK(sceUltMutexUnlock(&mutex) == Ok);
+    std::thread([&] {
+        other = sceUltMutexTryLock(&mutex);
+        if (other == Ok) other = sceUltMutexUnlock(&mutex);
+    }).join();
+    CHECK(other == Ok);
+    CHECK(sceUltMutexDestroy(&mutex) == Ok);
 }
 
 void MutexAndRuntimeOptParams() {
@@ -76,8 +86,11 @@ void MutexAndRuntimeOptParams() {
     UltUlthreadRuntimeOptParam runtimeOptions;
     std::memset(&runtimeOptions, 0xa5, sizeof(runtimeOptions));
     CHECK(sceUltUlthreadRuntimeOptParamInitialize(nullptr, 0) == Null);
-    CHECK(sceUltUlthreadRuntimeOptParamInitialize(&runtimeOptions, 0) == Ok);
-    for (const std::uint8_t byte : runtimeOptions.bytes) CHECK(byte == 0);
+    CHECK(sceUltUlthreadRuntimeOptParamInitialize(&runtimeOptions, 0x12400000) == Ok);
+    const std::uint8_t console[40] = {0x75, 0x62, 0x69, 0x6c, 0x61, 0x6d, 0x74, 0x6c, 0x00, 0x63, 0x69, 0x67, 0x00, 0x00, 0x40, 0x12, 0x00, 0x40, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0xff, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbc, 0x02, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00};
+    CHECK(std::memcmp(runtimeOptions.bytes, console, sizeof(console)) == 0);
+    for (std::size_t i = sizeof(console); i < sizeof(runtimeOptions.bytes); i++) CHECK(runtimeOptions.bytes[i] == 0);
 }
 
 void OptParams() {

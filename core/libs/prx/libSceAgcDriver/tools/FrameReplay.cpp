@@ -85,7 +85,13 @@ struct Options {
 
 class Frames {
 public:
+    void SetSize(std::uint32_t displayWidth, std::uint32_t displayHeight) {
+        width = displayWidth;
+        height = displayHeight;
+    }
+
     void MarkReady() {
+        AgcDriverTracePresent_nid_postfix(width, height);
         std::lock_guard lock(mutex);
         ready.push_back(Clock::now());
     }
@@ -109,6 +115,8 @@ private:
     mutable std::mutex mutex;
     std::vector<Clock::time_point> ready;
     std::exception_ptr failure;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
 };
 
 class ReplayFlip final : public AgcDriver::IFlipRequest {
@@ -273,6 +281,7 @@ void restoreSnapshot(const FrameCaptureReader& reader, const Skipped& skipped) {
 }
 
 Skipped restoreMemory(const FrameCaptureReader& reader) {
+    if (reader.Version() < 2) throw std::runtime_error("frame replay: calls format 1 does not record whether GPU writes had landed before each memory delta was read; record the capture again");
     std::uintptr_t base = 0;
     std::size_t size = 0;
     GuestArena::GuestArenaRange_nid_postfix(&base, &size);
@@ -505,6 +514,7 @@ struct Replay {
             if (skipped.Overlaps(*chunk)) continue;
             auto bytes = reader.Read(*chunk);
             auto* const target = reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(chunk->address));
+            AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, static_cast<std::size_t>(chunk->bytes));
             for (auto at = static_cast<std::size_t>((4 - chunk->address % 4) % 4); at + 4 <= bytes.size(); at += 4) {
                 std::uint32_t value = 0;
                 std::memcpy(&value, bytes.data() + at, sizeof(value));
@@ -1137,6 +1147,8 @@ int run(const Options& options) {
         if (chunk.kind == FrameMemoryKind::Delta) replay.groups[chunk.group].push_back(&chunk);
     }
     const auto& calls = reader.Calls();
+    const auto display = std::find_if(calls.begin(), calls.end(), [](const FrameCall& call) { return call.kind == FrameCallKind::DisplayBuffer && call.values.size() >= 4; });
+    if (display != calls.end()) replay.frames.SetSize(static_cast<std::uint32_t>(display->values[2]), static_cast<std::uint32_t>(display->values[3]));
     const auto frameStart = std::find_if(calls.begin(), calls.end(), [](const FrameCall& call) { return call.kind == FrameCallKind::FrameStart; });
     for (auto call = calls.begin(); call != frameStart; ++call) replay.execute(*call);
     const auto journalStart = Clock::now();
