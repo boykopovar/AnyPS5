@@ -55,9 +55,6 @@ void CheckDateConversions(const GuestTm& time) {
     Check("default %D", time, "%D", "10/02/26");
 }
 
-// With ANYPS5_TIME_FORMAT=host the three conversions take the strings of the host's LC_TIME locale.
-// The expected strings come from the same locale through nl_langinfo_l, so this checks the wiring and the
-// fallback on a machine whose locale is C; the Spanish strings were checked by hand with a compiled es_ES locale.
 void CheckHostDateConversions(const GuestTm& time) {
 #ifndef _WIN32
     locale_t host = newlocale(LC_TIME_MASK, "", static_cast<locale_t>(0));
