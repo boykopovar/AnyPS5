@@ -1657,6 +1657,30 @@ int APS5_VABI SumNotify(NpStreamCtx* self, const void* data, std::size_t size) {
     return context->result;
 }
 
+struct OverReader {
+    NpStreamReader base;
+    std::size_t extra;
+    int calls;
+};
+
+int APS5_VABI OverRead(NpStreamReader* self, void*, void*, std::size_t size, std::size_t* read) {
+    auto* reader = reinterpret_cast<OverReader*>(self);
+    *read = reader->calls++ == 0 ? size + reader->extra : 0;
+    return 0;
+}
+
+struct OverWriter {
+    NpStreamWriter base;
+    std::size_t extra;
+};
+
+int APS5_VABI OverWrite(NpStreamWriter* self, void*, const void*, std::size_t size, std::size_t* written) {
+    *written = size + reinterpret_cast<OverWriter*>(self)->extra;
+    return 0;
+}
+
+const void* const OverReaderVtable[] = {nullptr, nullptr, reinterpret_cast<const void*>(&OverRead)};
+const void* const OverWriterVtable[] = {nullptr, nullptr, reinterpret_cast<const void*>(&OverWrite)};
 const void* const ChunkReaderVtable[] = {nullptr, nullptr, reinterpret_cast<const void*>(&ChunkRead)};
 const void* const CollectWriterVtable[] = {nullptr, nullptr, reinterpret_cast<const void*>(&CollectWrite)};
 const void* const SumContextVtable[] = {nullptr, nullptr, reinterpret_cast<const void*>(&SumNotify)};
@@ -1726,6 +1750,28 @@ void TestStreamHelpers() {
     writer = {{CollectWriterVtable}, {}, 0, 4};
     Require(_ZN3sce2np12StreamWriter5WriteEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm(&writer.base, nullptr, nullptr, source.data(), 10, &count) == 0 && count == 4,
         "Write makes a single stream call");
+
+    OverReader over {{OverReaderVtable}, 1, 0};
+    SumContext notified {{SumContextVtable}, 0, 0, 0};
+    Require(_ZN3sce2np12StreamReader8ReadDataEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(&over.base, nullptr, &notified.base, out.data(), 10, &count) ==
+                NpStreamBufferTooSmall && count == 0 && notified.bytes == 0,
+        "ReadData refuses a callback that reports more bytes than it was asked for");
+    over = {{OverReaderVtable}, 1, 0};
+    skipped = 0;
+    Require(_ZN3sce2np12StreamReader7SkipAllEPNS0_6HandleEPNS0_9StreamCtxEPl(&over.base, nullptr, nullptr, &skipped) == NpStreamBufferTooSmall &&
+                skipped == 0,
+        "SkipAll refuses a chunk larger than its buffer");
+    over = {{OverReaderVtable}, 1, 0};
+    Require(_ZN3sce2np12StreamReader8SkipDataEPNS0_6HandleElPl(&over.base, nullptr, 10, &skipped) == NpStreamBufferTooSmall &&
+                skipped == 0,
+        "SkipData refuses a callback that reports more bytes than it was asked for");
+
+    OverWriter overWriter {{OverWriterVtable}, 1};
+    Require(_ZN3sce2np12StreamWriter9WriteDataEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm(&overWriter.base, nullptr, nullptr, source.data(), 10, &count) ==
+                NpStreamBufferTooSmall && count == 0,
+        "WriteData refuses a callback that reports more bytes than it was given");
+    Require(_ZN3sce2np12StreamWriter15WriteFilledDataEPNS0_6HandleEcl(&overWriter.base, nullptr, 'x', 200) == NpStreamBufferTooSmall,
+        "WriteFilledData refuses a callback that reports more bytes than it was given");
 }
 
 void TestRefObjects() {

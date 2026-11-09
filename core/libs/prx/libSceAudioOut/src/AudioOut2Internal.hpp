@@ -30,6 +30,7 @@ bool AudioOut2TraceEnabled();
 double AudioOut2TraceSeconds();
 bool AudioOut2IsInitialized_nid_no_patch();
 void AudioOut2MarkInitialized_nid_no_patch();
+bool AudioOut2TryInitialize_nid_no_patch();
 
 #define AUDIOOUT2_TRACE(...) \
     do { \

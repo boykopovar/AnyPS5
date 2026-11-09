@@ -179,6 +179,37 @@ static void CheckEcLifetime(bool named) {
     EC_KEY_free_nid_postfix(key);
 }
 
+static void CheckGet0EcKey() {
+    bool nullThrown = false;
+    try {
+        EVP_PKEY_get0_EC_KEY_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        nullThrown = true;
+    }
+    Require(nullThrown, "get0_EC_KEY of null did not throw");
+
+    LibreSsl3EvpPkey key {};
+    LibreSsl3EcKey ecKey {};
+    key.key = &ecKey;
+
+    for (const std::int32_t wrongType : {0, -1, 1, 6, 19, 28, 66, 116, 407, 409, 855, 894, 912}) {
+        key.type = wrongType;
+        LibreSsl3EvpPkey before;
+        std::memcpy(&before, &key, sizeof(key));
+        Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&key) == nullptr, "get0_EC_KEY wrong type return non-null");
+        Require(std::memcmp(&before, &key, sizeof(key)) == 0, "get0_EC_KEY mutated key");
+    }
+
+    key.type = 408;
+    LibreSsl3EvpPkey before;
+    std::memcpy(&before, &key, sizeof(key));
+    Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&key) == &ecKey, "get0_EC_KEY correct type return matching pointer");
+    Require(std::memcmp(&before, &key, sizeof(key)) == 0, "get0_EC_KEY mutated key on success");
+
+    key.key = nullptr;
+    Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&key) == nullptr, "get0_EC_KEY null inner key pointer");
+}
+
 int main(int argc, char** argv) {
     if (argc == 1 || std::strcmp(argv[1], "evp") == 0)
         CheckKey<LibreSsl3EvpPkey>(EVP_PKEY_up_ref_nid_postfix, 4);
@@ -196,5 +227,7 @@ int main(int argc, char** argv) {
         CheckKey<LibreSsl3SslCtx>(SSL_CTX_up_ref_nid_postfix, 40);
     if (argc == 1 || std::strcmp(argv[1], "bio") == 0)
         CheckKey<LibreSsl3Bio>(BIO_up_ref_nid_postfix, 80);
+    if (argc == 1 || std::strcmp(argv[1], "ec_get0") == 0)
+        CheckGet0EcKey();
     return 0;
 }
