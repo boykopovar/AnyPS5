@@ -36,5 +36,6 @@ extern "C" {
 void APS5_VABI ft_glyphslot_free_bitmap_nid_postfix(FreeType::GuestGlyphSlotRec* slot);
 void APS5_VABI ft_glyphslot_set_bitmap_nid_postfix(FreeType::GuestGlyphSlotRec* slot, std::uint8_t* buffer);
 int APS5_VABI ft_glyphslot_alloc_bitmap_nid_postfix(FreeType::GuestGlyphSlotRec* slot, std::uint64_t size);
+int APS5_VABI FT_Render_Glyph_Internal_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestGlyphSlotRec* slot, std::int32_t renderMode);
 
 }
