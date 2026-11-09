@@ -46,6 +46,7 @@ int APS5_VABI sceNpSignalingGetConnectionFromNpId(int ctxId, const void* peerNpI
 int APS5_VABI sceNpSignalingGetConnectionFromPeerAddress(int ctxId, std::uint32_t peerAddr, std::uint16_t peerPort, int* outConnId);
 int APS5_VABI sceNpSignalingGetConnectionFromPeerAddressA(int ctxId, const NpSignalingAccountPlatformPair* peerAddr, int* outConnId);
 int APS5_VABI sceNpSignalingGetContextOption(int ctxId, int optionId, int* outOptionValue);
+int APS5_VABI sceNpSignalingGetPeerNetInfo(int ctxId, const void* peerNpId, std::uint32_t* outReqId);
 int APS5_VABI sceNpSignalingGetPeerNetInfoA(int ctxId, const void* peerAccount, std::uint32_t* outReqId);
 int APS5_VABI sceNpSignalingCancelPeerNetInfo(int ctxId, int reqId);
 int APS5_VABI sceNpSignalingGetPeerNetInfoResult(int ctxId, int connId, NpSignalingNetInfo* peerNetInfo);
