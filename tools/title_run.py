@@ -154,6 +154,8 @@ def read_report(path):
     coverage, run, shaders = section(document, "coverage"), section(document, "run"), section(document, "shaders")
     missing, truncated = section(document, "missing"), section(document, "truncated")
     functions, unsupported = missing.get("functions"), shaders.get("unsupported")
+    functions = [entry for entry in functions if isinstance(entry, dict)] if isinstance(functions, list) else functions
+    unsupported = [entry for entry in unsupported if isinstance(entry, dict)] if isinstance(unsupported, list) else unsupported
     return {"averageFps": run.get("averageFps"),
             "shaders": {name: shaders.get(name) for name in SHADER_COUNTS} if coverage.get("shaders") else None,
             "missing": functions if coverage.get("missing") and isinstance(functions, list) else None,
@@ -260,7 +262,8 @@ def tally(entries, keys, count):
     totals = {}
     for entry in entries:
         key = json.dumps([entry.get(name) for name in keys])
-        totals[key] = totals.get(key, 0) + entry.get(count, 0)
+        value = entry.get(count)
+        totals[key] = totals.get(key, 0) + (value if isinstance(value, int) else 0)
     return totals
 
 
