@@ -104,12 +104,12 @@ int APS5_VABI sceMsgDialogOpen(const void* param) {
  const MsgDialog::ParsedParam parsed = MsgDialog::ParseParam(param);
  Inspect(parsed);
  ModalDialogRequest hostRequest;
- if (MsgDialog::HostMessageBoxEnabled(std::getenv("ANYPS5_MSG_DIALOG_HOST"), kAppleBuild) && MsgDialog::BuildRequest(parsed, hostRequest)) {
+ if (HostBox::HostMessageBoxEnabled(std::getenv("ANYPS5_MSG_DIALOG_HOST"), kAppleBuild) && MsgDialog::BuildRequest(parsed, hostRequest)) {
   g_presented = false;
   g_pollsLeft = std::numeric_limits<int>::max();
   g_status = kStatusRunning;
   g.unlock();
-  const auto answer = MsgDialog::ShowHostMessageBox(parsed.text, hostRequest);
+  const auto answer = HostBox::ShowHostMessageBox(parsed.text, hostRequest);
   g.lock();
   if (answer) {
    const std::size_t fallback = hostRequest.cancel != ModalDialogNoButton ? hostRequest.cancel : 0;
