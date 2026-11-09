@@ -1,6 +1,6 @@
 #include "prx/libSceMsgDialog/include/Api.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogParam.hpp"
-#include "prx/libSceMsgDialog/include/HostMessageBox.hpp"
+#include "prx/libSceIme/include/HostMessageBox.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogRequest.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include <atomic>
