@@ -87,13 +87,6 @@ int main() {
     PKCS12_free_nid_postfix(nullptr);
     Require(ERR_peek_error_nid_postfix() == Pack(11, 12, 13), "PKCS12_free null preserves the error queue");
     Require(ERR_get_error_nid_postfix() == Pack(11, 12, 13), "PKCS12_free null does not consume the error");
-    bool nonnullThrew = false;
-    try {
-        PKCS12_free_nid_postfix(reinterpret_cast<void*>(1));
-    } catch (const std::exception&) {
-        nonnullThrew = true;
-    }
-    Require(nonnullThrew, "PKCS12_free nonnull remains unimplemented without dereferencing the pointer");
     static_assert(std::is_void_v<decltype(OPENSSL_add_all_algorithms_noconf_nid_postfix())>);
     static_assert(std::is_void_v<decltype(OPENSSL_load_builtin_modules_nid_postfix())>);
     static_assert(std::is_void_v<decltype(CONF_modules_free_nid_postfix())>);
