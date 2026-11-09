@@ -84,6 +84,18 @@ int SupportFonts(FontLibrary library, void* FontLibNative::*slot, std::uint32_t 
 
 extern "C" {
 
+int APS5_VABI sceFontSupportSystemUpdation(FontLibrary library, std::uint32_t version) {
+    auto* lib = static_cast<FontLibNative*>(library);
+    std::uint32_t previous = 0;
+    if (!AcquireLibraryLock(lib, previous)) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    constexpr std::uint32_t SupportedVersion = 0x20230801;
+    constexpr std::uint16_t SystemUpdationFlag = 0x0200;
+    const bool supported = version == SupportedVersion;
+    if (supported) lib->reserved0 |= SystemUpdationFlag;
+    ReleaseLibraryLock(lib, previous);
+    return supported ? SCE_FONT_OK : SCE_FONT_ERROR_INVALID_PARAMETER;
+}
+
 int APS5_VABI sceFontMemoryInit(FontMemory* memory, void* regionAddress, std::uint32_t regionSize, const FontMemoryInterface* iface, void* mspaceObject, FontMemoryDestroyFunction destroyCallback, void* destroyObject) {
     if (!memory) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (!iface) {
