@@ -1,5 +1,9 @@
 # libSceAppContent technical debt
 
+### Silent stubs
+
+- [sceAppContentGetGameTrialsFlag](../../../core/libs/prx/libSceAppContent/Export.cpp) (libSceAppContent) - returning `SCE_APP_CONTENT_ERROR_PARAMETER` for an unwritable game trials flag pointer is a host-safety fallback with console behavior unmeasured.
+
 ### Unknown function info
 
 - [sceAppContentDownloadDataGetAvailableSpaceKb](../../../core/libs/prx/libSceAppContent/Export.cpp) (libSceAppContent) - a title whose `param.json` declares `downloadDataSize` 0 gets 0 KB and OK; the console's behaviour for a title without a download data area is unverified (it may return an error instead). shadPS4 stubs 1048576 KB. One disassembled title (PPSA15246) calls it with the `/download0` mount point and a zeroed 64-bit output, ignores the return value and multiplies the output by 1024, so for that title an error that leaves the output untouched and an OK with 0 KB look the same. `/download1` and `/download2` queries reflect their configured quota.

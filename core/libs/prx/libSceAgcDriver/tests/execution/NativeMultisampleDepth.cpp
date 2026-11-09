@@ -2163,7 +2163,7 @@ void CheckStencilTarget(Context context, std::uint32_t fragments, bool one, bool
     std::printf("Native depth-stencil samples=%u clear=%u fill=%u: imported, stencil-tested, sampled%s\n", fragments, one, filling, filling ? " and refilled three times" : "");
 }
 
-enum class PlaneFault { None, StencilByte, StencilWrite, UnwatchedStencil, HtileWord, PartialStencilFill, StencilFillPattern, StencilFillUnstored, StencilFillCpuWrite, StencilFillStoredFirst };
+enum class PlaneFault { None, StencilByte, StencilWrite, UnwatchedStencil, HtileWord, PartialStencilFill, StencilFillPattern, StencilFillUnstored, StencilFillCpuWrite, StencilFillStoredFirst, StencilSameValueStore, StencilOtherValueStore };
 enum class PlaneFill { None, Htile, Stencil, Both };
 
 void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool one, PlaneFill fill, PlaneFault fault = PlaneFault::None, bool pipeAligned = true) {
@@ -2193,7 +2193,15 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
         Context context;
         ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
     } cleanup{recorder, context};
+    std::optional<PublicationHookScope> storeDuringImport;
+    if (fault == PlaneFault::StencilSameValueStore || fault == PlaneFault::StencilOtherValueStore) {
+        const auto value = static_cast<std::uint8_t>(fault == PlaneFault::StencilSameValueStore ? clearStencil : clearStencil ^ 0x01u);
+        storeDuringImport.emplace([&, value](DepthPublicationStage stage) {
+            if (stage == DepthPublicationStage::StencilPlaneRead) *reinterpret_cast<volatile std::uint8_t*>(stencil.Data() + stencilBytes - 1u) = value;
+        });
+    }
     const auto view = DepthSurfaceView(context, target);
+    storeDuringImport.reset();
     const auto words = DepthSampleWords(target);
     auto texture = CachedSampledTexture(context, words);
     Require(texture != nullptr && CachedSampledTexture(context, words) == texture, "native depth with a separate stencil plane: sampled view was not reused");
@@ -4165,6 +4173,13 @@ int main(int argc, char** argv) {
                 TargetRefuses([&] { CheckSeparateStencilTarget(context, 4u, false, PlaneFill::None, fault); }, expected);
                 std::printf("Native depth with a separate stencil plane fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!supported(samples)) { unavailable += 1u; continue; }
+                CheckSeparateStencilTarget(context, samples, true, PlaneFill::None, PlaneFault::StencilSameValueStore);
+                ++checked;
+            }
+            TargetRefuses([&] { CheckSeparateStencilTarget(context, 4u, true, PlaneFill::None, PlaneFault::StencilOtherValueStore); }, "guest writes raced native multisample depth import");
+            std::printf("Native depth with a separate stencil plane stored the clear value again during import: imported; stored another value: refused\n");
             for (const auto& [fault, expected] : std::array{
                      std::pair{PlaneFault::HtileWord, "native multisample depth HTILE that is not pipe-aligned holds more than one word"}}) {
                 TargetRefuses([&] { CheckSeparateStencilTarget(context, 4u, false, PlaneFill::None, fault, false); }, expected);
