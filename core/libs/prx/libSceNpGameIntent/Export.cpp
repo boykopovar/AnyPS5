@@ -128,8 +128,7 @@ int APS5_VABI sceNpAppLauncherLaunchApp(std::int32_t arg0, const char* arg2, con
     (void)arg0;
     if (!AppLauncherInitialized()) return NpAppLauncherErrorNotInitialized;
     if (arg2 == nullptr || *arg2 == '\0' || (arg3 != nullptr && std::memchr(arg3, '\0', 0x2001) == nullptr)) return NpAppLauncherErrorInvalidArgument;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return NpAppLauncherErrorNotInitialized;
 }
 
 int APS5_VABI sceNpAppLauncherTerminate() {
