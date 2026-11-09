@@ -1,4 +1,6 @@
 #include "prx/libc/include/general/LogMacros.hpp"
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -101,6 +103,31 @@ void SetTimestamps(bool enabled) {
 #endif
 }
 
+std::atomic<int> g_sinkCalls{0};
+
+int CountingSink(std::FILE*, const char*, std::size_t) {
+    g_sinkCalls.fetch_add(1);
+    return 0;
+}
+
+void TestSharedClock() {
+    if (std::getenv("APS5_LOG_TIMESTAMPS") == nullptr) return;
+    const long long start = LibcLogTimestampMicros_nid_no_patch();
+    Require(start >= 0, "libc clock did not start");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(LogTimestampMicros() >= start + 80000, "LogTimestampMicros does not use the libc clock");
+}
+
+void TestSharedSink() {
+    Require(&LogSink() == LibcLogSink_nid_no_patch(), "LogSink is not the libc sink");
+    LogSink().store(&CountingSink);
+    Require(LibcLogSink_nid_no_patch()->load() == &CountingSink, "libc does not see the installed sink");
+    const int before = g_sinkCalls.load();
+    Require(_APS5_LOG_IMPL_NF(stderr, "sink routing") == 0, "a line through the sink failed");
+    Require(g_sinkCalls.load() == before + 1, "the installed sink did not receive the line");
+    LogSink().store(nullptr);
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -108,6 +135,8 @@ int main(int argc, char** argv) {
     const bool timestamped = argc == 2 && std::string(argv[1]) == "timestamps";
     Require(argc == 1 || timestamped, "unknown argument");
     SetTimestamps(timestamped);
+    TestSharedClock();
+    TestSharedSink();
     const auto shortLine = CaptureWrites([](std::FILE* stream) { Require(_APS5_LOG_IMPL(stream, "value %d of %s", 7, "seven") == 0, "a short line was not flushed"); });
     Require(HasLine(Join(shortLine), "] value 7 of seven\n", timestamped), "a short line differs");
     Require(shortLine.size() <= 2, "a short line took more than two writes");
