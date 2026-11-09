@@ -9,7 +9,7 @@
 using namespace FreeType;
 
 extern "C" int APS5_VABI FT_Get_PS_Font_Private_nid_postfix(GuestFaceRec* face, GuestPSPrivate* output) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     PS_PrivateRec native{};
     const int error = FT_Get_PS_Font_Private(owner ? owner->host : nullptr, output ? &native : nullptr);
     if (error != 0) return error;
