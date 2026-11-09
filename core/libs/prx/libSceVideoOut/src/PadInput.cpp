@@ -363,7 +363,7 @@ void PadInput::reloadInputMapping() {
     }
     mappings.Publish(std::move(configuration));
     applyMappingSnapshot();
-    APS5_LOG_OUT("Pad: input mapping reloaded");
+    APS5_LOG_CHARS_OUT("Pad: input mapping reloaded");
 }
 
 void PadInput::setMouseMode(bool enabled) {
