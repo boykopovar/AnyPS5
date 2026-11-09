@@ -642,6 +642,16 @@ bool ProbeStencilShadowCopy(const Context& context, VkFormat format, std::uint32
         barrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, static_cast<std::uint32_t>(toGeneral.size()), toGeneral.data());
         const VkClearDepthStencilValue clear{0.25f, 0xa5u};
         context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, source->image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &aspects);
+        VkImageMemoryBarrier clearToCopy{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        clearToCopy.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        clearToCopy.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        clearToCopy.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        clearToCopy.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        clearToCopy.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        clearToCopy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        clearToCopy.image = source->image;
+        clearToCopy.subresourceRange = aspects;
+        barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &clearToCopy);
         VkImageCopy region{};
         region.srcSubresource = {aspects.aspectMask, 0, 0, 1};
         region.dstSubresource = region.srcSubresource;
