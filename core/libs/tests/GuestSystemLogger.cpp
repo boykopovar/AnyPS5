@@ -1,6 +1,7 @@
 #include "prx/libSceSystemLogger/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -41,6 +42,16 @@ int main() {
     invalid = entry;
     invalid.reserved[0] = 1;
     Require(sceSystemLoggerSetLogData("tag", 1, &invalid) == invalidArgument);
+
+    errno = 71;
+    Require(sceSystemLoggerSetLogData(reinterpret_cast<const char*>(0x10), 1, reinterpret_cast<SystemLoggerLogData*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceSystemLoggerSetLogData(reinterpret_cast<const char*>(0x10), 0, nullptr) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceSystemLoggerSetLogData("tag", 1, reinterpret_cast<SystemLoggerLogData*>(0x10)) == invalidArgument);
+    Require(errno == 71);
 
     Require(sceSystemLoggerTerminate() == 0);
     Require(sceSystemLoggerTerminate() == notInitialized);
