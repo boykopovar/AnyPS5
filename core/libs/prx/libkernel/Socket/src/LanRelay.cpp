@@ -312,7 +312,7 @@ void Relay::StopDelivery() {
 void Relay::Deliver() {
     while (delivering) {
         const auto frame = Receive(100);
-        if (frame) localSender->SendDatagram(Endpoint{"127.0.0.1", frame->DestinationPort}, frame->Payload);
+        if (frame && frame->DestinationPort != Port()) localSender->SendDatagram(Endpoint{"127.0.0.1", frame->DestinationPort}, frame->Payload);
     }
 }
 
