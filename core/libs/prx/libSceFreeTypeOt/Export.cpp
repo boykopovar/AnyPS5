@@ -1,6 +1,8 @@
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include <cerrno>
+#include <ft2build.h>
+#include FT_GLYPH_H
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -110,8 +112,8 @@ int APS5_VABI sceFreeTypeOtUnknown_ZhtAXOoLNyo_nid_no_patch() {
 }
 APS5_EXPORT("ZhtAXOoLNyo", sceFreeTypeOtUnknown_ZhtAXOoLNyo_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtGlyphGetCBox_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI sceFreeTypeOtGlyphGetCBox_nid_no_patch(FT_Glyph glyph, FT_UInt mode, FT_BBox* box) {
+    FT_Glyph_Get_CBox(glyph, mode, box);
 }
 APS5_EXPORT("avLzN0tTxLI", sceFreeTypeOtGlyphGetCBox_nid_no_patch);
 
