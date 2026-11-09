@@ -382,7 +382,7 @@ int APS5_VABI SSL_get_peer_quic_transport_params_nid_postfix();
 void* APS5_VABI BIO_get_data_nid_postfix(LibreSsl::Bio* bio);
 int APS5_VABI EVP_PKEY2PKCS8_nid_postfix();
 Asn1String* APS5_VABI ASN1_TIME_new_nid_postfix();
-int APS5_VABI X509_set_issuer_name_nid_postfix();
+int APS5_VABI X509_set_issuer_name_nid_postfix(LibreSsl3Certificate* certificate, void* name);
 int APS5_VABI X509_add_ext_nid_postfix();
 int APS5_VABI tls_connect_socket_nid_postfix();
 int APS5_VABI SSL_CTX_set_quic_method_nid_postfix();

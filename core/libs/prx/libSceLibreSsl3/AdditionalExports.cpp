@@ -266,10 +266,6 @@ int APS5_VABI EVP_PKEY2PKCS8_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509_set_issuer_name_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_add_ext_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
