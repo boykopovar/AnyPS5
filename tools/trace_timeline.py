@@ -17,3 +17,17 @@ LABEL_WIDTH = 120
 ROW_HEIGHT = 18
 
 
+def window_slices(trace, start_us, end_us, threads=None):
+    rows = []
+    for tid, slices in trace.slices.items():
+        name = trace.name(tid)
+        if threads and name not in threads:
+            continue
+        for ts, dur, slice_name, _, _ in slices:
+            begin = max(ts, start_us)
+            end = min(ts + dur, end_us)
+            if end > begin:
+                rows.append({"thread": name, "ts": begin, "dur": end - begin, "name": slice_name})
+    return rows
+
+
