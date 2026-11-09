@@ -13,6 +13,7 @@ LEXICAL = re.compile(r'\\.|"(?:\\.|[^"\\])*"|\[(?P<literal_equals>=*)\[.*?\](?P=
                      r'|(?P<comment>\#\[(?P<comment_equals>=*)\[.*?\](?P=comment_equals)\]|\#[^\n]*)', re.S)
 
 KNOWN_UNRUN = set()
+SANITIZER_SKIPPED_LIBRARIES = {"libSceAddressSanitizer"}
 SCRIPT = re.compile(r"(?<![\w./-])(?:[\w.-]+/)*test_\w+\.py(?![\w./-])")
 EXPORTED = re.compile(r"\bAPS5_VABI\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 INCLUDED_SOURCE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+\.cpp)"', re.M)
@@ -77,7 +78,16 @@ def compiled(build):
     return sources
 
 
-def unbuilt_exports(root, sources):
+def skipped_libraries(build):
+    enabled = False
+    for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
+        name, _, value = line.partition(":")
+        if name in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
+            enabled = enabled or value.partition("=")[2].strip().upper() in ("ON", "1", "TRUE", "YES", "Y")
+    return set(SANITIZER_SKIPPED_LIBRARIES) if enabled else set()
+
+
+def unbuilt_exports(root, sources, skipped=()):
     prx = (Path(root) / "core" / "libs" / "prx").resolve()
     built_sources = {source for source in sources if prx in source.parents}
     if not built_sources:
@@ -97,6 +107,8 @@ def unbuilt_exports(root, sources):
     unbuilt = []
     for file in sorted(prx.glob("*/**/*.cpp")):
         relative = file.relative_to(prx)
+        if relative.parts[0] in skipped:
+            continue
         if any(part in ("tests", "test") for part in relative.parts[1:-1]) or file.resolve() in built_sources:
             continue
         if EXPORTED.search(file.read_text(encoding="utf-8", errors="replace")):
@@ -344,7 +356,8 @@ def main(argv=None):
     try:
         every = sorted(built(args.build))
         run = registered(args.build)
-        unbuilt = unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build))
+        skipped = skipped_libraries(args.build)
+        unbuilt = unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build), skipped)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
     if args.list:
@@ -365,6 +378,8 @@ def main(argv=None):
         return 1
     for name in sorted(set(unrun) & KNOWN_UNRUN):
         print(f"note: {name} is built and not run, as recorded")
+    for name in sorted(skipped):
+        print(f"note: {name} is not built in this ASan/TSan configuration")
     for name in stale:
         print(f"error: {name} is run by ctest now; remove it from KNOWN_UNRUN")
     for name in fresh:
