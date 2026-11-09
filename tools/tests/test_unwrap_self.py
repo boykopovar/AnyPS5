@@ -19,6 +19,7 @@ PROGRAM_TABLE_OFFSET = 0x40
 PT_NULL = 0
 PT_LOAD = 1
 PT_DYNAMIC = 2
+PT_INTERP = 3
 PT_TLS = 7
 PT_NOTE = 4
 PT_PHDR = 6
@@ -92,6 +93,68 @@ def read_program_headers(path):
 
 
 class UnwrapTest(unittest.TestCase):
+    def test_interpreter_without_an_address_uses_its_load_file_range(self):
+        payload = b"/libexec/ld-elf.so.1\0" + pattern(3, 0x20) * 8
+        for delta, address in ((0, 0), (0x20, 0), (len(payload) - 0x10, 0),
+                               (0, 0x400000), (0x20, 0x400000), (len(payload) - 0x10, 0x400000)):
+            for mapping in ("indexed", "legacy", "unrecorded"):
+                with self.subTest(delta=delta, address=address, mapping=mapping):
+                    source = 0x800 if mapping != "unrecorded" else 0x4000
+                    segments = [(PT_INTERP, 4, 0x4000 + delta, 0, 0x10, 1),
+                                (PT_LOAD, 5, 0x4000, address, len(payload), PAGE)]
+                    records = [] if mapping == "unrecorded" else [
+                        (0x100800 if mapping == "indexed" else 0x2804, source, len(payload))]
+                    container = build_container(segments, records, {source: payload})
+                    result, output = self.convert(container)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    data, headers = read_program_headers(output)
+                    interpreter, load = headers
+                    self.assertEqual(interpreter[2], load[2] + delta)
+                    self.assertEqual(interpreter[3], 0)
+                    self.assertEqual(data[interpreter[2]:interpreter[2] + 0x10], payload[delta:delta + 0x10])
+                    self.assertEqual(data[load[2]:load[2] + len(payload)], payload)
+                    self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
+    def test_recorded_interpreter_keeps_its_own_payload(self):
+        payload = pattern(3, 0x20) * 8
+        interpreter = b"/libexec/ld-elf.so.1\0"
+        segments = [(PT_INTERP, 4, 0x4000, 0, len(interpreter), 1),
+                    (PT_LOAD, 5, 0x4000, 0x400000, len(payload), PAGE)]
+        records = [(0x800, 0xA00, len(interpreter)), (0x100800, 0x800, len(payload))]
+        result, output = self.convert(build_container(segments, records, {0x800: payload, 0xA00: interpreter}))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data, headers = read_program_headers(output)
+        self.assertEqual(data[headers[0][2]:headers[0][2] + len(interpreter)], interpreter)
+        self.assertEqual(data[headers[1][2]:headers[1][2] + len(payload)], payload)
+
+    def test_inferred_interpreter_does_not_move_trailing_metadata(self):
+        payload = b"/libexec/ld-elf.so.1\0" + bytes(0x100)
+        comment, version = b"comment" * 4, b"version" * 4
+        segments = [(PT_INTERP, 4, 0x4000, 0, 0x10, 1),
+                    (PT_LOAD, 5, 0x4000, 0x400000, len(payload), PAGE),
+                    (SCE_COMMENT, 4, 0x1000, 0, len(comment), 1),
+                    (SCE_VERSION, 4, 0x1000 + len(comment), 0, len(version), 1)]
+        records = [(0x100800, 0x800, len(payload)), (0x200800, 0xA00, len(comment))]
+        container = build_container(segments, records, {0x800: payload, 0xA00: comment + version})
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data, headers = read_program_headers(output)
+        self.assertEqual(headers[0][2], headers[1][2])
+        self.assertEqual([data[header[2]:header[2] + header[5]] for header in headers],
+                         [payload[:0x10], payload, comment, version])
+
+    def test_inferred_interpreter_does_not_hide_a_truncated_load(self):
+        segments = [(PT_INTERP, 4, 0x4000, 0, 0x10, 1),
+                    (PT_LOAD, 5, 0x4000, 0x400000, 0x100, PAGE)]
+        container = build_container(segments, [(0x100800, 0x800, 0x100)], {0x800: bytes(0x20)})
+        output = Path(self.directory) / "output.elf"
+        output.write_bytes(b"previous output")
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("segment 1 does not fit the file", result.stderr)
+        self.assertEqual(output.read_bytes(), b"previous output")
+        self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
     def test_mapped_segments_at_virtual_address_zero_keep_their_template(self):
         for kind in (PT_DYNAMIC, PT_TLS):
             with self.subTest(kind=kind):
