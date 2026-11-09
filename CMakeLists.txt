@@ -290,6 +290,8 @@ if(BUILD_TESTING)
                 endif()
             endforeach()
         endif()
+        add_test(NAME export_gap COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_export_gap.py)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
         add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
@@ -422,6 +424,9 @@ if(BUILD_TESTING)
                 set_tests_properties(select_tests_${test_class} PROPERTIES TIMEOUT 30)
             endif()
         endforeach()
+        add_test(NAME relinker_fuzz_configurations COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_configurations.py)
+        set_tests_properties(relinker_fuzz_configurations PROPERTIES TIMEOUT 30)
         add_test(NAME configure_seed COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedTests)
         add_test(NAME configure_seed_paths COMMAND ${Python3_EXECUTABLE}
@@ -453,8 +458,26 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py CommandTests)
         add_test(NAME stubgen COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
-        add_test(NAME debt_split COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py)
+        set(debt_split_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${debt_split_source}")
+        file(STRINGS "${debt_split_source}" debt_split_cases REGEX "^class [A-Za-z0-9_]*Tests\\(|^    def test_")
+        set(debt_split_class "")
+        set(debt_split_first TRUE)
+        foreach(test_case IN LISTS debt_split_cases)
+            if(test_case MATCHES "^class ([A-Za-z0-9_]+)")
+                set(debt_split_class "${CMAKE_MATCH_1}")
+            elseif(test_case MATCHES "^    def (test_[A-Za-z0-9_]+)")
+                if(debt_split_first)
+                    set(debt_split_name debt_split)
+                    set(debt_split_first FALSE)
+                else()
+                    set(debt_split_name debt_split_${debt_split_class}_${CMAKE_MATCH_1})
+                endif()
+                add_test(NAME ${debt_split_name} COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py "${debt_split_class}.${CMAKE_MATCH_1}")
+                set_tests_properties(${debt_split_name} PROPERTIES TIMEOUT 20)
+            endif()
+        endforeach()
         add_test(NAME debt_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_report.py)
         add_test(NAME agc_test_split COMMAND ${Python3_EXECUTABLE}
