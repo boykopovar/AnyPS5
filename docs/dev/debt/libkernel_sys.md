@@ -363,6 +363,9 @@ The following eight candidate spellings are absent from that aerolib revision. T
 | `sceKernelSetAppInfoByAppId` | `fIyST5BItRg` |
 
 ### Functional
+
+- [statfs and futimesat](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) are not console-verified. `statfs` shares libkernel's host-volume statistics and incomplete guest mount identity fields with `_fstatfs`; archive-only paths throw because they have no host volume lookup. On Linux, FIFO and socket paths report their containing filesystem; this special-file behaviour is not independently measured on console. `futimesat` shares the existing timestamp implementation; descriptor-relative paths use the same host directory paths and guest-root limitations as `openat`, including Windows rename-after-open limits. A null path is `EFAULT`, as FreeBSD 11.4 `kern_utimesat`, not Linux's descriptor-only extension.
+- [symlinkat](../../../core/libs/prx/libkernel_sys/Export.cpp) shares `symlink`'s target restrictions: absolute targets throw; a parent-directory target throws when the host would not follow it to the guest path it names. Descriptor-relative destination paths have the same guest-root limitations as `mkdirat`; Windows requires symbolic-link privileges. Console behaviour is unverified.
 - [sceKernelGetPhysPageSize](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) returns `PS5_PAGE_SIZE` (16 KiB), the guest page granularity used by libkernel's direct-memory and mapping implementation. The export has no arguments. Console behaviour is unverified
 - [revoke](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) - a character device throws, because device revocation is not modelled. Other paths follow FreeBSD 11 `sys_revoke`: path errors as `stat` reports them, and `EINVAL` for anything that is not a character device. Guest paths have no `/dev`, so `/dev/null` and the like fail with `ENOENT`, not as devices
 
