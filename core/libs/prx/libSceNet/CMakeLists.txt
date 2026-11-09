@@ -4,6 +4,20 @@ target_link_libraries(libSceNet PRIVATE libSceNetCtl)
 configure_windows_unwind(libSceNet)
 
 if(BUILD_TESTING)
+    add_test_executable(net_reuseport_patched_tests tests/ReusePortPatched.cpp
+        ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp
+        ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp)
+    target_include_directories(net_reuseport_patched_tests PRIVATE ${LIBS_INCLUDE_DIR} ${LIBS_INCLUDE_DIR}/nid/include)
+    target_link_libraries(net_reuseport_patched_tests PRIVATE ${CMAKE_DL_LIBS})
+    configure_host_test_executable(net_reuseport_patched_tests)
+    add_dependencies(net_reuseport_patched_tests libs)
+    add_test(NAME net_reuseport_patched COMMAND net_reuseport_patched_tests ${PATCHED_DIR})
+    set_tests_properties(net_reuseport_patched PROPERTIES TIMEOUT 20)
+    if(MINGW)
+        get_filename_component(reusePortPatchedRuntimeDirectory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        set_tests_properties(net_reuseport_patched PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${reusePortPatchedRuntimeDirectory}")
+    endif()
     add_test_executable(net_ipv6only_patched_tests tests/Ipv6OnlyPatched.cpp
         ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp
         ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp)
@@ -233,6 +247,17 @@ if(BUILD_TESTING)
     target_link_libraries(guest_sce_net_tests PRIVATE libSceNet libSceNetCtl libkernel libc)
     configure_windows_unwind(guest_sce_net_tests)
     add_test(NAME guest_sce_net COMMAND guest_sce_net_tests)
+    add_test_executable(guest_sce_net_reuseport_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceNetReusePort.cpp)
+    target_include_directories(guest_sce_net_reuseport_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_net_reuseport_tests PRIVATE libSceNet libkernel libc)
+    configure_windows_unwind(guest_sce_net_reuseport_tests)
+    add_test(NAME guest_sce_net_reuseport_ipv4 COMMAND guest_sce_net_reuseport_tests 2)
+    add_test(NAME guest_sce_net_reuseport_ipv6 COMMAND guest_sce_net_reuseport_tests 28)
+    set_tests_properties(guest_sce_net_reuseport_ipv4 guest_sce_net_reuseport_ipv6 PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
+    if(WIN32)
+        set_tests_properties(guest_sce_net_reuseport_ipv4 guest_sce_net_reuseport_ipv6 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNet>")
+    endif()
     add_test_executable(guest_net_thread_tests ${LIBS_INCLUDE_DIR}/tests/GuestNetThread.cpp)
     target_include_directories(guest_net_thread_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_net_thread_tests PRIVATE libSceNet libkernel libc)
