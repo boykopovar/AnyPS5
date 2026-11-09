@@ -12852,6 +12852,48 @@ void uploadScratchReuseTests(const Device& device, Recorder& recorder) {
     }
 }
 
+void storageUploadScratchReuseTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    context.hostImportAlignment = 0;
+    Require(Recorder::Active() == &recorder, "the storage upload scratch test needs the active recorder");
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    SampleProgram program(context, recorder);
+    const VkComponentMapping identity{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    struct Upload {
+        std::uint32_t size;
+        std::uint8_t value;
+    };
+    const std::array<Upload, 6> uploads{{{64, 0x20}, {32, 0x90}, {64, 0xe0}, {128, 0x50}, {256, 0xb0}, {32, 0x70}}};
+    std::vector<std::vector<std::byte>> memories;
+    std::vector<std::shared_ptr<StorageTexture>> images;
+    std::vector<std::unique_ptr<Texture>> views;
+    recorder.Sync();
+    const auto submissions = recorder.Submissions();
+    for (std::size_t index = 0; index < uploads.size(); ++index) {
+        GuestTextureResource resource{};
+        resource.width = uploads[index].size;
+        resource.height = uploads[index].size;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kLinear;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        const auto geometry = DescribeSurface(resource);
+        memories.emplace_back(static_cast<std::size_t>(geometry.guestBytes) + 256, std::byte{uploads[index].value});
+        resource.baseAddress = (reinterpret_cast<std::uintptr_t>(memories.back().data()) + 255) & ~std::uintptr_t{255};
+        images.push_back(StorageTexture::Create(context, detiler, resource, 0));
+        Require(recorder.Recording() && recorder.Submissions() == submissions, "a storage upload waited for its own batch instead of recording into the open one");
+        views.push_back(std::make_unique<Texture>(context, images.back(), resource, identity));
+    }
+    for (std::size_t index = 0; index < uploads.size(); ++index) {
+        expectRed(program.Red(views[index]->View(), views[index]->Layout(), 0.0f), uploads[index].value / 255.0f, "a storage image uploaded through its batch's shared scratch holds another upload's bytes");
+    }
+}
+
 void singleCubeTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
     TextureDetiler detiler(context);
@@ -15651,6 +15693,7 @@ int main(int argc, char** argv) {
         imageMemoTests(device, recorder);
         minLodTests(device, recorder);
         uploadScratchReuseTests(device, recorder);
+        storageUploadScratchReuseTests(device, recorder);
         firstLayerViewTests(device, recorder);
         sampledStorageBaseLevelUsageTests(device, recorder);
         singleCubeTests(device, recorder);

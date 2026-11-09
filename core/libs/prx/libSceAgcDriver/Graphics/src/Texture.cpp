@@ -3083,10 +3083,14 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
     const auto linearBytes = sliceLinearBytes * arrayLayers;
     if (layers != nullptr && ((!blockUnits && trackedLayers != arrayLayers) || std::all_of(layers->begin(), layers->end(), [](bool selected) { return selected; }))) layers = nullptr;
     auto now = GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
-    const auto stampLayers = [&](bool selectedOnly) {
+    const auto stampLayers = [&](bool selectedOnly, bool baselineFromOriginal = false) {
         const bool whole = !selectedOnly || layers == nullptr;
+        bool baselinePending = false;
         if (guestBytes > GenerationBaselineBytes || !guestBytesSettled()) generationBaseline.clear();
-        else if (whole) {
+        else if (whole && baselineFromOriginal) {
+            generationBaseline.clear();
+            baselinePending = true;
+        } else if (whole) {
             generationBaseline.resize(static_cast<std::size_t>(guestBytes));
             GuestMemory::ReadCommitted(descriptor.baseAddress, generationBaseline);
         }
@@ -3099,6 +3103,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             GuestMemory::ReadCommitted(layerBegin(layer), std::span<std::byte>(generationBaseline).subspan(offset, static_cast<std::size_t>(layerBytes(layer))));
         }
         refreshGeneration();
+        return baselinePending;
     };
     uploadedKeys = ProvedClearKeys(descriptor, guestBytes, keyProof);
     filledKeys = DccKeys::Uncompressed;
@@ -3307,34 +3312,41 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         layerOriginal.assign(trackedLayers, true);
         cancelStoredSaves();
         forgetBorrowed(0, trackedLayers);
-        stampLayers(false);
+        const bool baselinePending = stampLayers(false, true);
         original.resize(static_cast<std::size_t>(guestBytes));
         GuestMemory::ReadCommitted(descriptor.baseAddress, original);
+        if (baselinePending) generationBaseline.assign(original.begin(), original.end());
     }
     {
-            auto staging = std::make_shared<Buffer>(context, original.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            static const bool syncUploads = std::getenv("APS5_SYNC_TEXTURE_UPLOAD") != nullptr;
+            auto* recorder = syncUploads ? nullptr : Recorder::Active();
+            std::shared_ptr<Buffer> staging;
+            Recorder::UploadSlice slice;
+            if (recorder != nullptr && original.size() <= Recorder::DrawUploadChunk / 2) slice = recorder->DrawUpload(original.size());
+            else staging = std::make_shared<Buffer>(context, original.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            const auto stagingBytes = staging != nullptr ? staging->Bytes().first(original.size()) : std::span<std::byte>(slice.bytes, original.size());
+            const VkBuffer stagingHandle = staging != nullptr ? staging->Handle() : slice.buffer->Handle();
+            const VkDeviceSize stagingOffset = staging != nullptr ? 0 : slice.offset;
             if (selectedCpu) {
                 for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
                     if (!cpuLayers[layer]) continue;
                     const auto offset = geometry.GuestLayerOffset(layer);
-                    std::memcpy(staging->Bytes().data() + offset, original.data() + offset, static_cast<std::size_t>(geometry.layerBytes));
+                    std::memcpy(stagingBytes.data() + offset, original.data() + offset, static_cast<std::size_t>(geometry.layerBytes));
                 }
-            } else if (uploadedKeys == DccKeys::Uncompressed) std::memcpy(staging->Bytes().data(), original.data(), original.size());
-            else ReadTextureSurface(descriptor, uploadedKeys, staging->Bytes().first(original.size()));
-            auto tiled = std::make_shared<DeviceBuffer>(context, original.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-            auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            } else if (uploadedKeys == DccKeys::Uncompressed) std::memcpy(stagingBytes.data(), original.data(), original.size());
+            else ReadTextureSurface(descriptor, uploadedKeys, stagingBytes);
             detiler.BeginBatch();
-            static const bool syncUploads = std::getenv("APS5_SYNC_TEXTURE_UPLOAD") != nullptr;
-            auto* recorder = syncUploads ? nullptr : Recorder::Active();
+            std::shared_ptr<DeviceBuffer> tiled;
+            std::shared_ptr<DeviceBuffer> linear;
             std::unique_ptr<CommandBatch> batch;
             VkCommandBuffer commands = VK_NULL_HANDLE;
             auto timing = Recorder::NoTiming;
             if (recorder != nullptr) {
                 commands = recorder->Commands();
+                tiled = recorder->UploadScratchBuffer(Recorder::UploadScratch::Tiled, original.size());
+                linear = recorder->UploadScratchBuffer(Recorder::UploadScratch::Linear, static_cast<std::size_t>(linearBytes));
                 timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageUpload);
-                recorder->Keep(staging, original.size());
-                recorder->Keep(tiled, original.size());
-                recorder->Keep(linear, static_cast<std::size_t>(linearBytes));
+                recorder->Keep(staging != nullptr ? std::shared_ptr<void>(staging) : std::shared_ptr<void>(slice.buffer), staging != nullptr ? original.size() : 0);
                 if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
                 Recorder::CountBarriers(Recorder::CommandClass::StorageUpload, 4);
                 if (Recorder::BarrierValidate()) {
@@ -3342,17 +3354,19 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
                     recorder->NoteAccess(Recorder::CommandClass::StorageUpload, Recorder::Access{{}, {}, std::span(&written, 1), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
                 }
             } else {
+                tiled = std::make_shared<DeviceBuffer>(context, original.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
                 batch = std::make_unique<CommandBatch>(context);
                 commands = batch->Handle();
             }
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT | Recorder::UploadScratchReuseStages, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
             if (selectedCpu) {
                 for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
                     if (!cpuLayers[layer]) continue;
                     const auto offset = geometry.GuestLayerOffset(layer);
-                    CopyBuffer(context, commands, staging->Handle(), offset, tiled->Handle(), offset, geometry.layerBytes);
+                    CopyBuffer(context, commands, stagingHandle, stagingOffset + offset, tiled->Handle(), offset, geometry.layerBytes);
                 }
-            } else CopyBuffer(context, commands, staging->Handle(), 0, tiled->Handle(), 0, original.size());
+            } else CopyBuffer(context, commands, stagingHandle, stagingOffset, tiled->Handle(), 0, original.size());
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
             for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
                 if (selectedCpu && !cpuLayers[layer]) continue;
