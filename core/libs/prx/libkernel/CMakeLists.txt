@@ -2064,6 +2064,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_socket_pair guest_recvmsg_memory PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+
+    add_test_executable(guest_kernel_socketpair_cloexec_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSocketpairCloexecInherit.cpp)
+    target_include_directories(guest_kernel_socketpair_cloexec_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_socketpair_cloexec_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_socketpair_cloexec_tests)
+    add_test(NAME guest_kernel_socketpair_cloexec COMMAND guest_kernel_socketpair_cloexec_tests)
+    set_tests_properties(guest_kernel_socketpair_cloexec PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_socketpair_cloexec PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     if(NOT WIN32)
         add_test_executable(guest_socket_rights_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketRights.cpp)
         target_include_directories(guest_socket_rights_tests PRIVATE ${LIBS_INCLUDE_DIR})
