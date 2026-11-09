@@ -239,7 +239,7 @@ void ResetEdge(KernelEqueueEvent* e) {
 
 void WatchEdges(KernelEqueueEvent& event, bool socket) {
     const int descriptor = static_cast<int>(event.event.ident);
-    auto watch = EdgeWatch::Watch::Open(socket ? GuestSockets::NativeDescriptor(descriptor) : descriptor, event.event.filter == EVFILT_WRITE);
+    auto watch = EdgeWatch::Watch::Open(socket ? GuestSockets::NativeDescriptor(descriptor) : descriptor, descriptor, event.event.filter == EVFILT_WRITE);
     event.filter.data = watch.get();
     event.filter.waitDescriptor = watch->Descriptor();
     event.filter.owner = std::move(watch);
@@ -638,6 +638,19 @@ std::optional<std::uint64_t> ScanDeadline(const KernelTimespec& timeout) {
 
 bool IsKqueueDescriptor_nid_no_patch(int descriptor) {
     return static_cast<bool>(FindKqueue(descriptor));
+}
+
+int ReserveKqueueDescriptor() {
+    return ReserveDescriptor();
+}
+
+void RegisterKqueueDescriptor(int descriptor, KernelEqueueRef queue) {
+    std::lock_guard lock(g_kqueueMutex);
+    g_kqueues[descriptor] = std::move(queue);
+}
+
+KernelEqueueRef FindKqueueDescriptor(int descriptor) {
+    return FindKqueue(descriptor);
 }
 
 std::optional<bool> KqueueReadable(int descriptor) {
