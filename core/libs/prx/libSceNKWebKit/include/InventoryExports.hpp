@@ -15,7 +15,6 @@ int APS5_VABI JSContextCreateBacktrace();
 int APS5_VABI JSRemoteInspectorDisableAutoStart();
 int APS5_VABI JSRemoteInspectorServerStart();
 int APS5_VABI JSRemoteInspectorSetLogToSystemConsole();
-int APS5_VABI JSRemoteInspectorSetParentProcessInformation();
 int APS5_VABI JSRemoteInspectorStart();
 int APS5_VABI JSRunLoop();
 int APS5_VABI JSSetOptions();
