@@ -218,6 +218,16 @@ char APS5_VABI sceLibcInternalNumpunctThousandsSep_nid_no_patch(const GuestLocal
 GuestLocale::String* APS5_VABI sceLibcInternalNumpunctGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
 GuestLocale::String* APS5_VABI sceLibcInternalNumpunctFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
 GuestLocale::String* APS5_VABI sceLibcInternalNumpunctTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+std::uint16_t APS5_VABI sceLibcInternalWideNumpunctDoDecimalPoint_nid_no_patch(const GuestLocale::WideNumpunctFacet* self);
+std::uint16_t APS5_VABI sceLibcInternalWideNumpunctDoThousandsSep_nid_no_patch(const GuestLocale::WideNumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalWideNumpunctDoGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::WideNumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalWideNumpunctDoFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::WideNumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalWideNumpunctDoTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::WideNumpunctFacet* self);
+std::uint16_t APS5_VABI sceLibcInternalWideNumpunctDecimalPoint_nid_no_patch(const GuestLocale::WideNumpunctFacet* self);
+std::uint16_t APS5_VABI sceLibcInternalWideNumpunctThousandsSep_nid_no_patch(const GuestLocale::WideNumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalWideNumpunctGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::WideNumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalWideNumpunctFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::WideNumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalWideNumpunctTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::WideNumpunctFacet* self);
 
 int APS5_VABI sceLibcMspaceSetMallocCallback();
 int APS5_VABI sceLibcPafMspaceReportMemoryBlocks();
