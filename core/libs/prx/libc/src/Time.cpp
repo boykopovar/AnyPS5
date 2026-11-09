@@ -5,10 +5,12 @@
 #include <atomic>
 #include <cerrno>
 #include <ctime>
+#include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <mutex>
 #include <type_traits>
 #include <stdexcept>
@@ -16,6 +18,9 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <langinfo.h>
+#include <locale.h>
 #endif
 
 #include "SceTypes.hpp"
@@ -371,17 +376,39 @@ IsoWeek isoWeek(const GuestTm& time) {
 template<typename TChar, typename TFormatChar>
 void formatTime(FormatBuffer<TChar>& buffer, const TFormatChar* format, const GuestTm& time);
 
-// %c, %x and %X use the C locale strings. ANYPS5_TIME_FORMAT=host takes them from the host's LC_TIME
-// locale instead (see hostConversionFormats). The strings are strftime formats.
+// %c, %x and %X use the C locale unless ANYPS5_TIME_FORMAT=host. Then they use the strings of the host's
+// LC_TIME locale (glibc: D_T_FMT, D_FMT and T_FMT through nl_langinfo_l). Those strings are strftime formats.
 struct ConversionFormats {
     std::string dateTime;
     std::string date;
     std::string clock;
 };
 
-const ConversionFormats& conversionFormats() {
+const ConversionFormats& cConversionFormats() {
     static const ConversionFormats formats{"%a %b %e %H:%M:%S %Y", "%m/%d/%y", "%H:%M:%S"};
     return formats;
+}
+
+const ConversionFormats& hostConversionFormats() {
+    static const ConversionFormats formats = [] {
+        ConversionFormats result{"%a %b %e %H:%M:%S %Y", "%m/%d/%y", "%H:%M:%S"};
+#ifndef _WIN32
+        locale_t host = newlocale(LC_TIME_MASK, "", static_cast<locale_t>(0));
+        if (host != static_cast<locale_t>(0)) {
+            result.dateTime = nl_langinfo_l(D_T_FMT, host);
+            result.date = nl_langinfo_l(D_FMT, host);
+            result.clock = nl_langinfo_l(T_FMT, host);
+            freelocale(host);
+        }
+#endif
+        return result;
+    }();
+    return formats;
+}
+
+const ConversionFormats& conversionFormats() {
+    const char* requested = std::getenv("ANYPS5_TIME_FORMAT");
+    return requested != nullptr && std::string_view(requested) == "host" ? hostConversionFormats() : cConversionFormats();
 }
 
 template<typename TChar>
