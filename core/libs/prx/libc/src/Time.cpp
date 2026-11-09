@@ -375,8 +375,6 @@ IsoWeek isoWeek(const GuestTm& time) {
 template<typename TChar, typename TFormatChar>
 void formatTime(FormatBuffer<TChar>& buffer, const TFormatChar* format, const GuestTm& time);
 
-// %c, %x and %X use the C locale unless ANYPS5_TIME_FORMAT=host. Then they use the strings of the host's
-// LC_TIME locale (glibc: D_T_FMT, D_FMT and T_FMT through nl_langinfo_l). Those strings are strftime formats.
 struct ConversionFormats {
     std::string dateTime;
     std::string date;
