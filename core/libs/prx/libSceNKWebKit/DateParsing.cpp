@@ -76,6 +76,7 @@
 #include "prx/libc/include/Api.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -85,6 +86,15 @@
 #include <string>
 
 namespace {
+constexpr const char* WeekdayNames[7] = {
+    "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun",
+};
+
+constexpr const char* MonthNames[12] = {
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+};
+
 
 constexpr double SecondsPerMinute = 60.0;
 constexpr double SecondsPerHour = SecondsPerMinute * 60.0;
@@ -411,4 +421,52 @@ double APS5_VABI _ZN3WTF37parseDateFromNullTerminatedCharactersEPKc(const char* 
     return value;
 }
 
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF21makeRFC2822DateStringEjjjjjjji(
+    unsigned dayOfWeek,
+    unsigned day,
+    unsigned month,
+    unsigned year,
+    unsigned hours,
+    unsigned minutes,
+    unsigned seconds,
+    int utcOffset) {
+    if (dayOfWeek >= 7) {
+        throw std::invalid_argument("WTF::makeRFC2822DateString: dayOfWeek out of range");
+    }
+    if (day == 0 || day > 31) {
+        throw std::invalid_argument("WTF::makeRFC2822DateString: day out of range");
+    }
+    if (month >= 12) {
+        throw std::invalid_argument("WTF::makeRFC2822DateString: month out of range");
+    }
+    if (hours > 23 || minutes > 59 || seconds > 59) {
+        throw std::invalid_argument("WTF::makeRFC2822DateString: time component out of range");
+    }
+    if (utcOffset < -5999 || utcOffset > 5999) {
+        throw std::invalid_argument("WTF::makeRFC2822DateString: utcOffset out of range");
+    }
+    char sign = utcOffset > 0 ? '+' : '-';
+    int absoluteOffset = std::abs(utcOffset);
+    int offsetHours = absoluteOffset / 60;
+    int offsetMinutes = absoluteOffset % 60;
+    char buffer[64];
+    int written = std::snprintf(
+        buffer,
+        sizeof(buffer),
+        "%s, %u %s %u %02u:%02u:%02u %c%02d%02d",
+        WeekdayNames[dayOfWeek],
+        day,
+        MonthNames[month],
+        year,
+        hours,
+        minutes,
+        seconds,
+        sign,
+        offsetHours,
+        offsetMinutes);
+    if (written < 0 || static_cast<std::size_t>(written) >= sizeof(buffer)) {
+        throw std::runtime_error("WTF::makeRFC2822DateString: format failed");
+    }
+    return _ZN3WTF6String8fromUTF8EPKhm(reinterpret_cast<const unsigned char*>(buffer), static_cast<std::size_t>(written));
+}
 }
