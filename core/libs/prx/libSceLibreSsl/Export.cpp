@@ -174,11 +174,6 @@ int APS5_VABI OCSP_BASICRESP_free_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI OCSP_RESPONSE_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI OCSP_basic_add1_cert_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
