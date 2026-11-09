@@ -40,6 +40,8 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+extern "C" long PKImageDecode_Create_WMP(void** decoder);
+
 namespace {
 constexpr std::int64_t WmpErrSuccess = 0;
 constexpr std::int64_t WmpErrOutOfMemory = -101;
@@ -273,8 +275,10 @@ int APS5_VABI PKImageDecode_Copy_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageDecode_Create_WMP_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKImageDecode_Create_WMP_nid_postfix(void** decoder) {
+    if (!decoder) APS5_INVALID_ARG_EX;
+    *decoder = nullptr;
+    return PKImageDecode_Create_WMP(decoder);
 }
 
 int APS5_VABI PKImageDecode_Create_nid_postfix() {

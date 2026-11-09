@@ -94,7 +94,7 @@ int APS5_VABI PKFormatConverter_InitializeConvert_nid_postfix();
 int APS5_VABI PKFormatConverter_Initialize_nid_postfix();
 int APS5_VABI PKFormatConverter_Release_nid_postfix();
 int APS5_VABI PKImageDecode_Copy_nid_postfix();
-int APS5_VABI PKImageDecode_Create_WMP_nid_postfix();
+std::int64_t APS5_VABI PKImageDecode_Create_WMP_nid_postfix(void** decoder);
 int APS5_VABI PKImageDecode_Create_nid_postfix();
 std::int64_t APS5_VABI PKImageDecode_GetColorContext_nid_postfix(void* decoder, std::uint8_t* buffer, std::uint32_t* size);
 std::int64_t APS5_VABI PKImageDecode_GetDescriptiveMetadata_nid_postfix(void* decoder, void* metadata);
