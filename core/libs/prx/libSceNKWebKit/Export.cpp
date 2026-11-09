@@ -24597,10 +24597,6 @@ int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager32setIsPlayingToAutomotive
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore27parseCacheControlDirectivesERKNS_13HTTPHeaderMapE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore27withinTextUnitOfGranularityERKNS_15VisiblePositionENS_15TextGranularityENS_18SelectionDirectionE() {
     NotImplemented_nid_no_patch(__func__);
 }
