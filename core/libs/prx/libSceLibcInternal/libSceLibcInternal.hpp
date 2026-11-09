@@ -1,5 +1,7 @@
 #pragma once
 
+#include "prx/libSceLibcInternal/include/AtomicWaitDeadline.hpp"
+#include "prx/libSceLibcInternal/include/PendingExports.hpp"
 #include "prx/libSceLibcInternal/include/RecoveredInventory.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports2.hpp"
 #include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"

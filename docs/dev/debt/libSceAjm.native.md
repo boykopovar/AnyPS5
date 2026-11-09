@@ -64,3 +64,5 @@
 | `Unknown` | `mKgie3ed4ao` |
 | `Unknown` | `mwtwIZb60YM` |
 | `Unknown` | `qkuXdR4-Ihc` |
+
+- [AJM instance contexts](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - context validation and ownership on instance creation/destruction follow shadPS4, not PS5 measurements. Rejected creation leaves the output untouched and rejected destruction preserves the owner's instance. IDs remain globally allocated by this runtime. Finalization still does not invalidate contexts or release instances; batch jobs still look up instances globally without checking their context.
