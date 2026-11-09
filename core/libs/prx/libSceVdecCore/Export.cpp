@@ -85,6 +85,7 @@ struct Decoder {
     std::int64_t lastDts = VdecCorePtsInvalid;
     std::uint64_t lastUserData = 0;
     std::mutex mutex;
+    std::mutex outputMutex;
     std::condition_variable inputReady;
     std::condition_variable outputReady;
     std::deque<Command> commands;
@@ -348,6 +349,7 @@ int APS5_VABI sceVdecCoreFlushDecodeOutput(void* decoder, std::uint32_t* count, 
 int APS5_VABI sceVdecCoreGetDecodeOutput(void* decoder, VdecCoreFrameBuffer* frameBuffer, std::uint32_t, VdecCoreOutputInfo* output, void*) {
     if (decoder == nullptr || output == nullptr) return VdecCoreErrorInvalidArgument;
     auto& target = Lookup(decoder, __func__);
+    std::lock_guard outputLock(target.outputMutex);
     AVFrame* frame = nullptr;
     {
         std::lock_guard lock(target.mutex);

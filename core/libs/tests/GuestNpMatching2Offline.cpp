@@ -30,6 +30,7 @@ constexpr int InvalidServerId = static_cast<int>(0x80550C0Cu);
 constexpr int InvalidRoomId = static_cast<int>(0x80550C0Fu);
 constexpr int ServerNotAvailable = static_cast<int>(0x80550C28u);
 constexpr int SessionNotFound = static_cast<int>(0x80550C3Au);
+constexpr int InvalidContext = static_cast<int>(0x80550C3Bu);
 constexpr int SignalingContextNotFound = static_cast<int>(0x80550E05u);
 constexpr int SignalingInvalidArgument = static_cast<int>(0x80550E15u);
 constexpr int SignalingPeerNotFound = static_cast<int>(0x80550E19u);
@@ -72,6 +73,7 @@ Function Resolve(const char* name) {
 
 void CheckOfflineRequests(CreateContextAFn createContextA) {
     const auto getWorldInfoList = Resolve<RequestFn>("sceNpMatching2GetWorldInfoList");
+    const auto getUserInfoList = Resolve<RequestFn>("sceNpMatching2GetUserInfoList");
     const auto setUserInfo = Resolve<RequestFn>("sceNpMatching2SetUserInfo");
     const auto setRoomDataExternal = Resolve<RequestFn>("sceNpMatching2SetRoomDataExternal");
     const auto setRoomDataInternal = Resolve<RequestFn>("sceNpMatching2SetRoomDataInternal");
@@ -97,6 +99,7 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     Require(getServerId(1, nullptr) == NotInitialized, "sceNpMatching2GetServerId", "a null output before initialization did not return NOT_INITIALIZED");
     Require(getSlotMask(1, 5, nullptr) == NotInitialized, "sceNpMatching2GetRoomJoinedSlotMaskLocal", "a null mask before initialization did not return NOT_INITIALIZED");
     Require(getWorldIds(1, nullptr, 0, nullptr) == NotInitialized, "sceNpMatching2GetWorldIdArrayForAllServers", "a call before initialization did not return NOT_INITIALIZED");
+    Require(getUserInfoList(1, serverRequest, nullptr, &requestId) == NotInitialized && requestId == 77, "sceNpMatching2GetUserInfoList", "a request before initialization did not return NOT_INITIALIZED");
     NpMatching2InitializeParameter init{};
     init.size = 0x30;
     NpMatching2CreateContextParameter create{};
@@ -116,6 +119,12 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
         Require(request(99, highServerByte, nullptr, &requestId) == InvalidServerId, "server request", "the server id was read past its 16 bits");
         Require(request(99, serverRequest, nullptr, &requestId) == ContextNotFound && request(0, serverRequest, nullptr, &requestId) == ContextNotFound, "server request", "an unknown context did not return CONTEXT_NOT_FOUND");
     }
+    Require(getUserInfoList(context, nullptr, nullptr, &requestId) == InvalidArgument, "sceNpMatching2GetUserInfoList", "a null request was taken");
+    Require(getUserInfoList(99, nullptr, nullptr, &requestId) == InvalidArgument, "sceNpMatching2GetUserInfoList", "a null request was not refused before the context");
+    Require(getUserInfoList(context, serverRequest, nullptr, nullptr) == InvalidArgument, "sceNpMatching2GetUserInfoList", "a null request id was taken");
+    Require(getUserInfoList(99, zeroed, nullptr, &requestId) == ContextNotFound, "sceNpMatching2GetUserInfoList", "an unknown context did not return CONTEXT_NOT_FOUND");
+    Require(getUserInfoList(contextA, zeroed, nullptr, &requestId) == InvalidContext, "sceNpMatching2GetUserInfoList", "an A context did not return 0x80550C3B");
+    Require(getUserInfoList(context, zeroed, nullptr, &requestId) == InvalidServerId, "sceNpMatching2GetUserInfoList", "server id 0 did not return INVALID_SERVER_ID");
     for (const RequestFn request : {setRoomDataExternal, setRoomDataInternal, getRoomDataInternal, getPingInfo, leaveRoom}) {
         Require(request(context, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "room id 0 did not return INVALID_ROOM_ID");
         Require(request(99, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "the room id was not checked before the context");
