@@ -2,12 +2,15 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_GUESTMEMORY_HPP
 
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -77,6 +80,31 @@ void SetFreshCollectHook(FreshCollectHook hook);
 #endif
 bool Watched(std::uint64_t address, std::size_t bytes);
 std::uint64_t CollectWrites(std::uint64_t address, std::size_t bytes);
+struct WriteSubscription;
+bool WriteIndexEnabled();
+std::shared_ptr<WriteSubscription> SubscribeWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+std::uint64_t SubscriptionGeneration(const WriteSubscription& subscription);
+std::span<const std::pair<std::uint64_t, std::uint64_t>> SubscriptionSpans(const WriteSubscription& subscription);
+bool SweepSubscription(const WriteSubscription& subscription);
+bool SubscriptionBumpsSince(const WriteSubscription& subscription, std::uint64_t generation, std::vector<std::uint64_t>& blocks, std::vector<std::uint64_t>& lookupBlocks);
+void TrimSubscriptionBumps(WriteSubscription& subscription, std::uint64_t generation);
+std::uint64_t WriteBlockOf(std::uint64_t address);
+void NoteGpuPending(std::uint64_t address, std::size_t bytes);
+void NoteTextureReleased(std::uint64_t address);
+enum class WriteBumpSource : std::uint8_t { Cpu, Driver, Pending, Unwatch, Forget, Release, Import, Count };
+struct WriteIndexStats {
+    std::uint64_t subscriptions = 0;
+    std::uint64_t blocks = 0;
+    std::uint64_t bumps = 0;
+    std::uint64_t lookups = 0;
+    std::uint64_t sweeps = 0;
+    std::uint64_t sweepFailures = 0;
+    std::uint64_t overflows = 0;
+    std::uint64_t lookupNanoseconds = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(WriteBumpSource::Count)> bySource{};
+};
+WriteIndexStats WriteIndexCounted();
+void ResetWriteIndexCounts();
 bool UnchangedSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // UnchangedSince for several ranges under one tracker lock: true only when every one holds.
 struct UnchangedQuery {
@@ -95,8 +123,12 @@ bool UnchangedCommittedSince(std::span<const std::pair<std::uint64_t, std::uint6
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes, std::uint64_t& order);
+void ForgetKnownZero(std::uint64_t address, std::size_t bytes);
+void MaterializeKnownZero(std::uint64_t address, std::size_t bytes);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store);
+std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void(std::span<std::byte>)>& store);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source);
+void SetOwnStoreCompare(bool compare);
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // Collect epoch: within one epoch a range already collected is not walked again, CollectWrites
@@ -221,6 +253,18 @@ auto CurrentFlushHook() -> void (*)(std::uint64_t address, std::size_t bytes);
 void SetReadGuard(void (*guard)(std::uint64_t address, std::size_t bytes));
 void GuardRead(std::uint64_t address, std::size_t bytes);
 void FlushGpuWrites(std::uint64_t address, std::size_t bytes);
+void PrepareHostWrite(std::uintptr_t address, std::size_t bytes);
+bool StopHostWrites(std::uint32_t boundMs);
+std::uint64_t LockedHostWrites();
+struct HostWriteCounts {
+    std::uint64_t calls = 0;
+    std::uint64_t waited = 0;
+    double waitedMs = 0;
+    double maxWaitedMs = 0;
+};
+HostWriteCounts HostWritesCounted();
+void SetWaitedMsProvider(double (*provider)());
+std::string HostWriteReport();
 // Moves with every ForgetPages call (the libc invalidator: memory unmapped or re-registered): odd
 // while the call stores its page states, moved past it after, so a reader that loads an even
 // value before consulting the page states and reading directly, and the same value after, knows
