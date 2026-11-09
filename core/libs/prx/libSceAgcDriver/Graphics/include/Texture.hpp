@@ -445,6 +445,17 @@ public:
     // Results pending in images lying wholly inside the range are dead (a fill overwrites every
     // byte of them): they are dropped instead of stored. Returns how many images were.
     static std::size_t DiscardPendingInside(std::uint64_t address, std::size_t bytes);
+    class OverwriteScope {
+    public:
+        explicit OverwriteScope(bool active);
+        ~OverwriteScope();
+        OverwriteScope(const OverwriteScope&) = delete;
+        OverwriteScope& operator=(const OverwriteScope&) = delete;
+        static bool Active();
+    private:
+        bool previous;
+    };
+    static bool OverwriteEnabled();
     // A fill of the whole surface (`layer` WholeImage) or of one array layer with the 16-byte
     // `pattern`, done as a GPU clear of the image instead of a store into guest memory: the
     // pattern must be one texel of the storage format repeated, exactly representable as a clear
@@ -703,6 +714,9 @@ private:
     // stays responsible for storing them until this image's own results supersede them
     // (markLayersPending). APS5_NO_ALIAS_BORROW=1 stores and re-reads as before.
     std::shared_ptr<StorageTexture> pendingAlias() const;
+    bool overwriteSkipsFlush(std::uint64_t address, std::size_t bytes, bool proven, std::vector<bool>& dead) const;
+    bool viewCompatible(const StorageTexture& other) const;
+    void discardSuperseded(std::uint32_t first, std::uint32_t count);
     std::optional<DccKeys> clearHandOver();
     void supersedeHandedOver(std::uint32_t first, std::uint32_t count);
     // The pending images FlushPending(address, bytes) would store (not the one a Refresh validates,
@@ -838,6 +852,8 @@ private:
     mutable std::atomic<bool> readTrapped{false};
     bool drawnWhole = false;
     bool drawingTarget = false;
+    bool overwriteDeferred = false;
+    bool uploadSkipped = false;
     bool pendingFromOthers = false;
     std::vector<DrawnRect> drawnRects;
     std::vector<std::uint64_t> storeNotes;

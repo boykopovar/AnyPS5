@@ -6442,13 +6442,125 @@ bool untrackedForgetTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+bool aliasOverwriteTests(const Device& device, Recorder& recorder, int level) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: alias overwrite not tested\n";
+        return false;
+    }
+    constexpr std::uint32_t side = 128;
+    constexpr std::size_t surfaceBytes = side * side * 4;
+    constexpr std::size_t bytes = 1 << 20;
+    void* block = AllocateWatched(bytes, 65536);
+    if (block == nullptr) {
+        std::cout << "no write watching: alias overwrite not tested\n";
+        return false;
+    }
+    std::memset(block, 0x55, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, address, bytes);
+        }
+    } unregister{base, block, address};
+    if (HostImportFor(base, address, bytes) == nullptr || !AgcDriver::GuestMemory::Watched(address, bytes)) {
+        std::cout << "the alias overwrite block is not imported and watched: not tested\n";
+        return false;
+    }
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    const auto surface = [&](TextureTileMode tile, std::uint32_t extent) {
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = extent;
+        resource.height = extent;
+        resource.mipCount = 1;
+        resource.tileMode = tile;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        return resource;
+    };
+    const auto written = surface(TextureTileMode::kR64KBX, side);
+    const auto retiled = surface(TextureTileMode::kD64KBX, side);
+    const auto smaller = surface(TextureTileMode::kR64KBX, side / 2);
+    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    const auto draw = [&](const std::shared_ptr<StorageTexture>& image, VkClearColorValue value) {
+        const auto commands = recorder.Commands();
+        recorder.Keep(image);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+        image->MarkDirty();
+    };
+    const auto settle = [&] {
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    };
+    const auto pendingIs = [&](const std::shared_ptr<StorageTexture>& image) {
+        return image->Dirty();
+    };
+    auto first = StorageTexture::Create(context, detiler, written, 0);
+    auto other = StorageTexture::Create(context, detiler, retiled, 0);
+    auto nested = StorageTexture::Create(context, detiler, smaller, 0);
+    Require(first->BlockUnits() && other->BlockUnits() && nested->BlockUnits(), "the alias overwrite surfaces are not block-unit images");
+    const auto refreshOther = [&](bool scope) {
+        const StorageTexture::OverwriteScope overwrite(scope);
+        other->Refresh();
+    };
+    first->Refresh();
+    other->Refresh();
+    nested->Refresh();
+    draw(first, {{1.0f, 0.0f, 0.0f, 1.0f}});
+    Require(pendingIs(first), "a cleared image is not pending");
+    refreshOther(false);
+    const bool skipsRead = level >= 2;
+    Require(pendingIs(first) == skipsRead, skipsRead ? "a refresh of an image of another tiling stored the pending results over its memory" : "a refresh of an image of another tiling left the pending results over its memory unstored");
+    settle();
+    StorageTexture::FlushPending(address, bytes, nullptr, "alias overwrite test");
+    settle();
+    draw(first, {{0.0f, 1.0f, 0.0f, 1.0f}});
+    nested->Refresh();
+    Require(!first->Dirty(), "a refresh of a nested image of the same tiling left the pending results over its memory unstored");
+    settle();
+    draw(first, {{0.0f, 0.0f, 1.0f, 1.0f}});
+    refreshOther(true);
+    const bool skipsWrite = level >= 1;
+    Require(pendingIs(first) == skipsWrite, skipsWrite ? "a refresh before a full overwrite stored the pending results over its memory" : "a refresh before a full overwrite left the pending results unstored");
+    if (skipsWrite) {
+        draw(other, {{1.0f, 1.0f, 0.0f, 1.0f}});
+        Require(pendingIs(other), "the overwriting image is not pending");
+        Require(!first->Dirty(), "the overwritten pending results were not dropped");
+    }
+    StorageTexture::FlushPending(address, bytes, nullptr, "alias overwrite test");
+    settle();
+    std::cout << "alias overwrite level " << level << ": ok\n";
+    return true;
+}
+
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
         std::cout << "host imports unavailable: storage refresh not tested\n";
         return;
     }
-    constexpr std::uint32_t side = 256;
+    constexpr std::uint32_t side = 128;
     constexpr std::size_t surfaceBytes = side * side * 4;
     constexpr std::size_t keyCount = surfaceBytes / 256;
     constexpr std::size_t bytes = surfaceBytes + 65536;
@@ -15474,6 +15586,13 @@ int main(int argc, char** argv) {
             }
             splitWriteBackTests(device, recorder);
             return 0;
+        }
+        if (argc == 3 && std::string_view(argv[1]) == "--alias-overwrite-only") {
+            if (device.GetContext().hostImportAlignment == 0) {
+                std::cout << "skipped, host imports are unavailable\n";
+                return 77;
+            }
+            return aliasOverwriteTests(device, recorder, std::atoi(argv[2])) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--storage-write-back-only") {
             if (device.GetContext().hostImportAlignment == 0) {

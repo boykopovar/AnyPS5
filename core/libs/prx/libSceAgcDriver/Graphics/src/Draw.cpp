@@ -1996,12 +1996,90 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     return inputs;
 }
 
+std::uint32_t colorChannelMask(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8_UNORM:
+        case VK_FORMAT_R8_SNORM:
+        case VK_FORMAT_R8_UINT:
+        case VK_FORMAT_R8_SINT:
+        case VK_FORMAT_R16_UNORM:
+        case VK_FORMAT_R16_SNORM:
+        case VK_FORMAT_R16_UINT:
+        case VK_FORMAT_R16_SINT:
+        case VK_FORMAT_R16_SFLOAT:
+        case VK_FORMAT_R32_UINT:
+        case VK_FORMAT_R32_SINT:
+        case VK_FORMAT_R32_SFLOAT:
+            return 0x1u;
+        case VK_FORMAT_R8G8_UNORM:
+        case VK_FORMAT_R8G8_SNORM:
+        case VK_FORMAT_R8G8_UINT:
+        case VK_FORMAT_R8G8_SINT:
+        case VK_FORMAT_R16G16_UNORM:
+        case VK_FORMAT_R16G16_SNORM:
+        case VK_FORMAT_R16G16_UINT:
+        case VK_FORMAT_R16G16_SINT:
+        case VK_FORMAT_R16G16_SFLOAT:
+        case VK_FORMAT_R32G32_UINT:
+        case VK_FORMAT_R32G32_SINT:
+        case VK_FORMAT_R32G32_SFLOAT:
+            return 0x3u;
+        case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
+            return 0x7u;
+        case VK_FORMAT_R8G8B8A8_UNORM:
+        case VK_FORMAT_R8G8B8A8_SNORM:
+        case VK_FORMAT_R8G8B8A8_UINT:
+        case VK_FORMAT_R8G8B8A8_SINT:
+        case VK_FORMAT_R8G8B8A8_SRGB:
+        case VK_FORMAT_B8G8R8A8_UNORM:
+        case VK_FORMAT_B8G8R8A8_SRGB:
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+        case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+        case VK_FORMAT_R16G16B16A16_UNORM:
+        case VK_FORMAT_R16G16B16A16_SNORM:
+        case VK_FORMAT_R16G16B16A16_UINT:
+        case VK_FORMAT_R16G16B16A16_SINT:
+        case VK_FORMAT_R16G16B16A16_SFLOAT:
+        case VK_FORMAT_R32G32B32A32_UINT:
+        case VK_FORMAT_R32G32B32A32_SINT:
+        case VK_FORMAT_R32G32B32A32_SFLOAT:
+            return 0xfu;
+        default:
+            return 0u;
+    }
+}
+
+bool drawOverwritesTarget(const State& state, const Pm4::DrawParameters& draw, const ColorTarget& color) {
+    if (!StorageTexture::OverwriteEnabled() || draw.indirect.has_value() || draw.instanceCount != 1u) return false;
+    if (!state.rectList && (draw.indexCount < 3u || draw.indexCount > 6u)) return false;
+    if (color.samples != 1u || color.volume || color.depth != 1u || color.mipCount != 1u || color.mip != 0u || color.layers != 1u || color.arrayLastSlice != 0u) return false;
+    if (color.dccAddress != 0) return false;
+    if (color.cmaskAddress != 0) return false;
+    if (color.fmaskAddress != 0 || color.staged || color.partialWriteMask != 0u || color.mergeBlend != 0u || color.uintExport) return false;
+    if (color.exportIndex >= state.blends.size()) return false;
+    const auto& blend = state.blends[color.exportIndex];
+    const auto channels = colorChannelMask(color.format);
+    if (blend.blendEnable != VK_FALSE || channels == 0u || (blend.colorWriteMask & channels) != channels) return false;
+    if (state.colorRop != CopyRop || state.alphaToCoverage || state.rasterizerDiscard || state.pixelKill || state.depthTest || state.stencilTest || state.depthBoundsTest || state.dualSourceBlend || state.reversedBlend != 0u) return false;
+    const auto& scissor = state.scissor;
+    if (scissor.offset.x > 0 || scissor.offset.y > 0 || scissor.extent.width < color.extent.width || scissor.extent.height < color.extent.height) return false;
+    const auto& viewport = state.viewport;
+    const auto left = std::min(viewport.x, viewport.x + viewport.width);
+    const auto right = std::max(viewport.x, viewport.x + viewport.width);
+    const auto top = std::min(viewport.y, viewport.y + viewport.height);
+    const auto bottom = std::max(viewport.y, viewport.y + viewport.height);
+    constexpr float tileSlack = 8.0f;
+    if (left > 0.0f || top > 0.0f || right + tileSlack <= static_cast<float>(color.extent.width) || bottom + tileSlack <= static_cast<float>(color.extent.height)) return false;
+    return true;
+}
+
 // The resident-target proof of one attachment (StorageTexture::Refresh: FlushPending, CollectWrites
 // over the target's pages, the DCC key scan of TextureClearKeys, then UnchangedSince), with the
 // [draws] target-lookup accounting. `lookup` makes (or finds) the image; DrawWithRecipe refreshes
 // the stored object instead.
-std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, const State& state, const ColorTarget& color, DrawOutcome& outcome, bool profile, const std::function<std::shared_ptr<StorageTexture>()>& lookup) {
+std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, const State& state, const Pm4::DrawParameters& draw, const ColorTarget& color, DrawOutcome& outcome, bool profile, const std::function<std::shared_ptr<StorageTexture>()>& lookup) {
     const auto lookupStart = std::chrono::steady_clock::now();
+    const StorageTexture::OverwriteScope overwriteScope(drawOverwritesTarget(state, draw, color));
     const auto walkedBefore = profile ? GuestMemory::ThreadCollectedBytes() : 0;
     std::shared_ptr<StorageTexture> resident;
     try {
@@ -3345,7 +3423,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             // (GuestMemory::BumpCollectEpoch: ordering points of the queue, or every packet under
             // APS5_PACKET_EPOCH=1); the key scan runs on every lookup regardless. Lookups of a
             // millisecond or more are counted apart; the [texture] line says how many uploaded.
-            binding.resident = refreshResidentTarget(context, state, color, outcome, profile, [&] {
+            binding.resident = refreshResidentTarget(context, state, draw, color, outcome, profile, [&] {
                 if (color.arrayLastSlice != 0) {
                     Require(color.dccAddress == 0 && color.cmaskAddress == 0 && AttachmentProxyFormat(context, color.format) == VK_FORMAT_UNDEFINED, "a slice of a 2D array color target with DCC, CMASK or an attachment proxy has no resident array image");
                     const auto array = ArraySurfaceForTarget(color);
@@ -3449,7 +3527,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         auto& binding = targets[index];
         if (binding.color.partialWriteMask == 0 || binding.multisampled || binding.resident == nullptr || binding.proxied || storesIntoResident(*resources, *binding.resident)) continue;
         const auto& color = binding.color;
-        binding.resident = refreshResidentTarget(context, state, color, outcome, profile, [&] { return color.arrayLastSlice != 0 ? CachedStorageLayers(context, ArraySurfaceForTarget(color), color.arraySlice, color.layers) : CachedStorageSurface(context, SurfaceForTarget(color)); });
+        binding.resident = refreshResidentTarget(context, state, draw, color, outcome, profile, [&] { return color.arrayLastSlice != 0 ? CachedStorageLayers(context, ArraySurfaceForTarget(color), color.arraySlice, color.layers) : CachedStorageSurface(context, SurfaceForTarget(color)); });
         if (binding.resident != nullptr) targetViews[index] = binding.resident->AttachmentView(color.format, color.mip, color.depthSlice, color.layers, color.arraySlice);
     }
     if (!stencilReferences.empty() && resources->ChecksFaults()) recordable = false;
@@ -4235,7 +4313,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         if (state.colors[index].fmaskAddress != 0) GuardOneFragmentFmask(context, state.colors[index]);
         auto stored = recipe.targets[index].lock();
         if (stored == nullptr || !StorageImageCached(context, stored.get()) || !StorageImageServesKeys(*stored, SurfaceForTarget(state.colors[index]).dccAddress)) return miss(DrawRecipeMiss::TargetGone);
-        auto resident = refreshResidentTarget(context, state, state.colors[index], outcome, profile, [&] {
+        auto resident = refreshResidentTarget(context, state, draw, state.colors[index], outcome, profile, [&] {
             if (state.colors[index].arrayLastSlice != 0) stored->RefreshLayers(state.colors[index].arraySlice, 1);
             else stored->Refresh();
             return stored;
