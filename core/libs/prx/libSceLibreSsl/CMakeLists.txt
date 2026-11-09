@@ -197,9 +197,10 @@ if(BUILD_TESTING)
     target_link_libraries(guest_libressl_general_name_tests PRIVATE libSceLibreSsl libc)
     configure_windows_unwind(guest_libressl_general_name_tests)
     add_test(NAME guest_libressl_general_name COMMAND guest_libressl_general_name_tests)
-    set_tests_properties(guest_libressl_general_name PROPERTIES TIMEOUT 30)
+    add_test(NAME guest_libressl_ocsp_response_free COMMAND guest_libressl_general_name_tests ocsp)
+    set_tests_properties(guest_libressl_general_name guest_libressl_ocsp_response_free PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(guest_libressl_general_name PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_libressl_general_name guest_libressl_ocsp_response_free PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
