@@ -44,6 +44,7 @@ int main() {
     Require(sceG2PDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceG2PDialogOpen(nullptr) == kErrArgNull);
+    Require(sceG2PDialogOpen(reinterpret_cast<const G2PDialogParam*>(0x10)) == kErrArgNull);
     Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == kErrNotFinished);
 
     param.base.size = 0;
@@ -75,6 +76,7 @@ int main() {
     Require(sceG2PDialogOpen(&param) == 0);
     Require(sceG2PDialogGetStatus() == kStatusFinished);
     Require(sceG2PDialogOpen(nullptr) == kErrArgNull);
+    Require(sceG2PDialogOpen(reinterpret_cast<const G2PDialogParam*>(0x10)) == kErrArgNull);
 
     Require(sceG2PDialogGetResult(nullptr) == kErrArgNull);
     Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(0x10)) == static_cast<int>(0x80B8000Au));
