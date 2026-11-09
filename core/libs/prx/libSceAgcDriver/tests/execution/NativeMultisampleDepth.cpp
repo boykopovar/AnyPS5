@@ -96,7 +96,7 @@ using namespace AgcDriver::Graphics;
 
 class Device {
 public:
-    explicit Device(bool importHost = false) {
+    explicit Device(bool importHost = false, bool storageWrites = false) {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
 #elif defined(__APPLE__)
@@ -141,6 +141,10 @@ public:
             function<PFN_vkGetPhysicalDeviceFeatures>("vkGetPhysicalDeviceFeatures")(context.physical, &available);
             VkPhysicalDeviceFeatures enabled{};
             enabled.shaderStorageImageReadWithoutFormat = available.shaderStorageImageReadWithoutFormat;
+            if (storageWrites) {
+                enabled.shaderStorageImageMultisample = available.shaderStorageImageMultisample;
+                enabled.shaderStorageImageWriteWithoutFormat = available.shaderStorageImageWriteWithoutFormat;
+            }
             const float priority = 1.0f;
             VkDeviceQueueCreateInfo queue{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
             queue.queueFamilyIndex = family;
@@ -199,6 +203,8 @@ public:
                 context.bufferDeviceAddress = true;
             }
             context.dmaBufImport = dmaBufImport;
+            context.storageImageMultisample = enabled.shaderStorageImageMultisample == VK_TRUE;
+            context.storageImageWriteWithoutFormat = enabled.shaderStorageImageWriteWithoutFormat == VK_TRUE;
             context.deviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
             context.formatProperties = function<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties");
             context.imageFormatProperties = function<PFN_vkGetPhysicalDeviceImageFormatProperties>("vkGetPhysicalDeviceImageFormatProperties");
@@ -2712,7 +2718,7 @@ void CheckAliasedDepth(Context context, std::uint32_t fragments, const AliasedDe
     if (which == DepthAliasCase::NewTargetAfterImport) {
         auto other = color;
         other.format = VK_FORMAT_R16G16_SFLOAT;
-        TargetRefuses([&] { PrepareMultisampleTargetForDraw_nid_no_patch(context, other); }, "initial multisample color contents overlap resident native depth");
+        TargetRefuses([&] { PrepareMultisampleTargetForDraw_nid_no_patch(context, other); }, "initial multisample color contents overlap another native owner");
         Require(DepthSurfaceAt(target.address) && CachedSampledTexture(context, words) == texture, "refused color initialization released the resident depth owner");
         recorder.Sync();
         read();
@@ -3969,6 +3975,199 @@ void CheckOtherIdentity(Context context, std::uint32_t samples, OtherIdentity mo
     std::printf("Native depth other identity samples=%u mode=%u: the owner of another identity retired, the new identity imported, drawn and published\n", samples, static_cast<std::uint32_t>(mode));
 }
 
+enum class ColourOver { DepthPlane, StencilPlane, Written, Unwritten, HeldView, StoredOver, PendingStorage, ColourOwner, Unpublishable };
+
+void CheckColourOverOwner(Context context, std::uint32_t samples, ColourOver mode) {
+    constexpr VkExtent2D extent{120u, 68u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    const bool overStencil = mode == ColourOver::StencilPlane;
+    ColorTarget color{};
+    color.extent = color.surfaceExtent = extent;
+    color.format = overStencil ? VK_FORMAT_R8_UNORM : VK_FORMAT_R32_SFLOAT;
+    color.elementBytes = overStencil ? 1u : 4u;
+    color.tileMode = ColorTileMode::RenderTarget;
+    color.samples = samples;
+    color.pipeBankXor = samples == 2u ? 0u : 0x8c00u;
+    color.bytes = static_cast<std::size_t>(extent.width) * extent.height * color.elementBytes;
+    const auto colorBytes = static_cast<std::size_t>(MultisampledColorBytes(color));
+    const auto colorOffset = overStencil ? depthBytes : std::size_t{0u};
+    const auto bytes = std::max(depthBytes + stencilBytes, colorOffset + colorBytes);
+    TargetMemory memory(bytes, true), metadata(65536u, true);
+    color.address = color.surfaceAddress = memory.Address() + colorOffset;
+    Recorder recorder(context);
+    recorder.Activate();
+    std::unique_ptr<DepthRaster> raster;
+    std::shared_ptr<Texture> texture;
+    std::shared_ptr<StorageTexture> image;
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); ClearMultisampleTargets(context.device); }
+    } cleanup{recorder, context};
+    if (mode == ColourOver::Unpublishable) {
+        std::memset(metadata.Data(), 0, static_cast<std::size_t>(HtileMetadataBytes(extent)));
+        DepthTarget plain{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, metadata.Address(), false, samples};
+        plain.depthSwizzle = 24u;
+        plain.pipeBankXor = color.pipeBankXor;
+        plain.iterate256 = plain.htilePipeAligned = plain.htileDepthOnly = true;
+        const auto view = DepthSurfaceView(context, plain);
+        Require(view != VK_NULL_HANDLE && ResidentDepthGuardOverlaps_nid_no_patch(color.address, colorBytes), "the D32 owner under the colour target has no resident depth guard");
+        NoteDepthSurfaceWrite(context, plain);
+        const auto serial = DepthSurfacesSerial();
+        const std::vector<std::byte> before(memory.Data(), memory.Data() + bytes);
+        TargetRefuses([&] { PrepareMultisampleTargetForDraw_nid_no_patch(context, color); }, "sample-preserving guest publication of native multisample depth is not implemented for this owner");
+        Require(DepthSurfaceAt(plain.address) && DepthSurfaceView(context, plain) == view && DepthSurfacesSerial() == serial && !MultisampleColorTargetOver(color.address, colorBytes) && std::equal(before.begin(), before.end(), memory.Data()), "a colour import refused over a written D32 owner retired it, imported or changed guest memory");
+        std::printf("Native depth under an initial colour import samples=%u mode=%u: a written D32 owner the publication cannot handle refuses the import and stays resident\n", samples, static_cast<std::uint32_t>(mode));
+        return;
+    }
+    DepthTarget target{memory.Address(), memory.Address() + depthBytes, extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0u, 0u, false, samples};
+    target.depthSwizzle = 24u;
+    target.pipeBankXor = color.pipeBankXor;
+    const auto one = std::bit_cast<std::uint32_t>(1.0f);
+    for (std::size_t offset = 0u; offset < depthBytes; offset += 4u) std::memcpy(memory.Data() + offset, &one, 4u);
+    std::memset(memory.Data() + depthBytes, 0x5a, stencilBytes);
+    std::vector<std::byte> expected(memory.Data(), memory.Data() + bytes);
+    const auto guestHolds = [&](const std::string& what) {
+        for (std::size_t offset = 0u; offset < bytes; ++offset) {
+            if (memory.Data()[offset] != expected[offset]) Require(false, what + " at byte " + std::to_string(offset));
+        }
+    };
+    auto words = DepthSampleWords(target);
+    words[6] &= ~((1u << 19u) | (1u << 21u));
+    const auto view = DepthSurfaceView(context, target);
+    Require(view != VK_NULL_HANDLE && DepthSurfaceAt(target.address), "the native depth owner over uniform planes was not imported");
+    if (mode != ColourOver::Unwritten) {
+        raster = std::make_unique<DepthRaster>(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x40u}, false, true);
+        NoteDepthSurfaceWrite(context, target);
+        raster->Run(recorder.Commands(), 0.25f);
+        recorder.Sync();
+        const MultisampleTextureLayout depthLayout(TextureTileMode::kZ64KBX, 4u, samples, extent.width, extent.height, 1u, target.pipeBankXor);
+        const MultisampleTextureLayout stencilLayout(TextureTileMode::kZ64KBX, 1u, samples, extent.width, extent.height, 1u, target.pipeBankXor);
+        for (std::uint32_t y = 0u; y < extent.height; ++y) {
+            for (std::uint32_t x = 0u; x < extent.width; ++x) {
+                for (std::uint32_t sample = 0u; sample < samples; ++sample) {
+                    const float depth = 0.25f + static_cast<float>(sample + 1u) / 16.0f;
+                    std::memcpy(expected.data() + depthLayout.Offset(x, y, 0u, sample), &depth, 4u);
+                    expected[depthBytes + stencilLayout.Offset(x, y, 0u, sample)] = static_cast<std::byte>(0x40u + sample);
+                }
+            }
+        }
+    }
+    const auto serial = DepthSurfacesSerial();
+    if (mode == ColourOver::StoredOver || mode == ColourOver::PendingStorage) {
+        GuestTextureResource storage{};
+        storage.baseAddress = target.address;
+        storage.width = 256u;
+        storage.height = static_cast<std::uint32_t>(depthBytes / 1024u);
+        storage.mipCount = storage.allocatedMipCount = 1u;
+        storage.dimension = TextureDimension::k2D;
+        storage.tileMode = TextureTileMode::kLinear;
+        storage.format = 22u;
+        storage.dstSelX = 4u;
+        storage.dstSelY = storage.dstSelZ = 0u;
+        storage.dstSelW = 1u;
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            image = StorageTexture::Create(context, *context.detiler, storage, 0u);
+            const auto commands = recorder.Commands();
+            recorder.Keep(image);
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, 1u};
+            VkClearColorValue value{};
+            value.uint32[0] = 0x3c3c3c3cu;
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1u, &range);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            image->MarkWholeWritten();
+        }
+        guestHolds("a storage image over the owner's depth plane did not publish its samples");
+    }
+    if (mode == ColourOver::StoredOver) std::fill(expected.begin(), expected.begin() + static_cast<std::ptrdiff_t>(depthBytes), std::byte{0x3c});
+    if (mode == ColourOver::PendingStorage) {
+        Require(DepthSurfaceView(context, target) == view, "the owner was not kept under pending storage results");
+        NoteDepthSurfaceWrite(context, target);
+        raster->Run(recorder.Commands(), 0.25f);
+        recorder.Sync();
+        TargetRefuses([&] { PrepareMultisampleTargetForDraw_nid_no_patch(context, color); }, "native multisample depth publication over pending storage image writes is not implemented");
+        Require(DepthSurfaceAt(target.address) && DepthSurfaceView(context, target) == view && DepthSurfacesSerial() == serial && !MultisampleColorTargetOver(color.address, colorBytes), "a colour import whose depth owner's publication was refused retired the owner or imported");
+        std::printf("Native depth under an initial colour import samples=%u mode=%u: the owner's publication was refused and it stays resident\n", samples, static_cast<std::uint32_t>(mode));
+        return;
+    }
+    if (mode == ColourOver::DepthPlane || mode == ColourOver::StencilPlane || mode == ColourOver::HeldView || mode == ColourOver::ColourOwner) {
+        std::array<std::byte, 1> probe;
+        AgcDriver::GuestMemory::Read(target.stencilAddress, probe);
+        guestHolds("a CPU read did not publish the owner's samples");
+        Require(DepthSurfaceView(context, target) == view && DepthSurfacesSerial() == serial, "a CPU read that took no guest byte retired the owner");
+    }
+    if (mode == ColourOver::HeldView) {
+        texture = DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{});
+        Require(texture != nullptr && DepthSurfaceHolds(context, DecodeTextureResource(words), texture.get()), "the owner was not sampled natively");
+    }
+    if (mode == ColourOver::ColourOwner) {
+        auto other = color;
+        other.format = VK_FORMAT_R16G16_SFLOAT;
+        MultisampleTargetView(context, other);
+        TargetRefuses([&] { PrepareMultisampleTargetForDraw_nid_no_patch(context, color); }, "initial multisample color contents overlap another native owner");
+        Require(DepthSurfaceAt(target.address) && ResidentDepthGuardOverlaps_nid_no_patch(target.address, depthBytes) && DepthSurfacesSerial() == serial, "a colour import refused over another colour owner retired the depth owner");
+        guestHolds("a colour import refused over another colour owner changed guest memory");
+        std::printf("Native depth under an initial colour import samples=%u mode=%u: another colour owner refuses the import before the depth owner is touched\n", samples, static_cast<std::uint32_t>(mode));
+        return;
+    }
+    const auto released = DepthSurfacesReleased();
+    PrepareMultisampleTargetForDraw_nid_no_patch(context, color);
+    Require(!DepthSurfaceAt(target.address) && !ResidentDepthGuardOverlaps_nid_no_patch(memory.Address(), bytes), "an initial multisampled colour import over a native depth owner left it resident");
+    Require(MultisampleColorTargetOver(color.address, colorBytes).has_value(), "an initial multisampled colour import over a native depth owner created no colour target");
+    guestHolds(mode == ColourOver::Written ? "an initial colour import did not publish the written owner's samples first" : "an initial colour import changed the owner's guest bytes");
+    const std::vector<std::byte> guest(memory.Data() + colorOffset, memory.Data() + colorOffset + colorBytes);
+    const auto colorView = MultisampleTargetView(context, color);
+    recorder.Sync();
+    const auto fetchSamples = [&](VkImageView source, VkImageLayout layout) {
+        const auto count = extent.width * extent.height * samples;
+        Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+        {
+            const std::array<VkDescriptorImageInfo, 1> images{{{VK_NULL_HANDLE, source, layout}}};
+            const Fetch fetch(context, images, output, FetchShader(extent.width, extent.height, samples, false, true));
+            CommandBatch batch(context);
+            fetch.Run(batch.Handle(), count);
+            RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+            batch.SubmitAndWait();
+        }
+        output.Invalidate();
+        std::vector<float> values(count);
+        for (std::uint32_t index = 0u; index < count; ++index) std::memcpy(&values[index], output.Bytes().data() + (index + 1u) * 16u, 4u);
+        return values;
+    };
+    const auto colored = fetchSamples(colorView, VK_IMAGE_LAYOUT_GENERAL);
+    const MultisampleTextureLayout colorLayout(TextureTileMode::kR64KBX, color.elementBytes, samples, extent.width, extent.height, 1u, color.pipeBankXor);
+    for (std::uint32_t index = 0u; index < colored.size(); ++index) {
+        const auto sample = index % samples;
+        const auto x = index / samples % extent.width;
+        const auto y = index / samples / extent.width;
+        const auto offset = colorLayout.Offset(x, y, 0u, sample);
+        std::uint32_t word = 0u;
+        std::memcpy(&word, guest.data() + offset, color.elementBytes);
+        const bool held = overStencil ? std::lround(colored[index] * 255.0f) == static_cast<long>(word) : std::bit_cast<std::uint32_t>(colored[index]) == word;
+        if (!held) Require(false, "an initial colour import over a retired depth owner does not hold the guest's bytes at " + std::to_string(x) + "," + std::to_string(y) + " sample " + std::to_string(sample));
+    }
+    if (mode == ColourOver::HeldView) {
+        Require(DepthSurfacesReleased() == released && !DepthSurfaceHolds(context, DecodeTextureResource(words), texture.get()), "a retired owner whose sampled view is held was released or still serves the view");
+        const auto held = fetchSamples(texture->View(), texture->Layout());
+        for (std::uint32_t index = 0u; index < held.size(); ++index) Require(held[index] == 0.25f + static_cast<float>(index % samples + 1u) / 16.0f, "a held view of a retired owner does not hold its samples at element " + std::to_string(index));
+        texture.reset();
+    }
+    constexpr VkExtent2D spareExtent{16u, 16u};
+    const auto spareDepth = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(spareExtent, 4u, samples));
+    const auto spareStencil = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(spareExtent, 1u, samples));
+    TargetMemory spare(spareDepth + spareStencil, true);
+    for (std::size_t offset = 0u; offset < spareDepth; offset += 4u) std::memcpy(spare.Data() + offset, &one, 4u);
+    std::memset(spare.Data() + spareDepth, 0x5a, spareStencil);
+    DepthTarget unrelated{spare.Address(), spare.Address() + spareDepth, spareExtent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0u, 0u, false, samples};
+    unrelated.depthSwizzle = 24u;
+    Require(DepthSurfaceView(context, unrelated) != VK_NULL_HANDLE && DepthSurfacesReleased() == released + 1u, "the owner retired by an initial colour import was not released at the next depth creation");
+    std::printf("Native depth under an initial colour import samples=%u mode=%u: the owner published and retired, the colour target imported its bytes from guest memory\n", samples, static_cast<std::uint32_t>(mode));
+}
+
 void CheckUniformPlaneAliasedDepth(Context context, std::uint32_t samples) {
     constexpr VkExtent2D extent{5u, 3u};
     const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
@@ -4350,7 +4549,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--driver-path") return CheckDriverPath(false);
         if (argc == 2 && std::string_view(argv[1]) == "--driver-queued-fill") return CheckDriverPath(true);
         std::unique_ptr<Device> device;
-        try { device = std::make_unique<Device>(); }
+        try { device = std::make_unique<Device>(false, argc == 2 && std::string_view(argv[1]) == "--colour-over-owner"); }
         catch (const std::exception& error) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
@@ -4494,6 +4693,22 @@ int main(int argc, char** argv) {
             for (const auto samples : {2u, 4u, 8u}) {
                 if (!DepthSupported(context, VK_FORMAT_D32_SFLOAT_S8_UINT, samples) || (context.limits.framebufferStencilSampleCounts & samples) == 0u) continue;
                 for (const auto mode : {OtherIdentity::Published, OtherIdentity::KeptByReuse, OtherIdentity::HeldView, OtherIdentity::RoundTrip, OtherIdentity::StoredOver, OtherIdentity::PendingStorage}) CheckOtherIdentity(publishing, samples, mode);
+                ++checked;
+            }
+            return checked != 0u ? 0 : VulkanTestSkipped;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--colour-over-owner") {
+            if (!context.storageImageMultisample || !context.storageImageWriteWithoutFormat) {
+                std::puts("native depth under an initial colour import skipped, the device does not enable multisampled formatless storage writes");
+                return VulkanTestSkipped;
+            }
+            TextureDetiler detiler(context);
+            auto publishing = context;
+            publishing.detiler = &detiler;
+            std::uint32_t checked = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!DepthSupported(context, VK_FORMAT_D32_SFLOAT_S8_UINT, samples) || (context.limits.framebufferStencilSampleCounts & samples) == 0u) continue;
+                for (const auto mode : {ColourOver::DepthPlane, ColourOver::StencilPlane, ColourOver::Written, ColourOver::Unwritten, ColourOver::HeldView, ColourOver::StoredOver, ColourOver::PendingStorage, ColourOver::ColourOwner, ColourOver::Unpublishable}) CheckColourOverOwner(publishing, samples, mode);
                 ++checked;
             }
             return checked != 0u ? 0 : VulkanTestSkipped;
