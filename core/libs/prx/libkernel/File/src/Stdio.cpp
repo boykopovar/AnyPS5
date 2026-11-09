@@ -690,7 +690,7 @@ static bool NativeIsPipe(int descriptor) {
 #endif
 }
 
-static int FillStatfs(const struct statvfs& host, KernelStatfs* fs);
+static int FillStatfs(const struct statvfs& host, bool noexec, KernelStatfs* fs);
 
 static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
     struct stat file{};
@@ -705,18 +705,19 @@ static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
     if (S_ISCHR(file.st_mode)) return DeviceFilesystem(fs);
     struct statvfs host{};
     if (::fstatvfs(descriptor, &host) != 0) return SceErrorFromErrno(errno) & 0xffff;
-    return FillStatfs(host, fs);
-}
-
-static int FillStatfs(const struct statvfs& host, KernelStatfs* fs) {
-    if (host.f_flag & ST_RDONLY) fs->f_flags |= KERNEL_MNT_RDONLY;
-    if (host.f_flag & ST_NOSUID) fs->f_flags |= KERNEL_MNT_NOSUID;
 #ifdef __APPLE__
     struct statfs mount{};
-    if (::fstatfs(descriptor, &mount) == 0 && (mount.f_flags & MNT_NOEXEC)) fs->f_flags |= KERNEL_MNT_NOEXEC;
+    const bool noexec = ::fstatfs(descriptor, &mount) == 0 && (mount.f_flags & MNT_NOEXEC);
 #else
-    if (host.f_flag & ST_NOEXEC) fs->f_flags |= KERNEL_MNT_NOEXEC;
+    const bool noexec = (host.f_flag & ST_NOEXEC) != 0;
 #endif
+    return FillStatfs(host, noexec, fs);
+}
+
+static int FillStatfs(const struct statvfs& host, bool noexec, KernelStatfs* fs) {
+    if (host.f_flag & ST_RDONLY) fs->f_flags |= KERNEL_MNT_RDONLY;
+    if (host.f_flag & ST_NOSUID) fs->f_flags |= KERNEL_MNT_NOSUID;
+    if (noexec) fs->f_flags |= KERNEL_MNT_NOEXEC;
     fs->f_bsize = host.f_frsize != 0 ? host.f_frsize : host.f_bsize;
     fs->f_iosize = host.f_bsize;
     fs->f_blocks = host.f_blocks;
@@ -731,7 +732,13 @@ static int FillStatfs(const struct statvfs& host, KernelStatfs* fs) {
 static int NativeStatfs(const std::filesystem::path& path, KernelStatfs* fs) {
     struct statvfs host{};
     if (::statvfs(path.c_str(), &host) != 0) return SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(path) : errno) & 0xffff;
-    return FillStatfs(host, fs);
+#ifdef __APPLE__
+    struct statfs mount{};
+    const bool noexec = ::statfs(path.c_str(), &mount) == 0 && (mount.f_flags & MNT_NOEXEC);
+#else
+    const bool noexec = (host.f_flag & ST_NOEXEC) != 0;
+#endif
+    return FillStatfs(host, noexec, fs);
 }
 
 
