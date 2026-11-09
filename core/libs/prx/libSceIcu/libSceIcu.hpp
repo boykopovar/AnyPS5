@@ -32,5 +32,6 @@
 #include "Search.hpp"
 #include "Character.hpp"
 #include "Configuration.hpp"
+#include "TimeZoneOffset.hpp"
 
 #include "ConverterHelpers.hpp"
