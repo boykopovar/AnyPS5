@@ -78,6 +78,8 @@ int main() {
     Require(sceNpSignalingGetContextOption(1, 1, nullptr) == NotInitialized, "sceNpSignalingGetContextOption", "a call before initialization did not return NOT_INITIALIZED first");
     Require(sceNpSignalingCancelPeerNetInfo(1, 1) == NotInitialized, "sceNpSignalingCancelPeerNetInfo", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpSignalingGetPeerNetInfoResult(1, 1, nullptr) == NotInitialized, "sceNpSignalingGetPeerNetInfoResult", "a call before initialization did not return NOT_INITIALIZED first");
+    std::uint32_t reqId = 0;
+    Require(sceNpSignalingGetPeerNetInfo(1, nullptr, &reqId) == NotInitialized, "sceNpSignalingGetPeerNetInfo", "a call before initialization did not return NOT_INITIALIZED");
 
     Require(sceNpSignalingInitialize(0, 0, 0, 0) == 0, "sceNpSignalingInitialize", "initialization failed");
     Require(sceNpSignalingInitialize(0, 0, 0, 0) == AlreadyInitialized, "sceNpSignalingInitialize", "a second initialization did not return ALREADY_INITIALIZED");
@@ -125,6 +127,15 @@ int main() {
     Require(sceNpSignalingGetConnectionInfo(99, 1, 1, info) == CtxNotFound, "sceNpSignalingGetConnectionInfo", "an unknown context was taken");
     Require(sceNpSignalingGetConnectionInfo(context, 1, 1, info) == ConnNotFound, "sceNpSignalingGetConnectionInfo", "a connection that was never created was found");
     Require(info[0] == 0xA5 && info[63] == 0xA5, "sceNpSignalingGetConnectionInfo", "connection information was written");
+
+    Require(sceNpSignalingGetPeerNetInfo(context, nullptr, &reqId) == InvalidArgument, "sceNpSignalingGetPeerNetInfo", "a null peer was taken");
+    Require(sceNpSignalingGetPeerNetInfo(context, &peer, nullptr) == InvalidArgument, "sceNpSignalingGetPeerNetInfo", "a null output was taken");
+    reqId = 0xA5A5A5A5u;
+    Require(sceNpSignalingGetPeerNetInfo(99, &tooShort, &reqId) == InvalidArgument, "sceNpSignalingGetPeerNetInfo", "an invalid peer was not refused before the context");
+    Require(reqId == 0xA5A5A5A5u, "sceNpSignalingGetPeerNetInfo", "the request id was written on invalid peer");
+    reqId = 0xA5A5A5A5u;
+    Require(sceNpSignalingGetPeerNetInfo(99, &peer, &reqId) == CtxNotFound, "sceNpSignalingGetPeerNetInfo", "an unknown context was taken");
+    Require(reqId == 0xA5A5A5A5u, "sceNpSignalingGetPeerNetInfo", "the request id was written on unknown context");
 
     Require(sceNpSignalingCreateContextA(-1, nullptr, nullptr, &created) == InvalidArgument, "sceNpSignalingCreateContextA", "user id -1 was taken");
     Require(sceNpSignalingCreateContextA(1, nullptr, nullptr, nullptr) == InvalidArgument, "sceNpSignalingCreateContextA", "a null output was taken");
@@ -189,6 +200,7 @@ int main() {
     Require(sceNpSignalingTerminateConnection(1, 1) == NotInitialized, "sceNpSignalingTerminateConnection", "terminating connection post-termination did not return NOT_INITIALIZED");
     Require(sceNpSignalingDeactivateConnection(1, 1) == NotInitialized, "sceNpSignalingDeactivateConnection", "deactivating connection post-termination did not return NOT_INITIALIZED");
     Require(sceNpSignalingGetConnectionInfo(1, 1, 1, nullptr) == NotInitialized, "sceNpSignalingGetConnectionInfo", "getting connection info post-termination did not return NOT_INITIALIZED");
+    Require(sceNpSignalingGetPeerNetInfo(1, nullptr, &reqId) == NotInitialized, "sceNpSignalingGetPeerNetInfo", "a call after termination did not return NOT_INITIALIZED");
 
     if (failures != 0) return 1;
     std::puts("NpSignaling offline tests passed");

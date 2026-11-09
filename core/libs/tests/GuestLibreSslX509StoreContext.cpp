@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -168,9 +169,50 @@ static void TestGet1Chain() {
     Require(leaf.references == 2 && intermediate.references == 3 && root.references == 6);
 }
 
+int allocations = 0;
+int frees = 0;
+
+void* APS5_VABI CountingAllocate(std::size_t size) {
+    ++allocations;
+    return std::malloc(size);
+}
+
+void APS5_VABI CountingFree(void* pointer) {
+    if (pointer) ++frees;
+    std::free(pointer);
+}
+
+void* APS5_VABI CountingCalloc(std::size_t count, std::size_t size) {
+    ++allocations;
+    return std::calloc(count, size);
+}
+
+void* APS5_VABI CountingReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+void* APS5_VABI UnexpectedAlign(std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned allocation"); }
+void* APS5_VABI UnexpectedRealign(void*, std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned reallocation"); }
+int APS5_VABI UnexpectedPosixAlign(void**, std::size_t, std::size_t) { throw std::runtime_error("unexpected posix_memalign"); }
+
+static void TestGet1ChainWithoutCapacity() {
+    allocations = frees = 0;
+
+    TestContext context;
+    LibreSslStack empty {0, nullptr, 0, 0, nullptr};
+    context.Write<void*>(ChainOffset, &empty);
+    LibreSslStack* copy = X509_STORE_CTX_get1_chain_nid_postfix(Context(context));
+    Require(copy != nullptr && copy != &empty && copy->num == 0 && copy->numAlloc == 0 && copy->comp == nullptr);
+    Require(allocations == 2 && frees == 0);
+    Require(OnlyChanged(context, ChainOffset, 8));
+    free_nid_postfix(copy->data);
+    free_nid_postfix(copy);
+    Require(allocations == frees);
+}
+
 int main() {
-    void* const heap[10] {};
-    ApplicationHeapRegister_nid_no_patch(heap);
+    std::array<void*, 10> heap {
+        reinterpret_cast<void*>(CountingAllocate), reinterpret_cast<void*>(CountingFree), reinterpret_cast<void*>(CountingCalloc),
+        reinterpret_cast<void*>(CountingReallocate), reinterpret_cast<void*>(UnexpectedAlign), reinterpret_cast<void*>(UnexpectedRealign),
+        reinterpret_cast<void*>(UnexpectedPosixAlign)};
+    ApplicationHeapRegister_nid_no_patch(heap.data());
     TestGetError();
     TestSetError();
     TestGetErrorDepth();
@@ -178,5 +220,6 @@ int main() {
     TestGetChain();
     TestGetExData();
     TestGet1Chain();
+    TestGet1ChainWithoutCapacity();
     std::puts("libSceLibreSsl X509_STORE_CTX tests passed");
 }
