@@ -240,7 +240,7 @@ void Pad::KeyboardMouse::SetViewport(int width, int height) {
     viewportHeight = height;
 }
 
-std::optional<Pad::PadTouchPoint> Pad::KeyboardMouse::touchAt(int x, int y) const {
+std::optional<PadTouchPoint> Pad::KeyboardMouse::touchAt(int x, int y) const {
     if (viewportWidth <= 0 || viewportHeight <= 0) return std::nullopt;
     const auto clampedX = std::clamp(x, 0, viewportWidth - 1);
     const auto clampedY = std::clamp(y, 0, viewportHeight - 1);
