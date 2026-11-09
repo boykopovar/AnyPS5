@@ -487,7 +487,7 @@ template<typename Value> GuestLocale::OutputIterator PutFormattedFloating(GuestL
     const std::string format = std::string("%") + ((flags & IosShowPos) != 0 ? "+" : "") + ((flags & IosShowPoint) != 0 ? "#" : "") + (field != IosHexFloat ? ".*" : "") + qualifier + static_cast<char>(upper ? conversion - 'a' + 'A' : conversion);
     if (size <= 0) throw std::invalid_argument("num_put::do_put: the precision leaves no room for the converted value");
     std::string digits(static_cast<std::size_t>(size), '\0');
-    const int count = std::snprintf(digits.data(), digits.size(), format.c_str(), precision, value);
+    const int count = snprintf_nid_postfix(digits.data(), digits.size(), format.c_str(), precision, value);
     if (count < 0 || count >= size) throw std::invalid_argument("num_put::do_put: the precision leaves no room for the converted value");
     return PutFloating(out, stream, fill, digits.c_str(), static_cast<std::size_t>(count));
 }
@@ -767,7 +767,7 @@ template<typename Value> GuestLocale::OutputIterator PutWideFormattedFloating(Gu
     const std::string format = std::string("%") + ((flags & IosShowPos) != 0 ? "+" : "") + ((flags & IosShowPoint) != 0 ? "#" : "") + (field != IosHexFloat ? ".*" : "") + qualifier + static_cast<char>(upper ? conversion - 'a' + 'A' : conversion);
     if (size <= 0) throw std::invalid_argument("num_put::do_put: the precision leaves no room for the converted value");
     std::string digits(static_cast<std::size_t>(size), '\0');
-    const int count = std::snprintf(digits.data(), digits.size(), format.c_str(), precision, value);
+    const int count = snprintf_nid_postfix(digits.data(), digits.size(), format.c_str(), precision, value);
     if (count < 0 || count >= size) throw std::invalid_argument("num_put::do_put: the precision leaves no room for the converted value");
     return PutWideFloating(out, stream, fill, digits.c_str(), static_cast<std::size_t>(count));
 }
