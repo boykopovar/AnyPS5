@@ -434,6 +434,8 @@
   at most two boundary words per entry beyond the buffer-size bound. `APS5_NO_OWNED_DRAW_INPUTS` disables this reuse and `APS5_VERIFY_OWNED_DRAW_INPUTS` compares reused bytes. No title or performance result has been
   measured.
 
+- [Stale depth planes over reused guest memory](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp) (libSceAgcDriver): a depth surface outlives the guest memory it mirrors, so a flush over a later allocation stores pending results into it; a pending fast clear used to skip the guest-write check and write zero there. A flush now drops a unit whose recorded allocation (`backingSerial`) changed, and a storing sync drops the units the guest wrote and forgets the clear. Not covered: reuse inside one unchanged registration with no write since the last sync, and the stencil plane, which compares bytes with its last mark. Closes when: surfaces are retired on allocation changes (an unmap hook that keeps the `surfacesMutex`/`GuestAllocations` lock order) instead of at flush time. PPSA27616 reached this through a cubemap of 128x128 depth faces whose memory its heap had taken back.
+
 ### Opt-in draw paths
 
 - [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The Linux main-image page table it adds matches what Windows already does by default.
