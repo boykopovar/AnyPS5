@@ -4,6 +4,7 @@
 #include "prx/libSceNKWebKit/src/NavigationData.hpp"
 #include "prx/libSceNKWebKit/src/BackForwardList.hpp"
 #include "prx/libSceNKWebKit/src/ProtectionSpace.hpp"
+#include "prx/libSceNKWebKit/src/Authentication.hpp"
 #include "prx/libSceNKWebKit/src/FrameHandle.hpp"
 #include "prx/libSceNKWebKit/src/OpenPanelParameters.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
@@ -1598,6 +1599,168 @@ static void TestProtectionSpace() {
     Require(threw);
 }
 
+static void TestAuthentication() {
+    Require(WKAuthenticationChallengeGetTypeID() == 2);
+    Require(WKAuthenticationDecisionListenerGetTypeID() == 3);
+
+    auto challenge = NKWebKit::Make<NKWebKit::AuthenticationChallenge>();
+    const void* ref = challenge.Get();
+
+    Require(WKAuthenticationChallengeGetPreviousFailureCount(ref) == 0);
+    Require(WKAuthenticationChallengeIsForMainResource(ref));
+    Require(WKAuthenticationChallengeIsInMainFrame(ref));
+    Require(WKAuthenticationChallengeGetProtectionSpace(ref) == nullptr);
+    Require(WKAuthenticationChallengeGetProposedCredential(ref) == nullptr);
+    Require(WKAuthenticationChallengCopyRequestURL(ref) == nullptr);
+
+    challenge->previousFailureCount = 3;
+    Require(WKAuthenticationChallengeGetPreviousFailureCount(ref) == 3);
+
+    challenge->isForMainResource = false;
+    Require(!WKAuthenticationChallengeIsForMainResource(ref));
+
+    challenge->isInMainFrame = false;
+    Require(!WKAuthenticationChallengeIsInMainFrame(ref));
+
+    auto* space = MakeProtectionSpace("example.com", 443, NKWebKit::ProtectionSpaceServerType::HTTPS, "Realm", NKWebKit::ProtectionSpaceAuthenticationScheme::HTTPBasic);
+    challenge->protectionSpace = NKWebKit::Retained<NKWebKit::ProtectionSpace>::Share(NKWebKit::Cast<NKWebKit::ProtectionSpace>(space, "TestAuthentication"));
+    Require(WKAuthenticationChallengeGetProtectionSpace(ref) == space);
+
+    auto user = WKStringCreateWithUTF8CString("alice");
+    auto pass = WKStringCreateWithUTF8CString("secret");
+    auto cred = WKCredentialCreate(user, pass, 0);
+    challenge->proposedCredential = NKWebKit::Retained<NKWebKit::Object>::Share(const_cast<NKWebKit::Object*>(NKWebKit::ToObject(cred, "TestAuthentication")));
+    Require(WKAuthenticationChallengeGetProposedCredential(ref) == cred);
+
+    auto url = WKURLCreateWithUTF8CString("https://example.com/login");
+    challenge->requestURL = NKWebKit::Retained<NKWebKit::URL>::Share(NKWebKit::Cast<NKWebKit::URL>(url, "TestAuthentication"));
+    auto copiedUrl = WKAuthenticationChallengCopyRequestURL(ref);
+    Require(copiedUrl != nullptr);
+    Require(WKGetTypeID(copiedUrl) == WKURLGetTypeID());
+    Require(WKURLIsEqual(copiedUrl, url));
+    WKRelease(copiedUrl);
+
+    const void* listenerRef = WKAuthenticationChallengeGetDecisionListener(ref);
+    Require(listenerRef != nullptr);
+    Require(WKGetTypeID(listenerRef) == WKAuthenticationDecisionListenerGetTypeID());
+    Require(WKAuthenticationChallengeGetDecisionListener(ref) == listenerRef);
+
+    auto* listener = NKWebKit::Cast<NKWebKit::AuthenticationDecisionListener>(listenerRef, "TestAuthentication");
+    Require(listener->decision == NKWebKit::AuthenticationDecisionListener::Decision::Pending);
+
+    WKAuthenticationDecisionListenerUseCredential(listenerRef, cred);
+    Require(listener->decision == NKWebKit::AuthenticationDecisionListener::Decision::UseCredential);
+    Require(listener->credential.Get() == cred);
+
+    WKAuthenticationDecisionListenerCancel(listenerRef);
+    Require(listener->decision == NKWebKit::AuthenticationDecisionListener::Decision::Cancel);
+    Require(listener->credential.Get() == nullptr);
+
+    WKAuthenticationDecisionListenerRejectProtectionSpaceAndContinue(listenerRef);
+    Require(listener->decision == NKWebKit::AuthenticationDecisionListener::Decision::RejectProtectionSpaceAndContinue);
+    Require(listener->credential.Get() == nullptr);
+
+    WKAuthenticationDecisionListenerUseCredential(listenerRef, nullptr);
+    Require(listener->decision == NKWebKit::AuthenticationDecisionListener::Decision::UseCredential);
+    Require(listener->credential.Get() == nullptr);
+
+    WKRelease(url);
+    WKRelease(cred);
+    WKRelease(pass);
+    WKRelease(user);
+    WKRelease(space);
+
+    bool threw = false;
+    try {
+        WKAuthenticationChallengeGetProtectionSpace(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKAuthenticationChallengeGetPreviousFailureCount(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKAuthenticationChallengeGetProposedCredential(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKAuthenticationChallengCopyRequestURL(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKAuthenticationChallengeIsForMainResource(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKAuthenticationChallengeIsInMainFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKAuthenticationChallengeGetDecisionListener(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKAuthenticationDecisionListenerCancel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKAuthenticationDecisionListenerRejectProtectionSpaceAndContinue(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKAuthenticationDecisionListenerUseCredential(nullptr, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    auto notChallenge = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>());
+    threw = false;
+    try {
+        WKAuthenticationChallengeGetProtectionSpace(notChallenge);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    WKRelease(notChallenge);
+}
+
 static void TestPermissionRequests() {
     Require(WKGeolocationPermissionRequestGetTypeID() == 61);
     Require(WKNotificationPermissionRequestGetTypeID() == 78);
@@ -2481,6 +2644,7 @@ int main() {
     TestPopupMenuItem();
     TestOpenPanelResultListener();
     TestProtectionSpace();
+    TestAuthentication();
     TestPermissionRequests();
     TestFrameHandle();
     TestOpenPanelParameters();

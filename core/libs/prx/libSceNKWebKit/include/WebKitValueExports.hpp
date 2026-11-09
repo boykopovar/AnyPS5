@@ -33,8 +33,18 @@ const void* APS5_VABI WKArrayGetItemAtIndex(const void* arrayRef, std::size_t in
 std::size_t APS5_VABI WKArrayGetSize(const void* arrayRef);
 std::uint32_t APS5_VABI WKArrayGetTypeID();
 void APS5_VABI WKArrayRemoveItemAtIndex(void* arrayRef, std::size_t index);
+const void* APS5_VABI WKAuthenticationChallengCopyRequestURL(const void* challengeRef);
+const void* APS5_VABI WKAuthenticationChallengeGetDecisionListener(const void* challengeRef);
+std::uint32_t APS5_VABI WKAuthenticationChallengeGetPreviousFailureCount(const void* challengeRef);
+const void* APS5_VABI WKAuthenticationChallengeGetProposedCredential(const void* challengeRef);
+const void* APS5_VABI WKAuthenticationChallengeGetProtectionSpace(const void* challengeRef);
 std::uint32_t APS5_VABI WKAuthenticationChallengeGetTypeID();
+bool APS5_VABI WKAuthenticationChallengeIsForMainResource(const void* challengeRef);
+bool APS5_VABI WKAuthenticationChallengeIsInMainFrame(const void* challengeRef);
+void APS5_VABI WKAuthenticationDecisionListenerCancel(const void* listenerRef);
 std::uint32_t APS5_VABI WKAuthenticationDecisionListenerGetTypeID();
+void APS5_VABI WKAuthenticationDecisionListenerRejectProtectionSpaceAndContinue(const void* listenerRef);
+void APS5_VABI WKAuthenticationDecisionListenerUseCredential(const void* listenerRef, const void* credentialRef);
 void APS5_VABI WKBackForwardListClear(const void* listRef);
 const void* APS5_VABI WKBackForwardListCopyBackListWithLimit(const void* listRef, std::uint32_t limit);
 const void* APS5_VABI WKBackForwardListCopyForwardListWithLimit(const void* listRef, std::uint32_t limit);
