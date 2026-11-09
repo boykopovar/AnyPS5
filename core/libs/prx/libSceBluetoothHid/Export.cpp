@@ -6,6 +6,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <cerrno>
 #include <mutex>
 
 static_assert(sizeof(BluetoothHidThreadParam) == 24);
@@ -136,8 +137,19 @@ int APS5_VABI sceBluetoothHidInterruptOutput(std::uint64_t deviceHandle, std::ui
 
 int APS5_VABI sceBluetoothHidParamInitialize(BluetoothHidParam* param, const BluetoothHidThreadParam* threadParam) {
     if (param == nullptr) return InvalidArgument;
-    param->threadParam = threadParam;
-    param->reserved = 0;
+    BluetoothHidParam localParam{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) {
+        errno = savedErrno;
+        return InvalidArgument;
+    }
+    localParam.threadParam = threadParam;
+    localParam.reserved = 0;
+    if (!GuestCopyOut_nid_no_patch(param, &localParam, sizeof(localParam))) {
+        errno = savedErrno;
+        return InvalidArgument;
+    }
+    errno = savedErrno;
     return 0;
 }
 
