@@ -1442,6 +1442,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
     endif()
 
+    add_test_executable(guest_kernel_readv_iovcnt_tests tests/GuestKernelReadvNegativeIovcnt.cpp)
+    target_include_directories(guest_kernel_readv_iovcnt_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_readv_iovcnt_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_readv_iovcnt_tests)
+    add_test(NAME guest_kernel_readv_iovcnt COMMAND guest_kernel_readv_iovcnt_tests)
+    if(WIN32)
+        set_tests_properties(guest_kernel_readv_iovcnt PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+
     add_subdirectory(tests/floating_prefix)
 
     add_test_executable(MemoryPoolTest
