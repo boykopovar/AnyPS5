@@ -1,4 +1,4 @@
-#include "prx/libSceMsgDialog/include/HostMessageBox.hpp"
+#include "prx/libSceIme/include/HostMessageBox.hpp"
 
 #include <cstdio>
 
