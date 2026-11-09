@@ -1831,6 +1831,37 @@ void RequireAsyncResolution() {
     Require(std::getenv("APS5_LAZY_SHADER_PREPARE") == nullptr && std::getenv("APS5_SYNC_SHADER_PREPARE") == nullptr, "background ABI resolution tests need the default preparation mode");
 }
 
+void AbiBackgroundDraw() {
+    RequireAsyncResolution();
+    static NarrowStoreHeader header;
+    RegisterNarrowStore(header);
+    SettleResolvedAbis();
+    const auto snapshot = RegisteredSnapshot(&header.shader);
+    const NarrowStoreOutputs outputs(1);
+    auto commands = NarrowStoreCommands(header, outputs.Block(0));
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    const std::array<ShaderRegister, 1> context{{{0x191, 0x20}}};
+    PoolGate gate;
+    AgcDriverResolveShaderAbi_nid_postfix(&header.shader, context, {});
+    Require(ResolvingAbis(*snapshot) == 1, "a resolved static ABI was not queued while every pool worker was busy");
+    auto drawn = std::async(std::launch::async, [&] {
+        sceAgcDriverSubmitAcb(0x20, &packet);
+        AgcDriverWaitIdle_nid_postfix();
+    });
+    const bool finished = drawn.wait_for(std::chrono::seconds(30)) == std::future_status::ready;
+    const bool queued = ResolvingAbis(*snapshot) == 1;
+    const auto built = ShaderRecompiler::FrontEndBuilds();
+    gate.Release();
+    drawn.get();
+    Require(finished, "a dispatch waited for the resolved ABI of its shader queued behind other registration work");
+    Require(queued, "the resolved ABI of a shader was prepared by the pool while every worker was busy");
+    outputs.Check(0, "dispatch beside a queued resolved ABI");
+    SettleResolvedAbis();
+    Require(ResolvingAbis(*snapshot) == 0, "a resolved ABI stayed pending after the pool ran its job");
+    Require(ShaderRecompiler::FrontEndBuilds() == built, "the resolved ABI of a shader its dispatch had already prepared was compiled again");
+    AgcDriverShutdown_nid_postfix();
+}
+
 void AbiBackgroundProgress() {
     RequireAsyncResolution();
     static NarrowStoreHeader header;
@@ -2032,7 +2063,7 @@ int main(int argc, char** argv) {
         Require(SetStdHandle(STD_ERROR_HANDLE, diagnosticError) != 0, "cannot retain native diagnostics during stderr capture");
 #endif
         const std::string_view abiMode = argc == 2 ? argv[1] : "";
-        const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-concurrent" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs" || abiMode == "--abi-deferred-background-progress" || abiMode == "--abi-deferred-background-close";
+        const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-concurrent" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs" || abiMode == "--abi-deferred-background-draw" || abiMode == "--abi-deferred-background-progress" || abiMode == "--abi-deferred-background-close";
         Require(argc == 1 || abiDeferred || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--registered-workgroup" || std::string_view(argv[1]) == "--dispatch-ahead-prewarm" || std::string_view(argv[1]) == "--lazy")), "invalid test arguments");
         if (abiDeferred) {
             if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
@@ -2044,6 +2075,7 @@ int main(int argc, char** argv) {
             else if (abiMode == "--abi-deferred-registration-failure") AbiDeferredRegistrationFailure();
             else if (abiMode == "--abi-deferred-vertex-inputs") AbiDeferredVertexInputs();
             else if (abiMode == "--abi-deferred-rectangle-pairs") AbiDeferredRectanglePairs();
+            else if (abiMode == "--abi-deferred-background-draw") AbiBackgroundDraw();
             else if (abiMode == "--abi-deferred-background-progress") AbiBackgroundProgress();
             else if (abiMode == "--abi-deferred-background-close") AbiBackgroundClose();
             else AbiDeferredRectangle();
