@@ -273,5 +273,9 @@ std::uint32_t APS5_VABI WKContextGetCacheModel(const void* contextRef);
 void APS5_VABI WKContextSetCacheModel(const void* contextRef, std::uint32_t cacheModel);
 bool APS5_VABI WKContextGetAccessibilityEnabled(const void* contextRef);
 void APS5_VABI WKContextSetAccessibilityEnabled(const void* contextRef, bool enabled);
+void APS5_VABI WKContextDisableProcessTermination(const void* contextRef);
+void APS5_VABI WKContextEnableProcessTermination(const void* contextRef);
+void APS5_VABI WKContextAddVisitedLink(const void* contextRef, const void* visitedURLRef);
+void APS5_VABI WKContextClearVisitedLinks(const void* contextRef);
 
 }
