@@ -98,6 +98,7 @@ SpirvFormatComponentType GetFormatComponentType(IrBufferFormat format) {
         case IrBufferFormat::Format16_16Float:
         case IrBufferFormat::Format11_11_10Float:
         case IrBufferFormat::Format10_11_11Float:
+        case IrBufferFormat::Format10_10_10_2Float:
         case IrBufferFormat::Format32_32Float:
         case IrBufferFormat::Format16_16_16_16Float:
         case IrBufferFormat::Format32_32_32Float:
@@ -185,6 +186,7 @@ SpirvBufferFormatInfo GetFormatInfo(IrBufferFormat format) {
         case IrBufferFormat::Format10_10_10_2SScaled:
         case IrBufferFormat::Format10_10_10_2UInt:
         case IrBufferFormat::Format10_10_10_2SInt:
+        case IrBufferFormat::Format10_10_10_2Float:
             return {format, type, 4u, 4u, {10u, 10u, 10u, 2u}, {0u, 10u, 20u, 30u}, true};
         case IrBufferFormat::Format8_8_8_8UNorm:
         case IrBufferFormat::Format8_8_8_8SNorm:

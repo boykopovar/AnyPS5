@@ -14,7 +14,7 @@ struct FormatInfo {
     bool sint32;
 };
 
-constexpr std::array<FormatInfo, 83> kFormatInfoTable {{
+constexpr std::array<FormatInfo, 84> kFormatInfoTable {{
     {IrBufferFormat::Format8UNorm, true, false, false},
     {IrBufferFormat::Format8SNorm, true, false, false},
     {IrBufferFormat::Format8UInt, true, true, false},
@@ -43,6 +43,7 @@ constexpr std::array<FormatInfo, 83> kFormatInfoTable {{
     {IrBufferFormat::Format10_10_10_2UNorm, true, false, false},
     {IrBufferFormat::Format10_10_10_2SNorm, true, false, false},
     {IrBufferFormat::Format10_10_10_2UInt, true, true, false},
+    {IrBufferFormat::Format10_10_10_2Float, true, true, false},
     {IrBufferFormat::Format10_10_10_2SInt, true, false, true},
     {IrBufferFormat::Format8_8_8_8UNorm, true, false, false},
     {IrBufferFormat::Format8_8_8_8SNorm, true, false, false},
@@ -145,7 +146,7 @@ IrTextureNumericClass SampledTextureNumericClass(IrBufferFormat format) {
 }
 
 IrBufferFormat RemapTextureFormat(IrBufferFormat format) {
-    return format == IrBufferFormat::Format11_11_10UNorm || format == IrBufferFormat::Format11_11_10UInt || format == IrBufferFormat::Format11_11_10Float || format == IrBufferFormat::Format10_11_11Float ? IrBufferFormat::Format32UInt : format;
+    return format == IrBufferFormat::Format11_11_10UNorm || format == IrBufferFormat::Format11_11_10UInt || format == IrBufferFormat::Format11_11_10Float || format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format10_10_10_2Float ? IrBufferFormat::Format32UInt : format;
 }
 
 IrBufferFormat RemapStorageTextureFormat(IrBufferFormat format) {

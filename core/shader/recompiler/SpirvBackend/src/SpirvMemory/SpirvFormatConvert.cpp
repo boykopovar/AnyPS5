@@ -70,8 +70,25 @@ std::uint32_t EmitUFloatToF32Bits(SpirvEmitterState& state, std::uint32_t raw, s
     return EmitBitcastF32ToU32(state, result);
 }
 
+std::uint32_t EmitUFloat6E4ToF32Bits(SpirvEmitterState& state, std::uint32_t raw) {
+    const auto mantissa = EmitBinaryU32(state, spv::OpBitwiseAnd, raw, ConstantU32(state, 0x3fu));
+    const auto exponent = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, raw, ConstantU32(state, 6u)), ConstantU32(state, 0xfu));
+    const auto exponentBits = EmitBinaryU32(state, spv::OpShiftLeftLogical, EmitAddU32(state, exponent, ConstantU32(state, 127u - 7u)), ConstantU32(state, 23u));
+    const auto mantissaBits = EmitBinaryU32(state, spv::OpShiftLeftLogical, mantissa, ConstantU32(state, 17u));
+    const auto normal = EmitBitcastU32ToF32(state, EmitBinaryU32(state, spv::OpBitwiseOr, exponentBits, mantissaBits));
+    const auto mantissaF32 = state.module.AllocateId();
+    const auto subnormal = state.module.AllocateId();
+    state.module.AddFunction(spv::OpConvertUToF, TypeF32(state), mantissaF32, mantissa);
+    state.module.AddFunction(spv::OpFMul, TypeF32(state), subnormal, mantissaF32, ConstantF32Value(state, std::ldexp(1.0f, 1 - 7 - 6)));
+    const auto result = EmitTBufferSelectF32(state, EmitCompareU32Constant(state, spv::OpIEqual, exponent, 0u), subnormal, normal);
+    return EmitBitcastF32ToU32(state, result);
+}
+
 std::uint32_t NormalizeFormatComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t raw) {
     const auto bits = info.componentBits[component];
+    if (info.format == IrBufferFormat::Format10_10_10_2Float) {
+        return component < 3u ? EmitUFloat6E4ToF32Bits(state, raw) : UnormToF32Bits(state, raw, bits);
+    }
     switch (info.type) {
     case SpirvFormatComponentType::Uint:
     case SpirvFormatComponentType::Sint:
@@ -280,6 +297,9 @@ std::uint32_t EmitD16FormatComponent(SpirvEmitterState& state, const SpirvBuffer
 }
 
 std::uint32_t EmitFormatStoreComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t data) {
+    if (info.format == IrBufferFormat::Format10_10_10_2Float) {
+        FailEmit("stores a 10_10_10_2 float format, which is not implemented");
+    }
     const auto bits = info.componentBits[component];
     const std::uint32_t mask = bits >= 32u ? 0xffffffffu : (1u << bits) - 1u;
     switch (info.type) {
