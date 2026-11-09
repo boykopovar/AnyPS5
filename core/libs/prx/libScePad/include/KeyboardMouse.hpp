@@ -107,6 +107,10 @@ private:
     bool mouseMode = false;
     bool titleReadsMouse = false;
     bool mouseTouchpad = false;
+    bool mouseGyro = false;
+    double gyroCountsX = 0.0;
+    double gyroCountsY = 0.0;
+    std::array<double, 2> gyroRate{};
     int viewportWidth = 0;
     int viewportHeight = 0;
     std::optional<PadTouchPoint> mouseTouch;
