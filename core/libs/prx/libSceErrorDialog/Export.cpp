@@ -1,8 +1,10 @@
 #include "prx/libSceErrorDialog/include/Api.hpp"
 #include "prx/libSceErrorDialog/include/ErrorDialogRequest.hpp"
+#include "prx/libSceIme/include/HostMessageBox.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 
@@ -15,6 +17,11 @@ constexpr int kStatusNone = 0;
 constexpr int kStatusInitialized = 1;
 constexpr int kStatusRunning = 2;
 constexpr int kStatusFinished = 3;
+#ifdef __APPLE__
+constexpr bool kAppleBuild = true;
+#else
+constexpr bool kAppleBuild = false;
+#endif
 
 constexpr int kErrOk = 0;
 constexpr int kErrNotInitialized = static_cast<int>(0x80ED0001u);
