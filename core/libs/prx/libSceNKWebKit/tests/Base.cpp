@@ -4,6 +4,8 @@
 #include "prx/libSceNKWebKit/src/NavigationData.hpp"
 #include "prx/libSceNKWebKit/src/BackForwardList.hpp"
 #include "prx/libSceNKWebKit/src/ProtectionSpace.hpp"
+#include "prx/libSceNKWebKit/src/FrameHandle.hpp"
+#include "prx/libSceNKWebKit/src/OpenPanelParameters.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <algorithm>
 #include <cassert>
@@ -368,6 +370,28 @@ static void TestArray() {
     Require(WKArrayGetSize(arr) == 2);
     Require(WKStringIsEqual(WKArrayGetItemAtIndex(arr, 0), s1));
     Require(WKStringIsEqual(WKArrayGetItemAtIndex(arr, 1), s2));
+
+    bool rejectedNull = false;
+    try {
+        WKArrayCreate(nullptr, 1);
+    } catch (...) {
+        rejectedNull = true;
+    }
+    Require(rejectedNull);
+    rejectedNull = false;
+    try {
+        WKArrayCreateAdoptingValues(nullptr, 1);
+    } catch (...) {
+        rejectedNull = true;
+    }
+    Require(rejectedNull);
+    rejectedNull = false;
+    try {
+        WKDictionaryCreate(nullptr, nullptr, 1);
+    } catch (...) {
+        rejectedNull = true;
+    }
+    Require(rejectedNull);
 
     bool caught = false;
     try {
@@ -1511,6 +1535,118 @@ static void TestPermissionRequests() {
     Require(threw);
 }
 
+static void TestFrameHandle() {
+    auto* handle = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::FrameHandle>(0x0123456789ABCDEFull));
+    Require(WKGetTypeID(handle) == WKFrameHandleGetTypeID());
+    Require(WKFrameHandleGetFrameID(handle) == 0x0123456789ABCDEFull);
+    WKRelease(handle);
+
+    auto* zero = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::FrameHandle>());
+    Require(WKFrameHandleGetFrameID(zero) == 0);
+    WKRelease(zero);
+
+    auto* maximum = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::FrameHandle>(UINT64_MAX));
+    Require(WKFrameHandleGetFrameID(maximum) == UINT64_MAX);
+    WKRelease(maximum);
+
+    auto* notHandle = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not a frame handle"));
+    bool threw = false;
+    try {
+        WKFrameHandleGetFrameID(notHandle);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    WKRelease(notHandle);
+
+    threw = false;
+    try {
+        WKFrameHandleGetFrameID(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+template<typename Function>
+static bool ThrowsOpenPanel(Function function, const void* ref) {
+    try {
+        function(ref);
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+template<typename Function>
+static bool ThrowsOpenPanelCopy(Function function, const void* ref) {
+    try {
+        function(ref);
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+static void TestOpenPanelParameters() {
+    using Strings = std::vector<NKWebKit::Retained<NKWebKit::String>>;
+    auto* parameters = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::OpenPanelParameters>(
+        true, true,
+        Strings{NKWebKit::String::FromUtf8("image/png"), NKWebKit::String::FromUtf8("text/*")},
+        Strings{NKWebKit::String::FromUtf8(".txt")},
+        Strings{NKWebKit::String::FromUtf8("/tmp/a.txt"), NKWebKit::String::FromUtf8("/tmp/b.txt"), NKWebKit::String::FromUtf8("/tmp/c.txt")}));
+    Require(WKGetTypeID(parameters) == WKOpenPanelParametersGetTypeID());
+    Require(WKOpenPanelParametersGetAllowsDirectories(parameters));
+    Require(WKOpenPanelParametersGetAllowsMultipleFiles(parameters));
+
+    auto* mimeTypes = WKOpenPanelParametersCopyAcceptedMIMETypes(parameters);
+    Require(WKGetTypeID(mimeTypes) == WKArrayGetTypeID());
+    Require(WKArrayGetSize(mimeTypes) == 2);
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 0), "image/png"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 1), "text/*"));
+    WKRelease(mimeTypes);
+
+    auto* extensions = WKOpenPanelParametersCopyAcceptedFileExtensions(parameters);
+    Require(WKArrayGetSize(extensions) == 1);
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(extensions, 0), ".txt"));
+    WKRelease(extensions);
+
+    auto* selected = WKOpenPanelParametersCopySelectedFileNames(parameters);
+    Require(WKArrayGetSize(selected) == 3);
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(selected, 2), "/tmp/c.txt"));
+    WKRelease(selected);
+    WKRelease(parameters);
+
+    auto* empty = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::OpenPanelParameters>());
+    Require(!WKOpenPanelParametersGetAllowsDirectories(empty));
+    Require(!WKOpenPanelParametersGetAllowsMultipleFiles(empty));
+    auto* none = WKOpenPanelParametersCopyAcceptedMIMETypes(empty);
+    Require(WKArrayGetSize(none) == 0);
+    WKRelease(none);
+    none = WKOpenPanelParametersCopyAcceptedFileExtensions(empty);
+    Require(WKArrayGetSize(none) == 0);
+    WKRelease(none);
+    none = WKOpenPanelParametersCopySelectedFileNames(empty);
+    Require(WKArrayGetSize(none) == 0);
+    WKRelease(none);
+    WKRelease(empty);
+
+    auto* withNull = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::OpenPanelParameters>(false, false, Strings{nullptr}, Strings{}, Strings{}));
+    auto* nullTypes = WKOpenPanelParametersCopyAcceptedMIMETypes(withNull);
+    Require(WKArrayGetSize(nullTypes) == 1);
+    Require(WKStringIsEmpty(WKArrayGetItemAtIndex(nullTypes, 0)));
+    WKRelease(nullTypes);
+    WKRelease(withNull);
+
+    auto* notParameters = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not parameters"));
+    Require(ThrowsOpenPanel(WKOpenPanelParametersGetAllowsDirectories, notParameters));
+    Require(ThrowsOpenPanel(WKOpenPanelParametersGetAllowsMultipleFiles, nullptr));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAcceptedMIMETypes, notParameters));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAcceptedFileExtensions, nullptr));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopySelectedFileNames, nullptr));
+    WKRelease(notParameters);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -1621,6 +1757,8 @@ int main() {
     TestOpenPanelResultListener();
     TestProtectionSpace();
     TestPermissionRequests();
+    TestFrameHandle();
+    TestOpenPanelParameters();
     TestCertificateInfo();
 TestEmptyFrameLoaderClient();
 
