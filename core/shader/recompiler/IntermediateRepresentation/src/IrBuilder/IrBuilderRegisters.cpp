@@ -2,6 +2,7 @@
 #include "IntermediateRepresentation/IrBuilderInternal.hpp"
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace ShaderRecompiler {
 
@@ -110,7 +111,7 @@ void IrBuilder::SetScalarMaskTag(ScalarReg reg, IrValue& value) {
 IrValue* IrBuilder::vectorWindowIndex(VectorReg reg) {
     const auto& metadata = program.Metadata();
     const auto index = static_cast<std::uint32_t>(RegIndex(reg));
-    if (metadata.vectorWindowSize == 0u || index < metadata.vectorWindowBase) return nullptr;
+    if (!vectorWindowActive || metadata.vectorWindowSize == 0u || index < metadata.vectorWindowBase) return nullptr;
     if (index - metadata.vectorWindowBase >= metadata.vectorWindowSize) throw std::runtime_error("vector register " + std::to_string(index) + " lies past the relative-addressing window");
     return &Constant(index - metadata.vectorWindowBase);
 }
@@ -129,6 +130,17 @@ void IrBuilder::SetVectorReg(VectorReg reg, IrValue& value) {
     }
     IrValue& operand = createRegisterOperand(program, RegisterBank::Vector, RegIndex(reg), IrType::VectorReg);
     (void)Emit(IrOpcode::SetVectorRegister, IrType::Void, {&operand, &value});
+}
+
+void IrBuilder::SyncVectorWindow(bool toWindow) {
+    const auto& metadata = program.Metadata();
+    const bool active = std::exchange(vectorWindowActive, false);
+    for (std::uint32_t slot = 0; slot < metadata.vectorWindowSize; ++slot) {
+        const auto reg = static_cast<VectorReg>(metadata.vectorWindowBase + slot);
+        if (toWindow) (void)Emit(IrOpcode::StoreVectorWindow, IrType::Void, {&Constant(slot), &GetVectorReg(reg)});
+        else SetVectorReg(reg, Emit(IrOpcode::LoadVectorWindow, IrType::U32, {&Constant(slot)}));
+    }
+    vectorWindowActive = active;
 }
 
 }
