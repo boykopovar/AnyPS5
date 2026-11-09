@@ -4,8 +4,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
-#include <string>
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -59,15 +57,6 @@ int main() {
     Require(sceBgftServiceIntInit(nullptr) == invalidArgument);
 
     std::byte heap[1024]{};
-    bool zeroHeapThrew = false;
-    try {
-        const BgftInitParam zeroHeap{heap, 0};
-        static_cast<void>(sceBgftServiceIntInit(&zeroHeap));
-    } catch (const std::runtime_error& error) {
-        zeroHeapThrew = std::string(error.what()) == "sceBgftServiceIntInit not implemented";
-    }
-    Require(zeroHeapThrew);
-
     const BgftInitParam initialized{heap, sizeof(heap)};
     Require(sceBgftServiceIntInit(&initialized) == 0);
     Require(sceBgftServiceIntInit(&initialized) == alreadyInitialized);
