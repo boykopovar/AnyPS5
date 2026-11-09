@@ -1269,6 +1269,23 @@ bool MovableBuffers() {
     return enabled;
 }
 
+std::atomic<std::uint64_t>& drawContentKeysBuilt() {
+    static std::atomic<std::uint64_t> built{0};
+    return built;
+}
+
+bool TemplateKeyWords(const CompiledShader& shader) {
+    const auto* heap = shader.heap;
+    if (heap == nullptr || heap->base == nullptr || shader.program->heapTemplateId == 0) return false;
+    const auto& bindings = shader.program->bindings;
+    for (std::size_t index = 0; index < bindings.size(); ++index) {
+        const auto role = bindings[index].role;
+        if (role != ShaderRecompiler::DescriptorRole::GuestImages && role != ShaderRecompiler::DescriptorRole::GuestSamplers) continue;
+        if (index < heap->bindings.size() && !heap->bindings[index].empty()) return false;
+    }
+    return true;
+}
+
 ResourceCache::Key DrawResourceKey(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::uint64_t indexBytes, bool ranges) {
     ResourceCache::Key key;
     key.reserve(256);
@@ -1282,16 +1299,21 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
     for (const auto& shader : shaders) {
         const auto sizeAt = key.size();
         key.push_back(0u);
-        auto& memo = shader.heap != nullptr ? shader.heap->drawKeyMemo.words : shader.program->drawKeyMemo.words;
+        const ShaderRecompiler::HeapStageWords* memoOwner = shader.heap;
+        if (memoOwner != nullptr && !memoOwner->memoizeKey && TemplateKeyWords(shader)) memoOwner = memoOwner->base.get();
+        auto& memo = memoOwner != nullptr ? memoOwner->drawKeyMemo.words : shader.program->drawKeyMemo.words;
         const auto ownerId = shader.program->heapTemplateId != 0 ? shader.program->heapTemplateId : static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(shader.program));
-        const std::array<std::uint32_t, 3> owner{static_cast<std::uint32_t>(ownerId), static_cast<std::uint32_t>(ownerId >> 32u),
-                                                 static_cast<std::uint32_t>(shader.stage) | (shader.program->heapTemplateId != 0 ? 0x80000000u : 0u)};
+        const auto variant = shader.program->PipelineVariantId();
+        const std::array<std::uint32_t, 5> owner{static_cast<std::uint32_t>(ownerId), static_cast<std::uint32_t>(ownerId >> 32u),
+                                                 static_cast<std::uint32_t>(shader.stage) | (shader.program->heapTemplateId != 0 ? 0x80000000u : 0u),
+                                                 static_cast<std::uint32_t>(variant), static_cast<std::uint32_t>(variant >> 32u)};
         const std::size_t prefix = shader.heap != nullptr ? owner.size() : 0u;
-        const bool memoize = shader.heap == nullptr || shader.heap->memoizeKey;
+        const bool memoize = memoOwner == nullptr || memoOwner->memoizeKey;
         const auto words = memoize ? memo.load(std::memory_order_acquire) : nullptr;
         if (words != nullptr && words->size() >= prefix && std::equal(owner.begin(), owner.begin() + static_cast<std::ptrdiff_t>(prefix), words->begin())) {
             key.insert(key.end(), words->begin() + static_cast<std::ptrdiff_t>(prefix), words->end());
         } else {
+            drawContentKeysBuilt().fetch_add(1, std::memory_order_relaxed);
             ShaderResources::AppendContentKey(shader, true, MovableBuffers(), key);
             if (memoize) {
                 auto stored = std::make_shared<std::vector<std::uint32_t>>(owner.begin(), owner.begin() + static_cast<std::ptrdiff_t>(prefix));
@@ -1438,6 +1460,10 @@ void CountDrawSkip(DrawSkip kind, double us) {
     stats.skipUs[static_cast<std::size_t>(kind)] += us;
 }
 
+
+std::uint64_t DrawContentKeysBuilt() {
+    return drawContentKeysBuilt().load(std::memory_order_relaxed);
+}
 
 bool DrawRecipes() {
     static const bool noDrawRecipe = std::getenv("APS5_NO_DRAW_RECIPE") != nullptr;
