@@ -59,6 +59,7 @@ struct InputRequests {
     bool volumeUp = false;
     bool volumeDown = false;
     bool toggleMute = false;
+    bool hostMenu = false;
     bool toggleMouse = false;
     bool reloadInputMapping = false;
     bool releaseMouse = false;
