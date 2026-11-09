@@ -79,6 +79,8 @@ PadInput::PadInput(Pad::InputConfiguration configuration) : mappings(std::move(c
 }
 
 PadInput::~PadInput() {
+    mappingWatchStop = true;
+    if (mappingWatchThread.joinable()) mappingWatchThread.join();
     for (int i = 0; i < PAD_MAX_CONTROLLERS; ++i) {
         closeController(i);
     }
