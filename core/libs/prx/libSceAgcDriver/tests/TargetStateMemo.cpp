@@ -1131,6 +1131,18 @@ void untrackedCmaskClear(AgcDriver::VulkanDevice& device) {
     untrackedMetadataClear(device, false);
 }
 
+void residentDccClear(AgcDriver::VulkanDevice& device) {
+    const auto keyed = colorTarget(true);
+    const auto plain = colorTarget();
+    Require(!AgcDriver::GuestMemory::Watched(keyed.dccAddress, Keys.size()), "the untracked metadata fixture is write-watched");
+    reset(device, keyed);
+    draw(device, keyed);
+    for (int repeat = 0; repeat < 4; ++repeat) draw(device, plain);
+    std::fill(Keys.begin(), Keys.end(), std::uint8_t{0x20});
+    expect(device, plain, [](std::uint32_t x) { return leftOver(x, Old); }, "a target without DCC took the fast clear of a resident image's DCC keys");
+    std::ranges::fill(Keys, std::uint8_t{0xff});
+}
+
 void descriptorIdentity() {
     auto color = colorTarget();
     auto depth = depthTarget(false);
@@ -1177,9 +1189,10 @@ void unchangedMemo(AgcDriver::VulkanDevice& device) {
     }
 }
 
-const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 12> R3Scenarios{{
+const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 13> R3Scenarios{{
     {"untracked-dcc", untrackedDccClear},
     {"untracked-cmask", untrackedCmaskClear},
+    {"resident-dcc", residentDccClear},
     {"claim", claimAfterAbsorbedFill},
     {"depth-proof", depthProofAfterMetadataWrite},
     {"baseline", validRefreshBaselines},
