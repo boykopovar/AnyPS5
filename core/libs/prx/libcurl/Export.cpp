@@ -691,12 +691,12 @@ void APS5_VABI curl_formfree_nid_postfix(struct guest_curl_httppost* form) {
     while (form) {
         auto* next = form->next;
         curl_formfree_nid_postfix(form->more);
-        if (!(form->flags & CURL_HTTPPOST_PTRNAME)) free_nid_postfix(form->name);
+        if (!(form->flags & CURL_HTTPPOST_PTRNAME)) Curl_cfree(form->name);
         if (!(form->flags & (CURL_HTTPPOST_PTRCONTENTS | CURL_HTTPPOST_BUFFER | CURL_HTTPPOST_CALLBACK)))
-            free_nid_postfix(form->contents);
-        free_nid_postfix(form->contenttype);
-        free_nid_postfix(form->showfilename);
-        free_nid_postfix(form);
+            Curl_cfree(form->contents);
+        Curl_cfree(form->contenttype);
+        Curl_cfree(form->showfilename);
+        Curl_cfree(form);
         form = next;
     }
 }
