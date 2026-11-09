@@ -305,8 +305,10 @@ int APS5_VABI sceHttp2SetAutoRedirect(int id, int enable) {
 }
 
 int APS5_VABI sceHttp2SetConnectionWaitTimeOut(int id, uint32_t usec) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Update(id, __func__, [&](auto& settings) {
+        if (!usec) NotImplemented_nid_no_patch("sceHttp2SetConnectionWaitTimeOut");
+        settings.connectionWaitTimeout = usec;
+    });
 }
 
 int APS5_VABI sceHttp2SetConnectTimeOut(int id, uint32_t usec) {
