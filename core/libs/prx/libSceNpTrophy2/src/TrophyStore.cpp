@@ -1,7 +1,9 @@
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libSceNpTrophy2/include/TitleTrophies.hpp"
+#include "prx/libSceNpTrophy2/include/TrophyNotice.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel/System/include/HostNotify.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -224,6 +226,7 @@ bool RecordUnlock(std::int32_t userId, std::uint32_t serviceLabel, std::int32_t 
     const NpTrophy2Unlock unlock{std::string(titleId), userId, serviceLabel, trophyId, CurrentTick()};
     if (!TitleStore().Unlock(userId, serviceLabel, trophyId, unlock.tick)) return false;
     std::fprintf(stderr, "[trophy] %s unlocked trophy %d for user %d\n", unlock.titleId.c_str(), trophyId, userId);
+    SendHostNotification("Trophy unlocked", UnlockNoticeText(Package(serviceLabel), trophyId));
     auto& registry = listeners();
     std::lock_guard dispatching(registry.dispatch);
     std::vector<Listener> current;
