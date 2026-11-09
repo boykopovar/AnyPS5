@@ -1,6 +1,7 @@
 #include <cstdint>
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
@@ -95,8 +96,8 @@ int APS5_VABI libSceLibcInternalInventory_017_nid_no_patch() {
 }
 APS5_EXPORT("rNYLEsL7M0k", libSceLibcInternalInventory_017_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_019_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_019_nid_no_patch(LibcException::SystemErrorObject* self, LibcException::ErrorCode code, const char* message) {
+    LibcExceptionConstructSystemError_nid_no_patch(self, code, message);
 }
 APS5_EXPORT("oly3wSwEJ2A", libSceLibcInternalInventory_019_nid_no_patch);
 
@@ -259,26 +260,6 @@ int APS5_VABI libSceLibcInternalInventory_053_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("8R00hgzXQDY", libSceLibcInternalInventory_053_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_054_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("WDKzMM-uuLE", libSceLibcInternalInventory_054_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_055_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("Dc4ZMWmPMl8", libSceLibcInternalInventory_055_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_056_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("hVQgfGhJz3U", libSceLibcInternalInventory_056_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_057_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("MAalgQhejPc", libSceLibcInternalInventory_057_nid_no_patch);
 
 int APS5_VABI libSceLibcInternalInventory_058_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -1192,11 +1173,6 @@ int APS5_VABI libSceLibcInternalInventory_241_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("Eva2i4D5J6I", libSceLibcInternalInventory_241_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_242_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("saSUnPWLq9E", libSceLibcInternalInventory_242_nid_no_patch);
 
 int APS5_VABI libSceLibcInternalInventory_243_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
