@@ -17,10 +17,13 @@ static_assert(sizeof(Context) == 56);
 
 int main() {
     Context context{};
-    int issuer = 1, subject = 2, request = 3, crl = 4;
+    int issuer = 1, subject = 2, request = 3, crl = 4, databaseMethod = 5, database = 6;
+    context.databaseMethod = &databaseMethod;
+    context.database = &database;
     X509V3_set_ctx_nid_postfix(&context, &issuer, &subject, &request, &crl, 0x1);
     Require(context.flags ==  0x1 && context.issuer == &issuer && context.subject == &subject);
     Require(context.request == &request && context.crl == &crl);
+    Require(context.databaseMethod == &databaseMethod && context.database == &database);
     bool threw = false;
     try { X509V3_set_ctx_nid_postfix(nullptr, nullptr, nullptr, nullptr, nullptr, 0); }
     catch (const std::invalid_argument&) { threw = true; }
