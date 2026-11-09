@@ -740,7 +740,8 @@ int main() {
             {"ToggleMute default key", testToggleMuteDefaultKey},
             {"default L2", testDefaultL2},
             {"title reads the mouse", testTitleReadsMouse},
-            {"mouse stick target", testMouseStickTarget}
+            {"mouse stick target", testMouseStickTarget},
+            {"pad chord requests", testPadChordRequests}
         };
         for (const auto& [name, test] : tests) {
             test();
