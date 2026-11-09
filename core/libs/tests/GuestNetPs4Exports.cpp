@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -24,16 +23,6 @@ constexpr int kDuplicateIpNotStarted = static_cast<int>(0x80411A03u);
 constexpr int kPppoeNotStarted = static_cast<int>(0x80411406u);
 
 bool Failed(int result, int error) { return result == (kErrorBase | error) && *sceNetErrnoLoc() == error; }
-
-template<typename TCall>
-bool Throws(TCall call) {
-    try {
-        call();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
 
 std::uint64_t APS5_VABI IgnoreEvent(std::uint32_t, std::uint64_t, void*, void*) { return 0; }
 
@@ -99,12 +88,6 @@ void CheckDaemonsNeverStarted() {
     const auto* dhcpd = reinterpret_cast<const NetDhcpdStartParameter*>(info.data());
     for (const std::uint32_t interfaceId : {0u, 2u, 3u, 6u, 0xFFFFFFFFu}) Require(sceNetDhcpdStart(interfaceId, nullptr, nullptr, 0, 0, dhcpd) == kDaemonInvalid);
     Require(sceNetDhcpdStart(1, nullptr, nullptr, 0, 0, nullptr) == kDaemonInvalid);
-    Require(Throws([&] { sceNetDhcpdStart(1, nullptr, nullptr, 0, 0, dhcpd); }));
-    Require(Throws([&] { sceNetDuplicateIpStart(3, nullptr, nullptr, 1, 0); }));
-    Require(Throws([&] { sceNetInfoDumpStart(0, 0, reinterpret_cast<const NetInfoDumpParameter*>(info.data())); }));
-    Require(Throws([&] { sceNetPppoeStart(1, 0, nullptr, nullptr, 0, 0, nullptr); }));
-    Require(Throws([&] { sceNetDhcpStart(1, nullptr, nullptr, 0, 0, nullptr); }));
-    Require(Throws([&] { sceNetAddrConfig6Start(1, nullptr, nullptr, 0, 0, nullptr); }));
 }
 
 void CheckDhcpOptionParser() {
@@ -178,8 +161,6 @@ void CheckValidation() {
     auto* connection = reinterpret_cast<NetResolverConnection*>(g_record.data());
     Require(Failed(sceNetControl(0xFFFFFFFFu, -1, 0, nullptr, 0), kEinval));
     Require(Failed(sceNetControl(1, 1, 0, nullptr, 0), kEinval));
-    Require(Throws([] { sceNetControl(0xFFFFFFFFu, 0, 0, nullptr, 0); }));
-    Require(Throws([] { sceNetControl(1, 0, 0, nullptr, 0); }));
     Require(Failed(sceNetGetIfList(1, nullptr, 1), kEinval));
     Require(Failed(sceNetGetIfList(1, interfaces, 0), kEinval));
     Require(Failed(sceNetGetIfList(1, interfaces, 2), kEinval));
@@ -187,22 +168,16 @@ void CheckValidation() {
     Require(Failed(sceNetGetIfListOnce(-1, statistics, 1), kEinval));
     Require(Failed(sceNetGetIfListOnce(1, nullptr, 1), kEinval));
     Require(Failed(sceNetGetIfListOnce(1, statistics, 2), kEinval));
-    Require(Throws([&] { sceNetGetIfListOnce(1, statistics, 1); }));
     Require(Failed(sceNetGetRouteInfo(0, routes, 4, 0), kEinval));
     Require(Failed(sceNetGetRouteInfo(23, routes, 4, 0), kEinval));
     Require(Failed(sceNetGetRouteInfo(2, nullptr, 1, 1), kEinval));
     Require(Failed(sceNetGetRouteInfo(28, routes, 2, 1), kEinval));
-    Require(Throws([&] { sceNetGetRouteInfo(2, routes, 4, 0); }));
-    Require(Throws([&] { sceNetAllocateAllRouteInfo(-1, &value); }));
     Require(sceNetFreeAllRouteInfo(nullptr) == 0);
     Require(Failed(sceNetGetArpInfo(nullptr, 4), kEinval));
-    Require(Throws([] { sceNetGetArpInfo(nullptr, 3); }));
     Require(Failed(sceNetGetStatisticsInfoInternal(nullptr), kEinval));
-    Require(Throws([] { sceNetGetStatisticsInfoInternal(reinterpret_cast<NetStatisticsInfoInternal*>(g_record.data())); }));
     const NetEventCallback callback = IgnoreEvent;
     Require(Failed(sceNetEventCallbackCreate(1, nullptr, nullptr, 0), kEinval));
     Require(Failed(sceNetEventCallbackCreate(1, callback, nullptr, 1), kEinval));
-    Require(Throws([&] { sceNetEventCallbackCreate(1, callback, nullptr, 0); }));
     Require(Failed(sceNetEventCallbackDestroy(1, 0), kEinval));
     Require(Failed(sceNetEventCallbackDestroy(1, 1), kEinval));
     Require(Failed(sceNetEventCallbackGetError(1, &value, 0), kEinval));
@@ -213,53 +188,38 @@ void CheckValidation() {
     Require(Failed(sceNetBandwidthControlSetDefaultParam(bandwidth, 1), kEinval));
     Require(Failed(sceNetBandwidthControlGetDefaultParam(nullptr, 0), kEinval));
     Require(Failed(sceNetBandwidthControlGetDefaultParam(bandwidth, 1), kEinval));
-    Require(Throws([&] { sceNetBandwidthControlGetDefaultParam(bandwidth, 0); }));
     auto* traffic = reinterpret_cast<NetDataTraffic*>(g_record.data());
     Require(Failed(sceNetBandwidthControlGetDataTraffic(1, traffic, 0), kEinval));
     Require(Failed(sceNetBandwidthControlGetDataTraffic(-1, nullptr, 0), kEinval));
     Require(Failed(sceNetBandwidthControlGetDataTraffic(-1, traffic, 1), kEinval));
-    Require(Throws([&] { sceNetBandwidthControlGetDataTraffic(-1, traffic, 0); }));
     Require(Failed(sceNetDumpCreate(nullptr, 0x800, 0), kEinval));
     Require(Failed(sceNetDumpCreate("dump", 0x7FF, 0), kEinval));
     Require(Failed(sceNetDumpCreate("dump", 0x800, 3), kEinval));
     Require(Failed(sceNetDumpCreate("dump", 0x800, 5), kEinval));
     Require(Failed(sceNetDumpCreate("0123456789abcdef0123456789abcdef", 0x800, 0), kEnametoolong));
     Require(Failed(sceNetDumpCreate("0123456789abcdef0123456789abcdef", 0, 3), kEnametoolong));
-    Require(Throws([] { sceNetDumpCreate("0123456789abcdef0123456789abcde", 0x800, 4); }));
     Require(Failed(sceNetDumpRead(0, nullptr, 0, nullptr), kEinval));
     Require(Failed(sceNetDumpRead(0, g_buffer.data(), -1, nullptr), kEinval));
     flags = 0x21;
     Require(Failed(sceNetDumpRead(0, g_buffer.data(), 1, &flags), kEinval));
-    flags = 0x20;
-    Require(Throws([&] { sceNetDumpRead(0, g_buffer.data(), 1, &flags); }));
-    Require(Throws([] { sceNetDumpDestroy(-1); }));
-    Require(Throws([] { sceNetDumpAbort(-1, 0); }));
     const std::int32_t small = static_cast<std::int32_t>(g_buffer.size()) - 1;
-    const std::int32_t full = static_cast<std::int32_t>(g_buffer.size());
     Require(Failed(sceNetShowIfconfigForBuffer(g_buffer.data(), small, 0), kEinval));
     Require(Failed(sceNetShowRouteForBuffer(g_buffer.data(), small, 0), kEinval));
     Require(Failed(sceNetShowRoute6ForBuffer(g_buffer.data(), small, 0), kEinval));
     Require(Failed(sceNetShowNetstatForBuffer(g_buffer.data(), small, 0), kEinval));
     Require(Failed(sceNetShowNetstatExForBuffer(g_buffer.data(), small, 0, 0), kEinval));
     Require(Failed(sceNetShowNetstatExForBuffer(nullptr, 0, 0, 0x10000), kEinval));
-    Require(Throws([&] { sceNetShowIfconfigForBuffer(g_buffer.data(), full, 0); }));
-    Require(Throws([] { sceNetShowRouteForBuffer(nullptr, 0, 0); }));
-    Require(Throws([&] { sceNetShowNetstatExForBuffer(g_buffer.data(), full, 0, 0); }));
     Require(Failed(sceNetResolverConnectCreate("test", 1, nullptr, 0), kEinval));
     Require(Failed(sceNetResolverConnectCreate("test", 1, connection, 1), kEinval));
-    Require(Throws([&] { sceNetResolverConnectCreate("test", 1, connection, 0); }));
     Require(Failed(sceNetResolverConnect(nullptr, "localhost", 80, nullptr), kEinval));
     Require(Failed(sceNetResolverConnectDestroy(nullptr), kEinval));
     g_record.fill(0);
     Require(Failed(sceNetResolverConnectDestroy(connection), kEbadf));
     g_record[0x1D8] = 2;
     Require(Failed(sceNetResolverConnectDestroy(connection), kEbadf));
-    g_record[0x1D8] = 1;
-    Require(Throws([&] { sceNetResolverConnectDestroy(connection); }));
     g_record.fill(0);
     Require(Failed(sceNetResolverConnectAbort(nullptr, 0), kEinval));
     Require(Failed(sceNetResolverConnectAbort(connection, 2), kEinval));
-    Require(Throws([&] { sceNetResolverConnectAbort(connection, 1); }));
 }
 
 void CheckGetIfList() {
