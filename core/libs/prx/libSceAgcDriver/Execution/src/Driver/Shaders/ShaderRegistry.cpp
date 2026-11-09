@@ -1531,8 +1531,32 @@ void DeferPipelineStage(PreparedShaderState& prepared, const ShaderSnapshot& sna
     prepared.deferred = true;
 }
 
-void PrepareResolvedAbi(const ShaderSnapshot& snapshot, RegisteredPreparation& plan) {
+class ResolvingAbi {
+public:
+    explicit ResolvingAbi(std::shared_ptr<const ShaderSnapshot> owner) : snapshot(std::move(owner)) {
+        std::lock_guard lock(snapshot->prepared->mutex);
+        ++snapshot->prepared->resolving;
+    }
+
+    ResolvingAbi(const ResolvingAbi&) = delete;
+    ResolvingAbi& operator=(const ResolvingAbi&) = delete;
+
+    ~ResolvingAbi() {
+        std::lock_guard lock(snapshot->prepared->mutex);
+        --snapshot->prepared->resolving;
+    }
+
+    const ShaderSnapshot& Snapshot() const {
+        return *snapshot;
+    }
+
+private:
+    std::shared_ptr<const ShaderSnapshot> snapshot;
+};
+
+void PrepareResolvedAbi(const ResolvingAbi& resolving, RegisteredPreparation& plan) {
     PerformanceContext timingContext(FrameTiming::Preparation());
+    const auto& snapshot = resolving.Snapshot();
     std::vector<PreparedShaders::Entry> entries;
     std::optional<std::string> failure;
     try {
@@ -1542,7 +1566,6 @@ void PrepareResolvedAbi(const ShaderSnapshot& snapshot, RegisteredPreparation& p
         failure = error.what();
     }
     std::lock_guard lock(snapshot.prepared->mutex);
-    --snapshot.prepared->resolving;
     if (failure) {
         DeferPipelineStage(*snapshot.prepared, snapshot, failure->c_str());
         return;
@@ -2339,11 +2362,7 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
         if (!LazyShaderPreparation()) {
             if (plan == nullptr) return;
             plan->prebuildDevice = localDevice;
-            {
-                std::lock_guard lock(snapshot->prepared->mutex);
-                ++snapshot->prepared->resolving;
-            }
-            RegistrationPreparePool::Instance().SubmitBackground([snapshot, plan = std::shared_ptr<RegisteredPreparation>(std::move(plan))] { PrepareResolvedAbi(*snapshot, *plan); });
+            RegistrationPreparePool::Instance().SubmitBackground([resolving = std::make_shared<ResolvingAbi>(snapshot), plan = std::shared_ptr<RegisteredPreparation>(std::move(plan))] { PrepareResolvedAbi(*resolving, *plan); });
             return;
         }
         PreparedShaders::DeferredAbi deferred{key, {}, {}, localDevice};

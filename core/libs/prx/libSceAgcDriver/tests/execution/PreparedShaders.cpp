@@ -1861,6 +1861,36 @@ void AbiBackgroundProgress() {
     AgcDriverShutdown_nid_postfix();
 }
 
+void AbiBackgroundClose() {
+    RequireAsyncResolution();
+    static NarrowStoreHeader header;
+    RegisterNarrowStore(header);
+    SettleResolvedAbis();
+    const auto snapshot = RegisteredSnapshot(&header.shader);
+    std::future<void> closing;
+    std::uint64_t queued = 0;
+    {
+        PoolGate gate;
+        const std::array<ShaderRegister, 1> queuedContext{{{0x191, 0x20}}};
+        AgcDriverResolveShaderAbi_nid_postfix(&header.shader, queuedContext, {});
+        Require(ResolvingAbis(*snapshot) == 1, "a resolved static ABI was not queued while every pool worker was busy");
+        queued = ShaderRecompiler::FrontEndBuilds();
+        const auto pending = AgcDriver::DriverDetail::RegistrationPreparationsPending();
+        Require(pending.has_value(), "the pool counters were busy");
+        closing = std::async(std::launch::async, [] { AgcDriver::DriverDetail::CloseRegistrationPreparation(); });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (AgcDriver::DriverDetail::RegistrationPreparationsPending() == pending && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+        Require(AgcDriver::DriverDetail::RegistrationPreparationsPending() != pending, "closing the pool did not drop the queued ABI");
+    }
+    closing.get();
+    Require(ResolvingAbis(*snapshot) == 0, "a resolved ABI the pool dropped stayed pending");
+    Require(ShaderRecompiler::FrontEndBuilds() == queued, "closing the pool ran the ABI it dropped");
+    const std::array<ShaderRegister, 1> context{{{0x191, 0x40}}};
+    AgcDriverResolveShaderAbi_nid_postfix(&header.shader, context, {});
+    Require(ResolvingAbis(*snapshot) == 0, "a static ABI resolved after the pool closed stayed pending");
+    AgcDriverShutdown_nid_postfix();
+}
+
 void RelocatedHeaders() {
     alignas(256) static const std::array<std::uint32_t, 11> code{0x7e0002ffu, 0, 0x7e0202ffu, 0, 0x7e0402ffu, 0, 0x7e0602ffu, 0x3f800000u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
     struct Header {
@@ -2002,7 +2032,7 @@ int main(int argc, char** argv) {
         Require(SetStdHandle(STD_ERROR_HANDLE, diagnosticError) != 0, "cannot retain native diagnostics during stderr capture");
 #endif
         const std::string_view abiMode = argc == 2 ? argv[1] : "";
-        const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-concurrent" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs" || abiMode == "--abi-deferred-background-progress";
+        const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-concurrent" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs" || abiMode == "--abi-deferred-background-progress" || abiMode == "--abi-deferred-background-close";
         Require(argc == 1 || abiDeferred || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--registered-workgroup" || std::string_view(argv[1]) == "--dispatch-ahead-prewarm" || std::string_view(argv[1]) == "--lazy")), "invalid test arguments");
         if (abiDeferred) {
             if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
@@ -2015,6 +2045,7 @@ int main(int argc, char** argv) {
             else if (abiMode == "--abi-deferred-vertex-inputs") AbiDeferredVertexInputs();
             else if (abiMode == "--abi-deferred-rectangle-pairs") AbiDeferredRectanglePairs();
             else if (abiMode == "--abi-deferred-background-progress") AbiBackgroundProgress();
+            else if (abiMode == "--abi-deferred-background-close") AbiBackgroundClose();
             else AbiDeferredRectangle();
             std::cout << "shader ABI deferral tests passed: " << abiMode << '\n';
             return 0;
