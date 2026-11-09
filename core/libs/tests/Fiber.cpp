@@ -110,6 +110,12 @@ alignas(16) std::array<unsigned char, 64 * 1024> g_smallArea;
 FiberStorage g_smallStorage;
 
 void APS5_VABI SmallEntry(std::uint64_t, std::uint64_t) {
+    auto* small = reinterpret_cast<FiberObject*>(&g_smallStorage);
+    auto* context = g_smallArea.data() + g_smallArea.size() - SmallContextSize;
+    Require(_sceFiberInitializeImpl_nid_postfix(small, "small", SmallEntry, 0, context, SmallContextSize, nullptr, 0) == FiberErrorState, "a running fiber cannot be initialized over its own stack");
+    FiberInfo info{};
+    info.size = sizeof(info);
+    Require(sceFiberGetInfo(small, &info) == 0 && std::strcmp(info.name, "small") == 0, "a refused initialize keeps the running fiber");
     std::uint64_t received = 0;
     for (;;) sceFiberReturnToThread(0, &received);
 }

@@ -84,7 +84,7 @@ int APS5_VABI sceGameLiveStreamingSetDefaultServiceProviderPermission(void);
 int APS5_VABI sceGameLiveStreamingSetInvitationSessionId(const char* sessionId);
 int APS5_VABI sceGameLiveStreamingStartGenerateStandbyScreenResource(void);
 int APS5_VABI sceGameLiveStreamingStopGenerateStandbyScreenResource(void);
-int APS5_VABI sceGameLiveStreamingRegisterCallback(void);
+int APS5_VABI sceGameLiveStreamingRegisterCallback(void* callback, void* userData);
 int APS5_VABI sceGameLiveStreamingUnregisterCallback(void);
 int APS5_VABI sceGameLiveStreamingCheckCallback(void);
 int APS5_VABI sceGameLiveStreamingSetStandbyScreenResource(void);

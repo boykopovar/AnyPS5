@@ -1,5 +1,6 @@
 #include "prx/libSceSrcUtl/include/Api.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -78,7 +79,13 @@ int APS5_VABI sceSrcUtilityGetHandleSize(std::uint32_t channels, std::uint32_t m
 int APS5_VABI sceSrcUtilityGetPriority(const void* handle, std::uint32_t* priority) {
     if (handle == nullptr || !HandleIsInitialized(handle)) return SRC_UTILITY_ERROR_INVALID_HANDLE;
     if (priority == nullptr) return SRC_UTILITY_ERROR_INVALID_POINTER;
-    std::memcpy(priority, static_cast<const std::byte*>(handle) + SRC_UTILITY_PRIORITY_OFFSET, sizeof(*priority));
+    std::uint32_t value = 0;
+    std::memcpy(&value, static_cast<const std::byte*>(handle) + SRC_UTILITY_PRIORITY_OFFSET, sizeof(value));
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(priority, &value, sizeof(value))) {
+        errno = savedErrno;
+        return SRC_UTILITY_ERROR_INVALID_POINTER;
+    }
     return 0;
 }
 
