@@ -191,6 +191,7 @@ if(BUILD_TESTING)
     add_test(NAME pad_command_file COMMAND pad_command_file_tests)
     set_tests_properties(pad_command_file PROPERTIES TIMEOUT 20)
     if(Python3_Interpreter_FOUND)
+        get_property(windows_tooling_before DIRECTORY PROPERTY TESTS)
         add_test(NAME mingw_host_only_test_targets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_mingw_host_only_test_targets.py)
         add_test(NAME patch_lib_atrac9 COMMAND ${Python3_EXECUTABLE}
@@ -289,6 +290,8 @@ if(BUILD_TESTING)
                 endif()
             endforeach()
         endif()
+        add_test(NAME export_gap COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_export_gap.py)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
         add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
@@ -357,6 +360,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_unknown_nids.py)
         add_test(NAME conventions_debt_length COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_length.py)
+        add_test(NAME conventions_debt_labels COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_labels.py)
         add_test(NAME test_registration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py)
         add_test(NAME unbuilt_exports COMMAND ${Python3_EXECUTABLE}
@@ -419,6 +424,9 @@ if(BUILD_TESTING)
                 set_tests_properties(select_tests_${test_class} PROPERTIES TIMEOUT 30)
             endif()
         endforeach()
+        add_test(NAME relinker_fuzz_configurations COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_configurations.py)
+        set_tests_properties(relinker_fuzz_configurations PROPERTIES TIMEOUT 30)
         add_test(NAME configure_seed COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedTests)
         add_test(NAME configure_seed_paths COMMAND ${Python3_EXECUTABLE}
@@ -452,6 +460,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
         add_test(NAME debt_split COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py)
+        add_test(NAME debt_report COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_report.py)
         add_test(NAME agc_test_split COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_agc_test_split.py)
         add_test(NAME stubgen_stdout_newlines COMMAND ${Python3_EXECUTABLE}
@@ -647,6 +657,25 @@ if(BUILD_TESTING)
         set_tests_properties(title_run PROPERTIES TIMEOUT 60)
         add_test(NAME relinker_fuzz_seeds COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_seeds.py)
+        if(WIN32)
+            get_property(windows_tooling_after DIRECTORY PROPERTY TESTS)
+            list(REMOVE_ITEM windows_tooling_after ${windows_tooling_before})
+            function(raise_windows_tooling_test_timeouts)
+                foreach(windows_tooling_test IN LISTS ARGN)
+                    get_test_property(${windows_tooling_test} TIMEOUT windows_tooling_timeout)
+                    if(windows_tooling_timeout MATCHES "^[0-9.]+$" AND windows_tooling_timeout LESS 120)
+                        set_tests_properties(${windows_tooling_test} PROPERTIES TIMEOUT 120)
+                    endif()
+                endforeach()
+            endfunction()
+            raise_windows_tooling_test_timeouts(${windows_tooling_after})
+            function(raise_windows_deferred_tooling_test_timeouts)
+                get_property(windows_deferred_tests DIRECTORY PROPERTY TESTS)
+                list(FILTER windows_deferred_tests INCLUDE REGEX "^check_compile_")
+                raise_windows_tooling_test_timeouts(${windows_deferred_tests})
+            endfunction()
+            cmake_language(DEFER CALL raise_windows_deferred_tooling_test_timeouts)
+        endif()
     endif()
 endif()
 

@@ -229,9 +229,9 @@ int APS5_VABI sceNpTssCreateNpTitleCtxA(std::uint32_t serviceLabel, int userId) 
     return sceNpTusCreateNpTitleCtxA(serviceLabel, userId);
 }
 
-int APS5_VABI sceNpTusCreateTitleCtx(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTusCreateTitleCtx(const void* titleId, const void* titleSecret, const void* selfNpId) {
+    if (!titleId || !titleSecret || !selfNpId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    return CreateTitleContext();
 }
 
 int APS5_VABI sceNpTusSetTimeout(void) {
