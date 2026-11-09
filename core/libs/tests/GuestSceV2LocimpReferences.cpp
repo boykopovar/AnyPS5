@@ -15,6 +15,7 @@ struct TypeRecord { const void* vtable; const char* name; const TypeRecord* base
 using Thrower = void (APS5_VABI *)(const void*);
 
 extern "C" {
+extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
 extern const TypeRecord _ZTISt9bad_alloc_nid_postfix;
 extern const TypeRecord _ZTISt8bad_cast_nid_postfix;
 
@@ -135,7 +136,7 @@ int main() {
 
     auto* copy = _ZNSt8__sce_v26locale7_Locimp11_New_LocimpERKS1__nid_postfix(classic);
     Require(copy != nullptr && copy != classic, "_New_Locimp returns a new object");
-    Require(copy->base.vtable != nullptr && copy->base.vtable != classic->base.vtable, "the copy has the versioned _Locimp vtable");
+    Require(copy->base.vtable != nullptr && copy->base.vtable == classic->base.vtable, "the copy has the classic's versioned _Locimp vtable");
     Require(copy->base.references == 1, "the copy starts with one reference");
     Require(copy->facetCount == classic->facetCount, "the copy keeps the facet count");
     Require(copy->category == classic->category && copy->transparent == classic->transparent, "the copy keeps category and transparency");
@@ -190,14 +191,15 @@ int main() {
     Require(gLastFreed == nested->facets, "the dtor frees the nested vector");
     _ZdlPv_nid_postfix(nested);
 
-    GuestLocale::Implementation borrowed = *classic;
+    auto* unversioned = _ZSt21_sceLibcClassicLocale_nid_postfix;
+    GuestLocale::Implementation borrowed = *unversioned;
     CountingFacet fourth = MakeFacet();
     gLastFreed = nullptr;
     _ZNSt8__sce_v26locale7_Locimp12_Locimp_dtorEPS1__nid_postfix(&borrowed);
     Require(gLastFreed == nullptr, "the dtor keeps the classic vector");
     _ZNSt8__sce_v26locale7_Locimp14_Locimp_AddfacEPS1_PNS0_5facetEm_nid_postfix(&borrowed, &fourth.base, 2);
-    Require(borrowed.facets != classic->facets && borrowed.facetCount == 40, "Addfac copies the classic vector");
-    Require(classic->facetCount == 1 && classic->facets[0] == nullptr, "the classic vector is unchanged");
+    Require(borrowed.facets != unversioned->facets && borrowed.facetCount == 40, "Addfac copies the classic vector");
+    Require(unversioned->facetCount == 1 && unversioned->facets[0] == nullptr, "the classic vector is unchanged");
     Require(Counts(fourth, 1, 1, 0, 0), "Addfac retains the facet added to the copied vector");
     _ZNSt8__sce_v26locale7_Locimp12_Locimp_dtorEPS1__nid_postfix(&borrowed);
     Require(Counts(fourth, 0, 1, 1, 1), "the dtor releases the facet added to the copied vector");
