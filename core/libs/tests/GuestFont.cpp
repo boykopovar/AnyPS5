@@ -625,6 +625,34 @@ int main() {
     }
     Require(foreignDriverRejected && foreignLibrary.lock_word == 5);
 
+    Font::FontLibNative invalidFormatLibrary{};
+    Require(sceFontFtSupportFontFormats(nullptr, 0x52) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontFtSupportFontFormats(nullptr, 0) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontFtSupportFontFormats(&invalidFormatLibrary, 0x52) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontFtSupportFontFormats(library, 0) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x52) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x01) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x08) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x10) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x14) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x20) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x30) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x42) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x50) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x80) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0xFF) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x100) == SCE_FONT_ERROR_NO_SUPPORT_FORMAT);
+    Require(sceFontFtSupportFontFormats(library, 0xffffffffu) == SCE_FONT_ERROR_NO_SUPPORT_FORMAT);
+    Require(nativeLibrary->lock_word == savedLock);
+
+    bool foreignFormatsRejected = false;
+    try {
+        static_cast<void>(sceFontFtSupportFontFormats(&foreignLibrary, 0x52));
+    } catch (const std::runtime_error&) {
+        foreignFormatsRejected = true;
+    }
+    Require(foreignFormatsRejected && foreignLibrary.lock_word == 5);
+
     std::uint32_t subPixelCount = 1;
     Require(sceFontGetPixelResolution(library, &subPixelCount) == SCE_FONT_OK && subPixelCount == 64);
     Require(sceFontGetPixelResolution(library, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
