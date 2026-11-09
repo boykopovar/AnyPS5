@@ -443,7 +443,17 @@ int hostMenuKeySlot(SDL_Scancode scancode) {
 }
 
 void publishHostMenu(const HostMenu::Menu& menu) {
-    if (!menu.IsOpen()) AgcDriverSetHostMenu_nid_postfix(nullptr, 0, 0);
+    if (!menu.IsOpen()) {
+        AgcDriverSetHostMenu_nid_postfix(nullptr, 0, 0);
+        return;
+    }
+    std::vector<std::string> labels;
+    labels.reserve(menu.Entries().size());
+    for (const auto& entry : menu.Entries()) labels.emplace_back(entry.label);
+    std::vector<const char*> pointers;
+    pointers.reserve(labels.size());
+    for (const auto& label : labels) pointers.push_back(label.c_str());
+    AgcDriverSetHostMenu_nid_postfix(pointers.data(), pointers.size(), menu.Cursor());
 }
 
 void printHostMenu(const HostMenu::Menu& menu) {
