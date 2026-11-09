@@ -17,7 +17,7 @@
 ### Unimplemented exports
 
 - [`curl_formadd`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: LP64 form nodes and length options are not translated to LLP64 host forms.
-- [`curl_formfree`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: LP64 form nodes and length options are not translated to LLP64 host forms.
+- [`curl_formfree`](../../../core/libs/prx/libcurl/Export.cpp) - frees form chains and their `more` subtrees from the guest LP64 layout through the active curl allocator and the pointer/buffer/callback ownership flags. Malformed pointers and cyclic form graphs are not validated.
 - [`curl_formget`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: LP64 form nodes and length options are not translated to LLP64 host forms.
 - [`curl_global_init_mem`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: Allocator callback ownership across repeated initialization and cleanup is not adapted exactly.
 - [`curl_maprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
