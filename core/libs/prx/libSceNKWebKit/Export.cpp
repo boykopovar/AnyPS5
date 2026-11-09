@@ -12677,14 +12677,6 @@ int APS5_VABI WKUserMediaPermissionCheckSetUserMediaAccessInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKUserMediaPermissionRequestAllow() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKUserMediaPermissionRequestDeny() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKViewAccessibilityFocusedObject() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -16702,10 +16694,6 @@ int APS5_VABI _ZN7Nicosia9AnimationC1ERKS0_() {
 }
 
 int APS5_VABI _ZN7Nicosia9AnimationC2ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10CookieUtil17defaultPathForURLERKN3WTF3URLE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -24630,10 +24618,6 @@ int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager31setShouldDeactivateAudio
 }
 
 int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager32setIsPlayingToAutomotiveHeadUnitEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore27parseCacheControlDirectivesERKNS_13HTTPHeaderMapE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
