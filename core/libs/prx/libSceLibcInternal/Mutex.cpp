@@ -1,6 +1,7 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
@@ -30,6 +31,10 @@ int APS5_VABI _Mtxinit_nid_postfix(PthreadMutex* mutex, const char* name) {
     const int initialized = scePthreadMutexInit(mutex, &attr, mutexName);
     const int released = scePthreadMutexattrDestroy(&attr);
     return initialized != 0 || released != 0;
+}
+
+int APS5_VABI _ZNSt8__sce_v236_Mtx_init_with_default_name_overrideEPP13pthread_mutexiPKc_nid_postfix(void** mutex, int type, const char* name) {
+    return _ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(mutex, type, name);
 }
 
 int APS5_VABI _Mtxlock_nid_postfix(PthreadMutex* mutex) {

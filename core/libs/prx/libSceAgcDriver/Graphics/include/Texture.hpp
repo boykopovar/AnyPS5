@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ImageMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
@@ -40,6 +41,14 @@ bool StorageFormatAvailable(const Context& context, std::uint32_t guestFormat);
 VkFormat HostStorageFormat(const Context& context, VkFormat format);
 bool StorageClearAvailable(const Context& context, std::uint32_t guestFormat, DccKeys keys);
 std::uint64_t SampledTextureMemory();
+
+struct SparseLevelBinds {
+    std::vector<VkSparseImageMemoryBind> levels;
+    std::vector<VkSparseMemoryBind> tails;
+    VkDeviceSize bytes = 0;
+};
+
+std::optional<SparseLevelBinds> PlanSparseLevels(VkExtent3D extent, std::uint32_t mipLevels, std::uint32_t arrayLayers, VkDeviceSize alignment, std::span<const VkSparseImageMemoryRequirements> requirements, std::uint32_t firstLevel);
 bool ClearKeepsDenormals(const Context& context, VkFormat format);
 bool ClearColorForTexel(VkFormat format, std::uint32_t elementBytes, std::span<const std::uint32_t, 4> pattern, VkClearColorValue& clear);
 
@@ -50,12 +59,13 @@ struct OwnedImage {
     OwnedImage(const OwnedImage&) = delete;
     OwnedImage& operator=(const OwnedImage&) = delete;
     ~OwnedImage();
-    void Allocate(const Context& device, const VkMemoryAllocateInfo& allocation, std::uint32_t mask, const char* operation, bool newImage = false);
+    void Allocate(const Context& device, const VkImageCreateInfo& imageInfo, const char* operation, bool newImage = false, bool budgeted = false);
     Context context;
     VkImage image;
     VkDeviceMemory memory;
     VkDeviceSize memoryBytes = 0;
     std::uint32_t memoryType = 0;
+    ImageAllocation allocation;
 };
 
 class Texture {
@@ -255,7 +265,19 @@ private:
 // or it leaves the cache. Dispatches reusing the image meanwhile skip the round trip entirely.
 class StorageTexture : public std::enable_shared_from_this<StorageTexture> {
 public:
+    struct CreationHandOver {
+        DccKeys keys = DccKeys::Uncompressed;
+        std::vector<std::shared_ptr<StorageTexture>> sources;
+        std::shared_ptr<StorageTexture> detached;
+        bool handed = false;
+        CreationHandOver() = default;
+        CreationHandOver(CreationHandOver&&) = default;
+        CreationHandOver& operator=(CreationHandOver&&) = default;
+        ~CreationHandOver();
+    };
     static std::shared_ptr<StorageTexture> Create(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel);
+    static CreationHandOver PrepareCreation(const Context& context, const GuestTextureResource& descriptor, std::uint64_t guestBytes, std::shared_ptr<StorageTexture> detached, bool& flushed);
+    void AdoptHandOver(CreationHandOver handOver);
     ~StorageTexture();
     StorageTexture(const StorageTexture&) = delete;
     StorageTexture& operator=(const StorageTexture&) = delete;
@@ -286,7 +308,8 @@ public:
     std::uint32_t TrackedUnits() const { return trackedLayers; }
     void MarkSliceDirty(std::uint32_t slice, std::uint32_t count = 1);
     bool MarkDrawn(std::uint32_t slice, std::uint32_t count, VkRect2D scissor);
-    void Flush();
+    void Flush(const char* reason = "cache eviction");
+    void Detach();
     bool Dirty() const;
     // Stores every pending image overlapping the range, except `except`; returns whether any was.
     // Stores into host-imported memory are recorded (not waited for): a CPU reader syncs afterwards.
@@ -303,9 +326,12 @@ public:
     static bool UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static void SetPublishHookForTest(void (*hook)());
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
+    static constexpr std::uint64_t OccasionalStoreBytes = 1024 * 1024;
+    static constexpr std::uint64_t OccasionalWriteFlips = 8;
     static std::size_t StoreSmallPending(const char* reason);
-    static void StoreReadbackBeforeLabel(const char* reason);
+    static void StoreReadbackBeforeLabel(const char* reason, VkDevice device = VK_NULL_HANDLE);
     static std::size_t StoreDrawnLinear(const char* reason);
+    static void NoteFlip();
     static std::size_t StoreDrawnLinearTouching(const char* reason, const std::function<bool(std::uint64_t, std::uint64_t)>& touches, bool all);
     static bool AnyPending();
     static void FlushDumpSelected(const char* reason);
@@ -385,7 +411,18 @@ public:
     // contains a descriptor of its first mips), if any; the caller decides whether the geometry fits
     // (Texture::CanCopyFrom, ResidentPresentable).
     static std::shared_ptr<StorageTexture> FindPending(std::uint64_t address, std::uint64_t bytes);
+    VkDevice Device() const;
+    static std::uint64_t EightBitWrites();
     static std::shared_ptr<StorageTexture> FindPendingSlice(std::uint64_t address, std::uint64_t bytes);
+    struct WriteRecord {
+        std::uint32_t width;
+        std::uint32_t height;
+        TextureTileMode tileMode;
+        TextureDimension dimension;
+        std::uint32_t format;
+        std::uint64_t serial;
+    };
+    static std::optional<WriteRecord> LastWrite(std::uint64_t address);
     // How a buffer fill of [address, address + bytes) (Driver.cpp's fill HLE) meets the storage
     // images alive: none of them; a whole surface (Exact) or one array layer of a surface (Layer),
     // `image` and `layer` naming it, whatever other images lie over the range (`others`, of which
@@ -466,11 +503,15 @@ public:
     static std::uint64_t SinglePassMoves();
     static std::uint64_t SlabRetiles();
     static std::uint64_t PaddingSeedCopies();
+    static std::uint64_t LinearImportRetiles();
     static std::uint64_t RefreshesProved();
     static std::uint64_t ClearHandOvers();
+    static std::uint64_t CreationHandOvers();
     static std::uint64_t HandedOverSuperseded();
     static void SetClearHandOver(bool enabled);
     static std::uint64_t UntrackedCompares();
+    static std::uint64_t GuestSnapshots();
+    static std::uint64_t OccasionalLabelStores();
     std::uint64_t GuestBytes() const;
     std::uint64_t BudgetBytes() const;
     std::size_t OriginalSnapshotBytes() const { return original.capacity(); }
@@ -507,6 +548,7 @@ private:
     void hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
     void forgetUnwatchHash(std::uint32_t first, std::uint32_t count);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
+    bool guestBytesStillHeld() const;
     bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
     // Stores the pending tracked layers overlapping [address, address + bytes) to guest memory; in
     // each, 64 KiB blocks the CPU wrote since the layer's generation keep the CPU's bytes. Block
@@ -518,9 +560,11 @@ private:
     void releaseReadTraps(bool sharingPages);
     void storeTrappedOverlaps(const char* reason);
     bool unchangedSinceBaseline(std::uint64_t from, std::uint64_t to) const;
+    bool cpuLeftUnchanged(std::uint32_t layer, std::uint64_t from, std::uint64_t to, bool edge) const;
     void saveBeforeUnwatch();
     void forgetKeptAtUnwatch(std::uint32_t unit);
     bool keptAtUnwatchHolds(std::uint64_t from, std::uint32_t unit) const;
+    bool keptForCpu(std::uint32_t unit) const;
     // Drops the saved guest bytes of the units over [address, address + bytes) (another image's fill
     // or copy supersedes them there); the other units' bytes stay valid.
     void forgetSavedOver(std::uint64_t address, std::size_t bytes);
@@ -628,6 +672,7 @@ private:
     void refreshGeneration();
     std::uint64_t collectedLayerGeneration(std::uint32_t layer, std::uint64_t whole, bool uncached = false) const;
     bool refreshProved();
+    bool keysReplacedByClear() const;
     void takeRefreshProof(bool aliased);
     bool otherPendingOverlaps() const;
     // Marks `count` tracked layers from `first` pending and registers the image (MarkDirty's
@@ -747,6 +792,7 @@ private:
     std::uint32_t trackedLayers = 1;
     std::uint64_t trackedLayerBytes = 0;
     std::vector<std::uint64_t> layerGeneration;
+    std::vector<std::uint64_t> layerPendingSince;
     std::vector<std::uint64_t> completionKept;
     UnitFlags layerPending;
     std::vector<bool> layerBehind;
@@ -762,14 +808,15 @@ private:
     UnitFlags borrowedUnits;
     std::vector<std::pair<std::weak_ptr<StorageTexture>, std::uint64_t>> handedOver;
     std::vector<bool> handedUnits;
+    std::vector<std::shared_ptr<StorageTexture>> adoptedSources;
+    void pruneAdoptedSources();
     // Units of this image were borrowed since it was last written: the borrower's proofs
     // (the resource cache's serial memo) hold only while this image's version does, so the next
     // write here bumps the pending serial although the image was pending already.
     bool lent = false;
     VkImage image = VK_NULL_HANDLE;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
+    ImageAllocation imageAllocation;
     VkDeviceSize memoryBytes = 0;
-    std::uint32_t memoryType = 0;
     VkImageView view = VK_NULL_HANDLE;
     std::uint32_t defaultMip = 0;
     std::map<std::uint32_t, VkImageView> extraViews;
@@ -782,7 +829,7 @@ private:
     bool attachable = false;
     std::map<std::tuple<VkFormat, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t>, VkImageView> attachmentViews;
     VkImage proxyImage = VK_NULL_HANDLE;
-    VkDeviceMemory proxyMemory = VK_NULL_HANDLE;
+    ImageAllocation proxyAllocation;
     VkImageView proxyView = VK_NULL_HANDLE;
     VkFormat storageFormat = VK_FORMAT_UNDEFINED;
     VkFormat imageFormat = VK_FORMAT_UNDEFINED;
@@ -795,6 +842,8 @@ private:
     bool pendingFromOthers = false;
     std::vector<DrawnRect> drawnRects;
     std::vector<std::uint64_t> storeNotes;
+    std::uint64_t writtenFlip = 0;
+    std::atomic<bool> writtenOccasionally{false};
     std::uint64_t version = 0;
     std::uint64_t writes = 0;
     // `original` holds the guest bytes; false after a GPU-side clear, which never read them.

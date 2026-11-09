@@ -184,7 +184,7 @@ int main(int argc, char** argv) {
     stream = open(argv[2], "w+b");
     Require(stream != nullptr, "could not reopen guest stream");
     Require(getLine(line, 0, stream) == nullptr, "fgets with size 0 should fail");
-    Require(wide(stream, 0) == -1, "fgets should orient the stream even for size 0");
+    Require(wide(stream, 0) == 0, "fgets with a size below 2 should leave the stream unoriented");
     Require(close(stream) == 0, "could not close stream after fgets");
     stream = open(argv[2], "w+b");
     Require(stream != nullptr, "could not reopen guest stream");

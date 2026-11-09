@@ -659,8 +659,35 @@ bool lookupChangedTests(Context context) {
     Require(first->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Fast, "the lookup-changed template did not take the fast proof");
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     Require(first->Revalidate(shader, &report), "the audit refused an unchanged template");
-    Require(report.path == ShaderResources::ProofPath::Full, "a proof past the audit interval did not take the full walk");
     Require(first->SampledTextures().front() == bound, "the audit changed the bound texture");
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Require(first->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Fast && !report.audited, "a proof past the audit interval took the full walk although no host import changed since the last one");
+#ifdef _WIN32
+    Require(GuestArena::GuestArenaAllocate_nid_postfix(SurfaceBytes, 65536) != nullptr, "cannot reserve the gap before the unrelated surface");
+#endif
+    WatchedSurface unrelated(context);
+    std::memset(reinterpret_cast<void*>(unrelated.Address()), 0x33, SurfaceBytes);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Require(first->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Fast && !report.audited, "a guest write outside the template's surfaces made a proof past the audit interval take the full walk although no host import changed");
+    const auto beforeUnrelated = HostImportSetGeneration();
+    if (HostImportFor(context, unrelated.Address(), SurfaceBytes) == nullptr) {
+        Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "the host import of the unrelated surface was refused");
+        std::puts("skipped, host imports are unavailable");
+        return false;
+    }
+    Require(HostImportSetGeneration() != beforeUnrelated, "adding a host import did not move the import set generation");
+    const auto* imported = HostImportFor(context, unrelated.Address(), SurfaceBytes);
+    Require(imported != nullptr, "the unrelated host import vanished before the recent-import checks");
+    const auto afterUnrelated = HostImportSetGeneration();
+    const auto afterInsertion = HostImportsIdentity(context);
+    for (unsigned hit = 0; hit < 3; ++hit) {
+        Require(HostImportFor(context, unrelated.Address(), SurfaceBytes) == imported, "a repeated lookup replaced the unrelated host import");
+        Require(HostImportSetGeneration() == afterUnrelated, "a recent-import hit moved the import set generation");
+        Require(HostImportsIdentity(context).inserted == afterInsertion.inserted, "a recent-import hit changed insertion bookkeeping");
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Require(first->Revalidate(shader, &report) && report.audited && report.path == ShaderResources::ProofPath::Full, "a proof past the audit interval after a host import was added did not audit the template");
+    Require(first->SampledTextures().front() == bound, "the audit after an unrelated host import changed the bound texture");
     Require(first->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Fast, "the proof right after an audit did not take the fast proof");
     if (HostImportFor(context, surface.Address(), SurfaceBytes) == nullptr) {
         Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "the host import of the watched surface was refused");
@@ -1050,6 +1077,42 @@ void VKAPI_PTR ReportBudget(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2*
     }
 }
 
+struct BudgetReportAgeProbe {
+    std::uint64_t budget = 8ull << 30u;
+    unsigned queries = 0;
+} budgetReportAge;
+
+void VKAPI_PTR ReportBudgetAge(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
+    ++budgetReportAge.queries;
+    auto* reported = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(properties->pNext);
+    for (std::uint32_t heap = 0; heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+        reported->heapBudget[heap] = budgetReportAge.budget;
+        reported->heapUsage[heap] = 0;
+    }
+}
+
+void budgetReportAgeTests(Context context) {
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    const auto heap = LargestDeviceLocalHeap(context.memory);
+    Require(heap.has_value(), "the budget report age fixture needs a device-local heap");
+    context.memory.memoryHeaps[*heap].size = std::max<VkDeviceSize>(context.memory.memoryHeaps[*heap].size, 16 * GiB);
+    context.memoryProperties2 = ReportBudgetAge;
+    Require(StorageTextureCacheBudget(context) == 4 * GiB, "the initial storage limit is not 4 GiB");
+    const auto queries = budgetReportAge.queries;
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    budgetReportAge.budget = 2 * GiB;
+    Require(SampledTextureCacheBudget(context) == 2 * GiB, "sampled did not use the reduced heap budget");
+    Require(budgetReportAge.queries == queries + 1, "reporting the storage limit issued an extra memory budget query");
+    Require(StorageTextureCacheBudget(context) == 4 * GiB, "reporting refreshed the still-active cached storage limit");
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    reported.heapBudget[*heap] = budgetReportAge.budget;
+    Require(StorageTextureBudget(context.memory, &reported, 0, 0) == GiB, "the fresh storage calculation does not differ from the active cached limit");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    Require(StorageTextureCacheBudget(context) == GiB, "storage did not refresh after its own cache interval");
+    Require(budgetReportAge.queries == queries + 2, "storage did not issue exactly one query when its cache interval expired");
+    std::puts("sampled budget report age tests passed");
+}
+
 std::uint64_t ExpectedBudget(const Context& context) {
     VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
     VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &reported};
@@ -1300,11 +1363,60 @@ void collectRefusalTests(Context context) {
     std::puts("collect refusal counters passed");
 }
 
+bool pendingFailCountTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    constexpr int Rounds = 3;
+    constexpr std::uint32_t ForeignSide = 16;
+    if (context.hostImportAlignment == 0) {
+        Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "the pending fast-fail count test requires host imports");
+        std::puts("skipped, host imports are unavailable");
+        return false;
+    }
+    WatchedSurface surface(context);
+    ClearCachedTextures(context.device);
+    if (HostImportFor(context, surface.Address(), SurfaceBytes) == nullptr) {
+        Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "the host import of the watched surface was refused");
+        std::puts("skipped, host imports are unavailable");
+        return false;
+    }
+    if (!AgcDriver::GuestMemory::Watched(surface.Address(), SurfaceBytes)) {
+        std::puts("skipped, the host import of the surface left the write watch (APS5_WRITE_WATCH_IMPORTS=watch keeps it)");
+        return false;
+    }
+    const auto program = SampledProgram(surface.Address());
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    auto sampled = std::make_shared<ShaderResources>(context, shader);
+    Require(sampled->Reusable() && sampled->SampledTextures().size() == 1 && sampled->SampledTextures().front()->ViewsStorageImage(), "the template over the imported surface does not bind a view of its storage image");
+    ShaderResources::ProofReport report{};
+    Require(sampled->Revalidate(shader, &report), "the template over the imported surface did not prove current");
+    auto foreign = CachedStorageSurface(context, Resource(surface.Address(), ForeignSide));
+    Require(foreign != nullptr && foreign.get() != sampled->SampledTextures().front()->StorageSource(), "no foreign storage image over the sampled surface");
+    for (int round = 0; round < Rounds; ++round) {
+        foreign->MarkDirty();
+        const auto before = ShaderResources::PendingFailCounts();
+        static_cast<void>(sampled->Revalidate(shader, &report));
+        const auto after = ShaderResources::PendingFailCounts();
+        std::printf("round %d: pending foreign +%llu, snapshot +%llu, T1 eligible +%llu\n", round, static_cast<unsigned long long>(after.foreign - before.foreign), static_cast<unsigned long long>(after.snapshot - before.snapshot), static_cast<unsigned long long>(after.t1Eligible - before.t1Eligible));
+        Require(after.foreign - before.foreign == 1, "a proof over a foreign storage image with pending results did not count one foreign pending fast-fail");
+        Require(after.t1Eligible - before.t1Eligible == 1, "a proof over a foreign storage image with pending results did not count one T1-eligible pending fast-fail");
+        Require(after.snapshot == before.snapshot, "a proof over a foreign storage image counted a snapshot pending fast-fail");
+    }
+    foreign->Flush();
+    foreign.reset();
+    sampled.reset();
+    ClearCachedTextures(context.device);
+    std::puts("pending fast-fail counters passed");
+    return true;
+}
+
 int main(int argc, char** argv) {
     try {
         const bool memory = argc > 1 && std::string(argv[1]) == "memory";
         const std::string mode = argc > 1 ? argv[1] : "";
-        if (mode == "collect-refusals") {
+        if (mode == "collect-refusals" || mode == "pending-fail-count") {
 #ifdef _WIN32
             _putenv_s("APS5_PROFILE_DRAW", "1");
 #else
@@ -1319,10 +1431,10 @@ int main(int argc, char** argv) {
         const bool disableStorageImageMultisample = mode == "without-storage-image-multisample";
         const bool recover = mode == "recover-sampled" || mode == "recover-storage" || mode == "recover-srgb" || mode == "recover-repack";
 #ifdef _WIN32
-        if (!memory) _putenv_s("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1");
+        if (!memory && mode != "budget-report-age") _putenv_s("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1");
         if (std::getenv("APS5_TEMPLATE_AUDIT_MS") == nullptr) _putenv_s("APS5_TEMPLATE_AUDIT_MS", "250");
 #else
-        if (!memory) setenv("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1", 1);
+        if (!memory && mode != "budget-report-age") setenv("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1", 1);
         setenv("APS5_TEMPLATE_AUDIT_MS", "250", 0);
 #endif
         std::unique_ptr<Device> device;
@@ -1339,6 +1451,16 @@ int main(int argc, char** argv) {
             return 0;
         }
         auto context = device->GetContext();
+        if (mode == "budget-report-age") {
+            try {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                budgetReportAgeTests(context);
+                return 0;
+            } catch (const std::exception& error) {
+                std::fprintf(stderr, "FAIL: %s\n", error.what());
+                return 1;
+            }
+        }
         if (disableStorageImageMultisample) {
             PlaceholderImages placeholders(context);
             for (std::uint32_t heap = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding;
@@ -1378,6 +1500,12 @@ int main(int argc, char** argv) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             collectRefusalTests(context);
             std::puts("resource cache collect refusal tests passed");
+            return 0;
+        }
+        if (mode == "pending-fail-count") {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            if (!pendingFailCountTests(context)) return VulkanTestSkipped;
+            std::puts("resource cache pending fast-fail count tests passed");
             return 0;
         }
         if (memory) {

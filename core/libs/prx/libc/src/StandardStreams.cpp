@@ -135,8 +135,9 @@ std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) {
 }
 
 std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* stream) {
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
-    if (stream) stream->Orientation(1);
+    if (stream == nullptr) { errno = 22; return -1; }
+    if (!stream->IsOpen()) { errno = 9; return -1; }
+    stream->Orientation(1);
     if (value == -1) return -1;
     if (value < 0 || value > 255) {
         errno = 86;
@@ -144,6 +145,7 @@ std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* strea
         return -1;
     }
     auto* native = GetNativeStream(stream);
+    if (!stream->OpenForReading()) return -1;
     if (!stream->SwitchToReading()) return -1;
     const int result = std::ungetc(value, native);
     stream->SyncStatus();
@@ -223,6 +225,7 @@ int APS5_VABI putchar_nid_postfix(int value) { return fputc_nid_postfix(value, _
 int APS5_VABI putchar_unlocked_nid_postfix(int value) { return putc_unlocked_nid_postfix(value, __stdoutp_nid_postfix); }
 int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    if (value != EOF && stream && !stream->OpenForReading()) return -1;
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (value != EOF && !stream->SwitchToReading()) return -1;
@@ -231,13 +234,9 @@ int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
     return result;
 }
 char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
+    if (size < 2) return nullptr;
     if (stream && !stream->IsOpen()) { errno = 9; return nullptr; }
     if (stream) stream->Orientation(-1);
-    if (size <= 0) {
-        stream->SetError();
-        errno = 22;
-        return nullptr;
-    }
     auto* native = GetNativeStream(stream);
     if (!stream->SwitchToReading()) return nullptr;
     auto* result = std::fgets(buffer, size, native);
@@ -299,8 +298,14 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
     if (handle == __acrt_iob_func(1) && KeepHostStandardOutput_nid_no_patch() < 0) return -1;
     if (handle == __acrt_iob_func(2) && KeepHostStandardError_nid_no_patch() < 0) return -1;
     buffer = nullptr;
-#endif
+    ::_lock_file(handle);
+    const int result = std::setvbuf(handle, buffer, native, size);
+    if (result == 0 && native == _IONBF) reinterpret_cast<UcrtStreamState*>(handle)->bufferSize = 1;
+    ::_unlock_file(handle);
+    return result;
+#else
     return std::setvbuf(handle, buffer, native, size);
+#endif
 }
 void APS5_VABI setbuf_nid_postfix(FileStream* stream, char* buffer) {
     setvbuf_nid_postfix(stream, buffer, buffer ? 0 : 2, buffer ? 1024 : 0);
