@@ -460,18 +460,27 @@ float ScaledHyperbolic(float x, float y, bool sine) {
 
 }
 
+namespace {
+
+std::lldiv_t wrappingLldiv(long long numerator, long long denominator) {
+    if (denominator == -1) return {static_cast<long long>(0ull - static_cast<unsigned long long>(numerator)), 0};
+    return std::lldiv(numerator, denominator);
+}
+
+}
+
 extern "C" {
 
 std::lldiv_t APS5_VABI lldiv_nid_postfix(long long numerator, long long denominator) {
-    return std::lldiv(numerator, denominator);
+    return wrappingLldiv(numerator, denominator);
 }
 
 std::lldiv_t APS5_VABI ldiv_nid_postfix(std::int64_t numerator, std::int64_t denominator) {
-    return std::lldiv(numerator, denominator);
+    return wrappingLldiv(numerator, denominator);
 }
 
 std::lldiv_t APS5_VABI imaxdiv_nid_postfix(std::int64_t numerator, std::int64_t denominator) {
-    return std::lldiv(numerator, denominator);
+    return wrappingLldiv(numerator, denominator);
 }
 
 std::int64_t APS5_VABI labs_nid_postfix(std::int64_t x) {
