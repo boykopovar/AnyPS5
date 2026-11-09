@@ -1,6 +1,7 @@
 // © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <cstdlib>
 #include <cstring>
 
@@ -8,6 +9,7 @@ namespace {
 void Check(bool value) { if (!value) std::abort(); }
 }
 int main() {
+    ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     using namespace Icu::Abi;
     const char* strings[]{"first", "", "third"};
     std::int32_t status = 0;

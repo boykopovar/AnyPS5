@@ -22,13 +22,6 @@ std::int32_t CheckedLength(const char* text) {
     if (length > INT32_MAX) throw std::invalid_argument("ICU string enumeration: length overflow");
     return static_cast<std::int32_t>(length);
 }
-void Close(Icu::UEnumeration* enumeration) {
-    if (!enumeration) return;
-    if (enumeration->close) {
-        Free_nid_no_patch(enumeration->baseContext);
-        enumeration->close(enumeration);
-    } else Free_nid_no_patch(enumeration);
-}
 void Destroy(StringEnumeration& object) {
     if (object.chars && object.chars != object.charsBuffer) Free_nid_no_patch(object.chars);
     _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(&object.unistr);
@@ -89,17 +82,17 @@ void APS5_VABI _ZN6icu_6817StringEnumerationD0Ev_nid_postfix(Icu::Abi::StringEnu
 }
 
 void APS5_VABI _ZN6icu_6818UStringEnumerationD1Ev_nid_postfix(Icu::Abi::UStringEnumeration* self) {
-    Close(Require(self).enumeration);
+    uenum_close_nid_postfix(Require(self).enumeration);
     Destroy(Require(self).base);
 }
 
 void APS5_VABI _ZN6icu_6818UStringEnumerationD2Ev_nid_postfix(Icu::Abi::UStringEnumeration* self) {
-    Close(Require(self).enumeration);
+    uenum_close_nid_postfix(Require(self).enumeration);
     Destroy(Require(self).base);
 }
 
 void APS5_VABI _ZN6icu_6818UStringEnumerationD0Ev_nid_postfix(Icu::Abi::UStringEnumeration* self) {
-    Close(Require(self).enumeration);
+    uenum_close_nid_postfix(Require(self).enumeration);
     Destroy(Require(self).base);
     Free_nid_no_patch(self);
 }
@@ -204,9 +197,9 @@ void APS5_VABI _ZN6icu_6818UStringEnumerationC2EP12UEnumeration_nid_postfix(Icu:
 
 Icu::Abi::UStringEnumeration* APS5_VABI _ZN6icu_6818UStringEnumeration16fromUEnumerationEP12UEnumerationR10UErrorCode_nid_postfix(Icu::UEnumeration* enumeration, std::int32_t* status) {
     auto& error = Require(status);
-    if (error > 0) { Close(enumeration); return nullptr; }
+    if (error > 0) { uenum_close_nid_postfix(enumeration); return nullptr; }
     auto* result = static_cast<UStringEnumeration*>(Allocate_nid_no_patch(sizeof(UStringEnumeration)));
-    if (!result) { error = 7; Close(enumeration); return nullptr; }
+    if (!result) { error = 7; uenum_close_nid_postfix(enumeration); return nullptr; }
     _ZN6icu_6818UStringEnumerationC1EP12UEnumeration_nid_postfix(result, enumeration);
     return result;
 }
