@@ -1,6 +1,6 @@
-add_library(libSceMsgDialog SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
-target_include_directories(libSceMsgDialog PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceMsgDialog PRIVATE libSceIme libc)
+add_library(libSceMsgDialog SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/HostMessageBox.cpp)
+target_include_directories(libSceMsgDialog PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+target_link_libraries(libSceMsgDialog PRIVATE libSceIme libc SDL2-static)
 configure_windows_unwind(libSceMsgDialog)
 
 if(BUILD_TESTING)
