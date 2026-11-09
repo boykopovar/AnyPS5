@@ -1,10 +1,12 @@
 #include <nid/BinaryPatcherFactory.hpp>
 #include <nid/ExportExclusions.hpp>
 #include <nid/NativePath.hpp>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace {
