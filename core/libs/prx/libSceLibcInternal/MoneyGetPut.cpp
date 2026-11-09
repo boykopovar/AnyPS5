@@ -1,3 +1,4 @@
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
