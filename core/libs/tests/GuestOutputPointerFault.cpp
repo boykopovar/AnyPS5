@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
 #include <cstdint>
@@ -60,7 +61,27 @@ static void RequireNonEfaultFailureThrows() {
 }
 #endif
 
+static void RequireFaultKeepsErrno() {
+    std::uint64_t value = 0;
+    for (const std::uintptr_t address : {std::uintptr_t{1}, ~std::uintptr_t{0xfff}}) {
+        void* bad = reinterpret_cast<void*>(address);
+        *__error_nid_postfix() = 12345;
+        Require(!GuestCopyOut_nid_no_patch(bad, &value, sizeof(value)));
+        Require(*__error_nid_postfix() == 12345);
+        *__error_nid_postfix() = 12345;
+        Require(!GuestCopyIn_nid_no_patch(&value, bad, sizeof(value)));
+        Require(*__error_nid_postfix() == 12345);
+        *__error_nid_postfix() = 12345;
+        Require(!GuestSocketReadGuest_nid_no_patch(&value, bad, sizeof(value)));
+        Require(*__error_nid_postfix() == 12345);
+        *__error_nid_postfix() = 12345;
+        Require(sceKernelReadv(0, static_cast<const KernelIovec*>(bad), 1) == KernelEfault);
+        Require(*__error_nid_postfix() == 12345);
+    }
+}
+
 int main() {
+    RequireFaultKeepsErrno();
     alignas(8) unsigned char valid[512]{};
     alignas(8) unsigned char zeroTimer[32]{};
     auto* timeValid = reinterpret_cast<KernelTimeval*>(valid);
