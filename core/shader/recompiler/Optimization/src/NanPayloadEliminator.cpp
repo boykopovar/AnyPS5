@@ -136,6 +136,8 @@ std::optional<bool> compareOverNanMagnitudes(IrOpcode opcode, std::size_t operan
 
 bool propagatesNan(const IrValue& user, std::size_t operand) {
     switch (user.Opcode()) {
+        case IrOpcode::NanPropagateF32:
+            return operand == 0u;
         case IrOpcode::Identity:
         case IrOpcode::BitCastU32F32:
         case IrOpcode::BitCastF32U32:
@@ -165,6 +167,7 @@ bool propagatesNan(const IrValue& user, std::size_t operand) {
 
 bool keepsNanPayloadDifference(IrOpcode opcode) {
     switch (opcode) {
+        case IrOpcode::NanPropagateF32:
         case IrOpcode::Identity: case IrOpcode::Phi: case IrOpcode::BitCastU32F32: case IrOpcode::BitCastF32U32:
         case IrOpcode::FPAbs32: case IrOpcode::FPNeg32: case IrOpcode::FPAdd32: case IrOpcode::FPSub32: case IrOpcode::FPMul32:
         case IrOpcode::FPFract32: case IrOpcode::FPFloor32: case IrOpcode::FPCeil32: case IrOpcode::FPTrunc32: case IrOpcode::FPRoundEven32:
@@ -178,6 +181,7 @@ bool keepsNanPayloadDifference(IrOpcode opcode) {
 
 bool pureOperation(IrOpcode opcode) {
     switch (opcode) {
+        case IrOpcode::NanPropagateF32:
         case IrOpcode::Identity: case IrOpcode::Phi: case IrOpcode::Select: case IrOpcode::SelectU1: case IrOpcode::SelectU32: case IrOpcode::SelectF32:
         case IrOpcode::BitCastU32F32: case IrOpcode::BitCastF32U32: case IrOpcode::BitCastU16F16: case IrOpcode::BitCastF16U16:
         case IrOpcode::IAdd32: case IrOpcode::ISub32: case IrOpcode::IMul32: case IrOpcode::INegate32: case IrOpcode::IAbs32:
@@ -262,6 +266,8 @@ public:
             const IrValue* negated = maskedOperand(value, IrOpcode::BitwiseOr32, 0x80000000u);
             const IrValue* source = quieted != nullptr ? quieted : negated;
             result = source != nullptr && AlwaysNan(source, depth + 1);
+        } else if (value->Opcode() == IrOpcode::NanPropagateF32) {
+            result = AlwaysNan(value->Argument(0), depth + 1);
         } else if (isSelect(*value)) {
             const IrValue* tested = nanTested(value->Argument(0));
             result = TakenIsNan(value->Argument(1), tested, NoMembers{}, depth + 1) && AlwaysNan(value->Argument(2), depth + 1);
@@ -490,6 +496,12 @@ private:
     }
 
     [[nodiscard]] std::pair<Difference, const IrValue*> sourceTransfer(const IrValue& select) {
+        if (select.Opcode() == IrOpcode::NanPropagateF32) {
+            for (std::size_t index = 0; index < select.ArgumentCount(); ++index) {
+                if (stateOf(select.Argument(index)) == Difference::Arbitrary) return {Difference::Arbitrary, nullptr};
+            }
+            return {Difference::NanPayload, &select};
+        }
         const IrValue* tested = nanTested(select.Argument(0));
         if (tested == nullptr || stateOf(tested) == Difference::Arbitrary || stateOf(select.Argument(0)) == Difference::Arbitrary) return {Difference::Arbitrary, nullptr};
         if (stateOf(select.Argument(2)) == Difference::Arbitrary) {
@@ -621,7 +633,13 @@ NanPayloadEliminationStats NanPayloadEliminator::Eliminate(IrProgram& program) c
         std::vector<IrValue*> candidates;
         for (auto* block : program.BlockOrder()) {
             for (auto* inst : block->Instructions()) {
-                if (!inst->HasUses() || !isSelect(*inst)) continue;
+                if (!inst->HasUses()) continue;
+                if (inst->Opcode() == IrOpcode::NanPropagateF32) {
+                    ++stats.candidates;
+                    candidates.push_back(inst);
+                    continue;
+                }
+                if (!isSelect(*inst)) continue;
                 const IrValue* tested = nanTested(inst->Argument(0));
                 if (tested == nullptr) continue;
                 ++stats.candidates;
@@ -639,7 +657,7 @@ NanPayloadEliminationStats NanPayloadEliminator::Eliminate(IrProgram& program) c
         return stats;
     }
     for (IrValue* select : removable) {
-        select->ReplaceAllUsesWith(select->Argument(2)->Resolve());
+        select->ReplaceAllUsesWith(select->Argument(select->Opcode() == IrOpcode::NanPropagateF32 ? 0u : 2u)->Resolve());
         ++stats.removedSelects;
     }
     return stats;

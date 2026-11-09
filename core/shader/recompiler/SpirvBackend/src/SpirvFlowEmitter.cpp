@@ -975,9 +975,9 @@ std::uint32_t EmitNanPropagateF32(SpirvValueEmitContext& ctx, const IrValue& ins
         const auto sourceBits = source->HasImmediate() ? ConstantU32(state, source->ImmediateU32()) : Unary(state, spv::OpBitcast, u32, sources[index]);
         auto selected = isNan(sourceBits);
         if (guardedAddend && index == 2u) selected = Binary(state, spv::OpLogicalAnd, boolean, selected, Unary(state, spv::OpLogicalNot, boolean, invalid));
-        const auto quieted = quiet ? Binary(state, spv::OpBitwiseOr, u32, sourceBits, ConstantU32(state, 0x00400000u)) : sourceBits;
-        propagated = Select(state, u32, selected, quieted, propagated);
+        propagated = Select(state, u32, selected, sourceBits, propagated);
     }
+    if (quiet) propagated = Binary(state, spv::OpBitwiseOr, u32, propagated, ConstantU32(state, 0x00400000u));
     const auto propagateExit = state.currentLabel;
     state.module.AddFunction(spv::OpBranch, merge);
     EmitLabel(state, merge);
