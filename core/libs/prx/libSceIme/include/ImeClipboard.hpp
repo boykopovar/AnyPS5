@@ -37,6 +37,10 @@ inline std::string Utf8(const std::u16string& text) {
     return out;
 }
 
+inline bool CopyEnabled(const char* value, bool apple) {
+    return !apple && value != nullptr && std::string_view(value) == "1";
+}
+
 }
 
 #endif
