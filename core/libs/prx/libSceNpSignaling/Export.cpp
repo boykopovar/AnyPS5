@@ -286,7 +286,10 @@ int APS5_VABI sceNpSignalingGetConnectionStatistics(NpSignalingConnectionStatist
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceNpSignalingGetMemoryInfo() {
+int APS5_VABI sceNpSignalingGetMemoryInfo(NpSignalingMemoryInfo* info) {
+    std::lock_guard lock(signalingMutex);
+    if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
+    if (!info) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     NotImplemented_nid_no_patch(__func__);
 }
 
