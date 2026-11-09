@@ -723,6 +723,7 @@ int main() try {
     reloadInputMappingAction();
     reloadErrorNamesLine();
     padChordParse();
+    watchStampsAndDebounce();
     std::filesystem::remove_all(root);
     std::cout << "input mapping tests passed\n";
     return 0;
