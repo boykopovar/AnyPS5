@@ -37,6 +37,17 @@ void RequireThrows(TAction action, const char* message) {
     Require(false, message);
 }
 
+template<typename TAction>
+void RequireInvalidArgument(TAction action, const char* message) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return;
+    } catch (const std::exception&) {
+    }
+    Require(false, message);
+}
+
 Stack* Lookups(LibreSslX509Store* store) {
     return static_cast<Stack*>(store->lookupMethods);
 }
@@ -80,13 +91,17 @@ void AddLookup() {
 
 void Unsupported() {
     auto* store = X509_STORE_new_nid_postfix();
-    RequireThrows([] { X509_STORE_add_lookup_nid_postfix(nullptr, X509_LOOKUP_file_nid_postfix()); }, "null store");
-    RequireThrows([&] { X509_STORE_add_lookup_nid_postfix(store, nullptr); }, "null method");
+    RequireInvalidArgument([] { X509_STORE_add_lookup_nid_postfix(nullptr, X509_LOOKUP_file_nid_postfix()); }, "null store");
+    RequireInvalidArgument([&] { X509_STORE_add_lookup_nid_postfix(store, nullptr); }, "null method");
     X509_STORE_free_nid_postfix(store);
 
     store = X509_STORE_new_nid_postfix();
     Lookups(store)->num = 1;
-    RequireThrows([&] { X509_STORE_add_lookup_nid_postfix(store, X509_LOOKUP_file_nid_postfix()); }, "a null listed lookup");
+    RequireInvalidArgument([&] { X509_STORE_add_lookup_nid_postfix(store, X509_LOOKUP_file_nid_postfix()); }, "a null listed lookup");
+
+    store = X509_STORE_new_nid_postfix();
+    store->param->id = nullptr;
+    RequireInvalidArgument([&] { X509_STORE_free_nid_postfix(store); }, "verify parameters without an identity");
 }
 
 int allocations = 0;

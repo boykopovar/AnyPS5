@@ -301,6 +301,7 @@ if(BUILD_TESTING)
     add_test_executable(elf_reader_bounds_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ElfReaderBoundsTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp)
+    target_link_libraries(elf_reader_bounds_tests PRIVATE relinker_core)
     target_include_directories(elf_reader_bounds_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
@@ -650,11 +651,13 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_rela_size.py $<TARGET_FILE:relinker>)
         add_test(NAME none_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_none_relocations.py $<TARGET_FILE:relinker>)
-        add_test(NAME guest_none_relocations COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_none_relocations.py $<TARGET_FILE:relinker> plain)
-        add_test(NAME guest_none_relocations_sce COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_none_relocations.py $<TARGET_FILE:relinker> sce)
-        set_tests_properties(guest_none_relocations guest_none_relocations_sce PROPERTIES TIMEOUT 20)
+        foreach(mode IN ITEMS plain sce)
+            foreach(system IN ITEMS linux windows macos rejected)
+                add_test(NAME guest_none_relocations_${mode}_${system} COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_none_relocations.py $<TARGET_FILE:relinker> ${mode} ${system})
+                set_tests_properties(guest_none_relocations_${mode}_${system} PROPERTIES TIMEOUT 20)
+            endforeach()
+        endforeach()
         add_test(NAME interpreter_in_code COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_interpreter_in_code.py $<TARGET_FILE:relinker>)
         set_tests_properties(interpreter_in_code PROPERTIES TIMEOUT 20)
@@ -688,6 +691,11 @@ if(BUILD_TESTING)
         add_test(NAME gs_trap_entry_roots COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_gs_trap_entry_roots.py $<TARGET_FILE:relinker>)
         set_tests_properties(gs_trap_entry_roots PROPERTIES TIMEOUT 30)
+        foreach(group IN ITEMS executable module rejected)
+            add_test(NAME function_symbol_roots_${group} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_function_symbol_roots.py $<TARGET_FILE:relinker> ${group})
+            set_tests_properties(function_symbol_roots_${group} PROPERTIES TIMEOUT 30)
+        endforeach()
         set(tlsCoverageGroups metadata padding register_loads displacement_bounds alu_execution register_address_loads moved_branch rejected)
         foreach(register IN ITEMS 0 1 2 3 5 6 7 8 9 10 11 12 13 14 15)
             list(APPEND tlsCoverageGroups displacement_r${register})
@@ -1052,6 +1060,21 @@ if(BUILD_TESTING)
     )
     add_test(NAME unwind_record_bounds COMMAND unwind_record_bounds_tests)
     set_tests_properties(unwind_record_bounds PROPERTIES TIMEOUT 20)
+
+    add_test_executable(leb128_bounds_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/Leb128BoundsTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/EhFrameReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
+    )
+    target_include_directories(leb128_bounds_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+    )
+    add_test(NAME leb128_bounds COMMAND leb128_bounds_tests)
+    set_tests_properties(leb128_bounds PROPERTIES TIMEOUT 20)
 
     add_test_executable(windows_icon_resource_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/WindowsIconResourceTests.cpp

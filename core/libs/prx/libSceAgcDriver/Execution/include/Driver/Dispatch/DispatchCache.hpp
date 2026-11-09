@@ -26,23 +26,18 @@ namespace AgcDriver::DriverDetail {
 
 inline bool CaptureRegisteredViewsCurrent(std::span<const ShaderRecompiler::RegisteredImageView> views) {
     if (views.empty()) return true;
-    for (std::uint32_t attempt = 0; attempt < 2u; ++attempt) {
-        const auto before = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
-        bool current = true;
-        for (const auto& view : views) {
-            const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(view.address), false);
-            if (view.hasRange != (range != nullptr)) {
-                current = false;
-                break;
-            }
-            if (range != nullptr && (range->address != view.rangeAddress || range->bytes != view.rangeBytes || range->allocationAddress != view.allocationAddress || range->allocationBytes != view.allocationBytes || range->backingSerial != view.backingSerial || range->readable != view.readable || range->writable != view.writable || range->gpu != view.gpu)) {
-                current = false;
-                break;
-            }
-        }
-        if (before == GuestAllocations::GuestAllocationsGeneration_nid_postfix()) return current;
+    std::vector<std::uintptr_t> addresses;
+    addresses.reserve(views.size());
+    for (const auto& view : views) addresses.push_back(static_cast<std::uintptr_t>(view.address));
+    std::vector<std::shared_ptr<const GuestAllocations::Range>> ranges(views.size());
+    GuestAllocations::GuestAllocationsLookupEach_nid_postfix(addresses.data(), addresses.size(), ranges.data());
+    for (std::size_t index = 0; index < views.size(); ++index) {
+        const auto& view = views[index];
+        const auto& range = ranges[index];
+        if (view.hasRange != (range != nullptr)) return false;
+        if (range != nullptr && (range->address != view.rangeAddress || range->bytes != view.rangeBytes || range->allocationAddress != view.allocationAddress || range->allocationBytes != view.allocationBytes || range->backingSerial != view.backingSerial || range->readable != view.readable || range->writable != view.writable || range->gpu != view.gpu)) return false;
     }
-    return false;
+    return true;
 }
 
 inline constexpr std::size_t MaxDispatchVariants = 8;
@@ -69,11 +64,13 @@ struct DispatchVariant {
     std::uint32_t pushOffset = 0;
     std::vector<std::int8_t> runBases;
     std::uint64_t relocatableWords = 0;
+    std::uint64_t userWordsWalked = 0;
     std::uint64_t valueWords = 0;
     std::vector<std::array<std::uint32_t, 3>> valueSlots;
     std::vector<std::array<std::uint32_t, 3>> descriptorPatches;
     std::uint64_t calleeWords = 0;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> calleeReads;
+    std::shared_ptr<DispatchVariant> donor;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> shaderDataPatches;
     std::uint64_t userDataMask = ~std::uint64_t{0};
     std::shared_ptr<const ShaderRecompiler::ShaderVertexStageInfo> vertexInfo;
@@ -93,7 +90,7 @@ struct DispatchEntry {
 };
 
 struct EntryCounters {
-    std::uint64_t lookups = 0, absent = 0, equal = 0, differing = 0, inaccessible = 0, queuedLabel = 0, flushingImage = 0, publishMoved = 0, pendingMoved = 0, forgetMoved = 0, imagesFlushed = 0, runsSynced = 0, forgetSinceInsert = 0, replaced = 0, inserts = 0, unstable = 0, touches = 0;
+    std::uint64_t lookups = 0, absent = 0, equal = 0, differing = 0, queuedStores = 0, inaccessible = 0, queuedLabel = 0, flushingImage = 0, publishMoved = 0, pendingMoved = 0, forgetMoved = 0, imagesFlushed = 0, runsSynced = 0, forgetSinceInsert = 0, replaced = 0, inserts = 0, unstable = 0, touches = 0;
 
     std::uint64_t runsValidated = 0, runsInserted = 0, retriesEqual = 0, retriesMoved = 0;
     double validateUs = 0;
@@ -117,7 +114,7 @@ struct DataMask {
     std::vector<std::pair<std::uint32_t, std::uint32_t>>* live;
 };
 
-enum class EntryOutcome { Equal, EqualData, Differing, Inaccessible, QueuedLabel, FlushingImage, PublishMoved, PendingMoved, ForgetMoved };
+enum class EntryOutcome { Equal, EqualData, Differing, QueuedStores, Inaccessible, QueuedLabel, FlushingImage, PublishMoved, PendingMoved, ForgetMoved };
 
 bool CacheableResult(const ShaderRecompiler::RecompileResult& compiled);
 
