@@ -206,6 +206,7 @@ extern "C" void DeliverPendingException_nid_no_patch(PthreadPrivate* thread);
 #endif
 extern "C" void ResumeAllGuestThreads_nid_no_patch();
 bool LiveGuestThreadExists(std::int64_t tid);
+bool LiveGuestThreadName(std::int64_t tid, std::string* name);
 bool GetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask& mask);
 bool GetLiveGuestThreadSched_nid_no_patch(std::int64_t tid, int& policy, int& priority);
 bool SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mask);
