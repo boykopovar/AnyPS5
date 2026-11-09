@@ -743,16 +743,30 @@ void testMemory() {
         waitPacket[6] |= lowMask;
         waitPacket[7] = 0xa5fc0000u;
         const auto tag = waitPacket[2] & 0xffff0000u;
-        const std::uintptr_t address = 0x1236abcd12345679ull;
+        const std::uintptr_t address = 0x123456789ab8ull;
         check(sceAgcWaitRegMemPatchAddress(waitPacket, reinterpret_cast<const volatile void*>(address)) == 0, "wait address patch failed");
-        check(waitPacket[2] == (tag | 0xabcdu) && waitPacket[3] == 0x12345679u, "wait wrapper address patch mismatch");
-        check(waitPacket[6] == ((0x12345679u & ~lowMask) | lowMask) && waitPacket[7] == 0xa5feabcdu, "wait address patch did not preserve control bits");
-        for (std::uint32_t comparison = 0; comparison <= 255; ++comparison) {
+        check(waitPacket[2] == (tag | 0x1234u) && waitPacket[3] == 0x56789ab8u, "wait wrapper address patch mismatch");
+        check(waitPacket[6] == ((0x56789ab8u & ~lowMask) | lowMask) && waitPacket[7] == 0xa5fc1234u, "wait address patch did not preserve control bits");
+        for (std::uint32_t comparison = 0; comparison <= 6; ++comparison) {
             const auto control = waitPacket[5] & ~7u;
             check(sceAgcWaitRegMemPatchCompareFunction(waitPacket, static_cast<std::uint8_t>(comparison)) == 0, "wait comparison patch failed");
-            check(waitPacket[5] == (control | (comparison & 7u)), "wait comparison patch changed control bits");
+            check(waitPacket[5] == (control | comparison), "wait comparison patch changed control bits");
         }
+        const auto beforeComparison = storage.words;
+        for (std::uint32_t comparison = 7; comparison <= 255; ++comparison) {
+            expectFailure([&] { sceAgcWaitRegMemPatchCompareFunction(waitPacket, static_cast<std::uint8_t>(comparison)); });
+        }
+        check(storage.words == beforeComparison, "a rejected wait comparison patch modified packet memory");
     }
+    const auto beforeAddress = storage.words;
+    expectFailure([&] { sceAgcWaitRegMemPatchAddress(packet, reinterpret_cast<const volatile void*>(std::uintptr_t{0x123456789ab4u})); });
+    expectFailure([&] { sceAgcWaitRegMemPatchAddress(truncated, reinterpret_cast<const volatile void*>(std::uintptr_t{0x123456789ab2u})); });
+    check(storage.words == beforeAddress, "a misaligned wait address patch modified packet memory");
+    check(sceAgcWaitRegMemPatchAddress(truncated, reinterpret_cast<const volatile void*>(std::uintptr_t{0x123456789ab4u})) == 0 && truncated[3] == 0x56789ab4u, "32-bit wait rejected a 4-byte aligned address");
+    const auto beforeWideAddress = storage.words;
+    expectFailure([&] { sceAgcWaitRegMemPatchAddress(packet, reinterpret_cast<const volatile void*>(std::uintptr_t{0x1000000000008u})); });
+    expectFailure([&] { sceAgcWaitRegMemPatchAddress(truncated, reinterpret_cast<const volatile void*>(std::uintptr_t{0x1000000000004u})); });
+    check(storage.words == beforeWideAddress, "a wait address above 48 bits modified packet memory");
     const auto beforeMask = storage.words;
     expectFailure([&] { sceAgcWaitRegMemPatchMask(packet + 4, 1); });
     check(storage.words == beforeMask, "invalid mask patch modified packet memory");
@@ -821,6 +835,26 @@ void testEndOfPipePatches() {
     const auto before = packet;
     expectFailure([&] { sceAgcQueueEndOfPipeActionPatchGcrCntl(packet.data(), 0x1000u); });
     check(packet == before, "a rejected GCR control patch changed the packet");
+    std::array<std::uint32_t, 8> gds{};
+    gds[0] = Agc::Command::Header(0x49u, 8);
+    gds[2] = 5u << 29u;
+    gds[5] = 0x00020010u;
+    const auto gdsBefore = gds;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(gds.data(), 1); });
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(gds.data(), 0x100000000ull); });
+    check(gds == gdsBefore, "a rejected GDS release data patch changed the packet");
+    check(sceAgcQueueEndOfPipeActionPatchData(gds.data(), 0) == 0 && gds == gdsBefore, "zero data patch changed the GDS offset and size");
+    std::array<std::uint32_t, 8> interruptOnly{};
+    interruptOnly[0] = Agc::Command::Header(0x49u, 8);
+    interruptOnly[2] = 4u << 24u;
+    const auto interruptBefore = interruptOnly;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(interruptOnly.data(), 1); });
+    check(interruptOnly == interruptBefore, "a rejected interrupt-only data patch changed the packet");
+    check(sceAgcQueueEndOfPipeActionPatchData(interruptOnly.data(), 0) == 0 && interruptOnly == interruptBefore, "zero data patch changed an interrupt-only release");
+    interruptOnly[3] = 0x1000u;
+    const auto addressed = interruptOnly;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(interruptOnly.data(), 0); });
+    check(interruptOnly == addressed, "an interrupt-only release with an address accepted a data patch");
     packet[0] = Agc::Command::Header(0x47u, 6);
     expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(packet.data(), 1); });
     expectFailure([&] { sceAgcQueueEndOfPipeActionPatchGcrCntl(packet.data(), 1); });
@@ -1151,6 +1185,15 @@ void testAcquireMem() {
     Storage large;
     sceAgcDcbAcquireMem(&large.buffer, 0, 0, 0, base, (1ull << 40u) + 1u, 0);
     check(large.words[2] == 0 && large.words[4] == 0, "an acquire over 1 TiB did not cover the whole address space");
+    Storage exact;
+    sceAgcDcbAcquireMem(&exact.buffer, 0, 0, 0, base, 1ull << 40u, 0);
+    check(exact.words[2] == 0 && exact.words[4] == 0, "an acquire of exactly 1 TiB did not cover the whole address space");
+    Storage encodable;
+    sceAgcDcbAcquireMem(&encodable.buffer, 0, 0, 0, nullptr, (1ull << 40u) - 0x100u, 0);
+    check(encodable.words[2] == 0xffffffffu && encodable.words[4] == 0, "an acquire just below 1 TiB was not encoded as its exact size");
+    Storage roundedUp;
+    sceAgcDcbAcquireMem(&roundedUp.buffer, 0, 0, 0, reinterpret_cast<const volatile void*>(0x1ull), (1ull << 40u) - 0xffu, 0);
+    check(roundedUp.words[2] == 0 && roundedUp.words[4] == 0, "an acquire rounded up to 1 TiB did not cover the whole address space");
     Storage asynchronous;
     sceAgcAcbAcquireMem(&asynchronous.buffer, 0x55u, base, 0x100, 80);
     const std::array<std::uint32_t, 8> compute{0xc0065800u, 0x80000000u, 2, 0, 0x12345678u, 0, 2, 0x55u};

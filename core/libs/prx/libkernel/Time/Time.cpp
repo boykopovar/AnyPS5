@@ -27,7 +27,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
-#include <x86intrin.h>
+#include "prx/libc/include/GuestCpu.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -45,6 +45,7 @@
 #elif defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <pthread.h>
 #endif
 #endif
 
@@ -467,6 +468,18 @@ static std::uint64_t ClockTicksPerSecond() {
     return static_cast<std::uint64_t>(rate);
 }
 
+#ifdef __APPLE__
+static std::uint64_t CurrentThreadCpuNanos() {
+    thread_basic_info_data_t info{};
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    if (thread_info(pthread_mach_thread_np(pthread_self()), THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info), &count) != KERN_SUCCESS)
+        throw std::runtime_error("clock_gettime: thread_info failed");
+    const auto microseconds = (static_cast<std::uint64_t>(info.user_time.seconds) + static_cast<std::uint64_t>(info.system_time.seconds)) * 1000000ULL +
+        static_cast<std::uint64_t>(info.user_time.microseconds) + static_cast<std::uint64_t>(info.system_time.microseconds);
+    return microseconds * 1000ULL;
+}
+#endif
+
 static std::uint64_t ProcessCpuNanos(bool countSystem) {
     struct tms usage{};
     errno = 0;
@@ -578,6 +591,14 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
         default:
             throw std::runtime_error(std::string("clock_gettime") + ": unsupported clock_id " + std::to_string(clockId));
     }
+#ifdef __APPLE__
+    if (clockId == 14) {
+        const std::uint64_t nanos = CurrentThreadCpuNanos();
+        tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
+        tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
+        return 0;
+    }
+#endif
     struct timespec ts{};
     if (clock_gettime(nativeId, &ts) != 0) {
         return -1;
@@ -854,17 +875,17 @@ int APS5_VABI sceKernelGettimezone(KernelTimezone* tz) {
 }
 
 uint64_t APS5_VABI sceKernelReadTsc(void) {
-    return __rdtsc();
+    return GuestCpu::ReadTsc();
 }
 
 std::uint64_t APS5_VABI HostTscFrequency_nid_no_patch() {
     static const std::uint64_t frequency = [] {
         const CurrentCpuPin pin;
         const std::uint64_t startNanos = RawMonotonicNanos();
-        const std::uint64_t startTicks = __rdtsc();
+        const std::uint64_t startTicks = GuestCpu::ReadTsc();
         TimedWait::SleepNanos(20000000ULL);
         const std::uint64_t elapsedNanos = RawMonotonicNanos() - startNanos;
-        const std::uint64_t elapsedTicks = __rdtsc() - startTicks;
+        const std::uint64_t elapsedTicks = GuestCpu::ReadTsc() - startTicks;
         return static_cast<std::uint64_t>(static_cast<long double>(elapsedTicks) * 1000000000.0L / static_cast<long double>(elapsedNanos));
     }();
     return frequency;
