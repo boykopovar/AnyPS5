@@ -43,6 +43,7 @@ WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix5flipY
 WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix5scaleEd( WebCore::TransformationMatrix* self, double s);
 WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix6rotateEd( WebCore::TransformationMatrix* self, double a);
 WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix8multiplyERKS0_( WebCore::TransformationMatrix* self, const WebCore::TransformationMatrix& mat);
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix16applyPerspectiveEd(WebCore::TransformationMatrix* self, double perspective);
 WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix8rotate3dEddd( WebCore::TransformationMatrix* self, double rx, double ry, double rz);
 WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix9translateEdd( WebCore::TransformationMatrix* self, double tx, double ty);
 void APS5_VABI _ZN7WebCore20TransformationMatrixC1ERKNS_15AffineTransformE( WebCore::TransformationMatrix* self, const WebCore::AffineTransform& t);
