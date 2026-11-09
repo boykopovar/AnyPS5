@@ -264,6 +264,85 @@ TInteger ParsedInteger(const char* text, char** end, int base, int* error, TInte
     return value;
 }
 
+constexpr signed char VersionedDigitLimit64[] = {
+    0, 0, 65, 41, 33, 28, 25, 23, 22, 21, 20, 19, 18, 18, 17, 17, 17, 16, 16,
+    16, 15, 15, 15, 15, 14, 14, 14, 14, 14, 14, 14, 13, 13, 13, 13, 13, 13,
+};
+constexpr signed char VersionedDigitLimit32[] = {
+    0, 0, 33, 21, 17, 14, 13, 12, 11, 11, 10, 10, 9, 9, 9, 9, 9, 8, 8,
+    8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+};
+
+const char* SkipVersionedSpace(const char* text) {
+    while (*text == ' ' || (*text >= '\t' && *text <= '\r')) ++text;
+    return text;
+}
+
+int VersionedDigit(char value) {
+    const unsigned char c = static_cast<unsigned char>(value);
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+    return 36;
+}
+
+template<typename TUnsigned>
+TUnsigned VersionedUnsigned(const char* text, char** end, int base, int* error) {
+    const signed char* const limits = sizeof(TUnsigned) == 8 ? VersionedDigitLimit64 : VersionedDigitLimit32;
+    if (error != nullptr) *error = 0;
+    const char* cursor = SkipVersionedSpace(text);
+    const bool negative = *cursor == '-';
+    if (*cursor == '-' || *cursor == '+') ++cursor;
+    if (base == 1 || static_cast<unsigned>(base) > 36) {
+        if (end != nullptr) *end = const_cast<char*>(text);
+        return 0;
+    }
+    const bool hexPrefix = cursor[0] == '0' && (cursor[1] | 0x20) == 'x';
+    if (base == 0) base = hexPrefix ? 16 : cursor[0] == '0' ? 8 : 10;
+    if (base == 16 && hexPrefix) cursor += 2;
+    const char* const digits = cursor;
+    while (*cursor == '0') ++cursor;
+    const char* const significant = cursor;
+    const TUnsigned radix = static_cast<TUnsigned>(base);
+    TUnsigned value = 0;
+    TUnsigned previous = 0;
+    TUnsigned digit = 0;
+    for (int next = VersionedDigit(*cursor); next < base; next = VersionedDigit(*++cursor)) {
+        previous = value;
+        digit = static_cast<TUnsigned>(next);
+        value = static_cast<TUnsigned>(value * radix + digit);
+    }
+    if (cursor == digits) {
+        if (end != nullptr) *end = const_cast<char*>(text);
+        return 0;
+    }
+    if (end != nullptr) *end = const_cast<char*>(cursor);
+    const std::ptrdiff_t excess = (cursor - significant) - limits[base];
+    if (excess > 0 || (excess == 0 && (value < digit || static_cast<TUnsigned>(value - digit) / radix != previous))) {
+        *__error_nid_postfix() = RangeError;
+        if (error != nullptr) *error = 1;
+        return std::numeric_limits<TUnsigned>::max();
+    }
+    return negative ? static_cast<TUnsigned>(0 - value) : value;
+}
+
+template<typename TUnsigned>
+TUnsigned VersionedSigned(const char* text, char** end, int base, int* error) {
+    constexpr TUnsigned Lowest = static_cast<TUnsigned>(TUnsigned {1} << (sizeof(TUnsigned) * 8 - 1));
+    char* local = nullptr;
+    char** const stop = end != nullptr ? end : &local;
+    const char* cursor = SkipVersionedSpace(text);
+    const char sign = *cursor == '-' || *cursor == '+' ? *cursor++ : '+';
+    const TUnsigned value = VersionedUnsigned<TUnsigned>(cursor, stop, base, error);
+    if (*stop == cursor) *stop = const_cast<char*>(text);
+    if ((*stop == text && value != 0) || (sign == '+' && value >= Lowest) || (sign == '-' && value > Lowest)) {
+        *__error_nid_postfix() = RangeError;
+        if (error != nullptr) *error = 1;
+        return sign == '-' ? Lowest : static_cast<TUnsigned>(Lowest - 1);
+    }
+    return sign == '-' ? static_cast<TUnsigned>(0 - value) : value;
+}
+
 constexpr short Denormal = -2, Finite = -1, Zero = 0, Infinite = 1, NotANumber = 2;
 
 void RaiseLibcError(int exceptions) {
@@ -381,6 +460,22 @@ std::int64_t APS5_VABI _Stolx_nid_postfix(const char* text, char** end, int base
 
 long long APS5_VABI _Stoll_nid_postfix(const char* text, char** end, int base) {
     return _Stollx_nid_postfix(text, end, base, nullptr);
+}
+
+long long APS5_VABI _ZNSt8__sce_v27_StollxEPKcPPciPi_nid_postfix(const char* text, char** end, int base, int* error) {
+    return static_cast<long long>(VersionedSigned<std::uint64_t>(text, end, base, error));
+}
+
+unsigned long long APS5_VABI _ZNSt8__sce_v28_StoullxEPKcPPciPi_nid_postfix(const char* text, char** end, int base, int* error) {
+    return VersionedUnsigned<std::uint64_t>(text, end, base, error);
+}
+
+std::int64_t APS5_VABI _ZNSt8__sce_v26_StolxEPKcPPciPi_nid_postfix(const char* text, char** end, int base, int* error) {
+    return VersionedSigned<std::uint32_t>(text, end, base, error);
+}
+
+std::uint64_t APS5_VABI _ZNSt8__sce_v27_StoulxEPKcPPciPi_nid_postfix(const char* text, char** end, int base, int* error) {
+    return VersionedUnsigned<std::uint32_t>(text, end, base, error);
 }
 
 short APS5_VABI _Exp_nid_postfix(double* value, double y, short offset) {

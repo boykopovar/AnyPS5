@@ -13,6 +13,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "ShaderDiskCache.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -156,6 +157,7 @@ Driver& Driver::Get() {
 }
 
 Driver::~Driver() {
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     GuestAllocations::GuestAllocationsSetGpuMapObserver_nid_postfix(nullptr);
     stop();
 }
@@ -170,6 +172,8 @@ void Driver::stop() {
     require(!onWorkerThread(), "worker cannot stop itself");
     std::lock_guard shutdownLock(shutdownMutex);
     if (stopped) return;
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    if (!GuestMemory::StopHostWrites(1000)) std::fprintf(stderr, "[driver] a host write was still inside the driver's hook 1 s into the shutdown; stopping without waiting for it\n");
     LibcRequestShutdown_nid_postfix();
     {
         std::lock_guard lock(mutex);
@@ -219,12 +223,14 @@ Driver::Driver() {
     });
     static_cast<void>(GuestMemory::TrackerGeneration());
     ShaderMemory::SetWaitedMsProvider(&Graphics::Recorder::ThreadWaitedMs);
+    GuestMemory::SetWaitedMsProvider(&Graphics::Recorder::ThreadWaitedMs);
     try {
         LibcRegisterShutdown_nid_postfix([] { Driver::Get().Shutdown(); });
     } catch (...) {
         stop();
         throw;
     }
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(&GuestMemory::PrepareHostWrite);
     GuestAllocations::GuestAllocationsSetGpuMapObserver_nid_postfix([](const GuestAllocations::Mapped& ranges, std::uint64_t generation) {
         const auto import = [&] {
             try {
@@ -278,6 +284,41 @@ bool Driver::WaitIdleFor(std::chrono::milliseconds timeout) {
     rethrowFailure();
     checkStopping();
     return idle;
+}
+
+bool Driver::WaitSettledFor(std::chrono::milliseconds timeout) {
+    require(!onWorkerThread(), "worker cannot wait for itself");
+    std::unique_lock lock(mutex);
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto settled = [&] {
+        if (failure != nullptr || stopping) return true;
+        captureHold.store(true, std::memory_order_relaxed);
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+        if (completed >= accepted || parkedOnTitle()) return true;
+        captureHold.store(false, std::memory_order_relaxed);
+        return false;
+    };
+    ++idleWaiters;
+    bool done = settled();
+    while (!done && std::chrono::steady_clock::now() < deadline) done = changed.wait_for(lock, std::chrono::milliseconds(1), settled);
+    --idleWaiters;
+    rethrowFailure();
+    checkStopping();
+    return done;
+}
+
+bool Driver::Settled() {
+    std::lock_guard lock(mutex);
+    return failure != nullptr || stopping || completed >= accepted || parkedOnTitle();
+}
+
+void Driver::ReleaseSettled() {
+    if (!captureHold.load(std::memory_order_relaxed)) return;
+    {
+        std::lock_guard lock(mutex);
+        captureHold.store(false, std::memory_order_relaxed);
+    }
+    changed.notify_all();
 }
 
 std::vector<AwaitedWait> Driver::AwaitedWaits() {

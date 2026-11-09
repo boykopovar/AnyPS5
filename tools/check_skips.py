@@ -5,7 +5,7 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports (no|shared memory through host pointers\b)|flushes|binds fewer)|the host (has not enough free disk space|cannot allocate a buffer)|no display|no usable Vulkan device|host imports are unavailable|not enough free disk space|cannot create a raw socket)", re.IGNORECASE)
+DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports (no|shared memory through host pointers\b)|flushes|binds fewer)|the host (has not enough free disk space|cannot allocate a buffer|has no interface that can join)|no display|no usable Vulkan device|host imports are unavailable|not enough free disk space|cannot create a raw socket)", re.IGNORECASE)
 
 HOST_LIMITATION = re.compile(r"^skipping: (not enough free disk space for a file|cannot allocate a buffer) of more than 2 GiB", re.IGNORECASE | re.MULTILINE)
 
@@ -24,6 +24,13 @@ WINDOWS_PREFIX = "agc"
 def device_limitations(output, patterns):
     reasons = [match.group(0) for line in output.splitlines() if (match := re.search(r"skipped,.*", line, re.IGNORECASE))]
     return bool(reasons) and all(any(pattern.search(reason) for pattern in patterns) for reason in reasons)
+
+
+def symlink_privilege_limitation(name, output):
+    if name not in ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched"):
+        return False
+    reasons = [match.group(0).strip() for line in output.splitlines() if (match := re.search(r"(?:skipped,|SKIP:).*", line, re.IGNORECASE))]
+    return bool(reasons) and all(reason == "SKIP: Windows symbolic-link privileges unavailable" for reason in reasons)
 
 
 def high_refresh_limitation(output):
@@ -88,8 +95,8 @@ def main(argv=None):
             print(f"{name}: {reason}")
         return 0
     if args.job == "windows":
-        unexpected = [name for name, output in found if not name.startswith(WINDOWS_PREFIX) and not device_limitations(output, (NO_DISPLAY, NO_VULKAN_DEVICE, NO_RAW_SOCKET)) and not high_refresh_limitation(output)]
-        expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for, or a test that reports no display or Vulkan device, a display without a 120 Hz mode or no permission to create a raw socket"
+        unexpected = [name for name, output in found if not name.startswith(WINDOWS_PREFIX) and not symlink_privilege_limitation(name, output) and not device_limitations(output, (NO_DISPLAY, NO_VULKAN_DEVICE, NO_RAW_SOCKET)) and not high_refresh_limitation(output)]
+        expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for, or a test that reports no display or Vulkan device, a display without a 120 Hz mode or no permission to create a raw socket, or the two symlink creation tests reporting unavailable Windows symbolic-link privileges"
     else:
         unexpected = [name for name, output in found if not device_limitations(output, (DEVICE_LIMITATION,)) and not high_refresh_limitation(output)]
         expected = "any test that reports the device limitation it needs, such as narrow subgroups, a missing extension, no display for a Vulkan window, a display without a 120 Hz mode or no permission to create a raw socket"

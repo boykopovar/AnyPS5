@@ -57,11 +57,13 @@ int APS5_VABI sceAppInstUtilAppInstallPkg(const char* packagePath, std::uint64_t
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceAppInstUtilAppPrepareOverwritePkg() {
+int APS5_VABI sceAppInstUtilAppPrepareOverwritePkg(const char* pkgPath) {
+    (void)pkgPath;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceAppInstUtilAppRecoverApp() {
+int APS5_VABI sceAppInstUtilAppRecoverApp(const char* titleId) {
+    (void)titleId;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -77,7 +79,8 @@ int APS5_VABI sceAppInstUtilAppUnInstallPat(const char* titleId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceAppInstUtilAppUnInstallTheme() {
+int APS5_VABI sceAppInstUtilAppUnInstallTheme(const char* contentId) {
+    (void)contentId;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

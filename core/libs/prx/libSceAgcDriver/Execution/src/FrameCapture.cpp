@@ -135,8 +135,12 @@ std::vector<std::byte> readFile(const std::filesystem::path& path) {
     return bytes;
 }
 
+bool hasMagic(std::span<const std::byte> bytes, std::string_view magic) {
+    return bytes.size() >= magic.size() && std::memcmp(bytes.data(), magic.data(), magic.size()) == 0;
+}
+
 void requireMagic(std::span<const std::byte> bytes, std::string_view magic, const std::filesystem::path& path) {
-    requireCapture(bytes.size() >= magic.size() && std::memcmp(bytes.data(), magic.data(), magic.size()) == 0, path.string() + " is not a frame capture file");
+    requireCapture(hasMagic(bytes, magic), path.string() + " is not a frame capture file");
 }
 
 struct Run {
@@ -360,8 +364,9 @@ std::vector<std::byte> FrameCaptureWriter::compress(std::span<const std::byte> b
 FrameCaptureReader::FrameCaptureReader(const std::filesystem::path& directory) : directory(directory) {
     const auto callsPath = directory / FrameCaptureWriter::CallsName;
     const auto callBytes = readFile(callsPath);
-    requireMagic(callBytes, FrameCaptureWriter::CallsMagic, callsPath);
-    std::size_t at = FrameCaptureWriter::CallsMagic.size();
+    if (hasMagic(callBytes, FrameCaptureWriter::CallsMagicV1)) version = 1;
+    else requireMagic(callBytes, FrameCaptureWriter::CallsMagic, callsPath);
+    std::size_t at = (version == 1 ? FrameCaptureWriter::CallsMagicV1 : FrameCaptureWriter::CallsMagic).size();
     while (at < callBytes.size()) {
         if (callBytes.size() - at < 8) {
             truncated = true;
@@ -442,6 +447,10 @@ const std::vector<FrameMemoryChunk>& FrameCaptureReader::Chunks() const {
 
 const std::string& FrameCaptureReader::Header() const {
     return header;
+}
+
+std::uint32_t FrameCaptureReader::Version() const {
+    return version;
 }
 
 bool FrameCaptureReader::Truncated() const {
