@@ -475,8 +475,10 @@ void Driver::execute(Submission& submission) {
             if (queueTiming) frame->CollectBackground();
             frame->NoteFlipBatches(batchesAtFlip, unsignaledAtFlip);
             CaptureTrace::Log("flip frame=%llu submission=%llu offset=%zu batch=%llu unsignaled=%llu", static_cast<unsigned long long>(frameSerial.load()), static_cast<unsigned long long>(submission.serial), cursor, static_cast<unsigned long long>(batchesAtFlip), static_cast<unsigned long long>(unsignaledAtFlip));
+            beginFlipReady(submission.flipHandles.at(cursor));
             flipHold.Release();
             submission.flips.at(cursor)->GpuReady(frame);
+            endFlipReady(submission.flipHandles.at(cursor));
         } else if (opcode == 0x15 || opcode == 0x16) {
             packetCounters.CountDispatch();
             landPendingWaits(submission.queue);
