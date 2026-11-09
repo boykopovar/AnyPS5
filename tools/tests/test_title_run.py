@@ -315,6 +315,15 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "PPSA00001 found more than once"):
             title_run.discover([self.root])
 
+    def test_git_refuses_a_failed_call(self):
+        failed = subprocess.CompletedProcess(["git"], 128, stdout="", stderr="fatal: not a git repository")
+        with unittest.mock.patch.object(title_run.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(SystemExit, "exit 128.*not a git repository"):
+                title_run.git(self.root, "rev-parse", "--short", "HEAD")
+        with unittest.mock.patch.object(title_run.subprocess, "run", side_effect=FileNotFoundError("git")):
+            with self.assertRaisesRegex(SystemExit, "cannot run git"):
+                title_run.git(self.root, "status", "--porcelain")
+
     def test_discover_refuses_a_package_without_title_id(self):
         package(self.root / "a/PPSA00001", "PPSA00001")
         param = self.root / "a/PPSA00001/sce_sys/param.json"
