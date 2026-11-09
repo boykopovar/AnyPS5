@@ -76,6 +76,34 @@ int main() {
     Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients(array, ambisonics, nullptr, 4); }), "null coefficients were accepted");
     alignas(16) unsigned char notArray[512] = {};
     Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients(notArray, ambisonics, coefficients, 4); }), "memory that holds no array was accepted");
+
+    float speakerCoefficients[4] = {3.0f, 3.0f, 3.0f, 3.0f};
+    Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayCoefficients(array, square[0], 0.0f, nullptr, 4, 0, 0.0f); }),
+        "null speaker-array coefficients were accepted");
+    Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayCoefficients(array, square[0], 0.0f, coefficients, 3, 0, 0.0f); }),
+        "a coefficient count other than the speaker count was accepted for the speaker array");
+    Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayCoefficients(notArray, square[0], 0.0f, coefficients, 4, 0, 0.0f); }),
+        "memory that holds no array was accepted for the speaker array");
+    Require(sceAudioOut2GetSpeakerArrayCoefficients(array, square[0], 1.0f, speakerCoefficients, 4, 0, 0.0f) == 0,
+        "the speaker-array coefficients failed");
+    Require(Near(speakerCoefficients[0], 1.0f) && Near(speakerCoefficients[1], 1.0f), "the front pair is not at full gain");
+    Require(Near(speakerCoefficients[2], 0.0f) && Near(speakerCoefficients[3], 0.0f), "a speaker beyond the front pair is not silent");
+    const AudioOut2Position far{12345.0f, -6789.0f, 90.0f};
+    Require(sceAudioOut2GetSpeakerArrayCoefficients(array, far, -2.5f, speakerCoefficients, 4, 1, 1e9f) == 0,
+        "the speaker-array coefficients failed with extreme inputs");
+    Require(Near(speakerCoefficients[0], 1.0f) && Near(speakerCoefficients[1], 1.0f) && Near(speakerCoefficients[2], 0.0f) &&
+        Near(speakerCoefficients[3], 0.0f), "position, spread, height awareness or the downmix radius changed the coefficients");
+    alignas(16) unsigned char monoMemory[512] = {};
+    VbapParams mono = params;
+    mono.numSpeakers = 1;
+    mono.memory = monoMemory;
+    AudioOut2SpeakerArrayHandle monoArray = nullptr;
+    Require(sceAudioOut2SpeakerArrayCreate(&monoArray, &mono, nullptr) == 0 && monoArray == monoMemory, "a single-speaker array was not created");
+    float firstCoefficient = 3.0f;
+    Require(sceAudioOut2GetSpeakerArrayCoefficients(monoArray, square[0], 0.0f, &firstCoefficient, 1, 0, 0.0f) == 0,
+        "the single-speaker coefficient failed");
+    Require(Near(firstCoefficient, 1.0f), "the single speaker is not at full gain");
+
     std::puts("AudioOut2 speaker array tests passed");
     return 0;
 }
