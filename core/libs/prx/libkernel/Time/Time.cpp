@@ -50,6 +50,7 @@
 #endif
 
 static constexpr int GUEST_EPERM = 1;
+static constexpr int GUEST_EIO = 5;
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
@@ -412,8 +413,6 @@ int APS5_VABI usleep_nid_postfix(KernelUseconds microseconds) {
 }
 
 #ifdef _WIN32
-static constexpr int GUEST_EIO = 5;
-
 int APS5_VABI ClockTimeWin32ErrorToGuestErrno_nid_no_patch(std::uint32_t error) {
     if (error == ERROR_NOACCESS) return GUEST_EFAULT;
     if (error == ERROR_ACCESS_DENIED) return GUEST_EPERM;
