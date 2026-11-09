@@ -1,12 +1,15 @@
 #include "prx/libSceMsgDialog/include/Api.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogParam.hpp"
+#include "prx/libSceMsgDialog/include/HostMessageBox.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogRequest.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <chrono>
 
@@ -31,6 +34,11 @@ constexpr int kButtonIdOk = MsgDialog::ButtonIdOk;
 constexpr int kButtonIdNo = MsgDialog::ButtonIdNo;
 constexpr int kModeUserMsg = MsgDialog::ModeUserMsg;
 constexpr int kModeProgressBar = MsgDialog::ModeProgressBar;
+#ifdef __APPLE__
+constexpr bool kAppleBuild = true;
+#else
+constexpr bool kAppleBuild = false;
+#endif
 
 std::mutex g_lock;
 int g_status = kStatusNone;
