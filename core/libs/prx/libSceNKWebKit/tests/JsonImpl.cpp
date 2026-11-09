@@ -1,11 +1,13 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "../src/WtfTextAbi.hpp"
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <new>
 #include <stdexcept>
+#include <string>
 
 static void Check(bool condition, int line) {
     if (!condition) {
@@ -20,6 +22,29 @@ using NKWebKit::JsonAbi::ArrayBase;
 using NKWebKit::JsonAbi::Value;
 using NKWebKit::JsonAbi::ValueType;
 using NKWebKit::WtfAbi::String;
+
+static std::string Serialize(const Value* value) {
+    NKWebKit::JsonAbi::StringBuilder output{String(), nullptr, nullptr, false, true, 0, true};
+    if (!value || !value->vptr || !value->vptr->writeJSON) throw std::invalid_argument("invalid JSON value");
+    value->vptr->writeJSON(value, output);
+    auto* text = output.buffer ? output.buffer : output.string.impl;
+    std::string result;
+    if (text && output.length) {
+        if (output.is8Bit) {
+            auto* chars = output.buffer ? output.characters8 : static_cast<const unsigned char*>(text->data);
+            result.assign(reinterpret_cast<const char*>(chars), static_cast<unsigned>(output.length));
+        } else {
+            auto* chars = output.buffer ? output.characters16 : static_cast<const char16_t*>(text->data);
+            for (unsigned i = 0; i < static_cast<unsigned>(output.length); ++i) {
+                Require(chars[i] <= 0x7f);
+                result.push_back(static_cast<char>(chars[i]));
+            }
+        }
+    }
+    NKWebKit::WtfAbi::Release(output.buffer);
+    NKWebKit::WtfAbi::Release(output.string.impl);
+    return result;
+}
 
 static void TestValueNull() {
     auto v = _ZN3WTF8JSONImpl5Value4nullEv();
@@ -249,6 +274,28 @@ static void TestArrayCreateAndPush() {
     Require(_ZNK3WTF8JSONImpl9ArrayBase10memoryCostEv(arr.Get()) == expectedCost);
 }
 
+static void TestWriteJSON() {
+    auto nullValue = _ZN3WTF8JSONImpl5Value4nullEv();
+    Require(Serialize(nullValue.Get()) == "null");
+
+    auto truth = _ZN3WTF8JSONImpl5Value6createEb(true);
+    auto falsity = _ZN3WTF8JSONImpl5Value6createEb(false);
+    Require(Serialize(truth.Get()) == "true");
+    Require(Serialize(falsity.Get()) == "false");
+
+    auto integer = _ZN3WTF8JSONImpl5Value6createEi(-42);
+    auto number = _ZN3WTF8JSONImpl5Value6createEd(1.25);
+    auto infinity = _ZN3WTF8JSONImpl5Value6createEd(std::numeric_limits<double>::infinity());
+    Require(Serialize(integer.Get()) == "-42");
+    Require(Serialize(number.Get()) == "1.25");
+    Require(Serialize(infinity.Get()) == "null");
+
+    String string = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("a\"b\n"), 4U);
+    auto stringValue = _ZN3WTF8JSONImpl5Value6createERKNS_6StringE(string);
+    Require(Serialize(stringValue.Get()) == "\"a\\\"b\\n\"");
+
+}
+
 static void TestArrayConstructorsAndDestructors() {
     alignas(alignof(ArrayBase)) unsigned char buf[sizeof(ArrayBase)];
     auto* p = reinterpret_cast<ArrayBase*>(buf);
@@ -335,6 +382,7 @@ int main() {
     TestValueString();
     TestValueConstructorsAndDestructors();
     TestArrayCreateAndPush();
+    TestWriteJSON();
     TestArrayConstructorsAndDestructors();
     TestNullPointerExceptions();
     return 0;
