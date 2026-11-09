@@ -780,6 +780,11 @@ class RunReportTests(unittest.TestCase):
         self.assertEqual(report["shaders"], {"compiled": None, "failed": None, "cacheHits": None})
         self.assertIsNone(report["unsupported"])
 
+    def test_list_entries_that_are_not_objects_are_dropped(self):
+        report = self.read(self.report(missing={"functions": [1, {"name": "f", "calls": None}]}))
+        self.assertEqual(report["missing"], [{"name": "f", "calls": None}])
+        self.assertEqual(title_run.tally(report["missing"], ["name"], "calls"), {'["f"]': 0})
+
 
 if __name__ == "__main__":
     unittest.main()
