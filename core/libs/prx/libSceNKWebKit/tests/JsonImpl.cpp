@@ -294,6 +294,14 @@ static void TestWriteJSON() {
     auto stringValue = _ZN3WTF8JSONImpl5Value6createERKNS_6StringE(string);
     Require(Serialize(stringValue.Get()) == "\"a\\\"b\\n\"");
 
+    auto array = _ZN3WTF8JSONImpl5Array6createEv();
+    _ZN3WTF8JSONImpl9ArrayBase11pushBooleanEb(array.Get(), true);
+    _ZN3WTF8JSONImpl9ArrayBase11pushIntegerEi(array.Get(), 7);
+    _ZN3WTF8JSONImpl9ArrayBase10pushStringERKNS_6StringE(array.Get(), string);
+    Require(Serialize(array.Get()) == "[true,7,\"a\\\"b\\n\"]");
+    auto emptyArray = _ZN3WTF8JSONImpl5Array6createEv();
+    Require(Serialize(emptyArray.Get()) == "[]");
+
 }
 
 static void TestArrayConstructorsAndDestructors() {
