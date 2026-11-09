@@ -15,6 +15,7 @@
 #include <unordered_set>
 #include <bit>
 #include <optional>
+#include <span>
 
 namespace ShaderRecompiler {
 namespace {
@@ -949,6 +950,12 @@ bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>
         }
     }
 
+    std::size_t first = 0u;
+    while (!bypassed.contains(region[first])) {
+        EmitDirectInstruction(ctx, *region[first]);
+        members.erase(region[first++]);
+    }
+    const auto suffix = std::span(region).subspan(first);
     auto exact = ctx;
     auto& state = ctx.state;
     const auto exceptional = state.module.AllocateId();
@@ -969,7 +976,7 @@ bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>
         state.module.AddFunction(spv::OpBranchConditional, special, exceptional, fast);
         EmitLabel(state, fast);
     } else for (const auto* value : sources) if (!members.contains(value)) accumulate(value);
-    for (const auto* value : region) {
+    for (const auto* value : suffix) {
         if (bypassed.contains(value)) ctx.Define(*value, ctx.Def(value->Argument(2)));
         else EmitDirectInstruction(ctx, *value);
         if (!entryGuard && uniqueSources.contains(value)) accumulate(value);
@@ -982,11 +989,11 @@ bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>
         state.module.AddFunction(spv::OpBranchConditional, special, exceptional, merge);
     }
     EmitLabel(state, exceptional);
-    for (const auto* value : region) EmitDirectInstruction(exact, *value);
+    for (const auto* value : suffix) EmitDirectInstruction(exact, *value);
     const auto exactLabel = state.currentLabel;
     state.module.AddFunction(spv::OpBranch, merge);
     EmitLabel(state, merge);
-    for (const auto* output : region) {
+    for (const auto* output : suffix) {
         const auto result = state.module.AllocateId();
         state.module.AddFunction(spv::OpPhi, TypeId(state, output->Type()), result, ctx.Def(output), fastLabel, exact.Def(output), exactLabel);
         ctx.definitions[output] = result;
