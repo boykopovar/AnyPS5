@@ -7,6 +7,18 @@
 #include <cstdio>
 #include <initializer_list>
 
+static size_t APS5_VABI MimeRead(char*, size_t, size_t, void*) {
+    return 0;
+}
+
+static int APS5_VABI MimeSeek(void*, std::int64_t, int) {
+    return CURL_SEEKFUNC_OK;
+}
+
+static void APS5_VABI MimeRelease(void* opaque) {
+    ++*static_cast<int*>(opaque);
+}
+
 static void Require(bool condition) {
     if (!condition) std::abort();
 }
@@ -30,6 +42,14 @@ int main() {
     Require(curl_mime_name_nid_postfix(part, "field") == CURLE_OK);
     const char bytes[] = {'a', '\0', 'b'};
     Require(curl_mime_data_nid_postfix(part, bytes, sizeof(bytes)) == CURLE_OK);
+    int releases = 0;
+    Require(curl_mime_data_cb_nid_postfix(part, sizeof(bytes), MimeRead, MimeSeek, MimeRelease, &releases) == CURLE_OK);
+    Require(curl_mime_data_nid_postfix(part, bytes, sizeof(bytes)) == CURLE_OK);
+    Require(releases == 1);
+    Require(curl_mime_data_cb_nid_postfix(part, -1, MimeRead, nullptr, MimeRelease, &releases) == CURLE_OK);
+    Require(curl_mime_data_cb_nid_postfix(part, 0, nullptr, nullptr, nullptr, nullptr) == CURLE_OK);
+    Require(releases == 2);
+    Require(curl_mime_data_cb_nid_postfix(nullptr, 0, MimeRead, nullptr, nullptr, nullptr) == CURLE_BAD_FUNCTION_ARGUMENT);
     Require(curl_mime_type_nid_postfix(part, "application/octet-stream") == CURLE_OK);
     Require(curl_mime_filename_nid_postfix(part, "upload.bin") == CURLE_OK);
     for (const char* encoder : {"binary", "8bit", "7bit", "base64", "quoted-printable"})
@@ -58,6 +78,7 @@ int main() {
     Require(curl_mime_data_nid_postfix(nullptr, "x", 1) == CURLE_BAD_FUNCTION_ARGUMENT);
     Require(curl_mime_subparts_nid_postfix(nullptr, nullptr) == CURLE_BAD_FUNCTION_ARGUMENT);
     curl_mime_free_nid_postfix(mime);
+    Require(releases == 2);
     curl_mime_free_nid_postfix(nullptr);
     curl_easy_cleanup_nid_postfix(easy);
     curl_global_cleanup_nid_postfix();
