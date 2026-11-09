@@ -70,6 +70,12 @@ VkDeviceSize mockReclaim(VkDeviceSize bytes, bool newImage) {
     return reclaimReturns;
 }
 
+VkDeviceSize reclaimableBytes = 0;
+
+VkDeviceSize mockReclaimable() {
+    return reclaimableBytes;
+}
+
 void ReclaimTests() {
     const std::uint32_t both = (1u << HostType) | (1u << DeviceType);
     Context context = mockContext(true);
@@ -91,6 +97,14 @@ void ReclaimTests() {
     choose("a partial release that the budget then shows", 3000 * MiB, 2990 * MiB, 32 * MiB, 2900 * MiB, DeviceType, 64 * MiB);
     choose("a partial release the budget does not show", 3000 * MiB, 2990 * MiB, 32 * MiB, 2990 * MiB, HostType, 64 * MiB);
     choose("caches release nothing", 3000 * MiB, 2990 * MiB, 0, 2990 * MiB, HostType, 64 * MiB);
+    context.cacheReclaimable = mockReclaimable;
+    reclaimableBytes = 40 * MiB;
+    choose("caches holding less than the allocation needs keep their entries", 3000 * MiB, 2990 * MiB, 40 * MiB, 2950 * MiB, HostType, 0);
+    choose("caches holding less than the overage and the allocation keep their entries", 2952 * MiB, 3633 * MiB, 40 * MiB, 3593 * MiB, HostType, 0);
+    reclaimableBytes = 54 * MiB;
+    choose("caches holding exactly what the allocation needs are asked", 3000 * MiB, 2990 * MiB, 54 * MiB, 2936 * MiB, DeviceType, 64 * MiB);
+    reclaimableBytes = 1024 * MiB;
+    choose("caches holding enough are asked for the allocation and the overage", 2952 * MiB, 3633 * MiB, 745 * MiB, 3633 * MiB, DeviceType, 745 * MiB);
 }
 
 void RefusedFallbackTests() {

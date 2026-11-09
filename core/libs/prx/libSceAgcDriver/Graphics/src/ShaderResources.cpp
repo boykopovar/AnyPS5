@@ -1704,6 +1704,13 @@ std::shared_ptr<StorageTexture> CachedStorageLayers(const Context& context, cons
     return cachedStorageTexture(context, {}, resource, 0, 0, false, std::pair{firstLayer, layerCount});
 }
 
+std::uint64_t ReclaimableTextureCacheBytes() {
+    auto& cache = Textures();
+    std::unique_lock lock(cache.mutex, std::defer_lock);
+    if (sampledCacheHeld == 0 && !lock.try_lock()) return std::numeric_limits<std::uint64_t>::max();
+    return cache.bytes + StorageTextures().bytes.load(std::memory_order_relaxed);
+}
+
 bool StorageImageServesKeys(const StorageTexture& image, std::uint64_t dccAddress) {
     GuestTextureResource resource{};
     resource.dccAddress = dccAddress;

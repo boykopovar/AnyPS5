@@ -197,6 +197,7 @@ struct Context {
     std::mutex* settleQueueMutex = nullptr;
     PFN_vkGetPhysicalDeviceMemoryProperties2 memoryProperties2 = nullptr;
     VkDeviceSize (*cacheReclaim)(VkDeviceSize bytes, bool newImage) = nullptr;
+    VkDeviceSize (*cacheReclaimable)() = nullptr;
     RenderCache* renderCache = nullptr;
     DrawQueue* drawQueue = nullptr;
     GraphicsPipelineCache* graphicsPipelines = nullptr;
@@ -369,7 +370,13 @@ struct Context {
         if (report.Fits(bytes)) return type;
         const auto host = HostMemoryType(mask);
         if (!host) return type;
-        if (cacheReclaim != nullptr) {
+        const auto least = report.usage + bytes > report.budget ? report.usage + bytes - report.budget : VkDeviceSize{0};
+        const auto reclaimable = cacheReclaimable != nullptr ? cacheReclaimable() : ~VkDeviceSize{0};
+        if (cacheReclaim != nullptr && reclaimable < least) {
+            static std::atomic<std::uint64_t> unreachable{0};
+            const auto count = unreachable.fetch_add(1) + 1;
+            if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: %llu bytes need %llu MiB of device-local heap %u released, more than the texture caches hold (%llu MiB), so they keep their entries; %llu such allocations\n", what, static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(least >> 20u), heap, static_cast<unsigned long long>(reclaimable >> 20u), static_cast<unsigned long long>(count));
+        } else if (cacheReclaim != nullptr) {
             const auto wanted = bytes + (report.usage > report.budget ? report.usage - report.budget : 0u);
             const auto released = cacheReclaim(wanted, true);
             if (released >= wanted) return type;
