@@ -132,11 +132,6 @@ int APS5_VABI get_vm_map_timestamp_nid_postfix(void) {
     return static_cast<int>(static_cast<std::uint32_t>(GuestAllocations::GuestAllocationsGeneration_nid_postfix()));
 }
 
-int APS5_VABI getfsstat_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI ipmimgr_call_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -217,8 +212,10 @@ int APS5_VABI pthread_attr_getaffinity_np_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_attr_getsolosched_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI pthread_attr_getsolosched_np_nid_postfix(const PthreadAttr* attr, int* solosched) {
+    constexpr int GuestEinval = 22;
+    if (!attr || !*attr || !solosched) return GuestEinval;
+    *solosched = (*attr)->_solosched & 0x10;
     return 0;
 }
 
@@ -236,8 +233,10 @@ int APS5_VABI pthread_attr_setcreatesuspend_np_nid_postfix(PthreadAttr* attr) {
     return 0;
 }
 
-int APS5_VABI pthread_attr_setstackaddr_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI pthread_attr_setstackaddr_nid_postfix(PthreadAttr* attr, void* stack_addr) {
+    constexpr int GuestEinval = 22;
+    if (!attr || !*attr || !stack_addr) return GuestEinval;
+    (*attr)->stackAddress = stack_addr;
     return 0;
 }
 
@@ -354,11 +353,6 @@ int APS5_VABI revoke_nid_postfix(const char* path) {
         return -1;
     }
     NotImplemented_nid_no_patch("revoke of a character device");
-}
-
-int APS5_VABI rfork_thread_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI rtld_printf_nid_postfix(void) {
@@ -888,8 +882,9 @@ int APS5_VABI sceKernelGetKnobs(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetKqueueFromEqueue(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetKqueueFromEqueue(KernelEqueue eq, int* kq) {
+    if (!kq) return SCE_KERNEL_ERROR_EINVAL;
+    *kq = static_cast<int>(static_cast<std::uint32_t>(eq));
     return 0;
 }
 
@@ -1506,11 +1501,6 @@ int APS5_VABI sceKernelQueryTraceMemory(void) {
 }
 
 int APS5_VABI sceKernelRandomizedPath(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelRdup(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

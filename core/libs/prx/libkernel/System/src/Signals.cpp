@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/JumpBuffer.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
@@ -396,6 +397,7 @@ void ExpireAlarm(std::chrono::microseconds interval, ThreadSignals& armer) {
         std::lock_guard lock(registration);
         handler = dispositions[GuestSigalrm].handler;
     }
+    KqueueSignalSent(GuestSigalrm);
     if (handler == 1) return;
     if (SignalBlocked(armer, GuestSigalrm)) {
         MarkPending(GuestSigalrm);
@@ -679,6 +681,7 @@ int APS5_VABI raise_nid_postfix(int guest) {
     if (guest < 1 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
     const GuestSigaction action = Disposition(guest);
     if (action.handler > 1 && !Delivered(action)) throw std::runtime_error("raise: SA_SIGINFO handlers are not delivered");
+    KqueueSignalSent(guest);
     if (action.handler == 1 || (action.handler == 0 && guest != GuestSigcont && IgnoredByDefault(guest))) return 0;
     if (SignalBlocked(guest)) {
         MarkPending(guest);
@@ -714,6 +717,7 @@ int APS5_VABI pthread_kill_nid_postfix(Pthread thread, int guest) {
     if (!GuestThreadIsLive(thread)) return PosixThread::GUEST_ESRCH;
     if (guest == 0) return 0;
     if (Disposition(guest).handler != 1) MarkPending(guest);
+    KqueueSignalSent(guest);
     return 0;
 }
 int APS5_VABI sigaltstack_nid_postfix(const GuestStack* stack, GuestStack* previous) {
@@ -823,13 +827,17 @@ int APS5_VABI pause_nid_postfix(void) {
 }
 
 int APS5_VABI sigsuspend_nid_postfix(const GuestSignalSet* set) {
-    if (set == nullptr) throw std::invalid_argument("sigsuspend: null mask");
+    GuestSignalSet requested{};
+    if (set == nullptr || !GuestCopyIn_nid_no_patch(&requested, set, sizeof(requested))) {
+        *__error_nid_postfix() = 14;
+        return -1;
+    }
     GuestSignalSet previous{{0, 0, 0, 0}};
     {
         std::lock_guard lock(registration);
         auto& self = CurrentSignals();
-        previous.bits[0] = self.blocked[0].exchange(set->bits[0] & ~UnblockableSignals);
-        for (int word = 1; word < 4; ++word) previous.bits[word] = self.blocked[word].exchange(set->bits[word]);
+        previous.bits[0] = self.blocked[0].exchange(requested.bits[0] & ~UnblockableSignals);
+        for (int word = 1; word < 4; ++word) previous.bits[word] = self.blocked[word].exchange(requested.bits[word]);
     }
     WaitForDeliverableSignal();
     ChangeBlockedMask(GuestSigsetmask, &previous, nullptr, false);
