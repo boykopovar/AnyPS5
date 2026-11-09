@@ -39,6 +39,9 @@ constexpr std::uint64_t kA = 0x1111, kB = 0x2222, kC = 0x3333, kD = 0x4444;
 std::uint8_t* arena = nullptr;
 volatile std::sig_atomic_t steps = 0;
 volatile std::sig_atomic_t outsideSteps = 0;
+constexpr int kCalibrationInstructions = 128;
+
+bool SingleStepIsReliable(const int count) { return count >= kCalibrationInstructions; }
 
 #ifdef _WIN32
 DWORD steppingThread = 0;
@@ -46,9 +49,6 @@ bool singleStepping = false;
 bool steppingFinished = false;
 std::uintptr_t steppingReturn = 0;
 bool calibratingSingleStep = false;
-constexpr int kCalibrationInstructions = 128;
-
-bool SingleStepIsReliable(const int count) { return count >= kCalibrationInstructions; }
 
 LONG CALLBACK clobberBelowRsp(EXCEPTION_POINTERS* exception) {
     if (GetCurrentThreadId() != steppingThread || !singleStepping || exception->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP)
@@ -471,6 +471,8 @@ int main() {
             return 77;
         }
         const SingleStepHandler singleStepHandler;
+        require(!SingleStepIsReliable(kCalibrationInstructions - 1) && SingleStepIsReliable(kCalibrationInstructions),
+                "single-step calibration threshold is wrong");
         if (!calibrateSingleStep()) return 77;
         runLeaves(framedLeaves());
         const auto stubbed = runLeaves(stubbedLeaves());
