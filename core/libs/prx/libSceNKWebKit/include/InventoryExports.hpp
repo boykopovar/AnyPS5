@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 
 extern "C" {
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient21dispatchDidCommitLoadEN3WTF8OptionalINS_18HasInsecureContentEEENS2_INS_13UsedLegacyTLSEEE();
 
 int APS5_VABI WKURLRequestSetDefaultTimeoutInterval();
 int APS5_VABI WKErrorCopyDomain();

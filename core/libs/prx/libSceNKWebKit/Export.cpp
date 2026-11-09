@@ -217,8 +217,7 @@ int APS5_VABI _ZN7WebCore9DOMWindow29setCanShowModalDialogOverrideEb() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient21dispatchDidCommitLoadEN3WTF8OptionalINS_18HasInsecureContentEEENS2_INS_13UsedLegacyTLSEEE() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient21dispatchDidCommitLoadEN3WTF8OptionalINS_18HasInsecureContentEEENS2_INS_13UsedLegacyTLSEEE() {
 }
 
 int APS5_VABI _ZNK7WebCore16HTMLImageElement19editableImageViewIDEv() {
