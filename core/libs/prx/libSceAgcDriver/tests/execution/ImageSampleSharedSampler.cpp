@@ -154,6 +154,7 @@ void CheckNormalizedProducts(AgcDriver::VulkanDevice& device) {
     constexpr auto SignedFormat = static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format8_8_8_8SNorm);
     const std::array<std::uint32_t, 4> floating{0x7f812345u, 0xffc54321u, 0x80000000u, 0x7f800000u};
     ShaderRecompiler::RecompileResult first;
+    ShaderRecompiler::RecompileResult sampledFirst;
     for (const auto format : {Format8888UNorm, SignedFormat, FloatFormat, Format8888UNorm}) {
         const auto pitch = PitchBytes(format, Colors.size());
         for (std::uint32_t y = 0u; y < Size; ++y) {
@@ -165,7 +166,9 @@ void CheckNormalizedProducts(AgcDriver::VulkanDevice& device) {
                 }
             }
         }
-        Run(device, Code, format, true);
+        const auto sample = Run(device, Code, format, true);
+        if (sampledFirst.spirv.empty()) sampledFirst = sample;
+        else Require(sampledFirst.spirv.ContentHash() == sample.spirv.ContentHash() && sampledFirst.Identity() == sample.Identity(), "format transition split a sampled shader with no bounded NaN query");
         std::array<std::uint32_t, 4> sampled{};
         std::copy_n(Output.begin() + 4u, 4u, sampled.begin());
         const auto result = Run(device, ProductCode, format, true);

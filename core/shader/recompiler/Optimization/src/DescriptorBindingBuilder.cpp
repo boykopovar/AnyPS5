@@ -30,6 +30,7 @@ static_assert(PipelineSpecialization::MinLodBase + ShaderInfo::MaxImages <= Pipe
 static_assert(PipelineSpecialization::SamplerLodBiasBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::FmaskFormatBase);
 static_assert(PipelineSpecialization::FmaskFormatBase + ShaderInfo::MaxImages <= PipelineSpecialization::VolumeGatherBase);
 static_assert(PipelineSpecialization::VolumeGatherBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
+static_assert(PipelineSpecialization::ImageComponentBase + ShaderInfo::MaxImages <= PipelineSpecialization::NormalizedImageBase);
 
 namespace {
 
@@ -81,7 +82,7 @@ bool NormalizedImageFormat(IrBufferFormat format) {
     }
 }
 
-std::uint32_t ConstantImageComponents(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::size_t index, const ImageResource& mode) {
+std::uint32_t SampledImageFlags(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::size_t index, const ImageResource& mode) {
     if (mode.resourceClass != ImageResourceClass::Sampled || mode.packed || mode.r128 || mode.depthCompare || mode.depthBits || mode.depthUnorm16 || mode.srgbDecode || (mode.emulatedCompare & EmulatedCompare::Enabled) != 0u || mode.byElements != 0u || mode.byComponents != 0u || mode.conversionFormat != IrBufferFormat::Invalid || mode.packedFormat != IrBufferFormat::Invalid) return 0u;
     if (mode.numericClass != IrTextureNumericClass::Float && mode.numericClass != IrTextureNumericClass::Uint && mode.numericClass != IrTextureNumericClass::Sint) return 0u;
     const auto& descriptor = snapshot.images.at(index);
@@ -561,7 +562,9 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {
         if (info.images[index].table == NoTable) {
             const auto& mode = info.runtimeImageModes.at(index).at(imageModes[index]);
-            plan.specialization.push_back({PipelineSpecialization::ImageComponentBase + index, ConstantImageComponents(info, snapshot, index, mode)});
+            const auto flags = SampledImageFlags(info, snapshot, index, mode);
+            plan.specialization.push_back({PipelineSpecialization::ImageComponentBase + index, flags & ~PipelineSpecialization::ImageNormalizedValues});
+            plan.specialization.push_back({PipelineSpecialization::NormalizedImageBase + index, (flags & PipelineSpecialization::ImageNormalizedValues) != 0u ? 1u : 0u});
         }
         if (info.images[index].mipMode != ImageMipMode::DynamicStorage) continue;
         const auto word = snapshot.images.at(index).dwords[3];

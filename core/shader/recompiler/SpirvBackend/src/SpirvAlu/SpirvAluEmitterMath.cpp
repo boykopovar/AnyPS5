@@ -1552,7 +1552,7 @@ const IrValue* NanQuerySource(const IrValue* value) {
 
 class NormalizedSampleValues {
 public:
-    explicit NormalizedSampleValues(const IrProgram& program) : program(program) {}
+    explicit NormalizedSampleValues(SpirvEmitterState& state) : program(state.program), known(state.normalizedSampleImages) {}
 
     std::optional<std::vector<std::uint32_t>> Images(const IrValue* value) {
         value = value->Resolve();
@@ -1613,17 +1613,17 @@ private:
     }
 
     const IrProgram& program;
-    std::unordered_map<const IrValue*, std::optional<std::vector<std::uint32_t>>> known;
+    std::unordered_map<const IrValue*, std::optional<std::vector<std::uint32_t>>>& known;
 };
 
 std::uint32_t SampleNanQuery(SpirvValueEmitContext& ctx, const IrValue* source, std::uint32_t fallback) {
-    NormalizedSampleValues values(ctx.state.program);
+    NormalizedSampleValues values(ctx.state);
     const auto images = values.Images(source);
     if (!images || images->empty()) return fallback;
     auto normalized = ConstantBool(ctx.state, true);
     for (const auto image : *images) {
-        const auto flags = ctx.state.module.SpecializationConstant(TypeU32(ctx.state), PipelineSpecialization::ImageComponentBase + image, 0u);
-        const auto bounded = Binary(ctx.state, spv::OpINotEqual, TypeBool(ctx.state), EmitAndConstant(ctx.state, flags, PipelineSpecialization::ImageNormalizedValues), ConstantU32(ctx.state, 0u));
+        const auto flags = ctx.state.module.SpecializationConstant(TypeU32(ctx.state), PipelineSpecialization::NormalizedImageBase + image, 0u);
+        const auto bounded = Binary(ctx.state, spv::OpINotEqual, TypeBool(ctx.state), flags, ConstantU32(ctx.state, 0u));
         normalized = Binary(ctx.state, spv::OpLogicalAnd, TypeBool(ctx.state), normalized, bounded);
     }
     return Select(ctx.state, TypeBool(ctx.state), normalized, ConstantBool(ctx.state, false), fallback);
