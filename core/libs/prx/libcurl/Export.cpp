@@ -173,6 +173,59 @@ struct GuestAllocators {
 
 GuestAllocators activeAllocators;
 
+struct CurlFormGetContext {
+    void* argument;
+    guest_curl_formget_callback append;
+};
+
+size_t CurlFormGetAppend(void* opaque, const char* buffer, size_t size) {
+    auto* const context = static_cast<CurlFormGetContext*>(opaque);
+    return context->append(context->argument, buffer, size);
+}
+
+struct CurlFormGetNode {
+    const guest_curl_httppost* guest;
+    std::unique_ptr<curl_httppost> host;
+};
+
+curl_httppost* TranslateCurlForm(const guest_curl_httppost* form,
+                                 std::vector<CurlFormGetNode>& nodes,
+                                 std::unordered_map<const guest_curl_httppost*, curl_httppost*>& translated) {
+    if (!form) return nullptr;
+    const auto found = translated.find(form);
+    if (found != translated.end()) return found->second;
+    auto host = std::make_unique<curl_httppost>();
+    auto* const pointer = host.get();
+    pointer->name = form->name;
+    pointer->namelength = static_cast<long>(form->namelength);
+    pointer->contents = form->contents;
+    pointer->contentslength = static_cast<long>(form->contentslength);
+    pointer->buffer = form->buffer;
+    pointer->bufferlength = static_cast<long>(form->bufferlength);
+    pointer->contenttype = form->contenttype;
+    pointer->contentheader = reinterpret_cast<curl_slist*>(form->contentheader);
+    pointer->flags = static_cast<long>(form->flags);
+    pointer->showfilename = form->showfilename;
+    pointer->userp = form->userp;
+    pointer->contentlen = form->contentlen;
+    translated.emplace(form, pointer);
+    nodes.push_back({form, std::move(host)});
+    return pointer;
+}
+
+curl_httppost* TranslateCurlFormTree(const guest_curl_httppost* form,
+                                    std::vector<CurlFormGetNode>& nodes,
+                                    std::unordered_map<const guest_curl_httppost*, curl_httppost*>& translated) {
+    auto* const root = TranslateCurlForm(form, nodes, translated);
+    for (std::size_t index = 0; index < nodes.size(); ++index) {
+        const auto* const guest = nodes[index].guest;
+        auto* const host = nodes[index].host.get();
+        host->next = TranslateCurlForm(guest->next, nodes, translated);
+        host->more = TranslateCurlForm(guest->more, nodes, translated);
+    }
+    return root;
+}
+
 void* GuestCurlMalloc(size_t size) {
     return activeAllocators.allocate(size);
 }
@@ -1092,7 +1145,16 @@ std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** htt
 }
 
 int APS5_VABI curl_formget_nid_postfix(struct guest_curl_httppost* form, void* arg, guest_curl_formget_callback append) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!append) NotImplemented_nid_no_patch(__func__);
+    try {
+        std::vector<CurlFormGetNode> nodes;
+        std::unordered_map<const guest_curl_httppost*, curl_httppost*> translated;
+        auto* const hostForm = TranslateCurlFormTree(form, nodes, translated);
+        CurlFormGetContext context{arg, append};
+        return ::curl_formget(hostForm, &context, CurlFormGetAppend);
+    } catch (const std::bad_alloc&) {
+        return CURLE_OUT_OF_MEMORY;
+    }
 }
 
 std::int32_t APS5_VABI curl_multi_socket_action_nid_postfix(CURLM* multi_handle, int s, int ev_bitmask, int* running_handles) {
