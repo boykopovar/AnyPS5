@@ -281,8 +281,10 @@ std::optional<HeldReason> writesBeyondTargets(const ShaderRecompiler::RecompileR
 
 DrawFinisher::Pending heldWrites(const DrawTail& tail) {
     DrawFinisher::Pending held;
-    held.key = tail.drawKey;
-    held.shape = tail.shapeKey;
+    if (!tail.drawHit) {
+        held.key = tail.drawKey;
+        held.shape = tail.shapeKey;
+    }
     if (tail.decode == nullptr) {
         noteHeld(HeldReason::NoDecode);
         return held;
