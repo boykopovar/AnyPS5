@@ -90,7 +90,7 @@ std::string ModuleStem(std::string name, const bool windows) {
 
 }
 
-std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, const bool toRosetta, ISyscallScanner& syscallScanner, const bool lazyBinding, const bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress) const {
+std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, const bool toRosetta, ISyscallScanner& syscallScanner, const bool lazyBinding, const bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress, const bool functionSymbolRoots) const {
     std::vector<std::filesystem::path> paths;
     std::map<std::filesystem::path, GuestImage> discovered;
     progress.Report({Domain::ProgressStage::Modules, {}, 0, modules.size()});
@@ -103,7 +103,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         if (excludedModules.contains(Io::Utf8Path(path.filename()))) throw Domain::RelinkerException("Excluded module supplied to converter: " + Io::Utf8Path(path));
         if (discovered.contains(path)) throw Domain::RelinkerException("Duplicate module path: " + Io::Utf8Path(path));
         paths.push_back(path);
-        auto image = GuestImageReader().Read(path, std::move(module.Bytes), windows);
+        auto image = GuestImageReader().Read(path, std::move(module.Bytes), windows, functionSymbolRoots);
         image.PatchedRanges = std::move(module.PatchedRanges);
         discovered.emplace(path, std::move(image));
     }
@@ -543,11 +543,11 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
 }
 
 
-std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules) {
+std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, const bool functionSymbolRoots) {
     std::map<std::size_t, std::string> sonames;
     const auto soname = [&](std::size_t index) -> const std::string& {
         const auto [found, inserted] = sonames.try_emplace(index);
-        if (inserted) found->second = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true).Soname;
+        if (inserted) found->second = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true, functionSymbolRoots).Soname;
         return found->second;
     };
     std::vector<std::pair<std::filesystem::path, std::filesystem::path>> skipped;
