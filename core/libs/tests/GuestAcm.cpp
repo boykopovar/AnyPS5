@@ -198,6 +198,18 @@ int main() {
     Require(reverb(1, reverbFilters, reverbOutputs) == BadPointer);
     filterA.blockCount = 3;
     Require(ringIs(0, 0) && reverbBatch.offset == 0);
+    std::byte historyBefore[0x8000];
+    std::memcpy(historyBefore, memory, sizeof(historyBefore));
+    reverbInput.currentBlock = 5;
+    reverbInput.availableBlocks = 1;
+    Require(reverb(1, reverbFilters, reverbOutputs) == BadPointer && ringIs(5, 1) && reverbBatch.offset == 0);
+    Require(std::memcmp(historyBefore, memory, sizeof(historyBefore)) == 0);
+    reverbInput.currentBlock = 0;
+    reverbInput.availableBlocks = 0;
+    reverbInput.blockCount = 0x100000;
+    Require(reverb(1, reverbFilters, reverbOutputs) == BadPointer && ringIs(0, 0) && reverbBatch.offset == 0);
+    Require(std::memcmp(historyBefore, memory, sizeof(historyBefore)) == 0);
+    reverbInput.blockCount = 4;
     Require(reverb(0, reverbFilters, reverbOutputs) == BadPointer && ringIs(3, 1));
     Require(reverb(1, reverbFilters, nullptr) == BadPointer && ringIs(2, 2));
     reverbInput.currentBlock = 0;
