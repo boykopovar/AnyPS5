@@ -24,6 +24,20 @@ void SetLanguage(const char* value) {
 }
 
 int main() {
+    int initialUser = -1;
+    Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(initialUser == -1);
+
+    char name[32]{};
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(name)) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, 0) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, sizeof(name)) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetUserName(123, name, sizeof(name)) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, 0) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, USER_SERVICE_MAX_USER_NAME_LENGTH) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     int32_t userNumber = -1;
     Require(sceUserServiceGetUserNumber(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
@@ -171,7 +185,7 @@ int main() {
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID, &value) == USER_SERVICE_OK);
         Require(value == setting.value);
     }
-    int initialUser = -1;
+    initialUser = -1;
     Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_OK && initialUser == USER_SERVICE_INITIAL_USER_ID);
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
@@ -206,18 +220,28 @@ int main() {
         Require(threw);
     }
 
-    char name[32]{};
+    std::memset(name, 0, sizeof(name));
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, 0) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserName(123, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserName(123, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(sceUserServiceGetUserName(0x10000004, name, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_USER_ID);
     Require(sceUserServiceGetUserName(static_cast<int>(0xFFFFFFFFu), name, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_USER_ID);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID + USER_SERVICE_MAX_USERS, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(sceUserServiceGetUserName(USER_SERVICE_USER_ID_INVALID, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
-    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, 5) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, 0) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, USER_SERVICE_MAX_USER_NAME_LENGTH) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, sizeof(name)) == USER_SERVICE_OK);
     Require(std::strcmp(name, "Player") == 0);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID + 1, name, sizeof(name)) == USER_SERVICE_OK);
     Require(std::strcmp(name, "Player2") == 0);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID + 2, name, sizeof(name)) == USER_SERVICE_OK);
+    Require(std::strcmp(name, "Player3") == 0);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID + 3, name, sizeof(name)) == USER_SERVICE_OK);
+    Require(std::strcmp(name, "Player4") == 0);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID - 1, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID + 4, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetUserName(USER_SERVICE_USER_ID_INVALID, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
 
     std::int32_t number = -1;
     Require(sceUserServiceGetUserNumber(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
@@ -319,6 +343,14 @@ int main() {
         Require(value == 0x5a5a5a5a);
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     }
+
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
+    initialUser = -1;
+    Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(initialUser == -1);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(name)) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, sizeof(name)) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     presets.difficulty = 0x5a;
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, &presets) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(presets.difficulty == 0x5a);
