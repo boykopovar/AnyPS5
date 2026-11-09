@@ -14,6 +14,7 @@
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bit>
 #include <cmath>
@@ -225,6 +226,60 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
     return false;
 }
 
+ReferencedProgramScan ReferencedPrograms(std::span<const std::uint32_t> commands, const std::map<std::size_t, std::vector<std::uint32_t>>& registerLists) {
+    constexpr std::array<std::uint32_t, 7> programRegisters{0x008u, 0x048u, 0x088u, 0x0c8u, 0x108u, 0x148u, 0x20cu};
+    std::array<std::uint32_t, programRegisters.size() * 2> values{};
+    std::array<bool, programRegisters.size() * 2> written{};
+    std::array<bool, programRegisters.size()> bound{};
+    ReferencedProgramScan scan;
+    const auto write = [&](std::uint32_t offset, std::uint32_t value, bool conditional) {
+        const auto base = std::ranges::find_if(programRegisters, [&](std::uint32_t program) { return offset - program < 2u; });
+        if (base == programRegisters.end()) return;
+        if (conditional) {
+            scan.complete = false;
+            return;
+        }
+        const auto slot = static_cast<std::size_t>(base - programRegisters.begin()) * 2u + (offset - *base);
+        values[slot] = value;
+        written[slot] = true;
+        const auto low = slot & ~std::size_t{1};
+        if (written[low] && written[low + 1]) {
+            bound[low / 2] = true;
+            scan.addresses.push_back((static_cast<std::uint64_t>(values[low]) << 8u) | (static_cast<std::uint64_t>(values[low + 1] & 0xffu) << 40u));
+        }
+    };
+    std::size_t guardedEnd = 0;
+    for (std::size_t cursor = 0; cursor < commands.size(); cursor += Pm4::PacketWords(commands[cursor])) {
+        const auto header = commands[cursor];
+        if ((header >> 30u) != 3u) continue;
+        const auto opcode = (header >> 8u) & 0xffu;
+        const auto words = std::min<std::size_t>(Pm4::PacketWords(header), commands.size() - cursor);
+        const bool conditional = (header & 1u) != 0 || cursor < guardedEnd;
+        if (opcode == 0x22u && words == 5) guardedEnd = std::max(guardedEnd, cursor + words + Pm4::ConditionalWords(commands.subspan(cursor, words)));
+        if (Pm4::DrawOpcode(opcode) && !std::any_of(bound.begin(), bound.end() - 1, [](bool pair) { return pair; })) scan.complete = false;
+        if ((opcode == 0x15u || opcode == 0x16u) && !bound.back()) scan.complete = false;
+        if (opcode == 0x76u && words >= 3) {
+            const auto packet = commands.subspan(cursor, words);
+            const auto offset = packet[1] & ~0x70000000u;
+            for (std::size_t i = 2; i < words; ++i) write(offset + static_cast<std::uint32_t>(i - 2), packet[i], conditional);
+        } else if (opcode == 0x63u) {
+            const auto list = registerLists.find(cursor);
+            if (list == registerLists.end()) continue;
+            if (!Pm4::IndirectRegistersValid(list->second)) {
+                scan.complete = false;
+                continue;
+            }
+            for (std::size_t i = 0; i + 1 < list->second.size(); i += 2) write(list->second[i] & ~0x70000000u, list->second[i + 1], conditional);
+        }
+    }
+    for (std::size_t slot = 0; slot < written.size(); slot += 2) {
+        if (written[slot] != written[slot + 1]) scan.complete = false;
+    }
+    std::ranges::sort(scan.addresses);
+    scan.addresses.erase(std::unique(scan.addresses.begin(), scan.addresses.end()), scan.addresses.end());
+    return scan;
+}
+
 void Driver::readRegisterLists(Submission& submission) {
     submission.registerLists.clear();
     for (std::size_t cursor = 0; cursor < submission.commands.size(); cursor += Pm4::PacketWords(submission.commands[cursor])) {
@@ -263,7 +318,7 @@ void Driver::noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited) {
     changed.notify_all();
 }
 
-void Driver::holdFlipBehindWorker(const Submission& submission) {
+void Driver::holdFlipBehindWorker(const Submission& submission, bool cpuFlip) {
     if (submission.queue != 0 || onWorkerThread()) return;
     bool candidate = false;
     for (std::size_t cursor = 0; cursor < submission.commands.size() && !candidate; cursor += Pm4::PacketWords(submission.commands[cursor])) {
@@ -281,11 +336,51 @@ void Driver::holdFlipBehindWorker(const Submission& submission) {
     flipHolders.fetch_add(1, std::memory_order_acq_rel);
     changed.wait(lock, [&] { return failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipsAhead.load(std::memory_order_acquire) == 0 || queue0AwaitsTitle.load(std::memory_order_acquire); });
     flipHolders.fetch_sub(1, std::memory_order_acq_rel);
+    if (cpuFlip || failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipsAhead.load(std::memory_order_acquire) != 0) return;
+    flipHolders.fetch_add(1, std::memory_order_acq_rel);
+    changed.wait(lock, [&] { return failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipWorkOpen.load(std::memory_order_acquire) == 0 || queue0AwaitsTitle.load(std::memory_order_acquire); });
+    flipHolders.fetch_sub(1, std::memory_order_acq_rel);
+    if (failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipWorkOpen.load(std::memory_order_acquire) != 0) return;
+    const auto workSerial = flipWorkSerial.load(std::memory_order_acquire);
+    lock.unlock();
+    waitFlipWork(workSerial);
+}
+
+void Driver::waitFlipWork(std::uint64_t workSerial) {
+    if (workSerial == 0) return;
+    auto localDevice = device.Load();
+    if (localDevice == nullptr) return;
+    if (localDevice->CanWaitUnlocked()) {
+        try {
+            localDevice->WaitRecorded(workSerial);
+        } catch (...) {
+            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
+            std::lock_guard gpuLock(GuestMemory::GpuMutex());
+            localDevice.reset();
+            throw;
+        }
+        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
+        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+        localDevice->ReapRecorded(workSerial);
+        localDevice.reset();
+        return;
+    }
+    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
+    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    localDevice->WaitIdle();
+    localDevice.reset();
 }
 
 void Driver::releaseFlipHold() {
     std::lock_guard lock(mutex);
     flipsAhead.fetch_sub(1, std::memory_order_acq_rel);
+    if (flipHolders.load(std::memory_order_acquire) != 0) changed.notify_all();
+}
+
+void Driver::finishFlipWork(std::uint64_t workSerial) {
+    std::lock_guard lock(mutex);
+    if (workSerial > flipWorkSerial.load(std::memory_order_relaxed)) flipWorkSerial.store(workSerial, std::memory_order_release);
+    flipWorkOpen.fetch_sub(1, std::memory_order_acq_rel);
     if (flipHolders.load(std::memory_order_acquire) != 0) changed.notify_all();
 }
 
@@ -470,8 +565,18 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
     readRegisterLists(submission);
     if (APS5_ENABLE_TIMING_LOG) submission.validatedAt = std::chrono::steady_clock::now();
     waitForFlipRoom(submission);
-    holdFlipBehindWorker(submission);
-    AwaitRegistrationPreparation();
+    holdFlipBehindWorker(submission, cpuFlip);
+    const auto scan = ReferencedPrograms(submission.commands, submission.registerLists);
+    if (!scan.complete || submission.rewindTail != nullptr) {
+        AwaitRegistrationPreparation();
+    } else {
+        std::shared_ptr<const ShaderRegistry> registry;
+        {
+            std::lock_guard lock(mutex);
+            registry = shaders;
+        }
+        if (registry != nullptr) AwaitReferencedPreparations(*registry, scan.addresses);
+    }
     if (LibraryPrebuildsWaiting()) PrioritizeLibraryPrebuilds(BoundGraphicsPrograms(submission));
     if (APS5_ENABLE_TIMING_LOG) submission.roomReadyAt = std::chrono::steady_clock::now();
     static const bool trace = std::getenv("APS5_TRACE_GPU") != nullptr;
@@ -498,11 +603,12 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
             submission.flips.begin()->second->GpuReady(frame);
             lock.unlock();
             Graphics::NoteHostImportFrame();
-            AgcDriverDeliverEopInterrupt(0);
             return;
         }
         submission.shaders = shaders;
         submission.serial = accepted + 1;
+        if (trace) std::fprintf(stderr, "[gpu] %.1f accepted serial=%llu queue=0x%x dwords=%zu at %p%s\n", TraceMs(), static_cast<unsigned long long>(submission.serial), queue, submission.commands.size(),
+                                static_cast<const void*>(descriptor.addr), cpuFlip ? " (cpu flip)" : "");
 
         submission.received = ++eventSerial;
         const auto now = std::chrono::steady_clock::now();
@@ -518,6 +624,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
         if (queue == 0 && !submission.flips.empty()) {
             submission.holdsFlip = true;
             flipsAhead.fetch_add(1, std::memory_order_acq_rel);
+            flipWorkOpen.fetch_add(1, std::memory_order_acq_rel);
         }
         if (!submission.flips.empty()) ++flipSubmissionsOfThread();
         enqueue(std::move(submission));
@@ -559,6 +666,8 @@ void Driver::SuspendPoint() {
     Submission boundary{};
     boundary.serial = accepted + 1;
     boundary.suspend = true;
+    static const bool trace = std::getenv("APS5_TRACE_GPU") != nullptr;
+    if (trace) std::fprintf(stderr, "[gpu] %.1f accepted serial=%llu suspend point\n", TraceMs(), static_cast<unsigned long long>(boundary.serial));
 
     boundary.queue = 0;
     boundary.receivedAt = receivedAt;
