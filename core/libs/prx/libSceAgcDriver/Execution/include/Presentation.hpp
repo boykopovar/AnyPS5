@@ -3,6 +3,7 @@
 
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <span>
@@ -35,6 +36,7 @@ extern "C" void AgcDriverReleaseWindow_nid_postfix(void* window);
 extern "C" void AgcDriverTogglePerformanceOverlay_nid_postfix();
 extern "C" void AgcDriverSetSystemOverlay_nid_postfix(const ImeKeyboardView* view);
 extern "C" void AgcDriverSetSystemDialog_nid_postfix(const ModalDialogView* view);
+extern "C" void AgcDriverSetHostMenu_nid_postfix(const char* const* lines, std::size_t count, std::size_t cursor);
 extern "C" void AgcDriverReportFailure_nid_postfix(std::exception_ptr error);
 
 #endif

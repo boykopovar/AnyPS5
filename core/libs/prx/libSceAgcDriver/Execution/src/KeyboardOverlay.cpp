@@ -612,6 +612,19 @@ extern "C" void AgcDriverSetSystemOverlay_nid_postfix(const ImeKeyboardView* vie
     else AgcDriver::systemOverlay.reset();
 }
 
+extern "C" void AgcDriverSetHostMenu_nid_postfix(const char* const* lines, std::size_t count, std::size_t cursor) {
+    std::lock_guard lock(AgcDriver::systemOverlayMutex);
+    if (lines == nullptr || count == 0) {
+        AgcDriver::systemHostMenu.reset();
+        return;
+    }
+    AgcDriver::HostMenuView view;
+    view.lines.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) view.lines.emplace_back(lines[index] != nullptr ? lines[index] : "");
+    view.cursor = cursor;
+    AgcDriver::systemHostMenu = std::move(view);
+}
+
 extern "C" void AgcDriverSetSystemDialog_nid_postfix(const ModalDialogView* view) {
     std::lock_guard lock(AgcDriver::systemOverlayMutex);
     if (view != nullptr) AgcDriver::systemDialog = *view;
