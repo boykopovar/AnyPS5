@@ -1,5 +1,7 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -23,6 +25,7 @@ std::int64_t JxrDecodeGetFrameCount_nid_no_patch(void* decoder, std::uint32_t* c
 std::int64_t JxrDecodeGetColorContext_nid_no_patch(void* decoder, std::uint8_t* buffer, std::uint32_t* size);
 std::int64_t JxrDecodeGetDescriptiveMetadata_nid_no_patch(void* decoder, void* metadata);
 std::int64_t JxrDecodeRelease_nid_no_patch(void** decoder);
+std::int64_t JxrCreateDecoderFromFile_nid_no_patch(const char* filename, void** decoder);
 
 void* JxrGuestCalloc_nid_no_patch(std::size_t count, std::size_t size) {
     return calloc_nid_postfix(count, size);
@@ -126,6 +129,18 @@ std::int64_t APS5_VABI PKImageDecode_Release_nid_postfix(void** decoder) {
     if (!decoder || !*decoder) throw std::invalid_argument("PKImageDecode_Release requires a decoder");
     if (!JxrDecodeHasClose_nid_no_patch(*decoder)) throw std::invalid_argument("PKImageDecode_Release requires a stream Close callback when the decoder owns its stream");
     return JxrDecodeRelease_nid_no_patch(decoder);
+}
+
+std::int64_t APS5_VABI PKCodecFactory_CreateDecoderFromFile_nid_postfix(const char* filename, void** decoder) {
+    if (!filename || !decoder) throw std::invalid_argument("PKCodecFactory_CreateDecoderFromFile requires a filename and output");
+    const auto hostPath = ResolvePath_nid_no_patch(filename).string();
+    void* nativeDecoder = reinterpret_cast<void*>(std::uintptr_t{1});
+    const auto result = JxrCreateDecoderFromFile_nid_no_patch(hostPath.c_str(), &nativeDecoder);
+    if (nativeDecoder != reinterpret_cast<void*>(std::uintptr_t{1})) {
+        GuestArena::HostWrite access(decoder, sizeof(*decoder));
+        *decoder = nativeDecoder;
+    }
+    return result;
 }
 
 }

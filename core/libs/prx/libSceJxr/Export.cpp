@@ -171,10 +171,6 @@ std::int64_t APS5_VABI PKCodecFactory_CreateCodec_nid_postfix(const std::uint32_
     return WmpErrUnsupportedFormat;
 }
 
-int APS5_VABI PKCodecFactory_CreateDecoderFromFile_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 std::int64_t APS5_VABI PKCodecFactory_CreateFormatConverter_nid_postfix(void** converter) {
     if (!converter) APS5_INVALID_ARG_EX;
     const auto result = AllocateZeroed(converter, sizeof(Jxr::FormatConverter));

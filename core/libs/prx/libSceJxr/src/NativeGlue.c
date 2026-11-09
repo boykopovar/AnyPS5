@@ -113,3 +113,7 @@ int64_t JxrDecodeRelease_nid_no_patch(void** decoder) {
     if (pID->fStreamOwner) ((JxrGuestClose)pID->pStream->Close)(&pID->pStream);
     return PKFree(decoder);
 }
+
+int64_t JxrCreateDecoderFromFile_nid_no_patch(const char* filename, void** decoder) {
+    return PKCodecFactory_CreateDecoderFromFile(filename, (PKImageDecode**)decoder);
+}

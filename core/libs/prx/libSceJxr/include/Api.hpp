@@ -76,7 +76,7 @@ std::int64_t APS5_VABI GetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::siz
 std::int64_t APS5_VABI GetPosWS_List_nid_postfix(Jxr::Stream* stream, std::size_t* position);
 std::int64_t APS5_VABI PKAlloc_nid_postfix(void** memory, std::size_t size);
 std::int64_t APS5_VABI PKCodecFactory_CreateCodec_nid_postfix(const std::uint32_t* iid, void** codec);
-int APS5_VABI PKCodecFactory_CreateDecoderFromFile_nid_postfix();
+std::int64_t APS5_VABI PKCodecFactory_CreateDecoderFromFile_nid_postfix(const char* filename, void** decoder);
 std::int64_t APS5_VABI PKCodecFactory_CreateFormatConverter_nid_postfix(void** converter);
 std::int64_t APS5_VABI PKCreateCodecFactory_Release_nid_postfix(void** factory);
 std::int64_t APS5_VABI PKCreateCodecFactory_nid_postfix(void** factory, std::uint32_t version);
