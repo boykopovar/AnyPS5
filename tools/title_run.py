@@ -141,11 +141,14 @@ def frame_is_uniform(path, tolerance=8):
     try:
         offset = struct.unpack_from("<I", data, 10)[0]
         width, height = struct.unpack_from("<ii", data, 18)
-        channels = struct.unpack_from("<H", data, 28)[0] // 8
+        bits = struct.unpack_from("<H", data, 28)[0]
     except struct.error:
         return None
+    if bits not in (24, 32):
+        return None
+    channels = bits // 8
     stride = (width * channels + 3) & ~3
-    if channels < 3 or len(data) < offset + stride * abs(height) - (stride - width * channels):
+    if len(data) < offset + stride * abs(height) - (stride - width * channels):
         return None
     first = data[offset:offset + 3]
     for row in range(abs(height)):
@@ -367,7 +370,7 @@ if os.name == "nt":
 
 class Session:
     def __init__(self, command, cwd, env, stdout, stderr, owned=None):
-        self.owned = os.path.normcase(os.path.abspath(owned or Path(command[0]).parent))
+        self.owned = os.path.normcase(os.path.realpath(owned or Path(command[0]).parent))
         if os.name == "nt":
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, creationflags=subprocess.CREATE_NO_WINDOW)
             self.handles, self.images = {}, {}
@@ -439,7 +442,7 @@ class Session:
     def image_path(self, handle):
         size = wintypes.DWORD(32768)
         buffer = ctypes.create_unicode_buffer(size.value)
-        return os.path.normcase(os.path.abspath(buffer.value)) if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)) else ""
+        return os.path.normcase(os.path.realpath(buffer.value)) if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)) else ""
 
     def exit_code(self):
         if os.name == "nt" and not self.process_ids():
@@ -552,7 +555,13 @@ def source_root(build):
 
 
 def git(root, *args):
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True).stdout.strip()
+    try:
+        done = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+    except OSError as error:
+        raise SystemExit(f"cannot run git {' '.join(args)} in {root}: {error}")
+    if done.returncode:
+        raise SystemExit(f"git {' '.join(args)} failed in {root} (exit {done.returncode}): {done.stderr.strip()}")
+    return done.stdout.strip()
 
 
 def positive(text):
