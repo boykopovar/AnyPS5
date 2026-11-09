@@ -528,14 +528,19 @@ void PadInput::dispatchPadChords(DisplayWindow& window) {
 
 void PadInput::applyRequests(const Pad::InputRequests& requests, bool windowFocused, DisplayWindow& window) {
     if (requests.reloadInputMapping) reloadInputMapping();
-    if (requests.toggleFullscreen && windowFocused) window.ToggleFullscreen();
-    if (requests.togglePerformanceOverlay && windowFocused) AgcDriverTogglePerformanceOverlay_nid_postfix();
-    if (requests.screenshot && windowFocused) AgcDriverRequestScreenshot_nid_postfix();
-    if (requests.showPadStatus && windowFocused) {
+    if (windowFocused && window.Handle() != nullptr) applyHostRequests(window, SDL_GetWindowID(window.Handle()), requests);
+}
+
+void PadInput::applyHostRequests(DisplayWindow& window, Uint32 windowId, const Pad::InputRequests& requests) {
+    const bool ours = window.Handle() != nullptr && windowId == SDL_GetWindowID(window.Handle());
+    if (requests.toggleFullscreen && ours) window.ToggleFullscreen();
+    if (requests.togglePerformanceOverlay && ours) AgcDriverTogglePerformanceOverlay_nid_postfix();
+    if (requests.screenshot && ours) AgcDriverRequestScreenshot_nid_postfix();
+    if (requests.showPadStatus && ours) {
         AgcDriverPadStatusShow_nid_postfix();
         reportStatus();
     }
-    if (windowFocused) {
+    if (ours) {
         HostVolume volume;
         if (ApplyHostVolumeRequests(requests, &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
     }
