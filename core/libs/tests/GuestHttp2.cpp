@@ -260,6 +260,11 @@ int main() {
         bad_option.equeue = -1;
         Require(sceHttp2SendRequestAsync(failed, nullptr, 0, &bad_option, nullptr) == 0);
         Require(Throws([&] { sceHttp2WaitAsync(failed, &result, nullptr, nullptr); }));
+        Require(sceHttp2SendRequestAsync(failed, nullptr, 0, nullptr, nullptr) == 0);
+        std::uint32_t zero_timeout = 0;
+        Http2AsyncResult polled{};
+        Require(sceHttp2WaitAsync(failed, &polled, &zero_timeout, nullptr) == 0);
+        Require(polled.req_id == failed && polled.result == static_cast<int>(0x80431063) && zero_timeout == 0);
         KernelEvent extra{};
         int extra_count = 123;
         Require(sceKernelWaitEqueue(eq, &extra, 1, &extra_count, &poll) != 0);
