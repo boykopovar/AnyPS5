@@ -239,7 +239,6 @@ private:
     bool minMaxF16(const RdnaInstruction& inst, IrOpcode opcode);
     bool vDivScaleF32(const RdnaInstruction& inst);
     bool vDivFmasF32(const RdnaInstruction& inst);
-    IrValue& fmaScaledF32(IrValue& lhs, IrValue& rhs, IrValue& addend, IrValue& powerHigh);
     bool vDivFixupF32(const RdnaInstruction& inst);
     bool vFrexpMantF32(const RdnaInstruction& inst);
     bool vFmaLegacyF32(const RdnaInstruction& inst, bool accumulate);
