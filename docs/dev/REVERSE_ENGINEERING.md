@@ -50,7 +50,12 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
    with its `nid`, `relocationType`, `targetOffset` (the GOT slot) and `callSites` (virtual addresses). Bundled modules'
    registries have no `callSites`. `tools/nid_names.py --name sceXxx` gives the NID of a name, and `--nid` the name of a
    NID (without the `#` suffix).
-   - `R_X86_64_GLOB_DAT`: each call site is the `call *slot(%rip)` itself.
+   - `R_X86_64_GLOB_DAT`: each call site is an instruction that reads the slot: a `call *slot(%rip)`, a tail call
+     `jmp *slot(%rip)`, their far forms `lcall` and `ljmp`, a `push slot(%rip)`, or a 64-bit `mov slot(%rip), %reg`
+     that loads the address for a later indirect call or a function pointer. Each of them may also carry the
+     address-size prefix (`0x67`) and read the slot as `slot(%eip)`. At a `call` or a tail-call `jmp` the argument
+     registers hold the import's arguments. A `push` or a `mov` only copies the address; the arguments are the
+     registers at the instruction that later transfers control to it.
    - `R_X86_64_JUMP_SLOT`: the call site is the PLT stub (`jmp *slot(%rip)`); the callers are the `call <stub>`
      instructions.
 3. Disassemble around the site. The ELF has no section headers, so `objdump -d` prints nothing; take the executable

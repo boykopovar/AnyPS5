@@ -36,7 +36,7 @@ int APS5_VABI sceRudpPollWait(int pollId, RudpPollEvent* events, std::size_t eve
 int APS5_VABI sceRudpPollDestroy(int pollId);
 int APS5_VABI sceRudpAccept(int ctxId, GuestRudpEventHandler handler, void* handlerArg, int* newCtxId, void* address, std::uint32_t* addressLength, std::uint16_t* vport);
 int APS5_VABI sceRudpFlush(int ctxId);
-int APS5_VABI sceRudpGetLocalInfo();
+int APS5_VABI sceRudpGetLocalInfo(int ctxId, int* socketId, void* addr, std::uint32_t* addrLen, std::uint16_t* vport, std::uint8_t* muxMode);
 int APS5_VABI sceRudpListen(int ctxId, int backlog);
 int APS5_VABI sceRudpPollCancel(int pollId);
 int APS5_VABI sceRudpSetMaxSegmentSize(uint16_t mss);
