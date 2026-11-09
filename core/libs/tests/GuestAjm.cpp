@@ -952,6 +952,7 @@ void TestBatchJobRunSplitChecks() {
     AjmBatchInfo info{};
     Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
     const AjmBuffer buffer{storage.data(), 16};
+    const AjmBuffer five[5]{buffer, buffer, buffer, buffer, buffer};
     std::int64_t result = -1;
     const std::size_t wrapped = (std::size_t{1} << 32) + 1;
     Require(sceAjmBatchJobRunSplit(nullptr, 0, 0, &buffer, 1, &buffer, 1, &result, sizeof(result)) == invalidParameter);
@@ -968,7 +969,7 @@ void TestBatchJobRunSplitChecks() {
     };
     Require(refusedFor(wrapped, 1) && refusedFor(1, wrapped) && refusedFor(300, 0) && refusedFor(15, 0));
     Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, &buffer, 1, &result, sizeof(result)) == 0 && info.offset == 64);
-    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 5, &buffer, 5, &result, sizeof(result)) == 0 && info.offset == storage.size());
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, five, 5, five, 5, &result, sizeof(result)) == 0 && info.offset == storage.size());
     Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 0, nullptr, 0, &result, sizeof(result)) == jobCreation && info.offset == storage.size() + 0x20);
     Require(sceAjmBatchJobClearContext(&info, 0, &result) == outOfResources && info.offset == storage.size() + 0x20);
 }
