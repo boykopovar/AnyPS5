@@ -27,6 +27,7 @@ ISA_FORMS = Path(__file__).resolve().parent / "rdna2_isa_forms.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
+ASM_DEFINITION = re.compile(rf'\b(?:{"|".join(sorted(tokenizer.ASM_FUNCTION_MACROS))})\s*\(\s*"(\w+)"\s*\)')
 STUB = "NotImplemented_nid_no_patch"
 CALL = re.compile(r"\b(\w+)\s*\(")
 KEYWORDS = r"return|else|do|throw|co_return|co_await|co_yield|and|or|not|xor|bitand|bitor|compl"
@@ -179,9 +180,21 @@ def shared_source_owners(path):
 
 def scan_library(path):
     done, todo, inert, live = set(), set(), set(), set()
-    texts = [code(source.read_text(encoding="utf-8", errors="ignore")) for source in path.rglob("*.cpp")
-             if "tests" not in source.relative_to(path).parts]
+    sources = [source.read_text(encoding="utf-8", errors="ignore") for source in path.rglob("*.cpp")
+               if "tests" not in source.relative_to(path).parts]
+    texts = [code(source) for source in sources]
     exported = {match.group(1) for text in texts for match in EXPORT.finditer(text)}
+    for source in sources:
+        definitions = {match.start(): match.group(1) for match in ASM_DEFINITION.finditer(source)}
+        if not definitions:
+            continue
+        for token in CPP_TOKEN.finditer(source):
+            if token.group("code") is None or token.start() not in definitions:
+                continue
+            name = definitions[token.start()]
+            if not name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) or name in exported:
+                done.add(name)
+                live.add(name)
     for text in texts:
         calls = stub_calls(text)
         wrappers = inert_wrappers(text)

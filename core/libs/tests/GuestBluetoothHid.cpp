@@ -35,7 +35,7 @@ int main() {
     Require(sceBluetoothHidRegisterDevice(1, 2) == notInitialized, "registration before initialization");
     Require(sceBluetoothHidUnregisterDevice(1, 2) == notInitialized, "unregistration before initialization");
     Require(sceBluetoothHidUnregisterCallback() == notInitialized, "callback removal before initialization");
-    Require(sceBluetoothHidGetDeviceName(0, nullptr) == notInitialized, "get device name before initialization");
+    Require(sceBluetoothHidGetDeviceName(1, nullptr) == notInitialized, "get device name before initialization");
     Require(sceBluetoothHidGetInputReport(0, 0) == notInitialized, "get input report before initialization");
     Require(sceBluetoothHidSetOutputReport(0, 0, nullptr, 0) == notInitialized, "set output report before initialization");
     Require(sceBluetoothHidDisconnectDevice(0) == notInitialized, "disconnect device before initialization");
@@ -63,6 +63,7 @@ int main() {
     Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, &param) == invalidArgument, "thread reserved field validation");
     Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, nullptr) == 0, "optional parameters rejected");
     bool threw = false;
+    Require(sceBluetoothHidGetDeviceName(1, nullptr) == invalidArgument, "null device name output");
     threw = false;
     try {
         sceBluetoothHidGetInputReport(0, 0);
