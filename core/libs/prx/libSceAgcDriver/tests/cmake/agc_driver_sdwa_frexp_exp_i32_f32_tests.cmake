@@ -1,0 +1,1 @@
+add_test(NAME agc_driver_sdwa_frexp_exp_i32_f32_tests_wave64 COMMAND agc_driver_sdwa_frexp_exp_i32_f32_tests wave64)
