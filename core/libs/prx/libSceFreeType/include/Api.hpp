@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prx/libSceFreeType/include/GuestList.hpp"
+#include "prx/libSceFreeType/include/PostScriptPrivate.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "prx/libSceFreeType/include/PostScriptInfo.hpp"
 #include "SceTypes.hpp"
@@ -67,6 +68,7 @@ std::uint64_t APS5_VABI FT_Get_CMap_Language_ID_nid_postfix(FreeType::GuestCharM
 std::int64_t APS5_VABI FT_Get_CMap_Format_nid_postfix(FreeType::GuestCharMapRec* charmap);
 const char* APS5_VABI FT_Get_X11_Font_Format_nid_postfix(FreeType::GuestFaceRec* face);
 std::uint16_t APS5_VABI FT_Get_FSType_Flags_nid_postfix(FreeType::GuestFaceRec* face);
+int APS5_VABI FT_Get_PS_Font_Private_nid_postfix(FreeType::GuestFaceRec* face, FreeType::GuestPSPrivate* privateDictionary);
 FreeType::GuestListNodeRec* APS5_VABI FT_List_Find_nid_postfix(FreeType::GuestListRec* list, void* data);
 void APS5_VABI FT_List_Add_nid_postfix(FreeType::GuestListRec* list, FreeType::GuestListNodeRec* node);
 void APS5_VABI FT_List_Insert_nid_postfix(FreeType::GuestListRec* list, FreeType::GuestListNodeRec* node);
@@ -122,6 +124,9 @@ int APS5_VABI FT_Stroker_BeginSubPath_nid_postfix(void* stroker, const FreeType:
 int APS5_VABI FT_Stroker_ConicTo_nid_postfix(void* stroker, const FreeType::GuestVector* control, const FreeType::GuestVector* to);
 int APS5_VABI ft_corner_is_flat_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y);
 int APS5_VABI ft_corner_orientation_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y);
+void APS5_VABI FT_Vector_Transform_nid_postfix(FreeType::GuestVector* vector, const FreeType::GuestMatrix* matrix);
+void APS5_VABI FT_Matrix_Multiply_nid_postfix(const FreeType::GuestMatrix* a, FreeType::GuestMatrix* b);
+int APS5_VABI FT_Matrix_Invert_nid_postfix(FreeType::GuestMatrix* matrix);
 const char* APS5_VABI FT_Get_Font_Format_nid_postfix(FreeType::GuestFaceRec* face);
 std::uint8_t APS5_VABI FT_Face_CheckTrueTypePatents_nid_postfix(FreeType::GuestFaceRec* face);
 std::uint8_t APS5_VABI FT_Face_SetUnpatentedHinting_nid_postfix(FreeType::GuestFaceRec* face, std::uint8_t value);

@@ -147,6 +147,7 @@ int main() {
     const int box = sceHttp2CreateCookieBox(0x10000);
     Require(sceHttp2Init(1, 1, 0x10000, 0) == static_cast<int>(0x817B11FE));
     Require(Throws([] { sceHttp2Init(1, 1, 0x10000, -1); }));
+    Require(sceHttp2Init(1, 0, 0x40000, 1) == static_cast<int>(0x8095F006));
     const int context = sceHttp2Init(1, 1, 0x10000, 4);
     const int tmpl = sceHttp2CreateTemplate(context, "agent", 3, 0);
     const int proxyTemplate = sceHttp2CreateTemplate(context, "agent", 3, 1);
