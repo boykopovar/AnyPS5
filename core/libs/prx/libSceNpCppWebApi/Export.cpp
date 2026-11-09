@@ -2045,8 +2045,13 @@ static void APS5_VABI DestroyVectorBody(void* object) {
             ResetString(&elements[index]);
         }
     }
-    LibContextDeallocate(body->libContext, body->elements);
-    LibContextDeallocate(body->libContext, body);
+    if (body->libContext != nullptr) {
+        LibContextDeallocate(body->libContext, body->elements);
+        LibContextDeallocate(body->libContext, body);
+    } else {
+        std::free(body->elements);
+        std::free(body);
+    }
 }
 
 static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementKind, const char* function) {
@@ -2060,14 +2065,16 @@ static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementK
     }
     auto* body = static_cast<VectorBody*>(self->object);
     if (body == nullptr) {
-        body = static_cast<VectorBody*>(LibContextAllocate(self->libContext, sizeof(VectorBody)));
+        LibContextState* state = LibContextStateFor(self->libContext);
+        body = state != nullptr
+            ? static_cast<VectorBody*>(LibContextAllocate(self->libContext, sizeof(VectorBody)))
+            : static_cast<VectorBody*>(std::calloc(1, sizeof(VectorBody)));
         if (body == nullptr) return nullptr;
         std::memset(body, 0, sizeof(VectorBody));
         body->magic = VectorBodyMagic;
-        body->libContext = self->libContext;
+        body->libContext = state != nullptr ? self->libContext : nullptr;
         body->referenceCount = 1;
         body->elementKind = elementKind;
-        body->libContext = self->libContext;
         self->object = body;
         self->deleter = &DestroyVectorBody;
         return body;
@@ -2083,8 +2090,10 @@ static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementK
 static bool VectorGrow(VectorBody* body, const std::size_t elementSize) {
     if (body->size < body->capacity) return true;
     const std::uint64_t capacity = body->capacity != 0 ? body->capacity * 2 : 4;
-    void* elements = LibContextReallocate(body->libContext, body->elements,
-                                          static_cast<std::size_t>(capacity) * elementSize);
+    void* elements = body->libContext != nullptr
+        ? LibContextReallocate(body->libContext, body->elements,
+                               static_cast<std::size_t>(capacity) * elementSize)
+        : std::realloc(body->elements, static_cast<std::size_t>(capacity) * elementSize);
     if (elements == nullptr) return false;
     body->elements = elements;
     body->capacity = capacity;
