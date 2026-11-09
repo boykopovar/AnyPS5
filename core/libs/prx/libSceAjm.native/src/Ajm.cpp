@@ -1938,7 +1938,8 @@ bool ReadConsoleJob(std::uint32_t instance, const std::uint8_t* job, const std::
 extern "C" {
 
 int APS5_VABI sceAjmInitialize(int64_t reserved, uint32_t* context) {
-    if (reserved != 0 || !context) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    (void)reserved;
+    if (!context) return SCE_AJM_ERROR_INVALID_PARAMETER;
     *context = g_nextContext.fetch_add(1, std::memory_order_relaxed);
     return 0;
 }
