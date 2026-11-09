@@ -532,8 +532,14 @@ int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallbackA(int titleUserCtxId
     return registerServicePushEventCallback(titleUserCtxId, callback);
 }
 
-int APS5_VABI sceNpWebApiRegisterExtdPushEventCallback() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApiRegisterExtdPushEventCallback(int titleUserCtxId, int filterId, void* callback, void* userArg) {
+    (void)filterId;
+    (void)userArg;
+    if (!callback) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findUserContext(titleUserCtxId);
+    if (lookup.error != 0) return lookup.error;
+    return SCE_NP_WEBAPI_ERROR_EXTD_PUSH_EVENT_FILTER_NOT_FOUND;
 }
 
 int APS5_VABI sceNpWebApiRegisterNotificationCallback(int titleUserCtxId, void* callback, void* userArg) {

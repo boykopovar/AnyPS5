@@ -266,6 +266,11 @@ void TestPushEventCallbacks() {
     Require(sceNpWebApiRegisterServicePushEventCallback(user, filter, PushEventCallback(), &argument) == ServicePushEventFilterNotFound, "a push event filter is not a service filter");
     Require(sceNpWebApiUnregisterServicePushEventCallback(user, 1) == ServicePushEventCallbackNotFound, "no service callback exists");
 
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user, filter, nullptr, &argument) == InvalidArgument, "extended push event callback without a function");
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user + 1, filter, nullptr, &argument) == InvalidArgument, "the function is checked before the user context for extended callbacks");
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user + 1, filter, PushEventCallback(), &argument) == UserContextNotFound, "extended push event callback of an unknown user context");
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user, 1, PushEventCallback(), &argument) == ExtdPushEventFilterNotFound, "extended push event filter does not exist");
+
     Require(sceNpWebApiIntRegisterServicePushEventCallback(user, 1, nullptr, &argument) == InvalidArgument, "int service callback without a function");
     Require(sceNpWebApiIntRegisterServicePushEventCallback(user + 1, 1, PushEventCallback(), &argument) == UserContextNotFound, "int service callback of an unknown user context");
     Require(sceNpWebApiIntRegisterServicePushEventCallback(user, filter, PushEventCallback(), &argument) == ServicePushEventFilterNotFound, "int service callback with a push event filter");

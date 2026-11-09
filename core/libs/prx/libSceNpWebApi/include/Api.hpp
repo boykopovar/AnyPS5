@@ -97,7 +97,7 @@ int APS5_VABI sceNpWebApiIntCreateServicePushEventFilter();
 int APS5_VABI sceNpWebApiIntInitialize(const NpWebApiIntInitializeArgs* args);
 int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallback(int titleUserCtxId, int filterId, void* callback, void* userArg);
 int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallbackA(int titleUserCtxId, int filterId, void* callback, void* userArg);
-int APS5_VABI sceNpWebApiRegisterExtdPushEventCallback();
+int APS5_VABI sceNpWebApiRegisterExtdPushEventCallback(int titleUserCtxId, int filterId, void* callback, void* userArg);
 int APS5_VABI sceNpWebApiRegisterNotificationCallback(int titleUserCtxId, void* callback, void* userArg);
 int APS5_VABI sceNpWebApiSendMultipartRequest(std::int64_t requestId, int partIndex, const void* data, std::size_t dataSize);
 int APS5_VABI sceNpWebApiSendMultipartRequest2(std::int64_t requestId, int partIndex, const void* data, std::size_t dataSize, void* responseInformation);
