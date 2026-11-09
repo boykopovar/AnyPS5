@@ -2279,7 +2279,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             if (shader.program->poisonedSrtReads != 0) {
                 const auto& programBindings = shader.program->bindings;
                 const auto flat = std::find_if(programBindings.begin(), programBindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt; });
-                if (flat != programBindings.end()) srtGuardFaults.push_back({IrStage(shader.stage), flat->guestDescriptor});
+                if (flat != programBindings.end()) srtGuardFaults.push_back({IrStage(shader.stage), DrawGuestWords(shader, *flat)});
             }
             const VkShaderStageFlags flags = VulkanStage(shader.stage);
             std::uint64_t stageStorageBuffers = 0;
