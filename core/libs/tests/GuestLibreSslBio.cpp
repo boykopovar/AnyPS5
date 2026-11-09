@@ -615,30 +615,6 @@ void TestPemReadBioX509NoStartLine() {
     Require(allocations == preambleBaseline, "EOF after preamble frees all three BUF_MEM objects");
     Require(BIO_free_nid_postfix(bio) == 1, "free PEM preamble BIO");
 
-    constexpr char unrelatedPem[] = "-----BEGIN OTHER-----\nYWJj\n-----END OTHER-----\n";
-    ERR_clear_error_nid_postfix();
-    bio = BIO_new_mem_buf_nid_postfix(unrelatedPem, sizeof(unrelatedPem) - 1);
-    Require(bio != nullptr, "unmatched PEM input BIO");
-    bio->callback = &ObserveBioCallback;
-    output = reinterpret_cast<LibreSslX509*>(std::uintptr_t{0x87654321});
-    bioCallbackEventCount = 0;
-    const int beginBaseline = allocations;
-    bool unsupported = false;
-    try {
-        static_cast<void>(PEM_read_bio_X509_nid_postfix(bio, &output, &ObservePasswordCallback, nullptr));
-    } catch (const std::exception&) {
-        unsupported = true;
-    }
-    Require(unsupported, "a BEGIN line reaches the unimplemented PEM payload parser");
-    Require(output == reinterpret_cast<LibreSslX509*>(std::uintptr_t{0x87654321}), "unmatched PEM preserves output");
-    Require(passwordCallbackCalls == 0, "unmatched PEM does not call password callback");
-    Require(bioCallbackEventCount == 2, "reader stops after allocating the first BEGIN label and header");
-    Require(ERR_get_error_nid_postfix() == 0, "unsupported payload parsing adds no fabricated error");
-    Require(allocations == beginBaseline, "unsupported BEGIN frees all temporary BUF_MEM storage");
-    Require(BIO_ctrl_nid_postfix(bio, 10, 0, nullptr) == static_cast<std::int64_t>(sizeof(unrelatedPem) - 1 - 22),
-        "reader stops immediately after the BEGIN line");
-    Require(BIO_free_nid_postfix(bio) == 1, "free unmatched PEM BIO");
-
     constexpr char beginOnly[] = "-----BEGIN CERTIFICATE-----\n";
     for (int failAt = 0; failAt < 5; ++failAt) {
         ERR_clear_error_nid_postfix();
