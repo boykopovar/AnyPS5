@@ -839,10 +839,6 @@ int APS5_VABI _ZN7WebCore12SharedBuffer6createEPKcm() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS0_5RadiiE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList17FillRectWithColorD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7005,10 +7001,6 @@ int APS5_VABI _ZN7WebCore17JSDOMRectReadOnlyC1EPN3JSC9StructureERNS_17JSDOMGloba
 }
 
 int APS5_VABI _ZNK7WebCore21FormAssociatedElement4formEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore11RoundedRectC2ERKNS_10LayoutRectERKNS0_5RadiiE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
