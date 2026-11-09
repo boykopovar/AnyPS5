@@ -239,6 +239,17 @@ if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_relinker_ehframe_fde_encoding_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestRelinkerEhFrameFdeEncoding.cpp)
+    target_include_directories(guest_relinker_ehframe_fde_encoding_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_relinker_ehframe_fde_encoding_tests PRIVATE libc)
+    configure_windows_unwind(guest_relinker_ehframe_fde_encoding_tests)
+    add_test(NAME guest_relinker_ehframe_fde_encoding COMMAND guest_relinker_ehframe_fde_encoding_tests)
+    set_tests_properties(guest_relinker_ehframe_fde_encoding PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_relinker_ehframe_fde_encoding PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_system_logger_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestSystemLogger.cpp)
     target_include_directories(guest_system_logger_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_system_logger_tests PRIVATE libSceSystemLogger libc libkernel)
