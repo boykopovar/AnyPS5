@@ -8,9 +8,6 @@
 | --- | --- |
 | `hb_ft_face_create_cached` | `RTxFQhlbF+U` |
 | `hb_icu_script_to_script` | `u0E8Xi0easM` |
-| `hb_ot_layout_language_find_feature` | `qos3JIrKrDg` |
-| `hb_ot_layout_script_get_language_tags` | `HH-sRSNiSaU` |
-| `hb_ot_layout_table_get_script_tags` | `wf6CfVJj9PQ` |
 | `hb_shape` | `dM3hP4y99rM` |
 
 ### Functional
@@ -23,4 +20,7 @@
 - [Font callbacks](../../../core/libs/prx/libharfbuzz/FontFunctions.cpp) are exercised by runtime tests using actual exports before and after NID patching and through native shaping with guest callbacks. They establish adapter behavior only. Null destruction and null-face construction follow the backend; other null font/function-table operations throw because no console contract is established. No title compatibility is claimed.
 
 - [Legacy glyph setter](../../../core/libs/prx/libharfbuzz/FontFunctions.cpp): A null callback throws before changing the table or taking ownership of caller data. The pinned deprecated backend setter installs trampolines that later invoke that null pointer; this host-safety rejection has not been measured on a console. Modern nominal/variation null setters still reset their callbacks through the backend.
+
+- [hb_ot_layout_table_get_script_tags, hb_ot_layout_script_get_language_tags and hb_ot_layout_language_find_feature](../../../core/libs/prx/libharfbuzz/Layout.cpp): Console signatures, HarfBuzz version and table-query behavior are unverified. The adapters use backend-owned opaque faces and follow pinned [HarfBuzz 10.0.1](https://github.com/harfbuzz/harfbuzz/blob/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc/src/hb-ot-layout.cc), including pagination, default-language and missing-feature indices. Foreign handle layouts are unverified. Null faces and a null tag array with a nonzero output count throw; invalid caller memory is not generally validated. A refused guest host-write scope throws before changing any caller output, an unmeasured host-boundary policy. Enumeration preflights the total to bracket only the tags the native query writes; other thread mutation of the face during a query remains the caller's synchronization responsibility.
+
 - [hb_ot_tag_to_script](../../../core/libs/prx/libharfbuzz/Export.cpp) follows a disassembly of firmware 13.42 `libSceVshHarfBuzz.sprx` (export at `0x4a850`) and has not been measured on a console. Tags ending in `2` or `3` map through the ten Indic version-2 tags or to `Zzzz`; `DFLT` returns 0; `math` returns `Zmth`; a space in the third or fourth byte repeats the previous byte; any other tag only clears bit 5 of its first byte without validating letters. It does not call the pinned HarfBuzz backend, so it may differ from HarfBuzz 10.0.1 on some tags.
