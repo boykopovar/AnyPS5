@@ -705,16 +705,18 @@ static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
     if (S_ISCHR(file.st_mode)) return DeviceFilesystem(fs);
     struct statvfs host{};
     if (::fstatvfs(descriptor, &host) != 0) return SceErrorFromErrno(errno) & 0xffff;
-    return FillStatfs(host, fs);
+    const int result = FillStatfs(host, fs);
+#ifdef __APPLE__
+    struct statfs mount{};
+    if (result == 0 && ::fstatfs(descriptor, &mount) == 0 && (mount.f_flags & MNT_NOEXEC)) fs->f_flags |= KERNEL_MNT_NOEXEC;
+#endif
+    return result;
 }
 
 static int FillStatfs(const struct statvfs& host, KernelStatfs* fs) {
     if (host.f_flag & ST_RDONLY) fs->f_flags |= KERNEL_MNT_RDONLY;
     if (host.f_flag & ST_NOSUID) fs->f_flags |= KERNEL_MNT_NOSUID;
-#ifdef __APPLE__
-    struct statfs mount{};
-    if (::fstatfs(descriptor, &mount) == 0 && (mount.f_flags & MNT_NOEXEC)) fs->f_flags |= KERNEL_MNT_NOEXEC;
-#else
+#ifndef __APPLE__
     if (host.f_flag & ST_NOEXEC) fs->f_flags |= KERNEL_MNT_NOEXEC;
 #endif
     fs->f_bsize = host.f_frsize != 0 ? host.f_frsize : host.f_bsize;
@@ -731,7 +733,12 @@ static int FillStatfs(const struct statvfs& host, KernelStatfs* fs) {
 static int NativeStatfs(const std::filesystem::path& path, KernelStatfs* fs) {
     struct statvfs host{};
     if (::statvfs(path.c_str(), &host) != 0) return SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(path) : errno) & 0xffff;
-    return FillStatfs(host, fs);
+    const int result = FillStatfs(host, fs);
+#ifdef __APPLE__
+    struct statfs mount{};
+    if (result == 0 && ::statfs(path.c_str(), &mount) == 0 && (mount.f_flags & MNT_NOEXEC)) fs->f_flags |= KERNEL_MNT_NOEXEC;
+#endif
+    return result;
 }
 
 
