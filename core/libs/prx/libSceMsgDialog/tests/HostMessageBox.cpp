@@ -25,5 +25,6 @@ int main() {
     Check(MsgDialog::HostMessageLabel(u"Yes") == "Yes", "an ASCII label is changed");
     Check(MsgDialog::HostMessageLabel(u"AÑ") == "A?", "a non-ASCII label is not replaced by ?");
 
+    Check(MsgDialog::IndexOfHostButton(0, 2, 1) == 0u, "the first button is not index 0");
     return correct ? 0 : 1;
 }
