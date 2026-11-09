@@ -3361,7 +3361,10 @@ struct TargetMemo {
     }
 };
 
-thread_local TargetMemo targetMemo;
+struct TargetMemoStorage {};
+TargetMemo& ThreadTargetMemo() {
+    return HostThreadLocal<TargetMemo, TargetMemoStorage>();
+}
 thread_local std::uint64_t targetMemoBuilds = 0;
 std::atomic<const TargetMemo*> targetMemoOwner{nullptr};
 
@@ -3395,8 +3398,8 @@ bool metadataProved(const ColorTarget& color) {
 
 void rememberTargets(const State& state, std::span<const TargetBinding> targets, std::span<const VkImageView> views, const TargetProof& proof) {
     ++targetMemoBuilds;
-    auto& colors = targetMemo.colors;
-    auto& depth = targetMemo.depth;
+    auto& colors = ThreadTargetMemo().colors;
+    auto& depth = ThreadTargetMemo().depth;
     const bool enabled = TargetMemoEnabled() && proof.epoch != 0;
     colors.valid = enabled && !targets.empty() && std::ranges::all_of(targets, [&](const TargetBinding& binding) {
         return binding.resident != nullptr && binding.resident->Cached() && !binding.multisampled && binding.color.fmaskAddress == 0 && !colorOverlapsDepth(state, binding) && metadataProved(binding.color);
@@ -3415,7 +3418,7 @@ void rememberTargets(const State& state, std::span<const TargetBinding> targets,
 }
 
 bool repeatColors(const Context& context, const State& state, const TargetProof& proof, std::vector<TargetBinding>& targets, std::vector<VkImageView>& views) {
-    auto& memo = targetMemo.colors;
+    auto& memo = ThreadTargetMemo().colors;
     if (state.colors.empty()) return false;
     if (!memo.valid || !TargetMemoEnabled()) {
         noteColorMemo(ColorMemoEvent::Invalid);
@@ -3446,8 +3449,8 @@ bool repeatColors(const Context& context, const State& state, const TargetProof&
 }
 
 VkImageView repeatDepth(const Context& context, const State& state, const TargetProof* proof) {
-    const auto& memo = targetMemo.depth;
-    if (!state.depth || !memo.valid || !TargetMemoEnabled() || targetMemoOwner.load(std::memory_order_relaxed) != &targetMemo || memo.proof != (proof != nullptr ? *proof : currentTargetProof(context)) || !memo.descriptor) return VK_NULL_HANDLE;
+    const auto& memo = ThreadTargetMemo().depth;
+    if (!state.depth || !memo.valid || !TargetMemoEnabled() || targetMemoOwner.load(std::memory_order_relaxed) != &ThreadTargetMemo() || memo.proof != (proof != nullptr ? *proof : currentTargetProof(context)) || !memo.descriptor) return VK_NULL_HANDLE;
     if (*memo.descriptor != *state.depth) return VK_NULL_HANDLE;
     return RepeatDepthSurfaceView(context, *state.depth, state.depthWrite, writesStencilTarget(state));
 }
@@ -3524,7 +3527,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto& targets = prepared.targets;
     targets.resize(state.colors.size());
     auto& targetViews = prepared.targetViews;
-    static_cast<void>(ownsTargetMemo(targetMemo));
+    static_cast<void>(ownsTargetMemo(ThreadTargetMemo()));
     const auto targetProof = currentTargetProof(context);
     auto admissionProof = targetProof;
     bool repeatedColors = repeatColors(context, state, targetProof, targets, targetViews);
@@ -3668,7 +3671,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto depthView = repeatDepth(context, state, repeatedColors ? &targetProof : nullptr);
     bool repeatedDepth = state.depth && depthView != VK_NULL_HANDLE;
     if (state.depth && !repeatedDepth) depthView = prepareDepth();
-    if (repeatedColors && (targetMemoOwner.load(std::memory_order_relaxed) != &targetMemo || !colorProofMatches(targetProof, currentTargetProof(context)) || !std::ranges::all_of(targets, [](const TargetBinding& binding) { return binding.resident->Cached(); }))) {
+    if (repeatedColors && (targetMemoOwner.load(std::memory_order_relaxed) != &ThreadTargetMemo() || !colorProofMatches(targetProof, currentTargetProof(context)) || !std::ranges::all_of(targets, [](const TargetBinding& binding) { return binding.resident->Cached(); }))) {
         noteColorMemo(ColorMemoEvent::PostDepthInvalidated);
         repeatedColors = false;
         admissionProof = currentTargetProof(context);
@@ -3709,16 +3712,16 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         Require(moved == nullptr, std::string("APS5_VERIFY_TARGET_MEMO: a repeated target's lookup moved ") + (moved != nullptr ? moved : ""));
     }
     if (state.depth) targetViews.push_back(depthView);
-    const bool retainedOwner = ownsTargetMemo(targetMemo);
+    const bool retainedOwner = ownsTargetMemo(ThreadTargetMemo());
     const auto preparedProof = currentTargetProof(context);
-    const bool unchangedDepth = (targetMemo.depth.valid && targetMemo.depth.proof == preparedProof &&
-        (repeatedDepth || (!state.depth && !targetMemo.depth.descriptor))) ||
-        (state.depth && state.depth->samples != 1u && !targetMemo.depth.valid);
-    const bool unchanged = retainedOwner && repeatedColors && targetMemo.colors.valid &&
-        targetMemo.colors.proof == preparedProof && unchangedDepth;
+    const bool unchangedDepth = (ThreadTargetMemo().depth.valid && ThreadTargetMemo().depth.proof == preparedProof &&
+        (repeatedDepth || (!state.depth && !ThreadTargetMemo().depth.descriptor))) ||
+        (state.depth && state.depth->samples != 1u && !ThreadTargetMemo().depth.valid);
+    const bool unchanged = retainedOwner && repeatedColors && ThreadTargetMemo().colors.valid &&
+        ThreadTargetMemo().colors.proof == preparedProof && unchangedDepth;
     if (admissionProof == preparedProof) {
         if (!unchanged) rememberTargets(state, targets, targetViews, preparedProof);
-    } else targetMemo.Invalidate();
+    } else ThreadTargetMemo().Invalidate();
     timer.phase(PhasePrepare);
     const bool recordDraws = RecordDraws();
     auto* recorder = prepared.recorder = Recorder::Active();
@@ -4468,7 +4471,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     try {
         if (prepareDraw(context, state, draw, shaders, snapshots, prepared)) recordPreparedDraw(context, state, draw, shaders, prepared);
     } catch (...) {
-        targetMemo.Invalidate();
+        ThreadTargetMemo().Invalidate();
         keepHeldSpace(prepared);
         throw;
     }
@@ -4516,7 +4519,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     // what the lookup would return, and Refresh brings it up to date exactly as the lookup's does
     // (FlushPending, the whole-surface collect and UnchangedSince, the key scan). An image gone
     // from the cache is a miss: the ordinary path looks up anew.
-    auto& memo = targetMemo;
+    auto& memo = ThreadTargetMemo();
     static_cast<void>(ownsTargetMemo(memo));
     memo.Invalidate();
     std::vector<std::shared_ptr<StorageTexture>> targets;
