@@ -6,7 +6,7 @@
 
 struct Export {
     const char* name;
-    int (*call)();
+    int (APS5_VABI* call)();
 };
 
 static const Export exports[] = {
