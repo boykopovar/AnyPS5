@@ -13,6 +13,8 @@
 #include <type_traits>
 #include <utility>
 #include <unordered_set>
+#include <bit>
+#include <optional>
 
 namespace ShaderRecompiler {
 namespace {
@@ -804,6 +806,107 @@ bool RegionArithmetic(const IrValue* inst) {
     }
 }
 
+class RegionEntryBounds {
+public:
+    RegionEntryBounds(const std::unordered_set<const IrValue*>& members, int exponent) : members(members), inputExponent(exponent) {}
+
+    std::optional<int> Bound(const IrValue* value) {
+        value = value->Resolve();
+        if (const auto found = known.find(value); found != known.end()) return found->second;
+        known.emplace(value, std::nullopt);
+        const auto result = Compute(value);
+        known[value] = result;
+        return result;
+    }
+
+    std::vector<const IrValue*> inputs;
+
+private:
+    std::optional<int> Join(std::optional<int> first, std::optional<int> second, bool product, bool add) {
+        if (!first || !second) return std::nullopt;
+        const int exponent = (product ? *first + *second : std::max(*first, *second) + (add ? 1 : 0)) + (product || add ? 1 : 0);
+        return exponent <= 126 ? std::optional(std::max(exponent, -149)) : std::nullopt;
+    }
+
+    bool False(const IrValue* value) {
+        value = value->Resolve();
+        if (value->Flags<std::uint64_t>() != 0u) return false;
+        if (value->Opcode() == IrOpcode::LogicalAnd) return False(value->Argument(0)) || False(value->Argument(1));
+        if (value->Opcode() == IrOpcode::LogicalOr) return False(value->Argument(0)) && False(value->Argument(1));
+        if (const auto* source = RegionNanCondition(value)) return Bound(source).has_value();
+        if (value->Opcode() != IrOpcode::IEqual32) return false;
+        for (unsigned index = 0u; index < 2u; ++index) {
+            const auto* constant = value->Argument(index)->Resolve();
+            const auto* magnitude = value->Argument(1u-index)->Resolve();
+            if (!constant->HasImmediate() || constant->ImmediateU32() != 0x7f800000u || magnitude->Opcode() != IrOpcode::BitwiseAnd32 || magnitude->Flags<std::uint64_t>() != 0u) continue;
+            for (unsigned part = 0u; part < 2u; ++part) {
+                const auto* mask = magnitude->Argument(part)->Resolve();
+                if (mask->HasImmediate() && mask->ImmediateU32() == 0x7fffffffu) return Bound(magnitude->Argument(1u-part)).has_value();
+            }
+        }
+        return false;
+    }
+
+    std::optional<int> Compute(const IrValue* value) {
+        if (value->HasImmediate()) {
+            if (value->Type() != IrType::U32 && value->Type() != IrType::F32) return std::nullopt;
+            const auto bits = value->ImmediateU32() & 0x7fffffffu;
+            if (bits >= 0x7f800000u) return std::nullopt;
+            const int exponent = bits == 0u ? -149 : bits < 0x00800000u ? static_cast<int>(std::bit_width(bits)) - 150 + (std::has_single_bit(bits) ? 0 : 1) : static_cast<int>(bits >> 23u) - 127 + ((bits & 0x007fffffu) != 0u ? 1 : 0);
+            return exponent <= 126 ? std::optional(exponent) : std::nullopt;
+        }
+        if (!members.contains(value)) {
+            if (value->Type() != IrType::U32 && value->Type() != IrType::F32) return std::nullopt;
+            if (uniqueInputs.insert(value).second) inputs.push_back(value);
+            return inputExponent;
+        }
+        if (value->Flags<std::uint64_t>() != 0u) return std::nullopt;
+        switch (value->Opcode()) {
+            case IrOpcode::BitCastU32F32:
+            case IrOpcode::BitCastF32U32:
+            case IrOpcode::FPAbs32:
+            case IrOpcode::FPNeg32: return Bound(value->Argument(0));
+            case IrOpcode::BitwiseAnd32:
+            case IrOpcode::BitwiseXor32:
+                for (unsigned part = 0u; part < 2u; ++part) {
+                    const auto* mask = value->Argument(part)->Resolve();
+                    if (!mask->HasImmediate()) continue;
+                    if (value->Opcode() == IrOpcode::BitwiseAnd32 && mask->ImmediateU32() == 0x80000000u) return -149;
+                    const auto accepted = value->Opcode() == IrOpcode::BitwiseAnd32 ? 0x7fffffffu : 0x80000000u;
+                    if (mask->ImmediateU32() == accepted) return Bound(value->Argument(1u-part));
+                }
+                return std::nullopt;
+            case IrOpcode::FPMul32: return Join(Bound(value->Argument(0)), Bound(value->Argument(1)), true, false);
+            case IrOpcode::FPAdd32:
+            case IrOpcode::FPSub32: return Join(Bound(value->Argument(0)), Bound(value->Argument(1)), false, true);
+            case IrOpcode::FPFma32:
+            case IrOpcode::FPMad32: return Join(Join(Bound(value->Argument(0)), Bound(value->Argument(1)), true, false), Bound(value->Argument(2)), false, true);
+            case IrOpcode::SelectU32:
+            case IrOpcode::SelectF32:
+                if (RegionNanSource(value) != nullptr || False(value->Argument(0))) return Bound(value->Argument(2));
+                return Join(Bound(value->Argument(1)), Bound(value->Argument(2)), false, false);
+            case IrOpcode::FPSaturate32: return 0;
+            case IrOpcode::FPSin:
+            case IrOpcode::FPCos:
+            case IrOpcode::FPFract32:
+                return Bound(value->Argument(0)) ? std::optional(2) : std::nullopt;
+            case IrOpcode::FPFloor32:
+            case IrOpcode::FPRoundEven32: {
+                const auto source = Bound(value->Argument(0));
+                if (!source) return std::nullopt;
+                const int exponent = std::max(*source, 0) + 1;
+                return exponent <= 126 ? std::optional(exponent) : std::nullopt;
+            }
+            default: return std::nullopt;
+        }
+    }
+
+    const std::unordered_set<const IrValue*>& members;
+    int inputExponent;
+    std::unordered_map<const IrValue*, std::optional<int>> known;
+    std::unordered_set<const IrValue*> uniqueInputs;
+};
+
 bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>& region) {
     std::unordered_set<const IrValue*> members(region.begin(), region.end());
     std::unordered_set<const IrValue*> uniqueSources;
@@ -816,25 +919,53 @@ bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>
         }
     }
     if (bypassed.size() < 2u) return false;
+    int low = -149, high = 126, accepted = -150;
+    std::vector<const IrValue*> entryInputs;
+    while (low <= high) {
+        const int exponent = low + (high - low) / 2;
+        RegionEntryBounds proof(members, exponent);
+        bool valid = true;
+        for (const auto* source : sources) if (!proof.Bound(source)) { valid = false; break; }
+        if (valid) {
+            accepted = exponent;
+            entryInputs = std::move(proof.inputs);
+            low = exponent + 1;
+        } else high = exponent - 1;
+    }
+    const bool entryGuard = accepted >= -149 && entryInputs.size() < sources.size();
+
     auto exact = ctx;
     auto& state = ctx.state;
+    const auto exceptional = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
     auto magnitude = ConstantU32(state, 0u);
     const auto accumulate = [&](const IrValue* value) {
-        const auto bits = Binary(state, spv::OpBitwiseAnd, TypeU32(state), ctx.Def(value), ConstantU32(state, 0x7fffffffu));
+        const auto native = ctx.Def(value);
+        const auto word = value->Type() == IrType::F32 ? Unary(state, spv::OpBitcast, TypeU32(state), native) : native;
+        const auto bits = Binary(state, spv::OpBitwiseAnd, TypeU32(state), word, ConstantU32(state, 0x7fffffffu));
         magnitude = EmitMinMaxU32Value(state, magnitude, bits, true);
     };
-    for (const auto* value : sources) if (!members.contains(value)) accumulate(value);
+    if (entryGuard) {
+        for (const auto* input : entryInputs) accumulate(input);
+        const std::uint32_t limit = accepted >= -126 ? static_cast<std::uint32_t>(accepted + 127) << 23u : 1u << static_cast<unsigned>(accepted + 149);
+        const auto special = Binary(state, spv::OpUGreaterThan, TypeBool(state), magnitude, ConstantU32(state, limit));
+        const auto fast = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlDontFlattenMask);
+        state.module.AddFunction(spv::OpBranchConditional, special, exceptional, fast);
+        EmitLabel(state, fast);
+    } else for (const auto* value : sources) if (!members.contains(value)) accumulate(value);
     for (const auto* value : region) {
         if (bypassed.contains(value)) ctx.Define(*value, ctx.Def(value->Argument(2)));
         else EmitDirectInstruction(ctx, *value);
-        if (uniqueSources.contains(value)) accumulate(value);
+        if (!entryGuard && uniqueSources.contains(value)) accumulate(value);
     }
-    const auto special = Binary(state, spv::OpUGreaterThan, TypeBool(state), magnitude, ConstantU32(state, 0x7f800000u));
     const auto fastLabel = state.currentLabel;
-    const auto exceptional = state.module.AllocateId();
-    const auto merge = state.module.AllocateId();
-    state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlDontFlattenMask);
-    state.module.AddFunction(spv::OpBranchConditional, special, exceptional, merge);
+    if (entryGuard) state.module.AddFunction(spv::OpBranch, merge);
+    else {
+        const auto special = Binary(state, spv::OpUGreaterThan, TypeBool(state), magnitude, ConstantU32(state, 0x7f800000u));
+        state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlDontFlattenMask);
+        state.module.AddFunction(spv::OpBranchConditional, special, exceptional, merge);
+    }
     EmitLabel(state, exceptional);
     for (const auto* value : region) EmitDirectInstruction(exact, *value);
     const auto exactLabel = state.currentLabel;
