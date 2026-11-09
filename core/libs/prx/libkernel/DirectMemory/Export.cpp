@@ -352,7 +352,10 @@ int APS5_VABI sceKernelMunmap(uint64_t vaddr, size_t len) {
 int APS5_VABI sceKernelMmap(void* addr, size_t len, int prot, int flags, int fd, int64_t offset, void** res) {
  void* mapped = mmap_nid_postfix(addr, len, prot, flags, fd, offset);
  if (mapped == reinterpret_cast<void*>(static_cast<uintptr_t>(-1))) return SceKernelError(*__error_nid_postfix());
- *res = mapped;
+ if (!GuestCopyOut_nid_no_patch(res, &mapped, sizeof(mapped))) {
+  munmap_nid_postfix(mapped, len);
+  return SCE_KERNEL_ERROR_EFAULT;
+ }
  return 0;
 }
 

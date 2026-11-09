@@ -27,10 +27,6 @@ int APS5_VABI EVP_PKEY_derive_set_peer_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EVP_PKEY_get0_EC_KEY_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EVP_PKEY_verify_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -152,10 +148,6 @@ int APS5_VABI X509_NAME_add_entry_by_txt_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_meth_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI tls_handshake_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -173,14 +165,6 @@ int APS5_VABI Unknown_3KZ_minus_L4y1gak_nid_no_patch() {
 }
 APS5_EXPORT("3KZ-L4y1gak", Unknown_3KZ_minus_L4y1gak_nid_no_patch);
 
-int APS5_VABI EVP_chacha20_poly1305_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI EVP_chacha20_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_set_pubkey_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -194,19 +178,7 @@ int APS5_VABI Unknown_4pEl_minus_5DmrrM_nid_no_patch() {
 }
 APS5_EXPORT("4pEl-5DmrrM", Unknown_4pEl_minus_5DmrrM_nid_no_patch);
 
-int APS5_VABI BIO_meth_set_write_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI BIO_meth_set_create_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_CRL_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI BIO_meth_set_read_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -253,10 +225,6 @@ int APS5_VABI SSL_CTX_set_default_verify_paths_nid_postfix() {
 }
 
 int APS5_VABI ERR_lib_error_string_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI BIO_meth_set_ctrl_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -419,10 +387,6 @@ int APS5_VABI X509V3_set_ctx_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_meth_set_destroy_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI tls_config_set_ciphers_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -436,10 +400,6 @@ int APS5_VABI ASN1_get_object_nid_postfix() {
 }
 
 int APS5_VABI SSL_provide_quic_data_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI BIO_meth_new_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
