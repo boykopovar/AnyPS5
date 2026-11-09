@@ -255,7 +255,7 @@ void TestLowLatencyService() {
     Require(sceAudioOut2LoInit() == 0, "starting the low-latency service again must be accepted");
     Require(sceAudioOut2LoTerminate() == 0, "stopping the low-latency service returns 0");
     Require(sceAudioOut2LoTerminate() == 0, "stopping a stopped low-latency service returns 0");
-    Require(sceAudioOut2InitializeEx(0) == 0 && sceAudioOut2InitializeEx(1) == 0, "the extended initialization succeeds");
+    Require(sceAudioOut2InitializeEx(0) == static_cast<int>(0x80268004) && sceAudioOut2InitializeEx(1) == static_cast<int>(0x80268004), "the extended initialization fails after sceAudioOutInit and when repeated");
 }
 
 }
