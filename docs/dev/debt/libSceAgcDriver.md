@@ -417,7 +417,9 @@
 
 - [SPI_SHADER_POS_FORMAT without a position export](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - a `POS0` entry of 0 (`SPI_SHADER_ZERO`) is decoded as a draw that rasterizes nothing and sets `rasterizerDiscardEnable`. That follows the register name; no console measurement shows the hardware discards the primitives rather than faulting or rasterizing an undefined position, and Mesa only programs `POS0` as four components. Other `POS0` formats than 0 and 4 stop the title.
 
-- [DB_RENDER_CONTROL without a depth plane](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - a depth copy, resummarize or decompress draw with no depth or stencil plane bound changes no modeled state on the hardware and draws nothing; here it is still rejected unless the pass-through resummarize check already skips it. Reserved DB_RENDER_CONTROL bits 14 to 31 are ignored as the hardware does.
+ - [DB_RENDER_CONTROL without a depth plane](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - a depth copy, resummarize or decompress draw with no depth or stencil plane bound changes no modeled state on the hardware and draws nothing; here it is still rejected unless the pass-through resummarize check already skips it. Reserved DB_RENDER_CONTROL bits 14 to 31 are ignored as the hardware does.
+
+- [Mesh compute readback cache](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp) (libSceAgcDriver) - `MeshComputeStages` keeps built readback vertex shaders in a static map keyed by mesh variant id with no trim or eviction. Fine for a fallback path with few distinct mesh programs; a title cycling many mesh variants would grow it without bound. Follow-up: bound it (LRU or cap with `Require`) and add a metric.
 
 ### Opt-in draw paths
 

@@ -1293,15 +1293,8 @@ std::array<std::uint32_t, 4> MeshIndexBufferDescriptor(const Pm4::DrawParameters
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) & 0xffffu, static_cast<std::uint32_t>(bytes), RawWord3};
 }
 
-std::uint32_t MeshDrawLayers(const State& state) {
-    std::uint32_t layers = 1;
-    for (const auto& color : state.colors) layers = std::max({layers, color.layers, color.depth});
-    if (state.depth.has_value() && state.depth->lastSlice >= state.depth->firstSlice) layers = std::max(layers, state.depth->lastSlice - state.depth->firstSlice + 1u);
-    return layers;
-}
-
-bool MeshDrawRunsAsCompute(bool meshShader, std::uint32_t maxMeshOutputLayers, const State& state) {
-    return state.stages.mesh.has_value() && (!meshShader || MeshDrawLayers(state) > maxMeshOutputLayers);
+bool MeshDrawRunsAsCompute(bool meshShader, std::uint32_t, const State& state) {
+    return state.stages.mesh.has_value() && !meshShader;
 }
 
 bool MeshDrawRunsAsCompute(const Context& context, const State& state) {

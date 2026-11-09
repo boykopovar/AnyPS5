@@ -248,7 +248,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     capability == spv::CapabilitySignedZeroInfNanPreserve;
 
                 const bool isBdaCapability =
-                    (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version || mesh || meshCompute || meshReadback) &&
+                    (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version || meshCompute || meshReadback) &&
                     (capability == spv::CapabilityInt64 ||
                      capability == spv::CapabilityPhysicalStorageBufferAddresses ||
                      capability == spv::CapabilityStorageBuffer8BitAccess);

@@ -12586,13 +12586,15 @@ void meshLimitTests() {
     Require(!MeshDrawRunsAsCompute(true, 8, layered), "a mesh-path draw at the device's layer limit left the mesh stage");
     layered.colors.front().layers = 1;
     layered.colors.front().depth = 32;
-    Require(MeshDrawRunsAsCompute(true, 8, layered), "a mesh-path draw into a 32-slice volume did not run as compute on a device with 8 mesh output layers");
+    Require(!MeshDrawRunsAsCompute(true, 8, layered), "a mesh-path draw into a 32-slice volume stayed on the native layer-window path on a device with 8 mesh output layers");
     Require(!MeshDrawRunsAsCompute(true, 2048, layered), "a mesh-path draw within the device's layer limit ran as compute");
+    layered.colors.front().depth = 34;
+    Require(!MeshDrawRunsAsCompute(true, 8, layered), "a mesh-path draw into a 34-slice volume stayed on the native layer-window path on a device with 8 mesh output layers");
     layered.colors.front().depth = 1;
     layered.depth = AgcDriver::Graphics::DepthTarget{};
     layered.depth->firstSlice = 2;
     layered.depth->lastSlice = 17;
-    Require(AgcDriver::Graphics::MeshDrawLayers(layered) == 16 && MeshDrawRunsAsCompute(true, 8, layered), "a mesh-path draw into 16 depth slices did not run as compute on a device with 8 mesh output layers");
+    Require(!MeshDrawRunsAsCompute(true, 8, layered), "a mesh-path draw into 16 depth slices stayed on the native layer-window path on a device with 8 mesh output layers");
     AgcDriver::Graphics::Context narrow{};
     narrow.subgroup.subgroupSize = 8;
     ShaderRecompiler::RecompileResult program{};
