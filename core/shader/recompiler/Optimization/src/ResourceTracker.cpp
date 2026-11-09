@@ -774,6 +774,10 @@ private:
         return user->Opcode() == IrOpcode::GetImageResource || user->Opcode() == IrOpcode::GetSamplerResource;
     }
 
+    static bool LaneSpill(const IrValue& user, const IrValue& value) {
+        return user.Opcode() == IrOpcode::WriteLane && user.ArgumentCount() == 3u && user.Argument(0)->Resolve() == &value;
+    }
+
     static IrValue* ImmediateStep(const IrValue& value, IrOpcode op, std::uint32_t& immediate) {
         if (value.Opcode() != op || value.ArgumentCount() != 2u) return nullptr;
         if (immediateU32(value.Argument(1), immediate)) return value.Argument(0)->Resolve();
@@ -812,7 +816,7 @@ private:
         return word;
     }
 
-    bool ChildKeyWord(const IrValue& read, const IrValue& vsharp, bool siblings = false) const {
+    bool ChildKeyWord(const IrValue& read, const IrValue& vsharp, bool rereadable = false) const {
         std::uint32_t memoryIndex = 0;
         std::uint32_t immediate = 0;
         if (ScalarReadMemory(read, memoryIndex) == nullptr || !immediateU32(read.Argument(1), immediate) || read.Uses().empty() || WrittenThrough(vsharp)) return false;
@@ -830,10 +834,11 @@ private:
                     std::uint32_t stride = 0;
                     std::uint32_t addend = 0;
                     KeyDomain domain;
-                    if (buffer->Opcode() != IrOpcode::GetBufferResource || (!SameHandle(*buffer, vsharp) && !(siblings && SiblingVsharp(*buffer, vsharp))) || !std::ranges::any_of(use->Uses(), DescriptorUser) || !MatchAffineOffset(use->Argument(1), key, stride, addend) || ChildKeyWordOf(key, domain) != &read) return false;
+                    if (buffer->Opcode() != IrOpcode::GetBufferResource || (!SameHandle(*buffer, vsharp) && !(rereadable && SiblingVsharp(*buffer, vsharp))) || !std::ranges::any_of(use->Uses(), DescriptorUser) || !MatchAffineOffset(use->Argument(1), key, stride, addend) || ChildKeyWordOf(key, domain) != &read) return false;
                     keys = true;
                     continue;
                 }
+                if (rereadable && LaneSpill(*use, *value)) continue;
                 const auto stepped = [&](IrOpcode op) { return ImmediateStep(*use, op, immediate) == value; };
                 if (!stepped(IrOpcode::ShiftRightLogical32) && !stepped(IrOpcode::BitwiseAnd32) && !stepped(IrOpcode::ShiftLeftLogical32) && !stepped(IrOpcode::IMul32) && !stepped(IrOpcode::IAdd32)) return false;
                 pending.push_back(use);
@@ -997,6 +1002,7 @@ private:
             if (otherUsers && !rereadable) return false;
             if (!std::ranges::all_of(parent.reads, [&](const IrValue* read) {
                 return std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
+                    if (rereadable && LaneSpill(*user, *read)) return true;
                     if (user->Opcode() != IrOpcode::GetBufferResource) return false;
                     if (std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return true;
                     return SameHandle(*user, *heapHandle) && DescriptorWordReads(*user, rereadable, *heapHandle);

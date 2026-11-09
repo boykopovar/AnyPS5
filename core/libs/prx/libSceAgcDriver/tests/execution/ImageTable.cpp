@@ -512,6 +512,17 @@ alignas(256) constexpr std::array<std::uint32_t, 63> PointerSiblingKeyCode{
     0xf428121au, 0xfa000020u, 0xbf8cc07fu, 0xf09c0f08u, 0x02490401u, 0x8afe3032u, 0xbf89ffe1u, 0xbefe042eu,
     0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
+alignas(256) constexpr std::array<std::uint32_t, 69> PointerSiblingKeySpillCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
+    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
+    0x7e280503u, 0xd4c20030u, 0x02020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
+    0xbf068012u, 0xbf850002u, 0xbeac03ffu, 0x000000eau, 0xf4080d16u, 0xfa000000u, 0xbf8cc07fu, 0xf420101au,
+    0xfa000014u, 0xf4081116u, 0xfa000040u, 0xbf8cc07fu, 0x90419040u, 0x8f418541u, 0xf42c0922u, 0x82000000u,
+    0xf428121au, 0xfa000020u, 0xbf8cc07fu, 0xf09c0f08u, 0x02490401u, 0xd7610006u, 0x02010044u, 0xd7610006u,
+    0x02010234u, 0xd7610006u, 0x02010440u, 0x8afe3032u, 0xbf89ffdbu, 0xbefe042eu, 0x7e120202u, 0x34101286u,
+    0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
 alignas(256) constexpr std::array<std::uint32_t, 77> PointerChildKeyArmCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
     0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
@@ -2782,7 +2793,7 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm) {
     std::puts((name + ": T#s indexed by a word read through the same pointer-loaded V#, with its S#, checked for several keys and the largest inside the V#; keys past the V# read null T#s, and a key the snapshot did not hold faults").c_str());
 }
 
-void RunPointerSiblingKeyTests(AgcDriver::VulkanDevice& device) {
+void RunPointerSiblingKeyTests(AgcDriver::VulkanDevice& device, bool spill) {
     constexpr std::uint32_t KeyWord = 0x14u;
     constexpr std::uint32_t SamplerWord = 0x20u;
     constexpr std::uint32_t SiblingWord = 0x40u;
@@ -2829,7 +2840,7 @@ void RunPointerSiblingKeyTests(AgcDriver::VulkanDevice& device) {
         Table[record * 4u + 3u] = static_cast<std::uint32_t>(pointer >> 32u);
     };
     for (std::uint32_t record = 0; record < 3u; ++record) link(record, record % 2u);
-    const std::string name = "pointer V# table with a T# array in one V# indexed by a word read from a sibling V# of the same record pointer";
+    const std::string name = std::string("pointer V# table with a T# array in one V# indexed by a word read from a sibling V# of the same record pointer") + (spill ? ", both V#s and the key word also written to VGPR lanes" : "");
     const std::array<AgcDriver::Graphics::GuestMemorySnapshot, 3> live{{
         {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
         {reinterpret_cast<std::uintptr_t>(heads.data()), std::as_bytes(std::span(heads))},
@@ -2881,7 +2892,7 @@ void RunPointerSiblingKeyTests(AgcDriver::VulkanDevice& device) {
             }
         }
     };
-    const std::span<const std::uint32_t> shader(PointerSiblingKeyCode);
+    const std::span<const std::uint32_t> shader = spill ? std::span<const std::uint32_t>(PointerSiblingKeySpillCode) : std::span<const std::uint32_t>(PointerSiblingKeyCode);
     const auto taken = run(shader);
     check(taken, "keys 2 and 5 at offset 0x14 of the V# at the record pointer, T#s in the V# at +0x40");
     const auto rekey = [&](std::uint32_t first, std::uint32_t second) {
@@ -3256,7 +3267,11 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-sibling-key") == 0) {
-            RunPointerSiblingKeyTests(*device);
+            RunPointerSiblingKeyTests(*device, false);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-sibling-key-spill") == 0) {
+            RunPointerSiblingKeyTests(*device, true);
             return 0;
         }
         RunTests(*device);
