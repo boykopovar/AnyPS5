@@ -143,21 +143,28 @@ void CopyAddressToHost(const GuestAddress& guest, curl_sockaddr& native) {
 }
 
 std::shared_ptr<Socket> Borrow(curl_socket_t native, bool nonblocking) {
-    sockaddr_storage address{};
+    int family = 0;
+    int type = 0;
 #ifdef _WIN32
-    int length = sizeof(address);
-    int typeLength = sizeof(int);
+    WSAPROTOCOL_INFOW information{};
+    int length = sizeof(information);
+    if (::getsockopt(native, SOL_SOCKET, SO_PROTOCOL_INFOW,
+                     reinterpret_cast<char*>(&information), &length) != 0) return {};
+    family = information.iAddressFamily;
+    type = information.iSocketType;
 #else
+    sockaddr_storage address{};
     socklen_t length = sizeof(address);
     socklen_t typeLength = sizeof(int);
-#endif
-    int type = 0;
     if (::getsockname(native, reinterpret_cast<sockaddr*>(&address), &length) != 0 ||
         ::getsockopt(native, SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&type), &typeLength) != 0) return {};
+    family = address.ss_family;
+#endif
     auto record = std::make_shared<Socket>();
     record->native = native;
     record->borrowed = true;
-    record->descriptor = KernelBorrowSocketNative_nid_no_patch(static_cast<std::uintptr_t>(native), GuestFamily(address.ss_family), type, nonblocking, &record->owner);
+    record->descriptor = KernelBorrowSocketNative_nid_no_patch(static_cast<std::uintptr_t>(native),
+                                                               GuestFamily(family), type, nonblocking, &record->owner);
     if (record->descriptor < 0) return {};
     return record;
 }

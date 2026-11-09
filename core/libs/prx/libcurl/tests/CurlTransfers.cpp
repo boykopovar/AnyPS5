@@ -12,6 +12,13 @@
 #include <source_location>
 #include <string>
 
+#ifdef _WIN32
+extern "C" int CurlHostNonblock_nid_no_patch(curl_socket_t socket, int nonblocking);
+extern "C" int CurlSocketNonblock_nid_no_patch(curl_socket_t socket, int nonblocking) {
+    return CurlHostNonblock_nid_no_patch(socket, nonblocking);
+}
+#endif
+
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (!value) {
         std::fprintf(stderr, "failure at %u\n", location.line());
