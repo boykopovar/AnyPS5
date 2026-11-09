@@ -3226,7 +3226,6 @@ int APS5_VABI _ZN7WebCore20findClosestPlainTextERKNS_11SimpleRangeERKN3WTF6Strin
 int APS5_VABI _ZN7WebCore20lastOffsetForEditingERKNS_4NodeE();
 int APS5_VABI _ZN7WebCore20nextSentencePositionERKNS_15VisiblePositionE();
 int APS5_VABI _ZN7WebCore20previousWordPositionERKNS_15VisiblePositionE();
-int APS5_VABI _ZN7WebCore20serializationForHTMLERKNS_5ColorE();
 int APS5_VABI _ZN7WebCore21AudioHardwareListener6createERNS0_6ClientE();
 int APS5_VABI _ZN7WebCore21BackForwardController11currentItemEv();
 int APS5_VABI _ZN7WebCore21BackForwardController11forwardItemEv();

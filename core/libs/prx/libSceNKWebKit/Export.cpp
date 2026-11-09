@@ -22509,10 +22509,6 @@ int APS5_VABI _ZN7WebCore20previousWordPositionERKNS_15VisiblePositionE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore20serializationForHTMLERKNS_5ColorE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore21AudioHardwareListener6createERNS0_6ClientE() {
     NotImplemented_nid_no_patch(__func__);
 }
