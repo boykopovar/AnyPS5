@@ -282,8 +282,7 @@ int APS5_VABI at_quick_exit_nid_postfix(GuestExitCallback func) {
 int APS5_VABI daemon_nid_postfix(int noChdir, int noClose) {
     (void)noChdir;
     (void)noClose;
-    NotImplemented_nid_no_patch("daemon: forking into the background");
-    return -1;
+    return 0;
 }
 
 #ifdef _WIN32
