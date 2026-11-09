@@ -84,11 +84,11 @@ void Scenario(Graphics::Context context, bool fail) {
     context.limits.minStorageBufferOffsetAlignment = 256;
     context.limits.nonCoherentAtomSize = blockBytes;
     context.bufferPool = std::make_shared<Graphics::BufferPool>(context);
+    copies = refusals = allocations = 0;
+    copied = false;
+    refuseReadback = false;
     auto ownedReadback = std::make_unique<Graphics::Buffer>(context, 32, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     readback = ownedReadback->Handle();
-    copied = false;
-    copies = refusals = 0;
-    allocations = 1;
     destination = VK_NULL_HANDLE;
     refuseReadback = fail;
     bool caught = false;
