@@ -62,6 +62,13 @@ bool pushesOrPops(const std::uint8_t* code, const Insn& insn) {
     return (info.Opcode >= 0x50 && info.Opcode <= 0x5f) || info.Opcode == 0x68 || info.Opcode == 0x6a || info.Opcode == 0x9c || info.Opcode == 0x9d || (info.Opcode == 0x8f && info.HasModRm && reg == 0) || (info.Opcode == 0xff && info.HasModRm && reg == 6);
 }
 
+bool pushOpcode(const Insn& insn) {
+    const auto& info = insn.Info;
+    const auto reg = static_cast<std::uint8_t>((info.ModRmByte >> 3) & 7);
+    if (info.IsTwoByteOpcode) return info.Opcode == 0xa0 || info.Opcode == 0xa8;
+    return (info.Opcode >= 0x50 && info.Opcode <= 0x57) || info.Opcode == 0x68 || info.Opcode == 0x6a || info.Opcode == 0x9c || (info.Opcode == 0xff && info.HasModRm && reg == 6);
+}
+
 std::optional<std::int64_t> rspAdjustment(const std::uint8_t* code, const Insn& insn) {
     std::int32_t value = 0;
     if (insn.Length == 4 && code[0] == 0x48 && code[1] == 0x83 && (code[2] == 0xec || code[2] == 0xc4)) {
@@ -347,7 +354,7 @@ std::optional<TrampolineSite> relocateLeaf(
     }
 
     std::int64_t deepest = 0;
-    std::map<std::size_t, std::pair<std::int64_t, std::int64_t>> indirectExits;
+    std::set<std::size_t> indirectExits;
     {
         std::vector<std::optional<std::int64_t>> depthAt(body.size());
         std::vector<std::optional<std::int64_t>> frameAt(body.size());
@@ -384,7 +391,7 @@ std::optional<TrampolineSite> relocateLeaf(
             if (use.RspBased && (use.Indexed || use.RspDisp >= 0)) upperOperands.emplace_back(use.RspDisp - depth, use.Indexed);
             if (use.RbpBased && frame && (use.RbpIndexed || use.RbpDisp - *frame >= -depth)) upperOperands.emplace_back(use.RbpDisp - *frame, use.RbpIndexed);
             const auto reg = static_cast<std::uint8_t>((info.ModRmByte >> 3) & 7);
-            const bool push = !info.IsTwoByteOpcode ? ((info.Opcode >= 0x50 && info.Opcode <= 0x57) || info.Opcode == 0x68 || info.Opcode == 0x6a || info.Opcode == 0x9c || (info.Opcode == 0xff && info.HasModRm && reg == 6)) : (info.Opcode == 0xa0 || info.Opcode == 0xa8);
+            const bool push = pushOpcode(insn);
             const bool pop = !info.IsTwoByteOpcode ? ((info.Opcode >= 0x58 && info.Opcode <= 0x5f) || info.Opcode == 0x9d || (info.Opcode == 0x8f && info.HasModRm && reg == 0)) : (info.Opcode == 0xa1 || info.Opcode == 0xa9);
             const auto move = quadRegisterMove(code, insn);
             if (pushesOrPops(code, insn) && (push || pop)) {
@@ -457,7 +464,7 @@ std::optional<TrampolineSite> relocateLeaf(
                 refusal = "indirect jump at a stack depth of pushes and allocations";
                 return std::nullopt;
             }
-            indirectExits.emplace(k, std::make_pair(depth, depth == 0 ? 0 : pushed));
+            indirectExits.insert(k);
         }
         for (const auto& [offset, indexed] : upperOperands) {
             const auto slot = poppedSlots.upper_bound(offset);
@@ -479,6 +486,8 @@ std::optional<TrampolineSite> relocateLeaf(
     std::vector<Fixup> fixups;
     std::map<std::size_t, std::size_t> placed;
     const auto raise = raiseRsp(shift);
+    const auto shiftField = static_cast<std::uint32_t>(shift);
+    const std::vector<std::uint8_t> storePushed{0xff, 0x34, 0x24, 0x8f, 0x84, 0x24, static_cast<std::uint8_t>(shiftField), static_cast<std::uint8_t>(shiftField >> 8), static_cast<std::uint8_t>(shiftField >> 16), static_cast<std::uint8_t>(shiftField >> 24)};
     const auto emitOutsideJump = [&](const std::int64_t target) {
         out.insert(out.end(), raise.begin(), raise.end());
         out.push_back(0xe9);
@@ -505,6 +514,7 @@ std::optional<TrampolineSite> relocateLeaf(
         const auto& info = insn.Info;
         const auto flow = info.FlowKind;
         const auto lead = code[info.OpcodeOffset];
+        const bool pushes = pushesOrPops(code, insn) && pushOpcode(insn);
         if (flow == ControlFlowKind::Call || flow == ControlFlowKind::IndirectCall) {
             refusal = "call in a leaf";
             return std::nullopt;
@@ -514,17 +524,9 @@ std::optional<TrampolineSite> relocateLeaf(
                 refusal = "rip-relative indirect branch";
                 return std::nullopt;
             }
-            const auto exit = indirectExits.find(static_cast<std::size_t>(&insn - body.data()));
-            if (exit == indirectExits.end()) {
+            if (!indirectExits.contains(static_cast<std::size_t>(&insn - body.data()))) {
                 out.insert(out.end(), code, code + insn.Length);
                 continue;
-            }
-            const auto [depth, pushed] = exit->second;
-            for (std::int64_t slot = 8; slot <= pushed; slot += 8) {
-                const auto source = static_cast<std::uint32_t>(static_cast<std::int32_t>(depth - slot));
-                const auto destination = static_cast<std::uint32_t>(static_cast<std::int32_t>(shift + depth - slot));
-                out.insert(out.end(), {0xff, 0xb4, 0x24, static_cast<std::uint8_t>(source), static_cast<std::uint8_t>(source >> 8), static_cast<std::uint8_t>(source >> 16), static_cast<std::uint8_t>(source >> 24)});
-                out.insert(out.end(), {0x8f, 0x84, 0x24, static_cast<std::uint8_t>(destination), static_cast<std::uint8_t>(destination >> 8), static_cast<std::uint8_t>(destination >> 16), static_cast<std::uint8_t>(destination >> 24)});
             }
             out.insert(out.end(), raise.begin(), raise.end());
             out.insert(out.end(), code, code + insn.Length);
@@ -616,6 +618,7 @@ std::optional<TrampolineSite> relocateLeaf(
                 return std::nullopt;
             }
             out.insert(out.end(), bytes->begin(), bytes->end());
+            if (pushes) out.insert(out.end(), storePushed.begin(), storePushed.end());
             ++operands;
             continue;
         }
@@ -629,9 +632,11 @@ std::optional<TrampolineSite> relocateLeaf(
             const auto field = out.size() + info.RipRelativeDispOffset;
             out.insert(out.end(), code, code + insn.Length);
             relocations.push_back({field, out.size(), static_cast<std::int64_t>(insn.Offset + insn.Length) + disp - static_cast<std::int64_t>(start), false});
+            if (pushes) out.insert(out.end(), storePushed.begin(), storePushed.end());
             continue;
         }
         out.insert(out.end(), code, code + insn.Length);
+        if (pushes) out.insert(out.end(), storePushed.begin(), storePushed.end());
     }
     if (trace) traceStep(body.back());
     const bool endsInUd2 = body.back().Info.IsTwoByteOpcode && body.back().Info.Opcode == 0x0b;
