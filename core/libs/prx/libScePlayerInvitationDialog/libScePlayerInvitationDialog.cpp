@@ -81,8 +81,9 @@ std::int32_t APS5_VABI scePlayerInvitationDialogGetResult(ScePlayerInvitationDia
     if (g_dialog_status == PlayerInvitationDialogStatus::None) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (g_dialog_status != PlayerInvitationDialogStatus::Finished) return COMMON_DIALOG_ERROR_NOT_FINISHED;
-    *result = ScePlayerInvitationDialogResult{};
-    result->result = COMMON_DIALOG_RESULT_USER_CANCELED;
+    ScePlayerInvitationDialogResult completed{};
+    completed.result = COMMON_DIALOG_RESULT_USER_CANCELED;
+    if (!GuestCopyOut_nid_no_patch(result, &completed, sizeof(completed))) return COMMON_DIALOG_ERROR_ARG_NULL;
     return 0;
 }
 
