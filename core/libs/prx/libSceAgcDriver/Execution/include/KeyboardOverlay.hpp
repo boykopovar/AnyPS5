@@ -8,6 +8,7 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include <array>
 #include <cstdint>
+#include <cstddef>
 #include <optional>
 #include <span>
 #include <string>
@@ -54,6 +55,11 @@ inline constexpr char32_t KeyboardFallbackCode = 0xFFFD;
 inline constexpr std::uint8_t KeyboardCompositionMark = 1;
 inline constexpr std::uint8_t KeyboardSelectionMark = 2;
 
+struct HostMenuView {
+    std::vector<std::string> lines;
+    std::size_t cursor = 0;
+};
+
 std::span<const KeyboardGlyphEntry> KeyboardGlyphTable();
 bool KeyboardHasGlyph(char32_t code);
 const KeyboardGlyphRows& KeyboardGlyph(char32_t code);
@@ -66,6 +72,8 @@ std::optional<ImeKeyboardView> SystemOverlayView();
 std::vector<std::u32string> WrapDialogMessage(const std::u16string& message, std::size_t columns, std::size_t maxLines);
 std::int32_t DialogScale(VkExtent2D extent, const ModalDialogView& view);
 OverlayLayout LayOutDialog(const ModalDialogView& view, VkExtent2D extent);
+OverlayLayout LayOutHostMenu(const HostMenuView& view, VkExtent2D extent);
+std::optional<HostMenuView> SystemHostMenuView();
 std::optional<ModalDialogView> SystemDialogView();
 std::optional<OverlayLayout> SystemOverlayLayout(VkExtent2D extent);
 
