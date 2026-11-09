@@ -109,7 +109,19 @@ int APS5_VABI sceMsgDialogOpen(const void* param) {
  if (g_status == kStatusRunning) return kErrBusy;
  const MsgDialog::ParsedParam parsed = MsgDialog::ParseParam(param);
  Inspect(parsed);
- g_presented = Present(parsed);
+ ModalDialogRequest hostRequest;
+ if (MsgDialog::HostMessageBoxEnabled(std::getenv("ANYPS5_MSG_DIALOG_HOST"), kAppleBuild) && MsgDialog::BuildRequest(parsed, hostRequest)) {
+  g.unlock();
+  const auto answer = MsgDialog::ShowHostMessageBox(parsed.text, hostRequest);
+  g.lock();
+  if (answer) {
+   const std::size_t fallback = hostRequest.cancel != ModalDialogNoButton ? hostRequest.cancel : 0;
+   g_buttonId = MsgDialog::ButtonIdOf(answer->chosen ? *answer->chosen : fallback);
+   g_status = kStatusFinished;
+   APS5_HIT("MSGDIALOG", "open: buttons=%zu -> host box, button %d", hostRequest.buttons.size(), g_buttonId);
+   return kErrOk;
+  }
+  g_presented = Present(parsed);
  if (parsed.hasText) APS5_HIT("MSGDIALOG", "open: buttons=%d text=\"%s\" -> %s", parsed.buttonType, MsgDialog::LogText(parsed.text).c_str(), g_presented ? "shown" : "auto answer");
  g_pollsLeft = 2;
  g_openedAt = std::chrono::steady_clock::now();
