@@ -127,19 +127,49 @@ int main() {
         BN_free_nid_postfix(big);
     }
     {
+        Require(BN_hex2bn_nid_postfix(nullptr, nullptr) == 0);
+        Require(BN_hex2bn_nid_postfix(nullptr, "") == 0);
+        Require(BN_hex2bn_nid_postfix(nullptr, "z") == 0);
+        Require(BN_hex2bn_nid_postfix(nullptr, "-") == 1);
+        Require(BN_hex2bn_nid_postfix(nullptr, "-z") == 1);
+        Require(BN_hex2bn_nid_postfix(nullptr, "-0") == 2);
+        Require(BN_hex2bn_nid_postfix(nullptr, "12G") == 2);
+        Require(BN_hex2bn_nid_postfix(nullptr, "-12G") == 3);
+        Require(BN_hex2bn_nid_postfix(nullptr, "1234xyz") == 4);
+        Require(BN_hex2bn_nid_postfix(nullptr, "-1234xyz") == 5);
+
+        Bn* fresh = nullptr;
+        Require(BN_hex2bn_nid_postfix(&fresh, "") == 0 && fresh == nullptr);
+        Require(BN_hex2bn_nid_postfix(&fresh, nullptr) == 0 && fresh == nullptr);
+        Require(BN_hex2bn_nid_postfix(&fresh, "z") == 0 && fresh && fresh->top == 0 && fresh->neg == 0);
+        BN_free_nid_postfix(fresh);
+        fresh = nullptr;
+        Require(BN_hex2bn_nid_postfix(&fresh, "-") == 1 && fresh && fresh->top == 0 && fresh->neg == 1);
+        BN_free_nid_postfix(fresh);
+        fresh = nullptr;
+        Require(BN_hex2bn_nid_postfix(&fresh, "-z") == 1 && fresh && fresh->top == 0 && fresh->neg == 1);
+        BN_free_nid_postfix(fresh);
+        fresh = nullptr;
+
         Bn* value = nullptr;
         Require(BN_hex2bn_nid_postfix(&value, "-1F") == 3 && value);
         Require(value->neg == 1 && value->top == 1 && value->d[0] == 0x1F);
         Bn* same = value;
         Require(BN_hex2bn_nid_postfix(&value, "ABC") == 3 && value == same);
         Require(value->neg == 0 && value->d[0] == 0xABC);
-        Require(BN_hex2bn_nid_postfix(&value, "FFzz") == 2 && value->d[0] == 0xFF);
-        Require(BN_hex2bn_nid_postfix(&value, "") == 0 && value->d[0] == 0xFF);
-        Require(BN_hex2bn_nid_postfix(&value, "zz") == 0 && BN_hex2bn_nid_postfix(&value, "-") == 0);
-        Require(BN_hex2bn_nid_postfix(&value, "-0") == 2 && value->top == 0 && value->neg == 0);
+        Require(BN_hex2bn_nid_postfix(&value, "FFzz") == 2 && value->d[0] == 0xFF && value->top == 1 && value->neg == 0);
+        Require(BN_hex2bn_nid_postfix(&value, "") == 0 && value->d[0] == 0xFF && value->top == 1 && value->neg == 0);
+        Require(BN_hex2bn_nid_postfix(&value, nullptr) == 0 && value->d[0] == 0xFF && value->top == 1 && value->neg == 0);
+        Require(BN_hex2bn_nid_postfix(&value, "zz") == 0 && value->top == 0 && value->neg == 0);
+        Require(BN_hex2bn_nid_postfix(&value, "ABC") == 3 && value->d[0] == 0xABC && value->top == 1 && value->neg == 0);
+        Require(BN_hex2bn_nid_postfix(&value, "-") == 1 && value->top == 0 && value->neg == 1);
+        Require(BN_hex2bn_nid_postfix(&value, "ABC") == 3 && value->d[0] == 0xABC && value->top == 1 && value->neg == 0);
+        Require(BN_hex2bn_nid_postfix(&value, "-z") == 1 && value->top == 0 && value->neg == 1);
+        Require(BN_hex2bn_nid_postfix(&value, "-0") == 2 && value->top == 0 && value->neg == 1);
+        Require(BN_hex2bn_nid_postfix(&value, "1234xyz") == 4 && value->d[0] == 0x1234 && value->top == 1 && value->neg == 0);
+        Require(BN_hex2bn_nid_postfix(&value, "-1234xyz") == 5 && value->d[0] == 0x1234 && value->top == 1 && value->neg == 1);
         Require(BN_hex2bn_nid_postfix(&value, "deadBEEF0123456789abcdef") == 24);
         Require(Hex(value) == "DEADBEEF0123456789ABCDEF" && value->top == 2);
-        Require(BN_hex2bn_nid_postfix(nullptr, "12G") == 2);
         BN_free_nid_postfix(value);
     }
     {
