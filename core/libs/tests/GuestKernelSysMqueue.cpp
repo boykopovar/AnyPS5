@@ -1,4 +1,6 @@
 #include "SceTypes.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <chrono>
@@ -11,34 +13,6 @@
 #include <source_location>
 #include <string>
 #include <thread>
-
-namespace {
-
-struct MqAttr {
-    std::int64_t flags;
-    std::int64_t maxmsg;
-    std::int64_t msgsize;
-    std::int64_t curmsgs;
-    std::int64_t reserved[4];
-};
-
-struct Timespec {
-    std::int64_t seconds;
-    std::int64_t nanoseconds;
-};
-
-}
-
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI open_nid_postfix(const char* path, int flags, int mode);
-int APS5_VABI close_nid_postfix(int descriptor);
-int APS5_VABI kmq_open_nid_postfix(const char* path, int flags, unsigned int mode, const MqAttr* attr);
-int APS5_VABI kmq_unlink_nid_postfix(const char* path);
-int APS5_VABI kmq_setattr_nid_postfix(int descriptor, const MqAttr* attr, MqAttr* oattr);
-int APS5_VABI kmq_timedsend_nid_postfix(int descriptor, const char* message, std::size_t length, unsigned int priority, const Timespec* abstime);
-std::int64_t APS5_VABI kmq_timedreceive_nid_postfix(int descriptor, char* buffer, std::size_t length, unsigned int* priority, const Timespec* abstime);
-}
 
 namespace {
 
@@ -72,7 +46,7 @@ std::string Name(const char* tag) {
     return std::string("/anyps5-mq-") + tag + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
 }
 
-Timespec FromNow(std::chrono::milliseconds delay) {
+GuestTimespec FromNow(std::chrono::milliseconds delay) {
     const auto when = std::chrono::system_clock::now() + delay;
     const auto nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(when.time_since_epoch()).count();
     return {nanoseconds / 1000000000, nanoseconds % 1000000000};
@@ -87,10 +61,10 @@ std::string Receive(int queue, unsigned* priority = nullptr) {
 
 void OpenRules() {
     const auto name = Name("open");
-    const MqAttr zero{0, 0, 16, 0, {}};
-    const MqAttr many{0, 101, 16, 0, {}};
-    const MqAttr empty{0, 2, 0, 0, {}};
-    const MqAttr huge{0, 2, 16385, 0, {}};
+    const GuestMqAttr zero{0, 0, 16, 0, {}};
+    const GuestMqAttr many{0, 101, 16, 0, {}};
+    const GuestMqAttr empty{0, 2, 0, 0, {}};
+    const GuestMqAttr huge{0, 2, 16385, 0, {}};
     Require(kmq_open_nid_postfix(name.c_str(), 3 | OCreat, 0600, nullptr) == -1 && Error() == Einval);
     Require(kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, &zero) == -1 && Error() == Einval);
     Require(kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, &many) == -1 && Error() == Einval);
@@ -105,7 +79,7 @@ void OpenRules() {
     Require(kmq_open_nid_postfix(name.c_str(), ORdwr, 0600, nullptr) == -1 && Error() == Enoent);
     const int queue = kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, nullptr);
     Require(queue >= 0);
-    MqAttr attributes{};
+    GuestMqAttr attributes{};
     Require(kmq_setattr_nid_postfix(queue, nullptr, &attributes) == 0);
     Require(attributes.maxmsg == 10 && attributes.msgsize == 1024 && attributes.curmsgs == 0 && attributes.flags == 0);
     Require(kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat | OExcl, 0600, nullptr) == -1 && Error() == Eexist);
@@ -117,7 +91,7 @@ void OpenRules() {
 
 void Messages() {
     const auto name = Name("messages");
-    const MqAttr small{0, 3, 16, 0, {}};
+    const GuestMqAttr small{0, 3, 16, 0, {}};
     const int queue = kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, &small);
     Require(queue >= 0);
     Require(kmq_timedsend_nid_postfix(queue, "x", 1, 64, nullptr) == -1 && Error() == Einval);
@@ -125,9 +99,9 @@ void Messages() {
     Require(kmq_timedsend_nid_postfix(queue, "low", 3, 1, nullptr) == 0);
     Require(kmq_timedsend_nid_postfix(queue, "high", 4, 5, nullptr) == 0);
     Require(kmq_timedsend_nid_postfix(queue, "low2", 4, 1, nullptr) == 0);
-    MqAttr attributes{};
-    const MqAttr nonblocking{ONonblock, 0, 0, 0, {}};
-    const MqAttr bad{0x1, 0, 0, 0, {}};
+    GuestMqAttr attributes{};
+    const GuestMqAttr nonblocking{ONonblock, 0, 0, 0, {}};
+    const GuestMqAttr bad{0x1, 0, 0, 0, {}};
     Require(kmq_setattr_nid_postfix(queue, &bad, nullptr) == -1 && Error() == Einval);
     Require(kmq_setattr_nid_postfix(queue, &nonblocking, &attributes) == 0 && attributes.flags == 0 && attributes.curmsgs == 3);
     Require(kmq_setattr_nid_postfix(queue, nullptr, &attributes) == 0 && attributes.flags == ONonblock);
@@ -145,11 +119,11 @@ void Messages() {
 
 void Waiting() {
     const auto name = Name("waiting");
-    const MqAttr one{0, 1, 16, 0, {}};
+    const GuestMqAttr one{0, 1, 16, 0, {}};
     const int queue = kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, &one);
     Require(queue >= 0);
     char buffer[16]{};
-    const Timespec invalid{0, 1000000000};
+    const GuestTimespec invalid{0, 1000000000};
     Require(kmq_timedreceive_nid_postfix(queue, buffer, sizeof(buffer), nullptr, &invalid) == -1 && Error() == Einval);
     const auto deadline = FromNow(std::chrono::milliseconds(150));
     const auto start = std::chrono::steady_clock::now();
@@ -198,7 +172,7 @@ void Access() {
 
 void NullBuffer() {
     const auto name = Name("nullbuffer");
-    const MqAttr small{0, 3, 16, 0, {}};
+    const GuestMqAttr small{0, 3, 16, 0, {}};
     const int queue = kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, &small);
     Require(queue >= 0);
     Require(kmq_timedsend_nid_postfix(queue, "keep", 4, 2, nullptr) == 0);
@@ -210,10 +184,10 @@ void NullBuffer() {
 
 void FarDeadline() {
     const auto name = Name("fardeadline");
-    const MqAttr one{0, 1, 16, 0, {}};
+    const GuestMqAttr one{0, 1, 16, 0, {}};
     const int queue = kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, &one);
     Require(queue >= 0);
-    const Timespec forever{INT64_MAX, 0};
+    const GuestTimespec forever{INT64_MAX, 0};
     std::atomic<std::int64_t> received{-2};
     std::thread reader([&] {
         char local[16]{};
@@ -229,13 +203,13 @@ void FarDeadline() {
 
 void ConcurrentSetattr() {
     const auto name = Name("setattr");
-    const MqAttr one{0, 1, 16, 0, {}};
+    const GuestMqAttr one{0, 1, 16, 0, {}};
     const int queue = kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, &one);
     Require(queue >= 0);
     std::atomic<bool> stop{false};
     std::thread toggler([&] {
-        const MqAttr on{ONonblock, 0, 0, 0, {}};
-        const MqAttr off{0, 0, 0, 0, {}};
+        const GuestMqAttr on{ONonblock, 0, 0, 0, {}};
+        const GuestMqAttr off{0, 0, 0, 0, {}};
         while (!stop) {
             kmq_setattr_nid_postfix(queue, &on, nullptr);
             kmq_setattr_nid_postfix(queue, &off, nullptr);
@@ -249,7 +223,7 @@ void ConcurrentSetattr() {
     }
     stop = true;
     toggler.join();
-    const MqAttr off{0, 0, 0, 0, {}};
+    const GuestMqAttr off{0, 0, 0, 0, {}};
     Require(kmq_setattr_nid_postfix(queue, &off, nullptr) == 0);
     Require(kmq_timedsend_nid_postfix(queue, "ok", 2, 0, nullptr) == 0);
     unsigned priority = 7;

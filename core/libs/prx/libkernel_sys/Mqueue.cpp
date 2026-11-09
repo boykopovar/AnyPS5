@@ -1,5 +1,8 @@
 #include "SceTypes.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
@@ -17,9 +20,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" void RegisterDescriptorCloseObserver_nid_no_patch(void (*observer)(int descriptor));
 
 namespace {
 
@@ -47,19 +47,6 @@ constexpr std::int64_t DefaultMessages = 10;
 constexpr std::int64_t DefaultMessageSize = 1024;
 constexpr unsigned PriorityMax = 64;
 constexpr std::size_t NameBytes = 256;
-
-struct GuestMqAttr {
-    std::int64_t flags;
-    std::int64_t maxmsg;
-    std::int64_t msgsize;
-    std::int64_t curmsgs;
-    std::int64_t reserved[4];
-};
-
-struct GuestTimespec {
-    std::int64_t seconds;
-    std::int64_t nanoseconds;
-};
 
 struct Message {
     unsigned priority;
@@ -128,8 +115,8 @@ std::chrono::system_clock::time_point Deadline(const GuestTimespec* abstime) {
     const std::int64_t maxSeconds = std::chrono::duration_cast<std::chrono::seconds>(Clock::duration::max()).count();
     if (abstime->seconds >= maxSeconds) return Clock::time_point::max();
     if (abstime->seconds <= -maxSeconds) return Clock::time_point::min();
-    return Clock::time_point(std::chrono::duration_cast<Clock::duration>(
-        std::chrono::seconds(abstime->seconds) + std::chrono::nanoseconds(abstime->nanoseconds)));
+    return Clock::time_point(std::chrono::duration_cast<Clock::duration>(std::chrono::seconds(abstime->seconds)) +
+                            std::chrono::duration_cast<Clock::duration>(std::chrono::nanoseconds(abstime->nanoseconds)));
 }
 
 template <typename Ready>
