@@ -1213,6 +1213,29 @@ void testAcquireMem() {
 
 }
 
+void testMemsetExclusive() {
+    Storage storage;
+    const std::array<std::uint32_t, 4> pattern{0x11223344u, 0x55667788u, 0x99aabbccu, 0xddeeff00u};
+    auto* destination = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x0000123456789000ull));
+    const auto* first = sceAgcCbMemsetExclusive(&storage.buffer, destination, pattern.data(), 256);
+    check(first == storage.words.data(), "MemsetExclusive did not return the first packet");
+    check(storage.buffer.cursor_up == storage.words.data() + 29, "MemsetExclusive cursor size mismatch");
+    const std::array<std::uint32_t, 29> expected{
+        0xc0037600u, 0x207u, 64u, 1u, 1u,
+        0xc0027600u, 0x20cu, 0u, 0u,
+        0xc0017600u, 0x213u, 0x94u,
+        0xc00a7600u, 0x240u, 0x56789000u, 0x00041234u, 64u, 0x00014004u,
+        pattern[0], pattern[1], pattern[2], pattern[3], 64u, 4u,
+        0xc0031500u, 1u, 1u, 1u, 0x41u,
+    };
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        if (index == 7 || index == 8) continue;
+        check(storage.words[index] == expected[index], "MemsetExclusive packet word mismatch");
+    }
+    check(storage.words[7] != 0 || storage.words[8] != 0, "MemsetExclusive did not bind a program address");
+    expectFailure([&] { sceAgcCbMemsetExclusive(&storage.buffer, destination, nullptr, 256); });
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::strcmp(argv[1], "defaults") == 0) {
@@ -1248,6 +1271,7 @@ int main(int argc, char** argv) {
         testRegisterRange();
         testPacketPayloadAddress();
         testMemory();
+        testMemsetExclusive();
         testEndOfPipePatches();
         testAtomicGds();
         testDebugRaiseException();
