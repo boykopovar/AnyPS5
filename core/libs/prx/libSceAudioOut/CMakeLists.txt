@@ -364,4 +364,16 @@ if(BUILD_TESTING)
         set_tests_properties(audio_out_set_volume PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+
+    add_test_executable(guest_audio_out_master_volume_tests ../tests/GuestAudioOutMasterVolume.cpp src/AudioOut.cpp src/AudioOut2PadMix.cpp src/AudioOutShutdown.cpp ../libScePad/src/HostVolumeState.cpp)
+    target_compile_definitions(guest_audio_out_master_volume_tests PRIVATE SDL_MAIN_HANDLED)
+    target_include_directories(guest_audio_out_master_volume_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+    target_link_libraries(guest_audio_out_master_volume_tests PRIVATE libc libkernel libScePad)
+    configure_windows_unwind(guest_audio_out_master_volume_tests)
+    add_test(NAME guest_audio_out_master_volume COMMAND guest_audio_out_master_volume_tests)
+    set_tests_properties(guest_audio_out_master_volume PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_audio_out_master_volume PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
