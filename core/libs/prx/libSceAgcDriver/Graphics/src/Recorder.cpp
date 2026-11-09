@@ -854,7 +854,7 @@ public:
         // The access's bytes are copied raw: a Read here would re-enter the hook. The same access
         // check the accessing code makes guards the copy; a range that fails it is left unchecked.
         // A store's bytes are not compared (counted as a store instead).
-        if (key.site != GuestMemory::ReadSite::Store && bytes <= CompareLimit && GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) {
+        if (!GuestMemory::WritesGuestMemory(key.site) && bytes <= CompareLimit && GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) {
             before.resize(bytes);
             std::memcpy(before.data(), reinterpret_cast<const void*>(address), bytes);
         }
@@ -882,7 +882,7 @@ public:
         }
         // One outcome per sync, on both the key's and the interval's counters.
         const auto outcome = [&]() -> std::uint64_t HookSyncOutcomes::* {
-            if (key.site == GuestMemory::ReadSite::Store) return &HookSyncOutcomes::stores;
+            if (GuestMemory::WritesGuestMemory(key.site)) return &HookSyncOutcomes::stores;
             if (before.empty() || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return &HookSyncOutcomes::unchecked;
             if (std::memcmp(before.data(), reinterpret_cast<const void*>(address), bytes) != 0) return &HookSyncOutcomes::changed;
             // A target already signaled (or no target found: the batch is finishing) had run
@@ -990,7 +990,7 @@ public:
     RecordedStoreSyncScope(const Recorder& recorder, std::uint64_t address, std::size_t bytes, const StorageTexture::AccessClassification& classification, bool stored, const HookSyncKey& key) : enabled(HookSyncProfiled()), address(address), bytes(bytes), classification(classification), stored(stored), key(key) {
         if (!enabled) return;
         batchesInFlight = recorder.InFlightBatches();
-        if (key.site != GuestMemory::ReadSite::Store && bytes <= CompareLimit && GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) {
+        if (!GuestMemory::WritesGuestMemory(key.site) && bytes <= CompareLimit && GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) {
             before.resize(bytes);
             std::memcpy(before.data(), reinterpret_cast<const void*>(address), bytes);
         }
@@ -1093,7 +1093,8 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     } else {
         stored = StorageTexture::FlushPending(address, bytes, nullptr, "memory access", scope, &published, waited);
     }
-    if (stored || published || (completionDepth() == 0 && SnapshotOverlaps(address, bytes))) {
+    const bool publishInProgress = site == GuestMemory::ReadSite::HostWrite && AnyPublishInProgress();
+    if (stored || published || publishInProgress || (completionDepth() == 0 && SnapshotOverlaps(address, bytes))) {
         // Stores into imported memory were only recorded; the CPU is about to read them. The wait
         // targets the batch holding them (the open one: SyncThrough submits it) and runs with the
         // mutex released when this acquisition is the outermost; a nested hook waits locked through
