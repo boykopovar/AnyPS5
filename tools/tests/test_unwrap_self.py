@@ -103,7 +103,7 @@ class UnwrapTest(unittest.TestCase):
                     segments = [(PT_INTERP, 4, 0x4000 + delta, 0, 0x10, 1),
                                 (PT_LOAD, 5, 0x4000, address, len(payload), PAGE)]
                     records = [] if mapping == "unrecorded" else [
-                        (0x100800 if mapping == "indexed" else 0x2804, source, len(payload))]
+                        (0x100800 if mapping == "indexed" else 0, source, len(payload))]
                     container = build_container(segments, records, {source: payload})
                     result, output = self.convert(container)
                     self.assertEqual(result.returncode, 0, result.stderr)
