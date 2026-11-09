@@ -45,6 +45,10 @@ DWORD steppingThread = 0;
 bool singleStepping = false;
 bool steppingFinished = false;
 std::uintptr_t steppingReturn = 0;
+bool calibratingSingleStep = false;
+constexpr int kCalibrationInstructions = 128;
+
+bool SingleStepIsReliable(const int count) { return count >= kCalibrationInstructions; }
 
 LONG CALLBACK clobberBelowRsp(EXCEPTION_POINTERS* exception) {
     if (GetCurrentThreadId() != steppingThread || !singleStepping || exception->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP)
@@ -61,7 +65,7 @@ LONG CALLBACK clobberBelowRsp(EXCEPTION_POINTERS* exception) {
         outsideSteps = outsideSteps + 1;
         return EXCEPTION_CONTINUE_EXECUTION;
     }
-    std::memset(reinterpret_cast<void*>(registers.Rsp - 0x80), kClobber, 0x80);
+    if (!calibratingSingleStep) std::memset(reinterpret_cast<void*>(registers.Rsp - 0x80), kClobber, 0x80);
     registers.EFlags |= 0x100u;
     steps = steps + 1;
     return EXCEPTION_CONTINUE_EXECUTION;
@@ -401,11 +405,30 @@ Run run(const std::size_t start, const bool clobber) {
     const auto result = entry(reinterpret_cast<std::uint64_t>(arena + start), kA, kB, kC, kD, clobber ? 1 : 0);
 #ifdef _WIN32
     singleStepping = false;
-    require(steppingFinished == clobber, "single-stepping did not finish at the runner's return point");
+    require(steppingFinished == clobber || calibratingSingleStep, "single-stepping did not finish at the runner's return point");
 #endif
     require(outsideSteps == 0, "single-stepping escaped the generated code");
     require(clobber || steps == 0, "single-stepping ran without the clobber requested");
     return {result, static_cast<int>(steps)};
+}
+
+bool calibrateSingleStep() {
+#ifdef _WIN32
+    std::vector<std::uint8_t> code(kCalibrationInstructions, 0x90);
+    code.push_back(0xc3);
+    const std::vector<Leaf> probe{{"single-step calibration", std::move(code), 0}};
+    const auto image = place(probe);
+    load(image, false);
+    calibratingSingleStep = true;
+    const Run result = run(image.Starts.front(), true);
+    calibratingSingleStep = false;
+    if (!SingleStepIsReliable(result.Steps)) {
+        std::cout << "skipped: Windows delivered only " << result.Steps << " single-step traps for "
+                  << kCalibrationInstructions << " straight-line instructions\n";
+        return false;
+    }
+#endif
+    return true;
 }
 
 std::string hex(const std::uint64_t value) {
@@ -448,6 +471,7 @@ int main() {
             return 77;
         }
         const SingleStepHandler singleStepHandler;
+        if (!calibrateSingleStep()) return 77;
         runLeaves(framedLeaves());
         const auto stubbed = runLeaves(stubbedLeaves());
         require(stubbed.OperandStubs == 3 && stubbed.StubbedOperands == 5, "the leaves were framed with " + std::to_string(stubbed.OperandStubs) + " operand stubs carrying " + std::to_string(stubbed.StubbedOperands) + " rsp operands, not 3 carrying 5");
