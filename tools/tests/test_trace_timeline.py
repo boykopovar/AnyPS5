@@ -71,6 +71,18 @@ class TimelineTests(unittest.TestCase):
         self.assertIn("&lt;script&gt;", text)
         self.assertNotIn("<script>", text)
 
+    def test_the_cli_writes_html_and_rejects_a_missing_file(self):
+        path = Path(self.tmp.name) / "a.json.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            json.dump(document(self.items), handle)
+        out = Path(self.tmp.name) / "a.html"
+        tool = Path(trace_timeline.__file__)
+        done = subprocess.run([sys.executable, str(tool), str(path), "-o", str(out)], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("<svg", out.read_text(encoding="utf-8"))
+        missing = subprocess.run([sys.executable, str(tool), str(Path(self.tmp.name) / "none.json.gz")], capture_output=True, text=True)
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("FAIL", missing.stderr)
 
 
 def trace_timeline_slices(items):
