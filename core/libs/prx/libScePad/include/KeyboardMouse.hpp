@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <vector>
 #include "SDL_events.h"
 
