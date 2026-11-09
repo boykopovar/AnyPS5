@@ -126,12 +126,17 @@ Run execute(const Bytes& site, const std::uint64_t destination, const std::uint6
     return executeCode(match->StubBody, destination, source, initialFlags, memorySource, match->ReturnBranchOffset);
 }
 
-Run executeMoved(const Bytes& site, const std::uint64_t destination, const std::uint64_t initialFlags, const std::uint64_t memoryValue) {
+std::optional<Run> executeMoved(const Bytes& site, const std::uint64_t destination, const std::uint64_t initialFlags, const std::uint64_t memoryValue) {
     constexpr std::size_t kSiteOffset = 0x400;
     constexpr std::size_t kStubOffset = 0x100;
     constexpr std::size_t kDataOffset = 0x800;
     auto* page = static_cast<std::uint8_t*>(mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0));
+#ifdef __APPLE__
+    // A 64-bit macOS executable's zero page covers the low 4 GiB, so there is no memory a 32-bit address can reach.
+    if (page == MAP_FAILED) return std::nullopt;
+#else
     require(page != MAP_FAILED, "Cannot allocate low executable memory for an ADX stub");
+#endif
     const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
     const auto match = matcher->Match(site.data(), site.size());
     require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "An ADX trampoline was not produced for a moved site");
@@ -235,9 +240,13 @@ void execution() {
         for (std::size_t index = 0; index < 4; ++index)
             moved.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(displacement) >> (index * 8)));
         const auto clear = executeMoved(moved, 5, 0x202, 7);
-        require(clear.Value == 12 && (clear.Flags & flag) == 0, "A moved address-size RIP-relative ADX source read the wrong memory");
+        if (!clear) {
+            std::cout << "ADX lowering: no executable memory below 4 GiB on this host, the moved address-size RIP-relative case was not run\n";
+            break;
+        }
+        require(clear->Value == 12 && (clear->Flags & flag) == 0, "A moved address-size RIP-relative ADX source read the wrong memory");
         const auto carried = executeMoved(moved, 5, 0x202 | flag, 7);
-        require(carried.Value == 13 && (carried.Flags & flag) == 0, "A moved address-size RIP-relative ADX source lost the carry-in");
+        require(carried && carried->Value == 13 && (carried->Flags & flag) == 0, "A moved address-size RIP-relative ADX source lost the carry-in");
     }
 }
 
