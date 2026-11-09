@@ -560,3 +560,12 @@ extern "C" int GuestSocketGetLinger_nid_no_patch(std::uintptr_t native, void* va
     GuestSockets::SocketOptionState state;
     return GuestSockets::GetSocketLevelOption(native, state, 0, 0, GuestSockets::GuestLinger, value, length);
 }
+
+extern "C" int GuestSocketSetReuseFlags_nid_no_patch(std::uintptr_t native, int option, int value, int* flags) {
+    if (flags == nullptr || (option != 0x4 && option != 0x200)) throw std::invalid_argument("Invalid socket reuse state");
+    GuestSockets::SocketOptionState state;
+    state.keptFlags = *flags;
+    const int error = GuestSockets::SetSocketLevelOption(native, state, 0, 0, option, &value, sizeof(value));
+    if (error == 0) *flags = state.keptFlags;
+    return error;
+}

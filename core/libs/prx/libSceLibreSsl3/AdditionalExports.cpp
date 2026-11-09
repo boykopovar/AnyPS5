@@ -27,10 +27,6 @@ int APS5_VABI EVP_PKEY_derive_set_peer_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EVP_PKEY_get0_EC_KEY_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EVP_PKEY_verify_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -65,10 +61,6 @@ int APS5_VABI SSL_CTX_add1_chain_cert_nid_postfix() {
 }
 
 int APS5_VABI SSL_CTX_set0_chain_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI SSL_CTX_set_timeout_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -168,14 +160,6 @@ int APS5_VABI Unknown_3KZ_minus_L4y1gak_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("3KZ-L4y1gak", Unknown_3KZ_minus_L4y1gak_nid_no_patch);
-
-int APS5_VABI EVP_chacha20_poly1305_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI EVP_chacha20_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI X509_set_pubkey_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -326,10 +310,6 @@ int APS5_VABI EVP_PKEY2PKCS8_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ASN1_TIME_new_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_set_issuer_name_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -343,10 +323,6 @@ int APS5_VABI tls_connect_socket_nid_postfix() {
 }
 
 int APS5_VABI SSL_CTX_set_quic_method_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI X509_gmtime_adj_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -446,10 +422,6 @@ int APS5_VABI EVP_PKEY_sign_init_nid_postfix() {
 }
 
 int APS5_VABI EC_POINT_dup_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI EVP_aes_128_ccm_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

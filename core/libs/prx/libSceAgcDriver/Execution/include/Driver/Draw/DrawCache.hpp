@@ -89,7 +89,7 @@ struct StageDataHit {
     std::shared_ptr<const ShaderRecompiler::RecompileResult> compiled;
 };
 
-enum class DrawMiss : std::size_t { FrontDiffering, FragmentDiffering, OtherDiffering, Layout, Gate, Stages, Count };
+enum class DrawMiss : std::size_t { FrontDiffering, FragmentDiffering, OtherDiffering, QueuedStores, Layout, Gate, Stages, Count };
 
 struct DrawEntryCounters {
     std::uint64_t lookups = 0, absent = 0, hits = 0, stageValidations = 0, stageEqual = 0, variantsCompared = 0, inserts = 0, shapeUpdates = 0, variantsInserted = 0, variantsEvicted = 0, present = 0, unstable = 0, touches = 0, verifyHits = 0, verifyMismatches = 0;
@@ -104,6 +104,7 @@ struct DrawEntryCounters {
     std::uint64_t differingSameRuns = 0, differingWords = 0, differingRunsChanged = 0;
     std::uint64_t dataHits = 0, dataStagesReused = 0, dataStagesCompiled = 0, dataVerified = 0;
     std::uint64_t stageDataHits = 0, stageDataWords = 0, stageDataVerified = 0, stageDataInserts = 0, stageDataPositions = 0;
+    std::uint64_t recordWordsForwarded = 0, recordStagesRecompiled = 0, recordWordsRefused = 0, recordWordsVerified = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 
