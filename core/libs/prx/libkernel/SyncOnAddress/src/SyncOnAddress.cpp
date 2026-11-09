@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <list>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -13,6 +14,7 @@
 #include <unordered_map>
 
 #include "SceTypes.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
@@ -190,6 +192,38 @@ TValue LoadAddressValue(TValue* address) {
 }
 
 template <class TValue>
+std::optional<TValue> TryLoadAddressValue(TValue* address) {
+    const auto guestAddress = reinterpret_cast<std::uintptr_t>(address);
+    if (guestAddress > std::numeric_limits<std::uintptr_t>::max() - sizeof(TValue)) return std::nullopt;
+    const auto end = guestAddress + sizeof(TValue);
+    std::array<std::shared_ptr<const GuestAllocations::Range>, sizeof(TValue)> pins;
+    std::size_t pinCount = 0;
+    bool hasUnregistered = false;
+    for (auto cursor = guestAddress; cursor < end;) {
+        auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(cursor, true);
+        if (range == nullptr || range->address >= end) {
+            hasUnregistered = true;
+            break;
+        }
+        if (range->address > cursor) {
+            hasUnregistered = true;
+            cursor = range->address;
+        }
+        if (!range->readable || cursor < range->address || range->address > std::numeric_limits<std::uintptr_t>::max() - range->bytes) return std::nullopt;
+        const auto rangeEnd = range->address + range->bytes;
+        if (rangeEnd <= cursor) return std::nullopt;
+        pins[pinCount++] = std::move(range);
+        cursor = std::min<std::uintptr_t>(end, rangeEnd);
+    }
+    if (hasUnregistered) {
+        TValue value;
+        if (!GuestCopyIn_nid_no_patch(&value, address, sizeof(value))) return std::nullopt;
+        return value;
+    }
+    return LoadAddressValue(address);
+}
+
+template <class TValue>
 bool WaitOnAddressUntil(TValue* address, TValue expected, std::optional<std::uint64_t> deadlineNanos, const void* caller, bool& differed) {
     return WaitOnKeyUntil(reinterpret_cast<std::uintptr_t>(address), [&] { return differed = LoadAddressValue(address) != expected; }, deadlineNanos, caller);
 }
@@ -210,7 +244,15 @@ int WaitOnAddress(TValue* address, TValue expected, KernelUseconds* timeout, con
     }
     const auto deadline = timeout == nullptr ? std::nullopt : std::optional<std::uint64_t>(TimedWait::DeadlineNanos(*timeout));
     bool differed = false;
-    const bool woken = WaitOnAddressUntil(address, expected, deadline, caller, differed);
+    bool faulted = false;
+    const bool woken = WaitOnKeyUntil(reinterpret_cast<std::uintptr_t>(address), [&] {
+        const auto value = TryLoadAddressValue(address);
+        if (!value) return faulted = true;
+        return differed = *value != expected;
+    }, deadline, caller);
+    if (faulted) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     if (differed) {
         return SCE_KERNEL_ERROR_EAGAIN;
     }
@@ -524,7 +566,7 @@ int MutexWake(UserMutex* mutex) {
     return 0;
 }
 
-int ConditionDeadline(const UserCondition* condition, std::uint64_t flags, const void* timeArgument, std::optional<std::uint64_t>& deadlineNanos) {
+int ConditionDeadline(UserCondition* condition, std::uint64_t flags, const void* timeArgument, std::optional<std::uint64_t>& deadlineNanos) {
     deadlineNanos.reset();
     if (timeArgument == nullptr) {
         return 0;
@@ -537,7 +579,7 @@ int ConditionDeadline(const UserCondition* condition, std::uint64_t flags, const
     if ((flags & CVWAIT_ABSTIME) == 0) {
         remaining = SaturatingNanos(timeout.tv_sec, timeout.tv_nsec);
     } else {
-        const int clock = (flags & CVWAIT_CLOCKID) != 0 ? static_cast<int>(std::atomic_ref<const std::uint32_t>(condition->clockId).load()) : GUEST_CLOCK_REALTIME;
+        const int clock = (flags & CVWAIT_CLOCKID) != 0 ? static_cast<int>(std::atomic_ref<std::uint32_t>(condition->clockId).load()) : GUEST_CLOCK_REALTIME;
         KernelTimespec now{};
         clock_gettime_nid_postfix(clock, &now);
         remaining = SaturatingNanos(timeout.tv_sec - now.tv_sec, timeout.tv_nsec - now.tv_nsec);

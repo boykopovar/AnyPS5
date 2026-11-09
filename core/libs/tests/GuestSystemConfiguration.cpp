@@ -791,15 +791,16 @@ static void CheckOvercommitSysctl() {
     length = 2;
     Require(sysctlbyname_nid_postfix("vm.overcommit", bytes, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 12);
     Require(length == 2 && bytes[2] == 0xaa && bytes[3] == 0xaa);
-    bool threw = false;
+    int written = 1;
+    value = -1;
     length = sizeof(value);
-    try {
-        sysctlbyname_nid_postfix("vm.overcommit", &value, &length, &value, sizeof(value));
-
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix("vm.overcommit", &value, &length, &written, sizeof(written)) == -1 && *__error_nid_postfix() == 1);
+    Require(value == -1 && length == sizeof(value));
+    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, nullptr, &written, sizeof(written)) == -1 && *__error_nid_postfix() == 1);
+    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, nullptr, &written, 0) == -1 && *__error_nid_postfix() == 1);
+    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, nullptr, reinterpret_cast<const void*>(0x10), 1) == -1 && *__error_nid_postfix() == 1);
+    Require(sysctlbyname_nid_postfix("vm.overcommit", &value, &length, nullptr, 0) == 0 && value == 0);
 }
 static void CheckSdkVersionSysctl() {
     *__error_nid_postfix() = 13;
@@ -984,9 +985,13 @@ static void CheckNameToMib() {
         {"hw.realmem", {6, 12}, 2},
         {"kern.arandom", {1, 37}, 2},
         {"kern.boottime", {1, 21}, 2},
-        {"kern.rng_pseudo", {1, 50}, 2},
         {"kern.proc.pathname", {1, 14, 12}, 3},
         {"kern.proc.proc", {1, 14, 8}, 3},
+        {"kern.rng_pseudo", {1, 50}, 2},
+        {"kern.sched.name", {1, 2147483182, 2147483181}, 3},
+        {"kern.smp.maxcpus", {1, 2147482816, 2147482814}, 3},
+        {"kern.stackprot", {1, 2147483151}, 2},
+        {"kern.timecounter.hardware", {1, 2147482838, 2147482834}, 3},
     };
     *__error_nid_postfix() = 13;
     for (const auto& entry : expected) {
@@ -998,6 +1003,28 @@ static void CheckNameToMib() {
         Require(std::memcmp(mib, entry.mib, entry.length * sizeof(int)) == 0 && mib[entry.length] == 0x5a5a5a5a);
     }
     Require(*__error_nid_postfix() == 13);
+
+    for (const char* name : {"kern.sched.name", "kern.smp.maxcpus", "kern.stackprot", "kern.timecounter.hardware"}) {
+        int absentMib[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+        std::size_t absentSize = 3;
+        Require(sysctlnametomib_nid_postfix(name, absentMib, &absentSize) == 0);
+        unsigned char absentBuffer[64];
+        std::memset(absentBuffer, 0xaa, sizeof(absentBuffer));
+        std::size_t absentLength = sizeof(absentBuffer);
+        *__error_nid_postfix() = 13;
+        Require(sysctl_nid_postfix(absentMib, static_cast<std::uint32_t>(absentSize), absentBuffer, &absentLength, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+        Require(absentLength == sizeof(absentBuffer) && Untouched(absentBuffer, sizeof(absentBuffer)));
+        absentLength = 77;
+        *__error_nid_postfix() = 13;
+        Require(sysctl_nid_postfix(absentMib, static_cast<std::uint32_t>(absentSize), nullptr, &absentLength, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+        Require(absentLength == 77);
+    }
+
+    int absentShort[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    std::size_t absentShortSize = 2;
+    *__error_nid_postfix() = 13;
+    Require(sysctlnametomib_nid_postfix("kern.smp.maxcpus", absentShort, &absentShortSize) == -1 && *__error_nid_postfix() == 12);
+    Require(absentShortSize == 2 && absentShort[0] == 1 && absentShort[1] == 2147482816 && absentShort[2] == 0x5a5a5a5a);
 
     int mib[4] = {};
     std::size_t size = 4;

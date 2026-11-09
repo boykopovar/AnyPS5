@@ -231,6 +231,7 @@ extern "C" {
 
 int APS5_VABI sceImeDialogAbort(void) {
     std::lock_guard lock(g_mutex);
+    if (g_dialog.status == StatusNone) return ErrorNotInUse;
     if (g_dialog.status != StatusRunning) return ErrorNotOpened;
     Finish(EndStatusAborted);
     return 0;
@@ -257,10 +258,14 @@ int APS5_VABI sceImeDialogGetPanelSizeExtended(const Param* param, const Extende
 }
 
 int APS5_VABI sceImeDialogGetResult(Result* result) {
-    std::lock_guard lock(g_mutex);
-    if (result == nullptr || g_dialog.status != StatusFinished) return ErrorNotOpened;
-    *result = Result{};
-    result->endstatus = g_dialog.endStatus;
+    Result res{};
+    {
+        std::lock_guard lock(g_mutex);
+        if (result != nullptr && g_dialog.status == StatusNone) return ErrorNotInUse;
+        if (result == nullptr || g_dialog.status != StatusFinished) return ErrorNotOpened;
+        res.endstatus = g_dialog.endStatus;
+    }
+    if (!GuestCopyOut_nid_no_patch(result, &res, sizeof(res))) return ErrorNotOpened;
     return 0;
 }
 
@@ -293,7 +298,7 @@ int APS5_VABI sceImeDialogInit(const Param* param, const ExtendedParam* extended
 
 int APS5_VABI sceImeDialogTerm(void) {
     std::lock_guard lock(g_mutex);
-    if (g_dialog.status == StatusNone) return ErrorNotOpened;
+    if (g_dialog.status == StatusNone) return ErrorNotInUse;
     ReleaseInput();
     g_dialog = Dialog{};
     return 0;

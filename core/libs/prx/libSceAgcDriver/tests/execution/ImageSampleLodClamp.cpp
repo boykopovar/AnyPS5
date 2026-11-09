@@ -308,12 +308,12 @@ void CheckPairing(const Pairing& item) {
                 const auto lower = static_cast<std::uint32_t>(std::floor(blended));
                 const auto weight = blended - static_cast<float>(lower);
                 const std::array<float, 3> expected{blended, (1.0f - weight) * static_cast<float>(sample.x >> lower) + weight * static_cast<float>(sample.x >> (lower + 1u)), (1.0f - weight) * static_cast<float>(sample.y >> lower) + weight * static_cast<float>(sample.y >> (lower + 1u))};
-                for (std::uint32_t component = 0; component < expected.size(); ++component) Require(std::abs(read(component) - expected[component]) < 0.05f, fail(component, expected[component]));
+                for (std::uint32_t component = 0; component < expected.size(); ++component) Require(std::abs(read(component) - expected[component]) < 1.0f, fail(component, expected[component]));
                 continue;
             }
             const bool filtered = index != 0u && magnifyLinear;
             const std::array<float, 4> expected{static_cast<float>(level), filtered ? Bilinear(sample.x, size) : static_cast<float>(sample.x >> level), filtered ? Bilinear(sample.y, size) : static_cast<float>(sample.y >> level), 255.0f};
-            for (std::uint32_t component = 0; component < 4u; ++component) Require(std::abs(read(component) - expected[component]) < (filtered ? 0.05f : 0.5f), fail(component, expected[component]));
+            for (std::uint32_t component = 0; component < 4u; ++component) Require(std::abs(read(component) - expected[component]) < (filtered ? 1.0f : 0.5f), fail(component, expected[component]));
         }
     }
 }

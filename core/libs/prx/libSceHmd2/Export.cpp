@@ -6,6 +6,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceHmd/Hmd.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
 
@@ -116,7 +117,17 @@ std::int32_t GetDeviceInformation(Hmd2::DeviceInformation* info) {
 extern "C" {
 
 int APS5_VABI sceHmd2ReprojectionGetStatus(Hmd2::ReprojectionStatus* status) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(reprojectionMutex);
+    if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
+    if (status == nullptr) return Hmd2::ParameterNull;
+    auto* bytes = reinterpret_cast<std::byte*>(status);
+    std::memset(bytes, 0, 0x68);
+    const std::uint64_t now = sceKernelGetProcessTime();
+    const std::uint64_t step = reprojectionState->timingUs != 0 ? reprojectionState->timingUs : Hmd2::ReprojectionTimingDefault;
+    for (std::size_t index = 0; index < 4; ++index) {
+        const std::uint64_t timestamp = now + index * step;
+        std::memcpy(bytes + 0x28 + index * 8, &timestamp, sizeof(timestamp));
+    }
     return 0;
 }
 
@@ -237,7 +248,12 @@ int APS5_VABI sceHmd2ReprojectionDisableVrMode() {
 }
 
 int APS5_VABI sceHmd2ReprojectionEnableMirroring(const Hmd2::MirroringParameter* parameter) {
-    return Hmd2::ReprojectionNotInitialized;
+    {
+        std::lock_guard lock(reprojectionMutex);
+        if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
+    }
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceHmd2ReprojectionEnableVrMode(std::uint64_t mode) {
@@ -258,7 +274,13 @@ Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionGetMirroringWorkMemorySizeAlign() {
 }
 
 int APS5_VABI sceHmd2ReprojectionGetPredictedDisplayTime(std::uint64_t frameId, std::uint64_t* time) {
-    return Hmd2::ReprojectionNotInitialized;
+    {
+        std::lock_guard lock(reprojectionMutex);
+        if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
+    }
+    if (time == nullptr) return Hmd2::ParameterNull;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceHmd2ReprojectionInitialize(const Hmd2::ReprojectionInitializeParameter* parameter, const void* reserved) {
@@ -318,7 +340,13 @@ int APS5_VABI sceHmd2ReprojectionSetParamWithBuffer(std::uint32_t bufferSetId, s
 }
 
 int APS5_VABI sceHmd2ReprojectionSetRenderConfig(std::uint64_t flags, std::uint64_t reserved, std::uint64_t reserved2) {
-    return Hmd2::ReprojectionNotInitialized;
+    {
+        std::lock_guard lock(reprojectionMutex);
+        if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
+    }
+    if ((flags & ~(1ull | (1ull << 32))) != 0 || reserved != 0 || reserved2 != 0) return Hmd2::ParameterInvalid;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceHmd2ReprojectionSetTiming(std::int32_t timing) {
