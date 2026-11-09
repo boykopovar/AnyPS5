@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -8,11 +9,6 @@
 
 extern "C" {
 void APS5_VABI sceLibcInternalUnknown6_112_6yplvTHbxpE_nid_no_patch(void* self);
-void APS5_VABI _ZNSt7codecvtIwc9_MbstatetED0Ev_nid_postfix(void* self);
-void APS5_VABI _ZNSt8messagesIwED0Ev_nid_postfix(void* self);
-void APS5_VABI _ZNSt24_Iostream_error_categoryD0Ev_nid_postfix(void* self);
-void APS5_VABI _ZNSt8messagesIcED0Ev_nid_postfix(void* self);
-void APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0Ev_nid_postfix(void* self);
 }
 
 namespace {
