@@ -34,8 +34,35 @@ T& Checked(T* ptr) {
     return *ptr;
 }
 
-void APS5_VABI ValueWriteJSON(const Value*, StringBuilder&) {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI ValueWriteJSON(const Value* self, StringBuilder& output) {
+    const auto& value = Checked(self);
+    switch (value.valueType) {
+    case ValueType::Null:
+        NKWebKit::WtfAbi::AppendCString(output, "null");
+        return;
+    case ValueType::Boolean:
+        NKWebKit::WtfAbi::AppendCString(output, value.data.boolean ? "true" : "false");
+        return;
+    case ValueType::Double:
+    case ValueType::Integer:
+        if (!std::isfinite(value.data.number)) {
+            NKWebKit::WtfAbi::AppendCString(output, "null");
+            return;
+        }
+        NKWebKit::WtfAbi::AppendCString(output, NKWebKit::WtfAbi::NumberToString(value.data.number).c_str());
+        return;
+    case ValueType::String: {
+        auto* string = value.data.string;
+        if (string) string->refCount += 2U;
+        String wrappedString(string);
+        _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(&output, wrappedString);
+        return;
+    }
+    case ValueType::Object:
+    case ValueType::Array:
+        throw std::invalid_argument("JSON composite value requires its derived writeJSON implementation");
+    }
+    throw std::invalid_argument("unknown WTF JSON value type");
 }
 
 void APS5_VABI ArrayWriteJSON(const Value*, StringBuilder&) {
