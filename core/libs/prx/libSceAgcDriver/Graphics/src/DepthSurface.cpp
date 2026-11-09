@@ -4128,6 +4128,11 @@ void RetireCoveredDepthSurfaces(VkDevice device, std::span<const std::pair<std::
         if (surface->context.device != device || surface->retired || !surface->CoveredBy(written, extents)) continue;
         if (!surface->PlaneCoveredBy(true, written, extents)) storeStaleStencil(*surface);
         retire(*surface);
+        if (surface->target.samples == 1u || !surface->samplingActive || surface->hostWritten->load(std::memory_order_acquire)) continue;
+        std::unique_lock guardLock(depthGuardMutex());
+        surface->active->store(false, std::memory_order_release);
+        std::erase_if(depthGuards(), [&](const auto& range) { return range.active == surface->active; });
+        anyDepthGuard().store(!depthGuards().empty(), std::memory_order_release);
     }
 }
 

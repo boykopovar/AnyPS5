@@ -180,6 +180,7 @@ constexpr int NET_SO_ERROR = 0x1007;
 constexpr int NET_SO_PROTOCOL = 0x1016;
 constexpr int NET_SO_NBIO = 0x1200;
 constexpr int NET_SO_REUSEADDR = 0x4;
+constexpr int NET_SO_REUSEPORT = 0x200;
 constexpr int NET_SO_KEEPALIVE = 0x8;
 constexpr int NET_SO_DONTROUTE = 0x10;
 constexpr int NET_SO_BROADCAST = 0x20;
@@ -341,6 +342,7 @@ struct Sock {
     int snd_buffer = 0;
     int rcv_buffer = 0;
     int onesbcast = 0;
+    int reuseFlags = 0;
     int keepalive = 0;
     int tcpMaximumSegment = NET_TCP_DEFAULT_MAXSEG;
     std::uint32_t tcpKeepIdle = 0;
@@ -1328,6 +1330,7 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
     connection.protocol = listener.protocol;
     connection.connectAttempted = true;
     connection.tcpMaximumSegment = listener.family == NET_AF_INET6 ? NET_TCP_DEFAULT_MAXSEG6 : NET_TCP_DEFAULT_MAXSEG;
+    connection.reuseFlags = listener.reuseFlags;
     connection.tcpKeepIdle = listener.tcpKeepIdle;
     connection.tcpKeepInterval = listener.tcpKeepInterval;
     connection.tcpKeepCount = listener.tcpKeepCount;
@@ -1342,6 +1345,7 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
         std::lock_guard lk(g_mutex);
         const auto current = g_socks.find(s);
         if (current != g_socks.end() && current->second.native == listener.native) {
+            connection.reuseFlags = current->second.reuseFlags;
             connection.tcpKeepIdle = current->second.tcpKeepIdle;
             connection.tcpKeepInterval = current->second.tcpKeepInterval;
             connection.tcpKeepCount = current->second.tcpKeepCount;
@@ -1842,6 +1846,14 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
     if (!optval || optlen < sizeof(int)) return fail(NET_EINVAL);
     int value = 0;
     std::memcpy(&value, optval, sizeof(value));
+    if (optname == NET_SO_REUSEADDR || optname == NET_SO_REUSEPORT) {
+        std::lock_guard lk(g_mutex);
+        const auto it = g_socks.find(s);
+        if (it == g_socks.end() || it->second.native != socket.native) return fail(NET_EBADF);
+        const int error = GuestSocketSetReuseFlags_nid_no_patch(static_cast<std::uintptr_t>(socket.native->value),
+            optname, value, &it->second.reuseFlags);
+        return error == 0 ? 0 : fail(error);
+    }
     if (optname == NET_SO_OOBINLINE) {
         const int enabled = value != 0;
         if (socket.type == NET_SOCK_STREAM &&
@@ -1856,9 +1868,9 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
     } else if (optname == NET_SO_RCVTIMEO || optname == NET_SO_SNDTIMEO) {
         if (value < 0) return fail(NET_EINVAL);
         if (set_native_timeout(socket.native->value, optname, value) != 0) return fail(native_error());
-    } else if (optname == NET_SO_REUSEADDR || optname == NET_SO_DONTROUTE || optname == NET_SO_BROADCAST || optname == NET_SO_SNDBUF || optname == NET_SO_RCVBUF) {
+    } else if (optname == NET_SO_DONTROUTE || optname == NET_SO_BROADCAST || optname == NET_SO_SNDBUF || optname == NET_SO_RCVBUF) {
         if ((optname == NET_SO_SNDBUF || optname == NET_SO_RCVBUF) && value < 1) return fail(NET_EINVAL);
-        const int native_option = optname == NET_SO_REUSEADDR ? SO_REUSEADDR : optname == NET_SO_DONTROUTE ? SO_DONTROUTE : optname == NET_SO_BROADCAST ? SO_BROADCAST : optname == NET_SO_SNDBUF ? SO_SNDBUF : SO_RCVBUF;
+        const int native_option = optname == NET_SO_DONTROUTE ? SO_DONTROUTE : optname == NET_SO_BROADCAST ? SO_BROADCAST : optname == NET_SO_SNDBUF ? SO_SNDBUF : SO_RCVBUF;
         if (::setsockopt(socket.native->value, SOL_SOCKET, native_option, reinterpret_cast<const char*>(&value), sizeof(value)) != 0)
             return fail(native_error());
     } else if (optname == NET_SO_KEEPALIVE) {
@@ -1904,6 +1916,16 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         return getsockopt_nid_postfix(s, level, optname, optval, optlen) == 0 ? 0 : fail(*__error_nid_postfix());
     }
     if (optval == nullptr || optlen == nullptr) return fail(NET_EINVAL);
+    if (level == NET_SOL_SOCKET && (optname == NET_SO_REUSEADDR || optname == NET_SO_REUSEPORT)) {
+        const int value = socket.reuseFlags & optname;
+        const auto count = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
+        const GuestArena::HostWrite destination(count == 0 ? nullptr : optval, count);
+        const GuestArena::HostWrite lengthOutput(optlen, sizeof(*optlen));
+        if (!destination.Open() || !lengthOutput.Open()) return fail(NET_EFAULT);
+        if (count != 0) std::memcpy(optval, &value, count);
+        *optlen = count;
+        return 0;
+    }
     if (level == NET_SOL_SOCKET && (optname == NET_SO_TYPE || optname == NET_SO_ACCEPTCONN)) {
         const int value = optname == NET_SO_TYPE ? socket.type : socket.listening ? NET_SO_ACCEPTCONN : 0;
         *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
@@ -1985,17 +2007,16 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         return 0;
     }
     if (*optlen < sizeof(int) &&
-        !(level == NET_SOL_SOCKET && (optname == NET_SO_REUSEADDR || optname == NET_SO_DONTROUTE || optname == NET_SO_BROADCAST))) return fail(NET_EINVAL);
+        !(level == NET_SOL_SOCKET && (optname == NET_SO_DONTROUTE || optname == NET_SO_BROADCAST))) return fail(NET_EINVAL);
     if (level == NET_IPPROTO_TCP) return fail(NET_ENOPROTOOPT);
     if (level != NET_SOL_SOCKET) return fail(NET_EOPNOTSUPP);
     int value = 0;
     switch (timeout_option(optname)) {
-        case NET_SO_REUSEADDR:
         case NET_SO_DONTROUTE:
         case NET_SO_BROADCAST: {
             int enabled = 0;
             NativeLength size = sizeof(enabled);
-            const int nativeOption = optname == NET_SO_REUSEADDR ? SO_REUSEADDR : optname == NET_SO_DONTROUTE ? SO_DONTROUTE : SO_BROADCAST;
+            const int nativeOption = optname == NET_SO_DONTROUTE ? SO_DONTROUTE : SO_BROADCAST;
             if (::getsockopt(socket.native->value, SOL_SOCKET, nativeOption, reinterpret_cast<char*>(&enabled), &size) != 0)
                 return fail(native_error());
             value = enabled != 0 ? optname : 0;

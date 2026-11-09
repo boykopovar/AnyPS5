@@ -86,26 +86,39 @@ static void OmittedTimeIsFaultAfterClockValidation() {
         Require(clock_gettime_nid_postfix(clockId, nullptr) == -1 && *__error_nid_postfix() == 14);
         Require(sceKernelClockGettime(clockId, nullptr) == fault);
     }
-    bool rejected = false;
-    try {
-        clock_gettime_nid_postfix(3, nullptr);
-
-    } catch (const std::runtime_error&) {
-        rejected = true;
+    for (const int clockId : {3, 6, 22, 31}) {
+        *__error_nid_postfix() = 0;
+        Require(clock_gettime_nid_postfix(clockId, nullptr) == -1 && *__error_nid_postfix() == 22);
+        Require(sceKernelClockGettime(clockId, nullptr) == fault);
     }
-    Require(rejected);
-    Require(sceKernelClockGettime(3, nullptr) == fault);
+    for (const int clockId : {16, 19}) {
+        *__error_nid_postfix() = 0;
+        Require(clock_gettime_nid_postfix(clockId, nullptr) == -1 && *__error_nid_postfix() == 5);
+        Require(sceKernelClockGettime(clockId, nullptr) == fault);
+    }
     Require(sceKernelClockGettime(21, nullptr) == fault);
 }
 
 static void InvalidClockIdFailsGettime() {
     KernelTimespec time{-1, -1};
-    for (const int clockId : {-1, 999}) {
+    for (const int clockId : {-1, 999, 3, 6, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31}) {
         *__error_nid_postfix() = 0;
         Require(clock_gettime_nid_postfix(clockId, &time) == -1 && *__error_nid_postfix() == 22);
         Require(time.tv_sec == -1 && time.tv_nsec == -1);
         *__error_nid_postfix() = 0;
         Require(sceKernelClockGettime(clockId, &time) == static_cast<int>(0x80020016u));
+        Require(time.tv_sec == -1 && time.tv_nsec == -1);
+    }
+}
+
+static void ClockIoErrorIds() {
+    for (const int clockId : {16, 17, 18, 19}) {
+        KernelTimespec time{-1, -1};
+        *__error_nid_postfix() = 0;
+        Require(clock_gettime_nid_postfix(clockId, &time) == -1 && *__error_nid_postfix() == 5);
+        Require(time.tv_sec == -1 && time.tv_nsec == -1);
+        *__error_nid_postfix() = 0;
+        Require(sceKernelClockGettime(clockId, &time) == static_cast<int>(0x80020005u) && *__error_nid_postfix() == 5);
         Require(time.tv_sec == -1 && time.tv_nsec == -1);
     }
 }
@@ -362,6 +375,7 @@ int main() {
     UnsupportedResolutionStillThrows();
     OmittedTimeIsFaultAfterClockValidation();
     InvalidClockIdFailsGettime();
+    ClockIoErrorIds();
     SettimeIsRefusedLikeAJailedProcess();
     CalendarConversionsInitializeTheirState();
     CalendarConversionsFollowTheHostZone();

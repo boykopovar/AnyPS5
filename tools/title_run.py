@@ -555,7 +555,13 @@ def source_root(build):
 
 
 def git(root, *args):
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True).stdout.strip()
+    try:
+        done = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+    except OSError as error:
+        raise SystemExit(f"cannot run git {' '.join(args)} in {root}: {error}")
+    if done.returncode:
+        raise SystemExit(f"git {' '.join(args)} failed in {root} (exit {done.returncode}): {done.stderr.strip()}")
+    return done.stdout.strip()
 
 
 def positive(text):
