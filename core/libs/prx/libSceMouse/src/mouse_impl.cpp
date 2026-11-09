@@ -1,8 +1,10 @@
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -208,12 +210,17 @@ int SetExtensionConfig(std::int32_t handle, const std::uint8_t* config) {
     std::lock_guard lock(mouseMutex);
     if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
     if (config == nullptr) return MOUSE_ERROR_INVALID_ARG;
+    std::array<std::uint8_t, MOUSE_EXTENSION_CONFIG_SIZE> local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(local.data(), config, local.size());
+    errno = savedErrno;
+    if (!copied) return MOUSE_ERROR_INVALID_ARG;
     for (std::size_t offset = 5; offset < MOUSE_EXTENSION_CONFIG_SIZE; ++offset) {
-        if (config[offset] != 0) return MOUSE_ERROR_INVALID_ARG;
+        if (local[offset] != 0) return MOUSE_ERROR_INVALID_ARG;
     }
     if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
-    std::memcpy(&extensionConfig, config, sizeof(extensionConfig));
-    extensionFlags = config[4];
+    std::memcpy(&extensionConfig, local.data(), sizeof(extensionConfig));
+    extensionFlags = local[4];
     return MOUSE_OK;
 }
 
