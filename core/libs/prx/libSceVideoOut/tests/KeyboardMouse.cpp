@@ -744,6 +744,7 @@ int main() {
             {"report rate smoothing", testReportRateSmoothing},
             {"poll rate independence", testPollRateIndependence},
             {"vertical scale", testVerticalScale},
+            {"mouse touchpad", testMouseTouchpad},
             {"mouse mode off", testMouseModeOff},
             {"keyboard sticks unchanged", testKeyboardSticksUnchanged},
             {"stick modifier", testStickModifier},
