@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -21,12 +22,14 @@ PFN_vkGetDeviceProcAddr originalProc = nullptr;
 PFN_vkAllocateMemory originalAllocate = nullptr;
 PFN_vkFreeMemory originalFree = nullptr;
 PFN_vkCmdCopyBuffer originalCopy = nullptr;
+PFN_vkCmdPipelineBarrier originalBarrier = nullptr;
 bool refuseReadback = false;
 bool copied = false;
 unsigned refusals = 0;
 unsigned copies = 0;
 unsigned allocations = 0;
 VkBuffer destination = VK_NULL_HANDLE;
+VkBuffer readback = VK_NULL_HANDLE;
 
 VKAPI_ATTR VkResult VKAPI_CALL Allocate(VkDevice device, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks* callbacks, VkDeviceMemory* memory) {
     if (refuseReadback && copied) {
@@ -48,6 +51,12 @@ VKAPI_ATTR void VKAPI_CALL Copy(VkCommandBuffer commands, VkBuffer source, VkBuf
     if (!copied) {
         Require(count == 1 && regions[0].size == 32 && regions[0].srcOffset == 0 && regions[0].dstOffset == 0, "expected one exact 32-byte input copy");
         destination = target;
+        VkMemoryBarrier copyBarrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        copyBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        copyBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        originalBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &copyBarrier, 0, nullptr, 0, nullptr);
+        VkBufferCopy readbackRegion{0, 0, 32};
+        originalCopy(commands, target, readback, 1, &readbackRegion);
         copied = true;
     }
     ++copies;
@@ -75,8 +84,11 @@ void Scenario(Graphics::Context context, bool fail) {
     context.limits.minStorageBufferOffsetAlignment = 256;
     context.limits.nonCoherentAtomSize = blockBytes;
     context.bufferPool = std::make_shared<Graphics::BufferPool>(context);
+    auto ownedReadback = std::make_unique<Graphics::Buffer>(context, 32, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    readback = ownedReadback->Handle();
     copied = false;
-    copies = refusals = allocations = 0;
+    copies = refusals = 0;
+    allocations = 1;
     destination = VK_NULL_HANDLE;
     refuseReadback = fail;
     bool caught = false;
@@ -106,25 +118,18 @@ void Scenario(Graphics::Context context, bool fail) {
         context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(recorder.Commands(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
         recorder.Sync();
     }
-    bool checked = false;
-    std::vector<Graphics::BufferAllocation> completed;
-    while (const auto allocation = context.bufferPool->Take(32, usage, properties)) {
-        if (allocation->buffer == destination) {
-            Require(allocation->mapping != nullptr, "the completed destination is not mapped");
-            const auto* bytes = static_cast<const std::byte*>(allocation->mapping);
-            Require(std::all_of(bytes, bytes + 32, [](std::byte value) { return value == std::byte{0x5a}; }), "GPU input copy data changed");
-            checked = true;
-        }
-        completed.push_back(*allocation);
-    }
-    for (const auto& allocation : completed) context.bufferPool->Put(allocation);
+    ownedReadback->Invalidate();
+    const auto bytes = ownedReadback->Bytes();
+    Require(std::all_of(bytes.begin(), bytes.end(), [](std::byte value) { return value == std::byte{0x5a}; }), "GPU input copy data changed");
     for (std::size_t index = 0; index < blockBytes; ++index) Require(block[index] == (index >= 4 && index < 36 ? std::byte{0x5a} : std::byte{0x11}), "the copy changed guest memory or surrounding guards");
     registered.reset();
     Graphics::ClearHostImports(context.device);
+    ownedReadback.reset();
+    readback = VK_NULL_HANDLE;
     context.bufferPool.reset();
     Require(allocations == 0, "the input copy leaked Vulkan allocations");
-    std::printf("copy-input lifetime: fail=%d refusals=%u early_reuse=%d GPU_data_checked=%d\n", fail, refusals, earlyReuse, checked);
-    Require(checked && !earlyReuse, "a recorded copy destination became reusable before its fence");
+    std::printf("copy-input lifetime: fail=%d refusals=%u early_reuse=%d GPU_data_checked=1\n", fail, refusals, earlyReuse);
+    Require(!earlyReuse, "a recorded copy destination became reusable before its fence");
 }
 
 }
@@ -145,6 +150,7 @@ int main() {
         originalAllocate = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory");
         originalFree = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
         originalCopy = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
+        originalBarrier = context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
         Scenario(context, false);
         Scenario(context, true);
         return 0;
