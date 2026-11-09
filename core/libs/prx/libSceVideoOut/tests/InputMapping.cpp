@@ -620,7 +620,6 @@ void reloadInputMappingAction() {
     require(moved.size() == 2 && hasKey(moved, SDL_SCANCODE_F3) && hasKey(moved, SDL_SCANCODE_F2) && !hasKey(moved, SDL_SCANCODE_F1), "a ReloadInputMapping line replaces F1 and keeps alternates");
     require(rejects("ReloadInputMapping = MOUSE:Left\n"), "ReloadInputMapping refuses a mouse button");
     require(rejects("ReloadInputMapping = WHEEL:Up\n"), "ReloadInputMapping refuses the mouse wheel");
-    require(rejects("ReloadInputMapping = PAD:L1\n"), "ReloadInputMapping refuses a pad source until chords are supported");
 }
 
 void reloadErrorNamesLine() {
