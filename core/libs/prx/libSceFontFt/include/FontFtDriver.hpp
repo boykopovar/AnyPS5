@@ -13,6 +13,7 @@ namespace FontFt {
 const Font::SysDriver* DriverTable();
 const Font::RendererSelection* RendererTable();
 int SupportFormats(FontLibrary library, std::initializer_list<const char*> modules);
+int SupportFontFormats(FontLibrary library, std::uint32_t formats);
 
 }
 

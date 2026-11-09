@@ -382,6 +382,7 @@ int SkipAll(NpStreamReader* self, void* handle, NpStreamCtx* ctx, std::int64_t* 
     while (true) {
         std::size_t got = 0;
         int result = StreamRead(self, handle, buffer, sizeof(buffer), &got);
+        if (result >= 0 && got > sizeof(buffer)) return NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         if (result >= 0) result = StreamNotify(ctx, buffer, got);
         if (skipped != nullptr) *skipped += static_cast<std::int64_t>(got);
         if (result < 0) return result;
@@ -396,6 +397,7 @@ int ReadData(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, st
     int result = 0;
     do {
         result = StreamRead(self, handle, bytes + total, size - total, &got);
+        if (result >= 0 && got > size - total) result = NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         if (result >= 0) result = StreamNotify(ctx, bytes + total, got);
         if (result < 0) break;
         total += got;
@@ -423,8 +425,10 @@ int WriteFilledData(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, char f
     std::memset(buffer, static_cast<std::uint8_t>(fill), sizeof(buffer));
     while (size > 0) {
         std::size_t written = 0;
-        int result = StreamWrite(self, handle, buffer, std::min(static_cast<std::size_t>(size), sizeof(buffer)), &written);
+        const std::size_t chunk = std::min(static_cast<std::size_t>(size), sizeof(buffer));
+        int result = StreamWrite(self, handle, buffer, chunk, &written);
         if (result < 0) return result;
+        if (written > chunk) return NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         result = StreamNotify(ctx, buffer, written);
         if (result < 0) return result;
         size -= static_cast<std::int64_t>(written);
@@ -439,6 +443,7 @@ int WriteData(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, const void* 
     int result = 0;
     while (total < size) {
         result = StreamWrite(self, handle, bytes + total, size - total, &got);
+        if (result >= 0 && got > size - total) result = NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         if (result >= 0) result = StreamNotify(ctx, bytes + total, got);
         if (result < 0) break;
         total += got;
@@ -446,6 +451,18 @@ int WriteData(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, const void* 
     if (result >= 0) result = 0;
     if (written != nullptr) *written = total;
     return result;
+}
+
+constexpr std::int32_t NP_EVENT_FLAG_CREATED = 1;
+constexpr std::int32_t NP_EVENT_FLAG_OPENED = 2;
+
+void* const NpEventFlagVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np9EventFlagD1Ev), reinterpret_cast<void*>(&_ZN3sce2np9EventFlagD0Ev),
+};
+
+void RequireEventFlagInit(const NpEventFlagObject* self, const char* message) {
+    if (self->state == 0) throw std::invalid_argument(message);
 }
 
 void* AllocateObject(std::size_t size, NpAllocator* allocator) {
@@ -482,9 +499,11 @@ NpMemoryHeap g_ipcClientHeap {};
 
 constexpr int KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010);
 constexpr int KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
+constexpr int KERNEL_ERROR_ECANCELED = static_cast<int>(0x80020055);
 constexpr int NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80558009);
 constexpr int NP_ERROR_TIMEOUT = static_cast<int>(0x8055800B);
 constexpr int NP_ERROR_EVENT_FLAG_BUSY = static_cast<int>(0x8055800C);
+constexpr int NP_ERROR_CANCELED = static_cast<int>(0x80558010);
 constexpr int NP_ERROR_SEMA_BUSY = static_cast<int>(0x8055800D);
 constexpr int NP_ERROR_MUTEX_BUSY = static_cast<int>(0x8055800F);
 constexpr std::uint32_t NP_MUTEX_FLAG_RECURSIVE = 1;
@@ -607,6 +626,13 @@ int APS5_VABI sceNpPollEventFlag(KernelEventFlag flag, std::uint64_t pattern, st
 
 int APS5_VABI sceNpCancelEventFlag(KernelEventFlag flag, std::uint64_t pattern, int* waiting) {
     return NpResult(sceKernelCancelEventFlag(flag, pattern, waiting));
+}
+
+int APS5_VABI sceNpWaitEventFlag(KernelEventFlag flag, std::uint64_t pattern, std::uint32_t mode, std::uint64_t* result, KernelUseconds* timeout) {
+    const int status = sceKernelWaitEventFlag(flag, pattern, mode, result, timeout);
+    if (status == KERNEL_ERROR_ETIMEDOUT) return NP_ERROR_TIMEOUT;
+    if (status == KERNEL_ERROR_ECANCELED) return NP_ERROR_CANCELED;
+    return NpResult(status);
 }
 
 int APS5_VABI sceNpCreateSema(KernelSema* sema, std::uint32_t flags, int initial, int maximum, const char* name) {
@@ -1935,6 +1961,87 @@ bool APS5_VABI _ZN3sce2npneERK20SceNpCommunicationIdRKNS0_8NpCommIdE(const NpCom
 
 bool APS5_VABI _ZN3sce2npneERKNS0_8NpCommIdERK20SceNpCommunicationId(const NpCommIdObject* lhs, const NpCommunicationId* rhs) {
     return !SameCommId(lhs->commId, *rhs);
+}
+
+void APS5_VABI _ZN3sce2np9EventFlagC1Ev(NpEventFlagObject* self) {
+    self->vtable = &NpEventFlagVtable[2];
+    self->state = 0;
+}
+
+void APS5_VABI _ZN3sce2np9EventFlagC2Ev(NpEventFlagObject* self) {
+    _ZN3sce2np9EventFlagC1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np9EventFlag4dtorEv(NpEventFlagObject* self) {
+    if (self->state == NP_EVENT_FLAG_OPENED) sceKernelCloseEventFlag(self->flag);
+    else if (self->state == NP_EVENT_FLAG_CREATED) sceKernelDeleteEventFlag(self->flag);
+}
+
+void APS5_VABI _ZN3sce2np9EventFlagD1Ev(NpEventFlagObject* self) {
+    self->vtable = &NpEventFlagVtable[2];
+    _ZN3sce2np9EventFlag4dtorEv(self);
+}
+
+void APS5_VABI _ZN3sce2np9EventFlagD2Ev(NpEventFlagObject* self) {
+    _ZN3sce2np9EventFlagD1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np9EventFlagD0Ev(NpEventFlagObject* self) {
+    self->vtable = &NpEventFlagVtable[2];
+    if (self->state == NP_EVENT_FLAG_OPENED) sceNpCloseEventFlag(self->flag);
+    else if (self->state == NP_EVENT_FLAG_CREATED) sceNpDeleteEventFlag(self->flag);
+    _ZN3sce2np6ObjectdlEPv(self);
+}
+
+void APS5_VABI _ZN3sce2np9EventFlag4ctorEv(NpEventFlagObject* self) {
+    self->state = 0;
+}
+
+int APS5_VABI _ZN3sce2np9EventFlag6CreateEPKcj(NpEventFlagObject* self, const char* name, std::uint32_t attr) {
+    if (self->state != 0) return NP_ERROR_OBJECT_ALREADY_INITIALIZED;
+    const int result = sceNpCreateEventFlag(&self->flag, name, attr, 0);
+    if (result >= 0) self->state = NP_EVENT_FLAG_CREATED;
+    return result;
+}
+
+int APS5_VABI _ZN3sce2np9EventFlag4OpenEPKc(NpEventFlagObject* self, const char* name) {
+    if (self->state != 0) return NP_ERROR_OBJECT_ALREADY_INITIALIZED;
+    const int result = sceNpOpenEventFlag(&self->flag, name);
+    if (result >= 0) self->state = NP_EVENT_FLAG_OPENED;
+    return result;
+}
+
+void APS5_VABI _ZN3sce2np9EventFlag7DestroyEv(NpEventFlagObject* self) {
+    if (self->state == NP_EVENT_FLAG_OPENED) sceNpCloseEventFlag(self->flag);
+    else if (self->state == NP_EVENT_FLAG_CREATED) sceNpDeleteEventFlag(self->flag);
+    self->state = 0;
+}
+
+int APS5_VABI _ZN3sce2np9EventFlag3SetEm(NpEventFlagObject* self, std::uint64_t pattern) {
+    RequireEventFlagInit(self, "sce::np::EventFlag::Set: the event flag is not initialized");
+    return NpResult(sceKernelSetEventFlag(self->flag, pattern));
+}
+
+int APS5_VABI _ZN3sce2np9EventFlag4PollEmjPm(NpEventFlagObject* self, std::uint64_t pattern, std::uint32_t mode, std::uint64_t* result) {
+    RequireEventFlagInit(self, "sce::np::EventFlag::Poll: the event flag is not initialized");
+    return NpResult(sceNpPollEventFlag(self->flag, pattern, mode, result));
+}
+
+int APS5_VABI _ZN3sce2np9EventFlag4WaitEmjPmj(NpEventFlagObject* self, std::uint64_t pattern, std::uint32_t mode, std::uint64_t* result, std::uint32_t usec) {
+    RequireEventFlagInit(self, "sce::np::EventFlag::Wait: the event flag is not initialized");
+    KernelUseconds timeout = usec;
+    return sceNpWaitEventFlag(self->flag, pattern, mode, result, usec != 0 ? &timeout : nullptr);
+}
+
+int APS5_VABI _ZN3sce2np9EventFlag5ClearEm(NpEventFlagObject* self, std::uint64_t pattern) {
+    RequireEventFlagInit(self, "sce::np::EventFlag::Clear: the event flag is not initialized");
+    return NpResult(sceKernelClearEventFlag(self->flag, pattern));
+}
+
+int APS5_VABI _ZN3sce2np9EventFlag6CancelEm(NpEventFlagObject* self, std::uint64_t pattern) {
+    RequireEventFlagInit(self, "sce::np::EventFlag::Cancel: the event flag is not initialized");
+    int waiting = 0;
+    return sceNpCancelEventFlag(self->flag, pattern, &waiting);
 }
 
 }

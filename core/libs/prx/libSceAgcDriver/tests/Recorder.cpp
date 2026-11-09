@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -26,6 +27,7 @@
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/WaitMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
@@ -50,7 +52,7 @@
 #include "VertexRangeProducer_frag_spv.h"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetTransfer.hpp"
 #include "BdaAbi.hpp"
-#include "ShaderCacheSourceVersion.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineBinaryStore.hpp"
 #include <SDL_loadso.h>
 #ifdef __APPLE__
 #include <mach/mach.h>
@@ -423,7 +425,7 @@ void deviceSelectionTests() {
 // them, as the driver creates its own; the recorder's batches need a real queue and real fences.
 class Device {
 public:
-    explicit Device(bool settleOnOtherFamily = false) {
+    explicit Device(bool settleOnOtherFamily = false, bool pipelineBinaries = false) {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
 #elif defined(__APPLE__)
@@ -616,6 +618,35 @@ public:
                 robustness.pNext = address.pNext;
                 address.pNext = &robustness;
             }
+            VkPhysicalDeviceMaintenance5FeaturesKHR maintenance{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR};
+            VkPhysicalDevicePipelineBinaryFeaturesKHR binaryFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_BINARY_FEATURES_KHR};
+            VkDevicePipelineBinaryInternalCacheControlKHR internalCache{VK_STRUCTURE_TYPE_DEVICE_PIPELINE_BINARY_INTERNAL_CACHE_CONTROL_KHR};
+            const std::array binaryDependencies{VK_KHR_MAINTENANCE_5_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME};
+            const bool wantPipelineBinaries = pipelineBinaries && hasExtension(VK_KHR_PIPELINE_BINARY_EXTENSION_NAME) && std::ranges::all_of(binaryDependencies, hasExtension) &&
+                PipelineBinaryStore::LayersCompatible(context.physical, function<PFN_vkEnumerateDeviceLayerProperties>("vkEnumerateDeviceLayerProperties"));
+            if (wantPipelineBinaries) {
+                maintenance.pNext = &binaryFeatures;
+                VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &maintenance};
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(context.physical, &features);
+                binaryEnabled = maintenance.maintenance5 == VK_TRUE && binaryFeatures.pipelineBinaries == VK_TRUE;
+                if (binaryEnabled) {
+                    for (const auto* extension : binaryDependencies) {
+                        if (std::ranges::none_of(extensionsEnabled, [&](const char* enabled) { return std::strcmp(enabled, extension) == 0; })) extensionsEnabled.push_back(extension);
+                    }
+                    extensionsEnabled.push_back(VK_KHR_PIPELINE_BINARY_EXTENSION_NAME);
+                    binaryFeatures.pNext = address.pNext;
+                    address.pNext = &maintenance;
+                    VkPhysicalDevicePipelineBinaryPropertiesKHR properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_BINARY_PROPERTIES_KHR};
+                    VkPhysicalDeviceProperties2 queried{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &properties};
+                    function<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(context.physical, &queried);
+                    if (properties.pipelineBinaryInternalCacheControl == VK_TRUE) {
+                        internalCache.disableInternalCache = VK_TRUE;
+                        internalCache.pNext = address.pNext;
+                        address.pNext = &internalCache;
+                    }
+                    std::cout << "pipeline binary internal_cache_disabled=" << internalCache.disableInternalCache << " driver=" << queried.properties.driverVersion << '\n';
+                }
+            }
             VkPhysicalDevicePortabilitySubsetFeaturesKHR portabilityFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR};
             if (hasExtension(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME)) {
                 VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &portabilityFeatures};
@@ -665,6 +696,7 @@ public:
 
     ~Device() { release(); }
     bool NullDescriptors() const { return nullDescriptors; }
+    bool PipelineBinaries() const { return binaryEnabled; }
     const Context& GetContext() const { return context; }
     bool Graphics() const { return graphics; }
     bool Timestamps() const {
@@ -723,6 +755,7 @@ private:
     VkInstance instance = VK_NULL_HANDLE;
     Context context{};
     bool graphics = false;
+    bool binaryEnabled = false;
     std::mutex settleMutex;
     bool nullDescriptors = false;
     bool memoryBudget = false;
@@ -5806,6 +5839,154 @@ void drawSnapshotUploadTests(const Device& device, Recorder& recorder) {
     recorder.Activate();
 }
 
+void ownedDrawInputTests(const Device& device, Recorder& recorder) {
+    using namespace AgcDriver::GuestMemory;
+    using Use = Recorder::SnapshotUse;
+    constexpr std::size_t bytes = 2 * 65536;
+    constexpr std::size_t size = 256;
+#ifdef _WIN32
+    void* block = AllocateWatched(bytes, bytes);
+    Require(block != nullptr, "owned draw inputs need a write-watched arena fixture");
+    constexpr bool reusable = true;
+#else
+    void* block = std::aligned_alloc(bytes, bytes);
+    Require(block != nullptr, "cannot allocate the untracked draw input fixture");
+    constexpr bool reusable = false;
+#endif
+    struct Release {
+        void* block;
+        ~Release() {
+#ifdef _WIN32
+            ReleaseWatched(block, bytes);
+#else
+            std::free(block);
+#endif
+        }
+    } release{block};
+    auto context = device.GetContext();
+    context.drawInputsInPlace = false;
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    auto* words = static_cast<std::uint32_t*>(block);
+    for (std::uint32_t i = 0; i < bytes / sizeof(std::uint32_t); ++i) words[i] = i * 3;
+    Unwatch(address, bytes);
+    Require(!Watched(address, bytes), "the owned draw input fixture is still tracked");
+    Require(InPlaceDrawInput(context, address, size, 4) == nullptr, "the copied input fixture was bound in place");
+    const auto copy = [&](Use use = Use::Index32, std::size_t length = 256, std::size_t offset = 0) {
+        auto result = CopyDrawInput(context, &recorder, address + offset, length, 4, use);
+        Require(result.buffer != nullptr && result.buffer->Bytes().size() == length && std::memcmp(result.buffer->Bytes().data(), static_cast<const std::byte*>(block) + offset, length) == 0, "the owned draw input has stale bytes");
+        Require(result.generation == 0, "the untracked copy acquired a tracked generation");
+        return result;
+    };
+    const auto keep = [&](const DrawInputCopy& value, Use use = Use::Index32) {
+        KeepDrawInput(&recorder, address, value, use, 189);
+    };
+    const auto first = copy();
+    Require(!first.reused, "the first owned draw input was reused");
+    keep(first);
+    const auto second = copy();
+    Require(second.reused == reusable, "an unchanged untracked draw input was copied again");
+    if (reusable) Require(second.buffer == first.buffer && second.derived == 189, "an owned index lost its buffer or highest index");
+    BumpCollectEpoch();
+    Require(copy().reused == reusable, "a collect epoch lost an unchanged owned input");
+    words[5] = 0xdead;
+    const auto stored = copy();
+    Require(!stored.reused, "an owned input outlived a CPU store");
+    keep(stored);
+    Require(copy().reused == reusable, "the copy after a CPU store was not kept");
+    MarkWritten(address + 128, 4);
+    const auto marked = copy();
+    Require(!marked.reused, "an owned input outlived an untracked GPU stamp");
+    keep(marked);
+    MarkPossiblyWritten(address + 64, 4);
+    Require(!copy().reused, "an owned input outlived a possible GPU store");
+    const auto beforeStore = copy();
+    words[6] = 0xbeef;
+    keep(beforeStore);
+    Require(!copy().reused, "keeping an old copy armed it after a CPU store");
+    const auto beforeStamp = copy();
+    MarkWritten(address + 128, 4);
+    keep(beforeStamp);
+    Require(!copy().reused, "keeping an old copy refreshed its GPU stamp");
+    const auto beforePending = copy();
+    recorder.NotePendingWrite(address + 32, 4);
+    keep(beforePending);
+    Require(!copy().reused && !recorder.PendingWriteOverlaps(address, size), "an owned input survived a pending GPU writer");
+    const auto afterPending = copy();
+    keep(afterPending);
+    Require(copy().reused == reusable, "the copy after a pending writer was not kept");
+    alignas(64) static std::byte other[64];
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(other, sizeof(other), true, true, true);
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(other);
+    }
+    Require(!copy().reused, "an owned input outlived a registry mutation");
+#ifdef _WIN32
+    const auto beforeCollect = copy();
+    keep(beforeCollect);
+    std::array<void*, bytes / 4096> pages{};
+    auto count = pages.size();
+    Require(GuestArena::GuestArenaCollectWrites_nid_postfix(address, bytes, pages.data(), &count, true), "the clearing collect failed");
+    Require(!copy().reused, "an owned input outlived a clearing collect");
+    const auto beforeProtection = copy();
+    keep(beforeProtection);
+    GuestArena::GuestArenaSetProtection_nid_postfix(address, bytes, PAGE_READWRITE);
+    Require(!copy().reused, "an owned input outlived a protection notification");
+    const auto beforeReset = copy();
+    keep(beforeReset);
+    GuestArena::GuestArenaReset_nid_postfix(block, bytes);
+    GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
+    std::memset(block, 0x29, bytes);
+    Unwatch(address, bytes);
+    Require(!copy().reused, "an owned input outlived a mapping replacement");
+    GuestArena::GuestArenaPinWritable_nid_postfix(block, bytes);
+    const auto pinned = copy();
+    keep(pinned);
+    Require(!copy().reused, "a pinned input acquired an owned proof");
+    GuestArena::GuestArenaUnpinWritable_nid_postfix(block, bytes);
+#endif
+    const auto vertex = copy(Use::Vertex);
+    keep(vertex, Use::Vertex);
+    Require(copy(Use::Vertex).reused == reusable, "the vertex copy was not kept");
+    Require(!copy(Use::Index16).reused, "an index input reused a vertex copy");
+    const auto exact = copy(Use::Vertex);
+    keep(exact, Use::Vertex);
+    Require(!copy(Use::Vertex, size / 2).reused, "a shorter owned input reused a longer copy");
+    Require(!copy(Use::Vertex, size * 2).reused, "a longer owned input reused a shorter copy");
+    Require(!copy(Use::Vertex, size, 4).reused, "an offset owned input reused another range");
+    const auto restart = copy(Use::Index32Restart);
+    keep(restart, Use::Index32Restart);
+    Require(copy(Use::Index32Restart).reused == reusable, "a restart index copy was not kept");
+    Require(!copy(Use::Index32).reused, "a non-restart input reused restart metadata");
+    if (const auto disabled = RuntimeSwitches::Find("APS5_NO_OWNED_DRAW_INPUTS"); disabled.has_value()) {
+        RuntimeSwitches::Assign(*disabled, true);
+        const auto fresh = copy();
+        keep(fresh);
+        Require(!copy().reused, "the disabled owned input path reused a copy");
+        RuntimeSwitches::Assign(*disabled, false);
+    }
+#ifdef _WIN32
+    if (std::getenv("TEST_OWNED_EVICT") != nullptr) {
+        constexpr std::uint64_t fakeBase = 0x1000000000ull;
+        for (std::size_t i = 0; i < Recorder::DrawInputEntries; ++i)
+            recorder.KeepDrawSnapshot(fakeBase + i * 65536, size, 1, 1, first.buffer, Use::Index32);
+        const auto freshOwned = copy();
+        Require(!freshOwned.reused && !freshOwned.owned.words.empty(), "eviction fixture did not arm an owned draw input");
+        keep(freshOwned);
+    }
+#endif
+#ifdef _WIN32
+    const auto crossing = copy(Use::Index32, 256, 65536 - 128);
+    Require(!crossing.reused && crossing.owned.words.size() == 2, "a draw input spanning two blocks did not arm both");
+    KeepDrawInput(&recorder, address + 65536 - 128, crossing, Use::Index32, 0);
+    Require(copy(Use::Index32, 256, 65536 - 128).reused, "a two-block owned input was not reused");
+#endif
+    recorder.Sync();
+}
+
 void drawInputReuseTests(const Device& device, Recorder& recorder) {
     using namespace AgcDriver::GuestMemory;
     using Use = Recorder::SnapshotUse;
@@ -6182,6 +6363,96 @@ bool unitShadowTests(const Device& device, Recorder& recorder) {
     Require(words[5 * unit] == 0x88 && words[5 * unit + unit - 1] == 0x88, "the retire did not publish a unit covered by the old registration");
     Require(words[127 * unit] == 0x66 && words[128 * unit] == 0x77, "the retire did not publish the second slab's units covered by the old registration");
     return true;
+}
+
+bool idlePublishDmaBufWaitTests(const Device& device, Recorder& recorder) {
+#ifndef __linux__
+    static_cast<void>(device);
+    static_cast<void>(recorder);
+    std::cout << "skipped, dma-buf imports require Linux\n";
+    return false;
+#else
+    using namespace AgcDriver::GuestMemory;
+    const auto& context = device.GetContext();
+    if (!UnitShadowEnabled() || !context.dmaBufImport) {
+        std::cout << "skipped, unit shadows or host imports are unavailable (no dma-buf import)\n";
+        return false;
+    }
+    const int fd = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        std::cout << "skipped, host imports are unavailable: /dev/udmabuf cannot be opened\n";
+        return false;
+    }
+    close(fd);
+    constexpr std::uint64_t unit = 65536;
+    constexpr std::size_t bytes = 8 * unit;
+    struct Backing {
+        const Context& context;
+        Recorder& recorder;
+        void* block = nullptr;
+        std::int64_t physical = -1;
+        ~Backing() {
+            try {
+                recorder.Sync();
+                ClearHostImports(context.device);
+            } catch (const std::exception& error) {
+                std::cerr << "dma-buf idle publish cleanup did not finish: " << error.what() << '\n';
+                return;
+            }
+            if (block != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(block), bytes);
+            if (physical >= 0) sceKernelReleaseDirectMemory(physical, bytes);
+        }
+    } backing{context, recorder};
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, unit, 0, &backing.physical) == 0, "allocate the idle publish dma-buf backing");
+    Require(sceKernelMapDirectMemory(&backing.block, bytes, 0x33, 0, backing.physical, unit) == 0, "map the idle publish dma-buf backing");
+    auto* words = static_cast<std::uint8_t*>(backing.block);
+    std::memset(words, 0x11, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(words);
+    const auto* import = HostImportFor(context, address, bytes);
+    Require(import != nullptr && import->dmaBuf, "the direct memory did not use a dma-buf import");
+    Require(!import->unwatched && Watched(address, bytes), "the dma-buf import did not stay watched");
+    recorder.Sync();
+    CollectWritesUncached(address, bytes);
+    const auto copyBuffer = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
+    const auto retile = [&](std::uint64_t begin, std::uint8_t value) {
+        auto destination = ShadowDestinationFor(context, *import, begin, begin + unit);
+        Require(destination.has_value() && destination->seedUnits.empty(), "the dma-buf retile has no whole-unit shadow destination");
+        auto pattern = std::make_shared<Buffer>(context, static_cast<std::size_t>(unit), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        std::memset(pattern->Bytes().data(), value, pattern->Bytes().size());
+        const auto commands = recorder.Commands();
+        recorder.Keep(pattern);
+        recorder.Keep(destination->slab);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const VkBufferCopy piece{0, destination->offset, unit};
+        copyBuffer(commands, pattern->Handle(), destination->buffer, 1, &piece);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        recorder.MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const ShadowedRange range{begin, begin + unit, destination->slab};
+        MarkShadowed(*import, std::span(&range, 1), TrackerGeneration());
+        Require(AnyShadowedOverlaps(begin, unit), "the dma-buf retile is not shadowed");
+    };
+    retile(address + 2 * unit, 0x22);
+    retile(address + 3 * unit, 0x33);
+    StorageTexture::FlushAllPending("idle");
+    Require(!AnyShadowedOverlaps(address + 2 * unit, 2 * unit), "the idle flush did not publish the dma-buf shadows");
+    Require(!recorder.PendingWriteOverlaps(address + 2 * unit, 2 * unit), "the idle flush returned before its dma-buf publish completed");
+    words[2 * unit] = 0x44;
+    words[4 * unit - 1] = 0x45;
+    recorder.Sync();
+    for (std::size_t offset = 0; offset < bytes; ++offset) {
+        const auto expected = offset == 2 * unit ? 0x44 : offset == 4 * unit - 1 ? 0x45 : offset >= 2 * unit && offset < 3 * unit ? 0x22 : offset >= 3 * unit && offset < 4 * unit ? 0x33 : 0x11;
+        Require(words[offset] == expected, "the idle dma-buf publish overwrote a later CPU store or changed another byte");
+    }
+    CollectWritesUncached(address, bytes);
+    retile(address + 5 * unit, 0x55);
+    StorageTexture::FlushAllPending("label");
+    const bool pending = recorder.PendingWriteOverlaps(address + 5 * unit, unit);
+    recorder.Sync();
+    Require(pending, "the non-idle dma-buf publish was waited");
+    Require(std::all_of(words + 5 * unit, words + 6 * unit, [](std::uint8_t value) { return value == 0x55; }), "the non-idle dma-buf publish did not land");
+    std::cout << "dma-buf idle publish wait and later CPU stores verified\n";
+    return true;
+#endif
 }
 
 void idlePublishWaitTests(const Device& device, Recorder& recorder) {
@@ -9619,6 +9890,33 @@ bool pendingKeyRefreshTests(const Device& device, Recorder& recorder) {
         Require(proved() == landed, "the proof over the pending key store held after its batch retired");
         image->Refresh();
         Require(proved() == landed + 1, "the proof was not taken again over the landed keys");
+        const auto* import = HostImportFor(base, address, bytes);
+        Require(import != nullptr, "the pending key store block lost its import");
+        const auto waits = KeyWaitCounts();
+        {
+            const auto commands = recorder.Commands();
+            context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, import->buffer, resource.dccAddress - import->base, keyCount, 0xffffffffu);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_HOST_READ_BIT);
+            recorder.NotePendingWrite(resource.dccAddress + keyCount / 2, keyCount / 2);
+            recorder.NotePendingFill(resource.dccAddress, keyCount / 2, 0xff);
+        }
+        texels[0] = 0x22;
+        image->Refresh();
+        const auto answered = KeyWaitCounts();
+        Require(answered.fillsUncompressed > waits.fillsUncompressed, "the refresh over a pending uncompressed key fill was not answered by the key writers (" + std::to_string(answered.calls - waits.calls) + " waits: " + std::to_string(answered.known - waits.known) + " known, " + std::to_string(answered.noPending - waits.noPending) + " with no pending write, " + std::to_string(answered.synced - waits.synced) + " synced)");
+        Require(image->KeyProof().pendingNote != 0, "the refresh over a pending uncompressed key fill took no proof of its write note");
+        image->Refresh();
+        const auto filling = proved();
+        image->Refresh();
+        Require(proved() == filling + 1, "a refresh of the unchanged target over its pending uncompressed key fill was not answered from the proof");
+        recorder.NotePendingFill(resource.dccAddress, keyCount / 2, 0xff);
+        const auto renoted = proved();
+        image->Refresh();
+        Require(proved() == renoted, "a refresh over a newer pending write of the keys was answered from the proof of an older one");
+        recorder.Sync();
+        const auto retired = proved();
+        image->Refresh();
+        Require(proved() == retired, "the proof over the pending uncompressed key fill held after its batch retired");
     }
     recorder.Sync();
     return true;
@@ -11548,7 +11846,7 @@ void imageMemoTests(const Device& device, Recorder& recorder) {
     Require(replaced != other && sample(second) == replaced && sample(first) == remade, "the cache does not answer with the replacements");
     const auto firstWords = linearTextureWords(reinterpret_cast<std::uint64_t>(first), width, height, 56);
     const auto secondWords = linearTextureWords(reinterpret_cast<std::uint64_t>(second), width, height, 56);
-    const auto bindElements = [&](std::initializer_list<std::array<std::uint32_t, 8>> elements, std::vector<bool> depthCompare) {
+    const auto bindElements = [&](std::initializer_list<std::array<std::uint32_t, 8>> elements, ShaderRecompiler::ElementFlags depthCompare) {
         program.bindings[0].count = static_cast<std::uint32_t>(elements.size());
         program.bindings[0].guestDescriptor.clear();
         for (const auto& words : elements) program.bindings[0].guestDescriptor.insert(program.bindings[0].guestDescriptor.end(), words.begin(), words.end());
@@ -13371,8 +13669,7 @@ void pipelineCacheHeaderTests(const Device& device) {
         }
     } removeDirectory{cleanupRoot};
     auto directory = root;
-    char version[17];
-    std::snprintf(version, sizeof(version), "%016llx", static_cast<unsigned long long>(ShaderRecompiler::ShaderDiskCache::Generated::SourceVersion));
+    const std::string version = "driver";
     while ((directory / version).native().size() < 220) {
         const auto length = (directory / version).native().size();
         const auto remaining = 245 > length ? 245 - length : 1;
@@ -13430,6 +13727,50 @@ void pipelineCacheHeaderTests(const Device& device) {
     Require(ShaderRecompiler::ReadWholeFile(files.front(), retained) && retained == stored, "an unreadable long pipeline cache file was overwritten");
 #endif
     std::cout << "long-path pipeline cache header reused without reloading\n";
+}
+
+int pipelineBinaryTests(const Device& device) {
+    if (!device.PipelineBinaries()) {
+        std::cout << "skipped, the device lacks VK_KHR_pipeline_binary\n";
+        return 77;
+    }
+    const auto& context = device.GetContext();
+    struct Objects {
+        const Context& context;
+        VkPipelineLayout layout = VK_NULL_HANDLE;
+        VkShaderModule module = VK_NULL_HANDLE;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        ~Objects() {
+            if (pipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
+            if (module != VK_NULL_HANDLE) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
+            if (layout != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, layout, nullptr);
+        }
+    } objects{context};
+    VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &objects.layout), "vkCreatePipelineLayout");
+    const std::array<std::uint32_t, 2> layoutKey{0, 0};
+    PipelineBinaryStore store(context, device.Properties());
+    for (const auto width : {4u, 8u}) {
+        const std::array spirv{0x07230203u, 0x00010000u, 0u, 6u, 0u,
+            0x00020011u, 1u, 0x0003000eu, 0u, 1u,
+            0x0005000fu, 5u, 4u, 0x6e69616du, 0u,
+            0x00060010u, 4u, 17u, width, 1u, 1u,
+            0x00020013u, 1u, 0x00030021u, 2u, 1u,
+            0x00050036u, 1u, 4u, 0u, 2u, 0x000200f8u, 5u, 0x000100fdu, 0x00010038u};
+        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        moduleInfo.codeSize = spirv.size() * sizeof(std::uint32_t);
+        moduleInfo.pCode = spirv.data();
+        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &objects.module), "vkCreateShaderModule");
+        VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        info.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, objects.module, "main", nullptr};
+        info.layout = objects.layout;
+        store.CreateComputePipeline(info, spirv, layoutKey, &objects.pipeline);
+        context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, objects.pipeline, nullptr);
+        objects.pipeline = VK_NULL_HANDLE;
+        context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, objects.module, nullptr);
+        objects.module = VK_NULL_HANDLE;
+    }
+    return 0;
 }
 
 int pipelineCacheFileTests(const Device& device) {
@@ -13514,8 +13855,7 @@ int pipelineCacheFileTests(const Device& device) {
     };
     const auto cacheFile = [&] {
         for (const auto& entry : std::filesystem::directory_iterator(directory)) Require(entry.is_directory(), "a pipeline cache file lives in the shader cache root");
-        char version[17];
-        std::snprintf(version, sizeof(version), "%016llx", static_cast<unsigned long long>(ShaderRecompiler::ShaderDiskCache::Generated::SourceVersion));
+        const std::string version = "driver";
         const auto versionDirectory = directory / version;
         Require(std::filesystem::is_directory(versionDirectory), "the current shader cache version has no directory");
         std::vector<std::filesystem::path> found;
@@ -14858,9 +15198,25 @@ int main(int argc, char** argv) {
             std::cout << "queued write group tests passed\n";
             return 0;
         }
+        const bool binaryTest = argc == 3 && std::string_view(argv[1]) == "--pipeline-binary-only";
+        if (binaryTest) {
+#ifdef _WIN32
+            _putenv_s("ANYPS5_SHADER_CACHE_DIR", argv[2]);
+            _putenv_s("ANYPS5_NO_SHADER_CACHE", "0");
+            _putenv_s("APS5_PIPELINE_BINARY_MIN_WORDS", "0");
+            _putenv_s("APS5_PIPELINE_BINARY_MIN_MS", "0");
+            _putenv_s("APS5_NO_PIPELINE_BINARIES", "");
+#else
+            setenv("ANYPS5_SHADER_CACHE_DIR", argv[2], 1);
+            setenv("ANYPS5_NO_SHADER_CACHE", "0", 1);
+            setenv("APS5_PIPELINE_BINARY_MIN_WORDS", "0", 1);
+            setenv("APS5_PIPELINE_BINARY_MIN_MS", "0", 1);
+            unsetenv("APS5_NO_PIPELINE_BINARIES");
+#endif
+        }
         std::unique_ptr<Device> created;
         try {
-            created = std::make_unique<Device>(argc == 2 && (std::string_view(argv[1]) == "--import-watch-other-family-only" || std::string_view(argv[1]) == "--deferred-settle-other-family-only" || std::string_view(argv[1]) == "--host-import-lifetime-other-family-only" || std::string_view(argv[1]) == "--settle-write-order-other-family-only"));
+            created = std::make_unique<Device>(argc == 2 && (std::string_view(argv[1]) == "--import-watch-other-family-only" || std::string_view(argv[1]) == "--deferred-settle-other-family-only" || std::string_view(argv[1]) == "--host-import-lifetime-other-family-only" || std::string_view(argv[1]) == "--settle-write-order-other-family-only"), binaryTest);
         } catch (const TestConfigurationError&) {
             throw;
         } catch (const std::exception& error) {
@@ -14869,6 +15225,7 @@ int main(int argc, char** argv) {
             return 77;
         }
         Device& device = *created;
+        if (binaryTest) return pipelineBinaryTests(device);
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-lifetime-only") return RunHostImportLifetimeTests(device.GetContext());
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-mutation-race-only") return RunHostImportMutationRaceTests(device.GetContext());
         if (argc == 2 && (std::string_view(argv[1]) == "--gpu-timing-complete-only" || std::string_view(argv[1]) == "--gpu-timing-incomplete-only")) {
@@ -15178,6 +15535,9 @@ int main(int argc, char** argv) {
             windowImportUnmapTests(device);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--idle-publish-dmabuf-wait-only") {
+            return idlePublishDmaBufWaitTests(device, recorder) ? 0 : 77;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--idle-publish-wait-only") {
             if (!AgcDriver::Graphics::UnitShadowEnabled() || device.GetContext().hostImportAlignment == 0) {
                 std::cout << "skipped, unit shadows or host imports are unavailable\n";
@@ -15293,6 +15653,34 @@ int main(int argc, char** argv) {
                 return 77;
             }
             std::cout << "DCC keys under unit shadows tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--owned-draw-inputs-only") {
+            const bool traceOwned = std::getenv("TEST_OWNED_TRACE") != nullptr;
+            if (traceOwned) AgcDriver::PerformanceTrace::Present(1, 1, nullptr);
+            ownedDrawInputTests(device, recorder);
+            if (traceOwned) {
+#ifdef _WIN32
+                const auto threads = AgcDriver::PerformanceTrace::ThreadTotals();
+                Require(threads.has_value(), "cannot collect owned draw trace totals");
+                std::map<std::string, std::uint64_t> counts;
+                for (const auto& thread : *threads) for (const auto& total : thread.totals) {
+                    if (std::string_view(total.scope).starts_with("OwnedDraw.")) counts[total.scope] += total.count;
+                }
+                Require(counts["OwnedDraw.arm_attempt"] == counts["OwnedDraw.arm_success"] + counts["OwnedDraw.arm_refused"] && counts["OwnedDraw.arm_refused"] != 0 && counts["OwnedDraw.arm_success"] != 0 && counts["OwnedDraw.reused"] != 0 && counts["OwnedDraw.invalidated"] != 0, "owned draw trace missed decisions");
+                Require(counts["OwnedDraw.proof_check"] >= counts["OwnedDraw.arena_check"] && counts["OwnedDraw.arena_check"] != 0 && counts["OwnedDraw.check_blocks_requested"] > counts["OwnedDraw.arena_check"] && counts["OwnedDraw.arm_blocks_requested"] > counts["OwnedDraw.arm_attempt"], "owned draw trace missed proof or block counts");
+                if (std::getenv("TEST_OWNED_EVICT") != nullptr) Require(counts["OwnedDraw.evicted_other_by_owned"] != 0 && counts["OwnedDraw.evicted_other"] != 0, "owned insertion did not count its eviction of a non-owned input");
+#endif
+                if (std::getenv("TEST_OWNED_UNBOUND") != nullptr) {
+                    const auto before = AgcDriver::PerformanceTrace::OwnedDrawUnbound();
+                    std::thread unbound([] { AgcDriver::PerformanceTrace::CountOwnedDraw("OwnedDraw.test_unbound"); });
+                    unbound.join();
+                    Require(AgcDriver::PerformanceTrace::OwnedDrawUnbound() == before + 1, "unbound owned draw event was not recorded");
+                }
+                AgcDriver::PerformanceTrace::Present(1, 1, nullptr);
+                AgcDriver::PerformanceTrace::StopOutput();
+            }
+            std::cout << "Owned draw input tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-inputs-in-place-only") {

@@ -92,6 +92,14 @@ static void CheckBaseCategory() {
     const auto mapped = _ZNKSt14error_category23default_error_conditionEi_nid_postfix(future, 7);
     REQUIRE(mapped.reserved == 0 && mapped.value == 7 && mapped.category == future);
     _ZNSt14error_categoryD2Ev_nid_postfix(nullptr);
+    _ZNSt14error_categoryD1Ev_nid_postfix(nullptr);
+    bool trapped = false;
+    try {
+        _ZNSt14error_categoryD0Ev_nid_postfix(nullptr);
+    } catch (const std::runtime_error& error) {
+        trapped = std::strstr(error.what(), "traps (ud2)") != nullptr;
+    }
+    REQUIRE(trapped);
 }
 
 static void CheckFutureCategory() {

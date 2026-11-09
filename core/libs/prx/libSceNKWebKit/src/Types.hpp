@@ -3,6 +3,7 @@
 #include "prx/libSceNKWebKit/src/Object.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -60,6 +61,13 @@ public:
     std::vector<std::uint8_t> bytes;
 };
 
+class SessionState final : public ObjectOf<ObjectType::SessionState> {
+public:
+    explicit SessionState(std::vector<std::uint8_t> data) : data(std::move(data)) {}
+
+    std::vector<std::uint8_t> data;
+};
+
 template<ObjectType kind, typename Value>
 class Number final : public ObjectOf<kind> {
 public:
@@ -101,6 +109,17 @@ public:
     bool valid = false;
 };
 
+class URLRequest final : public ObjectOf<ObjectType::URLRequest> {
+public:
+    URLRequest() = default;
+    explicit URLRequest(Retained<URL> url) : url(std::move(url)) {}
+
+    Retained<URL> url;
+    Retained<URL> firstPartyForCookies;
+    std::string httpMethod = "GET";
+    Retained<Data> httpBody;
+};
+
 class URLResponse final : public ObjectOf<ObjectType::URLResponse> {
 public:
     URLResponse() = default;
@@ -126,6 +145,15 @@ public:
     std::u16string lookupText;
     RectValue elementBoundingBox{{0.0, 0.0}, {0.0, 0.0}};
     bool isContentEditable = false;
+};
+
+class BundleScriptWorld final : public ObjectOf<ObjectType::BundleScriptWorld> {
+public:
+    Retained<String> name;
+    static BundleScriptWorld* NormalWorld() {
+        static auto world = Make<BundleScriptWorld>();
+        return world.Get();
+    }
 };
 
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
@@ -165,6 +193,95 @@ class OpenPanelResultListener final : public ObjectOf<ObjectType::OpenPanelResul
 public:
     bool cancelled = false;
     std::vector<Retained<String>> chosenFiles;
+};
+
+class GeolocationPermissionRequest final : public ObjectOf<ObjectType::GeolocationPermissionRequest> {
+public:
+    enum class State { Pending, Allowed, Denied };
+    using DecisionHandler = std::function<void(bool)>;
+
+    GeolocationPermissionRequest() = default;
+    explicit GeolocationPermissionRequest(DecisionHandler handler) : decisionHandler(std::move(handler)) {}
+
+    void Allow() {
+        state = State::Allowed;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(true);
+        }
+    }
+
+    void Deny() {
+        state = State::Denied;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(false);
+        }
+    }
+
+    State state = State::Pending;
+    DecisionHandler decisionHandler;
+};
+
+class NotificationPermissionRequest final : public ObjectOf<ObjectType::NotificationPermissionRequest> {
+public:
+    enum class State { Pending, Allowed, Denied };
+    using DecisionHandler = std::function<void(bool)>;
+
+    NotificationPermissionRequest() = default;
+    explicit NotificationPermissionRequest(DecisionHandler handler) : decisionHandler(std::move(handler)) {}
+
+    void Allow() {
+        state = State::Allowed;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(true);
+        }
+    }
+
+    void Deny() {
+        state = State::Denied;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(false);
+        }
+    }
+
+    State state = State::Pending;
+    DecisionHandler decisionHandler;
+};
+
+class Inspector final : public ObjectOf<ObjectType::Inspector> {
+public:
+    bool isAttached = false;
+    bool isConnected = false;
+    bool isElementSelectionActive = false;
+    bool isFront = false;
+    bool isProfilingPage = false;
+    bool isVisible = false;
+};
+
+class Connection final : public ObjectOf<ObjectType::Connection> {
+public:
+    Retained<Object> lastMessageName;
+    Retained<Object> lastMessageBody;
+    bool clientConfigured = false;
+};
+
+class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
+public:
+    bool decided = false;
+    bool allowed = false;
+
+    void Allow() {
+        decided = true;
+        allowed = true;
+    }
+
+    void Deny() {
+        decided = true;
+        allowed = false;
+    }
 };
 
 }  // namespace NKWebKit
