@@ -302,6 +302,24 @@ static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 
 extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last);
 
+extern "C" GuestLocale::OutputIterator LibcNumPutBool_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, bool value);
+extern "C" GuestLocale::OutputIterator LibcNumPutLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, std::int64_t value);
+extern "C" GuestLocale::OutputIterator LibcNumPutUnsignedLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, std::uint64_t value);
+extern "C" GuestLocale::OutputIterator LibcNumPutLongLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, std::int64_t value);
+extern "C" GuestLocale::OutputIterator LibcNumPutUnsignedLongLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, std::uint64_t value);
+extern "C" GuestLocale::OutputIterator LibcNumPutDouble_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, double value);
+extern "C" GuestLocale::OutputIterator LibcNumPutLongDouble_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, long double value);
+extern "C" GuestLocale::OutputIterator LibcNumPutPointer_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const void* value);
+
+extern "C" GuestLocale::OutputIterator LibcNumPutWideBool_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, bool value);
+extern "C" GuestLocale::OutputIterator LibcNumPutWideLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::int64_t value);
+extern "C" GuestLocale::OutputIterator LibcNumPutWideUnsignedLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::uint64_t value);
+extern "C" GuestLocale::OutputIterator LibcNumPutWideLongLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::int64_t value);
+extern "C" GuestLocale::OutputIterator LibcNumPutWideUnsignedLongLong_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::uint64_t value);
+extern "C" GuestLocale::OutputIterator LibcNumPutWideDouble_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, double value);
+extern "C" GuestLocale::OutputIterator LibcNumPutWideLongDouble_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, long double value);
+extern "C" GuestLocale::OutputIterator LibcNumPutWidePointer_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const void* value);
+
 inline constexpr std::size_t kNumPutCharVtableSlots = 14;
 static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
 extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots];
