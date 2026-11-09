@@ -527,6 +527,31 @@ void dialogLayoutTests() {
     std::printf("dialog layout: focus, long text, narrow target, invalid input\n");
 }
 
+void hostMenuLayoutTests() {
+    const VkExtent2D extent{1920, 1080};
+    AgcDriver::HostMenuView view;
+    view.lines = {"VOLUME UP", "VOLUME DOWN", "CLOSE"};
+    view.cursor = 0;
+    const auto first = AgcDriver::LayOutHostMenu(view, extent);
+    view.cursor = 1;
+    const auto second = AgcDriver::LayOutHostMenu(view, extent);
+    view.cursor = 2;
+    const auto third = AgcDriver::LayOutHostMenu(view, extent);
+    const auto accentFirst = rectsOf(first, OverlayColor::Accent);
+    const auto accentSecond = rectsOf(second, OverlayColor::Accent);
+    const auto accentThird = rectsOf(third, OverlayColor::Accent);
+    require(accentFirst.size() == 1 && accentSecond.size() == 1 && accentThird.size() == 1, "the cursor row is not highlighted once");
+    require(accentFirst[0].y < accentSecond[0].y && accentSecond[0].y < accentThird[0].y, "the cursor does not move down one row at a time");
+    for (const auto& rect : second.rects) require(contains(second.bounds, rect), "a host menu rectangle is drawn outside its panel");
+    bool rejected = false;
+    try {
+        static_cast<void>(AgcDriver::LayOutHostMenu(AgcDriver::HostMenuView{}, extent));
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    require(rejected, "a host menu without lines is laid out");
+}
+
 void systemDialogTests() {
     const VkExtent2D extent{1280, 720};
     require(!AgcDriver::SystemDialogView().has_value() && !AgcDriver::SystemOverlayLayout(extent).has_value(), "an overlay is laid out before one was set");
@@ -577,6 +602,7 @@ int main() {
         dialogWrapTests();
         dialogLayoutTests();
         systemDialogTests();
+        hostMenuLayoutTests();
         std::cout << "keyboard overlay tests passed\n";
         return 0;
     } catch (const std::exception& error) {
