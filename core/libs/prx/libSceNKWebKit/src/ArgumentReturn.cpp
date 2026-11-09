@@ -1,4 +1,4 @@
-#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNKWebKit/include/ArgumentReturnExports.hpp"
 
 extern "C" {
 
