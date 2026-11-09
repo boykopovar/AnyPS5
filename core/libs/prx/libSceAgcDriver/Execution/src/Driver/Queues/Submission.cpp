@@ -727,7 +727,12 @@ bool Driver::orderReleased(std::uint32_t queue, std::uint64_t received) const {
     return runningWorkers.load(std::memory_order_acquire) == 0 && !completionsPending() && !Graphics::Recorder::SnapshotWriteOverlaps(awaited, 4);
 }
 
+void Driver::TrackRewindTails() {
+    tracksTails.store(true, std::memory_order_relaxed);
+}
+
 void Driver::noteTailRead(const std::uint32_t* read, std::uint32_t queue, const std::uint32_t* next) {
+    if (!tracksTails.load(std::memory_order_relaxed)) return;
     std::lock_guard lock(tailsMutex);
     if (read != nullptr) std::erase_if(unreadTails, [&](const auto& tail) { return tail.second == read; });
     if (next != nullptr) unreadTails.emplace_back(queue, next);

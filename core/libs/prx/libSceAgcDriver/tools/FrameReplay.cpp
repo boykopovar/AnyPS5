@@ -1161,6 +1161,7 @@ int run(const Options& options) {
     relaunchIfHostRegionBlocks(reader);
 #endif
     if (reader.Truncated()) std::fprintf(stderr, "[frame-replay] the capture is truncated; replaying the complete records\n");
+    AgcDriverTrackRewindTails_nid_postfix();
     auto skipped = restoreMemory(reader);
     const auto loaded = Clock::now();
     Replay replay{options, reader};
