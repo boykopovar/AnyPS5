@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 register("./cdn-loader.mjs", import.meta.url, { data: { url: process.env.ANYPS5_TEST_ZIP_URL, path: process.env.ANYPS5_TEST_ZIP_PATH } });
-const { Archive, validPath } = await import(pathToFileURL(path.join(process.argv[2], "archive.mjs")));
+const webRoot = process.argv[2] ?? fileURLToPath(new URL("..", import.meta.url));
+const { Archive, validPath } = await import(pathToFileURL(path.join(webRoot, "archive.mjs")));
 const { BlobWriter, Uint8ArrayReader, ZipWriter } = await import(process.env.ANYPS5_TEST_ZIP_URL);
 const header = new Uint8Array([127, 69, 76, 70]);
 
