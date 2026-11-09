@@ -13,6 +13,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 
 namespace {
 
@@ -770,9 +771,9 @@ int APS5_VABI sceRtcSetCurrentDebugNetworkTick(const RtcTick* tick) {
 int APS5_VABI sceRtcSetConf(int first, int second, int third, int fourth) {
     (void)first;
     (void)second;
-    (void)third;
-    (void)fourth;
-    NotImplemented_nid_no_patch(__func__);
+    if (fourth < -1) return static_cast<int>(0x80020016u);
+    SetGuestTimezone_nid_no_patch(third, fourth < 0 ? 0 : fourth);
+    return 0;
 }
 
 int APS5_VABI sceRtcFormatRFC3339Precise(char* date_time, const RtcTick* utc, int time_zone_minutes, int precision) {

@@ -867,10 +867,39 @@ int APS5_VABI sceKernelGettimeofday(KernelTimeval* tp) {
     return result != 0 && *__error_nid_postfix() == 14 ? SceKernelErrorEfault : result;
 }
 
+namespace {
+
+std::mutex guestTimezoneMutex;
+bool guestTimezoneStored = false;
+KernelTimezone guestTimezone{};
+
+}
+
+void SetGuestTimezone_nid_no_patch(std::int32_t minutesWest, std::int32_t daylightTime) {
+    std::lock_guard lock(guestTimezoneMutex);
+    guestTimezone = KernelTimezone{minutesWest, daylightTime};
+    guestTimezoneStored = true;
+}
+
+void ResetGuestTimezone_nid_no_patch() {
+    std::lock_guard lock(guestTimezoneMutex);
+    guestTimezoneStored = false;
+    guestTimezone = KernelTimezone{};
+}
+
 int APS5_VABI sceKernelGettimezone(KernelTimezone* tz) {
     if (tz == nullptr) return SceKernelErrorEfault;
-    const auto now = static_cast<std::int64_t>(std::time(nullptr));
-    const KernelTimezone zone{static_cast<std::int32_t>(HostZoneAt(now).standardEast / 60), static_cast<std::int32_t>(HostDaylightAmount(now) / 60)};
+    KernelTimezone zone{};
+    bool stored = false;
+    {
+        std::lock_guard lock(guestTimezoneMutex);
+        stored = guestTimezoneStored;
+        zone = guestTimezone;
+    }
+    if (!stored) {
+        const auto now = static_cast<std::int64_t>(std::time(nullptr));
+        zone = KernelTimezone{static_cast<std::int32_t>(HostZoneAt(now).standardEast / 60), static_cast<std::int32_t>(HostDaylightAmount(now) / 60)};
+    }
     return GuestCopyOut_nid_no_patch(tz, &zone, sizeof(zone)) ? 0 : SceKernelErrorEfault;
 }
 
