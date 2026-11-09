@@ -587,6 +587,35 @@ int ConvertCharacter(int value, bool upper) {
 
 }
 
+extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last) {
+    const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix);
+    const auto narrow = [ctype](char character) { return ctype != nullptr ? reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->narrow(ctype, character, '\0') : character; };
+    const auto put = reinterpret_cast<const GuestLocale::TimePutVtable*>(self->vtable)->put;
+    for (; first != last; ++first) {
+        if (narrow(*first) != '%') {
+            PutCharacter(out, *first);
+        } else if (++first == last) {
+            PutCharacter(out, first[-1]);
+            break;
+        } else {
+            char specifier = narrow(*first);
+            char modifier = '\0';
+            const char percent = first[-1];
+            if (specifier == 'E' || specifier == 'O' || specifier == 'Q' || specifier == '#') {
+                if (++first == last) {
+                    PutCharacter(out, percent);
+                    PutCharacter(out, specifier);
+                    break;
+                }
+                modifier = specifier;
+                specifier = narrow(*first);
+            }
+            out = put(self, out, stream, fill, time, specifier, modifier);
+        }
+    }
+    return out;
+}
+
 void* GuestLocale::AllocateStringStorage(std::size_t bytes) {
     return GuestStringStorage::Allocate(bytes);
 }
