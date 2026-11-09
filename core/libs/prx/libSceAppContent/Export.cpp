@@ -8,6 +8,7 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libSceNpEntitlementAccess/EntitlementsIni.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <atomic>
 #include <cstring>
 #include <filesystem>
@@ -142,7 +143,11 @@ int APS5_VABI sceAppContentDownloadDataGetBlockSize(const AppContentMountPoint* 
 int APS5_VABI sceAppContentGetGameTrialsFlag(uint32_t* gameTrialsFlag) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     if (!gameTrialsFlag) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    *gameTrialsFlag = 0;
+    const uint32_t flag = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(gameTrialsFlag, &flag, sizeof(flag));
+    errno = savedErrno;
+    if (!copied) return SCE_APP_CONTENT_ERROR_PARAMETER;
     return 0;
 }
 
