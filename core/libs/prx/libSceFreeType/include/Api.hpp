@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libSceFreeType/include/MemoryAllocation.hpp"
 
 #include "prx/libSceFreeType/include/GuestList.hpp"
 #include "prx/libSceFreeType/include/PostScriptPrivate.hpp"
@@ -155,7 +156,6 @@ int APS5_VABI sceFreeTypeOtOutlineDone_nid_no_patch();
 int APS5_VABI sceFreeTypeOtOutlineNew_nid_no_patch();
 int APS5_VABI sceFreeTypeOtGlyphSlotEmbolden_nid_no_patch();
 int APS5_VABI sceFreeTypeOtGlyphSlotOblique_nid_no_patch();
-int APS5_VABI sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch();
 int APS5_VABI sceFreeTypeOtLibrarySetLcdFilter_nid_no_patch();
 int APS5_VABI sceFreeTypeOtLibrarySetLcdFilterWeights_nid_no_patch();
 void* APS5_VABI FT_Get_Module_nid_postfix(FreeType::GuestLibrary* library, const char* moduleName);

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -128,12 +129,33 @@ void testFlipsCountPerThread() {
     check(driver.FlipSubmissions() == before, "a flip submitted on another thread changed this thread's flip count, so a submission of this thread that overlaps it would end a captured frame");
 }
 
+void testSettledHoldsAdmissions() {
+    AgcDriverWaitIdle_nid_postfix();
+    check(AgcDriverHoldSettled_nid_postfix(1000), "the idle driver did not settle");
+    std::uint64_t before = 0, completed = 0;
+    AgcDriverSerialProgress_nid_postfix(&before, &completed);
+    std::atomic<bool> admitted{false};
+    std::thread submitter([&] {
+        AgcDriverSuspendPoint_nid_postfix();
+        admitted.store(true);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::uint64_t accepted = 0;
+    AgcDriverSerialProgress_nid_postfix(&accepted, &completed);
+    const bool held = !admitted.load() && accepted == before;
+    AgcDriverReleaseSettled_nid_postfix();
+    submitter.join();
+    AgcDriverWaitIdle_nid_postfix();
+    check(held, "the driver admitted a submission while a settled hold was taken on an idle driver");
+}
+
 }
 
 int main() {
     try {
         testEopFramesCountOnce();
         testFlipsCountPerThread();
+        testSettledHoldsAdmissions();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAILED: %s\n", error.what());
         return 1;
