@@ -3279,6 +3279,7 @@ struct TargetProof {
     std::uint64_t allocations = 0;
     std::uint64_t surfaces = 0;
     std::uint64_t released = 0;
+    std::uint64_t claims = 0;
     const Recorder* recorder = nullptr;
     VkDevice device = VK_NULL_HANDLE;
     bool operator==(const TargetProof&) const = default;
@@ -3290,12 +3291,12 @@ struct TargetProof {
 };
 
 TargetProof currentTargetProof(const Context& context) {
-    return {GuestMemory::CollectEpoch(), GuestMemory::ProofSerial(), StorageTexture::PendingSerial(), GuestMemory::UnwatchSerial(), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), DepthSurfacesSerial(), DepthSurfacesReleased(), Recorder::Active(), context.device};
+    return {GuestMemory::CollectEpoch(), GuestMemory::ProofSerial(), StorageTexture::PendingSerial(), GuestMemory::UnwatchSerial(), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), DepthSurfacesSerial(), DepthSurfacesReleased(), MultisampleClaimSerial(), Recorder::Active(), context.device};
 }
 
 enum class ColorMemoEvent {
     Accept, AcceptWithDepthMiss, Invalid, Descriptor, Resident, DepthOverlap,
-    Epoch, Proofs, Pending, Unwatch, Allocations, Surfaces, Released, Recorder, Device,
+    Epoch, Proofs, Pending, Unwatch, Allocations, Surfaces, Released, Claims, Recorder, Device,
     PostDepthInvalidated, DepthFallback, AvoidedRefreshLookups, Count
 };
 
@@ -3306,7 +3307,7 @@ void noteColorMemo([[maybe_unused]] ColorMemoEvent event, [[maybe_unused]] std::
         "ColorMemo.Miss.Descriptor", "ColorMemo.Miss.Resident", "ColorMemo.Miss.DepthOverlap",
         "ColorMemo.Miss.Epoch", "ColorMemo.Miss.Proofs", "ColorMemo.Miss.Pending",
         "ColorMemo.Miss.Unwatch", "ColorMemo.Miss.Allocations", "ColorMemo.Miss.Surfaces",
-        "ColorMemo.Miss.Released", "ColorMemo.Miss.Recorder", "ColorMemo.Miss.Device",
+        "ColorMemo.Miss.Released", "ColorMemo.Miss.Claims", "ColorMemo.Miss.Recorder", "ColorMemo.Miss.Device",
         "ColorMemo.PostDepthInvalidated", "DepthMemo.Fallback", "ColorMemo.AvoidedRefreshLookups"
     };
     static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(ColorMemoEvent::Count)> counts{};
@@ -3326,6 +3327,7 @@ bool colorProofMatches(const TargetProof& before, const TargetProof& after) {
     note(before.allocations != after.allocations, ColorMemoEvent::Allocations);
     note(before.surfaces != after.surfaces, ColorMemoEvent::Surfaces);
     note(before.released != after.released, ColorMemoEvent::Released);
+    note(before.claims != after.claims, ColorMemoEvent::Claims);
     note(before.recorder != after.recorder, ColorMemoEvent::Recorder);
     note(before.device != after.device, ColorMemoEvent::Device);
 #endif

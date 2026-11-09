@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -1073,6 +1074,38 @@ void depthProofAfterMetadataWrite(AgcDriver::VulkanDevice& device) {
     expect(device, color, [](std::uint32_t) { return Old; }, "a raw HTILE write reused a stale depth proof");
 }
 
+void claimAfterAbsorbedFill(AgcDriver::VulkanDevice& device) {
+    auto multisampled = colorTarget();
+    multisampled.address = address(MultisampleStorage.data());
+    multisampled.surfaceAddress = multisampled.address;
+    multisampled.samples = 2;
+    multisampled.coverageSamples = 2;
+    const auto color = colorTarget();
+    reset(device, color);
+    draw(device, multisampled, {.scissor = Right});
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        device.WaitIdle();
+    }
+    auto depth = depthTarget(true);
+    depth.address = multisampled.address;
+    arm(device, color, {.depth = depth, .compare = VK_COMPARE_OP_ALWAYS});
+    Require(MultisampledColorFillAbsorbs(multisampled.address, static_cast<std::size_t>(MultisampledColorBytes(multisampled)), 0u), "a fill over the aliased multisampled target was not taken as its clear");
+    draw(device, color, {.depth = depth, .compare = VK_COMPARE_OP_ALWAYS});
+    std::string refusal;
+    try {
+        RequireNoMultisampleColorTarget(depth.address, 4096, "a read of the depth plane");
+    } catch (const std::exception& error) {
+        refusal = error.what();
+    }
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        device.WaitIdle();
+        ClearMultisampleTargets(AgcDriver::VulkanDeviceTestAccess::ContextOf(device).device);
+    }
+    Require(refusal.empty(), "a depth draw after a fill over an aliased multisampled target did not claim its memory: " + refusal);
+}
+
 void descriptorIdentity() {
     auto color = colorTarget();
     auto depth = depthTarget(false);
@@ -1119,7 +1152,8 @@ void unchangedMemo(AgcDriver::VulkanDevice& device) {
     }
 }
 
-const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 9> R3Scenarios{{
+const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 10> R3Scenarios{{
+    {"claim", claimAfterAbsorbedFill},
     {"depth-proof", depthProofAfterMetadataWrite},
     {"baseline", validRefreshBaselines},
     {"unchanged", unchangedMemo},

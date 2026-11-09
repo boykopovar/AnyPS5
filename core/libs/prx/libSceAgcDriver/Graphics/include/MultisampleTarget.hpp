@@ -113,6 +113,7 @@ void NoteColorMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
 std::shared_ptr<Texture> MultisampleTargetFmaskTexture_nid_no_patch(const Context& context, const GuestTextureResource& resource, VkComponentMapping components);
 void ClearMultisampleTargets(VkDevice device);
 std::uint64_t MultisampleTargetRangeGeneration();
+std::uint64_t MultisampleClaimSerial();
 std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTargetRanges(
     VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges, std::uint64_t& generation);
 void InstallResidentImageReadGuard_nid_no_patch();
