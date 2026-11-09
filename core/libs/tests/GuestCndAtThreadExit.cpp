@@ -14,6 +14,11 @@ void* operator new(std::size_t size) {
     throw std::bad_alloc();
 }
 
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
+    if (failAllocations) return nullptr;
+    return std::malloc(size ? size : 1);
+}
+
 void operator delete(void* memory) noexcept { std::free(memory); }
 void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
 

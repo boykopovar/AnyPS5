@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -34,6 +35,15 @@ int main() {
     Require(sceBluetoothHidRegisterDevice(1, 2) == notInitialized, "registration before initialization");
     Require(sceBluetoothHidUnregisterDevice(1, 2) == notInitialized, "unregistration before initialization");
     Require(sceBluetoothHidUnregisterCallback() == notInitialized, "callback removal before initialization");
+    Require(sceBluetoothHidGetDeviceName(1, nullptr) == notInitialized, "get device name before initialization");
+    Require(sceBluetoothHidGetInputReport(0, 0) == notInitialized, "get input report before initialization");
+    Require(sceBluetoothHidSetOutputReport(0, 0, nullptr, 0) == notInitialized, "set output report before initialization");
+    Require(sceBluetoothHidDisconnectDevice(0) == notInitialized, "disconnect device before initialization");
+    Require(sceBluetoothHidGetDeviceInfo(0, nullptr) == notInitialized, "get device info before initialization");
+    Require(sceBluetoothHidGetFeatureReport(0, 0) == notInitialized, "get feature report before initialization");
+    Require(sceBluetoothHidGetReportDescriptor(0, nullptr, 0) == notInitialized, "get report descriptor before initialization");
+    Require(sceBluetoothHidInterruptOutput(0, 0, nullptr, 0) == notInitialized, "interrupt output before initialization");
+    Require(sceBluetoothHidSetFeatureReport(0, 0, nullptr, 0) == notInitialized, "set feature report before initialization");
     Require(sceBluetoothHidInit() == 0, "initialization failed");
     Require(sceBluetoothHidInit() == 0, "repeated initialization failed");
     Require(sceBluetoothHidRegisterDevice(1, 2) == noCallback, "registration without callback");
@@ -53,6 +63,7 @@ int main() {
     Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, &param) == invalidArgument, "thread reserved field validation");
     Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, nullptr) == 0, "optional parameters rejected");
     bool threw = false;
+    Require(sceBluetoothHidGetDeviceName(1, nullptr) == invalidArgument, "null device name output");
     threw = false;
     try {
         sceBluetoothHidGetInputReport(0, 0);
@@ -114,6 +125,9 @@ int main() {
     std::memset(&filled, 0x5a, sizeof(filled));
     Require(sceBluetoothHidParamInitialize(&filled, nullptr) == 0 && filled.threadParam == nullptr && filled.reserved == 0 && filled.padding == 0x5a5a5a5au, "a null thread parameter was not stored as given");
     Require(sceBluetoothHidParamInitialize(nullptr, &thread) == invalidArgument, "a null parameter block was not refused");
+    errno = 71;
+    Require(sceBluetoothHidParamInitialize(reinterpret_cast<BluetoothHidParam*>(0x10), &thread) == invalidArgument, "unwritable parameter block was not refused");
+    Require(errno == 71, "errno modified by invalid pointer check");
     Require(sceBluetoothHidParamInitialize(nullptr, nullptr) == invalidArgument, "null parameter and null thread parameter were not refused");
     BluetoothHidThreadParam built;
     std::memset(&built, 0x5a, sizeof(built));

@@ -4,7 +4,7 @@
 #include <source_location>
 
 #include "prx/libc/include/Api.hpp"
-#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 
 namespace {

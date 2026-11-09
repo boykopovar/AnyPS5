@@ -123,6 +123,10 @@ extern "C" void AgcDriverRequestScreenshot_nid_postfix() {
     AgcDriver::Screenshot::Request();
 }
 
+extern "C" void AgcDriverTracePresent_nid_postfix(std::uint32_t width, std::uint32_t height) {
+    AgcDriver::DriverDetail::Driver::Get().TracePresent(width, height);
+}
+
 extern "C" void AgcDriverRegisterShader_nid_postfix(const Shader* shader) try {
     AgcDriver::RegisterShader(shader);
 } catch (const ProcessShutdown&) {
@@ -169,6 +173,18 @@ extern "C" void AgcDriverSerialProgress_nid_postfix(std::uint64_t* accepted, std
     const auto [submitted, done] = AgcDriver::DriverDetail::Driver::Get().SerialProgress();
     *accepted = submitted;
     *completed = done;
+}
+
+extern "C" bool AgcDriverHoldSettled_nid_postfix(std::int64_t milliseconds) {
+    return AgcDriver::DriverDetail::Driver::Get().WaitSettledFor(std::chrono::milliseconds(milliseconds));
+}
+
+extern "C" void AgcDriverReleaseSettled_nid_postfix() {
+    AgcDriver::DriverDetail::Driver::Get().ReleaseSettled();
+}
+
+extern "C" bool AgcDriverSettled_nid_postfix() {
+    return AgcDriver::DriverDetail::Driver::Get().Settled();
 }
 
 extern "C" void AgcDriverSubmitFlip_nid_postfix(const AgcDriver::FlipInfo& info) try {

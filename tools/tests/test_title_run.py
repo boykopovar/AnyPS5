@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import sys
@@ -26,7 +27,7 @@ class TitlesTests(unittest.TestCase):
 
     def test_repository_file_is_valid(self):
         titles = title_run.load_titles(title_run.ROOT / "tools/titles.json")
-        self.assertEqual(titles["PPSA85300"], {"relink": ["--registry"]})
+        self.assertEqual(titles["PPSA85300"]["relink"], ["--registry"])
 
     def test_unknown_field_is_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: unknown field rlink"):
@@ -51,9 +52,32 @@ class TitlesTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 title_run.load_titles(self.write({"PPSA00001": {"pad": pad}}))
 
+    def test_files_are_checked(self):
+        files = {"app0/id1/autoexec.cfg": {"text": "r_rtshadows 0\n"}, "data/x/y.mp4": {"content": "media/y.mp4"}}
+        self.assertEqual(title_run.load_titles(self.write({"PPSA00001": {"files": files}}))["PPSA00001"]["files"], files)
+        for bad in ({"app0": {"text": ""}}, {"sce_sys/param.json": {"text": ""}}, {"/app0/x": {"text": ""}}, {"app0/../x": {"text": ""}},
+                    {"app0\\x": {"text": ""}}, {"C:/app0/x": {"text": ""}}, {"app0/x": "text"}, {"app0/x": {"text": 1}},
+                    {"app0/x": {"text": "", "content": "y"}}, {"app0/x": {"path": "y"}}, {"app0/x": {"content": "../y"}},
+                    {"app0/x": {"content": "/y"}}):
+            with self.subTest(files=bad), self.assertRaisesRegex(ValueError, "PPSA00001: files: "):
+                title_run.load_titles(self.write({"PPSA00001": {"files": bad}}))
+
     def test_bad_id_is_refused(self):
         with self.assertRaisesRegex(ValueError, "NOT-AN-ID is not a title ID"):
             title_run.load_titles(self.write({"NOT-AN-ID": {}}))
+
+    def test_files_refuse_colons_in_every_path_component(self):
+        cases = [{f"{root}/asset.bin:note": {"text": ""}} for root in ("app0", "data", "download0")]
+        cases += [
+            {"app0/nested/asset.bin:note:$DATA": {"text": ""}},
+            {"app0/nested/C:asset.bin": {"text": ""}},
+            {"app0/nested:note/asset.bin": {"text": ""}},
+            {"app0/asset.bin": {"content": "nested/asset.bin:note"}},
+            {"app0/asset.bin": {"content": "nested/asset.bin:note:$DATA"}},
+        ]
+        for files in cases:
+            with self.subTest(files=files), self.assertRaisesRegex(ValueError, "PPSA00001: files: "):
+                title_run.load_titles(self.write({"PPSA00001": {"files": files}}))
 
     def test_name_is_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: unknown field name"):
@@ -95,6 +119,8 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(title_run.first_error("radv/ps5: the GPU has not reached submission 12 (at 11) in 10 s\nVkResult is ERROR_DEVICE_LOST\n"), "radv/ps5: the GPU has not reached submission 12 (at 11) in 10 s")
         self.assertEqual(title_run.first_error("Converting\nFAIL: Forbidden syscall instruction at code offset 0x1\nInput: x\n"), "FAIL: Forbidden syscall instruction at code offset 0x1")
         self.assertEqual(title_run.first_error("all fine\n"), "")
+        self.assertEqual(title_run.first_error("[notification] Welcome\n[notification] PICO-8: could not get access to /data.\nMake sure elfldr is running\n"), "[notification] PICO-8: could not get access to /data.")
+        self.assertEqual(title_run.first_error("[notification] Welcome\nunhandled exception 'St13runtime_error'\n"), "unhandled exception 'St13runtime_error'")
 
     def test_warning_counts(self):
         text = "[gpu] storage image 0x1 destroyed with GPU results pending\n" * 2
@@ -125,6 +151,29 @@ class AnalysisTests(unittest.TestCase):
         cut = self.root / "cut.bmp"
         cut.write_bytes(noisy.read_bytes()[:-20])
         self.assertIsNone(title_run.frame_is_uniform(cut))
+
+    def test_unsupported_frame_bit_depth_is_unreadable(self):
+        frame = bmp(self.root / "unsupported.bmp", 8, 4, lambda x, y: (0, 0, 0))
+        data = bytearray(frame.read_bytes()) + bytes(128)
+        for bits in (25, 31, 33, 39, 40, 48, 64):
+            with self.subTest(bits=bits):
+                struct.pack_into("<H", data, 28, bits)
+                frame.write_bytes(data)
+                uniform = title_run.frame_is_uniform(frame)
+                self.assertIsNone(uniform)
+                self.assertEqual(title_run.classify(True, None, 1.0, True, uniform), "frame-unreadable")
+
+    def test_24_bit_frames_ignore_row_padding(self):
+        frame = self.root / "24bit.bmp"
+        for pixels, uniform in ((bytes(9), True), (bytes(6) + bytes((255, 255, 255)), False)):
+            with self.subTest(uniform=uniform):
+                rows = (pixels + bytes((255, 255, 255))) * 2
+                header = struct.pack("<2sIHHI", b"BM", 54 + len(rows), 0, 0, 54)
+                info = struct.pack("<IiiHHIIiiII", 40, 3, 2, 1, 24, 0, len(rows), 0, 0, 0, 0)
+                frame.write_bytes(header + info + rows)
+                self.assertIs(title_run.frame_is_uniform(frame), uniform)
+                outcome = "blank" if uniform else "rendering"
+                self.assertEqual(title_run.classify(True, None, 1.0, True, uniform), outcome)
 
     def test_classify_reads_the_last_frame(self):
         uniform = bmp(self.root / "uniform.bmp", 8, 4, lambda x, y: (9, 9, 9))
@@ -206,6 +255,13 @@ class ReportTests(unittest.TestCase):
                           "PPSA97358": {"name": "XPSemu", "version": "A2.1", "runs": [run("stalled"), run("stalled", "warm")]}})
         self.assertIn("Missing: XPSemu (PPSA97358)", title_run.render_markdown(now, before))
 
+    def test_render_markdown_lists_titles_run_without_content(self):
+        now = summary({"PPSA99010": {"name": "vkQuake", "version": "01.000.000", "missing_content": ["quake/pak0.pak"],
+                                     "runs": [run("exited"), run("exited", "warm")]}})
+        self.assertIn("\nRan without content: vkQuake (PPSA99010) quake/pak0.pak\n", title_run.render_markdown(now))
+        self.assertNotIn("Ran without", title_run.render_markdown(summary({"PPSA99010": {"name": "vkQuake", "version": "1", "missing_content": [],
+                                                                                         "runs": [run("exited")]}})))
+
 
 def package(root, title_id, version="01.000.000", name="Game"):
     (root / "sce_sys").mkdir(parents=True)
@@ -260,6 +316,15 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "PPSA00001 found more than once"):
             title_run.discover([self.root])
 
+    def test_git_refuses_a_failed_call(self):
+        failed = subprocess.CompletedProcess(["git"], 128, stdout="", stderr="fatal: not a git repository")
+        with unittest.mock.patch.object(title_run.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(SystemExit, "exit 128.*not a git repository"):
+                title_run.git(self.root, "rev-parse", "--short", "HEAD")
+        with unittest.mock.patch.object(title_run.subprocess, "run", side_effect=FileNotFoundError("git")):
+            with self.assertRaisesRegex(SystemExit, "cannot run git"):
+                title_run.git(self.root, "status", "--porcelain")
+
     def test_discover_refuses_a_package_without_title_id(self):
         package(self.root / "a/PPSA00001", "PPSA00001")
         param = self.root / "a/PPSA00001/sce_sys/param.json"
@@ -287,6 +352,24 @@ class PreparationTests(unittest.TestCase):
         self.assertTrue((self.root / "app0/sce_sys/param.json").is_file())
         self.assertTrue((self.root / "app0/eboot.bin").is_file())
         self.assertFalse((self.root / "app0/sce_module").exists())
+
+    def test_files_are_staged_without_touching_the_package(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        (source / "id1").mkdir()
+        (source / "id1/autoexec.cfg").write_text("old\n", encoding="utf-8")
+        work = self.root / "work"
+        title_run.link_tree(source, work / "app0", {"sce_module"})
+        content = self.root / "content"
+        (content / "quake").mkdir(parents=True)
+        (content / "quake/pak0.pak").write_bytes(b"PACK")
+        files = {"app0/id1/autoexec.cfg": {"text": "r_rtshadows 0\n"}, "app0/id1/pak0.pak": {"content": "quake/pak0.pak"},
+                 "data/media/clip.mp4": {"content": "media/clip.mp4"}}
+        self.assertEqual(title_run.stage_files(files, work, content), ["media/clip.mp4"])
+        self.assertEqual((work / "app0/id1/autoexec.cfg").read_bytes(), b"r_rtshadows 0\n")
+        self.assertEqual((source / "id1/autoexec.cfg").read_text(encoding="utf-8"), "old\n")
+        self.assertEqual((work / "app0/id1/pak0.pak").read_bytes(), b"PACK")
+        self.assertFalse((work / "data/media/clip.mp4").exists())
+        self.assertEqual(title_run.stage_files({"app0/id1/pak0.pak": {"content": "quake/pak0.pak"}}, work, None), ["quake/pak0.pak"])
 
 
 def wait_until(condition, seconds=10):
@@ -354,6 +437,10 @@ class PadTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    WINDOW = ("import ctypes; user32 = ctypes.WinDLL('user32'); user32.CreateWindowExW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4; "
+              "user32.CreateWindowExW(0x08000000, 'STATIC', 'title_run test', 0x10CF0000, 100, 100, 200, 200, None, None, None, None); message = ctypes.create_string_buffer(64)\n"
+              "while user32.GetMessageW(message, None, 0, 0) > 0: user32.DispatchMessageW(message)")
+
     def start(self, code, **options):
         session = title_run.Session([sys.executable, "-c", code], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, **options)
         self.addCleanup(session.kill)
@@ -377,15 +464,44 @@ class SessionTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 7)
 
+    @unittest.skipUnless(os.name == "nt", "junctions are Windows-specific")
+    def test_exit_code_follows_a_junctioned_interpreter(self):
+        target = Path(sys.executable).parent
+        directory = Path(tempfile.mkdtemp(prefix="title-run-junction-"))
+        link = directory / "python"
+        session = None
+        try:
+            made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, text=True)
+            if made.returncode != 0:
+                self.skipTest("cannot create a junction: " + made.stderr.strip())
+            child = "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])"
+            session = title_run.Session([str(link / Path(sys.executable).name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
+            self.assertTrue(wait_until(lambda: not session.alive()))
+            self.assertEqual(session.exit_code(), 7)
+        finally:
+            if session is not None:
+                session.kill()
+            if link.exists():
+                try:
+                    os.rmdir(link)
+                except OSError:
+                    pass
+            if not link.exists():
+                shutil.rmtree(directory, ignore_errors=True)
+
     @unittest.skipUnless(os.name == "nt", "window placement is Windows-specific")
     def test_new_windows_go_behind_the_others_without_polling(self):
-        window = ("import ctypes; user32 = ctypes.WinDLL('user32'); user32.CreateWindowExW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4; "
-                  "user32.CreateWindowExW(0x08000000, 'STATIC', 'title_run test', 0x10CF0000, 100, 100, 200, 200, None, None, None, None); message = ctypes.create_string_buffer(64)\n"
-                  "while user32.GetMessageW(message, None, 0, 0) > 0: user32.DispatchMessageW(message)")
+        self.assert_new_windows_go_behind_the_others(self.WINDOW)
+
+    @unittest.skipUnless(os.name == "nt", "window placement is Windows-specific")
+    def test_windows_of_later_processes_go_behind_the_others_without_polling(self):
+        self.assert_new_windows_go_behind_the_others(f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {self.WINDOW!r}])")
+
+    def assert_new_windows_go_behind_the_others(self, code):
         user32 = title_run.user32
         if not user32.FindWindowW("Progman", None):
             self.skipTest("no desktop shell in this session")
-        session = self.start(window)
+        session = self.start(code)
         user32.GetWindow.restype = title_run.wintypes.HWND
         user32.GetWindow.argtypes = (title_run.wintypes.HWND, title_run.wintypes.UINT)
         name = title_run.ctypes.create_unicode_buffer(256)

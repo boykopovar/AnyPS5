@@ -107,6 +107,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ReadLaneEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/MaskedSelectEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/TessellationLowering.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/QuadHelperProof.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceTracker.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceMaterializer.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/BindingAllocator.cpp
@@ -198,6 +199,7 @@ function(add_shader_recompiler target runtimeTarget)
     list(REMOVE_DUPLICATES shaderCacheRecompilerSources)
     set(shaderCacheKeySources
             "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThreadLocal.hpp"
+            "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThreadSlot.hpp"
             "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/general/AtomicSharedPtr.hpp")
     foreach(source IN LISTS shaderCacheKeySources)
         if(NOT EXISTS "${source}")
@@ -385,6 +387,25 @@ function(add_shader_recompiler target runtimeTarget)
         if(MINGW)
             target_link_libraries(spanned_uniformity_tests PRIVATE libc)
             set_tests_properties(spanned_uniformity PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endif()
+    if(BUILD_TESTING AND NOT TARGET shader_memory_decoder_tolerance_tests)
+        add_test_executable(shader_memory_decoder_tolerance_tests
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/ShaderMemoryDecoderToleranceTests.cpp")
+        target_link_libraries(shader_memory_decoder_tolerance_tests PRIVATE ${target} ${runtimeTarget})
+        target_include_directories(shader_memory_decoder_tolerance_tests PRIVATE
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/include"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Translation/include"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/IntermediateRepresentation/include"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/include")
+        set_target_properties(shader_memory_decoder_tolerance_tests PROPERTIES CXX_EXTENSIONS OFF)
+        configure_windows_unwind(shader_memory_decoder_tolerance_tests)
+        add_test(NAME shader_memory_decoder_tolerance COMMAND shader_memory_decoder_tolerance_tests)
+        set_tests_properties(shader_memory_decoder_tolerance PROPERTIES TIMEOUT 20)
+        if(MINGW)
+            target_link_libraries(shader_memory_decoder_tolerance_tests PRIVATE libc)
+            set_tests_properties(shader_memory_decoder_tolerance PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endif()
