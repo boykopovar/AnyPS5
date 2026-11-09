@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "ThreadOwned.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
@@ -73,7 +74,7 @@ bool keepsDrawPipeline(std::span<const std::uint32_t> packet, std::uint32_t head
     if (header == FlipPacketHeader || header == RenderingWaitPacketHeader) return false;
     if (Pm4::DrawOpcode(opcode)) return true;
     switch (opcode) {
-        case 0x11: case 0x12: case 0x13: case 0x20: case 0x26: case 0x2a: case 0x2f: case 0x42: case 0x58: case 0x59: case 0x69: case 0x76: case 0x79: case 0x7a: case 0x81: return true;
+        case 0x11: case 0x12: case 0x13: case 0x20: case 0x26: case 0x2a: case 0x2f: case 0x3f: case 0x42: case 0x58: case 0x59: case 0x69: case 0x76: case 0x79: case 0x7a: case 0x81: return true;
         case 0x46: return packet.size() >= 2 && (packet[1] & 0x3fu) != 0x39u;
         case 0x15: return orderedFills();
         case 0x63: case 0x64: case 0x9f:
@@ -143,7 +144,8 @@ void Driver::timed(double WorkerProfile::*bucket, TWork&& work) {
         work();
         return;
     }
-    static thread_local WorkerProfile profile;
+    struct Slot {};
+    auto& profile = ThreadScratch<WorkerProfile, Slot>();
     const auto begin = std::chrono::steady_clock::now();
     work();
     const auto end = std::chrono::steady_clock::now();
@@ -562,7 +564,7 @@ void Driver::execute(const Submission& submission) {
                     std::lock_guard gpuLock(GuestMemory::GpuMutex());
                     if (const auto localDevice = device.Load()) localDevice->SealPassWriteOnly();
                 };
-                if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Enqueue(seal, {});
+                if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Seal, seal, {});
                 else seal();
             }
         } else if (opcode != 0x42 && opcode != 0x46 && opcode != 0x58) {
@@ -617,7 +619,7 @@ void Driver::execute(const Submission& submission) {
         }
         if ((std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(submission.rewindTail - 1)).load(std::memory_order_acquire) & 0x80000000u) != 0) {
             const bool holdsFlip = std::exchange(flipHold.working, false);
-            DrawPipeline::Queue0().Enqueue([this, holdsFlip, progress = submission.progress] {
+            DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::SubmitEnd, [this, holdsFlip, progress = submission.progress] {
                 if (holdsFlip) finishFlipWork(submitFlipWork(0));
                 else submitOpenWork(progress);
                 wakeQueueZeroForCompletions();

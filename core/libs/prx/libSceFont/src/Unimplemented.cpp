@@ -349,11 +349,6 @@ void APS5_VABI sceFontSetGraphicsErrorCallback(Font::GraphicsErrorCallback callb
     Font::SetGraphicsErrorCallback(callback);
 }
 
-int APS5_VABI sceFontSupportGlyphs(const FontGlyphSupport* support) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceFontWordsFindWordCharacters(FontWords* words, FontTextCharacter* firstCharacter, FontTextCharacter* endCharacter, FontTextCharacter** lastCharacter, FontTextCharacter** nextCharacter) {
     return Font::WordsFindWordCharacters(words, firstCharacter, endCharacter, lastCharacter, nextCharacter);
 }
@@ -396,10 +391,6 @@ int APS5_VABI sceFontGraphicsUndefineIndexedVertexesGlyph() {
 
 int APS5_VABI sceFontGraphicsAppendGradientSegment(FontGraphicsFrame* graphicsObject, void* gradient, float position, const void* color) {
     return Font::GraphicsAppendGradientSegment(graphicsObject, gradient, position, color);
-}
-
-int APS5_VABI sceFontSupportSystemUpdation() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceFontGraphicsCanvasRenewal() {
@@ -494,8 +485,8 @@ int APS5_VABI sceFontGraphicsCanvasGetPreprocess() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFontGraphicsReportError() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFontGraphicsReportError(int error) {
+    return Font::ReportGraphicsError(error);
 }
 
 int APS5_VABI sceFontGraphicsDrawRectangleShape() {
@@ -534,8 +525,8 @@ int APS5_VABI sceFontGraphicsProcessRenderSequence() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFontOutlineVertexesInterfaceInit() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFontOutlineVertexesInterfaceInit(void* interface, const void* first, const void* second, std::uint64_t count) {
+    return Font::OutlineVertexesInterfaceInit(interface, first, second, count);
 }
 
 int APS5_VABI sceFontGraphicsSurfaceSetTargetView() {
