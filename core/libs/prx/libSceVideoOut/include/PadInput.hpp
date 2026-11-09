@@ -39,6 +39,7 @@ public:
 
 private:
     HostMenu::Menu hostMenu;
+    std::array<bool, 4> hostMenuKeysDown{};
 
     struct ControllerSlot {
         SDL_GameController* controller = nullptr;
