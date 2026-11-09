@@ -81,6 +81,10 @@ int main() {
     sendto_nid_postfix(guest, payload, sizeof payload, 0, unicast.data(), unicast.size());
     Require(!Readable(peer, 300), "a unicast send is not forwarded");
 
+    const void* unreadable = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10));
+    Require(sendto_nid_postfix(guest, unreadable, 100, 0, broadcast.data(), broadcast.size()) < 0, "a broadcast from an unreadable buffer fails");
+    Require(!Readable(peer, 300), "a failed broadcast send is not forwarded, so the relay never reads the guest buffer");
+
     const int quiet = socket_nid_postfix(2, 2, 0);
     const Address quietAddress = Endpoint(0, 0, 0, 0, QuietPort);
     Require(quiet >= 0 && bind_nid_postfix(quiet, quietAddress.data(), quietAddress.size()) == 0, "a second guest socket binds");
