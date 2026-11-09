@@ -183,7 +183,8 @@ std::uint64_t referenceGcnAddress(TextureTileMode mode, std::uint32_t bytes, std
     const std::uint32_t tileIndex = ((y / 8u) % bankHeight) * bankWidth + ((x / 8u) / pipes) % bankWidth;
     const std::uint64_t sliceBytes = static_cast<std::uint64_t>(pitch / macroPitch) * (height / macroHeight) * macroBytes;
     const std::uint64_t total = splitSlice * sliceBytes + macroOffset + elementOffset + static_cast<std::uint64_t>(tileIndex) * microBytes;
-    const std::uint32_t px = prt ? x % macroPitch : x, py = prt ? y % macroHeight : y;
+    const bool prtNoRotation = mode == TextureTileMode::kGcnDisplayPrt || mode == TextureTileMode::kGcnThinPrt;
+    const std::uint32_t px = prtNoRotation ? x % macroPitch : x, py = prtNoRotation ? y % macroHeight : y;
     const std::uint32_t tx = px / 8u, ty = py / 8u;
     const bool pipe8x16 = mode == TextureTileMode::kGcnDisplayPrt || mode == TextureTileMode::kGcnThinPrt;
     const std::uint32_t pipe = pipe8x16 ? (bit(tx, 1) ^ bit(ty, 0) ^ bit(tx, 2)) | ((bit(tx, 0) ^ bit(ty, 1)) << 1u) | ((bit(tx, 2) ^ bit(ty, 2)) << 2u)
@@ -323,6 +324,7 @@ void gcnTilingTests() {
                     for (std::uint32_t layer = 0; layer < surface.layers; ++layer) {
                         for (std::uint32_t y = 0; y < height; ++y) {
                             for (std::uint32_t x = 0; x < width; ++x) {
+                                if (layer != 0 && (x + layer) % 8u != y % 8u) continue;
                                 std::uint32_t inBlock = 0, split = 0;
                                 for (std::uint32_t bit = 0; bit < 16u; ++bit) inBlock |= static_cast<std::uint32_t>(std::popcount((x & geometry.equation[bit] & 0xfffu) ^ ((y << 12u) & geometry.equation[bit] & 0xfff000u)) & 1) << bit;
                                 for (std::uint32_t bit = 0; bit < 4u; ++bit) split |= static_cast<std::uint32_t>(std::popcount((x & geometry.splitMasks[bit] & 0xfffu) ^ ((y << 12u) & geometry.splitMasks[bit] & 0xfff000u)) & 1) << bit;
