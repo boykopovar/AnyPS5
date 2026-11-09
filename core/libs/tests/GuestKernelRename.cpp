@@ -59,6 +59,22 @@ int main() {
     Require(rename_nid_postfix(renamed.string().c_str(), nullptr) == -1 && *__error_nid_postfix() == 14);
     Require(rename_nid_postfix("", renamed.string().c_str()) == -1 && *__error_nid_postfix() == 2);
     Require(rename_nid_postfix(renamed.string().c_str(), "") == -1 && *__error_nid_postfix() == 2);
+    const auto directory = root / "dir";
+    const auto movedDirectory = root / "moved";
+    Require(std::filesystem::create_directory(directory));
+    { std::ofstream stream(directory / "inner.txt"); stream << "inner"; }
+    const std::string slashDestination = movedDirectory.string() + "/";
+    Require(rename_nid_postfix(directory.string().c_str(), slashDestination.c_str()) == 0);
+    Require(!std::filesystem::exists(directory) && std::filesystem::is_directory(movedDirectory));
+    Require(std::filesystem::exists(movedDirectory / "inner.txt"));
+    const auto emptyTarget = root / "empty";
+    Require(std::filesystem::create_directory(emptyTarget));
+    const std::string existingSlash = emptyTarget.string() + "/";
+    Require(rename_nid_postfix(movedDirectory.string().c_str(), existingSlash.c_str()) == 0);
+    Require(!std::filesystem::exists(movedDirectory) && std::filesystem::exists(emptyTarget / "inner.txt"));
+    const std::string fileSlash = (root / "plain.txt").string() + "/";
+    Require(rename_nid_postfix(renamed.string().c_str(), fileSlash.c_str()) == -1 && *__error_nid_postfix() == 2);
+    Require(std::filesystem::exists(renamed));
     std::filesystem::remove_all(root);
     return 0;
 }

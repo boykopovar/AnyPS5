@@ -111,14 +111,19 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
     const auto verbatimSource = NativeVerbatimPath_nid_no_patch(source, verbatimError);
     const auto& actualSource = verbatimError ? source : verbatimSource;
     const auto verbatimDest = NativeVerbatimPath_nid_no_patch(destination, verbatimError);
-    const auto& actualDest = verbatimError ? destination : verbatimDest;
+    const auto& rawDest = verbatimError ? destination : verbatimDest;
 #else
     const auto& actualSource = source;
-    const auto& actualDest = destination;
+    const auto& rawDest = destination;
 #endif
     const auto sourceStatus = LinkStatus(actualSource, error);
     if (error && error != std::errc::no_such_file_or_directory) return FilesystemError(error);
     if (sourceStatus.type() == fs::file_type::not_found) return GuestEnoent;
+    const bool sourceIsDirectory = fs::is_directory(sourceStatus) && !IsWindowsLink(source);
+    fs::path actualDest = rawDest;
+    if (sourceIsDirectory) {
+        while (!actualDest.has_filename() && actualDest.has_relative_path()) actualDest = actualDest.parent_path();
+    }
 
     const auto parent = actualDest.parent_path().empty() ? fs::path(".") : actualDest.parent_path();
     error.clear();
@@ -131,7 +136,6 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
     const auto destinationStatus = LinkStatus(actualDest, error);
     if (error && error != std::errc::no_such_file_or_directory) return FilesystemError(error);
     const bool destinationExists = destinationStatus.type() != fs::file_type::not_found;
-    const bool sourceIsDirectory = fs::is_directory(sourceStatus) && !IsWindowsLink(source);
     const bool destinationIsDirectory = destinationExists && fs::is_directory(destinationStatus) && !IsWindowsLink(destination);
     bool sameFile = false;
     if (destinationExists) {
