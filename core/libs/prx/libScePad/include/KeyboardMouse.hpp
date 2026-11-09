@@ -76,6 +76,7 @@ public:
     bool Advance(Clock::time_point now);
     void SetMouseMode(bool enabled);
     void SetMouseTouchpad(bool enabled);
+    void SetMouseGyro(bool enabled);
     void SetViewport(int width, int height);
     void SetTitleReadsMouse(bool reads);
     void Release();
