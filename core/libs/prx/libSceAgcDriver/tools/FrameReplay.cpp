@@ -500,9 +500,24 @@ struct Replay {
         return wait.function == 0 && wait.bytes == 0;
     }
 
+    void awaitTailsRead() {
+        const auto began = Clock::now();
+        while (AgcDriverRewindTailsUnread_nid_postfix()) {
+            if (Clock::now() - began >= options.busyDrainTimeout) {
+                std::fprintf(stderr, "[frame-replay] a released REWIND tail was not read before the next memory delta, blocked on%s\n", describeBlocked().c_str());
+                ++paceTimeouts;
+                if (options.strict) throw std::runtime_error("frame replay: a released REWIND tail was not read before the next memory delta");
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(50));
+        }
+        paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
+    }
+
     void restoreGroup(std::uint64_t group) {
         const auto found = groups.find(group);
         if (found == groups.end()) return;
+        awaitTailsRead();
         std::array<AgcDriver::AwaitedWait, 64> awaited{};
         const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
         std::vector<std::uint64_t> parked;
@@ -691,7 +706,13 @@ struct Replay {
             });
         }
         for (auto& worker : workers) worker.join();
-        if (failure == nullptr) drain();
+        if (failure == nullptr) {
+            try {
+                drain();
+            } catch (...) {
+                failure = std::current_exception();
+            }
+        }
         finished.store(true);
         breaker.join();
         if (failure != nullptr) std::rethrow_exception(failure);
@@ -702,6 +723,7 @@ struct Replay {
         auto lastProgress = Clock::now();
         auto lastReport = lastProgress;
         while (true) {
+            AgcDriverCheckFailure_nid_postfix();
             const auto [accepted, completed] = progress();
             unfinished = accepted - completed;
             if (unfinished == 0) return;

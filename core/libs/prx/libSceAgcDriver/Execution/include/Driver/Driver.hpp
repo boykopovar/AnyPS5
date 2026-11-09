@@ -78,6 +78,7 @@ public:
     std::pair<std::uint64_t, std::uint64_t> SerialProgress();
     std::uint64_t FlipSubmissions() const;
     std::vector<AwaitedWait> AwaitedWaits();
+    bool RewindTailsUnread();
     void WaitForPipelineJournal();
     bool WaitIdleFor(std::chrono::milliseconds timeout);
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
@@ -424,6 +425,9 @@ private:
         std::atomic<std::uint64_t> shape{0};
     };
     std::array<AwaitedSlot, SubmissionQueueEnd - 0x20 + 1> awaitedSlots{};
+    std::mutex tailsMutex;
+    std::vector<std::pair<std::uint32_t, const std::uint32_t*>> unreadTails;
+    void noteTailRead(const std::uint32_t* read, std::uint32_t queue, const std::uint32_t* next);
     void noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> packet);
     std::atomic<std::uint64_t> flipSerial{0};
     std::atomic<std::uint64_t> flipBatchesUnsignaled{0};

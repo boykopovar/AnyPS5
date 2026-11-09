@@ -35,6 +35,8 @@ extern "C" void AgcDriverTracePresent_nid_postfix(std::uint32_t width, std::uint
 extern "C" void AgcDriverSuspendPoint_nid_postfix();
 extern "C" void AgcDriverSerialProgress_nid_postfix(std::uint64_t* accepted, std::uint64_t* completed);
 extern "C" std::size_t AgcDriverAwaitedWaits_nid_postfix(AgcDriver::AwaitedWait* waits, std::size_t capacity);
+extern "C" bool AgcDriverRewindTailsUnread_nid_postfix();
+extern "C" void AgcDriverCheckFailure_nid_postfix();
 extern "C" void AgcDriverWaitForPipelineJournal_nid_postfix();
 extern "C" std::uint64_t AgcDriverDispatchesAdoptedAhead_nid_postfix();
 extern "C" std::uint64_t AgcDriverDispatchesRejectedAhead_nid_postfix();

@@ -341,6 +341,75 @@ void testParkedRewindReplays(const std::filesystem::path& tool) {
     check(readFile(dump) == copied, "the replay did not run the copy chained from the released REWIND tail");
 }
 
+std::uint32_t encodeWrite(std::uint32_t* words, std::byte* target, std::uint32_t value) {
+    CommandBuffer buffer{words, words + CommandBytes / sizeof(std::uint32_t), words, words + CommandBytes / sizeof(std::uint32_t), nullptr, nullptr, 0};
+    sceAgcDcbWriteData(&buffer, GraphicsMemory, 0, at(target), &value, 1, 0, 1);
+    return static_cast<std::uint32_t>(buffer.cursor_up - words);
+}
+
+void testRewindTargetReuse(const std::filesystem::path& tool) {
+    constexpr std::uint32_t First = 0x1234abcdu;
+    constexpr std::uint32_t Second = 0x5678ef01u;
+    const char* directory = std::getenv("APS5_FRAME_CAPTURE");
+    check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
+    const std::filesystem::path capture(directory);
+    const auto layout = allocate();
+    const auto copied = pattern(91);
+    std::memcpy(layout.source, copied.data(), copied.size());
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+
+    flip();
+    auto* const words = layout.firstCommands;
+    const std::array<std::uint32_t, 6> commands{0xc0005900u, 0u, 0xc0023f00u, 0u, 0u, 1u << 20u};
+    std::memcpy(words, commands.data(), sizeof(commands));
+    Packet packet{words, static_cast<std::uint32_t>(commands.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "the REWIND submission failed");
+    const auto parked = [&] {
+        std::array<AgcDriver::AwaitedWait, 64> awaited{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
+        return std::any_of(awaited.begin(), awaited.begin() + static_cast<std::ptrdiff_t>(count), [&](const auto& wait) { return wait.address == at(words + 1); });
+    };
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!parked() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    check(parked(), "the queue did not park at the unreleased REWIND");
+    auto* const target = layout.secondCommands;
+    const auto segment = encodeWrite(target, layout.firstTarget, First);
+    words[3] = static_cast<std::uint32_t>(at(target));
+    words[4] = static_cast<std::uint32_t>(at(target) >> 32u);
+    words[5] = (1u << 20u) | segment;
+    std::atomic_ref<std::uint32_t>(words[1]).store(AgcDriver::Pm4::RewindValid, std::memory_order_release);
+    AgcDriverWaitIdle_nid_postfix();
+    flip();
+    check(encodeWrite(target, layout.secondTarget, Second) == segment, "the reused target does not have the length of the tail it replaces");
+    copyFrame(layout.secondCommands + CommandBytes / sizeof(std::uint32_t) / 2, layout, layout.base + BlockBytes / 2);
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    std::uint32_t first = 0, second = 0;
+    std::memcpy(&first, layout.firstTarget, sizeof(first));
+    std::memcpy(&second, layout.secondTarget, sizeof(second));
+    check(first == First && second == 0, "the driver did not run the tail before its target was reused");
+
+    const FrameCaptureReader reader(capture);
+    check(!reader.Truncated(), "the capture is truncated");
+    const auto firstDump = capture / "first.bin";
+    const auto secondDump = capture / "second.bin";
+    auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --no-pace --repeat 5 --dump " + std::to_string(at(layout.firstTarget)) + ":4:\"" + firstDump.string() + "\" --dump " +
+                   std::to_string(at(layout.secondTarget)) + ":4:\"" + secondDump.string() + "\"";
+#ifdef _WIN32
+    command = "\"" + command + "\"";
+#endif
+    const auto code = std::system(command.c_str());
+    check(code == 0, "agc_frame_replay exited with " + std::to_string(code));
+    const auto replayedFirst = readFile(firstDump);
+    const auto replayedSecond = readFile(secondDump);
+    check(replayedFirst.size() == 4 && replayedSecond.size() == 4, "the replay did not dump both targets");
+    std::memcpy(&first, replayedFirst.data(), sizeof(first));
+    std::memcpy(&second, replayedSecond.data(), sizeof(second));
+    check(first == First, "the replay did not run the REWIND tail as captured");
+    check(second == 0, "the replay ran the REWIND tail from the bytes of a later delta");
+}
+
 void testReservationError(const std::filesystem::path& tool) {
     const char* directory = std::getenv("APS5_FRAME_CAPTURE");
     check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
@@ -383,8 +452,8 @@ void testReservationError(const std::filesystem::path& tool) {
 }
 
 int main(int argc, char** argv) {
-    if (argc != 2 && !(argc == 3 && (std::string(argv[2]) == "concurrent" || std::string(argv[2]) == "pipelines" || std::string(argv[2]) == "reservation_error" || std::string(argv[2]) == "rewind"))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind]\n");
+    if (argc != 2 && !(argc == 3 && (std::string(argv[2]) == "concurrent" || std::string(argv[2]) == "pipelines" || std::string(argv[2]) == "reservation_error" || std::string(argv[2]) == "rewind" || std::string(argv[2]) == "rewind_reuse"))) {
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_reuse]\n");
         return 2;
     }
     try {
@@ -392,6 +461,7 @@ int main(int argc, char** argv) {
         if (argc == 3 && std::string(argv[2]) == "concurrent") testConcurrentCopies(argv[1]);
         else if (argc == 3 && std::string(argv[2]) == "reservation_error") testReservationError(argv[1]);
         else if (argc == 3 && std::string(argv[2]) == "rewind") testParkedRewindReplays(argv[1]);
+        else if (argc == 3 && std::string(argv[2]) == "rewind_reuse") testRewindTargetReuse(argv[1]);
         else testCaptureAndReplay(argv[1], argc == 3);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAILED: %s\n", error.what());
