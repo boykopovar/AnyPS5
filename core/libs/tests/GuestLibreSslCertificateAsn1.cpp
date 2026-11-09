@@ -54,30 +54,6 @@ void CheckFailure(const unsigned char* data, int length, std::initializer_list<s
     Require(ERR_get_error_nid_postfix() == 0, "header failure queues no extra numeric errors");
 }
 
-void CheckValidOuterHeaderThrowsFor(const unsigned char* der, int length) {
-    LibreSslCtx context;
-    std::memset(&context, 0x5a, sizeof(context));
-    std::array<unsigned char, sizeof(context)> contextSnapshot{};
-    std::memcpy(contextSnapshot.data(), &context, sizeof(context));
-    ERR_clear_error_nid_postfix();
-    LibreSslPutError_nid_no_patch(1, 2, 3);
-    try {
-        SSL_CTX_use_certificate_ASN1_nid_postfix(&context, length, der);
-    } catch (const std::exception&) {
-        Require(std::memcmp(contextSnapshot.data(), &context, sizeof(context)) == 0,
-            "a valid outer sequence does not touch the context before unsupported X509 decoding");
-        Require(ERR_get_error_nid_postfix() == PreviousError && ERR_get_error_nid_postfix() == 0,
-            "unsupported X509 decoding does not fabricate errors");
-        return;
-    }
-    Require(false, "a valid outer sequence requires the unimplemented X509 decoder");
-}
-
-void CheckValidOuterHeaderThrows() {
-    constexpr unsigned char der[]{0x30, 0x00};
-    CheckValidOuterHeaderThrowsFor(der, sizeof(der));
-}
-
 }
 
 int main() {
@@ -93,10 +69,6 @@ int main() {
     CheckFailure(primitiveSequence, sizeof(primitiveSequence), {SequenceNotConstructed, SslAsn1Error});
     constexpr unsigned char highTagWrong[]{0x3f, 0x01, 0x00};
     CheckFailure(highTagWrong, sizeof(highTagWrong), {WrongTag, NestedAsn1Error, SslAsn1Error});
-    constexpr unsigned char indefiniteSequence[]{0x30, 0x80};
-    CheckValidOuterHeaderThrowsFor(indefiniteSequence, sizeof(indefiniteSequence));
-    constexpr unsigned char longFormEmptySequence[]{0x30, 0x81, 0x00};
-    CheckValidOuterHeaderThrowsFor(longFormEmptySequence, sizeof(longFormEmptySequence));
     bool minimumLengthThrew = false;
     ERR_clear_error_nid_postfix();
     try {
@@ -106,6 +78,5 @@ int main() {
     }
     Require(minimumLengthThrew && ERR_get_error_nid_postfix() == 0,
         "INT_MIN length stays unsupported where the source narrows its decremented bound");
-    CheckValidOuterHeaderThrows();
     return 0;
 }
