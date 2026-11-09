@@ -18,7 +18,7 @@
 
 - [`curl_formadd`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: LP64 form nodes and length options are not translated to LLP64 host forms.
 - [`curl_formfree`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: LP64 form nodes and length options are not translated to LLP64 host forms.
-- [`curl_formget`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: LP64 form nodes and length options are not translated to LLP64 host forms.
+- [`curl_formget`](../../../core/libs/prx/libcurl/Export.cpp) translates guest LP64 form nodes and bridges the append callback to curl 7.81.0. On LLP64 hosts it returns `CURLE_BAD_FUNCTION_ARGUMENT` when a guest `long` length does not fit host `long`; large LP64 lengths are not serialized there. Malformed or inaccessible guest pointers are not validated.
 - [`curl_global_init_mem`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: Allocator callback ownership across repeated initialization and cleanup is not adapted exactly.
 - [`curl_maprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
 - [`curl_mfprintf`](../../../core/libs/prx/libcurl/Export.cpp) - throws through `NotImplemented_nid_no_patch`: SysV variadic formatting with LP64 long and %ln writes and guest FILE streams has no exact adapter.
