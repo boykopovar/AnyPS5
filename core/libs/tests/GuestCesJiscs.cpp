@@ -147,6 +147,11 @@ int main() {
     RequireEncode(profiles[4], 0x4E02, 0, 0x04001001);
     RequireEncode(profiles[7], 0x4E02, 0, 0x03020102);
     RequireEncode(profiles[6], 0x20B9F, 0, 0x03012F34);
+    RequireEncode(profiles[0], 0x2000B, unassignedCode, 0);
+    RequireEncode(profiles[0], 0x20B9F, unassignedCode, 0);
+    RequireEncode(profiles[1], 0x2000B, unassignedCode, 0);
+    RequireEncode(profiles[2], 0x20B9F, unassignedCode, 0);
+    RequireEncode(profiles[4], 0x2000B, unassignedCode, 0);
     RequireEncode(profiles[2], 0xFF61, unassignedCode, 0);
     RequireEncode(profiles[0], 0xD800, illegalCode, 0);
     RequireEncode(profiles[0], 0x110000, illegalCode, 0);
