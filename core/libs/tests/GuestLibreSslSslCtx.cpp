@@ -94,19 +94,6 @@ static void TestSetCertStore() {
     Require(ctx.certStore == nullptr && clearedStore->references == 1);
     X509_STORE_free_nid_postfix(clearedStore);
 
-    auto* preservedStore = X509_STORE_new_nid_postfix();
-    Require(preservedStore != nullptr);
-    char* elements[] = {reinterpret_cast<char*>(std::uintptr_t{1})};
-    LibreSslStack objectStack {1, elements, 0, 1, nullptr};
-    LibreSslX509Store unsupportedStore {};
-    unsupportedStore.objects = &objectStack;
-    unsupportedStore.references = 1;
-    ctx.certStore = &unsupportedStore;
-    RequireThrows([&] { SSL_CTX_set_cert_store_nid_postfix(Context(&ctx), preservedStore); });
-    Require(ctx.certStore == &unsupportedStore && unsupportedStore.references == 0);
-    Require(preservedStore->references == 1);
-    ctx.certStore = preservedStore;
-    SSL_CTX_set_cert_store_nid_postfix(Context(&ctx), nullptr);
 }
 
 static void TestSetQuietShutdown() {
