@@ -38,7 +38,7 @@ int main() {
         {HTTPHeaderName::Accept, String{}},
     }};
 
-    ResourceRequestBase request{};
+    ResourceRequestBase request;
     request.resourceRequestUpdated = true;
     auto* headers = reinterpret_cast<HTTPHeaderMap*>(&request.httpHeaderFields);
     headers->common = {entries.data(), static_cast<unsigned>(entries.size()), static_cast<unsigned>(entries.size())};
@@ -48,7 +48,8 @@ int main() {
         Require(!_ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(headers, header));
     Require(_ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(headers, HTTPHeaderName::Accept));
 
-    ResourceRequestBase stale{};
+    ResourceRequestBase stale;
+    stale.resourceRequestUpdated = false;
     bool threw = false;
     try {
         _ZN7WebCore19ResourceRequestBase17makeUnconditionalEv(&stale);
