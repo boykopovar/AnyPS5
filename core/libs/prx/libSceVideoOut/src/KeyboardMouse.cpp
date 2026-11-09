@@ -215,6 +215,7 @@ bool Pad::KeyboardMouse::Advance(Clock::time_point now) {
 }
 
 void Pad::KeyboardMouse::SetMouseMode(bool enabled) {
+    if (enabled) mouseTouch.reset();
     mouseMode = enabled;
     mouse.Reset();
 }
@@ -254,6 +255,7 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
     if (event.type == SDL_WINDOWEVENT) {
         if (event.window.event != SDL_WINDOWEVENT_FOCUS_LOST && event.window.event != SDL_WINDOWEVENT_CLOSE) return requests;
         Release();
+        mouseTouch.reset();
         requests.releaseMouse = mouseMode;
         return requests;
     }
