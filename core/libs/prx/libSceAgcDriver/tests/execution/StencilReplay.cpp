@@ -231,6 +231,14 @@ int main() {
         Check(odd, "odd columns exported zero");
         Draw(*device, alternating, exported, equal(91u));
         Check(all, "exported references replace compare reference");
+        constexpr std::array<std::uint32_t, 21> waveBranch{
+            0x7e040f00u, 0xbe84047eu, 0x36060481u, 0x7daa0680u, 0xbf880007u, 0xbefe0404u, 0x7e0802ffu,
+            0x000000ffu, 0x7d8a0680u, 0xd5010005u, 0x01a90104u, 0xbf820003u, 0xbefe0404u, 0x7e0a02ffu,
+            0x000000feu, 0x7e0e02f2u, 0xf8000082u, 0x00000500u, 0xf800180fu, 0x07070707u, 0xbf810000u
+        };
+        Draw(*device, alternating, exported, replace());
+        Draw(*device, waveBranch, exported, equal(91u));
+        Check(all, "a wave branch on a lane predicate sees every lane of the original draw");
         Draw(*device, PlainPixelCode, plain, replace(0u));
         Draw(*device, ordered, exported, replace(), 6u);
         Draw(*device, PlainPixelCode, plain, equal(0u));
