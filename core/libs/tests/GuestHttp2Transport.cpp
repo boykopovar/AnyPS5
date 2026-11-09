@@ -1494,6 +1494,12 @@ void AsyncOptionalArguments(int ssl) {
     Require(sceHttp2WaitAsync(client.request, &reserved, nullptr, nullptr) == static_cast<int>(0x817B11FE), "async reserved result");
     Http2AsyncResult clean{};
     Require(sceHttp2WaitAsync(client.request, &clean, nullptr, &opaque) == static_cast<int>(0x817B11FE), "async reserved wait argument");
+    uint32_t zeroTimeout = 0;
+    Http2AsyncResult polled{};
+    polled.req_id = -1;
+    Require(sceHttp2WaitAsync(client.request, &polled, &zeroTimeout, nullptr) == static_cast<int>(0x817B1065), "unsent zero wait reports no completion");
+    Require(zeroTimeout == 0, "unsent zero wait leaves the timeout at zero");
+    Require(polled.req_id == -1, "unsent zero wait leaves the result untouched");
     Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, &opaque) == 0, "async opaque option submission");
     queue.ExpectEvent();
     Http2AsyncResult result{};
@@ -1517,6 +1523,12 @@ void AsyncBlockingWait(int ssl) {
     client.Create(server.Url("localhost"));
     AsyncQueue queue(client.request);
     Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "async blocking submission");
+    uint32_t zeroTimeout = 0;
+    Http2AsyncResult polled{};
+    polled.req_id = -1;
+    Require(sceHttp2WaitAsync(client.request, &polled, &zeroTimeout, nullptr) == static_cast<int>(0x817B1079), "zero wait reports the pending timeout");
+    Require(zeroTimeout == 0, "zero wait leaves the timeout at zero");
+    Require(polled.req_id == -1, "zero wait leaves the result untouched");
     std::thread release([&] {
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         server.Release();
@@ -1534,6 +1546,12 @@ void AsyncBlockingWait(int ssl) {
     release.join();
     Require(elapsed >= std::chrono::milliseconds(200), "null timeout returned before the completion");
     Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "async blocking result");
+    zeroTimeout = 0;
+    polled = {};
+    polled.req_id = -1;
+    Require(sceHttp2WaitAsync(client.request, &polled, &zeroTimeout, nullptr) == static_cast<int>(0x817B1065), "drained zero wait reports no completion");
+    Require(zeroTimeout == 0, "drained zero wait leaves the timeout at zero");
+    Require(polled.req_id == -1, "drained zero wait leaves the result untouched");
     queue.ExpectEvent();
     server.Join();
 }

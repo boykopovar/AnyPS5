@@ -48,6 +48,7 @@ struct Http2AsyncState {
     std::mutex mutex;
     std::condition_variable changed;
     std::deque<Http2AsyncCompletion> pending;
+    std::size_t active = 0;
     bool retired = false;
 };
 
@@ -82,6 +83,7 @@ static void CompleteAsync(const std::shared_ptr<Http2AsyncState>& state, const c
     completion.result.result = result;
     completion.failure = std::move(failure);
     state->pending.push_back(std::move(completion));
+    if (state->active != 0) --state->active;
     if (const auto hook = g_asyncPublishHook.load(std::memory_order_acquire)) {
         hook(g_asyncPublishHookData.load(std::memory_order_acquire));
     }
@@ -101,6 +103,7 @@ static void RetireAsync(const std::shared_ptr<Http2AsyncState>& state) {
         std::lock_guard lock(state->mutex);
         state->retired = true;
         state->pending.clear();
+        state->active = 0;
     }
     state->changed.notify_all();
 }
@@ -313,6 +316,10 @@ int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* k
     if (!request) return ERROR_INVALID_ID;
     const std::optional<Http2AsyncOption> async = kqueue_option
         ? std::optional<Http2AsyncOption>(*static_cast<const Http2AsyncOption*>(kqueue_option)) : std::nullopt;
+    {
+        std::lock_guard lock(state->mutex);
+        if (!state->retired) ++state->active;
+    }
     std::thread([request, state, async, data, size, req_id] {
         int result = 0;
         std::exception_ptr failure;
@@ -348,6 +355,10 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
             if (!handle) return ERROR_INVALID_ID;
             state = handle->async;
         }
+        {
+            std::lock_guard lock(state->mutex);
+            if (!state->retired) ++state->active;
+        }
         CompleteAsync(state, __func__, req_id, async ? &*async : nullptr, 0, ERROR_NETWORK, {});
         return 0;
     }
@@ -355,6 +366,10 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
     if (!request) return ERROR_INVALID_ID;
     std::vector<std::uint8_t> body;
     if (size) body.assign(static_cast<const std::uint8_t*>(post_data), static_cast<const std::uint8_t*>(post_data) + size);
+    {
+        std::lock_guard lock(state->mutex);
+        if (!state->retired) ++state->active;
+    }
     std::thread([request, state, async, body = std::move(body), req_id]() mutable {
         int result = 0;
         std::exception_ptr failure;
@@ -476,10 +491,8 @@ int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* 
     }
     std::unique_lock lock(state->mutex);
     const auto available = [&] { return state->retired || !state->pending.empty(); };
-    // A zero-timeout poll takes a completion that is already queued (an offline send queues one at
-    // once); what the console returns when nothing is queued is not measured.
     if (timeout && *timeout == 0) {
-        if (!available()) NotImplemented_nid_no_patch(__func__);
+        if (!available()) return state->active != 0 ? ERROR_TIMEOUT : ERROR_NOT_CONNECTED;
     } else if (timeout) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(*timeout);
         const bool ready = state->changed.wait_until(lock, deadline, available);
