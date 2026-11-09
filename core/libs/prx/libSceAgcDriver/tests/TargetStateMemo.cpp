@@ -75,7 +75,6 @@ const std::span<std::byte, PlaneBytes> SurfaceStorage{reinterpret_cast<std::byte
 const std::span<std::byte, PlaneBytes> DepthStorage{reinterpret_cast<std::byte*>((reinterpret_cast<std::uintptr_t>(DepthBlock.data()) + PlaneBytes - 1u) & ~std::uintptr_t{PlaneBytes - 1u}), PlaneBytes};
 alignas(4096) std::array<std::uint8_t, 4096> Keys{};
 alignas(4096) std::array<std::uint8_t, 4096> Cmask{};
-alignas(4096) std::array<std::uint8_t, 4096> UnimportedCmask{};
 alignas(4096) std::array<std::uint32_t, HtileBytes / 4u> Htile{};
 
 alignas(4096) std::array<std::byte, 3 * PlaneBytes> OuterBlock{};
@@ -550,8 +549,8 @@ void resolveBetween(AgcDriver::VulkanDevice& device) {
     auto multisampled = colorTarget();
     multisampled.address = address(MultisampleStorage.data());
     multisampled.surfaceAddress = multisampled.address;
-    multisampled.samples = 2;
-    multisampled.coverageSamples = 2;
+    multisampled.samples = 4;
+    multisampled.coverageSamples = 4;
     const auto color = colorTarget();
     reset(device, color);
     draw(device, multisampled, {.scissor = Right});
@@ -649,15 +648,6 @@ void gpuWriteUnderAlias(AgcDriver::VulkanDevice& device) {
     expect(device, color, [](std::uint32_t x) { return x < LeftWidth || x >= Width - LeftWidth ? Drawn : Old; }, "a draw through an alias between repeated draws");
 }
 
-void dccClear(AgcDriver::VulkanDevice& device) {
-    const auto color = colorTarget(true);
-    reset(device, color);
-    arm(device, color);
-    std::fill(Keys.begin(), Keys.end(), std::uint8_t{0x20});
-    AgcDriver::GuestMemory::BumpCollectEpoch();
-    mustLookUp(device, color, {}, "a draw after DCC keys were cleared repeated its targets");
-    Keys.fill(0xffu);
-}
 
 void cmaskClear(AgcDriver::VulkanDevice& device) {
     const auto color = colorTarget(false, true);
@@ -682,6 +672,17 @@ std::byte* allocateWatched(std::size_t bytes) {
 #endif
     GuestAllocations::Mutation().Add(memory, bytes, true, true, true);
     return static_cast<std::byte*>(memory);
+}
+
+void dccClear(AgcDriver::VulkanDevice& device) {
+    auto color = colorTarget(true);
+    auto* keys = allocateWatched(Keys.size());
+    color.dccAddress = address(keys);
+    reset(device, color);
+    arm(device, color);
+    std::fill(keys, keys + Keys.size(), std::byte{0x20});
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    mustLookUp(device, color, {}, "a draw after DCC keys were cleared repeated its targets");
 }
 
 void cmaskClearRecorded(AgcDriver::VulkanDevice& device) {
@@ -771,17 +772,18 @@ void depthPlaneWrittenByCpu(AgcDriver::VulkanDevice& device) {
 
 void cmaskPaddingBesideExpandedTiles(AgcDriver::VulkanDevice& device) {
     auto color = colorTarget(false, true);
-    color.cmaskAddress = address(UnimportedCmask.data());
+    auto* cmask = reinterpret_cast<std::uint8_t*>(allocateWatched(Cmask.size()));
+    color.cmaskAddress = address(cmask);
     reset(device, color);
     const CmaskLayout layout(Width, Height);
-    UnimportedCmask.fill(0);
+    std::fill(cmask, cmask + Cmask.size(), std::uint8_t{0});
     for (std::uint32_t tileY = 0; tileY < layout.TilesY(); ++tileY) {
         for (std::uint32_t tileX = 0; tileX < layout.TilesX(); ++tileX) {
             const auto nibble = layout.Nibble(tileX, tileY);
-            UnimportedCmask[nibble / 2u] |= static_cast<std::uint8_t>(0xfu << ((nibble % 2u) * 4u));
+            cmask[nibble / 2u] |= static_cast<std::uint8_t>(0xfu << ((nibble % 2u) * 4u));
         }
     }
-    const std::span tiles(UnimportedCmask.data(), color.cmaskBytes);
+    const std::span tiles(cmask, color.cmaskBytes);
     Require(std::ranges::find(tiles, std::uint8_t{0}) != tiles.end(), "the CMASK has no padding beside its tiles");
     AgcDriver::GuestMemory::BumpCollectEpoch();
     bool repeated = false;
@@ -907,7 +909,7 @@ void colorMemoWithMsaaDepth(AgcDriver::VulkanDevice& device) {
     reset(device, color);
     auto depth = depthTarget(false);
     depth.address = address(MultisampleStorage.data());
-    depth.samples = 2;
+    depth.samples = 4;
     depth.htileAddress = 0;
     arm(device, color, {.depth = depth, .compare = VK_COMPARE_OP_ALWAYS, .prepareOnly = true});
     const auto before = lookups();
@@ -1078,8 +1080,8 @@ void claimAfterAbsorbedFill(AgcDriver::VulkanDevice& device) {
     auto multisampled = colorTarget();
     multisampled.address = address(MultisampleStorage.data());
     multisampled.surfaceAddress = multisampled.address;
-    multisampled.samples = 2;
-    multisampled.coverageSamples = 2;
+    multisampled.samples = 4;
+    multisampled.coverageSamples = 4;
     const auto color = colorTarget();
     reset(device, color);
     draw(device, multisampled, {.scissor = Right});
@@ -1106,6 +1108,29 @@ void claimAfterAbsorbedFill(AgcDriver::VulkanDevice& device) {
     Require(refusal.empty(), "a depth draw after a fill over an aliased multisampled target did not claim its memory: " + refusal);
 }
 
+void untrackedMetadataClear(AgcDriver::VulkanDevice& device, bool dcc) {
+    const auto color = colorTarget(dcc, !dcc);
+    Require(!AgcDriver::GuestMemory::Watched(dcc ? color.dccAddress : color.cmaskAddress, dcc ? Keys.size() : Cmask.size()), "the untracked metadata fixture is write-watched");
+    reset(device, color);
+    for (int repeat = 0; repeat < 4; ++repeat) draw(device, color);
+    const ProofFields before;
+    if (dcc) std::fill(Keys.begin(), Keys.end(), std::uint8_t{0x20});
+    else std::fill(Cmask.begin(), Cmask.end(), std::uint8_t{0});
+    requireMoved(before, "", "a CPU write to untracked metadata");
+    mustLookUp(device, color, {}, dcc ? "a target with untracked DCC keys repeated its targets" : "a target with an untracked CMASK repeated its targets");
+    expect(device, color, [](std::uint32_t x) { return leftOver(x, Clear); }, dcc ? "a repeat skipped a fast clear written to untracked DCC keys" : "a repeat skipped a fast clear written to an untracked CMASK");
+    std::ranges::fill(Keys, std::uint8_t{0xff});
+    std::ranges::fill(Cmask, std::uint8_t{0xff});
+}
+
+void untrackedDccClear(AgcDriver::VulkanDevice& device) {
+    untrackedMetadataClear(device, true);
+}
+
+void untrackedCmaskClear(AgcDriver::VulkanDevice& device) {
+    untrackedMetadataClear(device, false);
+}
+
 void descriptorIdentity() {
     auto color = colorTarget();
     auto depth = depthTarget(false);
@@ -1126,7 +1151,7 @@ void unchangedMemo(AgcDriver::VulkanDevice& device) {
     descriptorIdentity();
     const auto color = colorTarget();
     reset(device, color);
-    for (const auto samples : {0u, 1u, 2u}) {
+    for (const auto samples : {0u, 1u, 4u}) {
         DrawOptions options{};
         options.changePadding = true;
         if (samples != 0u) {
@@ -1152,7 +1177,9 @@ void unchangedMemo(AgcDriver::VulkanDevice& device) {
     }
 }
 
-const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 10> R3Scenarios{{
+const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 12> R3Scenarios{{
+    {"untracked-dcc", untrackedDccClear},
+    {"untracked-cmask", untrackedCmaskClear},
     {"claim", claimAfterAbsorbedFill},
     {"depth-proof", depthProofAfterMetadataWrite},
     {"baseline", validRefreshBaselines},

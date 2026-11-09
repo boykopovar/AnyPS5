@@ -3296,7 +3296,7 @@ TargetProof currentTargetProof(const Context& context) {
 
 enum class ColorMemoEvent {
     Accept, AcceptWithDepthMiss, Invalid, Descriptor, Resident, DepthOverlap,
-    Epoch, Proofs, Pending, Unwatch, Allocations, Surfaces, Released, Claims, Recorder, Device,
+    Epoch, Proofs, Pending, Unwatch, Allocations, Surfaces, Released, Claims, Recorder, Device, Metadata,
     PostDepthInvalidated, DepthFallback, AvoidedRefreshLookups, Count
 };
 
@@ -3307,7 +3307,7 @@ void noteColorMemo([[maybe_unused]] ColorMemoEvent event, [[maybe_unused]] std::
         "ColorMemo.Miss.Descriptor", "ColorMemo.Miss.Resident", "ColorMemo.Miss.DepthOverlap",
         "ColorMemo.Miss.Epoch", "ColorMemo.Miss.Proofs", "ColorMemo.Miss.Pending",
         "ColorMemo.Miss.Unwatch", "ColorMemo.Miss.Allocations", "ColorMemo.Miss.Surfaces",
-        "ColorMemo.Miss.Released", "ColorMemo.Miss.Claims", "ColorMemo.Miss.Recorder", "ColorMemo.Miss.Device",
+        "ColorMemo.Miss.Released", "ColorMemo.Miss.Claims", "ColorMemo.Miss.Recorder", "ColorMemo.Miss.Device", "ColorMemo.Miss.Metadata",
         "ColorMemo.PostDepthInvalidated", "DepthMemo.Fallback", "ColorMemo.AvoidedRefreshLookups"
     };
     static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(ColorMemoEvent::Count)> counts{};
@@ -3384,13 +3384,22 @@ bool colorOverlapsDepth(const State& state, const TargetBinding& binding) {
         (color.cmaskAddress != 0 && DepthTargetOverlaps(*state.depth, color.cmaskAddress, color.cmaskBytes));
 }
 
+bool metadataProved(const ColorTarget& color) {
+    const auto keys = std::max<std::size_t>(colorKeyCount(color, color.bytes), 1u);
+    const bool proved = (color.dccAddress == 0 || GuestMemory::CollectWrites(color.dccAddress, keys) != 0) &&
+        (color.chainDccAddress == 0 || GuestMemory::CollectWrites(color.chainDccAddress, keys) != 0) &&
+        (color.cmaskAddress == 0 || cmaskProved(color.cmaskAddress, color.cmaskBytes));
+    if (!proved) noteColorMemo(ColorMemoEvent::Metadata);
+    return proved;
+}
+
 void rememberTargets(const State& state, std::span<const TargetBinding> targets, std::span<const VkImageView> views, const TargetProof& proof) {
     ++targetMemoBuilds;
     auto& colors = targetMemo.colors;
     auto& depth = targetMemo.depth;
     const bool enabled = TargetMemoEnabled() && proof.epoch != 0;
     colors.valid = enabled && !targets.empty() && std::ranges::all_of(targets, [&](const TargetBinding& binding) {
-        return binding.resident != nullptr && binding.resident->Cached() && !binding.multisampled && binding.color.fmaskAddress == 0 && !colorOverlapsDepth(state, binding);
+        return binding.resident != nullptr && binding.resident->Cached() && !binding.multisampled && binding.color.fmaskAddress == 0 && !colorOverlapsDepth(state, binding) && metadataProved(binding.color);
     });
     if (colors.valid) {
         colors.proof = proof;
