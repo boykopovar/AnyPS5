@@ -260,7 +260,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         const auto generation = Graphics::Recorder::WriteGeneration();
         const bool changed = generation != seenGeneration || recheck;
         const bool labelDue = labelFlushDue();
-        const bool reap = sleeping && (behindCompletion || ownStoreUnlanded || ((reapAll || queue0Dormant.load(std::memory_order_relaxed)) && completionsPending()));
+        const bool reap = behindCompletion || ownStoreUnlanded || (sleeping && (reapAll || queue0Dormant.load(std::memory_order_relaxed)) && completionsPending());
         if (!changed && !labelDue && !reap) return false;
 
         if (!changed && !pollTryEach()) {
@@ -353,7 +353,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     static const bool storeHeldResults = std::getenv("APS5_NO_QUEUED_DRAW_READ_ORDER") == nullptr;
     const auto spinLimit = queue == 0 ? std::chrono::microseconds(1500) : std::chrono::microseconds(100);
     const auto spinStart = std::chrono::steady_clock::now();
-    bool spinning = pauseSpin;
+    bool spinning = pauseSpin && !behindCompletion && !ownStoreUnlanded;
     std::uint32_t polls = 0;
     StallWatch stall(queue);
     std::uint64_t producerToken = 0;
@@ -365,6 +365,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             return;
         }
         ++polls;
+        if (spinning && (behindCompletion || ownStoreUnlanded)) spinning = false;
         if (spinning) {
             PreciseSpinPause();
             if ((polls & 63u) != 0) continue;
