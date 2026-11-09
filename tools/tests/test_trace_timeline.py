@@ -42,6 +42,10 @@ class TimelineTests(unittest.TestCase):
         durations = sorted(slice_["dur"] for slice_ in slices)
         self.assertEqual(durations, [1000, 2000, 3000])
 
+    def test_window_keeps_only_the_selected_threads(self):
+        slices = trace_timeline.window_slices(trace_of(self.items), 0, 10000, threads=["presenter"])
+        self.assertEqual([slice_["name"] for slice_ in slices], ["Driver.Present"])
+
 
 
 def trace_timeline_slices(items):
