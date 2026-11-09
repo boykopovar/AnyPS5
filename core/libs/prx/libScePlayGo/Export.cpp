@@ -128,8 +128,12 @@ static const ChunkTable& Chunks() {
         static const std::regex defaultChunk(R"re(default_chunk="(\d+)")re");
         std::smatch match;
         if (std::regex_search(text, match, defaultChunk)) {
-            const auto last = std::stoul(match[1].str());
-            for (unsigned long id = 0; id <= last && id <= 0xFFFF; ++id) result.insert(static_cast<uint16_t>(id));
+            const auto token = match[1].str();
+            std::uint32_t last = 0;
+            const auto parse = std::from_chars(token.data(), token.data() + token.size(), last);
+            if (parse.ec != std::errc{} || last > 0xFFFF)
+                throw std::runtime_error("scePlayGo: playgo-chunkdefs.xml default_chunk " + token + " is not a chunk id from 0 to 65535");
+            for (std::uint32_t id = 0; id <= last; ++id) result.insert(static_cast<uint16_t>(id));
         }
         return table;
     }();
