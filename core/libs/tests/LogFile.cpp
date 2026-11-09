@@ -444,7 +444,18 @@ Result Run(const std::string& role, const std::string& variable, bool set = true
         }
         if (idle) Sleep(2);
     }
-    if (open[0] || open[1]) std::fprintf(stderr, "role %s open %d %d\n", role.c_str(), open[0], open[1]);
+    if (open[0] || open[1]) {
+        DWORD state = 0;
+        const bool running = GetExitCodeProcess(child, &state) != 0 && state == STILL_ACTIVE;
+        const auto tail = [](const std::string& text) { return text.size() > 200 ? text.substr(text.size() - 200) : text; };
+        std::fprintf(stderr, "role %s open %d %d, the child is %s (state %lu), read %zu stdout and %zu stderr bytes\n", role.c_str(), open[0], open[1], running ? "still running" : "not running", static_cast<unsigned long>(state), result.out.size(), result.err.size());
+        std::fprintf(stderr, "stdout tail: \"%s\"\nstderr tail: \"%s\"\n", tail(result.out).c_str(), tail(result.err).c_str());
+        TerminateProcess(child, 1);
+        WaitForSingleObject(child, 5000);
+        CloseHandle(child);
+        Close(out.read);
+        Close(err.read);
+    }
     Require(!open[0] && !open[1], "the child kept its streams open");
     DWORD code = 0;
     Require(WaitForSingleObject(child, 20000) == WAIT_OBJECT_0 && GetExitCodeProcess(child, &code) != 0, "wait for the child");
