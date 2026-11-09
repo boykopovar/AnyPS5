@@ -48,19 +48,29 @@ static int CheckBuiltInModule(const Ngs2CustomRackModuleInfo& info) {
     return SCE_NGS2_OK;
 }
 
-static void CheckDelayModule(std::uint32_t rackId, const Ngs2CustomRackModuleInfo& info) {
+static int CheckDelayModule(std::uint32_t rackId, const Ngs2CustomRackModuleInfo& info) {
     if (rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || info.state_size != 0 || info.state_offset != 0) {
         throw std::runtime_error("NGS2: this custom Delay rack or module state is not implemented");
     }
-    if (info.option == nullptr || info.option->size != sizeof(Ngs2CustomDelayModuleOption)) {
+    if (info.option == nullptr) {
         throw std::runtime_error("NGS2: this custom Delay module option size is not implemented");
     }
+    if (info.option->size != sizeof(Ngs2CustomDelayModuleOption)) return SCE_NGS2_ERROR_INVALID_OPTION_SIZE;
     Ngs2CustomDelayModuleOption delay{};
     std::memcpy(&delay, info.option, sizeof(delay));
-    if (delay.type > 1 || delay.max_taps == 0 || delay.max_taps > 8 ||
-        !(delay.max_length >= 1.0f && delay.max_length <= 20000.0f) || delay.reserved != 0) {
+    if (!std::isfinite(delay.max_length) || delay.reserved != 0) {
         throw std::runtime_error("NGS2: these custom Delay module option values are not implemented");
     }
+    const bool invalidType = delay.type > 1;
+    const bool invalidTaps = delay.max_taps == 0 || delay.max_taps > 8;
+    const bool invalidLength = delay.max_length < 1.0f || delay.max_length > 20000.0f;
+    if (invalidType + invalidTaps + invalidLength > 1) {
+        throw std::runtime_error("NGS2: custom Delay option error precedence is not implemented");
+    }
+    if (invalidType) return SCE_NGS2_ERROR_INVALID_DELAY_TYPE;
+    if (invalidTaps) return SCE_NGS2_ERROR_INVALID_DELAY_MAX_TAPS;
+    if (invalidLength) return SCE_NGS2_ERROR_INVALID_DELAY_MAX_LENGTH;
+    return SCE_NGS2_OK;
 }
 
 int Ngs2CheckCustomRack(std::uint32_t rackId, const Ngs2CustomRackOption& option, std::uint32_t maxInputs) {
@@ -84,7 +94,8 @@ int Ngs2CheckCustomRack(std::uint32_t rackId, const Ngs2CustomRackOption& option
             }
             if (info.option != nullptr) throw std::runtime_error("NGS2: a custom UserFx module option is not implemented");
         } else if (info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_DELAY) {
-            CheckDelayModule(rackId, info);
+            const int result = CheckDelayModule(rackId, info);
+            if (result != SCE_NGS2_OK) return result;
         } else if (BuiltInModuleName(info.module_id) == nullptr) {
             throw std::runtime_error("NGS2: custom module id " + Ngs2Hex(info.module_id) + " is not implemented");
         }
@@ -387,6 +398,7 @@ void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         const auto& modules = voice.rack->customModuleIds;
         if (index >= modules.size()) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PARAM_ID};
         if (modules[index] != SCE_NGS2_CUSTOM_MODULE_ID_FILTER) throw std::runtime_error("NGS2: a custom filter param naming a module other than a filter is not implemented");
+        if (param.size < sizeof(Ngs2CustomVoiceFilterParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
         const auto& custom = reinterpret_cast<const Ngs2CustomVoiceFilterParam&>(param);
         if (custom.type >= 1 && custom.type <= 11 &&
             std::any_of(modules.begin(), modules.begin() + index, [](std::uint32_t id) { return id != SCE_NGS2_CUSTOM_MODULE_ID_FILTER; })) {

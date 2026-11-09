@@ -2,6 +2,10 @@
 
 #include "SceTypes.hpp"
 
+namespace WebCore {
+class DOMWrapperWorld;
+}
+
 extern "C" {
 
 int APS5_VABI WKErrorCopyLocalizedDescription();
@@ -28,7 +32,6 @@ int APS5_VABI _ZN7WebCore7Element26scrollIntoViewIfNotVisibleEb();
 int APS5_VABI _ZNK3JSC18PropertyDescriptor12configurableEv();
 int APS5_VABI _ZN3JSC30int52AwareSpeculationFromValueENS_7JSValueE();
 int APS5_VABI _ZN9Inspector18InjectedScriptHost7subtypeEPN3JSC14JSGlobalObjectENS1_7JSValueE();
-int APS5_VABI _ZN7WebCore13HTTPHeaderMap3addERKN3WTF6StringES4_();
 int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocalC2EPNS_19InspectorControllerEPNS_4PageESt10unique_ptrINS0_8SettingsESt14default_deleteIS6_EE();
 int APS5_VABI _ZN7WebCore23ScaleTransformOperation5blendEPKNS_18TransformOperationEdb();
 int APS5_VABI _ZN7WebCore14XMLHttpRequestD1Ev();
@@ -48,7 +51,6 @@ int APS5_VABI _ZNK7WebCore11WindowProxy6windowEv();
 int APS5_VABI WKPageLoadFile();
 int APS5_VABI _ZN3JSC13JSSetIterator14finishCreationERNS_2VMEPNS_5JSSetENS_13IterationKindE();
 int APS5_VABI _ZN3JSC21MarkedJSValueRefArrayC1EP15OpaqueJSContextj();
-int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE();
 int APS5_VABI _ZNK7WebCore4Page14renderTreeSizeEv();
 int APS5_VABI _ZN9Inspector22HeapFrontendDispatcher13trackingStartEdRKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore11JSDOMWindow9setOpenerERN3JSC14JSGlobalObjectENS1_7JSValueE();
@@ -71,12 +73,11 @@ int APS5_VABI _ZN7WebCore18TextureMapperLayer18setFixedToViewportEb();
 int APS5_VABI WKBundleBackForwardListGetForwardListCount();
 int APS5_VABI _ZN7WebCore28collectVaryingRequestHeadersEPNS_21NetworkStorageSessionERKNS_15ResourceRequestERKNS_16ResourceResponseE();
 int APS5_VABI _ZN7WebCore19approximateAsRegionERKNS_11RoundedRectEj();
-int APS5_VABI _ZN7WebCore11HistoryItem8formDataEv();
 int APS5_VABI _ZN3WTF9URLParser23maybeCanonicalizeSchemeERKNS_6StringE();
 int APS5_VABI _ZN3WTF21MemoryPressureHandler15setProcessStateENS_18WebsamProcessStateE();
 int APS5_VABI _ZThn16_N9Inspector21InspectorConsoleAgent6enableERN3WTF6StringE();
 int APS5_VABI _ZN7WebCore27TranslateTransformOperationC1ERKNS_6LengthES3_S3_NS_18TransformOperation13OperationTypeE();
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidClearWindowObjectInWorldERNS_15DOMWrapperWorldE();
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidClearWindowObjectInWorldERNS_15DOMWrapperWorldE(WebCore::DOMWrapperWorld&);
 int APS5_VABI WKDownloadCancel();
 int APS5_VABI _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_();
 int APS5_VABI _ZNK7WebCore11MessagePort5derefEv();
@@ -116,7 +117,7 @@ int APS5_VABI _ZThn16_N9Inspector21InspectorRuntimeAgent8evaluateERN3WTF6StringE
 int APS5_VABI _ZNK7WebCore27TranslateTransformOperationeqERKNS_18TransformOperationE();
 int APS5_VABI _ZN7WebCore9FrameView24forceLayoutForPaginationERKNS_9FloatSizeES3_fNS_19AdjustViewSizeOrNotE();
 int APS5_VABI _ZN7WebCore11DisplayList11ClearShadowD1Ev();
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
 int APS5_VABI _ZNK7WebCore6Widget25convertFromContainingViewERKNS_8IntPointE();
 int APS5_VABI _ZNK7WebCore13HTTPHeaderMap12isolatedCopyEv();
 int APS5_VABI _ZN7WebCore22DefaultFilterOperationD0Ev();
@@ -128,7 +129,6 @@ int APS5_VABI _ZN3JSC9Integrity22auditCellMinimallySlowERNS_2VMEPNS_6JSCellE();
 int APS5_VABI _ZN9Inspector24TargetFrontendDispatchernwEm();
 int APS5_VABI _ZNK7WebCore16HTMLImageElement13naturalHeightEv();
 int APS5_VABI _ZN3JSC10LinkBuffer8linkCodeERNS_14MacroAssemblerENS_20JITCompilationEffortE();
-int APS5_VABI WKNotificationPermissionRequestAllow();
 int APS5_VABI _ZN7WebCore9FrameView11removeChildERNS_6WidgetE();
 
 }

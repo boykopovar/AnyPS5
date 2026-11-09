@@ -18,9 +18,6 @@
 #include <mach/mach_vm.h>
 #endif
 #endif
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
 #if defined(__linux__) && defined(__x86_64__)
 #include <asm/prctl.h>
 #include <sys/syscall.h>
@@ -34,6 +31,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostExecutable.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -63,6 +61,10 @@
 #include <vector>
 #ifndef _WIN32
 #include <sys/resource.h>
+#endif
+#ifdef __APPLE__
+#include <crt_externs.h>
+#include <mach/mach.h>
 #endif
 
 extern char** environ;
@@ -109,7 +111,10 @@ bool StoreGuestId(std::uint32_t* output) {
 #elif defined(__linux__)
     iovec local{const_cast<std::uint32_t*>(&zero), sizeof(zero)};
     iovec remote{output, sizeof(zero)};
-    return ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0) == static_cast<ssize_t>(sizeof(zero));
+    const int saved = errno;
+    const auto copied = ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0);
+    if (copied < 0 && errno == EFAULT) errno = saved;
+    return copied == static_cast<ssize_t>(sizeof(zero));
 #elif defined(__APPLE__)
     return ::mach_vm_write(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(output),
         reinterpret_cast<vm_offset_t>(const_cast<std::uint32_t*>(&zero)), sizeof(zero)) == KERN_SUCCESS;
@@ -134,8 +139,10 @@ bool ReadGuest(void* destination, const void* source, std::size_t bytes) {
 #elif defined(__linux__)
     iovec local{destination, bytes};
     iovec remote{const_cast<void*>(source), bytes};
+    const int saved = errno;
     const auto copied = ::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0 && errno != EFAULT) throw std::runtime_error("credentials: process_vm_readv failed with errno " + std::to_string(errno));
+    errno = saved;
     return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
 #elif defined(__APPLE__)
     mach_vm_size_t copied = 0;
@@ -157,8 +164,10 @@ bool WriteGuest(void* destination, const void* source, std::size_t bytes) {
 #elif defined(__linux__)
     iovec local{const_cast<void*>(source), bytes};
     iovec remote{destination, bytes};
+    const int saved = errno;
     const auto copied = ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0 && errno != EFAULT) throw std::runtime_error("credentials: process_vm_writev failed with errno " + std::to_string(errno));
+    errno = saved;
     return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
 #elif defined(__APPLE__)
     return ::mach_vm_write(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(destination),
@@ -202,6 +211,11 @@ public:
             if (_wputenv_s(L"ANYPS5_LOADEXEC_ARGV_SKIP", L"") != 0 || !SetEnvironmentVariableW(L"ANYPS5_LOADEXEC_ARGV_SKIP", nullptr))
                 throw std::runtime_error("LoadExec: cannot clear the argument marker");
         }
+#elif defined(__APPLE__)
+        const int count = *_NSGetArgc();
+        char** values = *_NSGetArgv();
+        for (int index = 0; index < count; ++index)
+            arguments.push_back(values[index]);
 #else
         std::ifstream stream("/proc/self/cmdline", std::ios::binary);
         if (!stream)
@@ -345,51 +359,11 @@ bool ExecProgramFound(std::string_view name, bool search, int& error, std::strin
     }
 }
 
-std::string ExecFlattenedName(const std::string& guest) {
-    std::string_view relative(guest);
-    if (!relative.starts_with(ExecApplicationRoot))
-        NotImplemented_nid_no_patch((std::string("exec: executables outside /app0 (") + guest + ")").c_str());
-    relative.remove_prefix(ExecApplicationRoot.size());
-    std::string name;
-    while (true) {
-        const std::size_t separator = relative.find('/');
-        const std::string_view component = relative.substr(0, separator);
-        if (component.empty() || component == "." || component == "..")
-            NotImplemented_nid_no_patch((std::string("exec: a path with an empty, . or .. component (") + guest + ")").c_str());
-        name += (name.empty() ? "" : ".") + std::string(component);
-        if (separator == std::string_view::npos) return name;
-        relative.remove_prefix(separator + 1);
-    }
-}
-
-std::filesystem::path ExecOwnExecutable() {
-#if defined(_WIN32)
-    std::wstring own(32768, L'\0');
-    const DWORD length = GetModuleFileNameW(nullptr, own.data(), static_cast<DWORD>(own.size()));
-    if (length == 0 || length >= own.size())
-        throw std::system_error(GetLastError(), std::system_category(), "exec: GetModuleFileNameW");
-    own.resize(length);
-    return std::filesystem::path(own);
-#elif defined(__APPLE__)
-    std::uint32_t size = 0;
-    _NSGetExecutablePath(nullptr, &size);
-    std::vector<char> executable(size);
-    std::error_code error;
-    if (_NSGetExecutablePath(executable.data(), &size) == 0) return std::filesystem::canonical(executable.data(), error);
-    throw std::runtime_error("exec: cannot locate the executable");
-#else
-    std::error_code error;
-    const auto own = std::filesystem::read_symlink("/proc/self/exe", error);
-    if (error) throw std::system_error(error, "exec: cannot read /proc/self/exe");
-    return own;
-#endif
-}
-
 std::filesystem::path ExecConvertedTarget(const std::string& guest) {
-    const auto own = ExecOwnExecutable();
+    const auto own = HostExecutable::Own("exec");
     if (guest == ExecMainExecutable) return own;
     std::error_code error;
-    const auto name = std::filesystem::path(reinterpret_cast<const char8_t*>((ExecFlattenedName(guest) + own.extension().string()).c_str()));
+    const auto name = std::filesystem::path(reinterpret_cast<const char8_t*>((HostExecutable::ConvertedName(guest, [](const std::string& reason) { NotImplemented_nid_no_patch(("exec: " + reason).c_str()); }) + own.extension().string()).c_str()));
     const auto target = own.parent_path() / name;
     if (!std::filesystem::is_regular_file(target, error))
         NotImplemented_nid_no_patch((std::string("exec: ") + guest + " without its converted executable; relink with --executable " +
@@ -412,35 +386,6 @@ std::vector<std::string> ExecArgumentVector(char* const* arguments) {
 }
 
 #ifdef _WIN32
-std::wstring ExecWide(const std::string& text) {
-    if (text.empty()) return {};
-    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    if (size <= 0) throw std::runtime_error("exec: argument is not valid UTF-8");
-    std::wstring wide(static_cast<std::size_t>(size), L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), wide.data(), size);
-    return wide;
-}
-
-std::wstring ExecQuoted(const std::wstring& argument) {
-    if (!argument.empty() && argument.find_first_of(L" \t\n\v\"") == std::wstring::npos) return argument;
-    std::wstring quoted = L"\"";
-    for (std::size_t index = 0;; ++index) {
-        std::size_t backslashes = 0;
-        while (index < argument.size() && argument[index] == L'\\') {
-            ++backslashes;
-            ++index;
-        }
-        if (index == argument.size()) {
-            quoted.append(backslashes * 2, L'\\');
-            break;
-        }
-        quoted.append(argument[index] == L'"' ? backslashes * 2 + 1 : backslashes, L'\\');
-        quoted.push_back(argument[index]);
-    }
-    quoted.push_back(L'"');
-    return quoted;
-}
-
 void ExecDuplicate(HANDLE source, DWORD access, HANDLE* target) {
     if (!DuplicateHandle(GetCurrentProcess(), source, GetCurrentProcess(), target, access, TRUE, access ? 0 : DUPLICATE_SAME_ACCESS))
         throw std::system_error(GetLastError(), std::system_category(), "exec: duplicating a handle");
@@ -472,10 +417,10 @@ bool ExecWindowsImage(const std::filesystem::path& target) {
     const wchar_t* skipPrefix = SkipVariable;
     const std::size_t parentPrefixLength = std::size(ParentVariable) - 1;
     const std::size_t skipPrefixLength = std::size(SkipVariable) - 1;
-    std::wstring command = ExecQuoted(target.wstring());
+    std::wstring command = HostExecutable::QuotedArgument(target.wstring());
     for (const auto& argument : arguments) {
         if (!command.empty()) command += L' ';
-        command += ExecQuoted(ExecWide(argument));
+        command += HostExecutable::QuotedArgument(HostExecutable::Wide(argument, "exec"));
     }
     if (command.size() >= 32767) throw std::runtime_error("exec: command line is too long");
     std::vector<std::wstring> entries;
@@ -492,7 +437,7 @@ bool ExecWindowsImage(const std::filesystem::path& target) {
             return separator == std::wstring::npos ? entry : entry.substr(0, separator);
         };
         for (std::size_t index = 0; environment[index] != nullptr; ++index) {
-            std::wstring replaced = ExecWide(environment[index]);
+            std::wstring replaced = HostExecutable::Wide(environment[index], "exec");
             const std::wstring replacedName = name(replaced);
             for (std::size_t existing = 0; existing < entries.size();) {
                 if (name(entries[existing]) == replacedName) {
@@ -602,6 +547,12 @@ int APS5_VABI getpid_nid_postfix(void) {
     if (pid == 0 || static_cast<std::uint64_t>(pid) > static_cast<std::uint64_t>(std::numeric_limits<int>::max()))
         throw std::runtime_error("Process identifier is outside the guest range");
     return static_cast<int>(pid);
+}
+
+int APS5_VABI sceKernelGetProcessAbiType(int pid) {
+    if (pid == -1 || pid == getpid_nid_postfix()) return 1;
+    if (pid == 0) return 0;
+    throw std::runtime_error("sceKernelGetProcessAbiType: unsupported process id " + std::to_string(pid));
 }
 
 int APS5_VABI getsid_nid_postfix(int pid) {
@@ -924,6 +875,11 @@ int APS5_VABI sceKernelGetCurrentCpu(void) {
             throw std::system_error(GetLastError(), std::system_category(), "Reading processor group size");
         index += count;
     }
+#elif defined(__APPLE__)
+    std::size_t cpu = 0;
+    if (const int error = ::pthread_cpu_number_np(&cpu); error != 0)
+        throw std::system_error(error, std::generic_category(), "Reading current processor");
+    const auto index = static_cast<unsigned>(cpu);
 #else
     const int cpu = ::sched_getcpu();
     if (cpu < 0)
@@ -952,7 +908,8 @@ void APS5_VABI sceKernelSetGPO(std::uint32_t bits) {
 int APS5_VABI sceKernelGetOpenPsId(void* openPsIdOutput) {
     if (!openPsIdOutput)
         throw std::invalid_argument("sceKernelGetOpenPsId: null output");
-    std::memcpy(openPsIdOutput, openPsId.data(), openPsId.size());
+    if (!GuestCopyOut_nid_no_patch(openPsIdOutput, openPsId.data(), openPsId.size()))
+        return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -1011,10 +968,15 @@ int APS5_VABI sysarch(int operation, void* parameters) {
     constexpr int getFsBase = 128;
     constexpr int getGsBase = 130;
     constexpr int setGsBase = 131;
+    constexpr std::array<int, 2> xfpuStateOperations{11, 132};
     constexpr std::uint64_t userAddressEnd = 0x0000800000000000ull;
     constexpr std::array<int, 14> definedOperations{0, 1, 3, 4, 7, 8, 9, 10, 11, 128, 129, 130, 131, 132};
     if (std::find(definedOperations.begin(), definedOperations.end(), operation) == definedOperations.end()) {
         *__error_nid_postfix() = guestInvalid;
+        return -1;
+    }
+    if (parameters == nullptr && std::find(xfpuStateOperations.begin(), xfpuStateOperations.end(), operation) != xfpuStateOperations.end()) {
+        *__error_nid_postfix() = guestFault;
         return -1;
     }
     const bool i386 = operation == i386GetFsBase || operation == i386GetGsBase;
@@ -1110,8 +1072,27 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
     result.ru_stime.tv_usec = static_cast<std::int64_t>(kernelMicros % 1000000ULL);
 #else
     struct rusage native{};
+#ifdef __APPLE__
+    if (who == 0) {
+        if (::getrusage(RUSAGE_SELF, &native) != 0)
+            throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
+    } else {
+        thread_basic_info_data_t info{};
+        mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+        const mach_port_t thread = mach_thread_self();
+        const kern_return_t status = thread_info(thread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info), &count);
+        mach_port_deallocate(mach_task_self(), thread);
+        if (status != KERN_SUCCESS)
+            throw std::runtime_error("getrusage: thread_info failed");
+        native.ru_utime.tv_sec = info.user_time.seconds;
+        native.ru_utime.tv_usec = info.user_time.microseconds;
+        native.ru_stime.tv_sec = info.system_time.seconds;
+        native.ru_stime.tv_usec = info.system_time.microseconds;
+    }
+#else
     if (::getrusage(who == 0 ? RUSAGE_SELF : RUSAGE_THREAD, &native) != 0)
         throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
+#endif
     result.ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
     result.ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);
     result.ru_stime.tv_sec = static_cast<std::int64_t>(native.ru_stime.tv_sec);
