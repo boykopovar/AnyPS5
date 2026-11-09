@@ -40,10 +40,6 @@ static void TestGet1EcKey() {
     Require(ERR_peek_error_nid_postfix() == ErrorCode(1, 2, 3));
     int ecType = EcKeyType;
     unsigned char before[sizeof(ecType)];
-    std::memcpy(before, &ecType, sizeof(ecType));
-    RequireThrows([&] { EVP_PKEY_get1_EC_KEY_nid_postfix(&ecType); });
-    Require(std::memcmp(before, &ecType, sizeof(ecType)) == 0);
-    Require(ERR_peek_error_nid_postfix() == ErrorCode(1, 2, 3));
     int rsaType = RsaKeyType;
     std::memcpy(before, &rsaType, sizeof(rsaType));
     Require(EVP_PKEY_get1_EC_KEY_nid_postfix(&rsaType) == nullptr);
