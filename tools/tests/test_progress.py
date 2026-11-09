@@ -393,14 +393,17 @@ class ProgressTests(unittest.TestCase):
                 "    \"    call \" APS5_ASM_SYMBOL(\"Finish_nid_no_patch\") \"\\n\"\n"
                 "    APS5_ASM_FUNCTION( \"restore_nid_postfix\" )\n"
                 "    APS5_ASM_FUNCTION(\"Helper_nid_no_patch\")\n"
+                "    APS5_SIGNAL_ASM_FUNCTION(\"signal_nid_postfix\")\n"
+                "    APS5_ASM_FUNCTION(\"Forward_nid_no_patch\")\n"
                 "    \"    ret\\n\");\n"
                 "#endif\n"
+                "APS5_EXPORT(\"AAAAAAAAAAA\", Forward_nid_no_patch);\n"
                 "// APS5_ASM_FUNCTION(\"Comment_nid_postfix\")\n"
                 "/* APS5_ASM_FUNCTION(\"BlockComment_nid_postfix\") */\n"
                 "const char* note = R\"(APS5_ASM_FUNCTION(\"Literal_nid_postfix\"))\";\n",
                 encoding="utf-8")
             group = progress.scan_library(library)
-        self.assertEqual(group["done_names"], ["capture_nid_postfix", "restore_nid_postfix"])
+        self.assertEqual(group["done_names"], ["Forward_nid_no_patch", "capture_nid_postfix", "restore_nid_postfix", "signal_nid_postfix"])
         self.assertEqual(group["todo_names"], [])
         self.assertEqual(group["inert_names"], [])
 
