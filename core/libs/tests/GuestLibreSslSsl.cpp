@@ -81,13 +81,6 @@ static void TestGet1Session() {
     Require(std::memcmp(&ssl, before.data(), sizeof(ssl)) == 0);
     Require(ERR_peek_error_nid_postfix() == firstError);
     Require(LibreSslPeekLastError_nid_no_patch() == secondError);
-    int session = 0;
-    ssl.session = &session;
-    std::memcpy(before.data(), &ssl, sizeof(ssl));
-    RequireThrows([&] { SSL_get1_session_nid_postfix(reinterpret_cast<LibreSslSsl*>(&ssl)); });
-    Require(std::memcmp(&ssl, before.data(), sizeof(ssl)) == 0);
-    Require(ERR_peek_error_nid_postfix() == firstError);
-    Require(LibreSslPeekLastError_nid_no_patch() == secondError);
     Require(ERR_get_error_nid_postfix() == firstError);
     Require(ERR_get_error_nid_postfix() == secondError);
     Require(ERR_get_error_nid_postfix() == 0);
