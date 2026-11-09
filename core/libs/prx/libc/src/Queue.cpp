@@ -12,9 +12,7 @@ struct GuestQueueElement {
 }
 
 extern "C" void APS5_VABI insque_nid_postfix(void* element, void* pred) {
-    if (element == nullptr) {
-        NotImplemented_nid_no_patch(__func__);
-    }
+    if (element == nullptr) return;
     auto* const elem = static_cast<GuestQueueElement*>(element);
     if (pred == nullptr) {
         elem->q_forw = nullptr;
