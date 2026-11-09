@@ -184,6 +184,7 @@ std::uint64_t AddressDrawReuseVerifications();
 enum class DrawStopForTest { None = 0, ReturnAfterResolve = 1, ThrowAfterResolve = 2 };
 void SetSpaceKeepFailuresForTest(std::uint32_t count);
 void SetDrawStopAfterResolveForTest(DrawStopForTest stop);
+std::uint64_t TargetMemoBuildsForTest();
 
 }
 

@@ -965,6 +965,7 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
         ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); ClearMultisampleTargets(context.device); }
     } cleanup{recorder, context};
     const auto view = DepthSurfaceView(context, target);
+    Require(RepeatDepthSurfaceView(context, target, false, false) == VK_NULL_HANDLE, "native multisample depth unexpectedly acquired a repeat certificate");
     if (write == PublicationWrite::DrawAlias) {
         ColorTarget color{};
         color.address = color.surfaceAddress = target.address;
