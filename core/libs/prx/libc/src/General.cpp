@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -91,8 +92,10 @@ bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
 #elif defined(__linux__)
     iovec local{destination, bytes};
     iovec remote{const_cast<void*>(source), bytes};
+    const int saved = errno;
     const auto copied = process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0 && errno != EFAULT) throw std::runtime_error("guest path: process_vm_readv failed with errno " + std::to_string(errno));
+    errno = saved;
     return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
 #elif defined(__APPLE__)
     mach_vm_size_t copied = 0;
@@ -839,9 +842,13 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
 #elif defined(__linux__)
     iovec local{const_cast<void*>(source), bytes};
     iovec remote{destination, bytes};
+    const int saved = errno;
     const ssize_t copied = ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0) {
-        if (errno == EFAULT) return false;
+        if (errno == EFAULT) {
+            errno = saved;
+            return false;
+        }
         throw std::runtime_error("GuestCopyOut: process_vm_writev failed with errno " + std::to_string(errno));
     }
     return static_cast<std::size_t>(copied) == bytes;
@@ -927,6 +934,7 @@ extern "C" int APS5_VABI chdir_nid_postfix(const char* path) {
 
 extern "C" char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size) {
     if (buffer && size == 0) { errno = 22; return nullptr; }
+    if (buffer && size == 1) { errno = 34; return nullptr; }
     try {
         auto& state = Directories();
         std::lock_guard lock(state.mutex);
@@ -1017,8 +1025,13 @@ std::atomic<std::uint64_t> notImplementedCalls{0};
 
 }
 
-extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName) {
+extern "C" [[noreturn]] void (NotImplemented_nid_no_patch)(const char* funcName) {
+    NotImplementedAt_nid_no_patch(funcName, "", 0);
+}
+
+extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* funcName, const char* file, int line) {
     notImplementedCalls.fetch_add(1, std::memory_order_relaxed);
+    LibcRunReportMissingFunction_nid_no_patch(funcName, file, line);
     throw std::runtime_error(std::string(funcName) + " not implemented");
 }
 
