@@ -179,7 +179,6 @@
 | `Unknown` | `C3ToW2CA+hM` |
 | `Unknown` | `C3xgqN95IoE` |
 | `sceKernelSwitchToTrinityMode` | `Cz48pcLnLCY` |
-| `sceKernelIsGenuineCronosCex` | `DB0muDALi4Y` |
 | `Unknown` | `DWWduhQYA3I` |
 | `Unknown` | `Dv8In6FvzuM` |
 | `Unknown` | `E58GHGcQT7I` |
