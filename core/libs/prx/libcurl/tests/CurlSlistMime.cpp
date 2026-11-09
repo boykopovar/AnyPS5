@@ -45,7 +45,9 @@ int main() {
     Require(serialized.find("Content-Disposition: form-data; name=\"field\"") != std::string::npos);
     Require(serialized.find("value") != std::string::npos);
     Require(curl_formget_nid_postfix(form, nullptr, RejectFormData) == CURLE_READ_ERROR);
-    curl_formfree_nid_postfix(form);
+    free_nid_postfix(form->name);
+    free_nid_postfix(form->contents);
+    free_nid_postfix(form);
     CURL* easy = curl_easy_init_nid_postfix();
     Require(easy != nullptr);
     curl_mime* mime = curl_mime_init_nid_postfix(easy);
