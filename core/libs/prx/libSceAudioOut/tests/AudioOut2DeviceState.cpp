@@ -93,6 +93,14 @@ void PortStateRejectsBadArguments(AudioOut2ContextHandle context) {
     Require(sceAudioOut2PortGetState(port, &state) == errorInvalidHandle);
 }
 
+void ContextSetAttributesChecksArguments(AudioOut2ContextHandle context) {
+    const AudioOut2Attribute attribute{0, 0, nullptr, 0};
+    Require(sceAudioOut2ContextSetAttributes(0, &attribute, 1) == errorInvalidHandle);
+    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 1) == errorInvalidArgument);
+    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 0) == 0);
+    Require(sceAudioOut2ContextSetAttributes(context, &attribute, 1) == 0);
+}
+
 void SpeakerInfoReportsTheFrontPair() {
     AudioOut2SpeakerInfo info;
     std::memset(&info, 0xAB, sizeof(info));
@@ -172,6 +180,7 @@ int main() {
 
     PortStateFollowsTheDataFormat(context);
     PortStateRejectsBadArguments(context);
+    ContextSetAttributesChecksArguments(context);
     SpeakerInfoReportsTheFrontPair();
     SpeakerInfoRejectsBadFlags();
     SystemStateIsSilentAndRejectsNull();

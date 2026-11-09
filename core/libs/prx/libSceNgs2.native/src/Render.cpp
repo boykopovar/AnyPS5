@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "Ngs2Internal.hpp"
 
@@ -289,47 +291,53 @@ float Ngs2FixedDownmixLevel(std::uint32_t sourceChannels, std::uint32_t source, 
     return RowLevel(rows[source], destChannels, dest);
 }
 
-void Ngs2PrepareControlMix(Ngs2Voice& voice) {
-    for (auto& port : voice.ports) port.rampFrom.clear();
-    const bool changed = std::any_of(voice.pendingControls.begin(), voice.pendingControls.end(), [](const auto& control) {
-        return std::holds_alternative<Ngs2VoicePortVolumeParam>(control) || std::holds_alternative<Ngs2VoicePortMatrixParam>(control) || std::holds_alternative<Ngs2MatrixControl>(control);
-    });
-    if (!changed) return;
-    for (auto& port : voice.ports) {
-        if (port.dest == nullptr || voice.channels == 0) continue;
-        const auto outputs = port.dest->InputChannels();
-        const auto* matrix = port.matrix < 0 || voice.matrices[port.matrix].empty() ? nullptr : &voice.matrices[port.matrix];
-        port.rampFrom.assign(static_cast<std::size_t>(outputs) * voice.channels, 0.0f);
-        for (std::uint32_t dst = 0; dst < outputs; ++dst) for (std::uint32_t src = 0; src < voice.channels; ++src) {
-            const auto index = dst * voice.channels + src;
-            if (matrix == nullptr || dst < matrix->size() / voice.channels) port.rampFrom[index] = port.volume *
-                (matrix == nullptr ? Ngs2DefaultLevel(voice.channels, src, outputs, dst) : (*matrix)[index]);
-        }
-    }
+static bool PortMixesAudio(const Ngs2Port& port) {
+    return port.volume != 0.0f || std::any_of(port.mixedGains.begin(), port.mixedGains.end(), [](float gain) { return gain != 0.0f; });
 }
 
-static void MixPort(Ngs2Voice& voice, const Ngs2Voice& source, const Ngs2Port& port, std::uint32_t sourceBuffer, std::uint32_t grain) {
+static std::uint32_t PortOutputs(const Ngs2Voice& voice, const Ngs2Voice& source, const Ngs2Port& port) {
+    const auto* matrix = port.matrix < 0 || source.matrices[port.matrix].empty() ? nullptr : &source.matrices[port.matrix];
+    const auto channels = voice.InputChannels();
+    return static_cast<std::uint32_t>(matrix == nullptr ? channels : std::min<std::size_t>(channels, matrix->size() / source.channels));
+}
+
+static std::vector<float> PortGains(const Ngs2Voice& voice, const Ngs2Voice& source, const Ngs2Port& port, std::uint32_t& outputs) {
+    const auto* matrix = port.matrix < 0 || source.matrices[port.matrix].empty() ? nullptr : &source.matrices[port.matrix];
+    const auto channels = voice.InputChannels();
+    outputs = PortOutputs(voice, source, port);
+    std::vector<float> gains(static_cast<std::size_t>(outputs) * source.channels);
+    for (std::uint32_t dst = 0; dst < outputs; dst++) {
+        for (std::uint32_t src = 0; src < source.channels; src++) {
+            const float level = matrix == nullptr ? Ngs2DefaultLevel(source.channels, src, channels, dst) : (*matrix)[dst * source.channels + src];
+            gains[dst * source.channels + src] = level * port.volume;
+        }
+    }
+    return gains;
+}
+
+static void MixPort(Ngs2Voice& voice, const Ngs2Voice& source, const Ngs2Port& port, std::uint32_t sourceBuffer, const std::vector<float>& gains, std::uint32_t grain) {
     const auto& sourceSamples = source.Samples(sourceBuffer);
     auto& destSamples = voice.Samples(port.destInput);
     if (sourceSamples.size() != static_cast<std::size_t>(grain) * source.channels ||
         destSamples.size() != static_cast<std::size_t>(grain) * voice.InputChannels()) {
         throw std::runtime_error("NGS2: channel layout changes during input rendering are not implemented");
     }
-    const auto* matrix = port.matrix < 0 || source.matrices[port.matrix].empty() ? nullptr : &source.matrices[port.matrix];
-    const auto channels = voice.InputChannels();
-    const std::size_t outputs = port.rampFrom.empty() ? (matrix == nullptr ? channels : std::min<std::size_t>(channels, matrix->size() / source.channels)) : channels;
-    for (std::size_t dst = 0; dst < outputs; dst++) {
-        for (std::uint32_t src = 0; src < source.channels; src++) {
-            const auto index = dst * source.channels + src;
-            const float level = port.volume * (matrix == nullptr ? Ngs2DefaultLevel(source.channels, src, channels, static_cast<std::uint32_t>(dst)) : dst < matrix->size() / source.channels ? (*matrix)[index] : 0.0f);
-            const float from = port.rampFrom.empty() ? level : port.rampFrom[index];
-            if (level == 0.0f && from == 0.0f) continue;
-            if (from == level) {
-                for (std::uint32_t i = 0; i < grain; i++) destSamples[dst * grain + i] += sourceSamples[src * grain + i] * level;
-            } else {
-                const float step = (level - from) / static_cast<float>(grain);
-                for (std::uint32_t i = 0; i < grain; i++) destSamples[dst * grain + i] += sourceSamples[src * grain + i] * (from + step * static_cast<float>(i));
-            }
+    for (std::size_t entry = 0; entry < gains.size(); entry++) {
+        float* out = destSamples.data() + entry / source.channels * grain;
+        const float* in = sourceSamples.data() + entry % source.channels * grain;
+        const float now = gains[entry];
+        const float before = port.mixed ? port.mixedGains[entry] : now;
+        if (before == now && now == 0.0f) continue;
+        if (before == now) {
+            for (std::uint32_t i = 0; i < grain; i++) out[i] = std::fma(in[i], now, out[i]);
+            continue;
+        }
+        const float step = (now - before) / static_cast<float>(grain);
+        float lanes[8];
+        for (int lane = 0; lane < 8; lane++) lanes[lane] = before + static_cast<float>(lane) * step;
+        for (std::uint32_t i = 0; i < grain; i++) {
+            out[i] = std::fma(in[i], lanes[i % 8], out[i]);
+            lanes[i % 8] += 8.0f * step;
         }
     }
 }
@@ -337,17 +345,110 @@ static void MixPort(Ngs2Voice& voice, const Ngs2Voice& source, const Ngs2Port& p
 static void MixInputs(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices, std::uint32_t grain, std::uint32_t systemRate) {
     for (auto* source : voices) {
         for (std::size_t p = 0; p < source->ports.size(); p++) {
-            const auto& port = source->ports[p];
-            if (port.dest != &voice || (port.volume == 0.0f && port.rampFrom.empty())) continue;
+            auto& port = source->ports[p];
+            if (port.dest != &voice) continue;
+            if (!PortMixesAudio(port)) {
+                if (source->channels != 0) {
+                    port.mixedOutputs = PortOutputs(voice, *source, port);
+                    port.mixedSources = source->channels;
+                    port.mixedGains.assign(static_cast<std::size_t>(port.mixedOutputs) * source->channels, 0.0f);
+                    port.mixed = true;
+                }
+                continue;
+            }
             const auto destInput = port.destInput;
             RenderVoice(*source, voices, grain, systemRate);
             if (port.dest != &voice || port.destInput != destInput) {
                 throw std::runtime_error("NGS2: patch changes during source rendering are not implemented");
             }
-            if (!source->hasSamples || source->KilledForRender()) continue;
-            const auto sourceBuffer = source->rack->customPortBuffers.empty() ? 0u : source->rack->customPortBuffers[p];
-            MixPort(voice, *source, port, sourceBuffer, grain);
-            voice.hasSamples = true;
+            if (source->channels == 0) continue;
+            std::uint32_t outputs = 0;
+            auto gains = PortGains(voice, *source, port, outputs);
+            if (port.mixed && (port.mixedOutputs != outputs || port.mixedSources != source->channels)) port.mixed = false;
+            const bool unmixedInput = destInput != 0 && voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER;
+            if (source->hasSamples && !source->KilledForRender() && !unmixedInput) {
+                const auto sourceBuffer = source->rack->customPortBuffers.empty() ? 0u : source->rack->customPortBuffers[p];
+                MixPort(voice, *source, port, sourceBuffer, gains, grain);
+                voice.hasSamples = true;
+            }
+            port.mixedGains = std::move(gains);
+            port.mixedOutputs = outputs;
+            port.mixedSources = source->channels;
+            port.mixed = true;
+        }
+    }
+}
+
+static float CompressorCoefficient(float seconds, std::uint32_t sampleRate) {
+    const auto samples = static_cast<std::int32_t>(seconds * static_cast<float>(sampleRate));
+    return samples == 0 ? 0.0f : std::exp(-1.0f / static_cast<float>(samples));
+}
+
+static bool CompressorKnee(float knee) {
+    if (knee == 0.0f) return false;
+    if (!PS4_LIBRARY) return true;
+    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t sdkVersion;
+    std::memcpy(&sdkVersion, processParameters + 0x10, sizeof(sdkVersion));
+    return sdkVersion >= 0x1700000;
+}
+
+static void ProcessCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate) {
+    auto& compressor = voice.compressor;
+    if (!compressor.configured) return;
+    const auto& param = compressor.param;
+    if ((param.flags & 1u) != 0) {
+        compressor.gain.fill(1.0f);
+        return;
+    }
+    if (voice.userFxHandler != nullptr) throw std::runtime_error("NGS2: a submixer compressor on a voice with a UserFx handler is not implemented");
+    const auto channels = std::min<std::uint32_t>(voice.channels, NGS2_MAX_CHANNELS);
+    const float attack = CompressorCoefficient(param.attack_time, sampleRate);
+    const float release = CompressorCoefficient(param.release_time, sampleRate);
+    const bool knee = CompressorKnee(param.knee);
+    std::array<float, NGS2_MAX_CHANNELS> level{};
+    for (std::uint32_t start = 0; start < grain; start += 32) {
+        const auto count = std::min<std::uint32_t>(32, grain - start);
+        for (std::uint32_t channel = 0; channel < channels; channel++) {
+            const float* samples = voice.samples.data() + static_cast<std::size_t>(channel) * grain + start;
+            float value = 0.0f;
+            if ((param.flags & 2u) != 0) {
+                for (std::uint32_t i = 0; i < count; i++) value += samples[i] * samples[i];
+                value = std::sqrt(value / static_cast<float>(count));
+            } else {
+                for (std::uint32_t i = 0; i < count; i++) value = std::max(value, std::abs(samples[i]));
+            }
+            level[channel] = value;
+        }
+        if (PS4_LIBRARY || (param.flags & 0x20u) == 0) {
+            const bool lfeApart = (param.flags & (PS4_LIBRARY ? 0x8u : 0x10u)) != 0;
+            float loudest = 0.0f;
+            for (std::uint32_t channel = 0; channel < channels; channel++) {
+                if (!lfeApart || channel != 3) loudest = std::max(loudest, level[channel]);
+            }
+            for (std::uint32_t channel = 0; channel < channels; channel++) {
+                if (!lfeApart || channel != 3) level[channel] = loudest;
+            }
+        }
+        const float kneeStart = knee ? param.threshold * (1.0f - param.knee * 0.5f) : param.threshold;
+        const float kneeWidth = param.threshold - kneeStart;
+        for (std::uint32_t channel = 0; channel < channels; channel++) {
+            const float x = level[channel];
+            float target = 1.0f;
+            if (x > kneeStart && x - kneeStart <= kneeWidth) {
+                const float d = x - kneeStart;
+                target = (kneeStart + d * (1.0f + 0.5f * (d / kneeWidth) * (param.ratio - 1.0f))) / x;
+            } else if (x > kneeStart) {
+                target = (param.threshold + (x - param.threshold) * param.ratio) / x;
+            }
+            float& gain = compressor.gain[channel];
+            const float coefficient = gain <= target ? release : attack;
+            float* samples = voice.samples.data() + static_cast<std::size_t>(channel) * grain + start;
+            for (std::uint32_t i = 0; i < count; i++) {
+                gain = coefficient * gain + (1.0f - coefficient) * target;
+                samples[i] *= gain * param.level;
+            }
+            if (std::abs(target - gain) <= 0.01f && coefficient * gain + (1.0f - coefficient) * target == gain) gain = target;
         }
     }
 }
@@ -416,6 +517,7 @@ static void RenderVoice(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices,
             else if (voice.outputTransition != Ngs2VoiceTransition::Kill) RenderSampler(voice, grain, systemRate);
         } else {
             MixInputs(voice, voices, grain, systemRate);
+            if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER) ProcessCompressor(voice, grain, systemRate);
         }
         if (voice.rack->rackId == SCE_NGS2_RACK_ID_REVERB && voice.reverb) voice.hasSamples = Ngs2ProcessReverb(voice, grain, systemRate);
         Ngs2ProcessLegacyUserFx(voice, grain, systemRate);
@@ -473,7 +575,7 @@ static void RenderScheduled(Ngs2System& system, const std::vector<Ngs2Voice*>& v
             for (std::size_t j = 0; j < voices.size(); ++j) {
                 if (!ScheduledVoice(*voices[j])) continue;
                 for (const auto& port : voices[j]->ports) {
-                    if (port.dest == voices[i] && (port.volume != 0.0f || !port.rampFrom.empty())) value = std::max(value, self(self, j) + 1);
+                    if (port.dest == voices[i] && PortMixesAudio(port)) value = std::max(value, self(self, j) + 1);
                 }
             }
         }
@@ -541,13 +643,13 @@ static std::size_t SampleBytes(std::uint32_t waveformType) {
 }
 
 static bool HasMasteringMap(std::uint32_t channels, std::uint32_t outputChannels) {
-    if (PS4_LIBRARY) return channels == 2 && (outputChannels == 6 || outputChannels == 8);
     return HasDefaultMap(channels) && HasDefaultMap(outputChannels);
 }
 
-static float MasteringOutputLevel(std::uint32_t channels, std::uint32_t channel, std::uint32_t outputChannels, std::uint32_t dest) {
+static float MasteringOutputLevel(std::uint32_t channels, std::uint32_t channel, std::uint32_t outputChannels, std::uint32_t dest, bool customMastering) {
+    if (PS4_LIBRARY && customMastering) return channel == dest ? 1.0f : 0.0f;
     if (channels == outputChannels) return PS4_LIBRARY || HasDefaultMap(channels) ? static_cast<float>(channel == dest) : OddCountLevel(channels, channel, channels, dest);
-    if (channels == 1) return dest == 0 ? 1.0f : 0.0f;
+    if (channels == 1 && !PS4_LIBRARY) return dest == 0 ? 1.0f : 0.0f;
     return Ngs2DefaultLevel(channels, channel, outputChannels, dest);
 }
 
@@ -592,6 +694,16 @@ static std::vector<std::size_t> OutputBytes(const Ngs2System& system, const Ngs2
     return outputBytes;
 }
 
+void Ngs2RenderRefused(const Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo) {
+    const std::size_t grain = system.option.num_grain_samples;
+    for (std::uint32_t i = 0; i < numBufferInfo; i++) {
+        const auto& output = bufferInfo[i];
+        const std::size_t bytes = grain * output.num_channels * SampleBytes(output.waveform_type);
+        if (output.buffer_size < bytes) throw std::invalid_argument("NGS2: render buffer " + std::to_string(i) + " is too small");
+        if (output.buffer != nullptr) std::memset(output.buffer, 0, bytes);
+    }
+}
+
 void Ngs2RenderSilence(const Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo) {
     const auto outputBytes = OutputBytes(system, bufferInfo, numBufferInfo);
     for (std::uint32_t i = 0; i < numBufferInfo; i++) {
@@ -630,7 +742,7 @@ void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo
                 const bool lfe = channel == 3 && (voice->channels == 6 || voice->channels == 8);
                 const float level = lfe ? voice->lfeLevel : voice->fbwLevel;
                 for (std::uint32_t dest = 0; dest < outputChannels; dest++) {
-                    const float map = MasteringOutputLevel(voice->channels, channel, outputChannels, dest);
+                    const float map = MasteringOutputLevel(voice->channels, channel, outputChannels, dest, voice->rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING);
                     if (map == 0.0f) continue;
                     for (std::uint32_t i = 0; i < grain; i++) mix[i * outputChannels + dest] += voice->samples[channel * grain + i] * level * map;
                 }
