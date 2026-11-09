@@ -47,6 +47,11 @@ std::uint64_t depthWrites = 0;
 std::uint64_t mirrorEpoch = 0;
 std::atomic<void (*)(DepthPublicationStage)> depthPublicationHook{nullptr};
 
+std::uint64_t RegisteredBacking(std::uint64_t address) {
+    const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), false);
+    return range != nullptr ? range->backingSerial : 0;
+}
+
 std::pair<std::uint32_t, std::uint32_t> DepthBlockExtent(std::uint32_t bytesPerTexel) {
     return {bytesPerTexel == 4 ? 128u : 256u, bytesPerTexel == 1 ? 256u : 128u};
 }
@@ -1342,6 +1347,8 @@ public:
         staleUnits.assign(count, false);
         staleCount = 0;
         unitGeneration.assign(count, 0);
+        unitBacking.assign(count, 0);
+        backingGeneration = 0;
     }
 
     bool AnyStale() const {
@@ -1443,14 +1450,34 @@ public:
         return changed;
     }
 
-    void SyncFromMemory(const GuestTextureResource& resource) {
+    std::vector<bool> ChangedBackingUnits() const {
+        std::vector<bool> changed(unitBacking.size(), false);
+        if (backingGeneration == GuestAllocations::GuestAllocationsGeneration_nid_postfix()) return changed;
+        for (std::size_t unit = 0; unit < unitBacking.size(); ++unit) {
+            changed[unit] = unitBacking[unit] != 0 && RegisteredBacking(target.address + unit * unitBytes) != unitBacking[unit];
+        }
+        return changed;
+    }
+
+    void SyncFromMemory(const GuestTextureResource& resource, bool storing = false) {
         std::uint64_t generation = 0;
         const auto changed = WrittenUnits(resource, generation);
-        if ((pendingClear & VK_IMAGE_ASPECT_DEPTH_BIT) != 0 || !anyUnit(changed)) {
+        // The registry generation moves on every mapping mutation, so an unchanged value means every recorded backing is still current. Read it before the lookups: a mutation racing them leaves the stored value old and the next sync refreshes again.
+        if (const auto registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix(); registryGeneration != backingGeneration) {
+            for (std::size_t unit = 0; unit < unitBacking.size(); ++unit) unitBacking[unit] = RegisteredBacking(target.address + unit * unitBytes);
+            backingGeneration = registryGeneration;
+        }
+        const bool clearing = (pendingClear & VK_IMAGE_ASPECT_DEPTH_BIT) != 0;
+        if ((clearing && !storing) || !anyUnit(changed)) {
             unitGeneration.assign(unitGeneration.size(), generation);
             return;
         }
-        ClearStale(changed);
+        if (clearing) {
+            ClearStale();
+            ForgetClear(VK_IMAGE_ASPECT_DEPTH_BIT);
+        } else {
+            ClearStale(changed);
+        }
         {
             struct Syncing {
                 bool& flag;
@@ -1525,6 +1552,8 @@ public:
     std::size_t staleCount = 0;
     std::uint64_t depthMark = 0;
     std::uint64_t stencilMark = 0;
+    std::vector<std::uint64_t> unitBacking;
+    std::uint64_t backingGeneration = 0;
     std::vector<std::uint64_t> unitGeneration;
     std::uint64_t unitBytes = 0;
     bool syncing = false;
@@ -3003,10 +3032,12 @@ void retireStoringStale(DepthSurface& surface) {
     std::uint64_t generation = 0;
     const auto written = surface.WrittenUnits(resource, generation);
     const auto removed = unmappedUnits(surface.target.address, planeBytes, surface.unitBytes, surface.staleUnits.size(), surface.depthMark);
+    const auto reused = surface.ChangedBackingUnits();
     auto units = surface.staleUnits;
     for (std::size_t unit = 0; unit < units.size(); ++unit) {
-        if ((unit < written.size() && written[unit]) || removed[unit]) units[unit] = false;
+        if ((unit < written.size() && written[unit]) || removed[unit] || (unit < reused.size() && reused[unit])) units[unit] = false;
     }
+    if ((surface.pendingClear & VK_IMAGE_ASPECT_DEPTH_BIT) != 0 && anyUnit(written)) units.assign(units.size(), false);
     std::shared_ptr<StorageTexture> mirror;
     if (anyUnit(units) && (!anyUnit(written) || surface.StoresUnits(*surface.Mirror(resource)))) mirror = surface.StoreDepthPlane(resource, units);
     retire(surface);
@@ -3402,8 +3433,15 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
                     else surface->ClearStale(removed);
                     if (!surface->AnyStale()) continue;
                 }
+                const auto reused = surface->ChangedBackingUnits();
+                if (anyUnit(reused)) {
+                    static std::atomic<bool> reported{false};
+                    if (!reported.exchange(true)) std::fprintf(stderr, "[gpu] depth plane 0x%llx+0x%llx was re-registered with GPU results pending; they are dropped\n", static_cast<unsigned long long>(plane), static_cast<unsigned long long>(planeBytes));
+                    surface->ClearStale(reused);
+                    if (!surface->AnyStale()) continue;
+                }
                 GuestMemory::CollectWritesUncached(plane, static_cast<std::size_t>(planeBytes));
-                surface->SyncFromMemory(resource);
+                surface->SyncFromMemory(resource, true);
                 auto units = scope == DepthPlaneScope::Whole ? surface->staleUnits : surface->StaleUnitsIn(planeBytes, address, end);
                 if (anyUnit(units)) {
                     auto mirror = surface->StoreDepthPlane(resource, units);
