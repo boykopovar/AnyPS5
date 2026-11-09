@@ -2021,7 +2021,7 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
 #endif
         result = static_cast<int>(::sendto(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags),
             reinterpret_cast<sockaddr*>(&native), size));
-        if (socket->type == 2) LanRelay::ForwardBroadcastSend(static_cast<std::uintptr_t>(socket->value), reinterpret_cast<sockaddr*>(&native), buffer, static_cast<std::size_t>(length));
+        if (socket->type == 2 && result >= 0) LanRelay::ForwardBroadcastSend(static_cast<std::uintptr_t>(socket->value), reinterpret_cast<sockaddr*>(&native), buffer, static_cast<std::size_t>(length));
     }
     if (result >= 0) return result;
     const int error = SendError(socket->type);
