@@ -323,7 +323,7 @@ std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pendin
             if ((session.param.option & OptionMultiline) != 0) {
                 return Insert(session, u"\n");
             }
-            if (ImeClipboard::CopyEnabled(std::getenv("ANYPS5_IME_COPY"), kAppleBuild)) ImeClipboard::CopyToHost(session.text);
+            if (ImeClipboard::CopyEnabled(std::getenv("ANYPS5_IME_COPY"), kAppleBuild) && !session.text.empty()) ImeClipboard::CopyToHost(session.text);
             QueueText(session, EventPressEnter, session.caret, 0);
             return std::nullopt;
         case ImeHostInputKind::Escape:
