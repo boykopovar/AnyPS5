@@ -3,6 +3,7 @@
 #include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -506,6 +507,13 @@ int main(int argc, char** argv) {
     result.tick = 123;
     Require(sceRtcTickAddHours(nullptr, &source, 1) == invalidPointer);
     Require(sceRtcTickAddMicroseconds(&result, nullptr, 1) == invalidPointer);
+    const auto* unreadableTick = reinterpret_cast<const RtcTick*>(std::uintptr_t{0x10});
+    auto* unwritableTick = reinterpret_cast<RtcTick*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(sceRtcTickAddSeconds(&result, unreadableTick, 1) == invalidPointer && result.tick == 123 && errno == 71);
+    Require(sceRtcTickAddSeconds(unwritableTick, &source, 1) == invalidPointer && errno == 71);
+    Require(sceRtcTickAddMonths(&result, unreadableTick, 1) == invalidPointer && result.tick == 123 && errno == 71);
+    Require(sceRtcTickAddMonths(unwritableTick, &source, 1) == invalidPointer && errno == 71);
     source.tick = maxTick;
     Require(sceRtcTickAddTicks(&source, &source, 0) == 0 && source.tick == maxTick);
     Require(sceRtcTickAddTicks(&source, &source, -1) == 0 && source.tick == maxTick - 1);
