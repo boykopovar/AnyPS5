@@ -22,5 +22,6 @@ int main() {
     Check(!MsgDialog::HostMessageBoxEnabled("yes", false), "a value other than 1 enables the host box");
     Check(!MsgDialog::HostMessageBoxEnabled("1", true), "the host box is enabled on Apple builds");
 
+    Check(MsgDialog::HostMessageLabel(u"Yes") == "Yes", "an ASCII label is changed");
     return correct ? 0 : 1;
 }
