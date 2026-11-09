@@ -1144,7 +1144,7 @@ const SceV2CtypeWideVtable g_sceV2CtypeWideVtable{
     SceV2WideCtypeIs_nid_no_patch, SceV2WideCtypeIsRange_nid_no_patch, SceV2WideCtypeScanIs_nid_no_patch, SceV2WideCtypeScanNot_nid_no_patch,
     SceV2WideCtypeToLower_nid_no_patch, SceV2WideCtypeToLowerRange_nid_no_patch, SceV2WideCtypeToUpper_nid_no_patch, SceV2WideCtypeToUpperRange_nid_no_patch,
     SceV2WideCtypeWiden_nid_no_patch, SceV2WideCtypeWidenRange_nid_no_patch, SceV2WideCtypeNarrow_nid_no_patch, SceV2WideCtypeNarrowRange_nid_no_patch};
-constexpr auto g_sceV2CtypeUshortVtable = MakeSceV2FacetVtable<12, g_sceV2CtypeFamily, DestroySceV2WideCtypeFacet_nid_no_patch>();
+const SceV2CtypeWideVtable g_sceV2CtypeUshortVtable = g_sceV2CtypeWideVtable;
 template<typename Text> struct SceV2InputIterator {
     GuestLocale::Streambuf* buffer;
     bool got;
@@ -1190,7 +1190,6 @@ template<typename Text> const SceV2NumGetVtable<Text> g_sceV2NumGetVtable{
     SceV2NumGetUnsignedLong_nid_no_patch<Text>, SceV2NumGetLongLong_nid_no_patch<Text>, SceV2NumGetUnsignedLongLong_nid_no_patch<Text>,
     {SceV2NumGetFloatingSlots<Text>()[0], SceV2NumGetFloatingSlots<Text>()[1], SceV2NumGetFloatingSlots<Text>()[2]},
     SceV2NumGetPointer_nid_no_patch<Text>};
-constexpr auto g_sceV2NumGetUshortVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
 template<typename Text> struct SceV2NumPutVtable {
     GuestLocale::FacetVtable facet;
     GuestLocale::OutputIterator (APS5_VABI *putBool)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, unsigned char value);
@@ -1216,17 +1215,19 @@ template<typename Text> const SceV2NumPutVtable<Text> g_sceV2NumPutVtable{
     {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
     SceV2NumPutBool_nid_no_patch<Text>, SceV2NumPutLong_nid_no_patch<Text>, SceV2NumPutUnsignedLong_nid_no_patch<Text>, SceV2NumPutLongLong_nid_no_patch<Text>,
     SceV2NumPutUnsignedLongLong_nid_no_patch<Text>, SceV2NumPutDouble_nid_no_patch<Text>, SceV2NumPutLongDouble_nid_no_patch<Text>, SceV2NumPutPointer_nid_no_patch<Text>};
-constexpr auto g_sceV2NumPutUshortVtable = MakeSceV2FacetVtable<8, g_sceV2NumPutFamily>();
 const SceV2NumpunctWideVtable g_sceV2NumpunctWideVtable{
     {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
     SceV2WideNumpunctDecimalPoint_nid_no_patch, SceV2WideNumpunctThousandsSep_nid_no_patch, SceV2WideNumpunctGrouping_nid_no_patch,
     SceV2WideNumpunctFalsename_nid_no_patch, SceV2WideNumpunctTruename_nid_no_patch};
-constexpr auto g_sceV2NumpunctUshortVtable = MakeSceV2FacetVtable<5, g_sceV2NumpunctFamily, DestroySceV2UshortNumpunctFacet_nid_no_patch>();
+const SceV2NumpunctWideVtable g_sceV2NumpunctUshortVtable{
+    {DestroySceV2UshortNumpunctFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2UshortNumpunctFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2WideNumpunctDecimalPoint_nid_no_patch, SceV2WideNumpunctThousandsSep_nid_no_patch, SceV2WideNumpunctGrouping_nid_no_patch,
+    SceV2WideNumpunctFalsename_nid_no_patch, SceV2WideNumpunctTruename_nid_no_patch};
 const SceV2CodecvtWideVtable g_sceV2CodecvtWideVtable{
     {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
     SceV2WideCodecvtAlwaysNoconv_nid_no_patch, SceV2WideCodecvtMaxLength_nid_no_patch, SceV2WideCodecvtEncoding_nid_no_patch, SceV2WideCodecvtIn_nid_no_patch,
     SceV2WideCodecvtOut_nid_no_patch, SceV2WideCodecvtUnshift_nid_no_patch, SceV2WideCodecvtLength_nid_no_patch};
-constexpr auto g_sceV2CodecvtUshortVtable = MakeSceV2FacetVtable<7, g_sceV2CodecvtFamily>();
+const SceV2CodecvtWideVtable g_sceV2CodecvtUshortVtable = g_sceV2CodecvtWideVtable;
 template<typename Text> struct SceV2CollateVtable {
     GuestLocale::FacetVtable facet;
     int (APS5_VABI *compare)(const GuestLocale::Facet* self, const Text* first1, const Text* last1, const Text* first2, const Text* last2);
@@ -1272,6 +1273,19 @@ template<typename Text> std::int64_t APS5_VABI SceV2CollateHash_nid_no_patch(con
 template<typename Text> const SceV2CollateVtable<Text> g_sceV2CollateVtable{
     {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
     SceV2CollateCompare_nid_no_patch<Text>, SceV2CollateTransform_nid_no_patch<Text>, SceV2CollateHash_nid_no_patch<Text>};
+
+int APS5_VABI SceV2UshortCollateCompare_nid_no_patch(const GuestLocale::Facet*, const std::uint16_t* first1, const std::uint16_t* last1, const std::uint16_t* first2, const std::uint16_t* last2) {
+    for (; first1 != last1 && first2 != last2; ++first1, ++first2) {
+        if (*first1 < *first2) return -1;
+        if (*first1 > *first2) return 1;
+    }
+    if (first2 != last2) return -1;
+    return first1 != last1 ? 1 : 0;
+}
+
+const SceV2CollateVtable<std::uint16_t> g_sceV2CollateUshortVtable{
+    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2UshortCollateCompare_nid_no_patch, SceV2CollateTransform_nid_no_patch<std::uint16_t>, SceV2CollateHash_nid_no_patch<std::uint16_t>};
 
 template<typename Text> using SceV2MoneyString = std::conditional_t<std::is_same_v<Text, char>, SceV2String, SceV2WideString>;
 
@@ -1336,8 +1350,8 @@ template<typename Text> std::uint32_t APS5_VABI SceV2MoneypunctNegativeFormat_ni
     return pattern;
 }
 
-template<typename Text> const SceV2MoneypunctVtable<Text> g_sceV2MoneypunctVtable{
-    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+template<typename Text, SceV2FacetDestroy Destroy = DestroySceV2PlainFacet_nid_no_patch> const SceV2MoneypunctVtable<Text> g_sceV2MoneypunctVtable{
+    {Destroy, DeleteSceV2Facet_nid_no_patch<Destroy>, RetainFacet, ReleaseFacet},
     SceV2MoneypunctDecimalPoint_nid_no_patch<Text>, SceV2MoneypunctThousandsSep_nid_no_patch<Text>, SceV2MoneypunctGrouping_nid_no_patch<Text>,
     SceV2MoneypunctCurrencySymbol_nid_no_patch<Text>, SceV2MoneypunctPositiveSign_nid_no_patch<Text>, SceV2MoneypunctNegativeSign_nid_no_patch<Text>,
     SceV2MoneypunctFractionDigits_nid_no_patch<Text>, SceV2MoneypunctPositiveFormat_nid_no_patch<Text>, SceV2MoneypunctNegativeFormat_nid_no_patch<Text>};
@@ -1368,8 +1382,6 @@ template<typename Text> const SceV2MessagesVtable<Text> g_sceV2MessagesVtable{
     {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
     SceV2MessagesOpen_nid_no_patch, SceV2MessagesGet_nid_no_patch<Text>, SceV2MessagesClose_nid_no_patch};
 
-constexpr auto g_sceV2CollateUshortVtable = MakeSceV2FacetVtable<3, g_sceV2CollateFamily>();
-constexpr auto g_sceV2MessagesUshortVtable = MakeSceV2FacetVtable<3, g_sceV2MessagesFamily>();
 template<typename Text> struct SceV2MoneyGetVtable {
     GuestLocale::FacetVtable facet;
     SceV2InputIterator<Text> (APS5_VABI *getLongDouble)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, std::int32_t international, GuestLocale::SceV2IosBase* stream, std::int32_t* state, long double* value);
@@ -1382,7 +1394,6 @@ template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2MoneyGetDigits_n
 template<typename Text> const SceV2MoneyGetVtable<Text> g_sceV2MoneyGetVtable{
     {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
     SceV2MoneyGetLongDouble_nid_no_patch<Text>, SceV2MoneyGetDigits_nid_no_patch<Text>};
-constexpr auto g_sceV2MoneyGetUshortVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyGetFamily>();
 template<typename Text> struct SceV2MoneyPutVtable {
     GuestLocale::FacetVtable facet;
     GuestLocale::OutputIterator (APS5_VABI *putLongDouble)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::SceV2IosBase* stream, Text fill, long double value);
@@ -1395,9 +1406,6 @@ template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2MoneyPutDigit
 template<typename Text> const SceV2MoneyPutVtable<Text> g_sceV2MoneyPutVtable{
     {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
     SceV2MoneyPutLongDouble_nid_no_patch<Text>, SceV2MoneyPutDigits_nid_no_patch<Text>};
-constexpr auto g_sceV2MoneyPutUshortVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyPutFamily>();
-constexpr auto g_sceV2MoneypunctUshortVtable = MakeSceV2FacetVtable<9, g_sceV2MoneypunctFamily, DestroySceV2UshortMoneypunctFacet_nid_no_patch>();
-constexpr auto g_sceV2MoneypunctUshortIntlVtable = MakeSceV2FacetVtable<9, g_sceV2MoneypunctFamily, DestroySceV2UshortMoneypunctFacet_nid_no_patch>();
 template<typename Text> struct SceV2TimeGetVtable {
     using Get = SceV2InputIterator<Text> (APS5_VABI *)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time);
     GuestLocale::FacetVtable facet;
@@ -1418,11 +1426,10 @@ template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetMonthname
 template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetYear_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time);
 template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetField_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time, char specifier, char modifier);
 
-template<typename Text> const SceV2TimeGetVtable<Text> g_sceV2TimeGetVtable{
-    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+template<typename Text, SceV2FacetDestroy Destroy = DestroySceV2PlainFacet_nid_no_patch> const SceV2TimeGetVtable<Text> g_sceV2TimeGetVtable{
+    {Destroy, DeleteSceV2Facet_nid_no_patch<Destroy>, RetainFacet, ReleaseFacet},
     SceV2TimeGetDateOrder_nid_no_patch, SceV2TimeGetTime_nid_no_patch<Text>, SceV2TimeGetDate_nid_no_patch<Text>, SceV2TimeGetWeekday_nid_no_patch<Text>,
     SceV2TimeGetMonthname_nid_no_patch<Text>, SceV2TimeGetYear_nid_no_patch<Text>, SceV2TimeGetField_nid_no_patch<Text>};
-constexpr auto g_sceV2TimeGetUshortVtable = MakeSceV2FacetVtable<7, g_sceV2TimeGetFamily, DestroySceV2UshortTimeGetFacet_nid_no_patch>();
 template<typename Text> struct SceV2TimePutVtable {
     GuestLocale::FacetVtable facet;
     GuestLocale::OutputIterator (APS5_VABI *put)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, const GuestTm* time, char specifier, char modifier);
@@ -1433,7 +1440,6 @@ template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2TimePut_nid_n
 template<typename Text> const SceV2TimePutVtable<Text> g_sceV2TimePutVtable{
     {DestroySceV2TimePutFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2TimePutFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
     SceV2TimePut_nid_no_patch<Text>};
-constexpr auto g_sceV2TimePutUshortVtable = MakeSceV2FacetVtable<1, g_sceV2TimePutFamily, DestroySceV2TimePutFacet_nid_no_patch>();
 
 constexpr char g_sceV2Empty[] = "";
 constexpr char g_sceV2FalseName[] = "false";
@@ -2173,17 +2179,17 @@ SceV2FacetKind g_sceV2TimeGetWide{&_ZNSt8__sce_v28time_getIwNS_19istreambuf_iter
 SceV2FacetKind g_sceV2TimePutWide{&_ZNSt8__sce_v28time_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(SceV2TimePutFacet), &g_sceV2TimePutVtable<char16_t>.facet, InitializeSceV2TimePutFacet, nullptr};
 SceV2FacetKind g_sceV2CodecvtWide{&_ZNSt8__sce_v27codecvtIwc9_MbstatetE2idE_nid_postfix, sizeof(SceV2WideCodecvtFacet), &g_sceV2CodecvtWideVtable.facet, InitializeSceV2WideCodecvtFacet, nullptr};
 SceV2FacetKind g_sceV2CtypeUshort{&_ZNSt8__sce_v25ctypeItE2idE_nid_postfix, sizeof(SceV2WideCtypeFacet), &g_sceV2CtypeUshortVtable.facet, InitializeSceV2WideCtypeFacet, nullptr};
-SceV2FacetKind g_sceV2NumGetUshort{&g_sceV2NumGetUshortId, sizeof(GuestLocale::Facet), &g_sceV2NumGetUshortVtable.facet, InitializeSceV2PlainFacet, nullptr};
-SceV2FacetKind g_sceV2NumPutUshort{&g_sceV2NumPutUshortId, sizeof(GuestLocale::Facet), &g_sceV2NumPutUshortVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2NumGetUshort{&g_sceV2NumGetUshortId, sizeof(GuestLocale::Facet), &g_sceV2NumGetVtable<std::uint16_t>.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2NumPutUshort{&g_sceV2NumPutUshortId, sizeof(GuestLocale::Facet), &g_sceV2NumPutVtable<std::uint16_t>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2NumpunctUshort{&g_sceV2NumpunctUshortId, sizeof(GuestLocale::WideNumpunctFacet), &g_sceV2NumpunctUshortVtable.facet, InitializeSceV2UshortNumpunctFacet, nullptr};
 SceV2FacetKind g_sceV2CollateUshort{&g_sceV2CollateUshortId, sizeof(GuestLocale::Facet), &g_sceV2CollateUshortVtable.facet, InitializeSceV2PlainFacet, nullptr};
-SceV2FacetKind g_sceV2MessagesUshort{&g_sceV2MessagesUshortId, sizeof(GuestLocale::Facet), &g_sceV2MessagesUshortVtable.facet, InitializeSceV2PlainFacet, nullptr};
-SceV2FacetKind g_sceV2MoneyGetUshort{&g_sceV2MoneyGetUshortId, sizeof(GuestLocale::Facet), &g_sceV2MoneyGetUshortVtable.facet, InitializeSceV2PlainFacet, nullptr};
-SceV2FacetKind g_sceV2MoneyPutUshort{&g_sceV2MoneyPutUshortId, sizeof(GuestLocale::Facet), &g_sceV2MoneyPutUshortVtable.facet, InitializeSceV2PlainFacet, nullptr};
-SceV2FacetKind g_sceV2MoneypunctUshort{&g_sceV2MoneypunctUshortId, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctUshortVtable.facet, InitializeSceV2UshortMoneypunctFacet<false>, nullptr};
-SceV2FacetKind g_sceV2MoneypunctUshortIntl{&g_sceV2MoneypunctUshortIntlId, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctUshortIntlVtable.facet, InitializeSceV2UshortMoneypunctFacet<true>, nullptr};
-SceV2FacetKind g_sceV2TimeGetUshort{&g_sceV2TimeGetUshortId, sizeof(SceV2TimeGetFacet<std::uint16_t>), &g_sceV2TimeGetUshortVtable.facet, InitializeSceV2UshortTimeGetFacet, nullptr};
-SceV2FacetKind g_sceV2TimePutUshort{&g_sceV2TimePutUshortId, sizeof(SceV2TimePutFacet), &g_sceV2TimePutUshortVtable.facet, InitializeSceV2TimePutFacet, nullptr};
+SceV2FacetKind g_sceV2MessagesUshort{&g_sceV2MessagesUshortId, sizeof(GuestLocale::Facet), &g_sceV2MessagesVtable<std::uint16_t>.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MoneyGetUshort{&g_sceV2MoneyGetUshortId, sizeof(GuestLocale::Facet), &g_sceV2MoneyGetVtable<std::uint16_t>.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MoneyPutUshort{&g_sceV2MoneyPutUshortId, sizeof(GuestLocale::Facet), &g_sceV2MoneyPutVtable<std::uint16_t>.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MoneypunctUshort{&g_sceV2MoneypunctUshortId, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctVtable<std::uint16_t, DestroySceV2UshortMoneypunctFacet_nid_no_patch>.facet, InitializeSceV2UshortMoneypunctFacet<false>, nullptr};
+SceV2FacetKind g_sceV2MoneypunctUshortIntl{&g_sceV2MoneypunctUshortIntlId, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctVtable<std::uint16_t, DestroySceV2UshortMoneypunctFacet_nid_no_patch>.facet, InitializeSceV2UshortMoneypunctFacet<true>, nullptr};
+SceV2FacetKind g_sceV2TimeGetUshort{&g_sceV2TimeGetUshortId, sizeof(SceV2TimeGetFacet<std::uint16_t>), &g_sceV2TimeGetVtable<std::uint16_t, DestroySceV2UshortTimeGetFacet_nid_no_patch>.facet, InitializeSceV2UshortTimeGetFacet, nullptr};
+SceV2FacetKind g_sceV2TimePutUshort{&g_sceV2TimePutUshortId, sizeof(SceV2TimePutFacet), &g_sceV2TimePutVtable<std::uint16_t>.facet, InitializeSceV2TimePutFacet, nullptr};
 SceV2FacetKind g_sceV2CodecvtUshort{&_ZNSt8__sce_v27codecvtItc9_MbstatetE2idE_nid_postfix, sizeof(SceV2WideCodecvtFacet), &g_sceV2CodecvtUshortVtable.facet, InitializeSceV2WideCodecvtFacet, nullptr};
 
 const SceV2FacetStep g_sceV2NarrowLeadSteps[] = {
@@ -2338,6 +2344,14 @@ template<> struct SceV2TextFacets<char16_t> {
     static SceV2FacetKind& NumpunctKind() { return g_sceV2NumpunctWide; }
 };
 
+template<> struct SceV2TextFacets<std::uint16_t> {
+    using Ctype = SceV2CtypeWideVtable;
+    using Numpunct = SceV2NumpunctWideVtable;
+    using Punct = GuestLocale::WideNumpunctFacet;
+    static SceV2FacetKind& CtypeKind() { return g_sceV2CtypeUshort; }
+    static SceV2FacetKind& NumpunctKind() { return g_sceV2NumpunctUshort; }
+};
+
 template<typename Text> void PutSceV2Character(GuestLocale::OutputIterator& out, Text character) {
     GuestLocale::Streambuf* buffer = out.buffer;
     if (buffer == nullptr) {
@@ -2381,6 +2395,16 @@ template<typename Text, typename Punct> std::basic_string<Text> TakeSceV2String(
     return text;
 }
 
+template<typename Text, typename Source> std::basic_string<Text> AsSceV2Text(std::basic_string<Source> text) {
+    if constexpr (std::is_same_v<Text, Source>) return text;
+    else return std::basic_string<Text>(text.begin(), text.end());
+}
+
+template<typename Text> auto* SceV2CtypeUnits(Text* units) {
+    if constexpr (std::is_same_v<Text, std::uint16_t>) return reinterpret_cast<char16_t*>(units);
+    else return units;
+}
+
 template<typename Text> const typename SceV2TextFacets<Text>::Numpunct& SceV2Punctuation(const GuestLocale::Facet* facet) {
     return *reinterpret_cast<const typename SceV2TextFacets<Text>::Numpunct*>(facet->vtable);
 }
@@ -2393,7 +2417,7 @@ template<typename Text> std::basic_string<Text> WidenSceV2Digits(const GuestLoca
     if (count < 0) _ZNSt8__sce_v214_Xlength_errorEPKc_nid_postfix("string too long");
     const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), *stream->locale);
     std::basic_string<Text> text(static_cast<std::size_t>(count), Text{});
-    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, digits, digits + count, text.data());
+    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, digits, digits + count, SceV2CtypeUnits(text.data()));
     return text;
 }
 
@@ -2404,7 +2428,7 @@ template<typename Text> GuestLocale::OutputIterator PutSceV2IntegerDigits(GuestL
     std::basic_string<Text> text = WidenSceV2Digits<Text>(stream, digits, count);
     const GuestLocale::Facet* punct = UseSceV2Facet(SceV2TextFacets<Text>::NumpunctKind(), *stream->locale);
     const std::string grouping = TakeSceV2String(SceV2Punctuation<Text>(punct).grouping, punct);
-    if (static_cast<signed char>(grouping[0]) != CHAR_MAX && static_cast<signed char>(grouping[0]) > 0) InsertSeparators(text, grouping, SceV2Punctuation<Text>(punct).thousandsSep(AsSceV2Punct<Text>(punct)), size, prefix);
+    if (static_cast<signed char>(grouping[0]) != CHAR_MAX && static_cast<signed char>(grouping[0]) > 0) InsertSeparators(text, grouping, static_cast<Text>(SceV2Punctuation<Text>(punct).thousandsSep(AsSceV2Punct<Text>(punct))), size, prefix);
     return PutSceV2Field(out, stream, fill, text, prefix);
 }
 
@@ -2462,7 +2486,7 @@ template<typename Text, typename Value> GuestLocale::OutputIterator PutSceV2Floa
 template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutBool_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, unsigned char value) {
     if ((stream->flags & SceV2IosBoolAlpha) == 0) return reinterpret_cast<const SceV2NumPutVtable<Text>*>(self->vtable)->putLong(self, out, stream, fill, value);
     const GuestLocale::Facet* punct = UseSceV2Facet(SceV2TextFacets<Text>::NumpunctKind(), *stream->locale);
-    return PutSceV2Field(out, stream, fill, TakeSceV2String(value != 0 ? SceV2Punctuation<Text>(punct).truename : SceV2Punctuation<Text>(punct).falsename, punct), 0);
+    return PutSceV2Field(out, stream, fill, AsSceV2Text<Text>(TakeSceV2String(value != 0 ? SceV2Punctuation<Text>(punct).truename : SceV2Punctuation<Text>(punct).falsename, punct)), 0);
 }
 
 template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutLong_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, std::int64_t value) {
@@ -2498,7 +2522,8 @@ template<typename Text> using SceV2MoneypunctText = std::conditional_t<std::is_s
 
 template<typename Text> SceV2FacetKind& SceV2MoneypunctKind(bool international) {
     if constexpr (std::is_same_v<Text, char>) return international ? g_sceV2MoneypunctCharIntl : g_sceV2MoneypunctChar;
-    else return international ? g_sceV2MoneypunctWideIntl : g_sceV2MoneypunctWide;
+    else if constexpr (std::is_same_v<Text, char16_t>) return international ? g_sceV2MoneypunctWideIntl : g_sceV2MoneypunctWide;
+    else return international ? g_sceV2MoneypunctUshortIntl : g_sceV2MoneypunctUshort;
 }
 
 template<typename Text> void PutSceV2Characters(GuestLocale::OutputIterator& out, const Text* characters, std::size_t count) {
@@ -2537,9 +2562,9 @@ template<typename Text> GuestLocale::OutputIterator PutSceV2Money(GuestLocale::O
         }
     }
     const std::uint32_t pattern = negative ? punct.negativeFormat(fields) : punct.positiveFormat(fields);
-    const std::basic_string<Text> sign = TakeSceV2String(negative ? punct.negativeSign : punct.positiveSign, facet);
+    const std::basic_string<Text> sign = AsSceV2Text<Text>(TakeSceV2String(negative ? punct.negativeSign : punct.positiveSign, facet));
     std::basic_string<Text> symbol;
-    if ((stream->flags & SceV2IosShowBase) != 0) symbol = TakeSceV2String(punct.currencySymbol, facet);
+    if ((stream->flags & SceV2IosShowBase) != 0) symbol = AsSceV2Text<Text>(TakeSceV2String(punct.currencySymbol, facet));
     char field[4];
     std::memcpy(field, &pattern, sizeof(field));
     const std::size_t valueWidth = value.size() + (signedDigits != 0 ? 1 : 0) + (value.size() <= fractionDigits ? fractionDigits - value.size() + 1 : 0);
@@ -2611,7 +2636,7 @@ template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2MoneyPutLongD
     const auto& virtuals = *reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable);
     const Text zero = virtuals.widen(ctype, '0');
     std::basic_string<Text> text(static_cast<std::size_t>(count), Text{});
-    virtuals.widenRange(ctype, digits, digits + count, text.data());
+    virtuals.widenRange(ctype, digits, digits + count, SceV2CtypeUnits(text.data()));
     text.append(exponent, zero);
     return PutSceV2Money(out, international, stream, fill, negative, std::move(text), zero);
 }
@@ -2621,7 +2646,7 @@ template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2MoneyPutDigit
     constexpr std::size_t MinusAtom = 10;
     const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), *stream->locale);
     Text atoms[sizeof(Source)];
-    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, Source, Source + sizeof(Source), atoms);
+    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, Source, Source + sizeof(Source), SceV2CtypeUnits(atoms));
     const Text* data = digits->capacity > SceV2BasicString<Text>::InlineCapacity ? digits->pointer : digits->buffer;
     const std::size_t size = digits->size;
     const bool negative = size != 0 && data[0] == atoms[MinusAtom];
@@ -2738,7 +2763,7 @@ template<typename Text> std::uint32_t GetSceV2IntegerField(char* digits, SceV2In
     const Text separator = grouping.empty() ? Text{} : SceV2Punctuation<Text>(punct).thousandsSep(AsSceV2Punct<Text>(punct));
     const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), locale);
     Text atoms[sizeof(g_sceV2IntegerAtoms)];
-    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, g_sceV2IntegerAtoms, g_sceV2IntegerAtoms + sizeof(g_sceV2IntegerAtoms), atoms);
+    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, g_sceV2IntegerAtoms, g_sceV2IntegerAtoms + sizeof(g_sceV2IntegerAtoms), SceV2CtypeUnits(atoms));
     bool bad = SkipSceV2Separators(first, last, separator);
     std::size_t length = 0;
     if (!SceV2InputEnded(first, last)) {
@@ -2874,9 +2899,9 @@ template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetBool_nid_n
     }
     const GuestLocale::Facet* punct = UseSceV2Facet(SceV2TextFacets<Text>::NumpunctKind(), *stream->locale);
     std::basic_string<Text> names(1, Text{});
-    names += TakeSceV2String(SceV2Punctuation<Text>(punct).falsename, punct);
+    names += AsSceV2Text<Text>(TakeSceV2String(SceV2Punctuation<Text>(punct).falsename, punct));
     names.push_back(Text{});
-    names += TakeSceV2String(SceV2Punctuation<Text>(punct).truename, punct);
+    names += AsSceV2Text<Text>(TakeSceV2String(SceV2Punctuation<Text>(punct).truename, punct));
     const int match = GetSceV2LocaleText(first, last, 2, names.c_str());
     *value = match == 1;
     if (match != 0 && match != 1) *state = SceV2IosFailBit;
@@ -3006,7 +3031,7 @@ template<typename Text> bool NextSceV2Is(SceV2InputIterator<Text>& first, SceV2I
 template<typename Text> std::uint32_t GetSceV2FloatingField(char* digits, int maxSignificant, SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, const GuestLocale::Implementation* locale) {
     const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), locale);
     Text atoms[sizeof(g_sceV2FloatingAtoms)];
-    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, g_sceV2FloatingAtoms, g_sceV2FloatingAtoms + sizeof(g_sceV2FloatingAtoms), atoms);
+    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, g_sceV2FloatingAtoms, g_sceV2FloatingAtoms + sizeof(g_sceV2FloatingAtoms), SceV2CtypeUnits(atoms));
     const GuestLocale::Facet* punct = UseSceV2Facet(SceV2TextFacets<Text>::NumpunctKind(), locale);
     const std::string grouping = TakeSceV2String(SceV2Punctuation<Text>(punct).grouping, punct);
     const Text separator = grouping.empty() ? Text{} : SceV2Punctuation<Text>(punct).thousandsSep(AsSceV2Punct<Text>(punct));
@@ -3219,7 +3244,7 @@ template<typename Text> int GetSceV2ClassicFloatingField(char* digits, SceV2Inpu
     const std::string grouping = TakeSceV2String(SceV2Punctuation<Text>(punct).grouping, punct);
     const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), locale);
     Text atoms[sizeof(g_sceV2DecimalAtoms)];
-    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, source, source + sourceSize, atoms);
+    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, source, source + sourceSize, SceV2CtypeUnits(atoms));
     const Text plus = atoms[SceV2DecimalPlus];
     const Text minus = atoms[SceV2DecimalMinus];
     const std::size_t digitLimit = 10;
@@ -3427,14 +3452,14 @@ template<typename Text> std::string GetSceV2MoneyField(SceV2InputIterator<Text>&
     const std::uint32_t pattern = punct.negativeFormat(fields);
     std::string value;
     const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), *stream->locale);
-    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, g_sceV2MoneyAtoms, g_sceV2MoneyAtoms + sizeof(g_sceV2MoneyAtoms), atoms);
+    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, g_sceV2MoneyAtoms, g_sceV2MoneyAtoms + sizeof(g_sceV2MoneyAtoms), SceV2CtypeUnits(atoms));
     char field[4];
     std::memcpy(field, &pattern, sizeof(field));
     bool bad = false;
     for (std::size_t index = 0; !bad && index < 4; ++index) {
         switch (field[index]) {
             case SceV2MoneySymbol: {
-                std::basic_string<Text> symbol = TakeSceV2String(punct.currencySymbol, facet);
+                std::basic_string<Text> symbol = AsSceV2Text<Text>(TakeSceV2String(punct.currencySymbol, facet));
                 if (((stream->flags & SceV2IosShowBase) == 0 && !SceV2InputEnded(first, last) && PeekSceV2Character(first) != symbol[0])
                     || (index == 3 && sign.size() <= 1 && (SceV2InputEnded(first, last) || PeekSceV2Character(first) != symbol[0]))) symbol.clear();
                 std::size_t matched = 0;
@@ -3449,10 +3474,10 @@ template<typename Text> std::string GetSceV2MoneyField(SceV2InputIterator<Text>&
                 if (SceV2InputEnded(first, last)) break;
                 if (!TakeSceV2String(punct.positiveSign, facet).empty() && TakeSceV2String(punct.positiveSign, facet)[0] == PeekSceV2Character(first)) {
                     AdvanceSceV2Character(first);
-                    sign = TakeSceV2String(punct.positiveSign, facet);
+                    sign = AsSceV2Text<Text>(TakeSceV2String(punct.positiveSign, facet));
                 } else if (!TakeSceV2String(punct.negativeSign, facet).empty() && TakeSceV2String(punct.negativeSign, facet)[0] == PeekSceV2Character(first)) {
                     AdvanceSceV2Character(first);
-                    sign = TakeSceV2String(punct.negativeSign, facet);
+                    sign = AsSceV2Text<Text>(TakeSceV2String(punct.negativeSign, facet));
                     negative = true;
                 } else if (!TakeSceV2String(punct.positiveSign, facet).empty() && TakeSceV2String(punct.negativeSign, facet).empty()) {
                     negative = true;
@@ -3667,7 +3692,7 @@ template<typename Text> int GetSceV2TimeName(SceV2InputIterator<Text>& first, Sc
         return GetSceV2LocaleText(first, last, 0, months ? facet->months : facet->days, false);
     } else {
         const auto* facet = reinterpret_cast<const SceV2TimeGetFacet<std::uint16_t>*>(self);
-        return GetSceV2LocaleText(first, last, 0, reinterpret_cast<const char16_t*>(months ? facet->months : facet->days), false);
+        return GetSceV2LocaleText(first, last, 0, reinterpret_cast<const Text*>(months ? facet->months : facet->days), false);
     }
 }
 
