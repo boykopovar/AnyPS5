@@ -50,6 +50,7 @@
 #endif
 
 static constexpr int GUEST_EPERM = 1;
+static constexpr int GUEST_EIO = 5;
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
@@ -412,8 +413,6 @@ int APS5_VABI usleep_nid_postfix(KernelUseconds microseconds) {
 }
 
 #ifdef _WIN32
-static constexpr int GUEST_EIO = 5;
-
 int APS5_VABI ClockTimeWin32ErrorToGuestErrno_nid_no_patch(std::uint32_t error) {
     if (error == ERROR_NOACCESS) return GUEST_EFAULT;
     if (error == ERROR_ACCESS_DENIED) return GUEST_EPERM;
@@ -609,9 +608,21 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
 #endif
 }
 
+static bool MeasuredInvalidClock(int clockId) {
+    return clockId == 3 || clockId == 6 || (clockId >= 22 && clockId < 32);
+}
+
+static bool MeasuredIoErrorClock(int clockId) {
+    return clockId >= 16 && clockId <= 19;
+}
+
 int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
-    if (!IsCpuClock(clockId) && (clockId < 0 || clockId >= 32)) {
+    if (!IsCpuClock(clockId) && (clockId < 0 || clockId >= 32 || MeasuredInvalidClock(clockId))) {
         *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
+    if (MeasuredIoErrorClock(clockId)) {
+        *__error_nid_postfix() = GUEST_EIO;
         return -1;
     }
     KernelTimespec value{};
