@@ -528,7 +528,9 @@ OverlayContent ComposeOverlayDetails(const OverlayDetailSample& sample) {
     }
     if (sample.queueWaits) add("Q0 WAIT MS/FRAME: MEM " + value(sample.queueWaits->memoryMs) + " LOCK " + value(sample.queueWaits->lockMs) + " GPU " + value(sample.queueWaits->gpuMs));
     joined("RENDER PASSES/FRAME:", {shown(sample.renderPassesPerFrame, value)});
-    joined("PIPELINES:", {shown(sample.pipelinesCompiling, [&](std::uint64_t pending) { return "COMPILING " + count(static_cast<double>(pending)); }), shown(sample.pipelinesPerSecond, [&](double made) { return "NEW/S " + count(made); })});
+    std::optional<double> compileSecondsLeft;
+    if (sample.pipelinesCompiling && sample.pipelinesPerSecond && *sample.pipelinesPerSecond > 0) compileSecondsLeft = static_cast<double>(*sample.pipelinesCompiling) / *sample.pipelinesPerSecond;
+    joined("PIPELINES:", {shown(sample.pipelinesCompiling, [&](std::uint64_t pending) { return "COMPILING " + count(static_cast<double>(pending)); }), shown(sample.pipelinesPerSecond, [&](double made) { return "NEW/S " + count(made); }), shown(compileSecondsLeft, [&](double seconds) { return "LEFT " + FormatOverlayRate(seconds) + " S"; })});
     joined("HIT %:", {shown(sample.drawCacheHitPercent, [&](double percent) { return "DRAW CACHE " + value(percent); }), shown(sample.pipelineCacheHitPercent, [&](double percent) { return "PIPELINES " + value(percent); })});
     joined("", {shown(sample.flipsPerSecond, [&](double flips) { return "FLIPS/S: " + rate(flips); }), shown(sample.presentsPerSecond, [&](double presents) { return "PRESENTS/S: " + rate(presents); })});
     joined("", {shown(sample.droppedFrames, [&](std::uint64_t dropped) { return "DROPPED/S: " + count(static_cast<double>(dropped)); }), shown(sample.repeatedPresents, [&](std::uint64_t repeated) { return "REPEATED/S: " + count(static_cast<double>(repeated)); })});
