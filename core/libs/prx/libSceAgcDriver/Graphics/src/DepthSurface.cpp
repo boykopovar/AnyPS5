@@ -1005,6 +1005,13 @@ public:
         return target.samples != 1u && uniformPlaneTarget(target) && samplingActive && sampling.refusal.empty() && !hostWritten->load(std::memory_order_acquire);
     }
 
+    bool PublishedUnderStorage() const {
+        return GuestHoldsSamples() && std::ranges::any_of(sampling.initial, [](const auto& range) {
+            const std::pair<std::uint64_t, std::uint64_t> plane{range.address, range.address + range.bytes};
+            return StorageTexture::AnyPendingUnitsOverlap(std::span(&plane, 1u));
+        });
+    }
+
     void ProveOverwrite() {
         if (!sampling.overwriteStencil || !hostEverWritten->load(std::memory_order_acquire) || Recorder::InCompletion()) return;
         const auto value = *sampling.overwriteStencil;
@@ -3279,6 +3286,13 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
     }
     for (const auto& candidate : surfaces()) {
         if (surface == nullptr && candidate->active->load(std::memory_order_acquire) && candidate->context.device == context.device && sameLayoutWithin(candidate->target, target)) surface = candidate.get();
+    }
+    if (surface != nullptr && overwrittenStencil && surface->PublishedUnderStorage()) {
+        std::unique_lock guardLock(depthGuardMutex());
+        surface->active->store(false, std::memory_order_release);
+        std::erase_if(depthGuards(), [&](const auto& range) { return range.active == surface->active; });
+        anyDepthGuard().store(!depthGuards().empty(), std::memory_order_release);
+        surface = nullptr;
     }
     const bool created = surface == nullptr;
     if (!created) surface->ProveOverwrite();
