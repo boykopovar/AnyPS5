@@ -74,3 +74,36 @@ def nonnegative_number(value):
     return number
 
 
+def main(arguments=None):
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
+    parser.add_argument("trace", type=Path, help="aps5-trace-*.json.gz or .json")
+    parser.add_argument("-o", "--output", type=Path, help="HTML file to write (default: the trace name with .html)")
+    parser.add_argument("--from-ms", type=nonnegative_number, default=0.0, help="start of the window, in ms from the trace start")
+    parser.add_argument("--to-ms", type=nonnegative_number, help="end of the window, in ms (default: the end of the trace)")
+    parser.add_argument("--thread", action="append", default=[], metavar="NAME", help="draw only threads with this name; repeat to select several")
+    parser.add_argument("--max-slices", type=int, default=5000, help="bars to draw, longest first (default 5000)")
+    parser.add_argument("--width", type=int, default=1000, help="width of the time axis in pixels (default 1000)")
+    options = parser.parse_args(arguments)
+    trace = trace_digest.load_trace(options.trace)
+    if options.thread:
+        trace.select_threads(options.thread)
+    end_of_trace = max((ts + dur for slices in trace.slices.values() for ts, dur, _, _, _ in slices), default=0.0)
+    start_us = options.from_ms * 1000.0
+    end_us = end_of_trace if options.to_ms is None else options.to_ms * 1000.0
+    slices = window_slices(trace, start_us, end_us, options.thread)
+    laid = layout(slices, start_us, end_us, options.width, options.max_slices)
+    notes = [f"window {start_us / 1000.0:.3f} to {end_us / 1000.0:.3f} ms, {len(laid['threads'])} threads, {len(laid['bars'])} bars"]
+    if laid["left_out"]:
+        notes.append(f"{laid['left_out']} shorter slices left out by --max-slices")
+    output = options.output or options.trace.with_suffix(".html")
+    output.write_text(page(svg(laid), options.trace.name, notes), encoding="utf-8")
+    print(f"wrote {output}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (EOFError, OSError, ValueError, zlib.error) as error:
+        print(f"FAIL: {error}", file=sys.stderr)
+        sys.exit(2)
