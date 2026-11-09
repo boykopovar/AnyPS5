@@ -17,12 +17,16 @@ struct Waiter {
     KernelSema sem = nullptr;
     bool timed = false;
     int result = SCE_OK;
+    int need = 1;
+    int rounds = 1;
 };
 
 static void* APS5_VABI Wait(void* arg) {
     auto& waiter = *static_cast<Waiter*>(arg);
-    KernelUseconds timeout = 5000000;
-    waiter.result = sceKernelWaitSema(waiter.sem, 1, waiter.timed ? &timeout : nullptr);
+    for (int round = 0; round < waiter.rounds && waiter.result == SCE_OK; ++round) {
+        KernelUseconds timeout = 5000000;
+        waiter.result = sceKernelWaitSema(waiter.sem, waiter.need, waiter.timed ? &timeout : nullptr);
+    }
     return nullptr;
 }
 
@@ -100,6 +104,45 @@ static void RequireZeroTimeout() {
     Require(sceKernelDeleteSema(sem) == SCE_OK);
 }
 
+static void RequireSignalWakesOnlySatisfiedWaiters() {
+    KernelSema sem = nullptr;
+    Require(sceKernelCreateSema(&sem, "signal_wakes", 0, 0, 8, nullptr) == SCE_OK);
+    Require(sceKernelSignalSema(sem, 3) == SCE_OK);
+    Require(sceKernelPollSema(sem, 3) == SCE_OK);
+    Require(sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_EBUSY);
+
+    Waiter needsTwo{sem, true, SCE_OK, 2};
+    Pthread twoThread = nullptr;
+    Require(scePthreadCreate(&twoThread, nullptr, Wait, &needsTwo, nullptr) == SCE_OK);
+    for (int i = 0; i < 5000 && WaiterCount(sem) != 1; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(WaiterCount(sem) == 1);
+    Require(sceKernelSignalSema(sem, 1) == SCE_OK);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    Require(WaiterCount(sem) == 1);
+    Require(sceKernelSignalSema(sem, 1) == SCE_OK);
+    Require(scePthreadJoin(twoThread, nullptr) == SCE_OK);
+    Require(needsTwo.result == SCE_OK);
+    Require(sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_EBUSY);
+
+    Waiter first{sem, true, SCE_OK, 1, 2000};
+    Waiter second{sem, true, SCE_OK, 1, 2000};
+    Pthread firstThread = nullptr;
+    Pthread secondThread = nullptr;
+    Require(scePthreadCreate(&firstThread, nullptr, Wait, &first, nullptr) == SCE_OK);
+    Require(scePthreadCreate(&secondThread, nullptr, Wait, &second, nullptr) == SCE_OK);
+    for (int signaled = 0; signaled < 4000;) {
+        const int result = sceKernelSignalSema(sem, 1);
+        if (result == SCE_OK) ++signaled;
+        else Require(result == SCE_KERNEL_ERROR_EINVAL);
+        if (result != SCE_OK) std::this_thread::yield();
+    }
+    Require(scePthreadJoin(firstThread, nullptr) == SCE_OK);
+    Require(scePthreadJoin(secondThread, nullptr) == SCE_OK);
+    Require(first.result == SCE_OK && second.result == SCE_OK);
+    Require(WaiterCount(sem) == 0);
+    Require(sceKernelDeleteSema(sem) == SCE_OK);
+}
+
 int main() {
     KernelUseconds nullTimeout = 1000;
     int nullWaiters = -1;
@@ -167,4 +210,5 @@ int main() {
 
     RequireInvalidArguments();
     RequireZeroTimeout();
+    RequireSignalWakesOnlySatisfiedWaiters();
 }
