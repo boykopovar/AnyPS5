@@ -207,7 +207,7 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
         if (direction == "LEFT") return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, 0, -1};
         throw std::runtime_error("mouse wheel direction must be UP, DOWN, LEFT or RIGHT");
     }
-    throw std::runtime_error("source type must be KEY, MOUSE or WHEEL");
+    throw std::runtime_error("source type must be KEY, MOUSE, WHEEL or PAD");
 }
 
 enum class InputSetting {
