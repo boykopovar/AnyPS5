@@ -9,6 +9,7 @@ Entries about one library or component are in [debt](debt/), one file per librar
   - libgcc_s_seh-1.dll
   - libstdc++-6.dll
   - libwinpthread-1.dll
+- With a `libstdc++-6.dll` from another toolchain earlier on `PATH` (such as Git's `mingw64\bin`), a program that finds the three DLLs above only through `PATH` loads that copy and fails with "Entry Point Not Found". With CMake 3.28 or later, ctest puts the build compiler's directory first on `PATH` for the tests this project registers; with older CMake, and for programs run outside ctest, this is not handled.
 
 ### Silent stubs
 
