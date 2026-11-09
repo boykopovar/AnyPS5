@@ -62,6 +62,10 @@
 #ifndef _WIN32
 #include <sys/resource.h>
 #endif
+#ifdef __APPLE__
+#include <crt_externs.h>
+#include <mach/mach.h>
+#endif
 
 extern char** environ;
 namespace {
@@ -207,6 +211,11 @@ public:
             if (_wputenv_s(L"ANYPS5_LOADEXEC_ARGV_SKIP", L"") != 0 || !SetEnvironmentVariableW(L"ANYPS5_LOADEXEC_ARGV_SKIP", nullptr))
                 throw std::runtime_error("LoadExec: cannot clear the argument marker");
         }
+#elif defined(__APPLE__)
+        const int count = *_NSGetArgc();
+        char** values = *_NSGetArgv();
+        for (int index = 0; index < count; ++index)
+            arguments.push_back(values[index]);
 #else
         std::ifstream stream("/proc/self/cmdline", std::ios::binary);
         if (!stream)
@@ -540,6 +549,12 @@ int APS5_VABI getpid_nid_postfix(void) {
     return static_cast<int>(pid);
 }
 
+int APS5_VABI sceKernelGetProcessAbiType(int pid) {
+    if (pid == -1 || pid == getpid_nid_postfix()) return 1;
+    if (pid == 0) return 0;
+    throw std::runtime_error("sceKernelGetProcessAbiType: unsupported process id " + std::to_string(pid));
+}
+
 int APS5_VABI getsid_nid_postfix(int pid) {
     const int self = getpid_nid_postfix();
     if (pid == 0 || pid == self) return self;
@@ -860,6 +875,11 @@ int APS5_VABI sceKernelGetCurrentCpu(void) {
             throw std::system_error(GetLastError(), std::system_category(), "Reading processor group size");
         index += count;
     }
+#elif defined(__APPLE__)
+    std::size_t cpu = 0;
+    if (const int error = ::pthread_cpu_number_np(&cpu); error != 0)
+        throw std::system_error(error, std::generic_category(), "Reading current processor");
+    const auto index = static_cast<unsigned>(cpu);
 #else
     const int cpu = ::sched_getcpu();
     if (cpu < 0)
@@ -948,10 +968,15 @@ int APS5_VABI sysarch(int operation, void* parameters) {
     constexpr int getFsBase = 128;
     constexpr int getGsBase = 130;
     constexpr int setGsBase = 131;
+    constexpr std::array<int, 2> xfpuStateOperations{11, 132};
     constexpr std::uint64_t userAddressEnd = 0x0000800000000000ull;
     constexpr std::array<int, 14> definedOperations{0, 1, 3, 4, 7, 8, 9, 10, 11, 128, 129, 130, 131, 132};
     if (std::find(definedOperations.begin(), definedOperations.end(), operation) == definedOperations.end()) {
         *__error_nid_postfix() = guestInvalid;
+        return -1;
+    }
+    if (parameters == nullptr && std::find(xfpuStateOperations.begin(), xfpuStateOperations.end(), operation) != xfpuStateOperations.end()) {
+        *__error_nid_postfix() = guestFault;
         return -1;
     }
     const bool i386 = operation == i386GetFsBase || operation == i386GetGsBase;
@@ -1047,8 +1072,27 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
     result.ru_stime.tv_usec = static_cast<std::int64_t>(kernelMicros % 1000000ULL);
 #else
     struct rusage native{};
+#ifdef __APPLE__
+    if (who == 0) {
+        if (::getrusage(RUSAGE_SELF, &native) != 0)
+            throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
+    } else {
+        thread_basic_info_data_t info{};
+        mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+        const mach_port_t thread = mach_thread_self();
+        const kern_return_t status = thread_info(thread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info), &count);
+        mach_port_deallocate(mach_task_self(), thread);
+        if (status != KERN_SUCCESS)
+            throw std::runtime_error("getrusage: thread_info failed");
+        native.ru_utime.tv_sec = info.user_time.seconds;
+        native.ru_utime.tv_usec = info.user_time.microseconds;
+        native.ru_stime.tv_sec = info.system_time.seconds;
+        native.ru_stime.tv_usec = info.system_time.microseconds;
+    }
+#else
     if (::getrusage(who == 0 ? RUSAGE_SELF : RUSAGE_THREAD, &native) != 0)
         throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
+#endif
     result.ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
     result.ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);
     result.ru_stime.tv_sec = static_cast<std::int64_t>(native.ru_stime.tv_sec);
