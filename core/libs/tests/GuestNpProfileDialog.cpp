@@ -2,6 +2,7 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -155,6 +156,11 @@ int main() {
 
     Require(sceNpProfileDialogOpen(nullptr) == kErrArgNull);
     Require(sceNpProfileDialogOpenA(nullptr) == kErrArgNull);
+    errno = EDOM;
+    Require(sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == EDOM);
+    Require(sceNpProfileDialogOpenA(reinterpret_cast<const SceNpProfileDialogParamA*>(0x10)) == kErrArgNull);
+    Require(errno == EDOM);
     Require(sceNpProfileDialogGetStatus() == kStatusInitialized);
 
     alignas(8) std::uint8_t wrong[kParamSize + 16];

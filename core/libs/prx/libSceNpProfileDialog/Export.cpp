@@ -69,13 +69,18 @@ int OpenDialog(const TParam* param, const char* function) {
         Unsettled(function, "status " + std::to_string(dialog.status) + " is neither INITIALIZED nor FINISHED, and the error for it is unsettled");
     }
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    if (param->size != sizeof(TParam)) {
-        Unsettled(function, "param size " + std::to_string(param->size) + " is not the " + std::to_string(sizeof(TParam)) + "-byte layout this library reads");
+    TParam local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, param, sizeof(local));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (local.size != sizeof(TParam)) {
+        Unsettled(function, "param size " + std::to_string(local.size) + " is not the " + std::to_string(sizeof(TParam)) + "-byte layout this library reads");
     }
-    if (param->mode < NP_PROFILE_DIALOG_MODE_NORMAL || param->mode > NP_PROFILE_DIALOG_MODE_GRIEF_REPORT) {
-        Unsettled(function, "mode " + std::to_string(param->mode) + " is not a known profile dialog mode");
+    if (local.mode < NP_PROFILE_DIALOG_MODE_NORMAL || local.mode > NP_PROFILE_DIALOG_MODE_GRIEF_REPORT) {
+        Unsettled(function, "mode " + std::to_string(local.mode) + " is not a known profile dialog mode");
     }
-    dialog.userData = param->userData;
+    dialog.userData = local.userData;
     dialog.status = COMMON_DIALOG_STATUS_FINISHED;
     PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
     return COMMON_DIALOG_OK;
