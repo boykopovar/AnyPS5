@@ -688,7 +688,17 @@ int APS5_VABI curl_formget_nid_postfix(struct guest_curl_httppost* form, void* a
 }
 
 void APS5_VABI curl_formfree_nid_postfix(struct guest_curl_httppost* form) {
-    NotImplemented_nid_no_patch(__func__);
+    while (form) {
+        auto* next = form->next;
+        curl_formfree_nid_postfix(form->more);
+        if (!(form->flags & CURL_HTTPPOST_PTRNAME)) free_nid_postfix(form->name);
+        if (!(form->flags & (CURL_HTTPPOST_PTRCONTENTS | CURL_HTTPPOST_BUFFER | CURL_HTTPPOST_CALLBACK)))
+            free_nid_postfix(form->contents);
+        free_nid_postfix(form->contenttype);
+        free_nid_postfix(form->showfilename);
+        free_nid_postfix(form);
+        form = next;
+    }
 }
 
 std::int32_t APS5_VABI curl_multi_socket_action_nid_postfix(CURLM* multi_handle, int s, int ev_bitmask, int* running_handles) {
