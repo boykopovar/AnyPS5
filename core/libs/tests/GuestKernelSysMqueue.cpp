@@ -196,6 +196,67 @@ void Access() {
     std::filesystem::remove(path);
 }
 
+void NullBuffer() {
+    const auto name = Name("nullbuffer");
+    const MqAttr small{0, 3, 16, 0, {}};
+    const int queue = kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, &small);
+    Require(queue >= 0);
+    Require(kmq_timedsend_nid_postfix(queue, "keep", 4, 2, nullptr) == 0);
+    Require(kmq_timedreceive_nid_postfix(queue, nullptr, 16, nullptr, nullptr) == -1 && Error() == Efault);
+    unsigned priority = 0;
+    Require(Receive(queue, &priority) == "keep" && priority == 2);
+    Require(close_nid_postfix(queue) == 0 && kmq_unlink_nid_postfix(name.c_str()) == 0);
+}
+
+void FarDeadline() {
+    const auto name = Name("fardeadline");
+    const MqAttr one{0, 1, 16, 0, {}};
+    const int queue = kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, &one);
+    Require(queue >= 0);
+    const Timespec forever{INT64_MAX, 0};
+    std::atomic<std::int64_t> received{-2};
+    std::thread reader([&] {
+        char local[16]{};
+        received = kmq_timedreceive_nid_postfix(queue, local, sizeof(local), nullptr, &forever);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    Require(received == -2);
+    Require(kmq_timedsend_nid_postfix(queue, "late", 4, 0, nullptr) == 0);
+    reader.join();
+    Require(received == 4);
+    Require(close_nid_postfix(queue) == 0 && kmq_unlink_nid_postfix(name.c_str()) == 0);
+}
+
+void ConcurrentSetattr() {
+    const auto name = Name("setattr");
+    const MqAttr one{0, 1, 16, 0, {}};
+    const int queue = kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, &one);
+    Require(queue >= 0);
+    std::atomic<bool> stop{false};
+    std::thread toggler([&] {
+        const MqAttr on{ONonblock, 0, 0, 0, {}};
+        const MqAttr off{0, 0, 0, 0, {}};
+        while (!stop) {
+            kmq_setattr_nid_postfix(queue, &on, nullptr);
+            kmq_setattr_nid_postfix(queue, &off, nullptr);
+        }
+    });
+    char buffer[16]{};
+    for (int i = 0; i < 200; ++i) {
+        const auto deadline = FromNow(std::chrono::milliseconds(1));
+        const auto result = kmq_timedreceive_nid_postfix(queue, buffer, sizeof(buffer), nullptr, &deadline);
+        Require(result == -1 && (Error() == Etimedout || Error() == Eagain));
+    }
+    stop = true;
+    toggler.join();
+    const MqAttr off{0, 0, 0, 0, {}};
+    Require(kmq_setattr_nid_postfix(queue, &off, nullptr) == 0);
+    Require(kmq_timedsend_nid_postfix(queue, "ok", 2, 0, nullptr) == 0);
+    unsigned priority = 7;
+    Require(Receive(queue, &priority) == "ok" && priority == 0);
+    Require(close_nid_postfix(queue) == 0 && kmq_unlink_nid_postfix(name.c_str()) == 0);
+}
+
 }
 
 int main() {
@@ -203,6 +264,9 @@ int main() {
     Messages();
     Waiting();
     Access();
+    NullBuffer();
+    FarDeadline();
+    ConcurrentSetattr();
     std::puts("message queues passed");
     return 0;
 }
