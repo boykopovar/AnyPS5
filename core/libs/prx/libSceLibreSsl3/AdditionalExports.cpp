@@ -165,14 +165,6 @@ int APS5_VABI Unknown_3KZ_minus_L4y1gak_nid_no_patch() {
 }
 APS5_EXPORT("3KZ-L4y1gak", Unknown_3KZ_minus_L4y1gak_nid_no_patch);
 
-int APS5_VABI EVP_chacha20_poly1305_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI EVP_chacha20_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_set_pubkey_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
