@@ -70,6 +70,42 @@ int APS5_VABI WKBundleFrameGetJavaScriptWrapperForFileForWorld() {
     return 0;
 }
 
+int APS5_VABI WKBundleFrameHandlesPageScaleGesture() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionCopyDownloadAttribute() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionCopyFormElement() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionCopyHitTestResult() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetEventModifiers() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetEventMouseButton() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetNavigationType() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetShouldOpenExternalURLs() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetShouldTryAppLinks() {
+    return 0;
+}
+
 int APS5_VABI WKBundleNodeHandleCopyHTMLFrameElementContentFrame() {
     return 0;
 }
@@ -107,6 +143,10 @@ int APS5_VABI WKBundlePageCopyContextMenuItems() {
 }
 
 int APS5_VABI WKBundlePageGetBackForwardList() {
+    return 0;
+}
+
+int APS5_VABI WKBundlePageIsUsingDarkAppearance() {
     return 0;
 }
 
@@ -174,6 +214,10 @@ int APS5_VABI WKContextResumeDownload() {
     return 0;
 }
 
+int APS5_VABI WKFrameCanShowMIMEType() {
+    return 0;
+}
+
 int APS5_VABI WKFrameCreateFrameInfo() {
     return 0;
 }
@@ -227,6 +271,10 @@ int APS5_VABI WKOpenPanelParametersGetMediaCaptureType() {
 }
 
 int APS5_VABI WKPageGetFrameSetLargestFrame() {
+    return 0;
+}
+
+int APS5_VABI WKPageGetPaginationLineGridEnabled() {
     return 0;
 }
 
@@ -304,6 +352,10 @@ int APS5_VABI WKPreferencesGetQTKitEnabled() {
 
 int APS5_VABI WKPreferencesGetTypeID() {
     return static_cast<int>(0x00000058u);
+}
+
+int APS5_VABI WKProtectionSpaceCopyCertificateInfo() {
+    return 0;
 }
 
 int APS5_VABI WKUserContentExtensionStoreCreate() {

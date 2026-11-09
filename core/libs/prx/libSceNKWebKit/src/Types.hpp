@@ -61,6 +61,13 @@ public:
     std::vector<std::uint8_t> bytes;
 };
 
+class SessionState final : public ObjectOf<ObjectType::SessionState> {
+public:
+    explicit SessionState(std::vector<std::uint8_t> data) : data(std::move(data)) {}
+
+    std::vector<std::uint8_t> data;
+};
+
 template<ObjectType kind, typename Value>
 class Number final : public ObjectOf<kind> {
 public:
@@ -252,6 +259,13 @@ public:
     bool isFront = false;
     bool isProfilingPage = false;
     bool isVisible = false;
+};
+
+class Connection final : public ObjectOf<ObjectType::Connection> {
+public:
+    Retained<Object> lastMessageName;
+    Retained<Object> lastMessageBody;
+    bool clientConfigured = false;
 };
 
 class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
