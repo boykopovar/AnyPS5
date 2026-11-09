@@ -1,5 +1,7 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -83,6 +85,64 @@ void TestParameterLifecycle() {
     Require(GuardIntact(copyStorage));
 }
 
+
+struct alignas(16) ActivityModel {
+    std::array<std::byte, 0x10> header;
+    std::array<std::byte, 0x20> activityId;
+    std::array<std::byte, 0x20> name;
+    bool hidden;
+    std::array<std::byte, 7> reserved;
+    std::array<std::byte, 0x20> matchId;
+    bool matchIdSet;
+    std::array<std::byte, 7> guard;
+};
+
+static_assert(offsetof(ActivityModel, activityId) == 0x10);
+static_assert(offsetof(ActivityModel, name) == 0x30);
+static_assert(offsetof(ActivityModel, hidden) == 0x50);
+static_assert(offsetof(ActivityModel, matchId) == 0x58);
+static_assert(offsetof(ActivityModel, matchIdSet) == 0x78);
+static_assert(sizeof(ActivityModel) == 0x80);
+
+void TestActivityModelAccessors() {
+    std::array<ActivityModel, 4> activities{};
+    const std::array getters{
+        &_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity13getActivityIdEv,
+        &_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity7getNameEv,
+        &_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity10getMatchIdEv,
+    };
+    for (std::size_t index = 0; index < activities.size(); ++index) {
+        auto& activity = activities[index];
+        std::memset(&activity, 0xa5, sizeof(activity));
+        activity.hidden = (index & 1u) != 0;
+        activity.matchIdSet = (index & 2u) != 0;
+        const auto before = activities;
+        const std::array<std::byte*, 3> members{activity.activityId.data(), activity.name.data(), activity.matchId.data()};
+        for (std::size_t field = 0; field < getters.size(); ++field) {
+            const auto* reference = getters[field](&activity);
+            Require(reference == members[field]);
+        }
+        Require(_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity9getHiddenEv(&activity) == activity.hidden);
+        Require(_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity12matchIdIsSetEv(&activity) == activity.matchIdSet);
+        Require(std::memcmp(activities.data(), before.data(), sizeof(activities)) == 0);
+        for (std::size_t field = 0; field < getters.size(); ++field) {
+            const auto* reference = getters[field](&activity);
+            const auto value = std::byte{static_cast<unsigned char>(0x31u + index * 3u + field)};
+            std::fill(members[field], members[field] + 0x20, value);
+            const auto updated = activities;
+            Require(std::memcmp(reference, members[field], 0x20) == 0);
+            Require(getters[field](&activity) == reference);
+            Require(std::memcmp(activities.data(), updated.data(), sizeof(activities)) == 0);
+        }
+        activity.hidden = !activity.hidden;
+        Require(_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity9getHiddenEv(&activity) == activity.hidden);
+        Require(_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity12matchIdIsSetEv(&activity) == activity.matchIdSet);
+        activity.matchIdSet = !activity.matchIdSet;
+        Require(_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity9getHiddenEv(&activity) == activity.hidden);
+        Require(_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity12matchIdIsSetEv(&activity) == activity.matchIdSet);
+    }
+}
+
 void TestRequestIsSignedOut() {
     Require(_ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi17getUserActivitiesEiRKNS5_28ParameterToGetUserActivitiesERNS1_6Common11TransactionINS9_12IntrusivePtrINS4_26GetUsersActivitiesResponseEEENSB_INS9_18ResponseHeaderBaseEEEEE(
                 0, nullptr, nullptr) == kNotSignedIn);
@@ -93,5 +153,6 @@ void TestRequestIsSignedOut() {
 int main() {
     TestParameterLifecycle();
     TestRequestIsSignedOut();
+    TestActivityModelAccessors();
     return 0;
 }
