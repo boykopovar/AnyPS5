@@ -32123,8 +32123,8 @@ int APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient14cancelledErrorERKNS_15Resour
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient17overrideMediaTypeEv() {
-    NotImplemented_nid_no_patch(__func__);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient17overrideMediaTypeEv(const WebCore::EmptyFrameLoaderClient*) {
+    return NKWebKit::WtfAbi::String();
 }
 
 int APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient18cannotShowURLErrorERKNS_15ResourceRequestE() {

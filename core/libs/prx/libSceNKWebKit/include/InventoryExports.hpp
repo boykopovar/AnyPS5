@@ -1,6 +1,11 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
+
+namespace WebCore {
+class EmptyFrameLoaderClient;
+}
 
 extern "C" {
 
@@ -5842,7 +5847,7 @@ int APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient14cancelledErrorERKNS_15Resour
 int APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient14shouldFallBackERKNS_13ResourceErrorE();
 int APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient15canShowMIMETypeERKN3WTF6StringE();
 int APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient16canHandleRequestERKNS_15ResourceRequestE();
-int APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient17overrideMediaTypeEv();
+NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient17overrideMediaTypeEv(const WebCore::EmptyFrameLoaderClient* self);
 int APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient18cannotShowURLErrorERKNS_15ResourceRequestE();
 int APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient21canShowMIMETypeAsHTMLERKN3WTF6StringE();
 int APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient21fileDoesNotExistErrorERKNS_16ResourceResponseE();
