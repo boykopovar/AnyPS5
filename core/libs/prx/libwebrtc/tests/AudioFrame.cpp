@@ -239,7 +239,7 @@ void TestCopyFrom() {
     Require(destination->speechType == 3 && destination->vadActivity == 1 && destination->channelLayout == WebRtcChannelLayoutStereo);
     Require(destination->absoluteCaptureTimestampMsEngaged && destination->absoluteCaptureTimestampMs.value == 987654321);
     Require(!destination->muted && std::memcmp(destination->data, source->data, 4 * sizeof(source->data[0])) == 0);
-    Require(AllSamples(destination->data + 4, 0));
+    for (std::size_t index = 4; index < WebRtcAudioFrameMaxDataSizeSamples; ++index) Require(destination->data[index] == 0);
     Require(destination->profileTimestampMs == 999 && destination->packetInfos == nullptr);
 
     source->muted = true;
