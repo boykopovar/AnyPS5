@@ -112,12 +112,11 @@ bool DrawKeySightings::SeenBefore(std::uint64_t key) {
     return false;
 }
 
-bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
+bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape, const DrawRelocationPending& pending) {
     std::lock_guard cacheLock(drawCacheMutex);
     if (drawCache.contains(key)) return true;
     if (!drawKeySightings) drawKeySightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
     bool seen = drawKeySightings->SeenBefore(key);
-    const auto& pending = drawRelocationPending;
     if (pending.key == key && pending.identity != 0) {
         if (pending.alias != 0) {
             const auto trial = drawRelocationTrials.find(pending.identity);
