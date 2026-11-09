@@ -737,6 +737,29 @@ void testMouseTouchpad() {
     check(!keyboard.Compose(idle).touch[0].active, "losing the window focus lifts a touch point the mouse holds");
 }
 
+void testMouseGyro() {
+    Pad::KeyboardMouse keyboard(defaults());
+    const auto start = std::chrono::steady_clock::now();
+    const auto near = [](double value, double expected) { return std::abs(value - expected) < 1e-4; };
+    keyboard.SetMouseGyro(true);
+    keyboard.SetMouseMode(true);
+    keyboard.Advance(start);
+    SDL_Event motion{};
+    motion.type = SDL_MOUSEMOTION;
+    motion.motion.xrel = 10;
+    motion.motion.yrel = -5;
+    keyboard.HandleEvent(motion, start);
+    keyboard.Advance(start + std::chrono::milliseconds(10));
+    const auto moving = keyboard.Compose(PadInputState{});
+    check(moving.hasMotion && near(moving.gyro[2], 1.0) && near(moving.gyro[1], -0.5), "a mouse drag in mouse mode turns the gyro by counts per second");
+    keyboard.Advance(start + std::chrono::milliseconds(20));
+    check(!keyboard.Compose(PadInputState{}).hasMotion, "a still mouse leaves the gyro idle");
+    keyboard.SetMouseGyro(false);
+    keyboard.HandleEvent(motion, start);
+    keyboard.Advance(start + std::chrono::milliseconds(30));
+    check(!keyboard.Compose(PadInputState{}).hasMotion, "the gyro option off leaves the mouse off the gyro");
+}
+
 int main() {
     try {
         const std::pair<const char*, std::function<void()>> tests[] = {
