@@ -77,7 +77,10 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     if (graphics.depthRemap.mode != 0u && pushOffset < Graphics::PipelinePushSlotBytes) {
         request.layout.pushConstantSizeBytes = std::min(request.layout.pushConstantSizeBytes, ShaderRecompiler::DepthRemapPushOffsetBytes - pushOffset);
     }
-    if (program.binary.stage == Stage::Mesh && Graphics::MeshDrawRunsAsCompute(request.target.mesh.has_value(), localDevice->MaxMeshOutputLayers(), graphics)) request.target.meshAsCompute = true;
+    if (program.binary.stage == Stage::Mesh && Graphics::MeshDrawRunsAsCompute(request.target.mesh.has_value(), localDevice->MaxMeshOutputLayers(), graphics)) {
+        request.target.meshAsCompute = true;
+        request.target.meshWindowBuffer = false;
+    }
     const auto waitedBefore = traceCapSync() || profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
     auto invocation = [&] {
         try {

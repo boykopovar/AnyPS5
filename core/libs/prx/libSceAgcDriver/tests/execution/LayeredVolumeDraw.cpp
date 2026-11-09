@@ -184,7 +184,7 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
     if (mesh) geometry.graphics = ShaderRecompiler::GraphicsCompileContext{0, {}, Subgroup, std::nullopt, {draw.indexAddress, draw.indexCount, draw.indexSize, draw.instanceCount}};
     geometry.useCache = false;
     auto geometryResult = ShaderRecompiler::Recompile(geometry);
-    if (mesh) {
+    if (mesh && !target.meshAsCompute) {
         for (const auto required : {ShaderRecompiler::PipelineSpecialization::MeshLayerBase, ShaderRecompiler::PipelineSpecialization::MeshLayerCount}) {
             bool found = false;
             for (std::size_t at = 5; at < geometryResult.spirv.size();) {
