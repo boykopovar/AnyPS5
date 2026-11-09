@@ -74,6 +74,8 @@ public:
     InputRequests HandleEvent(const SDL_Event& event, Clock::time_point now);
     bool Advance(Clock::time_point now);
     void SetMouseMode(bool enabled);
+    void SetMouseTouchpad(bool enabled);
+    void SetViewport(int width, int height);
     void SetTitleReadsMouse(bool reads);
     void Release();
     bool MouseMode() const;
