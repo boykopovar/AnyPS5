@@ -201,8 +201,12 @@ bool Pad::KeyboardMouse::Advance(Clock::time_point now) {
         const double seconds = std::chrono::duration<double>(now - lastAdvance).count();
         lastAdvance = now;
         if (mouseMode) mouse.Advance(seconds);
+        gyroRate = mouseGyro && mouseMode && seconds > 0.0 ? std::array<double, 2>{gyroCountsX / seconds, gyroCountsY / seconds} : std::array<double, 2>{};
+        gyroCountsX = 0.0;
+        gyroCountsY = 0.0;
     }
     bool changed = advanceAxes(now);
+    if (gyroRate[0] != 0.0 || gyroRate[1] != 0.0) changed = true;
     for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
         const auto& binding = configuration.bindings[index];
         if (pressed[index] && binding.control == InputControl::Shake) changed = true;
