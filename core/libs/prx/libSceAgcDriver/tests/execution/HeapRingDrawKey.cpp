@@ -308,7 +308,12 @@ int main() {
             Require(sets == 0, "walked heap draws allocated " + std::to_string(sets) + " rewritten descriptor sets that a descriptor heap pipeline never binds");
         std::printf("walked draws allocated %llu rewritten descriptor sets\n", static_cast<unsigned long long>(sets));
         if (heap && AgcDriver::Graphics::DescriptorHeapEnabled())
-            Require(built * 8u < repeated, "repeated heap draws built " + std::to_string(built) + " resource-cache content keys over " + std::to_string(repeated) + " draws instead of reusing their stages' keys");
+        {
+            if (std::getenv("APS5_NO_MOVED_BUFFER_TEMPLATES") == nullptr)
+                Require(built * 8u < repeated, "repeated heap draws built " + std::to_string(built) + " resource-cache content keys over " + std::to_string(repeated) + " draws instead of reusing their stages' keys");
+            else
+                Require(built * 2u >= repeated, "with moved-buffer templates off, repeated heap draws built only " + std::to_string(built) + " content keys over " + std::to_string(repeated) + " draws, so a ring stage's key was shared across draws that carry different ShaderData words");
+        }
         std::printf("repeated draws built %llu content keys over %zu draws\n", static_cast<unsigned long long>(built), repeated);
         AgcDriverShutdown_nid_postfix();
         return 0;

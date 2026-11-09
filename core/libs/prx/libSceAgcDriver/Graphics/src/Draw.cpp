@@ -1275,6 +1275,8 @@ std::atomic<std::uint64_t>& drawContentKeysBuilt() {
 }
 
 bool TemplateKeyWords(const CompiledShader& shader) {
+    // With moved buffers off the key carries the per-draw ShaderData words, so it cannot be shared on the template.
+    if (!MovableBuffers()) return false;
     const auto* heap = shader.heap;
     if (heap == nullptr || heap->base == nullptr || shader.program->heapTemplateId == 0) return false;
     const auto& bindings = shader.program->bindings;
