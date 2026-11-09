@@ -1,6 +1,6 @@
 # libSceHttp2 technical debt
 
-- [HTTP transport](../../../core/libs/prx/libSceHttp2/Transport.cpp) DNS lookup failures return `0x804101e6`; connection refusals return `0x8041013d`. These codes were measured for WebSocket handshakes on firmware 13.40; applying them to HTTP requests is unverified.
+- [HTTP transport](../../../core/libs/prx/libSceHttp2/Transport.cpp) returns `0x804101e6` after failed DNS lookups and `0x8041013d` when a connection is refused. A [native PS5 HTTP probe](https://github.com/boykopovar/AnyPS5/pull/17570#issuecomment-6741390369) on firmware `13.590.001` confirmed these codes for NXDOMAIN and connection refusal, both as synchronous return values and as asynchronous completion results.
 
 ### Silent stubs
 
