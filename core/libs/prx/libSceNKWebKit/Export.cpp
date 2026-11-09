@@ -23398,8 +23398,7 @@ int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient15finishedLoadingEPNS_14Documen
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient15willChangeTitleEPNS_14DocumentLoaderE() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient15willChangeTitleEPNS_14DocumentLoaderE() {
 }
 
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient18makeRepresentationEPNS_14DocumentLoaderE() {
