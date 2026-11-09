@@ -732,6 +732,14 @@ std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content, std:
     return scale;
 }
 
+std::int32_t OverlayScaleRequest(const char* value) {
+    if (value == nullptr || value[0] == '\0') return 0;
+    char* end = nullptr;
+    const long parsed = std::strtol(value, &end, 10);
+    if (end == value || *end != '\0' || parsed < 1 || parsed > 8) return 0;
+    return static_cast<std::int32_t>(parsed);
+}
+
 OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, OverlayCorner corner) {
     Graphics::Require(extent.width != 0 && extent.height != 0, "the performance overlay needs a destination");
     Graphics::Require(content.frameTimes.size() <= OverlayStatistics::FrameHistory, "the performance overlay graph holds at most 120 frames");
