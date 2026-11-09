@@ -30,16 +30,23 @@ FcConfig* APS5_VABI FcConfigGetCurrent() {
     return nullptr;
 }
 
-int APS5_VABI FcFontList() {
-    NotImplemented_nid_no_patch(__func__);
+FcFontSet* APS5_VABI FcFontList(FcConfig* config, FcPattern*, FcObjectSet*) {
+    if (!config && !FcInitBringUptoDate()) return nullptr;
+    if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
+    return nullptr;
 }
 
-int APS5_VABI FcFontSetMatch() {
-    NotImplemented_nid_no_patch(__func__);
+FcPattern* APS5_VABI FcFontSetMatch(FcConfig* config, FcFontSet** sets, int, FcPattern* pattern, FcResult* result) {
+    if (!sets || !pattern || !result) NotImplemented_nid_no_patch(__func__);
+    *result = FcResultNoMatch;
+    if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
+    return nullptr;
 }
 
-int APS5_VABI FcConfigSubstitute() {
-    NotImplemented_nid_no_patch(__func__);
+FcBool APS5_VABI FcConfigSubstitute(FcConfig* config, FcPattern*, int kind) {
+    if (kind < FcMatchKindBegin || kind >= FcMatchKindEnd) return 0;
+    if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI FcInit() {
