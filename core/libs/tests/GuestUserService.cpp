@@ -297,22 +297,28 @@ int main() {
 #endif
     SetLanguage(nullptr);
 
-    std::int32_t accessibilityValue = 0;
-    bool threwKeyremap = false;
-    try {
-        sceUserServiceGetAccessibilityKeyremapEnable(USER_SERVICE_INITIAL_USER_ID, &accessibilityValue);
-    } catch (const std::runtime_error&) {
-        threwKeyremap = true;
+    const int absent_users[] = {0, USER_SERVICE_USER_ID_INVALID, 0xff, 0x12345678};
+    using UnmeasuredSetting = int (APS5_VABI *)(std::int32_t, std::int32_t*);
+    const UnmeasuredSetting unmeasuredSettings[] = {
+        sceUserServiceGetAccessibilityKeyremapEnable,
+        sceUserServiceGetAccessibilityZoom,
+    };
+    for (const UnmeasuredSetting& get : unmeasuredSettings) {
+        std::int32_t value = 0x5a5a5a5a;
+        Require(get(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        for (int user_id : absent_users) {
+            Require(get(user_id, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+            Require(value == 0x5a5a5a5a);
+            Require(get(user_id, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        }
+        bool threw = false;
+        try {
+            get(USER_SERVICE_INITIAL_USER_ID, &value);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
     }
-    Require(threwKeyremap);
-
-    bool threwZoom = false;
-    try {
-        sceUserServiceGetAccessibilityZoom(USER_SERVICE_INITIAL_USER_ID, &accessibilityValue);
-    } catch (const std::runtime_error&) {
-        threwZoom = true;
-    }
-    Require(threwZoom);
 
     VerifyLoggedInUser(USER_SERVICE_INITIAL_USER_ID);
     for (int i = 1; i < USER_SERVICE_MAX_USERS; ++i) {

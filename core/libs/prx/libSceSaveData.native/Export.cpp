@@ -655,15 +655,18 @@ static bool running_title(const SceSaveDataTitleId* titleId) {
     return titleId == nullptr || std::strncmp(titleId->data, GetAppTitleId_nid_postfix().value, sizeof(titleId->data)) == 0;
 }
 
-static int read_backup(const std::string& dirName, SaveDataParam* param) {
-    const std::string entry = backup_entry(BACKUP_DIR, dirName);
+static int read_backup_entry(const std::string& entry, SaveDataParam* param) {
     std::error_code error;
     if (!std::filesystem::exists(entry, error)) {
         return error ? SAVE_DATA_ERROR_INTERNAL : SAVE_DATA_ERROR_NOT_FOUND;
     }
     const std::string backup = entry_save(entry);
-    std::vector<char> bytes;
-    if (!std::filesystem::is_directory(backup, error) || !std::filesystem::is_regular_file(param_path(backup), error) || !read_file_all(param_path(backup), bytes) || bytes.size() != sizeof(SaveDataParam)) {
+    if (!std::filesystem::is_directory(backup, error) || !std::filesystem::is_regular_file(param_path(backup), error) || std::filesystem::file_size(param_path(backup), error) != sizeof(SaveDataParam) || error) {
+        return SAVE_DATA_ERROR_INTERNAL;
+    }
+    SaveDataParam stored{};
+    std::ifstream file(param_path(backup), std::ios::binary);
+    if (!file.read(reinterpret_cast<char*>(&stored), sizeof(stored)) || file.peek() != std::ifstream::traits_type::eof()) {
         return SAVE_DATA_ERROR_INTERNAL;
     }
     const auto blocks = std::filesystem::status(blocks_path(backup), error).type();
@@ -671,9 +674,65 @@ static int read_backup(const std::string& dirName, SaveDataParam* param) {
         return SAVE_DATA_ERROR_INTERNAL;
     }
     if (param != nullptr) {
-        std::memcpy(param, bytes.data(), sizeof(SaveDataParam));
+        *param = stored;
     }
     return SAVE_DATA_OK;
+}
+
+static void move_backup(const char* step, const std::string& from, const std::string& to, bool* moved = nullptr) {
+    file_step(step, to);
+    std::filesystem::rename(from, to);
+    if (moved != nullptr) *moved = true;
+    file_step("backup.flush", to);
+    flush_path(std::filesystem::path(to).parent_path().string(), true);
+    flush_path(std::filesystem::path(from).parent_path().string(), true);
+}
+
+static void remove_backup_copy(const char* step, const std::string& path) {
+    if (plain_type(path) == std::filesystem::file_type::not_found) return;
+    file_step(step, path);
+    RemoveTree(path);
+    flush_path(std::filesystem::path(path).parent_path().string(), true);
+}
+
+static void recover_backup(const std::string& dirName) {
+    require_plain_paths(dirName, {BACKUP_DIR, BACKUP_STAGING_DIR, BACKUP_OLD_DIR});
+    const std::string entry = backup_entry(BACKUP_DIR, dirName);
+    const std::string staged = backup_entry(BACKUP_STAGING_DIR, dirName);
+    const std::string old = backup_entry(BACKUP_OLD_DIR, dirName);
+    const auto previous = plain_type(old);
+    const auto staging = plain_type(staged);
+    if (previous == std::filesystem::file_type::not_found && staging == std::filesystem::file_type::not_found) return;
+    for (const auto& path : {staged, old}) {
+        if (plain_type(path) == std::filesystem::file_type::regular) {
+            throw std::filesystem::filesystem_error("SaveData: a backup recovery copy is not a directory", path, std::make_error_code(std::errc::not_a_directory));
+        }
+    }
+    const auto current = plain_type(entry);
+    if (current != std::filesystem::file_type::not_found) {
+        if (read_backup_entry(entry, nullptr) != SAVE_DATA_OK) {
+            throw std::filesystem::filesystem_error("SaveData: the published backup is incomplete", entry, std::make_error_code(std::errc::io_error));
+        }
+        flush_path(BACKUP_DIR, true);
+    } else if (previous != std::filesystem::file_type::not_found) {
+        if (read_backup_entry(old, nullptr) != SAVE_DATA_OK) {
+            throw std::filesystem::filesystem_error("SaveData: the previous backup is incomplete", old, std::make_error_code(std::errc::io_error));
+        }
+        std::filesystem::create_directories(BACKUP_DIR);
+        flush_path(".", true);
+        move_backup("backup.recover", old, entry);
+    }
+    remove_backup_copy("backup.recover.cleanup", staged);
+    remove_backup_copy("backup.recover.cleanup", old);
+}
+
+static int read_backup(const std::string& dirName, SaveDataParam* param) {
+    try {
+        recover_backup(dirName);
+        return read_backup_entry(backup_entry(BACKUP_DIR, dirName), param);
+    } catch (const std::filesystem::filesystem_error&) {
+        return SAVE_DATA_ERROR_INTERNAL;
+    }
 }
 
 static void backupSave(const std::string& dirName) {
@@ -682,10 +741,12 @@ static void backupSave(const std::string& dirName) {
     const std::string staged = backup_entry(BACKUP_STAGING_DIR, dirName);
     const std::string old = backup_entry(BACKUP_OLD_DIR, dirName);
     require_plain_paths(dirName, {SAVE_DIR, BACKUP_DIR, BACKUP_STAGING_DIR, BACKUP_OLD_DIR});
-    RemoveTree(staged);
-    RemoveTree(old);
+    recover_backup(dirName);
     std::filesystem::create_directories(staged);
-    FileSwap swap;
+    flush_path(BACKUP_STAGING_DIR, true);
+    flush_path(".", true);
+    bool displaced = false;
+    bool published = false;
     try {
         copy_tree("backup.copy", source, entry_save(staged));
         file_step("backup.copy", param_path(entry_save(staged)));
@@ -697,19 +758,24 @@ static void backupSave(const std::string& dirName) {
         }
         flush_tree(staged);
         std::filesystem::create_directories(BACKUP_DIR);
+        flush_path(".", true);
         if (std::filesystem::exists(entry)) {
             std::filesystem::create_directories(BACKUP_OLD_DIR);
-            swap.move("backup.aside", entry, old);
+            flush_path(".", true);
+            move_backup("backup.aside", entry, old, &displaced);
         }
-        swap.move("backup.place", staged, entry);
+        move_backup("backup.place", staged, entry, &published);
     } catch (...) {
-        swap.undo("backup.rollback");
+        if (published) move_backup("backup.rollback", entry, staged);
+        if (displaced) move_backup("backup.rollback", old, entry);
         std::error_code ignored;
         RemoveTree(staged, ignored);
         throw;
     }
-    std::error_code ignored;
-    RemoveTree(old, ignored);
+    try {
+        remove_backup_copy("backup.cleanup", old);
+    } catch (const std::filesystem::filesystem_error&) {
+    }
 }
 
 static void restoreSave(const std::string& dirName) {
@@ -772,13 +838,22 @@ static int deleteSave(const SaveDataDelete* del) {
     std::error_code error;
     if (isMountedDirectory(path, error)) return SAVE_DATA_ERROR_BUSY;
     if (error) return SAVE_DATA_ERROR_INTERNAL;
-    if (std::filesystem::is_directory(path)) {
-        RemoveTree(path);
+    try {
+        require_plain_paths(dirName, {BACKUP_DIR, BACKUP_STAGING_DIR, BACKUP_OLD_DIR});
+        if (std::filesystem::is_directory(path)) {
+            RemoveTree(path);
+        }
+        std::error_code ec;
+        std::filesystem::remove(param_path(path), ec);
+        if (ec) return SAVE_DATA_ERROR_INTERNAL;
+        std::filesystem::remove(blocks_path(path), ec);
+        if (ec) return SAVE_DATA_ERROR_INTERNAL;
+        for (const char* root : {BACKUP_STAGING_DIR, BACKUP_OLD_DIR, BACKUP_DIR}) {
+            remove_backup_copy("backup.delete", backup_entry(root, dirName));
+        }
+    } catch (const std::filesystem::filesystem_error&) {
+        return SAVE_DATA_ERROR_INTERNAL;
     }
-    std::error_code ec;
-    std::filesystem::remove(param_path(path), ec);
-    std::filesystem::remove(blocks_path(path), ec);
-    RemoveTree(backup_entry(BACKUP_DIR, dirName));
     return SAVE_DATA_OK;
 }
 
@@ -1642,11 +1717,6 @@ static int checkBackupData(const SaveDataCheckBackupData* check) {
         return SAVE_DATA_ERROR_BUSY;
     }
     if (error) return SAVE_DATA_ERROR_INTERNAL;
-    try {
-        require_plain_paths(dirName, {BACKUP_DIR});
-    } catch (const std::filesystem::filesystem_error&) {
-        return SAVE_DATA_ERROR_INTERNAL;
-    }
     return read_backup(dirName, check->param);
 }
 
@@ -1704,7 +1774,6 @@ int APS5_VABI sceSaveDataCreateUploadData(void) {
 }
 
 int APS5_VABI sceSaveDataDebugGetThreadId(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -1779,7 +1848,6 @@ int APS5_VABI sceSaveDataGetBoundPsnAccountCount(void) {
 }
 
 int APS5_VABI sceSaveDataGetClientThreadPriority(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -1826,8 +1894,7 @@ int APS5_VABI sceSaveDataGetSaveDataRootUsbPath(void) {
 }
 
 int APS5_VABI sceSaveDataGetSavePoint(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 2;
 }
 
 int APS5_VABI sceSaveDataGetUpdatedDataCount(void) {

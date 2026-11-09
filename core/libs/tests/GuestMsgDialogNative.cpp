@@ -3,6 +3,7 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <chrono>
@@ -28,6 +29,7 @@ constexpr int kErrArgNull = static_cast<int>(0x80B8000Du);
 constexpr int kButtonIdOk = 1;
 constexpr int kButtonIdNo = 2;
 constexpr int kStatusRunning = 2;
+constexpr int kRaceRounds = 100000;
 
 struct UserMessage {
     std::int32_t buttonType;
@@ -201,6 +203,31 @@ void ShownDialog() {
     ModalDialogSetPresenter_nid_postfix(false);
 }
 
+void TerminateWinsOverOpen() {
+    UserMessage yesNo{MsgDialog::ButtonTypeYesNo, 0, "Continue?"};
+    UserParam param(MsgDialog::ModeUserMsg, &yesNo);
+    ModalDialogSetPresenter_nid_postfix(true);
+    std::atomic<int> round{0};
+    std::atomic<int> done{0};
+    std::thread terminator([&] {
+        for (int i = 1; i <= kRaceRounds; ++i) {
+            while (round.load() != i) std::this_thread::yield();
+            sceMsgDialogTerminate();
+            done.fetch_add(1);
+        }
+    });
+    for (int i = 1; i <= kRaceRounds; ++i) {
+        Require(sceMsgDialogInitialize() == 0);
+        round.store(i);
+        sceMsgDialogOpen(&param);
+        while (done.load() != i) std::this_thread::yield();
+        Require(sceMsgDialogGetStatus() == 0);
+        Require(Session() == ModalDialogState::Idle);
+    }
+    terminator.join();
+    ModalDialogSetPresenter_nid_postfix(false);
+}
+
 }
 
 int main() {
@@ -263,4 +290,5 @@ int main() {
     CloseAndTerminate();
     WithoutFlips();
     OtherLibraryDialog();
+    TerminateWinsOverOpen();
 }

@@ -77,6 +77,7 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
     std::vector<std::filesystem::path> directories;
     if (hasSingular || hasPlural) directories.push_back(hasSingular ? singular : plural);
     if (hasPrx) directories.push_back(prx);
+    const auto automaticDirectories = directories.size();
     std::vector<std::filesystem::path> runtimeDirectories;
     for (const auto& name : moduleDirectories) {
         const auto relative = Io::NativePath(name).lexically_normal();
@@ -85,7 +86,12 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
         auto directory = (root / relative).lexically_normal();
         if (!directory.has_filename()) directory = directory.parent_path();
         if (!std::filesystem::is_directory(directory)) throw Domain::RelinkerException("Guest module path is not a directory: " + Io::Utf8Path(directory));
-        if (std::any_of(directories.begin(), directories.end(), [&](const auto& existing) { return SameDirectory(existing, directory); })) throw Domain::RelinkerException("Duplicate guest module directory: " + Io::Utf8Path(directory));
+        const auto duplicate = std::find_if(directories.begin(), directories.end(), [&](const auto& existing) { return SameDirectory(existing, directory); });
+        if (duplicate != directories.end()) {
+            const bool automatic = static_cast<std::size_t>(duplicate - directories.begin()) < automaticDirectories;
+            throw Domain::RelinkerException("Duplicate guest module directory: " + Io::Utf8Path(directory) +
+                (automatic ? " (sce_module, sce_modules and prx are relinked without --module-dir)" : ""));
+        }
         directories.push_back(directory);
         runtimeDirectories.push_back(directory);
     }
