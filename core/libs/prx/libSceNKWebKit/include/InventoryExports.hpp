@@ -2,6 +2,11 @@
 
 #include "SceTypes.hpp"
 
+namespace WebCore {
+class EmptyFrameLoaderClient;
+class CachedFrame;
+}
+
 extern "C" {
 
 int APS5_VABI WKURLRequestSetDefaultTimeoutInterval();
