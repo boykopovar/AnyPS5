@@ -184,8 +184,8 @@ bool HostOnly(std::uint64_t address) {
     return !HostOnlySampleRanges(address, BlockBytes).empty();
 }
 
-void CheckStoredImage(AgcDriver::VulkanDevice& device, bool draw, std::vector<bool> written, bool fmask) {
-    const bool stores = !written.empty() && written.front();
+void CheckStoredImage(AgcDriver::VulkanDevice& device, bool draw, ShaderRecompiler::ElementFlags written, bool fmask) {
+    const bool stores = !written.empty() && written[0];
     std::printf("checking a %s storage image %s over %s\n", draw ? "draw" : "compute", written.empty() ? "of unknown use" : stores ? "store" : "read", fmask ? "a one-fragment target's FMASK" : "part of a 4x target");
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
     GuestBlock block(3 * BlockBytes);
