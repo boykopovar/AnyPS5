@@ -80,6 +80,7 @@ int main() {
     NpSignalingAccountPlatformPair account{0x1234, 1, 0};
     NpSignalingNetInfo netInfo{};
     netInfo.size = sizeof(netInfo);
+    NpSignalingMemoryInfo memoryInfo{0x1234, 0x5678, 0x9ABC};
     int option = -7;
     Require(sceNpSignalingCreateContextA(-1, nullptr, nullptr, nullptr) == NotInitialized, "sceNpSignalingCreateContextA", "a call before initialization did not return NOT_INITIALIZED first");
     Require(sceNpSignalingActivateConnectionA(1, nullptr, nullptr) == NotInitialized, "sceNpSignalingActivateConnectionA", "a call before initialization did not return NOT_INITIALIZED first");
@@ -89,6 +90,8 @@ int main() {
     Require(sceNpSignalingGetContextOption(1, 1, nullptr) == NotInitialized, "sceNpSignalingGetContextOption", "a call before initialization did not return NOT_INITIALIZED first");
     Require(sceNpSignalingCancelPeerNetInfo(1, 1) == NotInitialized, "sceNpSignalingCancelPeerNetInfo", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpSignalingGetPeerNetInfoResult(1, 1, nullptr) == NotInitialized, "sceNpSignalingGetPeerNetInfoResult", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpSignalingGetMemoryInfo(nullptr) == NotInitialized, "sceNpSignalingGetMemoryInfo", "initialization was not checked before the output");
+    Require(sceNpSignalingGetMemoryInfo(&memoryInfo) == NotInitialized && memoryInfo.currentInUse == 0x1234 && memoryInfo.peakInUse == 0x5678 && memoryInfo.maxSystemSize == 0x9ABC, "sceNpSignalingGetMemoryInfo", "a call before initialization did not return NOT_INITIALIZED");
     std::uint32_t reqId = 0;
     Require(sceNpSignalingGetPeerNetInfo(1, nullptr, &reqId) == NotInitialized, "sceNpSignalingGetPeerNetInfo", "a call before initialization did not return NOT_INITIALIZED");
 
@@ -220,6 +223,7 @@ int main() {
     Require(sceNpSignalingGetPeerNetInfoResult(context, 1, &netInfo) == InvalidArgument, "sceNpSignalingGetPeerNetInfoResult", "size 0 was taken");
     netInfo.size = sizeof(netInfo);
     Require(sceNpSignalingGetPeerNetInfoResult(context, 1, &netInfo) == ResultNotFound && netInfo.localAddr == 0, "sceNpSignalingGetPeerNetInfoResult", "a result that was never staged was found");
+    Require(sceNpSignalingGetMemoryInfo(nullptr) == InvalidArgument, "sceNpSignalingGetMemoryInfo", "a null output was taken");
 
     Require(sceNpSignalingDeleteContext(99) == 0, "sceNpSignalingDeleteContext", "deleting an unknown context failed");
     Require(sceNpSignalingDeleteContext(context) == 0, "sceNpSignalingDeleteContext", "deleting a context failed");
@@ -244,6 +248,7 @@ int main() {
     Require(localInfo.localAddr == 0xA5A5A5A5u && localInfo.mappedAddr == 0xA5A5A5A5u &&
             localInfo.natStatus == static_cast<std::int32_t>(0xA5A5A5A5u) && localInfo.reserved == 0xA5A5A5A5u,
             "sceNpSignalingGetLocalNetInfo", "output was modified post-termination");
+    Require(sceNpSignalingGetMemoryInfo(&memoryInfo) == NotInitialized, "sceNpSignalingGetMemoryInfo", "getting memory info post-termination did not return NOT_INITIALIZED");
     Require(sceNpSignalingGetPeerNetInfo(1, nullptr, &reqId) == NotInitialized, "sceNpSignalingGetPeerNetInfo", "a call after termination did not return NOT_INITIALIZED");
 
     if (failures != 0) return 1;
