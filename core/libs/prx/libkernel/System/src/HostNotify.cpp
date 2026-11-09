@@ -1,5 +1,6 @@
 #include "prx/libkernel/System/include/HostNotify.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
@@ -150,10 +151,22 @@ HostNotifyBackend SelectHostNotifyBackend(std::string_view pathList, const HostN
 DetachedHostNotifySink::DetachedHostNotifySink(HostNotifyBackend backendValue, HostNotifySpawn spawnValue)
     : backend(backendValue), spawn(std::move(spawnValue)) {}
 
+namespace {
+
+constexpr int MaxNoticesInFlight = 4;
+std::atomic<int> noticesInFlight{0};
+
+}
+
 void DetachedHostNotifySink::Notify(std::string_view title, std::string_view text) {
     auto argv = HostNotifyArgvFor(backend, title, text);
     if (argv.empty()) return;
     const auto name = HostNotifyBackendName(backend);
+    if (noticesInFlight.fetch_add(1) >= MaxNoticesInFlight) {
+        noticesInFlight.fetch_sub(1);
+        HostNotifyLog("the host notice was dropped: " + std::to_string(MaxNoticesInFlight) + " notices are still being shown with " + name);
+        return;
+    }
     try {
         std::thread([spawn = spawn, argv = std::move(argv), name]() {
             bool shown = false;
@@ -162,9 +175,11 @@ void DetachedHostNotifySink::Notify(std::string_view title, std::string_view tex
             } catch (...) {
                 shown = false;
             }
+            noticesInFlight.fetch_sub(1);
             if (!shown) HostNotifyLog("the host notice could not be shown with " + name);
         }).detach();
     } catch (const std::system_error&) {
+        noticesInFlight.fetch_sub(1);
         HostNotifyLog("the host notice could not be started with " + name);
     }
 }
