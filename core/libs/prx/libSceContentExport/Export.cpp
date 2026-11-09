@@ -85,23 +85,32 @@ int APS5_VABI sceContentExportFrom(void) {
 }
 
 int APS5_VABI sceContentExportFromFileForSf(std::int32_t expId, const ContentExportParam* param, const ContentExportSfParam* sfParam, const char* sourcePath, const char* thumbnailPath, char* path, std::size_t pathBufferLength) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    std::lock_guard lock(g_sessionMutex);
+    RequireSession(__func__, expId);
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceContentExportFromFileWithContentIdList(std::int32_t expId, const ContentExportParam* param, const char* sourcePath, const char* thumbnailPath, const std::int64_t* contentIds, std::uint32_t contentCount, char* path, std::size_t pathBufferLength) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    std::lock_guard lock(g_sessionMutex);
+    RequireSession(__func__, expId);
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceContentExportFromFileWithTitleIdList(std::int32_t expId, const ContentExportParam* param, const char* sourcePath, const char* thumbnailPath, const char* titleIdList, char* path, std::size_t pathBufferLength) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    std::lock_guard lock(g_sessionMutex);
+    RequireSession(__func__, expId);
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceContentExportInit(const ContentExportInitParam* param) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (param == nullptr) APS5_INVALID_ARG_EX;
+    if (param->mallocFunc == nullptr || param->freeFunc == nullptr) throw std::invalid_argument(std::string(__func__) + ": missing allocator functions");
+    bool expected = false;
+    if (!g_initialized.compare_exchange_strong(expected, true)) throw std::logic_error(std::string(__func__) + ": already initialized");
+    return 0;
 }
 
 int APS5_VABI sceContentExportMalloc(void) {
