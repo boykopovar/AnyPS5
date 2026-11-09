@@ -80,6 +80,9 @@ public:
     std::vector<AwaitedWait> AwaitedWaits();
     void WaitForPipelineJournal();
     bool WaitIdleFor(std::chrono::milliseconds timeout);
+    bool WaitSettledFor(std::chrono::milliseconds timeout);
+    void ReleaseSettled();
+    bool Settled();
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void AttachWindow(const PresentationWindow& window);
@@ -149,6 +152,7 @@ private:
     void waitForFlipRoom(const Submission& submission);
     void holdFlipBehindWorker(const Submission& submission, bool cpuFlip);
     bool awaitsTitle(std::uint64_t awaited) const;
+    bool parkedOnTitle() const;
     void noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited);
     void releaseFlipHold();
     void finishFlipWork(std::uint64_t workSerial);
@@ -424,7 +428,9 @@ private:
         std::atomic<std::uint64_t> shape{0};
     };
     std::array<AwaitedSlot, SubmissionQueueEnd - 0x20 + 1> awaitedSlots{};
+    static bool stillAwaited(const AwaitedSlot& slot, std::uint64_t awaited);
     void noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> packet);
+    std::atomic<bool> captureHold{false};
     std::atomic<std::uint64_t> flipSerial{0};
     std::atomic<std::uint64_t> flipBatchesUnsignaled{0};
 
