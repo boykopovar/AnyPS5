@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -276,6 +277,7 @@ class Main(unittest.TestCase):
         self.assertEqual(seen_indices, list(range(2, len(tests) + 1)))
         self.assertEqual(len([cmd for cmd in calls if "-I" in cmd]), 1)
 
+    @unittest.skipUnless(shutil.which("ctest"), "CTest is required to run the selected tests")
     def test_ctest_index_file_runs_every_resolved_test(self):
         build = Path(self.temporary.name) / "ctest-build"
         build.mkdir()
