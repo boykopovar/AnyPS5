@@ -1301,6 +1301,7 @@ public:
         staleCount = 0;
         unitGeneration.assign(count, 0);
         unitBacking.assign(count, 0);
+        backingGeneration = 0;
     }
 
     bool AnyStale() const {
@@ -1398,6 +1399,7 @@ public:
 
     std::vector<bool> ChangedBackingUnits() const {
         std::vector<bool> changed(unitBacking.size(), false);
+        if (backingGeneration == GuestAllocations::GuestAllocationsGeneration_nid_postfix()) return changed;
         for (std::size_t unit = 0; unit < unitBacking.size(); ++unit) {
             changed[unit] = unitBacking[unit] != 0 && RegisteredBacking(target.address + unit * unitBytes) != unitBacking[unit];
         }
@@ -1407,7 +1409,11 @@ public:
     void SyncFromMemory(const GuestTextureResource& resource, bool storing = false) {
         std::uint64_t generation = 0;
         const auto changed = WrittenUnits(resource, generation);
-        for (std::size_t unit = 0; unit < unitBacking.size(); ++unit) unitBacking[unit] = RegisteredBacking(target.address + unit * unitBytes);
+        // The registry generation moves on every mapping mutation, so an unchanged value means every recorded backing is still current. Read it before the lookups: a mutation racing them leaves the stored value old and the next sync refreshes again.
+        if (const auto registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix(); registryGeneration != backingGeneration) {
+            for (std::size_t unit = 0; unit < unitBacking.size(); ++unit) unitBacking[unit] = RegisteredBacking(target.address + unit * unitBytes);
+            backingGeneration = registryGeneration;
+        }
         const bool clearing = (pendingClear & VK_IMAGE_ASPECT_DEPTH_BIT) != 0;
         if ((clearing && !storing) || !anyUnit(changed)) {
             unitGeneration.assign(unitGeneration.size(), generation);
@@ -1494,6 +1500,7 @@ public:
     std::uint64_t depthMark = 0;
     std::uint64_t stencilMark = 0;
     std::vector<std::uint64_t> unitBacking;
+    std::uint64_t backingGeneration = 0;
     std::vector<std::uint64_t> unitGeneration;
     std::uint64_t unitBytes = 0;
     bool syncing = false;
