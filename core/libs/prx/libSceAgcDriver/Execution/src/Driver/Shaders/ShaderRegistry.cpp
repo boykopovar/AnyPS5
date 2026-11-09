@@ -52,6 +52,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <unordered_map>
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/RegistrationPreparationBudget.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
@@ -1018,10 +1019,17 @@ std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompil
     constexpr std::uint64_t limitBytes = 64u << 20u;
     constexpr std::size_t limitCallees = 64u;
     const auto slot = call.userDataRegister - request.context.userDataBaseRegister;
-    const auto pointer = call.constantPointer ? *call.constantPointer : static_cast<std::uint64_t>(request.context.userData[slot]) | static_cast<std::uint64_t>(request.context.userData[slot + 1u]) << 32u;
-    const auto words = ReadGuestBytes(pointer + call.descriptorOffset, 16u, "call table descriptor");
     ShaderRecompiler::ShaderBufferResource descriptor{};
-    std::memcpy(descriptor.fields.data(), words.data(), words.size());
+    if (call.descriptorInUserData) {
+        if (slot + 4u > request.context.userData.size()) throw std::runtime_error("its call table descriptor is outside the user data");
+        std::uint32_t words[4]{};
+        for (std::size_t index = 0u; index < 4u; ++index) words[index] = request.context.userData[slot + index];
+        std::memcpy(descriptor.fields.data(), words, sizeof(words));
+    } else {
+        const auto pointer = call.constantPointer ? *call.constantPointer : static_cast<std::uint64_t>(request.context.userData[slot]) | static_cast<std::uint64_t>(request.context.userData[slot + 1u]) << 32u;
+        const auto words = ReadGuestBytes(pointer + call.descriptorOffset, 16u, "call table descriptor");
+        std::memcpy(descriptor.fields.data(), words.data(), words.size());
+    }
     const auto bytes = descriptor.GetSize();
     if (bytes > limitBytes) throw std::runtime_error("its call table of " + std::to_string(bytes) + " bytes is larger than the " + std::to_string(limitBytes) + " bytes that are searched for callees");
     const auto table = bytes == 0u ? std::vector<std::uint8_t>{} : ReadGuestBytes(descriptor.Base48(), bytes, "call table");
@@ -1640,6 +1648,7 @@ public:
                 else tasks.push_back({std::move(task), prepared, sequence, budgeted, program});
                 if (program != 0) waitingPrograms.fetch_add(1, std::memory_order_relaxed);
                 unfinished.insert(sequence);
+                if (prepared != nullptr) owned.emplace(prepared, sequence);
                 lock.unlock();
                 ready.notify_one();
                 return;
@@ -1650,10 +1659,17 @@ public:
 
     void Prioritize(const PreparedShaders& prepared) {
         std::lock_guard lock(mutex);
-        const auto found = std::ranges::find_if(tasks, [&](const auto& task) { return task.prepared == &prepared; });
-        if (found == tasks.end()) return;
-        if (std::getenv("APS5_TRACE_PREPARATION_WAIT") != nullptr) std::fprintf(stderr, "[shader-prepare] demanded queued task at position %zu of %zu\n", static_cast<std::size_t>(std::distance(tasks.begin(), found)), tasks.size());
-        std::rotate(tasks.begin(), found, std::next(found));
+        moveToFront(prepared);
+    }
+
+    void AwaitOwned(const PreparedShaders& prepared) {
+        std::unique_lock lock(mutex);
+        const auto [first, last] = owned.equal_range(&prepared);
+        if (first == last) return;
+        std::vector<std::uint64_t> sequences;
+        for (auto entry = first; entry != last; ++entry) sequences.push_back(entry->second);
+        moveToFront(prepared);
+        idle.wait(lock, [&] { return std::ranges::none_of(sequences, [&](const auto sequence) { return unfinished.contains(sequence); }); });
     }
 
     void Prioritize(std::span<const std::uint64_t> programs) {
@@ -1681,7 +1697,10 @@ public:
             if (dropQueued) {
                 dropped.swap(tasks);
                 waitingPrograms.store(0, std::memory_order_relaxed);
-                for (const auto& task : dropped) unfinished.erase(task.sequence);
+                for (const auto& task : dropped) {
+                    unfinished.erase(task.sequence);
+                    disown(task.prepared, task.sequence);
+                }
                 idle.notify_all();
             }
             idle.wait(lock, [&] { return tasks.empty() && running == 0; });
@@ -1693,6 +1712,20 @@ public:
 
 private:
     static constexpr std::size_t StackBytes = 64u << 20u;
+
+    void moveToFront(const PreparedShaders& prepared) {
+        const auto found = std::ranges::find_if(tasks, [&](const auto& task) { return task.prepared == &prepared; });
+        if (found == tasks.end()) return;
+        if (std::getenv("APS5_TRACE_PREPARATION_WAIT") != nullptr) std::fprintf(stderr, "[shader-prepare] demanded queued task at position %zu of %zu\n", static_cast<std::size_t>(std::distance(tasks.begin(), found)), tasks.size());
+        std::rotate(tasks.begin(), found, std::next(found));
+    }
+
+    void disown(const PreparedShaders* prepared, std::uint64_t sequence) {
+        if (prepared == nullptr) return;
+        const auto [first, last] = owned.equal_range(prepared);
+        const auto found = std::find_if(first, last, [&](const auto& entry) { return entry.second == sequence; });
+        if (found != last) owned.erase(found);
+    }
 
 #ifdef _WIN32
     struct Worker {
@@ -1771,6 +1804,7 @@ private:
             }
             const auto sequence = task.sequence;
             const bool budgeted = task.budgeted;
+            const auto* const prepared = task.prepared;
             task.function();
             task = {};
             bool drained = false;
@@ -1779,6 +1813,7 @@ private:
                 --pool.running;
                 if (budgeted) --pool.budgetedRunning;
                 pool.unfinished.erase(sequence);
+                pool.disown(prepared, sequence);
                 drained = pool.tasks.empty() && pool.running == 0;
                 pool.idle.notify_all();
             }
@@ -1811,6 +1846,7 @@ private:
     unsigned budgetedLimit = 1;
     std::uint64_t submitted = 0;
     std::set<std::uint64_t> unfinished;
+    std::unordered_multimap<const PreparedShaders*, std::uint64_t> owned;
     bool closed = false;
 };
 
@@ -1885,6 +1921,24 @@ void PrioritizeRegistrationPreparation(PreparedShaders& prepared) {
 
 void AwaitRegistrationPreparation() {
     if (auto* pool = RegistrationPreparePool::Existing()) pool->AwaitSubmitted();
+}
+
+void AwaitReferencedPreparations(const ShaderRegistry& registry, std::span<const std::uint64_t> addresses) {
+    for (const auto address : addresses) {
+        auto found = registry.upper_bound(address);
+        if (found == registry.begin()) continue;
+        --found;
+        for (const auto& snapshot : found->second) {
+            if (address - snapshot->codeAddress >= snapshot->code.size() * sizeof(std::uint32_t)) continue;
+            auto& prepared = *snapshot->prepared;
+            {
+                std::lock_guard lock(prepared.mutex);
+                if (!prepared.pending) continue;
+            }
+            prepared.demanded.store(true);
+            if (auto* pool = RegistrationPreparePool::Existing()) pool->AwaitOwned(prepared);
+        }
+    }
 }
 
 void SubmitLibraryPrebuild(std::function<void()> task, std::uint64_t program) {

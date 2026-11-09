@@ -49,7 +49,7 @@ std::uint64_t Driver::DispatchCacheBytes() {
     static const std::uint64_t bytes = [] {
         const char* text = std::getenv("APS5_DISPATCH_CACHE_BYTES");
         const auto parsed = text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
-        return parsed != 0 ? static_cast<std::uint64_t>(parsed) : std::uint64_t{256} << 20u;
+        return parsed != 0 ? static_cast<std::uint64_t>(parsed) : std::uint64_t{1} << 30u;
     }();
     return bytes;
 }

@@ -40,6 +40,8 @@ void TestNotInitialized() {
     Require(sceVoiceGetPortInfo(128, nullptr) == NotInitialized);
     Require(sceVoiceReadFromOPort(0, nullptr, nullptr) == NotInitialized);
     Require(sceVoiceReadFromOPort(128, nullptr, nullptr) == NotInitialized);
+    Require(sceVoiceWriteToIPort(0, nullptr, nullptr, 0) == NotInitialized);
+    Require(sceVoiceWriteToIPort(128, nullptr, nullptr, 0) == NotInitialized);
     VoicePortInfo info{};
     std::memset(&info, 0xA5, sizeof(info));
     VoicePortInfo sentinel = info;
@@ -223,7 +225,14 @@ int main() {
     Require(sceVoiceReadFromOPort(output, data, nullptr) == invalidArgument);
     Require(sceVoiceReadFromOPort(output, nullptr, nullptr) == invalidArgument);
     Require(sceVoiceReadFromOPort(output, data, &size) == 0 && size == 0);
+    size = sizeof(data);
+    Require(sceVoiceWriteToIPort(input, nullptr, &size, 0) == invalidArgument);
+    Require(sceVoiceWriteToIPort(input, data, nullptr, 0) == invalidArgument);
+    Require(sceVoiceWriteToIPort(input, nullptr, nullptr, 0) == invalidArgument);
+    Require(sceVoiceWriteToIPort(input, data, &size, 0) == 0 && size == 0);
     Require(sceVoiceDisconnectIPortFromOPort(input, output) == 0);
+    Require(sceVoiceDisconnectIPortFromOPort(input, output) == portNotFound);
+    Require(sceVoiceDisconnectIPortFromOPort(output, input) == portNotFound);
 
     Require(sceVoiceGetMuteFlag(input, &muted) == 0 && !muted);
     Require(sceVoiceSetMuteFlagAll(true) == 0);
@@ -275,6 +284,10 @@ int main() {
 
     Require(sceVoiceSetMuteFlagAll(true) == 0);
 
+    const auto spare = CreatePort(3, 0.25f);
+    Require(sceVoiceConnectIPortToOPort(input, spare) == 0);
+    Require(sceVoiceDeletePort(spare) == 0);
+    Require(sceVoiceDisconnectIPortFromOPort(input, spare) == portNotFound);
     Require(sceVoiceDeletePort(input) == 0);
     Require(sceVoiceResetPort(input) == portNotFound);
     Require(sceVoicePausePort(input) == portNotFound);
@@ -435,10 +448,16 @@ int main() {
     Require(sceVoiceReadFromOPort(128, nullptr, nullptr) == invalidPort);
     Require(sceVoiceReadFromOPort(128, data, nullptr) == invalidPort);
     Require(sceVoiceReadFromOPort(128, nullptr, &size) == invalidPort);
+    Require(sceVoiceWriteToIPort(128, nullptr, nullptr, 0) == invalidPort);
+    Require(sceVoiceWriteToIPort(128, data, nullptr, 0) == invalidPort);
+    Require(sceVoiceWriteToIPort(128, nullptr, &size, 0) == invalidPort);
     Require(sceVoiceGetPortInfo(127, nullptr) == invalidArgument);
     Require(sceVoiceReadFromOPort(127, nullptr, nullptr) == invalidArgument);
     Require(sceVoiceReadFromOPort(127, data, nullptr) == invalidArgument);
     Require(sceVoiceReadFromOPort(127, nullptr, &size) == invalidArgument);
+    Require(sceVoiceWriteToIPort(127, nullptr, nullptr, 0) == invalidArgument);
+    Require(sceVoiceWriteToIPort(127, data, nullptr, 0) == invalidArgument);
+    Require(sceVoiceWriteToIPort(127, nullptr, &size, 0) == invalidArgument);
     Require(sceVoiceGetVolume(127, nullptr) == invalidArgument);
     Require(sceVoiceGetBitRate(127, nullptr) == invalidArgument);
     Require(sceVoiceGetMuteFlag(127, nullptr) == invalidArgument);

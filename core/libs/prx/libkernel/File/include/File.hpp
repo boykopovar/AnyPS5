@@ -28,6 +28,7 @@ int PosixUtimesAt_nid_no_patch(int directory, const char* path, const KernelTime
 int APS5_VABI sceKernelStat(const char* path, FileStat* sb);
 int APS5_VABI sceKernelUnlink(const char* path);
 int APS5_VABI sceKernelFcntl(int d, int command, ...);
+std::int64_t PosixPwrite_nid_no_patch(int d, const void* buf, std::size_t nbytes, std::int64_t offset);
 #ifdef _WIN32
 std::int64_t NativePositioned_nid_no_patch(int descriptor, void* buf, std::size_t nbytes, std::int64_t offset, bool write);
 #endif
