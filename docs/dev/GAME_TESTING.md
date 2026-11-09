@@ -44,7 +44,7 @@ cmd /c '.\app.exe > run.log 2>&1'
 - `APS5_NO_PAD_INPUT=1` ignores keyboard and mouse, so a stray press doesn't move a measurement run.
 - `setarch x86_64 -R` (Linux only) turns off address randomisation so addresses match between runs.
 - On Windows, a `--windows-gui` build started without a console writes its output to `anyps5.log` beside the executable, replacing the previous run's file.
-- Some homebrew reopen stdout and stderr into their own storage before `main`, so `run.log` ends at `Transferring control to ELF entry point` while the title keeps running. Titles built on ps5-homebrew-ui, such as CD Player (PPSA98427), Afterglow (PPSA47770) and Surround Sound Studio (PPSA99051), write `download0/hui/dev/app.log` beside the executable and keep the previous run's log as `app.prev.log`. Read that file before reporting a hang or a silent exit.
+- Some homebrew reopen stdout and stderr into their own storage before `main`, so the title's own output, including the reason it exits, is not in `run.log`. Titles built on ps5-homebrew-ui, such as CD Player (PPSA98427), Afterglow (PPSA47770) and Surround Sound Studio (PPSA99051), write `download0/hui/dev/app.log` beside the executable and keep the previous run's log as `app.prev.log`. Read that file before reporting a hang or a silent exit.
 - On Windows the title needs a signed-in desktop. Started from an SSH session (session 0) it has no usable window. Start it inside the user's session instead, for example with a scheduled task that runs interactively. A newly created task does not start on battery power by default and fails silently; allow that in its settings.
 
 ## Check the GPU and the caches
@@ -89,13 +89,13 @@ cmd /c '.\app.exe > run.log 2>&1'
 - Use the title's default settings, and say so. A changed graphics mode makes a number incomparable with everyone else's.
 - Measure the same spot every time: load a save, wait for the scene to settle, then measure a fixed window with no input.
 - Compare builds on the same machine, alternating them (A, B, A, B), at least two runs each. Throw away a run that was disturbed (another program, a sleeping display) and say so.
-- `APS5_TRACE_SUMMARY_EVERY=10` writes one line per 10 s to `aps5-summary.jsonl` without slowing the title; `tools/trace_digest.py` turns it into a table, and `tools/performance_compare.py` compares two captures ([BUILD](BUILD.md#performance-trace)). Pull requests labelled `perf` need a capture of `main` and one with the change.
+- `APS5_TRACE_SUMMARY_EVERY=10` writes one line per 10 s to `aps5-summary.jsonl` without slowing the title; `tools/trace_digest.py` turns it into a table, and `tools/performance_compare.py` compares two captures ([BUILD](BUILD.md#performance-trace)). Pull requests labelled `perf` need a capture of `main` and one with the change, except `perf(tools)`, `perf(ci)` and `perf(build)`.
 - `APS5_DUMP_FRAMES=<n>` with `APS5_DUMP_FRAMES_EVERY=<k>` saves frames as `frame_<index>.bmp` to check what was on screen. A second process of the same title writes to the same names and overwrites the first one's frames. While 64 MiB of frames wait to be written, the presenter waits for the
   writer, so a slow disk or `APS5_DUMP_SCALE=1` slows the title down instead of stopping it.
 
 ## Title notes
 
-- **PlayGo:** dumps without PlayGo metadata stop at start unless `APS5_PLAYGO_UNLISTED_CHUNKS` is set; report the value used.
+- **PlayGo:** dumps without PlayGo metadata stop at start unless `APS5_PLAYGO_UNLISTED_CHUNKS` is set (installed, absent, or a comma-separated list of installed chunk ids); report the value used.
 - **UE4 titles:** keep the startup movies in place. Renaming them to skip the intro has made a level render without its 3D view, which looked like an emulator bug and wasn't.
 
 ## Input

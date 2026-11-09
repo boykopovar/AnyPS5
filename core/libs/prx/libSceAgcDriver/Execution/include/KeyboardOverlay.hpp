@@ -51,6 +51,8 @@ struct KeyboardGlyphEntry {
 };
 
 inline constexpr char32_t KeyboardFallbackCode = 0xFFFD;
+inline constexpr std::uint8_t KeyboardCompositionMark = 1;
+inline constexpr std::uint8_t KeyboardSelectionMark = 2;
 
 std::span<const KeyboardGlyphEntry> KeyboardGlyphTable();
 bool KeyboardHasGlyph(char32_t code);

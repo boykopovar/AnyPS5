@@ -9,6 +9,7 @@
 #include <iostream>
 #include <optional>
 #include <span>
+#include <spirv/unified1/spirv.hpp>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -46,6 +47,11 @@ alignas(256) constexpr std::array<std::uint32_t, 19> ScaleCode{
     0x34020082u, 0xe0302000u, 0x80000401u, 0xe0302004u, 0x80000501u, 0xe0302008u, 0x80000601u, 0xe030200cu,
     0x80000701u, 0xbf8c3f70u, 0xd56d140au, 0x041a0b04u, 0xd501000bu, 0x00510280u, 0xe0702000u, 0x80010a01u,
     0xe0702004u, 0x80010b01u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 16> FmasCode{
+    0x34020082u, 0xe0302000u, 0x80000401u, 0xe0302004u, 0x80000501u, 0xe0302008u, 0x80000601u, 0xe030200cu,
+    0x80000701u, 0xbf8c3f70u, 0x7d8a0e80u, 0xd56f000au, 0x041a0b04u, 0xe0702000u, 0x80010a01u, 0xbf810000u,
 };
 
 struct ScaleVector {
@@ -621,6 +627,39 @@ constexpr DivisionVector DivisionVectors[] = {
     {0x2210592fu, 0x0ac8fdd3u, 0x56b7dabeu},
 };
 
+struct FmasDenormalVector {
+    std::uint32_t s0, s1, s2, vcc, flushed, kept;
+};
+
+constexpr FmasDenormalVector FmasDenormalVectors[] = {
+    {0x00000001u, 0x80800000u, 0x1fea6146u, 1u, 0x00000000u, 0x003a9851u},
+    {0x8da51d6fu, 0x96a2a07au, 0x2004bac1u, 1u, 0x00000000u, 0x00425d61u},
+    {0xbec6b7ecu, 0x20000000u, 0x00800000u, 1u, 0x80000000u, 0x8018d6fdu},
+    {0x00000001u, 0x6a2932fau, 0x00400000u, 1u, 0x00000000u, 0x002a4cbfu},
+    {0x0becd7b0u, 0x2535a659u, 0x80000001u, 0u, 0x80000000u, 0x80000001u},
+    {0x20000000u, 0x08fe0996u, 0x807fffffu, 0u, 0x80000000u, 0x807fffffu},
+    {0x9d1996e9u, 0x03feab54u, 0x00400000u, 0u, 0x00000000u, 0x00400000u},
+    {0x80000000u, 0x9d47e6bfu, 0x00000001u, 0u, 0x00000000u, 0x00000001u},
+    {0x32d351d2u, 0x1f800000u, 0x9f800000u, 1u, 0x80000000u, 0x80200000u},
+    {0x1452d51eu, 0xb9246da0u, 0x9682e357u, 1u, 0x80000000u, 0x80000008u},
+    {0x84b5a818u, 0x2de2cedcu, 0x1f800000u, 1u, 0x00000000u, 0x00200000u},
+    {0x149e259bu, 0x80800000u, 0x1a3dc795u, 1u, 0x00000000u, 0x000005eeu},
+    {0xff800000u, 0x00000001u, 0x1e8b9c7bu, 0u, 0xff800000u, 0xff800000u},
+    {0x096fea1fu, 0x40000000u, 0x00400000u, 0u, 0x09efea2fu, 0x09efea2fu},
+    {0xb8c9817au, 0x0adcc633u, 0x007fffffu, 0u, 0x842cc747u, 0x842cc747u},
+    {0x807fffffu, 0xff7fffffu, 0x3f000000u, 0u, 0x408fffffu, 0x408fffffu},
+    {0xff800000u, 0x00000001u, 0x1e8b9c7bu, 1u, 0xff800000u, 0xff800000u},
+    {0x807fffffu, 0xff7fffffu, 0x3f000000u, 1u, 0x208fffffu, 0x208fffffu},
+    {0x802927c2u, 0x7f7fffffu, 0x80000000u, 1u, 0x9fa49f07u, 0x9fa49f07u},
+    {0x007fffffu, 0xde01282au, 0x25a1ba53u, 1u, 0x05a1b64au, 0x05a1b64au},
+    {0x00400000u, 0x14afa671u, 0x807fffffu, 0u, 0x80000000u, 0x807fffffu},
+    {0x95928216u, 0x80000001u, 0x807fffffu, 0u, 0x80000000u, 0x807fffffu},
+    {0x807fffffu, 0x3f800000u, 0x00000000u, 0u, 0x80000000u, 0x807fffffu},
+    {0x9e2d4ac9u, 0x80000000u, 0x80000001u, 0u, 0x80000000u, 0x80000001u},
+    {0x007fffffu, 0xff800000u, 0x15e81bf3u, 0u, 0xff800000u, 0xff800000u},
+    {0x007fffffu, 0xff800000u, 0x15e81bf3u, 1u, 0xff800000u, 0xff800000u},
+};
+
 struct FmasNanVector {
     std::uint32_t s0, s1, s2, noIeee, ieee;
 };
@@ -773,6 +812,30 @@ void CheckFmasNan(AgcDriver::VulkanDevice& device, const std::optional<ShaderRec
     }
 }
 
+bool HasFloat64(AgcDriver::VulkanDevice& device) {
+    const auto& capabilities = device.Target().supportedCapabilities;
+    return std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFloat64)) != capabilities.end();
+}
+
+void CheckFmasDenormals(AgcDriver::VulkanDevice& device) {
+    static_assert(std::size(FmasDenormalVectors) <= Threads);
+    for (const std::uint32_t mode : {0xc0u, 0xd0u, 0xe0u, 0xf0u}) {
+        Shader shader(device, FmasCode, ShaderRecompiler::ShaderFloatMode{mode, true, false, false});
+        Input.fill(0u);
+        for (std::uint32_t lane = 0; lane < std::size(FmasDenormalVectors); ++lane) {
+            const auto& vector = FmasDenormalVectors[lane];
+            std::copy_n(std::array<std::uint32_t, 4>{vector.s0, vector.s1, vector.s2, vector.vcc}.begin(), 4, Input.begin() + lane * Stride);
+        }
+        shader.Run();
+        for (std::uint32_t lane = 0; lane < std::size(FmasDenormalVectors); ++lane) {
+            const auto& vector = FmasDenormalVectors[lane];
+            const auto actual = Output[lane * Stride];
+            const auto expected = ((mode >> 4u) & 2u) != 0u ? vector.kept : vector.flushed;
+            Require(actual == expected, "division fmas denormals: FLOAT_MODE " + Hex(mode) + " (" + Hex(vector.s0) + ", " + Hex(vector.s1) + ", " + Hex(vector.s2) + ") vcc " + std::to_string(vector.vcc) + ": v_div_fmas_f32 is " + Hex(actual) + ", expected " + Hex(expected));
+        }
+    }
+}
+
 void CheckDivision(AgcDriver::VulkanDevice& device) {
     Shader shader(device, DivisionCode);
     constexpr std::uint32_t count = sizeof(DivisionVectors) / sizeof(DivisionVectors[0]);
@@ -805,6 +868,11 @@ int main() {
         CheckFmasNan(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
         CheckFmasNan(*device, ShaderRecompiler::ShaderFloatMode{0xf0u, false, false, false});
         CheckFmasNan(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, false, true, false});
+        if (HasFloat64(*device)) {
+            CheckFmasDenormals(*device);
+        } else {
+            std::puts("the device has no Float64, so v_div_fmas_f32 denormal and scaling rows are not checked");
+        }
         if (fused) {
             CheckDivision(*device);
         } else {
