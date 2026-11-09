@@ -26,6 +26,7 @@ int main() {
     Require(sceKernelHasNeoMode() == 1);
     Require(sceKernelIsAuthenticNeo() == 1);
     Require(sceKernelIsGenuineN() == 1);
+    Require(sceKernelIsCloudkitForDecid() == 0);
 
     Require(sceKernelCreateEport() == SCE_KERNEL_ERROR_EPERM);
     Require(sceKernelDeleteEport() == SCE_KERNEL_ERROR_EPERM);

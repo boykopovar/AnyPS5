@@ -573,7 +573,7 @@ int APS5_VABI libkernel_sysUnknown_4AMTAyz32fk_nid_no_patch() {
 APS5_EXPORT("4AMTAyz32fk", libkernel_sysUnknown_4AMTAyz32fk_nid_no_patch);
 
 int APS5_VABI sceKernelIsCloudkitForDecid() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 

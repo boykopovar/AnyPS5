@@ -152,7 +152,6 @@
 | `Unknown` | `3YkQPLocySc` |
 | `Unknown` | `3jw-vq4gYLs` |
 | `Unknown` | `4AMTAyz32fk` |
-| `sceKernelIsCloudkitForDecid` | `5EThc7n+PpM` |
 | `Unknown` | `5KHFhRhBR78` |
 | `sceKernelIccGetButtonStatus` | `5uP89EdDbB0` |
 | `sceKernelAbortWithContext` | `6nv1h9JH1Lk` |
