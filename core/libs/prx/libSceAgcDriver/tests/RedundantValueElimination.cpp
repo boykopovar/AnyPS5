@@ -743,6 +743,26 @@ int main() {
         return valid;
     });
 
+    passed &= run("metadata follows lifted predicates through later CSE replacements", [] {
+        Builder b;
+        auto& raw = b.unknown();
+        const auto isNan = [&](IrValue& bits) -> IrValue& { return b.emit(IrOpcode::UGreaterThan32, IrType::Bool, {&b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&bits, &b.constant(0x7fffffffu)}), &b.constant(0x7f800000u)}); };
+        auto& firstPredicate = isNan(raw);
+        auto& secondPredicate = isNan(raw);
+        auto& firstRepair = b.emit(IrOpcode::SelectU32, IrType::U32, {&firstPredicate, &b.constant(0xffc00000u), &raw});
+        auto& secondRepair = b.emit(IrOpcode::SelectU32, IrType::U32, {&secondPredicate, &b.constant(0xffc00000u), &raw});
+        auto& firstQuery = isNan(firstRepair);
+        auto& secondQuery = isNan(secondRepair);
+        auto& firstObserver = b.emit(IrOpcode::ReferenceU32, IrType::Void, {&firstQuery});
+        auto& secondObserver = b.emit(IrOpcode::ReferenceU32, IrType::Void, {&secondQuery});
+        BlockInfo info;
+        info.condition = &secondQuery;
+        b.program.Metadata().blockInfo.push_back(info);
+        b.eliminate();
+        auto* surviving = firstObserver.Argument(0)->Resolve();
+        return secondObserver.Argument(0)->Resolve() == surviving && b.program.Metadata().blockInfo.front().condition == surviving && surviving->HasUses();
+    });
+
     passed &= run("NaN status lifts through payload selection without altering payloads", [] {
         for (bool mismatch : {false, true}) {
             Builder b;

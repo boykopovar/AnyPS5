@@ -431,7 +431,9 @@ RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& pr
     }
     const auto replaced = [&](IrValue*& value) {
         if (value == nullptr) return;
-        if (const auto found = replacements.find(value->Resolve()); found != replacements.end()) value = found->second;
+        for (auto found = replacements.find(value->Resolve()); found != replacements.end(); found = replacements.find(value->Resolve())) {
+            value = found->second;
+        }
     };
     for (auto& info : program.Metadata().blockInfo) {
         replaced(info.condition);
