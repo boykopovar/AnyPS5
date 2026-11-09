@@ -17,16 +17,18 @@ namespace {
 constexpr std::size_t SwitchCount = static_cast<std::size_t>(RuntimeSwitch::Count);
 
 constexpr std::array<const char*, SwitchCount> SwitchNames{
-    "APS5_NO_BARRIER_BATCH",
     "APS5_NO_SIZE_ONLY_SURFACE_BYTES",
+    "APS5_NO_BARRIER_BATCH",
+    "APS5_NO_OWNED_DRAW_INPUTS",
 };
 
 struct SwitchValues {
     std::array<std::atomic<bool>, SwitchCount> set{};
     SwitchValues() {
         const std::array<bool, SwitchCount> environment{
-            std::getenv("APS5_NO_BARRIER_BATCH") != nullptr,
             std::getenv("APS5_NO_SIZE_ONLY_SURFACE_BYTES") != nullptr,
+            std::getenv("APS5_NO_BARRIER_BATCH") != nullptr,
+            std::getenv("APS5_NO_OWNED_DRAW_INPUTS") != nullptr,
         };
         for (std::size_t index = 0; index < SwitchCount; ++index) set[index].store(environment[index], std::memory_order_relaxed);
     }

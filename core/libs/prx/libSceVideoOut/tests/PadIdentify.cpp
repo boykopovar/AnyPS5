@@ -97,25 +97,27 @@ int Run(const char* mode) {
     if (std::strcmp(mode, "rumble") == 0) Pad::SetVibration(0, 200, 200);
     const auto bound = Clock::now();
     DisplayWindow window;
-    PadInput padInput;
-    Require(padInput.SlotOccupied(0), "the virtual controller takes slot 0");
+    {
+        PadInput padInput;
+        Require(padInput.SlotOccupied(0), "the virtual controller takes slot 0");
 
-    if (std::strcmp(mode, "rumble") == 0) {
-        Pump(padInput, window, 1500);
-        Require(pulseEdges.empty(), "no identify pulse is sent while the title is rumbling");
-        Require(!titleEdges.empty(), "the title's own rumble reaches the controller");
-        Pad::SetVibration(0, 0, 0);
-        Pump(padInput, window, 1500);
-        Require(pulseEdges.size() == 1, "after the title stops, one pulse for player 1 is sent");
-        Require(pulseEdges[0] - bound >= std::chrono::milliseconds(1500), "the pulse waits for the title to stay quiet");
-    } else {
-        Pump(padInput, window, 3000);
-        if (std::strcmp(mode, "off") == 0) {
-            Require(pulseEdges.empty() && titleEdges.empty(), "off sends no pulse");
+        if (std::strcmp(mode, "rumble") == 0) {
+            Pump(padInput, window, 1500);
+            Require(pulseEdges.empty(), "no identify pulse is sent while the title is rumbling");
+            Require(!titleEdges.empty(), "the title's own rumble reaches the controller");
+            Pad::SetVibration(0, 0, 0);
+            Pump(padInput, window, 1500);
+            Require(pulseEdges.size() == 1, "after the title stops, one pulse for player 1 is sent");
+            Require(pulseEdges[0] - bound >= std::chrono::milliseconds(1500), "the pulse waits for the title to stay quiet");
         } else {
-            Require(pulseEdges.size() == 1, "connect sends exactly one pulse for player 1");
-            Require(pulseEdges[0] - bound >= std::chrono::milliseconds(450) && pulseEdges[0] - bound <= std::chrono::milliseconds(1500),
-                "the pulse follows the 500 ms quiet window");
+            Pump(padInput, window, 3000);
+            if (std::strcmp(mode, "off") == 0) {
+                Require(pulseEdges.empty() && titleEdges.empty(), "off sends no pulse");
+            } else {
+                Require(pulseEdges.size() == 1, "connect sends exactly one pulse for player 1");
+                Require(pulseEdges[0] - bound >= std::chrono::milliseconds(450) && pulseEdges[0] - bound <= std::chrono::milliseconds(1500),
+                    "the pulse follows the 500 ms quiet window");
+            }
         }
     }
 

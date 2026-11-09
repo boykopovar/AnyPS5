@@ -391,6 +391,35 @@ int main() {
         return b.eliminate() == 2u && !sign.HasUses() && !exponent.HasUses() && significand.HasUses();
     });
 
+    passed &= run("finite trig arms need no flush except sine of a possibly denormal input", [] {
+        Builder b;
+        auto& raw = b.unknown();
+        auto& flushed = b.flush(raw);
+        const auto trig = [&](IrOpcode opcode, IrValue& bits) -> IrValue& {
+            auto& argument = b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&bits});
+            auto& result = b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(opcode, IrType::F32, {&argument})});
+            if (opcode == IrOpcode::FPCos) return result;
+            auto& zero = b.emit(IrOpcode::IEqual32, IrType::Bool, {&b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&bits, &b.constant(0x7fffffffu)}), &b.constant(0u)});
+            return b.emit(IrOpcode::SelectU32, IrType::U32, {&zero, &bits, &result});
+        };
+        const auto guard = [&](IrValue& bits, IrValue& result, bool infinite) -> IrValue& {
+            auto& magnitude = b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&bits, &b.constant(0x7fffffffu)});
+            auto& nan = b.emit(IrOpcode::UGreaterThan32, IrType::Bool, {&magnitude, &b.constant(0x7f800000u)});
+            auto& inf = b.emit(IrOpcode::IEqual32, IrType::Bool, {&magnitude, &b.constant(0x7f800000u)});
+            auto& condition = infinite ? b.emit(IrOpcode::LogicalOr, IrType::Bool, {&nan, &inf}) : nan;
+            return b.flush(b.emit(IrOpcode::SelectU32, IrType::U32, {&condition, &b.constant(0xffc00000u), &result}));
+        };
+        auto& cosine = trig(IrOpcode::FPCos, raw);
+        IrValue* removed[] = {&guard(raw, cosine, true), &guard(flushed, trig(IrOpcode::FPSin, flushed), true)};
+        IrValue* kept[] = {&b.flush(cosine), &guard(raw, trig(IrOpcode::FPSin, raw), true), &guard(raw, cosine, false), &guard(b.unknown(), cosine, true)};
+        for (auto* value : removed) b.keep(*value);
+        for (auto* value : kept) b.keep(*value);
+        bool valid = b.eliminate() == 2u;
+        for (auto* value : removed) valid &= !value->HasUses();
+        for (auto* value : kept) valid &= value->HasUses();
+        return valid;
+    });
+
     passed &= run("two chained v_mul_f32 keep only the input flush of the first source", [] {
         const std::array<std::uint32_t, 5> code{
             0x10020100u,
