@@ -2,7 +2,7 @@
 
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libAacs/Export.cpp) - 264 entries are import-resolution declarations only. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Callable exports](../../../core/libs/prx/libAacs/Export.cpp) - 264 entries are import-resolution declarations only. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. 12 `CAacsAuthMgr` and `CAacsLoadMgr` names come from the [PS4 symbol name list](https://github.com/zecoxao/sce_symbols/blob/fba94f281ca5e3ff1075a9897e99161d8678ca00/ps4_names.txt); each NID matches. The remaining unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 | Name | NID |
 | --- | --- |
@@ -18,10 +18,10 @@
 | `Unknown` | `-xuQAxlUvmk` |
 | `Unknown` | `0bhkzdWU6Y4` |
 | `Unknown` | `0oisD9Dr3FI` |
-| `Unknown` | `12CP5PHvlgs` |
+| `_ZN12CAacsLoadMgrD0Ev` | `12CP5PHvlgs` |
 | `Unknown` | `15QPrQC1usM` |
 | `Unknown` | `1CNq2v6hoig` |
-| `Unknown` | `1aMnfYcnn1I` |
+| `_ZN12CAacsAuthMgrC2Ev` | `1aMnfYcnn1I` |
 | `Unknown` | `1bzdduTshZ4` |
 | `Unknown` | `1eNkqOSGM+A` |
 | `Unknown` | `1hyWLxCZ-X8` |
@@ -38,12 +38,12 @@
 | `Unknown` | `4IQhgxl103g` |
 | `Unknown` | `4r3seYGdIK0` |
 | `AacsPermissionActivate` | `4zU8rDPa4r4` |
-| `Unknown` | `54hkTYBIxqs` |
+| `_ZN12CAacsLoadMgraSERKS_` | `54hkTYBIxqs` |
 | `AacsBusDecrypt` | `6KcHbwBESLA` |
 | `AacsModuleStop` | `6T773MR5QPI` |
 | `Unknown` | `6ToH2wFRWf4` |
 | `Unknown` | `6XcWJGADJeU` |
-| `Unknown` | `753FlqNkJlM` |
+| `_ZN12CAacsAuthMgrD2Ev` | `753FlqNkJlM` |
 | `Unknown` | `7ETkLi9auE0` |
 | `Unknown` | `7KCIejRxaB0` |
 | `AacsDecrypt` | `7TaiaYkvLFo` |
@@ -58,7 +58,7 @@
 | `Unknown` | `9UJqpmNn494` |
 | `Unknown` | `9eTs6-zAOJs` |
 | `Unknown` | `9rQgwWQB9NE` |
-| `Unknown` | `AVRC3P8reF0` |
+| `_ZN12CAacsAuthMgrC2ERKS_` | `AVRC3P8reF0` |
 | `Unknown` | `Apl9mjDSCE0` |
 | `Unknown` | `B10mYlgLwMM` |
 | `Unknown` | `BFdZY3ocsJo` |
@@ -79,7 +79,7 @@
 | `Unknown` | `FA1OyesdYiA` |
 | `Unknown` | `FEgD32GcLdM` |
 | `Unknown` | `FEi5mHUWB0M` |
-| `Unknown` | `FHWdAzU-rRI` |
+| `_Z22AacsAuthMgrGetInstancev` | `FHWdAzU-rRI` |
 | `Unknown` | `Fl0RrZ7B27g` |
 | `Unknown` | `G4zfSFYC1f8` |
 | `Unknown` | `GD6inRSAHfo` |
@@ -91,7 +91,7 @@
 | `Unknown` | `HmdBrUh2Xz4` |
 | `Unknown` | `HuTXuHqMrVE` |
 | `Unknown` | `ILwfo94p-ng` |
-| `Unknown` | `Iofb1lKwTNA` |
+| `_ZN12CAacsAuthMgraSERKS_` | `Iofb1lKwTNA` |
 | `Unknown` | `IxvgFI5JtxE` |
 | `Unknown` | `JXvlGrRcNlg` |
 | `Unknown` | `Jmviii0cDro` |
@@ -133,7 +133,7 @@
 | `Unknown` | `SJ9GmthhZDk` |
 | `Unknown` | `SjEjF5V5XHc` |
 | `Unknown` | `SjewOoJlr9c` |
-| `Unknown` | `TK5prfVU4b0` |
+| `_ZN12CAacsLoadMgrD1Ev` | `TK5prfVU4b0` |
 | `Unknown` | `TQCLQjHkkW0` |
 | `Unknown` | `TuTNDTTOXHo` |
 | `Unknown` | `U2zlEU4AhRk` |
@@ -158,9 +158,9 @@
 | `Unknown` | `YOlHXj4rrzQ` |
 | `Unknown` | `Yqt0NzhE-eU` |
 | `Unknown` | `Z9yhz8+DS3k` |
-| `Unknown` | `ZCRVIAxld6o` |
+| `_ZN12CAacsAuthMgrD1Ev` | `ZCRVIAxld6o` |
 | `Unknown` | `ZEdbi75pkX0` |
-| `Unknown` | `ZUEIg4QZJ+k` |
+| `_Z22AacsLoadMgrGetInstancev` | `ZUEIg4QZJ+k` |
 | `Unknown` | `ZnJgSGpLzGs` |
 | `Unknown` | `a3D2-Eh-DW8` |
 | `Unknown` | `aOX5VPrNfqo` |
@@ -202,13 +202,13 @@
 | `Unknown` | `iJ3zPE02P1w` |
 | `Unknown` | `iOLQbPwqsJU` |
 | `Unknown` | `igIuBDqdlZo` |
-| `Unknown` | `j0quzCtmBr4` |
+| `_ZN12CAacsLoadMgrD2Ev` | `j0quzCtmBr4` |
 | `Unknown` | `jXZJmZu3ihs` |
 | `Unknown` | `jdd4KuD7bOg` |
 | `Unknown` | `jpKit8Qv76g` |
 | `AacsPermissionSet` | `kDxzgCcMty0` |
 | `Unknown` | `kX1hCR9FDo0` |
-| `Unknown` | `kYQis7lBy+U` |
+| `_ZN12CAacsAuthMgrD0Ev` | `kYQis7lBy+U` |
 | `Unknown` | `kaxfKxeOvbU` |
 | `Unknown` | `keNMJVznBe0` |
 | `Unknown` | `kk8ELO4Y2Fo` |
