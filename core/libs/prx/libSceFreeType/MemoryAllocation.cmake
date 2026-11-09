@@ -1,7 +1,7 @@
 target_sources(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR}/prx/libSceFreeType/src/MemoryAllocation.cpp)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_freetype_memory_allocation_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeMemoryAllocation.cpp)
+    add_test_executable(guest_freetype_memory_allocation_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeMemoryAllocation.cpp)
     target_include_directories(guest_freetype_memory_allocation_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_memory_allocation_tests PRIVATE ${CMAKE_DL_LIBS})
     if(WIN32)
