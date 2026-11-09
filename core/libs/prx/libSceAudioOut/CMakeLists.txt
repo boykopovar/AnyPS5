@@ -365,7 +365,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
 
-    add_test_executable(audio_out_set_volume_tests tests/AudioOutSetVolume.cpp src/AudioOut.cpp src/AudioOut2PadMix.cpp src/AudioOutShutdown.cpp ../libScePad/src/HostVolumeState.cpp)
+    add_test_executable(audio_out_set_volume_tests tests/AudioOutSetVolume.cpp src/AudioOut.cpp src/AudioOut2PadMix.cpp src/AudioOutShutdown.cpp ../libScePad/src/HostVolumeState.cpp src/HostPause.cpp)
     target_compile_definitions(audio_out_set_volume_tests PRIVATE SDL_MAIN_HANDLED)
     target_include_directories(audio_out_set_volume_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
     target_link_libraries(audio_out_set_volume_tests PRIVATE libc libkernel libScePad)
