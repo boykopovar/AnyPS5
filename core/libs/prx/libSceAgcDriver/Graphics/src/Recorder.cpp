@@ -3489,7 +3489,8 @@ std::shared_ptr<Buffer> Recorder::ReusableOwnedDrawInput(std::uint64_t address, 
     }
     static const bool verify = std::getenv("APS5_VERIFY_OWNED_DRAW_INPUTS") != nullptr;
     if (verify) {
-        const bool equal = GuestMemory::EqualsCommittedUnsynced(address, found->second.buffer->Bytes());
+        const auto held = found->second.from;
+        const bool equal = GuestMemory::EqualsCommittedUnsynced(address + held, found->second.buffer->Bytes().subspan(held));
         if (!ownedDrawInputHolds(address, bytes, found->second.owned)) {
             eraseDrawSnapshot(found);
             return {};
