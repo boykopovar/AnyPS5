@@ -22,17 +22,10 @@ namespace AgcDriver::DriverDetail {
 
 void PollSleep() {
 #ifdef _WIN32
-    thread_local HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-    if (timer != nullptr) {
-        LARGE_INTEGER due{};
-        due.QuadPart = -2000;
-        if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
-            WaitForSingleObject(timer, INFINITE);
-            return;
-        }
-    }
-#endif
+    PreciseSleepWaitableTimerWithHandle(PreciseWaitThreadTimer(), 2000);
+#else
     std::this_thread::sleep_for(std::chrono::microseconds(200));
+#endif
 }
 
 bool OwnStoreRejects(std::span<const std::uint32_t> packet, std::uint64_t awaited, std::size_t bytes, std::uint32_t queue) {
