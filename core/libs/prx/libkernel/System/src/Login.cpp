@@ -1,8 +1,10 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include <array>
 #include <cerrno>
 #include <cstring>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -61,11 +63,47 @@ extern "C" void LoginNameForTest_nid_no_patch(const char* name) {
     else g_loginForTest = name;
 }
 
+namespace {
+constexpr std::size_t MaxLoginName = 33;
+std::mutex sessionMutex;
+std::optional<std::string> sessionLogin;
+}
+
+extern "C" int SetLogin_nid_no_patch(const char* name) {
+    if (name == nullptr) return 14;
+    const std::size_t length = ::strnlen(name, MaxLoginName);
+    if (length == MaxLoginName) return 22;
+    std::lock_guard lock(sessionMutex);
+    sessionLogin.emplace(name, length);
+    return 0;
+}
+
 extern "C" int APS5_VABI getlogin_r_nid_postfix(char* output, int size) {
     if (size <= 0) return 34;
     if (output == nullptr) return 14;
+    {
+        std::lock_guard lock(sessionMutex);
+        if (sessionLogin) {
+            if (sessionLogin->size() + 1 > static_cast<std::size_t>(size)) return 34;
+            const int saved = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(output, sessionLogin->c_str(), sessionLogin->size() + 1);
+            errno = saved;
+            return copied ? 0 : 14;
+        }
+    }
+    char buffer[512]{};
     const int saved = errno;
-    const int result = ReadLogin(output, size);
+    const int result = ReadLogin(buffer, static_cast<int>(sizeof(buffer)));
+    if (result != 0) {
+        errno = saved;
+        return result;
+    }
+    const std::size_t length = std::strlen(buffer) + 1;
+    if (length > static_cast<std::size_t>(size)) {
+        errno = saved;
+        return 34;
+    }
+    const bool copied = GuestCopyOut_nid_no_patch(output, buffer, length);
     errno = saved;
-    return result;
+    return copied ? 0 : 14;
 }

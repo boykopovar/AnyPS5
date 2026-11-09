@@ -6,8 +6,10 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
+#include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <cerrno>
 #include <new>
@@ -19,7 +21,6 @@
 #include <unistd.h>
 #elif defined(_WIN32)
 #include "prx/libc/include/WindowsDescriptor.hpp"
-#include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 #endif
 
@@ -47,6 +48,7 @@ constexpr int GuestAdviceProtect = 10;
 constexpr int GuestLockCurrent = 0x1;
 constexpr int GuestLockFuture = 0x2;
 constexpr int GuestDefinedProtection = 0x3F7;
+constexpr std::uintptr_t GuestUserAddressStart = PS5_PAGE_SIZE;
 constexpr std::uintptr_t GuestUserAddressEnd = 0x800000000000;
 constexpr int GuestAlignedSuper = 0x1000000;
 constexpr std::size_t SuperpageSize = std::size_t{1} << 21;
@@ -164,12 +166,11 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
 #ifndef _WIN32
         if (fixedAnonymous && !GuestArena::GuestArenaContains_nid_postfix(address, rounded)) return failed(GuestInvalid);
 #endif
-        const bool exclusive = fixedAnonymous && (mappingFlags & GuestMapExclusive) != 0;
-        const int placement = fixedAnonymous ? GuestMapFixed | (exclusive ? GuestMapNoOverwrite : 0) : 0;
+        const int placement = fixedAnonymous ? GuestMapFixed : 0;
         void* mapped = address;
         const auto alignment = !fixedAnonymous && (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
         try {
-            const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, exclusive, fixedAnonymous);
+            const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, false, fixedAnonymous);
             if (result != 0) return failed(result == SCE_KERNEL_ERROR_EINVAL ? GuestInvalid : GuestNoMemory);
             if (fixedAnonymous) ReleaseFlexibleMappingRange(start, rounded);
             return mapped;
@@ -188,6 +189,7 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
         (mappingFlags & ~(GuestShared | GuestPrivate | GuestMapFixed | GuestMapNoOverwrite | GuestMapNoCoalesce)) != 0)
         return failed(GuestNotSupported);
     if (descriptor < 0) return failed(GuestBadDescriptor);
+    if (File::IsVirtualDirectoryDescriptor(descriptor)) return failed(GuestNotSupported);
     File::RefuseArchivedFile(descriptor, "mmap");
     if (offset < 0 || (static_cast<std::uint64_t>(offset) & (PS5_PAGE_SIZE - 1)) != 0 ||
         rounded > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) ||
@@ -205,10 +207,12 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
     if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor) && !RegularFile(mappingDescriptor)) return failed(GuestNotSupported);
 #elif defined(_WIN32)
     const int mappingDescriptor = descriptor;
-    if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor)) {
+    {
         const HANDLE handle = WindowsDescriptorHandle_nid_no_patch(mappingDescriptor);
         if (handle == INVALID_HANDLE_VALUE) return failed(GuestBadDescriptor);
-        if (File::DirectoryDescriptorPath(mappingDescriptor) || File::IsRandomDevice(mappingDescriptor) || GetFileType(handle) != FILE_TYPE_DISK) return failed(GuestNotSupported);
+        if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor) &&
+            (File::DirectoryDescriptorPath(mappingDescriptor) || File::IsRandomDevice(mappingDescriptor) || GetFileType(handle) != FILE_TYPE_DISK))
+            return failed(GuestNotSupported);
         const int accessMode = DescriptorAccess(handle, mappingDescriptor);
         if (accessMode < 0) return failed(GuestBadDescriptor);
         if ((protection & 1) != 0 && accessMode == 1) return failed(GuestAccess);
@@ -251,9 +255,10 @@ int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
         return -1;
     };
     std::size_t rounded;
-    const auto start = reinterpret_cast<std::uintptr_t>(address);
-    if (!RoundLength(length, rounded) || start == 0 ||
-        (start & (PS5_PAGE_SIZE - 1)) != 0 ||
+    const auto offset = reinterpret_cast<std::uintptr_t>(address) & (PS5_PAGE_SIZE - 1);
+    const auto start = reinterpret_cast<std::uintptr_t>(address) - offset;
+    if (length == 0 || length > std::numeric_limits<std::size_t>::max() - offset ||
+        !RoundLength(length + offset, rounded) || start == 0 ||
         rounded > std::numeric_limits<std::uintptr_t>::max() - start)
         return failed(GuestInvalid);
     try {
@@ -277,7 +282,7 @@ int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protec
     if (start == 0 || length > std::numeric_limits<std::uintptr_t>::max() - start)
         return failed(GuestInvalid);
     try {
-        if (DoMprotect(address, length, protection & GuestDefinedProtection) != 0) return failed(GuestInvalid);
+        if (DoMprotect(address, length, protection & GuestDefinedProtection, false) != 0) return failed(GuestInvalid);
         return 0;
     } catch (const std::bad_alloc&) {
         return failed(GuestNoMemory);
@@ -308,8 +313,8 @@ int APS5_VABI mlockall_nid_postfix(int flags) {
         SetError(GuestInvalid);
         return -1;
     }
-    if ((flags & GuestLockFuture) != 0) throw std::runtime_error("mlockall: MCL_FUTURE is not implemented: later mappings are not locked");
-    throw std::runtime_error("mlockall: MCL_CURRENT is not implemented: the process also holds host stacks, heaps, modules and driver mappings");
+    NotImplemented_nid_no_patch("mlockall");
+    return 0;
 }
 
 int APS5_VABI munlockall_nid_postfix() {
@@ -327,6 +332,7 @@ int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags) {
     constexpr std::uintptr_t mask = PS5_PAGE_SIZE - 1;
     const auto first = reinterpret_cast<std::uintptr_t>(address);
     const auto start = first & ~mask;
+    if (length > std::numeric_limits<std::uintptr_t>::max() - (first - start) - mask) return failed(GuestInvalid);
     const std::uintptr_t size = (length + (first - start) + mask) & ~mask;
     const auto end = start + size;
     if (end < start) return failed(GuestInvalid);
@@ -346,6 +352,15 @@ int APS5_VABI madvise_nid_postfix(void* address, std::size_t length, int advice)
     return 0;
 }
 
+int APS5_VABI posix_madvise_nid_postfix(void* address, std::size_t length, int advice) {
+    if (advice == GuestAdviceProtect) return 0;
+    const auto start = reinterpret_cast<std::uintptr_t>(address);
+    if (advice < 0 || advice > GuestAdviceCore || start < GuestUserAddressStart || start > GuestUserAddressEnd || length > GuestUserAddressEnd - start) {
+        return GuestInvalid;
+    }
+    return 0;
+}
+
 int APS5_VABI mincore_nid_postfix(const void* address, std::size_t length, char* vec) {
     const auto failed = [](int error) {
         SetError(error);
@@ -357,16 +372,26 @@ int APS5_VABI mincore_nid_postfix(const void* address, std::size_t length, char*
     const auto size = (length + mask) & ~mask;
     if (size > std::numeric_limits<std::uintptr_t>::max() - first) return failed(GuestNoMemory);
     const auto end = first + size;
+    if (end > GuestUserAddressEnd || end < first) return failed(GuestNoMemory);
     if (size == 0 ? !Mapped(first) : !GuestRangeMapped(first, end)) return failed(GuestNoMemory);
     if (size == 0) return 0;
-    if (vec == nullptr) return failed(GuestFault);
+    std::array<char, 4096> chunk{};
     for (auto cursor = first; cursor < end;) {
-        VirtualQueryInfo info{};
-        sceKernelVirtualQuery(reinterpret_cast<const void*>(cursor), 0, &info, sizeof(info));
-
-        const auto extentEnd = std::min<std::uintptr_t>(info.end, end);
-        std::fill_n(vec + (cursor - first) / PS5_PAGE_SIZE, (extentEnd - cursor) / PS5_PAGE_SIZE, static_cast<char>(info.is_committed != 0 ? 1 : 0));
-        cursor = extentEnd;
+        const auto chunkPages = std::min<std::size_t>(chunk.size(), (end - cursor) / PS5_PAGE_SIZE);
+        const auto chunkEnd = cursor + chunkPages * PS5_PAGE_SIZE;
+        for (auto pageCursor = cursor; pageCursor < chunkEnd;) {
+            VirtualQueryInfo info{};
+            sceKernelVirtualQuery(reinterpret_cast<const void*>(pageCursor), 0, &info, sizeof(info));
+            const auto extentEnd = std::min<std::uintptr_t>(info.end, chunkEnd);
+            std::fill_n(chunk.data() + (pageCursor - cursor) / PS5_PAGE_SIZE,
+                        (extentEnd - pageCursor) / PS5_PAGE_SIZE,
+                        static_cast<char>(info.is_committed != 0 ? 1 : 0));
+            pageCursor = extentEnd;
+        }
+        if (!GuestCopyOut_nid_no_patch(vec + (cursor - first) / PS5_PAGE_SIZE, chunk.data(), chunkPages)) {
+            return failed(GuestFault);
+        }
+        cursor = chunkEnd;
     }
     return 0;
 }

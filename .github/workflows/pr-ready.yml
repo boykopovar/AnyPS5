@@ -1,0 +1,28 @@
+name: PR review queue
+on:
+  schedule:
+    - cron: '50 * * * *'
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: pr-review-queue
+jobs:
+  queue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          QUEUE_ISSUE: ${{ vars.REVIEW_QUEUE_ISSUE }}
+        run: |
+          if [ -n "$QUEUE_ISSUE" ]; then
+            python3 -I tools/pr_ready.py --issue "$QUEUE_ISSUE"
+          else
+            python3 -I tools/pr_ready.py
+          fi

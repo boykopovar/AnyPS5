@@ -1,10 +1,14 @@
 #include "prx/libSceAudio3d/include/Audio3d.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <bit>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+
 
 static_assert(sizeof(Audio3dOpenParameters) == 0x28);
 static_assert(offsetof(Audio3dOpenParameters, num_beds) == 0x20);
@@ -69,9 +73,45 @@ static void CheckExtendedBuffer() {
     }
 }
 
+static void CheckErrorStrings() {
+    constexpr const char* messages[]{
+        "port does not exist", "object does not exist", "invalid parameter",
+        "out of memory", "out of resources", "not ready"
+    };
+    for (std::uint32_t index = 0; index < std::size(messages); ++index) {
+        errno = 7;
+        const char* result = sceAudio3dStrError(std::bit_cast<std::int32_t>(0x80ea0002u + index));
+        Require(result && std::strcmp(result, messages[index]) == 0, "incorrect Audio3d error description");
+        Require(errno == 7, "error description lookup must preserve errno");
+        Require(std::strcmp(sceAudio3dStrError(0), "(unknown)") == 0 && std::strcmp(result, messages[index]) == 0,
+                "error descriptions must remain valid after another lookup");
+    }
+    for (const auto code : std::array<std::uint32_t, 11>{0, 1, 0xffffffffu, 0x80000000u, 0x7fffffffu,
+            0x80e9ffffu, 0x80ea0000u, 0x80ea0001u, 0x80ea0008u, 0x80ea0009u, 0x80eb0002u}) {
+        errno = 7;
+        const char* result = sceAudio3dStrError(std::bit_cast<std::int32_t>(code));
+        Require(result && std::strcmp(result, "(unknown)") == 0 && errno == 7,
+                "unrecognized codes must return the native fallback without changing errno");
+    }
+}
 int main() {
+    CheckErrorStrings();
     CheckInvalidDestination();
     CheckShortBuffer();
     CheckExtendedBuffer();
+    Require(sceAudio3dTerminate() == static_cast<int>(0x80EA0007), "terminate before initialize reports not ready");
+    Require(sceAudio3dInitialize(1) == static_cast<int>(0x80EA0004), "positive reserved parameter rejected in sceAudio3dInitialize");
+    Require(sceAudio3dInitialize(42) == static_cast<int>(0x80EA0004), "positive reserved parameter rejected in sceAudio3dInitialize");
     Require(sceAudio3dInitialize(-1) == static_cast<int>(0x80EA0004), "non-zero reserved parameter rejected in sceAudio3dInitialize");
+    Require(sceAudio3dInitialize(0x1000) == static_cast<int>(0x80EA0004), "positive 0x1000 reserved parameter rejected");
+    Require(sceAudio3dInitialize(INT64_MAX) == static_cast<int>(0x80EA0004), "INT64_MAX reserved parameter rejected");
+    Require(sceAudio3dInitialize(INT64_MIN) == static_cast<int>(0x80EA0004), "INT64_MIN reserved parameter rejected");
+    Require(sceAudio3dInitialize(0) == 0, "first initialize succeeds");
+    Require(sceAudio3dInitialize(1) == static_cast<int>(0x80EA0004), "reserved parameter rejected while initialized");
+    Require(sceAudio3dInitialize(-1) == static_cast<int>(0x80EA0004), "negative reserved parameter rejected while initialized");
+    Require(sceAudio3dTerminate() == 0, "terminate while initialized succeeds");
+    Require(sceAudio3dTerminate() == static_cast<int>(0x80EA0007), "second terminate reports not ready");
+    Require(sceAudio3dInitialize(0) == 0, "re-initialize after terminate succeeds");
+    Require(sceAudio3dTerminate() == 0, "second terminate succeeds");
+    Require(sceAudio3dTerminate() == static_cast<int>(0x80EA0007), "terminate after second terminate reports not ready");
 }

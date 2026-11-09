@@ -28,6 +28,7 @@ static void CheckClosed() {
     KeyboardInfo info;
     std::memset(&info, 0xa5, sizeof(info));
     Require(sceImeKeyboardGetInfo(0, nullptr) == InvalidAddress, "null info");
+    Require(sceImeKeyboardOpen(1, nullptr) == InvalidAddress, "null param");
     Require(sceImeKeyboardGetInfo(0, &info) == NotOpened, "info without an open keyboard");
     RequireUntouched(info);
     Require(sceImeKeyboardClose(1) == NotOpened, "close without an open keyboard");
@@ -38,6 +39,8 @@ static void CheckClosed() {
 
 static void CheckOpened() {
     KeyboardParam param{};
+    Require(sceImeKeyboardOpen(-1, &param) == InvalidUserId, "keyboard open for an invalid user");
+    Require(sceImeKeyboardClose(-1) == NotOpened, "close after the refused open");
     Require(sceImeKeyboardOpen(1, &param) == 0, "keyboard open failed");
     Require(sceImeKeyboardOpen(1, &param) == AlreadyOpened, "duplicate open accepted");
     KeyboardInfo info;

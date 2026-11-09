@@ -126,7 +126,7 @@ bool halvesRejoin() {
     return rejoined == &word && fieldBack;
 }
 
-bool factorFieldKept(bool multiplied) {
+bool factorFieldKept(bool multiplied, bool negated) {
     IrProgram program;
     auto& block = program.CreateBlock();
     program.SetEntryBlock(block);
@@ -137,13 +137,14 @@ bool factorFieldKept(bool multiplied) {
     auto& sum = builder.Emit(IrOpcode::IAdd32, IrType::U32, {&builder.Constant(1u), &lane});
     auto& masked = builder.Emit(IrOpcode::BitwiseAnd32, IrType::U32, {&sum, &builder.Constant(0xffffu)});
     auto& field = builder.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&masked, &builder.Constant(0u), &builder.Constant(24u)});
-    auto& used = multiplied ? builder.IMul(field, field) : field;
+    auto& factor = negated ? builder.Emit(IrOpcode::BitwiseXor32, IrType::U32, {&field, &builder.Constant(0x8000u)}) : field;
+    auto& used = multiplied ? builder.IMul(factor, factor) : factor;
     auto& user = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&used});
     static_cast<void>(builder.Emit(IrOpcode::Return, IrType::Void, {}));
     ConstantFolder().Fold(program);
     const IrValue* result = user.Argument(0)->Resolve();
     if (!multiplied) return result == &masked;
-    return result->Opcode() == IrOpcode::IMul32 && result->Argument(0)->Resolve() == &field && field.Opcode() == IrOpcode::BitFieldUExtract && field.Argument(0)->Resolve() == &masked;
+    return result->Opcode() == IrOpcode::IMul32 && result->Argument(0)->Resolve() == &factor && field.Opcode() == IrOpcode::BitFieldUExtract && field.Argument(0)->Resolve() == &masked;
 }
 
 bool reversesTo(std::uint32_t word, std::uint32_t expected) {
@@ -210,6 +211,8 @@ enum class QuadMask {
     Nested,
     SeparateHalves,
     RealOnly,
+    RealPartial,
+    RealDivergent,
     Partial,
     WrongHalf,
     Divergent,
@@ -225,7 +228,7 @@ bool quadProjection(std::uint32_t wave, QuadMask shape, bool expected, IrShaderS
     IrBuilder builder(program);
     builder.SetInsertionPoint(block);
     auto& lane = builder.Emit(IrOpcode::LaneId, IrType::U32, {});
-    if (shape == QuadMask::Divergent) {
+    if (shape == QuadMask::Divergent || shape == QuadMask::RealDivergent) {
         auto& taken = program.CreateBlock();
         auto& other = program.CreateBlock();
         program.BlockOrder().push_back(&taken);
@@ -245,17 +248,18 @@ bool quadProjection(std::uint32_t wave, QuadMask shape, bool expected, IrShaderS
         return std::array<IrValue*, 2>{&builder.CompositeExtract(mask, 0u), &builder.CompositeExtract(mask, 1u)};
     };
     auto& helper = builder.Emit(IrOpcode::GetBuiltin, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(StageInputKind::HelperInvocation)), &builder.Constant(0u)});
-    const auto real = ballot(builder.IEqual(helper, builder.Constant(0u)));
+    auto& realCondition = builder.IEqual(helper, builder.Constant(0u));
+    const auto real = ballot(realCondition);
     const auto quads = expand(real);
     const auto host = expand(ballot(builder.ConstantBool(true)));
     auto words = quads;
-    if (shape == QuadMask::Intersected || shape == QuadMask::Nested || shape == QuadMask::SeparateHalves || shape == QuadMask::RealOnly) {
+    if (shape == QuadMask::Intersected || shape == QuadMask::Nested || shape == QuadMask::SeparateHalves || shape == QuadMask::RealOnly || shape == QuadMask::RealPartial || shape == QuadMask::RealDivergent) {
         const auto highHost = shape == QuadMask::SeparateHalves ? expand(ballot(builder.ConstantBool(true))) : host;
-        const auto source = shape == QuadMask::Nested || shape == QuadMask::RealOnly ? real : quads;
+        const auto source = shape == QuadMask::Nested || shape == QuadMask::RealOnly || shape == QuadMask::RealPartial || shape == QuadMask::RealDivergent ? real : quads;
         words = {&builder.BitwiseAnd(*source[0], *host[0]), &builder.BitwiseAnd(*source[1], *highHost[1])};
         if (shape == QuadMask::Nested) words = expand(words);
     }
-    if (shape == QuadMask::Partial) {
+    if (shape == QuadMask::Partial || shape == QuadMask::RealPartial) {
         words = {&builder.BitwiseAnd(*words[0], builder.Constant(0x0000ffffu)), &builder.Constant(0u)};
     }
     if (shape == QuadMask::WrongHalf) words[1] = words[0];
@@ -266,7 +270,8 @@ bool quadProjection(std::uint32_t wave, QuadMask shape, bool expected, IrShaderS
     static_cast<void>(builder.Emit(IrOpcode::Return, IrType::Void, {}));
     ConstantFolder{}.Fold(program);
     const auto* result = user.Argument(0)->Resolve();
-    return expected ? result->HasImmediate() && result->ImmediateBool() : !result->HasImmediate();
+    if (shape == QuadMask::RealOnly) return result == &realCondition;
+    return expected ? result->HasImmediate() && result->ImmediateBool() : result->Opcode() == IrOpcode::INotEqual32;
 }
 
 bool run(const char* name, bool passed) {
@@ -284,8 +289,10 @@ int main() {
             passed &= run("intersecting whole-quad entry masks preserves pixel helpers", quadProjection(wave, QuadMask::Intersected, true));
             passed &= run("a nested whole-quad entry mask covers pixel helpers", quadProjection(wave, QuadMask::Nested, true));
             passed &= run("independent low and high whole-quad masks cover pixel helpers", quadProjection(wave, QuadMask::SeparateHalves, true));
-            passed &= run("an unexpanded entry mask must keep the helper bit test", quadProjection(wave, QuadMask::RealOnly, false));
+            passed &= run("an unexpanded entry mask must reuse the original helper test", quadProjection(wave, QuadMask::RealOnly, false));
             passed &= run("a partial whole-quad mask must keep the lane bit test", quadProjection(wave, QuadMask::Partial, false));
+            passed &= run("a partial real-lane mask must keep the lane bit test", quadProjection(wave, QuadMask::RealPartial, false));
+            passed &= run("a divergent real-lane ballot must keep the lane bit test", quadProjection(wave, QuadMask::RealDivergent, false));
             passed &= run("a divergent whole-quad ballot must keep the lane bit test", quadProjection(wave, QuadMask::Divergent, false));
             passed &= run("whole-quad entry proofs do not apply to other stages", quadProjection(wave, QuadMask::Intersected, false, IrShaderStage::Vertex));
         }
@@ -317,8 +324,9 @@ int main() {
         passed &= run("a mask under a merge of the halves reads through it", mergedHalfMask());
         passed &= run("half extractions read the half that was merged in", halfExtractions());
         passed &= run("the two halves of one word rejoin into the word", halvesRejoin());
-        passed &= run("a 24-bit field read of a value masked to 16 bits folds into the value", factorFieldKept(false));
-        passed &= run("a 24-bit field read that a multiply uses is kept, even for a factor masked to 16 bits", factorFieldKept(true));
+        passed &= run("a 24-bit field read of a value masked to 16 bits folds into the value", factorFieldKept(false, false));
+        passed &= run("a 24-bit field read that a multiply uses is kept, even for a factor masked to 16 bits", factorFieldKept(true, false));
+        passed &= run("a 24-bit field read that a multiply uses through a negating xor is kept, even for a factor masked to 16 bits", factorFieldKept(true, true));
         return passed ? 0 : 1;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

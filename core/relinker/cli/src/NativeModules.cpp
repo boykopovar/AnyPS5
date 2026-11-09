@@ -77,6 +77,7 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
     std::vector<std::filesystem::path> directories;
     if (hasSingular || hasPlural) directories.push_back(hasSingular ? singular : plural);
     if (hasPrx) directories.push_back(prx);
+    const auto automaticDirectories = directories.size();
     std::vector<std::filesystem::path> runtimeDirectories;
     for (const auto& name : moduleDirectories) {
         const auto relative = Io::NativePath(name).lexically_normal();
@@ -85,7 +86,12 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
         auto directory = (root / relative).lexically_normal();
         if (!directory.has_filename()) directory = directory.parent_path();
         if (!std::filesystem::is_directory(directory)) throw Domain::RelinkerException("Guest module path is not a directory: " + Io::Utf8Path(directory));
-        if (std::any_of(directories.begin(), directories.end(), [&](const auto& existing) { return SameDirectory(existing, directory); })) throw Domain::RelinkerException("Duplicate guest module directory: " + Io::Utf8Path(directory));
+        const auto duplicate = std::find_if(directories.begin(), directories.end(), [&](const auto& existing) { return SameDirectory(existing, directory); });
+        if (duplicate != directories.end()) {
+            const bool automatic = static_cast<std::size_t>(duplicate - directories.begin()) < automaticDirectories;
+            throw Domain::RelinkerException("Duplicate guest module directory: " + Io::Utf8Path(directory) +
+                (automatic ? " (sce_module, sce_modules and prx are relinked without --module-dir)" : ""));
+        }
         directories.push_back(directory);
         runtimeDirectories.push_back(directory);
     }
@@ -115,31 +121,9 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
     result.Directories = std::move(directories);
     result.RuntimeDirectories = std::move(runtimeDirectories);
     for (const auto& path : paths) result.Modules.push_back({path, Io::FileReader().Read(Io::Utf8Path(path))});
-    std::map<std::size_t, std::string> sonames;
-    const auto soname = [&](std::size_t index) -> const std::string& {
-        const auto [found, inserted] = sonames.try_emplace(index);
-        if (inserted) found->second = GuestImageReader().Read(result.Modules[index].Path, result.Modules[index].Bytes, true).Soname;
-        return found->second;
-    };
-    std::vector<bool> copies(result.Modules.size());
-    for (std::size_t copy = 0; copy < result.Modules.size(); ++copy) {
-        const auto& path = result.Modules[copy].Path;
-        const auto name = Io::Utf8Path(path.filename());
-        for (std::size_t original = 0; original < result.Modules.size(); ++original) {
-            const auto& kept = result.Modules[original].Path;
-            const auto prefix = Io::Utf8Path(kept.filename());
-            if (kept.parent_path() != path.parent_path() || prefix.size() >= name.size() || !name.starts_with(prefix)) continue;
-            if (soname(copy).empty() || soname(copy) != soname(original)) continue;
-            copies[copy] = true;
-            std::cout << "Skipping backup copy: " << path.lexically_relative(root).generic_string() << " (same SONAME as "
-                      << kept.lexically_relative(root).generic_string() << ")\n";
-            break;
-        }
-    }
-    std::vector<GuestModuleInput> modules;
-    for (std::size_t index = 0; index < result.Modules.size(); ++index)
-        if (!copies[index]) modules.push_back(std::move(result.Modules[index]));
-    result.Modules = std::move(modules);
+    for (const auto& [copy, kept] : RemoveBackupCopies(result.Modules))
+        std::cout << "Skipping backup copy: " << copy.lexically_relative(root).generic_string() << " (same SONAME as "
+                  << kept.lexically_relative(root).generic_string() << ")\n";
     return result;
 }
 

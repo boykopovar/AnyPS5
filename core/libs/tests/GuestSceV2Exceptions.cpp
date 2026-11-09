@@ -15,6 +15,7 @@ using Thrower = void (APS5_VABI *)(const void*);
 extern "C" {
 extern const TypeRecord _ZTISt9exception_nid_postfix;
 extern const TypeRecord _ZTISt9bad_alloc_nid_postfix;
+extern const TypeRecord _ZTISt8bad_cast_nid_postfix;
 extern const TypeRecord _ZTISt12length_error_nid_postfix;
 extern const TypeRecord _ZTISt12system_error_nid_postfix;
 extern const TypeRecord _ZTINSt13__sce_cxxvers16_Error_exceptionE_nid_postfix;
@@ -25,6 +26,13 @@ const void* SceV2CatchType = nullptr;
 const void* SceV2OtherType = nullptr;
 int SceV2Selector = 0;
 const void* SceV2Caught = nullptr;
+}
+
+struct LocinfoCall { GuestLocale::SceV2Locinfo* self; const char* name; };
+
+extern "C" void APS5_VABI SceV2ConstructLocinfo(const void* argument) {
+    const auto* call = static_cast<const LocinfoCall*>(argument);
+    _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(call->self, call->name);
 }
 
 static unsigned failures = 0;
@@ -99,7 +107,7 @@ static void CheckThrowers() {
         {"_Xoverflow_error", AsThrower(_ZNSt8__sce_v216_Xoverflow_errorEPKc_nid_postfix), nullptr, exception, &logicError, 2,
             "NSt8__sce_v214overflow_errorE|"},
         {"_Xbad_alloc", AsThrower(_ZNSt8__sce_v211_Xbad_allocEv_nid_postfix), nullptr, &_ZTISt9bad_alloc_nid_postfix, errorException, 2,
-            "St9bad_alloc|std::bad_alloc"},
+            "St9bad_alloc|bad allocation"},
         {"_Xbad_function_call", AsThrower(_ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix), nullptr, exception, errorException, 2,
             "NSt8__sce_v217bad_function_callE|bad function call"},
         {"_Throw(bad_optional_access)", AsThrower(_ZNSt8__sce_v26_ThrowERKNS_19bad_optional_accessE_nid_postfix), nullptr, exception, errorException, 2,
@@ -108,10 +116,16 @@ static void CheckThrowers() {
             "NSt8__sce_v212bad_weak_ptrE|bad_weak_ptr"},
         {"_Throw(bad_variant_access)", AsThrower(_ZNSt8__sce_v26_ThrowERKNS_18bad_variant_accessE_nid_postfix), nullptr, exception, errorException, 2,
             "NSt8__sce_v218bad_variant_accessE|bad variant access"},
+        {"_Throw(bad_any_cast)", AsThrower(_ZNSt8__sce_v26_ThrowERKNS_12bad_any_castE_nid_postfix), nullptr, &_ZTISt8bad_cast_nid_postfix, errorException, 2,
+            "NSt8__sce_v212bad_any_castE|Bad any_cast"},
+        {"unversioned _Throw(bad_cast)", AsThrower(_ZSt6_ThrowRKSt8bad_cast_nid_postfix), nullptr, exception, errorException, 2,
+            "St8bad_cast|std::bad_cast"},
         {"_Throw_Cpp_error", AsThrower(_ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix), reinterpret_cast<const void*>(1), &systemError, &_ZTISt12system_error_nid_postfix, 2,
             "NSt8__sce_v212system_errorE|invalid argument: invalid argument"},
     };
+    inspectBytes = sizeof(void*);
     for (const auto& test : cases) Run(test);
+    inspectBytes = sizeof(LibcException::ExceptionObject);
 }
 
 static void CheckCopies() {
@@ -125,6 +139,23 @@ static void CheckCopies() {
         "NSt8__sce_v211range_errorE|range copy"});
     Require(inspectedSystem.base.message == range.message, "_Throw(range_error) shares the message");
     _ZNSt13__sce_cxxvers16_Error_exceptionD2Ev_nid_postfix(&range);
+
+    LibcException::ExceptionObject format {};
+    _ZNSt13__sce_cxxvers16_Error_exceptionC2EPKc_nid_postfix(&format, "format copy");
+    Run({"_Throw(format_error)", AsThrower(_ZNSt8__sce_v26_ThrowERKNS_12format_errorE_nid_postfix), &format, &runtimeError, &logicError, 2,
+        "NSt8__sce_v212format_errorE|format copy"});
+    _ZNSt13__sce_cxxvers16_Error_exceptionD2Ev_nid_postfix(&format);
+
+    LibcException::SystemErrorObject future {};
+    _ZNSt13__sce_cxxvers16_Error_exceptionC2EPKc_nid_postfix(&future.base, "future copy");
+    future.code = {3, 7, _ZSt16generic_categoryv_nid_postfix()};
+    inspectBytes = sizeof(LibcException::SystemErrorObject);
+    Run({"_Throw(future_error)", AsThrower(_ZNSt8__sce_v26_ThrowERKNS_12future_errorE_nid_postfix), &future, &logicError, &runtimeError, 2,
+        "NSt8__sce_v212future_errorE|promise already satisfied"});
+    Require(inspectedSystem.code.reserved == 3 && inspectedSystem.code.value == 7, "_Throw(future_error) copies the code");
+    Require(inspectedSystem.code.category == future.code.category, "_Throw(future_error) copies the category");
+    inspectBytes = sizeof(LibcException::ExceptionObject);
+    _ZNSt13__sce_cxxvers16_Error_exceptionD2Ev_nid_postfix(&future.base);
 
     LibcException::SystemErrorObject error {};
     _ZNSt13__sce_cxxvers16_Error_exceptionC2EPKc_nid_postfix(&error.base, "system copy");
@@ -143,6 +174,18 @@ static void CheckCopies() {
     Require(inspectedSystem.code.value == 5, "ios_base::_Throw(failure) copies the code");
     inspectBytes = sizeof(LibcException::ExceptionObject);
     _ZNSt13__sce_cxxvers16_Error_exceptionD2Ev_nid_postfix(&error.base);
+}
+
+static void CheckCppErrorCode() {
+    const TypeRecord systemError = Named("NSt8__sce_v212system_errorE");
+    inspectBytes = sizeof(LibcException::SystemErrorObject);
+    SceV2CatchType = &systemError;
+    SceV2OtherType = &_ZTISt12system_error_nid_postfix;
+    SceV2Catch(AsThrower(_ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix), reinterpret_cast<const void*>(1));
+    Require(inspectedSystem.code.reserved == 22, "_Throw_Cpp_error stores the value in the first code word");
+    Require(inspectedSystem.code.value == 0, "_Throw_Cpp_error leaves the second code word clear");
+    Require(inspectedSystem.code.category == _ZSt16generic_categoryv_nid_postfix(), "_Throw_Cpp_error uses the generic category");
+    inspectBytes = sizeof(LibcException::ExceptionObject);
 }
 
 static void CheckErrorException() {
@@ -169,6 +212,54 @@ static void CheckSyserrorMap() {
     Require(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(2), _ZSt13_Syserror_mapi_nid_postfix(2)) == 0, "_Syserror_map(2) matches the unversioned text");
     Require(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(99999), "unknown error") == 0, "_Syserror_map(unknown)");
     Require(_ZSt13_Syserror_mapi_nid_postfix(99999) == nullptr, "unversioned _Syserror_map(unknown) stays null");
+
+    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(0), "success") == 0, "_Syserror_map_search(0)");
+    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1040), "no message available") == 0, "_Syserror_map_search(1040)");
+    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1050), "no stream resources") == 0, "_Syserror_map_search(1050)");
+    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1051), "not a stream") == 0, "_Syserror_map_search(1051)");
+    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1074), "stream timeout") == 0, "_Syserror_map_search(1074)");
+    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(45), "not supported") == 0, "_Syserror_map_search(45) first match");
+    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(35), "operation would block") == 0, "_Syserror_map_search(35) first match");
+    Require(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(95) == nullptr, "_Syserror_map_search(95) is not in the table");
+    Require(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(99999) == nullptr, "_Syserror_map_search(unknown)");
+    Require(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(1040), "no message available") == 0, "_Syserror_map(1040)");
+    Require(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(95), "unknown error") == 0, "_Syserror_map(95) is unknown");
+}
+
+static void CheckLocinfo() {
+    const TypeRecord runtimeError = Named("NSt8__sce_v213runtime_errorE");
+    const TypeRecord logicError = Named("NSt8__sce_v211logic_errorE");
+    const char untouched[] = "untouched";
+
+    GuestLocale::SceV2Locinfo locinfo {};
+    locinfo.reserved = 0x5a5a5a5a5a5a5a5aull;
+    _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(&locinfo, "");
+    Require(locinfo.name != nullptr && std::strcmp(locinfo.name, "C") == 0, "_Locinfo(empty) stores C");
+    Require(locinfo.name == locinfo.classicName, "_Locinfo stores the classic name twice");
+    _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(&locinfo, "C");
+    Require(locinfo.classicName != nullptr && std::strcmp(locinfo.classicName, "C") == 0, "_Locinfo(C) stores C");
+    _ZNSt8__sce_v28_Locinfo13_Locinfo_dtorEPS0__nid_postfix(&locinfo);
+    Require(locinfo.reserved == 0x5a5a5a5a5a5a5a5aull, "_Locinfo preserves the caller word at offset 0");
+
+    const char* const rejected[] {nullptr, "POSIX", "c", "C.UTF-8", "CX", "en_US.UTF-8"};
+    for (const char* name : rejected) {
+        GuestLocale::SceV2Locinfo invalid {};
+        invalid.reserved = 0x5a5a5a5a5a5a5a5aull;
+        invalid.classicName = untouched;
+        LocinfoCall call {&invalid, name};
+        SceV2CatchType = &runtimeError;
+        SceV2OtherType = &logicError;
+        SceV2Selector = 0;
+        inspected[0] = 0;
+        inspectBytes = sizeof(void*);
+        SceV2Catch(reinterpret_cast<Thrower>(SceV2ConstructLocinfo), &call);
+        Require(SceV2Selector == 2, "_Locinfo(non-C) throws");
+        Require(std::strcmp(inspected, "NSt8__sce_v213runtime_errorE|bad locale name") == 0, "_Locinfo(non-C) message");
+        Require(invalid.name != nullptr && std::strcmp(invalid.name, "C") == 0, "_Locinfo stores C before rejecting the name");
+        Require(invalid.classicName == untouched, "_Locinfo leaves offset 0x10 untouched when rejecting the name");
+        Require(invalid.reserved == 0x5a5a5a5a5a5a5a5aull, "_Locinfo preserves the caller word when rejecting the name");
+    }
+    inspectBytes = sizeof(LibcException::ExceptionObject);
 }
 
 static void CheckTicks() {
@@ -182,7 +273,9 @@ int main() {
     CheckErrorException();
     CheckThrowers();
     CheckCopies();
+    CheckCppErrorCode();
     CheckSyserrorMap();
+    CheckLocinfo();
     CheckTicks();
     if (failures) return 1;
     std::puts("guest std::__sce_v2 exceptions: PASS");

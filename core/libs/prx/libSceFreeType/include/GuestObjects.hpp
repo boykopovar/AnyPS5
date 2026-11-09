@@ -21,6 +21,18 @@ struct GuestLibrary {
 
 void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap);
 
+struct GuestSize {
+    GuestSizeRec rec{};
+    FT_Size host = nullptr;
+};
+
+struct RasterTargetSpan {
+    unsigned char* begin = nullptr;
+    std::size_t bytes = 0;
+};
+
+RasterTargetSpan RasterTargetSpan_nid_no_patch(const GuestBitmap& target);
+
 struct GuestFace {
     GuestFaceRec rec{};
     GuestGlyphSlotRec slot{};
@@ -28,6 +40,9 @@ struct GuestFace {
     GuestLibrary* library = nullptr;
     FT_Face host = nullptr;
     bool finalized = false;
+    FT_Size initialSize = nullptr;
+    bool sizeInitialized = false;
+    std::list<GuestSize> sizes;
     std::vector<unsigned char> bytes;
     std::vector<GuestBitmapSize> fixedSizes;
     std::vector<GuestCharMapRec> charmaps;
@@ -43,8 +58,12 @@ GuestFace* FaceOf(const GuestFaceRec* face);
 GuestFace* FaceOf(const GuestGlyphSlotRec* slot);
 void SyncFace(GuestFace& face);
 void SyncSize(GuestFace& face);
+void SyncSizePointer_nid_no_patch(GuestFace& face);
+void SyncSizeRecord_nid_no_patch(GuestFace& face, GuestSizeRec& rec, FT_Size host);
 void SyncSlot(GuestFace& face);
 
 }
+
+extern "C" void FreeTypeSyncFace_nid_no_patch(FreeType::GuestFaceRec* face);
 
 #endif

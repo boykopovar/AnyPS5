@@ -11,11 +11,11 @@ static void Require(bool result) {
 static void CheckHandoff(bool write) {
     constexpr int rounds = 2000;
     std::atomic<int> phase{0};
-    PthreadRwlock published = nullptr;
+    std::atomic<PthreadRwlock> published{nullptr};
     std::thread successor([&] {
         for (int round = 0; round < rounds; ++round) {
             phase.wait(0);
-            auto slot = published;
+            auto slot = published.load(std::memory_order_acquire);
             phase.store(2);
             phase.notify_one();
             for (;;) {
@@ -35,7 +35,7 @@ static void CheckHandoff(bool write) {
         PthreadRwlock slot = nullptr;
         Require(scePthreadRwlockInit(&slot, nullptr, "retire") == 0);
         Require((write ? scePthreadRwlockWrlock(&slot) : scePthreadRwlockRdlock(&slot)) == 0);
-        published = slot;
+        published.store(slot, std::memory_order_release);
         phase.store(1);
         phase.notify_one();
         phase.wait(1);

@@ -4,16 +4,29 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <span>
 #include <string_view>
 
 namespace AgcDriver::DriverDetail {
 
-inline constexpr std::uint32_t SubmissionQueueEnd = 0x58;
+inline constexpr std::uint32_t SubmissionQueueEnd = 0x59;
+inline constexpr std::uint32_t UnmeasuredSubmissionQueueEnd = 0x58;
 
 std::size_t SubmissionRingCapacity();
 
 std::chrono::seconds StallWatchdogPeriod();
+
+using StallClock = std::chrono::steady_clock::time_point (*)();
+void SetStallClock(StallClock clock);
+
+enum class StallChoice { Wait, Quit, Unavailable };
+
+using StallPresenter = StallChoice (*)(const char* message);
+void SetStallPresenter(StallPresenter presenter);
+StallChoice ShowStallPrompt(const char* message);
+
+bool StallPromptEnabled();
 
 bool ReadSubmissionRingSettings();
 
@@ -27,12 +40,14 @@ class StallWatch {
 public:
     explicit StallWatch(std::uint32_t queue) : queue(queue) {}
     void Progressed() { since = {}; }
-    void Check(const char* waiter, std::uint64_t value);
+    void Check(const char* waiter, std::uint64_t value, std::unique_lock<std::mutex>* held = nullptr);
 
 private:
     std::uint32_t queue;
     std::chrono::steady_clock::time_point since{};
     bool dumped = false;
+    bool finished = false;
+    int prompts = 0;
 };
 
 }

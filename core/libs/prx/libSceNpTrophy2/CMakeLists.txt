@@ -1,4 +1,5 @@
 add_library(libSceNpTrophy2 SHARED EXCLUDE_FROM_ALL
+        ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Context.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Handle.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GameInfo.cpp
@@ -12,7 +13,7 @@ add_library(libSceNpTrophy2 SHARED EXCLUDE_FROM_ALL
 target_include_directories(libSceNpTrophy2 PRIVATE
         ${LIBS_INCLUDE_DIR}
 )
-target_link_libraries(libSceNpTrophy2 PRIVATE libc)
+target_link_libraries(libSceNpTrophy2 PRIVATE libc system_service_host_locale)
 configure_windows_unwind(libSceNpTrophy2)
 
 if(BUILD_TESTING)
@@ -20,7 +21,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_nptrophy2_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_nptrophy2_tests PRIVATE libSceNpTrophy2 libc)
     configure_windows_unwind(guest_nptrophy2_tests)
-    add_test(NAME guest_nptrophy2 COMMAND guest_nptrophy2_tests)
+    add_test(NAME guest_nptrophy2 COMMAND guest_nptrophy2_tests $<TARGET_FILE:libSceNpTrophy2>)
     if(WIN32)
         set_tests_properties(guest_nptrophy2 PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpTrophy2>")

@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <span>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -53,8 +54,18 @@ struct QueueWorker {
 
     std::atomic<std::uint64_t> queued{0};
     std::unordered_map<std::uint64_t, std::uint32_t> unfinishedWrites;
+    std::uint64_t executingWaitFree = 0;
+    bool executingWaits = false;
+    alignas(64) std::atomic<std::uint64_t> executingPacket{0};
     std::thread thread;
 };
+
+struct ReferencedProgramScan {
+    std::vector<std::uint64_t> addresses;
+    bool complete = true;
+};
+
+ReferencedProgramScan ReferencedPrograms(std::span<const std::uint32_t> commands, const std::map<std::size_t, std::vector<std::uint32_t>>& registerLists);
 
 }
 

@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <stdexcept>
 
 namespace {
 
@@ -140,6 +141,7 @@ void CheckEpoll(int context) {
     Require(sceHttpSetEpoll(request, epoll, &marker) == InvalidId, "sceHttpSetEpoll took a destroyed epoll");
     Require(sceHttpGetEpoll(request, &bound, &argument) == 0 && bound == nullptr, "a refused sceHttpSetEpoll changed the binding");
     Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+    Require(sceHttpSetDelayBuildRequestEnabled(request, 1) == InvalidId, "a deleted request still accepted delay build request");
 }
 
 void CheckTermEndsOptions() {
@@ -166,6 +168,34 @@ void CheckTermEndsOptions() {
     Require(sceHttpTerm_nid_postfix(next) == 0, "sceHttpTerm failed");
 }
 
+bool RefusesNull(int context, int* netPoolId, int* sslContextId) {
+    try {
+        sceHttpGetRegisteredCtxIds(context, netPoolId, sslContextId);
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+void CheckRegisteredCtxIds() {
+    int netPoolId = -1;
+    int sslContextId = -1;
+    Require(sceHttpGetRegisteredCtxIds(UnknownId, &netPoolId, &sslContextId) == BeforeInit, "sceHttpGetRegisteredCtxIds answered before sceHttpInit");
+    const int first = sceHttpInit_nid_postfix(3, 7, 0x10000);
+    const int second = sceHttpInit_nid_postfix(5, 9, 0x20000);
+    Require(sceHttpGetRegisteredCtxIds(first, &netPoolId, &sslContextId) == 0 && netPoolId == 3 && sslContextId == 7, "the ids given to the first sceHttpInit were not reported");
+    Require(sceHttpGetRegisteredCtxIds(second, &netPoolId, &sslContextId) == 0 && netPoolId == 5 && sslContextId == 9, "the ids given to the second sceHttpInit were not reported");
+    Require(RefusesNull(second, nullptr, &sslContextId) && RefusesNull(second, &netPoolId, nullptr), "a null output was taken");
+    netPoolId = -1;
+    sslContextId = -1;
+    Require(sceHttpGetRegisteredCtxIds(UnknownId, &netPoolId, &sslContextId) == InvalidId, "sceHttpGetRegisteredCtxIds took an unknown id");
+    Require(sceHttpTerm_nid_postfix(first) == 0, "sceHttpTerm failed");
+    Require(sceHttpGetRegisteredCtxIds(first, &netPoolId, &sslContextId) == InvalidId, "a terminated context still reported its ids");
+    Require(netPoolId == -1 && sslContextId == -1, "a refused query wrote its outputs");
+    Require(sceHttpTerm_nid_postfix(second) == 0, "sceHttpTerm failed");
+    Require(sceHttpGetRegisteredCtxIds(second, &netPoolId, &sslContextId) == BeforeInit, "sceHttpGetRegisteredCtxIds answered after the last sceHttpTerm");
+}
+
 void CheckUnobservedOptions(int context) {
     const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
     const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
@@ -174,6 +204,8 @@ void CheckUnobservedOptions(int context) {
     Require(sceHttpRemoveRequestHeader(UnknownId, nullptr) == 0, "offline header removal started validating arguments");
     Require(sceHttpCacheRedirectedConnectionEnabled(pattern, 0) == 0 && sceHttpCacheRedirectedConnectionEnabled(request, 1) == 0, "sceHttpCacheRedirectedConnectionEnabled refused a live object");
     Require(sceHttpCacheRedirectedConnectionEnabled(UnknownId, 1) == InvalidId, "sceHttpCacheRedirectedConnectionEnabled took an unknown id");
+    Require(sceHttpSetDelayBuildRequestEnabled(pattern, 1) == 0 && sceHttpSetDelayBuildRequestEnabled(request, 0) == 0, "sceHttpSetDelayBuildRequestEnabled refused a live object");
+    Require(sceHttpSetDelayBuildRequestEnabled(UnknownId, 1) == InvalidId, "sceHttpSetDelayBuildRequestEnabled took an unknown id");
     for (const auto option : {sceHttpsEnableOptionPrivate, sceHttpsDisableOptionPrivate}) {
         Require(option(connection, 0x2dffu) == 0 && option(connection, 0) == 0, "a private SSL option within the mask was refused");
         Require(option(connection, 0x0100u) == 0 && option(connection, 0x2000u) == 0, "a private-only SSL flag was refused");
@@ -189,11 +221,13 @@ void CheckUnobservedOptions(int context) {
     Require(sceHttpSetProxy(UnknownId, 1, 1, "proxy.example", 8080) == InvalidId, "sceHttpSetProxy took an unknown id");
     Require(sceHttpAbortRequestForce(request) == 0, "sceHttpAbortRequestForce failed on a live request");
     Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+    Require(sceHttpSetDelayBuildRequestEnabled(request, 1) == InvalidId, "a deleted request still accepted delay build request");
 }
 
 }
 
 int main() {
+    Require(sceHttpSetDelayBuildRequestEnabled(UnknownId, 1) == BeforeInit, "delay build request was taken before sceHttpInit");
     const int context = sceHttpInit_nid_postfix(1, 1, 0x10000);
     Require(context > 0, "sceHttpInit failed");
     CheckAutoRedirect(context);
@@ -206,6 +240,7 @@ int main() {
     Require(sceHttpTerm_nid_postfix(context) == 0, "sceHttpTerm failed");
     Require(sceHttpSetDefaultAcceptEncodingGZIPEnabled(context, 1) == BeforeInit, "a gzip default was taken before sceHttpInit");
     CheckTermEndsOptions();
+    CheckRegisteredCtxIds();
     std::puts("HTTP option tests passed");
     return 0;
 }

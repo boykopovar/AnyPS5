@@ -17,6 +17,7 @@ struct Options {
     std::filesystem::path output;
     std::filesystem::path fixtureDirectory;
     bool fixture = false;
+    bool inspect = false;
 };
 
 Options Parse(int argc, char** argv) {
@@ -32,12 +33,13 @@ Options Parse(int argc, char** argv) {
         else if (argument == "--output") value(result.output);
         else if (argument == "--write-fixture") value(result.fixtureDirectory);
         else if (argument == "--fixture" && !result.fixture) result.fixture = true;
+        else if (argument == "--inspect" && !result.inspect) result.inspect = true;
         else if (argument.starts_with("--") || !result.source.empty()) throw std::runtime_error("unknown or repeated argument: " + std::string(argument));
         else result.source = argument;
     }
     const auto sources = static_cast<int>(!result.source.empty()) + static_cast<int>(result.fixture) + static_cast<int>(!result.fixtureDirectory.empty());
     if (sources != 1) throw std::runtime_error("select a capture file, --fixture, or --write-fixture DIRECTORY");
-    if (!result.fixtureDirectory.empty() && (!result.cacheIn.empty() || !result.cacheOut.empty() || !result.output.empty())) throw std::runtime_error("--write-fixture cannot be combined with replay options");
+    if (!result.fixtureDirectory.empty() && (!result.cacheIn.empty() || !result.cacheOut.empty() || !result.output.empty() || result.inspect)) throw std::runtime_error("--write-fixture cannot be combined with replay options");
     for (const auto& path : {result.cacheOut, result.output}) {
         if (!path.empty() && std::filesystem::exists(path)) throw std::runtime_error("output already exists: " + path.string());
     }
@@ -102,6 +104,7 @@ std::string Report(const Options& options, const AgcDriver::ComputePipelineCaptu
            << ",\n  \"specialization_constants\":" << capture.specialization.size()
            << ",\n  \"required_subgroup_size\":" << capture.requiredSubgroupSize
            << ",\n  \"pipeline_flags\":" << capture.flags
+           << ",\n  \"replay_pipeline_flags\":" << (capture.flags | (options.inspect ? static_cast<VkPipelineCreateFlags>(VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR) : 0u))
            << ",\n  \"stage_flags\":" << capture.stageFlags
            << ",\n  \"captured_device\":";
     WriteDevice(output, capture);
@@ -113,10 +116,15 @@ std::string Report(const Options& options, const AgcDriver::ComputePipelineCaptu
            << ",\n  \"cache_export_path\":" << Quote(options.cacheOut.string())
            << ",\n  \"cache_export_bytes\":" << (options.cacheOut.empty() ? 0u : replay.cache.size())
            << ",\n  \"driver_cache_state\":\"uncontrolled\""
-           << ",\n  \"dispatch_count\":0,\n  \"pipeline_statistics\":false"
-           << ",\n  \"milliseconds\":{\"shader_module\":" << replay.moduleMilliseconds
-           << ",\"layout\":" << replay.layoutMilliseconds << ",\"pipeline_create\":" << replay.pipelineMilliseconds
-           << ",\"cache\":" << replay.cacheMilliseconds << ",\"replay_total\":" << replay.totalMilliseconds << "}\n}\n";
+           << ",\n  \"dispatch_count\":0,\n  \"pipeline_statistics\":" << (options.inspect ? "true" : "false")
+           << ",\n  \"mode\":" << Quote(options.inspect ? "inspection" : "benchmark");
+    if (options.inspect) {
+        output << ",\n  \"milliseconds\":null\n}\n";
+    } else {
+        output << ",\n  \"milliseconds\":{\"shader_module\":" << replay.moduleMilliseconds
+               << ",\"layout\":" << replay.layoutMilliseconds << ",\"pipeline_create\":" << replay.pipelineMilliseconds
+               << ",\"cache\":" << replay.cacheMilliseconds << ",\"replay_total\":" << replay.totalMilliseconds << "}\n}\n";
+    }
     return output.str();
 }
 
@@ -124,8 +132,9 @@ std::string Report(const Options& options, const AgcDriver::ComputePipelineCaptu
 
 int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--help") {
-        std::cout << "agc_compute_pipeline_replay CAPTURE|--fixture [--cache-in FILE] [--cache-out FILE] [--output FILE]\n"
+        std::cout << "agc_compute_pipeline_replay CAPTURE|--fixture [--cache-in FILE] [--cache-out FILE] [--output FILE] [--inspect]\n"
                      "agc_compute_pipeline_replay --write-fixture DIRECTORY\n"
+                     "--inspect requires APS5_PIPELINE_STATS=1, prints executable counters to stderr and omits benchmark timings.\n"
                      "Compiles one compute pipeline without dispatch. Fresh application cache does not clear driver caches.\n";
         return 0;
     }
@@ -136,12 +145,19 @@ int main(int argc, char** argv) {
             return 0;
         }
         const auto* statistics = std::getenv("APS5_PIPELINE_STATS");
-        if (statistics != nullptr && std::string_view(statistics) != "0" && *statistics != '\0') throw std::runtime_error("unset APS5_PIPELINE_STATS before benchmarking");
+        const bool statisticsEnabled = statistics != nullptr && std::string_view(statistics) != "0" && *statistics != '\0';
+        if (options.inspect && !statisticsEnabled) throw std::runtime_error("--inspect requires APS5_PIPELINE_STATS=1");
+        if (!options.inspect && statisticsEnabled) throw std::runtime_error("unset APS5_PIPELINE_STATS before benchmarking");
         const auto capture = options.fixture ? AgcDriver::ComputePipelineFixture() : AgcDriver::ComputePipelineCapture::Read(options.source);
-        if ((capture.flags & VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR) != 0) throw std::runtime_error("capture requests pipeline statistics; capture again with APS5_PIPELINE_STATS disabled");
+        if (!options.inspect && (capture.flags & VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR) != 0) throw std::runtime_error("capture requests pipeline statistics; capture again with APS5_PIPELINE_STATS disabled");
         const auto cache = ReadCache(options.cacheIn);
         AgcDriver::VulkanDevice device(AgcDriver::VulkanDevice::CompileOnly{});
-        const auto replay = device.ReplayComputePipeline(capture, cache);
+        const auto replay = [&] {
+            if (!options.inspect) return device.ReplayComputePipeline(capture, cache);
+            auto inspection = capture;
+            inspection.flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
+            return device.ReplayComputePipeline(inspection, cache);
+        }();
         if (!options.cacheOut.empty()) WriteBytes(options.cacheOut, replay.cache);
         const auto report = Report(options, capture, replay);
         if (!options.output.empty()) WriteBytes(options.output, std::as_bytes(std::span(report.data(), report.size())));

@@ -43,11 +43,13 @@ struct Session {
     std::optional<TraceWindow> window;
     bool windowOpen = false;
     std::vector<std::vector<TraceThread::Total>> windowBase;
+    std::uint64_t windowOwnedUnbound = 0;
     std::optional<TraceInterval> interval;
     bool intervalOpen = false;
     std::uint64_t intervalFirstPresent = 0;
     double intervalGpuBusy = 0;
     std::vector<std::vector<TraceThread::Total>> intervalBase;
+    std::uint64_t intervalOwnedUnbound = 0;
     std::vector<Clock::time_point> intervalPresents;
     Clock::time_point first{};
     std::uint64_t present = 0;
@@ -81,8 +83,7 @@ std::unique_ptr<TraceBenchWriter>& benchWriter() {
 }
 
 std::filesystem::path traceDirectory() {
-    const char* directory = std::getenv("APS5_TRACE_DIR");
-    return std::filesystem::path(directory != nullptr ? directory : ".");
+    return TraceFile::Directory();
 }
 
 std::uint64_t processId() {
@@ -214,7 +215,11 @@ double seconds(Clock::duration elapsed) {
 }
 
 void PerformanceTrace::BindThread(const char* name, std::size_t capacity) {
-    if (!Configured() || local != nullptr) return;
+    if (local != nullptr) return;
+    if (!Configured()) {
+        localName = name;
+        return;
+    }
     const bool windowed = std::getenv("APS5_TRACE_FRAMES") != nullptr || std::getenv("APS5_TRACE_SECONDS") != nullptr;
     if (windowed && capacity == TraceThread::DefaultCapacity) capacity = TraceThread::ParseCapacity(std::getenv("APS5_TRACE_EVENTS"));
     auto bound = std::make_unique<TraceThread>(name, presentCount, windowed ? capacity : 0, buffering);
@@ -224,12 +229,46 @@ void PerformanceTrace::BindThread(const char* name, std::size_t capacity) {
     state.threads.push_back(std::move(bound));
 }
 
+TraceThread* PerformanceTrace::bindNamed() {
+    if (localName == nullptr) return nullptr;
+    auto bound = std::make_unique<TraceThread>(localName, presentCount, 0, buffering);
+    auto& state = session();
+    std::lock_guard lock(state.mutex);
+    local = bound.get();
+    state.threads.push_back(std::move(bound));
+    return local;
+}
+
+void PerformanceTrace::SetOverlayTotals(bool on) {
+    if (Configured()) return;
+    binder.store(on ? &bindNamed : nullptr, std::memory_order_release);
+    recording.store(on, std::memory_order_relaxed);
+}
+
+bool PerformanceTrace::OverlayTotals() {
+    return binder.load(std::memory_order_relaxed) != nullptr;
+}
+
+std::optional<std::vector<TraceThreadTotals>> PerformanceTrace::ThreadTotals() {
+    auto& state = session();
+    std::unique_lock lock(state.mutex, std::try_to_lock);
+    if (!lock.owns_lock()) return std::nullopt;
+    std::vector<TraceThreadTotals> threads;
+    threads.reserve(state.threads.size());
+    for (const auto& thread : state.threads) {
+        auto snapshot = thread->Collect();
+        threads.push_back({std::move(snapshot.name), std::move(snapshot.totals)});
+    }
+    return threads;
+}
+
 void PerformanceTrace::OpenInterval(Clock::time_point now, std::uint64_t present) {
     auto& state = session();
     state.interval->Restart(now - state.first);
     state.intervalOpen = true;
     state.intervalFirstPresent = present;
     state.intervalGpuBusy = VulkanDevice::PresentCounts().gpuBusyMs;
+    state.intervalOwnedUnbound = OwnedDrawUnbound();
     state.intervalPresents.assign(1, now);
     if (summaryWriter()) return;
     summaryWriter() = std::make_unique<ProfileOutput>([directory = traceDirectory()](std::string_view text) {
@@ -258,6 +297,7 @@ void PerformanceTrace::FlushInterval(Clock::time_point now, std::uint32_t width,
         snapshots.push_back(std::move(snapshot));
     }
     auto summary = identity(width, height, device);
+    summary.ownedDrawUnbound = OwnedDrawUnbound() - state.intervalOwnedUnbound;
     summary.window = state.interval->Describe();
     summary.firstPresent = state.intervalFirstPresent;
     summary.gpuBusyMs = VulkanDevice::PresentCounts().gpuBusyMs - state.intervalGpuBusy;
@@ -288,7 +328,7 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
     auto& state = session();
     std::lock_guard lock(state.mutex);
     if (!state.started) {
-        state.window = TraceWindow::Parse(std::getenv("APS5_TRACE_FRAMES"), std::getenv("APS5_TRACE_SECONDS"));
+        state.window = TraceWindow::FromEnvironment();
         state.interval = TraceInterval::Parse(std::getenv("APS5_TRACE_SUMMARY_EVERY"));
         state.bench = TraceBench::Parse(std::getenv("APS5_TRACE_BENCH"), state.interval.has_value());
         state.first = now;
@@ -310,6 +350,7 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
     if (edge == TraceWindow::Edge::Open) {
         state.windowOpen = true;
         state.windowBase = totalsOf(state.threads);
+        state.windowOwnedUnbound = OwnedDrawUnbound();
         state.firstPresent = present;
         state.gpuBusyAtOpen = VulkanDevice::PresentCounts().gpuBusyMs;
         TraceClockSample clock;
@@ -357,16 +398,26 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
     }
     const auto process = processId();
     auto summary = identity(width, height, device);
+    summary.ownedDrawUnbound = OwnedDrawUnbound() - state.windowOwnedUnbound;
     summary.window = state.window->Describe();
     summary.firstPresent = state.firstPresent;
     summary.gpuBusyMs = VulkanDevice::PresentCounts().gpuBusyMs - state.gpuBusyAtOpen;
     summary.trace = "aps5-trace-" + summary.commit + "-" + std::to_string(process) + ".json.gz";
-    auto events = TraceFormat::Events(process, state.presents.front(), snapshots, presenter, state.presents, state.firstPresent);
+    auto capture = std::make_shared<TraceCapture>();
+    capture->summary = std::move(summary);
+    capture->presents = state.presents;
+    capture->process = process;
+    capture->presenter = presenter;
+    for (auto& snapshot : snapshots) capture->Add(std::move(snapshot));
+    const auto name = capture->summary.trace;
     auto& output = writer();
-    output = std::make_unique<ProfileOutput>([directory = traceDirectory(), name = summary.trace, line = TraceFormat::Summary(summary, snapshots, state.presents)](std::string_view text) {
+    output = std::make_unique<ProfileOutput>([directory = traceDirectory(), name, capture = std::move(capture)](std::string_view) mutable {
+        auto closed = std::move(capture);
         try {
+            const auto events = TraceFormat::Events(closed->process, closed->presents.front(), closed->threads, closed->presenter, closed->presents, closed->summary.firstPresent);
+            const auto line = TraceFormat::Summary(closed->summary, closed->threads, closed->presents);
             std::filesystem::create_directories(directory);
-            TraceFile::WriteGzip(directory / name, text);
+            TraceFile::WriteGzip(directory / name, events);
             TraceFile::AppendLine(directory / "aps5-summary.jsonl", line);
             std::fprintf(stderr, "[trace] wrote %s and its line in aps5-summary.jsonl\n", name.c_str());
             std::fflush(stderr);
@@ -375,9 +426,9 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
             std::fflush(stderr);
             throw;
         }
-    }, std::numeric_limits<std::size_t>::max());
-    ProfilePrint_nid_no_patch("[trace] closed at present %llu, writing %s (%zu bytes of JSON)\n", static_cast<unsigned long long>(present), summary.trace.c_str(), events.size());
-    output->Write(std::move(events));
+    });
+    ProfilePrint_nid_no_patch("[trace] closed at present %llu, formatting %s off-thread\n", static_cast<unsigned long long>(present), name.c_str());
+    if (!output->Write(name)) throw std::runtime_error("trace output rejected the closed capture");
 }
 
 void PerformanceTrace::StopOutput() {

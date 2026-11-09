@@ -8,6 +8,8 @@
 #include <filesystem>
 #include <fstream>
 #include <array>
+#include <stdexcept>
+#include <string>
 #include "ProcessParametersFixture.hpp"
 
 static constexpr int ErrorParameter = static_cast<int>(0x80D90002);
@@ -15,6 +17,7 @@ static constexpr int ErrorNotFound = static_cast<int>(0x80D90005);
 static constexpr int ErrorDrmNoEntitlement = static_cast<int>(0x80D90007);
 static constexpr int ErrorBusy = static_cast<int>(0x80D90003);
 static constexpr int ErrorNotMounted = static_cast<int>(0x80D90004);
+static constexpr int ErrorGetStoreCountry = static_cast<int>(0x80D91000);
 static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
@@ -27,16 +30,37 @@ int main() {
     Require(sceAppContentAddcontUnmount(nullptr) == notInitialized);
     Require(sceAppContentGetAddcontInfo(0, nullptr, nullptr) == notInitialized);
     Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, nullptr) == notInitialized);
+    Require(sceAppContentGetEntitlementKey(0, nullptr, nullptr) == notInitialized);
     Require(sceAppContentAppParamGetInt(0, nullptr) == notInitialized);
+    char appParam[8]{};
+    Require(sceAppContentAppParamGetString(0, appParam, sizeof(appParam)) == notInitialized);
+    Require(sceAppContentDownloadDataGetBlockSize(nullptr, nullptr) == notInitialized);
+    Require(sceAppContentGetRegion(nullptr) == notInitialized);
+    Require(sceAppContentRequestPatchInstall(nullptr) == notInitialized);
+    AppContentMountPoint uninitializedMount{};
+    Require(sceAppContentTemporaryDataMount(nullptr) == notInitialized);
+    Require(sceAppContentTemporaryDataMount(&uninitializedMount) == notInitialized);
     Require(sceAppContentTemporaryDataMount2(0, nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataUnmount(nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataFormat(nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataGetAvailableSpaceKb(nullptr, nullptr) == notInitialized);
     Require(sceAppContentDownloadDataFormat(nullptr) == notInitialized);
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(nullptr, nullptr) == notInitialized);
+    Require(sceAppContentDownload1Expand(1024) == notInitialized);
+    Require(sceAppContentDownload2Expand(1024) == notInitialized);
     Require(sceAppContentAddcontDelete(0, nullptr) == notInitialized);
     Require(sceAppContentAddcontEnqueueDownload(0, nullptr) == notInitialized);
     Require(sceAppContentGetAddcontDownloadProgress(0, nullptr, nullptr) == notInitialized);
+    Require(sceAppContentAddcontEnqueueDownloadByEntitlemetId(nullptr) == notInitialized);
+    Require(sceAppContentAddcontEnqueueDownloadSp(0, nullptr) == notInitialized);
+    Require(sceAppContentAddcontMountByEntitlemetId(nullptr, nullptr) == notInitialized);
+    Require(sceAppContentAddcontShrink(0, nullptr) == notInitialized);
+    Require(sceAppContentGetAddcontInfoByEntitlementId(nullptr, nullptr) == notInitialized);
+    Require(sceAppContentGetAddcontInfoListByIroTag(0, nullptr, 0, nullptr) == notInitialized);
+    std::uint32_t pftFlag = 0x5a5a5a5a;
+    Require(sceAppContentGetPftFlag(&pftFlag) == notInitialized);
+    Require(pftFlag == 0x5a5a5a5a);
+    Require(sceAppContentGetDownloadedStoreCountry(0, nullptr, nullptr) == notInitialized);
     const auto original = std::filesystem::current_path();
     const auto directory = original / ("appcontent-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(directory));
@@ -70,6 +94,29 @@ int main() {
     Require(sceAppContentInitialize(nullptr, &boot) == 0);
     AppContentMountPoint download{};
     std::memcpy(download.data, "/download0", 11);
+    const auto reachesService = [](auto call) {
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            return true;
+        }
+        return false;
+    };
+    Require(sceAppContentAppParamGetString(0, nullptr, sizeof(appParam)) == ErrorParameter);
+    Require(reachesService([&] { sceAppContentAppParamGetString(0, appParam, sizeof(appParam)); }));
+    size_t blockSize = 12345;
+    Require(sceAppContentDownloadDataGetBlockSize(nullptr, &blockSize) == ErrorParameter);
+    Require(sceAppContentDownloadDataGetBlockSize(&download, nullptr) == ErrorParameter);
+    Require(blockSize == 12345);
+    Require(reachesService([&] { sceAppContentDownloadDataGetBlockSize(&download, &blockSize); }));
+    std::uint32_t region = 0;
+    Require(sceAppContentGetRegion(nullptr) == ErrorParameter);
+    Require(reachesService([&] { sceAppContentGetRegion(&region); }));
+    const std::string longest(255, 'a');
+    const std::string tooLong(256, 'a');
+    Require(sceAppContentRequestPatchInstall(nullptr) == ErrorParameter);
+    Require(sceAppContentRequestPatchInstall(tooLong.c_str()) == ErrorParameter);
+    Require(reachesService([&] { sceAppContentRequestPatchInstall(longest.c_str()); }));
     size_t availableKb = 12345;
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download, &availableKb) == 0);
     Require(availableKb == 0);
@@ -80,6 +127,7 @@ int main() {
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(nullptr, nullptr) == ErrorParameter);
     AppContentMountPoint invalidMount{};
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(&invalidMount, &availableKb) == ErrorNotMounted);
+    Require(availableKb == 12345);
     const auto downloadData = ResolvePath_nid_no_patch("/download0");
     Require(sceAppContentDownloadDataFormat(&download) == 0);
     Require(std::filesystem::is_directory(downloadData) && std::filesystem::is_empty(downloadData));
@@ -91,6 +139,43 @@ int main() {
     Require(std::filesystem::exists(downloadData / "index.dat"));
     Require(sceAppContentDownloadDataFormat(&download) == 0);
     Require(std::filesystem::is_directory(downloadData) && std::filesystem::is_empty(downloadData));
+    AppContentMountPoint download2Mount{};
+    std::memcpy(download2Mount.data, "/download2", 11);
+    const auto download2Data = ResolvePath_nid_no_patch("/download2");
+    std::filesystem::create_directories(download2Data);
+    { std::ofstream file(downloadData / "preserve.bin"); file << "download0"; }
+    { std::ofstream file(download2Data / "old.bin"); file << "download2"; }
+    Require(sceAppContentDownloadDataFormat(&download2Mount) == 0);
+    Require(std::filesystem::is_directory(download2Data) && std::filesystem::is_empty(download2Data));
+    Require(std::filesystem::exists(downloadData / "preserve.bin"));
+    Require(sceAppContentDownload2Expand(0) == ErrorParameter);
+    Require(sceAppContentDownload2Expand(2 * 1024 * 1024) == 0);
+    Require(std::filesystem::is_directory(download2Data));
+    size_t download2Space = 0;
+    Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download2Mount, &download2Space) == 0);
+    Require(download2Space == 2048);
+    Require(sceAppContentDownload2Expand(1024 * 1024) == 0);
+    Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download2Mount, &download2Space) == 0);
+    Require(download2Space == 2048);
+    AppContentMountPoint download1Mount{};
+    std::memcpy(download1Mount.data, "/download1", 11);
+    const auto download1Data = ResolvePath_nid_no_patch("/download1");
+    std::filesystem::create_directories(download1Data);
+    { std::ofstream file(download1Data / "old.bin"); file << "download1"; }
+    Require(sceAppContentDownloadDataFormat(&download1Mount) == 0);
+    Require(std::filesystem::is_directory(download1Data) && std::filesystem::is_empty(download1Data));
+    Require(sceAppContentDownload1Expand(0) == ErrorParameter);
+    Require(sceAppContentDownload1Expand(2 * 1024 * 1024) == 0);
+    Require(std::filesystem::is_directory(download1Data));
+    size_t download1Space = 12345;
+    Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download1Mount, &download1Space) == 0);
+    Require(download1Space == 2048);
+    Require(sceAppContentDownload1Expand(1024 * 1024) == 0);
+    Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download1Mount, &download1Space) == 0);
+    Require(download1Space == 2048);
+    { std::ofstream file(download1Data / "used.bin", std::ios::binary); file << std::string(1024, 'x'); }
+    Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download1Mount, &download1Space) == 0);
+    Require(download1Space == 2047);
 
     const int32_t expectedParams[] = {3, 23566, -7, 0, 2147483647};
     for (uint32_t id = 0; id < 5; ++id) {
@@ -192,6 +277,48 @@ int main() {
     Require(std::memcmp(info, untouchedInfo, sizeof(info)) == 0);
     Require(sceAppContentGetAddcontInfo(0, nullptr, reinterpret_cast<AppContentAddcontInfo*>(info)) == ErrorParameter);
     Require(sceAppContentGetAddcontInfo(0, &label, nullptr) == ErrorParameter);
+    const char entitlementId[] = "UP0000-PPSA00000_00-ADDCONT000000001";
+    Require(sceAppContentAddcontEnqueueDownloadByEntitlemetId(entitlementId) == ErrorNotFound);
+    Require(sceAppContentAddcontEnqueueDownloadByEntitlemetId(nullptr) == ErrorParameter);
+    Require(sceAppContentAddcontEnqueueDownloadSp(0, &label) == ErrorNotFound);
+    Require(sceAppContentAddcontEnqueueDownloadSp(7, &label) == ErrorNotFound);
+    Require(sceAppContentAddcontEnqueueDownloadSp(0, nullptr) == ErrorParameter);
+    Require(sceAppContentAddcontShrink(0, &label) == ErrorNotFound);
+    Require(sceAppContentAddcontShrink(7, &label) == ErrorNotFound);
+    Require(sceAppContentAddcontShrink(0, nullptr) == ErrorParameter);
+    std::memset(&mountPoint, 0x5a, sizeof(mountPoint));
+    Require(sceAppContentAddcontMountByEntitlemetId(entitlementId, &mountPoint) == ErrorNotFound);
+    Require(std::memcmp(&mountPoint, &untouched, sizeof(mountPoint)) == 0);
+    Require(sceAppContentAddcontMountByEntitlemetId(nullptr, &mountPoint) == ErrorParameter);
+    Require(sceAppContentAddcontMountByEntitlemetId(entitlementId, nullptr) == ErrorParameter);
+    Require(std::memcmp(&mountPoint, &untouched, sizeof(mountPoint)) == 0);
+    Require(sceAppContentGetAddcontInfoByEntitlementId(entitlementId, reinterpret_cast<AppContentAddcontInfo*>(info)) == ErrorDrmNoEntitlement);
+    Require(std::memcmp(info, untouchedInfo, sizeof(info)) == 0);
+    Require(sceAppContentGetAddcontInfoByEntitlementId(nullptr, reinterpret_cast<AppContentAddcontInfo*>(info)) == ErrorParameter);
+    Require(sceAppContentGetAddcontInfoByEntitlementId(entitlementId, nullptr) == ErrorParameter);
+    Require(std::memcmp(info, untouchedInfo, sizeof(info)) == 0);
+    Require(sceAppContentGetPftFlag(&pftFlag) == 0);
+    Require(pftFlag == 0);
+    Require(sceAppContentGetPftFlag(nullptr) == ErrorParameter);
+    AppContentEntitlementKey key;
+    std::memset(&key, 0x5a, sizeof(key));
+    const AppContentEntitlementKey untouchedKey = key;
+    for (const std::uint32_t serviceLabel : {0u, 7u, 8u, 0xffffffffu}) {
+        Require(sceAppContentGetEntitlementKey(serviceLabel, &label, &key) == ErrorDrmNoEntitlement);
+        Require(std::memcmp(&key, &untouchedKey, sizeof(key)) == 0);
+    }
+    Require(sceAppContentGetEntitlementKey(0, nullptr, &key) == ErrorParameter);
+    Require(std::memcmp(&key, &untouchedKey, sizeof(key)) == 0);
+    Require(sceAppContentGetEntitlementKey(0, &label, nullptr) == ErrorParameter);
+    unsigned char country[24];
+    std::memset(country, 0x5a, sizeof(country));
+    unsigned char untouchedCountry[sizeof(country)];
+    std::memcpy(untouchedCountry, country, sizeof(country));
+    Require(sceAppContentGetDownloadedStoreCountry(0, nullptr, country) == ErrorParameter);
+    Require(sceAppContentGetDownloadedStoreCountry(0, &label, nullptr) == ErrorParameter);
+    Require(sceAppContentGetDownloadedStoreCountry(0, &label, country) == ErrorGetStoreCountry);
+    Require(sceAppContentGetDownloadedStoreCountry(7, &label, country) == ErrorGetStoreCountry);
+    Require(std::memcmp(country, untouchedCountry, sizeof(country)) == 0);
 
     for (const std::uint32_t version : {0x014fffffu, 0x01500000u, 0x034fffffu, 0x03500000u}) {
         std::memcpy(process.data() + 16, &version, sizeof(version));
@@ -200,11 +327,20 @@ int main() {
             const int earlyError = version >= 0x01500000 ? ErrorParameter : ErrorNotFound;
             const int infoError = version >= 0x01500000 ? ErrorParameter : ErrorDrmNoEntitlement;
             const int lateError = version >= 0x03500000 ? ErrorParameter : ErrorNotFound;
+            const int countryError = version >= 0x01500000 ? ErrorParameter : ErrorGetStoreCountry;
             Require(sceAppContentAddcontMount(0, &label, &mountPoint) == earlyError);
+            Require(sceAppContentGetDownloadedStoreCountry(0, &label, info) == countryError);
+            Require(std::memcmp(info, untouchedInfo, sizeof(info)) == 0);
             Require(sceAppContentGetAddcontInfo(0, &label, reinterpret_cast<AppContentAddcontInfo*>(info)) == infoError);
+            Require(sceAppContentGetEntitlementKey(0, &label, &key) == infoError);
+            Require(std::memcmp(&key, &untouchedKey, sizeof(key)) == 0);
             Require(sceAppContentAddcontEnqueueDownload(0, &label) == earlyError);
             Require(sceAppContentAddcontDelete(0, &label) == lateError);
             Require(sceAppContentGetAddcontDownloadProgress(0, &label, progress) == lateError);
+            if (version >= 0x03500000) {
+                Require(sceAppContentAddcontEnqueueDownloadSp(0, &label) == ErrorParameter);
+                Require(sceAppContentAddcontShrink(0, &label) == ErrorParameter);
+            }
             Require(std::memcmp(info, untouchedInfo, sizeof(info)) == 0);
             Require(std::memcmp(progress, progressBefore, sizeof(progress)) == 0);
             padding = 0;
@@ -228,6 +364,17 @@ int main() {
     Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, nullptr) == ErrorParameter);
     Require(sceAppContentGetAddcontInfoList(0, reinterpret_cast<AppContentAddcontInfo*>(info), 0, nullptr) == ErrorParameter);
     Require(sceAppContentGetAddcontInfoList(0, nullptr, 1, nullptr) == ErrorParameter);
+    hitNum = 0x5a5a5a5a;
+    Require(sceAppContentGetAddcontInfoListByIroTag(1, nullptr, 0, &hitNum) == 0);
+    Require(hitNum == 0);
+    hitNum = 0x5a5a5a5a;
+    Require(sceAppContentGetAddcontInfoListByIroTag(1, reinterpret_cast<AppContentAddcontInfo*>(info), 1, &hitNum) == 0);
+    Require(hitNum == 0);
+    Require(sceAppContentGetAddcontInfoListByIroTag(1, reinterpret_cast<AppContentAddcontInfo*>(info), 1, nullptr) == 0);
+    Require(std::memcmp(info, untouchedInfo, sizeof(info)) == 0);
+    Require(sceAppContentGetAddcontInfoListByIroTag(1, nullptr, 0, nullptr) == ErrorParameter);
+    Require(sceAppContentGetAddcontInfoListByIroTag(1, reinterpret_cast<AppContentAddcontInfo*>(info), 0, nullptr) == ErrorParameter);
+    Require(sceAppContentGetAddcontInfoListByIroTag(1, nullptr, 1, nullptr) == ErrorParameter);
     std::filesystem::current_path(original);
     std::filesystem::remove_all(directory);
 }

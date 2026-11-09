@@ -1,74 +1,35 @@
 #include "prx/libSceNpEntitlementAccess/include/Api.hpp"
+#include "prx/libSceNpEntitlementAccess/EntitlementsIni.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
-#ifdef _WIN32
-#include <windows.h>
-#elif defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
 
 static constexpr int SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER = static_cast<int>(0x80558003);
 static constexpr int SCE_NP_ENTITLEMENT_ACCESS_ERROR_NOT_FOUND = static_cast<int>(0x80558007);
 static constexpr int SCE_NP_ERROR_SIGNED_OUT = static_cast<int>(0x80550006);
 static constexpr uint32_t SKU_FLAG_FULL = 3;
+static constexpr std::int32_t USER_ID_INVALID = -1;
 
 namespace {
-
-#ifdef _WIN32
-const wchar_t* ConfiguredEntitlements() { return _wgetenv(L"ANYPS5_ENTITLEMENTS"); }
-#else
-const char* ConfiguredEntitlements() { return std::getenv("ANYPS5_ENTITLEMENTS"); }
-#endif
-
-std::filesystem::path EntitlementsPath() {
-    if (const auto* configured = ConfiguredEntitlements(); configured != nullptr && configured[0] != 0) return configured;
-#ifdef _WIN32
-    wchar_t module[MAX_PATH];
-    const auto length = GetModuleFileNameW(nullptr, module, MAX_PATH);
-    if (length == 0 || length == MAX_PATH) throw std::runtime_error("NpEntitlementAccess: cannot locate the executable");
-    return std::filesystem::path(module).parent_path() / "anyps5-entitlements.ini";
-#elif defined(__APPLE__)
-    std::uint32_t size = 0;
-    _NSGetExecutablePath(nullptr, &size);
-    std::vector<char> executable(size);
-    std::error_code error;
-    std::filesystem::path path;
-    if (_NSGetExecutablePath(executable.data(), &size) == 0) path = std::filesystem::canonical(executable.data(), error);
-    if (path.empty()) throw std::runtime_error("NpEntitlementAccess: cannot locate the executable");
-    return path.parent_path() / "anyps5-entitlements.ini";
-#else
-    return std::filesystem::read_symlink("/proc/self/exe").parent_path() / "anyps5-entitlements.ini";
-#endif
-}
 
 const std::vector<NpEntitlementAccessAddcontEntitlementInfo>& OwnedAddons() {
     static const auto owned = [] {
         std::vector<NpEntitlementAccessAddcontEntitlementInfo> addons;
-        const auto path = EntitlementsPath();
-        std::ifstream file(path);
-        if (!file) {
-            if (ConfiguredEntitlements() != nullptr || std::filesystem::exists(path)) throw std::runtime_error("NpEntitlementAccess: cannot read " + path.string());
-            return addons;
-        }
-        std::string line;
-        while (std::getline(file, line)) {
-            line.erase(std::min(line.find_first_of("#;"), line.size()));
-            const auto first = line.find_first_not_of(" \t\r");
-            if (first == std::string::npos) continue;
-            const auto label = line.substr(first, line.find_last_not_of(" \t\r") + 1 - first);
+        for (const auto& entry : AnyPS5::Entitlements::ParseEntries()) {
             NpEntitlementAccessAddcontEntitlementInfo info{};
-            if (label.size() >= sizeof(info.entitlement_label.data)) throw std::runtime_error("NpEntitlementAccess: entitlement label '" + label + "' in " + path.string() + " is longer than 16 characters");
-            std::memcpy(info.entitlement_label.data, label.data(), label.size());
+            std::memcpy(info.entitlement_label.data, entry.label.data(), entry.label.size());
             info.package_type = 3;
             info.download_status = 4;
             addons.push_back(info);
@@ -76,6 +37,41 @@ const std::vector<NpEntitlementAccessAddcontEntitlementInfo>& OwnedAddons() {
         return addons;
     }();
     return owned;
+}
+
+std::string PrintableLabel(const std::string& label) {
+    std::string printable;
+    for (const unsigned char byte : label) {
+        if (byte >= 0x20 && byte < 0x7f && byte != '\\') {
+            printable += static_cast<char>(byte);
+            continue;
+        }
+        char escaped[5];
+        std::snprintf(escaped, sizeof(escaped), "\\x%02x", byte);
+        printable += escaped;
+    }
+    return printable;
+}
+
+std::string EntitlementsName() {
+    if (const auto* configured = AnyPS5::Entitlements::ConfiguredEntitlements(); configured != nullptr && configured[0] != 0) return AnyPS5::Entitlements::EntitlementsPath().string();
+    return "anyps5-entitlements.ini";
+}
+
+void ReportUnlisted(const std::string& label) {
+    constexpr std::size_t reportLimit = 64;
+    static std::mutex reportMutex;
+    static std::set<std::string> reported;
+    static bool capped = false;
+    std::lock_guard lock(reportMutex);
+    if (reported.contains(label)) return;
+    if (reported.size() < reportLimit) {
+        reported.insert(label);
+        std::fprintf(stderr, "[entitlements] the title asked for the add-on %s, which %s does not list, so it is reported as not installed\n", PrintableLabel(label).c_str(), EntitlementsName().c_str());
+    } else if (!capped) {
+        capped = true;
+        std::fprintf(stderr, "[entitlements] the title asked for more than %zu add-ons that %s does not list; further ones are reported as not installed without a line\n", reportLimit, EntitlementsName().c_str());
+    }
 }
 
 }
@@ -91,6 +87,7 @@ int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfo(uint32_t service_l
             return 0;
         }
     }
+    ReportUnlisted(std::string(entitlement_label->data, strnlen(entitlement_label->data, sizeof(entitlement_label->data))));
     return SCE_NP_ENTITLEMENT_ACCESS_ERROR_NOT_FOUND;
 }
 
@@ -120,17 +117,27 @@ int APS5_VABI sceNpEntitlementAccessGetEntitlementKey(
 }
 
 int APS5_VABI sceNpEntitlementAccessInitialize(const NpEntitlementAccessInitParam* init_param, NpEntitlementAccessBootParam* boot_param) {
-    (void)init_param;
-    (void)boot_param;
+    constexpr int errorParameter = static_cast<int>(0x817D0002);
+    constexpr int errorAlreadyInitialized = static_cast<int>(0x817D0003);
+    static std::mutex mutex;
+    static bool initialized = false;
+    std::lock_guard lock(mutex);
+    if (initialized) return errorAlreadyInitialized;
+    if (init_param == nullptr || boot_param == nullptr) return errorParameter;
+    if (!std::all_of(std::begin(init_param->reserved), std::end(init_param->reserved), [](char value) { return value == 0; })) return errorParameter;
+    if (!std::all_of(std::begin(boot_param->reserved), std::end(boot_param->reserved), [](char value) { return value == 0; })) return errorParameter;
+    initialized = true;
     return 0;
 }
 
 int APS5_VABI sceNpEntitlementAccessAbortRequest(std::int64_t requestId) {
-    throw std::logic_error("sceNpEntitlementAccessAbortRequest: asynchronous request tracking is unimplemented");
+    (void)requestId;
+    return 0;
 }
 
 int APS5_VABI sceNpEntitlementAccessDeleteRequest(std::int64_t requestId) {
-    throw std::logic_error("sceNpEntitlementAccessDeleteRequest: asynchronous request tracking is unimplemented");
+    (void)requestId;
+    return 0;
 }
 
 int APS5_VABI sceNpEntitlementAccessGenerateTransactionId(NpEntitlementAccessTransactionId* transactionId) {
@@ -196,24 +203,37 @@ int APS5_VABI sceNpEntitlementAccessRequestUnifiedEntitlementInfoList(std::int32
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 
-int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(std::int32_t user_id, uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label, NpEntitlementAccessAddcontEntitlementInfo* info) {
+    if (user_id == USER_ID_INVALID) return SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER;
+    return sceNpEntitlementAccessGetAddcontEntitlementInfo(service_label, entitlement_label, info);
 }
 
-int APS5_VABI sceNpEntitlementAccessPollConsumableEntitlementInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpEntitlementAccessPollConsumableEntitlementInfo(int64_t requestId, int32_t* result, void* info) {
+    (void)requestId;
+    (void)result;
+    (void)info;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 
-int APS5_VABI sceNpEntitlementAccessRequestConsumableEntitlementInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpEntitlementAccessRequestConsumableEntitlementInfo(
+    int32_t userId, uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, int64_t* requestId) {
+    (void)userId;
+    (void)serviceLabel;
+    (void)entitlementLabel;
+    (void)requestId;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 
-int APS5_VABI sceNpEntitlementAccessRequestConsumeEntitlement() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpEntitlementAccessRequestConsumeEntitlement(
+    int32_t userId, uint32_t serviceLabel, const void* entitlementLabel, const void* transactionId, int32_t useCount,
+    int64_t* requestId) {
+    (void)userId;
+    (void)serviceLabel;
+    (void)entitlementLabel;
+    (void)transactionId;
+    (void)useCount;
+    (void)requestId;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 }

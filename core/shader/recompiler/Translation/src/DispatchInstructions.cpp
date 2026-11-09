@@ -18,6 +18,9 @@ void TranslationContext::TranslateInstruction(const RdnaInstruction& decoded) {
     instruction.destination = destinationOperand(decoded);
     currentOpcode = instruction.op;
     currentProgramCounter = instruction.programCounter;
+    currentInstruction = &instruction;
+    vectorsRead.reset();
+    relativeVectorRead = false;
     if (instruction.op == RdnaOpcode::Unknown || instruction.op == RdnaOpcode::Count) {
         throw std::runtime_error("decoded opcode has no IR translation at pc " + std::to_string(instruction.programCounter));
     }
@@ -72,6 +75,8 @@ void TranslationContext::TranslateInstruction(const RdnaInstruction& decoded) {
         target.reg = 255u;
         writeOperand(target, &readRawU32(source).Value());
     }
+    currentInstruction = nullptr;
+    trackInactiveExecHalves(instruction);
 }
 
 namespace {
@@ -100,6 +105,14 @@ bool RayTracingMiss() {
         return text != nullptr && std::strcmp(text, "miss") == 0;
     }();
     return miss;
+}
+
+bool ExactF32Arithmetic() {
+    static const bool exact = [] {
+        const char* text = std::getenv("APS5_FAST_F32");
+        return text == nullptr || *text == '\0' || std::strcmp(text, "0") == 0;
+    }();
+    return exact;
 }
 
 DebugProbe DebugProbeConfig() {

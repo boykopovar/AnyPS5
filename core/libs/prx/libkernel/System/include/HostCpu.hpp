@@ -22,6 +22,18 @@ struct HostCpuFeature {
     bool Present;
 };
 
+struct HostCpuText {
+    char value[1024];
+};
+
+extern "C" {
+
+HostCpuRegisters ReadHostCpuRegisters_nid_no_patch();
+HostCpuText HostCpuModel_nid_no_patch();
+HostCpuText MissingHostCpuFeatures_nid_no_patch(const HostCpuRegisters* registers);
+
+}
+
 HostCpuRegisters ReadHostCpuRegisters();
 std::string HostCpuModel();
 std::vector<HostCpuFeature> HostCpuFeatures(const HostCpuRegisters& registers);

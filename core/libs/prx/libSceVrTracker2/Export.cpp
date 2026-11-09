@@ -652,10 +652,8 @@ std::int32_t APS5_VABI VrTracker2Unknown01(VrTracker2CalibrationResult* result, 
     return 0;
 }
 
-APS5_EXPORT("NBhWy+Gl0tY", VrTracker2Unknown02);
-std::int32_t APS5_VABI VrTracker2Unknown02(VrTracker2MeshRequirement* requirement, std::uint32_t format) {
-    NotImplemented_nid_no_patch("NBhWy+Gl0tY");
-    return 0;
+std::int32_t APS5_VABI sceVrTracker2GetRawCameraMeshSize(VrTracker2MeshRequirement* requirement, std::uint32_t format) {
+    return VR_TRACKER2_ERROR_NOT_INITIALIZED;
 }
 
 APS5_EXPORT("9R6W33Au4B4", VrTracker2Unknown03);

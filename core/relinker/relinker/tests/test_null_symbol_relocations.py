@@ -82,6 +82,21 @@ def main():
                                     capture_output=True, text=True, timeout=20)
             assert result.returncode == 2 and "Unnamed import symbol is not a null symbol entry" in result.stderr, (target, result.stderr)
             assert not output.exists()
+        named_null = image_with(index=0)
+        names = b"\0foo\0libfoo.prx\0"
+        named_null[0x600:0x600 + len(names)] = names
+        struct.pack_into("<Q", named_null, 0x418, len(names))
+        struct.pack_into("<qQqQ", named_null, 0x480, 1, 5, 0, 0)
+        struct.pack_into("<QQ", named_null, 152, 0xa0, 0xa0)
+        named_null[0x620:0x638] = struct.pack("<IBBHQQ", 1, 0x12, 0, 0, 0, 0)
+        source = work / "named-null-entry.elf"
+        source.write_bytes(named_null)
+        for target, options, _ in TARGETS:
+            output = work / f"named-null-entry-{target}.out"
+            result = subprocess.run([str(relinker), "--skip-sce-module", *options, str(source), str(output)],
+                                    capture_output=True, text=True, timeout=20)
+            assert result.returncode == 2 and "Dynamic symbol table entry 0 is not a null symbol entry" in result.stderr, (target, result.returncode, result.stderr)
+            assert not output.exists()
     print("Null symbol relocation tests passed")
 
 

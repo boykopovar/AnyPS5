@@ -4,10 +4,10 @@
 #include "prx/libkernel/Module/ModuleArgs.hpp"
 #include <nid/NidCompute.hpp>
 #include <algorithm>
-#include <array>
 #include <condition_variable>
 #include <filesystem>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <limits>
@@ -24,21 +24,31 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <mach-o/getsect.h>
+#include <mach-o/loader.h>
+#else
 #include <link.h>
 #ifdef __linux__
 #include <unistd.h>
 #endif
 #endif
+#endif
+#include "prx/libc/include/HostThreadLocal.hpp"
 
 #ifdef _WIN32
 extern "C" void ForgetUnloadedUnwindImages_nid_no_patch();
 #endif
 
 namespace {
-thread_local std::array<char, 512> loaderError{};
+struct LoaderErrorTag;
+std::string& LoaderError() {
+    return HostThreadLocal<std::string, LoaderErrorTag>();
+}
 thread_local bool pendingError = false;
 void Error(const char* message) {
-    std::snprintf(loaderError.data(), loaderError.size(), "%s", message);
+    LoaderError() = message;
     pendingError = true;
 }
 void LoadFailure(const std::filesystem::path& source, const std::filesystem::path& resolved, const std::string& reason) {
@@ -71,6 +81,10 @@ struct Module {
 #ifdef _WIN32
     std::uintptr_t globalOrder = 0;
 #endif
+#ifdef __APPLE__
+    const void* image = nullptr;
+    const void* loadBias = nullptr;
+#endif
     ~Module() {
         if (owned && native) {
 #ifdef _WIN32
@@ -93,7 +107,59 @@ void* Symbol(Module& module, const char* name) {
     return ::dlsym(module.native, name);
 #endif
 }
-#ifndef _WIN32
+#ifdef __APPLE__
+bool FromGuestModule(void* address) {
+    Dl_info info{};
+    if (address == nullptr || !::dladdr(address, &info) || info.dli_fname == nullptr || info.dli_fbase == nullptr) return false;
+    if (static_cast<const mach_header_64*>(info.dli_fbase)->filetype == MH_EXECUTE) return true;
+    const std::string path(info.dli_fname);
+    return path.ends_with(".prx");
+}
+
+void FindImage(Module& module, bool mainProgram) {
+    for (std::uint32_t index = 0; index < _dyld_image_count() && module.image == nullptr; ++index) {
+        const auto* header = reinterpret_cast<const mach_header_64*>(_dyld_get_image_header(index));
+        if (header == nullptr) continue;
+        if (mainProgram) {
+            if (header->filetype == MH_EXECUTE) module.image = header;
+            continue;
+        }
+        void* loaded = ::dlopen(_dyld_get_image_name(index), RTLD_LAZY | RTLD_NOLOAD);
+        if (loaded == nullptr) continue;
+        if (loaded == module.native) module.image = header;
+        ::dlclose(loaded);
+    }
+    module.loadBias = module.image;
+    unsigned long size = 0;
+    const auto* meta = module.image ? getsectiondata(static_cast<const mach_header_64*>(module.image), "__APS5DATA", "__meta", &size) : nullptr;
+    std::uint64_t version = 0;
+    if (meta != nullptr && size >= 0x60 && (std::memcpy(&version, meta, sizeof(version)), version == 2)) {
+        std::uint64_t loadBias = 0;
+        std::memcpy(&loadBias, meta + 0x08, sizeof(loadBias));
+        module.loadBias = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(loadBias));
+    }
+}
+
+bool HiddenImage(const void* image) {
+    if (image == nullptr || static_cast<const mach_header_64*>(image)->filetype == MH_EXECUTE) return false;
+    bool local = false;
+    for (const auto& [key, module] : modules) {
+        if (module->image != image) continue;
+        if (module->global) return false;
+        local = true;
+    }
+    return local;
+}
+
+void* DefaultScopeSymbol(const char* symbolName) {
+    auto* result = ::dlsym(RTLD_DEFAULT, symbolName);
+    if (!FromGuestModule(result)) return nullptr;
+    Dl_info info{};
+    if (!::dladdr(result, &info) || info.dli_fbase == nullptr) return result;
+    std::lock_guard lock(modulesMutex);
+    return HiddenImage(info.dli_fbase) ? nullptr : result;
+}
+#elif !defined(_WIN32)
 const link_map* MainProgramMap() {
     static const link_map* const map = [] {
         void* handle = ::dlopen(nullptr, RTLD_LAZY);
@@ -139,7 +205,7 @@ extern "C" {
 char* APS5_VABI dlerror_nid_postfix() {
     if (!pendingError) return nullptr;
     pendingError = false;
-    return loaderError.data();
+    return LoaderError().data();
 }
 #ifdef __linux__
 static void InitializeLinuxGuestModule(void* native) {
@@ -192,14 +258,127 @@ static void InitializeLinuxGuestModule(void* native) {
 }
 #endif
 #ifdef _WIN32
-static void InitializeDeferredModule(HMODULE native) {
+static std::mutex initializedLock;
+static std::condition_variable initializedChanged;
+
+static void InitializeDeferredModule(HMODULE native, const std::string& reason = {});
+
+struct DeferredLists {
+    std::vector<std::string> dependencies;
+    std::vector<std::string> sweep;
+};
+
+static DeferredLists DeferredListNames(const std::uint32_t* table) {
+    constexpr auto initializing = std::numeric_limits<std::uint32_t>::max();
+    constexpr std::uint32_t dependenciesMagic = 0x44504541;
+    constexpr std::uint32_t sweepMagic = 0x57534550;
+    constexpr std::uint32_t maximumDependencies = 4096;
+    DeferredLists lists;
+    const auto count = table[1];
+    if (count == initializing) return lists;
+    const auto* cursor = reinterpret_cast<const char*>(table + 2 + count);
+    for (int block = 0; block < 2; ++block) {
+        std::uint32_t header[2];
+        std::memcpy(header, cursor, sizeof(header));
+        if ((header[0] != dependenciesMagic && header[0] != sweepMagic) || header[1] == 0 || header[1] > maximumDependencies) break;
+        auto& names = header[0] == dependenciesMagic ? lists.dependencies : lists.sweep;
+        cursor += sizeof(header);
+        for (std::uint32_t index = 0; index < header[1]; ++index) {
+            names.emplace_back(cursor);
+            cursor += names.back().size() + 1;
+        }
+    }
+    return lists;
+}
+
+static std::string ModuleFileName(HMODULE module) {
+    char buffer[MAX_PATH] = {};
+    const auto length = GetModuleFileNameA(module, buffer, MAX_PATH);
+    return std::string(buffer, length < MAX_PATH ? length : 0);
+}
+
+static void InitializeDeferredModule(HMODULE native, const std::string& reason) {
     using Entry = int (APS5_VABI *)(std::size_t, const void*, void*);
     using Initializer = void (APS5_VABI *)(int, char**, char**);
     constexpr auto initializing = std::numeric_limits<std::uint32_t>::max();
-    static std::mutex initializedLock;
-    static std::condition_variable initializedChanged;
+    static int sweepState = 0;
+    static DWORD sweepOwner = 0;
+    struct ResolvingStorage {};
+    struct StartedResultsStorage {};
+    auto& resolving = HostThreadLocal<std::vector<HMODULE>, ResolvingStorage>();
+    auto& startedResults = HostThreadLocal<std::map<HMODULE, int>, StartedResultsStorage>();
+    thread_local int depth = 0;
+    struct Depth {
+        int& value;
+        std::map<HMODULE, int>& results;
+        Depth(int& counter, std::map<HMODULE, int>& stored) : value(counter), results(stored) { ++value; }
+        ~Depth() { if (--value == 0) results.clear(); }
+    } scope(depth, startedResults);
+    if (std::find(resolving.begin(), resolving.end(), native) != resolving.end()) return;
     auto* table = reinterpret_cast<std::uint32_t*>(GetProcAddress(native, "__aps5_guest_initialize"));
     if (!table) return;
+    DeferredLists lists;
+    {
+        std::lock_guard lock(initializedLock);
+        lists = DeferredListNames(table);
+    }
+    auto* pendingArgs = const_cast<PendingModuleArgs*>(static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch()));
+    const auto initiating = *pendingArgs;
+    const auto startAll = [&](const std::vector<std::string>& names, const std::string& why, const char* kind, const bool sweeping) {
+        if (!sweeping) resolving.push_back(native);
+        try {
+            for (const auto& name : names) {
+                if (const auto dependency = GetModuleHandleA(name.c_str()); dependency && sweeping) {
+                    try {
+                        InitializeDeferredModule(dependency, why);
+                    } catch (const std::exception& error) {
+                        std::fprintf(stderr, "[module] deferred sweep: %s failed: %s\n", name.c_str(), error.what());
+                    } catch (...) {
+                        std::fprintf(stderr, "[module] deferred sweep: %s failed: unknown exception\n", name.c_str());
+                    }
+                } else if (dependency && dependency != native) InitializeDeferredModule(dependency, why);
+                else if (!dependency) std::fprintf(stderr, "[module] deferred %s %s of %s is not mapped and is not started\n", kind, name.c_str(), ModuleFileName(native).c_str());
+                *pendingArgs = initiating;
+            }
+        } catch (...) {
+            *pendingArgs = initiating;
+            if (!sweeping) resolving.pop_back();
+            throw;
+        }
+        if (!sweeping) resolving.pop_back();
+        __aps5_set_module_init_result_nid_no_patch(0);
+    };
+    bool sweeping = false;
+    if (reason.empty() && !lists.sweep.empty()) {
+        const auto thread = GetCurrentThreadId();
+        std::unique_lock lock(initializedLock);
+        while (sweepState == 1 && sweepOwner != thread) initializedChanged.wait(lock);
+        if (sweepState == 0) {
+            sweepState = 1;
+            sweepOwner = thread;
+            sweeping = true;
+        }
+    }
+    if (sweeping) {
+        const auto finishSweep = [&](const int state) {
+            std::lock_guard lock(initializedLock);
+            sweepState = state;
+            sweepOwner = 0;
+            initializedChanged.notify_all();
+        };
+        try {
+            std::string listed;
+            for (const auto& name : lists.sweep) listed += " " + name;
+            const auto trigger = ModuleFileName(native);
+            std::fprintf(stderr, "[module] deferred sweep at the first load of %s, starting what other modules depend on:%s\n", trigger.c_str(), listed.c_str());
+            startAll(lists.sweep, "swept at the first load of " + trigger, "sweep module", true);
+        } catch (...) {
+            finishSweep(0);
+            throw;
+        }
+        finishSweep(2);
+    }
+    if (!lists.dependencies.empty()) startAll(lists.dependencies, "needed by " + ModuleFileName(native), "dependency", false);
     const auto owner = GetCurrentThreadId();
     std::unique_lock lock(initializedLock);
     while (table[1] == initializing) {
@@ -209,7 +388,15 @@ static void InitializeDeferredModule(HMODULE native) {
     }
     const auto entry = table[0];
     const auto count = table[1];
-    if (entry == 0 && count == 0) return;
+    if (entry == 0 && count == 0) {
+        if (reason.empty()) {
+            if (const auto started = startedResults.find(native); started != startedResults.end()) {
+                __aps5_set_module_init_result_nid_no_patch(started->second);
+                startedResults.erase(started);
+            }
+        }
+        return;
+    }
     DWORD protection = 0;
     if (!VirtualProtect(table, 2 * sizeof(*table), PAGE_READWRITE, &protection))
         throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "open deferred module initialization metadata");
@@ -229,9 +416,14 @@ static void InitializeDeferredModule(HMODULE native) {
         if (!restored) throw std::system_error(static_cast<int>(error), std::system_category(), "restore deferred module initialization metadata");
     };
     try {
+        std::fprintf(stderr, "[module] deferred start %s (%s)\n", ModuleFileName(native).c_str(), reason.empty() ? "loaded by the title" : reason.c_str());
         auto* base = reinterpret_cast<std::uint8_t*>(native);
         const auto* pending = static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch());
-        if (entry != 0) __aps5_set_module_init_result_nid_no_patch(reinterpret_cast<Entry>(base + entry)(pending->args, pending->argp, nullptr));
+        if (entry != 0) {
+            const int result = reinterpret_cast<Entry>(base + entry)(pending->args, pending->argp, nullptr);
+            __aps5_set_module_init_result_nid_no_patch(result);
+            if (!reason.empty()) startedResults[native] = result;
+        }
         for (std::uint32_t index = 0; index < count; ++index) {
             const auto initializer = *reinterpret_cast<Initializer*>(base + table[2 + index]);
             if (initializer) initializer(0, nullptr, nullptr);
@@ -275,8 +467,12 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
 #else
         const auto source = path ? ResolvePath_nid_no_patch(path) : std::filesystem::path{};
         const auto resolved = path ? RelinkedModulePath_nid_no_patch(source) : std::filesystem::path{};
+#ifdef __APPLE__
+        const int nativeFlags = ((flags & 3) == 1 ? RTLD_LAZY : RTLD_NOW) | RTLD_GLOBAL;
+#else
         const int nativeFlags = ((flags & 3) == 1 ? RTLD_LAZY : RTLD_NOW) |
             ((flags & 0x100) ? RTLD_GLOBAL : RTLD_LOCAL);
+#endif
         module->native = ::dlopen(path ? resolved.c_str() : nullptr, nativeFlags);
         if (!module->native) {
             if (path) LoadFailure(source, resolved, ::dlerror()); else Error(::dlerror());
@@ -284,6 +480,9 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
         }
 #ifdef __linux__
         if (path) InitializeLinuxGuestModule(module->native);
+#endif
+#ifdef __APPLE__
+        FindImage(*module, path == nullptr);
 #endif
 #endif
         std::lock_guard lock(modulesMutex);
@@ -310,9 +509,17 @@ void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
     if (!name || !*name) { Error("dlsym: empty symbol name"); return nullptr; }
     try {
         std::vector<std::shared_ptr<Module>> search;
+        bool defaultScope = handle == nullptr || handle == reinterpret_cast<void*>(static_cast<std::intptr_t>(-2));
         {
             std::lock_guard lock(modulesMutex);
-            if (handle == nullptr || handle == reinterpret_cast<void*>(static_cast<std::intptr_t>(-2))) {
+#ifdef __APPLE__
+            if (!defaultScope) {
+                auto found = modules.find(reinterpret_cast<std::uintptr_t>(handle));
+                defaultScope = found != modules.end() && found->second->image != nullptr &&
+                    static_cast<const mach_header_64*>(found->second->image)->filetype == MH_EXECUTE;
+            }
+#endif
+            if (defaultScope) {
                 for (const auto& [key, module] : modules) if (module->global) search.push_back(module);
 #ifdef _WIN32
                 std::sort(search.begin(), search.end(), [](const auto& left, const auto& right) { return left->globalOrder < right->globalOrder; });
@@ -326,7 +533,7 @@ void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
         }
         for (const auto& module : search) if (auto* result = FindSymbol(*module, name)) return result;
 #ifndef _WIN32
-        if (handle == nullptr || handle == reinterpret_cast<void*>(static_cast<std::intptr_t>(-2))) {
+        if (defaultScope) {
             if (auto* result = DefaultScopeSymbol(name)) return result;
             const auto nid = Nid::ComputeNid(name, "");
             if (auto* result = DefaultScopeSymbol(nid.c_str())) return result;
@@ -355,6 +562,8 @@ int APS5_VABI dlclose_nid_postfix(void* handle) {
         GuestAllocations::Mutation mutation;
 #ifdef _WIN32
         mutation.UnregisterImage(module->native);
+#elif defined(__APPLE__)
+        mutation.UnregisterImage(module->loadBias);
 #else
         mutation.UnregisterImage(reinterpret_cast<const void*>(static_cast<link_map*>(module->native)->l_addr));
 #endif
