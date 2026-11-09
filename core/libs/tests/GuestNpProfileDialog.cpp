@@ -157,6 +157,10 @@ int main() {
     Require(sceNpProfileDialogOpenA(nullptr) == kErrArgNull);
     Require(sceNpProfileDialogGetStatus() == kStatusInitialized);
 
+    Require(sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(0x10)) == kErrArgNull);
+    Require(sceNpProfileDialogOpenA(reinterpret_cast<const SceNpProfileDialogParamA*>(0x10)) == kErrArgNull);
+    Require(sceNpProfileDialogGetStatus() == kStatusInitialized);
+
     alignas(8) std::uint8_t wrong[kParamSize + 16];
     MakeParam(wrong, sizeof(wrong), kParamASize, 1, kParamUserData, &first);
     RequireThrows([&] { sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(wrong)); });
