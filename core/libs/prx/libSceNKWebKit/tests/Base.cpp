@@ -6,6 +6,7 @@
 #include "prx/libSceNKWebKit/src/ProtectionSpace.hpp"
 #include "prx/libSceNKWebKit/src/FrameHandle.hpp"
 #include "prx/libSceNKWebKit/src/OpenPanelParameters.hpp"
+#include "prx/libSceNKWebKit/src/PolicyAndResultListeners.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <algorithm>
 #include <cassert>
@@ -1352,6 +1353,169 @@ static void TestOpenPanelResultListener() {
     Require(threw);
 }
 
+static void TestPolicyAndResultListeners() {
+    Require(WKFormSubmissionListenerGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::FormSubmissionListener));
+    auto formListener = NKWebKit::Make<NKWebKit::FormSubmissionListener>();
+    Require(!formListener->continued);
+    WKFormSubmissionListenerContinue(formListener.Get());
+    Require(formListener->continued);
+
+    Require(WKFramePolicyListenerGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::FramePolicyListener));
+    auto frameListener = NKWebKit::Make<NKWebKit::FramePolicyListener>();
+    Require(frameListener->policy == NKWebKit::FramePolicyListener::Policy::None);
+    Require(!frameListener->websitePolicies);
+
+    WKFramePolicyListenerUse(frameListener.Get());
+    Require(frameListener->policy == NKWebKit::FramePolicyListener::Policy::Use);
+    Require(!frameListener->websitePolicies);
+
+    WKFramePolicyListenerDownload(frameListener.Get());
+    Require(frameListener->policy == NKWebKit::FramePolicyListener::Policy::Download);
+
+    WKFramePolicyListenerIgnore(frameListener.Get());
+    Require(frameListener->policy == NKWebKit::FramePolicyListener::Policy::Ignore);
+
+    WKFramePolicyListenerUseInNewProcess(frameListener.Get());
+    Require(frameListener->policy == NKWebKit::FramePolicyListener::Policy::UseInNewProcess);
+
+    auto dummyPolicyObj = NKWebKit::String::FromUtf8("policy");
+    WKFramePolicyListenerUseWithPolicies(frameListener.Get(), dummyPolicyObj.Get());
+    Require(frameListener->policy == NKWebKit::FramePolicyListener::Policy::Use);
+    Require(frameListener->websitePolicies.Get() != nullptr);
+
+    WKFramePolicyListenerUseInNewProcessWithPolicies(frameListener.Get(), dummyPolicyObj.Get());
+    Require(frameListener->policy == NKWebKit::FramePolicyListener::Policy::UseInNewProcess);
+    Require(frameListener->websitePolicies.Get() != nullptr);
+
+    WKFramePolicyListenerUseWithPolicies(frameListener.Get(), nullptr);
+    Require(!frameListener->websitePolicies);
+
+    Require(WKMessageListenerGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::MessageListener));
+    auto messageListener = NKWebKit::Make<NKWebKit::MessageListener>();
+    Require(!messageListener->replied);
+    Require(!messageListener->reply);
+
+    auto replyStr = NKWebKit::String::FromUtf8("reply");
+    WKMessageListenerSendReply(messageListener.Get(), replyStr.Get());
+    Require(messageListener->replied);
+    Require(messageListener->reply.Get() == replyStr.Get());
+
+    WKMessageListenerSendReply(messageListener.Get(), nullptr);
+    Require(messageListener->replied);
+    Require(!messageListener->reply);
+
+    Require(WKPageRequestStorageAccessConfirmResultListenerGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::RequestStorageAccessConfirmResultListener));
+    auto storageListener = NKWebKit::Make<NKWebKit::RequestStorageAccessConfirmResultListener>();
+    Require(!storageListener->called);
+    Require(!storageListener->allowed);
+    WKPageRequestStorageAccessConfirmResultListenerCall(storageListener.Get(), true);
+    Require(storageListener->called);
+    Require(storageListener->allowed);
+    WKPageRequestStorageAccessConfirmResultListenerCall(storageListener.Get(), false);
+    Require(!storageListener->allowed);
+
+    Require(WKPageRunBeforeUnloadConfirmPanelResultListenerGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::RunBeforeUnloadConfirmPanelResultListener));
+    auto unloadListener = NKWebKit::Make<NKWebKit::RunBeforeUnloadConfirmPanelResultListener>();
+    Require(!unloadListener->called);
+    Require(!unloadListener->result);
+    WKPageRunBeforeUnloadConfirmPanelResultListenerCall(unloadListener.Get(), true);
+    Require(unloadListener->called);
+    Require(unloadListener->result);
+    WKPageRunBeforeUnloadConfirmPanelResultListenerCall(unloadListener.Get(), false);
+    Require(!unloadListener->result);
+
+    Require(WKPageRunJavaScriptAlertResultListenerGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::RunJavaScriptAlertResultListener));
+    auto alertListener = NKWebKit::Make<NKWebKit::RunJavaScriptAlertResultListener>();
+    Require(!alertListener->called);
+    WKPageRunJavaScriptAlertResultListenerCall(alertListener.Get());
+    Require(alertListener->called);
+
+    Require(WKPageRunJavaScriptConfirmResultListenerGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::RunJavaScriptConfirmResultListener));
+    auto confirmListener = NKWebKit::Make<NKWebKit::RunJavaScriptConfirmResultListener>();
+    Require(!confirmListener->called);
+    Require(!confirmListener->result);
+    WKPageRunJavaScriptConfirmResultListenerCall(confirmListener.Get(), true);
+    Require(confirmListener->called);
+    Require(confirmListener->result);
+    WKPageRunJavaScriptConfirmResultListenerCall(confirmListener.Get(), false);
+    Require(!confirmListener->result);
+
+    Require(WKPageRunJavaScriptPromptResultListenerGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::RunJavaScriptPromptResultListener));
+    auto promptListener = NKWebKit::Make<NKWebKit::RunJavaScriptPromptResultListener>();
+    Require(!promptListener->called);
+    Require(!promptListener->result);
+    auto promptInput = NKWebKit::String::FromUtf8("entered text");
+    WKPageRunJavaScriptPromptResultListenerCall(promptListener.Get(), promptInput.Get());
+    Require(promptListener->called);
+    Require(promptListener->result->Utf8() == "entered text");
+    WKPageRunJavaScriptPromptResultListenerCall(promptListener.Get(), nullptr);
+    Require(!promptListener->result);
+
+    bool threw = false;
+    try {
+        WKFormSubmissionListenerContinue(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKFramePolicyListenerUse(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKMessageListenerSendReply(nullptr, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKPageRequestStorageAccessConfirmResultListenerCall(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKPageRunBeforeUnloadConfirmPanelResultListenerCall(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKPageRunJavaScriptAlertResultListenerCall(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKPageRunJavaScriptConfirmResultListenerCall(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKPageRunJavaScriptPromptResultListenerCall(nullptr, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static const void* MakeProtectionSpace(const char* host, int port, NKWebKit::ProtectionSpaceServerType serverType, const char* realm, NKWebKit::ProtectionSpaceAuthenticationScheme scheme) {
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::ProtectionSpace>(NKWebKit::String::FromUtf8(host), port, serverType, NKWebKit::String::FromUtf8(realm), scheme));
 }
@@ -1950,6 +2114,7 @@ int main() {
     TestAXObject();
     TestPopupMenuItem();
     TestOpenPanelResultListener();
+    TestPolicyAndResultListeners();
     TestProtectionSpace();
     TestPermissionRequests();
     TestFrameHandle();

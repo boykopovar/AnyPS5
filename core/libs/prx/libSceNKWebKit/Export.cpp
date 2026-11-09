@@ -11369,8 +11369,7 @@ int APS5_VABI WKCookieManagerStopObservingCookieChanges() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-int APS5_VABI WKFormSubmissionListenerContinue() {
+int APS5_VABI WKFrameCanProvideSource() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -11423,30 +11422,6 @@ int APS5_VABI WKFrameGetWebArchive() {
 }
 
 int APS5_VABI WKFrameInfoCreateFrameHandleRef() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFramePolicyListenerDownload() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFramePolicyListenerIgnore() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFramePolicyListenerUseInNewProcess() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFramePolicyListenerUseInNewProcessWithPolicies() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFramePolicyListenerUse() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFramePolicyListenerUseWithPolicies() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -11561,10 +11536,6 @@ int APS5_VABI WKInspectorTogglePageProfiling() {
 }
 
 int APS5_VABI WKKeyboardEventMake() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKMessageListenerSendReply() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -12065,10 +12036,6 @@ int APS5_VABI WKPageRenderTreeExternalRepresentation() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageRequestStorageAccessConfirmResultListenerCall() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageRestoreFromSessionState() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -12097,23 +12064,7 @@ int APS5_VABI WKPageRubberBandsAtTop() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageRunBeforeUnloadConfirmPanelResultListenerCall() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageRunJavaScriptAlertResultListenerCall() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageRunJavaScriptConfirmResultListenerCall() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageRunJavaScriptInMainFrame() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageRunJavaScriptPromptResultListenerCall() {
     NotImplemented_nid_no_patch(__func__);
 }
 
