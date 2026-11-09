@@ -8,6 +8,7 @@
 #include <functional>
 #include <mutex>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -94,8 +95,11 @@ bool UnchangedCommittedSince(std::span<const std::pair<std::uint64_t, std::uint6
 // UnchangedSince(range, it) holds until the next store over the range.
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes);
+std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes, std::uint64_t& order);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store);
+std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void(std::span<std::byte>)>& store);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source);
+void SetOwnStoreCompare(bool compare);
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // Collect epoch: within one epoch a range already collected is not walked again, CollectWrites
@@ -216,9 +220,22 @@ unsigned long long CodeOffset(const void* address);
 // every read and store through this interface calls first. Code that reads guest memory directly
 // calls FlushGpuWrites itself.
 void SetFlushHook(void (*hook)(std::uint64_t address, std::size_t bytes));
+auto CurrentFlushHook() -> void (*)(std::uint64_t address, std::size_t bytes);
 void SetReadGuard(void (*guard)(std::uint64_t address, std::size_t bytes));
 void GuardRead(std::uint64_t address, std::size_t bytes);
 void FlushGpuWrites(std::uint64_t address, std::size_t bytes);
+void PrepareHostWrite(std::uintptr_t address, std::size_t bytes);
+bool StopHostWrites(std::uint32_t boundMs);
+std::uint64_t LockedHostWrites();
+struct HostWriteCounts {
+    std::uint64_t calls = 0;
+    std::uint64_t waited = 0;
+    double waitedMs = 0;
+    double maxWaitedMs = 0;
+};
+HostWriteCounts HostWritesCounted();
+void SetWaitedMsProvider(double (*provider)());
+std::string HostWriteReport();
 // Moves with every ForgetPages call (the libc invalidator: memory unmapped or re-registered): odd
 // while the call stores its page states, moved past it after, so a reader that loads an even
 // value before consulting the page states and reading directly, and the same value after, knows

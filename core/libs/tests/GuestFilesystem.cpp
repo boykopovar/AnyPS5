@@ -18,6 +18,7 @@
 #include <array>
 #include <chrono>
 #include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -175,10 +176,29 @@ static void TestParentTraversal() {
     checkInvalid("/" + root.generic_string() + "/missing/..", 2);
     checkInvalid(root.generic_string() + "/missing/../../" + root.generic_string(), 2);
     AddPathAlias_nid_no_patch("parent-test-mount", std::filesystem::absolute(root).string().c_str());
-    const char* missingCreateAlias = "/parent-test-mount/missing-create/";
-    Require(sceKernelOpen(missingCreateAlias, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 0600) == SCE_KERNEL_ERROR_ENOENT);
-    Require(open_nid_postfix(missingCreateAlias, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 0600) == -1 && *__error_nid_postfix() == 2);
+    const auto missingCreate = root.generic_string() + "/missing-create/";
+    const int creates[] = {SCE_KERNEL_O_CREAT, SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC};
+    for (const char* name : {"/parent-test-mount/missing-create/", missingCreate.c_str()}) {
+        for (const int create : creates) {
+            Require(sceKernelOpen(name, SCE_KERNEL_O_WRONLY | create, 0600) == SCE_KERNEL_ERROR_ENOENT);
+            Require(open_nid_postfix(name, SCE_KERNEL_O_WRONLY | create, 0600) == -1 && *__error_nid_postfix() == 2);
+        }
+    }
     Require(!std::filesystem::exists(root / "missing-create"));
+#ifdef _WIN32
+    const auto nativeRoot = std::filesystem::absolute(root).generic_string();
+    const auto nativeMissing = nativeRoot + "/missing-create/";
+    const auto nativePresent = nativeRoot + "/present.txt/";
+    const auto nativeBelowFile = nativeRoot + "/present.txt/child/";
+    for (const int create : creates) {
+        Require(sceKernelOpen(nativeMissing.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == SCE_KERNEL_ERROR_ENOENT);
+        Require(open_nid_postfix(nativeMissing.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == -1 && *__error_nid_postfix() == 2);
+        Require(sceKernelOpen(nativePresent.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == SCE_KERNEL_ERROR_ENOTDIR);
+        Require(open_nid_postfix(nativePresent.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == -1 && *__error_nid_postfix() == 20);
+        Require(sceKernelOpen(nativeBelowFile.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == SCE_KERNEL_ERROR_ENOTDIR);
+    }
+    Require(!std::filesystem::exists(root / "missing-create") && std::filesystem::file_size(root / "present.txt") == 9);
+#endif
     checkInvalid("/PARENT-TEST-MOUNT/missing/..", 2);
     checkInvalid("/parent-test-mount/present.txt/..", 20);
     FileStat status{};
@@ -384,6 +404,26 @@ static void TestLongHostPathStat() {
     Require(sceKernelStat("/long-stat-host/missing.bin", &status) == static_cast<int>(0x80020002u));
     Require(lstat_nid_postfix("/long-stat-host/missing.bin", &status) == -1 && *__error_nid_postfix() == 2);
     Require(sceKernelStat("/long-stat-host/", &status) == 0 && (status.st_mode & 0170000) == 0040000);
+    const int opened = sceKernelOpen("/long-stat-host/payload.bin", 0, 0);
+    char content[8]{};
+    Require(opened >= 0 && sceKernelRead(opened, content, sizeof content) == 8 && std::memcmp(content, "metadata", 8) == 0 && sceKernelClose(opened) == 0);
+    const int listed = sceKernelOpen("/long-stat-host/", 0x20000, 0);
+    Require(listed >= 0);
+    std::vector<char> longListing(4096);
+    std::vector<std::string> longNames;
+    for (int count = sceKernelGetdents(listed, longListing.data(), static_cast<int>(longListing.size())); count > 0;
+         count = sceKernelGetdents(listed, longListing.data(), static_cast<int>(longListing.size()))) {
+        for (int offset = 0; offset < count;) {
+            std::uint16_t length = 0;
+            std::memcpy(&length, longListing.data() + offset + 4, sizeof length);
+            Require(length >= 8);
+            longNames.emplace_back(longListing.data() + offset + 8);
+            offset += length;
+        }
+    }
+    std::sort(longNames.begin(), longNames.end());
+    Require((longNames == std::vector<std::string>{".", "..", "payload.bin"}));
+    Require(sceKernelClose(listed) == 0);
     RemovePathAlias_nid_no_patch("/long-stat-host");
     const auto extendedHost = ExtendedPath(deep).string();
     AddPathAlias_nid_no_patch("/long-stat-extended", extendedHost.c_str());
@@ -1735,6 +1775,22 @@ int main() {
     Require(flock_nid_postfix(locked, 8) == 0);
     Require(flock_nid_postfix(other, 2 | 4) == 0);
     Require(flock_nid_postfix(other, 8) == 0);
+#ifndef _WIN32
+    {
+        const int third = open_nid_postfix(presentName.c_str(), 0, 0);
+        Require(third >= 0);
+        Require(flock_nid_postfix(locked, 1 | 4) == 0);
+        Require(flock_nid_postfix(other, 1 | 4) == 0);
+        Require(flock_nid_postfix(locked, 2 | 4) == -1 && *__error_nid_postfix() == 35);
+        Require(flock_nid_postfix(other, 8) == 0);
+        Require(flock_nid_postfix(third, 2 | 4) == -1 && *__error_nid_postfix() == 35);
+        Require(flock_nid_postfix(third, 1 | 4) == 0 && flock_nid_postfix(third, 8) == 0);
+        Require(flock_nid_postfix(locked, 2 | 4) == 0);
+        Require(flock_nid_postfix(third, 1 | 4) == -1 && *__error_nid_postfix() == 35);
+        Require(flock_nid_postfix(locked, 8) == 0);
+        Require(close_nid_postfix(third) == 0);
+    }
+#endif
     Require(flock_nid_postfix(locked, 2 | 4) == 0);
     Require(lseek_nid_postfix(-1, 0, 7) == -1 && *__error_nid_postfix() == 9);
     Require(lseek_nid_postfix(0x7fffffff, 0, -1) == -1 && *__error_nid_postfix() == 9);
