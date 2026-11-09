@@ -953,6 +953,15 @@ DrawArguments ReadDrawArguments(const DrawParameters::IndirectDraw& indirect, st
     return {words[0], words[1], words[2], 0, words[3]};
 }
 
+DrawArguments ReadDrawArgumentsUnsynced(const DrawParameters::IndirectDraw& indirect, std::uint32_t record) {
+    require(record < indirect.count, "indirect draw record index exceeds the packet's count");
+    std::array<std::uint32_t, 5> words{};
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::IndirectArguments);
+    GuestMemory::ReadCommittedUnsynced(indirect.arguments + static_cast<std::uint64_t>(record) * indirect.stride, std::as_writable_bytes(std::span(words)).first(indirect.recordBytes));
+    if (indirect.recordBytes == 20) return {words[0], words[1], words[2], words[3], words[4]};
+    return {words[0], words[1], words[2], 0, words[3]};
+}
+
 std::uint32_t ReadDrawCount(const DrawParameters::IndirectDraw& indirect) {
     require(indirect.countIndirect && indirect.countAddress != 0, "indirect draw has no count address");
     std::uint32_t count = 0;
