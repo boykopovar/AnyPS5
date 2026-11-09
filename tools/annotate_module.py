@@ -142,6 +142,8 @@ class Module:
 
     def count_gnu_symbols(self, table):
         buckets, symoffset, bloom_size, _ = self.unpack("<IIII", self.address(table, 16))
+        if bloom_size == 0 or (bloom_size & (bloom_size - 1)) != 0:
+            raise ModuleError("GNU hash Bloom filter count %d is not a power of two" % bloom_size)
         buckets_at = table + 16 + bloom_size * 8
         chains_at = buckets_at + buckets * 4
         self.address(table, chains_at - table)
