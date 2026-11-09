@@ -66,6 +66,15 @@ int APS5_VABI sceErrorDialogOpen(const void* param) {
  std::memcpy(&userId, buffer + 8, sizeof(userId));
  ModalDialogRequest request = ErrorDialog::BuildRequest(errorCode);
  request.owner = ModalDialogOwnerErrorDialog;
+ if (HostBox::HostMessageBoxEnabled(std::getenv("ANYPS5_ERROR_DIALOG_HOST"), kAppleBuild)) {
+  const auto answer = HostBox::ShowHostMessageBox(HostBox::HostMessageLabel(request.message), request);
+  if (answer) {
+   g_presented = false;
+   g_status = kStatusFinished;
+   APS5_HIT("ERRORDIALOG", "open: error_code=0x%08X user_id=%d -> host box", errorCode, userId);
+   return kErrOk;
+  }
+ }
  g_presented = ModalDialogOpen_nid_postfix(request);
  APS5_HIT("ERRORDIALOG", "open: error_code=0x%08X user_id=%d -> %s", errorCode, userId, g_presented ? "shown" : "auto answer");
  g_status = kStatusRunning;
