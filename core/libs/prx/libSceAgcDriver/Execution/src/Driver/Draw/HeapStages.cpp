@@ -372,22 +372,8 @@ std::uint64_t HeapWalkMemoBudget() {
 }
 
 void HeapWalkMemo::trim() {
-    retirePrevious();
-    if (heldBytes <= budget) return;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> stamps;
-    for (const auto& [key, ways] : current) {
-        for (const auto& entry : ways) stamps.emplace_back(entry.stored, key);
-    }
-    std::sort(stamps.begin(), stamps.end());
     const auto target = budget / 4u * 3u;
-    for (const auto& [stored, key] : stamps) {
-        if (heldBytes <= target) break;
-        const auto ways = current.find(key);
-        const auto entry = std::find_if(ways->second.begin(), ways->second.end(), [&](const HeapWalkEntry& way) { return way.stored == stored; });
-        drop(*entry);
-        ways->second.erase(entry);
-        if (ways->second.empty()) current.erase(ways);
-    }
+    while (heldBytes > target && order.size() > 1u) evictOldest();
 }
 
 namespace {

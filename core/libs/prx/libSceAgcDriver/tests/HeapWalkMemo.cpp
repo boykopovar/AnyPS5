@@ -32,16 +32,15 @@ HeapWalkEntry sizedEntry(std::size_t words, std::shared_ptr<const ShaderRecompil
 std::uint64_t heldBytes(const HeapWalkMemo& memo) {
     std::uint64_t bytes = 0;
     std::unordered_set<const void*> pinned;
-    for (const auto* generation : {&memo.current, &memo.previous}) {
-        for (const auto& [key, ways] : *generation) {
-            for (const auto& entry : ways) {
-                bytes += AgcDriver::DriverDetail::HeapWalkEntryOwnBytes(entry);
-                if (entry.capture != nullptr && pinned.insert(entry.capture.get()).second) bytes += AgcDriver::DriverDetail::HeapWalkCaptureBytes(*entry.capture);
-                if (entry.result != nullptr && pinned.insert(entry.result.get()).second) bytes += AgcDriver::DriverDetail::HeapWalkResultBytes(*entry.result);
-                if (entry.words != nullptr && pinned.insert(entry.words.get()).second) bytes += AgcDriver::DriverDetail::HeapWalkWordsBytes(*entry.words);
-            }
+    for (const auto& [key, slot] : memo.entries) {
+        for (const auto& entry : slot.ways) {
+            bytes += AgcDriver::DriverDetail::HeapWalkEntryOwnBytes(entry);
+            if (entry.capture != nullptr && pinned.insert(entry.capture.get()).second) bytes += AgcDriver::DriverDetail::HeapWalkCaptureBytes(*entry.capture);
+            if (entry.result != nullptr && pinned.insert(entry.result.get()).second) bytes += AgcDriver::DriverDetail::HeapWalkResultBytes(*entry.result);
+            if (entry.words != nullptr && pinned.insert(entry.words.get()).second) bytes += AgcDriver::DriverDetail::HeapWalkWordsBytes(*entry.words);
         }
     }
+    require(memo.order.size() == memo.entries.size(), "the heap walk memo ages " + std::to_string(memo.order.size()) + " keys for the " + std::to_string(memo.entries.size()) + " it holds");
     require(pinned.size() == memo.pins.size(), "the heap walk memo pins " + std::to_string(memo.pins.size()) + " objects for the " + std::to_string(pinned.size()) + " its entries hold");
     return bytes;
 }
@@ -71,24 +70,21 @@ void oldestEntriesDroppedTests() {
     const auto* newest = memo.find(keys);
     require(newest != nullptr && newest->size() == 1 && newest->front().values->size() == words, "the newest heap walk entry is not findable under the budget");
     require(!results.back().expired(), "the newest heap walk entry lost its result");
-    std::cout << "the heap walk memo keeps " << memo.current.size() << " of " << keys << " entries within its budget of " << memo.budget << " bytes\n";
+    std::cout << "the heap walk memo keeps " << memo.entries.size() << " of " << keys << " entries within its budget of " << memo.budget << " bytes\n";
 }
 
-void previousGenerationDroppedFirstTests() {
-    const auto tinyBytes = HeapWalkEntryBytes(sizedEntry(1));
-    constexpr std::size_t largeWords = std::size_t{2} << 20u;
-    const auto largeBytes = HeapWalkEntryBytes(sizedEntry(largeWords));
+void keyCapDropsLeastRecentTests() {
     HeapWalkMemo memo;
-    memo.budget = largeBytes + 64 * tinyBytes;
-    require((HeapWalkMemoKeys + 1) * tinyBytes < memo.budget, "the generation fixture does not fit its budget");
-    for (std::uint64_t key = 1; key <= HeapWalkMemoKeys + 1; ++key) memo.remember(key, sizedEntry(1));
-    require(memo.previous.size() == HeapWalkMemoKeys && memo.current.size() == 1, "the heap walk memo did not start a generation at its key cap");
-    requireWithinBudget(memo, "after the generation swap");
-    memo.remember(HeapWalkMemoKeys + 2, sizedEntry(largeWords));
-    requireWithinBudget(memo, "after the large entry");
-    require(memo.previous.empty(), "the heap walk memo kept its previous generation over the budget");
-    require(memo.find(HeapWalkMemoKeys + 1) != nullptr && memo.find(HeapWalkMemoKeys + 2) != nullptr, "the heap walk memo dropped current entries while its previous generation could go");
-    std::cout << "the heap walk memo drops its previous generation before its current entries\n";
+    memo.budget = 2 * (HeapWalkMemoKeys + 1) * HeapWalkEntryBytes(sizedEntry(1));
+    for (std::uint64_t key = 1; key <= HeapWalkMemoKeys; ++key) memo.remember(key, sizedEntry(1));
+    require(memo.find(1) != nullptr, "the heap walk memo dropped an entry below its key cap");
+    memo.remember(HeapWalkMemoKeys + 1, sizedEntry(1));
+    require(memo.entries.size() == HeapWalkMemoKeys, "the heap walk memo holds " + std::to_string(memo.entries.size()) + " keys, not its cap of " + std::to_string(HeapWalkMemoKeys));
+    require(memo.find(1) != nullptr, "the heap walk memo dropped an entry hit just before it reached its key cap");
+    require(memo.find(2) == nullptr, "the heap walk memo kept its least recently used key past its key cap");
+    for (std::uint64_t key = 3; key <= HeapWalkMemoKeys + 1; ++key) require(memo.find(key) != nullptr, "the heap walk memo dropped key " + std::to_string(key) + ", more recent than the one its cap needed to drop");
+    requireWithinBudget(memo, "after the key cap");
+    std::cout << "the heap walk memo drops only its least recently used key at its key cap\n";
 }
 
 void hitEntriesKeptTests() {
@@ -105,22 +101,6 @@ void hitEntriesKeptTests() {
     require(memo.find(1) != nullptr, "the heap walk memo dropped an entry that was hit after the entries it kept");
     require(memo.find(2) == nullptr, "the heap walk memo kept its least recently used entry past the budget");
     std::cout << "the heap walk memo keeps its recently hit entries\n";
-}
-
-void promotedHitKeptTests() {
-    const auto tinyBytes = HeapWalkEntryBytes(sizedEntry(1));
-    constexpr std::size_t largeWords = std::size_t{2} << 20u;
-    const auto largeBytes = HeapWalkEntryBytes(sizedEntry(largeWords));
-    HeapWalkMemo memo;
-    memo.budget = largeBytes + 64 * tinyBytes;
-    for (std::uint64_t key = 1; key <= HeapWalkMemoKeys + 1; ++key) memo.remember(key, sizedEntry(1));
-    auto* promoted = memo.find(1);
-    require(promoted != nullptr && memo.current.contains(1), "a hit did not move the heap walk entry into the current generation");
-    memo.touch(promoted->front());
-    memo.remember(HeapWalkMemoKeys + 2, sizedEntry(largeWords));
-    requireWithinBudget(memo, "after the large entry");
-    require(memo.find(1) != nullptr, "the heap walk memo dropped an entry promoted by a hit with its previous generation");
-    std::cout << "the heap walk memo keeps an entry a hit promoted from its previous generation\n";
 }
 
 void sharedResultsChargedOnceTests() {
@@ -150,9 +130,8 @@ void sharedResultsChargedOnceTests() {
 int main() {
     try {
         oldestEntriesDroppedTests();
-        previousGenerationDroppedFirstTests();
+        keyCapDropsLeastRecentTests();
         hitEntriesKeptTests();
-        promotedHitKeptTests();
         sharedResultsChargedOnceTests();
         std::cout << "heap walk memo budget tests passed\n";
         return 0;

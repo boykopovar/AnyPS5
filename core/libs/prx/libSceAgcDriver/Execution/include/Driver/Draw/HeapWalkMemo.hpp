@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <list>
 #include <memory>
 #include <unordered_map>
 #include <utility>
@@ -32,8 +33,6 @@ constexpr std::size_t HeapWalkWays = 4;
 
 constexpr std::size_t HeapWalkMemoKeys = 16384;
 
-constexpr std::size_t HeapWalkDrain = 2;
-
 constexpr std::size_t HeapWalkSeenKeys = 1u << 16;
 
 std::uint64_t HeapWalkEntryBytes(const HeapWalkEntry& entry);
@@ -49,8 +48,12 @@ std::uint64_t HeapWalkWordsBytes(const ShaderRecompiler::HeapStageWords& words);
 std::uint64_t HeapWalkMemoBudget();
 
 struct HeapWalkMemo {
-    std::unordered_map<std::uint64_t, std::vector<HeapWalkEntry>> current;
-    std::unordered_map<std::uint64_t, std::vector<HeapWalkEntry>> previous;
+    struct Slot {
+        std::vector<HeapWalkEntry> ways;
+        std::list<std::uint64_t>::iterator age;
+    };
+    std::unordered_map<std::uint64_t, Slot> entries;
+    std::list<std::uint64_t> order;
     std::vector<std::uint64_t> seen = std::vector<std::uint64_t>(HeapWalkSeenKeys, 0);
     std::unordered_map<const void*, std::pair<std::uint32_t, std::uint64_t>> pins;
     std::uint64_t heldBytes = 0;
@@ -65,25 +68,29 @@ struct HeapWalkMemo {
     }
 
     std::vector<HeapWalkEntry>* find(std::uint64_t key) {
-        if (const auto found = current.find(key); found != current.end()) return &found->second;
-        const auto old = previous.find(key);
-        if (old == previous.end()) return nullptr;
-        auto moved = std::move(old->second);
-        previous.erase(old);
-        auto& ways = slot(key);
-        ways = std::move(moved);
-        return &ways;
+        const auto found = entries.find(key);
+        if (found == entries.end()) return nullptr;
+        order.splice(order.begin(), order, found->second.age);
+        return &found->second.ways;
     }
 
     void remember(std::uint64_t key, HeapWalkEntry entry) {
-        auto& ways = slot(key);
-        if (ways.size() >= HeapWalkWays) {
-            drop(ways.back());
-            ways.pop_back();
+        auto [found, inserted] = entries.try_emplace(key);
+        auto& slot = found->second;
+        if (inserted) {
+            order.push_front(key);
+            slot.age = order.begin();
+        } else {
+            order.splice(order.begin(), order, slot.age);
+        }
+        if (slot.ways.size() >= HeapWalkWays) {
+            drop(slot.ways.back());
+            slot.ways.pop_back();
         }
         charge(entry);
         touch(entry);
-        ways.insert(ways.begin(), std::move(entry));
+        slot.ways.insert(slot.ways.begin(), std::move(entry));
+        while (entries.size() > HeapWalkMemoKeys) evictOldest();
         if (budget != 0 && heldBytes > budget) trim();
     }
 
@@ -92,19 +99,6 @@ struct HeapWalkMemo {
     }
 
 private:
-    std::vector<HeapWalkEntry>& slot(std::uint64_t key) {
-        for (std::size_t drained = 0; drained < HeapWalkDrain && !previous.empty(); ++drained) {
-            release(previous.begin()->second);
-            previous.erase(previous.begin());
-        }
-        if (current.size() >= HeapWalkMemoKeys && !current.contains(key)) {
-            retirePrevious();
-            previous = std::move(current);
-            current.clear();
-        }
-        return current[key];
-    }
-
     template <typename TObject, typename TSize>
     void pin(const std::shared_ptr<const TObject>& object, TSize size) {
         if (object == nullptr) return;
@@ -138,13 +132,12 @@ private:
         unpin(entry.words.get());
     }
 
-    void release(const std::vector<HeapWalkEntry>& ways) {
-        for (const auto& entry : ways) drop(entry);
-    }
-
-    void retirePrevious() {
-        for (const auto& [key, ways] : previous) release(ways);
-        previous.clear();
+    void evictOldest() {
+        const auto key = order.back();
+        const auto found = entries.find(key);
+        for (const auto& entry : found->second.ways) drop(entry);
+        entries.erase(found);
+        order.pop_back();
     }
 
     void trim();
