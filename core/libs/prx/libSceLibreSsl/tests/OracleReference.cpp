@@ -11,6 +11,8 @@
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <cstddef>
+#include <cstring>
+#include <string>
 
 namespace LibreSslReference {
 
@@ -89,5 +91,42 @@ void ConfModulesFree() { CONF_modules_free(); }
 int I2tAsn1Object(char* buffer, int length, const void* object) { return i2t_ASN1_OBJECT(buffer, length, const_cast<ASN1_OBJECT*>(static_cast<const ASN1_OBJECT*>(object))); }
 unsigned long ErrGetError() { return ERR_get_error(); }
 void ErrClearError() { ERR_clear_error(); }
+
+int CipherListNames(const char* rules, char* buffer, int length) {
+    static const int initialised = SSL_library_init();
+    static_cast<void>(initialised);
+    if (length > 0) buffer[0] = '\0';
+    SSL_CTX* ctx = SSL_CTX_new(TLSv1_2_method());
+    if (!ctx) return -1;
+    const int result = SSL_CTX_set_cipher_list(ctx, rules);
+    std::string names;
+    STACK_OF(SSL_CIPHER)* ciphers = ctx->cipher_list;
+    for (int index = 0; ciphers && index < sk_SSL_CIPHER_num(ciphers); ++index) {
+        if (index) names += ':';
+        names += SSL_CIPHER_get_name(sk_SSL_CIPHER_value(ciphers, index));
+    }
+    if (length > 0) {
+        const std::size_t copied = names.size() < static_cast<std::size_t>(length - 1) ? names.size() : static_cast<std::size_t>(length - 1);
+        std::memcpy(buffer, names.data(), copied);
+        buffer[copied] = '\0';
+    }
+    SSL_CTX_free(ctx);
+    return result;
+}
+
+int CipherFields(int index, void* fields, int length) {
+    static const int initialised = SSL_library_init();
+    static_cast<void>(initialised);
+    SSL_CTX* ctx = SSL_CTX_new(TLSv1_2_method());
+    if (!ctx) return -1;
+    int copied = 0;
+    if (SSL_CTX_set_cipher_list(ctx, "ALL:COMPLEMENTOFALL") == 1 && index >= 0 && index < sk_SSL_CIPHER_num(ctx->cipher_list)) {
+        const SSL_CIPHER* cipher = sk_SSL_CIPHER_value(ctx->cipher_list, index);
+        copied = length < static_cast<int>(sizeof(SSL_CIPHER)) ? length : static_cast<int>(sizeof(SSL_CIPHER));
+        std::memcpy(fields, cipher, static_cast<std::size_t>(copied));
+    }
+    SSL_CTX_free(ctx);
+    return copied;
+}
 
 }
