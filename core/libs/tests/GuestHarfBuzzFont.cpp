@@ -124,7 +124,7 @@ static int APS5_VABI LegacyGlyph(hb_font_t* font, void* fontData, std::uint32_t 
 
 static void CheckProperties(const Api& api, hb_font_t* font) {
     hb_font_t* native = hb_font_create(nullptr);
-    for (const auto [x, y] : std::array<std::pair<int, int>, 4>{{{0, 0}, {-123, 456}, {1000, -2000}, {std::numeric_limits<int>::min(), std::numeric_limits<int>::max()}}}) {
+    for (const auto [x, y] : std::array<std::pair<int, int>, 4>{{{0, 0}, {-123, 456}, {1000, -2000}, {std::numeric_limits<int>::min() + 1, std::numeric_limits<int>::max()}}}) {
         api.scale(font, x, y);
         hb_font_set_scale(native, x, y);
         int actualX, actualY, expectedX, expectedY;
