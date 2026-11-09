@@ -24,6 +24,9 @@ struct UcrtStreamState {
     char* base;
     int count;
     long flags;
+    long descriptor;
+    int characterBuffer;
+    int bufferSize;
 };
 extern "C" void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wchar_t* path), void (*forget)(int descriptor), void (*duplicate)(int from, int to));
 extern "C" void ForgetDirectoryStream_nid_no_patch(int descriptor);
@@ -482,6 +485,7 @@ inline std::FILE* GetNativeStream(FileStream* stream) {
 }
 
 extern "C" {
+extern FileStream* __stdinp_nid_postfix;
 extern FileStream _Stdout_nid_postfix;
 extern FileStream _Stderr_nid_postfix;
 }
