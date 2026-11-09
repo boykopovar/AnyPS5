@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <cstddef>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -36,6 +37,8 @@ void* APS5_VABI MockMalloc(std::size_t, void*) {
 }
 
 void APS5_VABI MockFree(void*, void*) {}
+
+std::int32_t APS5_VABI DataCallback(const void**, std::size_t*, void*) { return 0; }
 
 void Export(std::int32_t expId) {
     ContentExportParam param{};
@@ -97,6 +100,11 @@ std::int32_t APS5_VABI ProvideOldChunks(const void** data, std::size_t* size, vo
     return 1;
 }
 
+int ExportDataCallback(std::int32_t expId) {
+    ContentExportParam param{};
+    return sceContentExportFromData(expId, &param, 0, &DataCallback, nullptr, path, sizeof(path));
+}
+
 void ExportFile(std::int32_t expId) {
     ContentExportParam param{};
     sceContentExportFromFile(expId, &param, "source", path, sizeof(path));
@@ -129,7 +137,7 @@ void ExportFileWithTitleIdList(std::int32_t expId) {
 int main() {
     static std::array<std::byte, 0x40> process{};
     Require(ProcessParametersFixture::Install(process.data(), process.size()));
-    const std::uint32_t sdkVersion = 0x04000000;
+    std::uint32_t sdkVersion = 0x08000000;
     std::memcpy(process.data() + 0x10, &sdkVersion, sizeof(sdkVersion));
     const auto originalDirectory = std::filesystem::current_path();
     const auto testDirectory = originalDirectory / ("content-export-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -155,6 +163,11 @@ int main() {
     Require(sceContentExportStart() == static_cast<int>(0x809D3004u));
     Require(Throws([] { sceContentExportFinish(1); }));
     Require(ExportData(1) == static_cast<int>(0x809D3004u));
+    sdkVersion = 0x03000000;
+    std::memcpy(process.data() + 0x10, &sdkVersion, sizeof(sdkVersion));
+    Require(ExportData(1) == static_cast<int>(0x809D3016u));
+    sdkVersion = 0x08000000;
+    std::memcpy(process.data() + 0x10, &sdkVersion, sizeof(sdkVersion));
     Require(Throws([] { ExportFile(1); }));
     Require(Throws([] { ExportFileWithThumbnail(1); }));
     Require(Throws([] { ExportFileForSf(1); }));
@@ -181,6 +194,7 @@ int main() {
     }
     Require(sceContentExportStart() == static_cast<int>(0x809D3018u));
     Require(sceContentExportTerm() == static_cast<int>(0x809D3003u));
+    Require(ExportDataCallback(10) == static_cast<int>(0x809D3016u));
     int first = *sessions.begin();
     ContentExportParam fromData{};
     std::strncpy(fromData.title, "Content Export", sizeof(fromData.title) - 1);
@@ -229,6 +243,7 @@ int main() {
     Require(Throws<std::invalid_argument>([] { ExportFile(0); }));
     Require(Throws<std::invalid_argument>([] { ExportFileWithThumbnail(0); }));
     Require(ExportData(-1) == static_cast<int>(0x809D3016u));
+    Require(ExportData(10) == static_cast<int>(0x809D3016u));
     Require(Throws<std::invalid_argument>([] { ExportFile(-1); }));
     Require(Throws<std::invalid_argument>([] { ExportFileWithThumbnail(-1); }));
     Require(Throws<std::invalid_argument>([] { sceContentExportFinish(0); }));

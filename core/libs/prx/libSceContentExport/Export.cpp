@@ -9,7 +9,7 @@
 #include <fstream>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <atomic>
 #include <mutex>
 #include <set>
@@ -34,6 +34,13 @@ constexpr int ErrorDataCallback = static_cast<int>(0x809D301Bu);
 std::atomic<bool> g_initialized{false};
 std::mutex g_sessionMutex;
 std::set<std::int32_t> g_sessions;
+
+std::uint32_t CompiledSdkVersion() {
+    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t version;
+    std::memcpy(&version, process + 16, sizeof(version));
+    return version;
+}
 
 void RequireSession(const char* function, std::int32_t expId) {
     if (!g_initialized.load()) throw std::logic_error(std::string(function) + ": not initialized");
@@ -66,8 +73,7 @@ int APS5_VABI sceContentExportFinish(std::int32_t expId) {
 }
 
 int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportParam* param, std::size_t contentLength, ContentExportDataCallback callback, void* userData, char* path, std::size_t pathBufferLength) {
-    std::int32_t sdkVersion = 0;
-    if (sceKernelGetCompiledSdkVersion(&sdkVersion) != 0) sdkVersion = 0;
+    const std::int32_t sdkVersion = static_cast<std::int32_t>(CompiledSdkVersion());
     if (sdkVersion >= static_cast<std::int32_t>(MemoryPoolSdkVersion) && !g_initialized.load()) return ErrorNotInitialized;
     if (expId < 0 || expId >= MaxExecution || param == nullptr || callback == nullptr) return ErrorInvalidArgument;
     {
