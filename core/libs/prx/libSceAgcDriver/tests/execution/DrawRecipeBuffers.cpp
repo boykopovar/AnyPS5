@@ -156,6 +156,24 @@ bool CheckBindings(AgcDriver::VulkanDevice& device, const Block& block, bool dat
     WaitForOptimizedPipelines(context.device);
     Require(recipe != nullptr, "the initial draw did not produce a recipe");
     CheckPixels(state.color, {255, 0, 0, 255});
+    if (!dataWords) {
+        select(true);
+        std::shared_ptr<const AgcDriver::DrawRecipe> relocated;
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            Draw(context, state, triangle, shaders, {}, &relocated);
+        }
+        WaitForOptimizedPipelines(context.device);
+        Require(relocated != nullptr, "a draw over relocated buffers did not produce a recipe");
+        CheckPixels(state.color, {0, 255, 0, 255});
+        select(false);
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            const auto hit = DrawWithRecipe(context, state, triangle, shaders, {}, *relocated);
+            Require(hit.recorded, "a recipe made over relocated buffers refused a safe buffer change");
+        }
+        CheckPixels(state.color, {255, 0, 0, 255});
+    }
     for (const bool second : {true, true, false}) {
         select(second);
         {
