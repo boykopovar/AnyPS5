@@ -241,8 +241,10 @@ int APS5_VABI PKFormatConverter_EnumConversions_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix(void* converter, JxrGuestGuid* pixelFormat) {
+    if (!converter || !pixelFormat) APS5_INVALID_ARG_EX;
+    *pixelFormat = static_cast<Jxr::FormatConverter*>(converter)->pixelFormat;
+    return WmpErrSuccess;
 }
 
 int APS5_VABI PKFormatConverter_GetResolution_nid_postfix() {
