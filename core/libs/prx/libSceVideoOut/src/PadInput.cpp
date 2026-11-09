@@ -442,7 +442,12 @@ int hostMenuKeySlot(SDL_Scancode scancode) {
     }
 }
 
+void publishHostMenu(const HostMenu::Menu& menu) {
+    if (!menu.IsOpen()) AgcDriverSetHostMenu_nid_postfix(nullptr, 0, 0);
+}
+
 void printHostMenu(const HostMenu::Menu& menu) {
+    publishHostMenu(menu);
     if (!menu.IsOpen()) {
         APS5_LOG_ERR("%s", "host menu closed");
         return;
