@@ -1,4 +1,4 @@
-add_library(libcairo SHARED EXCLUDE_FROM_ALL Export.cpp Matrix.cpp Surface.cpp FontOptions.cpp Region.cpp)
+add_library(libcairo SHARED EXCLUDE_FROM_ALL Export.cpp Matrix.cpp Surface.cpp Context.cpp FontOptions.cpp Region.cpp)
 target_include_directories(libcairo PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libcairo)
 
@@ -32,6 +32,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_cairo_surface_user_data PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_cairo_context_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoContext.cpp)
+    target_include_directories(guest_cairo_context_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cairo_context_tests PRIVATE libcairo libc)
+    configure_windows_unwind(guest_cairo_context_tests)
+    add_test(NAME guest_cairo_context COMMAND guest_cairo_context_tests)
+    set_tests_properties(guest_cairo_context PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_cairo_context PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>")
     endif()
     add_test_executable(guest_cairo_font_options_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoFontOptions.cpp)
     target_include_directories(guest_cairo_font_options_tests PRIVATE ${LIBS_INCLUDE_DIR})
