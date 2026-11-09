@@ -25,5 +25,6 @@ bool APS5_VABI _ZNK7WebCore19ResourceRequestBase9isTopSiteEv(const NKWebKit::Web
 void APS5_VABI _ZN7WebCore19ResourceRequestBase12setIsTopSiteEb(NKWebKit::WebCoreAbi::ResourceRequestBase* self, bool isTopSite);
 double APS5_VABI _ZN7WebCore19ResourceRequestBase22defaultTimeoutIntervalEv();
 void APS5_VABI _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(double timeoutInterval);
+void APS5_VABI _ZN7WebCore19ResourceRequestBase20clearHTTPContentTypeEv(NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 
 }
