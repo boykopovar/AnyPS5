@@ -287,7 +287,13 @@ bool Relay::SendFrame(const Endpoint& peer, std::uint16_t sourcePort, std::uint1
     frame.SourcePort = sourcePort;
     frame.DestinationPort = destinationPort;
     frame.Payload = payload;
-    return SendDatagram(peer, EncodeFrame(frame));
+    try {
+        return SendDatagram(peer, EncodeFrame(frame));
+    } catch (const std::invalid_argument&) {
+        return false;
+    } catch (const std::length_error&) {
+        return false;
+    }
 }
 
 std::optional<Frame> Relay::Receive(int timeoutMilliseconds) {
