@@ -8,6 +8,12 @@
 #include <iterator>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
 namespace {
 
 constexpr int INVALID_HANDLE = static_cast<int>(0x815D0000);
@@ -73,9 +79,32 @@ void CheckPriority() {
     Require(sceSrcUtilityGetPriority(handle.data(), &priority) == INVALID_HANDLE && priority == 7, "a changed magic is rejected");
 }
 
+void CheckUnwritablePriorityOutput() {
+    std::uint8_t* page = nullptr;
+#ifdef _WIN32
+    page = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS));
+#else
+    void* mapped = mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    page = mapped == MAP_FAILED ? nullptr : static_cast<std::uint8_t*>(mapped);
+#endif
+    Require(page != nullptr, "a no-access page must be available");
+    std::vector<std::uint8_t> handle(HANDLE_SIZE, 0);
+    std::memcpy(handle.data() + 0x9470, &MAGIC, sizeof(MAGIC));
+    const std::uint32_t stored = 0x0BADF00D;
+    std::memcpy(handle.data() + 0x2C, &stored, sizeof(stored));
+    Require(sceSrcUtilityGetPriority(handle.data(), reinterpret_cast<std::uint32_t*>(page)) == INVALID_POINTER,
+            "get must report an unwritable output as the invalid pointer error");
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, 4096);
+#endif
+}
+
 }
 
 int main() {
     CheckHandleSize();
     CheckPriority();
+    CheckUnwritablePriorityOutput();
 }

@@ -164,11 +164,11 @@ void CheckStatements(sqlite3* db) {
     auto* text = static_cast<char16_t*>(std::malloc(16));
     std::memcpy(text, u"hé€", 8);
     Require(sqlite3_bind_text16_nid_postfix(insert, 3, text, 6, FreeBuffer) == SQLITE_OK, "bind text16");
-    Require(destroyedBuffers == 1, "text16 destructor runs after the copy");
+    Require(destroyedBuffers == 1, "text16 conversion releases input");
     auto* blob = static_cast<unsigned char*>(std::malloc(8));
     std::memcpy(blob, "\x01\x02\x03\x00\x05\x06\x07\x08", 8);
     Require(sqlite3_bind_blob_nid_postfix(insert, 4, blob, 8, FreeBuffer) == SQLITE_OK, "bind blob");
-    Require(destroyedBuffers == 2, "blob destructor runs after the copy");
+    Require(destroyedBuffers == 1, "blob stays owned by SQLite");
     Require(sqlite3_step_nid_postfix(insert) == SQLITE_DONE, "insert");
     Require(sqlite3_last_insert_rowid_nid_postfix(db) == 1, "last rowid");
     Require(sqlite3_reset_nid_postfix(insert) == SQLITE_OK, "reset");
