@@ -774,6 +774,28 @@ void TestShaderLevelsPastTheView(const Context& context, TextureDetiler& detiler
     const auto direct = ShaderRecompiler::DescriptorBindingBuilder{}.Prepare(layout, info, ShaderRecompiler::IrShaderStage::Compute, snapshot);
     Require(std::ranges::count(direct.specialization, ShaderRecompiler::PipelineSpecializationConstant{ShaderRecompiler::PipelineSpecialization::LevelsPastViewBase, 5u}) == 1, "image_get_resinfo of a 28x1 T# of levels 0-9: the pipeline is not specialized with the 5 levels its view lacks");
     layout.runtimeImageCount = 1u;
+    for (const std::uint32_t count : {65u, 128u}) {
+        auto storage = image;
+        storage.resourceClass = ShaderRecompiler::ImageResourceClass::Storage;
+        storage.mipMode = ShaderRecompiler::ImageMipMode::DynamicStorage;
+        ShaderRecompiler::ShaderInfo wideInfo;
+        wideInfo.images.assign(count, storage);
+        wideInfo.runtimeImageModes.assign(count, ShaderRecompiler::ResourceMaterializer::RuntimeImageModes(storage));
+        ShaderRecompiler::ResourceSnapshot wideSnapshot;
+        wideSnapshot.images.assign(count, cases[0].words);
+        ShaderRecompiler::IrBindingLayout wideLayout;
+        ShaderRecompiler::IrDescriptorBinding images{ShaderRecompiler::DescriptorBindingForImage(storage), {}};
+        for (std::uint32_t index = 0; index < count; ++index) images.resources.push_back(index);
+        wideLayout.descriptors.push_back(std::move(images));
+        const auto wide = ShaderRecompiler::DescriptorBindingBuilder{}.Prepare(wideLayout, wideInfo, ShaderRecompiler::IrShaderStage::Compute, wideSnapshot);
+        std::map<std::uint32_t, std::uint32_t> constants;
+        for (const auto& constant : wide.specialization) Require(constants.emplace(constant.id, constant.value).second, "mip-count and extra-level specialization IDs overlap with " + std::to_string(count) + " images");
+        for (std::uint32_t index = 0; index < count; ++index) {
+            Require(constants.at(ShaderRecompiler::PipelineSpecialization::MipCountBase + index) == 10u, "a wide image plan lost its storage mip count");
+            Require(constants.at(ShaderRecompiler::PipelineSpecialization::LevelsPastViewBase + index) == 5u, "a wide image plan lost its extra-level count");
+        }
+    }
+
     const auto registration = ShaderRecompiler::DescriptorBindingBuilder{}.Prepare(layout, info, ShaderRecompiler::IrShaderStage::Compute, snapshot, {}, true);
     Require(registration.imageMetadata.size() == 1u && ((registration.imageMetadata[0].metadata.flags >> ShaderRecompiler::RuntimeAbi::LevelsPastViewShift) & ShaderRecompiler::RuntimeAbi::LevelsPastViewMask) == 5u, "image_get_resinfo of a 28x1 T# of levels 0-9: the runtime image metadata does not carry the 5 levels its view lacks");
 
