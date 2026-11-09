@@ -502,6 +502,38 @@ int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient17setCopiesOnScrollEv() {
     return 0;
 }
 
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient18frameLoadCompletedEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient19detachedFromParent2Ev() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient19detachedFromParent3Ev() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient19updateGlobalHistoryEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient21dispatchDidFinishLoadEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient21forceLayoutForNonHTMLEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient22provisionalLoadStartedEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient25didDisplayInsecureContentEv() {
+    return 0;
+}
+
 int APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient10hasWebViewEv() {
     return 1;
 }
