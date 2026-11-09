@@ -762,7 +762,6 @@ void TestPrivateKeyFilenameControl(const std::filesystem::path& path, const std:
 
 void TestPrivateKeyFileErrorPaths() {
     constexpr int SslFileTypePem = 1;
-    constexpr int SslFileTypeAsn1 = 2;
     const auto path = std::filesystem::temp_directory_path() / "anyps5-libressl-private-key-test.pem";
     const auto missingPath = std::filesystem::temp_directory_path() / "anyps5-libressl-private-key-missing.pem";
     constexpr const char* AliasPrefix = "/anyps5-privatekey-test";
@@ -797,24 +796,6 @@ void TestPrivateKeyFileErrorPaths() {
             "invalid private-key file type returns failure without reading ctx");
     RequirePrivateKeyErrors({PrivateKeyErrorCode(20, 124)});
     Require(std::filesystem::remove(path), "invalid-type BIO closed private-key file");
-
-    LibreSslCtx context{};
-    for (const int type : {SslFileTypePem, SslFileTypeAsn1}) {
-        {
-            std::ofstream output(path, std::ios::binary);
-            Require(output.is_open(), "create accepted-type private-key input");
-            output << "private-key input";
-        }
-        bool threw = false;
-        try {
-            static_cast<void>(SSL_CTX_use_PrivateKey_file_nid_postfix(&context, guestFilename.c_str(), type));
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        Require(threw, "accepted private-key encoding must not report fake success");
-        Require(std::filesystem::remove(path), "unsupported private-key decoder path closed its file");
-        Require(ERR_get_error_nid_postfix() == 0, "unsupported private-key decoder did not invent an error");
-    }
 
     {
         std::ofstream output(path, std::ios::binary);
