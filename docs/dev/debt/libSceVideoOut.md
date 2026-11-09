@@ -309,3 +309,7 @@
 ### Mouse touchpad gaps
 
 - [KeyboardMouse](../../../core/libs/prx/libSceVideoOut/src/KeyboardMouse.cpp) - `ANYPS5_MOUSE_TOUCHPAD=1` gives the pad one touch point from the left mouse button. It is not multitouch, has no inertia after release, and does not follow the cursor outside the window. A real touchpad's finger timing and pressure are not modelled.
+
+### Mouse gyro gaps
+
+- [KeyboardMouse](../../../core/libs/prx/libSceVideoOut/src/KeyboardMouse.cpp) - `ANYPS5_MOUSE_GYRO=1` maps captured mouse movement to gyro rates with a fixed scale of 0.001 rad per count; the scale is not calibrated against a real controller, and the accelerometer stays at rest.
