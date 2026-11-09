@@ -22,7 +22,7 @@ public:
         declaredFloatMode = mode;
         floatMode = mode;
         ieeeMode = mode.has_value() && mode->ieeeMode;
-        rounding = RoundingState{static_cast<std::uint8_t>(mode.has_value() ? mode->floatMode & ModeRoundBits : 0u), 0u};
+        rounding = RoundingState{static_cast<std::uint8_t>(mode.has_value() ? mode->floatMode & ModeTrackedBits : ModeUndeclaredSeed), 0u};
     }
     void SetEntryRounding(const RoundingState& state) { setRounding(state); }
     void SetNativeFloat16(bool enabled, bool fma) { nativeFloat16 = enabled; nativeFloat16Fma = enabled && fma; }
@@ -239,7 +239,6 @@ private:
     bool minMaxF16(const RdnaInstruction& inst, IrOpcode opcode);
     bool vDivScaleF32(const RdnaInstruction& inst);
     bool vDivFmasF32(const RdnaInstruction& inst);
-    IrValue& fmaScaledF32(IrValue& lhs, IrValue& rhs, IrValue& addend, IrValue& powerHigh);
     bool vDivFixupF32(const RdnaInstruction& inst);
     bool vFrexpMantF32(const RdnaInstruction& inst);
     bool vFmaLegacyF32(const RdnaInstruction& inst, bool accumulate);
