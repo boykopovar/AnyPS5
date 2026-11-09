@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <unordered_set>
 
 namespace ShaderRecompiler {
 namespace {
@@ -739,16 +740,168 @@ void EmitStructuredInstruction(SpirvValueEmitContext& ctx, StructuredFunctionSta
     EmitDirectInstruction(ctx, inst);
 }
 
+const IrValue* RegionNanCondition(const IrValue* test) {
+    test = test->Resolve();
+    if (test->Opcode() == IrOpcode::LogicalAnd && test->Flags<std::uint64_t>() == 0u) {
+        for (const auto* argument : test->Arguments()) if (const auto* source = RegionNanCondition(argument)) return source;
+    }
+    if (test->Opcode() != IrOpcode::UGreaterThan32 || test->Flags<std::uint64_t>() != 0u) return nullptr;
+    const auto* limit = test->Argument(1)->Resolve();
+    if (!limit->HasImmediate() || limit->ImmediateU32() != 0x7f800000u) return nullptr;
+    const auto* magnitude = test->Argument(0)->Resolve();
+    if (magnitude->Opcode() != IrOpcode::BitwiseAnd32 || magnitude->Flags<std::uint64_t>() != 0u) return nullptr;
+    for (std::size_t index = 0u; index < 2u; ++index) {
+        const auto* mask = magnitude->Argument(index)->Resolve();
+        if (mask->HasImmediate() && mask->ImmediateU32() == 0x7fffffffu) return magnitude->Argument(1u - index)->Resolve();
+    }
+    return nullptr;
+}
+
+const IrValue* RegionNanSource(const IrValue* select) {
+    if (select->Opcode() != IrOpcode::SelectU32 && select->Opcode() != IrOpcode::SelectF32) return nullptr;
+    return select->Flags<std::uint64_t>() == 0u ? RegionNanCondition(select->Argument(0)) : nullptr;
+}
+
+bool RegionArithmetic(const IrValue* inst) {
+    if (inst->Flags<std::uint64_t>() != 0u) return false;
+    switch (inst->Opcode()) {
+        case IrOpcode::BitCastU32F32:
+        case IrOpcode::BitCastF32U32:
+        case IrOpcode::BitwiseAnd32:
+        case IrOpcode::BitwiseOr32:
+        case IrOpcode::BitwiseXor32:
+        case IrOpcode::IEqual32:
+        case IrOpcode::INotEqual32:
+        case IrOpcode::ULessThan32:
+        case IrOpcode::UGreaterThan32:
+        case IrOpcode::LogicalNot:
+        case IrOpcode::LogicalAnd:
+        case IrOpcode::LogicalOr:
+        case IrOpcode::SelectU32:
+        case IrOpcode::SelectF32:
+        case IrOpcode::SelectU1:
+        case IrOpcode::IAdd32:
+        case IrOpcode::ISub32:
+        case IrOpcode::FPMul32:
+        case IrOpcode::FPAdd32:
+        case IrOpcode::FPSub32:
+        case IrOpcode::FPFma32:
+        case IrOpcode::FPMad32:
+        case IrOpcode::FPAbs32:
+        case IrOpcode::FPNeg32:
+        case IrOpcode::FPOrdLessThan32:
+        case IrOpcode::FPOrdLessThanEqual32:
+        case IrOpcode::FPOrdGreaterThan32:
+        case IrOpcode::FPOrdGreaterThanEqual32:
+        case IrOpcode::FPSin:
+        case IrOpcode::FPCos:
+        case IrOpcode::FPFract32:
+        case IrOpcode::FPFloor32:
+        case IrOpcode::FPRoundEven32:
+        case IrOpcode::FPSaturate32:
+            return true;
+        default: return false;
+    }
+}
+
+bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>& region, const std::unordered_set<const IrValue*>& metadata) {
+    std::unordered_set<const IrValue*> members(region.begin(), region.end());
+    std::vector<const IrValue*> outputs;
+    for (const auto* value : region) {
+        bool outside = metadata.contains(value);
+        for (const auto& use : value->OperandUses()) outside |= !members.contains(use.user);
+        if (outside) outputs.push_back(value);
+    }
+    std::unordered_set<const IrValue*> live;
+    std::unordered_set<const IrValue*> uniqueSources;
+    std::vector<const IrValue*> sources;
+    std::unordered_set<const IrValue*> bypassed;
+    const auto mark = [&](const auto& self, const IrValue* value) -> void {
+        value = value->Resolve();
+        if (!members.contains(value) || !live.insert(value).second) return;
+        if (const auto* source = RegionNanSource(value)) {
+            bypassed.insert(value);
+            if (uniqueSources.insert(source).second) sources.push_back(source);
+            self(self, source);
+            self(self, value->Argument(2));
+        } else for (const auto* argument : value->Arguments()) self(self, argument);
+    };
+    for (const auto* output : outputs) mark(mark, output);
+    if (bypassed.size() < 2u) return false;
+    auto exact = ctx;
+    auto& state = ctx.state;
+    auto magnitude = ConstantU32(state, 0u);
+    const auto accumulate = [&](const IrValue* value) {
+        const auto bits = Binary(state, spv::OpBitwiseAnd, TypeU32(state), ctx.Def(value), ConstantU32(state, 0x7fffffffu));
+        magnitude = EmitMinMaxU32Value(state, magnitude, bits, true);
+    };
+    for (const auto* value : sources) if (!members.contains(value)) accumulate(value);
+    for (const auto* value : region) {
+        if (!live.contains(value)) continue;
+        if (bypassed.contains(value)) ctx.Define(*value, ctx.Def(value->Argument(2)));
+        else EmitDirectInstruction(ctx, *value);
+        if (uniqueSources.contains(value)) accumulate(value);
+    }
+    const auto special = Binary(state, spv::OpUGreaterThan, TypeBool(state), magnitude, ConstantU32(state, 0x7f800000u));
+    const auto fastLabel = state.currentLabel;
+    const auto exceptional = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlDontFlattenMask);
+    state.module.AddFunction(spv::OpBranchConditional, special, exceptional, merge);
+    EmitLabel(state, exceptional);
+    for (const auto* value : region) EmitDirectInstruction(exact, *value);
+    const auto exactLabel = state.currentLabel;
+    state.module.AddFunction(spv::OpBranch, merge);
+    EmitLabel(state, merge);
+    for (const auto* output : outputs) {
+        const auto result = state.module.AllocateId();
+        state.module.AddFunction(spv::OpPhi, TypeId(state, output->Type()), result, ctx.Def(output), fastLabel, exact.Def(output), exactLabel);
+        ctx.definitions[output] = result;
+    }
+    return true;
+}
+
 void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& functionState, const IrBlock* block) {
     auto& state = ctx.state;
     state.currentBlock = block;
     EmitLabel(state, ctx.Label(block));
+    std::unordered_set<const IrValue*> metadata;
+    const auto retain = [&](const IrValue* value) { if (value != nullptr) metadata.insert(value->Resolve()); };
+    for (const auto& info : state.program.Metadata().blockInfo) { retain(info.condition); retain(info.indirectTarget); }
+    for (const auto* value : state.program.Metadata().dynamicReads) retain(value);
+    for (const auto& descriptor : state.program.Resources().descriptorSources) for (const auto* value : descriptor.dwords) retain(value);
+    std::unordered_map<const IrValue*, std::vector<const IrValue*>> regions;
+    std::unordered_set<const IrValue*> grouped;
+    const auto* info = BlockInfoFor(state.program, block);
+    if (state.laneCount == 1u && !state.continueTarget && info != nullptr && !info->terminator.loopHeader) {
+        std::vector<const IrValue*> region;
+        const auto finish = [&] {
+            if (region.size() > 1u) {
+                std::size_t queries = 0u;
+                for (const auto* value : region) queries += RegionNanSource(value) != nullptr;
+                if (queries > 1u) {
+                    regions.emplace(region.front(), region);
+                    grouped.insert(region.begin(), region.end());
+                }
+            }
+            region.clear();
+        };
+        for (const auto* value : block->Instructions()) {
+            if (RegionArithmetic(value)) region.push_back(value);
+            else finish();
+        }
+        finish();
+    }
     bool emittedNonPhi = false;
     // Wave LDS ordering (see WaveLdsScope): a barrier separates an LDS write from the next LDS access
     // and a read from the next write. The block may be entered right after a write.
     bool ldsWritten = true;
     bool ldsRead = false;
     for (const IrValue* inst : block->Instructions()) {
+        if (const auto found = regions.find(inst); found != regions.end()) {
+            if (!EmitNanRegion(ctx, found->second, metadata)) for (const auto* value : found->second) EmitDirectInstruction(ctx, *value);
+        }
+        if (grouped.contains(inst)) { emittedNonPhi = true; continue; }
         if (inst->Opcode() == IrOpcode::Phi) {
             if (emittedNonPhi) {
                 ctx.Fail(*inst, "appears after a non-Phi instruction");
