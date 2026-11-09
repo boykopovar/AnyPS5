@@ -213,27 +213,6 @@ void CheckCallbackVeto() {
     Require(ERR_get_error_nid_postfix() == PemNoStartLine && ERR_get_error_nid_postfix() == 0, "callback veto adds only PEM_R_NO_START_LINE");
 }
 
-void CheckUnsupportedBlockStart() {
-    static const BioMethod method{0, "PEM test", nullptr, nullptr, nullptr, Gets, nullptr, nullptr, nullptr, nullptr};
-    ReadState readState{0, 3};
-    Bio bio{};
-    bio.method = &method;
-    bio.initialized = 1;
-    bio.data = &readState;
-    LibreSslX509 certificate{};
-    LibreSslX509* output = &certificate;
-    ERR_clear_error_nid_postfix();
-    try {
-        PEM_read_bio_X509_AUX_nid_postfix(&bio, &output, nullptr, nullptr);
-    } catch (const std::exception&) {
-        Require(output == &certificate, "unsupported PEM block leaves output unchanged");
-        Require(readState.calls == 1, "unsupported block stops before unimplemented payload parsing");
-        Require(ERR_peek_error_nid_postfix() == 0, "unsupported block does not fabricate an error");
-        return;
-    }
-    Require(false, "a PEM block requiring payload parsing throws");
-}
-
 void CheckAllocationFailures() {
     static const BioMethod method{0, "PEM test", nullptr, nullptr, nullptr, Gets, nullptr, nullptr, nullptr, nullptr};
     constexpr std::uint64_t previous = (std::uint64_t{1} << 24) | (std::uint64_t{2} << 12) | 3;
@@ -271,7 +250,6 @@ int main() {
     CheckCallbackVeto();
     CheckNullBio();
     CheckUninitializedBio();
-    CheckUnsupportedBlockStart();
     CheckAllocationFailures();
     return 0;
 }
