@@ -147,6 +147,7 @@ struct DeviceFunctions {
 
 // Per-thread count of vkGetDeviceProcAddr lookups made through Context::Function (the [vk] line).
 std::uint64_t& DeviceProcLookups();
+void BeforeCommandLookup(VkDevice device);
 
 inline constexpr std::size_t EmptyBufferBytes = 16;
 
@@ -297,6 +298,7 @@ struct Context {
     TFunction Function(const char* name) const {
         Require(deviceProc != nullptr, "missing Vulkan device function resolver");
         ++DeviceProcLookups();
+        if (name[0] == 'v' && name[1] == 'k' && name[2] == 'C' && name[3] == 'm' && name[4] == 'd') BeforeCommandLookup(device);
         const auto function = reinterpret_cast<TFunction>(deviceProc(device, name));
         if (function == nullptr) throw std::runtime_error(std::string("AGC graphics: missing Vulkan function: ") + name);
         return function;

@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RECORDER_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/BarrierBatch.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/CommandEncoder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PassHazards.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
@@ -49,7 +50,7 @@ class DeviceBuffer;
 class Recorder {
 public:
     // `timelineSemaphores`: the device enabled VK_KHR_timeline_semaphore (WaitSerial is usable).
-    explicit Recorder(const Context& context, bool timelineSemaphores = false);
+    explicit Recorder(const Context& context, bool timelineSemaphores = false, DeviceFunctions* encodedFunctions = nullptr, std::uint32_t queueFamily = 0);
     ~Recorder();
     Recorder(const Recorder&) = delete;
     Recorder& operator=(const Recorder&) = delete;
@@ -474,6 +475,23 @@ public:
     // there must not have a publish recorded for it (UnitShadow), see SyncThrough.
     static bool InCompletion();
     void Activate();
+    bool BeginEncoding();
+    void EndEncoding();
+    bool Encodes() const { return encoder != nullptr; }
+    class EncodingWindow {
+    public:
+        explicit EncodingWindow(Recorder& recorder) : recorder(recorder), opened(recorder.BeginEncoding()) {}
+        ~EncodingWindow() {
+            if (opened) recorder.EndEncoding();
+        }
+        EncodingWindow(const EncodingWindow&) = delete;
+        EncodingWindow& operator=(const EncodingWindow&) = delete;
+
+    private:
+        Recorder& recorder;
+        bool opened;
+    };
+    CommandEncoder::Statistics EncoderCounts() const { return encoder != nullptr ? encoder->Counts() : CommandEncoder::Statistics{}; }
     // APS5_PROFILE_DRAW: syncs by source (0 device idle, 1 CPU access to pending writes, 2 CPU read
     // after a recorded store, 3 address-based dispatch, 4 other). Contract: the call announces the
     // source for the Sync/SyncThrough this thread makes NEXT, which consumes it (a sync without a
@@ -616,6 +634,7 @@ private:
     };
     struct Batch {
         VkCommandBuffer commands = VK_NULL_HANDLE;
+        VkCommandPool pool = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
         std::size_t keptBytes = 0;
@@ -924,6 +943,15 @@ private:
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};
     std::unique_ptr<Batch> open;
+    VkCommandPool encoderPool = VK_NULL_HANDLE;
+    std::unique_ptr<CommandEncoder> encoder;
+    void quiesce() {
+        if (encoder != nullptr) encoder->Quiesce();
+    }
+    VkCommandBuffer live() {
+        quiesce();
+        return open->commands;
+    }
     std::vector<std::shared_ptr<void>> holdKept;
     std::uint64_t holdKeptSerial = 0;
     std::deque<std::unique_ptr<Batch>> inFlight;

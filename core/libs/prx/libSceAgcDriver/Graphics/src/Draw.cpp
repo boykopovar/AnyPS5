@@ -2874,6 +2874,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     VkDeviceSize argumentOffset = 0;
     bool rewritten = false;
     if (!meshIndirect && !inputs.restartTable.empty()) meshArguments = directMeshArguments(context, draw, inputs.restartTable);
+    std::optional<Recorder::EncodingWindow> encoding(std::in_place, *recorder);
     if (continued) {
         record.pipeline->Continue(commands, state);
     } else {
@@ -2952,6 +2953,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         record.pipeline->ContinueSecondChannel(commands);
         recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     }
+    encoding.reset();
     recorder->EndGpuTiming(eachDrawTiming);
     if (meshArguments != nullptr) recorder->Keep(meshArguments);
     if (state.tessellationCapture != nullptr) {
