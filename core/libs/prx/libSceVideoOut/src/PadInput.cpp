@@ -466,6 +466,19 @@ PadInputState PadInput::sampleController(int slot) const {
 
 namespace {
 
+void printHostMenu(const HostMenu::Menu& menu) {
+    if (!menu.IsOpen()) {
+        APS5_LOG_ERR("%s", "host menu closed");
+        return;
+    }
+    std::string text = "host menu (Up/Down, Enter, Escape):";
+    for (std::size_t index = 0; index < menu.Entries().size(); ++index) {
+        text += index == menu.Cursor() ? "\n  > " : "\n    ";
+        text += menu.Entries()[index].label;
+    }
+    APS5_LOG_ERR("%s", text.c_str());
+}
+
 Pad::InputRequests requestsFor(HostMenu::Action action) {
     Pad::InputRequests requests;
     switch (action) {
@@ -548,7 +561,10 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     keyboardMouse.SetTitleReadsMouse(MouseIsOpen_nid_no_patch());
     const auto requests = keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now());
     if (requests.reloadInputMapping) reloadInputMapping();
-    if (requests.hostMenu) hostMenu.Toggle();
+    if (requests.hostMenu) {
+        hostMenu.Toggle();
+        printHostMenu(hostMenu);
+    }
     applyHostRequests(window, event.key.windowID, requests);
     if (requests.toggleMouse) setMouseMode(!keyboardMouse.MouseMode());
     if (event.type != SDL_MOUSEMOTION) publish(window.FrameNumber(), 0);
