@@ -1,7 +1,6 @@
 add_library(libSceFreeTypeOt SHARED EXCLUDE_FROM_ALL Export.cpp ../libSceFreeType/src/OutlineBorders.cpp
         ../libSceFreeType/src/OutlineDecompose.cpp ../libSceFreeType/src/OutlineOrientation.cpp ../libSceFreeType/src/Trigonometry.cpp
         ../libSceFreeType/src/MemoryRecord.cpp)
-target_sources(libSceFreeTypeOt PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/AdditionalExports.cpp)
 target_include_directories(libSceFreeTypeOt PRIVATE ${LIBS_INCLUDE_DIR})
 include("${CMAKE_CURRENT_LIST_DIR}/Stream.cmake")
 target_link_libraries(libSceFreeTypeOt PRIVATE freetype)
