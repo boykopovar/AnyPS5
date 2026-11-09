@@ -104,6 +104,11 @@ void VerifyLoggedInUser(int userId) {
 }
 
 int main() {
+    std::uint64_t preinitAccountId = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, &preinitAccountId) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(preinitAccountId == 0x5a5a5a5a5a5a5a5aull);
+    Require(sceUserServiceGetNpAccountId(123, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     int foreground = -1;
     Require(sceUserServiceGetForegroundUser(&foreground) == USER_SERVICE_OK);
@@ -406,5 +411,6 @@ int main() {
     }
     VerifyLoggedInUser(USER_SERVICE_INITIAL_USER_ID);
 
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
     return 0;
 }

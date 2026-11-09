@@ -225,6 +225,12 @@ void RequireNotInitialized() {
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(event.user_id == static_cast<int>(0xAAAAAAAAu));
     Require(sceUserServiceGetEvent(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    std::uint64_t accountId = 0x5a5a5a5a5a5a5a5aull;
+    for (int userId : {USER_SERVICE_INITIAL_USER_ID, USER_SERVICE_INITIAL_USER_ID + 1, 123, USER_SERVICE_USER_ID_INVALID}) {
+        Require(sceUserServiceGetNpAccountId(userId, &accountId) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+        Require(accountId == 0x5a5a5a5a5a5a5a5aull);
+        Require(sceUserServiceGetNpAccountId(userId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    }
 }
 
 void RequireLoginOnce() {
