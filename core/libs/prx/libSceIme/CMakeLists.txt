@@ -1,5 +1,6 @@
-add_library(libSceIme SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ModalDialog.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PsnDialogNotice.cpp)
-target_include_directories(libSceIme PRIVATE ${LIBS_INCLUDE_DIR})
+add_library(libSceIme SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ModalDialog.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PsnDialogNotice.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ImeClipboard.cpp)
+target_include_directories(libSceIme PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+target_link_libraries(libSceIme PRIVATE SDL2-static)
 configure_windows_unwind(libSceIme)
 
 if(BUILD_TESTING)
