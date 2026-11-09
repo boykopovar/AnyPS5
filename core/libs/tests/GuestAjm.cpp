@@ -1010,10 +1010,42 @@ void TestBatchCancel(std::uint32_t context) {
     Require(sceAjmBatchCancel(context, id + 1) == invalidBatch);
 }
 
+void TestInstanceContextOwnership(std::uint32_t context) {
+    constexpr int invalidContext = static_cast<int>(0x80930002);
+    constexpr int invalidInstance = static_cast<int>(0x80930003);
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+    std::uint32_t untouched = 0xfeedu;
+    Require(sceAjmInstanceCreate(0, 24, 0, &untouched) == invalidContext);
+    Require(untouched == 0xfeedu);
+    Require(sceAjmInstanceCreate(0xffffffffu, 24, 0, &untouched) == invalidContext);
+    Require(untouched == 0xfeedu);
+    Require(sceAjmInstanceCreate(0, 24, 0, nullptr) == invalidContext);
+    Require(sceAjmInstanceCreate(context, 24, 0, nullptr) == invalidParameter);
+    std::uint32_t other = 0;
+    Require(sceAjmInitialize(0, &other) == 0 && other != context);
+    std::uint32_t first = 0;
+    std::uint32_t second = 0;
+    Require(sceAjmInstanceCreate(context, 24, 0, &first) == 0);
+    Require(sceAjmInstanceCreate(other, 24, 0, &second) == 0);
+    Require(sceAjmInstanceDestroy(0, first) == invalidContext);
+    Require(sceAjmInstanceDestroy(0xffffffffu, first) == invalidContext);
+    Require(sceAjmInstanceDestroy(other, first) == invalidInstance);
+    Require(sceAjmInstanceDestroy(context, second) == invalidInstance);
+    Require(sceAjmInstanceDestroy(context, 0) == invalidInstance);
+    Require(sceAjmInstanceDestroy(other, 0xffffffffu) == invalidInstance);
+    Require(sceAjmInstanceDestroy(context, first) == 0);
+    Require(sceAjmInstanceDestroy(context, first) == invalidInstance);
+    Require(sceAjmInstanceDestroy(other, second) == 0);
+    Require(sceAjmInstanceDestroy(other, second) == invalidInstance);
+    Require(sceAjmFinalize(other) == 0);
+}
+
 void TestBatchContextOwnership(std::uint32_t context) {
     constexpr int invalidContext = static_cast<int>(0x80930002);
     constexpr int invalidBatch = static_cast<int>(0x80930004);
     std::uint32_t other = 0;
+    std::uint32_t refused = 0xdeadbeefu;
+    Require(sceAjmInitialize(reinterpret_cast<std::intptr_t>(&refused), &refused) == static_cast<int>(0x80930005) && refused == 0xdeadbeefu);
     Require(sceAjmInitialize(0, &other) == 0 && other != context);
     std::vector<std::uint8_t> storage(256);
     AjmBatchInfo info{};
@@ -2621,6 +2653,10 @@ int main(int argc, char** argv) {
     std::uint32_t context = 0;
     Require(sceAjmInitialize(0, nullptr) == invalidParameter);
     Require(sceAjmInitialize(0, &context) == 0 && context != 0);
+    Require(sceAjmModuleRegister(context, 0, 1) == invalidParameter);
+    Require(sceAjmModuleRegister(context, 0, -1) == invalidParameter);
+    Require(sceAjmModuleRegister(context, 0, 0) == 0);
+    Require(sceAjmModuleUnregister(context, 0) == 0);
 
     const std::uint8_t stereo48k[4] = {0xFE, 0x72, 0x1F, 0xF0};
     AjmDecAt9ConfigDataInfo info{};
@@ -2668,6 +2704,7 @@ int main(int argc, char** argv) {
     TestBatchWaitRelease(context);
     TestInstanceHandleLifetime(context);
     TestBatchCancel(context);
+    TestInstanceContextOwnership(context);
     TestBatchContextOwnership(context);
     TestControlAt9(context);
     TestMultichannelAt9(context);
