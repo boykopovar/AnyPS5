@@ -1,4 +1,5 @@
 #include "prx/libSceGameCustomDataDialog/include/Api.hpp"
+#include <cerrno>
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
@@ -54,7 +55,10 @@ int APS5_VABI sceGameCustomDataDialogGetResultA(void* result) {
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
     const std::int32_t canceled = COMMON_DIALOG_RESULT_USER_CANCELED;
-    std::memcpy(result, &canceled, sizeof(canceled));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &canceled, sizeof(canceled));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
     return 0;
 }
 
@@ -70,11 +74,13 @@ int APS5_VABI sceGameCustomDataDialogTerminate(void) {
 }
 
 int APS5_VABI sceGameCustomDataDialogGetResult() {
+    if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGameCustomDataDialogOpen() {
+    if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
