@@ -92,21 +92,45 @@ std::uint32_t possibleU32BitsDepth(const IrValue* value, std::uint32_t depth) {
             return value->ArgumentCount() >= 1u ? possibleU32BitsDepth(value->Argument(0), depth - 1u) : std::numeric_limits<std::uint32_t>::max();
         case IrOpcode::SelectU32:
             return value->ArgumentCount() == 3u ? (possibleU32BitsDepth(value->Argument(1), depth - 1u) | possibleU32BitsDepth(value->Argument(2), depth - 1u)) : std::numeric_limits<std::uint32_t>::max();
-        case IrOpcode::IAdd32: {
-            if (value->ArgumentCount() != 2u) return std::numeric_limits<std::uint32_t>::max();
-            const auto add = [&](const IrValue* left, const IrValue* right) {
-                const auto* immediate = right->Resolve();
-                if (!immediate->HasImmediate() || immediate->Type() != IrType::U32) return std::numeric_limits<std::uint32_t>::max();
-                const auto upper = possibleU32BitsDepth(left, depth - 1u);
-                const auto increment = immediate->ImmediateU32();
-                return upper > std::numeric_limits<std::uint32_t>::max() - increment ? std::numeric_limits<std::uint32_t>::max() : upper + increment;
-            };
-            const auto first = add(value->Argument(0), value->Argument(1));
-            return first != std::numeric_limits<std::uint32_t>::max() ? first : add(value->Argument(1), value->Argument(0));
+        default:
+            return std::numeric_limits<std::uint32_t>::max();
+    }
+}
+
+std::uint32_t possibleU32Bits(const IrValue* value) {
+    return possibleU32BitsDepth(value, 8u);
+}
+
+std::uint32_t possibleU32UpperBoundDepth(const IrValue* value, std::uint32_t depth) {
+    value = value->Resolve();
+    if (value->HasImmediate()) {
+        return value->Type() == IrType::U32 ? value->ImmediateU32() : std::numeric_limits<std::uint32_t>::max();
+    }
+    if (depth == 0u) return std::numeric_limits<std::uint32_t>::max();
+    const auto add = [](std::uint32_t left, std::uint32_t right) {
+        return left > std::numeric_limits<std::uint32_t>::max() - right ? std::numeric_limits<std::uint32_t>::max() : left + right;
+    };
+    switch (value->Opcode()) {
+        case IrOpcode::BitwiseAnd32:
+            return std::min(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u));
+        case IrOpcode::BitwiseOr32:
+            return add(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u));
+        case IrOpcode::ShiftLeftLogical32: {
+            const IrValue* shift = value->Argument(1)->Resolve();
+            if (!shift->HasImmediate() || shift->Type() != IrType::U32) return std::numeric_limits<std::uint32_t>::max();
+            const auto bits = shift->ImmediateU32() & 31u;
+            const auto upper = possibleU32UpperBoundDepth(value->Argument(0), depth - 1u);
+            return bits != 0u && upper > (std::numeric_limits<std::uint32_t>::max() >> bits) ? std::numeric_limits<std::uint32_t>::max() : upper << bits;
         }
+        case IrOpcode::ReadFirstLane:
+            return value->ArgumentCount() >= 1u ? possibleU32UpperBoundDepth(value->Argument(0), depth - 1u) : std::numeric_limits<std::uint32_t>::max();
+        case IrOpcode::SelectU32:
+            return value->ArgumentCount() == 3u ? (possibleU32UpperBoundDepth(value->Argument(1), depth - 1u) | possibleU32UpperBoundDepth(value->Argument(2), depth - 1u)) : std::numeric_limits<std::uint32_t>::max();
+        case IrOpcode::IAdd32:
+            return value->ArgumentCount() == 2u ? add(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u)) : std::numeric_limits<std::uint32_t>::max();
         case IrOpcode::Phi: {
             std::uint32_t upper = 0;
-            for (std::uint32_t index = 0; index < value->ArgumentCount(); ++index) upper |= possibleU32BitsDepth(value->Argument(index), depth - 1u);
+            for (std::uint32_t index = 0; index < value->ArgumentCount(); ++index) upper |= possibleU32UpperBoundDepth(value->Argument(index), depth - 1u);
             return upper;
         }
         case IrOpcode::FindILsb32:
@@ -117,8 +141,8 @@ std::uint32_t possibleU32BitsDepth(const IrValue* value, std::uint32_t depth) {
     }
 }
 
-std::uint32_t possibleU32Bits(const IrValue* value) {
-    return possibleU32BitsDepth(value, 8u);
+std::uint32_t possibleU32UpperBound(const IrValue* value) {
+    return possibleU32UpperBoundDepth(value, 8u);
 }
 
 std::uint32_t byteExtent(const MemoryInfo& memory) {
@@ -904,7 +928,7 @@ private:
         column.addend = addend;
         column.offset = first;
         column.dwordCount = words;
-        column.maxKey = possibleU32Bits(key);
+        column.maxKey = possibleU32UpperBound(key);
         column.sampler = sampler;
         column.address = address;
         column.buffer = buffer;
@@ -1102,7 +1126,7 @@ private:
         column.addend = addend;
         column.offset = first;
         column.dwordCount = words;
-        column.maxKey = merged ? 0xffffffffu : possibleU32Bits(key);
+        column.maxKey = merged ? 0xffffffffu : possibleU32UpperBound(key);
         column.sampler = sampler;
         column.indirect = true;
         column.buffer = buffer;
