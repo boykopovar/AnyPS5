@@ -244,4 +244,30 @@ public:
     DecisionHandler decisionHandler;
 };
 
+class Inspector final : public ObjectOf<ObjectType::Inspector> {
+public:
+    bool isAttached = false;
+    bool isConnected = false;
+    bool isElementSelectionActive = false;
+    bool isFront = false;
+    bool isProfilingPage = false;
+    bool isVisible = false;
+};
+
+class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
+public:
+    bool decided = false;
+    bool allowed = false;
+
+    void Allow() {
+        decided = true;
+        allowed = true;
+    }
+
+    void Deny() {
+        decided = true;
+        allowed = false;
+    }
+};
+
 }  // namespace NKWebKit
