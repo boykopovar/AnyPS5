@@ -401,7 +401,15 @@ if(BUILD_TESTING)
     if(ANYPS5_ENABLE_ASAN)
         set_tests_properties(agc_driver_recorder PROPERTIES TIMEOUT 120)
     endif()
+    add_test(NAME agc_driver_recorder_deferred_encode COMMAND agc_driver_recorder_tests)
+    add_test(NAME agc_driver_recorder_deferred_encode_verify COMMAND agc_driver_recorder_tests)
+    set_tests_properties(agc_driver_recorder_deferred_encode PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
+        ENVIRONMENT "APS5_ASYNC_SUBMIT=1;APS5_DEFERRED_ENCODE=1")
+    set_tests_properties(agc_driver_recorder_deferred_encode_verify PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
+        ENVIRONMENT "APS5_ASYNC_SUBMIT=1;APS5_DEFERRED_ENCODE=1;APS5_VERIFY_DEFERRED_ENCODE=1")
     if(WIN32)
+        set_tests_properties(agc_driver_recorder_deferred_encode agc_driver_recorder_deferred_encode_verify PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         add_test(NAME agc_storage_cpu_snapshot COMMAND agc_driver_recorder_tests --storage-cpu-snapshot-only)
         set_tests_properties(agc_storage_cpu_snapshot PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 SKIP_RETURN_CODE 77
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")

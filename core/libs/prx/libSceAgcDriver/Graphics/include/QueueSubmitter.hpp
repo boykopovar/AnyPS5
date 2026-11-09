@@ -7,10 +7,13 @@
 #include <cstdint>
 #include <deque>
 #include <exception>
+#include <memory>
 #include <mutex>
 #include <thread>
 
 namespace AgcDriver::Graphics {
+
+class EncodeTicket;
 
 class QueueSubmitter {
 public:
@@ -21,13 +24,14 @@ public:
         std::uint64_t waitValue = 0;
         VkSemaphore signal = VK_NULL_HANDLE;
         std::uint64_t signalValue = 0;
+        std::shared_ptr<EncodeTicket> encode;
     };
 
     static bool Enabled();
     static QueueSubmitter& For(VkDevice device, VkQueue queue, PFN_vkQueueSubmit submit, PFN_vkDeviceWaitIdle waitIdle);
     static QueueSubmitter* Existing(VkQueue queue);
 
-    void Enqueue(const Job& job);
+    void Enqueue(Job job);
     void Drain();
     void RethrowFailure();
     AgcDriver::Mutex& QueueMutex() { return queueMutex; }
