@@ -805,8 +805,8 @@ std::array<std::array<float, 4>, OverlayColorCount> ColorblindOverlayPalette(std
 }
 
 std::array<std::array<float, 4>, OverlayColorCount> OverlayPalette(VkFormat format, VkColorSpaceKHR colorSpace) {
-        static const bool colorblind = std::getenv("ANYPS5_OVERLAY_PALETTE") != nullptr && std::string_view(std::getenv("ANYPS5_OVERLAY_PALETTE")) == "colorblind";
-std::array<std::array<float, 4>, OverlayColorCount> palette{{{0.0f, 0.0f, 0.0f, 0.6f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.35f, 0.8f, 0.35f, 1.0f}, {0.06f, 0.07f, 0.09f, 0.94f}, {0.22f, 0.24f, 0.29f, 1.0f}, {1.0f, 0.78f, 0.2f, 1.0f}, {0.0f, 0.0f, 0.0f, 1.0f}}};
+    static const bool colorblind = std::getenv("ANYPS5_OVERLAY_PALETTE") != nullptr && std::string_view(std::getenv("ANYPS5_OVERLAY_PALETTE")) == "colorblind";
+    std::array<std::array<float, 4>, OverlayColorCount> palette{{{0.0f, 0.0f, 0.0f, 0.6f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.35f, 0.8f, 0.35f, 1.0f}, {0.06f, 0.07f, 0.09f, 0.94f}, {0.22f, 0.24f, 0.29f, 1.0f}, {1.0f, 0.78f, 0.2f, 1.0f}, {0.0f, 0.0f, 0.0f, 1.0f}}};
     if (colorblind) palette = ColorblindOverlayPalette(palette);
     if (colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT) {
         for (auto& color : palette) {
