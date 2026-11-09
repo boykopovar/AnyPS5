@@ -258,6 +258,7 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
         return requests;
     }
     if (event.type == SDL_MOUSEMOTION) {
+        if (mouseTouch) mouseTouch = touchAt(event.motion.x, event.motion.y);
         if (mouseMode && !titleReadsMouse) mouse.Move(event.motion.xrel, event.motion.yrel);
         return requests;
     }
