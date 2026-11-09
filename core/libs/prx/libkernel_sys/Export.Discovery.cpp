@@ -742,9 +742,9 @@ int APS5_VABI sceKernelGetCompiledSdkVersionByPath(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetCompiledSdkVersionByPid(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelGetCompiledSdkVersionByPid(int pid, std::int32_t* version) {
+    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return static_cast<int>(0x80020003);
+    return sceKernelGetCompiledSdkVersion(version);
 }
 
 int APS5_VABI sceKernelGetCoredumpAppInfo(void) {
@@ -973,11 +973,6 @@ int APS5_VABI sceKernelGetRenderingMode(void) {
 }
 
 int APS5_VABI sceKernelGetResidentCount(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelGetResidentFmemCount(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
