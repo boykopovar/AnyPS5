@@ -43,3 +43,7 @@ int GetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, void* value
 
 extern "C" int GuestSocketSetIpv6LevelOption_nid_no_patch(std::uintptr_t native, bool ipv6, int option, const void* value, std::uint32_t length);
 extern "C" int GuestSocketGetIpv6LevelOption_nid_no_patch(std::uintptr_t native, bool ipv6, int option, void* value, std::uint32_t* length);
+extern "C" int GuestSocketSetLinger_nid_no_patch(std::uintptr_t native, const void* value, std::uint32_t length);
+extern "C" int GuestSocketGetLinger_nid_no_patch(std::uintptr_t native, void* value, std::uint32_t* length);
+
+extern "C" int GuestSocketSetReuseFlags_nid_no_patch(std::uintptr_t native, int option, int value, int* flags);
