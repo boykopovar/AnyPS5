@@ -635,6 +635,28 @@ void reloadErrorNamesLine() {
     require(Pad::TryLoadInputMapping("", configuration, error) && crossOnKey(configuration, SDL_SCANCODE_F), "a valid file reloads");
 }
 
+std::uint32_t padChordOf(const Pad::InputConfiguration& configuration, Pad::InputControl control) {
+    for (const auto& binding : configuration.bindings) {
+        if (binding.control == control && binding.padButtons != 0) return binding.padButtons;
+    }
+    return 0;
+}
+
+void padChordParse() {
+    useConfig("ToggleFullscreen = PAD:Options+R1\nScreenshot = pad:l1\n");
+    const auto configuration = Pad::LoadInputMapping();
+    const auto fullscreen = static_cast<std::uint32_t>(Pad::PadButton::Options) | static_cast<std::uint32_t>(Pad::PadButton::R1);
+    require(padChordOf(configuration, Pad::InputControl::ToggleFullscreen) == fullscreen, "a pad chord is a mask of its buttons");
+    require(padChordOf(configuration, Pad::InputControl::Screenshot) == static_cast<std::uint32_t>(Pad::PadButton::L1), "a single pad button is a chord");
+    require(keysFor(Pad::InputControl::ToggleFullscreen).size() == 0, "a pad chord does not bind a key");
+    require(rejects("Cross = PAD:L1\n"), "a pad chord cannot trigger a pad button");
+    require(rejects("ToggleMouse = PAD:L1\n"), "a pad chord cannot trigger ToggleMouse");
+    require(rejects("ToggleFullscreen = PAD:Options+\n"), "a pad chord with an empty button is rejected");
+    require(rejects("ToggleFullscreen = PAD:+R1\n"), "a pad chord with a leading plus is rejected");
+    require(rejects("ToggleFullscreen = PAD:Nope\n"), "a pad chord with an unknown button is rejected");
+    require(rejects("ToggleFullscreen = PAD:\n"), "an empty pad chord is rejected");
+}
+
 }
 
 int main() try {
