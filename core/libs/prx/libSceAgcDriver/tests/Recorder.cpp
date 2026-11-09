@@ -4432,6 +4432,71 @@ bool bdaStagingTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+bool carriedShadowTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    if (context.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: carried shadows not tested\n";
+        return false;
+    }
+    constexpr std::size_t bytes = 4u << 20u;
+    void* block = AllocateWatched(bytes, 65536);
+    Require(block != nullptr, "cannot allocate the test block");
+    struct Cleanup {
+        const Context& context;
+        void* block;
+        ~Cleanup() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
+            ReleaseWatched(block, bytes);
+        }
+    };
+    std::memset(block, 0x11, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    const Cleanup cleanup{context, block};
+    if (HostImportFor(context, address, bytes) == nullptr) {
+        std::cout << "host import of the test block refused: carried shadows not tested\n";
+        return false;
+    }
+    const auto element = address + 4096;
+    constexpr std::size_t elementBytes = 1u << 20u;
+    std::vector<std::unique_ptr<GuestBufferMemory>> kept;
+    const auto use = [&] {
+        auto& memory = *kept.emplace_back(std::make_unique<GuestBufferMemory>(context));
+        memory.AllowDeviceStaging();
+        memory.AddWritable(element, elementBytes, false, true);
+        memory.Upload(false);
+        Require(memory.InPlaceReads().empty(), "a read and written 1 MiB element was bound in place");
+        memory.RecordCopyBacks(recorder);
+        recorder.NotePendingWrites(memory.Writes());
+        memory.MarkDirectWrites();
+        memory.NoteCarriedShadows(recorder);
+    };
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    static_cast<void>(AgcDriver::GuestMemory::CollectWrites(element, elementBytes));
+    use();
+    const auto first = GuestBufferMemory::CarriedShadowCopies();
+    use();
+    Require(GuestBufferMemory::CarriedShadowCopies() == first + 1, "a staged region nobody wrote since its last use was not copied in from that use's device shadow");
+    recorder.Sync();
+    Require(std::all_of(static_cast<const std::byte*>(block), static_cast<const std::byte*>(block) + bytes, [](std::byte value) { return value == std::byte{0x11}; }), "a carried copy-in changed the guest bytes");
+    use();
+    std::memset(reinterpret_cast<void*>(element + 8192), 0x22, 4096);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto beforeWrite = GuestBufferMemory::CarriedShadowCopies();
+    use();
+    Require(GuestBufferMemory::CarriedShadowCopies() == beforeWrite, "a staged region the CPU wrote since its last use was copied in from that use's device shadow");
+    recorder.Sync();
+    kept.clear();
+    return true;
+}
+
 bool readWrittenStagingTests(const Device& device, Recorder& recorder) {
     const auto& context = device.GetContext();
     if (context.hostImportAlignment == 0) {
@@ -15131,6 +15196,11 @@ int main(int argc, char** argv) {
             std::cout << "address-based staging tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--carried-shadow-only") {
+            if (!carriedShadowTests(device, recorder)) return 77;
+            std::cout << "carried shadow tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--read-written-staging-only") {
             if (!readWrittenStagingTests(device, recorder)) return 77;
             std::cout << "read and written staging tests passed\n";
@@ -15377,6 +15447,7 @@ int main(int argc, char** argv) {
         refreshProofTests(device, recorder);
         resourceReadTests(device, recorder);
         readWrittenStagingTests(device, recorder);
+        carriedShadowTests(device, recorder);
         bdaStagingTests(device, recorder);
         depthSurfaceProofTests(device, recorder);
         multisampleGuestAccessTests(device, recorder);

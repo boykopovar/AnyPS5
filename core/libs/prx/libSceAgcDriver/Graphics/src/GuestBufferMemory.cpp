@@ -6478,6 +6478,8 @@ bool carriedShadowsEnabled() {
     return enabled;
 }
 
+std::atomic<std::uint64_t> carriedShadowCopies{0};
+
 struct CarriedShadow {
     std::shared_ptr<Buffer> buffer;
     const Recorder* recorder = nullptr;
@@ -6517,6 +6519,10 @@ std::shared_ptr<Buffer> takeCarriedShadow(const Recorder& recorder, std::uint64_
     return shadow.buffer;
 }
 
+}
+
+std::uint64_t GuestBufferMemory::CarriedShadowCopies() {
+    return carriedShadowCopies.load(std::memory_order_relaxed);
 }
 
 void GuestBufferMemory::NoteCarriedShadows(const Recorder& recorder) const {
@@ -6610,6 +6616,7 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
         std::shared_ptr<Buffer> carried;
         if (region->deviceLocal && inputSnapshot == nullptr && !region->sparse && region->mirror == nullptr && region->bufferEnd == 0) carried = takeCarriedShadow(*recorder, region->begin, region->end);
         if (carried != nullptr) {
+            carriedShadowCopies.fetch_add(1, std::memory_order_relaxed);
             if (carried->Handle() != region->buffer->Handle()) {
                 CopyBuffer(context, commands, carried->Handle(), 0, region->buffer->Handle(), 0, bytes);
                 recorder->Keep(carried);
