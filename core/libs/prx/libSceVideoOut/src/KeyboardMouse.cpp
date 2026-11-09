@@ -367,6 +367,10 @@ PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const
         state.analogButtonsL2 = std::max(state.analogButtonsL2, triggerByte(triggerAxes[0]));
         state.analogButtonsR2 = std::max(state.analogButtonsR2, triggerByte(triggerAxes[1]));
     }
+    if (mouseTouch) {
+        if (!state.touch[0].active) state.touch[0] = *mouseTouch;
+        else if (!state.touch[1].active) state.touch[1] = *mouseTouch;
+    }
     if (state.analogButtonsL2 != 0) state.buttons |= static_cast<std::uint32_t>(PadButton::L2);
     if (state.analogButtonsR2 != 0) state.buttons |= static_cast<std::uint32_t>(PadButton::R2);
     return state;
