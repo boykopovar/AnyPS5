@@ -75,6 +75,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/GotAccessIndex.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/RelativeRelocationIndex.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/ValidationPolicy.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/ExceptionTableParser.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/output/SysVDynamicSectionBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/output/CallRegistryWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/patching/GamePatch.cpp
@@ -1049,6 +1050,7 @@ if(BUILD_TESTING)
     add_test_executable(unwind_record_bounds_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/UnwindRecordBoundsTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/EhFrameReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/ExceptionTableParser.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
     )
     target_include_directories(unwind_record_bounds_tests PRIVATE
