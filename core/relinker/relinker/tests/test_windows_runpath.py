@@ -35,6 +35,18 @@ def main():
             if os.name == "nt":
                 executed = subprocess.run([str(output)], cwd=work, capture_output=True, text=True, timeout=20)
                 assert executed.returncode == 77, (runpath, executed.returncode, executed.stdout, executed.stderr)
+
+        for index, runpath in enumerate(("$ORIGIN///srv/share", "$ORIGIN/C:/x", "$ORIGIN//libs", "$ORIGIN//", "$ORIGIN/x:s")):
+            case = work / f"rejected{index}"
+            case.mkdir()
+            source = case / "input.elf"
+            source.write_bytes(executable("a.prx"))
+            output = case / "output.exe"
+            result = subprocess.run([str(relinker), "--windows", "--skip-sce-module", "--rpath", runpath,
+                                     str(source), str(output)], capture_output=True, text=True, timeout=20)
+            assert result.returncode == 2, (runpath, result.returncode, result.stdout, result.stderr)
+            assert "Windows run path below $ORIGIN must be relative: " + runpath in result.stderr, (runpath, result.stderr)
+            assert not output.exists(), runpath
     print("Windows runpath tests passed")
 
 

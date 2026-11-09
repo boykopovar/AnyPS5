@@ -21,14 +21,18 @@ constexpr std::uint32_t ErrorMessageCapacity = 32768;
 constexpr std::uint32_t ArgumentCapacity = 32768;
 constexpr std::uint32_t ArgumentTextCapacity = ArgumentCapacity * 3;
 
-std::string normalizeRunPath(std::string path) {
+std::string normalizeRunPath(const std::string& runPath) {
+    auto path = runPath;
     if (path.empty() || std::any_of(path.begin(), path.end(), [](const unsigned char value) { return value == 0 || value >= 128; }))
         throw Domain::RelinkerException("Windows run path must be a nonempty ASCII path");
     std::replace(path.begin(), path.end(), '/', '\\');
     if (path == "$ORIGIN")
         path = ".";
-    if (path.starts_with("$ORIGIN\\"))
+    if (path.starts_with("$ORIGIN\\")) {
         path.erase(0, 8);
+        if (!path.empty() && (path.front() == '\\' || path.find(':') != std::string::npos))
+            throw Domain::RelinkerException("Windows run path below $ORIGIN must be relative: " + runPath);
+    }
     if (path.empty())
         path = ".";
     if (path.find('$') != std::string::npos)
