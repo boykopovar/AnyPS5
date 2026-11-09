@@ -29,6 +29,7 @@ static constexpr int ERROR_NETWORK = static_cast<int>(0x80431063);
 static constexpr int ERROR_NOT_CONNECTED = static_cast<int>(0x817B1065);
 static constexpr int ERROR_UNSUPPORTED_SCHEME = static_cast<int>(0x817B1061);
 static constexpr std::uint32_t WEBSOCKET_MIN_PERIOD = 1000000;
+static constexpr int ERROR_HTTP2_ASYNC_NOT_SUPPORTED = static_cast<int>(0x80436063);
 
 static std::mutex g_completionsMutex;
 static std::unordered_map<int, std::deque<Http2AsyncResult>> g_completions;
@@ -277,8 +278,7 @@ int APS5_VABI sceHttp2ReadData(int req_id, void* data, size_t size) {
 }
 
 int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* kqueue_option, void* option) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ERROR_HTTP2_ASYNC_NOT_SUPPORTED;
 }
 
 int APS5_VABI sceHttp2SendRequest(int req_id, const void* post_data, size_t size) {
@@ -394,7 +394,12 @@ int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {
 
 int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* timeout, void* option) {
     (void)timeout;
-    if (result == nullptr || option != nullptr) NotImplemented_nid_no_patch(__func__);
+    if (result == nullptr) return ERROR_NULL_POINTER;
+    if (option != nullptr) return ERROR_INVALID_VALUE;
+    {
+        std::lock_guard lock(g_handlesMutex);
+        if (FindHandle(req_id, Http2Kind::Request) == nullptr) return ERROR_INVALID_ID;
+    }
     if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) {
         std::lock_guard lock(g_completionsMutex);
         const auto pending = g_completions.find(req_id);
@@ -405,7 +410,6 @@ int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* 
         }
     }
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceHttp2AbortRequest(int req_id) {
