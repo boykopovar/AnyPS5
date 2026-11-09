@@ -102,6 +102,7 @@ private:
     bool axesAdvanced = false;
     bool mouseMode = false;
     bool titleReadsMouse = false;
+    std::uint32_t padButtons = 0;
 };
 
 std::uint8_t StickByte(double deflection);
