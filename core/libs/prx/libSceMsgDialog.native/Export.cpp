@@ -1,3 +1,4 @@
+#include "prx/libSceIme/include/HostMessageBox.hpp"
 #include "prx/libSceMsgDialog.native/libSceMsgDialog.native.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogRequest.hpp"
@@ -5,6 +6,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
+#include <cstdlib>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -13,6 +15,11 @@ std::atomic<int> g_status{0};
 std::atomic<bool> g_presented{false};
 
 constexpr int BUTTON_ID_OK = 1;
+#ifdef __APPLE__
+constexpr bool kAppleBuild = true;
+#else
+constexpr bool kAppleBuild = false;
+#endif
 
 std::atomic<int> g_buttonId{BUTTON_ID_OK};
 
