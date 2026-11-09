@@ -3046,7 +3046,7 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
 bool SingleKeyColorFor(const GuestTextureResource& resource, std::uint64_t guestBytes, std::uint64_t collected, DccSingleProof& proof, VkFormat format, DccKeys keys, VkClearColorValue& clear) {
     if (keys != DccKeys::ClearSingle || !ProvedSingleUniform(resource, guestBytes, collected, proof)) return false;
     const auto elementBytes = BytesPerElement(resource.format);
-    if (elementBytes == 0 || elementBytes > sizeof(std::uint32_t) * 4) return false;
+    if (elementBytes == 0 || elementBytes > sizeof(std::uint32_t) * 4 || sizeof(std::uint32_t) * 4 % elementBytes != 0) return false;
     std::uint32_t pattern[4]{};
     auto* bytes = reinterpret_cast<std::byte*>(pattern);
     if (!ReadSingleElement(resource, std::span(bytes, elementBytes))) return false;

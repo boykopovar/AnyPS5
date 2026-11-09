@@ -1023,5 +1023,14 @@ int main() {
     syllableState = -1;
     Require(sceFontCharacterGetSyllableStringState(nullptr, &syllableState) == SCE_FONT_ERROR_INVALID_PARAMETER && syllableState == 0);
     Require(sceFontCharacterGetSyllableStringState(&character, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+
+    const auto* glyphs0 = sceFontSelectGlyphsFt(0);
+    Require(glyphs0 != nullptr);
+    const auto* glyphTable = reinterpret_cast<const std::uint32_t*>(glyphs0);
+    Require(glyphTable[0] == 0x0F1F);
+    Require(glyphTable[1] == 0x0F03);
+    Require(sceFontSelectGlyphsFt(1) == nullptr);
+    Require(sceFontSelectGlyphsFt(-1) == nullptr);
+
     std::filesystem::remove_all(fontRoot);
 }

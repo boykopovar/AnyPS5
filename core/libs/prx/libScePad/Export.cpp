@@ -1329,47 +1329,69 @@ int APS5_VABI scePadBondUpdateTerm(void) {
 }
 
 int APS5_VABI scePadControllerUpdateInit(void) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch("scePadControllerUpdateInit: the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateIsUpdateNeeded2(std::int32_t deviceId, const std::uint32_t* version, std::uint16_t* status) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (status == nullptr) return PAD_ERROR_INVALID_ARG;
+    *status = 0;
+    if (version == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadControllerUpdateIsUpdateNeeded2: the driver answer behind the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateIsReady(std::int32_t deviceId, std::int32_t* ready) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (ready == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadControllerUpdateIsReady: the driver answer behind the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateStart(std::int32_t handle, const PadUpdateParameter* parameter) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)handle;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (parameter == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadControllerUpdateStart: the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateGetStatus(std::int32_t deviceId, std::int32_t* status) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (status == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadControllerUpdateGetStatus: the driver answer behind the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateSendData(std::int32_t deviceId, const PadUpdateData* data) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (data == nullptr || data->size != 0x8000) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadControllerUpdateSendData: the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateResetController(std::int32_t deviceId) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch("scePadControllerUpdateResetController: the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateGetReconnectStatus(std::int32_t* status) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (status == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadControllerUpdateGetReconnectStatus: the driver answer behind the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateTerm(void) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch("scePadControllerUpdateTerm: the controller-update ioctl");
     return 0;
 }
 
