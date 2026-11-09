@@ -537,6 +537,10 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
             hostMenu.Down();
             return;
         }
+        if (event.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+            hostMenu.Toggle();
+            return;
+        }
         if (event.key.keysym.scancode == SDL_SCANCODE_RETURN) {
             if (const auto action = hostMenu.Activate()) applyHostRequests(window, event.key.windowID, requestsFor(*action));
             return;
