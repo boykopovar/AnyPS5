@@ -45,3 +45,15 @@ def layout(slices, start_us, end_us, width_px, max_slices=5000):
     return {"threads": threads, "bars": bars, "left_out": len(slices) - len(kept), "width": width_px + LABEL_WIDTH}
 
 
+def svg(laid):
+    height = max(len(laid["threads"]), 1) * ROW_HEIGHT
+    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{laid["width"]}" height="{height}">']
+    for row, name in enumerate(laid["threads"]):
+        parts.append(f'<text x="2" y="{row * ROW_HEIGHT + 13}" font-size="11">{html.escape(name)}</text>')
+    for bar in laid["bars"]:
+        title = html.escape(f'{bar["name"]} ({bar["ms"]:.3f} ms)')
+        parts.append(f'<rect x="{bar["x"]:.2f}" y="{bar["y"] + 2}" width="{bar["w"]:.2f}" height="{ROW_HEIGHT - 4}" fill="#4a7fc1"><title>{title}</title></rect>')
+    parts.append("</svg>")
+    return "".join(parts)
+
+
