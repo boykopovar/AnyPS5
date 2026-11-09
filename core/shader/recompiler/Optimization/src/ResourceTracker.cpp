@@ -73,27 +73,52 @@ std::string describeValueChain(const IrValue* value, std::uint32_t depth) {
     return text;
 }
 
-std::uint32_t possibleU32Bits(const IrValue* value) {
+std::uint32_t possibleU32BitsDepth(const IrValue* value, std::uint32_t depth) {
     value = value->Resolve();
     if (value->HasImmediate()) {
         return value->Type() == IrType::U32 ? value->ImmediateU32() : std::numeric_limits<std::uint32_t>::max();
     }
+    if (depth == 0u) return std::numeric_limits<std::uint32_t>::max();
     switch (value->Opcode()) {
         case IrOpcode::BitwiseAnd32:
-            return possibleU32Bits(value->Argument(0)) & possibleU32Bits(value->Argument(1));
+            return possibleU32BitsDepth(value->Argument(0), depth - 1u) & possibleU32BitsDepth(value->Argument(1), depth - 1u);
         case IrOpcode::BitwiseOr32:
-            return possibleU32Bits(value->Argument(0)) | possibleU32Bits(value->Argument(1));
+            return possibleU32BitsDepth(value->Argument(0), depth - 1u) | possibleU32BitsDepth(value->Argument(1), depth - 1u);
         case IrOpcode::ShiftLeftLogical32: {
             const IrValue* shift = value->Argument(1)->Resolve();
-            return shift->HasImmediate() && shift->Type() == IrType::U32 ? possibleU32Bits(value->Argument(0)) << (shift->ImmediateU32() & 31u) : std::numeric_limits<std::uint32_t>::max();
+            return shift->HasImmediate() && shift->Type() == IrType::U32 ? possibleU32BitsDepth(value->Argument(0), depth - 1u) << (shift->ImmediateU32() & 31u) : std::numeric_limits<std::uint32_t>::max();
         }
         case IrOpcode::ReadFirstLane:
-            return value->ArgumentCount() >= 1u ? possibleU32Bits(value->Argument(0)) : std::numeric_limits<std::uint32_t>::max();
+            return value->ArgumentCount() >= 1u ? possibleU32BitsDepth(value->Argument(0), depth - 1u) : std::numeric_limits<std::uint32_t>::max();
         case IrOpcode::SelectU32:
-            return value->ArgumentCount() == 3u ? (possibleU32Bits(value->Argument(1)) | possibleU32Bits(value->Argument(2))) : std::numeric_limits<std::uint32_t>::max();
+            return value->ArgumentCount() == 3u ? (possibleU32BitsDepth(value->Argument(1), depth - 1u) | possibleU32BitsDepth(value->Argument(2), depth - 1u)) : std::numeric_limits<std::uint32_t>::max();
+        case IrOpcode::IAdd32: {
+            if (value->ArgumentCount() != 2u) return std::numeric_limits<std::uint32_t>::max();
+            const auto add = [&](const IrValue* left, const IrValue* right) {
+                const auto* immediate = right->Resolve();
+                if (!immediate->HasImmediate() || immediate->Type() != IrType::U32) return std::numeric_limits<std::uint32_t>::max();
+                const auto upper = possibleU32BitsDepth(left, depth - 1u);
+                const auto increment = immediate->ImmediateU32();
+                return upper > std::numeric_limits<std::uint32_t>::max() - increment ? std::numeric_limits<std::uint32_t>::max() : upper + increment;
+            };
+            const auto first = add(value->Argument(0), value->Argument(1));
+            return first != std::numeric_limits<std::uint32_t>::max() ? first : add(value->Argument(1), value->Argument(0));
+        }
+        case IrOpcode::Phi: {
+            std::uint32_t upper = 0;
+            for (std::uint32_t index = 0; index < value->ArgumentCount(); ++index) upper |= possibleU32BitsDepth(value->Argument(index), depth - 1u);
+            return upper;
+        }
+        case IrOpcode::FindILsb32:
+        case IrOpcode::FindUMsb32:
+            return 31u;
         default:
             return std::numeric_limits<std::uint32_t>::max();
     }
+}
+
+std::uint32_t possibleU32Bits(const IrValue* value) {
+    return possibleU32BitsDepth(value, 8u);
 }
 
 std::uint32_t byteExtent(const MemoryInfo& memory) {
@@ -674,6 +699,7 @@ private:
 
     std::optional<KeyDomain> MatchKeyDomain(IrValue* key) {
         key = key->Resolve();
+        while (key->Opcode() == IrOpcode::ReadFirstLane && key->ArgumentCount() >= 1u) key = key->Argument(0)->Resolve();
         DescriptorSource direct;
         direct.dwordCount = 1u;
         direct.dwords[0] = key;
