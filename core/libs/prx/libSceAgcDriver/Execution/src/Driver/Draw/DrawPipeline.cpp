@@ -450,10 +450,7 @@ void DrawPipeline::run() {
         bool failed = false;
         bool shutdown = false;
         try {
-            if (commit != nullptr) {
-                (*commit)();
-                Driver::WakeQueueZeroIfCompletionsPending();
-            }
+            if (commit != nullptr) (*commit)();
             if (!isDraw) GuestMemory::BreakProofs();
         } catch (const std::exception&) {
             failed = true;

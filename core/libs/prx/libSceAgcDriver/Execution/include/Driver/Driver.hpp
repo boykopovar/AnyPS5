@@ -60,7 +60,6 @@ struct DrawTail;
 class Driver {
 public:
     static Driver& Get();
-    static void WakeQueueZeroIfCompletionsPending();
     static std::uint64_t GpuMapImportThreads();
     ~Driver();
     void Shutdown();

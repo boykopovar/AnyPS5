@@ -93,11 +93,6 @@ void Driver::submitOpenWork(const std::shared_ptr<SubmissionProgress>& progress)
     if (progress) progress->Publish(localDevice, localDevice ? localDevice->SubmittedEpoch() : 0);
 }
 
-void Driver::WakeQueueZeroIfCompletionsPending() {
-    if (!completionsPending()) return;
-    Get().wakeQueueZeroForCompletions();
-}
-
 void Driver::wakeQueueZeroForCompletions() {
     if (!completionsPending()) return;
     std::lock_guard lock(mutex);
