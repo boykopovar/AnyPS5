@@ -729,6 +729,12 @@ void testMouseTouchpad() {
     check(clamped.active && clamped.x == 1918 && clamped.y == 0, "a press outside the window is clamped to the pad edge");
     press(5000, -10, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONUP, now);
     check(!keyboard.Compose(idle).touch[0].active, "releasing the left button lifts the touch point");
+    press(480, 270, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONDOWN, now);
+    SDL_Event lost{};
+    lost.type = SDL_WINDOWEVENT;
+    lost.window.event = SDL_WINDOWEVENT_FOCUS_LOST;
+    keyboard.HandleEvent(lost, now);
+    check(!keyboard.Compose(idle).touch[0].active, "losing the window focus lifts a touch point the mouse holds");
 }
 
 int main() {
