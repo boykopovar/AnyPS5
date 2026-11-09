@@ -29,6 +29,7 @@ int main() {
 
     Require(sceKernelCreateEport() == SCE_KERNEL_ERROR_EPERM);
     Require(sceKernelDeleteEport() == SCE_KERNEL_ERROR_EPERM);
+    Require(sceKernelGetCanvasHandle() == 0);
     Require(sceKernelOpenEport() == SCE_KERNEL_ERROR_EPERM);
     Require(sceKernelCloseEport() == SCE_KERNEL_ERROR_EPERM);
     Require(sceKernelTriggerEport() == SCE_KERNEL_ERROR_EPERM);

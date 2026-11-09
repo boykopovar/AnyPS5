@@ -1316,7 +1316,7 @@ int APS5_VABI libkernel_sysUnknown_hmqw8GlN_plus_tI_nid_no_patch() {
 APS5_EXPORT("hmqw8GlN+tI", libkernel_sysUnknown_hmqw8GlN_plus_tI_nid_no_patch);
 
 int APS5_VABI sceKernelGetCanvasHandle() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 

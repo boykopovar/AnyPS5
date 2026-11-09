@@ -156,7 +156,6 @@
 | `Unknown` | `5KHFhRhBR78` |
 | `sceKernelIccGetButtonStatus` | `5uP89EdDbB0` |
 | `sceKernelAbortWithContext` | `6nv1h9JH1Lk` |
-| `sceKernelGetCanvasHandleByPid` | `6yzl0ibATw0` |
 | `Unknown` | `7BUHmsuhcq4` |
 | `Unknown` | `7FNl8FfSGNw` |
 | `Unknown` | `7Sd1vnnqEqU` |
@@ -270,7 +269,6 @@
 | `Unknown` | `h35fpAz5tf4` |
 | `sceKernelTraceMarkerPush` | `hYEEJrcB3wU` |
 | `Unknown` | `hmqw8GlN+tI` |
-| `sceKernelGetCanvasHandle` | `i9ghW7uPndU` |
 | `sceKernelSetSandboxId` | `iZEvDaPnNL4` |
 | `Unknown` | `ilQLkGlAjWA` |
 | `Unknown` | `j6bGtwZkxOQ` |
