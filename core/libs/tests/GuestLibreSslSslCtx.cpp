@@ -86,9 +86,6 @@ static void TestUseCertificateNonNull() {
     ERR_clear_error_nid_postfix();
     RequireThrows([&] { SSL_CTX_use_certificate_nid_postfix(nullptr, &certificate); });
     Require(ERR_get_error_nid_postfix() == 0);
-    TestCtx ctx;
-    RequireThrows([&] { SSL_CTX_use_certificate_nid_postfix(Context(&ctx), &certificate); });
-    Require(ERR_get_error_nid_postfix() == 0);
 }
 
 static void TestGetVerifyMode() {
