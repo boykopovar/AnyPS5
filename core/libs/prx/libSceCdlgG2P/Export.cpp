@@ -41,9 +41,16 @@ int APS5_VABI sceG2PDialogOpen(const G2PDialogParam* param) {
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
-    if (!ValidateCommonDialogBaseParam(param->base) || param->size != sizeof(*param) || param->userId == -1 || !std::all_of(std::begin(param->reserved), std::end(param->reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+    G2PDialogParam local{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) {
+        errno = savedErrno;
+        return COMMON_DIALOG_ERROR_ARG_NULL;
+    }
+    errno = savedErrno;
+    if (!ValidateCommonDialogBaseParam(local.base, reinterpret_cast<std::uintptr_t>(param)) || local.size != sizeof(local) || local.userId == -1 || !std::all_of(std::begin(local.reserved), std::end(local.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
     UserServiceLoginUserIdList users{};
-    if (sceUserServiceGetLoginUserIdList(&users) != 0 || std::none_of(std::begin(users.user_id), std::end(users.user_id), [param](std::int32_t userId) { return userId != -1 && userId == param->userId; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+    if (sceUserServiceGetLoginUserIdList(&users) != 0 || std::none_of(std::begin(users.user_id), std::end(users.user_id), [&local](std::int32_t userId) { return userId != -1 && userId == local.userId; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
     g_status = COMMON_DIALOG_STATUS_FINISHED;
     return 0;
 }
