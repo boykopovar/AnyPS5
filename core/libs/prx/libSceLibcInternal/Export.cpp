@@ -377,12 +377,6 @@ int APS5_VABI _ZNKSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE6do_
     return 0;
 }
 
-int APS5_VABI sceLibcInternalPending4_074_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("pS-t9AJblSM", sceLibcInternalPending4_074_nid_no_patch);
-
 int APS5_VABI sceLibcInternalPending4_075_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
