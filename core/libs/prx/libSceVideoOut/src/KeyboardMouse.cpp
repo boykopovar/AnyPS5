@@ -287,6 +287,8 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
     if (!keyboard && !mouseButton) return requests;
     if (keyboard && event.key.repeat != 0) return requests;
     if (event.type == SDL_MOUSEBUTTONDOWN && titleReadsMouse) return requests;
+    if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) mouseTouch.reset();
+    if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT && mouseTouchpad && !mouseMode) mouseTouch = touchAt(event.button.x, event.button.y);
     advanceAxes(now);
     const bool down = event.type == SDL_KEYDOWN || event.type == SDL_MOUSEBUTTONDOWN;
     for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
