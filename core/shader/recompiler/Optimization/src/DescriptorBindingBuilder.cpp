@@ -50,6 +50,37 @@ struct BufferWrittenCounts {
 };
 BufferWrittenCounts bufferWrittenCounts;
 
+bool NormalizedImageFormat(IrBufferFormat format) {
+    if (format >= IrBufferFormat::Format8UNorm && format <= IrBufferFormat::Format32_32_32_32Float) {
+        const auto type = GetFormatComponentType(format);
+        return type == SpirvFormatComponentType::Unorm || type == SpirvFormatComponentType::Snorm;
+    }
+    switch (format) {
+        case IrBufferFormat::Format8Srgb:
+        case IrBufferFormat::Format8_8Srgb:
+        case IrBufferFormat::Format8_8_8_8Srgb:
+        case IrBufferFormat::Format5_6_5UNorm:
+        case IrBufferFormat::Format5_5_5_1UNorm:
+        case IrBufferFormat::Format1_5_5_5UNorm:
+        case IrBufferFormat::Format4_4_4_4UNorm:
+        case IrBufferFormat::Bc1UNorm:
+        case IrBufferFormat::Bc1Srgb:
+        case IrBufferFormat::Bc2UNorm:
+        case IrBufferFormat::Bc2Srgb:
+        case IrBufferFormat::Bc3UNorm:
+        case IrBufferFormat::Bc3Srgb:
+        case IrBufferFormat::Bc4UNorm:
+        case IrBufferFormat::Bc4SNorm:
+        case IrBufferFormat::Bc5UNorm:
+        case IrBufferFormat::Bc5SNorm:
+        case IrBufferFormat::Bc7UNorm:
+        case IrBufferFormat::Bc7Srgb:
+            return true;
+        default:
+            return false;
+    }
+}
+
 std::uint32_t ConstantImageComponents(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::size_t index, const ImageResource& mode) {
     if (mode.resourceClass != ImageResourceClass::Sampled || mode.packed || mode.r128 || mode.depthCompare || mode.depthBits || mode.depthUnorm16 || mode.srgbDecode || (mode.emulatedCompare & EmulatedCompare::Enabled) != 0u || mode.byElements != 0u || mode.byComponents != 0u || mode.conversionFormat != IrBufferFormat::Invalid || mode.packedFormat != IrBufferFormat::Invalid) return 0u;
     if (mode.numericClass != IrTextureNumericClass::Float && mode.numericClass != IrTextureNumericClass::Uint && mode.numericClass != IrTextureNumericClass::Sint) return 0u;
@@ -62,6 +93,8 @@ std::uint32_t ConstantImageComponents(const ShaderInfo& info, const ResourceSnap
         const auto constant = selector == 0u ? Component::Zero : selector == 1u ? mode.numericClass == IrTextureNumericClass::Float ? Component::FloatOne : Component::IntegerOne : Component::None;
         components |= static_cast<std::uint32_t>(constant) << (component * PipelineSpecialization::ImageComponentBits);
     }
+    const auto format = static_cast<IrBufferFormat>((descriptor.dwords[1] >> 20u) & 0x1ffu);
+    if (mode.numericClass == IrTextureNumericClass::Float && NormalizedImageFormat(format)) components |= PipelineSpecialization::ImageNormalizedValues;
     if (components == 0u) return 0u;
     bool sampled = false;
     constexpr std::uint32_t ClampLastTexel = 2u;

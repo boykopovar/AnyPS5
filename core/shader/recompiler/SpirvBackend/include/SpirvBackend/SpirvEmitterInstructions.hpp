@@ -46,7 +46,7 @@ std::uint32_t EmitINotEqual64(SpirvEmitterState& state, std::uint32_t arg0, std:
 std::uint32_t EmitULessThan64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitSLessThan64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitUGreaterThan64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
-std::uint32_t EmitFPIsNan32(SpirvEmitterState& state, std::uint32_t arg0);
+std::uint32_t EmitFPIsNan32(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t arg0);
 std::uint32_t EmitFPMin32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitFPMax32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitFPMinTri32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2);
@@ -138,7 +138,7 @@ std::uint32_t EmitIEqual32(SpirvEmitterState& state, std::uint32_t arg0, std::ui
 std::uint32_t EmitSLessThanEqual32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitULessThanEqual32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitSGreaterThan32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
-std::uint32_t EmitUGreaterThan32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
+std::uint32_t EmitUGreaterThan32(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitINotEqual32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitSGreaterThanEqual32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitUGreaterThanEqual32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
