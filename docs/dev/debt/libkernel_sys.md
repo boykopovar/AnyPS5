@@ -129,7 +129,6 @@
 | `sceKernelTraceAutoCaptureStop` | `TqLPe9eIbng` |
 | `sceKernelTraceAutoCaptureStore` | `51iRQnpGof0` |
 | `sceKernelTraceAutoCaptureUnmap` | `stvymc0mgcY` |
-| `sceKernelUseCronosKura` | `7lZJYy0+evk` |
 | `sceKernelUseCronosStreaming` | `ind6aqzel+Y` |
 | `scePthreadRegisterThreadDeathHook` | `DlCg0QhcgYQ` |
 | `Unknown` | `+1mj9RYU1rs` |

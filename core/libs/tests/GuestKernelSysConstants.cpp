@@ -15,6 +15,7 @@ void Require(bool value) { if (!value) std::abort(); }
 }
 
 int main() {
+    Require(sceKernelUseCronosKura() == 0);
     Require(pthread_switch_add_np_nid_postfix() == GUEST_ENOTSUP);
     Require(pthread_switch_delete_np_nid_postfix() == GUEST_ENOTSUP);
 
