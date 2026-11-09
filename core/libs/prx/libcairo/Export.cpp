@@ -356,10 +356,6 @@ int APS5_VABI cairo_pattern_set_matrix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_surface_set_user_data() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_set_dash() {
     NotImplemented_nid_no_patch(__func__);
 }
