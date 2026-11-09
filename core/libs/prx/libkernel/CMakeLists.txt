@@ -135,7 +135,7 @@ if(BUILD_TESTING)
         set_tests_properties(guest_direct_memory_for_app PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_kernel_resident_fmem_export_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelResidentFmemExport.cpp)
+    add_test_executable(guest_kernel_resident_fmem_export_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestKernelResidentFmemExport.cpp)
     target_include_directories(guest_kernel_resident_fmem_export_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_kernel_resident_fmem_export_tests PRIVATE ${CMAKE_DL_LIBS})
     configure_host_test_executable(guest_kernel_resident_fmem_export_tests)
