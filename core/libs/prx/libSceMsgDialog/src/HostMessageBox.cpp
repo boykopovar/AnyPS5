@@ -21,8 +21,16 @@ std::optional<HostBoxAnswer> ShowHostMessageBox(std::string_view message, const 
         buttons.push_back({flags, static_cast<int>(index), labels[index].c_str()});
     }
 
-    (void)message;
-    return std::nullopt;
+    const std::string text(message);
+    SDL_MessageBoxData data{};
+    data.flags = SDL_MESSAGEBOX_INFORMATION;
+    data.title = "AnyPS5";
+    data.message = text.c_str();
+    data.numbuttons = static_cast<int>(buttons.size());
+    data.buttons = buttons.data();
+    int pressed = -1;
+    if (SDL_ShowMessageBox(&data, &pressed) != 0) return std::nullopt;
+    return HostBoxAnswer{IndexOfHostButton(pressed, buttons.size(), request.cancel)};
 }
 
 }
