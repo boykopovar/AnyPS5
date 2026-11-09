@@ -1127,7 +1127,7 @@ constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VFfbhI32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VFfbhU32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VBfrevB32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
-    {RdnaOpcode::VCvtF32F16, sdwaSelWords() | sdwaSelFull(), 0, 0, true},
+    {RdnaOpcode::VCvtF32F16, sdwaSelWords() | sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCvtF16F32, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), true},
     {RdnaOpcode::VCvtF16U16, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VCvtU16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
@@ -1154,6 +1154,16 @@ constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VRcpF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
     {RdnaOpcode::VSqrtF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
     {RdnaOpcode::VRsqF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VExpF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VLogF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VRcpIflagF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VFractF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VTruncF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VCeilF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VRndneF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VFloorF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VFrexpExpI32F32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VFrexpMantF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
 };
 
 const Vop1SdwaRule* findVop1SdwaRule(RdnaOpcode opcode) {

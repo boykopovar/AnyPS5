@@ -344,7 +344,7 @@ void CheckWideModifiersAndNarrowInsert() {
     const std::uint16_t abcdef[]{'a', 'b', 'c', 'd', 'e', 'f'};
     const std::uint16_t abef[]{'a', 'b', 'e', 'f'};
     String erase = MakeWide(abcdef, 6);
-    run("wide erase", "sceLibcInternalPending4_096_nid_no_patch", erase, [&] { return WideHolds(erase, abef, 4); },
+    run("wide erase", "_ZNSbIwSt11char_traitsIwESaIwEE5eraseEmm_nid_postfix", erase, [&] { return WideHolds(erase, abef, 4); },
         [&] { return _ZNSbIwSt11char_traitsIwESaIwEE5eraseEmm_nid_postfix(&erase, 2, 2); });
 
     const std::uint16_t ab[]{'a', 'b'};
@@ -352,25 +352,25 @@ void CheckWideModifiersAndNarrowInsert() {
     const std::uint16_t abxy[]{'a', 'b', 'X', 'Y'};
     String appendSubstring = MakeWide(ab, 2);
     String appendSource = MakeWide(wxyz, 4);
-    run("wide append substring", "sceLibcInternalPending4_097_nid_no_patch", appendSubstring, [&] { return WideHolds(appendSubstring, abxy, 4); },
+    run("wide append substring", "_ZNSbIwSt11char_traitsIwESaIwEE6appendERKS2_mm_nid_postfix", appendSubstring, [&] { return WideHolds(appendSubstring, abxy, 4); },
         [&] { return _ZNSbIwSt11char_traitsIwESaIwEE6appendERKS2_mm_nid_postfix(&appendSubstring, &appendSource, 1, 2); });
 
     const std::uint16_t abqqq[]{'a', 'b', 'Q', 'Q', 'Q'};
     String appendFill = MakeWide(ab, 2);
-    run("wide append fill", "sceLibcInternalPending4_098_nid_no_patch", appendFill, [&] { return WideHolds(appendFill, abqqq, 5); },
+    run("wide append fill", "_ZNSbIwSt11char_traitsIwESaIwEE6appendEmw_nid_postfix", appendFill, [&] { return WideHolds(appendFill, abqqq, 5); },
         [&] { return _ZNSbIwSt11char_traitsIwESaIwEE6appendEmw_nid_postfix(&appendFill, 3, 'Q'); });
 
     const std::uint16_t pointerExpected[]{'p', 'q', 0, 'r'};
     const std::uint16_t pointerInput[]{'p', 'q', 0, 'r'};
     String assignPointer = MakeWide(ab, 2);
-    run("wide assign pointer", "sceLibcInternalPending4_099_nid_no_patch", assignPointer, [&] { return WideHolds(assignPointer, pointerExpected, 4); },
+    run("wide assign pointer", "_ZNSbIwSt11char_traitsIwESaIwEE6assignEPKwm_nid_postfix", assignPointer, [&] { return WideHolds(assignPointer, pointerExpected, 4); },
         [&] { return _ZNSbIwSt11char_traitsIwESaIwEE6assignEPKwm_nid_postfix(&assignPointer, pointerInput, 4); });
 
     const std::uint16_t sourceText[]{'0', '1', '2', '3', '4', '5'};
     const std::uint16_t substringExpected[]{'1', '2', '3'};
     String assignSubstring = MakeWide(ab, 2);
     String assignSource = MakeWide(sourceText, 6);
-    run("wide assign substring", "sceLibcInternalPending4_100_nid_no_patch", assignSubstring, [&] { return WideHolds(assignSubstring, substringExpected, 3); },
+    run("wide assign substring", "_ZNSbIwSt11char_traitsIwESaIwEE6assignERKS2_mm_nid_postfix", assignSubstring, [&] { return WideHolds(assignSubstring, substringExpected, 3); },
         [&] { return _ZNSbIwSt11char_traitsIwESaIwEE6assignERKS2_mm_nid_postfix(&assignSubstring, &assignSource, 1, 3); });
 
     const std::uint16_t fillExpected[]{'F', 'F', 'F', 'F'};

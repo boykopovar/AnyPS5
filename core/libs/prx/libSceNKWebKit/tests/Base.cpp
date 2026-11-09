@@ -5,6 +5,7 @@
 #include "prx/libSceNKWebKit/src/BackForwardList.hpp"
 #include "prx/libSceNKWebKit/src/ProtectionSpace.hpp"
 #include "prx/libSceNKWebKit/src/FrameHandle.hpp"
+#include "prx/libSceNKWebKit/src/OpenPanelParameters.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <algorithm>
 #include <cassert>
@@ -57,6 +58,7 @@ static void TestTypeIDs() {
     Require(WKAXObjectGetTypeID() == 132);
     WKRenderLayerGetTypeID();
     WKRenderObjectGetTypeID();
+    Require(WKContextGetTypeID() == 85);
 }
 
 static void TestRetainRelease() {
@@ -1567,6 +1569,85 @@ static void TestFrameHandle() {
     Require(threw);
 }
 
+template<typename Function>
+static bool ThrowsOpenPanel(Function function, const void* ref) {
+    try {
+        function(ref);
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+template<typename Function>
+static bool ThrowsOpenPanelCopy(Function function, const void* ref) {
+    try {
+        function(ref);
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+static void TestOpenPanelParameters() {
+    using Strings = std::vector<NKWebKit::Retained<NKWebKit::String>>;
+    auto* parameters = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::OpenPanelParameters>(
+        true, true,
+        Strings{NKWebKit::String::FromUtf8("image/png"), NKWebKit::String::FromUtf8("text/*")},
+        Strings{NKWebKit::String::FromUtf8(".txt")},
+        Strings{NKWebKit::String::FromUtf8("/tmp/a.txt"), NKWebKit::String::FromUtf8("/tmp/b.txt"), NKWebKit::String::FromUtf8("/tmp/c.txt")}));
+    Require(WKGetTypeID(parameters) == WKOpenPanelParametersGetTypeID());
+    Require(WKOpenPanelParametersGetAllowsDirectories(parameters));
+    Require(WKOpenPanelParametersGetAllowsMultipleFiles(parameters));
+
+    auto* mimeTypes = WKOpenPanelParametersCopyAcceptedMIMETypes(parameters);
+    Require(WKGetTypeID(mimeTypes) == WKArrayGetTypeID());
+    Require(WKArrayGetSize(mimeTypes) == 2);
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 0), "image/png"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 1), "text/*"));
+    WKRelease(mimeTypes);
+
+    auto* extensions = WKOpenPanelParametersCopyAcceptedFileExtensions(parameters);
+    Require(WKArrayGetSize(extensions) == 1);
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(extensions, 0), ".txt"));
+    WKRelease(extensions);
+
+    auto* selected = WKOpenPanelParametersCopySelectedFileNames(parameters);
+    Require(WKArrayGetSize(selected) == 3);
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(selected, 2), "/tmp/c.txt"));
+    WKRelease(selected);
+    WKRelease(parameters);
+
+    auto* empty = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::OpenPanelParameters>());
+    Require(!WKOpenPanelParametersGetAllowsDirectories(empty));
+    Require(!WKOpenPanelParametersGetAllowsMultipleFiles(empty));
+    auto* none = WKOpenPanelParametersCopyAcceptedMIMETypes(empty);
+    Require(WKArrayGetSize(none) == 0);
+    WKRelease(none);
+    none = WKOpenPanelParametersCopyAcceptedFileExtensions(empty);
+    Require(WKArrayGetSize(none) == 0);
+    WKRelease(none);
+    none = WKOpenPanelParametersCopySelectedFileNames(empty);
+    Require(WKArrayGetSize(none) == 0);
+    WKRelease(none);
+    WKRelease(empty);
+
+    auto* withNull = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::OpenPanelParameters>(false, false, Strings{nullptr}, Strings{}, Strings{}));
+    auto* nullTypes = WKOpenPanelParametersCopyAcceptedMIMETypes(withNull);
+    Require(WKArrayGetSize(nullTypes) == 1);
+    Require(WKStringIsEmpty(WKArrayGetItemAtIndex(nullTypes, 0)));
+    WKRelease(nullTypes);
+    WKRelease(withNull);
+
+    auto* notParameters = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not parameters"));
+    Require(ThrowsOpenPanel(WKOpenPanelParametersGetAllowsDirectories, notParameters));
+    Require(ThrowsOpenPanel(WKOpenPanelParametersGetAllowsMultipleFiles, nullptr));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAcceptedMIMETypes, notParameters));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAcceptedFileExtensions, nullptr));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopySelectedFileNames, nullptr));
+    WKRelease(notParameters);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -1653,6 +1734,34 @@ static void TestInspector() {
     }
     Require(threw);
 }
+static void TestContext() {
+    Require(WKContextGetTypeID() == 85);
+
+    const auto* context = WKContextCreate();
+    Require(WKGetTypeID(context) == WKContextGetTypeID());
+    Require(!WKContextGetUsesSingleWebProcess(context));
+    WKContextSetUsesSingleWebProcess(context, true);
+    Require(WKContextGetUsesSingleWebProcess(context));
+    WKRelease(context);
+
+    const auto* config = WKContextConfigurationCreate();
+    const auto* contextFromConfig = WKContextCreateWithConfiguration(config);
+    Require(WKGetTypeID(contextFromConfig) == WKContextGetTypeID());
+    Require(!WKContextGetUsesSingleWebProcess(contextFromConfig));
+    WKRelease(contextFromConfig);
+    WKRelease(config);
+
+    const auto* nullContext = WKContextCreateWithConfiguration(nullptr);
+    Require(WKGetTypeID(nullContext) == WKContextGetTypeID());
+    WKRelease(nullContext);
+
+    auto* pathStr = WKStringCreateWithUTF8CString("/app0/bundle.js");
+    const auto* contextFromPath = WKContextCreateWithInjectedBundlePath(pathStr);
+    Require(WKGetTypeID(contextFromPath) == WKContextGetTypeID());
+    WKRelease(contextFromPath);
+    WKRelease(pathStr);
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -1678,10 +1787,12 @@ int main() {
     TestProtectionSpace();
     TestPermissionRequests();
     TestFrameHandle();
+    TestOpenPanelParameters();
     TestCertificateInfo();
 TestEmptyFrameLoaderClient();
 
 TestInspector();
+TestContext();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }
