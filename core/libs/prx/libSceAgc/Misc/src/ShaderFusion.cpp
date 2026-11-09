@@ -6,9 +6,11 @@
 #include <map>
 #include <mutex>
 #include <stdexcept>
+#include <span>
 #include <string>
 #include <cstdint>
 #include <cstddef>
+#include <utility>
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -28,6 +30,8 @@ constexpr std::uint32_t SPI_SHADER_PGM_RSRC1_HS = 0x10Au;
 constexpr std::uint32_t SPI_SHADER_PGM_RSRC2_HS = 0x10Bu;
 constexpr std::uint32_t SCodeEnd = 0xbf9f0000u;
 constexpr std::uint32_t SNop = 0xbf800000u;
+constexpr std::uint32_t SGetpcMask = 0xff80ff00u;
+constexpr std::uint32_t SGetpc = 0xbe801f00u;
 constexpr std::uint32_t SSetpcS6 = 0xbe802006u;
 constexpr std::uint32_t SSwappcNullS6 = 0xbefd2106u;
 constexpr std::size_t FusedCodeAlignment = 256;
@@ -62,6 +66,10 @@ void MergeMax(ShaderRegister& dst, const ShaderRegister& src, std::uint32_t shif
 
 struct GeometryLayout {
     std::uint32_t frontBytes;
+    std::size_t constantsOffset;
+    std::size_t constantsBytes;
+    std::size_t constantsSource;
+    std::vector<std::pair<std::size_t, std::uint32_t>> literals;
     std::size_t backOffset;
     std::size_t codeBytes;
     std::vector<ShaderRegister> sh;
@@ -89,11 +97,16 @@ std::size_t AlignUp(std::size_t value, std::size_t alignment) {
 void ValidateGeometryHalf(const char* function, const Shader* shader) {
     if (shader->file_header != SHADER_FILE_HEADER_MAGIC || shader->version != SHADER_VERSION) Fail(function, "invalid shader header or version");
     if (shader->code == nullptr || shader->shader_size == 0 || (shader->shader_size & 3u) != 0) Fail(function, "invalid shader half code");
-    if (shader->embedded_constant_buffer_size_dqw != 0) Fail(function, "fusing halves with an embedded constant buffer is not implemented");
     if ((shader->num_sh_registers != 0 && shader->sh_registers == nullptr) || (shader->num_cx_registers != 0 && shader->cx_registers == nullptr)) Fail(function, "shader half registers missing");
 }
 
-std::uint32_t FrontProgramBytes(const char* function, const Shader* front) {
+struct FrontProgram {
+    std::uint32_t programBytes;
+    std::uint32_t codeBytes;
+    std::size_t trailer;
+};
+
+FrontProgram FrontProgramBytes(const char* function, const Shader* front) {
     const auto* bytes = static_cast<const std::uint8_t*>(const_cast<const void*>(front->code));
     const std::size_t size = front->shader_size;
     if (size < TrailerCodeBytesOffset + sizeof(std::uint32_t)) Fail(function, "front half has no program trailer");
@@ -116,7 +129,36 @@ std::uint32_t FrontProgramBytes(const char* function, const Shader* front) {
     };
     while (end > 0 && word(end - 1) == SCodeEnd) --end;
     if (end == 0 || (word(end - 1) != SSetpcS6 && word(end - 1) != SSwappcNullS6)) Fail(function, "front half does not end with s_setpc_b64 s[6:7] or s_swappc_b64 null, s[6:7]");
-    return static_cast<std::uint32_t>((end - 1) * 4);
+    return {static_cast<std::uint32_t>((end - 1) * 4), codeBytes, trailer};
+}
+
+std::vector<std::pair<std::size_t, std::uint32_t>> ConstantLiterals(const char* function, const Shader* front, std::uint32_t programBytes, std::size_t constants, std::size_t constantsBytes, std::size_t moved) {
+    const auto* bytes = static_cast<const std::uint8_t*>(const_cast<const void*>(front->code));
+    const auto word = [&](std::size_t index) {
+        std::uint32_t value = 0;
+        std::memcpy(&value, bytes + index * 4, sizeof(value));
+        return value;
+    };
+    std::vector<std::pair<std::size_t, std::uint32_t>> literals;
+    const std::size_t words = programBytes / 4;
+    const std::span<const std::uint32_t> code(reinterpret_cast<const std::uint32_t*>(bytes), words);
+    const auto length = [&](std::size_t index) -> std::size_t {
+        const auto count = AgcDriverInstructionWords_nid_postfix(code, static_cast<std::uint32_t>(index));
+        if (count == 0) Fail(function, "front half with an embedded constant buffer holds an instruction that cannot be decoded at word " + std::to_string(index));
+        return count;
+    };
+    for (std::size_t i = 0; i < words; i += length(i)) {
+        if ((word(i) & SGetpcMask) != SGetpc) continue;
+        const auto reg = (word(i) >> 16u) & 0x7fu;
+        if (i + 3 >= words || word(i + 1) != (0x80000000u | (reg << 16u) | (reg << 8u) | 0xffu) || word(i + 3) != (0x82000000u | ((reg + 1u) << 16u) | ((reg + 1u) << 8u) | 0x80u)) {
+            Fail(function, "front half reads its embedded constant buffer through an s_getpc_b64 not followed by s_add_u32 with a literal and s_addc_u32 0");
+        }
+        const auto target = (i + 1) * 4 + std::size_t{word(i + 2)};
+        if (target < programBytes) continue;
+        if (target < constants || target >= constants + constantsBytes) Fail(function, "front half's s_getpc_b64 offset points outside its program and embedded constant buffer");
+        literals.emplace_back((i + 2) * 4, static_cast<std::uint32_t>(word(i + 2) + (moved - constants)));
+    }
+    return literals;
 }
 
 std::array<std::uint32_t, 2> mergeGeometryResources(std::uint32_t frontRsrc1, std::uint32_t frontRsrc2, std::uint32_t backRsrc1, std::uint32_t backRsrc2) {
@@ -145,9 +187,19 @@ GeometryLayout ComputeGeometryLayout(const char* function, const Shader* front, 
     ValidateGeometryHalf(function, back);
     ValidateGeometryHalf(function, front);
     GeometryLayout layout{};
-    layout.frontBytes = FrontProgramBytes(function, front);
+    if (back->embedded_constant_buffer_size_dqw != 0) Fail(function, "fusing a back half with an embedded constant buffer is not implemented");
+    const auto program = FrontProgramBytes(function, front);
+    layout.frontBytes = program.programBytes;
     layout.backOffset = AlignUp(layout.frontBytes, FusedCodeAlignment);
     layout.codeBytes = layout.backOffset + back->shader_size;
+    layout.constantsBytes = std::size_t{front->embedded_constant_buffer_size_dqw} * 16u;
+    if (layout.constantsBytes != 0) {
+        layout.constantsSource = program.codeBytes;
+        if (layout.constantsSource + layout.constantsBytes > program.trailer) Fail(function, "front half's embedded constant buffer runs into its program trailer");
+        layout.constantsOffset = AlignUp(layout.codeBytes, 16);
+        layout.literals = ConstantLiterals(function, front, layout.frontBytes, layout.constantsSource, layout.constantsBytes, layout.constantsOffset);
+        layout.codeBytes = layout.constantsOffset + layout.constantsBytes;
+    }
     const auto* frontRsrc1 = FindHalfRegister(front, SPI_SHADER_PGM_RSRC1_GS);
     const auto* frontRsrc2 = FindHalfRegister(front, SPI_SHADER_PGM_RSRC2_GS);
     if (frontRsrc1 == nullptr || frontRsrc2 == nullptr) Fail(function, "front half has no GS resource registers");
@@ -211,6 +263,7 @@ std::vector<std::uint8_t> FusionKey(const Shader* front, const Shader* back, con
     AppendBytes(key, back, headerBytes);
     AppendBytes(key, const_cast<const void*>(front->code), layout.frontBytes);
     AppendBytes(key, const_cast<const void*>(back->code), back->shader_size);
+    if (layout.constantsBytes != 0) AppendBytes(key, static_cast<const std::uint8_t*>(const_cast<const void*>(front->code)) + layout.constantsSource, layout.constantsBytes);
     AppendBytes(key, layout.sh.data(), layout.sh.size() * sizeof(ShaderRegister));
     AppendBytes(key, layout.cx.data(), layout.cx.size() * sizeof(ShaderRegister));
     AppendBytes(key, back->specials, back->special_sizes_bytes);
@@ -232,6 +285,11 @@ FusedProgram BuildFusedProgram(const char* fn, const Shader* front, const Shader
     std::memcpy(memory, const_cast<const void*>(front->code), layout.frontBytes);
     for (std::size_t offset = layout.frontBytes; offset < layout.backOffset; offset += sizeof(SNop)) std::memcpy(memory + offset, &SNop, sizeof(SNop));
     std::memcpy(memory + layout.backOffset, const_cast<const void*>(back->code), back->shader_size);
+    if (layout.constantsBytes != 0) {
+        for (std::size_t offset = layout.backOffset + back->shader_size; offset < layout.constantsOffset; ++offset) memory[offset] = 0;
+        std::memcpy(memory + layout.constantsOffset, static_cast<const std::uint8_t*>(const_cast<const void*>(front->code)) + layout.constantsSource, layout.constantsBytes);
+        for (const auto& [offset, literal] : layout.literals) std::memcpy(memory + offset, &literal, sizeof(literal));
+    }
     SetProgramAddress(layout.sh, SPI_SHADER_PGM_LO_GS, base + layout.backOffset);
     if (PatchProgramAddressRegister(layout.sh.data(), static_cast<std::uint32_t>(layout.sh.size()), static_cast<std::uint8_t>(ShaderBinaryType::Gs), base) != 0) Fail(fn, "fused program address patch failed");
     auto* sh = reinterpret_cast<ShaderRegister*>(memory + layout.shOffset);
@@ -299,12 +357,14 @@ extern "C" {
 int APS5_VABI sceAgcFuseShaderHalves_0200(Shader* fused_result, const Shader* front, const Shader* back, void* scratch_mem) {
     if (fused_result == nullptr || front == nullptr || back == nullptr) APS5_INVALID_ARG_EX;
     if (!ValidHalves(front, back)) return GRAPHICS5_ERROR_INVALID_SHADER_HALVES;
+    if (front->specials == nullptr || back->specials == nullptr) Fail("sceAgcFuseShaderHalves_0200", "shader half has no special registers");
     const bool isGs = GeometryHalves(front);
     const std::uint32_t stageBit = isGs ? (1u << 22u) : (1u << 21u);
     if (((front->specials->vgt_shader_stages_en.value ^ back->specials->vgt_shader_stages_en.value) & stageBit) != 0) {
         return GRAPHICS5_ERROR_INVALID_SHADER_HALVES;
     }
     if (isGs) return FuseGeometryHalves(fused_result, front, back, scratch_mem);
+    if (scratch_mem == nullptr) Fail("sceAgcFuseShaderHalves_0200", "hull halves need fused shader memory");
     *fused_result = *back;
     fused_result->type = static_cast<std::uint8_t>(ShaderBinaryType::Hs);
     if (scratch_mem != nullptr) {
@@ -351,6 +411,16 @@ int APS5_VABI sceAgcGetFusedShaderSize_0080(SizeAlign* dst, const Shader* front,
     if (GeometryHalves(front)) ComputeGeometryLayout("sceAgcGetFusedShaderSize_0080", front, back);
     dst->m_size = std::uint64_t{back->num_sh_registers} * sizeof(ShaderRegister);
     dst->m_align = 4;
+    return 0;
+}
+
+int APS5_VABI sceAgcGetFusedShaderSize(SizeAlign* dst, const Shader* front, const Shader* back) {
+    if (front == nullptr || back == nullptr) APS5_INVALID_ARG_EX;
+    if (!ValidHalves(front, back)) return GRAPHICS5_ERROR_INVALID_SHADER_HALVES;
+    if (dst == nullptr) APS5_INVALID_ARG_EX;
+    dst->m_size = std::uint64_t{back->num_sh_registers} * sizeof(ShaderRegister);
+    const std::uint32_t align = 4;
+    std::memcpy(&dst->m_align, &align, sizeof(align));
     return 0;
 }
 

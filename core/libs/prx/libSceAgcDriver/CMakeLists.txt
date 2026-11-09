@@ -156,6 +156,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcPackedMergeShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/PackedMerge.comp)
+set(agcPackedMergeShaderSpv ${agcTextureDetileGeneratedDir}/PackedMerge.spv)
+set(agcPackedMergeShaderHeader ${agcTextureDetileGeneratedDir}/PackedMerge_spv.h)
+add_custom_command(
+        OUTPUT "${agcPackedMergeShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcPackedMergeShaderSpv}" "${agcPackedMergeShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcPackedMergeShaderSpv} -DOUTPUT=${agcPackedMergeShaderHeader}
+        -DSYMBOL=PACKED_MERGE_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcPackedMergeShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcStagingCopyBackShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/StagingCopyBack.comp)
 set(agcStagingCopyBackShaderSpv ${agcTextureDetileGeneratedDir}/StagingCopyBack.spv)
 set(agcStagingCopyBackShaderHeader ${agcTextureDetileGeneratedDir}/StagingCopyBack_spv.h)
@@ -233,6 +246,23 @@ add_custom_command(
         DEPENDS "${agcSampleDumpsShaderSource}" glslang-standalone
         VERBATIM
 )
+function(agc_embedded_shader SOURCE STEM SYMBOL OUT_LIST)
+    set(source "${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/${SOURCE}")
+    set(spv "${agcTextureDetileGeneratedDir}/${STEM}.spv")
+    set(header "${agcTextureDetileGeneratedDir}/${STEM}_spv.h")
+    add_custom_command(
+            OUTPUT "${header}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+            COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${spv}" "${source}"
+            COMMAND ${CMAKE_COMMAND} -DINPUT=${spv} -DOUTPUT=${header}
+            -DSYMBOL=${SYMBOL} -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+            DEPENDS "${source}" glslang-standalone
+            VERBATIM
+    )
+    set(${OUT_LIST} ${${OUT_LIST}} "${header}" PARENT_SCOPE)
+endfunction()
+set(agcDepthTransferShaderHeaders)
+agc_embedded_shader(DepthToStorage.comp DepthToStorage DEPTH_TO_STORAGE_SPV agcDepthTransferShaderHeaders)
 foreach(agcPresentationStage IN ITEMS Vert Frag)
     string(TOLOWER "${agcPresentationStage}" agcPresentationExtension)
     string(TOUPPER "${agcPresentationStage}" agcPresentationSymbol)
@@ -302,6 +332,23 @@ foreach(agcOverlayStage IN ITEMS Vert Frag)
     )
     list(APPEND agcPresentationShaderHeaders ${agcOverlayShaderHeader})
 endforeach()
+set(agcFsrIncludeDir ${CMAKE_SOURCE_DIR}/3rdparty/FidelityFX-FSR/ffx-fsr)
+foreach(agcFsrFilter IN ITEMS Easu Rcas)
+    string(TOUPPER "${agcFsrFilter}" agcFsrSymbol)
+    set(agcFsrShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/Fsr${agcFsrFilter}.frag)
+    set(agcFsrShaderSpv ${agcTextureDetileGeneratedDir}/Fsr${agcFsrFilter}Frag.spv)
+    set(agcFsrShaderHeader ${agcTextureDetileGeneratedDir}/Fsr${agcFsrFilter}Frag_spv.h)
+    add_custom_command(
+            OUTPUT "${agcFsrShaderHeader}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+            COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 "-I${agcFsrIncludeDir}" -o "${agcFsrShaderSpv}" "${agcFsrShaderSource}"
+            COMMAND ${CMAKE_COMMAND} -DINPUT=${agcFsrShaderSpv} -DOUTPUT=${agcFsrShaderHeader}
+            -DSYMBOL=FSR_${agcFsrSymbol}_FRAG_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+            DEPENDS "${agcFsrShaderSource}" "${agcFsrIncludeDir}/ffx_a.h" "${agcFsrIncludeDir}/ffx_fsr1.h" glslang-standalone
+            VERBATIM
+    )
+    list(APPEND agcPresentationShaderHeaders ${agcFsrShaderHeader})
+endforeach()
 
 set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
@@ -353,6 +400,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Presentation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/QueueWorker.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/Submission.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/StallPrompt.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/SubmissionRing.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/WorkerAffinity.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Shaders/ShaderDiagnostics.cpp
@@ -382,9 +430,12 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameRecorder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/VulkanDevice.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatFlushProbe.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatProbeTolerance.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Float16ConversionProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/AspectFit.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationScaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationPass.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationUpscaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceOverlay.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/KeyboardOverlay.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PadStatusOverlay.cpp
@@ -398,6 +449,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Pipeline.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineLibrary.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineCache.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineBinaryStore.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineJournal.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/RuntimeSwitches.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Resources.cpp
@@ -429,6 +481,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Texture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PassHazards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/SampleOrder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/StagedMerge.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BarrierBatch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/UnitShadow.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
@@ -437,6 +490,7 @@ set(agcDriverSources
         ${agcReadbackHeaders}
         ${agcMultisampleUploadHeader}
         ${agcCmaskClearShaderHeader}
+        ${agcPackedMergeShaderHeader}
         ${agcMeshArgumentsShaderHeader}
         ${agcStagingCopyBackShaderHeader}
         ${agcTextureDetileImageShaderHeader}
@@ -447,6 +501,7 @@ set(agcDriverSources
         ${agcSampleCounterShaderHeader}
         ${agcSampleDumpsShaderHeader}
         ${agcPresentationShaderHeaders}
+        ${agcDepthTransferShaderHeaders}
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Event.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Query.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Resource/src/Lifecycle.cpp
@@ -527,6 +582,12 @@ set_target_properties(libSceAgcDriver PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libSceAgcDriver)
 if(WIN32)
     target_link_options(libSceAgcDriver PRIVATE LINKER:--exclude-symbols=_Znwy:_Znay:_ZnwyRKSt9nothrow_t:_ZnayRKSt9nothrow_t:_ZdlPv:_ZdaPv:_ZdlPvy:_ZdaPvy:_ZdlPvRKSt9nothrow_t:_ZdaPvRKSt9nothrow_t)
+endif()
+if(MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set(agcStdExportScript "${CMAKE_CURRENT_BINARY_DIR}/libSceAgcDriverStdExports.ver")
+    file(CONFIGURE OUTPUT "${agcStdExportScript}" CONTENT "{\n  local:\n    _ZSt*;\n    _ZNSt*;\n    _ZNKSt*;\n    _ZNRSt*;\n    _ZNKRSt*;\n    _ZNOSt*;\n    _ZNKOSt*;\n    _ZNSa*;\n    _ZNKSa*;\n};\n")
+    target_link_options(libSceAgcDriver PRIVATE "LINKER:--version-script=${agcStdExportScript}")
+    set_property(TARGET libSceAgcDriver APPEND PROPERTY LINK_DEPENDS "${agcStdExportScript}")
 endif()
 
 if(WIN32)
@@ -683,6 +744,11 @@ function(agc_add_draw_pipeline_test agcTestName)
     if(WIN32)
         set_tests_properties(${agcTestName}_draw_pipeline PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME ${agcTestName}_plan_verify COMMAND ${agcTestName}_tests)
+    set_tests_properties(${agcTestName}_plan_verify PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_PIPELINE=1;APS5_PIPELINED_DRAWS=32;APS5_PIPELINE_DISPATCH=1;APS5_VERIFY_DRAW_PLAN=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(${agcTestName}_plan_verify PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endfunction()
 
 function(agc_add_spirv_mode_tests agcTest)
@@ -809,7 +875,7 @@ if(BUILD_TESTING)
                 BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
     endif()
 
-    foreach(partialStoreTest agc_driver_depth_plane_partial_store_unimported agc_driver_depth_plane_partial_store_buffer_copy)
+    foreach(partialStoreTest agc_driver_depth_plane_partial_store_unimported agc_driver_depth_plane_partial_store_image_copy agc_driver_depth_plane_partial_store_buffer_copy)
         set_tests_properties(${partialStoreTest} PROPERTIES
                 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_HOST_IMPORT=1" TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         if(WIN32)
@@ -821,6 +887,7 @@ if(BUILD_TESTING)
         agc_driver_prepared_shaders_indirect agc_driver_prepared_shaders_uncached
         agc_driver_prepared_shaders_debug agc_driver_prepared_shaders_debug_failure
         PROPERTIES RESOURCE_LOCK shader_failure_capture)
+    set_property(TEST agc_driver_prepared_shaders APPEND PROPERTY ENVIRONMENT "APS5_NO_MASKED_RESULT_MEMO=1")
 endif()
 
 option(AGC_BUILD_VISUAL_TEST "Enable the standalone AGC SPIR-V visual test" OFF)
@@ -1025,8 +1092,23 @@ endif()
 
 if(BUILD_TESTING)
     get_directory_property(agcRegisteredTests TESTS)
-    list(FILTER agcRegisteredTests EXCLUDE REGEX "^(agc_pipeline_journal(_long_paths|_extended_paths)?|agc_driver_pipeline_journal|agc_pipeline_store_replay_growth)$")
+    list(FILTER agcRegisteredTests EXCLUDE REGEX "^(agc_pipeline_journal(_long_paths|_extended_paths)?|agc_driver_pipeline_journal(_undecodable_module)?|agc_pipeline_store_replay_growth)$")
     set_property(TEST ${agcRegisteredTests} APPEND PROPERTY ENVIRONMENT "APS5_NO_PIPELINE_JOURNAL=1")
+endif()
+
+add_test_executable(agc_run_report_shader_failure_tests EXCLUDE_FROM_ALL tests/RunReportShaderFailure.cpp)
+target_link_libraries(agc_run_report_shader_failure_tests PRIVATE shader_recompiler_agc_driver libc)
+target_include_directories(agc_run_report_shader_failure_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include)
+set_target_properties(agc_run_report_shader_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_run_report_shader_failure_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_run_report_shader_failure_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_run_report_shader_failure COMMAND agc_run_report_shader_failure_tests)
+    set_tests_properties(agc_run_report_shader_failure PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1")
+    if(WIN32)
+        set_tests_properties(agc_run_report_shader_failure PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 target_sources(agc_driver_scattered_runs_tests PRIVATE tests/AllocationFailure.cpp)

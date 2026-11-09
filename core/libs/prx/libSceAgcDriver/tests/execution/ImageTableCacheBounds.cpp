@@ -17,8 +17,6 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#else
-#include <sys/mman.h>
 #endif
 #ifdef __linux__
 #include <dirent.h>
@@ -88,21 +86,15 @@ constexpr std::array<std::uint32_t, 20> TablePixelCode{0xf4080100u, 0xfa000000u,
 class GuestBlock {
 public:
     GuestBlock() {
-#ifdef _WIN32
         block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
-        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
+        if (block != nullptr) {
+#ifdef _WIN32
+            GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
 #else
-        constexpr std::uintptr_t alignment = 65536;
-        void* mapped = mmap(nullptr, BlockBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (mapped != MAP_FAILED) {
-            const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
-            const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
-            if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned + BlockBytes != begin + BlockBytes + alignment) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + alignment - aligned);
-            block = reinterpret_cast<std::uint8_t*>(aligned);
+            GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, 0x04, BlockBytes);
             GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
-        }
 #endif
+        }
         Require(block != nullptr, "image table cache bounds: cannot allocate the guest block");
         GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
     }

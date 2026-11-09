@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 register("./cdn-loader.mjs", import.meta.url, { data: { url: process.env.ANYPS5_TEST_ZIP_URL, path: process.env.ANYPS5_TEST_ZIP_PATH } });
-const { Archive, DirectoryWriter } = await import(pathToFileURL(path.join(process.argv[2], "archive.mjs")));
+const webRoot = process.argv[2] ?? fileURLToPath(new URL("..", import.meta.url));
+const { Archive, DirectoryWriter } = await import(pathToFileURL(path.join(webRoot, "archive.mjs")));
 const { BlobWriter, Uint8ArrayReader, ZipWriter } = await import(process.env.ANYPS5_TEST_ZIP_URL);
 const header = new Uint8Array([127, 69, 76, 70]);
 
@@ -14,7 +15,7 @@ async function zipped(entries) {
   return writer.close();
 }
 
-const { packageArchive } = await import(pathToFileURL(path.join(process.argv[2], "archive.mjs")));
+const { packageArchive } = await import(pathToFileURL(path.join(webRoot, "archive.mjs")));
 const libraryBundle = await zipped([["libs/provider.prx", false]]);
 for (const moduleDirectories of [["sce_modules"], ["prx"], ["sce_module", "prx"], ["sce_modules", "prx"]]) {
   const entries = [["title/main.elf", false], ...moduleDirectories.map((name, index) => [`title/${name}/module${index}.prx`, false])];
@@ -142,7 +143,7 @@ for (const extra of [
   [...sidecars, ["other/resource", false, new Uint8Array([1])]]
 ]) {
   const archive = new Archive(await zipped([...app, ...extra]));
-  try { await assert.rejects(archive.inspect(() => {}), /exactly one executable ELF/); }
+  try { await assert.rejects(archive.inspect(() => {}), /This doesn't look like a PS5 app/); }
   finally { await archive.close(); }
 }
 
@@ -216,7 +217,7 @@ for (const directories of [[], parents, [...parents].reverse()]) {
   const originalSelf = globalThis.self;
   globalThis.self = { postMessage() {} };
   try {
-    const { downloadLibraries } = await import(pathToFileURL(path.join(process.argv[2], "worker.mjs")));
+    const { downloadLibraries } = await import(pathToFileURL(path.join(webRoot, "worker.mjs")));
     const bytes = Uint8Array.from({ length: 32 }, (_, index) => index);
     const sha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(byte => byte.toString(16).padStart(2, "0")).join("");
     const asset = { path: `libraries/linux-${sha256}.zip`, size: bytes.length, expandedBytes: 100, sha256 };
@@ -266,8 +267,18 @@ try { assert.equal((await folder.inspect(() => {})).root, "outer/inner/title/");
 finally { await folder.close(); }
 
 const siblings = new Archive(await zipped([["outer/", true], ["outer/main.elf", false], ["other/resource", false]]));
-try { await assert.rejects(siblings.inspect(() => {}), /exactly one executable ELF/); }
+try { await assert.rejects(siblings.inspect(() => {}), /This doesn't look like a PS5 app/); }
 finally { await siblings.close(); }
+
+for (const [entries, message] of [
+  [[["photo.jpg", false, new Uint8Array([255, 216, 255])]], "This doesn't look like a PS5 app. Choose the dumped game folder (the one containing sce_sys and sce_module), or a ZIP of it."],
+  [[["sce_sys/param.json", false, new TextEncoder().encode("{}")]], "No game executable (eboot.bin) was found next to sce_sys. Make sure the dump is complete and decrypted."],
+  [[["main.elf", false], ["other.elf", false], ["sce_sys/param.json", false, new TextEncoder().encode("{}")]], "Found 2 executables next to sce_sys (main.elf, other.elf). The app folder should contain exactly one, usually eboot.bin."]
+]) {
+  const archive = new Archive(await zipped(entries));
+  try { await assert.rejects(archive.inspect(() => {}), { message }); }
+  finally { await archive.close(); }
+}
 
 for (const cleanupRejects of [false, true]) {
   const failure = new Error("input read failed");

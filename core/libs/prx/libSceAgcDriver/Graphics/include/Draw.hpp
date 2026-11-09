@@ -7,10 +7,20 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include <array>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
 namespace AgcDriver::Graphics {
+
+struct VkDrawCounts {
+    std::uint64_t direct = 0;
+    std::uint64_t indexed = 0;
+    std::uint64_t indirect = 0;
+    std::uint64_t mesh = 0;
+};
+VkDrawCounts TakeVkDrawCounts();
 
 struct HostImport;
 
@@ -52,6 +62,7 @@ struct DrawInputCopy {
     std::uint32_t derived = 0;
     std::uint64_t generation = 0;
     std::uint64_t registryGeneration = 0;
+    Recorder::OwnedDrawInputProof owned;
 };
 DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use);
 DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes, std::size_t stride = 0);
@@ -165,6 +176,14 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
 std::vector<std::pair<std::uint64_t, std::uint64_t>> PipelinedColorMetadataPassWrites(const ColorMetadataPass& pass);
 bool DrawPipelineEnabled();
 bool CommitTrims();
+enum class AddressDrawReuse : std::uint8_t { Reused, Built, NotReadOnly, NotSpaceOnly, SnapshotOutside, PartialOverlap, SnapshotChanged, MovedBuffer, PatchedData, SpaceChanged, InUse, Revalidation, Count };
+using AddressDrawReuseCounts = std::array<std::uint64_t, static_cast<std::size_t>(AddressDrawReuse::Count)>;
+AddressDrawReuseCounts AddressDrawReuseCounters();
+const char* AddressDrawReuseName(AddressDrawReuse outcome);
+std::uint64_t AddressDrawReuseVerifications();
+enum class DrawStopForTest { None = 0, ReturnAfterResolve = 1, ThrowAfterResolve = 2 };
+void SetSpaceKeepFailuresForTest(std::uint32_t count);
+void SetDrawStopAfterResolveForTest(DrawStopForTest stop);
 
 }
 
