@@ -479,6 +479,8 @@ void testToggleRequests() {
     check(!keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_MIDDLE, false), now).toggleMouse, "releasing it asks for nothing");
     check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F7, true), now).toggleMouse, "F7 asks to toggle the mouse");
     check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F7, false), now).toggleMouse, "releasing F7 asks for nothing");
+    check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F4, true), now).hostMenu, "F4 asks to open the host menu");
+    check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F4, false), now).hostMenu, "releasing F4 asks for nothing");
     check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F11, true), now).toggleFullscreen, "F11 asks to toggle fullscreen");
     const auto overlay = keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F10, true), now);
     check(overlay.togglePerformanceOverlay && !overlay.toggleFullscreen, "F10 asks to toggle the performance overlay");
