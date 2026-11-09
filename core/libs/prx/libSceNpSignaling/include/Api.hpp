@@ -33,6 +33,7 @@ int APS5_VABI sceNpSignalingActivateConnection(int ctxId, const void* peerNpId, 
 int APS5_VABI sceNpSignalingCreateContext(const void* npId, void* callback, void* callbackArg, int* outContextId);
 int APS5_VABI sceNpSignalingDeleteContext(int ctxId);
 int APS5_VABI sceNpSignalingGetConnectionInfo(int ctxId, int connId, int infoCode, void* outInfo);
+int APS5_VABI sceNpSignalingGetLocalNetInfo(int ctxId, NpSignalingNetInfo* info);
 int APS5_VABI sceNpSignalingInitialize(std::int64_t memorySize, int threadPriority, int cpuAffinityMask, std::int64_t threadStackSize);
 int APS5_VABI sceNpSignalingSetContextOption(int ctxId, int optionId, int optionValue);
 int APS5_VABI sceNpSignalingTerminate();
@@ -46,6 +47,7 @@ int APS5_VABI sceNpSignalingGetConnectionFromNpId(int ctxId, const void* peerNpI
 int APS5_VABI sceNpSignalingGetConnectionFromPeerAddress(int ctxId, std::uint32_t peerAddr, std::uint16_t peerPort, int* outConnId);
 int APS5_VABI sceNpSignalingGetConnectionFromPeerAddressA(int ctxId, const NpSignalingAccountPlatformPair* peerAddr, int* outConnId);
 int APS5_VABI sceNpSignalingGetContextOption(int ctxId, int optionId, int* outOptionValue);
+int APS5_VABI sceNpSignalingGetPeerNetInfo(int ctxId, const void* peerNpId, std::uint32_t* outReqId);
 int APS5_VABI sceNpSignalingGetPeerNetInfoA(int ctxId, const void* peerAccount, std::uint32_t* outReqId);
 int APS5_VABI sceNpSignalingCancelPeerNetInfo(int ctxId, int reqId);
 int APS5_VABI sceNpSignalingGetPeerNetInfoResult(int ctxId, int connId, NpSignalingNetInfo* peerNetInfo);
