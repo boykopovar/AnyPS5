@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -123,6 +124,9 @@ int main() {
     std::memset(&filled, 0x5a, sizeof(filled));
     Require(sceBluetoothHidParamInitialize(&filled, nullptr) == 0 && filled.threadParam == nullptr && filled.reserved == 0 && filled.padding == 0x5a5a5a5au, "a null thread parameter was not stored as given");
     Require(sceBluetoothHidParamInitialize(nullptr, &thread) == invalidArgument, "a null parameter block was not refused");
+    errno = 71;
+    Require(sceBluetoothHidParamInitialize(reinterpret_cast<BluetoothHidParam*>(0x10), &thread) == invalidArgument, "unwritable parameter block was not refused");
+    Require(errno == 71, "errno modified by invalid pointer check");
     Require(sceBluetoothHidParamInitialize(nullptr, nullptr) == invalidArgument, "null parameter and null thread parameter were not refused");
     BluetoothHidThreadParam built;
     std::memset(&built, 0x5a, sizeof(built));

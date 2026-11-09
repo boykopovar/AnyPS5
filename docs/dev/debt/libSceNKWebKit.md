@@ -25,6 +25,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 ### Functional
 - [EmptyFrameLoaderClient document-loader notifications](../../../core/libs/prx/libSceNKWebKit/src/EmptyClients.cpp) (libSceNKWebKit) - four wrappers follow the empty `void` bodies in pinned [EmptyClients.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/loader/EmptyClients.cpp#L670-L975) for `assignIdentifierToInitialRequest`, `updateCachedDocumentLoader`, `dispatchUnableToImplementPolicy` and `setTitle`. Their exported NIDs remain unchanged; the physical console ABI is unverified.
+- [RFC 2822 date formatting](../../../core/libs/prx/libSceNKWebKit/DateParsing.cpp) (libSceNKWebKit) - `WTF::makeRFC2822DateString` follows [DateMath.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/DateMath.cpp#L1033-L1051) at commit `80f77e94c63ee7202eec3d4b5b1a021dd89011ba`. The output formats using a local stack buffer and constructs a `WTF::String` via `String::fromUTF8`. Out-of-range parameters (`dayOfWeek > 6`, `day == 0 || day > 31`, `month > 11`, `hours > 23`, `minutes > 59`, `seconds > 59`, or `|utcOffset| > 5999`) throw `std::invalid_argument` to prevent array bounds violations and enforce the two-digit hour boundary (`number < 100`) of `appendTwoDigitNumber`. Runtime behavior on PS5 hardware has not been measured.
+
 - [WTF ICU version queries](../../../core/libs/prx/libSceNKWebKit/src/WtfPrimitives.cpp) (libSceNKWebKit) - `WTF::ICU::majorVersion` and `WTF::ICU::minorVersion` follow [ICUHelpers.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/unicode/icu/ICUHelpers.cpp) at commit `80f77e94c63ee7202eec3d4b5b1a021dd89011ba`. Both functions query the underlying ICU version via `u_getVersion_nid_postfix` with `std::call_once` synchronization and return version components `[0]` and `[1]`. Runtime version values reflect `libSceIcu`'s reported ICU 78.1 release and have not been measured against console hardware traces.
 
 - [WKURL URL component and comparison helpers](../../../core/libs/prx/libSceNKWebKit/src/URL.cpp) (libSceNKWebKit) - `WKURLCopyHostName`, `WKURLCopyPath`, `WKURLCopyScheme`, `WKURLCopyLastPathComponent`, `WKURLCreateWithBaseURL` and `WKURLIsEqual` create and inspect `WKURLRef` host objects, resolving relative URLs against base URLs and comparing canonical URL strings; console execution is unverified.
@@ -91,7 +93,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
 - [WebCore text dumps](../../../core/libs/prx/libSceNKWebKit/src/WebCoreDump.cpp) (libSceNKWebKit) - the `operator<<(TextStream&, ...)` overloads for geometry, transforms, `ScrollAlignment` and scrolling and graphics enums follow the pinned [`FloatPoint.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatPoint.cpp), [`GraphicsTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/GraphicsTypes.cpp) and [`ScrollTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/ScrollTypes.cpp); expectations are hand-derived and not checked against console binaries. They rely on the `TextStream` exports and layout of the WTF text change. `XYZ_D65` prints `XYZ-D50`, as in that source; a `CompositeOperator` or `BlendMode` outside its name table throws.
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6353 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6347 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -467,12 +469,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKNotificationManagerProviderDidRemoveNotificationPolicies` | `gjIRPiBLogA` |
 | `WKNotificationManagerProviderDidShowNotification` | `7mQ26kdVI1U` |
 | `WKNotificationManagerSetProvider` | `7LaChig9ovU` |
-| `WKOpenPanelParametersCopyAcceptedFileExtensions` | `13zq0KIVJJg` |
-| `WKOpenPanelParametersCopyAcceptedMIMETypes` | `FajrozYzGvw` |
 | `WKOpenPanelParametersCopyAllowedMIMETypes` | `YacE5rS1b3k` |
-| `WKOpenPanelParametersCopySelectedFileNames` | `Oa8DwUsT8yg` |
-| `WKOpenPanelParametersGetAllowsDirectories` | `yZ8MpxQizWM` |
-| `WKOpenPanelParametersGetAllowsMultipleFiles` | `6JUqQUan7cM` |
 | `WKPageAreScrollbarAnimationsSuppressed` | `OQYQvowtC6I` |
 | `WKPageBackgroundExtendsBeyondPage` | `qKJ2G1pGKmU` |
 | `WKPageBeginPrinting` | `hujPhSbtd4A` |
@@ -1609,7 +1606,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF21RefCountedLeakCounterC2EPKc` | `opqf3CJzhms` |
 | `_ZN3WTF21bootSessionUUIDStringEv` | `8Wal1MC0Llo` |
 | `_ZN3WTF21currentSearchLocaleIDEv` | `D0gLApZm36c` |
-| `_ZN3WTF21makeRFC2822DateStringEjjjjjjji` | `uj+HLgqmsTY` |
 | `_ZN3WTF21sentenceBreakIteratorENS_10StringViewE` | `poSZevJzCfA` |
 | `_ZN3WTF22CrossThreadTaskHandler13postTaskReplyEONS_15CrossThreadTaskE` | `ygkwGUwd8fE` |
 | `_ZN3WTF22CrossThreadTaskHandler21setCompletionCallbackEONS_8FunctionIFvvEEE` | `3QQmCLX9eCA` |
