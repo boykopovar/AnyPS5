@@ -511,6 +511,16 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     if (!input || ignoreInput) return;
     if (event.type == SDL_KEYDOWN && ImeCapturesKeyboard_nid_postfix()) return;
     if (event.type != SDL_KEYUP && event.type != SDL_MOUSEBUTTONUP && ModalDialogCapturesInput_nid_postfix()) return;
+    if (hostMenu.IsOpen() && event.type == SDL_KEYDOWN && event.key.repeat == 0) {
+        if (event.key.keysym.scancode == SDL_SCANCODE_UP) {
+            hostMenu.Up();
+            return;
+        }
+        if (event.key.keysym.scancode == SDL_SCANCODE_DOWN) {
+            hostMenu.Down();
+            return;
+        }
+    }
     keyboardMouse.SetTitleReadsMouse(MouseIsOpen_nid_no_patch());
     const auto requests = keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now());
     const bool targetsWindow = window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle());
