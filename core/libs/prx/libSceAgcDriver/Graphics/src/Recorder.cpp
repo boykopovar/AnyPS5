@@ -1215,6 +1215,7 @@ void WriteCheckpointMarker(const Context& context, VkCommandBuffer commands, std
     if (commands == VK_NULL_HANDLE || token == 0) return;
     try {
         if (!PrepareCheckpointMarker(context)) return;
+        BeforeCommandLookup(context.device);
         auto& state = CheckpointMarkerState();
         state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, CheckpointMarkerTokenOffset, static_cast<std::uint32_t>(token));
     } catch (...) {
@@ -1229,6 +1230,7 @@ void WriteNvCheckpointToken(const Context& context, VkCommandBuffer commands, st
         if (context.device == VK_NULL_HANDLE || context.deviceProc == nullptr) return;
         auto setCheckpoint = reinterpret_cast<PFN_vkCmdSetCheckpointNV>(context.deviceProc(context.device, "vkCmdSetCheckpointNV"));
         if (setCheckpoint == nullptr) return;
+        BeforeCommandLookup(context.device);
         EmitNvCheckpointToken(commands, static_cast<AgcDriver::FaultToken>(token), setCheckpoint);
     } catch (...) {
     }

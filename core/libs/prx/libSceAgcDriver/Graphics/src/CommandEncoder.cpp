@@ -477,7 +477,11 @@ void CommandEncoder::Open(VkCommandBuffer commands) {
     windows.push_back(commands);
     owner.store(std::this_thread::get_id(), std::memory_order_relaxed);
     recent.store(commands, std::memory_order_relaxed);
-    target.store(commands, std::memory_order_relaxed);
+    target.store(commands, std::memory_order_release);
+}
+
+void CommandEncoder::RefuseForeignProducer() {
+    throw std::logic_error("AGC graphics: another thread used the encoder while an encoding window was open");
 }
 
 void CommandEncoder::Close() {
@@ -609,6 +613,7 @@ void BeforeCommandLookup(VkDevice device) {
         auto* encoder = state.encoder.load(std::memory_order_acquire);
         if (encoder == nullptr || state.device != device) continue;
         if (encoder->OpenOnThisThread()) encoder->Quiesce();
+        else if (encoder->OpenOnOtherThread()) CommandEncoder::RefuseForeignProducer();
         else encoder->Settle();
     }
 }
