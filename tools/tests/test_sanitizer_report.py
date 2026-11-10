@@ -2,7 +2,9 @@ import os
 import subprocess
 from pathlib import Path
 import contextlib
+import html
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -265,6 +267,65 @@ class SanitizerReportTests(unittest.TestCase):
         code, stdout, _ = self.run_main(self.write(suite(case("plain", "fail", '<failure message=""/><system-out>FAIL</system-out>'))))
         self.assertEqual(code, 1)
         self.assertIn("| Failed test |\n| - |\n| `plain` |\n", stdout)
+
+
+    def test_names_remain_literal_in_every_summary_table(self):
+        names = ("one|two", "`fence`", "line\nnext\rreturn", "carriage\rreturn", "\\|<script>&中文*_")
+        for name in names:
+            for details, known, outcome in (({}, {}, "failed"), ({name: "report"}, {}, "failed"),
+                                            ({}, {name: "reason"}, "failed"), ({}, {name: "reason"}, "passed"),
+                                            ({}, {name: "reason"}, None)):
+                with self.subTest(name=name, outcome=outcome, details=bool(details)):
+                    found = {name: outcome} if outcome else {"ordinary": "passed"}
+                    text, failing = sanitizer_report.summarize("ASan", found, known, details)
+                    rows = [line for line in text.splitlines() if line.startswith("| <code>")]
+                    self.assertEqual(len(rows), 1)
+                    self.assertEqual(rows[0].count("|"), 3 if known and outcome or details else 2)
+                    encoded = rows[0].split("<code>", 1)[1].split("</code>", 1)[0]
+                    self.assertEqual(html.unescape(encoded), name.replace("\r", r"\r").replace("\n", r"\n"))
+                    self.assertRegex(encoded, r"\A(?:[^\W_]| |&#\d+;)*\Z")
+                    self.assertEqual(failing, outcome == "failed" and not known)
+
+    def test_cli_json_keeps_original_names_and_appends_literal_markdown(self):
+        names = ("one|two", "`fence`", "line\nnext\rreturn", "carriage\rreturn", "\\|<script>&中文*_")
+        path = self.write(suite(*(case(html.escape(name, quote=True).replace("\r", "&#13;").replace("\n", "&#10;"),
+                                      "disabled", '<skipped/><failure/><system-out>ERROR: AddressSanitizer: bad access</system-out>')
+                                  for name in names)))
+        before = path.read_bytes()
+        summary = self.write("existing\n", "summary.md")
+        completed = subprocess.run([sys.executable, str(Path(sanitizer_report.__file__)), str(path),
+                                    "--json", "--summary", str(summary)],
+                                   capture_output=True, encoding="utf-8", timeout=15)
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+        data = json.loads(completed.stdout)
+        self.assertTrue(data["unexpected_failure"])
+        self.assertEqual([test["name"] for test in data["tests"]], sorted(names))
+        self.assertEqual([(test["outcome"], test["unexpected"], test["report"]) for test in data["tests"]],
+                         [("failed", True, "ERROR: AddressSanitizer: bad access")] * len(names))
+        markdown = summary.read_text(encoding="utf-8")
+        self.assertTrue(markdown.startswith("existing\n"))
+        self.assertIn("5 tests: 0 passed, 0 skipped, 5 failed.", markdown)
+        rows = [line for line in markdown.splitlines() if line.startswith("| <code>")]
+        self.assertEqual(len(rows), len(names))
+        for row, name in zip(rows, sorted(names)):
+            self.assertEqual(row.count("|"), 3)
+            encoded = row.split("<code>", 1)[1].split("</code>", 1)[0]
+            self.assertEqual(html.unescape(encoded), name.replace("\r", r"\r").replace("\n", r"\n"))
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_explicit_failures_override_skipped_and_disabled_statuses(self):
+        for status in ("run", "notrun", "disabled", None):
+            for failure in ("failure", "error"):
+                for skip in ("", '<skipped/>', '<skipped message="SKIP_RETURN_CODE=77"/>'):
+                    with self.subTest(status=status, failure=failure, skip=skip):
+                        path = self.write(suite(case("contradiction", status, skip + f"<{failure}/>")))
+                        self.assertEqual(sanitizer_report.results(path), {"contradiction": "failed"})
+                        self.assertEqual(self.run_main(path)[0], 1)
+                        known = self.write_known("contradiction address tracked issue")
+                        code, stdout, _ = self.run_main(path, "--known", known, "--sanitizer", "address")
+                        self.assertEqual(code, 0)
+                        self.assertIn("1 failed (1 known)", stdout)
 
 
 

@@ -116,9 +116,16 @@ int main(int argc, char** argv) {
         ApplicationHeapFree_nid_no_patch(large);
         const auto released = measure();
         require(released[3] == initial[3] && released[2] == holding[2]);
-        write(stats, 0, std::uint16_t{0x27});
-        require(malloc_stats_fast_nid_postfix(stats.data()) == 22);
-        require(malloc_stats_fast_nid_postfix(nullptr) == 22 && statsCalls == 0);
+        const std::array<std::array<std::uint16_t, 2>, 4> invalid{{{0x28, 0}, {0x28, 2}, {0x27, 1}, {0x30, 1}}};
+        for (const auto& [size, version] : invalid) {
+            stats.fill(std::byte{0x5a});
+            write(stats, 0, size);
+            write(stats, 2, version);
+            const auto before = stats;
+            require(malloc_stats_fast_nid_postfix(stats.data()) == 1 && stats == before);
+        }
+        reject([&] { malloc_stats_fast_nid_postfix(nullptr); });
+        require(statsCalls == 0);
         return 0;
     }
     if (argc > 1 && std::strcmp(argv[1], "missing") == 0) {

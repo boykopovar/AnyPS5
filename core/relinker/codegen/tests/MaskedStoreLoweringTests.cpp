@@ -1,6 +1,7 @@
 #include <codegen/x86/MaskedStoreLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <codegen/CodegenException.hpp>
+#include "LoweringExecution.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -269,6 +270,10 @@ void execution() {
     std::uint64_t runs = 0;
     for (const auto& form : kForms) {
         for (const bool wide : {false, true}) {
+            if (!LoweringExecution::HostExecutes(maskedStore(form, wide, 1, 2, 0, {0x07}))) {
+                std::cout << "skipped: " << (wide ? "256-bit " : "128-bit ") << form.Name << " execution, the host does not execute it\n";
+                continue;
+            }
             const auto elements = (wide ? 32u : 16u) / form.ElementSize;
             for (std::size_t mode = 0; mode < kAddressings.size(); ++mode) {
                 const auto& addressing = kAddressings[mode];
