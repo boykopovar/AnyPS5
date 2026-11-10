@@ -46,6 +46,28 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(len(tests["probe"]["missing_layers"]), 1)
         self.assertEqual(problems, ["probe"])
 
+    def test_unassigned_validation_errors_are_compared(self):
+        inserted = 'Insert instance layer "VK_LAYER_KHRONOS_validation"'
+        text = ('<testsuite><testcase name="probe"><system-err>' + inserted + '\n'
+                'Validation Error: [ UNASSIGNED-Threading-Info ] invalid image handle\n'
+                'Validation Error: [ UNASSIGNED-Device address out of bounds ] invalid address\n'
+                'environment: UNASSIGNED-Fake-Configuration'
+                '</system-err></testcase></testsuite>')
+        tests, problems = self.report(text)
+        self.assertEqual(tests["probe"]["diagnostics"], {
+            "UNASSIGNED-Threading-Info": 1,
+            "UNASSIGNED-Device address out of bounds": 1,
+        })
+        self.assertEqual(problems, [])
+        report = gate.compare([
+            {"side": "baseline", "iteration": 1, "returncode": 0, "problems": [],
+             "tests": {"probe": {"diagnostics": {}}}},
+            {"side": "candidate", "iteration": 1, "returncode": 0, "problems": [], "tests": tests},
+        ])
+        self.assertEqual(report["new_diagnostics"], {
+            "probe": ["UNASSIGNED-Device address out of bounds", "UNASSIGNED-Threading-Info"]})
+        self.assertEqual(report["exit_code"], 1)
+
     def test_a_test_without_the_layer_insertion_line_is_not_a_success(self):
         inserted = '[Vulkan Loader] INFO | LAYER:   Insert instance layer "VK_LAYER_KHRONOS_validation" (layer.json)'
         for line, problems in ((inserted, []), ('Insert instance layer "VK_LAYER_OTHER" (layer.json)', ["probe"]), ("", ["probe"])):
