@@ -15,4 +15,5 @@
 extern "C" {
 int APS5_VABI FT_Trace_Get_Count_nid_no_patch();
 const char* APS5_VABI FT_Trace_Get_Name_nid_no_patch(int idx);
+void APS5_VABI sceFreeTypeOtGlyphGetCBox_nid_no_patch(FreeType::GuestGlyphRec* glyph, std::uint32_t mode, FreeType::GuestBBox* box);
 }
