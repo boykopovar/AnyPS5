@@ -737,23 +737,43 @@ static int NativeStatfs(const std::filesystem::path& path, KernelStatfs* fs) {
 
 #endif
 
-extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
-    if (!descriptors) return PosixFailure(GUEST_EFAULT);
+extern "C" int APS5_VABI pipe2_nid_postfix(int* descriptors, int flags) {
+    if ((flags & ~(SCE_KERNEL_O_NONBLOCK | SCE_KERNEL_O_CLOEXEC)) != 0) return PosixFailure(GUEST_EINVAL);
     int native[2];
 #ifdef _WIN32
-    const int result = ::_pipe(native, 65536, _O_BINARY);
+    int mode = _O_BINARY;
+    if ((flags & SCE_KERNEL_O_CLOEXEC) != 0) mode |= _O_NOINHERIT;
+    const int result = ::_pipe(native, 65536, mode);
 #else
-    const int result = ::pipe(native);
+    int hostFlags = 0;
+#ifdef O_CLOEXEC
+    if ((flags & SCE_KERNEL_O_CLOEXEC) != 0) hostFlags |= O_CLOEXEC;
+#endif
+#ifdef O_NONBLOCK
+    if ((flags & SCE_KERNEL_O_NONBLOCK) != 0) hostFlags |= O_NONBLOCK;
+#endif
+    const int result = ::pipe2(native, hostFlags);
 #endif
     if (result != 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
-    File::RememberPipe(native[0]);
-    File::RememberPipe(native[1]);
+#ifdef _WIN32
+    if ((flags & SCE_KERNEL_O_NONBLOCK) != 0) {
+        DWORD pipeMode = PIPE_NOWAIT;
+        ::SetNamedPipeHandleState(WindowsDescriptorHandle_nid_no_patch(native[0]), &pipeMode, nullptr, nullptr);
+        ::SetNamedPipeHandleState(WindowsDescriptorHandle_nid_no_patch(native[1]), &pipeMode, nullptr, nullptr);
+    }
+#endif
+    File::RememberPipe(native[0], flags);
+    File::RememberPipe(native[1], flags);
     if (!GuestCopyOut_nid_no_patch(descriptors, native, sizeof(native))) {
         close_nid_postfix(native[0]);
         close_nid_postfix(native[1]);
         return PosixFailure(GUEST_EFAULT);
     }
     return 0;
+}
+
+extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
+    return pipe2_nid_postfix(descriptors, 0);
 }
 
 static int PathError(const char* path, std::string& copy) {
