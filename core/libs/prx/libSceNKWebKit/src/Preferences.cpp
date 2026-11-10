@@ -1096,6 +1096,14 @@ bool APS5_VABI WKPreferencesGetDirectoryUploadEnabled(const void* preferencesRef
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"DirectoryUploadEnabled");
 }
 
+void APS5_VABI WKPreferencesSetDialogElementEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"DialogElementEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesGetDialogElementEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"DialogElementEnabled");
+}
+
 void APS5_VABI WKPreferencesSetMediaControlsScaleWithPageZoom(const void* preferencesRef, bool flag) {
     PreferencesFromRef(preferencesRef, __func__)->Set(u"MediaControlsScaleWithPageZoom", flag);
 }

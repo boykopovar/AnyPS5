@@ -91,6 +91,7 @@ const BooleanCase booleanCases[]{
     {"DeveloperExtrasEnabled", WKPreferencesSetDeveloperExtrasEnabled, WKPreferencesGetDeveloperExtrasEnabled, false},
     {"DiagnosticLoggingEnabled", WKPreferencesSetDiagnosticLoggingEnabled, WKPreferencesGetDiagnosticLoggingEnabled, false},
     {"DirectoryUploadEnabled", WKPreferencesSetDirectoryUploadEnabled, WKPreferencesGetDirectoryUploadEnabled, false},
+    {"DialogElementEnabled", WKPreferencesSetDialogElementEnabled, WKPreferencesGetDialogElementEnabled, true},
     {"DownloadAttributeEnabled", WKPreferencesSetDownloadAttributeEnabled, WKPreferencesGetDownloadAttributeEnabled, false},
     {"EnableInheritURIQueryComponent", WKPreferencesSetEnableInheritURIQueryComponent, WKPreferencesGetEnableInheritURIQueryComponent, false},
     {"EncodingDetectorEnabled", WKPreferencesSetEncodingDetectorEnabled, WKPreferencesGetEncodingDetectorEnabled, false},
@@ -508,6 +509,15 @@ void Features() {
     RequireThrows<std::invalid_argument>([&] { WKPreferencesSetExperimentalFeatureForKey(preferences.Get(), true, preferences.Get()); });
 }
 
+void DialogElementFeatureKey() {
+    auto preferences = Create();
+    auto key = NKWebKit::Make<NKWebKit::String>(std::u16string(u"DialogElementEnabled"));
+    WKPreferencesSetExperimentalFeatureForKey(preferences.Get(), false, key.Get());
+    Require(!WKPreferencesGetDialogElementEnabled(preferences.Get()));
+    WKPreferencesEnableAllExperimentalFeatures(preferences.Get());
+    Require(WKPreferencesGetDialogElementEnabled(preferences.Get()));
+}
+
 void CreationAndUnknownDefaults() {
     auto identifier = NKWebKit::Make<NKWebKit::String>(std::u16string(u"shared identifier"));
     auto first = NKWebKit::Retained<NKWebKit::Preferences>::Adopt(NKWebKit::Cast<NKWebKit::Preferences>(
@@ -565,6 +575,7 @@ int main() {
     Numeric();
     Strings();
     Features();
+    DialogElementFeatureKey();
     CreationAndUnknownDefaults();
     std::puts("WKPreferences: defaults, boolean round trips, deprecated APIs, numeric boundaries, Unicode/null strings, copies, features and unknown media defaults passed");
 }

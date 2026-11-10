@@ -3086,10 +3086,6 @@ int APS5_VABI _ZN7WebCore15SQLiteStatement21getColumnBlobAsStringEi() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPreferencesSetDialogElementEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList13ClipOutToPathC1ERKNS_4PathE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -5399,10 +5395,6 @@ int APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperationC2EdNS_15FilterOperati
 }
 
 int APS5_VABI _ZN7WebCore12JSTimeRangesC2EPN3JSC9StructureERNS_17JSDOMGlobalObjectEON3WTF3RefINS_10TimeRangesENS6_13DumbPtrTraitsIS8_EEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPreferencesGetDialogElementEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 
