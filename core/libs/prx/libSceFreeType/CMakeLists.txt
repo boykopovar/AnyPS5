@@ -8,6 +8,7 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         src/Stroker.cpp src/OutlineStorage.cpp src/FaceCompat.cpp src/TrackKerning.cpp src/LcdFilter.cpp src/ModuleManagement.cpp src/OutlineTransform.cpp src/VectorPolar.cpp src/PsFontValue.cpp src/OutlineRender.cpp
         src/OutlineBitmap.cpp
         src/SfntTable.cpp
+        src/Stroker.cpp src/OutlineStorage.cpp src/FaceCompat.cpp src/TrackKerning.cpp src/Variations.cpp
         src/GuestObjects.cpp
         src/Names.cpp
         src/Trigonometry.cpp
@@ -319,6 +320,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_freetype_outline_render COMMAND guest_freetype_outline_render_tests)
     if(WIN32)
         set_tests_properties(guest_freetype_outline_render PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_variations_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeVariations.cpp)
+    target_include_directories(guest_freetype_variations_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_variations_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_variations_tests)
+    add_test(NAME guest_freetype_variations COMMAND guest_freetype_variations_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_variations PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
     endif()
     add_test_executable(guest_freetype_charmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeCharmap.cpp)
