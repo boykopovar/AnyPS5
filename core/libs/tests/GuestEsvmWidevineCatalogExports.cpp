@@ -36,15 +36,15 @@ void ExpectNotImplemented(TFn stub, const char* name, int line) {
 #define RequireNotImplemented(stub) ExpectNotImplemented(stub, #stub, __LINE__)
 
 int main() {
-    RequireNotImplemented(sceEsvmCreateMediaKeys2_nid_no_patch);
-    RequireNotImplemented(sceEsvmGetMetrics_nid_no_patch);
-    RequireNotImplemented(sceEsvmGetProvisioningRequest_nid_no_patch);
-    RequireNotImplemented(sceEsvmGetServiceCertificateRequest_nid_no_patch);
-    RequireNotImplemented(sceEsvmHandleProvisioningResponse_nid_no_patch);
-    RequireNotImplemented(sceEsvmIsProvisioned_nid_no_patch);
-    RequireNotImplemented(sceEsvmMediaKeysDecryptAudioData_nid_no_patch);
-    RequireNotImplemented(sceEsvmParseAndLoadServiceCertificateResponse_nid_no_patch);
-    RequireNotImplemented(sceEsvmSetMediaKeys_nid_no_patch);
-    RequireNotImplemented(sceEsvmSetServiceCertificate_nid_no_patch);
+    RequireNotImplemented(sceEsvmCreateMediaKeys2);
+    RequireNotImplemented(sceEsvmGetMetrics);
+    RequireNotImplemented(sceEsvmGetProvisioningRequest);
+    RequireNotImplemented(sceEsvmGetServiceCertificateRequest);
+    RequireNotImplemented(sceEsvmHandleProvisioningResponse);
+    RequireNotImplemented(sceEsvmIsProvisioned);
+    RequireNotImplemented(sceEsvmMediaKeysDecryptAudioData);
+    RequireNotImplemented(sceEsvmParseAndLoadServiceCertificateResponse);
+    RequireNotImplemented(sceEsvmSetMediaKeys);
+    RequireNotImplemented(sceEsvmSetServiceCertificate);
     return 0;
 }
