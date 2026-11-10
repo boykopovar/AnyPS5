@@ -213,10 +213,6 @@ int APS5_VABI Unknown_GjO5Ap3E_minus_t4_nid_no_patch() {
 }
 APS5_EXPORT("GjO5Ap3E-t4", Unknown_GjO5Ap3E_minus_t4_nid_no_patch);
 
-int APS5_VABI DES_set_key_unchecked_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EVP_PKEY_CTX_new_id_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
