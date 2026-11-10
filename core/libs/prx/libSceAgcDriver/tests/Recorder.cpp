@@ -668,6 +668,11 @@ public:
     ~Device() { release(); }
     bool NullDescriptors() const { return nullDescriptors; }
     const Context& GetContext() const { return context; }
+    DeviceFunctions* UseFunctionTable() {
+        FillDeviceFunctions(context, functions);
+        context.functions = &functions;
+        return &functions;
+    }
     bool Graphics() const { return graphics; }
     bool Timestamps() const {
         std::uint32_t count = 0;
@@ -727,6 +732,7 @@ private:
     bool graphics = false;
     std::mutex settleMutex;
     bool nullDescriptors = false;
+    DeviceFunctions functions{};
     bool memoryBudget = false;
 };
 
@@ -1788,6 +1794,25 @@ void completionWaitTests(const Device& device, Recorder& recorder) {
     recorder.AfterCompletions(base + 4u, cpuValue, 8, 0, false);
     CompletePendingCpuWrites(device.GetContext(), base, sizeof(memory));
     Require(memory[1] == 9u && Recorder::PendingCompletionLabels() == 0, "completion wait: a reader of a label stored behind a completion did not wait for that store");
+}
+
+void encoderSlotFallbackTests(const Device& device) {
+    if (!CommandEncoder::Enabled()) return;
+    const auto& context = device.GetContext();
+    std::vector<DeviceFunctions> tables(CommandEncoder::Slots + 1);
+    std::vector<std::unique_ptr<Recorder>> recorders;
+    for (auto& table : tables) {
+        FillDeviceFunctions(context, table);
+        recorders.push_back(std::make_unique<Recorder>(context, false, &table, context.queueFamily));
+    }
+    auto& fallback = *recorders.back();
+    Require(!fallback.Encodes(), "a recorder past the command encoder slots got an encoder");
+    Require(std::ranges::count_if(recorders, [](const auto& recorder) { return recorder->Encodes(); }) != 0, "no recorder with a device table got a command encoder");
+    RecordMemoryBarrier(context, fallback.Commands(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    fallback.Submit();
+    fallback.Sync();
+    Require(fallback.Idle(), "a recorder past the command encoder slots did not complete its batch");
+    std::cout << "Command encoder slot fallback tests passed\n";
 }
 
 int gpuTimingCompletionTests(const Device& device, bool incomplete) {
@@ -15271,7 +15296,7 @@ int main(int argc, char** argv) {
         }
 #endif
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
-        Recorder recorder(device.GetContext());
+        Recorder recorder(device.GetContext(), false, argc == 1 ? device.UseFunctionTable() : nullptr, device.GetContext().queueFamily);
         recorder.Activate();
         if (argc == 2 && std::string_view(argv[1]) == "--command-reuse-only") {
             if (device.GetContext().hostImportAlignment == 0) return 77;
@@ -15764,7 +15789,12 @@ int main(int argc, char** argv) {
         drawSnapshotPatchTests(device);
         drawSnapshotEpochTests(device);
         gpu.lock();
+        encoderSlotFallbackTests(device);
         recorder.Activate();
+        const bool drew = vertexTargetRangeTests(device, recorder, false);
+        Require(recorder.Encodes() == CommandEncoder::Enabled(), "the recorder suite's recorder did not follow APS5_RECORD_INLINE");
+        Require(!recorder.Encodes() || !drew || recorder.EncoderCounts().commands != 0, "the recorder suite drew but recorded no command through the encoder");
+        std::cout << "encoder recorded " << recorder.EncoderCounts().commands << " commands\n";
         std::cout << "Recorder read tracking and label tests passed\n";
         return 0;
     }
