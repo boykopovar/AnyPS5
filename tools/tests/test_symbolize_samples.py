@@ -736,6 +736,30 @@ class CandidateModuleTests(unittest.TestCase):
 
 
 class ThreadFilterInputTests(unittest.TestCase):
+    def test_address_captures_without_thread_headings_reject_thread_filter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plain = root / "plain.txt"
+            threaded = root / "threads.txt"
+            threaded.write_text("thread 7 samples 10\n  example.prx 0x1010 10 10\n", encoding="utf-8")
+            for header in ("", "# 5 samples\n"):
+                plain.write_text(header + "example.prx 0x1010 5 5\n", encoding="utf-8")
+                original = {path: path.read_bytes() for path in (plain, threaded)}
+                for target in ("samples", "since"):
+                    with self.subTest(header=header, target=target):
+                        samples = plain if target == "samples" else threaded
+                        options = [] if target == "samples" else ["--since", str(plain)]
+                        result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
+                                                 "--libs", str(root), "--thread", "7", *options],
+                                                capture_output=True, text=True, timeout=5)
+                        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn(f"{plain}:{2 if header else 1}:", result.stderr)
+                        self.assertIn("thread filtering requires thread headings", result.stderr)
+                        self.assertNotIn("Traceback", result.stderr)
+                        for path, content in original.items():
+                            self.assertEqual(path.read_bytes(), content)
+
     def test_collapsed_stacks_reject_thread_filter_without_writing_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -23,6 +23,48 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+/*
+ * Copyright (C) 2006-2019 Apple Inc. All rights reserved
+ * Copyright (C) Research In Motion Limited 2009. All rights reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ *
+ * Derived from Source/WTF/wtf/text/StringHash.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+ */
+/*
+ * Copyright (C) 2005-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2010 Patrick Gansterer <paroga@paroga.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ *
+ * Derived from Source/WTF/wtf/text/StringHasher.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+ */
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
@@ -256,6 +298,10 @@ unsigned Hash(StringView view, bool masked = true) {
     StringHasher hasher;
     for (unsigned i = 0; i < view.length; ++i) hasher.addCharacter(Unit(view, i));
     return hasher.hash(masked);
+}
+
+unsigned AvoidDeletedHashValue(unsigned hash) {
+    return hash | (static_cast<unsigned>(!(hash + 1)) << 31);
 }
 
 StringImpl* EmptyImpl() {
@@ -502,6 +548,68 @@ template<typename T> String IntegerString(T value) {
     auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
     if (result.ec != std::errc{}) throw std::runtime_error("WTF integer formatting failed");
     return String(CopyImpl({buffer, static_cast<unsigned>(result.ptr - buffer), true}));
+}
+
+char16_t FoldQuoteMark(char16_t value) {
+    switch (value) {
+    case 0x00AB:
+    case 0x00BB:
+    case 0x05F4:
+    case 0x201C:
+    case 0x201D:
+    case 0x201E:
+    case 0x201F:
+    case 0x2E42:
+    case 0x301D:
+    case 0x301E:
+    case 0x301F:
+    case 0xFF02:
+        return u'"';
+    case 0x05F3:
+    case 0x2018:
+    case 0x2019:
+    case 0x201A:
+    case 0x201B:
+    case 0x2039:
+    case 0x203A:
+    case 0x300C:
+    case 0x300D:
+    case 0x300E:
+    case 0x300F:
+    case 0xFE41:
+    case 0xFE42:
+    case 0xFE43:
+    case 0xFE44:
+    case 0xFF07:
+    case 0xFF62:
+    case 0xFF63:
+        return u'\'';
+    default:
+        return value;
+    }
+}
+
+String FoldQuoteMarks(const StringImpl* impl) {
+    auto view = View(impl);
+    unsigned first = 0;
+    while (first < view.length && FoldQuoteMark(Unit(view, first)) == Unit(view, first)) ++first;
+    if (first == view.length) return String(Retain(const_cast<StringImpl*>(impl)));
+    void* data;
+    auto* result = NewImpl(view.length, view.is8Bit, data);
+    for (unsigned i = 0; i < view.length; ++i) {
+        auto value = FoldQuoteMark(Unit(view, i));
+        if (view.is8Bit) static_cast<unsigned char*>(data)[i] = static_cast<unsigned char>(value);
+        else static_cast<char16_t*>(data)[i] = value;
+    }
+    return String(result);
+}
+
+const String* DefaultMIMEType() {
+    static const unsigned char characters[] = "application/octet-stream";
+    constexpr unsigned length = sizeof(characters) - 1;
+    static StringImpl impl{1, length, characters, (Hash({characters, length, true}) << 8) | 12};
+    static const String* value = new String(&impl);
+    return value;
 }
 
 }  // namespace
@@ -926,6 +1034,14 @@ bool APS5_VABI _ZN3WTF11CStringHash5equalERKNS_7CStringES3_(const CString& a, co
     return a.buffer->length == b.buffer->length && !std::memcmp(Bytes(a), Bytes(b), a.buffer->length);
 }
 
+String APS5_VABI _ZN7WebCore14foldQuoteMarksERKN3WTF6StringE(const String* string) {
+    return FoldQuoteMarks(Checked(string).impl);
+}
+
+const String& APS5_VABI _ZN7WebCore15defaultMIMETypeEv() {
+    return *DefaultMIMEType();
+}
+
 }
 
 namespace {
@@ -1137,6 +1253,32 @@ bool APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_(const URL* a, 
     return URLPort(first) == URLPort(second);
 }
 
+bool APS5_VABI _ZN3WTF9URLParser14allValuesEqualERKNS_3URLES3_(const URL* a, const URL* b) {
+    const auto& first = Checked(a);
+    const auto& second = Checked(b);
+    return EqualImpls(first.impl, second.impl)
+        && first.bits == second.bits
+        && first.userStart == second.userStart
+        && first.userEnd == second.userEnd
+        && first.passwordEnd == second.passwordEnd
+        && first.hostEnd == second.hostEnd
+        && first.pathAfterLastSlash == second.pathAfterLastSlash
+        && first.pathEnd == second.pathEnd
+        && first.queryEnd == second.queryEnd;
+}
+
+bool APS5_VABI _ZN3WTF9URLParser24internalValuesConsistentERKNS_3URLE(const URL* self) {
+    const auto& url = Checked(self);
+    return (url.bits >> 6) <= url.userStart
+        && url.userStart <= url.userEnd
+        && url.userEnd <= url.passwordEnd
+        && url.passwordEnd <= url.hostEnd
+        && url.hostEnd + ((url.bits >> 3) & 7) <= url.pathAfterLastSlash
+        && url.pathAfterLastSlash <= url.pathEnd
+        && url.pathEnd <= url.queryEnd
+        && url.queryEnd <= View(url.impl).length;
+}
+
 void APS5_VABI _ZN3WTF3URL10invalidateEv(URL* self) {
     auto& url = Checked(self);
     url.bits = 0;
@@ -1288,6 +1430,14 @@ String APS5_VABI _ZNK3WTF3URL30stringCenterEllipsizedToLengthEj(const URL* self,
     if (view.length <= length) return String(Retain(url.impl));
     const StringView parts[] = {LeftView(view, length / 2 - 1), {"...", 3, true}, RightView(view, length / 2 - 2)};
     return ConcatViews(parts, 3);
+}
+
+unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashEPKDsj(const char16_t* characters, unsigned length) {
+    return AvoidDeletedHashValue(Hash({characters, length, false}, false));
+}
+
+unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashERKN3WTF6StringE(const String* string) {
+    return AvoidDeletedHashValue(Hash(View(Checked(string).impl), false));
 }
 
 String APS5_VABI _ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE(const String* input) {

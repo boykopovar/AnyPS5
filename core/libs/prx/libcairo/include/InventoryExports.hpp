@@ -36,16 +36,16 @@ enum cairo_hint_metrics_t : int {
     CAIRO_HINT_METRICS_ON,
 };
 
-extern "C" {
+struct CairoRegion;
 
-cairo_font_options_t* APS5_VABI cairo_font_options_create();
-cairo_font_options_t* APS5_VABI cairo_font_options_copy(const cairo_font_options_t* original);
-void APS5_VABI cairo_font_options_destroy(cairo_font_options_t* options);
-void APS5_VABI cairo_font_options_set_antialias(cairo_font_options_t* options, cairo_antialias_t antialias);
-cairo_antialias_t APS5_VABI cairo_font_options_get_antialias(const cairo_font_options_t* options);
-void APS5_VABI cairo_font_options_set_hint_style(cairo_font_options_t* options, cairo_hint_style_t hint_style);
-void APS5_VABI cairo_font_options_set_hint_metrics(cairo_font_options_t* options, cairo_hint_metrics_t hint_metrics);
-void APS5_VABI cairo_font_options_set_subpixel_order(cairo_font_options_t* options, cairo_subpixel_order_t subpixel_order);
+struct CairoRectangleInt {
+    int x;
+    int y;
+    int width;
+    int height;
+};
+
+extern "C" {
 
 int APS5_VABI cairo_scaled_font_get_font_face();
 int APS5_VABI cairo_paint();
@@ -73,13 +73,11 @@ int APS5_VABI cairo_show_glyphs();
 int APS5_VABI cairo_mesh_pattern_curve_to();
 int APS5_VABI cairo_scaled_font_get_font_matrix();
 int APS5_VABI cairo_mesh_pattern_line_to();
-int APS5_VABI cairo_region_get_rectangle();
 int APS5_VABI cairo_font_face_destroy();
 int APS5_VABI cairo_scaled_font_text_extents();
 int APS5_VABI cairo_pattern_create_linear();
 int APS5_VABI cairo_clip_extents();
 int APS5_VABI cairo_set_scaled_font();
-int APS5_VABI cairo_region_create();
 int APS5_VABI cairo_fill();
 int APS5_VABI cairo_pop_group_to_source();
 int APS5_VABI cairo_mesh_pattern_set_corner_color_rgba();
@@ -92,8 +90,6 @@ int APS5_VABI cairo_mesh_pattern_move_to();
 int APS5_VABI cairo_paint_with_alpha();
 int APS5_VABI cairo_mesh_pattern_begin_patch();
 int APS5_VABI cairo_mesh_pattern_end_patch();
-int APS5_VABI cairo_region_union_rectangle();
-int APS5_VABI cairo_region_reference();
 int APS5_VABI cairo_scaled_font_status();
 int APS5_VABI cairo_in_fill();
 int APS5_VABI cairo_set_source();
@@ -105,7 +101,6 @@ int APS5_VABI cairo_fill_extents();
 int APS5_VABI cairo_ft_font_face_create_for_ft_face();
 int APS5_VABI cairo_pattern_destroy();
 int APS5_VABI cairo_pattern_set_matrix();
-int APS5_VABI cairo_surface_set_user_data();
 int APS5_VABI cairo_pattern_set_filter();
 int APS5_VABI cairo_push_group();
 int APS5_VABI cairo_ft_font_options_substitute();
@@ -120,9 +115,23 @@ int APS5_VABI cairo_set_font_face();
 int APS5_VABI cairo_scaled_font_create();
 int APS5_VABI cairo_pattern_create_radial();
 int APS5_VABI cairo_set_source_surface();
-int APS5_VABI cairo_region_destroy();
 int APS5_VABI cairo_device_destroy();
 int APS5_VABI cairo_pattern_add_color_stop_rgba();
-int APS5_VABI cairo_region_num_rectangles();
+
+cairo_font_options_t* APS5_VABI cairo_font_options_create();
+cairo_font_options_t* APS5_VABI cairo_font_options_copy(const cairo_font_options_t* original);
+void APS5_VABI cairo_font_options_destroy(cairo_font_options_t* options);
+void APS5_VABI cairo_font_options_set_antialias(cairo_font_options_t* options, cairo_antialias_t antialias);
+cairo_antialias_t APS5_VABI cairo_font_options_get_antialias(const cairo_font_options_t* options);
+void APS5_VABI cairo_font_options_set_hint_style(cairo_font_options_t* options, cairo_hint_style_t hint_style);
+void APS5_VABI cairo_font_options_set_hint_metrics(cairo_font_options_t* options, cairo_hint_metrics_t hint_metrics);
+void APS5_VABI cairo_font_options_set_subpixel_order(cairo_font_options_t* options, cairo_subpixel_order_t subpixel_order);
+
+CairoRegion* APS5_VABI cairo_region_create();
+CairoRegion* APS5_VABI cairo_region_reference(CairoRegion* region);
+void APS5_VABI cairo_region_destroy(CairoRegion* region);
+int APS5_VABI cairo_region_union_rectangle(CairoRegion* region, const CairoRectangleInt* rectangle);
+void APS5_VABI cairo_region_get_rectangle(const CairoRegion* region, int nth, CairoRectangleInt* rectangle);
+int APS5_VABI cairo_region_num_rectangles(const CairoRegion* region);
 
 }

@@ -12,8 +12,8 @@ static constexpr int TransactionNotStarted = static_cast<int>(0x80553508);
 
 // Offline PSN: request entry points (API calls, transaction start/readData, factories) fail with
 // SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN, the constant shadPS4/fpPS4 document for this code; parameter
-// bookkeeping succeeds; response accessors stay unimplemented because a failed request never
-// produces a response.
+// bookkeeping succeeds; the audited accessors read the measured offsets and the rest stay
+// unimplemented because a failed request never produces a response.
 extern "C" {
 
 static void ConstructParameter(void* self);
@@ -104,34 +104,24 @@ int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi17
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity13getActivityIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity13getActivityIdEv(const void* self) {
+    return static_cast<const std::byte*>(self) + 0x10;
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity7getNameEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity7getNameEv(const void* self) {
+    return static_cast<const std::byte*>(self) + 0x30;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity9getHiddenEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return *reinterpret_cast<const bool*>(static_cast<const std::byte*>(self) + 0x50);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity12matchIdIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return *reinterpret_cast<const bool*>(static_cast<const std::byte*>(self) + 0x78);
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity10getMatchIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity10getMatchIdEv(const void* self) {
+    return static_cast<const std::byte*>(self) + 0x58;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities26GetUsersActivitiesResponse8getUsersEv(const void* self) {
@@ -140,10 +130,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities26GetUsersActiv
     return 0;
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities14UserActivities12getAccountIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities14UserActivities12getAccountIdEv(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0x10;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities14UserActivities13getActivitiesEv(const void* self) {
@@ -151,6 +139,20 @@ int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities14UserActivitie
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+static constexpr std::size_t ReferenceCountOffset = 0;
+static constexpr std::size_t VectorReferenceCountOffset = 0x30;
+static constexpr std::size_t StringVectorReferenceCountOffset = 0x38;
+static constexpr std::size_t ScalarVectorReferenceCountOffset = 0x20;
+
+static_assert(sizeof(CommonIterator) == 0x10 && offsetof(CommonIterator, element) == 0x08);
+
+static void* HostVectorBegin(void* out, const void* self, const std::int32_t elementKind, const char* function);
+static void* HostVectorEnd(void* out, const void* self, const std::int32_t elementKind, const std::size_t elementSize, const char* function);
+static void* HostIteratorAdvance(void* self, const std::size_t elementSize);
+static bool HostIteratorNotEqual(const void* self, const void* other);
+static void* CopyMemberIntrusivePtr(void* out, const void* self, const std::size_t memberOffset, const std::size_t referenceCountOffset);
+static void* CopyOnlineId(void* out, const void* self, const std::size_t memberOffset);
 
 int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V111UserFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_4UserEEE() {
  return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
@@ -176,10 +178,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody9setOf
  return 0;
 }
 
-void* APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V122GetRankingResponseBody10getEntriesEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+void* APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V122GetRankingResponseBody10getEntriesEv(void* out, void* self) {
+    return CopyMemberIntrusivePtr(out, self, 0x30, VectorReferenceCountOffset);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V122RecordScoreRequestBody10setCommentEPKc() {
@@ -387,7 +387,7 @@ static int TerminateParameter(void* self) {
 
 static int InitializeParameterWithBody(void* self, const std::uint64_t* context, const bool textsPresent, const IntrusivePtr* body) {
     const int result = InitializeParameter(self, context, textsPresent);
-    if (result != 0 || body->object != nullptr) return result;
+    if (result != 0 || (body != nullptr && body->object != nullptr)) return result;
     static_cast<ParameterObject*>(self)->implementation = nullptr;
     return ParameterBodyMissing;
 }
@@ -580,10 +580,10 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead11getTeamNameE
     return 0;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead12getAccountIdEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead12getAccountIdEv(const void* self) {
+    std::uint64_t value;
+    std::memcpy(&value, static_cast<const std::uint8_t*>(self) + 0x10, sizeof(value));
+    return value;
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead13onlineIdIsSetEv(void* self) {
@@ -640,10 +640,10 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V118PlayerForOfferRead11getTick
     return 0;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V118PlayerForOfferRead12getAccountIdEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V118PlayerForOfferRead12getAccountIdEv(const void* self) {
+    std::uint64_t value;
+    std::memcpy(&value, static_cast<const std::uint8_t*>(self) + 0x10, sizeof(value));
+    return value;
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V118PlayerForOfferRead13onlineIdIsSetEv(void* self) {
@@ -838,10 +838,8 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody9getSt
     return 0;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V124SubmitTicketResponseBody11getTicketIdEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V124SubmitTicketResponseBody11getTicketIdEv(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0x30;
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V124SubmitTicketResponseBody13ticketIdIsSetEv(void* self) {
@@ -886,10 +884,10 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V19Submitter11getPlatformEv(voi
     return 0;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V19Submitter12getAccountIdEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V19Submitter12getAccountIdEv(const void* self) {
+    std::uint64_t value;
+    std::memcpy(&value, static_cast<const std::uint8_t*>(self) + 0x10, sizeof(value));
+    return value;
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V19Submitter13platformIsSetEv(void* self) {
@@ -1068,28 +1066,22 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithB
     return 0;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus22getLastUpdatedDateTimeEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus22getLastUpdatedDateTimeEv(const void* self) {
+    return *reinterpret_cast<const std::uint64_t*>(static_cast<const std::uint8_t*>(self) + 0x40);
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus7getInfoEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus7getInfoEv(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0x20;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataResponseHeaders24getXPsnAtomicOperationIdEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataResponseHeaders24getXPsnAtomicOperationIdEv(const void* self) {
+    const char* value = *reinterpret_cast<const char* const*>(static_cast<const std::uint8_t*>(self) + 0x10);
+    return value != nullptr ? value : "";
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataResponseHeaders24hasXPsnAtomicOperationIdEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataResponseHeaders24hasXPsnAtomicOperationIdEv(const void* self) {
+    const auto* header = static_cast<const std::uint8_t*>(*reinterpret_cast<const void* const*>(static_cast<const std::uint8_t*>(self) + 0x10));
+    return header != nullptr && *reinterpret_cast<const std::uint8_t*>(header + 0x20) != 0;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common10InitParamsC1Ev(void* self) {
@@ -1145,11 +1137,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_12
 }
 
 static_assert(sizeof(IntrusivePtr) == 0x18);
-
-static constexpr std::size_t ReferenceCountOffset = 0;
-static constexpr std::size_t VectorReferenceCountOffset = 0x30;
-static constexpr std::size_t StringVectorReferenceCountOffset = 0x38;
-static constexpr std::size_t ScalarVectorReferenceCountOffset = 0x20;
 
 static std::atomic_ref<std::int32_t> ReferenceCount(void* object, const std::size_t offset) {
     return std::atomic_ref<std::int32_t>(*reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(object) + offset));
@@ -1357,22 +1344,16 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leader
     return 0;
 }
 
-void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEE3endEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEE3endEv(void* out, void* self) {
+    return HostVectorEnd(out, self, 1, sizeof(IntrusivePtr), __func__);
 }
 
-void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEE5beginEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEE5beginEv(void* out, void* self) {
+    return HostVectorBegin(out, self, 1, __func__);
 }
 
 void* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEEppEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    return HostIteratorAdvance(self, sizeof(IntrusivePtr));
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(uint64_t* context) {
@@ -1482,88 +1463,68 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionRespons
     return false;
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry10getCommentEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const CommonString* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry10getCommentEv(const void* self) {
+    return reinterpret_cast<const CommonString*>(static_cast<const std::byte*>(self) + 0x18);
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry11getObjectIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const CommonString* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry11getObjectIdEv(const void* self) {
+    return reinterpret_cast<const CommonString*>(static_cast<const std::byte*>(self) + 0x48);
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry11getOnlineIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+void* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry11getOnlineIdEv(void* out, const void* self) {
+    return CopyOnlineId(out, self, 0x69);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry12commentIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return static_cast<const std::uint8_t*>(self)[0x38] != 0;
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry12getAccountIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return *reinterpret_cast<const std::uint64_t*>(static_cast<const std::uint8_t*>(self) + 0x10);
 }
 
-const void* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry12getSmallDataEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const CommonBinary* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry12getSmallDataEv(const void* self) {
+    return reinterpret_cast<const CommonBinary*>(static_cast<const std::byte*>(self) + 0xa0);
 }
 
 std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry13getSerialRankEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::uint32_t value;
+    std::memcpy(&value, static_cast<const std::byte*>(self) + 0x98, sizeof(value));
+    return value;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry13objectIdIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return static_cast<const std::uint8_t*>(self)[0x68] != 0;
 }
 
 std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry14getHighestRankEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::uint32_t value;
+    std::memcpy(&value, static_cast<const std::byte*>(self) + 0x3c, sizeof(value));
+    return value;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry14smallDataIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return static_cast<const std::uint8_t*>(self)[0xb8] != 0;
 }
 
 std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry20getHighestSerialRankEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::uint32_t value;
+    std::memcpy(&value, static_cast<const std::byte*>(self) + 0x40, sizeof(value));
+    return value;
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry7getPcIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::int32_t value;
+    std::memcpy(&value, static_cast<const std::byte*>(self) + 0x80, sizeof(value));
+    return value;
 }
 
 std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry7getRankEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return *reinterpret_cast<const std::uint32_t*>(static_cast<const std::uint8_t*>(self) + 0x88);
 }
 
 std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry8getScoreEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return *reinterpret_cast<const std::int64_t*>(static_cast<const std::uint8_t*>(self) + 0x90);
 }
 
 const char* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V19RecordApi26RecordScoreResponseHeaders24getXPsnAtomicOperationIdEv(const void* self) {
@@ -1721,16 +1682,11 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common6Binary12appendBinaryEPKvm(CommonBinary
 
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEEdeEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    return static_cast<const CommonIterator*>(self)->element;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEEneERKS9_(const void* self, const void* other) {
-    (void)self;
-    (void)other;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return HostIteratorNotEqual(self, other);
 }
 
 // Shared vector bodies. A Vector handle is an IntrusivePtr whose object is a body;
@@ -1897,7 +1853,7 @@ static void* HostVectorEnd(void* out, const void* self, const std::int32_t eleme
     const VectorBody* body = HostVectorBody(self, elementKind, function);
     auto* it = static_cast<CommonIterator*>(out);
     it->referenceCount = 0;
-    it->element = body != nullptr ? static_cast<std::uint8_t*>(body->elements) + body->size * elementSize : nullptr;
+    it->element = body != nullptr && body->elements != nullptr ? static_cast<std::uint8_t*>(body->elements) + body->size * elementSize : nullptr;
     return out;
 }
 
@@ -1955,6 +1911,11 @@ static int HostVectorCopyFrom(IntrusivePtr* self, const IntrusivePtr* source, co
     return 0;
 }
 
+static void* CopyOnlineId(void* out, const void* self, const std::size_t memberOffset) {
+    std::memcpy(out, static_cast<const std::uint8_t*>(self) + memberOffset, 0x14);
+    return out;
+}
+
 static void* CopyMemberIntrusivePtr(void* out, const void* self, const std::size_t memberOffset, const std::size_t referenceCountOffset) {
     CopyIntrusivePtr(static_cast<IntrusivePtr*>(out),
                      reinterpret_cast<const IntrusivePtr*>(static_cast<const std::uint8_t*>(self) + memberOffset),
@@ -1979,8 +1940,13 @@ static void DestroyHostString(void* field) {
 static int HostVectorCopyFromStrings(IntrusivePtr* self, const IntrusivePtr* source, const char* function) {
     VectorBody* body = VectorBodyFor(self, 2, function);
     if (body == nullptr) return ParameterAllocationFailed;
-    if (self->libContext == nullptr) self->libContext = source->libContext;
-    const auto* sourceBody = static_cast<const VectorBody*>(source->object);
+    const auto* sourceDirect = static_cast<const VectorBody*>(static_cast<const void*>(source));
+    const bool sourceIsBody = sourceDirect != nullptr && sourceDirect->magic == VectorBodyMagic;
+    const auto* sourceBody = sourceIsBody ? sourceDirect : static_cast<const VectorBody*>(source->object);
+    void** const selfContext = body == static_cast<VectorBody*>(static_cast<void*>(self)) ? &body->libContext : &self->libContext;
+    void* const sourceContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
+    if (*selfContext == nullptr) *selfContext = sourceContext;
+    if (body->libContext == nullptr) body->libContext = *selfContext;
     if (sourceBody != nullptr && (sourceBody->magic != VectorBodyMagic || sourceBody->elementKind != 2)) {
         NotImplemented_nid_no_patch(function);
         return ParameterAllocationFailed;
@@ -2680,22 +2646,15 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_13In
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEEEneERKS9_(const void* self, const void* other) {
-    (void)self;
-    (void)other;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return HostIteratorNotEqual(self, other);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEEEdeEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    return static_cast<const CommonIterator*>(self)->element;
 }
 
 void* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEEEppEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    return HostIteratorAdvance(self, sizeof(IntrusivePtr));
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEEC1Ev(void* self) {
@@ -2703,8 +2662,12 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERSB_(const void* self, void* response) {
-    (void)self;
+    if (*reinterpret_cast<const void* const*>(static_cast<const std::uint8_t*>(self) + 0x8) == nullptr ||
+        *static_cast<const void* const*>(self) == nullptr) {
+        return TransactionNotStarted;
+    }
     (void)response;
+    NotImplemented_nid_no_patch(__func__);
     return TransactionNotStarted;
 }
 
@@ -2818,10 +2781,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi12getContainer
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi13InGameCatalog2V57Product8getLabelEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi13InGameCatalog2V57Product8getLabelEv(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0x30;
 }
 
 void* APS5_VABI _ZN3sce2Np9CppWebApi13InGameCatalog2V57Product7getSkusEv(void* out, void* self) {
@@ -2867,15 +2828,11 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi26getMultiDataSt
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus11getDataSizeEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return *reinterpret_cast<const std::uint64_t*>(static_cast<const std::uint8_t*>(self) + 0x10);
 }
 
 const char* APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus11getObjectIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    return reinterpret_cast<const char*>(static_cast<const std::uint8_t*>(self) + 0x70);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus8getOwnerEv(const void* self) {
@@ -2884,28 +2841,20 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus8getOwner
     return nullptr;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus9getSlotIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus9getSlotIdEv(const void* self) {
+    return *reinterpret_cast<const std::uint32_t*>(static_cast<const std::uint8_t*>(self) + 0xb4);
 }
 
-void* APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V132GetMultiDataStatusesResponseBody17getDataStatusListEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+void* APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V132GetMultiDataStatusesResponseBody17getDataStatusListEv(void* out, void* self) {
+    return CopyMemberIntrusivePtr(out, self, 0x30, VectorReferenceCountOffset);
 }
 
 std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V132GetMultiDataStatusesResponseBody23getTotalDataStatusCountEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return *reinterpret_cast<const std::uint32_t*>(static_cast<const std::uint8_t*>(self) + 0x5c);
 }
 
-std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V15Owner12getAccountIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V15Owner12getAccountIdEv(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0x10;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi10getFriendsEiRKNS4_21ParameterToGetFriendsERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_18GetFriendsResponseEEENSA_INS8_18ResponseHeaderBaseEEEEE() {
@@ -3186,9 +3135,10 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37Parame
     return TerminateParameter(self);
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118LeaderWithOnlineId12getAccountIdEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118LeaderWithOnlineId12getAccountIdEv(const void* self) {
+    std::uint64_t value;
+    std::memcpy(&value, static_cast<const std::uint8_t*>(self) + 0x10, sizeof(value));
+    return value;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody20setInvitableUserTypeERKNS3_23CustomInvitableUserTypeE() {
@@ -4062,6 +4012,19 @@ static void APS5_VABI DestroyMatchesModelString16(void* object) {
     std::free(object);
 }
 
+static void APS5_VABI DestroyMatchesModelStrings16And48(void* object) {
+    DestroyMatchesString(MatchesStringAt(object, 16));
+    DestroyMatchesString(MatchesStringAt(object, 48));
+    std::free(object);
+}
+
+static void APS5_VABI DestroyRequestMatchPlayer(void* object) {
+    DestroyMatchesString(MatchesStringAt(object, 16));
+    DestroyMatchesString(MatchesStringAt(object, 56));
+    DestroyMatchesString(MatchesStringAt(object, 96));
+    std::free(object);
+}
+
 static void APS5_VABI DestroyAddedPlayer(void* object) {
     DestroyMatchesString(MatchesStringAt(object, 16));
     DestroyMatchesString(MatchesStringAt(object, 56));
@@ -4112,10 +4075,34 @@ static void APS5_VABI DestroyRequestMatchResults(void* object) {
     std::free(object);
 }
 
+static void APS5_VABI DestroyMatchesModelString16AndVector48(void* object) {
+    DestroyMatchesString(MatchesStringAt(object, 16));
+    ReleaseMatchesMember(object, 48, VectorReferenceCountOffset);
+    std::free(object);
+}
+
+static void APS5_VABI DestroyMatchesModelString16AndVector72(void* object) {
+    DestroyMatchesString(MatchesStringAt(object, 16));
+    ReleaseMatchesMember(object, 72, VectorReferenceCountOffset);
+    std::free(object);
+}
+
+static void APS5_VABI DestroyMatchesModelVector24(void* object) {
+    ReleaseMatchesMember(object, 24, VectorReferenceCountOffset);
+    std::free(object);
+}
+
+static void APS5_VABI DestroyMatchesModelMembers24And48(void* object) {
+    ReleaseMatchesMember(object, 24, ReferenceCountOffset);
+    ReleaseMatchesMember(object, 48, ReferenceCountOffset);
+    std::free(object);
+}
+
 static int MatchesFactoryCreate(const void* context, IntrusivePtr* out, const std::size_t size, void (APS5_VABI* deleter)(void*)) {
     if (context == nullptr || out == nullptr) return ParameterInvalidArgument;
     void* object = std::calloc(1, size);
     if (object == nullptr) return MatchesOutOfMemory;
+    *reinterpret_cast<const void**>(static_cast<std::uint8_t*>(object) + 0x08) = context;
     ReferenceCount(object, ReferenceCountOffset).store(1);
     try {
         ReleaseIntrusivePtr(out, ReferenceCountOffset, __func__);
@@ -4126,6 +4113,27 @@ static int MatchesFactoryCreate(const void* context, IntrusivePtr* out, const st
     out->object = object;
     out->deleter = deleter;
     out->libContext = const_cast<void*>(context);
+    return 0;
+}
+
+static int CopyMatchesVector(IntrusivePtr* member, const IntrusivePtr* source) {
+    if (source == nullptr) return ParameterInvalidArgument;
+    if (source->object == nullptr) return 0;
+    const IntrusivePtr* begin;
+    const IntrusivePtr* end;
+    const auto* body = static_cast<const VectorBody*>(source->object);
+    if (body->magic == VectorBodyMagic && body->elementKind == 1) {
+        begin = static_cast<const IntrusivePtr*>(body->elements);
+        end = begin + body->size;
+    } else {
+        const auto* vector = reinterpret_cast<const std::uint8_t*>(source);
+        begin = *reinterpret_cast<IntrusivePtr* const*>(vector + 0x18);
+        end = *reinterpret_cast<IntrusivePtr* const*>(vector + 0x28);
+    }
+    for (const IntrusivePtr* element = begin; element != end; ++element) {
+        if (element->object == nullptr) return ParameterInvalidArgument;
+        if (VectorPushBackIntrusivePtr(member, element) != 0) return MatchesOutOfMemory;
+    }
     return 0;
 }
 
@@ -4336,10 +4344,10 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V122RequestMatchStatistics19setPlayer
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V123JoinMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_11AddedPlayerEEEEEPNS9_INS3_16JoinMatchRequestEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V123JoinMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_11AddedPlayerEEEEEPNS9_INS3_16JoinMatchRequestEEE(void* self, const IntrusivePtr* players, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x30, &DestroyMatchesModelVector24);
+    if (created != 0) return created;
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 24), players);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V123RequestMatchTeamFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_16RequestMatchTeamEEE(void* self, const char* name, IntrusivePtr* out) {
@@ -4350,10 +4358,10 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V123RequestMatchTeamFactory6createEPN
     return AssignMatchesString(MatchesStringAt(out->object, 16), name);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V124LeaveMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_13RemovedPlayerEEEEEPNS9_INS3_17LeaveMatchRequestEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V124LeaveMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_13RemovedPlayerEEEEEPNS9_INS3_17LeaveMatchRequestEEE(void* self, const IntrusivePtr* players, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x30, &DestroyMatchesModelVector24);
+    if (created != 0) return created;
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 24), players);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V124RequestCompetitiveResult14setTeamResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_18RequestTeamResultsEEEEE(void* self, const IntrusivePtr* value) {
@@ -4410,22 +4418,36 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V125CreateMatchRequestFactory6createE
     return AssignMatchesString(MatchesStringAt(out->object, 24), name);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V125RequestMatchPlayerFactory6createEPNS1_6Common10LibContextEPKcNS3_10PlayerTypeEPNS5_12IntrusivePtrINS3_18RequestMatchPlayerEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V125RequestMatchPlayerFactory6createEPNS1_6Common10LibContextEPKcNS3_10PlayerTypeEPNS5_12IntrusivePtrINS3_18RequestMatchPlayerEEE(void* self, const char* name, std::int32_t playerType, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x88, &DestroyRequestMatchPlayer);
+    if (created != 0) return created;
+    ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
+    ConstructMatchesString(MatchesStringAt(out->object, 56), out->libContext);
+    ConstructMatchesString(MatchesStringAt(out->object, 96), out->libContext);
+    const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
+    if (assigned < 0) return assigned;
+    *reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(out->object) + 0x30) = playerType;
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V125RequestTeamResultsFactory6createEPNS1_6Common10LibContextEPKciPNS5_12IntrusivePtrINS3_18RequestTeamResultsEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V125RequestTeamResultsFactory6createEPNS1_6Common10LibContextEPKciPNS5_12IntrusivePtrINS3_18RequestTeamResultsEEE(void* self, const char* name, std::int32_t rank, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x68, &DestroyMatchesModelString16AndVector72);
+    if (created != 0) return created;
+    ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
+    const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
+    if (assigned < 0) return assigned;
+    *reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(out->object) + 0x30) = rank;
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V126AdditionalStatisticFactory6createEPNS1_6Common10LibContextEPKcS9_PNS5_12IntrusivePtrINS3_19AdditionalStatisticEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V126AdditionalStatisticFactory6createEPNS1_6Common10LibContextEPKcS9_PNS5_12IntrusivePtrINS3_19AdditionalStatisticEEE(void* self, const char* name, const char* value, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x50, &DestroyMatchesModelStrings16And48);
+    if (created != 0) return created;
+    ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
+    ConstructMatchesString(MatchesStringAt(out->object, 48), out->libContext);
+    const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
+    if (assigned < 0) return assigned;
+    return AssignMatchesString(MatchesStringAt(out->object, 48), value);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V126RequestInGameRosterFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_19RequestInGameRosterEEE(void* self, IntrusivePtr* out) {
@@ -4439,15 +4461,21 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V126RequestMatchResultsFactory6create
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V127ReportResultsRequestFactory6createEPNS1_6Common10LibContextENS5_12IntrusivePtrINS3_19RequestMatchResultsEEEPNS8_INS3_20ReportResultsRequestEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V127ReportResultsRequestFactory6createEPNS1_6Common10LibContextENS5_12IntrusivePtrINS3_19RequestMatchResultsEEEPNS8_INS3_20ReportResultsRequestEEE(void* self, const IntrusivePtr* results, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x50, &DestroyMatchesModelMembers24And48);
+    if (created != 0) return created;
+    if (results == nullptr || results->object == nullptr) return ParameterBodyMissing;
+    CopyIntrusivePtr(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 24), results, ReferenceCountOffset);
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V127RequestPlayerResultsFactory6createEPNS1_6Common10LibContextEPKciPNS5_12IntrusivePtrINS3_20RequestPlayerResultsEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V127RequestPlayerResultsFactory6createEPNS1_6Common10LibContextEPKciPNS5_12IntrusivePtrINS3_20RequestPlayerResultsEEE(void* self, const char* name, std::int32_t rank, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x48, &DestroyMatchesModelString16);
+    if (created != 0) return created;
+    ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
+    const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
+    if (assigned < 0) return assigned;
+    *reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(out->object) + 0x30) = rank;
     return 0;
 }
 
@@ -4462,15 +4490,22 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V129RequestMatchStatisticsFactory6cre
     return MatchesFactoryCreate(self, out, 0x50, &DestroyMatchesModelVectors16And48);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V129RequestPlayerStatisticFactory6createEPNS1_6Common10LibContextEPKcRKNS5_6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEEPNSB_INS3_22RequestPlayerStatisticEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V129RequestPlayerStatisticFactory6createEPNS1_6Common10LibContextEPKcRKNS5_6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEEPNSB_INS3_22RequestPlayerStatisticEEE(void* self, const char* name, const IntrusivePtr* statistics, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x48, &DestroyMatchesModelString16AndVector48);
+    if (created != 0) return created;
+    ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
+    const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
+    if (assigned < 0) return assigned;
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 48), statistics);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V130RequestTeamMemberResultFactory6createEPNS1_6Common10LibContextEPKcdPNS5_12IntrusivePtrINS3_23RequestTeamMemberResultEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V130RequestTeamMemberResultFactory6createEPNS1_6Common10LibContextEPKcdPNS5_12IntrusivePtrINS3_23RequestTeamMemberResultEEE(void* self, const char* name, double score, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x38, &DestroyMatchesModelString16);
+    if (created != 0) return created;
+    ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
+    const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
+    if (assigned < 0) return assigned;
+    *reinterpret_cast<double*>(static_cast<std::uint8_t*>(out->object) + 0x30) = score;
     return 0;
 }
 
@@ -4492,10 +4527,13 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V131UpdateMatchStatusRequestFactory6c
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V133RequestTeamMemberStatisticFactory6createEPNS1_6Common10LibContextEPKcRKNS5_6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEEPNSB_INS3_26RequestTeamMemberStatisticEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V133RequestTeamMemberStatisticFactory6createEPNS1_6Common10LibContextEPKcRKNS5_6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEEPNSB_INS3_26RequestTeamMemberStatisticEEE(void* self, const char* name, const IntrusivePtr* statistics, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x48, &DestroyMatchesModelString16AndVector48);
+    if (created != 0) return created;
+    ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
+    const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
+    if (assigned < 0) return assigned;
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 48), statistics);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi10leaveMatchEiRKNS4_21ParameterToLeaveMatchERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE(void* self) {
@@ -4847,9 +4885,7 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6Stri
 }
 
 CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE3endEv(CommonIterator* iterator, const IntrusivePtr* self) {
-    iterator->referenceCount = 0;
-    iterator->element = StringVectorElements(self, true, __func__);
-    return iterator;
+    return static_cast<CommonIterator*>(HostVectorEnd(iterator, self, 2, sizeof(CommonString), __func__));
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringeqEPKc(const CommonString* self, const char* other) {
@@ -4865,9 +4901,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultResponse
 }
 
 CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE5beginEv(CommonIterator* iterator, const IntrusivePtr* self) {
-    iterator->referenceCount = 0;
-    iterator->element = StringVectorElements(self, false, __func__);
-    return iterator;
+    return static_cast<CommonIterator*>(HostVectorBegin(iterator, self, 2, __func__));
 }
 
 
@@ -5055,8 +5089,7 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile11getOnlineId
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V113BasicPresenceEEEEEEaSERKSA_(IntrusivePtr* self, const IntrusivePtr* source) {
-    ReleaseIntrusivePtr(self, 0x30, __func__);
-    CopyIntrusivePtr(self, source, 0x30);
+    AssignIntrusivePtr(self, source, 0x30, __func__);
 }
 
 void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEE5beginEv(void* out, void* self) {
@@ -5137,8 +5170,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_30CommunicationRest
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V112BasicProfileEEEEEEaSERKSA_(IntrusivePtr* self, const IntrusivePtr* source) {
-    ReleaseIntrusivePtr(self, 0x30, __func__);
-    CopyIntrusivePtr(self, source, 0x30);
+    AssignIntrusivePtr(self, source, 0x30, __func__);
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11UserProfile2V125GetBasicPresencesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() {
@@ -5209,8 +5241,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi28ParameterTo
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEaSERKS7_(IntrusivePtr* self, const IntrusivePtr* source) {
-    ReleaseIntrusivePtr(self, 0x00, __func__);
-    CopyIntrusivePtr(self, source, 0x00);
+    AssignIntrusivePtr(self, source, 0x00, __func__);
 }
 
 std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V125GetBasicPresencesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv() {
@@ -5270,9 +5301,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS
     return TransactionNotStarted;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEEdeEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEEdeEv(const void* self) {
+    return static_cast<const CommonIterator*>(self)->element;
 }
 
 void* APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEENS4_INS2_18ResponseHeaderBaseEEEEaSERKSB_(void* self, const void* source) {
@@ -5440,16 +5470,12 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V125RequestGameSessionFactory
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V127GetGameSessionsResponseBody15getGameSessionsEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V127GetGameSessionsResponseBody15getGameSessionsEv(void* out, void* self) {
+    return CopyMemberIntrusivePtr(out, self, 0x30, VectorReferenceCountOffset);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V128PostGameSessionsResponseBody15getGameSessionsEv(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V128PostGameSessionsResponseBody15getGameSessionsEv(void* out, void* self) {
+    return CopyMemberIntrusivePtr(out, self, 0x30, VectorReferenceCountOffset);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V128RequestJoinGameSessionPlayer12setJoinStateERKNS3_16InitialJoinStateE() {
@@ -6488,40 +6514,28 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE7reserveEi() {
 
 
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail11getLastNameEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail11getLastNameEv(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0x60;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail12getFirstNameEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail12getFirstNameEv(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0x10;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail13getMiddleNameEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail13getMiddleNameEv(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0x38;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail13lastNameIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0x80) != 0;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail14firstNameIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0x30) != 0;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail15middleNameIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0x58) != 0;
 }
 
 
@@ -6536,88 +6550,60 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail15middleName
 
 
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V111GameSession12getSessionIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V111GameSession12getSessionIdEv(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0x10;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V114Representative11getOnlineIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V114Representative11getOnlineIdEv(void* out, const void* self) {
+    return CopyOnlineId(out, self, 0x18);
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V114Representative12getAccountIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V114Representative12getAccountIdEv(const void* self) {
+    return *reinterpret_cast<const std::uint64_t*>(static_cast<const std::uint8_t*>(self) + 0x10);
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead14getCustomData1Ev(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead14getCustomData1Ev(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0xd0;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead14getCustomData2Ev(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead14getCustomData2Ev(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0xf0;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead14getMatchmakingEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead14getMatchmakingEv(void* out, void* self) {
+    return CopyMemberIntrusivePtr(out, self, 0x110, ReferenceCountOffset);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead16customData1IsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0xe8) != 0;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead16customData2IsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0x108) != 0;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead16matchmakingIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0x128) != 0;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead17getRepresentativeEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead17getRepresentativeEv(void* out, void* self) {
+    return CopyMemberIntrusivePtr(out, self, 0xb0, ReferenceCountOffset);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead19representativeIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0xc8) != 0;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118LeaderWithOnlineId11getOnlineIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118LeaderWithOnlineId11getOnlineIdEv(void* out, const void* self) {
+    return CopyOnlineId(out, self, 0x18);
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118MatchmakingForRead10getOfferIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118MatchmakingForRead10getOfferIdEv(const void* self) {
+    return static_cast<const std::uint8_t*>(self) + 0x10;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead11leaderIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0x110) != 0;
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_15ProfanityFilter2V223FilterProfanityResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_() {

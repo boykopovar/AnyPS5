@@ -30,6 +30,8 @@ struct TranslateOptions {
     std::uint32_t userDataBaseRegister = 0;
     std::uint32_t userDataCount = 64;
     std::uint32_t scratchDwords = 0;
+    std::uint32_t sharedVectorBase = 0;
+    std::uint32_t sharedVectorCount = 0;
     std::uint32_t sharedMemoryBytes = 0;
     std::uint64_t shaderHash = 0;
     bool fragmentShaderBarycentricEnabled = false;
