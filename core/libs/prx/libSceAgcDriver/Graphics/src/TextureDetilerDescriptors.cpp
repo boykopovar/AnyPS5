@@ -9,16 +9,28 @@ namespace AgcDriver::Graphics {
 
 void TextureDetiler::BeginBatch() {
     GuestMemory::AssertGpuLockHeld("TextureDetiler::BeginBatch");
+    if (standaloneBatches.load(std::memory_order_acquire) != 0) return;
     if (const auto* recorder = Recorder::Active(); recorder != nullptr && !recorder->Idle()) return;
     resetRing(descriptorSets, "vkResetDescriptorPool texture detiler");
     resetRing(cmaskDescriptorSets, "vkResetDescriptorPool CMASK clear");
     resetRing(imageDescriptorSets, "vkResetDescriptorPool texture detiler");
     resetRing(readbackDescriptorSets, "vkResetDescriptorPool multisample readback");
+    resetRing(depthConvertDescriptorSets, "vkResetDescriptorPool depth convert");
+}
+
+void TextureDetiler::BeginStandaloneBatch() {
+    standaloneBatches.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void TextureDetiler::EndStandaloneBatch() {
+    const auto previous = standaloneBatches.fetch_sub(1, std::memory_order_acq_rel);
+    Require(previous != 0, "a standalone texture-detiler batch was ended without a begin");
 }
 
 void TextureDetiler::resetRing(DescriptorRing& ring, const char* resetWhat) {
     for (const auto pool : ring.pools) Check(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")(context.device, pool, 0), resetWhat);
     std::fill(ring.serials.begin(), ring.serials.end(), std::uint64_t{0});
+    std::fill(ring.standaloneUsers.begin(), ring.standaloneUsers.end(), false);
     ring.current = 0;
     ring.used = 0;
 }
@@ -26,18 +38,23 @@ void TextureDetiler::resetRing(DescriptorRing& ring, const char* resetWhat) {
 VkDescriptorSet TextureDetiler::allocateFrom(DescriptorRing& ring, VkDescriptorSetLayout layout, const std::vector<VkDescriptorPoolSize>& sizes, const char* createWhat, const char* allocateWhat, const char* resetWhat) {
     constexpr std::uint32_t setsPerPool = 64;
     const auto* recorder = Recorder::Active();
+    const bool standalone = recorder == nullptr || standaloneBatches.load(std::memory_order_acquire) != 0;
     if (ring.pools.empty() || ring.used == setsPerPool) {
         const auto completed = recorder != nullptr ? recorder->CompletedThrough() : 0;
+        const bool standaloneInFlight = standaloneBatches.load(std::memory_order_acquire) != 0;
         auto next = ring.pools.size();
-        for (std::size_t step = 1; step <= ring.pools.size(); ++step) {
-            const auto index = (ring.current + step) % ring.pools.size();
-            if (ring.serials[index] <= completed) {
-                next = index;
-                break;
+        if (!standalone) {
+            for (std::size_t step = 1; step <= ring.pools.size(); ++step) {
+                const auto index = (ring.current + step) % ring.pools.size();
+                if (ring.serials[index] <= completed && !(ring.standaloneUsers[index] && standaloneInFlight)) {
+                    next = index;
+                    break;
+                }
             }
         }
         if (next < ring.pools.size()) {
             Check(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")(context.device, ring.pools[next], 0), resetWhat);
+            ring.standaloneUsers[next] = false;
         } else {
             VkDescriptorPoolCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
             info.maxSets = setsPerPool;
@@ -45,10 +62,12 @@ VkDescriptorSet TextureDetiler::allocateFrom(DescriptorRing& ring, VkDescriptorS
             info.pPoolSizes = sizes.data();
             ring.pools.reserve(ring.pools.size() + 1);
             ring.serials.reserve(ring.serials.size() + 1);
+            ring.standaloneUsers.reserve(ring.standaloneUsers.size() + 1);
             VkDescriptorPool pool = VK_NULL_HANDLE;
             Check(context.Function<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(context.device, &info, nullptr, &pool), createWhat);
             ring.pools.push_back(pool);
             ring.serials.push_back(0);
+            ring.standaloneUsers.push_back(false);
         }
         ring.current = next;
         ring.used = 0;
@@ -60,7 +79,8 @@ VkDescriptorSet TextureDetiler::allocateFrom(DescriptorRing& ring, VkDescriptorS
     VkDescriptorSet set = VK_NULL_HANDLE;
     Check(context.Resolved(&DeviceFunctions::allocateDescriptorSets, "vkAllocateDescriptorSets")(context.device, &allocation, &set), allocateWhat);
     ++ring.used;
-    ring.serials[ring.current] = recorder != nullptr ? recorder->OpenSerial() : std::numeric_limits<std::uint64_t>::max();
+    if (standalone) ring.standaloneUsers[ring.current] = true;
+    if (recorder != nullptr) ring.serials[ring.current] = std::max(ring.serials[ring.current], recorder->OpenSerial());
     return set;
 }
 

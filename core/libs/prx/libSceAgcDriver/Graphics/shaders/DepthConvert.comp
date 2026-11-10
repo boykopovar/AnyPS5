@@ -1,0 +1,100 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) readonly buffer Source { uint sourceWords[]; };
+layout(set = 0, binding = 1) writeonly buffer Destination { uint destinationWords[]; };
+layout(set = 0, binding = 2) buffer Fault { uint faultWords[]; };
+
+layout(push_constant) uniform Push {
+    uint sourceBase;
+    uint destinationBase;
+    uint pairCount;
+    uint rows;
+    uint sourceRowWords;
+    uint destinationRowWords;
+    uint width;
+    uint mode;
+} push;
+
+uint d16ToD24(uint value) {
+    return value * 256u + (value + 128u) / 257u;
+}
+
+uint d24ToD16(uint value) {
+    value &= 0xffffffu;
+    uint quotient = value / 65793u;
+    uint remainder = value - quotient * 65793u;
+    return quotient * 257u + (remainder * 257u + 32896u) / 65793u;
+}
+
+uint roundedShift(uint value, uint scale, uint shift) {
+    if (shift >= 41u) return 0u;
+    uint high = 0u;
+    uint low = 0u;
+    umulExtended(value, scale, high, low);
+    uint quotient = 0u;
+    bool round = false;
+    bool sticky = false;
+    if (shift == 0u) {
+        quotient = low;
+        round = false;
+        sticky = high != 0u;
+    } else if (shift < 32u) {
+        quotient = (low >> shift) | (high << (32u - shift));
+        round = ((low >> (shift - 1u)) & 1u) != 0u;
+        sticky = (low & ((1u << (shift - 1u)) - 1u)) != 0u;
+    } else if (shift == 32u) {
+        quotient = high;
+        round = (low & 0x80000000u) != 0u;
+        sticky = (low & 0x7fffffffu) != 0u;
+    } else {
+        quotient = high >> (shift - 32u);
+        round = ((high >> (shift - 33u)) & 1u) != 0u;
+        sticky = (high & ((1u << (shift - 33u)) - 1u)) != 0u || low != 0u;
+    }
+    if (round && (sticky || (quotient & 1u) != 0u)) ++quotient;
+    return quotient;
+}
+
+uint d32ToD16(uint bits) {
+    const uint sign = bits >> 31u;
+    const uint exponent = (bits >> 23u) & 0xffu;
+    const uint mantissa = bits & 0x7fffffu;
+    if (exponent == 0xffu) {
+        atomicOr(faultWords[0], 1u);
+        return sign == 0u && mantissa == 0u ? 0xffffu : 0u;
+    }
+    if (sign != 0u) return 0u;
+    if (exponent == 0u) return mantissa == 0u ? 0u : roundedShift(mantissa, 65535u, 149u);
+    if (exponent >= 127u) return 0xffffu;
+    return roundedShift(0x800000u | mantissa, 65535u, 150u - exponent);
+}
+
+uint toDepth(uint value) {
+    if (push.mode == 0u) return d16ToD24(value);
+    return floatBitsToUint(float(value) / 65535.0);
+}
+
+uint toR16(uint value) {
+    if (push.mode == 2u) return d24ToD16(value);
+    return d32ToD16(value);
+}
+
+void main() {
+    const uint pair = gl_GlobalInvocationID.x;
+    const uint row = gl_GlobalInvocationID.y;
+    if (pair >= push.pairCount || row >= push.rows) return;
+    if (push.mode == 0u || push.mode == 1u) {
+        const uint sourceIndex = push.sourceBase + row * push.sourceRowWords + pair;
+        const uint packed = sourceWords[sourceIndex];
+        const uint destinationIndex = push.destinationBase + row * push.destinationRowWords + pair * 2u;
+        destinationWords[destinationIndex] = toDepth(packed & 0xffffu);
+        if (pair * 2u + 1u < push.width) destinationWords[destinationIndex + 1u] = toDepth(packed >> 16u);
+    } else {
+        const uint sourceIndex = push.sourceBase + row * push.sourceRowWords + pair * 2u;
+        const uint first = toR16(sourceWords[sourceIndex]);
+        const uint second = pair * 2u + 1u < push.width ? toR16(sourceWords[sourceIndex + 1u]) : 0u;
+        destinationWords[push.destinationBase + row * push.destinationRowWords + pair] = first | (second << 16u);
+    }
+}
