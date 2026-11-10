@@ -642,13 +642,16 @@ static void BitmapBoxes() {
     image.bitmap.width = image.bitmap.rows = 67108864;
     ExpectBox(glyph, 0, {-192, 448, -192, 448});
     ExpectBox(glyph, 3, {-3, 7, -3, 7});
+    image.bitmap.width = image.bitmap.rows = 0;
     for (const std::int32_t bearing : {INT32_MIN, INT32_MAX, -33554433, 33554432}) {
         for (const bool vertical : {false, true}) {
             image.left = vertical ? 0 : bearing;
             image.top = vertical ? bearing : 0;
-            GuestBBox box{1, 2, 3, 4};
-            Require(Throws([&] { FT_Glyph_Get_CBox_nid_postfix(glyph, 0, &box); }, "FT_Glyph_Get_CBox"));
-            Require(EqualBox(box, {}));
+            const std::int64_t value = static_cast<std::int64_t>(bearing) * 64;
+            const GuestBBox fixed = vertical ? GuestBBox{0, value, 0, value} : GuestBBox{value, 0, value, 0};
+            const GuestBBox pixels = vertical ? GuestBBox{0, bearing, 0, bearing} : GuestBBox{bearing, 0, bearing, 0};
+            for (const auto mode : {0u, 1u, 2u, 4u, 7u, UINT32_MAX}) ExpectBox(glyph, mode, fixed);
+            ExpectBox(glyph, 3, pixels);
         }
     }
     image = saved;
