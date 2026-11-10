@@ -1844,6 +1844,19 @@ void encoderFailureFollowsTheBatchTests(const Device& device, Recorder& recorder
     recorder.Submit();
     recorder.Sync();
     Require(recorder.Idle(), "the recorder did not recover after discarding batches whose replay failed");
+    static_cast<void>(recorder.Commands());
+    std::string inside;
+    {
+        const Recorder::EncodingWindow window(recorder);
+        try {
+            recorder.Submit();
+        } catch (const std::logic_error& error) {
+            inside = error.what();
+        }
+    }
+    Require(!inside.empty(), "a batch was submitted inside an encoding window");
+    recorder.Submit();
+    recorder.Sync();
     std::cout << "Command encoder failure tests passed\n";
 }
 

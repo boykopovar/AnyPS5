@@ -4272,6 +4272,7 @@ void Recorder::Submit() {
     dropStaleHoldKept();
     if (open == nullptr) return;
     GuestMemory::AssertGpuLockHeld("Recorder::Submit");
+    if (encoder != nullptr && encoder->OpenOnThisThread()) throw std::logic_error("AGC graphics: a batch was submitted inside an encoding window");
     struct DiscardUnsubmitted {
         Recorder& recorder;
         std::unique_ptr<Batch>& batch;

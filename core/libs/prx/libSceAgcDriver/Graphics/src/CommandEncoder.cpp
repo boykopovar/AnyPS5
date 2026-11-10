@@ -80,7 +80,7 @@ VKAPI_ATTR void VKAPI_CALL plain(VkCommandBuffer commands, A... arguments) {
 
 template<std::size_t S, auto Member, typename... A>
 VKAPI_ATTR void VKAPI_CALL direct(VkCommandBuffer commands, A... arguments) {
-    if (auto* encoder = deferring<S>(commands)) encoder->Quiesce();
+    if (auto* encoder = deferring<S>(commands); encoder != nullptr && !encoder->Direct()) return;
     (slots()[S].real.*Member)(commands, arguments...);
 }
 
@@ -238,7 +238,7 @@ VKAPI_ATTR void VKAPI_CALL pipelineBarrier(VkCommandBuffer commands, VkPipelineS
             copyArray(copyArray(copyArray(at + aligned(sizeof(BarrierHeader)), memoryBarriers, memory), bufferBarriers, buffers), imageBarriers, images);
             return;
         }
-        encoder->Quiesce();
+        if (!encoder->Direct()) return;
     }
     slots()[S].real.cmdPipelineBarrier(commands, source, destination, dependencies, memory, memoryBarriers, buffers, bufferBarriers, images, imageBarriers);
 }
@@ -262,7 +262,7 @@ VKAPI_ATTR void VKAPI_CALL beginRenderPass(VkCommandBuffer commands, const VkRen
             copyArray(at + aligned(sizeof(BeginPassHeader)), info->pClearValues, info->clearValueCount);
             return;
         }
-        encoder->Quiesce();
+        if (!encoder->Direct()) return;
     }
     slots()[S].real.cmdBeginRenderPass(commands, info, contents);
 }
@@ -291,7 +291,7 @@ VKAPI_ATTR void VKAPI_CALL beginRendering(VkCommandBuffer commands, const VkRend
             copyArray(at + aligned(sizeof(RenderingHeader)), info->pColorAttachments, info->colorAttachmentCount);
             return;
         }
-        encoder->Quiesce();
+        if (!encoder->Direct()) return;
     }
     slots()[S].real.cmdBeginRendering(commands, info);
 }
@@ -384,6 +384,7 @@ std::unique_ptr<CommandEncoder> CommandEncoder::Attach(VkDevice device, DeviceFu
 }
 
 CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot) : table(table), real(table), device(device), slot(slot) {
+    static_cast<void>(HandoffSpinWindow());
     worker = std::thread([this] { run(); });
     std::lock_guard lock(slotMutex());
     slots()[slot].real = real;
@@ -456,8 +457,9 @@ std::byte* CommandEncoder::Append(Run run, std::size_t bytes) {
         try {
             if (filling->bytes.size() < std::max(ChunkBytes, need)) filling->bytes.resize(std::max(ChunkBytes, need));
         } catch (...) {
+            auto* chunk = std::exchange(filling, nullptr);
             std::lock_guard lock(queueMutex);
-            filling->next = std::exchange(spare, std::exchange(filling, nullptr));
+            chunk->next = std::exchange(spare, chunk);
             throw;
         }
         filling->used = 0;
@@ -490,6 +492,11 @@ void CommandEncoder::post() noexcept {
 void CommandEncoder::Quiesce() noexcept {
     post();
     await();
+}
+
+bool CommandEncoder::Direct() noexcept {
+    Quiesce();
+    return recording == nullptr || !recording->Failed();
 }
 
 void CommandEncoder::Settle() noexcept {

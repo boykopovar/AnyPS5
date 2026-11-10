@@ -47,6 +47,7 @@ public:
     void Open(VkCommandBuffer commands, Recording& recording);
     void Close();
     void Quiesce() noexcept;
+    bool Direct() noexcept;
     void Settle() noexcept;
     [[noreturn]] static void RefuseForeignProducer();
     bool OpenOnThisThread() const { return target.load(std::memory_order_acquire) != VK_NULL_HANDLE && owner.load(std::memory_order_relaxed) == std::this_thread::get_id(); }

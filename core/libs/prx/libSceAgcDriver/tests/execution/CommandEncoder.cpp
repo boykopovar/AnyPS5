@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <new>
 #include <memory>
@@ -615,6 +617,58 @@ void FinishCarriesAnUnreportedFailure() {
     Require(!Reports([&] { RecordingOf(failing).Report(); }), "a failed replay carried by finishing its recording was reported again");
 }
 
+void DirectCallsSkipAFailedRecording() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x4e);
+    const auto failing = Handle<VkCommandBuffer>(0x1200);
+    const auto healthy = Handle<VkCommandBuffer>(0x1280);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    std::atomic<int> failures{1};
+    CommandEncoder::SetDelayForTesting([&] {
+        if (failures.fetch_sub(1) > 0) throw std::runtime_error("injected replay failure");
+    });
+    const std::uint8_t bytes[] = {7};
+    const VkMemoryBarrier chainedLink{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    const VkMemoryBarrier chained{VK_STRUCTURE_TYPE_MEMORY_BARRIER, &chainedLink, 1, 2};
+    encoder.Open(failing, RecordingOf(failing));
+    table.cmdDraw(failing, 1, 1, 0, 0);
+    table.cmdUpdateBuffer(failing, Handle<VkBuffer>(0x30), 0, 1, bytes);
+    table.cmdPipelineBarrier(failing, 1, 2, 0, 1, &chained, 0, nullptr, 0, nullptr);
+    encoder.Close();
+    encoder.Open(healthy, RecordingOf(healthy));
+    table.cmdUpdateBuffer(healthy, Handle<VkBuffer>(0x31), 0, 1, bytes);
+    encoder.Close();
+    encoder.Quiesce();
+    CommandEncoder::SetDelayForTesting({});
+    Require(Recorded(failing) == 0, "a window recorded " + std::to_string(Recorded(failing)) + " direct calls into a recording after a replay into it failed");
+    Require(Reports([&] { RecordingOf(failing).Report(); }), "a failed replay followed by direct calls was not reported");
+    Compare({{healthy, {"update 49 0 7"}}}, "a direct call into another recording after a failed replay");
+}
+
+void AppendFailureKeepsTheWindow() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x4f);
+    const auto commands = Handle<VkCommandBuffer>(0x1300);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    encoder.Open(commands, RecordingOf(commands));
+    table.cmdDraw(commands, 1, 1, 0, 0);
+    bool refused = false;
+    try {
+        static_cast<void>(encoder.Append([](const std::byte*, VkCommandBuffer, const DeviceFunctions&) {}, static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max() / 2)));
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    table.cmdDraw(commands, 2, 1, 0, 0);
+    encoder.Close();
+    encoder.Quiesce();
+    Require(refused, "a record too large to allocate was appended");
+    Compare({{commands, {"draw 1 1 0 0", "draw 2 1 0 0"}}}, "a window after a record failed to allocate");
+}
+
 void DevicesPastTheSlotsRecordInline() {
     Reset();
     std::vector<DeviceFunctions> tables(CommandEncoder::Slots + 1, FakeTable());
@@ -707,6 +761,8 @@ int main() {
         RawCallAfterLookupKeepsOrder();
         FailedReplayStaysWithItsRecording();
         FinishCarriesAnUnreportedFailure();
+        DirectCallsSkipAFailedRecording();
+        AppendFailureKeepsTheWindow();
         DevicesPastTheSlotsRecordInline();
         PostingNeverAllocates();
         ReplayFailureNeedsNoAllocation();
