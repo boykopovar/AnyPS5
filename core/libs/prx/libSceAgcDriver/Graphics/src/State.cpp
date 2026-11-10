@@ -2192,9 +2192,12 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     const auto swap = (info >> 11u) & 3u;
     const auto decoded = DecodeColorFormat((info >> 2u) & 0x1fu, number, swap);
     const auto attrib = read(cx, 0x31d + stride);
-    color.samples = 1u << ((attrib >> 12u) & 7u);
-    Require(color.samples <= 8u, "GCN color targets with more than eight samples are not implemented");
-    Require((1u << ((attrib >> 15u) & 3u)) == color.samples, "GCN color targets with fewer fragments than samples (EQAA) are not implemented");
+    color.coverageSamples = 1u << ((attrib >> 12u) & 7u);
+    Require(color.coverageSamples <= 8u, "GCN color targets with more than eight samples are not implemented");
+    const auto fragments = 1u << ((attrib >> 15u) & 3u);
+    Require(fragments <= color.coverageSamples, "GCN color targets with more fragments than samples are not implemented");
+    color.samples = fragments == 1u ? 1u : color.coverageSamples;
+    if (fragments > 1u && fragments < color.coverageSamples) color.eqaaFragments = fragments;
     Require((info & 0x3u) == 0 && (info & 0x80u) == 0, "endian-swapped or linear-general GCN color targets are not implemented");
     Require((info & 0x8000u) != 0 || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
     const auto view = read(cx, 0x31b + stride);
@@ -2234,6 +2237,13 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
         color.cmaskBytes = (static_cast<std::size_t>(read(cx, 0x320 + stride) & 0x3fffu) + 1u) * 128u;
         color.cmaskFastClear = (info & 0x2000u) != 0;
     }
+    if (fragments < color.coverageSamples && (info & 0x4000u) != 0) {
+        color.fmaskAddress = static_cast<std::uint64_t>(read(cx, 0x321 + stride)) << 8u;
+        Require(color.fmaskAddress != 0, "a compressed GCN color target with fewer fragments than samples has no FMASK address");
+        const auto fmaskBitsPerPixel = fragments * (fragments == 1u ? 8u : color.coverageSamples);
+        color.gcnFmaskBytes = ((read(cx, 0x322 + stride) & 0x3fffffu) + 1u) * 8u * fmaskBitsPerPixel;
+    }
+    Require(color.eqaaFragments == 0 || color.fmaskAddress != 0, "GCN color targets with fewer fragments than samples (EQAA) are supported only with FMASK (CB_COLOR_INFO COMPRESSION and a CB_COLOR_FMASK base)");
     GuestMemory::CheckRange(reinterpret_cast<const void*>(color.address), color.bytes, layout.Alignment(), true);
     return color;
 }
