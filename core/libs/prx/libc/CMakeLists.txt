@@ -201,6 +201,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Filesystem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedFilesystem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedFilesystemCalls.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicWait.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Rename.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Errors.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Syslog.cpp
@@ -249,6 +250,21 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_sigvec PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_std_atomic_wait_tests ${LIBS_INCLUDE_DIR}/tests/GuestStdAtomicWait.cpp)
+    target_include_directories(guest_std_atomic_wait_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_std_atomic_wait_tests PRIVATE libc)
+    configure_windows_unwind(guest_std_atomic_wait_tests)
+    add_test(NAME guest_std_atomic_wait COMMAND guest_std_atomic_wait_tests)
+    add_test_executable(guest_std_atomic_wait_kernel_tests ${LIBS_INCLUDE_DIR}/tests/GuestStdAtomicWaitKernel.cpp)
+    target_include_directories(guest_std_atomic_wait_kernel_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_std_atomic_wait_kernel_tests PRIVATE libc libkernel)
+    configure_windows_unwind(guest_std_atomic_wait_kernel_tests)
+    add_test(NAME guest_std_atomic_wait_kernel COMMAND guest_std_atomic_wait_kernel_tests)
+    set_tests_properties(guest_std_atomic_wait_kernel PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_std_atomic_wait guest_std_atomic_wait_kernel PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
 endif()
 
