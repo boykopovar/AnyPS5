@@ -138,6 +138,9 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
         if (action.control == Pad::InputControl::ToggleMute) {
             throw std::runtime_error("ToggleMute can only use a keyboard key");
         }
+        if (action.control == Pad::InputControl::HostMenu) {
+            throw std::runtime_error("HostMenu can only use a keyboard key");
+        }
         return {SDL_SCANCODE_UNKNOWN, parseMouseButton(value), action.control, action.button, 0};
     }
     if (type == "WHEEL") {
