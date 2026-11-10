@@ -35,12 +35,9 @@
 | `cairo_stroke_extents` | `1K5ly63m6fo` |
 | `cairo_arc_negative` | `2w5H3b3yPqw` |
 | `cairo_new_sub_path` | `36Wm5aIJUFY` |
-| `cairo_set_antialias` | `3urTbaMTNyE` |
 | `cairo_image_surface_create_from_png_stream` | `4dvdsqyLM8c` |
-| `cairo_get_fill_rule` | `4e7O-m-JWVM` |
 | `cairo_ft_scaled_font_lock_face` | `4gDTaBZH8lo` |
 | `cairo_glyph_path` | `54HrgUIQHOk` |
-| `cairo_get_dash` | `5OZ1YwHyHd8` |
 | `cairo_set_source_rgb` | `6DvK+OdIPW4` |
 | `cairo_scaled_font_destroy` | `6Y3HHedGzlw` |
 | `cairo_pattern_reference` | `6qRL52tLOII` |
@@ -53,7 +50,6 @@
 | `cairo_set_source_rgba` | `BZFvjfb9xDk` |
 | `cairo_ft_font_face_create_for_pattern` | `By6b1vjSVok` |
 | `cairo_mask` | `D1KYCZ80Sac` |
-| `cairo_get_line_width` | `D45IcsszyQI` |
 | `cairo_curve_to` | `DOCnSv1cXx8` |
 | `cairo_copy_path` | `E2E+DDLhCRg` |
 | `cairo_rectangle` | `E5LkpnAY7po` |
@@ -62,8 +58,6 @@
 | `cairo_mesh_pattern_curve_to` | `H9bwCsWw7LA` |
 | `cairo_scaled_font_get_font_matrix` | `HKjYBSCx3mY` |
 | `cairo_mesh_pattern_line_to` | `HTB1uUwgSVQ` |
-| `cairo_get_line_cap` | `Hkp7M+pJILk` |
-| `cairo_set_miter_limit` | `IKnEk6g6ZV0` |
 | `cairo_font_face_destroy` | `IgBFcd4cF28` |
 | `cairo_scaled_font_text_extents` | `Jk9paxbMQsk` |
 | `cairo_has_current_point` | `JwQxC4dA5DY` |
@@ -71,7 +65,6 @@
 | `cairo_clip_extents` | `LJNqwiDWTm0` |
 | `cairo_set_scaled_font` | `LUh-6rZhniA` |
 | `cairo_fill` | `Ndvm8s28Gyc` |
-| `cairo_set_line_join` | `Ori3CK8Sx6g` |
 | `cairo_pop_group_to_source` | `Oyzf6kDk6Ns` |
 | `cairo_mesh_pattern_set_corner_color_rgba` | `P+Hm5enx01Y` |
 | `cairo_clip` | `PkGZZi1G2Gw` |
@@ -82,15 +75,11 @@
 | `cairo_ft_scaled_font_unlock_face` | `SJMLSxaYvWU` |
 | `cairo_mesh_pattern_move_to` | `T0JOV6EajrA` |
 | `cairo_paint_with_alpha` | `TAIhaLjmAlg` |
-| `cairo_set_fill_rule` | `THcHgZElshs` |
-| `cairo_get_miter_limit` | `TWtGBP-grBM` |
-| `cairo_get_antialias` | `U4Ajvh3L57k` |
 | `cairo_mesh_pattern_begin_patch` | `Ux6XxakVN+8` |
 | `cairo_mesh_pattern_end_patch` | `VBA3H7mYG70` |
 | `cairo_append_path` | `XX9tocaUX+g` |
 | `cairo_scaled_font_status` | `a5WkqZXnG2w` |
 | `cairo_in_fill` | `akimK5gpdho` |
-| `cairo_get_line_join` | `azNGOQLubLc` |
 | `cairo_set_source` | `bU0QXekwNes` |
 | `cairo_font_face_get_user_data` | `bXupa3+NYIs` |
 | `cairo_pattern_create_mesh` | `bz5MfOeWZw4` |
@@ -100,10 +89,8 @@
 | `cairo_fill_preserve` | `dewyjTlk+u8` |
 | `cairo_fill_extents` | `dkoQNd4kBlQ` |
 | `cairo_ft_font_face_create_for_ft_face` | `dqEhIWRTjuo` |
-| `cairo_get_dash_count` | `eSwGXlKHIas` |
 | `cairo_pattern_destroy` | `eZpt6dzI9oo` |
 | `cairo_pattern_set_matrix` | `fDNhBmmwSNs` |
-| `cairo_set_dash` | `fx5nS1yOp-I` |
 | `cairo_pattern_set_filter` | `gsqESe70WD0` |
 | `cairo_new_path` | `hhuvB3JXuMM` |
 | `cairo_push_group` | `hlh15JjNtWg` |
@@ -113,7 +100,6 @@
 | `cairo_line_to` | `mSda1B-vfkM` |
 | `cairo_scaled_font_reference` | `mb4bdMeFRs8` |
 | `cairo_font_face_reference` | `nqmUW6Z8xLE` |
-| `cairo_set_line_cap` | `oFltTuV0f7Y` |
 | `cairo_scaled_font_text_to_glyphs` | `ojbXRC0CmUo` |
 | `cairo_scaled_font_glyph_extents` | `oy7NcAkex1I` |
 | `cairo_show_text` | `psdqLsaPnkk` |
@@ -127,4 +113,3 @@
 | `cairo_set_source_surface` | `vcN1gg+gWRg` |
 | `cairo_device_destroy` | `wO1D4B90k0k` |
 | `cairo_pattern_add_color_stop_rgba` | `xXWrbaaPNNg` |
-| `cairo_set_line_width` | `zwMGP3ASKMI` |
