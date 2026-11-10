@@ -59,6 +59,12 @@ int main() {
 
     auto* face = cairo_ft_font_face_create_for_ft_face(guestFace, FT_LOAD_DEFAULT);
     Require(face != nullptr, "Cairo face creation returned null");
+    auto* repeated = cairo_ft_font_face_create_for_ft_face(guestFace, FT_LOAD_DEFAULT);
+    Require(repeated == face, "same FreeType face and load flags did not reuse the Cairo font face");
+    auto* differentFlags = cairo_ft_font_face_create_for_ft_face(guestFace, FT_LOAD_NO_HINTING);
+    Require(differentFlags != face, "different load flags incorrectly reused the Cairo font face");
+    cairo_font_face_destroy(repeated);
+    cairo_font_face_destroy(differentFlags);
     Require(FT_Reference_Face(nativeFace) == 0, "native face reference failed");
     Require(FT_Done_Face_nid_postfix(guestFace) == 0, "guest caller face release failed");
     Require(FT_Done_Face(nativeFace) == 0, "native caller face release failed");
@@ -101,7 +107,7 @@ int main() {
     Require(cairo_font_face_set_user_data(face, &reentryKey, &reentryData, Reenter) == 0,
             "reentrant user-data registration failed");
     cairo_font_face_destroy(face);
-    Require(reentryStatus == 12, "finalizer reentry did not report invalid status");
+    Require(reentryStatus == 6, "finalizer reentry did not report invalid status");
     reentryFace = nullptr;
 
     auto* nullFace = cairo_ft_font_face_create_for_ft_face(nullptr, 0);

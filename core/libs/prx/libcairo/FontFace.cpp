@@ -3,7 +3,10 @@
 
 #include <atomic>
 #include <limits>
+#include <map>
+#include <mutex>
 #include <new>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -11,8 +14,8 @@ namespace {
 constexpr int kSuccess = 0;
 constexpr int kNoMemory = 1;
 constexpr int kNullPointer = 7;
-constexpr int kInvalidStatus = 12;
-constexpr int kUserFontError = 51;
+constexpr int kInvalidStatus = 6;
+constexpr int kFreetypeError = 40;
 
 struct CairoFontFaceState {
     struct UserDataSlot {
@@ -26,6 +29,7 @@ struct CairoFontFaceState {
     FreeType::GuestFaceRec* face{};
     int loadFlags{};
     bool immortal{};
+    std::mutex userDataMutex;
     std::vector<UserDataSlot> userData;
 
     CairoFontFaceState() = default;
@@ -42,9 +46,21 @@ CairoFontFaceState& NoMemoryFace() {
     return face;
 }
 
-CairoFontFaceState& UserFontErrorFace() {
-    static CairoFontFaceState face{kUserFontError, true};
+CairoFontFaceState& FreetypeErrorFace() {
+    static CairoFontFaceState face{kFreetypeError, true};
     return face;
+}
+
+std::mutex& FaceCacheMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+using FaceKey = std::pair<FreeType::GuestFaceRec*, int>;
+
+std::map<FaceKey, CairoFontFaceState*>& FaceCache() {
+    static std::map<FaceKey, CairoFontFaceState*> cache;
+    return cache;
 }
 
 CairoFontFaceState* State(cairo_font_face_t* face) {
@@ -61,7 +77,13 @@ extern "C" {
 
 cairo_font_face_t* APS5_VABI cairo_ft_font_face_create_for_ft_face(FreeType::GuestFaceRec* face, int loadFlags) {
     if (!face) return Handle(&NullPointerFace());
-    if (FT_Reference_Face_nid_postfix(face) != 0) return Handle(&UserFontErrorFace());
+    std::lock_guard cacheLock(FaceCacheMutex());
+    const FaceKey key{face, loadFlags};
+    if (const auto existing = FaceCache().find(key); existing != FaceCache().end()) {
+        existing->second->references.fetch_add(1, std::memory_order_relaxed);
+        return Handle(existing->second);
+    }
+    if (FT_Reference_Face_nid_postfix(face) != 0) return Handle(&FreetypeErrorFace());
     auto* state = new (std::nothrow) CairoFontFaceState;
     if (!state) {
         FT_Done_Face_nid_postfix(face);
@@ -69,6 +91,13 @@ cairo_font_face_t* APS5_VABI cairo_ft_font_face_create_for_ft_face(FreeType::Gue
     }
     state->face = face;
     state->loadFlags = loadFlags;
+    try {
+        FaceCache().emplace(key, state);
+    } catch (const std::bad_alloc&) {
+        FT_Done_Face_nid_postfix(face);
+        delete state;
+        return Handle(&NoMemoryFace());
+    }
     return Handle(state);
 }
 
@@ -76,12 +105,21 @@ void APS5_VABI cairo_font_face_destroy(cairo_font_face_t* face) {
     if (!face) return;
     auto* state = State(face);
     if (state->immortal) return;
-    auto references = state->references.load(std::memory_order_relaxed);
-    while (references != 0 && !state->references.compare_exchange_weak(
-                                  references, references - 1, std::memory_order_acq_rel,
-                                  std::memory_order_relaxed)) {}
-    if (references != 1) return;
-    for (auto slot = state->userData.rbegin(); slot != state->userData.rend(); ++slot)
+    {
+        std::lock_guard cacheLock(FaceCacheMutex());
+        const auto references = state->references.load(std::memory_order_relaxed);
+        if (references == 0) return;
+        state->references.store(references - 1, std::memory_order_release);
+        if (references != 1) return;
+        FaceCache().erase({state->face, state->loadFlags});
+    }
+    std::vector<CairoFontFaceState::UserDataSlot> finalizers;
+    {
+        std::lock_guard dataLock(state->userDataMutex);
+        state->status = kInvalidStatus;
+        finalizers = std::move(state->userData);
+    }
+    for (auto slot = finalizers.rbegin(); slot != finalizers.rend(); ++slot)
         if (slot->data && slot->destroy) slot->destroy(slot->data);
     if (state->face) FT_Done_Face_nid_postfix(state->face);
     delete state;
@@ -89,7 +127,8 @@ void APS5_VABI cairo_font_face_destroy(cairo_font_face_t* face) {
 
 void* APS5_VABI cairo_font_face_get_user_data(cairo_font_face_t* face, const cairo_user_data_key_t* key) {
     if (!face) return nullptr;
-    const auto* state = State(face);
+    auto* state = State(face);
+    std::lock_guard dataLock(state->userDataMutex);
     if (state->status != kSuccess) return nullptr;
     for (const auto& slot : state->userData)
         if (slot.key == key) return slot.data;
@@ -100,13 +139,10 @@ cairo_font_face_t* APS5_VABI cairo_font_face_reference(cairo_font_face_t* face) 
     if (!face) return nullptr;
     auto* state = State(face);
     if (state->immortal) return face;
-    auto references = state->references.load(std::memory_order_relaxed);
-    while (references != 0 && references != std::numeric_limits<unsigned>::max()) {
-        if (state->references.compare_exchange_weak(references, references + 1,
-                                                    std::memory_order_relaxed,
-                                                    std::memory_order_relaxed))
-            break;
-    }
+    std::lock_guard cacheLock(FaceCacheMutex());
+    const auto references = state->references.load(std::memory_order_relaxed);
+    if (references != 0 && references != std::numeric_limits<unsigned>::max())
+        state->references.store(references + 1, std::memory_order_relaxed);
     return face;
 }
 
@@ -114,6 +150,7 @@ int APS5_VABI cairo_font_face_set_user_data(cairo_font_face_t* face, const cairo
                                             void* data, cairo_destroy_func_t destroy) {
     if (!face) return kNullPointer;
     auto* state = State(face);
+    std::unique_lock dataLock(state->userDataMutex);
     if (state->status != kSuccess) return state->status;
     if (state->references.load(std::memory_order_relaxed) == 0) return kInvalidStatus;
     CairoFontFaceState::UserDataSlot* selected = nullptr;
@@ -125,9 +162,11 @@ int APS5_VABI cairo_font_face_set_user_data(cairo_font_face_t* face, const cairo
         if (data && !slot.data) selected = &slot;
     }
     if (selected) {
-        if (selected->data && selected->destroy) selected->destroy(selected->data);
+        const auto replaced = *selected;
         *selected = data ? CairoFontFaceState::UserDataSlot{key, data, destroy}
                          : CairoFontFaceState::UserDataSlot{};
+        dataLock.unlock();
+        if (replaced.data && replaced.destroy) replaced.destroy(replaced.data);
     } else if (data) {
         if (state->userData.size() == state->userData.max_size()) return kNoMemory;
         try {
