@@ -1796,6 +1796,57 @@ void completionWaitTests(const Device& device, Recorder& recorder) {
     Require(memory[1] == 9u && Recorder::PendingCompletionLabels() == 0, "completion wait: a reader of a label stored behind a completion did not wait for that store");
 }
 
+template<typename Lock>
+void encoderFailureFollowsTheBatchTests(const Device& device, Recorder& recorder, Lock& gpu) {
+    if (!recorder.Encodes()) return;
+    const auto& context = device.GetContext();
+    std::atomic<int> failures{0};
+    CommandEncoder::SetDelayForTesting([&] {
+        if (failures.fetch_sub(1) > 0) throw std::runtime_error("injected replay failure");
+    });
+    const auto failOne = [&] {
+        failures.store(1);
+        const auto commands = recorder.Commands();
+        const Recorder::EncodingWindow window(recorder);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    };
+    const auto caught = [](const std::function<void()>& step) -> std::string {
+        try {
+            step();
+            return {};
+        } catch (const std::runtime_error& error) {
+            return error.what();
+        }
+    };
+    gpu.unlock();
+    std::thread producer([&] {
+        std::lock_guard lock(GpuMutex());
+        failOne();
+    });
+    producer.join();
+    gpu.lock();
+    const auto reported = caught([&] { static_cast<void>(recorder.Commands()); });
+    const auto refused = caught([&] { recorder.Submit(); });
+    failOne();
+    std::string submitted;
+    gpu.unlock();
+    std::thread submitter([&] {
+        std::lock_guard lock(GpuMutex());
+        submitted = caught([&] { recorder.Submit(); });
+    });
+    submitter.join();
+    gpu.lock();
+    CommandEncoder::SetDelayForTesting({});
+    Require(reported == "injected replay failure", "a replay failure recorded on another thread reached the next settle of its batch as '" + reported + "'");
+    Require(!refused.empty() && refused != "injected replay failure", "a batch whose replay failure was already reported was submitted or reported again ('" + refused + "')");
+    Require(submitted == "injected replay failure", "Submit on another thread did not carry the batch's unreported replay failure ('" + submitted + "')");
+    RecordMemoryBarrier(context, recorder.Commands(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    recorder.Submit();
+    recorder.Sync();
+    Require(recorder.Idle(), "the recorder did not recover after discarding batches whose replay failed");
+    std::cout << "Command encoder failure tests passed\n";
+}
+
 void encoderSlotFallbackTests(const Device& device) {
     if (!CommandEncoder::Enabled()) return;
     const auto& context = device.GetContext();
@@ -15789,6 +15840,7 @@ int main(int argc, char** argv) {
         drawSnapshotPatchTests(device);
         drawSnapshotEpochTests(device);
         gpu.lock();
+        encoderFailureFollowsTheBatchTests(device, recorder, gpu);
         encoderSlotFallbackTests(device);
         recorder.Activate();
         const bool drew = vertexTargetRangeTests(device, recorder, false);

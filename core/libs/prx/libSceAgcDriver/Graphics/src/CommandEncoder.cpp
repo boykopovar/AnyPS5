@@ -393,21 +393,34 @@ CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::siz
 }
 
 CommandEncoder::~CommandEncoder() {
-    Drain();
+    Quiesce();
     stopping.store(true, std::memory_order_seq_cst);
     posted.fetch_add(1, std::memory_order_seq_cst);
     posted.notify_all();
     worker.join();
+    delete filling;
+    for (auto* chunk = spare; chunk != nullptr;) delete std::exchange(chunk, chunk->next);
     std::lock_guard lock(slotMutex());
     table = real;
     slots()[slot].encoder.store(nullptr, std::memory_order_release);
     slots()[slot].claimed = false;
 }
 
-void CommandEncoder::Open(VkCommandBuffer commands) {
+void CommandEncoder::Recording::deliver() {
+    reported = true;
+    std::rethrow_exception(error);
+}
+
+void CommandEncoder::Recording::refuse() {
+    if (!reported) deliver();
+    throw std::runtime_error("AGC graphics: the encoder failed to record this command buffer, so it is not submitted");
+}
+
+void CommandEncoder::Open(VkCommandBuffer commands, Recording& recording) {
     if (recent.load(std::memory_order_relaxed) != commands) Quiesce();
-    windows.push_back(commands);
+    windows.push_back({commands, &recording});
     owner.store(std::this_thread::get_id(), std::memory_order_relaxed);
+    this->recording = &recording;
     recent.store(commands, std::memory_order_relaxed);
     target.store(commands, std::memory_order_release);
 }
@@ -418,37 +431,40 @@ void CommandEncoder::RefuseForeignProducer() {
 
 void CommandEncoder::Close() {
     post();
-    const auto closed = windows.back();
+    const auto closed = windows.back().commands;
     windows.pop_back();
     if (windows.empty()) {
         target.store(VK_NULL_HANDLE, std::memory_order_relaxed);
+        recording = nullptr;
         return;
     }
-    if (windows.back() != closed) await();
-    recent.store(windows.back(), std::memory_order_relaxed);
-    target.store(windows.back(), std::memory_order_relaxed);
+    if (windows.back().commands != closed) await();
+    recording = windows.back().recording;
+    recent.store(windows.back().commands, std::memory_order_relaxed);
+    target.store(windows.back().commands, std::memory_order_relaxed);
 }
 
 std::byte* CommandEncoder::Append(Run run, std::size_t bytes) {
     const auto need = RecordHeader + aligned(bytes);
-    if (filling != nullptr && filling->used + need > filling->bytes.size()) post();
+    if (filling != nullptr && (filling->recording != recording || filling->used + need > filling->bytes.size())) post();
     if (filling == nullptr) {
         {
             std::lock_guard lock(queueMutex);
-            if (!free.empty()) {
-                filling = std::move(free.back());
-                free.pop_back();
-            }
+            if (spare != nullptr) filling = std::exchange(spare, spare->next);
         }
-        if (filling == nullptr) filling = std::make_unique<Chunk>();
-        if (filling->bytes.size() < std::max(ChunkBytes, need)) filling->bytes.resize(std::max(ChunkBytes, need));
+        if (filling == nullptr) filling = new Chunk;
+        try {
+            if (filling->bytes.size() < std::max(ChunkBytes, need)) filling->bytes.resize(std::max(ChunkBytes, need));
+        } catch (...) {
+            std::lock_guard lock(queueMutex);
+            filling->next = std::exchange(spare, std::exchange(filling, nullptr));
+            throw;
+        }
         filling->used = 0;
         filling->records = 0;
+        filling->next = nullptr;
         filling->target = target.load(std::memory_order_relaxed);
-        filling->producer = std::this_thread::get_id();
-    } else if (filling->target != target.load(std::memory_order_relaxed)) {
-        post();
-        return Append(run, bytes);
+        filling->recording = recording;
     }
     auto* at = filling->bytes.data() + filling->used;
     new (at) Record{run, static_cast<std::uint32_t>(need)};
@@ -457,88 +473,30 @@ std::byte* CommandEncoder::Append(Run run, std::size_t bytes) {
     return at + RecordHeader;
 }
 
-void CommandEncoder::post() {
+void CommandEncoder::post() noexcept {
     if (filling == nullptr || filling->records == 0) return;
     commandCount.fetch_add(filling->records, std::memory_order_relaxed);
     postCount.fetch_add(1, std::memory_order_relaxed);
     {
         std::lock_guard lock(queueMutex);
-        queue.push_back(std::move(filling));
+        auto* chunk = std::exchange(filling, nullptr);
+        (tail != nullptr ? tail->next : head) = chunk;
+        tail = chunk;
     }
     posted.fetch_add(1, std::memory_order_seq_cst);
     if (sleeping.load(std::memory_order_seq_cst)) posted.notify_one();
 }
 
-void CommandEncoder::Quiesce() {
-    post();
-    Settle();
-}
-
-void CommandEncoder::Drain() noexcept {
+void CommandEncoder::Quiesce() noexcept {
     post();
     await();
 }
 
-void CommandEncoder::Settle() {
+void CommandEncoder::Settle() noexcept {
     await();
-    if (unreported.load(std::memory_order_acquire) != 0) report();
 }
 
-void CommandEncoder::Finish(VkCommandBuffer commands) {
-    post();
-    await();
-    if (failing.load(std::memory_order_acquire) == 0) return;
-    std::exception_ptr error;
-    {
-        std::lock_guard lock(failureMutex);
-        const auto found = std::ranges::find(failures, commands, &Failure::commands);
-        if (found == failures.end()) return;
-        if (found->reported || found->producer != std::this_thread::get_id()) throw std::runtime_error("AGC graphics: the encoder failed to record this command buffer, so it is not submitted");
-        found->reported = true;
-        unreported.fetch_sub(1, std::memory_order_relaxed);
-        error = found->error;
-    }
-    std::rethrow_exception(error);
-}
-
-void CommandEncoder::Forget(VkCommandBuffer commands) {
-    if (failing.load(std::memory_order_acquire) == 0) return;
-    std::lock_guard lock(failureMutex);
-    std::erase_if(failures, [&](const Failure& failure) {
-        if (failure.commands != commands) return false;
-        if (!failure.reported) unreported.fetch_sub(1, std::memory_order_relaxed);
-        return true;
-    });
-    failing.store(failures.size(), std::memory_order_release);
-}
-
-void CommandEncoder::report() {
-    std::exception_ptr error;
-    {
-        std::lock_guard lock(failureMutex);
-        const auto found = std::ranges::find_if(failures, [](const Failure& failure) { return !failure.reported && failure.producer == std::this_thread::get_id(); });
-        if (found == failures.end()) return;
-        found->reported = true;
-        unreported.fetch_sub(1, std::memory_order_relaxed);
-        error = found->error;
-    }
-    std::rethrow_exception(error);
-}
-
-bool CommandEncoder::skips(VkCommandBuffer commands) {
-    if (failing.load(std::memory_order_acquire) == 0) return false;
-    std::lock_guard lock(failureMutex);
-    return std::ranges::find(failures, commands, &Failure::commands) != failures.end();
-}
-
-void CommandEncoder::fail(const Chunk& chunk, std::exception_ptr error) {
-    std::lock_guard lock(failureMutex);
-    failures.push_back({chunk.target, chunk.producer, std::move(error)});
-    failing.store(failures.size(), std::memory_order_release);
-    unreported.fetch_add(1, std::memory_order_release);
-}
-
-void CommandEncoder::await() {
+void CommandEncoder::await() noexcept {
     const auto through = posted.load(std::memory_order_acquire);
     if (executed.load(std::memory_order_acquire) >= through) return;
     const auto start = std::chrono::steady_clock::now();
@@ -574,12 +532,12 @@ void CommandEncoder::run() {
             }
             continue;
         }
-        std::unique_ptr<Chunk> chunk;
+        Chunk* chunk = nullptr;
         {
             std::lock_guard lock(queueMutex);
-            if (!queue.empty()) {
-                chunk = std::move(queue.front());
-                queue.pop_front();
+            if (head != nullptr) {
+                chunk = std::exchange(head, head->next);
+                if (head == nullptr) tail = nullptr;
             }
         }
         ++taken;
@@ -587,16 +545,18 @@ void CommandEncoder::run() {
             if (stopping.load(std::memory_order_acquire)) return;
             continue;
         }
-        if (!skips(chunk->target)) {
+        auto& recording = *chunk->recording;
+        if (!recording.failed.load(std::memory_order_relaxed)) {
             try {
                 execute(*chunk);
             } catch (...) {
-                fail(*chunk, std::current_exception());
+                recording.error = std::current_exception();
+                recording.failed.store(true, std::memory_order_release);
             }
         }
         {
             std::lock_guard lock(queueMutex);
-            free.push_back(std::move(chunk));
+            chunk->next = std::exchange(spare, chunk);
         }
         executed.fetch_add(1, std::memory_order_release);
         executed.notify_all();

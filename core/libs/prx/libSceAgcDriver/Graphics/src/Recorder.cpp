@@ -1857,7 +1857,7 @@ VkCommandBuffer Recorder::Commands(VkAccessFlags* coveredAccess) {
 
 bool Recorder::BeginEncoding() {
     if (encoder == nullptr || open == nullptr) return false;
-    encoder->Open(open->commands);
+    encoder->Open(open->commands, open->recording);
     return true;
 }
 
@@ -4272,6 +4272,21 @@ void Recorder::Submit() {
     dropStaleHoldKept();
     if (open == nullptr) return;
     GuestMemory::AssertGpuLockHeld("Recorder::Submit");
+    struct DiscardUnsubmitted {
+        Recorder& recorder;
+        std::unique_ptr<Batch>& batch;
+        ~DiscardUnsubmitted() {
+            if (batch != nullptr && !batch->submitted) recorder.discard(std::move(batch));
+        }
+    };
+    if (encoder != nullptr) {
+        encoder->Quiesce();
+        if (open->recording.Failed()) {
+            auto failed = std::move(open);
+            const DiscardUnsubmitted discardFailed{*this, failed};
+            failed->recording.Finish();
+        }
+    }
     flushDeferredDispatch();
     if (!open->keyStores.empty()) recordKeyStores(false);
     if (open->renderPass.open) endOpenRenderPass(PassBreak::NewBatch);
@@ -4297,14 +4312,11 @@ void Recorder::Submit() {
         for (const auto& [begin, end] : notedReads(*open)) open->readGeneration = std::max(open->readGeneration, GuestMemory::CollectWrites(begin, end - begin));
     }
     auto batch = std::move(open);
-    struct DiscardUnsubmitted {
-        Recorder& recorder;
-        std::unique_ptr<Batch>& batch;
-        ~DiscardUnsubmitted() {
-            if (batch != nullptr && !batch->submitted) recorder.discard(std::move(batch));
-        }
-    } discardUnsubmitted{*this, batch};
-    if (encoder != nullptr) encoder->Finish(batch->commands);
+    const DiscardUnsubmitted discardUnsubmitted{*this, batch};
+    if (encoder != nullptr) {
+        encoder->Quiesce();
+        batch->recording.Finish();
+    }
     Check(function(endCommandBuffer, "vkEndCommandBuffer")(batch->commands), "vkEndCommandBuffer recorder");
     if (injectedSubmitFailures.load(std::memory_order_relaxed) != 0 && injectedSubmitFailures.fetch_sub(1, std::memory_order_relaxed) != 0) throw std::runtime_error("vkQueueSubmit recorder: injected failure");
     VkSubmitInfo submission{VK_STRUCTURE_TYPE_SUBMIT_INFO};
@@ -4933,7 +4945,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
 }
 
 void Recorder::discard(std::unique_ptr<Batch> batch) noexcept {
-    if (encoder != nullptr) encoder->Drain();
+    if (encoder != nullptr) encoder->Quiesce();
     removeLabels(*batch);
     if (batch->completionLabelCount != 0) completionLabels.fetch_sub(batch->completionLabelCount, std::memory_order_acq_rel);
     if (batch->completionStoreCount != 0) completionStores.fetch_sub(batch->completionStoreCount, std::memory_order_acq_rel);
@@ -4983,7 +4995,6 @@ void Recorder::release(Batch& batch) noexcept {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (batch.commands != VK_NULL_HANDLE) {
         std::unique_lock poolLock = encoder != nullptr ? std::unique_lock(encoder->PoolMutex()) : std::unique_lock<std::mutex>();
-        if (encoder != nullptr) encoder->Forget(batch.commands);
         context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, batch.pool != VK_NULL_HANDLE ? batch.pool : context.pool, 1, &batch.commands);
         if (profile) commandBuffersFreed.fetch_add(1, std::memory_order_relaxed);
     }

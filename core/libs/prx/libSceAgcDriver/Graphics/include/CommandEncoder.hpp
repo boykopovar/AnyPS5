@@ -5,7 +5,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <exception>
 #include <functional>
 #include <memory>
@@ -18,19 +17,37 @@ namespace AgcDriver::Graphics {
 class CommandEncoder {
 public:
     using Run = void (*)(const std::byte* payload, VkCommandBuffer commands, const DeviceFunctions& functions);
+    class Recording {
+    public:
+        Recording() = default;
+        Recording(const Recording&) = delete;
+        Recording& operator=(const Recording&) = delete;
+        bool Failed() const { return failed.load(std::memory_order_acquire); }
+        void Report() {
+            if (Failed() && !reported) deliver();
+        }
+        void Finish() {
+            if (Failed()) refuse();
+        }
+
+    private:
+        friend class CommandEncoder;
+        [[noreturn]] void deliver();
+        [[noreturn]] void refuse();
+        std::exception_ptr error;
+        std::atomic<bool> failed{false};
+        bool reported = false;
+    };
     static bool Enabled();
     static constexpr std::size_t Slots = 4;
     static std::unique_ptr<CommandEncoder> Attach(VkDevice device, DeviceFunctions& table);
     ~CommandEncoder();
     CommandEncoder(const CommandEncoder&) = delete;
     CommandEncoder& operator=(const CommandEncoder&) = delete;
-    void Open(VkCommandBuffer commands);
+    void Open(VkCommandBuffer commands, Recording& recording);
     void Close();
-    void Quiesce();
-    void Settle();
-    void Drain() noexcept;
-    void Finish(VkCommandBuffer commands);
-    void Forget(VkCommandBuffer commands);
+    void Quiesce() noexcept;
+    void Settle() noexcept;
     [[noreturn]] static void RefuseForeignProducer();
     bool OpenOnThisThread() const { return target.load(std::memory_order_acquire) != VK_NULL_HANDLE && owner.load(std::memory_order_relaxed) == std::this_thread::get_id(); }
     bool Defers(VkCommandBuffer commands) const {
@@ -55,7 +72,7 @@ public:
     public:
         explicit UnwindQuiesce(CommandEncoder* encoder) : encoder(encoder), exceptions(std::uncaught_exceptions()) {}
         ~UnwindQuiesce() {
-            if (encoder != nullptr && std::uncaught_exceptions() > exceptions) encoder->Drain();
+            if (encoder != nullptr && std::uncaught_exceptions() > exceptions) encoder->Quiesce();
         }
         UnwindQuiesce(const UnwindQuiesce&) = delete;
         UnwindQuiesce& operator=(const UnwindQuiesce&) = delete;
@@ -71,42 +88,36 @@ private:
         std::size_t used = 0;
         std::size_t records = 0;
         VkCommandBuffer target = VK_NULL_HANDLE;
-        std::thread::id producer;
+        Recording* recording = nullptr;
+        Chunk* next = nullptr;
     };
-    struct Failure {
-        VkCommandBuffer commands = VK_NULL_HANDLE;
-        std::thread::id producer;
-        std::exception_ptr error;
-        bool reported = false;
+    struct Window {
+        VkCommandBuffer commands;
+        Recording* recording;
     };
     CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot);
     static std::size_t claim();
-    void post();
+    void post() noexcept;
     void run();
     void execute(Chunk& chunk);
-    void await();
-    void report();
-    bool skips(VkCommandBuffer commands);
-    void fail(const Chunk& chunk, std::exception_ptr error);
+    void await() noexcept;
     DeviceFunctions& table;
     DeviceFunctions real;
     VkDevice device = VK_NULL_HANDLE;
     std::size_t slot = Slots;
-    std::vector<VkCommandBuffer> windows;
+    std::vector<Window> windows;
     std::atomic<VkCommandBuffer> target{VK_NULL_HANDLE};
     std::atomic<VkCommandBuffer> recent{VK_NULL_HANDLE};
-    std::unique_ptr<Chunk> filling;
+    Recording* recording = nullptr;
+    Chunk* filling = nullptr;
     std::mutex queueMutex;
-    std::deque<std::unique_ptr<Chunk>> queue;
-    std::vector<std::unique_ptr<Chunk>> free;
+    Chunk* head = nullptr;
+    Chunk* tail = nullptr;
+    Chunk* spare = nullptr;
     std::atomic<std::uint64_t> posted{0};
     std::atomic<std::uint64_t> executed{0};
     std::atomic<bool> sleeping{false};
     std::atomic<bool> stopping{false};
-    std::mutex failureMutex;
-    std::vector<Failure> failures;
-    std::atomic<std::size_t> failing{0};
-    std::atomic<std::size_t> unreported{0};
     std::mutex poolMutex;
     std::thread worker;
     std::atomic<std::thread::id> owner{};
