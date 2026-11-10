@@ -2058,6 +2058,9 @@ struct ReusedTableElement {
     bool rejected = false;
     std::string message;
     bool live = false;
+    bool substitute = false;
+    std::uint32_t representative = NoRepresentative;
+    GuestTextureResource representativeResource{};
 };
 
 struct ReusedTable {
@@ -2074,6 +2077,7 @@ struct ReusedTable {
     std::vector<std::uint32_t> samplers;
     std::vector<std::string> bound;
     bool replayable = false;
+    std::vector<std::uint32_t> representatives;
 };
 
 constexpr std::size_t ReusedTableCount = 4;
@@ -2112,7 +2116,7 @@ bool CachedTableTextures(const ReusedTable& table, std::vector<std::shared_ptr<T
     std::vector<std::list<CachedTexture>::iterator> entries;
     entries.reserve(table.queries.size());
     for (const auto& element : table.elements) {
-        if (element.rejected || element.live) continue;
+        if (element.rejected || element.live || element.substitute) continue;
         const auto it = findTexture(cache, element.key);
         if (it == cache.entries.end() || it->texture != element.texture.lock()) return false;
         entries.push_back(it);
@@ -4341,6 +4345,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             if (images == nullptr || images->count != table.elementTextures.size()) return false;
             std::vector<std::shared_ptr<Texture>> cached;
             if (auto* reused = FindReusedTable(context.device, *images, CurrentTableState()); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
+                if (!reused->representatives.empty() && reused->representatives != variantRepresentatives(context.device, *images, table.elementBase, context.imageTableCapacity)) return false;
                 auto next = cached.begin();
                 bool same = true;
                 for (std::uint32_t element = 0; same && element < images->count; ++element) {
@@ -4350,6 +4355,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                         same = index == std::numeric_limits<std::size_t>::max();
                         continue;
                     }
+                    if (entry.substitute) continue;
                     if (entry.live) {
                         if (index == std::numeric_limits<std::size_t>::max()) continue;
                         same = index == textureIndex && currentTableEntry(*images, element);
@@ -6194,7 +6200,9 @@ void ShaderResources::resolveImageTables() {
             }
             if (landed && CurrentTableState() != state) reused = nullptr;
         }
+        if (reused != nullptr && !reused->representatives.empty() && reused->representatives != variantRepresentatives(context.device, binding, table.elementBase, context.imageTableCapacity)) reused = nullptr;
         if (reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
+            table.representatives = reused->representatives;
             const bool replay = TableReplay() && reused->replayable && reused->imageSamplers == binding.imageSamplers && reused->samplers == samplerKey;
             if (!replay) reused->bound.assign(binding.count, {});
             auto next = cached.begin();
@@ -6202,10 +6210,12 @@ void ShaderResources::resolveImageTables() {
                 const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
                 const auto& entry = reused->elements[element];
                 if (static_cast<std::uint64_t>(table.elementBase) + element >= context.imageTableCapacity) {
-                    if (!entry.rejected && !entry.live) ++next;
+                    if (!entry.rejected && !entry.live && !entry.substitute) ++next;
                     table.map[faults + element] = rejectTableElement(table, words, capacityMessage());
                 } else if (entry.rejected) {
                     table.map[faults + element] = rejectTableElement(table, words, entry.message);
+                } else if (entry.substitute) {
+                    continue;
                 } else if (entry.live) {
                     auto message = resolveLive(element, words);
                     if (!replay) reused->bound[element] = std::move(message);
@@ -6219,6 +6229,22 @@ void ShaderResources::resolveImageTables() {
                         place(element, std::move(*next++), entry.resource, entry.guestBytes, entry.firstLayer);
                     }
                 }
+            }
+            for (std::uint32_t element = 0; element < binding.count; ++element) {
+                const auto& entry = reused->elements[element];
+                if (!entry.substitute || static_cast<std::uint64_t>(table.elementBase) + element >= context.imageTableCapacity) continue;
+                const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+                const auto representativeWords = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(entry.representative) * 8u, 8u);
+                const auto index = table.elementTextures[entry.representative];
+                const auto message = index == std::numeric_limits<std::size_t>::max() ? std::string("the dynamic-resolution variant this entry borrows from was rejected") : refusal(element, representativeWords, textures[index], entry.representativeResource);
+                if (!message.empty()) {
+                    table.map[faults + element] = rejectTableElement(table, words, message);
+                    counters.variantRejected.fetch_add(1, std::memory_order_relaxed);
+                    continue;
+                }
+                table.elementTextures[element] = index;
+                item->imageAllocations[static_cast<std::size_t>(table.elementBase) + element] = index;
+                counters.variantSubstituted.fetch_add(1, std::memory_order_relaxed);
             }
             if (!replay) {
                 reused->imageSamplers = binding.imageSamplers;
@@ -6248,7 +6274,12 @@ void ShaderResources::resolveImageTables() {
                 continue;
             }
             if (!representatives.empty() && representatives[element] != NoRepresentative) {
-                reusable = false;
+                if (reusable) {
+                    ReusedTableElement substitute;
+                    substitute.substitute = true;
+                    substitute.representative = representatives[element];
+                    fresh.elements.push_back(std::move(substitute));
+                }
                 substitutes.push_back(element);
                 continue;
             }
@@ -6331,6 +6362,10 @@ void ShaderResources::resolveImageTables() {
             const auto index = table.elementTextures[representative];
             const auto source = representativeSources.find(representative);
             const auto message = index == std::numeric_limits<std::size_t>::max() || source == representativeSources.end() ? std::string("the dynamic-resolution variant this entry borrows from was rejected") : refusal(element, words, textures[index], source->second);
+            if (reusable) {
+                if (fresh.elements[representative].rejected || source == representativeSources.end()) reusable = false;
+                else fresh.elements[element].representativeResource = source->second;
+            }
             if (!message.empty()) {
                 table.map[faults + element] = rejectTableElement(table, words, message);
                 counters.variantRejected.fetch_add(1, std::memory_order_relaxed);
@@ -6351,6 +6386,7 @@ void ShaderResources::resolveImageTables() {
                 fresh.imageSamplers = binding.imageSamplers;
                 fresh.samplers = std::move(samplerKey);
                 fresh.replayable = static_cast<std::uint64_t>(table.elementBase) + binding.count <= context.imageTableCapacity;
+                fresh.representatives = table.representatives;
                 RememberTable(std::move(fresh), binding);
             }
         }

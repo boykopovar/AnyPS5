@@ -288,6 +288,37 @@ void RunLargest(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     Expect(before, 1, 3, 0, "three dispatches of two variants with no write and no depth surface");
 }
 
+void RunReused(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    Prepare(block);
+    SetRecord(block, 0, block.Texels(Largest), Wide);
+    SetRecord(block, 1, block.Texels(Largest), Narrow);
+    const auto result = Compile(device, block);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto before = AgcDriver::Graphics::ImageTableReuses();
+    Require(Dispatch(device, result, 1) == Row(block.Texels(Largest), Wide), "image table variants: the narrow variant did not borrow the largest one");
+    Require(Dispatch(device, result, 1) == Row(block.Texels(Largest), Wide), "image table variants: the narrow variant of a reused table did not borrow the largest one");
+    const auto reused = AgcDriver::Graphics::ImageTableReuses().reused - before.reused;
+    Require(reused != 0u, "image table variants: a table whose borrowing entry shares a cached representative was resolved again instead of reused");
+    const auto step = Since(before);
+    Require(step.substituted == 2u && step.rejected == 0u, "image table variants: two dispatches of a reused table with a borrowing entry: " + std::to_string(step.substituted) + " substituted and " + std::to_string(step.rejected) + " rejected entries, expected 2 and 0");
+}
+
+void RunReusedWritten(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    Prepare(block);
+    SetRecord(block, 0, block.Texels(Written), Wide);
+    SetRecord(block, 1, block.Texels(Written), Narrow);
+    const auto result = Compile(device, block);
+    Store(device, block.Texels(Written), Wide);
+    std::vector<float> wide(Wide);
+    for (std::uint32_t x = 0; x < Wide; ++x) wide[x] = -4.0f - static_cast<float>(x);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(Dispatch(device, result, 1) == Row(wide.data(), Wide), "image table variants: the narrow variant did not borrow the wide one written last");
+    Store(device, block.Texels(Written), Narrow);
+    std::vector<float> narrow(Narrow);
+    for (std::uint32_t x = 0; x < Narrow; ++x) narrow[x] = -4.0f - static_cast<float>(x);
+    Require(Dispatch(device, result, 0) == Row(narrow.data(), Narrow), "image table variants: after a write of the narrow variant, the wide variant of a remembered table did not borrow it");
+}
+
 std::uint64_t GuestBytes(const void* texels, std::uint32_t width) {
     std::array<std::uint32_t, 8> words{};
     const auto image = Image(texels, width);
@@ -448,7 +479,9 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     RunTied(device, block);
     RunProof(device, block);
     RunLargest(device, block);
+    RunReused(device, block);
     RunWritten(device, block);
+    RunReusedWritten(device, block);
     RunFetch(device, block);
     RunSize(device, block);
     RunDepth(device, block);
