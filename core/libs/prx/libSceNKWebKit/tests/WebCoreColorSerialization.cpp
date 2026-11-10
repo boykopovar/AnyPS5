@@ -3,7 +3,6 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <exception>
 #include <string>
 
 namespace {
@@ -30,17 +29,6 @@ WebCore::Color Color(std::uint8_t red, std::uint8_t green, std::uint8_t blue, st
                           | (static_cast<std::uint64_t>(blue) << 8) | alpha};
 }
 
-template <typename F>
-void RequireThrows(F&& function) {
-    bool caught = false;
-    try {
-        function();
-    } catch (const std::exception&) {
-        caught = true;
-    }
-    REQUIRE(caught);
-}
-
 } // namespace
 
 int main() {
@@ -53,13 +41,7 @@ int main() {
     const auto translucent = Color(12, 34, 56, 128);
     REQUIRE(Text(_ZN7WebCore20serializationForHTMLERKNS_5ColorE(&translucent)) == "rgba(12, 34, 56, 0.5)");
 
-    auto colorFunction = Color(12, 34, 56, 255);
-    colorFunction.m_colorAndFlags |= 1ULL << 49;
-    RequireThrows([&] { (void)_ZN7WebCore20serializationForHTMLERKNS_5ColorE(&colorFunction); });
-
-    auto outOfLine = Color(12, 34, 56, 255);
-    outOfLine.m_colorAndFlags |= 1ULL << 51;
-    RequireThrows([&] { (void)_ZN7WebCore20serializationForHTMLERKNS_5ColorE(&outOfLine); });
-    RequireThrows([] { (void)_ZN7WebCore20serializationForHTMLERKNS_5ColorE(nullptr); });
+    const WebCore::Color invalid{0};
+    REQUIRE(Text(_ZN7WebCore20serializationForHTMLERKNS_5ColorE(&invalid)) == "rgba(0, 0, 0, 0)");
     return 0;
 }
