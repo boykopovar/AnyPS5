@@ -33,6 +33,10 @@ std::map<VkPipelineBinaryKHR, std::uint8_t> binaries;
 std::function<void()> duringCapture;
 std::function<void(const VkPipelineCreateInfoKHR*, VkPipelineBinaryKeyKHR*)> keyOutput;
 unsigned keyQueries = 0;
+unsigned globalQueries = 0;
+unsigned pipelineQueries = 0;
+unsigned otherBinaryCalls = 0;
+unsigned binaryLookups = 0;
 
 void Check(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
@@ -108,6 +112,8 @@ void LayerCompatibilityTests() {
 
 VKAPI_ATTR VkResult VKAPI_CALL Key(VkDevice device, const VkPipelineCreateInfoKHR* info, VkPipelineBinaryKeyKHR* key) {
     Check(device == reinterpret_cast<VkDevice>(1), "key query lost the device");
+    if (info == nullptr) ++globalQueries;
+    else ++pipelineQueries;
     if (keyQueries++ == 0) Check(info == nullptr, "first key query must have null create-info");
     Check(key->sType == VK_STRUCTURE_TYPE_PIPELINE_BINARY_KEY_KHR && key->pNext == nullptr && key->keySize == 0, "key query output was not initialized");
     key->keySize = 1;
@@ -151,6 +157,7 @@ VKAPI_ATTR VkResult VKAPI_CALL Create(VkDevice, VkPipelineCache cache, std::uint
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL Binary(VkDevice, const VkPipelineBinaryCreateInfoKHR* info, const VkAllocationCallbacks*, VkPipelineBinaryHandlesInfoKHR* output) {
+    ++otherBinaryCalls;
     if (missing) return VK_PIPELINE_BINARY_MISSING_KHR;
     if (output->pPipelineBinaries == nullptr) {
         output->pipelineBinaryCount = 2;
@@ -171,6 +178,7 @@ VKAPI_ATTR VkResult VKAPI_CALL Binary(VkDevice, const VkPipelineBinaryCreateInfo
 }
 
 VKAPI_ATTR void VKAPI_CALL DestroyBinary(VkDevice, VkPipelineBinaryKHR binary, const VkAllocationCallbacks*) {
+    ++otherBinaryCalls;
     Check(binaries.erase(binary) == 1, "unknown binary destroyed");
 }
 
@@ -178,6 +186,7 @@ VKAPI_ATTR void VKAPI_CALL DestroyPipeline(VkDevice, VkPipeline, const VkAllocat
 
 VKAPI_ATTR VkResult VKAPI_CALL Data(VkDevice, const VkPipelineBinaryDataInfoKHR* info, VkPipelineBinaryKeyKHR* key, std::size_t* size, void* data) {
     key->keySize = 1;
+    ++otherBinaryCalls;
     key->key[0] = binaries.at(info->pipelineBinary);
     *size = oversized ? 256u * 1024u * 1024u + 1u : 1;
     if (data != nullptr) *static_cast<std::uint8_t*>(data) = key->key[0];
@@ -185,11 +194,13 @@ VKAPI_ATTR VkResult VKAPI_CALL Data(VkDevice, const VkPipelineBinaryDataInfoKHR*
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL Release(VkDevice, const VkReleaseCapturedPipelineDataInfoKHR*, const VkAllocationCallbacks*) {
+    ++otherBinaryCalls;
     ++released;
     return VK_SUCCESS;
 }
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL Resolve(VkDevice, const char* name) {
+    if (std::strstr(name, "KHR") != nullptr) ++binaryLookups;
     if (unsupported && std::strcmp(name, "vkGetPipelineKeyKHR") == 0) return nullptr;
     if (std::strcmp(name, "vkGetPipelineKeyKHR") == 0) return reinterpret_cast<PFN_vkVoidFunction>(Key);
     if (std::strcmp(name, "vkCreateComputePipelines") == 0) return reinterpret_cast<PFN_vkVoidFunction>(Create);
@@ -223,6 +234,7 @@ int main(int argc, char** argv) try {
     Environment("ANYPS5_SHADER_CACHE_DIR", root.string().c_str());
     Environment("ANYPS5_NO_SHADER_CACHE", "0");
     Environment("APS5_NO_PIPELINE_BINARIES", "");
+    Environment("APS5_UNSAFE_PIPELINE_BINARIES", "");
     Environment("APS5_PIPELINE_BINARY_MIN_WORDS", "0");
     Environment("APS5_PIPELINE_BINARY_MIN_MS", "0");
     Context context{};
@@ -233,11 +245,46 @@ int main(int argc, char** argv) try {
     properties.vendorID = 1;
     properties.deviceID = 2;
     properties.driverVersion = 3;
+    VkDriverId driverId = VK_DRIVER_ID_MESA_RADV;
     std::array<std::uint32_t, 5> spirv{0x07230203, 0x10000, 0, 1, 0};
     std::array<std::uint32_t, 4> layout{1, 2, 3, 4};
     VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     info.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, reinterpret_cast<VkShaderModule>(1), "main", nullptr};
     info.layout = reinterpret_cast<VkPipelineLayout>(1);
+    if (argc > 1 && std::string_view(argv[1]).starts_with("--driver-")) {
+        const std::string_view mode = argv[1];
+        properties.vendorID = 0x10de;
+        driverId = mode == "--driver-nvk" ? VK_DRIVER_ID_MESA_NVK : VK_DRIVER_ID_NVIDIA_PROPRIETARY;
+        if (mode == "--driver-unsafe" || mode == "--driver-optout") Environment("APS5_UNSAFE_PIPELINE_BINARIES", "1");
+        if (mode == "--driver-optout") Environment("APS5_NO_PIPELINE_BINARIES", "1");
+        const bool enabled = mode == "--driver-unsafe" || mode == "--driver-nvk";
+        const auto exercise = [&] {
+            PipelineBinaryStore tested(context, properties, driverId);
+            VkPipeline pipeline = VK_NULL_HANDLE;
+            tested.CreateComputePipeline(info, spirv, layout, &pipeline);
+            Check(pipeline != VK_NULL_HANDLE, "policy fallback did not create a pipeline");
+            if (!enabled) {
+                std::printf("policy counters: global=%u pipeline=%u binary=%u lookups=%u legacy=%u\n", globalQueries, pipelineQueries, otherBinaryCalls, binaryLookups, legacyCreates);
+                Check(globalQueries == 0 && pipelineQueries == 0 && otherBinaryCalls == 0 && binaryLookups == 0, "disabled driver reached the binary extension before the gate");
+                Check(!tested.IsReady() && legacyCreates == cold && captures == 0, "disabled driver lost the original pipeline cache");
+                const auto expected = mode == "--driver-optout" ? PipelineBinaryPolicy::Disabled : PipelineBinaryPolicy::DisabledByDriver;
+                Check(tested.PolicyStatus() == expected, "wrong driver disable status or opt-out precedence");
+                Check(PipelineBinaryStore::PolicyForDriver(driverId) == expected, "device enable policy disagrees with the store");
+            } else Check(tested.IsReady() && tested.PolicyStatus() == PipelineBinaryPolicy::Enabled, "allowed driver was gated");
+        };
+        if (mode == "--driver-invalid-optin") {
+            for (const auto* value : {"0", "true", "yes", "01", "1 ", " 1", "2", "-1"}) {
+                Environment("APS5_UNSAFE_PIPELINE_BINARIES", value);
+                exercise();
+            }
+        } else exercise();
+        if (enabled) {
+            exercise();
+            Check(globalQueries == 2 && pipelineQueries == 2 && otherBinaryCalls != 0 && binaryLookups != 0 && captures == 1 && restored == 1 && released == 1 && binaries.empty(), "allowed driver did not capture and restore through the existing key path");
+        }
+        std::printf("PASS %s: global=%u pipeline=%u binary=%u lookups=%u legacy=%u\n", argv[1], globalQueries, pipelineQueries, otherBinaryCalls, binaryLookups, legacyCreates);
+        return 0;
+    }
     if (argc > 1) {
         const std::string mode = argv[1];
         const bool perPipeline = mode.starts_with("--pipeline-");
@@ -259,7 +306,7 @@ int main(int argc, char** argv) try {
             } else Check(false, "unknown key query test");
         };
         const auto destroy = [](PipelineBinaryStore* store) { std::destroy_at(store); };
-        std::unique_ptr<PipelineBinaryStore, decltype(destroy)> tested(std::construct_at(reinterpret_cast<PipelineBinaryStore*>(storage), context, properties), destroy);
+        std::unique_ptr<PipelineBinaryStore, decltype(destroy)> tested(std::construct_at(reinterpret_cast<PipelineBinaryStore*>(storage), context, properties, driverId), destroy);
         const auto key = tested->Key(info, spirv, layout);
         const bool maximum = mode.ends_with("maximum");
         Check(maximum ? !key.empty() : key.empty(), maximum ? "maximum key was rejected" : "unusable key was accepted");
@@ -271,7 +318,7 @@ int main(int argc, char** argv) try {
         std::printf("PASS %s: %u initialized key queries; %s\n", argv[1], keyQueries, maximum ? "maximum key accepted" : "unusable key rejected");
         return 0;
     }
-    PipelineBinaryStore store(context, properties);
+    PipelineBinaryStore store(context, properties, driverId);
     const auto key = store.Key(info, spirv, layout);
     Check(!key.empty() && store.Key(info, spirv, layout) == key, "unstable recipe key");
     ++spirv[2];
@@ -319,7 +366,7 @@ int main(int argc, char** argv) try {
     store.CreateComputePipeline(info, spirv, layout, &pipeline);
     Check(cold == 1 && restored == 0 && released == 1 && binaries.empty(), "cold capture failed or leaked");
     {
-        PipelineBinaryStore reopened(context, properties);
+        PipelineBinaryStore reopened(context, properties, driverId);
         reopened.CreateComputePipeline(info, spirv, layout, &pipeline);
     }
     Check(cold == 1 && restored == 1 && binaries.empty(), "store did not survive recreation");
@@ -332,12 +379,12 @@ int main(int argc, char** argv) try {
     Check(cold == 3 && binaries.empty(), "missing binary did not fall back");
     missing = false;
     ++global;
-    PipelineBinaryStore incompatible(context, properties);
+    PipelineBinaryStore incompatible(context, properties, driverId);
     Check(incompatible.Key(info, spirv, layout) != key, "global device key is absent");
     incompatible.CreateComputePipeline(info, spirv, layout, &pipeline);
     Check(cold == 4, "incompatible global key reused a binary");
     ++properties.driverVersion;
-    PipelineBinaryStore newDriver(context, properties);
+    PipelineBinaryStore newDriver(context, properties, driverId);
     Check(newDriver.Key(info, spirv, layout) != incompatible.Key(info, spirv, layout), "driver fingerprint is absent");
     for (const auto& file : std::filesystem::recursive_directory_iterator(root)) {
         if (!file.is_regular_file()) continue;
@@ -353,51 +400,51 @@ int main(int argc, char** argv) try {
     captureFailure = false;
     ++spirv[2];
     Environment("APS5_NO_PIPELINE_BINARIES", "1");
-    PipelineBinaryStore disabled(context, properties);
+    PipelineBinaryStore disabled(context, properties, driverId);
     disabled.CreateComputePipeline(info, spirv, layout, &pipeline);
     Check(cold == 7 && binaries.empty(), "opt-out did not use legacy build");
     Environment("APS5_NO_PIPELINE_BINARIES", "");
     unsupported = true;
-    PipelineBinaryStore unavailable(context, properties);
+    PipelineBinaryStore unavailable(context, properties, driverId);
     unavailable.CreateComputePipeline(info, spirv, layout, &pipeline);
     Check(cold == 8 && binaries.empty(), "unsupported extension did not use legacy build");
     unsupported = false;
     Environment("APS5_PIPELINE_BINARY_MIN_WORDS", "100");
-    PipelineBinaryStore small(context, properties);
+    PipelineBinaryStore small(context, properties, driverId);
     small.CreateComputePipeline(info, spirv, layout, &pipeline);
     Check(cold == 9 && released == 5, "size threshold captured a small pipeline");
     Environment("APS5_PIPELINE_BINARY_MIN_WORDS", "0");
     Environment("APS5_PIPELINE_BINARY_MIN_MS", "100000");
-    PipelineBinaryStore fast(context, properties);
+    PipelineBinaryStore fast(context, properties, driverId);
     fast.CreateComputePipeline(info, spirv, layout, &pipeline);
     Check(cold == 10 && released == 6 && binaries.empty(), "time threshold did not release capture data");
     const auto filesBefore = std::distance(std::filesystem::recursive_directory_iterator(root), std::filesystem::recursive_directory_iterator{});
     const auto legacyBefore = legacyCreates;
-    PipelineBinaryStore fastReopened(context, properties);
+    PipelineBinaryStore fastReopened(context, properties, driverId);
     fastReopened.CreateComputePipeline(info, spirv, layout, &pipeline);
     Check(legacyCreates == legacyBefore + 1 && released == 6, "time-threshold rejection did not survive recreation and use the driver cache");
     const auto filesAfter = std::distance(std::filesystem::recursive_directory_iterator(root), std::filesystem::recursive_directory_iterator{});
     Check(cold == 11 && filesBefore == filesAfter, "time threshold persisted a fast pipeline");
     Environment("APS5_PIPELINE_BINARY_MIN_MS", "0");
-    PipelineBinaryStore retryThreshold(context, properties);
+    PipelineBinaryStore retryThreshold(context, properties, driverId);
     retryThreshold.CreateComputePipeline(info, spirv, layout, &pipeline);
     Check(cold == 12 && released == 7 && binaries.empty(), "lowering the time threshold did not retry capture");
     const auto beforePipelineKey = store.Key(info, spirv, layout);
     ++pipelineKey;
     Check(store.Key(info, spirv, layout) != beforePipelineKey, "Vulkan pipeline key is absent");
     properties.vendorID += 1;
-    PipelineBinaryStore newVendor(context, properties);
+    PipelineBinaryStore newVendor(context, properties, driverId);
     Check(newVendor.Key(info, spirv, layout) != fast.Key(info, spirv, layout), "vendor fingerprint is absent");
     properties.deviceID += 1;
-    PipelineBinaryStore newDevice(context, properties);
+    PipelineBinaryStore newDevice(context, properties, driverId);
     Check(newDevice.Key(info, spirv, layout) != newVendor.Key(info, spirv, layout), "device fingerprint is absent");
     properties.pipelineCacheUUID[0] = 1;
-    PipelineBinaryStore newUuid(context, properties);
+    PipelineBinaryStore newUuid(context, properties, driverId);
     Check(newUuid.Key(info, spirv, layout) != newDevice.Key(info, spirv, layout), "UUID fingerprint is absent");
     Environment("APS5_PIPELINE_BINARY_MIN_MS", "100000");
-    PipelineBinaryStore pendingMarker(context, properties);
+    PipelineBinaryStore pendingMarker(context, properties, driverId);
     Environment("APS5_PIPELINE_BINARY_MIN_MS", "0");
-    PipelineBinaryStore competingCapture(context, properties);
+    PipelineBinaryStore competingCapture(context, properties, driverId);
     duringCapture = [&] {
         VkPipeline competingPipeline = VK_NULL_HANDLE;
         competingCapture.CreateComputePipeline(info, spirv, layout, &competingPipeline);
@@ -408,7 +455,7 @@ int main(int argc, char** argv) try {
     const auto coldBeforeMarker = cold;
     for (const auto threshold : {"100000", "200000"}) {
         Environment("APS5_PIPELINE_BINARY_MIN_MS", threshold);
-        PipelineBinaryStore afterMarker(context, properties);
+        PipelineBinaryStore afterMarker(context, properties, driverId);
         afterMarker.CreateComputePipeline(info, spirv, layout, &pipeline);
     }
     Check(restored == restoredBeforeMarker + 2 && cold == coldBeforeMarker && binaries.empty(), "pending threshold marker erased a competing captured binary");
@@ -416,7 +463,7 @@ int main(int argc, char** argv) try {
     for (const auto failure : {"extraction failure", "oversized binary", "rejected capture build"}) {
         ++spirv[2];
         Environment("APS5_PIPELINE_BINARY_MIN_MS", "1");
-        PipelineBinaryStore failing(context, properties);
+        PipelineBinaryStore failing(context, properties, driverId);
         const auto recipe = failing.Key(info, spirv, layout);
         char name[32];
         std::snprintf(name, sizeof(name), "%016llx.bin", static_cast<unsigned long long>(ShaderRecompiler::HashBytes(recipe)));
@@ -432,11 +479,11 @@ int main(int argc, char** argv) try {
         oversized = false;
         captureFailure = false;
         const auto legacyBeforeFailure = legacyCreates;
-        PipelineBinaryStore reopenedFailure(context, properties);
+        PipelineBinaryStore reopenedFailure(context, properties, driverId);
         reopenedFailure.CreateComputePipeline(info, spirv, layout, &pipeline);
         const bool ordinary = pipeline != VK_NULL_HANDLE && legacyCreates == legacyBeforeFailure + 1 && captures == capturesBefore + 1;
         Environment("APS5_PIPELINE_BINARY_MIN_MS", "0");
-        PipelineBinaryStore loweredFailure(context, properties);
+        PipelineBinaryStore loweredFailure(context, properties, driverId);
         loweredFailure.CreateComputePipeline(info, spirv, layout, &pipeline);
         const bool loweredOrdinary = pipeline != VK_NULL_HANDLE && legacyCreates == legacyBeforeFailure + 2 && captures == capturesBefore + 1;
         std::fprintf(stderr, "%s: %s survives recreation and a lowered time threshold\n", ordinary && loweredOrdinary ? "PASS" : "FAIL", failure);

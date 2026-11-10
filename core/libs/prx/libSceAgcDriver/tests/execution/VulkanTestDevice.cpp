@@ -1,4 +1,5 @@
 #include "VulkanTestDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineBinaryStore.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -120,8 +121,11 @@ int PipelineBinaryStartupTests() {
         std::cout << "skipped, the device lacks VK_KHR_pipeline_binary\n";
         return VulkanTestSkipped;
     }
-    Require(status == AgcDriver::VulkanDevice::PipelineBinaryStatus::Ready, "VK_KHR_pipeline_binary is present but the pipeline binary store is not ready");
-    std::cout << "pipeline binary startup: global-key query completed successfully; store ready; device=" << device->DeviceName() << "; driver=" << device->DriverInfo() << '\n';
+    const auto policy = AgcDriver::Graphics::PipelineBinaryStore::PolicyForDriver(device->DriverId());
+    const bool gated = policy == AgcDriver::Graphics::PipelineBinaryPolicy::DisabledByDriver;
+    const auto expected = gated ? AgcDriver::VulkanDevice::PipelineBinaryStatus::DisabledByDriver : AgcDriver::VulkanDevice::PipelineBinaryStatus::Ready;
+    Require(status == expected, "VK_KHR_pipeline_binary is present but the store has an unexpected disable reason");
+    std::cout << "pipeline binary startup: " << (gated ? "DisabledByDriver; device started successfully" : "global-key query completed successfully; store ready") << "; device=" << device->DeviceName() << "; driver=" << device->DriverInfo() << '\n';
     return 0;
 }
 

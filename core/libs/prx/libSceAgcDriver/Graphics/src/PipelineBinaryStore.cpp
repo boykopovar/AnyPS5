@@ -91,6 +91,19 @@ struct BinaryHandles {
 
 }
 
+PipelineBinaryPolicy PipelineBinaryStore::PolicyForDriver(VkDriverId driverId) {
+    if (std::getenv("APS5_NO_PIPELINE_BINARIES") != nullptr) return PipelineBinaryPolicy::Disabled;
+    const auto* unsafe = std::getenv("APS5_UNSAFE_PIPELINE_BINARIES");
+    if (driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && (unsafe == nullptr || std::strcmp(unsafe, "1") != 0)) return PipelineBinaryPolicy::DisabledByDriver;
+    return PipelineBinaryPolicy::Enabled;
+}
+
+void PipelineBinaryStore::ReportPolicy(PipelineBinaryPolicy policy) {
+    if (policy == PipelineBinaryPolicy::DisabledByDriver) {
+        std::fprintf(stderr, "[pipeline-binary] disabled: NVIDIA proprietary driver (vkGetPipelineKeyKHR global-key bug); set APS5_UNSAFE_PIPELINE_BINARIES=1 to override\n");
+    }
+}
+
 bool PipelineBinaryStore::LayersCompatible(VkPhysicalDevice physical, PFN_vkEnumerateDeviceLayerProperties enumerate) {
     if (enumerate == nullptr) {
         std::fprintf(stderr, "[pipeline-binary] disabled: active layer enumeration unavailable; using the driver pipeline cache\n");
@@ -125,8 +138,9 @@ bool PipelineBinaryStore::LayersCompatible(VkPhysicalDevice physical, PFN_vkEnum
     return false;
 }
 
-PipelineBinaryStore::PipelineBinaryStore(const Context& context, const VkPhysicalDeviceProperties& properties) : context(context), properties(properties) {
-    if (std::getenv("APS5_NO_PIPELINE_BINARIES") != nullptr) return;
+PipelineBinaryStore::PipelineBinaryStore(const Context& context, const VkPhysicalDeviceProperties& properties, VkDriverId driverId) : context(context), policy(PolicyForDriver(driverId)), properties(properties) {
+    ReportPolicy(policy);
+    if (policy != PipelineBinaryPolicy::Enabled) return;
     minimumWords = static_cast<std::size_t>(std::min<std::uint64_t>(configured("APS5_PIPELINE_BINARY_MIN_WORDS", minimumWords), std::numeric_limits<std::size_t>::max()));
     minimumMilliseconds = configured("APS5_PIPELINE_BINARY_MIN_MS", minimumMilliseconds);
     const auto root = ShaderRecompiler::ShaderCacheDirectory();

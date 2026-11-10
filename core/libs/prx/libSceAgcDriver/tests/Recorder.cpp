@@ -473,6 +473,14 @@ public:
                 }
                 return false;
             };
+            if (selected.apiVersion >= VK_API_VERSION_1_2 || hasExtension(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
+                VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+                VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
+                function<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(context.physical, &properties);
+                driverId = driver.driverID;
+            }
+            binaryPolicy = PipelineBinaryStore::PolicyForDriver(driverId);
+            binaryAvailable = hasExtension(VK_KHR_PIPELINE_BINARY_EXTENSION_NAME);
             memoryBudget = hasExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
             auto bytes = AgcDriver::QueryBdaByteFeatures(context.physical, function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), available);
             auto address = AgcDriver::QueryBdaFeatures(context.physical, function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), available);
@@ -622,7 +630,7 @@ public:
             VkPhysicalDevicePipelineBinaryFeaturesKHR binaryFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_BINARY_FEATURES_KHR};
             VkDevicePipelineBinaryInternalCacheControlKHR internalCache{VK_STRUCTURE_TYPE_DEVICE_PIPELINE_BINARY_INTERNAL_CACHE_CONTROL_KHR};
             const std::array binaryDependencies{VK_KHR_MAINTENANCE_5_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME};
-            const bool wantPipelineBinaries = pipelineBinaries && hasExtension(VK_KHR_PIPELINE_BINARY_EXTENSION_NAME) && std::ranges::all_of(binaryDependencies, hasExtension) &&
+            const bool wantPipelineBinaries = pipelineBinaries && binaryPolicy == PipelineBinaryPolicy::Enabled && binaryAvailable && std::ranges::all_of(binaryDependencies, hasExtension) &&
                 PipelineBinaryStore::LayersCompatible(context.physical, function<PFN_vkEnumerateDeviceLayerProperties>("vkEnumerateDeviceLayerProperties"));
             if (wantPipelineBinaries) {
                 maintenance.pNext = &binaryFeatures;
@@ -697,6 +705,9 @@ public:
     ~Device() { release(); }
     bool NullDescriptors() const { return nullDescriptors; }
     bool PipelineBinaries() const { return binaryEnabled; }
+    bool PipelineBinaryExtension() const { return binaryAvailable; }
+    PipelineBinaryPolicy BinaryPolicy() const { return binaryPolicy; }
+    VkDriverId DriverId() const { return driverId; }
     const Context& GetContext() const { return context; }
     bool Graphics() const { return graphics; }
     bool Timestamps() const {
@@ -756,6 +767,9 @@ private:
     Context context{};
     bool graphics = false;
     bool binaryEnabled = false;
+    bool binaryAvailable = false;
+    VkDriverId driverId = VK_DRIVER_ID_MAX_ENUM;
+    PipelineBinaryPolicy binaryPolicy = PipelineBinaryPolicy::Disabled;
     std::mutex settleMutex;
     bool nullDescriptors = false;
     bool memoryBudget = false;
@@ -13740,11 +13754,20 @@ void pipelineCacheHeaderTests(const Device& device) {
 }
 
 int pipelineBinaryTests(const Device& device) {
-    if (!device.PipelineBinaries()) {
+    if (!device.PipelineBinaryExtension()) {
         std::cout << "skipped, the device lacks VK_KHR_pipeline_binary\n";
         return 77;
     }
-    const auto& context = device.GetContext();
+    const bool gated = device.BinaryPolicy() == PipelineBinaryPolicy::DisabledByDriver;
+    Require(gated || device.PipelineBinaries(), "pipeline binary extension is present but was not enabled for an allowed driver");
+    auto context = device.GetContext();
+    std::unique_ptr<PipelineCache> cache;
+    if (gated) {
+        cache = std::make_unique<PipelineCache>(context, device.Properties());
+        context.pipelineCache = cache->Handle();
+        context.pipelineCacheSynchronization = &cache->Synchronization();
+        Require(context.pipelineCache != VK_NULL_HANDLE, "policy fallback has no ordinary pipeline cache");
+    }
     struct Objects {
         const Context& context;
         VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -13759,7 +13782,8 @@ int pipelineBinaryTests(const Device& device) {
     VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &objects.layout), "vkCreatePipelineLayout");
     const std::array<std::uint32_t, 2> layoutKey{0, 0};
-    PipelineBinaryStore store(context, device.Properties());
+    PipelineBinaryStore store(context, device.Properties(), device.DriverId());
+    Require(gated ? store.PolicyStatus() == PipelineBinaryPolicy::DisabledByDriver : store.IsReady(), "unexpected pipeline binary store status");
     for (const auto width : {4u, 8u}) {
         const std::array spirv{0x07230203u, 0x00010000u, 0u, 6u, 0u,
             0x00020011u, 1u, 0x0003000eu, 0u, 1u,
@@ -13779,6 +13803,11 @@ int pipelineBinaryTests(const Device& device) {
         objects.pipeline = VK_NULL_HANDLE;
         context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, objects.module, nullptr);
         objects.module = VK_NULL_HANDLE;
+    }
+    if (gated) {
+        cache->SaveNow();
+        Require(PipelineCacheTestAccess::HasHeader(*cache), "ordinary pipeline cache was not persisted");
+        std::cout << "pipeline binary policy fallback: ordinary_pipelines=2 cache_saved=1; binary round-trip coverage was not exercised\n";
     }
     return 0;
 }

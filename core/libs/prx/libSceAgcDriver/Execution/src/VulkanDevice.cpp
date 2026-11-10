@@ -627,6 +627,7 @@ struct VulkanDevice::State {
     bool maintenance5 = false;
     bool pipelineBinaries = false;
     bool pipelineBinaryExtension = false;
+    Graphics::PipelineBinaryPolicy pipelineBinaryPolicy = Graphics::PipelineBinaryPolicy::Disabled;
     bool fillModeNonSolid = false;
     bool wideLines = false;
     std::uint32_t srgbDecodeFormats = 0;
@@ -1620,7 +1621,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     check(enumerateDeviceExtensions(selected, nullptr, &extensionCount, availableExtensions.data()), "vkEnumerateDeviceExtensionProperties");
     const auto hasExtension = [&](const char* name) { return std::any_of(availableExtensions.begin(), availableExtensions.end(), [&](const auto& item) { return std::strcmp(item.extensionName, name) == 0; }); };
     VkDriverId driverId{};
-    if (hasExtension(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
+    if (state->properties.apiVersion >= VK_API_VERSION_1_2 || hasExtension(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
         VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
         VkPhysicalDeviceProperties2 driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &driverProperties);
@@ -2055,7 +2056,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5Features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR};
     state->pipelineBinaryExtension = hasExtension(VK_KHR_PIPELINE_BINARY_EXTENSION_NAME);
-    const bool wantPipelineBinaries = state->pipelineBinaryExtension && std::getenv("APS5_NO_PIPELINE_BINARIES") == nullptr && !ShaderRecompiler::ShaderCacheDirectory().empty() &&
+    state->pipelineBinaryPolicy = Graphics::PipelineBinaryStore::PolicyForDriver(state->driverId);
+    Graphics::PipelineBinaryStore::ReportPolicy(state->pipelineBinaryPolicy);
+    const bool wantPipelineBinaries = state->pipelineBinaryExtension && state->pipelineBinaryPolicy == Graphics::PipelineBinaryPolicy::Enabled && !ShaderRecompiler::ShaderCacheDirectory().empty() &&
         Graphics::PipelineBinaryStore::LayersCompatible(selected, state->InstanceFunction<PFN_vkEnumerateDeviceLayerProperties>("vkEnumerateDeviceLayerProperties"));
     constexpr std::array<const char*, 4> maintenanceExtensions{VK_KHR_MAINTENANCE_5_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME};
     if ((state->graphicsPipelineLibrary || wantPipelineBinaries) && std::all_of(maintenanceExtensions.begin(), maintenanceExtensions.end(), hasExtension)) {
@@ -2687,7 +2690,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     if (!compileOnly && Pm4::GdsImportable() && Graphics::HostImportFor(graphicsContext(), Pm4::GdsAddress(), Pm4::GdsBytes, Graphics::ImportRequester::Map) == nullptr) Pm4::RejectGdsImport();
     static const bool headlessPipelineCache = std::getenv("APS5_HEADLESS_PIPELINE_CACHE") != nullptr;
     state->pipelineCache = std::make_unique<Graphics::PipelineCache>(graphicsContext(), state->properties, window != nullptr || compileOnly || headlessPipelineCache);
-    if (state->pipelineBinaries) state->pipelineBinaryStore = std::make_unique<Graphics::PipelineBinaryStore>(graphicsContext(), state->properties);
+    if (state->pipelineBinaries) state->pipelineBinaryStore = std::make_unique<Graphics::PipelineBinaryStore>(graphicsContext(), state->properties, state->driverId);
     state->detiler = std::make_unique<Graphics::TextureDetiler>(graphicsContext());
     state->textureCache = std::make_unique<Graphics::TextureCache>(graphicsContext());
     state->colorTransfer = std::make_unique<Graphics::GpuColorTransfer>(graphicsContext());
@@ -4618,8 +4621,13 @@ std::string VulkanDevice::DriverInfo() const {
     return state->driverInfo.empty() ? std::to_string(state->properties.driverVersion) : state->driverInfo;
 }
 
+VkDriverId VulkanDevice::DriverId() const {
+    return state->driverId;
+}
+
 VulkanDevice::PipelineBinaryStatus VulkanDevice::PipelineBinariesStatus() const {
     if (!state->pipelineBinaryExtension) return PipelineBinaryStatus::Unavailable;
+    if (state->pipelineBinaryPolicy == Graphics::PipelineBinaryPolicy::DisabledByDriver) return PipelineBinaryStatus::DisabledByDriver;
     return state->pipelineBinaryStore != nullptr && state->pipelineBinaryStore->IsReady() ? PipelineBinaryStatus::Ready : PipelineBinaryStatus::Disabled;
 }
 
