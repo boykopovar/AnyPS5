@@ -365,16 +365,6 @@ int APS5_VABI _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc10ColorSpaceC1ERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc12EncodedImageC1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
