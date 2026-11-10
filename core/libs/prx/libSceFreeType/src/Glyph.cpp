@@ -188,10 +188,6 @@ void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(GuestGlyphRec* glyph, std::uint32_t
     auto& owner = Find(glyph, __func__, false);
     if (owner.isBitmap) {
         const auto& image = owner.bitmap;
-        const auto fits = [](std::int32_t bearing) {
-            return bearing >= std::numeric_limits<std::int32_t>::min() / 64 && bearing <= std::numeric_limits<std::int32_t>::max() / 64;
-        };
-        if (!fits(image.left) || !fits(image.top)) NotImplemented_nid_no_patch(__func__);
         box->xMin = static_cast<std::int64_t>(image.left) * 64;
         box->xMax = box->xMin + static_cast<std::int64_t>(image.bitmap.width * std::uint32_t{64});
         box->yMax = static_cast<std::int64_t>(image.top) * 64;
