@@ -1182,6 +1182,29 @@ class ImportAuditTests(unittest.TestCase):
             import_audit.locate_search_root(loop)
         self.assertIn("symbolic link loop", str(context.exception))
 
+    def test_converted_module_resolves_plain_and_origin_library_names(self):
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(exporting())
+        (work.modules / "libSceFace.prx.guest.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        (work.modules / "libc.prx.guest.prx").write_bytes(exporting("BBBBBBBBBBB"))
+        (work.modules / "main.prx").write_bytes(build_elf([], [
+            "$ORIGIN/libSceFace.prx.guest.prx",
+            "$ORIGIN/../../sce_module/libc.prx.guest.prx",
+            "$ORIGIN/../Plugins/libSceFace.prx.guest.prx",
+        ]))
+        registry = work.root / "game.registry.json"
+        write_registry(registry, [("AAAAAAAAAAA", "libSceFace.prx")])
+        (work.root / "game.needed.json").write_text('["libSceFace.prx"]')
+        result = work.root / "audit.json"
+        code, out, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, err), (0, ""))
+        data = json.loads(result.read_text())
+        self.assertEqual(data["missing_libraries"], {})
+        self.assertEqual(data["unique_by_class"]["module"], 1)
+        record = next(record for record in data["imports"] if record["nid"] == "AAAAAAAAAAA")
+        self.assertEqual((record["class"], record["library"]), ("module", "libSceFace.prx"))
+        self.assertNotIn("libSceFace.prx", out)
+
     def test_conflicting_module_files_preserve_or_leave_no_json_report(self):
         work = self.work
         first, second = work.modules, work.root / "other-modules"

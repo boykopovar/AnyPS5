@@ -287,7 +287,7 @@ void ValidateViewport(const Context& context, const VkViewport& viewport) {
 }
 
 bool ShadersWriteMemory(std::span<const CompiledShader> shaders) {
-    const auto any = [](const std::vector<bool>& written, std::uint32_t count) { return written.size() < count || std::ranges::any_of(written, [](bool element) { return element; }); };
+    const auto any = [](const ShaderRecompiler::ElementFlags& written, std::uint32_t count) { return written.size() < count || std::ranges::any_of(written, [](bool element) { return element; }); };
     for (const auto& shader : shaders) {
         if (shader.program == nullptr) continue;
         for (const auto& binding : shader.program->bindings) {
@@ -704,8 +704,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         }
         if (alternateAlpha) {
             const auto keepsStencil = [](const VkStencilOpState& face) { return face.writeMask == 0 || (face.failOp == VK_STENCIL_OP_KEEP && face.passOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP); };
-            Require(!(state.depth && (state.depthWrite || (state.stencilTest && (!keepsStencil(state.stencilFront) || !keepsStencil(state.stencilBack))))) && !state.depthBiasPerFace, "blending into an 8_8 color target with the alternate component order and a separate alpha blend from a draw that writes depth or stencil is not implemented");
-            Require(!ShadersWriteMemory(shaders), "blending into an 8_8 color target with the alternate component order and a separate alpha blend from a draw whose shaders write memory is not implemented");
+            Require(!(state.depth && (state.depthWrite || (state.stencilTest && (!keepsStencil(state.stencilFront) || !keepsStencil(state.stencilBack))))) && !state.depthBiasPerFace, "blending into a two-channel color target with the alternate component order and a separate alpha blend from a draw that writes depth or stencil is not implemented");
+            Require(!ShadersWriteMemory(shaders), "blending into a two-channel color target with the alternate component order and a separate alpha blend from a draw whose shaders write memory is not implemented");
             for (std::size_t index = 0; index < secondChannels.size(); ++index) {
                 const bool split = index < state.colors.size() && state.colors[index].componentMapping == 0xecu && state.blends[index].blendEnable;
                 if (!split) {
