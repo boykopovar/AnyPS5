@@ -168,7 +168,7 @@ static_assert(offsetof(X509Extension, critical) == 8);
 static_assert(offsetof(X509Extension, value) == 16);
 
 int writeFormatted(LibreSsl::Bio* bio, const char* data, int length) {
-    return LibreSslBioWrite_nid_no_patch(bio, data, length) == length ? length : -1;
+    return LibreSslBioWrite_nid_no_patch(bio, data, length);
 }
 
 } // namespace
@@ -178,22 +178,37 @@ extern "C" {
 APS5_DUMMY_FUN
 int APS5_VABI BIO_printf_nid_postfix(LibreSsl::Bio* bio, const char* format, ...) {
     if (!format) throw std::invalid_argument("BIO_printf: null format");
+#ifdef _WIN32
+    __builtin_sysv_va_list arguments;
+    __builtin_sysv_va_start(arguments, format);
+    __builtin_sysv_va_list again;
+    __builtin_sysv_va_copy(again, arguments);
+#else
     std::va_list arguments;
     va_start(arguments, format);
     std::va_list again;
     va_copy(again, arguments);
+#endif
     std::array<char, 512> small{};
-    const int length = std::vsnprintf(small.data(), small.size(), format, arguments);
+    const int length = vsnprintf_nid_postfix(small.data(), small.size(), format, reinterpret_cast<VaList*>(arguments));
+#ifdef _WIN32
+    __builtin_sysv_va_end(arguments);
+#else
     va_end(arguments);
+#endif
     int result = -1;
     if (length >= 0 && static_cast<std::size_t>(length) < small.size()) {
         result = writeFormatted(bio, small.data(), length);
     } else if (length >= 0) {
         std::vector<char> large(static_cast<std::size_t>(length) + 1);
-        std::vsnprintf(large.data(), large.size(), format, again);
+        vsnprintf_nid_postfix(large.data(), large.size(), format, reinterpret_cast<VaList*>(again));
         result = writeFormatted(bio, large.data(), length);
     }
+#ifdef _WIN32
+    __builtin_sysv_va_end(again);
+#else
     va_end(again);
+#endif
     return result;
 }
 
