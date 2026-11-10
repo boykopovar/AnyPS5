@@ -2,17 +2,23 @@
 #define CORE_LIBS_PRX_LIBC_INCLUDE_HOSTTHREAD_HPP
 
 #include <functional>
-#include <immintrin.h>
 #include <thread>
 #include <stop_token>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 
+#if defined(__SSE__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 1)
+#include <immintrin.h>
+#define ANYPS5_HOST_HAS_MXCSR 1
+#endif
+
 namespace Libc {
 
 inline void SetHostMxcsr() {
+#ifdef ANYPS5_HOST_HAS_MXCSR
     _mm_setcsr(0x1f80u);
+#endif
 }
 
 template<class Function, class... Arguments>
