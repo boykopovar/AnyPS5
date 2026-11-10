@@ -197,6 +197,7 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"InspectorWindowFrame", {Preferences::StringValue{u""}, FeatureKind::None}},
         {u"InteractionRegionInlinePadding", {double{4}, FeatureKind::None}},
         {u"InteractionRegionMinimumCornerRadius", {double{8}, FeatureKind::None}},
+        {u"InspectorAdditionsEnabled", {false, FeatureKind::Boolean}},
         {u"InteractiveFormValidationEnabled", {true, FeatureKind::Boolean}},
         {u"IntersectionObserverEnabled", {true, FeatureKind::Testable}},
         {u"InvisibleAutoplayNotPermitted", {false, FeatureKind::Boolean}},
@@ -1078,6 +1079,14 @@ void APS5_VABI WKPreferencesSetInlineMediaPlaybackRequiresPlaysInlineAttribute(c
 
 bool APS5_VABI WKPreferencesGetInlineMediaPlaybackRequiresPlaysInlineAttribute(const void* preferencesRef) {
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"InlineMediaPlaybackRequiresPlaysInlineAttribute");
+}
+
+void APS5_VABI WKPreferencesSetInspectorAdditionsEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"InspectorAdditionsEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesGetInspectorAdditionsEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"InspectorAdditionsEnabled");
 }
 
 void APS5_VABI WKPreferencesSetBeaconAPIEnabled(const void* preferencesRef, bool flag) {

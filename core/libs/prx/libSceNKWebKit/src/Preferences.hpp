@@ -143,6 +143,7 @@ bool APS5_VABI WKPreferencesGetImageControlsEnabled(const void* preferencesRef);
 double APS5_VABI WKPreferencesGetInactiveMediaCaptureSteamRepromptIntervalInMinutes(const void* preferencesRef);
 double APS5_VABI WKPreferencesGetIncrementalRenderingSuppressionTimeout(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetInlineMediaPlaybackRequiresPlaysInlineAttribute(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetInspectorAdditionsEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetInteractiveFormValidationEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetIntersectionObserverEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetInvisibleMediaAutoplayPermitted(const void* preferencesRef);
@@ -336,6 +337,7 @@ void APS5_VABI WKPreferencesSetImageControlsEnabled(const void* preferencesRef, 
 void APS5_VABI WKPreferencesSetInactiveMediaCaptureSteamRepromptIntervalInMinutes(const void* preferencesRef, double interval);
 void APS5_VABI WKPreferencesSetIncrementalRenderingSuppressionTimeout(const void* preferencesRef, double timeout);
 void APS5_VABI WKPreferencesSetInlineMediaPlaybackRequiresPlaysInlineAttribute(const void* preferencesRef, bool flag);
+void APS5_VABI WKPreferencesSetInspectorAdditionsEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetInteractiveFormValidationEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetInternalDebugFeatureForKey(const void* preferencesRef, bool value, const void* internalDebugFeatureKey);
 void APS5_VABI WKPreferencesSetIntersectionObserverEnabled(const void* preferencesRef, bool flag);

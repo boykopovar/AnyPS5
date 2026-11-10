@@ -110,6 +110,7 @@ const BooleanCase booleanCases[]{
     {"ICECandidateFilteringEnabled", WKPreferencesSetICECandidateFilteringEnabled, WKPreferencesGetICECandidateFilteringEnabled, true},
     {"ImageControlsEnabled", WKPreferencesSetImageControlsEnabled, WKPreferencesGetImageControlsEnabled, false},
     {"InlineMediaPlaybackRequiresPlaysInlineAttribute", WKPreferencesSetInlineMediaPlaybackRequiresPlaysInlineAttribute, WKPreferencesGetInlineMediaPlaybackRequiresPlaysInlineAttribute, false},
+    {"InspectorAdditionsEnabled", WKPreferencesSetInspectorAdditionsEnabled, WKPreferencesGetInspectorAdditionsEnabled, false},
     {"InteractiveFormValidationEnabled", WKPreferencesSetInteractiveFormValidationEnabled, WKPreferencesGetInteractiveFormValidationEnabled, true},
     {"IntersectionObserverEnabled", WKPreferencesSetIntersectionObserverEnabled, WKPreferencesGetIntersectionObserverEnabled, true},
     {"InvisibleMediaAutoplayPermitted", WKPreferencesSetInvisibleMediaAutoplayPermitted, WKPreferencesGetInvisibleMediaAutoplayPermitted, true},
