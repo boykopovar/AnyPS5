@@ -149,8 +149,9 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (mode == "--category-unavailable") {
+            std::uint32_t categoryType = 0;
             bool unavailable = false;
-            try { static_cast<void>(sceKernelGetAppCategoryType(getpid_nid_postfix(), nullptr)); }
+            try { static_cast<void>(sceKernelGetAppCategoryType(getpid_nid_postfix(), &categoryType)); }
             catch (const std::runtime_error&) { unavailable = true; }
             Require(unavailable, "category lookup without param.json category metadata did not throw");
             return 0;
