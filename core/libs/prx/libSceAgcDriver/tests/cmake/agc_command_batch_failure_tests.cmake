@@ -1,5 +1,5 @@
 add_test_executable(agc_command_batch_failure_tests EXCLUDE_FROM_ALL
-        tests/CommandBatch.cpp tests/CommandBatchFailure.cpp Graphics/src/Resources.cpp tests/AllocationFailure.cpp)
+        tests/CommandBatch.cpp tests/CommandBatchFailure.cpp Graphics/src/Resources.cpp tests/AllocationFailure.cpp tests/QueueAccessNone.cpp)
 target_include_directories(agc_command_batch_failure_tests PRIVATE
         ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
 target_link_libraries(agc_command_batch_failure_tests PRIVATE libSceAgcDriver libc)

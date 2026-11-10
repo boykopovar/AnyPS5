@@ -491,7 +491,7 @@ Context stubContext(PFN_vkGetDeviceProcAddr proc = &stubProc) {
     Context context{};
     context.device = fake<VkDevice>(0x9000);
     context.queue = fake<VkQueue>(0x9010);
-    context.deviceProc = proc;
+    context.deviceProc = RecordCommandStreams(context.device, proc);
     context.graphicsPipelineLibrary = true;
     return context;
 }

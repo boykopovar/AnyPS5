@@ -222,6 +222,10 @@ VKAPI_ATTR void VKAPI_CALL mockCmdBindPipeline(VkCommandBuffer commands, VkPipel
     record(commands, "bind pipeline");
 }
 
+VKAPI_ATTR void VKAPI_CALL mockCmdPushConstants(VkCommandBuffer commands, VkPipelineLayout, VkShaderStageFlags, std::uint32_t, std::uint32_t, const void*) {
+    record(commands, "push constants");
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL mockQueueSubmit(VkQueue, std::uint32_t count, const VkSubmitInfo* submits, VkFence fence) {
     std::unique_lock lock(mock->mutex);
     std::vector<VkCommandBuffer> submitted;
@@ -321,6 +325,7 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
         {"vkCmdResetQueryPool", reinterpret_cast<PFN_vkVoidFunction>(mockCmdResetQueryPool)},
         {"vkCmdCopyQueryPoolResults", reinterpret_cast<PFN_vkVoidFunction>(mockCmdCopyQueryPoolResults)},
         {"vkCmdBindPipeline", reinterpret_cast<PFN_vkVoidFunction>(mockCmdBindPipeline)},
+        {"vkCmdPushConstants", reinterpret_cast<PFN_vkVoidFunction>(mockCmdPushConstants)},
     };
     const auto it = table.find(name);
     return it == table.end() ? nullptr : it->second;
@@ -341,7 +346,7 @@ struct Fixture {
         nextQueue += 0x10;
         context.queue = handleOf<VkQueue>(nextQueue);
         context.pool = device.contextPool;
-        context.deviceProc = mockProc;
+        context.deviceProc = RecordCommandStreams(context.device, mockProc);
     }
 
     ~Fixture() {

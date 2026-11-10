@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <mutex>
 #include <new>
 #include <stdexcept>
 #include <string>
@@ -449,6 +450,48 @@ PFN_vkVoidFunction ResolveDeviceFunction(VkDevice device, PFN_vkGetDeviceProcAdd
     const auto function = deviceProc(device, name);
     if (function == nullptr || op == OpCount) return function;
     return thunkFor(op, function);
+}
+
+namespace {
+
+struct StreamedDevice {
+    std::atomic<VkDevice> device{VK_NULL_HANDLE};
+    std::atomic<PFN_vkGetDeviceProcAddr> proc{nullptr};
+};
+
+constexpr std::size_t StreamedDevices = 8;
+std::array<StreamedDevice, StreamedDevices> streamedDevices;
+std::mutex streamedDevicesMutex;
+std::size_t streamedDeviceNext = 0;
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL streamedDeviceProc(VkDevice device, const char* name) {
+    PFN_vkGetDeviceProcAddr proc = nullptr;
+    for (const auto& entry : streamedDevices) {
+        if (entry.device.load(std::memory_order_acquire) != device) continue;
+        proc = entry.proc.load(std::memory_order_acquire);
+        break;
+    }
+    if (proc == nullptr) throw std::runtime_error(std::string("AGC graphics: ") + name + " was asked of a device whose resolver records no command streams");
+    const auto op = opOf(name);
+    const auto function = proc(device, name);
+    if (function == nullptr || op == OpCount) return function;
+    return thunkFor(op, function);
+}
+
+}
+
+PFN_vkGetDeviceProcAddr RecordCommandStreams(VkDevice device, PFN_vkGetDeviceProcAddr deviceProc) {
+    if (deviceProc == &streamedDeviceProc) return deviceProc;
+    std::lock_guard lock(streamedDevicesMutex);
+    StreamedDevice* slot = nullptr;
+    for (auto& entry : streamedDevices) {
+        if (entry.device.load(std::memory_order_relaxed) == device) slot = &entry;
+    }
+    if (slot == nullptr) slot = &streamedDevices[streamedDeviceNext++ % StreamedDevices];
+    slot->device.store(VK_NULL_HANDLE, std::memory_order_release);
+    slot->proc.store(deviceProc, std::memory_order_release);
+    slot->device.store(device, std::memory_order_release);
+    return &streamedDeviceProc;
 }
 
 }
