@@ -770,6 +770,45 @@ int APS5_VABI _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postf
     return static_cast<int>(static_cast<std::uint32_t>(seconds) * 1000000u + static_cast<std::uint32_t>((nanos + 999) / 1000));
 }
 
+void APS5_VABI _ZNSt8__sce_v219_Timespec64_get_sysEP8timespec_nid_postfix(Xtime* now) {
+    if (!now)
+        APS5_INVALID_ARG_EX;
+    const auto ticks = static_cast<std::uint64_t>(_Xtime_get_ticks_nid_postfix());
+    now->sec = static_cast<std::int64_t>(ticks / 1000000);
+    now->nsec = static_cast<std::int64_t>(ticks % 1000000) * 1000;
+}
+
+Xtime APS5_VABI _ZNSt8__sce_v222_Timespec64_diff_to_tsEPK8timespec_nid_postfix(const Xtime* target) {
+    if (!target)
+        APS5_INVALID_ARG_EX;
+    constexpr std::uint64_t billion = nanosPerSecond;
+    const auto ticks = static_cast<std::uint64_t>(_Xtime_get_ticks_nid_postfix());
+    const std::uint64_t nowSeconds = ticks / 1000000;
+    const auto nowNanos = static_cast<std::int64_t>(ticks % 1000000) * 1000;
+    std::uint64_t seconds = static_cast<std::uint64_t>(target->sec);
+    std::uint64_t nanos = static_cast<std::uint64_t>(target->nsec);
+    if (static_cast<std::int64_t>(nanos) < 0) {
+        const std::uint64_t lowest = 0 - billion;
+        const std::uint64_t whole = nanos < lowest ? (lowest - nanos - 1) / billion + 1 : 0;
+        seconds -= whole + 1;
+        nanos += (whole + 1) * billion;
+    }
+    if (static_cast<std::int64_t>(nanos) >= nanosPerSecond) {
+        const std::uint64_t whole = ((nanos >= 2 * billion - 1 ? nanos - (2 * billion - 1) : 0) + billion - 1) / billion;
+        seconds += whole + 1;
+        nanos -= (whole + 1) * billion;
+    }
+    if (static_cast<std::int64_t>(nanos) < nowNanos) {
+        seconds += ~nowSeconds;
+        nanos += billion;
+    } else {
+        seconds -= nowSeconds;
+    }
+    nanos -= static_cast<std::uint64_t>(nowNanos);
+    if (static_cast<std::int64_t>(seconds) < 0 || (seconds == 0 && static_cast<std::int64_t>(nanos) <= 0)) return {0, 0};
+    return {static_cast<std::int64_t>(seconds), static_cast<std::int64_t>(nanos)};
+}
+
 static int SharedMutexResult(int result) {
     if (result == 0) return threadSuccess;
     if ((static_cast<std::uint32_t>(result) & 0xffff0000u) == 0x80020000u) return result & 0xffff;

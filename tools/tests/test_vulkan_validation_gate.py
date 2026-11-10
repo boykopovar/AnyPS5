@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import vulkan_validation_gate as gate
@@ -182,9 +183,25 @@ class TimeoutTests(FixtureTests):
     def test_a_shorter_ctest_property_remains_usable(self):
         baseline = self.source("base-short", property_text="TIMEOUT 0.5")
         candidate = self.source("head-short", property_text="TIMEOUT 0.5")
-        code, report = self.execute(baseline, candidate, "--repeat", "1", "--test-timeout", "1")
+        report_text = ('<testsuite><testcase name="probe"><system-err>' + gate.INSERTED_LAYER
+                       + '</system-err></testcase></testsuite>')
+        ctest_runs = []
+        real_run = gate.run
+
+        def run(command, log, environment, timeout):
+            if "--output-junit" not in command:
+                return real_run(command, log, environment, timeout)
+            ctest_runs.append(command)
+            Path(command[command.index("--output-junit") + 1]).write_text(report_text, encoding="utf-8")
+            return 0
+
+        with unittest.mock.patch.object(gate, "run", run):
+            code, report = self.execute(baseline, candidate, "--repeat", "1", "--test-timeout", "1")
         self.assertEqual(code, 0, report)
         self.assertEqual(report["status"], "complete")
+        self.assertEqual(len(ctest_runs), 2)
+        for command in ctest_runs:
+            self.assertEqual(command[command.index("--timeout") + 1], "1.0")
 
     def test_request_above_thirty_seconds_is_refused_before_output_creation(self):
         with self.assertRaises(SystemExit) as raised:

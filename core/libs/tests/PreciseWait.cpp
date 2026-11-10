@@ -12,6 +12,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#ifdef __APPLE__
+#include <sys/resource.h>
+#endif
 
 namespace {
 
@@ -256,6 +259,32 @@ int main() {
             std::cerr << "PreciseSleepFromCounterWithTimer fallback returned early\n";
             return 1;
         }
+    }
+#endif
+
+#ifdef __APPLE__
+    {
+        const auto wake = PreciseMonotonicNanos() + 1000000ULL;
+        if (!PreciseKernelTimerSleep_nid_no_patch(wake) || PreciseMonotonicNanos() < wake) {
+            std::cerr << "PreciseKernelTimerSleep did not wait for its wake time\n";
+            return 1;
+        }
+    }
+    const auto threadCpuNanos = [] {
+        struct rusage usage{};
+        getrusage(RUSAGE_SELF, &usage);
+        return (static_cast<std::uint64_t>(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * 1000000ULL + static_cast<std::uint64_t>(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec)) * 1000ULL;
+    };
+    std::uint64_t bestCpuNanos = 0;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const auto cpuStart = threadCpuNanos();
+        for (int sleep = 0; sleep < 20; ++sleep) PreciseSleepUs(2000);
+        const auto cpuNanos = threadCpuNanos() - cpuStart;
+        if (attempt == 0 || cpuNanos < bestCpuNanos) bestCpuNanos = cpuNanos;
+    }
+    if (bestCpuNanos > 3000000ULL && !IsRunnerPreempted()) {
+        std::cerr << "PreciseSleepUs(2000) spun for " << bestCpuNanos / 1000ULL << " us of thread CPU time over 20 sleeps\n";
+        return 1;
     }
 #endif
 

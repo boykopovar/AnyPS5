@@ -22,9 +22,14 @@ void CheckParamInit() {
     }
 }
 
+void CheckForTestFunction() {
+    Require(sceImeBackendForTestFunction() == static_cast<int>(0x80bc00ffu));
+}
+
 }
 
 int main() {
     CheckParamInit();
+    CheckForTestFunction();
     return 0;
 }

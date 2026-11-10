@@ -4,6 +4,15 @@ target_link_libraries(libSceNpCppWebApi PRIVATE libc libkernel)
 configure_windows_unwind(libSceNpCppWebApi)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_np_cpp_web_api_product_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCppWebApiProduct.cpp)
+    target_include_directories(guest_np_cpp_web_api_product_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_cpp_web_api_product_tests PRIVATE libSceNpCppWebApi libc)
+    configure_windows_unwind(guest_np_cpp_web_api_product_tests)
+    add_test(NAME guest_np_cpp_web_api_product COMMAND guest_np_cpp_web_api_product_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_cpp_web_api_product
+            PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_np_cpp_web_api_matchmaking_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCppWebApiMatchmaking.cpp)
     target_include_directories(guest_np_cpp_web_api_matchmaking_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_np_cpp_web_api_matchmaking_tests PRIVATE libSceNpCppWebApi libc)
@@ -74,5 +83,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_np_cpp_web_api_activities
             PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_cpp_web_api_account_ids_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCppWebApiAccountIds.cpp)
+    target_include_directories(guest_np_cpp_web_api_account_ids_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_cpp_web_api_account_ids_tests PRIVATE libSceNpCppWebApi libc)
+    configure_windows_unwind(guest_np_cpp_web_api_account_ids_tests)
+    add_test(NAME guest_np_cpp_web_api_account_ids COMMAND guest_np_cpp_web_api_account_ids_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_cpp_web_api_account_ids
+            PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

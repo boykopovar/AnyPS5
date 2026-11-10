@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
+#include <cerrno>
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
@@ -103,13 +104,33 @@ int APS5_VABI sceInvitationDialogGetResult(InvitationDialogResult* result) {
     if (dialog.status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (dialog.status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    if (std::any_of(std::begin(result->reserved), std::end(result->reserved), [](std::uint8_t value) { return value != 0; })) {
+    InvitationDialogResult localResult{};
+    const int savedErrnoIn = errno;
+    const bool inCopied = GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult));
+    errno = savedErrnoIn;
+    if (!inCopied) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (std::any_of(std::begin(localResult.reserved), std::end(localResult.reserved), [](std::uint8_t value) { return value != 0; })) {
         Unsettled(__func__, "the module checks the reserved bytes 0x18..0x37 of the result, and the error for a non-zero one is unsettled");
     }
-    result->callbackArg = dialog.callbackArg;
-    result->errorCode = COMMON_DIALOG_OK;
-    result->result = COMMON_DIALOG_RESULT_USER_CANCELED;
-    if (result->recipients != nullptr) result->recipients->count = 0;
+    localResult.callbackArg = dialog.callbackArg;
+    localResult.errorCode = COMMON_DIALOG_OK;
+    localResult.result = COMMON_DIALOG_RESULT_USER_CANCELED;
+    if (localResult.recipients != nullptr) {
+        InvitationDialogRecipients recipients{};
+        const int savedErrnoRecv = errno;
+        const bool recvInCopied = GuestCopyIn_nid_no_patch(&recipients, localResult.recipients, sizeof(recipients));
+        errno = savedErrnoRecv;
+        if (!recvInCopied) return COMMON_DIALOG_ERROR_ARG_NULL;
+        recipients.count = 0;
+        const int savedErrnoRecvOut = errno;
+        const bool recvOutCopied = GuestCopyOut_nid_no_patch(localResult.recipients, &recipients, sizeof(recipients));
+        errno = savedErrnoRecvOut;
+        if (!recvOutCopied) return COMMON_DIALOG_ERROR_ARG_NULL;
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
     return COMMON_DIALOG_OK;
 }
 
@@ -120,11 +141,17 @@ int APS5_VABI sceInvitationDialogGetStatus_nid_postfix(void) {
 }
 
 int APS5_VABI sceInvitationDialogOpenA_nid_postfix(void) {
+    DialogState& dialog = Dialog();
+    std::lock_guard lock(dialog.mutex);
+    if (dialog.status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceInvitationDialogGetResultA_nid_postfix(void) {
+    DialogState& dialog = Dialog();
+    std::lock_guard lock(dialog.mutex);
+    if (dialog.status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

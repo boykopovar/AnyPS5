@@ -14,7 +14,9 @@ namespace {
 constexpr int StatusRunning = 2;
 constexpr int StatusFinished = 3;
 constexpr int ErrBusy = static_cast<int>(0x80B80007u);
+constexpr int ErrParam = static_cast<int>(0x80B80001u);
 constexpr int ErrNotRunning = static_cast<int>(0x80B8000Bu);
+constexpr int ErrArgNull = static_cast<int>(0x80B8000Du);
 
 void Require(bool value, const char* what) {
     if (value) return;
@@ -66,6 +68,9 @@ void Shown() {
     Require(ModalDialogReadView_nid_postfix(view) && view.message == u"Continue?" && view.buttons.size() == 2, "the shown dialog is not the message");
     for (int poll = 0; poll < 5; ++poll) Require(sceMsgDialogGetStatus() == StatusRunning && sceMsgDialogUpdateStatus() == StatusRunning, "a shown dialog finished before it was answered");
     Require(sceMsgDialogOpen(&param) == ErrBusy, "a second open was accepted while the dialog ran");
+    Require(sceMsgDialogProgressBarInc(0, 10) == ErrNotRunning, "progress bar inc during running user message dialog");
+    Require(sceMsgDialogProgressBarSetValue(0, 50) == ErrNotRunning, "progress bar set value during running user message dialog");
+    Require(sceMsgDialogProgressBarSetMsg(0, "test") == ErrNotRunning, "progress bar set msg during running user message dialog");
     ModalDialogPublishInput_nid_postfix(ModalDialogInputKind::Next);
     ModalDialogPublishInput_nid_postfix(ModalDialogInputKind::Confirm);
     Require(sceMsgDialogGetStatus() == StatusFinished, "an answered dialog did not finish");
@@ -87,7 +92,18 @@ void NotPresented() {
     Require(sceMsgDialogGetStatus() == StatusRunning && sceMsgDialogGetStatus() == StatusFinished, "a dialog without buttons did not finish on the second poll");
     UserMessage user{MsgDialog::ButtonTypeOk, 0, "Progress"};
     Param progress(MsgDialog::ModeProgressBar, &user);
+    Require(sceMsgDialogProgressBarInc(0, 10) == ErrNotRunning, "ProgressBarInc when not running");
+    Require(sceMsgDialogProgressBarSetValue(0, 50) == ErrNotRunning, "ProgressBarSetValue when not running");
+    Require(sceMsgDialogProgressBarSetMsg(0, "test") == ErrNotRunning, "ProgressBarSetMsg when not running");
     Require(sceMsgDialogOpen(&progress) == 0 && Session() == ModalDialogState::Idle, "a progress bar was shown");
+    Require(sceMsgDialogProgressBarSetValue(1, 50) == ErrParam, "ProgressBarSetValue invalid target");
+    Require(sceMsgDialogProgressBarSetValue(0, 101) == ErrParam, "ProgressBarSetValue rate > 100");
+    Require(sceMsgDialogProgressBarSetValue(0, 50) == 0, "ProgressBarSetValue valid");
+    Require(sceMsgDialogProgressBarInc(1, 10) == ErrParam, "ProgressBarInc invalid target");
+    Require(sceMsgDialogProgressBarInc(0, 10) == 0, "ProgressBarInc valid");
+    Require(sceMsgDialogProgressBarSetMsg(1, "test") == ErrParam, "ProgressBarSetMsg invalid target");
+    Require(sceMsgDialogProgressBarSetMsg(0, nullptr) == ErrArgNull, "ProgressBarSetMsg null msg");
+    Require(sceMsgDialogProgressBarSetMsg(0, "test") == 0, "ProgressBarSetMsg valid");
     Require(sceMsgDialogClose() == 0, "close of the progress bar");
     Param system(MsgDialog::ModeSystemMsg, &user);
     Require(sceMsgDialogOpen(&system) == 0 && Session() == ModalDialogState::Idle, "a system message was shown");

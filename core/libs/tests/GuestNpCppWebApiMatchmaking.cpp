@@ -89,6 +89,18 @@ const TextFn kSetView = _ZN3sce2Np9CppWebApi11Matchmaking2V13Api20ParameterToGet
 }
 
 int main() {
+    {
+        alignas(8) unsigned char model[0x30];
+        constexpr std::uint64_t values[]{0, 1, 0xffffffffULL, 0x100000000ULL, 0x8000000000000000ULL, 0x0123456789abcdefULL, 0xffffffffffffffffULL};
+        for (const auto value : values) {
+            std::memset(model, 0xa5, sizeof(model));
+            std::memcpy(model + 0x10, &value, sizeof(value));
+            unsigned char before[sizeof(model)];
+            std::memcpy(before, model, sizeof(model));
+            Require(_ZNK3sce2Np9CppWebApi14SessionManager2V118LeaderWithOnlineId12getAccountIdEv(model) == value);
+            Require(std::memcmp(model, before, sizeof(model)) == 0);
+        }
+    }
     for (const auto fn : kSignedOut) Require(fn(nullptr) == kNotSignedIn);
     for (const auto fn : kSetters) Require(fn(nullptr) == 0);
 
@@ -127,6 +139,7 @@ int main() {
         std::memset(storage.bytes, 0, kParameterSize);
         std::uint64_t context = 1;
         IntrusivePtr empty{};
+        Require(kBodyInitializer(storage.bytes, &context, nullptr) == kBodyMissing);
         Require(kBodyInitializer(storage.bytes, &context, &empty) == kBodyMissing);
         IntrusivePtr body{};
         body.object = storage.bytes;

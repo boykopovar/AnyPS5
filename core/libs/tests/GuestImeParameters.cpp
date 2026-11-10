@@ -40,6 +40,7 @@ static void CheckInitialization() {
     Require(guarded.param.user_id == -1 && guarded.param.type == 0 &&
             guarded.param.option == 0 && guarded.param.max_text_length == 0,
             "reinitialization must reset previous values");
+    sceImeParamInit(reinterpret_cast<Param*>(0x10));
 }
 
 static void CheckPanelSizes() {
@@ -79,6 +80,13 @@ static void CheckErrors() {
     Require(sceImeGetPanelSize(nullptr, &width, &height) == InvalidAddress, "null parameter");
     Require(sceImeGetPanelSize(&param, nullptr, &height) == InvalidAddress, "null width");
     Require(sceImeGetPanelSize(&param, &width, nullptr) == InvalidAddress, "null height");
+    Require(sceImeGetPanelSize(reinterpret_cast<const Param*>(0x10), &width, &height) == InvalidAddress,
+            "unwritable parameter");
+    Require(sceImeGetPanelSize(&param, reinterpret_cast<uint32_t*>(0x10), &height) == InvalidAddress,
+            "unwritable width");
+    uint32_t unwritableWidth = width;
+    Require(sceImeGetPanelSize(&param, &unwritableWidth, reinterpret_cast<uint32_t*>(0x10)) == InvalidAddress,
+            "unwritable height");
     for (uint32_t type : {5u, 0xffffffffu}) {
         param.type = type;
         Require(sceImeGetPanelSize(&param, &width, &height) == InvalidType, "invalid type");
@@ -116,8 +124,31 @@ static void CheckClosedPanel() {
     std::memset(&form, 0xa5, sizeof(form));
     Require(sceImeGetPanelPositionAndForm(&form) == notOpened, "panel position needs an open panel");
     Require(sceImeGetPanelPositionAndForm(nullptr) == notOpened, "panel position checks the panel first");
+    Require(sceImeGetPanelPositionAndForm(reinterpret_cast<PositionAndForm*>(0x10)) == notOpened,
+            "unwritable form checks the panel first");
     const auto* formBytes = reinterpret_cast<const unsigned char*>(&form);
     for (size_t i = 0; i < sizeof(form); ++i) Require(formBytes[i] == 0xa5, "panel position written without an open panel");
+}
+
+static void APS5_VABI IgnoreEvent(void*, const ImeEvent*) {}
+
+static void CheckOpenPanel() {
+    constexpr int InvalidAddress = static_cast<int>(0x80bc0031u);
+    char16_t text[64] = {};
+    alignas(16) unsigned char work[0x5000] = {};
+    Param param{};
+    sceImeParamInit(&param);
+    param.user_id = 1;
+    param.max_text_length = 32;
+    param.input_text_buffer = text;
+    param.work = work;
+    param.handler = IgnoreEvent;
+    Require(sceImeOpen_nid_postfix(&param, nullptr) == 0, "open ime panel");
+    Require(sceImeGetPanelPositionAndForm(reinterpret_cast<PositionAndForm*>(0x10)) == InvalidAddress,
+            "unwritable panel position and form");
+    PositionAndForm form{};
+    Require(sceImeGetPanelPositionAndForm(&form) == 0, "valid panel position and form");
+    Require(sceImeClose_nid_postfix() == 0, "close ime panel");
 }
 
 static void CheckKeyboardResourceIds() {
@@ -128,6 +159,8 @@ static void CheckKeyboardResourceIds() {
     KeyboardResourceIdArray ids;
     std::memset(&ids, 0xa5, sizeof(ids));
     Require(sceImeKeyboardGetResourceId(1, nullptr) == InvalidAddress, "null resource id array");
+    Require(sceImeKeyboardGetResourceId(1, reinterpret_cast<KeyboardResourceIdArray*>(0x10)) == InvalidAddress,
+            "unwritable resource id array");
     Require(sceImeKeyboardGetResourceId(-1, &ids) == InvalidUserId, "invalid user");
     const auto* bytes = reinterpret_cast<const unsigned char*>(&ids);
     for (size_t i = 0; i < sizeof(ids); ++i) Require(bytes[i] == 0xa5, "outputs changed on argument error");
@@ -146,10 +179,19 @@ static void CheckKeyboardResourceIds() {
     Require(sceImeKeyboardGetResourceId(1, &ids) == NotOpened, "closed keyboard reported as opened");
 }
 
+static void CheckConsecutiveClauseConversion() {
+    const std::uint8_t values[] = {0, 1, 2, 0xff};
+    for (const std::uint8_t value : values) {
+        Require(sceImeSetConsecutiveClauseConversionEnabled(value) == 0, "any value must succeed");
+    }
+}
+
 int main() {
     CheckInitialization();
     CheckPanelSizes();
     CheckErrors();
     CheckClosedPanel();
+    CheckOpenPanel();
     CheckKeyboardResourceIds();
+    CheckConsecutiveClauseConversion();
 }
