@@ -9,8 +9,8 @@ static void Require(bool condition) {
 }
 
 int main() {
-    Require(!_ZN7WebCore22EmptyFrameLoaderClient26shouldUseCredentialStorageEPNS_14DocumentLoaderEm(nullptr, 0));
-    Require(!_ZN7WebCore22EmptyFrameLoaderClient26shouldUseCredentialStorageEPNS_14DocumentLoaderEm(nullptr, UINT64_MAX));
+    Require(!_ZN7WebCore22EmptyFrameLoaderClient26shouldUseCredentialStorageEPNS_14DocumentLoaderEm(nullptr, nullptr, 0));
+    Require(!_ZN7WebCore22EmptyFrameLoaderClient26shouldUseCredentialStorageEPNS_14DocumentLoaderEm(nullptr, nullptr, UINT64_MAX));
     std::puts("EmptyFrameLoaderClient credential storage tests passed");
     return 0;
 }
