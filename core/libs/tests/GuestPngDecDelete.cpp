@@ -1,4 +1,4 @@
-﻿#include "prx/libScePngDec/include/Api.hpp"
+#include "prx/libScePngDec/include/Api.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -142,4 +142,3 @@ int main(int argc, char** argv) {
     Require(erase(handle) == static_cast<std::int32_t>(0x80690004), "deleted handle is invalid");
     std::puts("PNG delete protected-memory and stream-retention checks passed");
 }
-
