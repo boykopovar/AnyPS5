@@ -7,7 +7,7 @@
 
 namespace FreeType {
 
-struct GuestOpenArgs {
+struct GuestStreamOpenArgs {
     std::uint32_t flags;
     const std::uint8_t* memoryBase;
     std::int64_t memorySize;
@@ -18,14 +18,14 @@ struct GuestOpenArgs {
     void* params;
 };
 
-static_assert(sizeof(GuestOpenArgs) == 64 && offsetof(GuestOpenArgs, memoryBase) == 8 && offsetof(GuestOpenArgs, memorySize) == 16);
-static_assert(offsetof(GuestOpenArgs, pathname) == 24 && offsetof(GuestOpenArgs, stream) == 32 && offsetof(GuestOpenArgs, numParams) == 48);
+static_assert(sizeof(GuestStreamOpenArgs) == 64 && offsetof(GuestStreamOpenArgs, memoryBase) == 8 && offsetof(GuestStreamOpenArgs, memorySize) == 16);
+static_assert(offsetof(GuestStreamOpenArgs, pathname) == 24 && offsetof(GuestStreamOpenArgs, stream) == 32 && offsetof(GuestStreamOpenArgs, numParams) == 48);
 
 }
 
 extern "C" {
 
 int APS5_VABI FT_Stream_Open_nid_postfix(FreeType::GuestStreamRec* stream, const char* filepathname);
-int APS5_VABI FT_Stream_New_nid_postfix(FreeType::GuestRaccessLibrary* library, const FreeType::GuestOpenArgs* args, FreeType::GuestStreamRec** astream);
+int APS5_VABI FT_Stream_New_nid_postfix(FreeType::GuestRaccessLibrary* library, const FreeType::GuestStreamOpenArgs* args, FreeType::GuestStreamRec** astream);
 
 }

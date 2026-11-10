@@ -105,7 +105,7 @@ char* MakeFileName(GuestMemoryRec* memory, const char* original, const char* ins
 }
 
 int GuessDoubleFromFileName(GuestRaccessLibrary* library, char* fileName, std::int64_t* resultOffset) {
-    GuestOpenArgs args{};
+    GuestStreamOpenArgs args{};
     args.flags = OpenPathname;
     args.pathname = fileName;
     GuestStreamRec* stream = nullptr;
