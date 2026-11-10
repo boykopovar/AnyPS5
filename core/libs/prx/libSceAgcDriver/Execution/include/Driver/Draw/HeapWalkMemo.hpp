@@ -47,6 +47,10 @@ std::uint64_t HeapWalkWordsBytes(const ShaderRecompiler::HeapStageWords& words);
 
 std::uint64_t HeapWalkMemoBudget();
 
+void NoteHeapWalkMemoEviction();
+
+std::uint64_t HeapWalkMemoEvictions();
+
 struct HeapWalkMemo {
     struct Slot {
         std::vector<HeapWalkEntry> ways;
@@ -138,6 +142,7 @@ private:
         for (const auto& entry : found->second.ways) drop(entry);
         entries.erase(found);
         order.pop_back();
+        NoteHeapWalkMemoEviction();
     }
 
     void trim();

@@ -362,6 +362,23 @@ std::uint64_t HeapWalkEntryBytes(const HeapWalkEntry& entry) {
     return bytes;
 }
 
+namespace {
+
+std::atomic<std::uint64_t>& heapWalkMemoEvictions() {
+    static std::atomic<std::uint64_t> evictions{0};
+    return evictions;
+}
+
+}
+
+void NoteHeapWalkMemoEviction() {
+    heapWalkMemoEvictions().fetch_add(1, std::memory_order_relaxed);
+}
+
+std::uint64_t HeapWalkMemoEvictions() {
+    return heapWalkMemoEvictions().load(std::memory_order_relaxed);
+}
+
 std::uint64_t HeapWalkMemoBudget() {
     static const std::uint64_t budget = [] {
         const char* value = std::getenv("APS5_HEAP_WALK_MEMO_MB");
