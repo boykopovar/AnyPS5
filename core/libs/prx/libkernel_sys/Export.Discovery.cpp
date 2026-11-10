@@ -9,6 +9,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "SceTypes.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
@@ -103,9 +104,8 @@ int APS5_VABI dynlib_get_obj_member_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI futimesat_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI futimesat_nid_postfix(int directory, const char* path, const KernelTimeval* times) {
+    return PosixUtimesAt_nid_no_patch(directory, path, times);
 }
 
 int APS5_VABI get_module_info_list_nid_postfix(void) {
@@ -138,31 +138,6 @@ int APS5_VABI ipmimgr_call_nid_postfix(void) {
 }
 
 int APS5_VABI kmq_notify_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kmq_open_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kmq_setattr_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kmq_timedreceive_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kmq_timedsend_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kmq_unlink_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -742,9 +717,9 @@ int APS5_VABI sceKernelGetCompiledSdkVersionByPath(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetCompiledSdkVersionByPid(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelGetCompiledSdkVersionByPid(int pid, std::int32_t* version) {
+    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return static_cast<int>(0x80020003);
+    return sceKernelGetCompiledSdkVersion(version);
 }
 
 int APS5_VABI sceKernelGetCoredumpAppInfo(void) {
@@ -973,11 +948,6 @@ int APS5_VABI sceKernelGetRenderingMode(void) {
 }
 
 int APS5_VABI sceKernelGetResidentCount(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelGetResidentFmemCount(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2097,19 +2067,8 @@ int APS5_VABI sigreturn_nid_postfix(const UserUcontext* context) {
     return SigreturnContext_nid_no_patch(context);
 }
 
-int APS5_VABI statfs_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI swapon_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI symlinkat_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI statfs_nid_postfix(const char* path, KernelStatfs* buf) {
+    return PosixStatfs_nid_no_patch(path, buf);
 }
 
 int APS5_VABI sysc_e00_nid_postfix(void) {

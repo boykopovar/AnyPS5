@@ -119,6 +119,7 @@ void CheckUnwindInfo() {
         threw = true;
     }
     Require(threw);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, nullptr); }));
 }
 #endif
 
