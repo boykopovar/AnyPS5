@@ -11,6 +11,44 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+
+static std::u16string Utf8ToUtf16(std::string_view input) {
+    std::u16string output;
+    for (std::size_t index = 0; index < input.size();) {
+        const unsigned char first = static_cast<unsigned char>(input[index++]);
+        std::uint32_t codePoint = first;
+        std::size_t continuationCount = 0;
+        if (first >= 0xc2 && first <= 0xdf) {
+            codePoint = first & 0x1f;
+            continuationCount = 1;
+        } else if (first >= 0xe0 && first <= 0xef) {
+            codePoint = first & 0x0f;
+            continuationCount = 2;
+        } else if (first >= 0xf0 && first <= 0xf4) {
+            codePoint = first & 0x07;
+            continuationCount = 3;
+        } else if (first >= 0x80) {
+            throw std::runtime_error("strftime returned invalid UTF-8");
+        }
+        if (continuationCount > input.size() - index) throw std::runtime_error("strftime returned truncated UTF-8");
+        for (std::size_t continuation = 0; continuation < continuationCount; ++continuation) {
+            const unsigned char next = static_cast<unsigned char>(input[index++]);
+            if ((next & 0xc0) != 0x80) throw std::runtime_error("strftime returned invalid UTF-8 continuation");
+            codePoint = (codePoint << 6) | (next & 0x3f);
+        }
+        if ((continuationCount == 1 && codePoint < 0x80) || (continuationCount == 2 && codePoint < 0x800)
+            || (continuationCount == 3 && codePoint < 0x10000) || (codePoint >= 0xd800 && codePoint <= 0xdfff) || codePoint > 0x10ffff)
+            throw std::runtime_error("strftime returned a non-scalar UTF-8 sequence");
+        if (codePoint <= 0xffff) output.push_back(static_cast<char16_t>(codePoint));
+        else {
+            codePoint -= 0x10000;
+            output.push_back(static_cast<char16_t>(0xd800 + (codePoint >> 10)));
+            output.push_back(static_cast<char16_t>(0xdc00 + (codePoint & 0x3ff)));
+        }
+    }
+    return output;
+}
 
 static int APS5_VABI Format(char16_t* buffer, std::size_t size, const char16_t* format, ...) {
 #ifdef _WIN32
@@ -256,6 +294,9 @@ static void CheckSwprintf() {
     Require(swprintf_nid_postfix(wide, 16, u"%5ls|%-3c|%lc", u"wide", 'z', 0x20ac) == 11, "swprintf padded length");
     Require(wide == std::u16string(u" wide|z  |€"), "swprintf padded output");
     Require(swprintf_nid_postfix(wide, 16, u"[%q][%5q]") == 11 && wide == std::u16string(u"[%q][   %q]"), "swprintf prints an unknown conversion");
+    char16_t letters[32];
+    Require(swprintf_nid_postfix(letters, 32, u"%C|%5C|%hC|%S|%-3S|%lS%d", 7) == 22 && letters == std::u16string(u"%C|   %C|%C|%S|%S |%S7"), "swprintf prints %C and %S as unknown conversions");
+    Require(swprintf_nid_postfix(letters, 32, u"%2$d %S %f", 1, 2, 3.5) == 13 && letters == std::u16string(u"2 %S 3.500000"), "positional %S takes no argument");
     for (const char16_t* format : {u"%99999999999d", u"%.99999999999d", u"%4294967296s", u"%.4294967296s", u"%2147483648ls", u"%.2147483648ls"}) {
         wide[0] = u'x';
         Require(swprintf_nid_postfix(wide, 16, format, 7, u"a") < 0 && wide[0] == 0, "swprintf width or precision beyond int");
@@ -400,17 +441,18 @@ static void CheckWcsftime() {
         {u"%k|%l|%v|%+", "%k|%l|%v|%+"},
         {u"%A|%B|%h|%C|%e|%I|%n|%t|%U|%u|%V|%G|%g|%W|%w|%y|%z", "%A|%B|%h|%C|%e|%I|%n|%t|%U|%u|%V|%G|%g|%W|%w|%y|%z"},
         {u"%s", "%s"},
-        {u"\u00e9t\u00e9 %Y", "\xe9t\xe9 %Y"},
+        {u"\u00e9t\u00e9 %Y", "\xc3\xa9t\xc3\xa9 %Y"},
     };
     for (const auto& item : cases) {
         char narrow[128];
         char16_t wide[128];
         const std::size_t length = strftime_nid_postfix(narrow, sizeof(narrow), item.narrow, &time);
         Require(length != 0, "wcsftime reference strftime");
-        Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(wide), 128, reinterpret_cast<const std::uint16_t*>(item.wide), &time) == length, "wcsftime length matches strftime");
-        for (std::size_t index = 0; index <= length; ++index)
-            Require(wide[index] == static_cast<unsigned char>(narrow[index]), "wcsftime output matches strftime");
-        CheckWcsftimeCapacities(item.wide, std::u16string(wide, length), time);
+        const std::u16string expected = Utf8ToUtf16(std::string_view(narrow, length));
+        const std::size_t wideLength = wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(wide), 128, reinterpret_cast<const std::uint16_t*>(item.wide), &time);
+        Require(wideLength == expected.size(), "wcsftime length matches UTF-8 strftime converted to UTF-16");
+        Require(std::u16string(wide, wideLength) == expected, "wcsftime output matches UTF-8 strftime converted to UTF-16");
+        CheckWcsftimeCapacities(item.wide, std::u16string(wide, wideLength), time);
     }
     CheckWcsftimeCapacities(u"", u"", time);
     CheckWcsftimeCapacities(u"abc", u"abc", time);
