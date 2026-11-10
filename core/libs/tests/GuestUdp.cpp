@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Socket/include/SocketArrivalAge.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -298,6 +299,20 @@ static void CheckDontWait() {
     Require(close_nid_postfix(receiver) == 0 && close_nid_postfix(sender) == 0);
 }
 
+static void CheckArrivalCounterAge() {
+    using KernelSocketArrival::CounterAge;
+    Require(CounterAge(1000, 4000, 1000, true) == 3000000000);
+    Require(CounterAge(10000000, 10000001, 10000000, true) == 100);
+    Require(CounterAge(7, 7, 10000000, true) == 0);
+    Require(CounterAge(1, UINT64_MAX / 2, 3, true) == 0);
+    Require(CounterAge(1000, 4000, 1000, false) == 0);
+    Require(CounterAge(987654321, 4000, 1000, false) == 0);
+    Require(CounterAge(0, 4000, 1000, true) == 0);
+    Require(CounterAge(4001, 4000, 1000, true) == 0);
+    Require(CounterAge(1000, 4000, 0, true) == 0);
+    Require(CounterAge(1000, 4000, UINT64_MAX, true) == 0);
+}
+
 static void CheckArrivalTimestamps(int family) {
     const std::uint32_t addressSize = family == 2 ? 16 : 28;
     const int receiver = socket_nid_postfix(family, 2, 0);
@@ -540,6 +555,7 @@ int main() {
     CheckAddressLengths(28);
     for (const int family : {2, 28})
         for (int binding = 0; binding < 3; ++binding) CheckDissolvedName(family, binding);
+    CheckArrivalCounterAge();
     CheckArrivalTimestamps(2);
     CheckArrivalTimestamps(28);
     CheckDontWait();

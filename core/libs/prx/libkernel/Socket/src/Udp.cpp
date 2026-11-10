@@ -5,6 +5,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mswsock.h>
+#include <iphlpapi.h>
 #include <fcntl.h>
 #include <io.h>
 #else
@@ -49,8 +50,10 @@
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/Socket/include/SocketConnect.hpp"
+#include "prx/libkernel/Socket/include/SocketArrivalAge.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <climits>
 #include <cstdint>
@@ -2355,11 +2358,64 @@ static bool WriteGuest(void* destination, const void* source, std::size_t bytes)
     return true;
 #endif
 }
+#ifdef _WIN32
+struct ArrivalClockCapabilities {
+    ULONG64 hardwareClockFrequency;
+    BOOLEAN crossTimestamp;
+    BOOLEAN hardware[11];
+    BOOLEAN software[3];
+};
+using ArrivalClockQuery = DWORD(WINAPI*)(const NET_LUID*, ArrivalClockCapabilities*);
+using ArrivalClockChange = VOID(CALLBACK*)(PVOID);
+using ArrivalClockWatch = DWORD(WINAPI*)(ArrivalClockChange, PVOID, HANDLE*);
+static std::atomic<std::uint64_t> arrivalClockChanges{0};
+static VOID CALLBACK ArrivalClockChanged(PVOID) {
+    arrivalClockChanges.fetch_add(1);
+}
+static bool QueryArrivalSystemCounter() {
+    const HMODULE library = GetModuleHandleW(L"iphlpapi.dll");
+    const auto query = library ? reinterpret_cast<ArrivalClockQuery>(reinterpret_cast<void*>(GetProcAddress(library, "GetInterfaceActiveTimestampCapabilities"))) : nullptr;
+    if (!query) return false;
+    MIB_IF_TABLE2* table = nullptr;
+    if (GetIfTable2(&table) != NO_ERROR || !table) return false;
+    bool system = true;
+    for (ULONG index = 0; index < table->NumEntries && system; ++index) {
+        ArrivalClockCapabilities capabilities{};
+        const DWORD result = query(&table->Table[index].InterfaceLuid, &capabilities);
+        if (result == ERROR_BAD_DRIVER) system = false;
+        if (result != NO_ERROR) continue;
+        for (const BOOLEAN enabled : capabilities.hardware) if (enabled) system = false;
+    }
+    FreeMibTable(table);
+    return system;
+}
+static bool ArrivalSystemCounter() {
+    static std::mutex mutex;
+    static bool tried = false;
+    static bool watched = false;
+    static bool known = false;
+    static bool system = false;
+    static std::uint64_t seen = 0;
+    static HANDLE watch = nullptr;
+    std::lock_guard lock(mutex);
+    if (!tried) {
+        tried = true;
+        const HMODULE library = GetModuleHandleW(L"iphlpapi.dll");
+        const auto listen = library ? reinterpret_cast<ArrivalClockWatch>(reinterpret_cast<void*>(GetProcAddress(library, "RegisterInterfaceTimestampConfigChange"))) : nullptr;
+        watched = listen && listen(ArrivalClockChanged, nullptr, &watch) == NO_ERROR;
+    }
+    const std::uint64_t changes = arrivalClockChanges.load();
+    if (watched && known && seen == changes) return system;
+    system = QueryArrivalSystemCounter();
+    seen = changes;
+    known = true;
+    return system;
+}
+#endif
 static bool ArrivalStamped(const Socket& socket, int keptFlags) {
     return socket.type == 2 && (socket.family == 2 || socket.family == 28) && (keptFlags & (0x400 | 0x2000)) != 0;
 }
 static std::int64_t ReceiveStamped(const Socket& socket, char* data, std::size_t length, int nativeFlags, sockaddr_storage& address, socklen_t& size, std::int64_t& age) {
-    constexpr std::int64_t second = 1000000000;
     age = 0;
 #ifdef _WIN32
     GUID extension = WSAID_WSARECVMSG;
@@ -2388,15 +2444,12 @@ static std::int64_t ReceiveStamped(const Socket& socket, char* data, std::size_t
             if (entry->cmsg_level != SOL_SOCKET || entry->cmsg_type != arrivalCounter || entry->cmsg_len < WSA_CMSG_LEN(sizeof(std::uint64_t))) continue;
             std::uint64_t arrived = 0;
             std::memcpy(&arrived, WSA_CMSG_DATA(entry), sizeof(arrived));
+            if (arrived == 0) continue;
             LARGE_INTEGER now{};
             LARGE_INTEGER frequency{};
             QueryPerformanceCounter(&now);
             QueryPerformanceFrequency(&frequency);
-            const auto current = static_cast<std::uint64_t>(now.QuadPart);
-            const auto rate = static_cast<std::uint64_t>(frequency.QuadPart);
-            if (rate == 0 || arrived == 0 || arrived > current) continue;
-            const auto elapsed = current - arrived;
-            age = static_cast<std::int64_t>(elapsed / rate * second + elapsed % rate * second / rate);
+            age = KernelSocketArrival::CounterAge(arrived, static_cast<std::uint64_t>(now.QuadPart), static_cast<std::uint64_t>(frequency.QuadPart), ArrivalSystemCounter());
         }
     }
     if (truncated) {
@@ -2405,6 +2458,7 @@ static std::int64_t ReceiveStamped(const Socket& socket, char* data, std::size_t
     }
     return static_cast<std::int64_t>(count);
 #else
+    constexpr std::int64_t second = 1000000000;
     alignas(cmsghdr) char control[128];
     iovec vector{data, length};
     msghdr host{};
