@@ -447,8 +447,8 @@ void TransfersAndQueriesInAWindowNeverWait() {
         Require(encoder.Counts().waits == 0, "a transfer or query command in a window waited for the encoder");
         encoder.Close();
     }
-    CommandEncoder::SetDelayForTesting({});
     encoder.Quiesce();
+    CommandEncoder::SetDelayForTesting({});
     Compare({{commands, expected}}, "transfers and queries in a window");
 }
 
