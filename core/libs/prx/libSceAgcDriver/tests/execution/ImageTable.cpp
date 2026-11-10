@@ -1,7 +1,9 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "DepthFastClearHarness.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "tests/TemporaryFile.hpp"
 #include "Recompiler.hpp"
@@ -45,6 +47,11 @@ constexpr std::uint32_t Stride = 48;
 constexpr std::uint32_t Records = 12;
 constexpr std::uint32_t Lanes = 64;
 constexpr std::uint32_t MaxGroups = 8;
+constexpr std::uint32_t Format16Unorm = 7;
+constexpr std::uint32_t Format16Snorm = 8;
+constexpr std::uint32_t Format16Uint = 11;
+constexpr std::uint32_t Format16Sint = 12;
+constexpr std::uint32_t Format16Sfloat = 13;
 constexpr std::uint32_t Format32UInt = 20;
 constexpr std::uint32_t Format32SInt = 21;
 constexpr std::uint32_t Format32Float = 22;
@@ -55,12 +62,32 @@ constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Type3D = 10;
 constexpr std::uint32_t DepthSwizzleMode = 0x18;
 
+struct TableFormatFilter {
+    VkPhysicalDevice real = VK_NULL_HANDLE;
+    PFN_vkGetPhysicalDeviceFormatProperties format = nullptr;
+    PFN_vkGetPhysicalDeviceImageFormatProperties image = nullptr;
+    bool refuseSnorm = false;
+};
+
+TableFormatFilter tableFormatFilter;
+
+VKAPI_ATTR void VKAPI_CALL TableFilteredFormat(VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
+    tableFormatFilter.format(tableFormatFilter.real, format, properties);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL TableForwardImageFormat(VkPhysicalDevice, VkFormat format, VkImageType type, VkImageTiling tiling, VkImageUsageFlags usage, VkImageCreateFlags flags, VkImageFormatProperties* properties) {
+    if (tableFormatFilter.refuseSnorm && format == VK_FORMAT_R16_SNORM) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    return tableFormatFilter.image(tableFormatFilter.real, format, type, tiling, usage, flags, properties);
+}
+
 alignas(256) std::array<float, Width * Height> FloatTexels{};
 alignas(256) std::array<float, Width * Height> OtherFloatTexels{};
 alignas(256) std::array<std::uint32_t, Width * Height> UintTexels{};
 alignas(256) std::array<std::uint64_t, Width * Height> Uint64Texels{};
 alignas(256) std::array<std::int32_t, Width * Height> SintTexels{};
 alignas(4096) std::array<std::uint32_t, 49152> DepthStorage{};
+alignas(256) std::array<std::uint8_t, 6 * 0x400> DepthTablePlanes{};
+alignas(256) std::array<std::byte, Width * Height * 4> DepthTablePixels{};
 alignas(256) std::array<std::uint32_t, Records * Stride / 4> Table{};
 alignas(256) std::array<std::uint32_t, 64> Keys{};
 alignas(256) std::array<std::uint32_t, MaxGroups * 128 * 4> Output{};
@@ -168,6 +195,13 @@ alignas(256) constexpr std::array<std::uint32_t, 22> ReadTableCounterLoopCode{
 alignas(256) constexpr std::array<std::uint32_t, 28> ReadTableSetBitLoopCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4200a44u, 0xfa000000u,
     0x360200bfu, 0x7e040280u, 0xbea80380u, 0xbeaa1329u, 0x9312b02au, 0xf42c0802u, 0x24000000u, 0xf0008f08u,
+    0x00090401u, 0x7e120228u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0x80288128u,
+    0xbea91b2au, 0xbf078029u, 0xbf85fff0u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 28> StorageSetBitLoopCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4200a44u, 0xfa000000u,
+    0x360200bfu, 0x7e040280u, 0xbea80380u, 0xbeaa1329u, 0x9312b02au, 0xf42c0802u, 0x24000000u, 0xf0208f08u,
     0x00090401u, 0x7e120228u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0x80288128u,
     0xbea91b2au, 0xbf078029u, 0xbf85fff0u, 0xbf810000u,
 };
@@ -410,6 +444,9 @@ struct Outcome {
     std::vector<std::array<std::uint32_t, 4>> samplerTable;
     std::vector<std::uint32_t> tableMap;
     std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>> imageTableReadRanges;
+    std::vector<bool> tableUintStorage;
+    std::uint32_t storageTableBinding = 0;
+    std::uint32_t storageTableKind = 0;
 };
 
 std::vector<std::array<std::uint32_t, 4>> SamplerWords(const std::vector<std::uint32_t>& words) {
@@ -439,6 +476,11 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
     outcome.imageTableReadRanges = result.imageTableReadRanges;
     for (const auto& binding : result.bindings) {
         if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable) outcome.imageTableCount = binding.count;
+        if (binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable) {
+            outcome.tableUintStorage.assign(binding.imageUintStorage.begin(), binding.imageUintStorage.end());
+            outcome.storageTableBinding = binding.binding;
+            outcome.storageTableKind = static_cast<std::uint32_t>(binding.kind);
+        }
         if (binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap) outcome.tableMap = binding.guestDescriptor;
         if (binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers) outcome.samplers = SamplerWords(binding.guestDescriptor);
         if (binding.role == ShaderRecompiler::DescriptorRole::SamplerTable) outcome.samplerTable = SamplerWords(binding.guestDescriptor);
@@ -1163,6 +1205,91 @@ void RunStoreTests(AgcDriver::VulkanDevice& device) {
     const auto null = Run(device, StoreLaneTableCode, 1, Lanes, 64);
     AgcDriver::Graphics::StorageTexture::FlushAllPending("image table store test");
     Require(untouched(), "image table store: a store through a null entry reached an image:\n" + null.log);
+}
+
+void RunDepthStorageTableTests(AgcDriver::VulkanDevice& device) {
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    } registeredPlanes(DepthTablePlanes.data(), sizeof(DepthTablePlanes));
+    const auto context = device.graphicsContext();
+    const auto plane = [&](std::uint32_t index) { return reinterpret_cast<std::uintptr_t>(DepthTablePlanes.data() + index * 0x400u); };
+    const auto stencil = [&](std::uint32_t index) { return plane(index) + 0x200u; };
+    const auto shaders = DepthFastClearHarness::Compile(device);
+    const auto draw = [&](std::uint32_t index) {
+        return DepthFastClearHarness::Draw(device, shaders, {plane(index), stencil(index), 0u, false, VK_FORMAT_D16_UNORM_S8_UINT}, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}, {Width, Height}, DepthTablePixels);
+    };
+    const std::array<std::uint32_t, 5> formats{Format16Unorm, Format16Snorm, Format16Uint, Format16Sint, Format16Sfloat};
+    for (std::uint32_t record = 0; record < formats.size(); ++record) {
+        Require(AgcDriver::Graphics::DepthSurfaceView(context, {plane(record), stencil(record), {Width, Height}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0u}) != VK_NULL_HANDLE, "depth storage table: resident D16S8 surface " + std::to_string(record) + " was not created");
+        Require(draw(record) == Width * Height, "depth storage table: the resident D16S8 producer did not cover surface " + std::to_string(record));
+    }
+    std::fill(Table.begin(), Table.end(), 0u);
+    for (std::uint32_t record = 0; record < formats.size(); ++record) SetRecord(record, PointClamp, Image(reinterpret_cast<const void*>(plane(record)), formats[record]));
+    Keys = {};
+    for (std::uint32_t record = 0; record < formats.size(); ++record) {
+        Keys[0] = record;
+        const auto stored = Run(device, StoreTableCode, 1, Lanes, 64);
+        AgcDriver::Graphics::StorageTexture::FlushAllPending("depth storage table test");
+        device.WaitIdle();
+        Require(!Faulted(stored), "depth storage table: record " + std::to_string(record) + " faulted:\n" + stored.log);
+        Require(stored.storageTableBinding == ShaderRecompiler::RuntimeAbi::ImageStorageTableBinding, "depth storage table: record " + std::to_string(record) + " compiled binding " + std::to_string(stored.storageTableBinding) + ", expected the image storage table");
+        Require(stored.storageTableKind == static_cast<std::uint32_t>(ShaderRecompiler::DescriptorKind::StorageImage), "depth storage table: record " + std::to_string(record) + " compiled a non-storage descriptor kind");
+        Require(!stored.tableUintStorage.empty(), "depth storage table: record " + std::to_string(record) + " bound no storage element classes");
+        const bool uintStorage = record == 2u || record == 3u || record == 4u;
+        const bool anyUint = std::any_of(stored.tableUintStorage.begin(), stored.tableUintStorage.end(), [](bool value) { return value; });
+        Require(uintStorage ? anyUint : !anyUint, "depth storage table: format " + std::to_string(formats[record]) + " selected the wrong storage kind");
+        for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+            std::uint16_t bits = 0;
+            std::memcpy(&bits, reinterpret_cast<const void*>(plane(record) + lane * sizeof(std::uint16_t)), sizeof(bits));
+            Require(bits == 0u, "depth storage table: record " + std::to_string(record) + " left depth bits " + Hex(bits) + " at texel " + std::to_string(lane) + " after a zero store");
+        }
+    }
+    Keys[0] = 0x7u;
+    const auto mixed = Run(device, StorageSetBitLoopCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("depth storage table mixed test");
+    Require(!Faulted(mixed), "depth storage table: the mixed-kind loop faulted:\n" + mixed.log);
+    Require(mixed.storageTableBinding == ShaderRecompiler::RuntimeAbi::ImageStorageTableBinding && mixed.storageTableKind == static_cast<std::uint32_t>(ShaderRecompiler::DescriptorKind::StorageImage), "depth storage table: the mixed-kind loop did not compile the image storage table");
+    Require(mixed.imageTableCount == formats.size(), "depth storage table: the mixed-kind storage table holds " + std::to_string(mixed.imageTableCount) + " elements, expected " + std::to_string(formats.size()));
+    Require(mixed.tableUintStorage.size() == formats.size(), "depth storage table: the mixed-kind storage binding carries " + std::to_string(mixed.tableUintStorage.size()) + " element classes, expected " + std::to_string(formats.size()));
+    const auto mixedUint = static_cast<std::size_t>(std::count(mixed.tableUintStorage.begin(), mixed.tableUintStorage.end(), true));
+    Require(mixedUint == 3u, "depth storage table: the mixed-kind storage binding carries " + std::to_string(mixedUint) + " UINT elements, expected the three write-only UINT, SINT and SFLOAT records");
+    static std::uintptr_t maskedSerial = 0x9000u;
+    auto masked = context;
+    masked.physical = reinterpret_cast<VkPhysicalDevice>(maskedSerial);
+    maskedSerial += 0x1000u;
+    masked.formatProperties = TableFilteredFormat;
+    masked.imageFormatProperties = TableForwardImageFormat;
+    masked.memoryProperties2 = nullptr;
+    tableFormatFilter.real = context.physical;
+    tableFormatFilter.format = context.formatProperties;
+    tableFormatFilter.image = context.imageFormatProperties;
+    tableFormatFilter.refuseSnorm = true;
+    Require(AgcDriver::Graphics::DepthSurfaceView(masked, {plane(5), stencil(5), {Width, Height}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0u}) != VK_NULL_HANDLE, "depth storage table: the image-query-refused SNORM surface was not created");
+    std::vector<std::uint16_t> initial(static_cast<std::size_t>(Width) * Height, 0x8000u);
+    std::memcpy(reinterpret_cast<void*>(plane(5)), initial.data(), initial.size() * sizeof(std::uint16_t));
+    std::memcpy(reinterpret_cast<void*>(plane(1)), initial.data(), initial.size() * sizeof(std::uint16_t));
+    Require(draw(5) == Width * Height, "depth storage table: the image-query-refused SNORM producer did not cover the surface");
+    Require(draw(1) == Width * Height, "depth storage table: the valid mixed-kind surface did not cover");
+    std::fill(Table.begin(), Table.end(), 0u);
+    SetRecord(0, PointClamp, Image(reinterpret_cast<const void*>(plane(5)), Format16Snorm));
+    SetRecord(1, PointClamp, Image(reinterpret_cast<const void*>(plane(1)), Format16Uint));
+    Keys = {};
+    Keys[0] = 0x3u;
+    const auto poisoned = Run(device, StorageSetBitLoopCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("depth storage table poison test");
+    device.WaitIdle();
+    Require(poisoned.log.find("raw depth storage has no typed shader view") != std::string::npos, "depth storage table: the refused SNORM element did not report its missing typed view:\n" + poisoned.log);
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        std::uint16_t valid = 0xdeadu, refused = 0;
+        std::memcpy(&valid, reinterpret_cast<const void*>(plane(1) + lane * sizeof(std::uint16_t)), sizeof(valid));
+        std::memcpy(&refused, reinterpret_cast<const void*>(plane(5) + lane * sizeof(std::uint16_t)), sizeof(refused));
+        Require(valid == 0u, "depth storage table: the valid mixed-kind element did not store at texel " + std::to_string(lane));
+        Require(refused == 0x8000u, "depth storage table: the refused SNORM element stored at texel " + std::to_string(lane));
+    }
+    tableFormatFilter.refuseSnorm = false;
+    AgcDriver::Graphics::ClearDepthSurfaces(context.device);
 }
 
 void RunAtomicTests(AgcDriver::VulkanDevice& device) {
@@ -1916,6 +2043,7 @@ int main(int argc, char** argv) {
         RunSelectedRecordTests(*device);
         RunModeTests(*device);
         RunStoreTests(*device);
+        RunDepthStorageTableTests(*device);
         RunAtomicTests(*device);
         RunAtomic64Tests(*device);
         RunSelectedStoreTests(*device);
