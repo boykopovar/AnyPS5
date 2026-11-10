@@ -9,7 +9,7 @@ void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWit
 void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidClearWindowObjectInWorldERNS_15DOMWrapperWorldE(WebCore::DOMWrapperWorld&) {
 }
 
-void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient25setMainFrameDocumentReadyEb(bool) {
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient25setMainFrameDocumentReadyEb(void*, bool) {
 }
 
 }
