@@ -231,6 +231,8 @@ int main() {
     Require(sceVoiceWriteToIPort(input, nullptr, nullptr, 0) == invalidArgument);
     Require(sceVoiceWriteToIPort(input, data, &size, 0) == 0 && size == 0);
     Require(sceVoiceDisconnectIPortFromOPort(input, output) == 0);
+    Require(sceVoiceDisconnectIPortFromOPort(input, output) == portNotFound);
+    Require(sceVoiceDisconnectIPortFromOPort(output, input) == portNotFound);
 
     Require(sceVoiceGetMuteFlag(input, &muted) == 0 && !muted);
     Require(sceVoiceSetMuteFlagAll(true) == 0);
@@ -282,6 +284,10 @@ int main() {
 
     Require(sceVoiceSetMuteFlagAll(true) == 0);
 
+    const auto spare = CreatePort(3, 0.25f);
+    Require(sceVoiceConnectIPortToOPort(input, spare) == 0);
+    Require(sceVoiceDeletePort(spare) == 0);
+    Require(sceVoiceDisconnectIPortFromOPort(input, spare) == portNotFound);
     Require(sceVoiceDeletePort(input) == 0);
     Require(sceVoiceResetPort(input) == portNotFound);
     Require(sceVoicePausePort(input) == portNotFound);
