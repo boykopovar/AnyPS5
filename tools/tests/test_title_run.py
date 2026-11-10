@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import sys
@@ -151,6 +152,29 @@ class AnalysisTests(unittest.TestCase):
         cut.write_bytes(noisy.read_bytes()[:-20])
         self.assertIsNone(title_run.frame_is_uniform(cut))
 
+    def test_unsupported_frame_bit_depth_is_unreadable(self):
+        frame = bmp(self.root / "unsupported.bmp", 8, 4, lambda x, y: (0, 0, 0))
+        data = bytearray(frame.read_bytes()) + bytes(128)
+        for bits in (25, 31, 33, 39, 40, 48, 64):
+            with self.subTest(bits=bits):
+                struct.pack_into("<H", data, 28, bits)
+                frame.write_bytes(data)
+                uniform = title_run.frame_is_uniform(frame)
+                self.assertIsNone(uniform)
+                self.assertEqual(title_run.classify(True, None, 1.0, True, uniform), "frame-unreadable")
+
+    def test_24_bit_frames_ignore_row_padding(self):
+        frame = self.root / "24bit.bmp"
+        for pixels, uniform in ((bytes(9), True), (bytes(6) + bytes((255, 255, 255)), False)):
+            with self.subTest(uniform=uniform):
+                rows = (pixels + bytes((255, 255, 255))) * 2
+                header = struct.pack("<2sIHHI", b"BM", 54 + len(rows), 0, 0, 54)
+                info = struct.pack("<IiiHHIIiiII", 40, 3, 2, 1, 24, 0, len(rows), 0, 0, 0, 0)
+                frame.write_bytes(header + info + rows)
+                self.assertIs(title_run.frame_is_uniform(frame), uniform)
+                outcome = "blank" if uniform else "rendering"
+                self.assertEqual(title_run.classify(True, None, 1.0, True, uniform), outcome)
+
     def test_classify_reads_the_last_frame(self):
         uniform = bmp(self.root / "uniform.bmp", 8, 4, lambda x, y: (9, 9, 9))
         varied = bmp(self.root / "varied.bmp", 8, 4, lambda x, y: (x * 30, y * 60, 0))
@@ -292,6 +316,15 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "PPSA00001 found more than once"):
             title_run.discover([self.root])
 
+    def test_git_refuses_a_failed_call(self):
+        failed = subprocess.CompletedProcess(["git"], 128, stdout="", stderr="fatal: not a git repository")
+        with unittest.mock.patch.object(title_run.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(SystemExit, "exit 128.*not a git repository"):
+                title_run.git(self.root, "rev-parse", "--short", "HEAD")
+        with unittest.mock.patch.object(title_run.subprocess, "run", side_effect=FileNotFoundError("git")):
+            with self.assertRaisesRegex(SystemExit, "cannot run git"):
+                title_run.git(self.root, "status", "--porcelain")
+
     def test_discover_refuses_a_package_without_title_id(self):
         package(self.root / "a/PPSA00001", "PPSA00001")
         param = self.root / "a/PPSA00001/sce_sys/param.json"
@@ -310,6 +343,44 @@ class PreparationTests(unittest.TestCase):
         source.write_bytes(b"\x7fELF" + bytes(60))
         title_run.unwrap_or_copy(source, self.root / "out/eboot.elf")
         self.assertEqual((self.root / "out/eboot.elf").read_bytes(), source.read_bytes())
+
+    def test_module_dirs_are_staged_for_the_relinker(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name in ("eboot.bin", "sce_module/libc.prx", "Media/Modules/Il2CppUserAssemblies.prx", "Media/Plugins/lib_burst_generated.prx", "Media/Other/skip.prx"):
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_bytes(elf)
+        entry = {"relink": ["--trap-sdk-syscall-stubs", "--module-dir", "Media/Modules", "--module-dir", "Media/Plugins"]}
+        self.assertEqual(title_run.module_dirs(entry), ["Media/Modules", "Media/Plugins"])
+        title_run.stage_inputs(source, entry, self.root / "input")
+        staged = sorted(path.relative_to(self.root / "input").as_posix() for path in (self.root / "input").rglob("*.*"))
+        self.assertEqual(staged, ["Media/Modules/Il2CppUserAssemblies.prx", "Media/Plugins/lib_burst_generated.prx", "eboot.elf", "sce_module/libc.prx"])
+        self.assertEqual(title_run.module_dirs({"relink": ["--module-dir"]}), [])
+
+    def test_module_dirs_keep_every_module_and_empty_directories(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name, data in (("eboot.bin", elf), ("Media/Plugins/anchor.prx", elf), ("Media/Plugins/plugin.sprx", elf), ("Media/Plugins/readme.txt", b"text")):
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_bytes(data)
+        (source / "Media/Empty").mkdir(parents=True)
+        entry = {"relink": ["--module-dir", "Media/Plugins", "--module-dir", "Media/Empty", "--module-dir", "Media/Missing"]}
+        title_run.stage_inputs(source, entry, self.root / "input")
+        staged = self.root / "input/Media"
+        self.assertEqual(sorted(path.name for path in (staged / "Plugins").iterdir()), ["anchor.prx", "plugin.sprx"])
+        self.assertTrue((staged / "Empty").is_dir())
+        self.assertFalse((staged / "Missing").exists())
+
+    def test_module_dirs_leave_out_the_executables_and_their_aliases(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name in ("eboot.bin", "tool.elf", "plugin.prx"):
+            (source / name).write_bytes(elf)
+        os.link(source / "eboot.bin", source / "alias.bin")
+        entry = {"relink": ["--module-dir", "."], "executables": ["tool.elf"]}
+        title_run.stage_inputs(source, entry, self.root / "input")
+        staged = sorted(path.name for path in (self.root / "input").iterdir() if path.is_file())
+        self.assertEqual(staged, ["eboot.elf", "plugin.prx", "tool.elf"])
 
     def test_link_tree_skips(self):
         source = package(self.root / "pkg", "PPSA00001")
@@ -430,6 +501,31 @@ class SessionTests(unittest.TestCase):
         session = self.start(f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}])", owned=Path(sys.executable).parent)
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 7)
+
+    @unittest.skipUnless(os.name == "nt", "junctions are Windows-specific")
+    def test_exit_code_follows_a_junctioned_interpreter(self):
+        target = Path(sys.executable).parent
+        directory = Path(tempfile.mkdtemp(prefix="title-run-junction-"))
+        link = directory / "python"
+        session = None
+        try:
+            made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, text=True)
+            if made.returncode != 0:
+                self.skipTest("cannot create a junction: " + made.stderr.strip())
+            child = "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])"
+            session = title_run.Session([str(link / Path(sys.executable).name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
+            self.assertTrue(wait_until(lambda: not session.alive()))
+            self.assertEqual(session.exit_code(), 7)
+        finally:
+            if session is not None:
+                session.kill()
+            if link.exists():
+                try:
+                    os.rmdir(link)
+                except OSError:
+                    pass
+            if not link.exists():
+                shutil.rmtree(directory, ignore_errors=True)
 
     @unittest.skipUnless(os.name == "nt", "window placement is Windows-specific")
     def test_new_windows_go_behind_the_others_without_polling(self):
