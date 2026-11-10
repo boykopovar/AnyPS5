@@ -54,6 +54,8 @@ struct TableCall {
     std::uint32_t entryOffset = 0;
     std::uint32_t entryStride = 0;
     std::optional<std::uint64_t> constantPointer;
+    std::uint32_t constantPointerLowProgramCounter = 0;
+    std::uint32_t constantPointerHighProgramCounter = 0;
     bool descriptorInUserData = false;
     std::optional<std::uint32_t> nestedDescriptorOffset;
 };
@@ -103,6 +105,7 @@ struct TableCallContinuation {
 [[nodiscard]] std::optional<TableCallContinuation> ContinueTableCall(const RdnaProgram& program, const TableCall& call, std::span<const TableCallee> callees, std::uint32_t vectorCount, std::string& refusal);
 [[nodiscard]] SplitTableCallPrograms BuildTableCallContinuation(const RdnaProgram& program, const TableCall& call, std::span<const TableCallee> callees, const TableCallContinuation& continuation);
 
+[[nodiscard]] std::optional<std::vector<std::uint32_t>> RetargetTableCallPointer(std::span<const std::uint32_t> code, const RdnaProgram& program, const TableCall& call, std::uint64_t address);
 struct LinkedCalls {
     std::vector<std::uint32_t> code;
     std::vector<std::uint32_t> fallbacks;
