@@ -1940,7 +1940,8 @@ extern "C" {
 int APS5_VABI sceAjmInitialize(int64_t reserved, uint32_t* context) {
     (void)reserved;
     if (!context) return SCE_AJM_ERROR_INVALID_PARAMETER;
-    *context = g_nextContext.fetch_add(1, std::memory_order_relaxed);
+    const uint32_t id = g_nextContext.fetch_add(1, std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(context, &id, sizeof(id))) return SCE_AJM_ERROR_INVALID_PARAMETER;
     return 0;
 }
 
