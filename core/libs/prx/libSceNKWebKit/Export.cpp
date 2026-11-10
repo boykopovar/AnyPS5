@@ -11354,9 +11354,6 @@ int APS5_VABI WKCookieManagerStopObservingCookieChanges() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKFrameCanProvideSource() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKFrameCopyMIMEType() {
     NotImplemented_nid_no_patch(__func__);

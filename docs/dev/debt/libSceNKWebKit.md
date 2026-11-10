@@ -391,7 +391,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKErrorCopyDomain` | `CbWxMDgV5WQ` |
 | `WKErrorCopyFailingURL` | `Rcz4V01xRBo` |
 | `WKErrorGetErrorCode` | `Jx+jaw-BVuE` |
-| `WKFrameCanProvideSource` | `pupKRlW6z-w` |
 | `WKFrameCopyMIMEType` | `UwMYQFss8oM` |
 | `WKFrameCopyProvisionalURL` | `dAKWNwkRfZw` |
 | `WKFrameCopyTitle` | `kEags+FqdZQ` |
