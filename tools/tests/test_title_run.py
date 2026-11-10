@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import sys
@@ -343,6 +344,44 @@ class PreparationTests(unittest.TestCase):
         title_run.unwrap_or_copy(source, self.root / "out/eboot.elf")
         self.assertEqual((self.root / "out/eboot.elf").read_bytes(), source.read_bytes())
 
+    def test_module_dirs_are_staged_for_the_relinker(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name in ("eboot.bin", "sce_module/libc.prx", "Media/Modules/Il2CppUserAssemblies.prx", "Media/Plugins/lib_burst_generated.prx", "Media/Other/skip.prx"):
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_bytes(elf)
+        entry = {"relink": ["--trap-sdk-syscall-stubs", "--module-dir", "Media/Modules", "--module-dir", "Media/Plugins"]}
+        self.assertEqual(title_run.module_dirs(entry), ["Media/Modules", "Media/Plugins"])
+        title_run.stage_inputs(source, entry, self.root / "input")
+        staged = sorted(path.relative_to(self.root / "input").as_posix() for path in (self.root / "input").rglob("*.*"))
+        self.assertEqual(staged, ["Media/Modules/Il2CppUserAssemblies.prx", "Media/Plugins/lib_burst_generated.prx", "eboot.elf", "sce_module/libc.prx"])
+        self.assertEqual(title_run.module_dirs({"relink": ["--module-dir"]}), [])
+
+    def test_module_dirs_keep_every_module_and_empty_directories(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name, data in (("eboot.bin", elf), ("Media/Plugins/anchor.prx", elf), ("Media/Plugins/plugin.sprx", elf), ("Media/Plugins/readme.txt", b"text")):
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_bytes(data)
+        (source / "Media/Empty").mkdir(parents=True)
+        entry = {"relink": ["--module-dir", "Media/Plugins", "--module-dir", "Media/Empty", "--module-dir", "Media/Missing"]}
+        title_run.stage_inputs(source, entry, self.root / "input")
+        staged = self.root / "input/Media"
+        self.assertEqual(sorted(path.name for path in (staged / "Plugins").iterdir()), ["anchor.prx", "plugin.sprx"])
+        self.assertTrue((staged / "Empty").is_dir())
+        self.assertFalse((staged / "Missing").exists())
+
+    def test_module_dirs_leave_out_the_executables_and_their_aliases(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name in ("eboot.bin", "tool.elf", "plugin.prx"):
+            (source / name).write_bytes(elf)
+        os.link(source / "eboot.bin", source / "alias.bin")
+        entry = {"relink": ["--module-dir", "."], "executables": ["tool.elf"]}
+        title_run.stage_inputs(source, entry, self.root / "input")
+        staged = sorted(path.name for path in (self.root / "input").iterdir() if path.is_file())
+        self.assertEqual(staged, ["eboot.elf", "plugin.prx", "tool.elf"])
+
     def test_link_tree_skips(self):
         source = package(self.root / "pkg", "PPSA00001")
         (source / "sce_module").mkdir()
@@ -462,6 +501,31 @@ class SessionTests(unittest.TestCase):
         session = self.start(f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}])", owned=Path(sys.executable).parent)
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 7)
+
+    @unittest.skipUnless(os.name == "nt", "junctions are Windows-specific")
+    def test_exit_code_follows_a_junctioned_interpreter(self):
+        target = Path(sys.executable).parent
+        directory = Path(tempfile.mkdtemp(prefix="title-run-junction-"))
+        link = directory / "python"
+        session = None
+        try:
+            made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, text=True)
+            if made.returncode != 0:
+                self.skipTest("cannot create a junction: " + made.stderr.strip())
+            child = "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])"
+            session = title_run.Session([str(link / Path(sys.executable).name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
+            self.assertTrue(wait_until(lambda: not session.alive()))
+            self.assertEqual(session.exit_code(), 7)
+        finally:
+            if session is not None:
+                session.kill()
+            if link.exists():
+                try:
+                    os.rmdir(link)
+                except OSError:
+                    pass
+            if not link.exists():
+                shutil.rmtree(directory, ignore_errors=True)
 
     @unittest.skipUnless(os.name == "nt", "window placement is Windows-specific")
     def test_new_windows_go_behind_the_others_without_polling(self):
