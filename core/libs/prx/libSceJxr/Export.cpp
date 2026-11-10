@@ -293,26 +293,6 @@ int APS5_VABI PKImageEncode_Create_WMP_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageEncode_Create_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKImageEncode_Initialize_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKImageEncode_Release_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKImageEncode_SetColorContext_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKImageEncode_SetDescriptiveMetadata_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 std::int64_t APS5_VABI PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(
     tagPKImageEncode* encoder, const std::uint8_t* metadata, std::uint32_t size) {
     return Jxr::SetImageEncodeMetadata(
@@ -332,18 +312,6 @@ int APS5_VABI PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageEncode_SetPixelFormat_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKImageEncode_SetResolution_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKImageEncode_SetSize_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI PKImageEncode_SetXMPMetadata_WMP_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -353,10 +321,6 @@ std::int64_t APS5_VABI PKImageEncode_Terminate_nid_postfix(void* encoder) {
 }
 
 int APS5_VABI PKImageEncode_Transcode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKImageEncode_WritePixels_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
