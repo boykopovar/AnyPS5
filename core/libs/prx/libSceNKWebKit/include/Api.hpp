@@ -36,7 +36,6 @@ int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocalC2EPNS_19InspectorControl
 int APS5_VABI _ZN7WebCore23ScaleTransformOperation5blendEPKNS_18TransformOperationEdb();
 int APS5_VABI _ZN7WebCore14XMLHttpRequestD1Ev();
 int APS5_VABI _ZN3JSC20TypedArrayControllerC2Ev();
-int APS5_VABI _ZN7WebCore14StaticNodeListnaEmPv();
 int APS5_VABI _ZN3WTF21RefCountedLeakCounter16suppressMessagesEPKc();
 int APS5_VABI _ZN9Inspector26LayerTreeBackendDispatcherD0Ev();
 int APS5_VABI _ZN3JSC49throwConstructorCannotBeCalledAsFunctionTypeErrorEPNS_14JSGlobalObjectERNS_10ThrowScopeEPKc();
@@ -108,7 +107,6 @@ int APS5_VABI WKPageCanDelete();
 int APS5_VABI WKNotificationCopyDir();
 int APS5_VABI WKUserContentExtensionStoreRemove();
 int APS5_VABI _ZN9Inspector21InspectorRuntimeAgent6enableERN3WTF6StringE();
-int APS5_VABI _ZN9Inspector31NetworkBackendDispatcherHandleraSERKS0_();
 int APS5_VABI _ZN7WebCore19ResourceRequestBase17removeCredentialsEv();
 int APS5_VABI WKPageSetCustomTextEncodingName();
 int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager30stopAllMediaPlaybackForProcessEv();
