@@ -3,6 +3,7 @@
 #include "ConstrainedFieldPosition.hpp"
 #include "Enumeration.hpp"
 #include "ErrorName.hpp"
+#include "CharacterNames.hpp"
 #include "Invariant.hpp"
 #include "Iterator.hpp"
 #include "prx/libSceIcu/include/InventoryDispatch.hpp"

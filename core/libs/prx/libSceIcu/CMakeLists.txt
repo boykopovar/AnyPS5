@@ -351,7 +351,7 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-target_sources(libSceIcu PRIVATE BreakIterator.cpp Data.cpp Configuration.cpp)
+target_sources(libSceIcu PRIVATE BreakIterator.cpp Data.cpp Configuration.cpp CharacterNames.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_icu_break_iterator_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/BreakIterator.cpp)
@@ -384,5 +384,18 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_icu_data_registration guest_icu_break_allocator PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_character_names_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/CharacterNames.cpp)
+    target_include_directories(guest_icu_character_names_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_character_names_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_character_names_tests)
+    add_test(NAME guest_icu_character_names COMMAND guest_icu_character_names_tests)
+    set_tests_properties(guest_icu_character_names PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_character_names PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()

@@ -10,7 +10,8 @@
         "ulayout": "include",
         "uemoji": "include",
         "normalization": "include",
-        "misc": "include"
+        "misc": "include",
+        "unames": "include"
     },
     "resourceFilters": [
         {
