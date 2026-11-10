@@ -46,6 +46,11 @@ int main() {
     Require(scePthreadRename(worker, "abcdefghijklmnopqrstuvwxyz01234") == 0);
     Require(sceKernelGetThreadName(workerId.load(), name) == 0);
     Require(std::strlen(name) == 31);
+    for (const char* tooLong : {"abcdefghijklmnopqrstuvwxyz012345", "abcdefghijklmnopqrstuvwxyz0123456789"}) {
+        Require(scePthreadRename(worker, tooLong) == static_cast<std::int32_t>(0x80020016u));
+        Require(sceKernelGetThreadName(workerId.load(), name) == 0);
+        Require(std::strcmp(name, "abcdefghijklmnopqrstuvwxyz01234") == 0);
+    }
 
     Require(scePthreadRename(worker, "") == 0);
     std::memset(name, 0xa5, sizeof(name));
