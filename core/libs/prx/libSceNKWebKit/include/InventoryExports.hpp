@@ -453,8 +453,6 @@ int APS5_VABI WKPageGetInspector();
 int APS5_VABI WKPageGetIsControlledByAutomation();
 int APS5_VABI WKPageGetMediaCaptureEnabled();
 int APS5_VABI WKPageGetMediaState();
-int APS5_VABI WKPageGetPageCount();
-int APS5_VABI WKPageGetPageGroup();
 int APS5_VABI WKPageGetPageZoomFactor();
 int APS5_VABI WKPageGetPaginationLineGridEnabled();
 int APS5_VABI WKPageGetProcessIdentifier();
