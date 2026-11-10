@@ -1,6 +1,27 @@
+import contextlib
+import shutil
 import struct
+import tempfile
+import time
 
 from test_guest_intel_trampolines import main_fixture
+
+
+@contextlib.contextmanager
+def fixture_directory(prefix):
+    directory = tempfile.mkdtemp(prefix=prefix)
+    try:
+        yield directory
+    finally:
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                shutil.rmtree(directory)
+                break
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
 
 
 def dynamic(image, offset, phoff, tags):

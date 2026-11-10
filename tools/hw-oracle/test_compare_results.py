@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import compare_results
 import hw_oracle
 
 
@@ -18,6 +19,39 @@ MODES = dict(ieee=0, denorm32=0, denorm16=3, dx10_clamp=1, round32=0, round16=0,
 
 
 class CompareResultsTests(unittest.TestCase):
+    def test_utf8_bom_and_crlf_keep_identical_and_different_results(self):
+        for before_encoding, after_encoding in (("utf-8-sig", "utf-8"), ("utf-8", "utf-8-sig"), ("utf-8-sig", "utf-8-sig")):
+            for different in (False, True):
+                with self.subTest(before=before_encoding, after=after_encoding, different=different):
+                    after = copy.deepcopy(self.report)
+                    if different:
+                        after["rows"][0]["output"][0] ^= 1
+                    self.before.write_bytes(json.dumps(self.report, indent=2).replace("\n", "\r\n").encode(before_encoding))
+                    self.after.write_bytes(json.dumps(after, indent=2).replace("\n", "\r\n").encode(after_encoding))
+                    result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
+                                            capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, int(different), result.stdout + result.stderr)
+                    self.assertEqual(result.stderr, "")
+
+    def test_deeply_nested_json_is_an_invalid_report_not_a_difference(self):
+        self.before.write_text(json.dumps(self.report), encoding="utf-8")
+        self.after.write_text("[" * 200000, encoding="utf-8")
+        result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("nested too deeply", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_bom_does_not_hide_invalid_json_or_invalid_reports(self):
+        self.before.write_text(json.dumps(self.report), encoding="utf-8")
+        for payload in ("{", "[]", '{"schema_version": 2}'):
+            with self.subTest(payload=payload):
+                self.after.write_text(payload, encoding="utf-8-sig")
+                result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -41,16 +75,28 @@ class CompareResultsTests(unittest.TestCase):
             ],
         }
 
-    def cli(self, before=None, after=None):
+    def cli(self, before=None, after=None, process=False):
         self.before.write_text(json.dumps(self.report if before is None else before), encoding="utf-8")
         self.after.write_text(json.dumps(self.report if after is None else after), encoding="utf-8")
-        return subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
-                              capture_output=True, text=True, timeout=10)
+        if process:
+            return subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
+                                  capture_output=True, text=True, timeout=10)
+        return self.compare()
+
+    def compare(self):
+        argv = [str(SCRIPT), str(self.before), str(self.after)]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch("sys.argv", argv), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                returncode = compare_results.main()
+            except SystemExit as exit:
+                returncode = exit.code
+        return subprocess.CompletedProcess(argv, returncode, stdout.getvalue(), stderr.getvalue())
 
     def test_identical_outputs_across_assembly_targets(self):
         after = copy.deepcopy(self.report)
         after["assembly_target"] = "gfx1100"
-        result = self.cli(after=after)
+        result = self.cli(after=after, process=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("gfx1030 -> gfx1100", result.stdout)
         self.assertIn("2 rows x 2 registers: 0 differing words", result.stdout)
@@ -60,7 +106,7 @@ class CompareResultsTests(unittest.TestCase):
         after = copy.deepcopy(self.report)
         after["rows"][0]["output"][0] = 0x80000000
         after["rows"][1]["output"] = [0x7fc00002, 0]
-        result = self.cli(after=after)
+        result = self.cli(after=after, process=True)
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("3 differing words", result.stdout)
         self.assertIn("row 1, v10: 0x00000000 -> 0x80000000", result.stdout)
@@ -147,8 +193,7 @@ class CompareResultsTests(unittest.TestCase):
             with self.subTest(content=content):
                 if content is not None:
                     self.after.write_bytes(content)
-                result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
-                                        capture_output=True, text=True, timeout=10)
+                result = self.compare()
                 self.assertEqual(result.returncode, 2)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(result.stdout, "")
@@ -177,6 +222,43 @@ class CompareResultsTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 1, result.stderr)
                     self.assertIn("1 differing words", result.stdout)
                     self.assertIn(f"row 1025, v{9 + outs}", result.stdout)
+
+    def test_diagnostic_limit_does_not_limit_comparison_or_hide_failure(self):
+        after = copy.deepcopy(self.report)
+        after["rows"][0]["output"][0] = 1
+        after["rows"][1]["output"] = [2, 3]
+        self.cli(after=after)
+        for limit, shown in ((0, 0), (1, 1), (3, 3), (10, 3)):
+            with self.subTest(limit=limit):
+                result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after),
+                                         "--max-differences", str(limit)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("3 differing words", result.stdout)
+                self.assertEqual(sum(line.startswith("row ") for line in result.stdout.splitlines()), shown)
+                if shown < 3:
+                    self.assertIn(f"{3 - shown} additional differing words omitted", result.stdout)
+        result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after),
+                                 "--max-differences", "-1"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+
+    def test_diagnostic_limit_retains_only_visible_differences_while_counting_all(self):
+        before = copy.deepcopy(self.report)
+        before["rows"] = [
+            {"input": [index, 0, 0, 0], "output": [0, 0]}
+            for index in range(1000)
+        ]
+        after = copy.deepcopy(before)
+        for row in after["rows"]:
+            row["output"] = [1, 2]
+        count, differences = compare_results.compare_limited(before, after, 3)
+        self.assertEqual(count, 2000)
+        self.assertEqual(differences, [
+            (1, "v10", 0, 1),
+            (1, "v11", 0, 2),
+            (2, "v10", 0, 1),
+        ])
+
 
 
 if __name__ == "__main__":

@@ -16,6 +16,12 @@ using FileByteOffset = std::uint64_t;
 using VirtualAddress = std::uint64_t;
 using ByteCount = std::uint64_t;
 
+struct CodeRange {
+    ByteCount Begin;
+    ByteCount End;
+    bool operator==(const CodeRange&) const = default;
+};
+
 struct ElfHeader {
     std::uint16_t Machine;
     std::uint16_t Type;
@@ -51,6 +57,7 @@ struct SectionHeader {
     ByteCount SectionSize;
     std::uint32_t Link;
     std::uint32_t Info;
+    std::uint64_t Alignment;
     std::uint64_t EntrySize;
 };
 
@@ -63,6 +70,7 @@ struct NidReference {
     std::int64_t Addend;
     bool Weak = false;
     bool Function = false;
+    std::uint8_t SymbolType = 0;
 };
 
 struct CallSiteInfo {
@@ -100,6 +108,7 @@ struct SysVDynamicSection {
     std::vector<GuestRuntime> GuestModules;
     std::map<VirtualAddress, std::string> ImportModules;
     std::set<VirtualAddress> FunctionImports;
+    std::set<VirtualAddress> NamedImports;
     std::set<std::string> UnmatchedImportModules;
     std::vector<std::string> NeededLibraries;
 };

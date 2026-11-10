@@ -35,11 +35,14 @@ public:
             if (position < segment.MappedAddress || position - segment.MappedAddress > segment.FileSize)
                 throw RelinkerException("Strict filter: EH frame header exceeds segment", position);
             if (count > segment.FileSize / 2) throw RelinkerException("Strict filter: invalid EH frame count", position);
+            std::set<std::pair<VirtualAddress, VirtualAddress>> listed;
             for (std::uint64_t index = 0; index < count; ++index) {
                 const auto begin = encoded(position, tableEncoding, segment.MappedAddress);
                 const auto fde = encoded(position, tableEncoding, segment.MappedAddress);
                 if (position < segment.MappedAddress || position - segment.MappedAddress > segment.FileSize) throw RelinkerException("Strict filter: EH frame table exceeds segment", position);
-                result.push_back(readFde(begin, fde));
+                if (!listed.emplace(begin, fde).second) continue;
+                auto region = readFde(begin, fde);
+                if (region.End != region.Begin) result.push_back(std::move(region));
             }
         }
         return result;
@@ -139,6 +142,9 @@ private:
                 const bool negative = (value >> 63) != 0;
                 if (negative ? base < std::uint64_t{0} - value : value > std::numeric_limits<VirtualAddress>::max() - base)
                     throw RelinkerException("Strict filter: unwind pointer address overflowed", field);
+            } else if ((encoding & 0x0F) == 2 || (encoding & 0x0F) == 3 || ((encoding & 0x0F) == 4 && (encoding & 0x70) == 0x40)) {
+                if (value > std::numeric_limits<VirtualAddress>::max() - base)
+                    throw RelinkerException("Strict filter: unwind pointer address overflowed", field);
             }
             value = base + value;
         }
@@ -211,7 +217,7 @@ private:
         const auto cie = readCie(cieField - cieOffset);
         const auto begin = encoded(position, cie.PointerEncoding);
         const auto size = encoded(position, cie.PointerEncoding & 0x0F);
-        if (begin != expectedBegin || size == 0 || size > std::numeric_limits<VirtualAddress>::max() - begin)
+        if (begin != expectedBegin || size > std::numeric_limits<VirtualAddress>::max() - begin)
             throw RelinkerException("Strict filter: inconsistent FDE function range", address);
         StrictCodeRegion region{begin, begin + size, {}};
         if (cie.Personality != 0) region.ExtraTargets.push_back(cie.Personality);

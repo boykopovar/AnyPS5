@@ -8,6 +8,7 @@ namespace Relinker {
 using FileByteOffset = Domain::FileByteOffset;
 using VirtualAddress = Domain::VirtualAddress;
 using ByteCount = Domain::ByteCount;
+using CodeRange = Domain::CodeRange;
 using ElfHeader = Domain::ElfHeader;
 using ProgramHeader = Domain::ProgramHeader;
 using SectionHeader = Domain::SectionHeader;

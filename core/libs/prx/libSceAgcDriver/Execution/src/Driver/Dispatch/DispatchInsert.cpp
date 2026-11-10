@@ -18,19 +18,28 @@ void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDis
     if (!noDispatchCache) {
         auto fresh = std::make_shared<DispatchVariant>();
         fresh->compiled = compiledResult;
+        if (capture != nullptr && !capture->snapshot.registeredImages.empty()) fresh->registeredViews = std::make_shared<const std::vector<ShaderRecompiler::RegisteredImageView>>(capture->snapshot.registeredImages);
         fresh->shader = registeredShader;
         fresh->forgetSerial = forgetAtCapture;
 
         std::vector<ShaderRecompiler::MemoryRegion> srtRegions;
+        std::size_t capturedWords = 0;
         for (const auto& region : captured) {
             const bool registered = std::any_of(memory.begin(), memory.end(), [&](const auto& known) { return region.guestAddress >= known.guestAddress && region.guestAddress < known.guestAddress + known.bytes.size(); });
             if (registered) continue;
             srtRegions.push_back(region);
+            capturedWords += region.bytes.size() / sizeof(std::uint32_t);
+        }
+        const auto supplied = shaderMemory->SuppliedBlocks();
+        fresh->runs.reserve(srtRegions.size());
+        fresh->words.reserve(capturedWords);
+        for (const auto& region : srtRegions) {
             fresh->runs.emplace_back(region.guestAddress, region.guestAddress + region.bytes.size());
             const auto count = region.bytes.size() / sizeof(std::uint32_t);
             const auto offset = fresh->words.size();
             fresh->words.resize(offset + count);
             std::memcpy(fresh->words.data() + offset, region.bytes.data(), count * sizeof(std::uint32_t));
+            AppendSharedWords(fresh->shared, fresh->runs.size() - 1u, offset, region.bytes, supplied);
         }
 
         DataWordPositionCounts dataCounts;
@@ -91,7 +100,7 @@ void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDis
                 dispatchOrder.push_front(key);
                 created->order = dispatchOrder.begin();
                 dispatchCache.emplace(key, std::move(created));
-            } else if (found->second != missedEntry && !found->second->variants.empty() && found->second->variants.front()->runs == fresh->runs && found->second->variants.front()->words == fresh->words) {
+            } else if (found->second != missedEntry && !found->second->variants.empty() && found->second->variants.front()->runs == fresh->runs && SameCapturedWords(found->second->variants.front()->words, found->second->variants.front()->shared, fresh->words, fresh->shared)) {
 
                 attachVariant = found->second->variants.front();
             } else {

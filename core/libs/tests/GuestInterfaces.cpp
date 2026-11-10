@@ -1,43 +1,44 @@
+#include "prx/libc/include/Api.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 #else
+#include <arpa/inet.h>
 #include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
+#ifdef __linux__
+#include <net/if_arp.h>
+#include <netpacket/packet.h>
+#elif defined(__APPLE__)
+#include <net/if_dl.h>
+#include <net/if_types.h>
+#endif
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <fstream>
 #endif
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
-struct GuestInterfaceAddress {
-    GuestInterfaceAddress* next;
-    char* name;
-    std::uint32_t flags;
-    void* address;
-    void* netmask;
-    void* destination;
-    void* data;
-};
 static_assert(sizeof(GuestInterfaceAddress) == 56);
 static_assert(offsetof(GuestInterfaceAddress, flags) == 16);
 static_assert(offsetof(GuestInterfaceAddress, address) == 24);
 static_assert(offsetof(GuestInterfaceAddress, netmask) == 32);
 static_assert(offsetof(GuestInterfaceAddress, destination) == 40);
 static_assert(offsetof(GuestInterfaceAddress, data) == 48);
-
-extern "C" {
-int APS5_VABI getifaddrs_nid_postfix(GuestInterfaceAddress** list);
-void APS5_VABI freeifaddrs_nid_postfix(GuestInterfaceAddress* list);
-void APS5_VABI free_nid_postfix(void* pointer);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -46,6 +47,12 @@ struct HostInterfaceAddress {
     std::uint8_t address[16];
     std::uint8_t netmask[16];
     std::uint32_t scope;
+    char name[16];
+    unsigned int index;
+    std::uint8_t type;
+    std::uint8_t hardwareLength;
+    std::uint8_t hardware[8];
+    bool loopbackUp;
 };
 
 static HostInterfaceAddress HostAddress(const sockaddr* address) {
@@ -60,6 +67,207 @@ static HostInterfaceAddress HostAddress(const sockaddr* address) {
     }
     return entry;
 }
+
+#ifdef __linux__
+constexpr int HostLinkFamily = AF_PACKET;
+
+static std::uint64_t SysfsCounter(const char* name, const char* file) {
+    std::ifstream input(std::string("/sys/class/net/") + name + "/statistics/" + file);
+    unsigned long long value = 0;
+    Require(static_cast<bool>(input >> value));
+    return value;
+}
+#elif defined(__APPLE__)
+constexpr int HostLinkFamily = AF_LINK;
+
+static std::uint64_t SysfsCounter(const char* name, const char* file) {
+    ifaddrs* host = nullptr;
+    Require(::getifaddrs(&host) == 0);
+    std::uint64_t value = 0;
+    bool found = false;
+    for (auto* item = host; item; item = item->ifa_next) {
+        if (!item->ifa_addr || item->ifa_addr->sa_family != AF_LINK || std::strcmp(item->ifa_name, name) != 0 || !item->ifa_data) continue;
+        const auto& data = *static_cast<const if_data*>(item->ifa_data);
+        const std::string counter(file);
+        value = counter == "rx_packets" ? data.ifi_ipackets : counter == "tx_packets" ? data.ifi_opackets : counter == "rx_bytes" ? data.ifi_ibytes : data.ifi_obytes;
+        found = true;
+    }
+    ::freeifaddrs(host);
+    Require(found);
+    return value;
+}
+#endif
+
+#if defined(__linux__) || defined(__APPLE__)
+
+static std::uint32_t HostMtu(const char* name) {
+    const int probe = ::socket(AF_INET, SOCK_DGRAM, 0);
+    Require(probe >= 0);
+    ifreq request{};
+    std::strncpy(request.ifr_name, name, sizeof(request.ifr_name) - 1);
+    Require(::ioctl(probe, SIOCGIFMTU, &request) == 0);
+    ::close(probe);
+    return static_cast<std::uint32_t>(request.ifr_mtu);
+}
+
+static void SendLoopbackDatagram() {
+    const int receiver = ::socket(AF_INET, SOCK_DGRAM, 0);
+    const int sender = ::socket(AF_INET, SOCK_DGRAM, 0);
+    Require(receiver >= 0 && sender >= 0);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    Require(::bind(receiver, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0);
+    socklen_t length = sizeof(address);
+    Require(::getsockname(receiver, reinterpret_cast<sockaddr*>(&address), &length) == 0);
+    const char payload = 'x';
+    Require(::sendto(sender, &payload, 1, 0, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 1);
+    char received = 0;
+    Require(::recv(receiver, &received, 1, 0) == 1);
+    ::close(sender);
+    ::close(receiver);
+}
+#endif
+
+#ifdef _WIN32
+static void RequireWindowsLink(bool value, const char* message) {
+    if (!value) {
+        std::fprintf(stderr, "guest_interfaces: %s\n", message);
+        std::abort();
+    }
+}
+
+static void CheckWindowsLinks() {
+    GuestInterfaceAddress* first = nullptr;
+    GuestInterfaceAddress* second = nullptr;
+    const ULONG options = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    ULONG size = 0;
+    std::vector<std::uint8_t> storage;
+    ULONG result = GetAdaptersAddresses(AF_UNSPEC, options, nullptr, nullptr, &size);
+    for (unsigned calls = 1; result == ERROR_BUFFER_OVERFLOW && calls < 4; ++calls) {
+        storage.resize(size);
+        result = GetAdaptersAddresses(AF_UNSPEC, options, nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data()), &size);
+    }
+    Require(result == NO_ERROR);
+    std::vector<MIB_IF_ROW2> baseline;
+    for (auto* adapter = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data()); adapter; adapter = adapter->Next) {
+        MIB_IF_ROW2 row{};
+        row.InterfaceLuid = adapter->Luid;
+        Require(GetIfEntry2(&row) == NO_ERROR);
+        baseline.push_back(row);
+    }
+    Require(getifaddrs_nid_postfix(&first) == 0);
+    Require(getifaddrs_nid_postfix(&second) == 0);
+    bool loopback = false;
+    bool hardware = false;
+    std::size_t adapters = 0;
+    for (auto* adapter = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data()); adapter; adapter = adapter->Next) {
+        ++adapters;
+        char nativeName[NDIS_IF_MAX_STRING_SIZE + 1] = {};
+        Require(ConvertInterfaceLuidToNameA(&adapter->Luid, nativeName, sizeof(nativeName)) == NO_ERROR);
+        const auto index = adapter->IfIndex ? adapter->IfIndex : adapter->Ipv6IfIndex;
+        const std::string name = std::strlen(nativeName) < 16 ? nativeName : "if" + std::to_string(index);
+        const GuestInterfaceAddress* links[2] = {};
+        const GuestInterfaceAddress* lists[] = {first, second};
+        for (std::size_t snapshot = 0; snapshot < 2; ++snapshot) {
+            unsigned count = 0;
+            for (auto* item = lists[snapshot]; item; item = item->next) {
+                if (name != item->name) continue;
+                const auto* address = static_cast<const std::uint8_t*>(item->address);
+                Require(address != nullptr);
+                if (address[1] == 18) {
+                    RequireWindowsLink(count == 0, "duplicate AF_LINK entry");
+                    links[snapshot] = item;
+                    ++count;
+                } else {
+                    RequireWindowsLink(count == 1, "address entry has no preceding AF_LINK entry");
+                    RequireWindowsLink(item->flags == links[snapshot]->flags, "link and address flags disagree");
+                    bool nativeAddress = false;
+                    for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
+                        const auto* hostAddress = unicast->Address.lpSockaddr;
+                        if (!hostAddress || (hostAddress->sa_family != AF_INET && hostAddress->sa_family != AF_INET6)) continue;
+                        const auto expected = HostAddress(hostAddress);
+                        const bool ipv4 = address[1] == 2;
+                        nativeAddress = nativeAddress || (expected.family == (ipv4 ? AF_INET : AF_INET6) &&
+                            std::memcmp(address + (ipv4 ? 4 : 8), expected.address, ipv4 ? 4 : 16) == 0);
+                    }
+                    RequireWindowsLink(nativeAddress, "address belongs to a different native interface index");
+                }
+            }
+            RequireWindowsLink(count == 1, "native adapter has no AF_LINK entry");
+            const auto* link = static_cast<const std::uint8_t*>(links[snapshot]->address);
+            const auto* data = static_cast<const std::uint8_t*>(links[snapshot]->data);
+            RequireWindowsLink(data != nullptr, "AF_LINK entry has no if_data");
+            std::uint16_t guestIndex = 0;
+            std::uint16_t dataLength = 0;
+            std::uint32_t mtu = 0;
+            std::memcpy(&guestIndex, link + 2, sizeof(guestIndex));
+            std::memcpy(&dataLength, data + 6, sizeof(dataLength));
+            std::memcpy(&mtu, data + 8, sizeof(mtu));
+            RequireWindowsLink(guestIndex == index, "AF_LINK index differs from native adapter");
+            const std::uint8_t type = adapter->IfType == IF_TYPE_ETHERNET_CSMACD ? 0x6
+                : adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK ? 0x18 : adapter->IfType == IF_TYPE_PPP ? 0x17 : 0x1;
+            RequireWindowsLink(link[4] == type, "AF_LINK type differs from native adapter");
+            Require(link[0] >= 54 && link[0] % 8 == 0 && link[5] == name.size() && link[7] == 0);
+            Require(std::memcmp(link + 8, name.data(), name.size()) == 0);
+            Require(links[snapshot]->netmask == nullptr && links[snapshot]->destination == nullptr);
+            Require(dataLength == 152 && data[0] == link[4] && data[2] == link[6]);
+            RequireWindowsLink(mtu == adapter->Mtu, "AF_LINK MTU differs from native adapter");
+            if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+                RequireWindowsLink(link[4] == 0x18 && link[6] == 0 && data[3] == 0, "loopback link type or hardware address is incorrect");
+                loopback = true;
+            } else {
+                RequireWindowsLink(link[6] == adapter->PhysicalAddressLength &&
+                    std::memcmp(link + 8 + name.size(), adapter->PhysicalAddress, link[6]) == 0, "AF_LINK MAC differs from native adapter");
+                hardware = hardware || adapter->PhysicalAddressLength != 0;
+            }
+        }
+        const auto* before = static_cast<const std::uint8_t*>(links[0]->data);
+        const auto* after = static_cast<const std::uint8_t*>(links[1]->data);
+        const auto& initial = baseline[adapters - 1];
+        MIB_IF_ROW2 final{};
+        final.InterfaceLuid = adapter->Luid;
+        Require(GetIfEntry2(&final) == NO_ERROR);
+        RequireWindowsLink(initial.InterfaceIndex == index && final.InterfaceIndex == index, "adapter and counter indices disagree");
+        const auto counters = [](const MIB_IF_ROW2& row) {
+            return std::array<std::uint64_t, 12>{row.InUcastPkts + row.InNUcastPkts, row.InErrors,
+                row.OutUcastPkts + row.OutNUcastPkts, row.OutErrors, 0, row.InOctets, row.OutOctets,
+                row.InNUcastPkts, row.OutNUcastPkts, row.InDiscards, row.OutDiscards, row.InUnknownProtos};
+        };
+        const auto lower = counters(initial);
+        const auto upper = counters(final);
+        for (std::size_t offset = 24; offset <= 112; offset += 8) {
+            std::uint64_t oldValue = 0;
+            std::uint64_t newValue = 0;
+            std::memcpy(&oldValue, before + offset, sizeof(oldValue));
+            std::memcpy(&newValue, after + offset, sizeof(newValue));
+            RequireWindowsLink(newValue >= oldValue, "interface counter decreased between snapshots");
+            RequireWindowsLink(oldValue >= lower[(offset - 24) / 8] && newValue <= upper[(offset - 24) / 8],
+                "interface counter differs from native bounds");
+        }
+    }
+    for (const auto* list : {first, second}) {
+        std::size_t links = 0;
+        for (auto* item = list; item; item = item->next) {
+            const auto* address = static_cast<const std::uint8_t*>(item->address);
+            if (address[1] == 18) ++links;
+            else {
+                unsigned owners = 0;
+                for (auto* candidate = list; candidate; candidate = candidate->next) {
+                    const auto* link = static_cast<const std::uint8_t*>(candidate->address);
+                    if (link[1] == 18 && std::strcmp(candidate->name, item->name) == 0) ++owners;
+                }
+                RequireWindowsLink(owners == 1, "address entry does not have exactly one same-name AF_LINK entry");
+            }
+        }
+        RequireWindowsLink(links == adapters, "AF_LINK count differs from native adapter count");
+    }
+    RequireWindowsLink(loopback, "no loopback AF_LINK checked");
+    RequireWindowsLink(hardware, "no non-loopback MAC and MTU checked");
+    freeifaddrs_nid_postfix(first);
+    freeifaddrs_nid_postfix(second);
+}
+#endif
 
 static std::vector<HostInterfaceAddress> HostSnapshot() {
     std::vector<HostInterfaceAddress> entries;
@@ -88,22 +296,64 @@ static std::vector<HostInterfaceAddress> HostSnapshot() {
 #else
     ifaddrs* host = nullptr;
     Require(::getifaddrs(&host) == 0);
+    std::vector<std::string> names;
+    std::vector<std::vector<HostInterfaceAddress>> groups;
+    const auto group = [&](const char* name) -> std::vector<HostInterfaceAddress>& {
+        for (std::size_t index = 0; index < names.size(); ++index)
+            if (names[index] == name) return groups[index];
+        names.emplace_back(name);
+        return groups.emplace_back();
+    };
     try {
         for (auto* item = host; item; item = item->ifa_next) {
-            if (!item->ifa_addr || (item->ifa_addr->sa_family != AF_INET && item->ifa_addr->sa_family != AF_INET6)) continue;
+            if (!item->ifa_addr) continue;
+#ifdef __linux__
+            if (item->ifa_addr->sa_family == AF_PACKET) {
+                const auto& link = *reinterpret_cast<const sockaddr_ll*>(item->ifa_addr);
+                HostInterfaceAddress entry{};
+                entry.family = AF_PACKET;
+                std::strncpy(entry.name, item->ifa_name, sizeof(entry.name) - 1);
+                entry.index = static_cast<unsigned int>(link.sll_ifindex);
+                entry.type = link.sll_hatype == ARPHRD_ETHER ? 0x6 : link.sll_hatype == ARPHRD_LOOPBACK ? 0x18 : link.sll_hatype == ARPHRD_PPP ? 0x17 : 0x1;
+                entry.hardwareLength = entry.type == 0x18 ? 0 : link.sll_halen;
+                std::memcpy(entry.hardware, link.sll_addr, entry.hardwareLength);
+                entry.loopbackUp = (item->ifa_flags & IFF_UP) != 0;
+                auto& members = group(item->ifa_name);
+                members.insert(members.begin(), entry);
+                continue;
+            }
+#elif defined(__APPLE__)
+            if (item->ifa_addr->sa_family == AF_LINK) {
+                const auto& link = *reinterpret_cast<const sockaddr_dl*>(item->ifa_addr);
+                HostInterfaceAddress entry{};
+                entry.family = AF_LINK;
+                std::strncpy(entry.name, item->ifa_name, sizeof(entry.name) - 1);
+                entry.index = link.sdl_index;
+                entry.type = link.sdl_type == IFT_ETHER ? 0x6 : link.sdl_type == IFT_LOOP ? 0x18 : link.sdl_type == IFT_PPP ? 0x17 : 0x1;
+                entry.hardwareLength = entry.type == 0x18 ? 0 : std::min<std::uint8_t>(link.sdl_alen, sizeof(entry.hardware));
+                std::memcpy(entry.hardware, link.sdl_data + link.sdl_nlen, entry.hardwareLength);
+                entry.loopbackUp = (item->ifa_flags & IFF_UP) != 0;
+                auto& members = group(item->ifa_name);
+                members.insert(members.begin(), entry);
+                continue;
+            }
+#endif
+            if (item->ifa_addr->sa_family != AF_INET && item->ifa_addr->sa_family != AF_INET6) continue;
             Require(item->ifa_netmask != nullptr);
             HostInterfaceAddress entry = HostAddress(item->ifa_addr);
+            std::strncpy(entry.name, item->ifa_name, sizeof(entry.name) - 1);
             if (entry.family == AF_INET)
                 std::memcpy(entry.netmask, &reinterpret_cast<const sockaddr_in*>(item->ifa_netmask)->sin_addr, 4);
             else
                 std::memcpy(entry.netmask, &reinterpret_cast<const sockaddr_in6*>(item->ifa_netmask)->sin6_addr, 16);
-            entries.push_back(entry);
+            group(item->ifa_name).push_back(entry);
         }
     } catch (...) {
         ::freeifaddrs(host);
         throw;
     }
     ::freeifaddrs(host);
+    for (const auto& members : groups) entries.insert(entries.end(), members.begin(), members.end());
 #endif
     return entries;
 }
@@ -111,10 +361,17 @@ static std::vector<HostInterfaceAddress> HostSnapshot() {
 int main() {
     std::array<void*, 10> api{};
     ApplicationHeapRegister_nid_no_patch(api.data());
+#ifdef _WIN32
+    CheckWindowsLinks();
+#endif
     constexpr std::uint32_t knownFlags = 0x1 | 0x2 | 0x8 | 0x10 | 0x40 | 0x80 | 0x100 | 0x200 | 0x8000;
     const std::uint8_t loopbackAddress[] = {127, 0, 0, 1};
     const std::uint8_t loopbackMask[] = {255, 0, 0, 0};
     bool matched = false;
+#if defined(__linux__) || defined(__APPLE__)
+    bool linkChecked = false;
+    SendLoopbackDatagram();
+#endif
     for (unsigned attempt = 0; attempt < 3 && !matched; ++attempt) {
         const std::vector<HostInterfaceAddress> host = HostSnapshot();
         GuestInterfaceAddress* list = nullptr;
@@ -123,13 +380,56 @@ int main() {
         bool equal = true;
         bool loopback = false;
         for (auto* item = list; item; item = item->next) {
+#ifdef _WIN32
+            const auto* family = static_cast<const std::uint8_t*>(item->address);
+            if (family && family[1] == 18) continue;
+#endif
             Require(++entries < 100000);
             Require(item->name != nullptr);
             const std::size_t nameLength = std::strlen(item->name);
             Require(nameLength >= 1 && nameLength <= 15);
             Require((item->flags & ~knownFlags) == 0);
-            Require(item->data == nullptr);
             const auto* address = static_cast<const std::uint8_t*>(item->address);
+            Require(address != nullptr && reinterpret_cast<std::uintptr_t>(address) % 8 == 0);
+#if defined(__linux__) || defined(__APPLE__)
+            if (address[1] == 18) {
+                Require(item->netmask == nullptr && item->destination == nullptr);
+                const auto* data = static_cast<const std::uint8_t*>(item->data);
+                Require(data != nullptr && reinterpret_cast<std::uintptr_t>(data) % 8 == 0);
+                std::uint16_t index = 0;
+                std::uint16_t dataLength = 0;
+                std::uint32_t mtu = 0;
+                std::uint64_t counters[11] = {};
+                std::memcpy(&index, address + 2, 2);
+                std::memcpy(&dataLength, data + 6, 2);
+                std::memcpy(&mtu, data + 8, 4);
+                std::memcpy(counters, data + 24, sizeof(counters));
+                Require(address[0] >= 54 && address[0] % 8 == 0 && address[0] >= 24 + address[6]);
+                Require(address[5] == nameLength && std::memcmp(address + 8, item->name, nameLength) == 0 && address[7] == 0);
+                Require(dataLength == 152 && data[0] == address[4] && data[2] == address[6] && data[1] == 0 && data[5] == 0);
+                Require(data[4] == 1 || data[4] == 2);
+                Require(index == if_nametoindex(item->name));
+                Require(mtu == HostMtu(item->name));
+                Require(counters[0] <= SysfsCounter(item->name, "rx_packets") && counters[2] <= SysfsCounter(item->name, "tx_packets"));
+                Require(counters[5] <= SysfsCounter(item->name, "rx_bytes") && counters[6] <= SysfsCounter(item->name, "tx_bytes"));
+                if (entries <= host.size()) {
+                    const HostInterfaceAddress& expected = host[entries - 1];
+                    equal = equal && expected.family == HostLinkFamily && std::strcmp(expected.name, item->name) == 0 && expected.index == index &&
+                        expected.type == address[4] && expected.hardwareLength == address[6] &&
+                        std::memcmp(expected.hardware, address + 8 + nameLength, expected.hardwareLength) == 0;
+                    if (expected.type == 0x18) {
+                        Require(data[3] == 0 && data[4] == (expected.loopbackUp ? 2 : 1));
+                        if (expected.loopbackUp) Require(counters[0] > 0 && counters[2] > 0 && counters[5] > 0 && counters[6] > 0);
+                        linkChecked = linkChecked || expected.loopbackUp;
+                    }
+                    if (expected.type == 0x6) Require(data[3] == 14 && address[6] == 6);
+                } else {
+                    equal = false;
+                }
+                continue;
+            }
+#endif
+            Require(item->data == nullptr);
             const auto* netmask = static_cast<const std::uint8_t*>(item->netmask);
             Require(address != nullptr && netmask != nullptr);
             Require(reinterpret_cast<std::uintptr_t>(address) % 8 == 0);
@@ -151,6 +451,9 @@ int main() {
             if (item->flags & 0x10) Require(item->destination != nullptr);
             if (entries <= host.size()) {
                 const HostInterfaceAddress& expected = host[entries - 1];
+#ifndef _WIN32
+                equal = equal && std::strcmp(expected.name, item->name) == 0;
+#endif
                 const bool ipv4 = address[1] == 2;
                 const std::size_t offset = ipv4 ? 4 : 8;
                 const std::size_t length = ipv4 ? 4 : 16;
@@ -170,12 +473,17 @@ int main() {
         }
         matched = equal && entries == host.size() && loopback;
         freeifaddrs_nid_postfix(list);
+
     }
     Require(matched);
+#if defined(__linux__) || defined(__APPLE__)
+    Require(linkChecked);
+#endif
     GuestInterfaceAddress* released = nullptr;
     Require(getifaddrs_nid_postfix(&released) == 0 && released != nullptr);
     free_nid_postfix(released);
     freeifaddrs_nid_postfix(nullptr);
+
     *__error_nid_postfix() = 0;
     Require(getifaddrs_nid_postfix(nullptr) == -1);
     Require(*__error_nid_postfix() == 14);

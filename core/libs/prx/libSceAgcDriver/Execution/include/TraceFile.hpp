@@ -8,7 +8,9 @@ namespace AgcDriver {
 
 class TraceFile {
 public:
+    static std::filesystem::path Directory();
     static void WriteGzip(const std::filesystem::path& path, std::string_view text);
+    static void ReplaceGzip(const std::filesystem::path& path, std::string_view text);
     static void AppendLine(const std::filesystem::path& path, std::string_view line);
 };
 

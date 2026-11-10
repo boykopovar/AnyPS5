@@ -1,0 +1,699 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
+#include <atomic>
+#include <cinttypes>
+#include <cstdio>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <stdexcept>
+#include <string>
+#include "SceTypes.hpp"
+#include "prx/libSceLibreSsl/include/Bio.hpp"
+#include "prx/libc/include/General.hpp"
+#include "mbedtls/des.h"
+
+namespace {
+
+constexpr std::size_t DesScheduleBytes = 128;
+constexpr int CryptoNumLocks = 41;
+
+static_assert(sizeof(CryptoThreadId) == 16);
+
+std::atomic<void*> lockingCallback{nullptr};
+std::atomic<void*> addLockCallback{nullptr};
+std::atomic<void*> threadIdCallback{nullptr};
+
+struct X509Extension {
+    void* object;
+    std::int32_t critical;
+    void* value;
+};
+
+static_assert(sizeof(X509Extension) == 24);
+static_assert(offsetof(X509Extension, object) == 0);
+static_assert(offsetof(X509Extension, critical) == 8);
+static_assert(offsetof(X509Extension, value) == 16);
+
+} // namespace
+
+extern "C" {
+
+APS5_DUMMY_FUN
+int APS5_VABI BIO_f_ssl_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI BIO_printf_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI BIO_write_nid_postfix(LibreSsl::Bio* bio, const void* source, int size) {
+    return LibreSslBioWrite_nid_no_patch(bio, source, size);
+}
+
+void APS5_VABI CONF_modules_free_nid_postfix(void) {}
+
+int APS5_VABI CONF_modules_load_file_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI CRYPTO_THREADID_set_callback_nid_postfix(void* callback) {
+    void* expected = nullptr;
+    return threadIdCallback.compare_exchange_strong(expected, callback) ? 1 : 0;
+}
+
+void APS5_VABI CRYPTO_THREADID_set_numeric_nid_postfix(CryptoThreadId* id, std::uint64_t value) {
+    if (id == nullptr) APS5_INVALID_ARG_EX;
+    *id = {};
+    id->val = value;
+}
+
+int APS5_VABI CRYPTO_num_locks_nid_postfix(void) {
+    return CryptoNumLocks;
+}
+
+void APS5_VABI CRYPTO_set_add_lock_callback_nid_postfix(void* callback) {
+    addLockCallback.store(callback);
+}
+
+void APS5_VABI CRYPTO_set_locking_callback_nid_postfix(void* callback) {
+    lockingCallback.store(callback);
+}
+
+void APS5_VABI DES_ecb_encrypt_nid_postfix(const unsigned char* input, unsigned char* output, const unsigned char* schedule, int enc) {
+    if (input == nullptr || output == nullptr || schedule == nullptr) APS5_INVALID_ARG_EX;
+    mbedtls_des_context context;
+    mbedtls_des_init(&context);
+    unsigned char block[MBEDTLS_DES_KEY_SIZE];
+    std::memcpy(block, input, sizeof(block));
+    int status = enc ? mbedtls_des_setkey_enc(&context, schedule) : mbedtls_des_setkey_dec(&context, schedule);
+    if (status == 0) status = mbedtls_des_crypt_ecb(&context, block, output);
+    mbedtls_des_free(&context);
+    if (status != 0) throw std::runtime_error("DES_ecb_encrypt: mbedtls failed");
+}
+
+int APS5_VABI DES_set_key_nid_postfix(const unsigned char* key, unsigned char* schedule) {
+    if (key == nullptr || schedule == nullptr) APS5_INVALID_ARG_EX;
+    std::memset(schedule, 0, DesScheduleBytes);
+    std::memcpy(schedule, key, MBEDTLS_DES_KEY_SIZE);
+    return 0;
+}
+
+void APS5_VABI DES_set_odd_parity_nid_postfix(unsigned char* key) {
+    if (key == nullptr) APS5_INVALID_ARG_EX;
+    mbedtls_des_key_set_parity(key);
+}
+
+int APS5_VABI DTLSv1_client_method_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI DTLSv1_server_method_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI EC_KEY_get0_private_key_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI EC_KEY_set_private_key_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI EC_POINT_mul_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI ENGINE_get_id_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI ENGINE_set_default_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI EVP_DigestVerifyFinal_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI EVP_DigestVerifyInit_nid_postfix(EvpMdContext* context, void**, const EvpMd*, void*, void* pkey) {
+    if (!context) throw std::invalid_argument("null EVP digest context");
+    if (context->pkeyContext || pkey) NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI EVP_PKEY_get1_EC_KEY_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+
+int APS5_VABI OBJ_obj2nid_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI OCSP_BASICRESP_free_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI OCSP_basic_add1_cert_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI OCSP_basic_verify_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI OCSP_response_get1_basic_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+void APS5_VABI OPENSSL_add_all_algorithms_noconf_nid_postfix(void) {}
+
+void APS5_VABI OPENSSL_load_builtin_modules_nid_postfix(void) {}
+
+int APS5_VABI PEM_X509_INFO_read_bio_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI PEM_read_RSAPrivateKey_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI PEM_read_X509_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI PEM_read_bio_PrivateKey_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI PEM_read_bio_X509_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI PEM_write_bio_X509_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+void APS5_VABI PKCS12_PBE_add_nid_postfix(void) {}
+
+int APS5_VABI PKCS12_free_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI PKCS12_parse_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI RSA_generate_key_ex_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_add_client_CA_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_check_private_key_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_free_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_get_ex_data_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_load_verify_locations_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_load_verify_mem_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_new_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_set1_groups_list_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_set_alpn_protos_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_set_cert_store_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_set_cipher_list_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_set_ex_data_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+
+
+int APS5_VABI SSL_CTX_use_PrivateKey_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_use_PrivateKey_ASN1_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_use_PrivateKey_file_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_use_certificate_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_use_certificate_ASN1_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_use_certificate_chain_file_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_CTX_use_certificate_file_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_SESSION_free_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_accept_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_check_private_key_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_connect_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_free_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_get0_param_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_get1_session_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+
+int APS5_VABI SSL_get_error_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_get_ex_data_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_get_fd_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_get_peer_cert_chain_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_get_peer_certificate_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+
+int APS5_VABI SSL_get_servername_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+
+int APS5_VABI SSL_library_init_nid_postfix(void) {
+    return 1;
+}
+
+void APS5_VABI SSL_load_error_strings_nid_postfix(void) {}
+
+int APS5_VABI SSL_new_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_peek_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_pending_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_read_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_set_SSL_CTX_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_set_bio_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_set_ex_data_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_set_fd_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_set_session_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_shutdown_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_use_PrivateKey_ASN1_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_use_certificate_ASN1_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSL_write_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::uint64_t APS5_VABI SSLeay_nid_postfix(void) {
+    return 0x20000000;
+}
+
+int APS5_VABI SSLv23_client_method_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI SSLv23_server_method_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI TLS_client_method_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI UI_OpenSSL_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI X509V3_EXT_print_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI X509_EXTENSION_get_critical_nid_postfix(const void* extension) {
+    if (!extension) return 0;
+    std::int32_t critical;
+    std::memcpy(&critical, static_cast<const unsigned char*>(extension) + offsetof(X509Extension, critical), sizeof(critical));
+    return critical > 0;
+}
+
+void* APS5_VABI X509_EXTENSION_get_data_nid_postfix(const void* extension) {
+    if (!extension) return nullptr;
+    void* value;
+    std::memcpy(&value, static_cast<const unsigned char*>(extension) + offsetof(X509Extension, value), sizeof(value));
+    return value;
+}
+
+void* APS5_VABI X509_EXTENSION_get_object_nid_postfix(const void* extension) {
+    if (!extension) return nullptr;
+    void* object;
+    std::memcpy(&object, static_cast<const unsigned char*>(extension) + offsetof(X509Extension, object), sizeof(object));
+    return object;
+}
+
+int APS5_VABI X509_INFO_free_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI X509_NAME_print_ex_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI X509_STORE_add_cert_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI X509_STORE_add_crl_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI X509_check_issued_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI X509_free_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI X509_get_ext_d2i_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI X509_get_pubkey_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI X509_load_crl_file_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI X509_print_ex_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI X509_verify_cert_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+const char* APS5_VABI X509_verify_cert_error_string_nid_postfix(std::int64_t error) {
+    static constexpr const char* messages[] {
+        "ok",
+        nullptr,
+        "unable to get issuer certificate",
+        "unable to get certificate CRL",
+        "unable to decrypt certificate's signature",
+        "unable to decrypt CRL's signature",
+        "unable to decode issuer public key",
+        "certificate signature failure",
+        "CRL signature failure",
+        "certificate is not yet valid",
+        "certificate has expired",
+        "CRL is not yet valid",
+        "CRL has expired",
+        "format error in certificate's notBefore field",
+        "format error in certificate's notAfter field",
+        "format error in CRL's lastUpdate field",
+        "format error in CRL's nextUpdate field",
+        "out of memory",
+        "self signed certificate",
+        "self signed certificate in certificate chain",
+        "unable to get local issuer certificate",
+        "unable to verify the first certificate",
+        "certificate chain too long",
+        "certificate revoked",
+        "invalid CA certificate",
+        "path length constraint exceeded",
+        "unsupported certificate purpose",
+        "certificate not trusted",
+        "certificate rejected",
+        "subject issuer mismatch",
+        "authority and subject key identifier mismatch",
+        "authority and issuer serial number mismatch",
+        "key usage does not include certificate signing",
+        "unable to get CRL issuer certificate",
+        "unhandled critical extension",
+        "key usage does not include CRL signing",
+        "unhandled critical CRL extension",
+        "invalid non-CA certificate (has CA markings)",
+        "proxy path length constraint exceeded",
+        "key usage does not include digital signature",
+        "proxy certificates not allowed, please set the appropriate flag",
+        "invalid or inconsistent certificate extension",
+        "invalid or inconsistent certificate policy extension",
+        "no explicit policy",
+        "Different CRL scope",
+        "Unsupported extension feature",
+        "RFC 3779 resource not subset of parent's resources",
+        "permitted subtree violation",
+        "excluded subtree violation",
+        "name constraints minimum and maximum not supported",
+        "application verification failure",
+        "unsupported name constraint type",
+        "unsupported or invalid name constraint syntax",
+        "unsupported or invalid name syntax",
+        "CRL path validation error",
+    };
+    const auto code = static_cast<std::uint32_t>(error);
+    if (code < sizeof(messages) / sizeof(messages[0]) && messages[code]) return messages[code];
+    static char unknown[100];
+    std::snprintf(unknown, sizeof(unknown), "error number %" PRId64, error);
+    return unknown;
+}
+
+int APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI d2i_PKCS12_bio_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI d2i_PKCS12_fp_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI d2i_X509_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI i2d_X509_PUBKEY_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceLibreSslGetMemoryPoolStats(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceLibreSslInit(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceLibreSslInitEx(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceLibreSslInitEx2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceLibreSslTerm(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+}

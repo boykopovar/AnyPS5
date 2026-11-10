@@ -1,14 +1,8 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdlib>
 #include <initializer_list>
-
-extern "C" {
-int APS5_VABI sceKernelInstallExceptionHandler(int signum, void* handler);
-int APS5_VABI sceKernelRemoveExceptionHandler(int signum);
-}
-
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
-static constexpr int SCE_KERNEL_ERROR_EAGAIN = static_cast<int>(0x80020023);
 
 static void APS5_VABI Handler(int, void*) {}
 static void APS5_VABI Other(int, void*) {}

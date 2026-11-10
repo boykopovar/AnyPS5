@@ -7,9 +7,24 @@ namespace AgcDriver::DriverDetail {
 void Driver::classifyDiffering(std::uint64_t program, std::uint64_t key, const DispatchVariant& old, const DispatchVariant& fresh, const ShaderRecompiler::ResourceCapture* capture, EntryCounters& counters) {
     ++counters.differingClassified;
     ++counters.differingByProgram[program];
+    const auto valueSet = [](const DispatchVariant& variant) {
+        std::uint64_t hash = 0xcbf29ce484222325ull;
+        const auto mix = [&](std::uint64_t value) {
+            hash ^= value;
+            hash *= 0x100000001b3ull;
+        };
+        mix(variant.runs.size());
+        for (const auto& [begin, end] : variant.runs) {
+            mix(begin);
+            mix(end);
+        }
+        mix(variant.words.size());
+        for (const auto word : variant.words) mix(word);
+        return hash;
+    };
     auto& ring = priorValueSets[key];
-    if (std::any_of(ring.begin(), ring.end(), [&](const ValueSet& set) { return set.first == fresh.runs && set.second == fresh.words; })) ++counters.differingMatchedPrior;
-    ring.emplace_front(old.runs, old.words);
+    if (std::find(ring.begin(), ring.end(), valueSet(fresh)) != ring.end()) ++counters.differingMatchedPrior;
+    ring.push_front(valueSet(old));
     while (ring.size() > 3) ring.pop_back();
     if (priorValueSets.size() > dispatchCacheEntries()) priorValueSets.clear();
     if (old.runs != fresh.runs || old.words.size() != fresh.words.size()) {
@@ -43,7 +58,7 @@ void Driver::classifyDiffering(std::uint64_t program, std::uint64_t key, const D
 void Driver::reportDispatchCache(EntryCounters& counters) {
     const auto count = [](std::uint64_t value) { return static_cast<unsigned long long>(value); };
     const auto validated = counters.lookups - counters.absent;
-    AgcDriver::ProfilePrint_nid_no_patch("[dispatch-cache] %llu lookups (10 s): %llu no entry, %llu validated by value in %.1f us each: %llu equal, %llu differing, %llu page not mapped, %llu queued label, %llu image being stored, %llu publish generation moved, %llu pending serial moved, %llu forget serial moved (%llu pending images stored first, %llu pending runs synced first, %llu equal entries inserted before a forget; gate retried %llu: %llu equal, %llu moved again); runs per entry %.1f validated / %.1f inserted; %llu misses found the entry replaced meanwhile; %llu inserts (%llu captures not kept: unstable), %llu evictions in total, %zu entries, %llu LRU moves\n", count(counters.lookups), count(counters.absent), count(validated), validated != 0 ? counters.validateUs / static_cast<double>(validated) : 0.0, count(counters.equal), count(counters.differing), count(counters.inaccessible), count(counters.queuedLabel), count(counters.flushingImage), count(counters.publishMoved), count(counters.pendingMoved), count(counters.forgetMoved), count(counters.imagesFlushed), count(counters.runsSynced), count(counters.forgetSinceInsert), count(counters.retriesEqual + counters.retriesMoved), count(counters.retriesEqual), count(counters.retriesMoved), validated != 0 ? static_cast<double>(counters.runsValidated) / static_cast<double>(validated) : 0.0, counters.inserts != 0 ? static_cast<double>(counters.runsInserted) / static_cast<double>(counters.inserts) : 0.0, count(counters.replaced), count(counters.inserts), count(counters.unstable), count(dispatchCacheEvictions), dispatchCache.size(), count(counters.touches));
+    AgcDriver::ProfilePrint_nid_no_patch("[dispatch-cache] %llu lookups (10 s): %llu no entry, %llu validated by value in %.1f us each: %llu equal, %llu differing, %llu recaptured over queued stores, %llu page not mapped, %llu queued label, %llu image being stored, %llu publish generation moved, %llu pending serial moved, %llu forget serial moved (%llu pending images stored first, %llu pending runs synced first, %llu equal entries inserted before a forget; gate retried %llu: %llu equal, %llu moved again); runs per entry %.1f validated / %.1f inserted; %llu misses found the entry replaced meanwhile; %llu inserts (%llu captures not kept: unstable), %llu evictions in total, %zu entries, %llu LRU moves\n", count(counters.lookups), count(counters.absent), count(validated), validated != 0 ? counters.validateUs / static_cast<double>(validated) : 0.0, count(counters.equal), count(counters.differing), count(counters.queuedStores), count(counters.inaccessible), count(counters.queuedLabel), count(counters.flushingImage), count(counters.publishMoved), count(counters.pendingMoved), count(counters.forgetMoved), count(counters.imagesFlushed), count(counters.runsSynced), count(counters.forgetSinceInsert), count(counters.retriesEqual + counters.retriesMoved), count(counters.retriesEqual), count(counters.retriesMoved), validated != 0 ? static_cast<double>(counters.runsValidated) / static_cast<double>(validated) : 0.0, counters.inserts != 0 ? static_cast<double>(counters.runsInserted) / static_cast<double>(counters.inserts) : 0.0, count(counters.replaced), count(counters.inserts), count(counters.unstable), count(dispatchCacheEvictions), dispatchCache.size(), count(counters.touches));
     std::vector<std::pair<std::uint64_t, std::uint64_t>> programs(counters.differingByProgram.begin(), counters.differingByProgram.end());
     std::sort(programs.begin(), programs.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
     std::string top;

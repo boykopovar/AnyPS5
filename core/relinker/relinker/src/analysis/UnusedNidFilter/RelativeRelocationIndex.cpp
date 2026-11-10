@@ -1,9 +1,11 @@
 #include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
 #include <relinker/parsing/ElfReader.hpp>
+#include <relinker/parsing/RelrRelocations.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <unordered_map>
 #include <cstring>
 #include <limits>
+#include <optional>
 
 namespace Relinker::UnusedNidFilter {
 
@@ -90,7 +92,12 @@ void collectRelativeEntries(
 
         if (relType != R_X86_64_RELATIVE) continue;
 
-        out[static_cast<VirtualAddress>(rOffset)] = static_cast<VirtualAddress>(rAddend);
+        if (rAddend < 0)
+            throw RelinkerException("Relative relocation target address is negative", rOffset);
+
+        auto [it, inserted] = out.emplace(static_cast<VirtualAddress>(rOffset), static_cast<VirtualAddress>(rAddend));
+        if (!inserted && it->second != static_cast<VirtualAddress>(rAddend))
+            throw RelinkerException("Conflicting relative relocation targets for slot", rOffset);
     }
 }
 
@@ -147,14 +154,19 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
             if (hasSceDynlibData) throw RelinkerException("Multiple PT_SCE_DYNLIBDATA segments", phPos);
             hasSceDynlibData = true;
             sceTableBase = read64(elfBytes, phPos + 8);
+            std::uint64_t sceSize = read64(elfBytes, phPos + 32);
+            if (sceTableBase > elfBytes.size() || sceSize > elfBytes.size() - sceTableBase)
+                throw RelinkerException("PT_SCE_DYNLIBDATA segment out of bounds", phPos);
         }
     }
-    for (const auto& header : ElfReader(elfBytes).ReadProgramHeaders()) {
+    const auto headers = ElfReader(elfBytes).ReadProgramHeaders();
+    for (const auto& header : headers) {
         if (header.Type != PT_LOAD) continue;
         loads.push_back({header.MappedAddress, header.Offset, header.FileSize});
     }
 
     std::unordered_map<VirtualAddress, VirtualAddress> targets;
+    bool hasDynamic = false;
 
     for (std::uint16_t i = 0; i < phCount; ++i) {
         std::size_t phPos = static_cast<std::size_t>(phOff) + i * phEntSize;
@@ -162,43 +174,155 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
 
         std::uint32_t type = read32(elfBytes, phPos);
         if (type != PT_DYNAMIC) continue;
+        if (hasDynamic) throw RelinkerException("Multiple PT_DYNAMIC segments", phPos);
+        hasDynamic = true;
 
         std::uint64_t segOff = read64(elfBytes, phPos + 8);
         std::uint64_t segSz = read64(elfBytes, phPos + 32);
         if (segOff > elfBytes.size() || segSz > elfBytes.size() - segOff) throw RelinkerException("PT_DYNAMIC segment out of bounds");
 
-        VirtualAddress relaVa = 0;
-        std::uint64_t relaSz = 0;
-        VirtualAddress jmprelVa = 0;
-        std::uint64_t pltrelsz = 0;
-        bool relaSce = false;
-        bool jmprelSce = false;
+        std::optional<VirtualAddress> relaVa;
+        std::optional<std::uint64_t> relaSz;
+        std::optional<std::uint64_t> relaEnt;
+        std::optional<VirtualAddress> jmprelVa;
+        std::optional<std::uint64_t> pltrelsz;
+        std::optional<std::uint64_t> pltrel;
+        bool hasSysvRela = false;
+        bool hasOsRela = false;
+        bool hasSysvRelaSz = false;
+        bool hasOsRelaSz = false;
+        bool hasSysvRelaEnt = false;
+        bool hasOsRelaEnt = false;
+        bool hasSysvJmprel = false;
+        bool hasOsJmprel = false;
+        bool hasSysvPltrelsz = false;
+        bool hasOsPltrelsz = false;
+        bool hasSysvPltrel = false;
+        bool hasOsPltrel = false;
+        bool terminated = false;
+        std::vector<Domain::DynamicTag> relrTags;
 
         for (std::uint64_t off = 0; off <= segSz && segSz - off >= 16; off += 16) {
             std::size_t pos = static_cast<std::size_t>(segOff + off);
             std::int64_t tag = static_cast<std::int64_t>(read64(elfBytes, pos));
             std::uint64_t val = read64(elfBytes, pos + 8);
 
-            if (tag == DT_NULL) break;
-            if (tag == DT_RELA || tag == DT_OS_RELA) {
+            if (tag == DT_NULL) {
+                terminated = true;
+                break;
+            }
+            if (tag == DT_REL || tag == DT_RELSZ || tag == DT_RELENT)
+                throw RelinkerException("DT_REL relocations are not supported");
+            if (tag == DT_RELR || tag == DT_RELRSZ || tag == DT_RELRENT) relrTags.push_back({tag, val});
+            if (tag == DT_RELA) {
+                if (hasOsRela) throw RelinkerException("Both DT_OS_ and DT_ variants present for DT_RELA");
+                if (hasSysvRela && relaVa.value() != val) throw RelinkerException("Conflicting duplicate DT_RELA tags");
+                hasSysvRela = true;
                 relaVa = val;
-                relaSce = tag == DT_OS_RELA;
             }
-            if (tag == DT_RELASZ || tag == DT_OS_RELASZ) relaSz = val;
-            if (tag == DT_JMPREL || tag == DT_OS_JMPREL) {
+            if (tag == DT_OS_RELA) {
+                if (hasSysvRela) throw RelinkerException("Both DT_OS_ and DT_ variants present for DT_RELA");
+                if (hasOsRela && relaVa.value() != val) throw RelinkerException("Conflicting duplicate DT_OS_RELA tags");
+                hasOsRela = true;
+                relaVa = val;
+            }
+            if (tag == DT_RELASZ) {
+                if (hasOsRelaSz) throw RelinkerException("Both DT_OS_ and DT_ variants present for DT_RELASZ");
+                if (hasSysvRelaSz && relaSz.value() != val) throw RelinkerException("Conflicting duplicate DT_RELASZ tags");
+                hasSysvRelaSz = true;
+                relaSz = val;
+            }
+            if (tag == DT_OS_RELASZ) {
+                if (hasSysvRelaSz) throw RelinkerException("Both DT_OS_ and DT_ variants present for DT_RELASZ");
+                if (hasOsRelaSz && relaSz.value() != val) throw RelinkerException("Conflicting duplicate DT_OS_RELASZ tags");
+                hasOsRelaSz = true;
+                relaSz = val;
+            }
+            if (tag == DT_RELAENT) {
+                if (hasOsRelaEnt) throw RelinkerException("Both DT_OS_ and DT_ variants present for DT_RELAENT");
+                if (hasSysvRelaEnt && relaEnt.value() != val) throw RelinkerException("Conflicting duplicate DT_RELAENT tags");
+                hasSysvRelaEnt = true;
+                relaEnt = val;
+            }
+            if (tag == DT_OS_RELAENT) {
+                if (hasSysvRelaEnt) throw RelinkerException("Both DT_OS_ and DT_ variants present for DT_RELAENT");
+                if (hasOsRelaEnt && relaEnt.value() != val) throw RelinkerException("Conflicting duplicate DT_OS_RELAENT tags");
+                hasOsRelaEnt = true;
+                relaEnt = val;
+            }
+            if (tag == DT_JMPREL) {
+                if (hasOsJmprel) throw RelinkerException("Both DT_OS_ and DT_ variants present for DT_JMPREL");
+                if (hasSysvJmprel && jmprelVa.value() != val) throw RelinkerException("Conflicting duplicate DT_JMPREL tags");
+                hasSysvJmprel = true;
                 jmprelVa = val;
-                jmprelSce = tag == DT_OS_JMPREL;
             }
-            if (tag == DT_PLTRELSZ || tag == DT_OS_PLTRELSZ) pltrelsz = val;
+            if (tag == DT_OS_JMPREL) {
+                if (hasSysvJmprel) throw RelinkerException("Both DT_OS_ and DT_ variants present for DT_JMPREL");
+                if (hasOsJmprel && jmprelVa.value() != val) throw RelinkerException("Conflicting duplicate DT_OS_JMPREL tags");
+                hasOsJmprel = true;
+                jmprelVa = val;
+            }
+            if (tag == DT_PLTRELSZ) {
+                if (hasOsPltrelsz) throw RelinkerException("Both DT_OS_ and DT_ variants present for DT_PLTRELSZ");
+                if (hasSysvPltrelsz && pltrelsz.value() != val) throw RelinkerException("Conflicting duplicate DT_PLTRELSZ tags");
+                hasSysvPltrelsz = true;
+                pltrelsz = val;
+            }
+            if (tag == DT_OS_PLTRELSZ) {
+                if (hasSysvPltrelsz) throw RelinkerException("Both DT_OS_ and DT_ variants present for DT_PLTRELSZ");
+                if (hasOsPltrelsz && pltrelsz.value() != val) throw RelinkerException("Conflicting duplicate DT_OS_PLTRELSZ tags");
+                hasOsPltrelsz = true;
+                pltrelsz = val;
+            }
+            if (tag == DT_PLTREL) {
+                if (hasOsPltrel) throw RelinkerException("Both DT_OS_ and DT_ variants present for DT_PLTREL");
+                if (hasSysvPltrel && pltrel.value() != val) throw RelinkerException("Conflicting duplicate DT_PLTREL tags");
+                hasSysvPltrel = true;
+                pltrel = val;
+            }
+            if (tag == DT_OS_PLTREL) {
+                if (hasSysvPltrel) throw RelinkerException("Both DT_OS_ and DT_ variants present for DT_PLTREL");
+                if (hasOsPltrel && pltrel.value() != val) throw RelinkerException("Conflicting duplicate DT_OS_PLTREL tags");
+                hasOsPltrel = true;
+                pltrel = val;
+            }
         }
 
-        collectRelativeEntries(elfBytes, loads, relaVa, relaSz, relaSce, sceTableBase, targets);
-        collectRelativeEntries(elfBytes, loads, jmprelVa, pltrelsz, jmprelSce, sceTableBase, targets);
+        if (!terminated) throw RelinkerException("Unterminated dynamic segment", segOff);
 
-        break;
+        if ((hasSysvRela && hasOsRelaSz) || (hasOsRela && hasSysvRelaSz))
+            throw RelinkerException("Mismatched DT_RELA and DT_RELASZ tag variants");
+        if ((hasSysvRela && hasOsRelaEnt) || (hasOsRela && hasSysvRelaEnt))
+            throw RelinkerException("Mismatched DT_RELA and DT_RELAENT tag variants");
+        if (relaVa.has_value() != relaSz.has_value())
+            throw RelinkerException("Incomplete relocation table metadata");
+        if (relaEnt.has_value() && *relaEnt != RelaEntSize)
+            throw RelinkerException("Unsupported DT_RELAENT value: " + std::to_string(*relaEnt) + "; expected 24 bytes");
+
+        if ((hasSysvJmprel && hasOsPltrelsz) || (hasOsJmprel && hasSysvPltrelsz))
+            throw RelinkerException("Mismatched DT_JMPREL and DT_PLTRELSZ tag variants");
+        if ((hasSysvJmprel && hasOsPltrel) || (hasOsJmprel && hasSysvPltrel))
+            throw RelinkerException("Mismatched DT_JMPREL and DT_PLTREL tag variants");
+        if (jmprelVa.has_value() != pltrelsz.has_value())
+            throw RelinkerException("Incomplete PLT relocation table metadata");
+        if (pltrel.has_value() && *pltrel != static_cast<std::uint64_t>(DT_RELA))
+            throw RelinkerException("Unsupported DT_PLTREL type: " + std::to_string(*pltrel) + "; expected DT_RELA (7)");
+
+        if (relaVa.has_value())
+            collectRelativeEntries(elfBytes, loads, *relaVa, *relaSz, hasOsRela, sceTableBase, targets);
+        if (jmprelVa.has_value())
+            collectRelativeEntries(elfBytes, loads, *jmprelVa, *pltrelsz, hasOsJmprel, sceTableBase, targets);
+        for (const auto& [target, addend] : ReadRelrRelocations(elfBytes, headers, relrTags)) {
+            if (addend > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+                throw RelinkerException("Relative relocation target address is negative", target);
+            const auto [found, inserted] = targets.emplace(target, addend);
+            if (!inserted && found->second != addend)
+                throw RelinkerException("Conflicting relative relocation targets for slot", target);
+        }
     }
 
     return std::make_unique<RelativeRelocationIndex>(std::move(targets));
 }
 
 }
+

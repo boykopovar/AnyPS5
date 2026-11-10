@@ -15,6 +15,7 @@ struct GuestImport {
     std::uint32_t RelocationType = 1;
     std::string Library;
     bool Function = false;
+    bool Weak = false;
 };
 
 struct GuestRuntime {
@@ -29,6 +30,8 @@ struct GuestRuntime {
     std::vector<std::string> UnmatchedImportModules;
     std::set<std::string> ZeroReturnExports;
     bool DeferInitialization = false;
+    std::vector<std::string> DeferredDependencies;
+    std::vector<std::string> DeferredSweep;
 };
 
 }

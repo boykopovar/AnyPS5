@@ -18,5 +18,15 @@ constexpr std::int32_t SCE_KERNEL_O_DSYNC     = 0x00001000;
 constexpr std::int32_t SCE_KERNEL_O_NONBLOCK  = 0x00000004;
 constexpr std::int32_t SCE_KERNEL_O_DIRECT    = 0x00010000;
 constexpr std::int32_t SCE_KERNEL_O_DIRECTORY = 0x00020000;
+constexpr std::int32_t SCE_KERNEL_O_CLOEXEC   = 0x00100000;
+
+namespace File {
+
+constexpr bool InvalidOpenFlags(std::int32_t flags) {
+    constexpr std::int32_t createExclusiveDirectory = SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL | SCE_KERNEL_O_DIRECTORY;
+    return (flags & SCE_KERNEL_O_ACCMODE) == SCE_KERNEL_O_ACCMODE || (flags & createExclusiveDirectory) == createExclusiveDirectory;
+}
+
+}
 
 #endif

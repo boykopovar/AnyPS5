@@ -2,13 +2,28 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_DIAGNOSTICS_HPP
 
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
+#include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <stdexcept>
+#include <string>
 
 namespace AgcDriver::DriverDetail {
 
 double TraceMs();
 
-std::uint64_t SkippedShader();
+bool SkippedShader(std::uint64_t address);
+
+class RefusedDraw final : public std::runtime_error {
+public:
+    RefusedDraw(std::uint64_t address, const std::string& what) : std::runtime_error(what), address(address) {}
+    std::uint64_t address;
+};
+
+bool SkipRefusedDraws();
+
+void ReportRefusedDraw(const RefusedDraw& refused);
+std::optional<std::size_t> RefusedShaderCount();
 
 void require(bool condition, const char* reason);
 

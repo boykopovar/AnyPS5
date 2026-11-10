@@ -274,6 +274,22 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     device.WaitIdle();
 }
 
+std::vector<std::uint32_t> Scheduled(std::span<const std::uint32_t> original) {
+    std::vector<std::uint32_t> code(original.begin(), original.end());
+    code.insert(code.begin() + 25, 0x7e3c0280u);
+    code.insert(code.begin() + 24, 0x7e3e0280u);
+    const auto relocated = [](std::int32_t word) { return word + (word >= 24 ? 1 : 0) + (word >= 25 ? 1 : 0); };
+    for (std::int32_t word = 0; word < static_cast<std::int32_t>(original.size()); ++word) {
+        const auto instruction = original[static_cast<std::size_t>(word)];
+        const auto opcode = instruction & 0xffff0000u;
+        if (opcode != 0xbf820000u && opcode != 0xbf850000u) continue;
+        const auto target = word + 1 + static_cast<std::int16_t>(instruction & 0xffffu);
+        const auto offset = relocated(target) - relocated(word) - 1;
+        code[static_cast<std::size_t>(relocated(word))] = opcode | (static_cast<std::uint32_t>(offset) & 0xffffu);
+    }
+    return code;
+}
+
 void CheckReversedSubtractRefused(AgcDriver::VulkanDevice& device) {
     std::string refusal;
     try {
@@ -305,6 +321,14 @@ int main() {
         Run(*device, Wave64Code, 64, device->Target());
         Check(Expected64);
         Run(*device, Wave64Code, 64, device->ComputeTarget(32));
+        Check(Expected64);
+        const auto scheduled32 = Scheduled(Wave32Code);
+        const auto scheduled64 = Scheduled(Wave64Code);
+        Run(*device, scheduled32, 32, device->ComputeTarget(32));
+        Check(Expected32);
+        Run(*device, scheduled64, 64, device->Target());
+        Check(Expected64);
+        Run(*device, scheduled64, 64, device->ComputeTarget(32));
         Check(Expected64);
         CheckReversedSubtractRefused(*device);
         std::puts("setpc tests passed");

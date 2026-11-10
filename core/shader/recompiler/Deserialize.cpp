@@ -165,8 +165,12 @@ int main(int argc, char** argv) {
         translateOptions.stage = stageKind;
         translateOptions.waveSize = request.context.waveSize;
         translateOptions.userDataBaseRegister = request.context.userDataBaseRegister;
+        translateOptions.gcnLegacyVertexInputs = GcnGuestShaders() && request.context.userDataBaseRegister == 0u;
         translateOptions.userDataCount = static_cast<std::uint32_t>(request.context.userData.size());
         translateOptions.scratchDwords = request.context.compute.has_value() ? request.context.compute->scratchDwords : 0u;
+        const auto sharedVectors = GuestSharedVectorRegisters(request.context);
+        translateOptions.sharedVectorBase = sharedVectors.base;
+        translateOptions.sharedVectorCount = sharedVectors.count;
         translateOptions.sharedMemoryBytes = request.context.compute.has_value() && static_cast<std::uint64_t>(request.context.compute->ldsSizeDwords) * 4u + 4u > request.target.maxWorkgroupSharedMemoryBytes ? request.context.compute->ldsSizeDwords * 4u : 0u;
         translateOptions.inputInfo = inputInfo;
 

@@ -42,9 +42,13 @@ def command_output(stdout, stderr="", returncode=0):
             f"sys.exit({returncode})\n")
 
     def run(command, **kwargs):
+        if command[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            root = (str(Path.cwd()) + "\n").encode("utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout=root, stderr=b"")
         return RUN([sys.executable, "-c", code], **kwargs)
 
     with simulated_cp1252(), \
+            patch.dict(pr_overlap._REPO_ROOTS, clear=True), \
             patch.object(subprocess, "run", side_effect=run):
         yield
 
@@ -81,11 +85,11 @@ class EncodingTests(unittest.TestCase):
 
     def test_merge_conflict_preserves_unicode_paths(self):
         path = UNICODE + ".txt"
-        with command_output(TREE + "\n" + path + "\n", returncode=1):
+        with command_output(TREE + "\0" + path + "\0", returncode=1):
             self.assertEqual(pr_overlap.merge("main", "topic"), (TREE, {path}))
 
     def test_merge_success(self):
-        with command_output(TREE + "\n"):
+        with command_output(TREE + "\0"):
             self.assertEqual(pr_overlap.merge("main", "topic"), (TREE, set()))
 
     def test_merge_error_preserves_unicode(self):
@@ -107,7 +111,7 @@ class EncodingTests(unittest.TestCase):
             source = repo / "core" / "libs" / "prx" / "x" / "a.cpp"
             source.parent.mkdir(parents=True)
             ident = ["-c", "user.name=t", "-c", "user.email=t@example.test"]
-            for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "base"]):
+            for args in (["init", "-q"], ["config", "core.safecrlf", "false"], ["commit", "-q", "--allow-empty", "-m", "base"]):
                 subprocess.run(["git", *ident, *args], cwd=repo, check=True, capture_output=True)
             source.write_bytes(b"int APS5_VABI f() {} // caf\xe9\n")
             for args in (["add", "."], ["commit", "-q", "-m", "add"]):

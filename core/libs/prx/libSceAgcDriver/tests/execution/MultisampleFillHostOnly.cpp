@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -23,6 +24,7 @@
 #include <deque>
 #include <initializer_list>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <span>
 #include <stdexcept>
@@ -154,6 +156,10 @@ bool FillsTakenAsMultisampledClearsAreNotStored(AgcDriver::VulkanDevice& device)
         VkDevice handle;
         ~ClearTargets() {
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            if (auto* active = AgcDriver::Graphics::Recorder::Active(); active != nullptr && active->Device() != handle) {
+                active->Sync();
+                active->FlushDeferredReleases();
+            }
             device.SubmitRecorded(true);
             device.WaitIdle();
             AgcDriver::Graphics::ClearMultisampleTargets(handle);
@@ -179,7 +185,12 @@ bool FillsTakenAsMultisampledClearsAreNotStored(AgcDriver::VulkanDevice& device)
     Require(AgcDriver::Graphics::MultisampledColorBytes(target) == BlockBytes, "the 4x 64x64 RGBA8 target does not take one 64 KiB block");
     {
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-        Require(AgcDriver::Graphics::MultisampleTargetView(context, target) != VK_NULL_HANDLE, "the multisampled target has no view");
+        auto* active = AgcDriver::Graphics::Recorder::Active();
+        Require(active != nullptr && active->Device() != context.device, "the fill test requires a second device's active recorder");
+        const auto keptBytes = active->OpenKeptBytes();
+        std::shared_ptr<void> owner;
+        Require(AgcDriver::Graphics::MultisampleTargetView(context, target, owner) != VK_NULL_HANDLE && owner != nullptr, "the multisampled target has no view");
+        Require(active->OpenKeptBytes() == keptBytes, "the multisampled target was charged to another device's recorder");
         device.SubmitRecorded(true);
         device.WaitIdle();
     }
@@ -205,7 +216,11 @@ bool FillsTakenAsMultisampledClearsAreNotStored(AgcDriver::VulkanDevice& device)
     srgb.format = VK_FORMAT_R8G8B8A8_SRGB;
     {
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        auto* active = AgcDriver::Graphics::Recorder::Active();
+        Require(active != nullptr && active->Device() != context.device, "the sRGB fill test requires a second device's active recorder");
+        const auto keptBytes = active->OpenKeptBytes();
         Require(AgcDriver::Graphics::MultisampleTargetView(context, srgb) != VK_NULL_HANDLE, "the sRGB multisampled target has no view");
+        Require(active->OpenKeptBytes() == keptBytes, "the sRGB multisampled target was charged to another device's recorder");
         device.SubmitRecorded(true);
         device.WaitIdle();
     }
@@ -226,6 +241,17 @@ bool FillsTakenAsMultisampledClearsAreNotStored(AgcDriver::VulkanDevice& device)
     DispatchFill(code, color.Address(), BlockBytes, 0);
     Settle(code, sentinel);
     Require(color.Holds(std::byte{}, 0, BlockBytes), "a compute fill over a retired target's color memory was not stored");
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        std::shared_ptr<void> owner;
+        Require(AgcDriver::Graphics::MultisampleTargetView(context, target, owner) != VK_NULL_HANDLE && owner != nullptr, "the replacement multisampled target has no view");
+        const std::weak_ptr<void> targetOwner = owner;
+        owner.reset();
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+        AgcDriver::Graphics::ClearMultisampleTargets(context.device);
+        Require(targetOwner.expired(), "another device's recorder retained a multisampled target after its device's work completed");
+    }
     return true;
 }
 

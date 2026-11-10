@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -25,6 +26,11 @@ int APS5_VABI sceAudioOut2UserCreate(uint32_t user_id, AudioOut2UserHandle* hand
     return 0;
 }
 
+int APS5_VABI sceAudioOut2UserCreateEx(uint32_t user_id, const void* attributes, AudioOut2UserHandle* handle) {
+    (void)attributes;
+    return sceAudioOut2UserCreate(user_id, handle);
+}
+
 int APS5_VABI sceAudioOut2UserDestroy(AudioOut2UserHandle handle) {
     std::lock_guard lock(g_usersLock);
     g_users.erase(handle);
@@ -32,13 +38,13 @@ int APS5_VABI sceAudioOut2UserDestroy(AudioOut2UserHandle handle) {
 }
 
 int APS5_VABI sceAudioOut2UserGetSupportedAttributes(AudioOut2UserHandle handle, uint32_t* contextAttributes, uint32_t* portAttributes) {
-    if (!contextAttributes || !portAttributes)
-        throw std::runtime_error("sceAudioOut2UserGetSupportedAttributes: null output");
+    if (handle == 0 || handle == std::numeric_limits<AudioOut2UserHandle>::max()) return static_cast<int>(0x80268010);
+    if (!contextAttributes && !portAttributes) return static_cast<int>(0x80268001);
     std::lock_guard lock(g_usersLock);
     if (!g_users.contains(handle))
         throw std::runtime_error("sceAudioOut2UserGetSupportedAttributes: unknown user handle");
-    *contextAttributes = 0;
-    *portAttributes = (1u << 0) | (1u << 1);
+    if (contextAttributes) *contextAttributes = 0;
+    if (portAttributes) *portAttributes = (1u << 0) | (1u << 1);
     return 0;
 }
 

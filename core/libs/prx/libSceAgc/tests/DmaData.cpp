@@ -1,4 +1,7 @@
+#include "prx/libSceAgc/DcbFlow/include/Memory.hpp"
+#include "prx/libSceAgc/Acb/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
+#include "prx/libSceAgc/Patch/include/Dma.hpp"
 
 #include <algorithm>
 #include <array>
@@ -6,13 +9,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
-
-extern "C" {
-std::uint32_t* APS5_VABI sceAgcAcbDmaData(CommandBuffer*, std::uint8_t, std::uint8_t, std::uint64_t, std::uint8_t, std::uint8_t, std::uint64_t, std::uint32_t, std::uint8_t, std::uint8_t);
-std::uint32_t APS5_VABI sceAgcAcbDmaDataGetSize();
-std::uint32_t* APS5_VABI sceAgcDcbDmaData(CommandBuffer*, std::uint8_t, std::uint8_t, std::uint8_t, std::uint64_t, std::uint8_t, std::uint8_t, std::uint64_t, std::uint32_t, std::uint8_t, std::uint8_t, std::uint8_t);
-std::uint32_t APS5_VABI sceAgcDcbDmaDataGetSize();
-}
 
 namespace {
 
@@ -78,6 +74,26 @@ void testCommand(TWriter writer, TSize size, std::uint32_t control) {
     check(shortBuffer.words == before && shortBuffer.buffer.cursor_up == shortBuffer.words.data(), "failed DMA write modified the buffer");
 }
 
+void testPatches() {
+    constexpr std::uint64_t PatchedDestination = 0x0000aabbccddeeffull;
+    constexpr std::uint64_t PatchedSource = 0x0000102030405060ull;
+    for (auto* writer : {writeCompute, writeDraw}) {
+        Storage storage;
+        auto* packet = writer(&storage.buffer);
+        auto expected = storage.words;
+        check(sceAgcDmaDataPatchSetDstAddressOrOffset(packet, PatchedDestination) == 0, "the destination patch failed");
+        expected[4] = 0xccddeeffu;
+        expected[5] = 0xaabbu;
+        check(storage.words == expected, "the destination patch did not replace only words 4 and 5");
+        check(sceAgcDmaDataPatchSetSrcAddressOrOffsetOrImmediate(packet, PatchedSource) == 0, "the source patch failed");
+        expected[2] = 0x30405060u;
+        expected[3] = 0x1020u;
+        check(storage.words == expected, "the source patch did not replace only words 2 and 3");
+        check(sceAgcDmaDataPatchSetSrcAddressOrOffsetOrImmediate(packet, 0xfedcba9876543210ull) == 0 && packet[2] == 0x76543210u && packet[3] == 0xfedcba98u, "the source patch did not keep a 64-bit immediate whole");
+    }
+
+}
+
 }
 
 int main() {
@@ -85,6 +101,7 @@ int main() {
         testCommand(writeCompute, sceAgcAcbDmaDataGetSize, 0x44102000u);
         testCommand(writeDraw, sceAgcDcbDmaDataGetSize, 0xc4102001u);
         check(sceAgcAcbDmaDataGetSize() == sceAgcDcbDmaDataGetSize(), "compute and draw DMA sizes differ");
+        testPatches();
         std::puts("AGC DMA data tests passed");
         return 0;
     } catch (const std::exception& error) {

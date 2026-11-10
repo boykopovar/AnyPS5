@@ -75,6 +75,7 @@ void Write(std::uint8_t* texels) {
     AgcDriverWaitIdle_nid_postfix();
     AgcDriver::Graphics::StorageTexture::FlushAllPending("test");
     AgcDriverWaitIdle_nid_postfix();
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(texels), SurfaceBytes);
 }
 
 class GuestSurface {

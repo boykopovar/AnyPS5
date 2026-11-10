@@ -41,8 +41,8 @@ inline constexpr std::uint32_t BufferCapacity = 128u;
 inline constexpr std::uint32_t ImageCapacity = 256u;
 inline constexpr std::uint32_t SampledHeapCapacity = 64u;
 inline constexpr std::uint32_t BindlessTableSlots = 16u;
-inline constexpr std::uint32_t StorageMipSlots = 4u;
-inline constexpr std::uint32_t StorageHeapCapacity = 16u;
+inline constexpr std::uint32_t StorageMipSlots = 16u;
+inline constexpr std::uint32_t StorageHeapCapacity = 64u;
 inline constexpr std::uint32_t SamplerHeapCapacity = 64u;
 inline constexpr std::uint32_t StateExportMappings = 0u;
 inline constexpr std::uint32_t StateDwords = 2u;
@@ -108,6 +108,13 @@ inline std::uint32_t BindingNumber(Stage stage, Binding binding) {
     const auto count = static_cast<std::uint32_t>(Binding::Count);
     if (group >= StageCount || index >= count) throw std::runtime_error("Shader runtime ABI: invalid stage or binding");
     return group * count + index;
+}
+
+inline bool UintStorageImageBinding(std::uint32_t number) {
+    const auto count = static_cast<std::uint32_t>(Binding::Count);
+    if (number >= StageCount * count) return false;
+    const auto local = number % count;
+    return local >= FirstStorageImageBinding + 7u && local < FirstStorageImageBinding + 14u;
 }
 
 static_assert(FirstImageBinding + ImageBindingCount == static_cast<std::uint32_t>(Binding::Samplers));

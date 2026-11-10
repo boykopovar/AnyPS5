@@ -1,16 +1,11 @@
+#include "prx/libSceLoginDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceLoginDialogInitialize(void);
-int APS5_VABI sceLoginDialogOpen(const void* param);
-int APS5_VABI sceLoginDialogUpdateStatus(void);
-int APS5_VABI sceLoginDialogGetStatus(void);
-int APS5_VABI sceLoginDialogGetResult(void* result);
-int APS5_VABI sceLoginDialogClose(void);
-int APS5_VABI sceLoginDialogTerminate(void);
-}
+#include <thread>
+#include "prx/libSceCommonDialog/CommonDialog.hpp"
 
 namespace {
 
@@ -19,22 +14,54 @@ void Require(bool value) { if (!value) std::abort(); }
 constexpr int kStatusNone = 0;
 constexpr int kStatusInitialized = 1;
 constexpr int kStatusFinished = 3;
-constexpr int kErrNotInitialized = static_cast<int>(0x80B80003);
-constexpr int kErrAlreadyInitialized = static_cast<int>(0x80B80004);
-constexpr int kErrNotFinished = static_cast<int>(0x80B80005);
-constexpr int kErrArgNull = static_cast<int>(0x80B8000D);
+constexpr int kErrNotInitialized = static_cast<int>(0x81340001);
+constexpr int kErrAlreadyInitialized = static_cast<int>(0x81340002);
+constexpr int kErrNotFinished = static_cast<int>(0x81340005);
+constexpr int kErrArgNull = static_cast<int>(0x81340003);
 constexpr int kResultUserCanceled = 1;
+constexpr int kRaceRounds = 200000;
+
+template <typename Finish>
+void RequireTerminateWins(Finish finish) {
+    std::atomic<int> round{0};
+    std::atomic<int> done{0};
+    std::thread terminator([&] {
+        for (int i = 1; i <= kRaceRounds; ++i) {
+            while (round.load() != i) std::this_thread::yield();
+            sceLoginDialogTerminate();
+            done.fetch_add(1);
+        }
+    });
+    for (int i = 1; i <= kRaceRounds; ++i) {
+        Require(sceLoginDialogInitialize() == 0);
+        round.store(i);
+        finish();
+        while (done.load() != i) std::this_thread::yield();
+        Require(sceLoginDialogGetStatus() == kStatusNone);
+    }
+    terminator.join();
+}
 
 }
 
 int main() {
-    std::int64_t param = 0;
-    std::int32_t result[2] = {-1, -1};
+    LoginDialogParam param{};
+    param.size = sizeof(param);
+    std::fill(std::begin(param.userIds), std::end(param.userIds), -1);
+    LoginDialogResult result{-1, -1, {11, 22, 33, 44, 55, 66, 77, 88}};
 
     Require(sceLoginDialogTerminate() == kErrNotInitialized);
+    Require(sceLoginDialogOpen(nullptr) == kErrArgNull);
+    param.size = 63;
+    Require(sceLoginDialogOpen(&param) == kErrArgNull);
+    param.size = sizeof(param);
+    param.mode = 2;
+    Require(sceLoginDialogOpen(&param) == kErrArgNull);
+    param.mode = 0;
     Require(sceLoginDialogOpen(&param) == kErrNotInitialized);
     Require(sceLoginDialogClose() == kErrNotInitialized);
-    Require(sceLoginDialogGetResult(result) == kErrNotInitialized);
+    Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceLoginDialogGetResult(&result) == kErrNotInitialized);
     Require(sceLoginDialogGetStatus() == kStatusNone);
     Require(sceLoginDialogUpdateStatus() == kStatusNone);
 
@@ -44,19 +71,77 @@ int main() {
     Require(sceLoginDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceLoginDialogOpen(nullptr) == kErrArgNull);
-    Require(sceLoginDialogGetResult(result) == kErrNotFinished);
+    Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceLoginDialogGetResult(&result) == kErrNotFinished);
+    Require(result.result == 1 && result.errorCode == static_cast<int>(0x81340007u));
+    Require(result.data[0] == 11 && result.data[1] == 22 && result.data[2] == 33 && result.data[3] == 44 &&
+            result.data[4] == 55 && result.data[5] == 66 && result.data[6] == 77 && result.data[7] == 88);
+    errno = 71;
+    Require(sceLoginDialogGetResult(reinterpret_cast<LoginDialogResult*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
 
+    param.size = 63;
+    Require(sceLoginDialogOpen(&param) == kErrArgNull);
+    param.size = sizeof(param);
+    param.mode = 2;
+    Require(sceLoginDialogOpen(&param) == kErrArgNull);
+    param.mode = 1;
+    param.reserved[4] = 1;
+    Require(sceLoginDialogOpen(&param) == kErrArgNull);
+    param.reserved[4] = 0;
+    for (auto& userId : param.userIds) {
+        for (const auto invalid : {0, 0x0fffffff, 0x40000000, -2}) {
+            userId = invalid;
+            Require(sceLoginDialogOpen(&param) == static_cast<int>(0x81340007u));
+        }
+        userId = -1;
+    }
+    param.userIds[0] = 0x10000000;
+    param.userIds[8] = 0x3fffffff;
     Require(sceLoginDialogOpen(&param) == 0);
     Require(sceLoginDialogGetStatus() == kStatusFinished);
     Require(sceLoginDialogUpdateStatus() == kStatusFinished);
 
     Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);
-    Require(sceLoginDialogGetResult(result) == 0);
-    Require(result[0] == kResultUserCanceled);
-    Require(result[1] == -1);
+    errno = 71;
+    Require(sceLoginDialogGetResult(reinterpret_cast<LoginDialogResult*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
+    Require(sceLoginDialogGetResult(&result) == 0);
+    Require(result.result == kResultUserCanceled);
+    Require(result.errorCode == static_cast<int>(0x81340007u));
+    Require(result.data[0] == 11 && result.data[7] == 88);
 
     Require(sceLoginDialogClose() == 0);
     Require(sceLoginDialogTerminate() == 0);
     Require(sceLoginDialogTerminate() == kErrNotInitialized);
+    Require(sceLoginDialogClose() == kErrNotInitialized);
+    Require(sceLoginDialogOpen(nullptr) == kErrArgNull);
+    Require(sceLoginDialogOpen(&param) == kErrNotInitialized);
+    Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceLoginDialogGetResult(&result) == kErrNotInitialized);
     Require(sceLoginDialogGetStatus() == kStatusNone);
+    Require(sceLoginDialogUpdateStatus() == kStatusNone);
+
+    Require(sceLoginDialogInitialize() == 0);
+    Require(sceLoginDialogGetStatus() == kStatusInitialized);
+    Require(sceLoginDialogClose() == 0);
+    Require(sceLoginDialogGetStatus() == kStatusFinished);
+    result.result = -1;
+    Require(sceLoginDialogGetResult(&result) == 0);
+    Require(result.result == kResultUserCanceled);
+    errno = 71;
+    Require(sceLoginDialogGetResult(reinterpret_cast<LoginDialogResult*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
+    Require(sceLoginDialogTerminate() == 0);
+    Require(sceLoginDialogTerminate() == kErrNotInitialized);
+    Require(sceLoginDialogClose() == kErrNotInitialized);
+    Require(sceLoginDialogOpen(nullptr) == kErrArgNull);
+    Require(sceLoginDialogOpen(&param) == kErrNotInitialized);
+    Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceLoginDialogGetResult(&result) == kErrNotInitialized);
+    Require(sceLoginDialogGetStatus() == kStatusNone);
+    Require(sceLoginDialogUpdateStatus() == kStatusNone);
+
+    RequireTerminateWins([&] { sceLoginDialogOpen(&param); });
+    RequireTerminateWins([] { sceLoginDialogClose(); });
 }

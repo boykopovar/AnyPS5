@@ -3,15 +3,59 @@
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <array>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__APPLE__) || defined(__EMSCRIPTEN__)
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
+#include <dlfcn.h>
 #endif
+
+bool ApplicationGuestHeapApi_nid_no_patch(void** api) {
+#ifdef __linux__
+    static const auto guest = [] {
+        constexpr std::array<const char*, 10> names{
+            "gQX+4GDQjpM#guest", "tIhsqj0qsFE#guest", "2X5agFjKxMc#guest", "Y7aJ1uydPMo#guest",
+            "Ujf3KzMvRmI#guest", "OGybVuPAhAY#guest", "cVSk9y8URbc#guest", "CC-BLMBu9-I#guest",
+            "KuOuD58hqn4#guest", "NDcSfcYZRC8#guest"
+        };
+        std::array<void*, 10> result{};
+        bool found = false;
+        for (std::size_t index = 0; index < names.size(); ++index) {
+            result[index] = ::dlsym(RTLD_DEFAULT, names[index]);
+            found |= result[index] != nullptr;
+        }
+        if (!found) return result;
+        if (result[0] == nullptr) throw std::runtime_error("application heap: incomplete guest allocator API");
+        Dl_info owner{};
+        if (!::dladdr(result[0], &owner) || owner.dli_fbase == nullptr || owner.dli_fname == nullptr)
+            throw std::runtime_error("application heap: cannot identify guest allocator owner");
+        for (std::size_t index = 1; index < names.size(); ++index) {
+            Dl_info info{};
+            if (result[index] == nullptr || !::dladdr(result[index], &info) || info.dli_fbase != owner.dli_fbase)
+                throw std::runtime_error("application heap: incomplete or mixed guest allocator API");
+        }
+        if (::dlopen(owner.dli_fname, RTLD_LAZY | RTLD_NOLOAD) == nullptr)
+            throw std::runtime_error("application heap: cannot retain guest allocator owner");
+        return result;
+    }();
+    if (guest[0] == nullptr) return false;
+    std::memcpy(api, guest.data(), sizeof(guest));
+    return true;
+#else
+    (void)api;
+    return false;
+#endif
+}
+
+const void* ApplicationEmptyProcessParameters_nid_no_patch() {
+    alignas(16) static const std::byte empty[0x40] = {};
+    return empty;
+}
 
 const void* ApplicationProcessParameters_nid_no_patch() {
 #ifdef _WIN32
@@ -24,21 +68,27 @@ const void* ApplicationProcessParameters_nid_no_patch() {
     const auto* sections = IMAGE_FIRST_SECTION(nt);
     const auto imageSize = nt->OptionalHeader.SizeOfImage;
     const void* result = nullptr;
+    bool found = false;
     for (unsigned index = 0; index < nt->FileHeader.NumberOfSections; ++index) {
         const auto& section = sections[index];
         if (std::memcmp(section.Name, ".procpar", 8) != 0) continue;
-        if (result != nullptr) throw std::runtime_error("application heap: duplicate process metadata");
+        if (found) throw std::runtime_error("application heap: duplicate process metadata");
+        found = true;
         if (section.Misc.VirtualSize != 8 || section.VirtualAddress > imageSize || 8 > imageSize - section.VirtualAddress) throw std::runtime_error("application heap: invalid process metadata section");
         std::uint32_t address;
         std::uint32_t size;
         std::memcpy(&address, image + section.VirtualAddress, sizeof(address));
         std::memcpy(&size, image + section.VirtualAddress + 4, sizeof(size));
+        if (address == 0 && size == 0) {
+            result = ApplicationEmptyProcessParameters_nid_no_patch();
+            continue;
+        }
         if (size < 0x40 || address > imageSize || size > imageSize - address) throw std::runtime_error("application heap: process parameters exceed the image");
         result = image + address;
     }
-    if (result == nullptr) throw std::runtime_error("application heap: process metadata is missing; relink the executable");
+    if (!found) throw std::runtime_error("application heap: process metadata is missing; relink the executable");
     return result;
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__APPLE__) || defined(__EMSCRIPTEN__)
     struct Search {
         const void* parameters = nullptr;
         bool invalid = false;

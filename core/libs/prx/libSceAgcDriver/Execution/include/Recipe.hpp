@@ -82,7 +82,7 @@ struct DrawRecipe {
     std::array<std::byte, Graphics::PipelinePushConstantBytes> pushBytes{};
     VkShaderStageFlags pushStages = 0;
     std::optional<Graphics::State> masked;
-    std::set<std::uint32_t> fragmentOutputs;
+    std::uint32_t fragmentOutputs = 0;
     VkPipelineStageFlags shaderStages = 0;
     bool hasDepth = false;
 };
