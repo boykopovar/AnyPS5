@@ -1190,6 +1190,10 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     add_test(NAME macos_guest_weak_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_weak_imports.py $<TARGET_FILE:relinker>)
     set_property(TEST macos_guest_weak_imports APPEND PROPERTY LABELS relinker)
+    if(APPLE)
+        set_tests_properties(macos_trace_imports macos_guest_weak_exports macos_executable_exports macos_guest_weak_imports
+            PROPERTIES RUN_SERIAL TRUE)
+    endif()
 endif()
 
 if(BUILD_TESTING)
