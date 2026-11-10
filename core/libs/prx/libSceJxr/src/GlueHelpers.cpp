@@ -45,8 +45,8 @@ std::int64_t StoreIid(std::int64_t (*lookup)(const char*, std::uint32_t*), const
     if (result < 0) return result;
     if (!iid) throw std::invalid_argument(std::string(function) + " requires an output for a known extension");
     switch (value) {
-    case 101: *iid = &JxrGuest_IID_PKImageWmpEncode_nid_no_patch; break;
-    case 201: *iid = &JxrGuest_IID_PKImageWmpDecode_nid_no_patch; break;
+    case 101: *iid = &IID_PKImageWmpEncode; break;
+    case 201: *iid = &IID_PKImageWmpDecode; break;
     case ImageUnsupported: *iid = &ImageUnsupported; break;
     default: throw std::logic_error(std::string(function) + ": jxrlib returned an unknown IID " + std::to_string(value) + " for " + extension);
     }
