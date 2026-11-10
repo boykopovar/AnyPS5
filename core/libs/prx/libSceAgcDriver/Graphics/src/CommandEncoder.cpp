@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommandEncoder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -31,6 +32,7 @@ struct SlotState {
     std::atomic<CommandEncoder*> encoder{nullptr};
     DeviceFunctions real;
     VkDevice device = VK_NULL_HANDLE;
+    bool claimed = false;
 };
 
 std::array<SlotState, CommandEncoder::Slots>& slots() {
@@ -359,15 +361,31 @@ bool CommandEncoder::Enabled() {
     return enabled;
 }
 
-CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table) : table(table), real(table), device(device) {
+std::size_t CommandEncoder::claim() {
     std::lock_guard lock(slotMutex());
     for (std::size_t index = 0; index < Slots; ++index) {
-        if (slots()[index].encoder.load(std::memory_order_relaxed) != nullptr) continue;
-        slot = index;
-        break;
+        if (slots()[index].claimed) continue;
+        slots()[index].claimed = true;
+        return index;
     }
-    if (slot == Slots) throw std::runtime_error("AGC graphics: every command encoder slot is in use");
+    return Slots;
+}
+
+std::unique_ptr<CommandEncoder> CommandEncoder::Attach(VkDevice device, DeviceFunctions& table) {
+    const auto slot = claim();
+    if (slot == Slots) return nullptr;
+    try {
+        return std::unique_ptr<CommandEncoder>(new CommandEncoder(device, table, slot));
+    } catch (...) {
+        std::lock_guard lock(slotMutex());
+        slots()[slot].claimed = false;
+        throw;
+    }
+}
+
+CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot) : table(table), real(table), device(device), slot(slot) {
     worker = std::thread([this] { run(); });
+    std::lock_guard lock(slotMutex());
     slots()[slot].real = real;
     slots()[slot].device = device;
     installAt(slot, table, std::make_index_sequence<Slots>{});
@@ -383,6 +401,7 @@ CommandEncoder::~CommandEncoder() {
     std::lock_guard lock(slotMutex());
     table = real;
     slots()[slot].encoder.store(nullptr, std::memory_order_release);
+    slots()[slot].claimed = false;
 }
 
 void CommandEncoder::Open(VkCommandBuffer commands) {
@@ -426,6 +445,7 @@ std::byte* CommandEncoder::Append(Run run, std::size_t bytes) {
         filling->used = 0;
         filling->records = 0;
         filling->target = target.load(std::memory_order_relaxed);
+        filling->producer = std::this_thread::get_id();
     } else if (filling->target != target.load(std::memory_order_relaxed)) {
         post();
         return Append(run, bytes);
@@ -461,7 +481,61 @@ void CommandEncoder::Drain() noexcept {
 
 void CommandEncoder::Settle() {
     await();
-    if (failed.load(std::memory_order_acquire)) std::rethrow_exception(failure);
+    if (unreported.load(std::memory_order_acquire) != 0) report();
+}
+
+void CommandEncoder::Finish(VkCommandBuffer commands) {
+    post();
+    await();
+    if (failing.load(std::memory_order_acquire) == 0) return;
+    std::exception_ptr error;
+    {
+        std::lock_guard lock(failureMutex);
+        const auto found = std::ranges::find(failures, commands, &Failure::commands);
+        if (found == failures.end()) return;
+        if (found->reported || found->producer != std::this_thread::get_id()) throw std::runtime_error("AGC graphics: the encoder failed to record this command buffer, so it is not submitted");
+        found->reported = true;
+        unreported.fetch_sub(1, std::memory_order_relaxed);
+        error = found->error;
+    }
+    std::rethrow_exception(error);
+}
+
+void CommandEncoder::Forget(VkCommandBuffer commands) {
+    if (failing.load(std::memory_order_acquire) == 0) return;
+    std::lock_guard lock(failureMutex);
+    std::erase_if(failures, [&](const Failure& failure) {
+        if (failure.commands != commands) return false;
+        if (!failure.reported) unreported.fetch_sub(1, std::memory_order_relaxed);
+        return true;
+    });
+    failing.store(failures.size(), std::memory_order_release);
+}
+
+void CommandEncoder::report() {
+    std::exception_ptr error;
+    {
+        std::lock_guard lock(failureMutex);
+        const auto found = std::ranges::find_if(failures, [](const Failure& failure) { return !failure.reported && failure.producer == std::this_thread::get_id(); });
+        if (found == failures.end()) return;
+        found->reported = true;
+        unreported.fetch_sub(1, std::memory_order_relaxed);
+        error = found->error;
+    }
+    std::rethrow_exception(error);
+}
+
+bool CommandEncoder::skips(VkCommandBuffer commands) {
+    if (failing.load(std::memory_order_acquire) == 0) return false;
+    std::lock_guard lock(failureMutex);
+    return std::ranges::find(failures, commands, &Failure::commands) != failures.end();
+}
+
+void CommandEncoder::fail(const Chunk& chunk, std::exception_ptr error) {
+    std::lock_guard lock(failureMutex);
+    failures.push_back({chunk.target, chunk.producer, std::move(error)});
+    failing.store(failures.size(), std::memory_order_release);
+    unreported.fetch_add(1, std::memory_order_release);
 }
 
 void CommandEncoder::await() {
@@ -513,12 +587,11 @@ void CommandEncoder::run() {
             if (stopping.load(std::memory_order_acquire)) return;
             continue;
         }
-        if (!failed.load(std::memory_order_relaxed)) {
+        if (!skips(chunk->target)) {
             try {
                 execute(*chunk);
             } catch (...) {
-                failure = std::current_exception();
-                failed.store(true, std::memory_order_release);
+                fail(*chunk, std::current_exception());
             }
         }
         {

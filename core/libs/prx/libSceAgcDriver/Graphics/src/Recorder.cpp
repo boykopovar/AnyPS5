@@ -1344,17 +1344,12 @@ struct Recorder::ProgressWatcher {
 };
 
 Recorder::Recorder(const Context& context, bool timelineSemaphores, DeviceFunctions* encodedFunctions, std::uint32_t queueFamily) : context(context), id(nextRecorderId.fetch_add(1)) {
-    if (encodedFunctions != nullptr && CommandEncoder::Enabled()) {
+    if (encodedFunctions != nullptr && CommandEncoder::Enabled()) encoder = CommandEncoder::Attach(context.device, *encodedFunctions);
+    if (encoder != nullptr) {
         VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
         poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         poolInfo.queueFamilyIndex = queueFamily;
         Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &poolInfo, nullptr, &encoderPool), "vkCreateCommandPool recorder encoder");
-        try {
-            encoder = std::make_unique<CommandEncoder>(context.device, *encodedFunctions);
-        } catch (...) {
-            context.Function<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(context.device, encoderPool, nullptr);
-            throw;
-        }
     }
     {
         std::lock_guard lock(liveRecordersMutex);
@@ -2841,6 +2836,7 @@ void Recorder::endSegment(Batch& batch) {
 
 void Recorder::copySegments(VkCommandBuffer commands, std::uint32_t count) {
     Require(count <= pendingSamples.size() && count <= SegmentFoldCapacity, "occlusion segments exceed the fold capacity");
+    quiesce();
     const auto copy = function(cmdCopyQueryPoolResults, "vkCmdCopyQueryPoolResults");
     for (std::uint32_t i = 0; i < count;) {
         const auto& first = pendingSamples[i];
@@ -2942,7 +2938,10 @@ void Recorder::foldSamples(Batch& batch, VkDeviceAddress target) {
     std::size_t done = 0;
     do {
         const auto count = static_cast<std::uint32_t>(std::min<std::size_t>(SampleFoldCapacity, pendingSamples.size() - done));
-        if (done != 0) recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        if (done != 0) {
+            recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            quiesce();
+        }
         for (std::uint32_t i = 0; i < count; ++i) {
             const auto& segment = pendingSamples[done + i];
             copy(commands, segment.handle, segment.slot, 1, sampleCounter->Handle(), 16 + 8 * i, 8, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
@@ -4297,7 +4296,6 @@ void Recorder::Submit() {
         // it) fails UnchangedSince at the presenter's check (VulkanDevice RetirePresents).
         for (const auto& [begin, end] : notedReads(*open)) open->readGeneration = std::max(open->readGeneration, GuestMemory::CollectWrites(begin, end - begin));
     }
-    quiesce();
     auto batch = std::move(open);
     struct DiscardUnsubmitted {
         Recorder& recorder;
@@ -4306,6 +4304,7 @@ void Recorder::Submit() {
             if (batch != nullptr && !batch->submitted) recorder.discard(std::move(batch));
         }
     } discardUnsubmitted{*this, batch};
+    if (encoder != nullptr) encoder->Finish(batch->commands);
     Check(function(endCommandBuffer, "vkEndCommandBuffer")(batch->commands), "vkEndCommandBuffer recorder");
     if (injectedSubmitFailures.load(std::memory_order_relaxed) != 0 && injectedSubmitFailures.fetch_sub(1, std::memory_order_relaxed) != 0) throw std::runtime_error("vkQueueSubmit recorder: injected failure");
     VkSubmitInfo submission{VK_STRUCTURE_TYPE_SUBMIT_INFO};
@@ -4934,7 +4933,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
 }
 
 void Recorder::discard(std::unique_ptr<Batch> batch) noexcept {
-    quiesce();
+    if (encoder != nullptr) encoder->Drain();
     removeLabels(*batch);
     if (batch->completionLabelCount != 0) completionLabels.fetch_sub(batch->completionLabelCount, std::memory_order_acq_rel);
     if (batch->completionStoreCount != 0) completionStores.fetch_sub(batch->completionStoreCount, std::memory_order_acq_rel);
@@ -4984,6 +4983,7 @@ void Recorder::release(Batch& batch) noexcept {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (batch.commands != VK_NULL_HANDLE) {
         std::unique_lock poolLock = encoder != nullptr ? std::unique_lock(encoder->PoolMutex()) : std::unique_lock<std::mutex>();
+        if (encoder != nullptr) encoder->Forget(batch.commands);
         context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, batch.pool != VK_NULL_HANDLE ? batch.pool : context.pool, 1, &batch.commands);
         if (profile) commandBuffersFreed.fetch_add(1, std::memory_order_relaxed);
     }

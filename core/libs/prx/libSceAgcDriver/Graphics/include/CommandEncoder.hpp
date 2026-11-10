@@ -20,7 +20,7 @@ public:
     using Run = void (*)(const std::byte* payload, VkCommandBuffer commands, const DeviceFunctions& functions);
     static bool Enabled();
     static constexpr std::size_t Slots = 4;
-    CommandEncoder(VkDevice device, DeviceFunctions& table);
+    static std::unique_ptr<CommandEncoder> Attach(VkDevice device, DeviceFunctions& table);
     ~CommandEncoder();
     CommandEncoder(const CommandEncoder&) = delete;
     CommandEncoder& operator=(const CommandEncoder&) = delete;
@@ -29,6 +29,8 @@ public:
     void Quiesce();
     void Settle();
     void Drain() noexcept;
+    void Finish(VkCommandBuffer commands);
+    void Forget(VkCommandBuffer commands);
     [[noreturn]] static void RefuseForeignProducer();
     bool OpenOnThisThread() const { return target.load(std::memory_order_acquire) != VK_NULL_HANDLE && owner.load(std::memory_order_relaxed) == std::this_thread::get_id(); }
     bool Defers(VkCommandBuffer commands) const {
@@ -69,11 +71,23 @@ private:
         std::size_t used = 0;
         std::size_t records = 0;
         VkCommandBuffer target = VK_NULL_HANDLE;
+        std::thread::id producer;
     };
+    struct Failure {
+        VkCommandBuffer commands = VK_NULL_HANDLE;
+        std::thread::id producer;
+        std::exception_ptr error;
+        bool reported = false;
+    };
+    CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot);
+    static std::size_t claim();
     void post();
     void run();
     void execute(Chunk& chunk);
     void await();
+    void report();
+    bool skips(VkCommandBuffer commands);
+    void fail(const Chunk& chunk, std::exception_ptr error);
     DeviceFunctions& table;
     DeviceFunctions real;
     VkDevice device = VK_NULL_HANDLE;
@@ -89,8 +103,10 @@ private:
     std::atomic<std::uint64_t> executed{0};
     std::atomic<bool> sleeping{false};
     std::atomic<bool> stopping{false};
-    std::exception_ptr failure;
-    std::atomic<bool> failed{false};
+    std::mutex failureMutex;
+    std::vector<Failure> failures;
+    std::atomic<std::size_t> failing{0};
+    std::atomic<std::size_t> unreported{0};
     std::mutex poolMutex;
     std::thread worker;
     std::atomic<std::thread::id> owner{};
