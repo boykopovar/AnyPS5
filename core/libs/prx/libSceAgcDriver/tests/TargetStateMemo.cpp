@@ -1041,6 +1041,7 @@ void validRefreshBaselines(AgcDriver::VulkanDevice& device) {
     auto color = colorTarget();
     auto* memory = allocateWatched(PlaneBytes);
     color.address = color.surfaceAddress = address(memory);
+    AgcDriver::GuestMemory::Unwatch(color.address, color.bytes);
     reset(device, color);
     arm(device, color);
     std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
@@ -1053,8 +1054,12 @@ void validRefreshBaselines(AgcDriver::VulkanDevice& device) {
     AgcDriver::GuestMemory::BumpCollectEpoch();
     Require(resident->RefreshObligation() != nullptr, "a valid saved baseline missed changed guest bytes");
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+#ifdef _WIN32
     const std::pair<std::uint64_t, std::uint64_t> range{color.address, color.address + color.bytes};
     AgcDriver::GuestMemory::Rewatch(std::span(&range, 1));
+#else
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory, color.bytes);
+#endif
     Require(AgcDriver::GuestMemory::Watched(color.address, color.bytes) && HostImportFor(context, color.address, color.bytes) != nullptr, "the baseline fixture cannot directly upload watched bytes");
     resident->Refresh();
     Require(resident->OriginalSnapshotBytes() != 0, "the direct upload dropped the baseline buffer");
