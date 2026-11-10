@@ -28,6 +28,7 @@ public:
     void Close();
     void Quiesce();
     void Settle();
+    void Drain() noexcept;
     [[noreturn]] static void RefuseForeignProducer();
     bool OpenOnThisThread() const { return target.load(std::memory_order_acquire) != VK_NULL_HANDLE && owner.load(std::memory_order_relaxed) == std::this_thread::get_id(); }
     bool Defers(VkCommandBuffer commands) const {
@@ -52,7 +53,7 @@ public:
     public:
         explicit UnwindQuiesce(CommandEncoder* encoder) : encoder(encoder), exceptions(std::uncaught_exceptions()) {}
         ~UnwindQuiesce() {
-            if (encoder != nullptr && std::uncaught_exceptions() > exceptions) encoder->Quiesce();
+            if (encoder != nullptr && std::uncaught_exceptions() > exceptions) encoder->Drain();
         }
         UnwindQuiesce(const UnwindQuiesce&) = delete;
         UnwindQuiesce& operator=(const UnwindQuiesce&) = delete;
@@ -72,6 +73,7 @@ private:
     void post();
     void run();
     void execute(Chunk& chunk);
+    void await();
     DeviceFunctions& table;
     DeviceFunctions real;
     VkDevice device = VK_NULL_HANDLE;
@@ -87,6 +89,8 @@ private:
     std::atomic<std::uint64_t> executed{0};
     std::atomic<bool> sleeping{false};
     std::atomic<bool> stopping{false};
+    std::exception_ptr failure;
+    std::atomic<bool> failed{false};
     std::mutex poolMutex;
     std::thread worker;
     std::atomic<std::thread::id> owner{};

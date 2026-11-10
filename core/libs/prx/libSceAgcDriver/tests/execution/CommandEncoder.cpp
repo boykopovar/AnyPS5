@@ -582,6 +582,43 @@ void RawCallAfterLookupKeepsOrder() {
 
 }
 
+void FailedReplayIsReportedToTheProducer() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x4a);
+    const auto commands = Handle<VkCommandBuffer>(0xe00);
+    std::size_t reported = 0;
+    std::size_t recordedAfterFailure = 0;
+    {
+        CommandEncoder encoder(device, table);
+        CommandEncoder::SetDelayForTesting([] { throw std::runtime_error("injected replay failure"); });
+        encoder.Open(commands);
+        table.cmdDraw(commands, 1, 1, 0, 0);
+        encoder.Close();
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            try {
+                encoder.Quiesce();
+            } catch (const std::runtime_error& error) {
+                Require(std::string(error.what()) == "injected replay failure", std::string("the encoder reported '") + error.what() + "' for a failed replay");
+                ++reported;
+            }
+        }
+        CommandEncoder::SetDelayForTesting({});
+        encoder.Open(commands);
+        table.cmdDraw(commands, 2, 1, 0, 0);
+        encoder.Close();
+        try {
+            encoder.Quiesce();
+        } catch (const std::runtime_error&) {
+            ++reported;
+        }
+        std::lock_guard lock(logMutex);
+        recordedAfterFailure = recorded[commands].size();
+    }
+    Require(reported == 3, "a failed replay was reported to " + std::to_string(reported) + " of 3 later drains");
+    Require(recordedAfterFailure == 0, "the encoder recorded " + std::to_string(recordedAfterFailure) + " commands into a command buffer after a replay into it failed");
+}
+
 int main() {
     try {
         for (std::uint32_t seed = 1; seed <= 6; ++seed) RandomProgramRecordsWhatInlineRecords(seed, seed % 2 == 0);
@@ -595,6 +632,7 @@ int main() {
         ForeignThreadCannotProduceIntoAnOpenWindow();
         ForeignLookupWhileAWindowIsOpenProceeds();
         RawCallAfterLookupKeepsOrder();
+        FailedReplayIsReportedToTheProducer();
         std::cout << "command encoder tests passed\n";
         return 0;
     } catch (const std::exception& error) {

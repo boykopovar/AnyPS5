@@ -462,7 +462,7 @@ CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table) : table(
 }
 
 CommandEncoder::~CommandEncoder() {
-    Quiesce();
+    Drain();
     stopping.store(true, std::memory_order_seq_cst);
     posted.fetch_add(1, std::memory_order_seq_cst);
     posted.notify_all();
@@ -492,7 +492,7 @@ void CommandEncoder::Close() {
         target.store(VK_NULL_HANDLE, std::memory_order_relaxed);
         return;
     }
-    if (windows.back() != closed) Settle();
+    if (windows.back() != closed) await();
     recent.store(windows.back(), std::memory_order_relaxed);
     target.store(windows.back(), std::memory_order_relaxed);
 }
@@ -541,7 +541,17 @@ void CommandEncoder::Quiesce() {
     Settle();
 }
 
+void CommandEncoder::Drain() noexcept {
+    post();
+    await();
+}
+
 void CommandEncoder::Settle() {
+    await();
+    if (failed.load(std::memory_order_acquire)) std::rethrow_exception(failure);
+}
+
+void CommandEncoder::await() {
     const auto through = posted.load(std::memory_order_acquire);
     if (executed.load(std::memory_order_acquire) >= through) return;
     const auto start = std::chrono::steady_clock::now();
@@ -590,7 +600,14 @@ void CommandEncoder::run() {
             if (stopping.load(std::memory_order_acquire)) return;
             continue;
         }
-        execute(*chunk);
+        if (!failed.load(std::memory_order_relaxed)) {
+            try {
+                execute(*chunk);
+            } catch (...) {
+                failure = std::current_exception();
+                failed.store(true, std::memory_order_release);
+            }
+        }
         {
             std::lock_guard lock(queueMutex);
             free.push_back(std::move(chunk));
