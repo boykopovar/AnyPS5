@@ -32,7 +32,8 @@ static_assert(PipelineSpecialization::GatherLodBase + ShaderInfo::MaxSamplers <=
 static_assert(PipelineSpecialization::GatherLodBiasBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::GatherImageMinLodBase);
 static_assert(PipelineSpecialization::GatherImageMinLodBase + ShaderInfo::MaxImages <= PipelineSpecialization::FmaskFormatBase);
 static_assert(PipelineSpecialization::FmaskFormatBase + ShaderInfo::MaxImages <= PipelineSpecialization::VolumeGatherBase);
-static_assert(PipelineSpecialization::VolumeGatherBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
+static_assert(PipelineSpecialization::VolumeGatherBase + ShaderInfo::MaxImages <= PipelineSpecialization::GatherImageShapeBase);
+static_assert(PipelineSpecialization::GatherImageShapeBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
 
 namespace {
 
@@ -439,6 +440,17 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         const auto base = ((words[3] >> 12u) & 0xfu) * 256u;
         const PipelineSpecializationConstant constant{PipelineSpecialization::GatherImageMinLodBase + pair.image, minLod > base ? minLod - base : 0u};
         if (std::ranges::find(plan.specialization, constant) == plan.specialization.end()) plan.specialization.push_back(constant);
+        const auto width = (((words[1] >> 30u) & 0x3u) | ((words[2] & 0xfffu) << 2u)) + 1u;
+        const auto height = ((words[2] >> 14u) & 0x3fffu) + 1u;
+        const auto baseLevel = (words[3] >> 12u) & 0xfu;
+        const auto lastLevel = (words[3] >> 16u) & 0xfu;
+        const auto maxMip = (words[5] >> 4u) & 0xfu;
+        const auto viewLast = baseLevel <= maxMip ? std::min(lastLevel, maxMip) : lastLevel;
+        const auto levels = viewLast >= baseLevel ? viewLast - baseLevel + 1u : 1u;
+        const auto baseWidth = std::max(width >> baseLevel, 1u);
+        const auto baseHeight = std::max(height >> baseLevel, 1u);
+        const PipelineSpecializationConstant shape{PipelineSpecialization::GatherImageShapeBase + pair.image, (levels - 1u) | ((baseWidth - 1u) << 4u) | ((baseHeight - 1u) << 18u)};
+        if (std::ranges::find(plan.specialization, shape) == plan.specialization.end()) plan.specialization.push_back(shape);
     }
     std::vector<std::uint32_t> compareStates(info.images.size());
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {

@@ -1050,8 +1050,11 @@ std::uint32_t EmitTwoDimensionalGatherLod(SpirvValueEmitContext& ctx, const Imag
     const auto field = [&](std::uint32_t shift, std::uint32_t mask) { return EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, u32, samplerState, ConstantU32(state, shift)), mask); };
     const auto fixedLod = [&](std::uint32_t raw) { return Binary(state, spv::OpFMul, f32, Unary(state, spv::OpConvertUToF, f32, raw), ConstantF32(state, 0x3b800000u)); };
     const auto image = LoadSampledImageDescriptor(state, access.mem.resource);
-    const auto levels = state.module.AllocateId();
-    state.module.AddFunction(spv::OpImageQueryLevels, u32, levels, image);
+    const auto shape = state.module.SpecializationConstant(u32, PipelineSpecialization::GatherImageShapeBase + access.mem.resource, 0u);
+    const auto shapeField = [&](std::uint32_t shift, std::uint32_t mask) { return EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, u32, shape, ConstantU32(state, shift)), mask); };
+    const auto queriedLevels = state.module.AllocateId();
+    state.module.AddFunction(spv::OpImageQueryLevels, u32, queriedLevels, image);
+    const auto levels = Select(state, u32, Binary(state, spv::OpIEqual, boolean, queriedLevels, ConstantU32(state, 0u)), Binary(state, spv::OpIAdd, u32, shapeField(0u, 0xfu), ConstantU32(state, 1u)), queriedLevels);
     const auto atLeastOne = state.module.AllocateId();
     state.module.AddFunction(spv::OpExtInst, u32, atLeastOne, GlslStd450(state), GLSLstd450UMax, levels, ConstantU32(state, 1u));
     const auto lastLevel = Unary(state, spv::OpConvertUToF, f32, Binary(state, spv::OpISub, u32, atLeastOne, ConstantU32(state, 1u)));
@@ -1077,8 +1080,12 @@ std::uint32_t EmitTwoDimensionalGatherLod(SpirvValueEmitContext& ctx, const Imag
     std::uint32_t extent[2] = {};
     std::uint32_t first[2] = {};
     for (std::uint32_t axis = 0; axis < 2u; axis++) {
-        extent[axis] = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeExtract, i32, extent[axis], size, axis);
+        const auto queried = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, i32, queried, size, axis);
+        const auto shifted = Binary(state, spv::OpShiftRightLogical, u32, Binary(state, spv::OpIAdd, u32, shapeField(axis == 0u ? 4u : 18u, 0x3fffu), ConstantU32(state, 1u)), Unary(state, spv::OpBitcast, u32, level));
+        const auto texels = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, u32, texels, GlslStd450(state), GLSLstd450UMax, shifted, ConstantU32(state, 1u));
+        extent[axis] = Select(state, i32, Binary(state, spv::OpIEqual, boolean, queried, ConstantI32(state, 0)), Unary(state, spv::OpBitcast, i32, texels), queried);
         const auto coord = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, f32, coord, setup.coord, axis);
         const auto scaled = Binary(state, spv::OpFSub, f32, Binary(state, spv::OpFMul, f32, coord, Unary(state, spv::OpConvertSToF, f32, extent[axis])), ConstantF32(state, 0x3f000000u));
