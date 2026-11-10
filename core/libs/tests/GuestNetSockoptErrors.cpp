@@ -49,7 +49,11 @@ int main() {
     const int stream = sceNetSocket("sockopt-stream", 2, 1, 0);
     const int datagram = sceNetSocket("sockopt-datagram", 2, 2, 0);
     const int stream6 = sceNetSocket("sockopt-stream6", 28, 1, 0);
-    Require(stream >= 0 && datagram >= 0 && stream6 >= 0);
+    Require(stream >= 0 && datagram >= 0);
+    if (stream6 < 0) {
+        Require(*sceNetErrnoLoc() == 43 || *sceNetErrnoLoc() == 47);
+        std::fprintf(stderr, "IPv6 unavailable; continuing IPv4 sockopt checks\n");
+    }
     int one = 1;
     std::uint32_t size = sizeof(one);
 
@@ -107,11 +111,13 @@ int main() {
     RequireError(GetOption(stream, 6, 0x7777, &one, &size), noOption);
     RequireError(SetOption(stream, 6, 0x7777, &one, sizeof(one)), noOption);
     RequireError(SetOption(stream, 6, 0x7777, &one, 0), noOption);
-    for (const int option : {3, 4}) {
-        size = sizeof(one);
-        RequireError(GetOption(stream6, 0, option, &one, &size), invalid);
+    if (stream6 >= 0) {
+        for (const int option : {3, 4}) {
+            size = sizeof(one);
+            RequireError(GetOption(stream6, 0, option, &one, &size), invalid);
+        }
+        RequireError(SetOption(stream6, 0, 4, &one, sizeof(one)), invalid);
     }
-    RequireError(SetOption(stream6, 0, 4, &one, sizeof(one)), invalid);
 
     Require(SetOption(stream, socketLevel, 0x1200, &one, sizeof(one)) == 0);
     const std::int64_t timeout[2] = {2, 0};
@@ -171,6 +177,7 @@ int main() {
         RequireError(SetOption(stream, socketLevel, 4, nullptr, huge), invalid);
         for (const int level : {socketLevel, 6, 41}) {
             const int descriptor = level == 41 ? stream6 : stream;
+            if (descriptor < 0) continue;
             for (void* value : {static_cast<void*>(&one), static_cast<void*>(nullptr)}) {
                 size = huge;
                 RequireError(GetOption(descriptor, level, 0x7777, value, &size), noOption);
@@ -185,7 +192,8 @@ int main() {
         for (const std::uint32_t length : {0u, 1u, 2u, 3u}) RequireError(SetOption(stream, socketLevel, option, &one, length), invalid);
         RequireError(SetOption(stream, socketLevel, option, nullptr, 0), invalid);
         RequireError(SetOption(stream, socketLevel, option, nullptr, sizeof(one)), fault);
-        Require(SetOption(stream, socketLevel, option, &one, 8) == 0);
+        const std::array<int, 2> value{one, 0};
+        Require(SetOption(stream, socketLevel, option, value.data(), sizeof(value)) == 0);
     }
     RequireError(SetOption(stream, socketLevel, 4, unmapped, sizeof(one)), fault);
     RequireError(SetOption(stream, socketLevel, 4, unmapped, 0), invalid);
@@ -205,6 +213,7 @@ int main() {
         RequireError(SetOption(stream, 6, option, unmapped, sizeof(one)), fault);
     }
     for (const int socket : {stream, stream6, datagram}) {
+        if (socket < 0) continue;
         for (const int enabled : {1, 0}) {
             Require(SetOption(socket, socketLevel, 0x20, &enabled, sizeof(enabled)) == 0);
             int value = -1;
@@ -213,7 +222,8 @@ int main() {
             Require(value == (enabled ? 0x20 : 0));
         }
     }
-    RequireError(SetOption(stream6, 41, 27, nullptr, sizeof(one)), fault);
+    if (stream6 >= 0) RequireError(SetOption(stream6, 41, 27, nullptr, sizeof(one)), fault);
 
-    Require(sceNetSocketClose(stream) == 0 && sceNetSocketClose(datagram) == 0 && sceNetSocketClose(stream6) == 0);
+    Require(sceNetSocketClose(stream) == 0 && sceNetSocketClose(datagram) == 0);
+    if (stream6 >= 0) Require(sceNetSocketClose(stream6) == 0);
 }
