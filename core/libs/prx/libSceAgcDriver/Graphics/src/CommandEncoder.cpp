@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommandEncoder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -32,6 +33,7 @@ struct SlotState {
     std::atomic<CommandEncoder*> encoder{nullptr};
     DeviceFunctions real;
     VkDevice device = VK_NULL_HANDLE;
+    bool claimed = false;
 };
 
 std::array<SlotState, CommandEncoder::Slots>& slots() {
@@ -226,7 +228,7 @@ VKAPI_ATTR void VKAPI_CALL pipelineBarrier(VkCommandBuffer commands, VkPipelineS
             copyArray(copyArray(copyArray(at + aligned(sizeof(BarrierHeader)), memoryBarriers, memory), bufferBarriers, buffers), imageBarriers, images);
             return;
         }
-        encoder->Quiesce();
+        if (!encoder->Direct()) return;
     }
     slots()[S].real.cmdPipelineBarrier(commands, source, destination, dependencies, memory, memoryBarriers, buffers, bufferBarriers, images, imageBarriers);
 }
@@ -349,7 +351,7 @@ VKAPI_ATTR void VKAPI_CALL beginRenderPass(VkCommandBuffer commands, const VkRen
             copyArray(at + aligned(sizeof(BeginPassHeader)), info->pClearValues, info->clearValueCount);
             return;
         }
-        encoder->Quiesce();
+        if (!encoder->Direct()) return;
     }
     slots()[S].real.cmdBeginRenderPass(commands, info, contents);
 }
@@ -378,7 +380,7 @@ VKAPI_ATTR void VKAPI_CALL beginRendering(VkCommandBuffer commands, const VkRend
             copyArray(at + aligned(sizeof(RenderingHeader)), info->pColorAttachments, info->colorAttachmentCount);
             return;
         }
-        encoder->Quiesce();
+        if (!encoder->Direct()) return;
     }
     slots()[S].real.cmdBeginRendering(commands, info);
 }
@@ -447,15 +449,32 @@ bool CommandEncoder::Enabled() {
     return enabled;
 }
 
-CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table) : table(table), real(table), device(device) {
+std::size_t CommandEncoder::claim() {
     std::lock_guard lock(slotMutex());
     for (std::size_t index = 0; index < Slots; ++index) {
-        if (slots()[index].encoder.load(std::memory_order_relaxed) != nullptr) continue;
-        slot = index;
-        break;
+        if (slots()[index].claimed) continue;
+        slots()[index].claimed = true;
+        return index;
     }
-    if (slot == Slots) throw std::runtime_error("AGC graphics: every command encoder slot is in use");
+    return Slots;
+}
+
+std::unique_ptr<CommandEncoder> CommandEncoder::Attach(VkDevice device, DeviceFunctions& table) {
+    const auto slot = claim();
+    if (slot == Slots) return nullptr;
+    try {
+        return std::unique_ptr<CommandEncoder>(new CommandEncoder(device, table, slot));
+    } catch (...) {
+        std::lock_guard lock(slotMutex());
+        slots()[slot].claimed = false;
+        throw;
+    }
+}
+
+CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot) : table(table), real(table), device(device), slot(slot) {
+    static_cast<void>(HandoffSpinWindow());
     worker = std::thread([this] { run(); });
+    std::lock_guard lock(slotMutex());
     slots()[slot].real = real;
     slots()[slot].device = device;
     installAt(slot, table, std::make_index_sequence<Slots>{});
@@ -463,20 +482,34 @@ CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table) : table(
 }
 
 CommandEncoder::~CommandEncoder() {
-    Drain();
+    Quiesce();
     stopping.store(true, std::memory_order_seq_cst);
     posted.fetch_add(1, std::memory_order_seq_cst);
     posted.notify_all();
     worker.join();
+    delete filling;
+    for (auto* chunk = spare; chunk != nullptr;) delete std::exchange(chunk, chunk->next);
     std::lock_guard lock(slotMutex());
     table = real;
     slots()[slot].encoder.store(nullptr, std::memory_order_release);
+    slots()[slot].claimed = false;
 }
 
-void CommandEncoder::Open(VkCommandBuffer commands) {
+void CommandEncoder::Recording::deliver() {
+    reported = true;
+    std::rethrow_exception(error);
+}
+
+void CommandEncoder::Recording::refuse() {
+    if (!reported) deliver();
+    throw std::runtime_error("AGC graphics: the encoder failed to record this command buffer, so it is not submitted");
+}
+
+void CommandEncoder::Open(VkCommandBuffer commands, Recording& recording) {
     if (recent.load(std::memory_order_relaxed) != commands) Quiesce();
-    windows.push_back(commands);
+    windows.push_back({commands, &recording});
     owner.store(std::this_thread::get_id(), std::memory_order_relaxed);
+    this->recording = &recording;
     recent.store(commands, std::memory_order_relaxed);
     target.store(commands, std::memory_order_release);
 }
@@ -487,36 +520,41 @@ void CommandEncoder::RefuseForeignProducer() {
 
 void CommandEncoder::Close() {
     post();
-    const auto closed = windows.back();
+    const auto closed = windows.back().commands;
     windows.pop_back();
     if (windows.empty()) {
         target.store(VK_NULL_HANDLE, std::memory_order_relaxed);
+        recording = nullptr;
         return;
     }
-    if (windows.back() != closed) await();
-    recent.store(windows.back(), std::memory_order_relaxed);
-    target.store(windows.back(), std::memory_order_relaxed);
+    if (windows.back().commands != closed) await();
+    recording = windows.back().recording;
+    recent.store(windows.back().commands, std::memory_order_relaxed);
+    target.store(windows.back().commands, std::memory_order_relaxed);
 }
 
 std::byte* CommandEncoder::Append(Run run, std::size_t bytes) {
     const auto need = RecordHeader + aligned(bytes);
-    if (filling != nullptr && filling->used + need > filling->bytes.size()) post();
+    if (filling != nullptr && (filling->recording != recording || filling->used + need > filling->bytes.size())) post();
     if (filling == nullptr) {
         {
             std::lock_guard lock(queueMutex);
-            if (!free.empty()) {
-                filling = std::move(free.back());
-                free.pop_back();
-            }
+            if (spare != nullptr) filling = std::exchange(spare, spare->next);
         }
-        if (filling == nullptr) filling = std::make_unique<Chunk>();
-        if (filling->bytes.size() < std::max(ChunkBytes, need)) filling->bytes.resize(std::max(ChunkBytes, need));
+        if (filling == nullptr) filling = new Chunk;
+        try {
+            if (filling->bytes.size() < std::max(ChunkBytes, need)) filling->bytes.resize(std::max(ChunkBytes, need));
+        } catch (...) {
+            auto* chunk = std::exchange(filling, nullptr);
+            std::lock_guard lock(queueMutex);
+            chunk->next = std::exchange(spare, chunk);
+            throw;
+        }
         filling->used = 0;
         filling->records = 0;
+        filling->next = nullptr;
         filling->target = target.load(std::memory_order_relaxed);
-    } else if (filling->target != target.load(std::memory_order_relaxed)) {
-        post();
-        return Append(run, bytes);
+        filling->recording = recording;
     }
     auto* at = filling->bytes.data() + filling->used;
     new (at) Record{run, static_cast<std::uint32_t>(need)};
@@ -525,7 +563,7 @@ std::byte* CommandEncoder::Append(Run run, std::size_t bytes) {
     return at + RecordHeader;
 }
 
-void CommandEncoder::post() {
+void CommandEncoder::post() noexcept {
     if (filling == nullptr || filling->records == 0) return;
     const auto records = filling->records;
     commandCount.fetch_add(records, std::memory_order_relaxed);
@@ -538,28 +576,29 @@ void CommandEncoder::post() {
     }
     {
         std::lock_guard lock(queueMutex);
-        queue.push_back(std::move(filling));
+        auto* chunk = std::exchange(filling, nullptr);
+        (tail != nullptr ? tail->next : head) = chunk;
+        tail = chunk;
     }
     posted.fetch_add(1, std::memory_order_seq_cst);
     if (sleeping.load(std::memory_order_seq_cst)) posted.notify_one();
 }
 
-void CommandEncoder::Quiesce() {
-    post();
-    Settle();
-}
-
-void CommandEncoder::Drain() noexcept {
+void CommandEncoder::Quiesce() noexcept {
     post();
     await();
 }
 
-void CommandEncoder::Settle() {
-    await();
-    if (failed.load(std::memory_order_acquire)) std::rethrow_exception(failure);
+bool CommandEncoder::Direct() noexcept {
+    Quiesce();
+    return recording == nullptr || !recording->Failed();
 }
 
-void CommandEncoder::await() {
+void CommandEncoder::Settle() noexcept {
+    await();
+}
+
+void CommandEncoder::await() noexcept {
     const auto through = posted.load(std::memory_order_acquire);
     if (executed.load(std::memory_order_acquire) >= through) return;
     const auto start = std::chrono::steady_clock::now();
@@ -599,12 +638,12 @@ void CommandEncoder::run() {
             }
             continue;
         }
-        std::unique_ptr<Chunk> chunk;
+        Chunk* chunk = nullptr;
         {
             std::lock_guard lock(queueMutex);
-            if (!queue.empty()) {
-                chunk = std::move(queue.front());
-                queue.pop_front();
+            if (head != nullptr) {
+                chunk = std::exchange(head, head->next);
+                if (head == nullptr) tail = nullptr;
             }
         }
         ++taken;
@@ -612,17 +651,18 @@ void CommandEncoder::run() {
             if (stopping.load(std::memory_order_acquire)) return;
             continue;
         }
-        if (!failed.load(std::memory_order_relaxed)) {
+        auto& recording = *chunk->recording;
+        if (!recording.failed.load(std::memory_order_relaxed)) {
             try {
                 execute(*chunk);
             } catch (...) {
-                failure = std::current_exception();
-                failed.store(true, std::memory_order_release);
+                recording.error = std::current_exception();
+                recording.failed.store(true, std::memory_order_release);
             }
         }
         {
             std::lock_guard lock(queueMutex);
-            free.push_back(std::move(chunk));
+            chunk->next = std::exchange(spare, chunk);
         }
         executed.fetch_add(1, std::memory_order_release);
         executed.notify_all();

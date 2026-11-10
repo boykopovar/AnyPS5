@@ -1,11 +1,17 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommandEncoder.hpp"
+#include "prx/libSceAgcDriver/tests/AllocationFailure.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <iostream>
+#include <limits>
 #include <map>
+#include <new>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <stdexcept>
@@ -247,9 +253,30 @@ void Compare(const std::map<VkCommandBuffer, std::vector<std::string>>& expected
     }
 }
 
+std::map<VkCommandBuffer, CommandEncoder::Recording>& Recordings() {
+    static std::map<VkCommandBuffer, CommandEncoder::Recording> value;
+    return value;
+}
+
+CommandEncoder::Recording& RecordingOf(VkCommandBuffer commands) {
+    return Recordings()[commands];
+}
+
 void Reset() {
     std::lock_guard lock(logMutex);
     recorded.clear();
+    Recordings().clear();
+}
+
+std::size_t Recorded(VkCommandBuffer commands) {
+    std::lock_guard lock(logMutex);
+    return recorded[commands].size();
+}
+
+std::unique_ptr<CommandEncoder> Attached(VkDevice device, DeviceFunctions& table) {
+    auto encoder = CommandEncoder::Attach(device, table);
+    Require(encoder != nullptr, "no command encoder slot was free");
+    return encoder;
 }
 
 void RandomProgramRecordsWhatInlineRecords(std::uint32_t seed, bool delays) {
@@ -266,7 +293,8 @@ void RandomProgramRecordsWhatInlineRecords(std::uint32_t seed, bool delays) {
         });
     }
     {
-        CommandEncoder encoder(device, table);
+        const auto attached = Attached(device, table);
+        auto& encoder = *attached;
         Oracle oracle{table, {}};
         const VkCommandBuffer buffers[2]{Handle<VkCommandBuffer>(0x100), Handle<VkCommandBuffer>(0x200)};
         std::uint32_t depth = 0;
@@ -275,7 +303,7 @@ void RandomProgramRecordsWhatInlineRecords(std::uint32_t seed, bool delays) {
             const auto choice = random() % 20;
             if (choice == 0 && depth < 3) {
                 if (depth == 0) open = buffers[random() % 2];
-                encoder.Open(open);
+                encoder.Open(open, RecordingOf(open));
                 ++depth;
             } else if (choice == 1 && depth != 0) {
                 encoder.Close();
@@ -310,14 +338,15 @@ void OtherThreadsRecordDirectlyWhileAWindowIsOpen() {
     Reset();
     auto table = FakeTable();
     const auto device = Handle<VkDevice>(0x41);
-    CommandEncoder encoder(device, table);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
     const auto mine = Handle<VkCommandBuffer>(0x300);
     const auto theirs = Handle<VkCommandBuffer>(0x400);
     std::map<VkCommandBuffer, std::vector<std::string>> expected;
     std::thread other([&] {
         for (std::uint32_t index = 0; index < 5000; ++index) table.cmdDraw(theirs, index, 2, 0, 0);
     });
-    encoder.Open(mine);
+    encoder.Open(mine, RecordingOf(mine));
     for (std::uint32_t index = 0; index < 5000; ++index) {
         table.cmdDraw(mine, index, 1, 0, 0);
         expected[mine].push_back("draw " + std::to_string(index) + " 1 0 0");
@@ -333,13 +362,14 @@ void HookDuringUnencodedOpsWaits() {
     Reset();
     auto table = FakeTable();
     const auto device = Handle<VkDevice>(0x42);
-    CommandEncoder encoder(device, table);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
     const auto commands = Handle<VkCommandBuffer>(0x500);
     std::atomic<bool> release{false};
     CommandEncoder::SetDelayForTesting([&] {
         while (!release.load()) std::this_thread::yield();
     });
-    encoder.Open(commands);
+    encoder.Open(commands, RecordingOf(commands));
     table.cmdDraw(commands, 1, 1, 0, 0);
     encoder.Close();
     std::thread releaser([&] {
@@ -357,16 +387,17 @@ void NestedWindowKeepsOrder() {
     Reset();
     auto table = FakeTable();
     const auto device = Handle<VkDevice>(0x43);
-    CommandEncoder encoder(device, table);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
     const auto outer = Handle<VkCommandBuffer>(0x600);
     const auto inner = Handle<VkCommandBuffer>(0x700);
-    encoder.Open(outer);
+    encoder.Open(outer, RecordingOf(outer));
     table.cmdDraw(outer, 1, 1, 0, 0);
-    encoder.Open(outer);
+    encoder.Open(outer, RecordingOf(outer));
     table.cmdDraw(outer, 2, 1, 0, 0);
     encoder.Close();
     table.cmdDraw(outer, 3, 1, 0, 0);
-    encoder.Open(inner);
+    encoder.Open(inner, RecordingOf(inner));
     table.cmdDraw(inner, 4, 1, 0, 0);
     table.cmdDraw(outer, 5, 1, 0, 0);
     encoder.Close();
@@ -381,10 +412,11 @@ void LargeRecordsSpanChunks() {
     Reset();
     auto table = FakeTable();
     const auto device = Handle<VkDevice>(0x44);
-    CommandEncoder encoder(device, table);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
     const auto commands = Handle<VkCommandBuffer>(0x800);
     std::map<VkCommandBuffer, std::vector<std::string>> expected;
-    encoder.Open(commands);
+    encoder.Open(commands, RecordingOf(commands));
     for (std::uint32_t round = 0; round < 64; ++round) {
         std::vector<std::uint8_t> bytes(4096 + round);
         std::string text = "push 1 1 0";
@@ -409,12 +441,13 @@ void TransfersAndQueriesInAWindowNeverWait() {
     Reset();
     auto table = FakeTable();
     const auto device = Handle<VkDevice>(0x46);
-    CommandEncoder encoder(device, table);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
     const auto commands = Handle<VkCommandBuffer>(0xa00);
     CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(5)); });
     std::vector<std::string> expected;
     for (std::uint32_t round = 0; round < 4; ++round) {
-        encoder.Open(commands);
+        encoder.Open(commands, RecordingOf(commands));
         table.cmdDraw(commands, round, 1, 0, 0);
         expected.push_back("draw " + std::to_string(round) + " 1 0 0");
         VkBufferCopy copies[2]{{round, 16 + round, 4}, {32, 48, 8 + round}};
@@ -456,13 +489,14 @@ void UnwindingSettlesQueuedRecording() {
     Reset();
     auto table = FakeTable();
     const auto device = Handle<VkDevice>(0x45);
-    CommandEncoder encoder(device, table);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
     const auto commands = Handle<VkCommandBuffer>(0x900);
     CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(30)); });
     std::size_t recordedAtCatch = 0;
     try {
-        encoder.Open(commands);
-        const CommandEncoder::UnwindQuiesce guard(&encoder);
+        encoder.Open(commands, RecordingOf(commands));
+        const CommandEncoder::UnwindQuiesce guard(attached.get());
         table.cmdDraw(commands, 1, 1, 0, 0);
         table.cmdDraw(commands, 2, 1, 0, 0);
         encoder.Close();
@@ -489,14 +523,15 @@ void OwnersOutliveTheUnwindDrain() {
     Reset();
     auto table = FakeTable();
     const auto device = Handle<VkDevice>(0x46);
-    CommandEncoder encoder(device, table);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
     const auto commands = Handle<VkCommandBuffer>(0xa00);
     CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(30)); });
     std::size_t recordedAtRelease = 0;
     try {
-        encoder.Open(commands);
+        encoder.Open(commands, RecordingOf(commands));
         RecordedAtDestruction owner{commands, recordedAtRelease};
-        const CommandEncoder::UnwindQuiesce guard(&encoder);
+        const CommandEncoder::UnwindQuiesce guard(attached.get());
         table.cmdDraw(commands, 1, 1, 0, 0);
         table.cmdDraw(commands, 2, 1, 0, 0);
         encoder.Close();
@@ -512,9 +547,10 @@ void ForeignThreadCannotProduceIntoAnOpenWindow() {
     Reset();
     auto table = FakeTable();
     const auto device = Handle<VkDevice>(0x47);
-    CommandEncoder encoder(device, table);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
     const auto commands = Handle<VkCommandBuffer>(0xb00);
-    encoder.Open(commands);
+    encoder.Open(commands, RecordingOf(commands));
     table.cmdDraw(commands, 1, 1, 0, 0);
     std::atomic<bool> refused{false};
     std::thread other([&] {
@@ -538,10 +574,11 @@ void ForeignLookupWhileAWindowIsOpenProceeds() {
     Reset();
     auto table = FakeTable();
     const auto device = Handle<VkDevice>(0x48);
-    CommandEncoder encoder(device, table);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
     const auto commands = Handle<VkCommandBuffer>(0xc00);
     const auto own = Handle<VkCommandBuffer>(0xc80);
-    encoder.Open(commands);
+    encoder.Open(commands, RecordingOf(commands));
     table.cmdDraw(commands, 1, 1, 0, 0);
     std::atomic<bool> refused{false};
     std::thread other([&] {
@@ -565,10 +602,11 @@ void RawCallAfterLookupKeepsOrder() {
     auto table = FakeTable();
     const auto raw = table;
     const auto device = Handle<VkDevice>(0x49);
-    CommandEncoder encoder(device, table);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
     const auto commands = Handle<VkCommandBuffer>(0xd00);
     CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(5)); });
-    encoder.Open(commands);
+    encoder.Open(commands, RecordingOf(commands));
     table.cmdDraw(commands, 1, 1, 0, 0);
     table.cmdDraw(commands, 2, 1, 0, 0);
     AgcDriver::Graphics::BeforeCommandLookup(device);
@@ -582,41 +620,219 @@ void RawCallAfterLookupKeepsOrder() {
 
 }
 
-void FailedReplayIsReportedToTheProducer() {
+bool Reports(const std::function<void()>& settle) {
+    try {
+        settle();
+        return false;
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == "injected replay failure", std::string("the encoder reported '") + error.what() + "' for a failed replay");
+        return true;
+    }
+}
+
+bool Refuses(const std::function<void()>& finish) {
+    try {
+        finish();
+        return false;
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) != "injected replay failure";
+    }
+}
+
+void FailedReplayStaysWithItsRecording() {
     Reset();
     auto table = FakeTable();
     const auto device = Handle<VkDevice>(0x4a);
-    const auto commands = Handle<VkCommandBuffer>(0xe00);
-    std::size_t reported = 0;
-    std::size_t recordedAfterFailure = 0;
+    const auto failing = Handle<VkCommandBuffer>(0xe00);
+    const auto healthy = Handle<VkCommandBuffer>(0xe80);
     {
-        CommandEncoder encoder(device, table);
-        CommandEncoder::SetDelayForTesting([] { throw std::runtime_error("injected replay failure"); });
-        encoder.Open(commands);
-        table.cmdDraw(commands, 1, 1, 0, 0);
-        encoder.Close();
-        for (int attempt = 0; attempt < 2; ++attempt) {
-            try {
-                encoder.Quiesce();
-            } catch (const std::runtime_error& error) {
-                Require(std::string(error.what()) == "injected replay failure", std::string("the encoder reported '") + error.what() + "' for a failed replay");
-                ++reported;
-            }
-        }
-        CommandEncoder::SetDelayForTesting({});
-        encoder.Open(commands);
-        table.cmdDraw(commands, 2, 1, 0, 0);
-        encoder.Close();
-        try {
+        const auto attached = Attached(device, table);
+        auto& encoder = *attached;
+        std::atomic<int> failures{1};
+        CommandEncoder::SetDelayForTesting([&] {
+            if (failures.fetch_sub(1) > 0) throw std::runtime_error("injected replay failure");
+        });
+        std::thread producer([&] {
+            encoder.Open(failing, RecordingOf(failing));
+            table.cmdDraw(failing, 1, 1, 0, 0);
+            encoder.Close();
             encoder.Quiesce();
-        } catch (const std::runtime_error&) {
-            ++reported;
-        }
-        std::lock_guard lock(logMutex);
-        recordedAfterFailure = recorded[commands].size();
+        });
+        producer.join();
+        std::thread other([&] {
+            encoder.Settle();
+            AgcDriver::Graphics::BeforeCommandLookup(device);
+        });
+        other.join();
+        encoder.Open(healthy, RecordingOf(healthy));
+        table.cmdDraw(healthy, 2, 1, 0, 0);
+        encoder.Close();
+        encoder.Open(failing, RecordingOf(failing));
+        table.cmdDraw(failing, 3, 1, 0, 0);
+        encoder.Close();
+        encoder.Quiesce();
+        CommandEncoder::SetDelayForTesting({});
     }
-    Require(reported == 3, "a failed replay was reported to " + std::to_string(reported) + " of 3 later drains");
-    Require(recordedAfterFailure == 0, "the encoder recorded " + std::to_string(recordedAfterFailure) + " commands into a command buffer after a replay into it failed");
+    Require(RecordingOf(failing).Failed() && !RecordingOf(healthy).Failed(), "a replay failure was not kept with the recording it happened in");
+    Require(Reports([&] { RecordingOf(failing).Report(); }), "a failed replay recorded by a thread that has exited was not reported to the next settle of its recording");
+    Require(!Reports([&] { RecordingOf(failing).Report(); }), "a failed replay was reported twice");
+    Require(Refuses([&] { RecordingOf(failing).Finish(); }), "finishing a recording whose reported replay failure was not refused, or reported it again");
+    Require(!Reports([&] { RecordingOf(healthy).Finish(); }), "finishing a healthy recording reported another recording's failed replay");
+    Require(Recorded(failing) == 0, "the encoder recorded " + std::to_string(Recorded(failing)) + " commands into a recording after a replay into it failed");
+    Compare({{healthy, {"draw 2 1 0 0"}}}, "another recording after a failed replay");
+}
+
+void FinishCarriesAnUnreportedFailure() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x4b);
+    const auto failing = Handle<VkCommandBuffer>(0xf00);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    std::atomic<int> failures{1};
+    CommandEncoder::SetDelayForTesting([&] {
+        if (failures.fetch_sub(1) > 0) throw std::runtime_error("injected replay failure");
+    });
+    encoder.Open(failing, RecordingOf(failing));
+    table.cmdDraw(failing, 1, 1, 0, 0);
+    encoder.Close();
+    encoder.Quiesce();
+    CommandEncoder::SetDelayForTesting({});
+    std::atomic<bool> carried{false};
+    std::thread submitter([&] { carried.store(Reports([&] { RecordingOf(failing).Finish(); })); });
+    submitter.join();
+    Require(carried.load(), "finishing a recording on another thread did not carry its unreported replay failure");
+    Require(!Reports([&] { RecordingOf(failing).Report(); }), "a failed replay carried by finishing its recording was reported again");
+}
+
+void DirectCallsSkipAFailedRecording() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x4e);
+    const auto failing = Handle<VkCommandBuffer>(0x1200);
+    const auto healthy = Handle<VkCommandBuffer>(0x1280);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    std::atomic<int> failures{1};
+    CommandEncoder::SetDelayForTesting([&] {
+        if (failures.fetch_sub(1) > 0) throw std::runtime_error("injected replay failure");
+    });
+    const std::uint8_t bytes[] = {7};
+    const VkMemoryBarrier chainedLink{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    const VkMemoryBarrier chained{VK_STRUCTURE_TYPE_MEMORY_BARRIER, &chainedLink, 1, 2};
+    encoder.Open(failing, RecordingOf(failing));
+    table.cmdDraw(failing, 1, 1, 0, 0);
+    table.cmdUpdateBuffer(failing, Handle<VkBuffer>(0x30), 0, 1, bytes);
+    table.cmdPipelineBarrier(failing, 1, 2, 0, 1, &chained, 0, nullptr, 0, nullptr);
+    encoder.Close();
+    encoder.Open(healthy, RecordingOf(healthy));
+    table.cmdUpdateBuffer(healthy, Handle<VkBuffer>(0x31), 0, 1, bytes);
+    encoder.Close();
+    encoder.Quiesce();
+    CommandEncoder::SetDelayForTesting({});
+    Require(Recorded(failing) == 0, "a window recorded " + std::to_string(Recorded(failing)) + " direct calls into a recording after a replay into it failed");
+    Require(Reports([&] { RecordingOf(failing).Report(); }), "a failed replay followed by direct calls was not reported");
+    Compare({{healthy, {"update 49 0 7"}}}, "a direct call into another recording after a failed replay");
+}
+
+void AppendFailureKeepsTheWindow() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x4f);
+    const auto commands = Handle<VkCommandBuffer>(0x1300);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    encoder.Open(commands, RecordingOf(commands));
+    table.cmdDraw(commands, 1, 1, 0, 0);
+    bool refused = false;
+    try {
+        static_cast<void>(encoder.Append([](const std::byte*, VkCommandBuffer, const DeviceFunctions&) {}, static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max() / 2)));
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    table.cmdDraw(commands, 2, 1, 0, 0);
+    encoder.Close();
+    encoder.Quiesce();
+    Require(refused, "a record too large to allocate was appended");
+    Compare({{commands, {"draw 1 1 0 0", "draw 2 1 0 0"}}}, "a window after a record failed to allocate");
+}
+
+void DevicesPastTheSlotsRecordInline() {
+    Reset();
+    std::vector<DeviceFunctions> tables(CommandEncoder::Slots + 1, FakeTable());
+    std::vector<std::unique_ptr<CommandEncoder>> encoders;
+    for (std::size_t index = 0; index < tables.size(); ++index) encoders.push_back(CommandEncoder::Attach(Handle<VkDevice>(0x60 + index), tables[index]));
+    Require(encoders.back() == nullptr, "a device past the encoder slots got an encoder");
+    Require(std::all_of(encoders.begin(), encoders.end() - 1, [](const auto& encoder) { return encoder != nullptr; }), "a device within the encoder slots got no encoder");
+    Require(tables.back().cmdDraw == &FakeDraw, "a device without an encoder had its table patched");
+    encoders.front().reset();
+    Require(CommandEncoder::Attach(Handle<VkDevice>(0x70), tables.back()) != nullptr, "a slot freed by a destroyed encoder was not reused");
+    Require(tables.back().cmdDraw == &FakeDraw, "the reused slot's encoder left its table patched");
+}
+
+void PostingNeverAllocates() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x4c);
+    const auto commands = Handle<VkCommandBuffer>(0x1000);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    std::atomic<bool> release{false};
+    CommandEncoder::SetDelayForTesting([&] {
+        while (!release.load()) std::this_thread::yield();
+    });
+    for (std::uint32_t index = 0; index < 200; ++index) {
+        encoder.Open(commands, RecordingOf(commands));
+        table.cmdDraw(commands, index, 1, 0, 0);
+        bool allocated = false;
+        AgcDriver::Tests::SetAllocationFailureCountdown(0);
+        try {
+            encoder.Close();
+        } catch (const std::bad_alloc&) {
+            allocated = true;
+        }
+        AgcDriver::Tests::SetAllocationFailureCountdown(-1);
+        Require(!allocated, "posting chunk " + std::to_string(index) + " allocated memory");
+    }
+    encoder.Open(commands, RecordingOf(commands));
+    table.cmdDraw(commands, 200, 1, 0, 0);
+    release.store(true);
+    AgcDriver::Tests::SetAllocationFailureCountdown(0);
+    encoder.Quiesce();
+    AgcDriver::Tests::SetAllocationFailureCountdown(-1);
+    encoder.Close();
+    CommandEncoder::SetDelayForTesting({});
+    Require(Recorded(commands) == 201, "the encoder recorded " + std::to_string(Recorded(commands)) + " of 201 commands posted without allocating");
+}
+
+void ReplayFailureNeedsNoAllocation() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x4d);
+    const auto failing = Handle<VkCommandBuffer>(0x1100);
+    const auto healthy = Handle<VkCommandBuffer>(0x1180);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    const std::runtime_error injected("injected replay failure");
+    std::atomic<int> calls{0};
+    CommandEncoder::SetDelayForTesting([&] {
+        if (calls.fetch_add(1) == 0) {
+            AgcDriver::Tests::SetAllocationFailureCountdown(0);
+            throw injected;
+        }
+        AgcDriver::Tests::SetAllocationFailureCountdown(-1);
+    });
+    encoder.Open(failing, RecordingOf(failing));
+    table.cmdDraw(failing, 1, 1, 0, 0);
+    encoder.Close();
+    encoder.Quiesce();
+    encoder.Open(healthy, RecordingOf(healthy));
+    table.cmdDraw(healthy, 2, 1, 0, 0);
+    encoder.Close();
+    encoder.Quiesce();
+    CommandEncoder::SetDelayForTesting({});
+    Require(Reports([&] { RecordingOf(failing).Finish(); }), "a failed replay was not kept after its failure was stored without allocating");
+    Compare({{healthy, {"draw 2 1 0 0"}}}, "a replay after a failure stored without allocating");
 }
 
 int main() {
@@ -632,7 +848,13 @@ int main() {
         ForeignThreadCannotProduceIntoAnOpenWindow();
         ForeignLookupWhileAWindowIsOpenProceeds();
         RawCallAfterLookupKeepsOrder();
-        FailedReplayIsReportedToTheProducer();
+        FailedReplayStaysWithItsRecording();
+        FinishCarriesAnUnreportedFailure();
+        DirectCallsSkipAFailedRecording();
+        AppendFailureKeepsTheWindow();
+        DevicesPastTheSlotsRecordInline();
+        PostingNeverAllocates();
+        ReplayFailureNeedsNoAllocation();
         std::cout << "command encoder tests passed\n";
         return 0;
     } catch (const std::exception& error) {

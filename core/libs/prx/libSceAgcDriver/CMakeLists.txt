@@ -1112,3 +1112,4 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(agc_driver_scattered_runs_tests PRIVATE tests/AllocationFailure.cpp)
+target_sources(agc_driver_command_encoder_tests PRIVATE tests/AllocationFailure.cpp)

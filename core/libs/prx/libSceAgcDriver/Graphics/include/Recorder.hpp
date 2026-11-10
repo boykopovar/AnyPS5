@@ -635,6 +635,7 @@ private:
         const Batch* batch = nullptr;
     };
     struct Batch {
+        CommandEncoder::Recording recording;
         VkCommandBuffer commands = VK_NULL_HANDLE;
         VkCommandPool pool = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
@@ -949,7 +950,9 @@ private:
     VkCommandPool encoderPool = VK_NULL_HANDLE;
     std::unique_ptr<CommandEncoder> encoder;
     void quiesce() {
-        if (encoder != nullptr) encoder->Quiesce();
+        if (encoder == nullptr) return;
+        encoder->Quiesce();
+        if (open != nullptr) open->recording.Report();
     }
     VkCommandBuffer live() {
         quiesce();
