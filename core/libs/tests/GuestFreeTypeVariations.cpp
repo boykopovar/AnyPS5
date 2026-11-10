@@ -139,7 +139,7 @@ static void TestSetDesign() {
     Require(FT_Set_Var_Design_Coordinates_nid_postfix(&plain.guest.rec, 1, one) == FT_Set_Var_Design_Coordinates(plain.oracle, 1, nativeOne));
     FacePair pair(VariableFont());
     Require(FT_Set_Var_Design_Coordinates_nid_postfix(&pair.guest.rec, 1, nullptr) == FT_Set_Var_Design_Coordinates(pair.oracle, 1, nullptr));
-    Require(FT_Set_Var_Design_Coordinates_nid_postfix(nullptr, 0, nullptr) == FT_Set_Var_Design_Coordinates(nullptr, 0, nullptr));
+    Require(FT_Set_Var_Design_Coordinates_nid_postfix(nullptr, 0, nullptr) == FT_Err_Invalid_Face_Handle);
 }
 
 static void TestGetDesign() {
