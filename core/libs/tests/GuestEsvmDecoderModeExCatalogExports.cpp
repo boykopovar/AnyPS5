@@ -1,25 +1,41 @@
 #include "prx/libSceEsvmDecoderModeEx/libSceEsvmDecoderModeEx.hpp"
+#include "prx/libc/include/General.hpp"
+
 #include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
-int failures = 0;
+void Fail(const std::string& message, int line) {
+    std::fprintf(stderr, "libSceEsvmDecoderModeEx catalog export check failed at line %d: %s\n", line, message.c_str());
+    std::abort();
+}
 
 template <typename TFn>
-void RequireThrows(TFn fn, const char *name) {
+void ExpectNotImplemented(TFn stub, const char* name, int line) {
+    const auto before = NotImplementedCalls_nid_no_patch();
+    std::string what;
+    bool threw = false;
     try {
-        fn();
-    } catch (const std::runtime_error &) {
-        return;
+        stub();
+    } catch (const std::runtime_error& error) {
+        threw = true;
+        what = error.what();
     }
-    std::fprintf(stderr, "%s did not throw\n", name);
-    ++failures;
+    if (!threw) Fail(std::string(name) + " returned instead of reporting that it is not implemented", line);
+    if (NotImplementedCalls_nid_no_patch() != before + 1)
+        Fail(std::string(name) + " did not reach libc's shared not-implemented path", line);
+    if (what != std::string(name) + " not implemented")
+        Fail(std::string(name) + " reported \"" + what + "\"", line);
 }
 
 }
+
+#define RequireNotImplemented(stub) ExpectNotImplemented(stub, #stub, __LINE__)
 
 int main() {
-    RequireThrows(sceEsvmUseCustomMusicCoreForDecoderMode_nid_no_patch, "sceEsvmUseCustomMusicCoreForDecoderMode");
-    return failures == 0 ? 0 : 1;
+    RequireNotImplemented(sceEsvmUseCustomMusicCoreForDecoderMode_nid_no_patch);
+    return 0;
 }
