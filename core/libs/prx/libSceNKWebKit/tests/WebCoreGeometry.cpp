@@ -173,6 +173,16 @@ static void TestFloatRect() {
     Require(AlmostEqual(fit4.m_location.m_y, -3.0f));
     Require(AlmostEqual(fit4.m_size.m_width, 13.0f));
     Require(AlmostEqual(fit4.m_size.m_height, 12.0f));
+
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    WebCore::FloatPoint nanP0{1.0f, 0.0f};
+    WebCore::FloatPoint nanP1{2.0f, 0.0f};
+    WebCore::FloatPoint nanP2{nan, 0.0f};
+    WebCore::FloatPoint nanP3{0.0f, 0.0f};
+    WebCore::FloatRect fitNan;
+    _ZN7WebCore9FloatRect11fitToPointsERKNS_10FloatPointES3_S3_S3_(&fitNan, nanP0, nanP1, nanP2, nanP3);
+    Require(AlmostEqual(fitNan.m_location.m_x, 1.0f));
+    Require(AlmostEqual(fitNan.m_size.m_width, 1.0f));
 }
 
 static void TestFloatQuad() {
