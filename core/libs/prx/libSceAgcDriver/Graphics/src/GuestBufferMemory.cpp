@@ -5586,6 +5586,12 @@ void ClearRetainedSpaces(VkDevice device) {
     pruneRetained([device](const RetainedAddressSpace& node) { return node.device == device; });
 }
 
+void ClearUploadCopies(VkDevice device) {
+    auto& copies = UploadCopyCache();
+    std::lock_guard lock(copies.mutex);
+    if (copies.device == device) resetUploadCache(copies, VK_NULL_HANDLE);
+}
+
 std::size_t RetainedSpaceCount() {
     std::size_t count = 0;
     pruneRetained([&count](const RetainedAddressSpace&) {
@@ -6602,15 +6608,30 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     std::uint64_t uploadGeneration = 0;
     if (cacheable) {
         if (auto cached = findUploaded(context, region.begin, region.sparse, region.backed, static_cast<std::size_t>(allocated), usage, uploadGeneration)) {
-            region.buffer = std::move(cached);
-            region.snapshot.clear();
-            static std::atomic<std::uint64_t> hits{0}, hitBytes{0};
-            const auto hit = hits.fetch_add(1, std::memory_order_relaxed) + 1;
-            hitBytes.fetch_add(allocated, std::memory_order_relaxed);
-            if (profile && hit % 1000 == 0) {
-                AgcDriver::ProfilePrint_nid_no_patch("[buffers] %llu upload cache hits, %.0f MiB served\n", static_cast<unsigned long long>(hit), static_cast<double>(hitBytes.load(std::memory_order_relaxed)) / 1048576.0);
+            bool unchanged = true;
+            {
+                const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::BufferUpload);
+                if (const auto hook = GuestMemory::CurrentFlushHook()) {
+                    if (!region.sparse) {
+                        hook(region.begin, static_cast<std::size_t>(allocated));
+                    } else {
+                        for (const auto& [first, last] : region.backed) hook(first, static_cast<std::size_t>(last - first));
+                    }
+                    unchanged = uploadUnchanged(region.begin, region.sparse, region.backed, static_cast<std::size_t>(allocated), uploadGeneration);
+                }
             }
-            return;
+            if (unchanged) {
+                region.buffer = std::move(cached);
+                region.snapshot.clear();
+                static std::atomic<std::uint64_t> hits{0}, hitBytes{0};
+                const auto hit = hits.fetch_add(1, std::memory_order_relaxed) + 1;
+                hitBytes.fetch_add(allocated, std::memory_order_relaxed);
+                if (profile && hit % 1000 == 0) {
+                    AgcDriver::ProfilePrint_nid_no_patch("[buffers] %llu upload cache hits, %.0f MiB served\n", static_cast<unsigned long long>(hit), static_cast<double>(hitBytes.load(std::memory_order_relaxed)) / 1048576.0);
+                }
+                return;
+            }
+            forgetUploaded(context, region.begin, static_cast<std::size_t>(allocated), usage);
         }
         uploadGeneration = collectUploadWrites(region.begin, region.sparse, region.backed, static_cast<std::size_t>(allocated));
     } else if (written) {
