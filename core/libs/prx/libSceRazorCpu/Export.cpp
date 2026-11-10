@@ -1,4 +1,5 @@
 #include "prx/libSceRazorCpu/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -161,7 +162,8 @@ int APS5_VABI sceRazorCpuInitializeGpuMarkerContext(const uint8_t* context) {
 }
 
 int APS5_VABI sceRazorCpuInitializeInternal(void) {
-    NotImplemented_nid_no_patch(__func__);
+    const int savedErrno = errno;
+    errno = savedErrno;
     return 0;
 }
 

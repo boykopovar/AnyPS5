@@ -1,5 +1,6 @@
 #include "prx/libSceRazorCpu/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -130,5 +131,7 @@ int main() {
     Require(sceRazorCpuWriteBookmarkEnd() == 0);
     Require(sceRazorCpuStartCaptureInternal() == static_cast<int>(0x80580000));
     Require(sceRazorCpuStopCaptureInternal() == static_cast<int>(0x80580000));
+    errno = 0x5a;
+    Require(sceRazorCpuInitializeInternal() == 0 && errno == 0x5a);
     Require(sceRazorCpuIsCapturing() == 0);
 }
