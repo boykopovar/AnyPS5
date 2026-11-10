@@ -627,6 +627,11 @@ public:
 
 private:
     struct Batch;
+    struct SampleSegment {
+        std::shared_ptr<void> pool;
+        VkQueryPool handle;
+        std::uint32_t slot = 0;
+    };
     struct WideLabel {
         std::uint64_t end;
         std::vector<std::byte> bytes;
@@ -685,6 +690,8 @@ private:
         std::uint32_t segmentNext = 0;
         std::uint32_t segmentSlot = 0;
         bool segmentActive = false;
+        std::size_t ownSamples = 0;
+        std::vector<SampleSegment> foldedSamples;
         std::uint32_t queuedDumps = 0;
         std::vector<std::uint64_t> timedKeys;
         std::vector<std::uint64_t> timedBytes;
@@ -811,11 +818,7 @@ private:
     void dispatchDumps(VkCommandBuffer commands, std::uint32_t firstDump, std::uint32_t dumps, std::uint32_t firstSegment, std::uint32_t lastSegment);
     void foldSegments();
     void foldQueuedDumps(VkCommandBuffer commands, std::span<const Batch::StoreRun::Queued> writes, std::size_t first, std::size_t end, std::uint32_t& dumpIndex, std::uint32_t& consumed);
-    struct SampleSegment {
-        std::shared_ptr<void> pool;
-        VkQueryPool handle;
-        std::uint32_t slot = 0;
-    };
+    void forgetSamples(Batch& batch) noexcept;
     std::vector<SampleSegment> pendingSamples;
     bool countingSamples = false;
     int meshArgumentState = 0;

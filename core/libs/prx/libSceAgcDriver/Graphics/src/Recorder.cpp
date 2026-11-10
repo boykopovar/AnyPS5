@@ -204,6 +204,11 @@ constexpr VkDeviceSize DumpListOffset = 16 + 8 * SegmentFoldCapacity;
 constexpr std::uint32_t SampleDumpPushBytes = 40;
 std::atomic<std::uint64_t> dumpsQueued{0}, dumpsQueuedInPass{0}, dumpsAtOnce{0}, segmentsClosed{0}, dumpFolds{0};
 
+template <typename T>
+void reserveMore(std::vector<T>& list, std::size_t more) {
+    if (list.capacity() - list.size() < more) list.reserve(std::max(list.size() + more, 2 * list.capacity()));
+}
+
 struct SamplePoolCache {
     VkDevice device;
     PFN_vkDestroyQueryPool destroy;
@@ -2834,12 +2839,14 @@ void Recorder::endSegment(Batch& batch) {
     function(cmdEndQuery, "vkCmdEndQuery")(batch.commands, batch.segments, batch.segmentSlot);
     batch.segmentActive = false;
     pendingSamples.push_back({batch.segmentPool, batch.segments, batch.segmentSlot});
+    ++batch.ownSamples;
     segmentsClosed.fetch_add(1, std::memory_order_relaxed);
 }
 
 void Recorder::copySegments(VkCommandBuffer commands, std::uint32_t count) {
     Require(count <= pendingSamples.size() && count <= SegmentFoldCapacity, "occlusion segments exceed the fold capacity");
     quiesce();
+    reserveMore(open->foldedSamples, count);
     const auto copy = function(cmdCopyQueryPoolResults, "vkCmdCopyQueryPoolResults");
     for (std::uint32_t i = 0; i < count;) {
         const auto& first = pendingSamples[i];
@@ -2851,9 +2858,7 @@ void Recorder::copySegments(VkCommandBuffer commands, std::uint32_t count) {
 }
 
 void Recorder::retireSegments(std::uint32_t count) {
-    for (std::uint32_t i = 0; i < count; ++i) {
-        if (pendingSamples[i].pool != nullptr) open->kept.push_back(std::move(pendingSamples[i].pool));
-    }
+    open->foldedSamples.insert(open->foldedSamples.end(), std::make_move_iterator(pendingSamples.begin()), std::make_move_iterator(pendingSamples.begin() + count));
     pendingSamples.erase(pendingSamples.begin(), pendingSamples.begin() + count);
 }
 
@@ -2927,12 +2932,16 @@ void Recorder::endSamples(Batch& batch) {
     if (!batch.sampleActive) return;
     function(cmdEndQuery, "vkCmdEndQuery")(batch.commands, batch.samples, 0);
     batch.sampleActive = false;
-    if (sampleCounterState > 0 && batch.samplesDrawn) pendingSamples.push_back({batch.samplePool, batch.samples});
+    if (sampleCounterState > 0 && batch.samplesDrawn) {
+        pendingSamples.push_back({batch.samplePool, batch.samples});
+        ++batch.ownSamples;
+    }
     batch.samplesDrawn = false;
 }
 
 void Recorder::foldSamples(Batch& batch, VkDeviceAddress target) {
     quiesce();
+    reserveMore(batch.foldedSamples, pendingSamples.size());
     const auto commands = batch.commands;
     const auto copy = function(cmdCopyQueryPoolResults, "vkCmdCopyQueryPoolResults");
     const auto bind = function(cmdBindPipeline, "vkCmdBindPipeline");
@@ -2948,7 +2957,6 @@ void Recorder::foldSamples(Batch& batch, VkDeviceAddress target) {
         for (std::uint32_t i = 0; i < count; ++i) {
             const auto& segment = pendingSamples[done + i];
             copy(commands, segment.handle, segment.slot, 1, sampleCounter->Handle(), 16 + 8 * i, 8, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
-            if (segment.pool != nullptr) batch.kept.push_back(segment.pool);
         }
         done += count;
         const bool last = done == pendingSamples.size();
@@ -2976,6 +2984,7 @@ void Recorder::foldSamples(Batch& batch, VkDeviceAddress target) {
     } while (done < pendingSamples.size());
     recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_HOST_READ_BIT);
     CountBarriers(CommandClass::Copy, target != 0 ? 4u : 2u);
+    batch.foldedSamples.insert(batch.foldedSamples.end(), std::make_move_iterator(pendingSamples.begin()), std::make_move_iterator(pendingSamples.end()));
     pendingSamples.clear();
 }
 
@@ -4955,9 +4964,21 @@ void Recorder::discard(std::unique_ptr<Batch> batch) noexcept {
     if (batch->completionStoreCount != 0) completionStores.fetch_sub(batch->completionStoreCount, std::memory_order_acq_rel);
     if (batch->writeBackCompletionCount != 0) writeBackCompletions.fetch_sub(batch->writeBackCompletionCount, std::memory_order_acq_rel);
     if (activeRecorder == this) pendingLabelSince.store(NoPendingLabel, std::memory_order_release);
+    forgetSamples(*batch);
     release(*batch);
     try {
         publishPendingWrites();
+    } catch (...) {
+    }
+}
+
+void Recorder::forgetSamples(Batch& batch) noexcept {
+    const auto own = std::min(batch.ownSamples, batch.foldedSamples.size() + pendingSamples.size());
+    const auto pending = std::min(own, pendingSamples.size());
+    pendingSamples.erase(pendingSamples.end() - static_cast<std::ptrdiff_t>(pending), pendingSamples.end());
+    batch.foldedSamples.erase(batch.foldedSamples.end() - static_cast<std::ptrdiff_t>(own - pending), batch.foldedSamples.end());
+    try {
+        pendingSamples.insert(pendingSamples.begin(), std::make_move_iterator(batch.foldedSamples.begin()), std::make_move_iterator(batch.foldedSamples.end()));
     } catch (...) {
     }
 }
@@ -4996,6 +5017,7 @@ void Recorder::release(Batch& batch) noexcept {
     batch.endedSamples.clear();
     batch.segments = VK_NULL_HANDLE;
     batch.segmentPool.reset();
+    batch.foldedSamples.clear();
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (batch.commands != VK_NULL_HANDLE) {
         std::unique_lock poolLock = encoder != nullptr ? std::unique_lock(encoder->PoolMutex()) : std::unique_lock<std::mutex>();
