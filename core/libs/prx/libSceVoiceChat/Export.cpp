@@ -1,6 +1,7 @@
 #include "prx/libSceVoiceChat/include/InventoryExports.hpp"
 #include "prx/libSceVoiceChat/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstddef>
@@ -36,7 +37,9 @@ int offlineRequest(const char* func) {
 extern "C" {
 
 int APS5_VABI sceVoiceChatRegisterMicEventHandler2() {
-    NotImplemented_nid_no_patch(__func__);
+    const int savedErrno = errno;
+    errno = savedErrno;
+    return 0;
 }
 
 int APS5_VABI sceVoiceChatUnregisterMicEventHandler2() {

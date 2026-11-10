@@ -2,6 +2,7 @@
 #include "prx/libSceVoiceChat/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -19,6 +20,8 @@ int main() {
     Require(sceVoiceChatProcessEvent() == 0, "event processing failed");
     Require(sceVoiceChatRegisterHandlers(nullptr, nullptr) == 0, "register handlers failed");
     Require(sceVoiceChatRegisterMicEventHandler(0, nullptr, nullptr) == 0, "register mic event handler failed");
+    errno = 0x5a;
+    Require(sceVoiceChatRegisterMicEventHandler2() == 0 && errno == 0x5a, "register mic event handler 2 failed");
     Require(sceVoiceChatRegisterChannelEventHandler(nullptr, nullptr) == 0, "register channel event handler failed");
     Require(sceVoiceChatRegisterDaemonEventHandler(nullptr, nullptr) == 0, "register daemon event handler failed");
     Require(sceVoiceChatRegisterMemberEventHandler(nullptr, nullptr) == 0, "register member event handler failed");
