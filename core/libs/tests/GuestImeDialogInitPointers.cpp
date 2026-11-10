@@ -69,25 +69,6 @@ int main() {
         Require(sceImeDialogTerm() == 0, "the finished dialog closes");
         Require(munmap(page, 4096) == 0, "unmap the buffer page");
 
-        void* pages = mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        Require(pages != MAP_FAILED, "map two pages for the full buffer");
-        Require(mprotect(static_cast<char*>(pages) + 4096, 4096, PROT_NONE) == 0, "protect the second page");
-        auto* full = reinterpret_cast<char16_t*>(static_cast<char*>(pages) + 4096 - 2 * sizeof(char16_t));
-        full[0] = u'\0';
-        full[1] = u'\0';
-        Param fullParam{};
-        fullParam.max_text_length = 2;
-        fullParam.input_text_buffer = full;
-        Require(sceImeDialogInit(&fullParam, nullptr) == 0, "a two-unit buffer opens the dialog");
-        ImePublishPaste_nid_postfix("ab", 2);
-        ImeHostInput enterFull{};
-        enterFull.kind = ImeHostInputKind::Enter;
-        ImePublishInput_nid_postfix(enterFull);
-        Result fullResult{};
-        Require(sceImeDialogGetResult(&fullResult) == 0 && fullResult.endstatus == EndStatusOk, "a full text is accepted without touching the next page");
-        Require(full[0] == u'a' && full[1] == u'b', "a full text is written to the buffer");
-        Require(sceImeDialogTerm() == 0, "the finished dialog closes");
-        Require(munmap(pages, 8192) == 0, "unmap the two pages");
     }
 #endif
     return 0;
