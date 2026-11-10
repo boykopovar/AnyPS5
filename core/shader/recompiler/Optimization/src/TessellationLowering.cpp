@@ -806,7 +806,13 @@ public:
                     relative.push_back(inst);
                     continue;
                 }
-                if (IsBase(inst, TessellationBaseKind::PassthroughPrimitive)) Fail("the primitive VGPR is used other than as the passthrough primitive export", 0u);
+                if (IsBase(inst, TessellationBaseKind::PassthroughPrimitive)) {
+                    if (stage == IrShaderStage::TessellationEvaluation) {
+                        inst->ReplaceAllUsesWith(&constant(0u));
+                        continue;
+                    }
+                    Fail("the primitive VGPR is used other than as the passthrough primitive export", 0u);
+                }
                 Fail("a tessellation ring base is used outside a lowered ring access", 0u);
             }
         }
