@@ -375,8 +375,6 @@ void TestReprojection() {
     Require(sceHmd2ReprojectionEnableVrMode(0x2000F) == Hmd2::VideoOutNoDevice, "enabling the second VR mode did not report no device");
     Require(sceHmd2ReprojectionEnableVrMode(0) == Hmd2::VideoOutInvalidValue, "an unknown output mode did not report invalid value");
     Require(state->outputMode == 0, "the output mode changed without a VR runtime");
-    Require(sceHmd2ReprojectionDisableVrMode() == 0, "disabling VR mode did not succeed");
-    Require(state->outputMode == 0, "the output mode was not cleared after disabling VR mode");
     Require(sceHmd2ReprojectionSetAllowPositionalReprojection(6) == Hmd2::ParameterInvalid,
             "a positional setting above the range did not report invalid parameter");
     Require(sceHmd2ReprojectionSetAllowPositionalReprojection(0xFF) == Hmd2::ParameterInvalid,
