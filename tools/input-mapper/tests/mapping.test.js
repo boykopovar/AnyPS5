@@ -159,7 +159,7 @@ test('all exportable SDL names validate and unsafe comment names are rejected', 
 test('mouse values and action restrictions match the current INI format', () => {
     for (const action of actions) {
         for (const value of mouseValues) {
-            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus', 'VolumeUp', 'VolumeDown', 'ToggleMute', 'ReloadInputMapping'].includes(action));
+            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus', 'VolumeUp', 'VolumeDown', 'ToggleMute', 'ReloadInputMapping', 'HostMenu'].includes(action));
         }
     }
     assert.ok(validate([binding('Cross', 'MOUSE', 'Button1')]).errors.length);
@@ -196,10 +196,10 @@ test('ShowPadStatus is a keyboard-only action with an F9 default that conflicts 
     for (const [type, value] of [['MOUSE', 'Left'], ['MOUSE', 'X2'], ['WHEEL', 'Up'], ['WHEEL', 'Down']]) {
         assert.ok(validate([binding('ShowPadStatus', type, value)]).errors.length, `${type}:${value}`);
     }
-    assert.equal(validate([binding('ShowPadStatus', 'KEY', 'F4')]).warnings.length, 0);
+    assert.equal(validate([binding('ShowPadStatus', 'KEY', 'F3')]).warnings.length, 0);
     const shared = validate([binding('TogglePerformanceOverlay', 'KEY', 'F9')]);
     assert.ok(shared.warnings.some(warning => warning.message.includes('TogglePerformanceOverlay and ShowPadStatus (built-in)')));
-    assert.equal(validate([binding('TogglePerformanceOverlay', 'KEY', 'F9'), binding('ShowPadStatus', 'KEY', 'F4')]).warnings.length, 0);
+    assert.equal(validate([binding('TogglePerformanceOverlay', 'KEY', 'F9'), binding('ShowPadStatus', 'KEY', 'F3')]).warnings.length, 0);
     assert.ok(Object.values(defaults).flat().filter(source => source === 'KEY:F9').length === 1);
 });
 

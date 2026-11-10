@@ -150,7 +150,7 @@ void padStatusBinding() {
     }
     require(padStatus == 1, "the pad status has more than one default input");
     require(onF9 == 1, "another default binding uses F9");
-    require(Pad::InputMapping.size() == 44, "the default bindings changed besides the pad status, host volume and reload keys");
+    require(Pad::InputMapping.size() == 45, "the default bindings changed besides the pad status, host volume, reload and host menu keys");
     useConfig("ShowPadStatus = KEY:F4\n");
     const auto moved = Pad::LoadInputMapping();
     require(padStatusBindingsOn(moved, SDL_SCANCODE_F4) == 1 && padStatusBindingsOn(moved, SDL_SCANCODE_F9) == 0, "the pad status key moves to another key");
