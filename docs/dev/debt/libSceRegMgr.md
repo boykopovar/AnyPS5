@@ -18,11 +18,13 @@
 ### Functional
 
 - [Registry store](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - entries are read and written through an in-memory process-local store without persistence. Callable prototypes for `sceRegMgrGetInt`, `sceRegMgrGetStr`, and `sceRegMgrGetBin` derive from [regmgr.h](https://github.com/ps5-payload-dev/regdump/blob/883524cc48c8497267ba7fc94ff0ac58880c4227/regmgr.h#L3713-L3729). Implemented getters return error codes for invalid parameters (`0x80820001`), missing keys (`0x80820002`), buffer sizing (`0x80820004`), and type mismatches (`0x80820006`) as unverified host implementation assumptions, as the cited regmgr.h does not establish error codes or validation behavior. Queries with non-positive keys `0` and `-1` take the missing-key path without key-range validation, pinning the unverified host assumption that non-positive keys are not rejected as invalid parameters. The 11.00 wrappers forward `sceRegMgrSetInt`, `sceRegMgrSetStr` and `sceRegMgrSetBin` with operation codes 1, 3 and 5 and a four-byte int or a pointer plus length; the host stores the value with the key's existing type, returns `0x80820006` for a different type and `0x80820001` for a null buffer, and creates the key on first write because the console's fixed registry schema is not available. Zero-length setter and getter paths, `sceRegMgrSetbin`, `sceRegMgrResetVal` and the init-level behavior remain unimplemented throwing `NotImplemented_nid_no_patch` because the kernel path is unmeasured.
-- [Unverified registry APIs](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - export names and NIDs for initial-value getters, version queries, region queries and conversions, error checks, control/backup routines, and `sceRegMgrNonSys*` variants are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/cf6eede3f6588d779664e01874638f09484324b7/libSceRegMgr.c) and [NID database](https://github.com/zecoxao/sce_symbols/blob/9620e03b2964dbf0cfc1cb143ab24a65125091de/aerolib.csv), but their callable contracts and runtime behavior remain unverified and retain `NotImplemented_nid_no_patch`.
+- [Unverified registry APIs](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - export names and NIDs for initial-value getters, version queries, region queries and conversions, control/backup routines and the tool/driver queries are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/cf6eede3f6588d779664e01874638f09484324b7/libSceRegMgr.c) and [NID database](https://github.com/zecoxao/sce_symbols/blob/9620e03b2964dbf0cfc1cb143ab24a65125091de/aerolib.csv), but their callable contracts and runtime behavior remain unverified and retain `NotImplemented_nid_no_patch`.
+
+
+- [sceRegMgrNonSysGetInt, sceRegMgrNonSysSetInt, sceRegMgrNonSysGetStr, sceRegMgrNonSysSetStr, sceRegMgrNonSysGetBin, sceRegMgrNonSysSetBin, sceRegMgrCheckError, sceRegMgrNonSysCheckError and sceRegMgrIsInitOK](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - the 11.00 wrappers show the NonSys calls take a 64-bit key, a 32-bit type and an int value or a buffer plus length; the getters reject a null output (`0x800D0202`), and the string/binary calls reject a length above `0x800` (`0x800D0208`). The host reuses the same in-memory store as the system getters and setters, ignores the type word because the console schema is unavailable, and returns the store's `0x808200xx` codes for missing keys, type mismatches and short buffers; a zero-length getter returns `0x80820004`. `sceRegMgrCheckError` and `sceRegMgrNonSysCheckError` report no error and `sceRegMgrIsInitOK` reports the store ready, because the in-memory model has no service init. Not measured on a PS5.
 
 ### Unknown function info
 
-- [sceRegMgrCheckError](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrCheckIntVal](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrGetBinInitVal](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrGetIntInitVal](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
@@ -31,7 +33,6 @@
 - [sceRegMgrIsChange](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrEvtGetCnt](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrEvtGetRegId](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
-- [sceRegMgrResetVal](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrSetInitLevel](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrSrvCnvRegionInt](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrSrvCnvRegionStr](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
@@ -50,15 +51,8 @@
 - [sceRegMgrCntlGetFilesCount](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrCntlGetFileName](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrCntSetInitReinst](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
-- [sceRegMgrIsInitOK](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrGetInitError](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrRecoverRegNvs](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
-- [sceRegMgrNonSysCheckError](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
-- [sceRegMgrNonSysGetBin](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
-- [sceRegMgrNonSysGetStr](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
-- [sceRegMgrNonSysSetBin](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
-- [sceRegMgrNonSysSetInt](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
-- [sceRegMgrNonSysSetStr](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrGetVersionForPS4](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrBackupNeedMemForPS4](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrBackupPullDataForPS4](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature

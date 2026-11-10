@@ -1252,6 +1252,17 @@ if(BUILD_TESTING)
         add_subdirectory(tests/register_context)
     endif()
 
+    add_test_executable(guest_kernel_sys_mqueue_tests tests/GuestKernelSysMqueue.cpp)
+    target_include_directories(guest_kernel_sys_mqueue_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_mqueue_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_mqueue_tests)
+    add_test(NAME guest_kernel_sys_mqueue COMMAND guest_kernel_sys_mqueue_tests)
+    set_tests_properties(guest_kernel_sys_mqueue PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_mqueue PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
     add_test_executable(savedata_memory_metadata_tests tests/SaveDataMemoryMetadata.cpp)
     target_include_directories(savedata_memory_metadata_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(savedata_memory_metadata_tests PRIVATE libSceSaveData.native)

@@ -715,16 +715,21 @@ public:
                 if (stencilFillNote != 0u) pending->SyncThrough(sampling.initial[2].address, sampling.initial[2].bytes);
             }
         }
-        const auto newestHtileNote = recorder != nullptr ? recorder->NewestWriteNote(sampling.initial[1].address, sampling.initial[1].bytes) : 0u;
+        const auto newestHtileNote = recorder != nullptr ? recorder->NewestStoreNote(sampling.initial[1].address, sampling.initial[1].bytes) : 0u;
         const bool queuedFill = clearPattern.has_value() && clearFillNote != 0u && newestHtileNote == clearFillNote;
-        const auto newestStencilNote = recorder != nullptr && sampling.initial.size() > 2u ? recorder->NewestWriteNote(sampling.initial[2].address, sampling.initial[2].bytes) : 0u;
+        const auto newestStencilNote = recorder != nullptr && sampling.initial.size() > 2u ? recorder->NewestStoreNote(sampling.initial[2].address, sampling.initial[2].bytes) : 0u;
         const bool queuedStencilFill = stencilClearValue.has_value() && stencilFillNote != 0u && newestStencilNote == stencilFillNote;
         const bool separatePlane = target.stencilAddress != 0u && !target.htileStencil && target.htileDepthOnly && sampling.initial.size() > 2u;
         bool stencilPlaneAliased = false;
         for (std::size_t index = 0u; index < sampling.initial.size(); ++index) {
             const auto& range = sampling.initial[index];
             Require(GuestMemory::Accessible(reinterpret_cast<const void*>(range.address), range.bytes) && GuestMemory::Watched(range.address, range.bytes), "native multisample depth requires watched accessible guest memory");
-            if (recorder != nullptr && !(index == 1u && queuedFill) && !(index == 2u && queuedStencilFill)) Require(!recorder->PendingWriteOverlaps(range.address, range.bytes), "external GPU writes over native multisample depth are not implemented");
+            if (recorder != nullptr && !(index == 1u && queuedFill) && !(index == 2u && queuedStencilFill) && recorder->PendingWriteOverlaps(range.address, range.bytes)) {
+                Require(!recorder->PendingStoreOverlaps(range.address, range.bytes), "external GPU writes over native multisample depth are not implemented");
+                const auto settled = GuestMemory::TrackerGeneration();
+                RecorderFor(context)->SyncThrough(range.address, range.bytes);
+                Require(!GuestMemory::WrittenSince(range.address, range.bytes, settled), "external GPU writes over native multisample depth are not implemented");
+            }
             GuestMemory::CollectWritesUncached(range.address, range.bytes);
             const auto alias = MultisampleColorTargetOver(range.address, range.bytes);
             if (!alias || (index == 2u && sampling.unprovenStencil && stencilClearGeneration == 0u)) continue;
@@ -1006,17 +1011,6 @@ public:
         hostWritten->store(true, std::memory_order_release);
     }
 
-    bool GuestHoldsSamples() const {
-        return target.samples != 1u && uniformPlaneTarget(target) && samplingActive && sampling.refusal.empty() && !hostWritten->load(std::memory_order_acquire);
-    }
-
-    bool PublishedUnderStorage() const {
-        return GuestHoldsSamples() && std::ranges::any_of(sampling.initial, [](const auto& range) {
-            const std::pair<std::uint64_t, std::uint64_t> plane{range.address, range.address + range.bytes};
-            return StorageTexture::AnyPendingUnitsOverlap(std::span(&plane, 1u));
-        });
-    }
-
     void ProveOverwrite() {
         if (!sampling.overwriteStencil || !hostEverWritten->load(std::memory_order_acquire) || Recorder::InCompletion()) return;
         const auto value = *sampling.overwriteStencil;
@@ -1048,6 +1042,17 @@ public:
         InstallResidentImageReadGuard_nid_no_patch();
         samplingActive = true;
         capturePublication();
+    }
+
+    bool GuestHoldsSamples() const {
+        return target.samples != 1u && uniformPlaneTarget(target) && samplingActive && sampling.refusal.empty() && !hostWritten->load(std::memory_order_acquire);
+    }
+
+    bool PublishedUnderStorage() const {
+        return GuestHoldsSamples() && std::ranges::any_of(sampling.initial, [](const auto& range) {
+            const std::pair<std::uint64_t, std::uint64_t> plane{range.address, range.address + range.bytes};
+            return StorageTexture::AnyPendingUnitsOverlap(std::span(&plane, 1u));
+        });
     }
 
     void PublishToGuest();
