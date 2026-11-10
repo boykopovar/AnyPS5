@@ -284,6 +284,17 @@ public:
     }
 };
 
+class Notification final : public ObjectOf<ObjectType::Notification> {
+public:
+    std::u16string title;
+    std::u16string body;
+    std::u16string iconURL;
+    std::u16string tag;
+    std::u16string lang;
+    std::u16string dir;
+    std::uint64_t notificationID = 0;
+};
+
 class Frame final : public ObjectOf<ObjectType::Frame> {
 public:
     bool isDisplayingMarkupDocument = false;

@@ -2317,7 +2317,7 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
 }
 
 enum class GhostFill { Stored, QueuedAfterNote, QueuedBeforeNote, QueuedNotedTwice };
-enum class GhostFault { None, LaterStencilWrite, OtherHtileWord, PartialHtileFill, CreationRefused, RepeatedStencilNote };
+enum class GhostFault { None, LaterStencilWrite, OtherHtileWord, PartialHtileFill, CreationRefused, RepeatedStencilNote, UnwrittenReach, WrittenReach };
 
 void CheckGhostSequence(Context context, std::uint32_t fragments, GhostFill path, GhostFault fault = GhostFault::None) {
     const VkExtent2D extent{5u, 3u};
@@ -2355,6 +2355,11 @@ void CheckGhostSequence(Context context, std::uint32_t fragments, GhostFill path
         if (path == GhostFill::Stored) AgcDriver::GuestMemory::StoreOwnBytes(address, size, [&] { std::memset(reinterpret_cast<void*>(address), 0, size); });
     }
     if (fault == GhostFault::LaterStencilWrite) QueueTargetByteWrite(context, recorder, target.stencilAddress + stencilBytes - 1u, std::byte{0});
+    if (fault == GhostFault::UnwrittenReach || fault == GhostFault::WrittenReach) {
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 3> reach{{{target.address, target.address + bytes}, {target.htileAddress, target.htileAddress + metadataBytes}, {target.stencilAddress, target.stencilAddress + stencilBytes}}};
+        recorder.NotePendingReach(reach);
+        if (fault == GhostFault::WrittenReach) recorder.OnComplete([address = target.address] { AgcDriver::GuestMemory::MarkPossiblyWritten(address, 4u); });
+    }
     const auto words = DepthSampleWords(target);
     auto texture = CachedSampledTexture(context, words);
     Require(texture != nullptr, "native depth sampled after the HTILE and stencil plane fills was not imported");
@@ -4374,6 +4379,12 @@ int main(int argc, char** argv) {
                 TargetRefuses([&] { CheckGhostSequence(context, 4u, GhostFill::QueuedAfterNote, fault); }, "external GPU writes over native multisample depth are not implemented");
                 std::printf("Native depth after HTILE and stencil plane fills fault=%u refused: external GPU writes over native multisample depth are not implemented\n", static_cast<std::uint32_t>(fault));
             }
+            for (const auto path : {GhostFill::Stored, GhostFill::QueuedAfterNote}) {
+                CheckGhostSequence(context, 4u, path, GhostFault::UnwrittenReach);
+                std::printf("Native depth after HTILE and stencil plane fills path=%u waited for a pending raw-pointer reach over the target that stored nothing there and sampled it\n", static_cast<std::uint32_t>(path));
+            }
+            TargetRefuses([&] { CheckGhostSequence(context, 4u, GhostFill::Stored, GhostFault::WrittenReach); }, "external GPU writes over native multisample depth are not implemented");
+            std::puts("Native depth after HTILE and stencil plane fills refused a pending raw-pointer reach whose use stored into the depth plane: external GPU writes over native multisample depth are not implemented");
             for (const auto path : {GhostFill::Stored, GhostFill::QueuedNotedTwice}) {
                 TargetRefuses([&] { CheckGhostSequence(context, 4u, path, GhostFault::RepeatedStencilNote); }, "overlapping native multisample stencil plane fills are not implemented");
                 std::printf("Native depth after HTILE and stencil plane fills path=%u refused a stencil plane fill noted twice without a write between: overlapping native multisample stencil plane fills are not implemented\n", static_cast<std::uint32_t>(path));
