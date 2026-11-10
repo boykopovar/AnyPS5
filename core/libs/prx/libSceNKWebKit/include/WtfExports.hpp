@@ -9,6 +9,10 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace NKWebKit::WtfAbi {
+struct SHA1;
+}  // namespace NKWebKit::WtfAbi
+
 extern "C" {
 
 [[noreturn]] void APS5_VABI WTFCrash();
@@ -154,8 +158,13 @@ bool APS5_VABI _ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_(const NKWe
 unsigned APS5_VABI _ZN3WTF31sixCharacterHashStringToIntegerEPKc(const char* data);
 std::size_t APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS_6StringERKNS_6VectorIS0_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEERb(const NKWebKit::WtfAbi::String* language, const NKWebKit::WtfAbi::StringVector* languageList, bool* exactMatch);
 void APS5_VABI _ZN3WTF3URL10invalidateEv(NKWebKit::WtfAbi::URL* self);
+bool APS5_VABI _ZN3WTF9URLParser14allValuesEqualERKNS_3URLES3_(const NKWebKit::WtfAbi::URL* a, const NKWebKit::WtfAbi::URL* b);
+bool APS5_VABI _ZN3WTF9URLParser24internalValuesConsistentERKNS_3URLE(const NKWebKit::WtfAbi::URL* url);
 double APS5_VABI _ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb(const char* dateString, bool& isLocalTime);
 void APS5_VABI _ZN3WTF40releaseFastMallocFreeMemoryForThisThreadEv();
+NKWebKit::WtfAbi::CString APS5_VABI _ZN3WTF4SHA116computeHexDigestEv(NKWebKit::WtfAbi::SHA1* self);
+void APS5_VABI _ZN3WTF4SHA1C1Ev(NKWebKit::WtfAbi::SHA1* self);
+void APS5_VABI _ZN3WTF4SHA1C2Ev(NKWebKit::WtfAbi::SHA1* self);
 bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplEPKDsj(const NKWebKit::WtfAbi::StringImpl* impl, const char16_t* data, unsigned length);
 bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplEPKh(const NKWebKit::WtfAbi::StringImpl* impl, const unsigned char* data);
 bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplEPKhj(const NKWebKit::WtfAbi::StringImpl* impl, const unsigned char* data, unsigned length);
