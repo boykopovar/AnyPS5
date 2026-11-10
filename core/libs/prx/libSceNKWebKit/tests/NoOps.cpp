@@ -18,6 +18,7 @@ static void Check(bool value, int line) {
 
 int main() {
     const auto before = NotImplementedCalls_nid_no_patch();
+    JSRemoteInspectorSetParentProcessInformation();
     WKAddMockMediaDevice();
     WKBundleExtendClassesForParameterCoder();
     WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabled();
