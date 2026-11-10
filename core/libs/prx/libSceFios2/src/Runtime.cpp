@@ -31,6 +31,7 @@ struct Op {
     Work work;
     bool done = false;
     bool queued = false;
+    bool syncRequested = false;
     bool executing = false;
     bool ioDone = false;
     bool cancelled = false;
@@ -126,6 +127,14 @@ SceFiosHandle NextHandle(State& state) {
 std::shared_ptr<Op> FindOp(State& state, SceFiosOp id) {
     const auto found = state.ops.find(id);
     return found == state.ops.end() ? nullptr : found->second;
+}
+
+std::deque<SceFiosOp>::iterator ReadyPending(State& state) {
+    if (state.terminating || state.suspendCount == 0) return state.pending.begin();
+    return std::find_if(state.pending.begin(), state.pending.end(), [&](SceFiosOp id) {
+        const auto op = FindOp(state, id);
+        return !op || op->syncRequested;
+    });
 }
 
 bool IsInAnyCallback(const State& state, std::thread::id threadId) {
@@ -242,9 +251,9 @@ bool CancelQueuedLocked(std::unique_lock<std::mutex>& lock, const std::shared_pt
 void* APS5_VABI FiosWorkerEntry_nid_no_patch(void*) {
     std::unique_lock lock(Global().mutex);
     while (Global().workerRunning) {
-        if (!Global().terminating && (Global().suspendCount > 0 || Global().pending.empty())) {
+        if (!Global().terminating && ReadyPending(Global()) == Global().pending.end()) {
             Global().workAvailable.wait(lock, [&] {
-                return !Global().workerRunning || Global().terminating || (Global().suspendCount == 0 && !Global().pending.empty());
+                return !Global().workerRunning || Global().terminating || ReadyPending(Global()) != Global().pending.end();
             });
             if (!Global().workerRunning && (!Global().terminating || Global().pending.empty())) break;
         }
@@ -253,8 +262,10 @@ void* APS5_VABI FiosWorkerEntry_nid_no_patch(void*) {
             continue;
         }
 
-        const SceFiosOp id = Global().pending.front();
-        Global().pending.pop_front();
+        const auto ready = ReadyPending(Global());
+        if (ready == Global().pending.end()) continue;
+        const SceFiosOp id = *ready;
+        Global().pending.erase(ready);
         const auto op = FindOp(Global(), id);
         if (!op) continue;
         if (op->done) {
@@ -466,6 +477,11 @@ bool SyncWait(SceFiosOp op, Completion& completion) {
         if (!found->done && !found->ioDone) {
             NotImplemented_nid_no_patch(__func__);
         }
+    }
+
+    if (found->queued) {
+        found->syncRequested = true;
+        Global().workAvailable.notify_one();
     }
 
     Global().finished.wait(lock, [&] { return found->callbackFinished && !found->callbackExecuting; });

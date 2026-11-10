@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 register("./cdn-loader.mjs", import.meta.url, { data: { url: process.env.ANYPS5_TEST_ZIP_URL, path: process.env.ANYPS5_TEST_ZIP_PATH } });
-const { Archive, DirectoryWriter } = await import(pathToFileURL(path.join(process.argv[2], "archive.mjs")));
+const webRoot = process.argv[2] ?? fileURLToPath(new URL("..", import.meta.url));
+const { Archive, DirectoryWriter } = await import(pathToFileURL(path.join(webRoot, "archive.mjs")));
 const { BlobWriter, Uint8ArrayReader, ZipWriter } = await import(process.env.ANYPS5_TEST_ZIP_URL);
 const header = new Uint8Array([127, 69, 76, 70]);
 
@@ -14,7 +15,7 @@ async function zipped(entries) {
   return writer.close();
 }
 
-const { packageArchive } = await import(pathToFileURL(path.join(process.argv[2], "archive.mjs")));
+const { packageArchive } = await import(pathToFileURL(path.join(webRoot, "archive.mjs")));
 const libraryBundle = await zipped([["libs/provider.prx", false]]);
 for (const moduleDirectories of [["sce_modules"], ["prx"], ["sce_module", "prx"], ["sce_modules", "prx"]]) {
   const entries = [["title/main.elf", false], ...moduleDirectories.map((name, index) => [`title/${name}/module${index}.prx`, false])];
@@ -216,7 +217,7 @@ for (const directories of [[], parents, [...parents].reverse()]) {
   const originalSelf = globalThis.self;
   globalThis.self = { postMessage() {} };
   try {
-    const { downloadLibraries } = await import(pathToFileURL(path.join(process.argv[2], "worker.mjs")));
+    const { downloadLibraries } = await import(pathToFileURL(path.join(webRoot, "worker.mjs")));
     const bytes = Uint8Array.from({ length: 32 }, (_, index) => index);
     const sha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(byte => byte.toString(16).padStart(2, "0")).join("");
     const asset = { path: `libraries/linux-${sha256}.zip`, size: bytes.length, expandedBytes: 100, sha256 };

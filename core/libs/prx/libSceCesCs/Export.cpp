@@ -3130,7 +3130,7 @@ int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jisc
     if (ucs > 0xFFFF && ucs >> 16 != 2) throw std::runtime_error("sceCesUcsToJiscs: code point " + hexCode(ucs) + " outside the BMP and plane 2 is not implemented");
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isJiscsProfile(profile)) throw std::runtime_error("sceCesUcsToJiscs: a profile other than the eight JIS profiles is not implemented");
-    if (ucs > 0xFFFF && !isJis2004(profile)) throw std::runtime_error("sceCesUcsToJiscs: plane 2 with a JIS X 0208 profile is not implemented");
+    if (ucs > 0xFFFF && !isJis2004(profile)) return CES_ERROR_UNASSIGNED_CODE;
     uint32_t code = 0;
     const int result = unicodeToJiscs(profile, ucs, code);
     if (result != 0) return result;
