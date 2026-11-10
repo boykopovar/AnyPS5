@@ -60,10 +60,10 @@ int main() {
             "both strokers have the same export capacity");
     Output expected(points, contours);
     Output actual(points, contours);
+    std::vector<FreeType::GuestVector> actualPoints(points);
     FT_Stroker_Export(expectedStroker, &expected.outline);
 
-    FreeType::GuestVector* guestPoints = reinterpret_cast<FreeType::GuestVector*>(actual.points.data());
-    FreeType::GuestOutline guestOutline{0, 0, guestPoints,
+    FreeType::GuestOutline guestOutline{0, 0, actualPoints.data(),
         actual.tags.data(), actual.contours.data(), 0};
     sceFreeTypeOtStrokerExport_nid_no_patch(actualStroker, &guestOutline);
 
@@ -71,7 +71,7 @@ int main() {
     Require(guestOutline.n_contours == expected.outline.n_contours, "contour count matches FreeType");
     Require(guestOutline.n_points > 0 && guestOutline.n_contours > 0, "stroke produced geometry");
     for (std::size_t i = 0; i < guestOutline.n_points; ++i) {
-        Require(actual.points[i].x == expected.points[i].x && actual.points[i].y == expected.points[i].y,
+        Require(actualPoints[i].x == expected.points[i].x && actualPoints[i].y == expected.points[i].y,
                 "point coordinates match FreeType");
         Require(actual.tags[i] == expected.tags[i], "point tags match FreeType");
     }
