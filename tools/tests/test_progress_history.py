@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -26,7 +27,7 @@ def commit(root, day, message, body, time="12:00:00Z"):
     (root / OPCODES).parent.mkdir(parents=True, exist_ok=True)
     (root / OPCODES).write_text("enum class RdnaOpcode : int {\n    SEndpgm,\n};\n", encoding="utf-8")
     env = {**os.environ, "GIT_AUTHOR_DATE": f"{day}T{time}", "GIT_COMMITTER_DATE": f"{day}T{time}"}
-    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "-c", "core.safecrlf=false", "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message],
                    check=True, env=env)
 
@@ -180,6 +181,145 @@ class ProgressHistoryTests(unittest.TestCase):
                         progress_history.collect("HEAD", cache)
                     self.assertEqual(cache.read_bytes(), contents)
 
+    def test_cache_rejects_invalid_shader_metric(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / "history.json"
+            signature = progress_history.cache_signature()
+            record = {
+                "libraries": {"done": 1, "total": 1, "percent": 100.0},
+                "shaders": {"done": 0, "total": 0, "percent": 0},
+            }
+            for metric in ("bogus", [], {}):
+                with self.subTest(metric=metric):
+                    cache.write_text(json.dumps({
+                        "schema_version": 2,
+                        "rules": signature,
+                        "commits": {"a" * 40: {**record, "shader_metric": metric}},
+                    }), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "invalid cached shader metric"):
+                        progress_history.load_cache(cache, signature)
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                        progress_history.main([str(root / "site"), "--cache", str(cache)])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_measure_legacy_fallback_uses_archived_opcode_table(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            current_prx = root / "current" / "prx"
+            current_opcodes = root / "current" / "opcodes.txt"
+            current_prx.mkdir(parents=True)
+            current_opcodes.write_text("current", encoding="utf-8")
+
+            class Archive:
+                def extractall(self, destination, **kwargs):
+                    (destination / "current" / "prx").mkdir(parents=True)
+                    (destination / "current" / "opcodes.txt").write_text("archived", encoding="utf-8")
+
+            def collect_shaders():
+                self.assertNotEqual(progress.OPCODES, current_opcodes)
+                self.assertEqual(progress.OPCODES.read_text(encoding="utf-8"), "archived")
+                return {"done": 1, "total": 2, "percent": 50.0}
+
+            def git_output(*args):
+                return b"current/prx/file.cpp\ncurrent/opcodes.txt\n" if args[0] == "ls-tree" else b"archive"
+
+            with patch.multiple(progress, ROOT=root, PRX=current_prx, OPCODES=current_opcodes), \
+                    patch.object(progress_history, "git", side_effect=git_output), \
+                    patch.object(progress_history.tarfile, "open", return_value=Archive()), \
+                    patch.object(progress, "collect_libraries", return_value={"done": 1, "total": 1, "percent": 100.0}), \
+                    patch.object(progress, "collect_shader_source", side_effect=progress.shader_scan.ScanError("unsupported")), \
+                    patch.object(progress, "collect_shaders", side_effect=collect_shaders):
+                result = progress_history.measure("HEAD")
+
+            self.assertEqual(result["shaders"], {"done": 1, "total": 2, "percent": 50.0})
+            self.assertEqual(result["shader_metric"], "legacy")
+
+    def test_measure_source_scan_is_tagged_as_decoded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            current_prx = root / "current" / "prx"
+            current_opcodes = root / "current" / "opcodes.txt"
+            current_prx.mkdir(parents=True)
+            current_opcodes.write_text("current", encoding="utf-8")
+
+            class Archive:
+                def extractall(self, destination, **kwargs):
+                    (destination / "current" / "prx").mkdir(parents=True)
+                    (destination / "current" / "opcodes.txt").write_text("archived", encoding="utf-8")
+
+            def git_output(*args):
+                return b"current/prx/file.cpp\ncurrent/opcodes.txt\n" if args[0] == "ls-tree" else b"archive"
+
+            with patch.multiple(progress, ROOT=root, PRX=current_prx, OPCODES=current_opcodes), \
+                    patch.object(progress_history, "git", side_effect=git_output), \
+                    patch.object(progress_history.tarfile, "open", return_value=Archive()), \
+                    patch.object(progress, "collect_libraries", return_value={"done": 1, "total": 1, "percent": 100.0}), \
+                    patch.object(progress, "collect_shader_source", return_value={"instructions": {"decoded": 3, "total": 4}}):
+                result = progress_history.measure("HEAD")
+
+            self.assertEqual(result["shaders"], {"done": 3, "total": 4, "percent": 75.0})
+            self.assertEqual(result["shader_metric"], "decoded")
+
+    def test_mixed_shader_metrics_are_tagged_and_rendered_separately(self):
+        def point(day, metric, done, total):
+            return {"date": day, "commit": "a" * 40, "shader_metric": metric,
+                    "libraries": {"done": 1, "total": 2, "percent": 50.0},
+                    "shaders": {"done": done, "total": total, "percent": round(100 * done / total, 2)}}
+
+        points = [
+            point("2026-01-01", "legacy", 1000, 1166),
+            point("2026-01-02", "legacy", 1166, 1166),
+            point("2026-01-03", "decoded", 1400, 1460),
+            point("2026-01-04", "decoded", 1460, 1460),
+        ]
+        svg = progress_history.chart(points)
+        html = progress_history.page(points)
+        ET.fromstring(svg)
+        decoded_panel = svg.split(">Decoded shader forms</text>", 1)[1].split(">Legacy shader opcode names</text>", 1)[0]
+        legacy_panel = svg.split(">Legacy shader opcode names</text>", 1)[1]
+        self.assertEqual([len(polyline.split()) for polyline in re.findall(r'<polyline points="([^"]*)"', decoded_panel)], [2, 2])
+        self.assertEqual([len(polyline.split()) for polyline in re.findall(r'<polyline points="([^"]*)"', legacy_panel)], [2, 2])
+        self.assertNotIn("1,166", decoded_panel)
+        self.assertNotIn("1,460", legacy_panel)
+        self.assertIn("compare points only within the same shader panel", html)
+        self.assertIn("<tr><td>2026-01-04</td><td>1/2</td><td>50.0%</td><td>1460/1460</td><td>100.0%</td><td>—</td><td>—</td></tr>", html)
+        self.assertIn("<tr><td>2026-01-02</td><td>1/2</td><td>50.0%</td><td>—</td><td>—</td><td>1166/1166</td><td>100.0%</td></tr>", html)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "site"
+            with patch.object(progress_history, "collect", return_value=points):
+                progress_history.main([str(output)])
+            data = json.loads((output / "history.json").read_text(encoding="utf-8"))
+        self.assertEqual([item["shader_metric"] for item in data], ["legacy", "legacy", "decoded", "decoded"])
+
+    def test_measure_ignores_paths_missing_from_archived_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
+            commit(root, "2026-01-01", "first", "int APS5_VABI A() { return 0; }\n")
+            for path in (progress.shader_scan.RECOMPILER, progress.shader_scan.AGC_DRIVER):
+                (root / path).mkdir(parents=True, exist_ok=True)
+                (root / path / "current.txt").write_text("current", encoding="utf-8")
+            (root / "tools").mkdir()
+            (root / "tools/rdna2_isa_forms.txt").write_text("current", encoding="utf-8")
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES):
+                result = progress_history.measure("HEAD")
+
+            self.assertIsNotNone(result)
+
+    def test_measure_skips_commit_missing_required_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
+            commit(root, "2026-01-01", "first", "int APS5_VABI A() { return 0; }\n")
+            (root / progress.shader_scan.RECOMPILER).mkdir(parents=True, exist_ok=True)
+            with patch.multiple(progress, ROOT=root, PRX=root / "missing/prx", OPCODES=root / OPCODES):
+                result = progress_history.measure("HEAD")
+
+            self.assertIsNone(result)
+
     def test_failed_cache_publication_preserves_the_old_file(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "history.json"
@@ -289,7 +429,7 @@ class ProgressHistoryTests(unittest.TestCase):
             self.assertIn(f">{label}<", svg)
 
     def test_main_writes_utf8_output_files(self):
-        point = {"date": "2026-01-01", "commit": "abc1234",
+        point = {"date": "2026-01-01", "commit": "abc1234", "shader_metric": "decoded",
                  "libraries": {"done": 1, "total": 2, "percent": 50.0},
                  "shaders": {"done": 3, "total": 4, "percent": 75.0}}
         with tempfile.TemporaryDirectory() as directory:

@@ -33,6 +33,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 mix(tess.mergedHull);
             }
             mix(graphics.rectList);
+            mix(graphics.rasterizerDiscard);
             mix(programs.size());
             for (std::size_t i = 0; i < programs.size(); ++i) {
                 const auto& program = programs[i];
@@ -181,6 +182,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                     }
                     if (matched[i] != nullptr) continue;
                     if (!anyLayout) miss = DrawMiss::Layout;
+                    else if (outcome == EntryOutcome::QueuedStores) miss = DrawMiss::QueuedStores;
                     else if (outcome != EntryOutcome::Differing) miss = DrawMiss::Gate;
                     else miss = roles[i] == Role::Fragment ? DrawMiss::FragmentDiffering : i == 0 ? DrawMiss::FrontDiffering : DrawMiss::OtherDiffering;
                 }
