@@ -33,11 +33,6 @@ int Collect(KernelEqueue queue, std::array<KernelEvent, 2>& events) {
 
 int main() {
     VideoOutTestEnvironment environment;
-    KernelEqueue queue = 0;
-    Require(sceKernelCreateEqueue(&queue, "set mode test") == 0, "event queue creation failed");
-    Require(sceVideoOutAddSetModeEvent(queue, 1, nullptr) == InvalidHandle, "a set-mode event was added on a port that is not open");
-    Require(sceVideoOutDeleteSetModeEvent(queue, 1) == InvalidHandle, "a set-mode event was deleted on a port that is not open");
-
     int handle = 0;
     try {
         handle = sceVideoOutOpen(SystemUser, MainBus, 0, nullptr);
@@ -47,6 +42,11 @@ int main() {
         return 77;
     }
     Require(handle > 0, "sceVideoOutOpen failed");
+
+    KernelEqueue queue = 0;
+    Require(sceKernelCreateEqueue(&queue, "set mode test") == 0, "event queue creation failed");
+    Require(sceVideoOutAddSetModeEvent(queue, handle + 1, nullptr) == InvalidHandle, "a set-mode event was added on a port that is not open");
+    Require(sceVideoOutDeleteSetModeEvent(queue, handle + 1) == InvalidHandle, "a set-mode event was deleted on a port that is not open");
 
     int setMode = 0;
     int outputMode = 0;
