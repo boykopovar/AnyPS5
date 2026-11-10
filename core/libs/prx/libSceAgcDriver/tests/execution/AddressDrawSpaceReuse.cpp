@@ -66,6 +66,7 @@ constexpr std::size_t IndirectCodeOffset = 512;
 constexpr std::size_t PointerSlots = 1024;
 constexpr std::size_t MovedVerticesOffset = 32768;
 constexpr std::size_t ShiftedVerticesOffset = MovedVerticesOffset + 4100;
+constexpr std::size_t ShiftedAgainVerticesOffset = ShiftedVerticesOffset + 4096;
 constexpr std::size_t RingSlotBytes = 256;
 constexpr std::size_t RingSlots = 8;
 constexpr std::uint32_t PinWaitMs = 4000;
@@ -332,6 +333,7 @@ struct Scene {
         std::memcpy(vertices.Data(), Triangle.data(), sizeof(Triangle));
         std::memcpy(vertices.Data() + MovedVerticesOffset, Triangle.data(), sizeof(Triangle));
         std::memcpy(vertices.Data() + ShiftedVerticesOffset, Triangle.data(), sizeof(Triangle));
+        std::memcpy(vertices.Data() + ShiftedAgainVerticesOffset, Triangle.data(), sizeof(Triangle));
         vertices.Register(false);
         std::memcpy(code.Data() + VertexCodeOffset, VertexCode.data(), sizeof(VertexCode));
         std::memcpy(code.Data() + PixelCodeOffset, PixelCode.data(), sizeof(PixelCode));
@@ -775,19 +777,31 @@ void RingRefusals(Scene& scene) {
         Require(outcomes[AddressDrawReuse::Reused] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose read-only vertex buffer moved inside the space counted " + outcomes.Text() + ", expected one reuse with the buffer bound anew");
     }
     if (HeapStages) {
+        {
+            const Outcomes outcomes;
+            scene.Fetch(ShiftedVerticesOffset);
+            const auto copies = AgcDriver::Graphics::DrawInputCopies();
+            const auto color = scene.DrawnColor();
+            Require(color == 170, "address draw space reuse: the draw after its vertex buffer moved off its view's alignment read " + std::to_string(color) + " instead of 170");
+            Require(outcomes[AddressDrawReuse::Built] == 1 && outcomes.Total() == 1, "address draw space reuse: a heap-stage draw whose vertex buffer moved off its view's alignment counted " + outcomes.Text() + ", expected one build for the new alignment");
+            Require(AgcDriver::Graphics::DrawInputCopies() == copies, "address draw space reuse: heap stages read a copy of a vertex buffer that moved off its view's alignment");
+        }
         const Outcomes outcomes;
-        scene.Fetch(ShiftedVerticesOffset);
         const auto copies = AgcDriver::Graphics::DrawInputCopies();
-        const auto color = scene.DrawnColor();
-        Require(color == 170, "address draw space reuse: the draw after its vertex buffer moved off its view's alignment read " + std::to_string(color) + " instead of 170");
-        Require(outcomes[AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a heap-stage draw whose vertex buffer moved off its view's alignment counted " + outcomes.Text() + ", expected one refusal for a moved GuestBuffers element");
-        Require(AgcDriver::Graphics::DrawInputCopies() == copies, "address draw space reuse: heap stages read a copy of a vertex buffer that moved off its view's alignment");
+        for (const auto offset : {ShiftedAgainVerticesOffset, MovedVerticesOffset, ShiftedVerticesOffset}) {
+            scene.Fetch(offset);
+            const auto color = scene.DrawnColor();
+            Require(color == 170, "address draw space reuse: a draw whose vertex buffer moved between two view alignments read " + std::to_string(color) + " instead of 170");
+        }
+        Require(outcomes[AddressDrawReuse::Reused] == 3 && outcomes.Total() == 3, "address draw space reuse: heap-stage draws whose vertex buffer moved between two view alignments counted " + outcomes.Text() + ", expected each alignment's build reused with the buffer read in place");
+        Require(AgcDriver::Graphics::DrawInputCopies() == copies, "address draw space reuse: heap stages read a copy of a vertex buffer that moved between two view alignments");
     }
     {
         std::memcpy(scene.spare.Data(), Triangle.data(), sizeof(Triangle));
         constexpr std::size_t Filled = 64;
         const std::array<std::uint32_t, 4> pattern{};
         const Outcomes outcomes;
+        const auto behindBefore = AgcDriver::Graphics::ShaderResources::MovedBehindGpuWrites();
         scene.Fetch(scene.spare, 0);
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
@@ -797,7 +811,12 @@ void RingRefusals(Scene& scene) {
         }
         const auto color = scene.Color();
         Require(color == 170, "address draw space reuse: the draw whose moved vertex buffer a pending fill overlaps read " + std::to_string(color) + " instead of 170");
-        Require(outcomes[AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose moved read-only vertex buffer a pending GPU write overlaps counted " + outcomes.Text() + ", expected one refusal for a moved GuestBuffers element");
+        if (HeapStages) {
+            Require(outcomes[AddressDrawReuse::Reused] == 1 && outcomes.Total() == 1, "address draw space reuse: a heap-stage draw whose moved read-only vertex buffer a pending GPU write overlaps counted " + outcomes.Text() + ", expected one reuse reading the buffer in place");
+            Require(AgcDriver::Graphics::ShaderResources::MovedBehindGpuWrites() > behindBefore, "address draw space reuse: a heap-stage draw whose moved vertex buffer a pending GPU write overlaps was not read in place behind the write");
+        } else {
+            Require(outcomes[AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose moved read-only vertex buffer a pending GPU write overlaps counted " + outcomes.Text() + ", expected one refusal for a moved GuestBuffers element");
+        }
     }
     scene.Fetch(0);
     scene.cachedVertex = false;

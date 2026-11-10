@@ -1299,6 +1299,25 @@ bool TemplateKeyWords(const CompiledShader& shader) {
     return true;
 }
 
+bool ReadsAddressTable(const CompiledShader& shader) {
+    return std::ranges::any_of(shader.program->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; });
+}
+
+void AppendMovedBufferAlignments(const CompiledShader& shader, std::uint64_t alignment, ResourceCache::Key& key) {
+    for (const auto& binding : shader.program->bindings) {
+        if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
+        const auto& words = DrawGuestWords(shader, binding);
+        if (words.size() != static_cast<std::size_t>(binding.count) * 4u) continue;
+        for (std::uint32_t element = 0; element < binding.count; ++element) {
+            const auto* descriptor = words.data() + static_cast<std::size_t>(element) * 4u;
+            const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
+            const bool empty = descriptor[2] == 0 || (descriptor[0] == 0 && (descriptor[1] & 0xffffu) == 0);
+            if (written || empty) continue;
+            key.push_back(static_cast<std::uint32_t>(descriptor[0] & (alignment - 1u)));
+        }
+    }
+}
+
 ResourceCache::Key DrawResourceKey(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::uint64_t indexBytes, bool ranges) {
     ResourceCache::Key key;
     key.reserve(256);
@@ -1309,6 +1328,8 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
     };
     append64(reinterpret_cast<std::uint64_t>(context.device));
     key.push_back(static_cast<std::uint32_t>(shaders.size()));
+    const bool inPlaceMoves = MovableBuffers() && AnyHeapShader(shaders) && std::ranges::any_of(shaders, ReadsAddressTable);
+    const auto alignment = inPlaceMoves ? static_cast<std::uint64_t>(GuestBufferViewAlignment(context.limits)) : 0u;
     for (const auto& shader : shaders) {
         const auto sizeAt = key.size();
         key.push_back(0u);
@@ -1334,6 +1355,7 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
                 memo.store(std::move(stored), std::memory_order_release);
             }
         }
+        if (inPlaceMoves) AppendMovedBufferAlignments(shader, alignment, key);
         key[sizeAt] = static_cast<std::uint32_t>(key.size() - sizeAt - 1u);
     }
     key.push_back(colorAttachments);
