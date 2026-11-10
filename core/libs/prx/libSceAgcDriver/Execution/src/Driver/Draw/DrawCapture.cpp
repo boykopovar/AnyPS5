@@ -167,11 +167,23 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     }
     timing.Mark("materialize");
     const auto walked = capture->userDataUse.asValue | capture->userDataUse.asBase;
-    auto mask = walked == 0 ? ~std::uint64_t{0} : walked | stageCapture.compiled->userDataRegisterReads;
+    auto mask = capture->plan != nullptr && capture->plan->srtPlanComplete ? walked | stageCapture.compiled->userDataRegisterReads : ~std::uint64_t{0};
     if (vertexInfos[i]) {
         for (const auto reg : {static_cast<std::uint32_t>(vertexInfos[i]->fetchAttribReg), static_cast<std::uint32_t>(vertexInfos[i]->fetchBufferReg)}) {
             mask |= reg + 1u < 64u ? std::uint64_t{3} << reg : ~std::uint64_t{0};
         }
+    }
+    if (program.snapshot && program.snapshot->userDataTailRegister) {
+        const auto reg = *program.snapshot->userDataTailRegister;
+        if (reg >= program.firstUserSgpr) {
+            const auto slot = reg - program.firstUserSgpr;
+            mask |= slot + 1u < 64u ? std::uint64_t{3} << slot : ~std::uint64_t{0};
+        } else {
+            mask = ~std::uint64_t{0};
+        }
+    }
+    if (program.snapshot && StageLinksUserDataCallees(*program.snapshot, program.codeOffset)) {
+        mask = ~std::uint64_t{0};
     }
     stageCapture.userDataMask = mask;
     phaseTiming.Phase(DrawRowRecompile);
