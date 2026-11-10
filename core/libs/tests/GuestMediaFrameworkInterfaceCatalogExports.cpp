@@ -10,20 +10,20 @@ namespace {
 using ThrowingStub = int (APS5_VABI *)(void);
 
 const ThrowingStub kStubs[] = {
-    sceMediaFwAddEsvmDecoder2_nid_no_patch,
-    sceMediaFwAudioSyncFlush_nid_no_patch,
-    sceMediaFwChangeVideoOutputMode_nid_no_patch,
-    sceMediaFwChangeVideoOutputMode2_nid_no_patch,
-    sceMediaFwInitializeCdm_nid_no_patch,
-    sceMediaFwMediaKeySystemAccessCreateMediaKeys2_nid_no_patch,
-    sceMediaFwMediaKeysSetServerCertificate2_nid_no_patch,
-    sceMediaFwRegisterSrcAllocateStateChangeCallback_nid_no_patch,
-    sceMediaFwReleaseVideoFrame_nid_no_patch,
-    sceMediaFwRequestMediaKeySystemAccess2_nid_no_patch,
-    sceMediaFwSetAudioTagFeature_nid_no_patch,
-    sceMediaFwSetUniversalEsvm_nid_no_patch,
-    sceMediaFwSourceBufferCanSwitchToType_nid_no_patch,
-    sceMediaFwSyncVideo_nid_no_patch,
+    sceMediaFwAddEsvmDecoder2,
+    sceMediaFwAudioSyncFlush,
+    sceMediaFwChangeVideoOutputMode,
+    sceMediaFwChangeVideoOutputMode2,
+    sceMediaFwInitializeCdm,
+    sceMediaFwMediaKeySystemAccessCreateMediaKeys2,
+    sceMediaFwMediaKeysSetServerCertificate2,
+    sceMediaFwRegisterSrcAllocateStateChangeCallback,
+    sceMediaFwReleaseVideoFrame,
+    sceMediaFwRequestMediaKeySystemAccess2,
+    sceMediaFwSetAudioTagFeature,
+    sceMediaFwSetUniversalEsvm,
+    sceMediaFwSourceBufferCanSwitchToType,
+    sceMediaFwSyncVideo,
 };
 
 const char* kStubNames[] = {

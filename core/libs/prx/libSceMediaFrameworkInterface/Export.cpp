@@ -770,74 +770,60 @@ APS5_EXPORT("zbDNeWDHhTc", libSceMediaFrameworkInterfaceUnknown_zbDNeWDHhTc_nid_
 }
 
 extern "C" {
-int APS5_VABI sceMediaFwAddEsvmDecoder2_nid_no_patch(void) {
+int APS5_VABI sceMediaFwAddEsvmDecoder2(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("56n3lSTmSIQ", sceMediaFwAddEsvmDecoder2_nid_no_patch);
-int APS5_VABI sceMediaFwAudioSyncFlush_nid_no_patch(void) {
+int APS5_VABI sceMediaFwAudioSyncFlush(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("onZVvMJVfUc", sceMediaFwAudioSyncFlush_nid_no_patch);
-int APS5_VABI sceMediaFwChangeVideoOutputMode_nid_no_patch(void) {
+int APS5_VABI sceMediaFwChangeVideoOutputMode(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("gmyWiS5nx0M", sceMediaFwChangeVideoOutputMode_nid_no_patch);
-int APS5_VABI sceMediaFwChangeVideoOutputMode2_nid_no_patch(void) {
+int APS5_VABI sceMediaFwChangeVideoOutputMode2(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("9QsUR0sExmM", sceMediaFwChangeVideoOutputMode2_nid_no_patch);
-int APS5_VABI sceMediaFwInitializeCdm_nid_no_patch(void) {
+int APS5_VABI sceMediaFwInitializeCdm(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("MOrDC2LzUJg", sceMediaFwInitializeCdm_nid_no_patch);
-int APS5_VABI sceMediaFwMediaKeySystemAccessCreateMediaKeys2_nid_no_patch(void) {
+int APS5_VABI sceMediaFwMediaKeySystemAccessCreateMediaKeys2(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("UMuQN3ysX9o", sceMediaFwMediaKeySystemAccessCreateMediaKeys2_nid_no_patch);
-int APS5_VABI sceMediaFwMediaKeysSetServerCertificate2_nid_no_patch(void) {
+int APS5_VABI sceMediaFwMediaKeysSetServerCertificate2(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("siSe0IdqHe0", sceMediaFwMediaKeysSetServerCertificate2_nid_no_patch);
-int APS5_VABI sceMediaFwRegisterSrcAllocateStateChangeCallback_nid_no_patch(void) {
+int APS5_VABI sceMediaFwRegisterSrcAllocateStateChangeCallback(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("Z3rNZpSYyKI", sceMediaFwRegisterSrcAllocateStateChangeCallback_nid_no_patch);
-int APS5_VABI sceMediaFwReleaseVideoFrame_nid_no_patch(void) {
+int APS5_VABI sceMediaFwReleaseVideoFrame(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("Pktm1lJA6gk", sceMediaFwReleaseVideoFrame_nid_no_patch);
-int APS5_VABI sceMediaFwRequestMediaKeySystemAccess2_nid_no_patch(void) {
+int APS5_VABI sceMediaFwRequestMediaKeySystemAccess2(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("iqJ90izN-3E", sceMediaFwRequestMediaKeySystemAccess2_nid_no_patch);
-int APS5_VABI sceMediaFwSetAudioTagFeature_nid_no_patch(void) {
+int APS5_VABI sceMediaFwSetAudioTagFeature(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("iyk9gLtB1Lc", sceMediaFwSetAudioTagFeature_nid_no_patch);
-int APS5_VABI sceMediaFwSetUniversalEsvm_nid_no_patch(void) {
+int APS5_VABI sceMediaFwSetUniversalEsvm(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("gbEj46IQMXg", sceMediaFwSetUniversalEsvm_nid_no_patch);
-int APS5_VABI sceMediaFwSourceBufferCanSwitchToType_nid_no_patch(void) {
+int APS5_VABI sceMediaFwSourceBufferCanSwitchToType(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("+7hET0Xa3UI", sceMediaFwSourceBufferCanSwitchToType_nid_no_patch);
-int APS5_VABI sceMediaFwSyncVideo_nid_no_patch(void) {
+int APS5_VABI sceMediaFwSyncVideo(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("a2ob5b036Cw", sceMediaFwSyncVideo_nid_no_patch);
 }
