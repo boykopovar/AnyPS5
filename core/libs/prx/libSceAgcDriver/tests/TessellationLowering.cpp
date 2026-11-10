@@ -1070,5 +1070,43 @@ int main() {
         return result.helpers > 0u && result.mismatches > 0u;
     });
 
+    passed &= run("a domain shader with primitive VGPR use on a non-export path lowers with constant zero", [] {
+        IrProgram program;
+        IrBuilder builder{program};
+        program.Resources().stage = IrShaderStage::TessellationEvaluation;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        program.BlockOrder().push_back(&block);
+        BlockInfo info;
+        info.id = block.Id();
+        program.Metadata().blockInfo.push_back(info);
+        builder.SetInsertionPoint(block);
+        auto& prim = builder.Emit(IrOpcode::TessellationBase, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(TessellationBaseKind::PassthroughPrimitive))});
+        auto& ref = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&prim});
+        static_cast<void>(ref);
+        const Outcome outcome = Lower(program);
+        if (!outcome.lowered) return false;
+        return ref.Argument(0)->HasImmediate() && ref.Argument(0)->ImmediateU32() == 0u;
+    });
+
+    passed &= run("a hull shader with primitive VGPR use fails lowering", [] {
+        IrProgram program;
+        IrBuilder builder{program};
+        program.Resources().stage = IrShaderStage::TessellationControl;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        program.BlockOrder().push_back(&block);
+        BlockInfo info;
+        info.id = block.Id();
+        program.Metadata().blockInfo.push_back(info);
+        builder.SetInsertionPoint(block);
+        auto& prim = builder.Emit(IrOpcode::TessellationBase, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(TessellationBaseKind::PassthroughPrimitive))});
+        auto& ref = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&prim});
+        static_cast<void>(ref);
+        const Outcome outcome = Lower(program);
+        if (outcome.lowered) return false;
+        return outcome.reason.find("the primitive VGPR is used other than as the passthrough primitive export") != std::string::npos;
+    });
+
     return passed ? 0 : 1;
 }
