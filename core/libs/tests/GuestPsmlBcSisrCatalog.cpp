@@ -36,8 +36,8 @@ void ExpectNotImplemented(TFn stub, const char* name, int line) {
 #define RequireNotImplemented(stub) ExpectNotImplemented(stub, #stub, __LINE__)
 
 int main() {
-    RequireNotImplemented(scePsmlBcSisrGetInternalBufferRequirement_nid_no_patch);
-    RequireNotImplemented(scePsmlBcSisrGetPacketSizeInDwords_nid_no_patch);
-    RequireNotImplemented(scePsmlBcSisrInit_nid_no_patch);
+    RequireNotImplemented(scePsmlBcSisrGetInternalBufferRequirement);
+    RequireNotImplemented(scePsmlBcSisrGetPacketSizeInDwords);
+    RequireNotImplemented(scePsmlBcSisrInit);
     return 0;
 }
