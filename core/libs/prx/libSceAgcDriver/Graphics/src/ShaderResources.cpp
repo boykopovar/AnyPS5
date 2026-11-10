@@ -6831,28 +6831,32 @@ ShaderResources::DrawBindings::~DrawBindings() {
     release(fragmentLayout, fragmentAllocation);
 }
 
-std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, bool* patchedData) const {
+std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, bool* patchedData, MoveRefusal* refusal) const {
+    const auto refuse = [&](MoveRefusal why) {
+        if (refusal != nullptr) *refusal = why;
+        return std::optional<std::vector<MovedBuffer>>{};
+    };
     std::vector<MovedBuffer> moved;
     std::size_t movedBytes = 0;
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE && !heapStage) || (usesBda && !spaceReuse)) return moved;
     for (const auto& shader : shaders) {
-        if (shader.program == nullptr) return std::nullopt;
+        if (shader.program == nullptr) return refuse(MoveRefusal::Shape);
         const bool heapShader = HeapShader(shader);
         for (const auto& binding : shader.program->bindings) {
             if (heapShader && (DataRole(binding.role) || binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers)) continue;
             if (DataRole(binding.role)) {
                 const auto kept = std::find_if(bindings.begin(), bindings.end(), [&](const Binding& item) { return item.layout.binding == binding.binding; });
-                if (kept == bindings.end() || kept->allocations.size() != 1) return std::nullopt;
+                if (kept == bindings.end() || kept->allocations.size() != 1) return refuse(MoveRefusal::Shape);
                 const auto index = kept->allocations.front();
                 const auto& item = allocations[index];
                 const auto& guestWords = DrawGuestWords(shader, binding);
-                if (item.guest || item.buffer == nullptr || item.size != guestWords.size() * sizeof(std::uint32_t)) return std::nullopt;
+                if (item.guest || item.buffer == nullptr || item.size != guestWords.size() * sizeof(std::uint32_t)) return refuse(MoveRefusal::Shape);
                 const bool patched = std::any_of(dataPatches.begin(), dataPatches.end(), [&](const DataPatch& patch) { return patch.allocation == index; });
                 const bool same = !item.dataWords.empty() ? item.dataWords == guestWords : !patched && std::memcmp(item.buffer->Bytes().data(), guestWords.data(), item.size) == 0;
                 if (same) continue;
                 if (item.dataWords.empty() && patched) {
                     if (patchedData != nullptr) *patchedData = true;
-                    return std::nullopt;
+                    return refuse(MoveRefusal::Bindings);
                 }
                 if (moved.empty()) moved.reserve(allocations.size());
                 moved.push_back({index, 0, item.size, guestWords});
@@ -6861,7 +6865,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
             if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
             const auto& guestWords = DrawGuestWords(shader, binding);
             const auto kept = std::find_if(bindings.begin(), bindings.end(), [&](const Binding& item) { return item.layout.binding == binding.binding; });
-            if (kept == bindings.end() || kept->allocations.size() != binding.count || guestWords.size() != static_cast<std::size_t>(binding.count) * 4u) return std::nullopt;
+            if (kept == bindings.end() || kept->allocations.size() != binding.count || guestWords.size() != static_cast<std::size_t>(binding.count) * 4u) return refuse(MoveRefusal::Shape);
             for (std::uint32_t element = 0; element < binding.count; ++element) {
                 const auto* words = guestWords.data() + static_cast<std::size_t>(element) * 4u;
                 const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
@@ -6873,23 +6877,24 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 const bool empty = size == 0 || address == 0;
                 if (!item.guest) {
                     if (empty) continue;
-                    return std::nullopt;
+                    return refuse(MoveRefusal::NotGuest);
                 }
                 if (item.address == address && item.size == size) continue;
-                if (written || empty || item.written || size > context.limits.maxStorageBufferRange) return std::nullopt;
+                if (written || empty || item.written) return refuse(MoveRefusal::Written);
+                if (size > context.limits.maxStorageBufferRange) return refuse(MoveRefusal::Limit);
                 const auto begin = address - item.adjustment;
                 const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
                 const bool behind = recorder.PendingWriteOverlaps(begin, bytes);
                 const bool inPlace = (usesBda && heapStage) || (behind && heapShader && addressedBuffers);
-                if (behind && !inPlace) return std::nullopt;
-                if (!inPlace && bytes > maxDrawSnapshotBytes - movedBytes) return std::nullopt;
-                if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) return std::nullopt;
-                if (guestMemory.WritesOverlap(begin, bytes) || PendingStorageOverlaps(begin, bytes, nullptr) || AnyShadowedOverlaps(begin, bytes)) return std::nullopt;
+                if (behind && !inPlace) return refuse(MoveRefusal::Overlap);
+                if (!inPlace && bytes > maxDrawSnapshotBytes - movedBytes) return refuse(MoveRefusal::Limit);
+                if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) return refuse(MoveRefusal::Inaccessible);
+                if (guestMemory.WritesOverlap(begin, bytes) || PendingStorageOverlaps(begin, bytes, nullptr) || AnyShadowedOverlaps(begin, bytes)) return refuse(MoveRefusal::Overlap);
                 if (behind) {
                     const auto overlaps = [&](const std::shared_ptr<ShaderResources>& writer) { return writer != nullptr && writer->WritesOverlap(begin, bytes); };
-                    if (context.copiedWriters != nullptr && std::any_of(context.copiedWriters->begin(), context.copiedWriters->end(), overlaps)) return std::nullopt;
+                    if (context.copiedWriters != nullptr && std::any_of(context.copiedWriters->begin(), context.copiedWriters->end(), overlaps)) return refuse(MoveRefusal::Overlap);
                     const auto drawWriters = DrawCopiedWriters();
-                    if (std::any_of(drawWriters->begin(), drawWriters->end(), overlaps)) return std::nullopt;
+                    if (std::any_of(drawWriters->begin(), drawWriters->end(), overlaps)) return refuse(MoveRefusal::Overlap);
                 }
                 VkDeviceAddressRangeEXT view{};
                 if (inPlace) {
@@ -6904,7 +6909,9 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                         found = guestMemory.TryDescriptor(address, static_cast<std::size_t>(size), adjustment, nullptr, &handle).has_value() && handle != 0;
                     }
                     const bool classic = std::any_of(bindings.begin(), bindings.end(), [&](const Binding& other) { return !(other.heap && other.addressed) && std::find(other.allocations.begin(), other.allocations.end(), index) != other.allocations.end(); });
-                    if (!found || adjustment != item.adjustment || classic) return std::nullopt;
+                    if (!found) return refuse(MoveRefusal::NotImported);
+                    if (adjustment != item.adjustment) return refuse(MoveRefusal::Alignment);
+                    if (classic) return refuse(MoveRefusal::SharedBinding);
                 }
                 if (moved.empty()) moved.reserve(allocations.size());
                 moved.push_back({index, address, static_cast<std::size_t>(size), {}, inPlace, view});
@@ -6925,6 +6932,9 @@ const char* ShaderResources::MoveRefusalName(MoveRefusal refusal) {
         case MoveRefusal::Inaccessible: return "unmapped";
         case MoveRefusal::Overlap: return "pending write";
         case MoveRefusal::Bindings: return "no bindings made";
+        case MoveRefusal::NotImported: return "not imported";
+        case MoveRefusal::Alignment: return "alignment changed";
+        case MoveRefusal::SharedBinding: return "shared with a classic binding";
         case MoveRefusal::Count: break;
     }
     return "?";

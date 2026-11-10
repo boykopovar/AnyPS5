@@ -908,6 +908,11 @@ std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(AddressDrawReuse
     return counts;
 }
 
+std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(ShaderResources::MoveRefusal::Count)>& addressMoveRefusals() {
+    static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(ShaderResources::MoveRefusal::Count)> counts{};
+    return counts;
+}
+
 void countAddressDrawReuse(AddressDrawReuse outcome) {
     addressDrawReuses()[static_cast<std::size_t>(outcome)].fetch_add(1, std::memory_order_relaxed);
 }
@@ -1052,6 +1057,12 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
         }
         AgcDriver::ProfilePrint_nid_no_patch("%s\n", reuse);
         profile.addressSeen = address;
+        std::string refusals = "[rescache] address-based moved-buffer refusals (cumulative):";
+        for (std::size_t why = 1; why < addressMoveRefusals().size(); ++why) {
+            const auto count = addressMoveRefusals()[why].load(std::memory_order_relaxed);
+            if (count != 0) refusals += std::string(" ") + ShaderResources::MoveRefusalName(static_cast<ShaderResources::MoveRefusal>(why)) + " " + std::to_string(count);
+        }
+        AgcDriver::ProfilePrint_nid_no_patch("%s\n", refusals.c_str());
     }
     profile.totalsUs.fill(0);
     profile.maxUs.fill(0);
@@ -2251,7 +2262,8 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
             bool patched = false;
-            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color, &patched);
+            auto refusal = ShaderResources::MoveRefusal::None;
+            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color, &patched, &refusal);
             if (moved.has_value()) {
                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
                 if (counted && verifyAddressDrawReuse()) verifyServedSpace(context, state, draw, shaders, snapshots, indexBytes, *cached);
@@ -2266,7 +2278,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
             } else if (valid || inUse) {
                 if (valid && cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
                 if (valid && counted) reuse = patched ? AddressDrawReuse::PatchedData : AddressDrawReuse::MovedBuffer;
-                countCache(&DrawProfile::cacheMisses);
+                if (valid && counted) addressMoveRefusals()[static_cast<std::size_t>(refusal)].fetch_add(1, std::memory_order_relaxed);
             } else {
                 if (cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
                 SharedResourceCache().Remove(resolved.contentKey);
