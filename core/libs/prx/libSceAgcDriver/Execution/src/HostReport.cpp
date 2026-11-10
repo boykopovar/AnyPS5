@@ -15,15 +15,16 @@ namespace {
 
 #ifdef _WIN32
 
+constexpr UINT Latin1Codepage = 28591;
+
 struct Decoded {
     std::wstring text;
-    bool utf8;
+    UINT codepage;
 };
 
-std::wstring decodeWide(const std::string& text, bool utf8) {
+std::wstring decodeWide(const std::string& text, const UINT codepage) {
     if (text.empty()) return {};
-    const auto codepage = utf8 ? CP_UTF8 : CP_ACP;
-    const auto flags = utf8 ? MB_ERR_INVALID_CHARS : 0;
+    const auto flags = codepage == CP_UTF8 ? MB_ERR_INVALID_CHARS : 0;
     const auto count = ::MultiByteToWideChar(codepage, flags, text.data(), static_cast<int>(text.size()), nullptr, 0);
     if (count <= 0) return {};
     std::wstring out(static_cast<std::size_t>(count), L'\0');
@@ -31,22 +32,23 @@ std::wstring decodeWide(const std::string& text, bool utf8) {
     return out;
 }
 
-Decoded decodeWide(const std::string& text) {
-    if (text.empty()) return {{}, true};
-    auto wide = decodeWide(text, true);
-    if (!wide.empty()) return {std::move(wide), true};
-    wide = decodeWide(text, false);
-    return {std::move(wide), false};
-}
-
-std::string encodeNarrow(const std::wstring& text, bool utf8) {
+std::string encodeNarrow(const std::wstring& text, const UINT codepage) {
     if (text.empty()) return {};
-    const auto codepage = utf8 ? CP_UTF8 : CP_ACP;
     const int count = ::WideCharToMultiByte(codepage, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
     if (count <= 0) return {};
     std::string out(static_cast<std::size_t>(count), '\0');
     ::WideCharToMultiByte(codepage, 0, text.data(), static_cast<int>(text.size()), out.data(), count, nullptr, nullptr);
     return out;
+}
+
+Decoded decodeText(const std::string& text) {
+    if (text.empty()) return {{}, CP_UTF8};
+    const UINT codepages[] = {CP_UTF8, CP_ACP};
+    for (const auto codepage : codepages) {
+        auto wide = decodeWide(text, codepage);
+        if (!wide.empty() && encodeNarrow(wide, codepage) == text) return {std::move(wide), codepage};
+    }
+    return {decodeWide(text, Latin1Codepage), Latin1Codepage};
 }
 
 bool nameCharacter(wchar_t value) {
@@ -63,10 +65,10 @@ std::size_t findWideName(const std::wstring& text, const std::wstring& name, std
     return std::wstring::npos;
 }
 
-std::wstring replaceNames(std::wstring text, const std::vector<std::string>& names, bool utf8) {
+std::wstring replaceNames(std::wstring text, const std::vector<std::string>& names, const UINT codepage) {
     for (const auto& name : names) {
         if (name.empty()) continue;
-        const auto decoded = decodeWide(name, utf8);
+        const auto decoded = decodeWide(name, codepage);
         if (decoded.empty()) continue;
         std::wstring result;
         std::size_t cursor = 0;
@@ -88,10 +90,10 @@ std::wstring replaceNames(std::wstring text, const std::vector<std::string>& nam
 }
 
 std::string replaceNames(std::string text, const std::vector<std::string>& names) {
-    const auto decoded = decodeWide(text);
-    auto encoded = encodeNarrow(replaceNames(std::move(decoded.text), names, decoded.utf8), decoded.utf8);
+    const auto decoded = decodeText(text);
+    const auto encoded = encodeNarrow(replaceNames(decoded.text, names, decoded.codepage), decoded.codepage);
     if (encoded.empty() && !text.empty()) return text;
-    return std::move(encoded);
+    return encoded;
 }
 
 #else
