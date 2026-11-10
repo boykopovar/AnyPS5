@@ -415,7 +415,7 @@ bool TranslationContext::vLdexpF16(const RdnaInstruction& inst) {
     const IrF16 half(ir.Emit(IrOpcode::BitCastF16U16, IrType::F16, {&ir.Emit(IrOpcode::ConvertU16U32, IrType::U16, {&bits.Value()})}));
     const IrF32 value(ir.Emit(IrOpcode::ConvertF32F16, IrType::F32, {&half.Value()}));
     const RdnaOperand& exponentSource = sourceAt(inst, 1u);
-    const IrU32 exponentBits = inst.family == RdnaInstructionFamily::VOP3 ? readF16SourceBits(exponentSource) : readU32(exponentSource);
+    const IrU32 exponentBits = inst.family == RdnaInstructionFamily::VOP3 ? readF16SourceBits(exponentSource) : readU16AsU32(exponentSource, false);
     const IrU32 exponent(ir.Emit(IrOpcode::BitFieldSExtract, IrType::U32, {&exponentBits.Value(), &ir.Constant(0u), &ir.Constant(16u)}));
     const IrU32 clamped(ir.Emit(IrOpcode::SMax32, IrType::U32, {&ir.Emit(IrOpcode::SMin32, IrType::U32, {&exponent.Value(), &ir.Constant(64u)}), &ir.Constant(static_cast<std::uint32_t>(-64))}));
     IrValue& power = ir.BitCastF32(ir.ShiftLeftLogical(ir.IAdd(clamped.Value(), ir.Constant(127u)), ir.Constant(23u)));

@@ -878,6 +878,10 @@ bool isVop1IntegerSourceOpcode(RdnaOpcode opcode) {
     }
 }
 
+bool isVop1Integer16SourceOpcode(RdnaOpcode opcode) {
+    return opcode == RdnaOpcode::VCvtF16U16 || opcode == RdnaOpcode::VCvtF16I16;
+}
+
 bool isVop1FloatResultOpcode(RdnaOpcode opcode) {
     switch (opcode) {
         case RdnaOpcode::VCvtF32I32:
@@ -1088,11 +1092,8 @@ bool isVop2IntegerOpcode(RdnaOpcode opcode) {
 }
 
 bool hasUnsupportedVop2SourceModifiers(RdnaOpcode opcode, bool src0Modified, bool src1Modified) {
-    if (isVop2FloatOpcode(opcode) || isVop2IntegerOpcode(opcode)) {
+    if (isVop2FloatOpcode(opcode) || isVop2IntegerOpcode(opcode) || opcode == RdnaOpcode::VLdexpF16) {
         return false;
-    }
-    if (opcode == RdnaOpcode::VLdexpF16) {
-        return src1Modified;
     }
     return src0Modified || src1Modified;
 }
@@ -1210,7 +1211,7 @@ const Vop1SdwaRule* findVop1SdwaRule(RdnaOpcode opcode) {
 }
 
 bool isVop1SdwaSourceSupported(RdnaOpcode opcode, std::uint32_t sourceSelector, bool sourceNegate, bool sourceAbsolute) {
-    const bool modifiersAccepted = isVop1IntegerSourceOpcode(opcode) || (!sourceNegate && !sourceAbsolute);
+    const bool modifiersAccepted = isVop1IntegerSourceOpcode(opcode) || isVop1Integer16SourceOpcode(opcode) || (!sourceNegate && !sourceAbsolute);
     if (sourceSelector == 6u) {
         return isVop1FloatSourceOpcode(opcode) || modifiersAccepted;
     }
@@ -1335,7 +1336,7 @@ void decodeVop1Dpp(std::uint32_t programCounter, std::span<const std::uint32_t> 
     }
     instruction.sourceCount = 1;
 
-    if (!isVop1FloatSourceOpcode(instruction.op) && !isVop1IntegerSourceOpcode(instruction.op) && (instruction.source0.negate || instruction.source0.absolute)) {
+    if (!isVop1FloatSourceOpcode(instruction.op) && !isVop1IntegerSourceOpcode(instruction.op) && !isVop1Integer16SourceOpcode(instruction.op) && (instruction.source0.negate || instruction.source0.absolute)) {
         throw std::invalid_argument("VOP1 DPP integer source modifiers are not supported");
     }
     ReadRdnaLiteralOperands(code, wordIndex, instruction);
