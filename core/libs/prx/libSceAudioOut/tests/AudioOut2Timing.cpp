@@ -3,6 +3,7 @@
 #include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -345,6 +346,9 @@ void TestPrimingAfterRunningDry() {
 void TestLowLatencyCallsRejectBadArguments() {
     AudioOut2ContextParam params{};
     Require(sceAudioOut2ContextResetParam(&params) == 0);
+    errno = 73;
+    Require(sceAudioOut2ContextResetParam(reinterpret_cast<AudioOut2ContextParam*>(0x10)) == static_cast<int>(0x80260502));
+    Require(errno == 73);
     params.num_grains = grain;
     params.queue_depth = queueDepth;
     constexpr int errorInvalidParam = static_cast<int>(0x80268001);
