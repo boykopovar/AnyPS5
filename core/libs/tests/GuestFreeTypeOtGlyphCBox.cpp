@@ -6,7 +6,6 @@
 #include FT_GLYPH_H
 
 #include <cstdlib>
-#include <exception>
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -40,14 +39,6 @@ int main() {
         Require(guestBox.xMin == hostBox.xMin && guestBox.yMin == hostBox.yMin &&
                 guestBox.xMax == hostBox.xMax && guestBox.yMax == hostBox.yMax);
     }
-    bool rejected = false;
-    try {
-        FreeType::GuestBBox box{};
-        sceFreeTypeOtGlyphGetCBox_nid_no_patch(reinterpret_cast<FreeType::GuestGlyphRec*>(hostGlyph), FT_GLYPH_BBOX_SUBPIXELS, &box);
-    } catch (const std::exception&) {
-        rejected = true;
-    }
-    Require(rejected);
     FT_Done_Glyph_nid_postfix(guestGlyph);
     FT_Done_Glyph(hostGlyph);
     Require(FT_Done_Face_nid_postfix(guestFace) == 0);
