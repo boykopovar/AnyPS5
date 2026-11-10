@@ -26,3 +26,5 @@
 #include "Search.hpp"
 #include "Character.hpp"
 #include "Configuration.hpp"
+
+#include "ConverterHelpers.hpp"

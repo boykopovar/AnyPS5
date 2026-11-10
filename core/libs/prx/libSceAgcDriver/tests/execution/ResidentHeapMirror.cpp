@@ -286,6 +286,12 @@ void ResidentTests(AgcDriver::VulkanDevice& device) {
     Require(again.rebuilds == steady.rebuilds && again.heapBytes == steady.heapBytes, "resident heap mirror: an unchanged dispatch rebuilt or grew the heap mirrors");
     CheckReads(output, "unchanged dispatch", true);
     CheckStores(written, "unchanged dispatch");
+    const auto settled = AgcDriver::Graphics::MirrorCounters();
+    AgcDriver::GuestMemory::MarkWritten(read.Address() + 8, 16);
+    Dispatch(device, read, written, output);
+    Require(AgcDriver::Graphics::MirrorCounters().blocksCopied == settled.blocksCopied, "resident heap mirror: a block stamped without a byte change was copied into its mirror again");
+    CheckReads(output, "a stamped block that did not change", true);
+    CheckStores(written, "a stamped block that did not change");
 }
 
 void StagingChunkTests(AgcDriver::VulkanDevice& device) {

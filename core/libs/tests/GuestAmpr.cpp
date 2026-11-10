@@ -152,6 +152,14 @@ void TestRejectedArguments() {
     Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, &gatherState, reinterpret_cast<std::uint64_t*>(0x10)) == invalidPointer);
     Require(sceAmprCommandBufferReset(nullptr) == invalidArgument);
     Require(sceAmprCommandBufferSetBuffer(nullptr, memory.data(), memory.size()) == invalidArgument);
+    alignas(8) std::uint64_t target = 0;
+    Require(sceAmprCommandBufferWriteAddress_04_00(nullptr, &target, 0x1122334455667788ull, 0) == invalidArgument);
+    Require(target == 0);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(nullptr) == nullptr);
+    Require(sceAmprCommandBufferGetCurrentOffset(nullptr) == 0);
+    Require(sceAmprCommandBufferGetNumCommands(nullptr) == 0);
+    Require(sceAmprCommandBufferGetSize(nullptr) == 0);
+    Require(sceAmprCommandBufferGetType(nullptr) == 0);
 }
 
 void TestFullBuffer() {
@@ -1024,6 +1032,7 @@ void TestAmmRangesAboveHintedMaps() {
 void TestAmmUsageStats() {
     std::array<std::uint64_t, 4> stats{};
     Require(sceAmprAmmGetUsageStatsData(nullptr) == static_cast<int>(0x80020016));
+    Require(sceAmprAmmGetUsageStatsData(reinterpret_cast<AmmUsageStatsData*>(0x10)) == static_cast<int>(0x8002000E));
     stats[0] = 0x19;
     Require(sceAmprAmmGetUsageStatsData(reinterpret_cast<AmmUsageStatsData*>(stats.data())) == static_cast<int>(0x80020016));
     stats = {0x18, 0xdeadbeef, 0xdeadbeef, 0xdeadbeef};
@@ -1627,6 +1636,9 @@ void TestWriteAddressCommand() {
     alignas(8) std::uint64_t target = 0;
     const auto offset = recorder.Offset();
     const auto commands = recorder.Commands();
+    alignas(8) std::array<std::uint32_t, 4> misaligned{};
+    Require(sceAmprCommandBufferWriteAddress_04_00(&recorder.buffer, reinterpret_cast<std::uint64_t*>(misaligned.data() + 1), 0x87654321u, 0) == invalidArgument);
+    Require(recorder.Offset() == offset && recorder.Commands() == commands);
     Require(sceAmprCommandBufferWriteAddress_04_00(&recorder.buffer, &target, 0x1122334455667788ull, 0) == 0);
     RequireAppended(recorder, offset, commands, Apr::Opcode::WriteAddress, sceAmprMeasureCommandSizeWriteAddress_04_00());
     Apr::WriteAddressCommand command{};
@@ -1872,6 +1884,29 @@ void TestExpandedBufferLifecycle() {
     Require(sceAmprCommandBufferDestructor(&buffer) == 0);
 }
 
+void TestConstructNopPayloadIntoBuffer() {
+    std::array<std::uint8_t, 32> memory{};
+    Apr::CommandBufferObject buffer{};
+    Require(sceAmprCommandBufferConstructor(&buffer) == 0);
+    Require(sceAmprCommandBufferSetBuffer(&buffer, memory.data(), static_cast<std::uint32_t>(memory.size())) == 0);
+    alignas(8) std::uint64_t done = 0;
+    Require(sceAmprCommandBufferWriteAddressOnCompletion(&buffer, &done, 1) == 0);
+    Require(sceAmprCommandBufferWriteAddressOnCompletion(&buffer, &done, 2) == 0);
+    Require(buffer.base != memory.data());
+    while (sceAmprCommandBufferGetSize(&buffer) - buffer.offset >= 12u) {
+        Require(sceAmprCommandBufferNop(&buffer, 1) == 0);
+    }
+    const std::uint8_t payload[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    const auto payloadOffset = buffer.offset - 8u;
+    std::memcpy(buffer.base + payloadOffset, payload, sizeof(payload));
+    const auto* source = reinterpret_cast<const std::uint8_t*>(buffer.base + payloadOffset);
+    const auto offset = buffer.offset;
+    Require(sceAmprCommandBufferConstructNop(&buffer, 0, source, sizeof(payload), nullptr) == 0);
+    const auto* data = reinterpret_cast<const std::uint8_t*>(buffer.base) + offset + Apr::NopHeaderBytes;
+    Require(std::memcmp(data, payload, sizeof(payload)) == 0);
+    Require(sceAmprCommandBufferDestructor(&buffer) == 0);
+}
+
 int main() {
     TestRecording("frame");
     TestRecording("");
@@ -1918,5 +1953,6 @@ int main() {
     TestKernelWriteCommands();
     TestAmmSubmitAfterGrowth();
     TestExpandedBufferLifecycle();
+    TestConstructNopPayloadIntoBuffer();
     return 0;
 }
