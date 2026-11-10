@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -143,7 +144,11 @@ void TestCreateDecoderFromFileErrors() {
     const char* unsupported = "anyps5-decoder-file.unsupported";
     const auto expectedUnsupported = PKCodecFactory_CreateDecoderFromFile(unsupported, &expected);
     const auto actualUnsupported = PKCodecFactory_CreateDecoderFromFile_nid_postfix(unsupported, &actual);
-    Require(actualUnsupported == expectedUnsupported && actual == expected);
+    if (actualUnsupported != expectedUnsupported || actual != expected) {
+        std::fprintf(stderr, "decoder file test: unsupported extension returned %lld, expected %lld; output %p, expected %p\n",
+                     static_cast<long long>(actualUnsupported), static_cast<long long>(expectedUnsupported), actual, expected);
+        std::abort();
+    }
 
     constexpr const char* missing = "anyps5-decoder-file-does-not-exist.jxr";
     const auto hostPath = ResolvePath_nid_no_patch(missing).string();
@@ -151,7 +156,11 @@ void TestCreateDecoderFromFileErrors() {
     actual = expected;
     const auto expectedMissing = PKCodecFactory_CreateDecoderFromFile(hostPath.c_str(), &expected);
     const auto actualMissing = PKCodecFactory_CreateDecoderFromFile_nid_postfix(missing, &actual);
-    Require(actualMissing == expectedMissing && actual == expected);
+    if (actualMissing != expectedMissing || actual != expected) {
+        std::fprintf(stderr, "decoder file test: missing file returned %lld, expected %lld; output %p, expected %p\n",
+                     static_cast<long long>(actualMissing), static_cast<long long>(expectedMissing), actual, expected);
+        std::abort();
+    }
     RequireThrows([] { PKCodecFactory_CreateDecoderFromFile_nid_postfix(nullptr, nullptr); });
 }
 
