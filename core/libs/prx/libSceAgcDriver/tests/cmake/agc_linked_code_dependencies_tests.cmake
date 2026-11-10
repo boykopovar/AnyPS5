@@ -30,10 +30,17 @@ if(BUILD_TESTING)
                     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
-    foreach(mode eviction disabled)
+    foreach(mode eviction disabled data-hit-verify data-hit-verify-table data-hit-verify-stale-data data-hit-verify-stale-code)
         add_test(NAME agc_linked_code_dependencies_${mode} COMMAND agc_linked_code_dependencies_tests ${mode})
         set_tests_properties(agc_linked_code_dependencies_${mode} PROPERTIES
                 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        if(mode MATCHES "^data-hit-verify")
+            set_property(TEST agc_linked_code_dependencies_${mode} APPEND PROPERTY ENVIRONMENT "APS5_VERIFY_DATA_HITS=1")
+        endif()
+        if(mode MATCHES "^data-hit-verify-stale-")
+            set_tests_properties(agc_linked_code_dependencies_${mode} PROPERTIES
+                    PASS_REGULAR_EXPRESSION "APS5_VERIFY_DATA_HITS: the captured bytes disagrees")
+        endif()
         if(WIN32)
             set_tests_properties(agc_linked_code_dependencies_${mode} PROPERTIES
                     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")

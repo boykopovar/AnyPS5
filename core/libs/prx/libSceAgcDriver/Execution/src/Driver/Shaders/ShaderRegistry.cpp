@@ -8,7 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
-#include "CacheKey.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparationScope.hpp"
 #include "CompiledVariant.hpp"
@@ -1171,15 +1171,10 @@ std::shared_ptr<const PreparedShaderState::UserDataLink> LinkUserDataCallees(con
         }
     }
     auto linked = std::make_shared<const ShaderRecompiler::LinkedCalls>(ShaderRecompiler::LinkCalls(program, calls, callees, tableCalls, tableCallees));
-    for (const auto& table : tableCallees) {
-        auto& targets = link.tableTargets.emplace_back();
-        for (const auto& callee : table) targets.push_back(callee.target);
-    }
     if (!tableCalls.empty()) link.tableUserData.assign(request.context.userData.begin(), request.context.userData.end());
     for (const auto& call : calls) link.callees.push_back(addressOf(call));
     link.code = std::move(callees);
     link.linked = linked;
-    link.linkedHash = ShaderRecompiler::RecompileCacheKey::HashCode(linked->code);
     if (tableCalls.empty()) remember(link);
     else remember({codeOffset, swappc.userDataBaseRegister, swappc.userDataCount, swappc.waveSize, sites});
     return std::make_shared<const PreparedShaderState::UserDataLink>(std::move(link));

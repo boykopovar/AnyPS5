@@ -158,10 +158,8 @@ struct PreparedShaderState {
         std::vector<std::uint64_t> callees;
         std::vector<std::vector<std::uint32_t>> code;
         std::shared_ptr<const ShaderRecompiler::LinkedCalls> linked;
-        std::vector<std::vector<std::uint64_t>> tableTargets;
         std::vector<std::uint32_t> tableUserData;
         std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> dependencies;
-        std::uint64_t linkedHash = 0;
 
         void AppendRegions(std::vector<ShaderRecompiler::MemoryRegion>& regions) const;
         void VouchRegions(std::span<const ShaderRecompiler::MemoryRegion> regions, std::vector<VouchedRegions>& vouched) const;

@@ -14,6 +14,37 @@ bool CacheableResult(const ShaderRecompiler::RecompileResult& compiled) {
     });
 }
 
+std::vector<ShaderRecompiler::MemoryRegion> Driver::dispatchRegions(std::span<const ShaderRecompiler::MemoryRegion> memory, std::span<const ShaderRecompiler::MemoryRegion> captured, const PreparedShaderState::UserDataLink* linking) {
+    std::vector<ShaderRecompiler::MemoryRegion> linkRegions;
+    if (linking != nullptr) linking->AppendRegions(linkRegions);
+    std::stable_sort(linkRegions.begin(), linkRegions.end(), [](const auto& left, const auto& right) { return left.guestAddress < right.guestAddress; });
+    std::vector<ShaderRecompiler::MemoryRegion> srtRegions;
+    for (const auto& region : captured) {
+        const bool registered = std::any_of(memory.begin(), memory.end(), [&](const auto& known) { return region.guestAddress >= known.guestAddress && region.guestAddress < known.guestAddress + known.bytes.size(); });
+        const bool dependency = std::any_of(linkRegions.begin(), linkRegions.end(), [&](const auto& linked) { return region.guestAddress == linked.guestAddress && region.bytes.data() == linked.bytes.data() && region.bytes.size() == linked.bytes.size(); });
+        if (registered || dependency) continue;
+        auto address = region.guestAddress;
+        const auto end = address + region.bytes.size();
+        const auto append = [&](std::uint64_t begin, std::uint64_t stop, std::span<const std::byte> bytes) {
+            if (begin < stop) srtRegions.push_back({begin, bytes.first(static_cast<std::size_t>(stop - begin))});
+        };
+        for (const auto& linked : linkRegions) {
+            const auto low = std::max(address, linked.guestAddress);
+            const auto high = std::min(end, linked.guestAddress + linked.bytes.size());
+            if (low >= high || (low - region.guestAddress) % sizeof(std::uint32_t) != 0 || (high - low) % sizeof(std::uint32_t) != 0) continue;
+            append(address, low, region.bytes.subspan(static_cast<std::size_t>(address - region.guestAddress)));
+            const auto original = region.bytes.subspan(static_cast<std::size_t>(low - region.guestAddress), static_cast<std::size_t>(high - low));
+            const auto dependency = linked.bytes.subspan(static_cast<std::size_t>(low - linked.guestAddress), original.size());
+            append(low, high, std::ranges::equal(original, dependency) ? dependency : original);
+            address = high;
+        }
+        append(address, end, region.bytes.subspan(static_cast<std::size_t>(address - region.guestAddress)));
+    }
+    srtRegions.insert(srtRegions.end(), linkRegions.begin(), linkRegions.end());
+    std::stable_sort(srtRegions.begin(), srtRegions.end(), [](const auto& left, const auto& right) { return left.guestAddress < right.guestAddress; });
+    return srtRegions;
+}
+
 void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDispatchCache, bool profile, const std::shared_ptr<const ShaderSnapshot>& registeredShader, std::uint64_t forgetAtCapture, std::span<const ShaderRecompiler::MemoryRegion> memory, const std::shared_ptr<ShaderMemory>& shaderMemory, const std::vector<ShaderRecompiler::MemoryRegion>& captured, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, const std::shared_ptr<const ShaderRecompiler::RecompileResult>& compiledResult, const std::shared_ptr<DispatchEntry>& missedEntry, bool missedDiffering, std::shared_ptr<DispatchVariant>& attachVariant, DispatchPhaseTiming& phaseTiming, const std::shared_ptr<const PreparedShaderState::UserDataLink>& linking) {
     if (!noDispatchCache) {
         auto fresh = std::make_shared<DispatchVariant>();
@@ -23,33 +54,7 @@ void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDis
         fresh->linking = linking;
         fresh->forgetSerial = forgetAtCapture;
 
-        std::vector<ShaderRecompiler::MemoryRegion> linkRegions;
-        if (linking != nullptr) linking->AppendRegions(linkRegions);
-        std::stable_sort(linkRegions.begin(), linkRegions.end(), [](const auto& left, const auto& right) { return left.guestAddress < right.guestAddress; });
-        std::vector<ShaderRecompiler::MemoryRegion> srtRegions;
-        for (const auto& region : captured) {
-            const bool registered = std::any_of(memory.begin(), memory.end(), [&](const auto& known) { return region.guestAddress >= known.guestAddress && region.guestAddress < known.guestAddress + known.bytes.size(); });
-            const bool dependency = std::any_of(linkRegions.begin(), linkRegions.end(), [&](const auto& linked) { return region.guestAddress == linked.guestAddress && region.bytes.data() == linked.bytes.data() && region.bytes.size() == linked.bytes.size(); });
-            if (registered || dependency) continue;
-            auto address = region.guestAddress;
-            const auto end = address + region.bytes.size();
-            const auto append = [&](std::uint64_t begin, std::uint64_t stop, std::span<const std::byte> bytes) {
-                if (begin < stop) srtRegions.push_back({begin, bytes.first(static_cast<std::size_t>(stop - begin))});
-            };
-            for (const auto& linked : linkRegions) {
-                const auto low = std::max(address, linked.guestAddress);
-                const auto high = std::min(end, linked.guestAddress + linked.bytes.size());
-                if (low >= high || (low - region.guestAddress) % sizeof(std::uint32_t) != 0 || (high - low) % sizeof(std::uint32_t) != 0) continue;
-                append(address, low, region.bytes.subspan(static_cast<std::size_t>(address - region.guestAddress)));
-                const auto original = region.bytes.subspan(static_cast<std::size_t>(low - region.guestAddress), static_cast<std::size_t>(high - low));
-                const auto dependency = linked.bytes.subspan(static_cast<std::size_t>(low - linked.guestAddress), original.size());
-                append(low, high, std::ranges::equal(original, dependency) ? dependency : original);
-                address = high;
-            }
-            append(address, end, region.bytes.subspan(static_cast<std::size_t>(address - region.guestAddress)));
-        }
-        srtRegions.insert(srtRegions.end(), linkRegions.begin(), linkRegions.end());
-        std::stable_sort(srtRegions.begin(), srtRegions.end(), [](const auto& left, const auto& right) { return left.guestAddress < right.guestAddress; });
+        const auto srtRegions = dispatchRegions(memory, captured, linking.get());
         std::size_t capturedWords = 0;
         for (const auto& region : srtRegions) capturedWords += region.bytes.size() / sizeof(std::uint32_t);
         auto supplied = shaderMemory->SuppliedBlocks();

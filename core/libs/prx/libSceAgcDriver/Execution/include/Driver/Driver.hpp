@@ -182,6 +182,7 @@ private:
     static bool stampValidate();
     static bool dataHits();
     static bool verifyDataHits();
+    static std::vector<ShaderRecompiler::MemoryRegion> dispatchRegions(std::span<const ShaderRecompiler::MemoryRegion> memory, std::span<const ShaderRecompiler::MemoryRegion> captured, const PreparedShaderState::UserDataLink* linking);
     static bool pipelineDispatch();
     static std::size_t dispatchVariants();
     static bool insertCompare();

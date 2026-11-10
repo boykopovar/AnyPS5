@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -48,7 +49,7 @@ struct DriverTestAccess {
         driver.eraseDispatchEntry(driver.dispatchCache.find(14u));
     }
 
-    static std::shared_ptr<DispatchVariant> Lookup(const ShaderSnapshot& shader, const ShaderRecompiler::RecompileRequest& request, std::vector<ShaderRecompiler::MemoryRegion>* retained = nullptr) {
+    static std::shared_ptr<DispatchVariant> Lookup(const ShaderSnapshot& shader, const ShaderRecompiler::RecompileRequest& request, std::vector<ShaderRecompiler::MemoryRegion>* retained = nullptr, std::vector<std::uint32_t>* liveWords = nullptr, std::shared_ptr<const ShaderRecompiler::RecompileResult>* patched = nullptr) {
         auto& driver = Driver::Get();
         Submission submission{};
         std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
@@ -63,7 +64,20 @@ struct DriverTestAccess {
         DispatchPhaseTiming timing{false, lap, phases, phaseLap};
         driver.lookupDispatch(shader.codeAddress, submission, 14u, false, false, false, request.context.memory, timing, phases, result, kept, captured, words, data, cached, validated, missed, differing);
         if (retained != nullptr) *retained = captured;
+        if (liveWords != nullptr) {
+            if (!data) throw std::runtime_error("the verifier test did not get a data hit");
+            *liveWords = words;
+        }
+        if (patched != nullptr) *patched = result;
         return cached ? kept : nullptr;
+    }
+
+    static void Verify(const ShaderSnapshot& shader, const ShaderRecompiler::RecompileRequest& request, const DispatchVariant& variant, std::span<const std::uint32_t> liveWords, const ShaderRecompiler::RecompileResult& patched) {
+        auto& driver = Driver::Get();
+        if (!driver.verifyDataHits()) throw std::runtime_error("data-hit verification is disabled");
+        const auto before = driver.DispatchCacheCounters().dataVerified;
+        driver.verifyDataHit(shader, 0, request, request.context.memory, shader.codeAddress, variant, liveWords, patched);
+        if (driver.DispatchCacheCounters().dataVerified != before + 1u) throw std::runtime_error("the data hit was not verified");
     }
 
     static bool Final(std::span<const ShaderRecompiler::MemoryRegion> captured, bool pipelined, const PreparedShaderState::UserDataLink* linking) {
@@ -100,6 +114,7 @@ struct Inputs {
     alignas(16) std::array<std::uint64_t, 4> otherTable{};
     alignas(16) std::array<std::uint32_t, 4> descriptor{};
     alignas(256) std::array<std::uint32_t, 64> output{};
+    std::uint32_t data = 7u;
 };
 
 void Require(bool condition, const char* message) {
@@ -151,26 +166,35 @@ void Run(const std::string& mode, std::string_view watch) {
     auto& OtherTable = allWatched || watch == "--watch-table" ? arena->otherTable : ordinary->otherTable;
     auto& Descriptor = allWatched || watch == "--watch-descriptor" ? arena->descriptor : ordinary->descriptor;
     auto& Output = allWatched ? arena->output : ordinary->output;
+    auto& Data = allWatched ? arena->data : ordinary->data;
     First[0] = 0x4a020285u;
     First[1] = 0xbe80200eu;
     Second[0] = 0x4a0202c0u;
     Second[1] = 0xbe80200eu;
     const auto first = reinterpret_cast<std::uintptr_t>(First.data());
     const auto second = reinterpret_cast<std::uintptr_t>(Second.data());
-    const bool table = mode != "direct" && mode != "eviction" && mode != "disabled" && mode != "final-direct";
+    const bool verify = mode.starts_with("data-hit-verify");
+    const bool table = verify ? mode == "data-hit-verify-table" : mode != "direct" && mode != "eviction" && mode != "disabled" && mode != "final-direct";
     Table = {first, 0u, 0u, 0u};
     OtherTable = {second, 0u, 0u, 0u};
     const auto tableAddress = reinterpret_cast<std::uintptr_t>(Table.data());
     Descriptor = {static_cast<std::uint32_t>(tableAddress), static_cast<std::uint32_t>(tableAddress >> 32u) | (16u << 16u), 2u, 0x31016facu};
     const auto pointer = table ? reinterpret_cast<std::uintptr_t>(Descriptor.data()) : first;
     const auto output = reinterpret_cast<std::uintptr_t>(Output.data());
-    const std::array<std::uint32_t, 8> users{static_cast<std::uint32_t>(pointer), static_cast<std::uint32_t>(pointer >> 32u), table ? 0u : static_cast<std::uint32_t>(second), table ? 1u : static_cast<std::uint32_t>(second >> 32u),
-        static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u), sizeof(Output), 0x31016facu};
-    const auto code = table ? std::span<const std::uint32_t>(TableCaller) : std::span<const std::uint32_t>(DirectCaller);
+    const auto data = reinterpret_cast<std::uintptr_t>(&Data);
+    const std::array<std::uint32_t, 10> users{static_cast<std::uint32_t>(pointer), static_cast<std::uint32_t>(pointer >> 32u), table ? 0u : static_cast<std::uint32_t>(second), table ? 1u : static_cast<std::uint32_t>(second >> 32u),
+        static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u), sizeof(Output), 0x31016facu, static_cast<std::uint32_t>(data), static_cast<std::uint32_t>(data >> 32u)};
+    auto code = table ? std::span<const std::uint32_t>(TableCaller) : std::span<const std::uint32_t>(DirectCaller);
+    std::vector<std::uint32_t> dataCode;
+    if (verify) {
+        dataCode = {0xf4000204u, 0xfa000000u, 0xbf8cc07fu, 0x7e020208u};
+        dataCode.insert(dataCode.end(), code.begin() + 1u, code.end());
+        code = dataCode;
+    }
     auto shader = std::make_shared<ShaderSnapshot>(ShaderSnapshot{reinterpret_cast<std::uintptr_t>(code.data()), 0, 0, {code.begin(), code.end()}, {}});
     const std::array<ShaderRecompiler::MemoryRegion, 1> initial{{{shader->codeAddress, std::as_bytes(std::span(shader->code))}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
-    ShaderRecompiler::RecompileRequest request{{ShaderRecompiler::ShaderStage::Compute, shader->codeAddress, shader->code, 0, {}}, {32u, 0u, users, compute, std::nullopt, std::nullopt, initial}, {}, {0u, 0u, 0u, 128u}};
+    ShaderRecompiler::RecompileRequest request{{ShaderRecompiler::ShaderStage::Compute, shader->codeAddress, shader->code, 0, {}}, {32u, 0u, std::span(users).first(verify ? 10u : 8u), compute, std::nullopt, std::nullopt, initial}, {}, {0u, 0u, 0u, 128u}};
     static constexpr std::array<std::uint32_t, 6> capabilities{spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityClipDistance};
     static constexpr std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
     request.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
@@ -191,6 +215,25 @@ void Run(const std::string& mode, std::string_view watch) {
     auto original = DriverTestAccess::Insert(shader, request);
     Require(original != nullptr, "the initial prepared dispatch was not cached");
     Require(DriverTestAccess::Lookup(*shader, request) == original, "unchanged linking inputs missed the dispatch cache");
+    if (verify) {
+        Require(!original->dataPositions.empty() && original->linking != nullptr && !original->linking->dependencies.empty(), "the verifier fixture has no data words or external callees");
+        Data = 11u;
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        std::vector<std::uint32_t> liveWords;
+        std::shared_ptr<const ShaderRecompiler::RecompileResult> patched;
+        Require(DriverTestAccess::Lookup(*shader, request, nullptr, &liveWords, &patched) == original, "a data-only SRT write missed the linked dispatch");
+        DriverTestAccess::Verify(*shader, request, *original, liveWords, *patched);
+        if (mode == "data-hit-verify-stale-data" || mode == "data-hit-verify-stale-code") {
+            if (mode == "data-hit-verify-stale-data") Data = 19u;
+            else First[0] = 0x4a020281u;
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            std::signal(SIGABRT, [](int) { std::_Exit(0); });
+            DriverTestAccess::Verify(*shader, request, *original, liveWords, *patched);
+            throw std::runtime_error("the data-hit verifier accepted a stale hit");
+        }
+        std::puts("linked data-only SRT hit verified");
+        return;
+    }
     if (mode.starts_with("final-")) {
         for (std::size_t path = 0; path < 3; ++path) {
             AgcDriver::GuestMemory::BumpCollectEpoch();

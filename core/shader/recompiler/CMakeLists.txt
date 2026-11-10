@@ -274,7 +274,6 @@ function(add_shader_recompiler target runtimeTarget)
             SetDiagnosticSink
             Recompile
             RecompileCacheKey::ContextHash
-            RecompileCacheKey::HashCode
             RecompileCacheKey::SealFeatureDigest
             RecompileResult
             PrepareShader

@@ -71,9 +71,8 @@ std::uint64_t Driver::variantBytes(const DispatchVariant& variant) {
     auto bytes = sizeof(DispatchVariant) + held(variant.runs) + held(variant.words) + held(variant.shared) + held(variant.dataPositions) + held(variant.dataSlots) + held(variant.runBases) + held(variant.shaderDataPatches) + held(variant.captured) + held(variant.spans) + (variant.registeredViews != nullptr ? held(*variant.registeredViews) : 0u) + (variant.vertexInfo != nullptr ? sizeof(ShaderRecompiler::ShaderVertexStageInfo) : 0) + (variant.memory != nullptr ? variant.memory->Bytes() : 0);
     if (variant.linking != nullptr) {
         const auto& link = *variant.linking;
-        bytes += sizeof(link) + held(link.callees) + held(link.code) + held(link.tableTargets) + held(link.tableUserData) + held(link.dependencies);
+        bytes += sizeof(link) + held(link.callees) + held(link.code) + held(link.tableUserData) + held(link.dependencies);
         for (const auto& code : link.code) bytes += held(code);
-        for (const auto& targets : link.tableTargets) bytes += held(targets);
         for (const auto& dependency : link.dependencies) bytes += sizeof(*dependency) + held(dependency->words) + held(dependency->runs) + (dependency->stamp != nullptr ? sizeof(*dependency->stamp) : 0u);
         if (link.linked != nullptr) bytes += sizeof(*link.linked) + held(link.linked->code) + held(link.linked->fallbacks);
     }
