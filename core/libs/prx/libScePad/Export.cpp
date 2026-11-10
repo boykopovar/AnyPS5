@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstring>
 #include <stdexcept>
 #include <chrono>
@@ -215,12 +216,12 @@ int APS5_VABI scePadGetHandle(int user_id, int type, int index) {
 
 int APS5_VABI scePadGetInfo_nid_postfix(PadInfo* info) {
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
- std::memset(info, 0, sizeof(*info));
- info->maxConnectCount = PAD_MAX_CONTROLLERS;
+ PadInfo local{};
+ local.maxConnectCount = PAD_MAX_CONTROLLERS;
  std::uint8_t count = 0;
  for (int port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
   if (Pad::IsConnected(port)) {
-   PadInfo::PadTypeInfo& slot = info->padTypeInfo[count];
+   PadInfo::PadTypeInfo& slot = local.padTypeInfo[count];
    slot.connectPort = static_cast<std::uint8_t>(port);
    slot.status = 1;
    slot.deviceType = PAD_DEVICE_TYPE_DUAL_SENSE;
@@ -232,9 +233,12 @@ int APS5_VABI scePadGetInfo_nid_postfix(PadInfo* info) {
    ++count;
   }
  }
- info->connectedCount[0] = count;
- info->connectedCount[1] = 0;
- return PAD_OK;
+ local.connectedCount[0] = count;
+ local.connectedCount[1] = 0;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(info, &local, sizeof(local));
+ errno = savedErrno;
+ return copied ? PAD_OK : PAD_ERROR_INVALID_ARG;
 }
 
 int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInformation* info) {
