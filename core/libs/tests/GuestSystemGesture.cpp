@@ -1,9 +1,11 @@
+#include "prx/libSceSystemGesture/include/InventoryExports.hpp"
 #include "prx/libSceSystemGesture/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -245,12 +247,16 @@ static void TestNotInitialized(std::int32_t handle) {
     Require(count == 7);
     Require(sceSystemGestureGetTouchEventsCount(handle, &recognizer) == notInitialized);
     Require(sceSystemGestureGetTouchRecognizerInformation(handle, &recognizer, &information) == notInitialized);
+    errno = 0x5a;
+    Require(sceSystemGestureSetTouchAreaInformation() == notInitialized && errno == 0x5a);
     Require(sceSystemGestureInitializePrimitiveTouchRecognizer() == 0);
 }
 
 int main() {
     constexpr int invalidArgument = static_cast<int>(0x80890001);
     constexpr int invalidHandle = static_cast<int>(0x80890006);
+    errno = 0x5a;
+    Require(sceSystemGestureSetTouchAreaInformation() == static_cast<int>(0x80890003) && errno == 0x5a);
     Require(sceSystemGestureOpen(0, nullptr) == static_cast<int>(0x80890003));
     Require(sceSystemGestureGetTouchEventsCount(0, nullptr) == static_cast<int>(0x80890003));
     Require(sceSystemGestureInitializePrimitiveTouchRecognizer() == 0);
@@ -316,6 +322,8 @@ int main() {
     Require(sceSystemGestureUpdatePrimitiveTouchRecognizer(handle + 1, nullptr) == invalidArgument);
 
     Require(sceSystemGestureDebugGetVersion() == 0x6a00);
+    errno = 0x5a;
+    Require(sceSystemGestureSetTouchAreaInformation() == 0 && errno == 0x5a);
     TestTouchRecognizerInformation(handle, invalidArgument, invalidHandle);
     TestPrimitiveTouchEvents(handle, invalidArgument, invalidHandle, indexOutOfArray);
     TestCreateTouchRecognizer(handle, invalidArgument, invalidHandle);
@@ -337,6 +345,8 @@ int main() {
     TestNotInitialized(handle);
     Require(sceSystemGestureClose(handle) == 0);
     Require(sceSystemGestureFinalizePrimitiveTouchRecognizer() == 0);
+    errno = 0x5a;
+    Require(sceSystemGestureSetTouchAreaInformation() == static_cast<int>(0x80890003) && errno == 0x5a);
     Require(sceSystemGestureOpen(0, nullptr) == static_cast<int>(0x80890003));
     Require(sceSystemGestureClose(handle) == static_cast<int>(0x80890003));
     Require(sceSystemGestureGetPrimitiveTouchEventsCount(handle) == static_cast<int>(0x80890003));

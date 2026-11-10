@@ -1,5 +1,6 @@
 #include "prx/libSceSystemGesture/include/InventoryExports.hpp"
 #include "prx/libSceSystemGesture/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -371,12 +372,15 @@ int APS5_VABI sceSystemGestureDebugGetVersion() {
     return 0x6a00;
 }
 
-}
-
-extern "C" {
-
 int APS5_VABI sceSystemGestureSetTouchAreaInformation() {
-    NotImplemented_nid_no_patch(__func__);
+    const int savedErrno = errno;
+    std::lock_guard lock(primitiveTouchMutex);
+    if (!gestureInitialized) {
+        errno = savedErrno;
+        return static_cast<int>(0x80890003);
+    }
+    errno = savedErrno;
+    return 0;
 }
 
 }
