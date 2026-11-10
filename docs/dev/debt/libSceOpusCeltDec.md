@@ -1,8 +1,11 @@
 # libSceOpusCeltDec technical debt
 
+### Silent stubs
+
+- [sceOpusCeltDecCreate](../../../core/libs/prx/libSceOpusCeltDec/Export.cpp) (libSceOpusCeltDec) - creates a standalone CELT decoder without an AJM context while preserving errno; sample rates and channel counts are validated against libopus requirements. Context ownership and AJM hardware error codes remain unmodeled.
+
 ### Unknown function info
 
-- [sceOpusCeltDecCreate](../../../core/libs/prx/libSceOpusCeltDec/Export.cpp) (libSceOpusCeltDec) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceOpusCeltDec.c), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim.
 - [sceOpusCeltDecTerminate](../../../core/libs/prx/libSceOpusCeltDec/Export.cpp): the non-null path forwards the AJM finalization result, but the null path returns without setting the return register. Its source return type cannot be established from this callee alone. The existing integer return is retained.
 
 ### Functional

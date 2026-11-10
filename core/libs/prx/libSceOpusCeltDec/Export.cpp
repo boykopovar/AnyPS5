@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceOpusDec/include/OpusDecoder.hpp"
 #include "prx/libSceOpusDec/include/OpusDecodeVariants.hpp"
+#include <cerrno>
 #include <cstdarg>
 #include <cstdint>
 #include "prx/libc/include/General.hpp"
@@ -32,9 +33,11 @@ int APS5_VABI sceOpusCeltDecDecode(void* state, const std::uint8_t* data, int by
 
 int APS5_VABI sceOpusCeltDecDestroy(void* state) { return library.Destroy(state); }
 
-int APS5_VABI sceOpusCeltDecCreate() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceOpusCeltDecCreate(void* state, int sampleRate, int channels) {
+    const int savedErrno = errno;
+    const int result = library.Create(state, sampleRate, channels);
+    errno = savedErrno;
+    return result;
 }
 
 int APS5_VABI sceOpusCeltDecCtl(void* state, int request, ...) {

@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
@@ -87,6 +88,16 @@ int main() {
     Require(sceOpusCeltDecDecode(invalidState.data(), &packet, 1, &output, -1) == static_cast<int>(errorBase + 9));
     Require(sceOpusCeltDecDecode(invalidState.data(), &packet, 1, &output, 2) == static_cast<int>(errorBase + 1));
     Require(output == 12345);
+
+    errno = 0x5a;
+    Require(sceOpusCeltDecCreate(nullptr, 48000, 2) == static_cast<int>(errorBase) && errno == 0x5a);
+    Require(sceOpusCeltDecCreate(invalidState.data(), 0, 2) == static_cast<int>(errorBase + 2) && errno == 0x5a);
+    Require(sceOpusCeltDecCreate(invalidState.data(), 48000, 0) == static_cast<int>(errorBase + 3) && errno == 0x5a);
+    Require(sceOpusCeltDecCreate(invalidState.data(), 48000, 3) == static_cast<int>(errorBase + 3) && errno == 0x5a);
+    std::array<std::uint8_t, 640> standaloneState{};
+    Require(sceOpusCeltDecCreate(standaloneState.data(), 48000, 2) == 0 && errno == 0x5a);
+    RequireThrows([&] { sceOpusCeltDecCreate(standaloneState.data(), 48000, 2); });
+    Require(sceOpusCeltDecDestroy(standaloneState.data()) == 0 && errno == 0x5a);
 
     RequireThrows([&] { sceOpusCeltDecInitialize(&context); });
     Require(sceOpusCeltDecGetSize(1) == 640 && sceOpusCeltDecGetSize(2) == 640);

@@ -47,6 +47,25 @@ public:
         return 640;
     }
 
+    int Create(void* state, int sampleRate, int channels) {
+        if (!state) return error(0);
+        if (celtOnly && channels != 1 && channels != 2) return error(3);
+        if (sampleRate != 8000 && sampleRate != 12000 && sampleRate != 16000 && sampleRate != 24000 && sampleRate != 48000) return error(2);
+        if (channels != 1 && channels != 2) return error(3);
+        std::lock_guard lock(mutex);
+        if (decoders.contains(state)) fail("state already owns a decoder");
+        auto decoder = std::make_unique<Decoder>();
+        decoder->context = 0;
+        decoder->channels = channels;
+        decoder->sampleRate = sampleRate;
+        int error = OPUS_OK;
+        decoder->codec.reset(opus_decoder_create(sampleRate, channels, &error));
+        if (error == OPUS_ALLOC_FAIL) throw std::bad_alloc();
+        if (!decoder->codec || error != OPUS_OK) fail("cannot create libopus decoder");
+        decoders.emplace(state, std::move(decoder));
+        return 0;
+    }
+
     int CreateEx(const std::uint32_t* context, void* state, int sampleRate, int channels) {
         if (!context || !state) return error(0);
         if (celtOnly && channels != 1 && channels != 2) return error(3);
