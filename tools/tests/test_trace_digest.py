@@ -60,6 +60,56 @@ def excessive_trace_json(opening, closing):
     raise AssertionError("JSON decoder accepted every bounded nesting probe")
 
 
+class TraceWaitAncestryTests(unittest.TestCase):
+    def test_digest_classifies_each_slice_once(self):
+        events = [complete(1, "Worker.wait" if index % 3 == 0 else "work",
+                           index * 2, 1) for index in range(128)]
+        trace = trace_digest.Trace(events)
+        expected = trace_digest.digest(trace)
+        with mock.patch.object(trace_digest, "is_wait", wraps=trace_digest.is_wait) as check:
+            actual = trace_digest.digest(trace)
+        self.assertEqual(actual, expected)
+        self.assertEqual(check.call_count, len(events))
+
+    def test_wait_ancestry_survives_inner_pops_and_ends_with_parent(self):
+        events = [
+            complete(1, "wait.outer", 0, 100),
+            complete(1, "work.child", 1, 10),
+            complete(1, "work.grandchild", 2, 1),
+            complete(1, "work.sibling", 11, 10),
+            complete(1, "work.after", 100, 10),
+            complete(2, "work.other_thread", 2, 1),
+        ]
+        trace = trace_digest.Trace(list(reversed(events)))
+        self.assertEqual([(entry[2], entry[3], entry[4]) for entry in trace.slices[1]], [
+            ("wait.outer", 0, False),
+            ("work.child", 1, True),
+            ("work.grandchild", 2, True),
+            ("work.sibling", 1, True),
+            ("work.after", 0, False),
+        ])
+        self.assertEqual(trace.slices[2][0][3:], [0, False])
+
+    def test_inner_wait_does_not_leak_into_a_sibling(self):
+        events = [
+            complete(1, "work.outer", 0, 100),
+            complete(1, "wait.inner", 1, 10),
+            complete(1, "work.grandchild", 2, 1),
+            complete(1, "work.sibling", 11, 10),
+        ]
+        trace = trace_digest.Trace(events)
+        self.assertEqual([entry[4] for entry in trace.slices[1]], [False, False, True, False])
+
+    def test_non_wait_ancestry_checks_grow_linearly(self):
+        count = 512
+        events = [complete(1, "work", index, 2 * (count - index)) for index in range(count)]
+        with mock.patch.object(trace_digest, "is_wait", wraps=trace_digest.is_wait) as check:
+            trace = trace_digest.Trace(events)
+        self.assertLessEqual(check.call_count, count)
+        self.assertEqual([entry[3] for entry in trace.slices[1]], list(range(count)))
+        self.assertFalse(any(entry[4] for entry in trace.slices[1]))
+
+
 class GpuOccupancyTests(unittest.TestCase):
     def trace(self, ranges, begin=0, end=15000, thread="gpu"):
         events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": thread}},
@@ -272,6 +322,16 @@ class TraceDigestTests(unittest.TestCase):
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(result.stdout, "")
 
+    def test_folded_counters_follow_the_selected_frame_window(self):
+        events = [{"name": "present", "ph": "i", "ts": ts, "args": {"present": index}}
+                  for index, ts in enumerate((0, 10000))]
+        events += [{"name": "worker folded", "ph": "C", "ts": ts, "tid": 1, "args": {"ms": value}}
+                   for ts, value in ((-1, 7), (0, 1.5), (9999, 2), (10000, 11), (20000, 5))]
+        result = trace_digest.digest(trace_digest.Trace(events))
+        self.assertEqual(result["threads"][0]["folded_ms_per_frame"], 3.5)
+        result = trace_digest.digest(trace_digest.Trace(events[:1] + events[2:]), {"window": {"ms": 10}})
+        self.assertEqual(result["threads"][0]["folded_ms_per_frame"], 3.5)
+
     def test_summary_jsonl_excessive_nesting_reports_line_without_traceback(self):
         path = Path(self.directory.name) / "deep.jsonl"
         path.write_text('{}\n\n{"extra":' + excessive_trace_json('[', ']') + '}\n', encoding="utf-8")
@@ -354,6 +414,24 @@ class TraceDigestTests(unittest.TestCase):
         path.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
         self.assertEqual(trace_digest.load_summary(path, self.trace)["commit"], "latest")
         self.assertEqual(trace_digest.load_summary(path, self.trace.with_suffix(""))["commit"], "alternate")
+
+    def test_owned_draw_interval_counts_are_preserved(self):
+        first = interval_line(0.0, 30.0, 20.0, 5.0)
+        second = interval_line(30.0, 60.0, 20.0, 5.0)
+        first["owned_draw_counts"] = {"OwnedDraw.arm_attempt": 4, "OwnedDraw.reused": 2}
+        second["owned_draw_counts"] = {"OwnedDraw.arm_attempt": 1}
+        for line in (first, second):
+            trace_digest.validate_interval(line)
+        result = trace_digest.digest_intervals([first, second])
+        self.assertEqual(result["intervals"][0]["owned_draw_counts"], first["owned_draw_counts"])
+        missing = trace_digest.digest_intervals([first, interval_line(30.0, 60.0, 20.0, 5.0)])
+        self.assertIn("| 2 | - | - |", trace_digest.markdown_intervals(missing))
+        text = trace_digest.markdown_intervals(result)
+        self.assertIn("OwnedDraw.arm_attempt", text)
+        self.assertIn("| 2 | 1 | 0 |", text)
+        first["owned_draw_counts"] = {"bad": -1}
+        with self.assertRaises(ValueError):
+            trace_digest.validate_interval(first)
 
     def test_empty_summary_jsonl_files_remain_valid(self):
         path = self.trace.with_name("aps5-summary.jsonl")

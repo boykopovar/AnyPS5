@@ -109,6 +109,20 @@ class GuestTestTargets(unittest.TestCase):
 
 
 class OwnerResolution(unittest.TestCase):
+    def test_cmake_owner_marker_precedes_tool_options_and_client_arguments(self):
+        owner = build_changed_guest_tests.test_owner(
+            ["C:/cmake.exe", "-DPATCHER=C:/b/nid_patcher.exe", "-P", "wrapper.cmake", "--",
+             "C:/b/guest_owner_tests.exe", "C:/b/guest_client_tests.exe"],
+            {"nid_patcher": "nid_patcher", "guest_owner_tests": "guest_owner_tests",
+             "guest_client_tests": "guest_client_tests"})
+        self.assertEqual(owner, "guest_owner_tests")
+
+    def test_cmake_owner_marker_also_resolves_extensionless_executables(self):
+        owner = build_changed_guest_tests.test_owner(
+            ["/usr/bin/cmake", "-P", "wrapper.cmake", "--", "/build/guest_owner_tests", "/build/guest_client_tests"],
+            {"guest_owner_tests": "guest_owner_tests", "guest_client_tests": "guest_client_tests"})
+        self.assertEqual(owner, "guest_owner_tests")
+
     def test_resolves_the_executable_not_a_test_argument(self):
         owner = build_changed_guest_tests.test_owner(
             ["C:/b/tests/guest_np_common_tests.exe", "build"], {"guest_np_common_tests": "guest_np_common_tests"})
@@ -189,6 +203,37 @@ class Main(unittest.TestCase):
         self.assertEqual(selections, ["0,0,0,1,2,3\n"])
         self.assertIn("--no-tests=error", run_cmd)
 
+    def test_cmake_wrapper_is_not_owned_by_its_guest_client_argument(self):
+        build = self.fixture([
+            self.target("guest_http_client_tests", source="core/libs/tests/HttpClient.cpp", fragment="libc.prx"),
+            self.target("guest_avplayer_tests", source="core/libs/tests/AvPlayer.cpp", fragment="libc.prx"),
+            self.target("avplayer_http_patched_modules_tests", source="core/libs/tests/AvPlayerHttpModules.cpp"),
+            self.target("nid_patcher", source="core/nid_patcher/main.cpp"),
+        ])
+        listing = json.dumps({"tests": [
+            {"name": "guest_http_client", "command": ["C:/b/tests/guest_http_client_tests.exe"]},
+            {"name": "guest_avplayer", "command": ["C:/b/tests/guest_avplayer_tests.exe"]},
+            {"name": "avplayer_http_patched_modules", "command": [
+                "C:/cmake/bin/cmake.exe", "-DPATCHER=C:/b/nid_patcher.exe",
+                "-P", "AvPlayerHttpModules.cmake", "--",
+                "C:/b/tests/avplayer_http_patched_modules_tests.exe",
+                "C:/b/tests/guest_http_client_tests.exe", "C:/b/tests/guest_avplayer_tests.exe",
+            ]},
+        ]})
+        selections = []
+        builds = []
+        def execute(cmd, **_):
+            if cmd[0] == "cmake":
+                builds.append(cmd[cmd.index("--target") + 1:])
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            code = self.main(build, ["core/libs/include/Changed.hpp"])
+        self.assertEqual(code, 0)
+        self.assertEqual(selections, ["0,0,0,1,2,3\n"])
+        self.assertIn(["avplayer_http_patched_modules_tests"], builds)
+
     def test_output_log_reaches_the_ctest_run(self):
         build = self.fixture([self.target("guest_pad_tests", fragment="libc.prx")])
         changed = Path(self.temporary.name) / "changed.txt"
@@ -245,7 +290,8 @@ class Main(unittest.TestCase):
                 return run_result()
             return real_run(cmd, **{**kwargs, "capture_output": True})
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
-            build_changed_guest_tests.run(build, ["python_target"], {Path(sys.executable).stem: "python_target"})
+            target = {"name": "python_target", "artifacts": [{"path": python}]}
+            build_changed_guest_tests.run(build, ["python_target"], build_changed_guest_tests.target_artifact_names(target))
         self.assertEqual(sorted(path.name for path in build.glob("ran-*")), sorted(f"ran-{index}" for index in range(11)))
         self.assertFalse((build / "unrelated").exists())
 
@@ -325,6 +371,21 @@ class Main(unittest.TestCase):
             self.assertEqual(build_changed_guest_tests.main([str(loop)]), 1)
         self.assertIn("no CMake File API index", errors.getvalue())
         self.assertNotIn("Traceback", errors.getvalue())
+
+
+class ArtifactOwnerNames(unittest.TestCase):
+    def test_dotted_artifact_names_keep_non_executable_suffixes(self):
+        target = {"name": "guest_target", "artifacts": [{"path": "tests/guest.check"}]}
+        aliases = build_changed_guest_tests.target_artifact_names(target)
+        self.assertEqual(build_changed_guest_tests.test_owner(["/build/tests/guest.check"], aliases), "guest_target")
+        self.assertIsNone(build_changed_guest_tests.test_owner(["/build/tests/guest.other"], aliases))
+        self.assertIsNone(build_changed_guest_tests.test_owner(["/build/tests/guest.check"], {"guest": "unrelated"}))
+
+    def test_dotted_windows_artifact_names_remove_only_exe(self):
+        target = {"name": "guest_target", "artifacts": [{"path": "tests/guest.check.EXE"}]}
+        aliases = build_changed_guest_tests.target_artifact_names(target)
+        self.assertEqual(build_changed_guest_tests.test_owner(["C:/build/tests/guest.check.EXE"], aliases), "guest_target")
+        self.assertEqual(build_changed_guest_tests.test_owner(["python", "C:/build/tests/guest.check.EXE"], aliases), "guest_target")
 
 
 if __name__ == "__main__":

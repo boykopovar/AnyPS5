@@ -1,6 +1,8 @@
 #include "prx/libc/include/Api.hpp"
+#include <array>
 #include <cstdint>
 #include <cstddef>
+#include <atomic>
 #include <cerrno>
 #include <ctime>
 #include <cstring>
@@ -15,14 +17,18 @@
 #include <windows.h>
 #endif
 
+#include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include "prx/libc/include/GuestTimeZoneName.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 
 extern "C" char* tzname_nid_postfix[2];
 extern "C" int64_t timezone_nid_postfix;
 
 namespace {
+
+std::atomic<ClockGetresFn_nid_no_patch> registeredClockGetres{nullptr};
 
 constexpr const char* WEEKDAY_NAMES[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 constexpr const char* MONTH_NAMES[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
@@ -187,6 +193,9 @@ std::recursive_mutex& zoneMutex() {
 
 char** HostZoneNames();
 char* GuestZoneName(int index);
+#ifdef _WIN32
+void refreshGuestZoneNames();
+#endif
 
 void applyGuestZone() {
     static bool initialized = false;
@@ -206,6 +215,7 @@ void applyGuestZone() {
     current = guest;
 #ifdef _WIN32
     _tzset();
+    refreshGuestZoneNames();
 #else
     ::tzset();
 #endif
@@ -476,11 +486,39 @@ char** HostZoneNames() {
 #endif
 }
 
+#ifdef _WIN32
+std::array<std::string, 2>& guestZoneNamesUtf8() {
+    static std::array<std::string, 2> names;
+    return names;
+}
+
+bool& guestZoneNamesInitialized() {
+    static bool initialized = false;
+    return initialized;
+}
+
+void refreshGuestZoneNames() {
+    char** names = HostZoneNames();
+    auto& utf8Names = guestZoneNamesUtf8();
+    for (std::size_t index = 0; index < utf8Names.size(); ++index) {
+        const auto converted = GuestTimeZoneNameToUtf8(names[index], CP_ACP);
+        if (utf8Names[index] != converted) utf8Names[index] = converted;
+    }
+    guestZoneNamesInitialized() = true;
+}
+#endif
+
 char* GuestZoneName(int index) {
     static char unnamed[] = "   ";
     char** names = HostZoneNames();
 #ifdef _WIN32
+    if (!guestZoneNamesInitialized()) refreshGuestZoneNames();
+    auto& utf8Names = guestZoneNamesUtf8();
     const bool daylightSaving = _daylight != 0;
+    if (index >= 0 && index < 2) {
+        if (index == 1 && !daylightSaving) return unnamed;
+        return utf8Names[static_cast<std::size_t>(index)].data();
+    }
 #else
     const bool daylightSaving = ::daylight != 0;
 #endif
@@ -496,6 +534,9 @@ int daylight_nid_postfix = 0;
 
 void APS5_VABI tzset_nid_postfix(void) {
     const ZoneScope zone;
+#ifdef _WIN32
+    refreshGuestZoneNames();
+#endif
     tzname_nid_postfix[0] = GuestZoneName(0);
     tzname_nid_postfix[1] = GuestZoneName(1);
     const int64_t now = libc_time_nid_postfix(nullptr);
@@ -506,6 +547,17 @@ void APS5_VABI tzset_nid_postfix(void) {
 
     daylight_nid_postfix = local.tm_isdst >= 0 ? 1 : 0;
     timezone_nid_postfix = static_cast<int64_t>(libc_difftime_nid_postfix(libc_mktime_nid_postfix(&universal), libc_mktime_nid_postfix(&local)));
+}
+
+void RegisterClockGetres_nid_no_patch(ClockGetresFn_nid_no_patch fn) {
+    registeredClockGetres.store(fn, std::memory_order_release);
+}
+
+int APS5_VABI timespec_getres_nid_postfix(KernelTimespec* result, int base) {
+    if (base != 1) return 0;
+    const auto clockGetres = registeredClockGetres.load(std::memory_order_acquire);
+    if (clockGetres == nullptr) NotImplemented_nid_no_patch(__func__);
+    return clockGetres(0, result) == 0 ? 1 : 0;
 }
 
 int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer) {
@@ -531,6 +583,23 @@ int64_t APS5_VABI _Xtime_get_ticks_nid_postfix() {
 #endif
 }
 
+int APS5_VABI timespec_get_nid_postfix(KernelTimespec* ts, int base) {
+    if (ts == nullptr || base != TIME_UTC) return 0;
+#ifdef _WIN32
+    FILETIME ft{};
+    GetSystemTimePreciseAsFileTime(&ft);
+    const uint64_t hundredNs = ((static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime) - 116444736000000000ULL;
+    ts->tv_sec = static_cast<std::int64_t>(hundredNs / 10000000ULL);
+    ts->tv_nsec = static_cast<std::int64_t>((hundredNs % 10000000ULL) * 100ULL);
+#else
+    timespec host{};
+    if (clock_gettime(CLOCK_REALTIME, &host) != 0) return 0;
+    ts->tv_sec = host.tv_sec;
+    ts->tv_nsec = host.tv_nsec;
+#endif
+    return TIME_UTC;
+}
+
 double APS5_VABI libc_difftime_nid_postfix(int64_t time1, int64_t time0) {
     if (time1 >= time0) return static_cast<double>(static_cast<uint64_t>(time1) - static_cast<uint64_t>(time0));
     return -static_cast<double>(static_cast<uint64_t>(time0) - static_cast<uint64_t>(time1));
@@ -542,11 +611,13 @@ double APS5_VABI difftime_nid_postfix(int64_t time1, int64_t time0) {
 
 GuestTm* APS5_VABI libc_gmtime_nid_postfix(const int64_t* timer) {
     static thread_local GuestTm result;
+    if (timer == nullptr) return nullptr;
     return gmtime_s_nid_postfix(timer, &result);
 }
 
 GuestTm* APS5_VABI libc_localtime_nid_postfix(const int64_t* timer) {
     static thread_local GuestTm result;
+    if (timer == nullptr) return nullptr;
     return localtime_s_nid_postfix(timer, &result);
 }
 
@@ -555,7 +626,10 @@ GuestTm* APS5_VABI localtime_nid_postfix(const int64_t* timer) {
 }
 
 GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result) {
-    if (timer == nullptr || result == nullptr) return nullptr;
+    if (timer == nullptr || result == nullptr) {
+        SonyInvokeConstraintHandler("localtime_s: bad argument", nullptr, EINVAL);
+        return nullptr;
+    }
     const ZoneScope zone;
     std::tm host{};
     const int callerError = errno;
@@ -580,7 +654,7 @@ GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result
     _get_dstbias(&daylightBias);
     const bool daylight = host.tm_isdst > 0;
     result->tm_gmtoff = -static_cast<std::int64_t>(standardBias + (daylight ? daylightBias : 0));
-    result->tm_zone = _tzname[daylight ? 1 : 0];
+    result->tm_zone = GuestZoneName(daylight ? 1 : 0);
 #else
     const std::time_t t = static_cast<std::time_t>(*timer);
     if (localtime_r(&t, &host) == nullptr) {
@@ -595,7 +669,10 @@ GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result
 }
 
 GuestTm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, GuestTm* result) {
-    if (timer == nullptr || result == nullptr) return nullptr;
+    if (timer == nullptr || result == nullptr) {
+        SonyInvokeConstraintHandler("gmtime_s: bad argument", nullptr, EINVAL);
+        return nullptr;
+    }
     if (!utcCalendarFields(*timer, *result)) return nullptr;
     result->tm_gmtoff = 0;
     result->tm_zone = "UTC";
@@ -661,17 +738,22 @@ size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* 
     return formatGuestTime(str, count, format, *timeptr);
 }
 
-char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr) {
-    static thread_local char result[ASCTIME_SIZE];
+char* APS5_VABI asctime_r_nid_postfix(const GuestTm* timeptr, char* buffer) {
+    if (buffer == nullptr) throw std::invalid_argument("asctime_r: null buffer");
     if (timeptr == nullptr) {
         errno = EINVAL;
-        std::memcpy(result, "??? ??? ?? ??:??:?? ????\n", sizeof("??? ??? ?? ??:??:?? ????\n"));
-        return result;
+        std::memcpy(buffer, "??? ??? ?? ??:??:?? ????\n", sizeof("??? ??? ?? ??:??:?? ????\n"));
+        return buffer;
     }
     const std::int64_t year = static_cast<std::int64_t>(timeptr->tm_year) + YEAR_BASE;
-    std::snprintf(result, sizeof(result), "%s %s%3d %02d:%02d:%02d %04d\n", tableName(timeptr->tm_wday, WEEKDAY_NAMES, WEEKDAY_NAMES, 7), tableName(timeptr->tm_mon, MONTH_NAMES, MONTH_NAMES, 12),
+    std::snprintf(buffer, 26, "%s %s%3d %02d:%02d:%02d %04d\n", tableName(timeptr->tm_wday, WEEKDAY_NAMES, WEEKDAY_NAMES, 7), tableName(timeptr->tm_mon, MONTH_NAMES, MONTH_NAMES, 12),
         clampedField(timeptr->tm_mday, 100), clampedField(timeptr->tm_hour, 100), clampedField(timeptr->tm_min, 100), clampedField(timeptr->tm_sec, 100), clampedField(year, 10000));
-    return result;
+    return buffer;
+}
+
+char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr) {
+    static thread_local char result[ASCTIME_SIZE];
+    return asctime_r_nid_postfix(timeptr, result);
 }
 
 char* APS5_VABI ctime_nid_postfix(const int64_t* timer) {
