@@ -84,10 +84,6 @@ int APS5_VABI X509_EXTENSION_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509_STORE_CTX_get0_param_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_STORE_load_locations_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
