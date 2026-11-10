@@ -1027,6 +1027,7 @@ void TestAmmRangesAboveHintedMaps() {
 void TestAmmUsageStats() {
     std::array<std::uint64_t, 4> stats{};
     Require(sceAmprAmmGetUsageStatsData(nullptr) == static_cast<int>(0x80020016));
+    Require(sceAmprAmmGetUsageStatsData(reinterpret_cast<AmmUsageStatsData*>(0x10)) == static_cast<int>(0x8002000E));
     stats[0] = 0x19;
     Require(sceAmprAmmGetUsageStatsData(reinterpret_cast<AmmUsageStatsData*>(stats.data())) == static_cast<int>(0x80020016));
     stats = {0x18, 0xdeadbeef, 0xdeadbeef, 0xdeadbeef};
