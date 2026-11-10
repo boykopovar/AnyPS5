@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cmath>
 #include <thread>
 #include <cstddef>
 #include <cstdint>
@@ -61,6 +62,7 @@ static void TestTypeIDs() {
     WKRenderLayerGetTypeID();
     WKRenderObjectGetTypeID();
     Require(WKSessionStateGetTypeID() == 19);
+    Require(WKSerializedScriptValueGetTypeID() == 20);
     Require(WKContextGetTypeID() == 85);
 }
 
@@ -1928,6 +1930,101 @@ static void TestContext() {
     WKRelease(pathStr);
 }
 
+static void TestSerializedScriptValue() {
+    Require(WKSerializedScriptValueGetTypeID() == 20);
+    Require(WKSerializedScriptValueCreate(nullptr, nullptr, nullptr) == nullptr);
+    Require(WKSerializedScriptValueDeserialize(nullptr, nullptr, nullptr) == nullptr);
+
+    auto* ctx = JSGlobalContextCreate(nullptr);
+    Require(ctx != nullptr);
+    Require(WKSerializedScriptValueCreate(ctx, nullptr, nullptr) == nullptr);
+
+    auto* numVal = JSValueMakeNumber(ctx, 42.0);
+    auto* serNum = WKSerializedScriptValueCreate(ctx, numVal, nullptr);
+    Require(serNum != nullptr);
+    Require(WKGetTypeID(serNum) == WKSerializedScriptValueGetTypeID());
+    Require(WKSerializedScriptValueDeserialize(serNum, nullptr, nullptr) == nullptr);
+    auto* deNum = WKSerializedScriptValueDeserialize(serNum, ctx, nullptr);
+    Require(deNum != nullptr);
+    Require(JSValueIsNumber(ctx, deNum));
+    Require(JSValueToNumber(ctx, deNum, nullptr) == 42.0);
+
+    auto* retained = WKRetain(serNum);
+    Require(retained == serNum);
+    WKRelease(retained);
+    WKRelease(serNum);
+
+    auto* nanVal = JSValueMakeNumber(ctx, std::numeric_limits<double>::quiet_NaN());
+    auto* serNan = WKSerializedScriptValueCreate(ctx, nanVal, nullptr);
+    Require(serNan != nullptr);
+    auto* deNan = WKSerializedScriptValueDeserialize(serNan, ctx, nullptr);
+    Require(deNan != nullptr && JSValueIsNumber(ctx, deNan) && std::isnan(JSValueToNumber(ctx, deNan, nullptr)));
+    WKRelease(serNan);
+
+    auto* infVal = JSValueMakeNumber(ctx, std::numeric_limits<double>::infinity());
+    auto* serInf = WKSerializedScriptValueCreate(ctx, infVal, nullptr);
+    Require(serInf != nullptr);
+    auto* deInf = WKSerializedScriptValueDeserialize(serInf, ctx, nullptr);
+    Require(deInf != nullptr && JSValueIsNumber(ctx, deInf) && std::isinf(JSValueToNumber(ctx, deInf, nullptr)) && JSValueToNumber(ctx, deInf, nullptr) > 0);
+    WKRelease(serInf);
+
+    auto* negInfVal = JSValueMakeNumber(ctx, -std::numeric_limits<double>::infinity());
+    auto* serNegInf = WKSerializedScriptValueCreate(ctx, negInfVal, nullptr);
+    Require(serNegInf != nullptr);
+    auto* deNegInf = WKSerializedScriptValueDeserialize(serNegInf, ctx, nullptr);
+    Require(deNegInf != nullptr && JSValueIsNumber(ctx, deNegInf) && std::isinf(JSValueToNumber(ctx, deNegInf, nullptr)) && JSValueToNumber(ctx, deNegInf, nullptr) < 0);
+    WKRelease(serNegInf);
+
+    auto* boolVal = JSValueMakeBoolean(ctx, true);
+    auto* serBool = WKSerializedScriptValueCreate(ctx, boolVal, nullptr);
+    Require(serBool != nullptr);
+    auto* deBool = WKSerializedScriptValueDeserialize(serBool, ctx, nullptr);
+    Require(deBool != nullptr && JSValueIsBoolean(ctx, deBool) && JSValueToBoolean(ctx, deBool));
+    WKRelease(serBool);
+
+    auto* nullVal = JSValueMakeNull(ctx);
+    auto* serNull = WKSerializedScriptValueCreate(ctx, nullVal, nullptr);
+    Require(serNull != nullptr);
+    auto* deNull = WKSerializedScriptValueDeserialize(serNull, ctx, nullptr);
+    Require(deNull != nullptr && JSValueIsNull(ctx, deNull));
+    WKRelease(serNull);
+
+    auto* undefVal = JSValueMakeUndefined(ctx);
+    auto* serUndef = WKSerializedScriptValueCreate(ctx, undefVal, nullptr);
+    Require(serUndef != nullptr);
+    auto* deUndef = WKSerializedScriptValueDeserialize(serUndef, ctx, nullptr);
+    Require(deUndef != nullptr && JSValueIsUndefined(ctx, deUndef));
+    WKRelease(serUndef);
+
+    auto* jsJsonStr = JSStringCreateWithUTF8CString_nid_postfix("\"hello AnyPS5\"");
+    Require(jsJsonStr != nullptr);
+    auto* strVal = JSValueMakeFromJSONString(ctx, jsJsonStr);
+    JSStringRelease_nid_postfix(jsJsonStr);
+    Require(strVal != nullptr);
+    auto* serStr = WKSerializedScriptValueCreate(ctx, strVal, nullptr);
+    Require(serStr != nullptr);
+
+    auto* otherCtx = JSGlobalContextCreate(nullptr);
+    Require(otherCtx != nullptr);
+    auto* deStrOther = WKSerializedScriptValueDeserialize(serStr, otherCtx, nullptr);
+    Require(deStrOther != nullptr && JSValueIsString(otherCtx, deStrOther));
+    auto* outStr = JSValueToStringCopy(otherCtx, deStrOther, nullptr);
+    Require(outStr != nullptr && JSStringIsEqualToUTF8CString(outStr, "hello AnyPS5"));
+    JSStringRelease_nid_postfix(outStr);
+    JSGlobalContextRelease(otherCtx);
+
+    WKRelease(serStr);
+
+    NKWebKit::JSValueRef exc = nullptr;
+    auto* badSer = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::SerializedScriptValue>("invalid json {{{", NKWebKit::SerializedScriptValueKind::Json));
+    auto* deBad = WKSerializedScriptValueDeserialize(badSer, ctx, &exc);
+    Require(deBad == nullptr);
+    Require(exc != nullptr);
+    WKRelease(badSer);
+
+    JSGlobalContextRelease(ctx);
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -1960,6 +2057,7 @@ int main() {
     TestInspector();
     TestContext();
     TestSessionState();
+    TestSerializedScriptValue();
     TestRunLoop();
     TestFrame();
     std::printf("All libSceNKWebKit Base tests passed!\n");
