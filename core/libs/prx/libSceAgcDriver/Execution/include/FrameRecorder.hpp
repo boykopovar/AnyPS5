@@ -51,6 +51,7 @@ public:
     static void NoteGpuFill(std::uint64_t address, std::uint64_t bytes, const std::array<std::uint32_t, 4>& pattern) {
         if (notingGpuStores.load(std::memory_order_relaxed)) Active()->noteGpuFill(address, bytes, pattern);
     }
+    void RewindTailFlips(std::uint64_t flips);
 
 private:
     enum class State { Waiting, Recording, Done };
@@ -85,6 +86,7 @@ private:
     static void collectShaderPages(std::span<const Shader* const> shaders, std::set<std::uint64_t>& blocks, std::set<std::uint64_t>& hostPages);
     void emitShaderDelta(std::span<const Shader* const> shaders);
     void writeDelta(std::span<Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added = {});
+    void frameBoundaryLocked();
     bool triggered();
     void start();
     void finish();
@@ -126,6 +128,7 @@ private:
     std::map<std::uint64_t, DisplayBuffer> displayBuffers;
     std::uint64_t ordinal = 0;
     std::uint64_t boundaries = 0;
+    std::uint64_t rewindTailFlips = 0;
     std::uint64_t startBoundary = 0;
     std::uint64_t recordedFrames = 0;
     std::uint64_t startGeneration = 0;
