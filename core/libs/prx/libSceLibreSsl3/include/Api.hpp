@@ -273,7 +273,7 @@ unsigned char* APS5_VABI SHA1_nid_postfix(const unsigned char* data, std::size_t
 void APS5_VABI BN_clear_free_nid_postfix(LibreSsl3Bignum* number);
 void APS5_VABI BIO_clear_flags_nid_postfix(LibreSsl::Bio* bio, int flags);
 void APS5_VABI BIO_set_flags_nid_postfix(LibreSsl::Bio* bio, int flags);
-int APS5_VABI BN_dup_nid_postfix();
+Bignum* APS5_VABI BN_dup_nid_postfix(const Bignum* source);
 int APS5_VABI ERR_func_error_string_nid_postfix();
 int APS5_VABI EVP_CIPHER_iv_length_nid_postfix(const LibreSsl3EvpCipher* cipher);
 int APS5_VABI EVP_CIPHER_key_length_nid_postfix(const LibreSsl3EvpCipher* cipher);
