@@ -330,6 +330,14 @@ public:
         records = static_cast<std::uint32_t*>(::operator new(RecordBytes, std::align_val_t{65536}));
         GuestAllocations::Mutation mutation;
         mutation.Add(records, RecordBytes, true, true, true);
+        indices = static_cast<std::uint16_t*>(::operator new(IndexBytes, std::align_val_t{65536}));
+        mutation.Add(indices, IndexBytes, true, true, true);
+    }
+
+    std::uintptr_t GuestIndices(const std::array<std::uint16_t, 4>& source) {
+        auto* slot = indices + IndexSlotElements * usedIndexSlots++;
+        std::copy(source.begin(), source.end(), slot);
+        return reinterpret_cast<std::uintptr_t>(slot);
     }
 
     std::vector<std::uint32_t> UserData(std::uint32_t baseVertex, std::uint32_t startInstance) const {
@@ -445,7 +453,11 @@ public:
 
 private:
     static constexpr std::size_t RecordBytes = 65536;
+    static constexpr std::size_t IndexBytes = 65536;
+    static constexpr std::size_t IndexSlotElements = 128;
     std::uint32_t* records = nullptr;
+    std::uint16_t* indices = nullptr;
+    std::size_t usedIndexSlots = 0;
 };
 
 AgcDriver::DriverDetail::DrawProgram Program(const std::vector<std::uint32_t>& userData) {
@@ -529,7 +541,7 @@ std::string Run(Fixture& fixture) {
     std::string failures = Analysis(fixture);
     const std::array<std::uint32_t, Vertices> autoIndices{0, 1, 2};
     const std::array<std::uint32_t, Vertices> bufferIndices{Indices[0], Indices[1], Indices[2]};
-    const auto indexAddress = reinterpret_cast<std::uintptr_t>(Indices.data());
+    const auto indexAddress = fixture.GuestIndices(Indices);
 
     {
         constexpr std::uint32_t indxOffset = 5;
@@ -559,7 +571,7 @@ std::string Run(Fixture& fixture) {
         const auto userData = fixture.UserData(baseVertex, startInstance);
         const auto vertex = fixture.Vertex(VertexCode, userData);
         const std::array<std::uint32_t, Vertices> raised{RaisedIndices[0], RaisedIndices[1], RaisedIndices[2]};
-        const auto draw = FoldedDraw(vertex, userData, {reinterpret_cast<std::uintptr_t>(RaisedIndices.data()), Vertices, 2, Instances, 0, true, 0, 0});
+        const auto draw = FoldedDraw(vertex, userData, {fixture.GuestIndices(RaisedIndices), Vertices, 2, Instances, 0, true, 0, 0});
         fixture.Place(baseVertex, raised, startInstance);
         fixture.Draw(vertex, draw);
         failures += fixture.Check("direct indexed draw whose lowest index is 3, s16 1000, s17 40", raised, baseVertex, startInstance, true);
@@ -570,7 +582,7 @@ std::string Run(Fixture& fixture) {
         const auto userData = fixture.UserData(baseVertex, startInstance);
         const auto vertex = fixture.Vertex(VertexCode, userData);
         const std::array<std::uint32_t, Vertices> raised{RestartIndices[1], RestartIndices[2], RestartIndices[3]};
-        const auto draw = FoldedDraw(vertex, userData, {reinterpret_cast<std::uintptr_t>(RestartIndices.data()), static_cast<std::uint32_t>(RestartIndices.size()), 2, Instances, 0, true, 0, 0});
+        const auto draw = FoldedDraw(vertex, userData, {fixture.GuestIndices(RestartIndices), static_cast<std::uint32_t>(RestartIndices.size()), 2, Instances, 0, true, 0, 0});
         fixture.Place(baseVertex, raised, startInstance);
         fixture.Draw(vertex, draw, true);
         failures += fixture.Check("direct indexed strip that starts with a restart index, lowest index 3, s16 1000, s17 40", raised, baseVertex, startInstance, true);
