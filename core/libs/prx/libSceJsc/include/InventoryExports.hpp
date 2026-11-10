@@ -14,6 +14,8 @@ void APS5_VABI _ZN10Deprecated11ScriptValueC1Ev(void* self);
 int APS5_VABI _ZN10Deprecated11ScriptValueC2ERKS0_();
 int APS5_VABI _ZN10Deprecated11ScriptValueC2ERN3JSC2VMENS1_7JSValueE();
 void APS5_VABI _ZN10Deprecated11ScriptValueC2Ev(void* self);
+bool APS5_VABI _ZNK10Deprecated11ScriptValue10hasNoValueEv(const void* self);
+std::uint64_t APS5_VABI _ZNK10Deprecated11ScriptValue7jsValueEv(const void* self);
 int APS5_VABI _ZN10Deprecated11ScriptValueD1Ev();
 int APS5_VABI _ZN10Deprecated11ScriptValueD2Ev();
 int APS5_VABI _ZN10Deprecated11ScriptValueaSERKS0_();
@@ -311,8 +313,6 @@ int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent21willDispatchAsyncCallENS0_1
 int APS5_VABI _ZN9Inspector22RemoteInspectionTarget25setRemoteDebuggingAllowedEb();
 int APS5_VABI _ZN9Inspector25ConsoleFrontendDispatcher15messagesClearedEv();
 int APS5_VABI _ZN9Inspector25ConsoleFrontendDispatcher25messageRepeatCountUpdatedEi();
-int APS5_VABI _ZNK10Deprecated11ScriptValue10hasNoValueEv();
-int APS5_VABI _ZNK10Deprecated11ScriptValue7jsValueEv();
 int APS5_VABI _ZNK3JSC11RegisterSet4dumpERN3WTF11PrintStreamE();
 int APS5_VABI _ZNK3JSC14JSGlobalObject22remoteDebuggingEnabledEv();
 int APS5_VABI _ZNK3JSC17DebuggerCallFrame12functionNameEv();
