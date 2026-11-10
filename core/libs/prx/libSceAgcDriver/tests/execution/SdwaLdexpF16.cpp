@@ -220,27 +220,6 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
     device.WaitIdle();
 }
 
-void CheckRefused(AgcDriver::VulkanDevice& device) {
-    struct Refused {
-        std::uint32_t modifier;
-        const char* error;
-    };
-    constexpr std::array<Refused, 2> forms{{
-        {0x10050404u, "VOP2 SDWA source modifiers are not supported"},
-        {0x26060604u, "VOP2 SDWA source modifiers are not supported"},
-    }};
-    for (const auto& form : forms) {
-        alignas(256) const std::array<std::uint32_t, 3> code{0x76140af9u, form.modifier, 0xbf810000u};
-        std::string refusal;
-        try {
-            static_cast<void>(Compile(device, code));
-        } catch (const std::exception& error) {
-            refusal = error.what();
-        }
-        Require(refusal.find(form.error) != std::string::npos, "v_ldexp_f16 SDWA form " + Hex(form.modifier) + " was not refused");
-    }
-}
-
 void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* in = &Input[tid * Inputs];
@@ -274,7 +253,6 @@ int main() {
         Check();
         Run(*device, ClampCode);
         CheckClamp();
-        CheckRefused(*device);
         std::puts("sdwa ldexp f16 tests passed");
         return 0;
     } catch (const std::exception& error) {
