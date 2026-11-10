@@ -27,10 +27,15 @@ With `ANYPS5_USE_SYSTEM_DEPS=ON`, the `freetype` CMake target is an `INTERFACE` 
 The remaining exports deliberately retain `NotImplemented_nid_no_patch` because they require unavailable Sony-specific modules/state or a guest/native bridge that is not yet implemented:
 
 - [Module class exports](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp) (18), the generic `FT_Add_Module` / `FtaAddModule` wrappers (2), and `FT_Get_Module_Interface` (1): host `FT_Module_Class` fields differ from the 64-bit guest ABI on some platforms; native FreeType callback and interface pointers are not guest-callable trampolines. A guest module-class layout and callback bridge are required before safe implementation. Their NIDs retain their original labels in `Export.cpp`.
+
 - Raster5 add/export/remove/support (`wbyY8kfNfaI`, `6zDeyzjWz-8`, `SKUldaN3e2A`, `Tzm-z36UYKg`): the Sony Raster5 module is absent from the bundled FreeType sources. See its [unimplemented exports](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp).
+
 - Smooth LCD and LCD vertical add/export/remove/support (`NLA7bmDS1jc`, `xcJCXHqBrjE`, `+bRRhPeBqZI`, `q7kTOFaQrW4`, `xtb9fOR6ilA`, `6z2P2V2XCiI`, `M94SjXo-UVA`, `Ns9a-LjOcDw`): Sony exports distinct renderer descriptors; the bundled library has one smooth renderer, so aliasing these descriptors would give incorrect add/remove behavior. See its [unimplemented exports](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp).
+
 - Composite format/module configuration (`JuzrPZClLew`, `sylevnx-fqk`, `0RSuGozMl9o`, `J3HnvW8FJV8`, `YpxR8CqGMIM`, `83qtpn8+XnA`, `g2p7fkJpuC0`, `xqjAbn8VNGo`, `oM0zMNCfXKM`): these routines combine module registration with Sony-specific support-mask state. Implementing registration alone would omit observable state updates. See its [unimplemented exports](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp).
+
 - [`FT_Attach_Stream`, `FT_CMap_New`, and `FT_CMap_Done`](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp) (`ZqvTX8u1bEc`, `wLqQQWyOdpc`, `h0n4Fb9j2R8`): direct native calls bypass the existing guest face/charmap layout, stream/callback ABI, and lifecycle ownership. These require a dedicated guest bridge before implementation.
+
 - `FT_Done_Memory` (`UTumVjeIQtg`): the export has no parameter and operates on a Sony-owned global memory manager; the host FreeType library exposes a separate manager for each library. See its [unimplemented export](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp).
 
 Each remaining export keeps its original NID alias and throws through `NotImplemented_nid_no_patch` until its required implementation or state mapping is available.

@@ -24,21 +24,35 @@
 - The additional pending imports in [InventoryExports.cpp](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) are listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceCommonDialog.c). Their signatures and behavior are unverified; each uses the no-parameter unknown-signature convention and throws through `NotImplemented_nid_no_patch`, for import resolution only.
 
 - [`_ZN3sce16CommonDialogUtil12getSelfAppIdEv`](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) — NID `2RdicdHhtGA`
+
 - [`_ZN3sce16CommonDialogUtil6Client11closeModuleEv`](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) — NID `I+tdxsCap08`
+
 - [`_ZN3sce16CommonDialogUtil6Client11updateStateEv`](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) — NID `v4+gzuTkv6k`
+
 - [`_ZN3sce16CommonDialogUtil6Client15launchCmnDialogEv`](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) — NID `CwCzG0nnLg8`
+
 - [`_ZN3sce16CommonDialogUtil6ClientD0Ev`](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) — NID `Ib1SMmbr07k`
+
 - [`_ZN3sce16CommonDialogUtil6ClientD1Ev`](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) — NID `6TIMpGvsrC4`
+
 - [`_ZN3sce16CommonDialogUtil6ClientD2Ev`](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) — NID `+UyKxWAnqIU`
+
 - [`_ZNK3sce16CommonDialogUtil6Client10isCloseReqEv`](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) — NID `bUCx72-9f0g`
+
 - [`_ZNK3sce16CommonDialogUtil6Client13getFinishDataEPvm`](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) — NID `xZtXq554Lbg`
+
 - [`_ZNK3sce16CommonDialogUtil6Client14getClientStateEv`](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) — NID `C-EZ3PkhibQ`
+
 - [`_ZNK3sce16CommonDialogUtil6Client19isInitializedStatusEv`](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) — NID `70niEKUAnZ0`
+
 - [`_ZNK3sce16CommonDialogUtil6Client8getAppIdEv`](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) — NID `mdJgdwoM0Mo`
+
 - [`_ZNK3sce16CommonDialogUtil6Client8isFinishEv`](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) — NID `87GekE1nowg`
+
 - [`_ZNK3sce16CommonDialogUtil6Client9getResultEv`](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) — NID `6ljeTSi+fjs`
 
 ### Functional
 
 - [sceCommonDialogInitialize](../../../core/libs/prx/libSceCommonDialog/Export.cpp) (libSceCommonDialog) - returning `ALREADY_SYSTEM_INITIALIZED` (`0x80B80002`) from a repeated call is not measured on a console by the project. A third-party PS5 log ([obSCEne](https://github.com/project-oops/obSCEne/blob/67b4c529eb3c271184117e26bb54330531ef2cf6/reports/hardware/report-20261014-004800.log#L260-L261), firmware 12.40) records two calls, `0x0` and then `0x80b80002`; a third call is not covered. The SDK error names, shadPS4 (a PS4 emulator) and SharpProspero give the same value; PPSA09695 compares the result with `0x80b80002` (call site 0x5F7BD0) and PPSA06327 stops on `0x80b80004`. Closes when: measured on a PS5, including a third call.
+
 - [sceCommonDialogIsUsed](../../../core/libs/prx/libSceCommonDialog/Export.cpp) (libSceCommonDialog) - reports whether a common dialog holds the system, like shadPS4's `g_isUsed`. Only [libSceInvitationDialog](libSceInvitationDialog.md) takes and frees it so far, through `CommonDialogAcquire_nid_no_patch` and `CommonDialogRelease_nid_no_patch`, so a dialog of another library that is in use is not seen. Not measured on a console.
