@@ -70,6 +70,50 @@ class PublicHeaderPackageTests(unittest.TestCase):
                 self.assertEqual(list(self.output.iterdir()), [previous])
                 self.assertEqual(previous.read_bytes(), b"previous")
 
+    def test_ambiguous_quoted_include_is_rejected(self):
+        (self.libs / "Api.hpp").write_text("", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous"):
+            package_headers.package(self.source, self.output, "v1")
+        self.assertFalse(self.output.exists())
+
+    def test_missing_umbrella_is_rejected(self):
+        self.umbrella.unlink()
+        with self.assertRaisesRegex(RuntimeError, "Missing public header"):
+            package_headers.package(self.source, self.output, "v1")
+        self.assertFalse(self.output.exists())
+
+    def test_comments_and_raw_strings_do_not_add_dependencies(self):
+        self.api.write_text('/*\n#include "Missing.hpp"\n*/\nconst char* text = R"test(\n#include "AlsoMissing.hpp"\n)test";\n', encoding="utf-8")
+        self.assertEqual(len(package_headers.public_headers(self.source)), 3)
+
+    def test_external_symlink_is_rejected(self):
+        external = self.root / "external.hpp"
+        external.write_text("", encoding="utf-8")
+        link = self.umbrella.with_name("Linked.hpp")
+        try:
+            link.symlink_to(external)
+        except OSError as error:
+            self.skipTest(str(error))
+        self.api.write_text('#include "Linked.hpp"\n', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "outside core/libs"):
+            package_headers.package(self.source, self.output, "v1")
+
+    def test_header_symlink_loop_is_rejected_without_traceback(self):
+        loop = self.umbrella.with_name("Loop.hpp")
+        try:
+            loop.symlink_to("Loop.hpp")
+        except OSError as error:
+            self.skipTest(str(error))
+        self.api.write_text('#include "Loop.hpp"\n', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "Symbolic link loop"):
+            package_headers.public_headers(self.source)
+        self.assertTrue(loop.is_symlink())
+
+    def test_header_command_needs_no_build_directory(self):
+        with patch.object(package_release, "ROOT", self.source):
+            self.assertEqual(package_release.main(["--platform", "headers", "--version", "v1", "--output", str(self.output)]), 0)
+        self.assertTrue((self.output / "prx-headers-v1.zip").is_file())
+
     def test_archive_promotion_failure_restores_the_pair(self):
         names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
         original_replace = Path.replace
@@ -170,50 +214,6 @@ class PublicHeaderPackageTests(unittest.TestCase):
             self.assertEqual(len(staging), 1)
             self.assertTrue((staging[0] / names[1]).is_file())
             self.assertIn(str(staging[0]), str(raised.exception))
-
-    def test_ambiguous_quoted_include_is_rejected(self):
-        (self.libs / "Api.hpp").write_text("", encoding="utf-8")
-        with self.assertRaisesRegex(RuntimeError, "Ambiguous"):
-            package_headers.package(self.source, self.output, "v1")
-        self.assertFalse(self.output.exists())
-
-    def test_missing_umbrella_is_rejected(self):
-        self.umbrella.unlink()
-        with self.assertRaisesRegex(RuntimeError, "Missing public header"):
-            package_headers.package(self.source, self.output, "v1")
-        self.assertFalse(self.output.exists())
-
-    def test_comments_and_raw_strings_do_not_add_dependencies(self):
-        self.api.write_text('/*\n#include "Missing.hpp"\n*/\nconst char* text = R"test(\n#include "AlsoMissing.hpp"\n)test";\n', encoding="utf-8")
-        self.assertEqual(len(package_headers.public_headers(self.source)), 3)
-
-    def test_external_symlink_is_rejected(self):
-        external = self.root / "external.hpp"
-        external.write_text("", encoding="utf-8")
-        link = self.umbrella.with_name("Linked.hpp")
-        try:
-            link.symlink_to(external)
-        except OSError as error:
-            self.skipTest(str(error))
-        self.api.write_text('#include "Linked.hpp"\n', encoding="utf-8")
-        with self.assertRaisesRegex(RuntimeError, "outside core/libs"):
-            package_headers.package(self.source, self.output, "v1")
-
-    def test_header_symlink_loop_is_rejected_without_traceback(self):
-        loop = self.umbrella.with_name("Loop.hpp")
-        try:
-            loop.symlink_to("Loop.hpp")
-        except OSError as error:
-            self.skipTest(str(error))
-        self.api.write_text('#include "Loop.hpp"\n', encoding="utf-8")
-        with self.assertRaisesRegex(RuntimeError, "Symbolic link loop"):
-            package_headers.public_headers(self.source)
-        self.assertTrue(loop.is_symlink())
-
-    def test_header_command_needs_no_build_directory(self):
-        with patch.object(package_release, "ROOT", self.source):
-            self.assertEqual(package_release.main(["--platform", "headers", "--version", "v1", "--output", str(self.output)]), 0)
-        self.assertTrue((self.output / "prx-headers-v1.zip").is_file())
 
 
 class ReleasePackageTests(unittest.TestCase):
