@@ -473,6 +473,26 @@ void ForeignLookupWhileAWindowIsOpenProceeds() {
     Compare({{commands, {"draw 1 1 0 0", "draw 2 1 0 0"}}, {own, {"draw 7 1 0 0"}}}, "a foreign lookup");
 }
 
+void RawCallAfterLookupKeepsOrder() {
+    Reset();
+    auto table = FakeTable();
+    const auto raw = table;
+    const auto device = Handle<VkDevice>(0x49);
+    CommandEncoder encoder(device, table);
+    const auto commands = Handle<VkCommandBuffer>(0xd00);
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(5)); });
+    encoder.Open(commands);
+    table.cmdDraw(commands, 1, 1, 0, 0);
+    table.cmdDraw(commands, 2, 1, 0, 0);
+    AgcDriver::Graphics::BeforeCommandLookup(device);
+    raw.cmdDraw(commands, 3, 1, 0, 0);
+    table.cmdDraw(commands, 4, 1, 0, 0);
+    encoder.Close();
+    encoder.Quiesce();
+    CommandEncoder::SetDelayForTesting({});
+    Compare({{commands, {"draw 1 1 0 0", "draw 2 1 0 0", "draw 3 1 0 0", "draw 4 1 0 0"}}}, "a raw call after a lookup inside a window");
+}
+
 }
 
 int main() {
@@ -486,6 +506,7 @@ int main() {
         OwnersOutliveTheUnwindDrain();
         ForeignThreadCannotProduceIntoAnOpenWindow();
         ForeignLookupWhileAWindowIsOpenProceeds();
+        RawCallAfterLookupKeepsOrder();
         std::cout << "command encoder tests passed\n";
         return 0;
     } catch (const std::exception& error) {
