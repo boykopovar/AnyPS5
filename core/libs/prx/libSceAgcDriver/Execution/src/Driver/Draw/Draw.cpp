@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawProgramTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/RecycledShared.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -42,32 +43,19 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
-struct RecycledRingWordsPool {
-    std::vector<std::shared_ptr<ShaderRecompiler::HeapStageWords>> words;
-    std::size_t cursor = 0;
-};
-
 struct RecycledRingWordsStorage {};
 
 std::shared_ptr<ShaderRecompiler::HeapStageWords> RecycledRingWords() {
     constexpr std::size_t PoolSize = 1024, Probes = 16;
-    auto& state = HostThreadLocal<RecycledRingWordsPool, RecycledRingWordsStorage>();
-    auto& pool = state.words;
-    auto& cursor = state.cursor;
-    for (std::size_t probe = 0; probe < Probes && probe < pool.size(); ++probe) {
-        auto& candidate = pool[cursor];
-        cursor = cursor + 1 == pool.size() ? 0 : cursor + 1;
-        if (candidate.use_count() != 1) continue;
-        std::atomic_thread_fence(std::memory_order_acquire);
-        candidate->userData.clear();
-        candidate->drawKeyMemo.words.store(nullptr, std::memory_order_relaxed);
-        candidate->memoizeKey = false;
-        candidate->dataOrigin = 0;
-        return candidate;
-    }
-    auto words = std::make_shared<ShaderRecompiler::HeapStageWords>();
+    struct Pool : RecycledShared<ShaderRecompiler::HeapStageWords> {
+        Pool() : RecycledShared(PoolSize, Probes) {}
+    };
+    auto words = HostThreadLocal<Pool, RecycledRingWordsStorage>().Take([](ShaderRecompiler::HeapStageWords& candidate) {
+        candidate.userData.clear();
+        candidate.drawKeyMemo.words.store(nullptr, std::memory_order_relaxed);
+        candidate.dataOrigin = 0;
+    });
     words->memoizeKey = false;
-    if (pool.size() < PoolSize) pool.push_back(words);
     return words;
 }
 

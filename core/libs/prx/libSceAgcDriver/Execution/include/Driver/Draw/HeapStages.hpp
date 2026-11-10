@@ -39,6 +39,8 @@ struct HeapStageMaterialized {
     HeapStageReads reads;
 };
 
+void ResetHeapStageWords(ShaderRecompiler::HeapStageWords& words);
+
 HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
                                            std::uint64_t shaderBase);
 void NoteHeapDirect();

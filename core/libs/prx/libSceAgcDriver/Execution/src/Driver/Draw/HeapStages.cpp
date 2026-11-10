@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapWalkMemo.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/RecycledShared.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -577,6 +578,60 @@ captureWalk(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::s
 
 }
 
+namespace {
+
+constexpr std::size_t RecycledKeptBytes = 16u << 10u;
+
+template <typename TVector>
+void clearRecycled(TVector& vector) {
+    if (vector.capacity() * sizeof(typename TVector::value_type) > RecycledKeptBytes) TVector().swap(vector);
+    else vector.clear();
+}
+
+}
+
+void ResetHeapStageWords(ShaderRecompiler::HeapStageWords& words) {
+    clearRecycled(words.userData);
+    clearRecycled(words.flattenedSrt);
+    clearRecycled(words.vertexAttributes);
+    clearRecycled(words.bindings);
+    words.base.reset();
+    words.dataOrigin = 0;
+    words.drawKeyMemo.words.store(nullptr, std::memory_order_relaxed);
+    words.memoizeKey = true;
+}
+
+namespace {
+
+constexpr std::size_t RecycledStageRecords = 1024, RecycledStageProbes = 8;
+
+template <typename TObject>
+struct RecycledStagePool : RecycledShared<TObject> {
+    RecycledStagePool() : RecycledShared<TObject>(RecycledStageRecords, RecycledStageProbes) {}
+};
+
+struct RecycledWordsStorage {};
+struct RecycledValuesStorage {};
+struct RecycledRangesStorage {};
+
+std::shared_ptr<ShaderRecompiler::HeapStageWords> recycledStageWords() {
+    return HostThreadLocal<RecycledStagePool<ShaderRecompiler::HeapStageWords>, RecycledWordsStorage>().Take(ResetHeapStageWords);
+}
+
+std::shared_ptr<const std::vector<std::uint32_t>> recycledValues(const std::vector<std::uint32_t>& values) {
+    auto copy = HostThreadLocal<RecycledStagePool<std::vector<std::uint32_t>>, RecycledValuesStorage>().Take(clearRecycled<std::vector<std::uint32_t>>);
+    copy->assign(values.begin(), values.end());
+    return copy;
+}
+
+std::shared_ptr<const AddressRanges> recycledRanges(const AddressRanges& ranges) {
+    auto copy = HostThreadLocal<RecycledStagePool<AddressRanges>, RecycledRangesStorage>().Take(clearRecycled<AddressRanges>);
+    copy->assign(ranges.begin(), ranges.end());
+    return copy;
+}
+
+}
+
 HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
                                            std::uint64_t shaderBase) {
     struct ReadsStorage {};
@@ -624,15 +679,15 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     guardRanges(ranges);
     guardCost.Stop();
     Graphics::HeapCostScope materializeCost(Graphics::HeapCost::Materialize);
-    auto words = std::make_shared<ShaderRecompiler::HeapStageWords>();
+    auto words = recycledStageWords();
     auto result = invocation.MaterializeHeap(*capture, *words);
     if (result == nullptr) result = invocation.Materialize(*capture);
     words->dataOrigin = NextHeapDataOrigin();
     materializeCost.Stop();
     const bool complete = !reads.failed && result != nullptr;
     HeapStageMaterialized materialized;
-    auto shared = complete ? std::make_shared<const std::vector<std::uint32_t>>(values) : nullptr;
-    auto sharedRanges = complete ? std::make_shared<const AddressRanges>(ranges) : nullptr;
+    auto shared = complete ? recycledValues(values) : nullptr;
+    auto sharedRanges = complete ? recycledRanges(ranges) : nullptr;
     if (complete) materialized.reads = {sharedRanges, shared, capture->userDataUse, capture, true};
     Graphics::HeapCostScope insertCost(Graphics::HeapCost::MemoInsert);
     if (memoOn && complete && (memoKnown || heapWalkMemo().admit(memoKey)))
