@@ -175,6 +175,18 @@ extern "C" void AgcDriverSerialProgress_nid_postfix(std::uint64_t* accepted, std
     *completed = done;
 }
 
+extern "C" bool AgcDriverHoldSettled_nid_postfix(std::int64_t milliseconds) {
+    return AgcDriver::DriverDetail::Driver::Get().WaitSettledFor(std::chrono::milliseconds(milliseconds));
+}
+
+extern "C" void AgcDriverReleaseSettled_nid_postfix() {
+    AgcDriver::DriverDetail::Driver::Get().ReleaseSettled();
+}
+
+extern "C" bool AgcDriverSettled_nid_postfix() {
+    return AgcDriver::DriverDetail::Driver::Get().Settled();
+}
+
 extern "C" void AgcDriverSubmitFlip_nid_postfix(const AgcDriver::FlipInfo& info) try {
     auto* const recorder = AgcDriver::FrameRecorder::Active();
     if (recorder == nullptr) {
