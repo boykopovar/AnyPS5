@@ -336,6 +336,22 @@ class ImportAuditTests(unittest.TestCase):
                 self.assertEqual(data["library_mismatch"], 0)
                 self.assertEqual(data["imports"][0]["providers"], ["libSceA.prx"])
 
+    def test_gnm_padebug_dependency_uses_libscegnmdriver(self):
+        work = self.work
+        registry, result = work.root / "game.registry.json", work.root / "audit.json"
+        for kind, provider in (("pe", build_pe(["AAAAAAAAAAA"])), ("elf", exporting("AAAAAAAAAAA"))):
+            (work.libs / "libSceGnmDriver.prx").write_bytes(provider)
+            for name in ("libSceGnmDriver_padebug.prx", "libSceGnmDriver_padebug.sprx"):
+                with self.subTest(kind=kind, name=name):
+                    write_registry(registry, [("AAAAAAAAAAA", name)])
+                    registry.with_name("game.needed.json").write_text(json.dumps([name]))
+                    code, _, err = work.run(registry, "--strict-providers", "--json", str(result))
+                    self.assertEqual((code, err), (0, ""))
+                    data = json.loads(result.read_text())
+                    self.assertEqual(data["missing_libraries"], {})
+                    self.assertEqual(data["library_mismatch"], 0)
+                    self.assertEqual(data["imports"][0]["providers"], ["libSceGnmDriver.prx"])
+
     def test_elf_suffix_lookup_keeps_the_suffix_case_and_missing_libraries(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
