@@ -2,6 +2,7 @@
 #include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -112,6 +113,10 @@ void SpeakerInfoReportsTheFrontPair() {
     Require(info.speaker_angle[1].azimuth == -30 && info.speaker_angle[1].elevation == 0);
     for (int index = 2; index < 16; index++) Require(info.speaker_angle[index].azimuth == -360 && info.speaker_angle[index].elevation == -360);
     Require(sceAudioOut2GetSpeakerInfo(nullptr, 0) == errorInvalidPointer);
+    auto* const invalidOutput = reinterpret_cast<AudioOut2SpeakerInfo*>(0x10);
+    errno = 73;
+    Require(sceAudioOut2GetSpeakerInfo(invalidOutput, 0) == errorInvalidPointer);
+    Require(errno == 73);
 }
 
 void SpeakerInfoRequiresInitialization() {
@@ -144,6 +149,7 @@ void SpeakerInfoRejectsBadFlags() {
     Require(sceAudioOut2GetSpeakerInfo(&info, 2) == errorInvalidParam);
     Require(sceAudioOut2GetSpeakerInfo(&info, 0x80000000) == errorInvalidParam);
     Require(sceAudioOut2GetSpeakerInfo(nullptr, 2) == errorInvalidPointer);
+    Require(sceAudioOut2GetSpeakerInfo(reinterpret_cast<AudioOut2SpeakerInfo*>(0x10), 2) == errorInvalidParam);
     Require(std::memcmp(&info, &untouched, sizeof(info)) == 0);
     Require(sceAudioOut2GetSpeakerInfo(&info, 1) == 0);
     Require(info.type == 0);
