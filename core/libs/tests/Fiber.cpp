@@ -110,6 +110,12 @@ alignas(16) std::array<unsigned char, 64 * 1024> g_smallArea;
 FiberStorage g_smallStorage;
 
 void APS5_VABI SmallEntry(std::uint64_t, std::uint64_t) {
+    auto* small = reinterpret_cast<FiberObject*>(&g_smallStorage);
+    auto* context = g_smallArea.data() + g_smallArea.size() - SmallContextSize;
+    Require(_sceFiberInitializeImpl_nid_postfix(small, "small", SmallEntry, 0, context, SmallContextSize, nullptr, 0) == FiberErrorState, "a running fiber cannot be initialized over its own stack");
+    FiberInfo info{};
+    info.size = sizeof(info);
+    Require(sceFiberGetInfo(small, &info) == 0 && std::strcmp(info.name, "small") == 0, "a refused initialize keeps the running fiber");
     std::uint64_t received = 0;
     for (;;) sceFiberReturnToThread(0, &received);
 }
@@ -566,6 +572,23 @@ int main(int argc, char** argv) {
 #endif
     FiberObject* self = nullptr;
     Require(sceFiberGetSelf(&self) == FiberErrorPermission, "no fiber on the thread");
+    Require(sceFiberOptParamInitialize(nullptr) == FiberErrorNull, "null opt param");
+    Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(0x10)) == FiberErrorInvalid, "unwritable opt param");
+    struct alignas(8) AlignedOptParamBuffer {
+        std::uint8_t bytes[0x80];
+        std::uint32_t sentinel = 0x5a5a5a5a;
+    } storage;
+    std::memset(storage.bytes, 0xA5, sizeof(storage.bytes));
+    Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(storage.bytes)) == 0, "initialize opt param");
+    bool allZero = true;
+    for (std::size_t i = 0; i < sizeof(storage.bytes); ++i) {
+        if (storage.bytes[i] != 0) {
+            allZero = false;
+            break;
+        }
+    }
+    Require(allZero, "opt param cleared");
+    Require(storage.sentinel == 0x5a5a5a5a, "sentinel intact");
     Require(_sceFiberInitializeImpl_nid_postfix(g_first, "first", FirstEntry, 11, g_firstContext.data(), g_firstContext.size(), nullptr, 0) == 0, "initialize first");
     Require(_sceFiberInitializeImpl_nid_postfix(g_second, "second", SecondEntry, 22, g_secondContext.data(), g_secondContext.size(), nullptr, 0) == 0, "initialize second");
     const auto threadCsr = _mm_getcsr();

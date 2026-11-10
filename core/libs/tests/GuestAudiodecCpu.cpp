@@ -72,16 +72,28 @@ void TestQueryMemSize() {
     empty.ui_memory_size = 0;
     Require(sceAudiodecCpuInternalQueryMemSize(&decoder.ctrl, &empty, LpcmDvd) == 0);
     Require(empty.ui_memory_size == 0x190138);
+    AudiodecCtrl paramOnly{&decoder.param, nullptr, nullptr, nullptr};
+    empty.ui_memory_size = 7;
+    Require(sceAudiodecCpuQueryMemSize(&paramOnly, &empty, 0x1009) == Error(1));
+    Require(empty.ui_memory_size == 7);
+    Require(sceAudiodecCpuQueryMemSize(&paramOnly, &empty, LpcmBd) == 0);
+    Require(empty.ui_memory_size == 0x190138);
 }
 
 void TestInitAndClear() {
     Decoder decoder;
+    Require(sceAudiodecCpuInitDecoder(nullptr, &decoder.memory, LpcmBd) == Error(9));
+    AudiodecCtrl noParam{nullptr, &decoder.info, &decoder.au, &decoder.pcm};
+    Require(sceAudiodecCpuInitDecoder(&noParam, &decoder.memory, LpcmBd) == Error(0xa));
     AudiodecCtrl noBsi{&decoder.param, nullptr, &decoder.au, &decoder.pcm};
     Require(sceAudiodecCpuInitDecoder(&noBsi, &decoder.memory, LpcmBd) == Error(0xb));
+    Require(sceAudiodecCpuInitDecoder(&noBsi, nullptr, LpcmBd) == Error(0xb));
+    Require(sceAudiodecCpuInitDecoder(&decoder.ctrl, nullptr, LpcmBd) == Error(0xe));
     AudiodecCpuMemory noAddress{0x18, nullptr, 0};
     Require(sceAudiodecCpuInitDecoder(&decoder.ctrl, &noAddress, LpcmBd) == Error(0x11));
     AudiodecCpuMemory badSize{0x10, decoder.work.data(), 0};
     Require(sceAudiodecCpuInitDecoder(&decoder.ctrl, &badSize, LpcmBd) == Error(8));
+    Require(sceAudiodecCpuInitDecoder(&decoder.ctrl, &badSize, 0x100a) == Error(8));
     Require(sceAudiodecCpuInitDecoder(&decoder.ctrl, &decoder.memory, 0x100a) == Error(1));
     Require(sceAudiodecCpuInitDecoder(&decoder.ctrl, &decoder.memory, LpcmBd) == 0);
     Require(sceAudiodecCpuInternalInitDecoder(&decoder.ctrl, &decoder.memory, LpcmDvd) == 0);
@@ -98,6 +110,9 @@ void TestDecodeArguments() {
     Require(sceAudiodecCpuInitDecoder(&decoder.ctrl, &decoder.memory, LpcmBd) == 0);
     Require(sceAudiodecCpuDecode(nullptr, &decoder.memory, LpcmBd) == Error(9));
     AudiodecCtrl ctrl = decoder.ctrl;
+    ctrl.pParam = nullptr;
+    Require(sceAudiodecCpuDecode(&ctrl, &decoder.memory, LpcmBd) == Error(0xa));
+    ctrl = decoder.ctrl;
     ctrl.pBsiInfo = nullptr;
     Require(sceAudiodecCpuDecode(&ctrl, &decoder.memory, LpcmBd) == Error(0xb));
     ctrl = decoder.ctrl;
@@ -126,6 +141,10 @@ void TestDecodeArguments() {
     Require(sceAudiodecCpuDecode(&ctrl, &decoder.memory, LpcmBd) == Error(7));
     pcm.ui_size = 0x18;
     Require(sceAudiodecCpuDecode(&ctrl, nullptr, LpcmBd) == Error(0xe));
+    AudiodecCpuMemory noAddress{0x18, nullptr, 0};
+    Require(sceAudiodecCpuDecode(&ctrl, &noAddress, LpcmBd) == Error(0x11));
+    AudiodecCpuMemory badSize{0x10, decoder.work.data(), 0};
+    Require(sceAudiodecCpuDecode(&ctrl, &badSize, 0x1009) == Error(8));
     Require(sceAudiodecCpuDecode(&ctrl, &decoder.memory, 0x1009) == Error(1));
     decoder.param.size = 0x20;
     Require(decoder.Decode(None, None) == static_cast<int>(0x80f70100u));
@@ -134,6 +153,7 @@ void TestDecodeArguments() {
         decoder.param.header = header;
         Require(decoder.Decode(None, None) == static_cast<int>(0x80f70100u));
     }
+    Require(decoder.param.channelConfig == 0 && decoder.param.rateIndex == 0 && decoder.param.bitsIndex == 0 && decoder.param.auBytes == 0);
 }
 
 void TestDecodeSamples() {
@@ -156,6 +176,10 @@ void TestDecodeSamples() {
     Require(decoder.param.auBytes == 5760 && decoder.au.ui_au_size == 5760 && decoder.pcm.ui_pcm_size == 1920 * 4);
     Require(decoder.output[0] == 0x1p-23f && decoder.output[1] == -0x1p-23f);
     Require(decoder.info.rateIndex == 2);
+    decoder.param.header = Header(2, 3, 3, 1);
+    Require(decoder.Decode(None, None) == 0);
+    Require(decoder.param.rateIndex == 3 && decoder.param.bitsIndex == 3 && decoder.param.auBytes == 5760);
+    Require(decoder.au.ui_au_size == 5760 && decoder.pcm.ui_pcm_size == 1920 * 4 && decoder.info.rateIndex == 3);
 }
 
 void TestTimestamps() {

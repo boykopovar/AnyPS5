@@ -1,4 +1,5 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/include/InventoryExports.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -254,6 +255,10 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceAudioOut2PortCreateEx(AudioOut2ContextHandle ctx, const AudioOut2PortParam* params, AudioOut2PortHandle* port) {
+    return sceAudioOut2PortCreate(ctx, params, port);
+}
+
 int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle port) try {
     const AudioOutCall call;
     std::lock_guard lock(g_portsLock);
@@ -310,6 +315,28 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
         }
         const auto traces = entry->attributeTraces++;
         if (traces < ATTRIBUTE_TRACE_FULL || traces % ATTRIBUTE_TRACE_EVERY == 0) TraceAttribute(port, *entry, attribute, verdict);
+    }
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceAudioOut2LoPortGetAttributes(AudioOut2PortHandle port, AudioOut2Attribute* attributes, uint32_t num) try {
+    constexpr int ErrorInvalidParam = static_cast<int>(0x80268001);
+    const AudioOutCall call;
+    std::lock_guard lock(g_portsLock);
+    auto* entry = FromHandle(port);
+    if (!entry) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    if (!attributes && num != 0) return ErrorInvalidParam;
+    for (uint32_t index = 0; index < num; index++) {
+        const auto& attribute = attributes[index];
+        if (attribute.attribute_id == ATTRIBUTE_VOLUME && attribute.value != nullptr) {
+            std::memcpy(const_cast<void*>(attribute.value), entry->volume, entry->channels * sizeof(float));
+        } else if (attribute.attribute_id == 9 || attribute.attribute_id == 0xa || attribute.attribute_id == 0x21) {
+            NotImplemented_nid_no_patch(__func__);
+        } else {
+            return ErrorInvalidParam;
+        }
     }
     return 0;
 } catch (const ProcessShutdown&) {

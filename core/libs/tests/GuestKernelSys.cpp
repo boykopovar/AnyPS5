@@ -87,7 +87,7 @@ void ThreadAndSessionTests(int descriptor) {
     Require(tcsetsid_nid_postfix(-1, session) == -1 && Error() == 9);
     const int socketDescriptor = socket_nid_postfix(2, 2, 0);
     Require(socketDescriptor >= 0);
-    Require(tcsetsid_nid_postfix(socketDescriptor, session) == -1 && Error() == 25);
+    Require(tcsetsid_nid_postfix(socketDescriptor, session) == -1 && Error() == 49);
     Require(close_nid_postfix(socketDescriptor) == 0);
 }
 
@@ -340,6 +340,7 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
     posixFault([&] { return lutimes_nid_postfix(paths.Unreadable(), nullptr); });
     posixFault([&] { return readlink_nid_postfix(paths.Unreadable(), linkBuffer, sizeof(linkBuffer)); });
     posixFault([&] { return pathconf_nid_postfix(paths.Unreadable(), 4); });
+    posixFault([&] { return chroot_nid_postfix(paths.Unreadable()); });
     posixFault([&] { return link_nid_postfix(paths.Unreadable(), "unused-link"); });
     posixFault([&] { return link_nid_postfix(renameSource.c_str(), paths.Unreadable()); });
     posixFault([&] { return symlink_nid_postfix(paths.Unreadable(), "unused-symlink"); });
@@ -604,10 +605,12 @@ void CheckCondattrClock() {
     Require(scePthreadCondattrGetclock(nullptr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
     Require(scePthreadCondattrGetclock(nullptr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadCondattrGetclock(&attr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
+    Require(scePthreadCondattrGetclock(reinterpret_cast<const PthreadCondattr*>(0x10), &clock) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadCondattrInit(&attr) == 0 && attr != nullptr);
     Require(scePthreadCondattrGetclock(&attr, &clock) == 0 && clock == Realtime);
     Require(scePthreadCondattrSetclock(&attr, Monotonic) == 0);
     Require(scePthreadCondattrGetclock(&attr, &clock) == 0 && clock == Monotonic);
+    Require(scePthreadCondattrGetclock(&attr, reinterpret_cast<KernelClockid*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     bool getclockThrew = false;
     try { scePthreadCondattrGetclock(&attr, nullptr); } catch (const std::invalid_argument&) { getclockThrew = true; }
     Require(getclockThrew);
@@ -849,6 +852,7 @@ void CheckAmmMapperCalls() {
     std::array<std::uint64_t, 8> param{};
     param.fill(0xAAAAAAAAAAAAAAAAull);
     Require(sceKernelMapperGetParam(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelMapperGetParam(reinterpret_cast<std::uint64_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     param[0] = 0x39;
     Require(sceKernelMapperGetParam(param.data()) == SCE_KERNEL_ERROR_EINVAL && param[0] == 0x39 && param[1] == 0xAAAAAAAAAAAAAAAAull);
     param[0] = 0x28;
@@ -952,55 +956,46 @@ void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
 }
 
 void CheckSettimeofday() {
+    constexpr int Fault = 14;
+    constexpr int Permission = 1;
     KernelTimezone zone{-1, -1};
-    Require(settimeofday_nid_postfix(nullptr, nullptr) == 0);
-    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
     const KernelTimezone west{60, 1};
-    const auto unreadableTime = reinterpret_cast<const KernelTimeval*>(1);
-    const auto unreadableZone = reinterpret_cast<const KernelTimezone*>(1);
-    Require(settimeofday_nid_postfix(unreadableTime, &west) == -1 && Error() == 14);
-    Require(settimeofday_nid_postfix(unreadableTime, unreadableZone) == -1 && Error() == 14);
-    Require(settimeofday_nid_postfix(nullptr, unreadableZone) == -1 && Error() == 14);
-    for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}}) {
-        Require(settimeofday_nid_postfix(&invalid, &west) == -1 && Error() == 22);
-        Require(settimeofday_nid_postfix(&invalid, unreadableZone) == -1 && Error() == 14);
-    }
-    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
     const KernelTimeval valid{1000000000, 0};
-    Require(settimeofday_nid_postfix(&valid, unreadableZone) == -1 && Error() == 14);
-    bool rejected = false;
-    try {
-        settimeofday_nid_postfix(&valid, &west);
-    } catch (const std::runtime_error& error) {
-        rejected = std::strstr(error.what(), "settimeofday: setting the time to 1000000000.000000") != nullptr;
+    Require(settimeofday_nid_postfix(nullptr, nullptr) == -1 && Error() == Permission);
+    for (const std::uintptr_t bad : {std::uintptr_t{1}, std::uintptr_t{0x10}}) {
+        const auto unreadableTime = reinterpret_cast<const KernelTimeval*>(bad);
+        const auto unreadableZone = reinterpret_cast<const KernelTimezone*>(bad);
+        Require(settimeofday_nid_postfix(unreadableTime, &west) == -1 && Error() == Fault);
+        Require(settimeofday_nid_postfix(unreadableTime, unreadableZone) == -1 && Error() == Fault);
+        Require(settimeofday_nid_postfix(nullptr, unreadableZone) == -1 && Error() == Fault);
+        Require(settimeofday_nid_postfix(&valid, unreadableZone) == -1 && Error() == Fault);
+        for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}})
+            Require(settimeofday_nid_postfix(&invalid, unreadableZone) == -1 && Error() == Fault);
     }
-    Require(rejected);
-    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
-    Require(settimeofday_nid_postfix(nullptr, &west) == 0);
+    for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}}) {
+        Require(settimeofday_nid_postfix(&invalid, &west) == -1 && Error() == Permission);
+        Require(settimeofday_nid_postfix(&invalid, nullptr) == -1 && Error() == Permission);
+    }
+    Require(settimeofday_nid_postfix(&valid, &west) == -1 && Error() == Permission);
+    Require(settimeofday_nid_postfix(&valid, nullptr) == -1 && Error() == Permission);
+    Require(settimeofday_nid_postfix(nullptr, &west) == -1 && Error() == Permission);
     KernelTimeval now{};
-    Require(gettimeofday_nid_postfix(&now, &zone) == 0 && zone.tz_minuteswest == 60 && zone.tz_dsttime == 1 && now.tv_sec > 0);
-    const KernelTimezone zero{0, 0};
-    Require(settimeofday_nid_postfix(nullptr, &zero) == 0);
-    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+    Require(gettimeofday_nid_postfix(&now, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0 && now.tv_sec > 0 && now.tv_sec != valid.tv_sec);
 }
 
 void CheckSceKernelSettimeofday() {
     constexpr int KernelFault = static_cast<int>(0x8002000Eu);
-    constexpr int KernelInvalid = static_cast<int>(0x80020016u);
+    constexpr int KernelPermission = static_cast<int>(0x80020001u);
     KernelTimezone zone{-1, -1};
-    Require(sceKernelSettimeofday(nullptr, nullptr) == 0);
     const KernelTimezone west{60, 1};
-    const auto unreadableTime = reinterpret_cast<const KernelTimeval*>(1);
-    const auto unreadableZone = reinterpret_cast<const KernelTimezone*>(1);
-    Require(sceKernelSettimeofday(unreadableTime, &west) == KernelFault);
-    Require(sceKernelSettimeofday(nullptr, unreadableZone) == KernelFault);
+    const KernelTimeval valid{1000000000, 0};
+    Require(sceKernelSettimeofday(nullptr, nullptr) == KernelPermission);
+    Require(sceKernelSettimeofday(reinterpret_cast<const KernelTimeval*>(1), &west) == KernelFault);
+    Require(sceKernelSettimeofday(nullptr, reinterpret_cast<const KernelTimezone*>(1)) == KernelFault);
     for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}})
-        Require(sceKernelSettimeofday(&invalid, &west) == KernelInvalid);
-    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
-    Require(sceKernelSettimeofday(nullptr, &west) == 0);
-    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 60 && zone.tz_dsttime == 1);
-    const KernelTimezone zero{0, 0};
-    Require(sceKernelSettimeofday(nullptr, &zero) == 0);
+        Require(sceKernelSettimeofday(&invalid, &west) == KernelPermission);
+    Require(sceKernelSettimeofday(&valid, &west) == KernelPermission);
+    Require(sceKernelSettimeofday(nullptr, &west) == KernelPermission);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
 }
 
@@ -1085,6 +1080,17 @@ void DirectoryRenameTests(const std::filesystem::path& parent) {
     Require(std::filesystem::remove(original) && std::filesystem::remove(moved) && std::filesystem::remove(fixture));
 }
 
+static void CheckKqueueFromEqueue() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "kqueue from equeue") == 0);
+    int kq = -1;
+    Require(sceKernelGetKqueueFromEqueue(eq, &kq) == 0 && kq == static_cast<int>(static_cast<std::uint32_t>(eq)));
+    const KernelEvent change{9, -11, 0x0001, 0, 0, nullptr};
+    Require(kevent_nid_postfix(kq, &change, 1, nullptr, 0, nullptr) == 0);
+    Require(sceKernelGetKqueueFromEqueue(eq, nullptr) == static_cast<int>(0x80020016));
+    Require(sceKernelDeleteEqueue(eq) == 0);
+}
+
 static void CheckProcessQueries() {
     KernelTitleWorkaround workaround{1, 0, {(1ull << 3) | (1ull << 0x39) | (1ull << 63), (1ull << 0) | (1ull << 0x3F)}};
     for (auto query : {sceKernelTitleWorkaroundIsEnabled, sceKernelTitleWorkdaroundIsEnabled}) {
@@ -1105,6 +1111,23 @@ static void CheckProcessQueries() {
         Require(query(&workaround, 65, &enabled) == 0 && enabled == 0);
         Require(query(&workaround, 0x7E, &enabled) == 0 && enabled == 0);
         Require(query(&workaround, 0x7F, &enabled) == 0 && enabled == 1);
+    }
+    for (const std::uint64_t selector : {std::uint64_t{0}, std::uint64_t{0x28}}) {
+        std::int32_t enabled = -1;
+        Require(sceKernelTitleWorkaroundIsEnabled2(nullptr, selector, 3, &enabled) == static_cast<int>(0x8002000E) && enabled == -1);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 3, nullptr) == static_cast<int>(0x8002000E));
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 0x80, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 0xFFFFFFFFu, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 3, &enabled) == 0 && enabled == 1);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 4, &enabled) == 0 && enabled == 0);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 64, &enabled) == 0 && enabled == 1);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 0x7F, &enabled) == 0 && enabled == 1);
+    }
+    for (const std::uint64_t selector : {std::uint64_t{0x29}, std::uint64_t{0x2A}, ~std::uint64_t{0}}) {
+        std::int32_t enabled = -1;
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 3, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+        Require(sceKernelTitleWorkaroundIsEnabled2(nullptr, selector, 3, &enabled) == static_cast<int>(0x8002000E));
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 3, nullptr) == static_cast<int>(0x8002000E));
     }
     Require(sceKernelGetProcessType(getpid_nid_postfix()) == 0);
     Require(sceKernelGetProcessType(-1) == 0 && sceKernelGetProcessType(0) == 0);
@@ -1228,6 +1251,47 @@ void CheckRawGetcwd() {
     Require(__getcwd_nid_postfix(nullptr, buffer.size()) == -1 && Error() == 14);
 }
 
+static void CheckGetfsstat() {
+    constexpr std::int64_t Size = sizeof(KernelStatfs);
+    constexpr int MntWait = 1;
+    constexpr int MntNowait = 2;
+    KernelStatfs slots[2];
+    auto Fill = [&] { std::memset(slots, 0x5a, sizeof(slots)); };
+    auto Untouched = [&](int index) {
+        const auto* bytes = reinterpret_cast<const unsigned char*>(&slots[index]);
+        for (std::size_t i = 0; i < sizeof(KernelStatfs); ++i) if (bytes[i] != 0x5a) return false;
+        return true;
+    };
+    for (const int mode : {0, 3, -1, 4}) {
+        Fill();
+        Require(getfsstat_nid_postfix(slots, Size, mode) == -1 && Error() == 22 && Untouched(0));
+    }
+    Require(getfsstat_nid_postfix(slots, -1, MntWait) == -1 && Error() == 22);
+    Require(getfsstat_nid_postfix(nullptr, -Size, MntNowait) == -1 && Error() == 22);
+    Fill();
+    Require(getfsstat_nid_postfix(slots, 0, MntWait) == 1 && Untouched(0));
+    Require(getfsstat_nid_postfix(nullptr, 0, MntNowait) == 1);
+    Require(getfsstat_nid_postfix(slots, Size - 1, MntWait) == 0 && Untouched(0));
+    Require(getfsstat_nid_postfix(slots, 1, MntNowait) == 0 && Untouched(0));
+    Require(getfsstat_nid_postfix(nullptr, Size - 1, MntWait) == 1);
+    Require(getfsstat_nid_postfix(nullptr, Size, MntWait) == 1);
+    Require(getfsstat_nid_postfix(nullptr, INT64_C(0x100000000) + Size, MntNowait) == 1);
+    Require(getfsstat_nid_postfix(nullptr, INT64_C(-0x100000000) + Size, MntNowait) == -1 && Error() == 22);
+    Require(getfsstat_nid_postfix(reinterpret_cast<KernelStatfs*>(0x10), Size, MntNowait) == -1 && Error() == 14);
+    for (const int mode : {MntWait, MntNowait}) {
+        Fill();
+        Require(getfsstat_nid_postfix(slots, 2 * Size, mode) == 1);
+        Require(Untouched(1));
+        Require(slots[0].f_version == 0x20030518 && slots[0].f_bsize != 0 && slots[0].f_blocks != 0 && slots[0].f_namemax >= 255);
+        const int top = open_nid_postfix("/", 0, 0);
+        Require(top >= 0);
+        KernelStatfs expected{};
+        Require(_fstatfs_nid_postfix(top, &expected) == 0);
+        Require(close_nid_postfix(top) == 0);
+        Require(slots[0].f_bsize == expected.f_bsize && slots[0].f_blocks == expected.f_blocks && slots[0].f_flags == expected.f_flags);
+    }
+}
+
 int main() {
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
@@ -1237,6 +1301,7 @@ int main() {
     Require(sceKernelGetPhysPageSize() == 16384);
     CheckProcessQueries();
     CheckRawGetcwd();
+    CheckKqueueFromEqueue();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
     Require(profil_nid_postfix(nullptr, 0, 0, (1u << 16) + 1) == -1 && Error() == 22);
     Require(profil_nid_postfix(nullptr, 0, 0, 0xFFFFFFFFu) == -1 && Error() == 22);
@@ -1313,6 +1378,7 @@ int main() {
     Require(fstat_nid_postfix(-1, &viaFstat) == -1 && Error() == 9);
     Require(fpathconf_nid_postfix(descriptor, 4) == -1 && Error() == 9);
     Require(_fpathconf_nid_postfix(descriptor, 4) == -1 && Error() == 9);
+    CheckGetfsstat();
     const int dirDescriptor = open_nid_postfix(root.generic_string().c_str(), 0, 0);
     Require(dirDescriptor >= 0);
     CheckDescriptorPathconf(fpathconf_nid_postfix, dirDescriptor);
@@ -1488,6 +1554,10 @@ int main() {
     Require(socketDescriptor >= 0);
     Require(fchdir_nid_postfix(socketDescriptor) == -1 && Error() == 22);
     Require(close_nid_postfix(socketDescriptor) == 0);
+    const int fchdirKqueueDescriptor = kqueue_nid_postfix();
+    Require(fchdirKqueueDescriptor >= 0);
+    Require(fchdir_nid_postfix(fchdirKqueueDescriptor) == -1 && Error() == 22);
+    Require(close_nid_postfix(fchdirKqueueDescriptor) == 0);
     Require(fchdir_nid_postfix(directory) == 0);
     char directoryPath[1024];
     Require(getcwd_nid_postfix(directoryPath, sizeof(directoryPath)) == directoryPath);
@@ -1595,6 +1665,27 @@ int main() {
     lookup.name = "symbol";
     for (const int missing : {-2147483647 - 1, 1, 2, 3, 100, 2147483647}) {
         Require(kldsym_nid_postfix(missing, 1, &lookup) == -1 && Error() == 2);
+    }
+    Require(swapon_nid_postfix(nullptr) == -1 && Error() == 14);
+    Require(swapon_nid_postfix(reinterpret_cast<const char*>(0x10)) == -1 && Error() == 14);
+    Require(swapon_nid_postfix("") == -1 && Error() == 2);
+    Require(swapon_nid_postfix((root / "missing").string().c_str()) == -1 && Error() == 2);
+    Require(swapon_nid_postfix((root / "file.txt" / "child").string().c_str()) == -1 && Error() == 20);
+    Require(swapon_nid_postfix((root / std::string(256, 'n')).string().c_str()) == -1 && Error() == 63);
+    Require(swapon_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
+    Require(swapon_nid_postfix(file.c_str()) == -1 && Error() == 15);
+    Require(swapon_nid_postfix(root.string().c_str()) == -1 && Error() == 15);
+    const auto swapFileLink = (root / "swap-file.link").string();
+    const auto swapDirectoryLink = (root / "swap-directory.link").string();
+    const auto swapDangling = (root / "swap-dangling.link").string();
+    if (symlink_nid_postfix("file.txt", swapFileLink.c_str()) == 0) {
+        Require(symlink_nid_postfix(".", swapDirectoryLink.c_str()) == 0);
+        Require(symlink_nid_postfix("swap-missing", swapDangling.c_str()) == 0);
+        Require(swapon_nid_postfix(swapFileLink.c_str()) == -1 && Error() == 15);
+        Require(swapon_nid_postfix(swapDirectoryLink.c_str()) == -1 && Error() == 15);
+        Require(swapon_nid_postfix(swapDangling.c_str()) == -1 && Error() == 2);
+        Require(unlink_nid_postfix(swapFileLink.c_str()) == 0 && unlink_nid_postfix(swapDangling.c_str()) == 0);
+        Require(std::filesystem::remove(swapDirectoryLink));
     }
     const std::string throughFile = (root / "file.txt" / "child").string();
     Require(pathconf_nid_postfix(throughFile.c_str(), 4) == -1 && Error() == 20);
@@ -2003,6 +2094,26 @@ int main() {
         Require(createHostLink(upDirectory, L"prefix-up\\deep", SYMBOLIC_LINK_FLAG_DIRECTORY) && createHostLink(upFile, L"..\\f2\\x", 0));
         const auto belowUp = upDirectory + "/pa/child";
         Require(stat_nid_postfix(belowUp.c_str(), &prefixStatus) == -1 && Error() == 20);
+        const std::array<std::tuple<const char*, const wchar_t*, DWORD, int>, 7> directoryPrefixes{{
+            {"prefix-directory-file", L"file.txt", SYMBOLIC_LINK_FLAG_DIRECTORY, 20},
+            {"prefix-directory-through-file", L"file.txt\\sub", SYMBOLIC_LINK_FLAG_DIRECTORY, 20},
+            {"prefix-directory-chain", L"prefix-directory-file", SYMBOLIC_LINK_FLAG_DIRECTORY, 20},
+            {"prefix-directory-chain-through-file", L"prefix-directory-through-file", SYMBOLIC_LINK_FLAG_DIRECTORY, 20},
+            {"prefix-directory-missing", L"prefix-missing", SYMBOLIC_LINK_FLAG_DIRECTORY, 2},
+            {"prefix-file-control", L"file.txt", 0, 20},
+            {"prefix-directory-control", L"prefix-up\\deep", SYMBOLIC_LINK_FLAG_DIRECTORY, 2}
+        }};
+        for (const auto& [name, target, flags, expected] : directoryPrefixes) {
+            Require(createHostLink((root / name).string(), target, flags));
+        }
+        Require(access_nid_postfix((root / "prefix-file-control").string().c_str(), 0) == 0);
+        Require(access_nid_postfix((root / "prefix-directory-control").string().c_str(), 0) == 0);
+        for (const auto& [name, target, flags, expected] : directoryPrefixes) {
+            Require(access_nid_postfix((root / name / "child").string().c_str(), 0) == -1 && Error() == expected);
+        }
+        for (const auto& [name, target, flags, expected] : directoryPrefixes) {
+            Require(RemoveSymlink((root / name).string()));
+        }
         Require(RemoveSymlink(upFile) && RemoveSymlink(upDirectory));
 #endif
         const auto prefixChainEnd = (root / "prefix-chain-end").string();

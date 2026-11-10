@@ -1,9 +1,11 @@
 #include "prx/libSceCdlgPlayerReview/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <atomic>
 #include <cstdint>
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <cstdlib>
+#include <thread>
 
 namespace {
 
@@ -16,7 +18,30 @@ constexpr int COMMON_DIALOG_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80B8000A
 constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
 constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
 
+constexpr int RACE_ROUNDS = 200000;
+
 void Require(bool value) { if (!value) std::abort(); }
+
+void RequireTerminateWinsOverOpen(const PlayerReviewDialogParam& param) {
+    std::atomic<int> round{0};
+    std::atomic<int> done{0};
+    std::thread terminator([&] {
+        for (int i = 1; i <= RACE_ROUNDS; ++i) {
+            while (round.load() != i) std::this_thread::yield();
+            scePlayerReviewDialogTerminate();
+            done.fetch_add(1);
+        }
+    });
+    for (int i = 1; i <= RACE_ROUNDS; ++i) {
+        Require(scePlayerReviewDialogInitialize() == 0);
+        round.store(i);
+        const int opened = scePlayerReviewDialogOpen(&param);
+        Require(opened == 0 || opened == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+        while (done.load() != i) std::this_thread::yield();
+        Require(scePlayerReviewDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
+    }
+    terminator.join();
+}
 
 }
 
@@ -119,5 +144,7 @@ int main() {
     Require(scePlayerReviewDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     Require(scePlayerReviewDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
     Require(scePlayerReviewDialogUpdateStatus() == COMMON_DIALOG_STATUS_NONE);
+    param.mode = 0;
+    RequireTerminateWinsOverOpen(param);
     Require(sceUserServiceTerminate() == 0);
 }

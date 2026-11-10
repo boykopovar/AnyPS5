@@ -30,6 +30,7 @@ bool AudioOut2TraceEnabled();
 double AudioOut2TraceSeconds();
 bool AudioOut2IsInitialized_nid_no_patch();
 void AudioOut2MarkInitialized_nid_no_patch();
+bool AudioOut2TryInitialize_nid_no_patch();
 
 #define AUDIOOUT2_TRACE(...) \
     do { \
@@ -136,6 +137,7 @@ struct AudioOut2Context {
 };
 
 AudioOut2Context* AudioOut2FindContext(AudioOut2ContextHandle ctx);
+void AudioOut2DestroyAllContexts();
 
 // Mixes every port of the context that carries PCM data into out (stereo float, frames frames), summing
 // onto the zeroed buffer. Returns the number of ports mixed.

@@ -5,14 +5,20 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string_view>
 #include "SceTypes.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
+#include "prx/libSceAvPlayer/include/LogCallback.hpp"
+#include "prx/libc/include/WindowsFormatting.hpp"
 
 using namespace AvPlayer;
 
 namespace {
+
+void* LogCallback = nullptr;
+void* LogUserData = nullptr;
 
 Player* ToPlayer(AvPlayerInternal* h) {
     return static_cast<Player*>(h);
@@ -25,6 +31,30 @@ std::uint32_t VideoBufferCount(std::int32_t requested) {
 constexpr std::size_t Ps5InitDataExSize = 0x230;
 constexpr std::size_t Ps5AutoStartOffset = 0x74;
 constexpr std::size_t Ps5VideoFrameBuffersOffset = 0x228;
+
+}
+
+extern "C" {
+
+void SceAvPlayerSetLogCallbackState(void* callback, void* user_data) {
+    LogCallback = callback;
+    LogUserData = user_data;
+}
+
+int SceAvPlayerWriteLog(const char* format, VaList* arguments) {
+    if (LogCallback) {
+        return reinterpret_cast<SceAvPlayerLogCallback>(LogCallback)(LogUserData, format, arguments);
+    }
+#ifdef _WIN32
+    return LibcDetail::PrintWindows(format, arguments);
+#else
+    std::va_list copy;
+    va_copy(copy, *reinterpret_cast<std::va_list*>(arguments));
+    const int result = std::vprintf(format, copy);
+    va_end(copy);
+    return result;
+#endif
+}
 
 }
 
@@ -156,8 +186,7 @@ int APS5_VABI sceAvPlayerSetAvailableBandwidth(AvPlayerInternal* h, uint32_t sta
 }
 
 int APS5_VABI sceAvPlayerSetLogCallback(void* callback, void* user_data) {
-    (void)callback;
-    (void)user_data;
+    SceAvPlayerSetLogCallbackState(callback, user_data);
     return SCE_OK;
 }
 

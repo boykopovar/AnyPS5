@@ -37,6 +37,7 @@ int main() {
     PlayerSelectionDialogResult result{-1, 99, nullptr, 77, 55};
 
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
+    Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
     Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogParamInitialize(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogParamInitialize(&param) == 0);
@@ -69,6 +70,8 @@ int main() {
     Require(scePlayerSelectionDialogInitialize() == kErrAlreadyInitialized);
     Require(scePlayerSelectionDialogGetStatus() == kStatusInitialized);
     Require(scePlayerSelectionDialogUpdateStatus() == kStatusInitialized);
+    Require(scePlayerSelectionDialogClose() == kErrNotRunning);
+    Require(scePlayerSelectionDialogGetStatus() == kStatusInitialized);
 
     Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogGetResult(&result) == kErrNotFinished);
@@ -223,6 +226,7 @@ int main() {
     Require(scePlayerSelectionDialogClose() == kErrNotRunning);
     Require(scePlayerSelectionDialogTerminate() == 0);
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
+    Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
     Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogOpen(&param) == kErrNotInitialized);
     Require(scePlayerSelectionDialogClose() == kErrNotInitialized);
@@ -234,9 +238,13 @@ int main() {
     Require(scePlayerSelectionDialogInitialize() == 0);
     Require(scePlayerSelectionDialogInitialize() == kErrAlreadyInitialized);
     Require(scePlayerSelectionDialogGetStatus() == kStatusInitialized);
+    Require(scePlayerSelectionDialogClose() == kErrNotRunning);
+    Require(scePlayerSelectionDialogGetStatus() == kStatusInitialized);
     Require(scePlayerSelectionDialogOpen(&param) == 0);
     Require(scePlayerSelectionDialogGetStatus() == kStatusFinished);
     Require(scePlayerSelectionDialogGetResult(&result) == kResultUserCanceled);
     Require(scePlayerSelectionDialogTerminate() == 0);
+    Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
+    Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
     Require(sceUserServiceTerminate() == 0);
 }
