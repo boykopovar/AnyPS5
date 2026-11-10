@@ -1044,6 +1044,10 @@ public:
         capturePublication();
     }
 
+    bool GuestHoldsSamples() const {
+        return target.samples != 1u && uniformPlaneTarget(target) && samplingActive && sampling.refusal.empty() && !hostWritten->load(std::memory_order_acquire);
+    }
+
     void PublishToGuest();
 
     std::uint64_t written = ++depthWrites;
@@ -3852,6 +3856,7 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     const bool stencil = base.stencilAddress != 0 && resource.baseAddress == base.stencilAddress;
     if (stencil && BytesPerElement(resource.format) != 1u) return nullptr;
     if (stencil && found->StencilMirrorable()) found->SyncStencilFromMemory(stencilResource(base));
+    if (base.samples != 1u && resource.dimension != TextureDimension::k2DMsaa && found->GuestHoldsSamples()) return nullptr;
     if (base.samples != 1u || resource.dimension == TextureDimension::k2DMsaa) {
         Require(base.samples > 1u, "multisample reader overlaps a single-sample depth attachment");
         auto* recorder = RecorderFor(context);
