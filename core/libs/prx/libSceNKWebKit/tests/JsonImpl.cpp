@@ -301,7 +301,21 @@ static void TestWriteJSON() {
     Require(Serialize(array.Get()) == "[true,7,\"a\\\"b\\n\"]");
     auto emptyArray = _ZN3WTF8JSONImpl5Array6createEv();
     Require(Serialize(emptyArray.Get()) == "[]");
+}
 
+static void TestWriteJSONEscapesLikeUpstream() {
+    String markup = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("<a>\x01\t\x7f\xe9"), 7U);
+    auto markupValue = _ZN3WTF8JSONImpl5Value6createERKNS_6StringE(markup);
+    Require(Serialize(markupValue.Get()) == "\"\\u003Ca\\u003E\\u0001\\t\\u007F\\u00E9\"");
+
+    const char16_t wide[] = {u'x', 0x20AC, 0xD83D, 0xDE00};
+    String wideString = _ZN3WTF10StringImpl6createEPKDsj(wide, 4U);
+    auto wideValue = _ZN3WTF8JSONImpl5Value6createERKNS_6StringE(wideString);
+    Require(Serialize(wideValue.Get()) == "\"x\\u20AC\\uD83D\\uDE00\"");
+
+    String nullString;
+    auto nullStringValue = _ZN3WTF8JSONImpl5Value6createERKNS_6StringE(nullString);
+    Require(Serialize(nullStringValue.Get()) == "\"\"");
 }
 
 static void TestArrayConstructorsAndDestructors() {
@@ -391,6 +405,7 @@ int main() {
     TestValueConstructorsAndDestructors();
     TestArrayCreateAndPush();
     TestWriteJSON();
+    TestWriteJSONEscapesLikeUpstream();
     TestArrayConstructorsAndDestructors();
     TestNullPointerExceptions();
     return 0;
