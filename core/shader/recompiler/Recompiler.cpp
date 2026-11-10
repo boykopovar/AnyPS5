@@ -508,6 +508,41 @@ HeapTemplateLru::Name HeapTemplateName(const SourceEntry& source, std::uint64_t 
     return {source.id, key, entry.result->heapTemplateId};
 }
 
+std::atomic<std::uint64_t>& HeapTemplateErasures() {
+    static std::atomic<std::uint64_t> erasures{0};
+    return erasures;
+}
+
+constexpr std::size_t HeapTemplateFrontEntries = 1024;
+constexpr std::uint64_t HeapTemplateTouchInterval = 256;
+
+struct HeapTemplateFront {
+    struct Entry {
+        std::uint64_t source = 0;
+        std::uint64_t key = 0;
+        std::uint64_t touched = 0;
+        std::shared_ptr<const HeapTemplate> found;
+    };
+    std::array<Entry, HeapTemplateFrontEntries> entries{};
+    std::uint64_t lookups = 0;
+    std::uint64_t erasures = 0;
+
+    void Follow(std::uint64_t current) {
+        if (current == erasures) return;
+        for (auto& entry : entries) entry.found.reset();
+        erasures = current;
+    }
+
+    Entry& At(std::uint64_t source, std::uint64_t key) {
+        return entries[((key ^ (source * 0x9e3779b97f4a7c15ull)) >> 17u) & (HeapTemplateFrontEntries - 1u)];
+    }
+};
+
+HeapTemplateFront& HeapTemplateFrontTable() {
+    struct FrontStorage {};
+    return HostThreadLocal<HeapTemplateFront, FrontStorage>();
+}
+
 void KeepHeapTemplate(const std::shared_ptr<SourceEntry>& source, std::uint64_t key, const HeapTemplate& entry) {
     auto& store = HeapTemplates();
     std::vector<HeapTemplateLru::Evicted> evicted;
@@ -526,6 +561,7 @@ void KeepHeapTemplate(const std::shared_ptr<SourceEntry>& source, std::uint64_t 
         ++erased;
     }
     if (erased == 0) return;
+    HeapTemplateErasures().fetch_add(1, std::memory_order_release);
     std::lock_guard lock(store.mutex);
     store.evicted += erased;
 }
@@ -2508,15 +2544,27 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
         if (perDrawBindings) HeapBindingWords(request, *variant, merged, *shared, words);
         CompleteHeapDataWords(*shared->result, words);
     };
+    auto& front = HeapTemplateFrontTable();
+    front.Follow(HeapTemplateErasures().load(std::memory_order_acquire));
+    auto& entry = front.At(source.id, key);
+    ++front.lookups;
     std::shared_ptr<const HeapTemplate> hit;
-    {
-        std::lock_guard lock(source.mutex);
-        const auto found = source.heapTemplates.find(key);
-        if (found != source.heapTemplates.end()) hit = found->second;
+    if (entry.found != nullptr && entry.source == source.id && entry.key == key) {
+        hit = entry.found;
+    } else {
+        {
+            std::lock_guard lock(source.mutex);
+            const auto found = source.heapTemplates.find(key);
+            if (found != source.heapTemplates.end()) hit = found->second;
+        }
+        if (hit != nullptr) entry = {source.id, key, 0, hit};
     }
     if (hit != nullptr) {
         complete(hit);
-        TouchHeapTemplate({source.id, key, hit->result->heapTemplateId});
+        if (front.lookups - entry.touched >= HeapTemplateTouchInterval || entry.touched == 0) {
+            entry.touched = front.lookups;
+            TouchHeapTemplate({source.id, key, hit->result->heapTemplateId});
+        }
         return hit->result;
     }
     UsedBindingPlan usedPlan;
@@ -2536,6 +2584,7 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
     }
     if (inserted) KeepHeapTemplate(source.shared_from_this(), key, *shared);
     else TouchHeapTemplate(HeapTemplateName(source, key, *shared));
+    entry = {source.id, key, front.lookups, shared};
     complete(shared);
     return shared->result;
 }
