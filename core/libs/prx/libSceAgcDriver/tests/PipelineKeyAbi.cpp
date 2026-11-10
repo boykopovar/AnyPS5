@@ -40,7 +40,7 @@ int PipelineKeyAbiSynthetic(bool clobbering) {
     PipelineKeyAbiObservation outer;
     PipelineKeyAbiNestedCall nested{clobbering ? PipelineKeyAbiClobbering : PipelineKeyAbiConforming, &inner};
     VkPipelineBinaryKeyKHR key{VK_STRUCTURE_TYPE_PIPELINE_BINARY_KEY_KHR};
-    PipelineKeyAbiProbe(PipelineKeyAbiNested, reinterpret_cast<VkDevice>(1), reinterpret_cast<const VkPipelineCreateInfoKHR*>(&nested), &key, &outer);
+    PipelineKeyAbiProbe(PipelineKeyAbiNested, reinterpret_cast<VkDevice>(1), reinterpret_cast<const VkPipelineCreateInfoKHR*>(&nested), &key, &outer, 0xa5a5a5a5a5a5a5a5ull);
     const auto changed = PipelineKeyAbiDifferences(inner);
     const auto callerChanged = PipelineKeyAbiDifferences(outer);
 #ifdef _WIN32
@@ -49,8 +49,10 @@ int PipelineKeyAbiSynthetic(bool clobbering) {
     constexpr unsigned registerCount = 6;
 #endif
     bool seeded = true;
+    bool distinct = true;
     for (unsigned i = 0; i < (registerCount == 18 ? 8u : 6u); ++i) {
         const auto value = inner.before.general[i];
+        distinct = distinct && value != outer.before.general[i];
         seeded = seeded && (value >> 32u) != 0 && static_cast<std::uint32_t>(value) != 0;
         for (unsigned j = 0; j < i; ++j) seeded = seeded && value != inner.before.general[j];
         if (clobbering) seeded = seeded && inner.after.general[i] == (value & 0xffffffff00000000ull);
@@ -59,12 +61,13 @@ int PipelineKeyAbiSynthetic(bool clobbering) {
     for (unsigned i = 0; i < inner.before.vector.size(); ++i) {
         for (unsigned half = 0; half < 2; ++half) {
             const auto value = inner.before.vector[i][half];
+            distinct = distinct && value != outer.before.vector[i][half];
             seeded = seeded && (value >> 32u) != 0 && static_cast<std::uint32_t>(value) != 0;
             if (clobbering) seeded = seeded && inner.after.vector[i][half] == std::numeric_limits<std::uint64_t>::max();
         }
     }
 #endif
-    const bool passed = seeded && inner.result == VK_SUCCESS && outer.result == VK_SUCCESS && key.keySize == 1 && key.key[0] == 0x5a && changed == (clobbering ? registerCount : 0) && callerChanged == 0;
-    std::printf("%s; compiler=%s; synthetic=%s; changed=%u; caller_changed=%u; %s\n", PipelineKeyAbiPlatform(), __VERSION__, clobbering ? "clobbering" : "conforming", changed, callerChanged, passed ? "PASS" : "FAIL");
+    const bool passed = seeded && distinct && inner.result == VK_SUCCESS && outer.result == VK_SUCCESS && key.keySize == 1 && key.key[0] == 0x5a && changed == (clobbering ? registerCount : 0) && callerChanged == 0;
+    std::printf("%s; compiler=%s; synthetic=%s; distinct_seeds=%u; changed=%u; caller_changed=%u; %s\n", PipelineKeyAbiPlatform(), __VERSION__, clobbering ? "clobbering" : "conforming", static_cast<unsigned>(distinct), changed, callerChanged, passed ? "PASS" : "FAIL");
     return passed ? 0 : 1;
 }

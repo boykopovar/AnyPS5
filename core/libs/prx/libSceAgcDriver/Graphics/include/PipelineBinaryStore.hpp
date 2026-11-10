@@ -17,6 +17,7 @@ enum class PipelineBinaryPolicy { Enabled, Disabled, DisabledByDriver };
 
 class PipelineBinaryStore {
 public:
+    static VkDriverId DriverIdentity(VkPhysicalDevice physical, std::uint32_t apiVersion, bool driverPropertiesExtension, PFN_vkGetPhysicalDeviceProperties2 query);
     static PipelineBinaryPolicy PolicyForDriver(VkDriverId driverId);
     static void ReportPolicy(PipelineBinaryPolicy policy);
     static bool LayersCompatible(VkPhysicalDevice physical, PFN_vkEnumerateDeviceLayerProperties enumerate);

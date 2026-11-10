@@ -92,55 +92,79 @@ PipelineKeyAbiProbe:
     movq %r9, 280(%rsp)
     movq 816(%rsp), %rax
     movq %rax, 288(%rsp)
+    movq 824(%rsp), %rax
+    movq %rax, 760(%rsp)
 #else
     movq %rdi, 256(%rsp)
     movq %rsi, 264(%rsp)
     movq %rdx, 272(%rsp)
     movq %rcx, 280(%rsp)
     movq %r8, 288(%rsp)
+    movq %r9, 760(%rsp)
 #endif
     leaq 304(%rsp), %rdi
     movl $56, %ecx
     xorl %eax, %eax
     rep stosq
+    movq 760(%rsp), %rax
     movabsq $0x1234567887654321, %rbx
+    xorq %rax, %rbx
     movq %rbx, 304(%rsp)
     movabsq $0x1335577988664422, %rbp
+    xorq %rax, %rbp
     movq %rbp, 312(%rsp)
     movabsq $0x1436587a89674523, %r12
+    xorq %rax, %r12
     movq %r12, 320(%rsp)
     movabsq $0x1537597b8a684624, %r13
+    xorq %rax, %r13
     movq %r13, 328(%rsp)
     movabsq $0x16385a7c8b694725, %r14
+    xorq %rax, %r14
     movq %r14, 336(%rsp)
     movabsq $0x17395b7d8c6a4826, %r15
+    xorq %rax, %r15
     movq %r15, 344(%rsp)
 #ifdef _WIN32
     movabsq $0x183a5c7e8d6b4927, %rdi
+    xorq %rax, %rdi
     movq %rdi, 352(%rsp)
     movabsq $0x193b5d7f8e6c4a28, %rsi
+    xorq %rax, %rsi
     movq %rsi, 360(%rsp)
 #endif
 #ifdef _WIN32
+    movq %rax, %xmm0
+    punpcklqdq %xmm0, %xmm0
     movdqu .Lseed0(%rip), %xmm6
+    pxor %xmm0, %xmm6
     movdqu %xmm6, 368(%rsp)
     movdqu .Lseed1(%rip), %xmm7
+    pxor %xmm0, %xmm7
     movdqu %xmm7, 384(%rsp)
     movdqu .Lseed2(%rip), %xmm8
+    pxor %xmm0, %xmm8
     movdqu %xmm8, 400(%rsp)
     movdqu .Lseed3(%rip), %xmm9
+    pxor %xmm0, %xmm9
     movdqu %xmm9, 416(%rsp)
     movdqu .Lseed4(%rip), %xmm10
+    pxor %xmm0, %xmm10
     movdqu %xmm10, 432(%rsp)
     movdqu .Lseed5(%rip), %xmm11
+    pxor %xmm0, %xmm11
     movdqu %xmm11, 448(%rsp)
     movdqu .Lseed6(%rip), %xmm12
+    pxor %xmm0, %xmm12
     movdqu %xmm12, 464(%rsp)
     movdqu .Lseed7(%rip), %xmm13
+    pxor %xmm0, %xmm13
     movdqu %xmm13, 480(%rsp)
     movdqu .Lseed8(%rip), %xmm14
+    pxor %xmm0, %xmm14
     movdqu %xmm14, 496(%rsp)
     movdqu .Lseed9(%rip), %xmm15
+    pxor %xmm0, %xmm15
     movdqu %xmm15, 512(%rsp)
     movq 264(%rsp), %rcx
     movq 272(%rsp), %rdx
@@ -340,8 +364,11 @@ PipelineKeyAbiNested:
     movq 0(%r10), %rcx
     movq 8(%r10), %rax
     movq %rax, 32(%rsp)
+    movq $0, 40(%rsp)
     call PipelineKeyAbiProbe
+    xorl %eax, %eax
     addq $56, %rsp
+.cfi_def_cfa_offset 8
 #else
     subq $8, %rsp
 .cfi_def_cfa_offset 16
@@ -351,11 +378,12 @@ PipelineKeyAbiNested:
     movq $2, %rdx
     movq 0(%r10), %rdi
     movq 8(%r10), %r8
+    xorl %r9d, %r9d
     call PipelineKeyAbiProbe
-    addq $8, %rsp
-#endif
-.cfi_def_cfa_offset 8
     xorl %eax, %eax
+    addq $8, %rsp
+.cfi_def_cfa_offset 8
+#endif
     ret
 .cfi_endproc
 #ifdef _WIN32

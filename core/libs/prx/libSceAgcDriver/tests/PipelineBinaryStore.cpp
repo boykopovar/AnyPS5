@@ -37,9 +37,39 @@ unsigned globalQueries = 0;
 unsigned pipelineQueries = 0;
 unsigned otherBinaryCalls = 0;
 unsigned binaryLookups = 0;
+unsigned driverQueries = 0;
+VkDriverId queriedDriver = VK_DRIVER_ID_NVIDIA_PROPRIETARY;
 
 void Check(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
+}
+
+VKAPI_ATTR void VKAPI_CALL QueryDriver(VkPhysicalDevice physical, VkPhysicalDeviceProperties2* properties) {
+    Check(physical == reinterpret_cast<VkPhysicalDevice>(1), "driver identity lost the physical device");
+    Check(properties->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, "driver identity used the wrong properties structure");
+    auto* driver = static_cast<VkPhysicalDeviceDriverProperties*>(properties->pNext);
+    Check(driver != nullptr && driver->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES && driver->pNext == nullptr, "driver identity used the wrong query chain");
+    ++driverQueries;
+    driver->driverID = queriedDriver;
+}
+
+void DriverIdentityTests() {
+    const auto physical = reinterpret_cast<VkPhysicalDevice>(1);
+    for (const auto version : {VK_API_VERSION_1_0, VK_API_VERSION_1_1, VK_API_VERSION_1_2, VK_API_VERSION_1_3}) {
+        for (const bool extension : {false, true}) {
+            driverQueries = 0;
+            const bool supported = extension || version >= VK_API_VERSION_1_2;
+            const auto identity = PipelineBinaryStore::DriverIdentity(physical, version, extension, QueryDriver);
+            Check(identity == (supported ? queriedDriver : VK_DRIVER_ID_MAX_ENUM), "wrong policy driver identity");
+            Check(driverQueries == (supported ? 1u : 0u), "unsupported driver properties were queried");
+            Check(PipelineBinaryStore::PolicyForDriver(identity) == (supported ? PipelineBinaryPolicy::DisabledByDriver : PipelineBinaryPolicy::Enabled), "discovered identity did not reach the policy");
+        }
+    }
+    queriedDriver = VK_DRIVER_ID_MESA_NVK;
+    Check(PipelineBinaryStore::PolicyForDriver(PipelineBinaryStore::DriverIdentity(physical, VK_API_VERSION_1_2, false, QueryDriver)) == PipelineBinaryPolicy::Enabled, "core-only NVK identity was gated");
+    Check(PipelineBinaryStore::DriverIdentity(physical, VK_API_VERSION_1_2, false, nullptr) == VK_DRIVER_ID_MAX_ENUM, "missing properties query invented an identity");
+    Check(globalQueries == 0 && pipelineQueries == 0 && otherBinaryCalls == 0 && binaryLookups == 0, "identity discovery reached the binary extension");
+    std::printf("PASS driver identity: extension/core-only/unknown; no binary calls\n");
 }
 
 std::vector<VkLayerProperties> activeLayers;
@@ -251,6 +281,10 @@ int main(int argc, char** argv) try {
     VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     info.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, reinterpret_cast<VkShaderModule>(1), "main", nullptr};
     info.layout = reinterpret_cast<VkPipelineLayout>(1);
+    if (argc > 1 && std::string_view(argv[1]) == "--driver-identity") {
+        DriverIdentityTests();
+        return 0;
+    }
     if (argc > 1 && std::string_view(argv[1]).starts_with("--driver-")) {
         const std::string_view mode = argv[1];
         properties.vendorID = 0x10de;

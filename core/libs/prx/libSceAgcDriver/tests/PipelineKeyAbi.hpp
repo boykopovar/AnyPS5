@@ -30,7 +30,7 @@ static_assert(offsetof(VkPipelineBinaryKeyKHR, keySize) == 16);
 static_assert(offsetof(VkPipelineBinaryKeyKHR, key) == 20);
 static_assert(offsetof(PipelineKeyAbiNestedCall, observation) == 8);
 
-extern "C" void PipelineKeyAbiProbe(PFN_vkGetPipelineKeyKHR function, VkDevice device, const VkPipelineCreateInfoKHR* info, VkPipelineBinaryKeyKHR* key, PipelineKeyAbiObservation* observation);
+extern "C" void PipelineKeyAbiProbe(PFN_vkGetPipelineKeyKHR function, VkDevice device, const VkPipelineCreateInfoKHR* info, VkPipelineBinaryKeyKHR* key, PipelineKeyAbiObservation* observation, std::uint64_t seed = 0);
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL PipelineKeyAbiConforming(VkDevice device, const VkPipelineCreateInfoKHR* info, VkPipelineBinaryKeyKHR* key);
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL PipelineKeyAbiClobbering(VkDevice device, const VkPipelineCreateInfoKHR* info, VkPipelineBinaryKeyKHR* key);
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL PipelineKeyAbiNested(VkDevice device, const VkPipelineCreateInfoKHR* info, VkPipelineBinaryKeyKHR* key);

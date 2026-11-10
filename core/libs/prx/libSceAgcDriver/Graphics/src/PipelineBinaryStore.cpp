@@ -91,6 +91,15 @@ struct BinaryHandles {
 
 }
 
+VkDriverId PipelineBinaryStore::DriverIdentity(VkPhysicalDevice physical, std::uint32_t apiVersion, bool driverPropertiesExtension, PFN_vkGetPhysicalDeviceProperties2 query) {
+    if ((!driverPropertiesExtension && apiVersion < VK_API_VERSION_1_2) || query == nullptr) return VK_DRIVER_ID_MAX_ENUM;
+    VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+    driver.driverID = VK_DRIVER_ID_MAX_ENUM;
+    VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
+    query(physical, &properties);
+    return driver.driverID;
+}
+
 PipelineBinaryPolicy PipelineBinaryStore::PolicyForDriver(VkDriverId driverId) {
     if (std::getenv("APS5_NO_PIPELINE_BINARIES") != nullptr) return PipelineBinaryPolicy::Disabled;
     const auto* unsafe = std::getenv("APS5_UNSAFE_PIPELINE_BINARIES");
