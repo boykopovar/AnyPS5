@@ -322,7 +322,8 @@ void TestDeviceStream() {
     device.releases.clear();
     stream.pos = 6;
     Require(api.EnterFrame(&stream, 4) == InvalidStreamOperation, "short frame read fails");
-    Require(device.releases.size() == 1 && !stream.base && !stream.cursor && stream.limit == At(4) && stream.pos == 8, "short frame read releases the block");
+    Require(device.releases.size() == 1 && !stream.base && !stream.cursor && !stream.limit && stream.pos == 8, "short frame read releases the block");
+    Require(api.GetULong(&stream) == 0 && !stream.cursor && !stream.limit, "getter after a short frame read reads nothing");
     stream.memory = nullptr;
     device.calls.clear();
     Require(api.EnterFrame(&stream, 0) == 0 && !stream.base && !stream.cursor && !stream.limit, "empty device frame allocates nothing");

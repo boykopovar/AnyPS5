@@ -15,6 +15,9 @@ constexpr int SCE_REG_MGR_ERROR_INVALID_PARAM = static_cast<int>(0x80820001);
 constexpr int SCE_REG_MGR_ERROR_NOT_FOUND = static_cast<int>(0x80820002);
 constexpr int SCE_REG_MGR_ERROR_BUFFER_TOO_SMALL = static_cast<int>(0x80820004);
 constexpr int SCE_REG_MGR_ERROR_INVALID_TYPE = static_cast<int>(0x80820006);
+constexpr int SCE_REG_MGR_NONSYS_ERROR_INVALID_PARAM = static_cast<int>(0x800D0202);
+constexpr int SCE_REG_MGR_NONSYS_ERROR_BUFFER_TOO_BIG = static_cast<int>(0x800D0208);
+constexpr std::size_t SCE_REG_MGR_NONSYS_MAX_SIZE = 0x800;
 
 enum EntryType {
     TypeInt = 0,
@@ -141,16 +144,14 @@ int APS5_VABI sceRegMgrSetStr(int32_t optionId, const char* inStirng, std::size_
     if (stringLength == 0) NotImplemented_nid_no_patch(__func__);
     return gStore.setStr(static_cast<std::uint32_t>(optionId), inStirng, stringLength);
 }
-std::int32_t APS5_VABI sceRegMgrNonSysGetInt(std::int64_t key, std::int32_t unk, std::int32_t* data) {
-    (void)key;
-    (void)unk;
-    (void)data;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI sceRegMgrNonSysGetInt(std::int64_t key, std::int32_t type, std::int32_t* data) {
+    (void)type;
+    if (data == nullptr) return SCE_REG_MGR_NONSYS_ERROR_INVALID_PARAM;
+    return gStore.getInt(key, data);
 }
 
 int APS5_VABI sceRegMgrCheckError(void) {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceRegMgrCheckIntVal(void) {
@@ -289,8 +290,7 @@ int APS5_VABI sceRegMgrCntSetInitReinst(void) {
 }
 
 int APS5_VABI sceRegMgrIsInitOK(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 1;
 }
 
 int APS5_VABI sceRegMgrGetInitError(void) {
@@ -304,33 +304,42 @@ int APS5_VABI sceRegMgrRecoverRegNvs(void) {
 }
 
 int APS5_VABI sceRegMgrNonSysCheckError(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceRegMgrNonSysGetBin(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceRegMgrNonSysGetBin(std::int64_t key, std::int32_t type, void* data, std::size_t size) {
+    (void)type;
+    if (data == nullptr) return SCE_REG_MGR_NONSYS_ERROR_INVALID_PARAM;
+    if (size > SCE_REG_MGR_NONSYS_MAX_SIZE) return SCE_REG_MGR_NONSYS_ERROR_BUFFER_TOO_BIG;
+    if (size == 0) return SCE_REG_MGR_ERROR_BUFFER_TOO_SMALL;
+    return gStore.getBin(key, data, static_cast<int>(size));
 }
 
-int APS5_VABI sceRegMgrNonSysGetStr(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceRegMgrNonSysGetStr(std::int64_t key, std::int32_t type, char* data, std::size_t size) {
+    (void)type;
+    if (data == nullptr) return SCE_REG_MGR_NONSYS_ERROR_INVALID_PARAM;
+    if (size > SCE_REG_MGR_NONSYS_MAX_SIZE) return SCE_REG_MGR_NONSYS_ERROR_BUFFER_TOO_BIG;
+    if (size == 0) return SCE_REG_MGR_ERROR_BUFFER_TOO_SMALL;
+    return gStore.getStr(key, data, static_cast<int>(size));
 }
 
-int APS5_VABI sceRegMgrNonSysSetBin(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceRegMgrNonSysSetBin(std::int64_t key, std::int32_t type, const void* data, std::size_t size) {
+    (void)type;
+    if (data == nullptr) return SCE_REG_MGR_NONSYS_ERROR_INVALID_PARAM;
+    if (size > SCE_REG_MGR_NONSYS_MAX_SIZE) return SCE_REG_MGR_NONSYS_ERROR_BUFFER_TOO_BIG;
+    return gStore.setBin(key, data, size);
 }
 
-int APS5_VABI sceRegMgrNonSysSetInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceRegMgrNonSysSetInt(std::int64_t key, std::int32_t type, std::int32_t value) {
+    (void)type;
+    return gStore.setInt(key, value);
 }
 
-int APS5_VABI sceRegMgrNonSysSetStr(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceRegMgrNonSysSetStr(std::int64_t key, std::int32_t type, const char* data, std::size_t size) {
+    (void)type;
+    if (data == nullptr) return SCE_REG_MGR_NONSYS_ERROR_INVALID_PARAM;
+    if (size > SCE_REG_MGR_NONSYS_MAX_SIZE) return SCE_REG_MGR_NONSYS_ERROR_BUFFER_TOO_BIG;
+    return gStore.setStr(key, data, size);
 }
 
 int APS5_VABI sceRegMgrGetVersionForPS4(void) {
