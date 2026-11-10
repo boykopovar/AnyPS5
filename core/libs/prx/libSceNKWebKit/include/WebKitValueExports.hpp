@@ -215,6 +215,8 @@ std::uint16_t APS5_VABI WKSecurityOriginGetPort(const void* value);
 const void* APS5_VABI WKSecurityOriginCopyToString(const void* value);
 std::uint32_t APS5_VABI WKSecurityOriginGetTypeID();
 std::uint32_t APS5_VABI WKSerializedScriptValueGetTypeID();
+const void* APS5_VABI WKSerializedScriptValueCreate(NKWebKit::JSContextRef context, NKWebKit::JSValueRef value, NKWebKit::JSValueRef* exception);
+NKWebKit::JSValueRef APS5_VABI WKSerializedScriptValueDeserialize(const void* serializedScriptValueRef, NKWebKit::JSContextRef context, NKWebKit::JSValueRef* exception);
 const void* APS5_VABI WKSessionStateCopyData(const void* sessionState);
 const void* APS5_VABI WKSessionStateCreateFromData(const void* data);
 std::uint32_t APS5_VABI WKSessionStateGetTypeID();
