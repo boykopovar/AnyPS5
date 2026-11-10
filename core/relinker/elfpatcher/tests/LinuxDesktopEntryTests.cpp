@@ -20,6 +20,17 @@ const std::vector<std::uint8_t> Png{
     0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00,
     0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
 
+std::vector<std::uint8_t> withIhdrCrc(std::vector<std::uint8_t> bytes) {
+    std::uint32_t crc = 0xffffffffu;
+    for (std::size_t index = 12; index < 29; ++index) {
+        crc ^= bytes[index];
+        for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320u : 0u);
+    }
+    crc ^= 0xffffffffu;
+    for (std::size_t index = 0; index < 4; ++index) bytes[29 + index] = static_cast<std::uint8_t>(crc >> (24 - 8 * index));
+    return bytes;
+}
+
 void require(const bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
@@ -113,6 +124,34 @@ void run(const std::filesystem::path& root) {
     writeText(badPngSceSys / "icon0.png", "GIF89a" + std::string(40, '\0'));
     std::filesystem::create_directories(root / "badpng" / "out");
     requireFailure(badPngSceSys, root / "badpng" / "out" / "game", "icon0.png");
+
+    const auto structurallyBad = root / "invalid-structure" / "sce_sys";
+    const auto untouched = root / "invalid-structure" / "out" / "game";
+    std::vector<std::vector<std::uint8_t>> invalid;
+    auto zeroWidth = Png;
+    zeroWidth[19] = 0;
+    invalid.push_back(withIhdrCrc(zeroWidth));
+    auto badCrc = Png;
+    badCrc[32] ^= 1;
+    invalid.push_back(badCrc);
+    auto noData = Png;
+    noData.erase(noData.begin() + 33, noData.end() - 12);
+    invalid.push_back(noData);
+    auto truncated = Png;
+    truncated.pop_back();
+    invalid.push_back(truncated);
+    auto noEnd = Png;
+    noEnd.resize(noEnd.size() - 12);
+    invalid.push_back(noEnd);
+    auto trailing = Png;
+    trailing.push_back(0);
+    invalid.push_back(trailing);
+    for (const auto& bytes : invalid) {
+        writeBytes(structurallyBad / "icon0.png", bytes);
+        requireFailure(structurallyBad, untouched, "icon0.png");
+    }
+    writeBytes(structurallyBad / "icon0.png", Png);
+    require(Elfpatcher::Linux::LinuxDesktopEntryWriter().Prepare(structurallyBad, untouched).has_value(), "Valid PNG retry failed");
 
     const auto badParamSceSys = root / "badparam" / "game" / "sce_sys";
     writeBytes(badParamSceSys / "icon0.png", Png);
