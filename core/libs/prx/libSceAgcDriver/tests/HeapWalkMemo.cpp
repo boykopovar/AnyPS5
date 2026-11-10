@@ -125,6 +125,35 @@ void sharedResultsChargedOnceTests() {
     std::cout << "the heap walk memo charges a result its entries share once\n";
 }
 
+void unrepeatedVariantsSkipTests() {
+    using AgcDriver::DriverDetail::HeapWalkProbeLookups;
+    using AgcDriver::DriverDetail::HeapWalkSkippedWalks;
+    HeapWalkMemo memo;
+    constexpr std::uint64_t missing = 7;
+    constexpr std::uint64_t hitting = 9;
+    for (std::uint32_t lookup = 0; lookup < HeapWalkProbeLookups; ++lookup) {
+        require(memo.consult(missing), "the heap walk memo skipped a shader before its first probe window ended");
+        memo.noteLookup(missing, false);
+        require(memo.consult(hitting), "the heap walk memo skipped a shader whose lookups hit");
+        memo.noteLookup(hitting, lookup == 17u);
+    }
+    for (std::uint32_t walk = 0; walk < HeapWalkSkippedWalks; ++walk) {
+        require(!memo.consult(missing), "the heap walk memo kept looking up a shader none of whose " + std::to_string(HeapWalkProbeLookups) + " lookups hit (walk " + std::to_string(walk) + ")");
+        require(memo.consult(hitting), "the heap walk memo skipped a shader one of whose lookups hit: a walk costs far more than a lookup");
+    }
+    require(memo.consult(missing), "the heap walk memo never probed a skipped shader again");
+    for (std::uint32_t lookup = 0; lookup < HeapWalkProbeLookups; ++lookup) memo.noteLookup(missing, true);
+    for (std::uint32_t walk = 0; walk < 4u * HeapWalkSkippedWalks; ++walk) require(memo.consult(missing), "the heap walk memo skipped a shader whose new lookups all hit");
+    constexpr std::uint64_t returning = 11;
+    for (std::uint32_t lookup = 0; lookup < HeapWalkProbeLookups; ++lookup) memo.noteLookup(returning, false);
+    require(!memo.consult(returning), "the heap walk memo kept looking up a shader none of whose lookups hit");
+    for (std::uint64_t key = 0; key < HeapWalkProbeLookups; ++key) memo.noteSkipped(returning, 0x1000u + key);
+    require(!memo.consult(returning), "the heap walk memo resumed a skipped shader whose walks never repeated a key");
+    for (std::uint64_t key = 0; key < HeapWalkProbeLookups; ++key) memo.noteSkipped(returning, 0x1000u + key);
+    require(memo.consult(returning), "the heap walk memo kept skipping a shader whose skipped walks repeated their keys");
+    std::cout << "the heap walk memo skips shaders whose lookups do not hit and resumes when their keys repeat\n";
+}
+
 }
 
 int main() {
@@ -133,6 +162,7 @@ int main() {
         keyCapDropsLeastRecentTests();
         hitEntriesKeptTests();
         sharedResultsChargedOnceTests();
+        unrepeatedVariantsSkipTests();
         std::cout << "heap walk memo budget tests passed\n";
         return 0;
     } catch (const std::exception& error) {

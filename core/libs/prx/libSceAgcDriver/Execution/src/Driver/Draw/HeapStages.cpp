@@ -589,16 +589,20 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     const auto before = Graphics::Recorder::PendingWriteSnapshot();
     snapshotCost.Stop();
     const auto generation = GuestMemory::StableTrackerGeneration();
-    const bool memoOn = !invocation.Request().context.vertex.has_value();
+    const auto variant = invocation.VariantId();
+    const bool memoAllowed = !invocation.Request().context.vertex.has_value();
+    const bool memoOn = memoAllowed && heapWalkMemo().consult(variant);
     std::uint64_t memoKey = 0;
     bool memoKnown = false;
+    if (memoAllowed && !memoOn) heapWalkMemo().noteSkipped(variant, walkMemoKey(invocation, userData, shaderBase));
 
     Graphics::HeapCostScope memoCost(Graphics::HeapCost::WalkMemo);
     if (memoOn) {
         memoKey = walkMemoKey(invocation, userData, shaderBase);
         HeapStageMaterialized adopted;
-        if (adoptWalk(memoKey, invocation, userData, shaderBase, before.get(), generation, adopted, memoKnown))
-            return adopted;
+        const bool hit = adoptWalk(memoKey, invocation, userData, shaderBase, before.get(), generation, adopted, memoKnown);
+        heapWalkMemo().noteLookup(variant, hit);
+        if (hit) return adopted;
     }
     memoCost.Stop();
 

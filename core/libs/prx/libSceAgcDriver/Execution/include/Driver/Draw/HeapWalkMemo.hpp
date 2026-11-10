@@ -35,6 +35,21 @@ constexpr std::size_t HeapWalkMemoKeys = 16384;
 
 constexpr std::size_t HeapWalkSeenKeys = 1u << 16;
 
+constexpr std::size_t HeapWalkVariantSlots = 4096;
+
+constexpr std::uint32_t HeapWalkProbeLookups = 64;
+
+constexpr std::uint32_t HeapWalkSkippedWalks = 1024;
+
+struct HeapWalkVariantUse {
+    std::uint64_t variant = 0;
+    std::uint32_t lookups = 0;
+    std::uint32_t hits = 0;
+    std::uint32_t skip = 0;
+    std::uint32_t skipped = 0;
+    std::uint32_t repeats = 0;
+};
+
 std::uint64_t HeapWalkEntryBytes(const HeapWalkEntry& entry);
 
 std::uint64_t HeapWalkEntryOwnBytes(const HeapWalkEntry& entry);
@@ -60,9 +75,38 @@ struct HeapWalkMemo {
     std::list<std::uint64_t> order;
     std::vector<std::uint64_t> seen = std::vector<std::uint64_t>(HeapWalkSeenKeys, 0);
     std::unordered_map<const void*, std::pair<std::uint32_t, std::uint64_t>> pins;
+    std::vector<HeapWalkVariantUse> variants = std::vector<HeapWalkVariantUse>(HeapWalkVariantSlots);
     std::uint64_t heldBytes = 0;
     std::uint64_t stores = 0;
     std::uint64_t budget = HeapWalkMemoBudget();
+
+    bool consult(std::uint64_t variant) {
+        auto& use = variantUse(variant);
+        if (use.skip == 0) return true;
+        --use.skip;
+        return false;
+    }
+
+    void noteSkipped(std::uint64_t variant, std::uint64_t key) {
+        const bool repeated = admit(key);
+        auto& use = variantUse(variant);
+        ++use.skipped;
+        if (repeated) ++use.repeats;
+        if (use.skipped < HeapWalkProbeLookups) return;
+        if (use.repeats * 8u >= use.skipped) use.skip = 0;
+        use.skipped = 0;
+        use.repeats = 0;
+    }
+
+    void noteLookup(std::uint64_t variant, bool hit) {
+        auto& use = variantUse(variant);
+        ++use.lookups;
+        if (hit) ++use.hits;
+        if (use.lookups < HeapWalkProbeLookups) return;
+        if (use.hits == 0u) use.skip = HeapWalkSkippedWalks;
+        use.lookups = 0;
+        use.hits = 0;
+    }
 
     bool admit(std::uint64_t key) {
         auto& last = seen[(key ^ (key >> 29)) & (HeapWalkSeenKeys - 1u)];
@@ -103,6 +147,12 @@ struct HeapWalkMemo {
     }
 
 private:
+    HeapWalkVariantUse& variantUse(std::uint64_t variant) {
+        auto& use = variants[(variant ^ (variant >> 31u)) & (HeapWalkVariantSlots - 1u)];
+        if (use.variant != variant) use = {variant};
+        return use;
+    }
+
     template <typename TObject, typename TSize>
     void pin(const std::shared_ptr<const TObject>& object, TSize size) {
         if (object == nullptr) return;
