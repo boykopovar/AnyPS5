@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "prx/libSceJxr/GuestPixelInfo.h"
+#include "prx/libSceJxr/ImageEncode.hpp"
 #include "prx/libSceJxr/Stream.hpp"
 #include "prx/libSceJxr/include/GuidExports.hpp"
 
@@ -107,23 +108,23 @@ std::int64_t APS5_VABI PKImageDecode_Release_nid_postfix(void** decoder);
 std::int64_t APS5_VABI PKImageDecode_SelectFrame_nid_postfix(void* decoder, std::uint32_t frame);
 std::int64_t APS5_VABI PKImageEncode_CreateNewFrame_nid_postfix(void* encoder, void* param, std::size_t paramSize);
 int APS5_VABI PKImageEncode_Create_WMP_nid_postfix();
-int APS5_VABI PKImageEncode_Create_nid_postfix();
-int APS5_VABI PKImageEncode_Initialize_nid_postfix();
-int APS5_VABI PKImageEncode_Release_nid_postfix();
-int APS5_VABI PKImageEncode_SetColorContext_nid_postfix();
-int APS5_VABI PKImageEncode_SetDescriptiveMetadata_nid_postfix();
+std::int64_t APS5_VABI PKImageEncode_Create_nid_postfix(Jxr::ImageEncode** encoder);
+std::int64_t APS5_VABI PKImageEncode_Initialize_nid_postfix(Jxr::ImageEncode* encoder, Jxr::Stream* stream, void* parameter, std::size_t size);
+std::int64_t APS5_VABI PKImageEncode_Release_nid_postfix(Jxr::ImageEncode** encoder);
+std::int64_t APS5_VABI PKImageEncode_SetColorContext_nid_postfix(Jxr::ImageEncode* encoder, const std::uint8_t* context, std::uint32_t size);
+std::int64_t APS5_VABI PKImageEncode_SetDescriptiveMetadata_nid_postfix(Jxr::ImageEncode* encoder, const void* metadata);
 std::int64_t APS5_VABI PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(
     tagPKImageEncode* encoder, const std::uint8_t* metadata, std::uint32_t size);
 int APS5_VABI PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix();
 int APS5_VABI PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix();
 int APS5_VABI PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix();
-int APS5_VABI PKImageEncode_SetPixelFormat_nid_postfix();
-int APS5_VABI PKImageEncode_SetResolution_nid_postfix();
-int APS5_VABI PKImageEncode_SetSize_nid_postfix();
+std::int64_t APS5_VABI PKImageEncode_SetPixelFormat_nid_postfix(Jxr::ImageEncode* encoder, JxrGuestGuid format);
+std::int64_t APS5_VABI PKImageEncode_SetResolution_nid_postfix(Jxr::ImageEncode* encoder, float horizontal, float vertical);
+std::int64_t APS5_VABI PKImageEncode_SetSize_nid_postfix(Jxr::ImageEncode* encoder, std::int32_t width, std::int32_t height);
 int APS5_VABI PKImageEncode_SetXMPMetadata_WMP_nid_postfix();
 std::int64_t APS5_VABI PKImageEncode_Terminate_nid_postfix(void* encoder);
 int APS5_VABI PKImageEncode_Transcode_nid_postfix();
-int APS5_VABI PKImageEncode_WritePixels_nid_postfix();
+std::int64_t APS5_VABI PKImageEncode_WritePixels_nid_postfix(Jxr::ImageEncode* encoder, std::uint32_t lines, std::uint8_t* pixels, std::uint32_t stride);
 int APS5_VABI PKImageEncode_WriteSource_nid_postfix();
 int APS5_VABI ReadWS_File_nid_postfix();
 std::int64_t APS5_VABI ReadWS_Memory_nid_postfix(Jxr::Stream* stream, void* buffer, std::size_t size);
