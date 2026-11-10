@@ -195,7 +195,7 @@ static void CheckUnboundListen(int family) {
     const int listener = socket_nid_postfix(family, 1, 0);
     if (listener < 0 && family == 28 && *__error_nid_postfix() == 47) return;
     Require(listener >= 0, "unbound listener");
-    Require(listen_nid_postfix(listener, 0) == 0, "listen on an unbound stream socket binds it to an ephemeral port");
+    Require(listen_nid_postfix(listener, 1) == 0, "listen on an unbound stream socket binds it to an ephemeral port");
     Address name{};
     std::uint32_t length = name.size();
     Require(getsockname_nid_postfix(listener, name.data(), &length) == 0 && length == size, "unbound listener name");
