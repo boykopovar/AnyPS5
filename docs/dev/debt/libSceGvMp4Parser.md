@@ -7,6 +7,6 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceGvMp4Parser/Export.cpp) - 16 NIDs have callable entries in a 3.20-labelled image and in a later 13.60-labelled image under a different module and library identity. Image labels are not independently authenticated. Names, parameter lists, return types, behavior and cross-version equivalence are unverified. The parameterless `int` declarations are placeholders and every entry throws.
+- [Additional callable exports](../../../core/libs/prx/libSceGvMp4Parser/Export.cpp) - these NIDs have callable entries in a 3.20-labelled image and in a later 13.60-labelled image under a different module and library identity. Image labels are not independently authenticated. Names, parameter lists, return types, behavior and cross-version equivalence are unverified. The parameterless `int` declarations are placeholders and every entry throws.
 
 - [Older callable NIDs](../../../core/libs/prx/libSceGvMp4Parser/Export.cpp): 3 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory.

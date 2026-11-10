@@ -2,7 +2,7 @@
 
 ### Unknown function info
 
-- The 21 Sony-specific exports in [Export.cpp](../../../core/libs/prx/libSceGLSlimVSH/Export.cpp) have names recovered by `tools/nid_names.py` from its pinned [NID database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv). Each name hashes to the original explicit NID. Their prototypes and behavior remain unverified; all retain no-parameter throwing placeholders. No recovered name is a standard EGL or GLES2 function.
+- The Sony-specific exports in [Export.cpp](../../../core/libs/prx/libSceGLSlimVSH/Export.cpp) have names recovered by `tools/nid_names.py` from its pinned [NID database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv). Each name hashes to the original explicit NID. Their prototypes and behavior remain unverified; all retain no-parameter throwing placeholders. No recovered name is a standard EGL or GLES2 function.
 
 | Name | NID |
 | --- | --- |
@@ -32,7 +32,7 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceGLSlimVSH/Export.cpp) - 6 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceGLSlimVSH.c) and the [selected export metadata](https://gist.github.com/kyon-eth/e1b845e2be0047e065a7dbb2c2e92322/7a180a59bf97bf6ea42020d4eedf9a8d631b0fd3) from two version-labelled images (SHA-256 `5d1eb4913d2914be044c05a48c4287a3a73e526605f21ec37ce9acfb5b2170ad`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Additional callable exports](../../../core/libs/prx/libSceGLSlimVSH/Export.cpp) - these callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceGLSlimVSH.c) and the [selected export metadata](https://gist.github.com/kyon-eth/e1b845e2be0047e065a7dbb2c2e92322/7a180a59bf97bf6ea42020d4eedf9a8d631b0fd3) from two version-labelled images (SHA-256 `5d1eb4913d2914be044c05a48c4287a3a73e526605f21ec37ce9acfb5b2170ad`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
 
 | Name | NID |
 | --- | --- |
@@ -61,7 +61,7 @@
 
 ### Functional
 
-- The [host implementation](../../../core/libs/prx/libSceGLSlimVSH/src/Egl.cpp) is not a conformant GLES2 renderer. The single pbuffer configuration advertises `EGL_NON_CONFORMANT_CONFIG` and no `EGL_CONFORMANT` bits. Native window/pixmap integration, OpenVG client-buffer import, GLSL ES compilation, program linking/reflection and rasterization are absent. The 35 standard exports below still call `NotImplemented_nid_no_patch`; no shader or program can acquire a successful compile/link status. Uniform locations and storage require linked shader reflection and remain unavailable.
+- The [host implementation](../../../core/libs/prx/libSceGLSlimVSH/src/Egl.cpp) is not a conformant GLES2 renderer. The single pbuffer configuration advertises `EGL_NON_CONFORMANT_CONFIG` and no `EGL_CONFORMANT` bits. Native window/pixmap integration, OpenVG client-buffer import, GLSL ES compilation, program linking/reflection and rasterization are absent. The standard exports below still call `NotImplemented_nid_no_patch`; no shader or program can acquire a successful compile/link status. Uniform locations and storage require linked shader reflection and remain unavailable.
 
   - `eglCreatePbufferFromClientBuffer`
   - `glCompileShader`

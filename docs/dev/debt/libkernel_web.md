@@ -2,7 +2,7 @@
 
 ### Unknown function info
 
-- 43 [libkernel_web exports](../../../core/libs/prx/libkernel_web/Export.cpp) carry the PS5 3.20 import names whose `tools/nid_names.py` hash equals their NID (`__freeze`, `__sceKernelGetGPI`, the `__sys_*` wrappers, `_dup2`, `_execve`, `_execvpe`, `_wait4`, `sceKernelGetPrefixVersion`, `sceKernelIccGetThermalAlert`). A name match does not establish their prototypes or behavior: the other 40 keep the no-parameter import-resolution convention and throw through `NotImplemented_nid_no_patch`. Source: [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs).
+- [libkernel_web exports](../../../core/libs/prx/libkernel_web/Export.cpp) carry the PS5 3.20 import names whose `tools/nid_names.py` hash equals their NID (`__freeze`, `__sceKernelGetGPI`, the `__sys_*` wrappers, `_dup2`, `_execve`, `_execvpe`, `_wait4`, `sceKernelGetPrefixVersion`, `sceKernelIccGetThermalAlert`). A name match does not establish their prototypes or behavior: those not forwarded to libkernel_sys keep the no-parameter import-resolution convention and throw through `NotImplemented_nid_no_patch`. Source: [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs).
 
 ### Functional
 
