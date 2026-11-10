@@ -549,6 +549,7 @@ std::atomic<std::uint64_t> publishGeneration{0};
 std::atomic<std::uint64_t> completionLabels{0};
 std::atomic<std::uint64_t> completionStores{0};
 std::atomic<std::uint64_t> writeBackCompletions{0};
+std::atomic<std::uint64_t> validationCompletions{0};
 std::atomic<std::uint64_t> completionStoresSkipped{0};
 std::atomic<std::uint64_t> completionStoresRun{0};
 std::atomic<std::uint64_t> commandBuffersFreed{0};
@@ -557,6 +558,14 @@ std::atomic<std::uint64_t> fencesKept{0};
 std::atomic<std::uint64_t> writeBacksOverLabels{0};
 // Completion labels that entered the pending count at a write-back (see NoteWrittenBack).
 std::atomic<std::uint64_t> completionLabelsCountedLate{0};
+
+void SubtractCount(std::atomic<std::uint64_t>& counter, std::uint64_t count) {
+    auto current = counter.load(std::memory_order_acquire);
+    for (;;) {
+        const auto next = current > count ? current - count : std::uint64_t{0};
+        if (counter.compare_exchange_weak(current, next, std::memory_order_acq_rel, std::memory_order_acquire)) return;
+    }
+}
 std::atomic<std::uint64_t> workSinceSubmit{0};
 
 // APS5_COUNT_ALL_COMPLETION_LABELS=1: a completion label also stored on the GPU counts as pending
@@ -1437,6 +1446,7 @@ Recorder::~Recorder() {
     } catch (const std::exception& error) {
         std::fprintf(stderr, "[gpu] recorder teardown: %s\n", error.what());
     }
+    if (open != nullptr) discard(std::move(open));
     ForgetHtileMasks_nid_no_patch(id);
     progressWatcher.reset();
     holdKept.clear();
@@ -1448,6 +1458,7 @@ Recorder::~Recorder() {
         completionLabels.store(0, std::memory_order_release);
         completionStores.store(0, std::memory_order_release);
         writeBackCompletions.store(0, std::memory_order_release);
+        validationCompletions.store(0, std::memory_order_release);
         workSinceSubmit.store(0, std::memory_order_release);
     }
     {
@@ -1529,7 +1540,7 @@ std::uint64_t Recorder::PendingCompletionStores() {
 }
 
 std::uint64_t Recorder::PendingWriteBackCompletions() {
-    return writeBackCompletions.load(std::memory_order_acquire);
+    return writeBackCompletions.load(std::memory_order_acquire) + validationCompletions.load(std::memory_order_acquire);
 }
 
 std::uint64_t Recorder::RecordedWorkSinceSubmit() {
@@ -3687,12 +3698,18 @@ void Recorder::KeepBytes(const void* owner, std::size_t bytes) {
 
 void Recorder::BoundKeptBytes() {
     if (!GuestMemory::GpuMutex().HeldByThisThread()) return;
+    if (validationFailure != nullptr) DrainValidationFailure();
     if (open != nullptr && open->keptBytes >= KeptBytesBudget) Submit();
     if (DeferredBytes() != 0 && inFlightKeptBytes + DeferredBytes() > 2 * KeptBytesBudget) DestroyDeferred(TakeDeferred(), false);
     while (!inFlight.empty() && inFlightKeptBytes > 2 * KeptBytesBudget) {
         auto batch = std::move(inFlight.front());
         inFlight.pop_front();
-        finish(std::move(batch), true, 4, true);
+        try {
+            finish(std::move(batch), true, 4, true);
+        } catch (...) {
+            if (!validationFailure) validationFailure = std::current_exception();
+            DrainValidationFailure();
+        }
     }
 }
 
@@ -4056,6 +4073,13 @@ void Recorder::OnComplete(std::function<void()> action) {
     open->completions.push_back(std::move(action));
     ++open->writeBackCompletionCount;
     writeBackCompletions.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void Recorder::OnValidated(Validation validation) {
+    ensureOpen();
+    open->validations.push_back(std::move(validation));
+    ++open->validationCount;
+    validationCompletions.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void Recorder::OnWriteComplete(std::uint64_t address, std::size_t bytes, std::function<void()> action) {
@@ -4550,9 +4574,9 @@ std::optional<Recorder::PendingWriteInfo> Recorder::DescribePendingWrite(std::ui
 }
 
 bool Recorder::HasCompletions() const {
-    if (open != nullptr && !open->completions.empty()) return true;
+    if (open != nullptr && (!open->completions.empty() || !open->validations.empty())) return true;
     for (const auto& batch : inFlight) {
-        if (!batch->completions.empty()) return true;
+        if (!batch->completions.empty() || !batch->validations.empty()) return true;
     }
     return false;
 }
@@ -5009,12 +5033,22 @@ void Recorder::FinishUpTo(std::uint64_t serial) {
     announcedSource = 4;
     const void* site = std::exchange(announcedSite, nullptr);
     const auto previousSite = inFlight.empty() || inFlight.front()->serial > serial ? activeSyncSite : BeginSyncSite(0, site != nullptr ? site : __builtin_return_address(0));
+    RestoreSyncSite restore{previousSite};
+    std::exception_ptr failure;
+    bool draining = validationFailure != nullptr;
     while (!inFlight.empty() && inFlight.front()->serial <= serial) {
         auto batch = std::move(inFlight.front());
         inFlight.pop_front();
-        finish(std::move(batch), true, 0);
+        try {
+            finish(std::move(batch), true, 0, false, !draining);
+        } catch (...) {
+            if (validationFailure == nullptr) throw;
+            if (!failure) failure = std::current_exception();
+            draining = true;
+        }
     }
-    activeSyncSite = previousSite;
+    if (!failure) failure = validationFailure;
+    if (failure) std::rethrow_exception(failure);
 }
 
 void Recorder::Sync() {
@@ -5025,12 +5059,22 @@ void Recorder::Sync() {
     // Counted only when something is waited for: an idle recorder's Sync is free and would only
     // swamp the site table with the callers that check nothing first.
     const auto previousSite = inFlight.empty() ? activeSyncSite : BeginSyncSite(source, site != nullptr ? site : __builtin_return_address(0));
+    RestoreSyncSite restore{previousSite};
+    std::exception_ptr failure;
+    bool draining = validationFailure != nullptr;
     while (!inFlight.empty()) {
         auto batch = std::move(inFlight.front());
         inFlight.pop_front();
-        finish(std::move(batch), true, source);
+        try {
+            finish(std::move(batch), true, source, false, !draining);
+        } catch (...) {
+            if (validationFailure == nullptr) throw;
+            if (!failure) failure = std::current_exception();
+            draining = true;
+        }
     }
-    activeSyncSite = previousSite;
+    if (!failure) failure = validationFailure;
+    if (failure) std::rethrow_exception(failure);
 }
 
 void Recorder::FlushDeferredReleases() {
@@ -5040,6 +5084,7 @@ void Recorder::FlushDeferredReleases() {
 
 void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUnlocked) {
     if (bytes == 0) return;
+    if (validationFailure != nullptr) DrainValidationFailure();
     const auto end = address + bytes;
     if (completionDepth() != 0 && !CompletionStoreSyncs()) {
         // A store made by a completion action (a copied buffer's write-back, GuestBufferMemory::
@@ -5097,10 +5142,23 @@ void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUn
     // Batches are in flight in serial order. A completion's own guest access can sync re-entrantly
     // and finish the target first (and a new batch may reuse its allocation, so the serial, not the
     // pointer, identifies it); the loop stops then, and later batches stay in flight either way.
-    while (!inFlight.empty() && inFlight.front()->serial <= targetSerial) {
+    std::exception_ptr failure;
+    bool draining = validationFailure != nullptr;
+    while (!inFlight.empty() && (draining || inFlight.front()->serial <= targetSerial)) {
         auto batch = std::move(inFlight.front());
         inFlight.pop_front();
-        finish(std::move(batch), true, source);
+        try {
+            finish(std::move(batch), true, source, false, !draining);
+        } catch (...) {
+            if (validationFailure == nullptr) throw;
+            if (!failure) failure = std::current_exception();
+            draining = true;
+        }
+    }
+    if (!failure) failure = validationFailure;
+    if (failure) {
+        if (validationFailure == nullptr) validationFailure = failure;
+        DrainValidationFailure();
     }
     batchesLeftInFlight.fetch_add(inFlight.size(), std::memory_order_relaxed);
 }
@@ -5167,6 +5225,7 @@ bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int
     // up the caller's mutex, and a thread that waits here holds nothing the relock could invert
     // (the hook took the mutex from a depth of 0 with the same locks held).
     if (HookLockedWait() || timeline == VK_NULL_HANDLE || GuestMemory::GpuMutex().DepthOnThisThread() != 1) return false;
+    if (validationFailure != nullptr) DrainValidationFailure();
     // The target as SyncThrough chooses it: the open batch (submitted here, so the GPU can reach
     // it) makes everything the target, else the newest overlapping in-flight batch; with
     // SyncThrough disabled everything is the target as well.
@@ -5278,17 +5337,53 @@ bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int
         return true;
     }
     Check(result, "vkWaitSemaphoresKHR recorder");
+    if (validationFailure != nullptr) DrainValidationFailure();
     // The completions up to the target, under the mutex again; the fences are signaled, so the
     // waits inside finish() return at once (charged to the same site entry). Another thread may
     // have finished some meanwhile.
     targetedSyncs.fetch_add(1, std::memory_order_relaxed);
-    while (!inFlight.empty() && inFlight.front()->serial <= targetSerial) {
+    std::exception_ptr failure;
+    bool draining = validationFailure != nullptr;
+    while (!inFlight.empty() && (draining || inFlight.front()->serial <= targetSerial)) {
         auto batch = std::move(inFlight.front());
         inFlight.pop_front();
-        finish(std::move(batch), true, source);
+        try {
+            finish(std::move(batch), true, source, false, !draining);
+        } catch (...) {
+            if (validationFailure == nullptr) throw;
+            if (!failure) failure = std::current_exception();
+            draining = true;
+        }
+    }
+    if (!failure) failure = validationFailure;
+    if (failure) {
+        if (validationFailure == nullptr) validationFailure = failure;
+        DrainValidationFailure();
     }
     batchesLeftInFlight.fetch_add(inFlight.size(), std::memory_order_relaxed);
     return true;
+}
+
+void Recorder::DrainValidationFailure() {
+    if (validationFailure == nullptr) return;
+    if (open != nullptr) {
+        try {
+            Submit();
+        } catch (...) {
+        }
+    }
+    std::exception_ptr failure = validationFailure;
+    while (!inFlight.empty()) {
+        auto batch = std::move(inFlight.front());
+        inFlight.pop_front();
+        try {
+            finish(std::move(batch), true, 4, false, false);
+        } catch (...) {
+            if (!failure) failure = std::current_exception();
+        }
+    }
+    if (!failure) failure = validationFailure;
+    if (failure) std::rethrow_exception(failure);
 }
 
 bool Recorder::Reap() {
@@ -5298,13 +5393,23 @@ bool Recorder::Reap() {
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::uint64_t retired = 0;
     if (fenceless && !inFlight.empty() && inFlight.back()->serial > reachedSerial) readTimeline();
+    std::exception_ptr failure;
+    bool draining = validationFailure != nullptr;
     while (!inFlight.empty()) {
         if (fenceless ? inFlight.front()->serial > reachedSerial : fenceStatus(inFlight.front()->fence) != VK_SUCCESS) break;
         auto batch = std::move(inFlight.front());
         inFlight.pop_front();
-        finish(std::move(batch), false, 4);
+        try {
+            finish(std::move(batch), false, 4, false, !draining);
+        } catch (...) {
+            if (validationFailure == nullptr) throw;
+            if (!failure) failure = std::current_exception();
+            draining = true;
+        }
         ++retired;
     }
+    if (!failure) failure = validationFailure;
+    if (failure) std::rethrow_exception(failure);
     if (profile) {
         ++holdCounters.reaps;
         if (retired != 0) ++holdCounters.reapsWithWork;
@@ -5314,7 +5419,7 @@ bool Recorder::Reap() {
     return inFlight.empty();
 }
 
-void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool releaseNow) {
+void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool releaseNow, bool publishActions) {
     inFlightKeptBytes -= batch->keptBytes;
     // The batch's writes stay published until its completions ran, on every exit path.
     struct Finishing {
@@ -5324,9 +5429,10 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
             auto& list = recorder.finishing;
             list.erase(std::remove(list.begin(), list.end(), batch), list.end());
             // The batch's completion labels have landed, or never will (fence failure below).
-            if (batch->completionLabelCount != 0) completionLabels.fetch_sub(batch->completionLabelCount, std::memory_order_acq_rel);
-            if (batch->completionStoreCount != 0) completionStores.fetch_sub(batch->completionStoreCount, std::memory_order_acq_rel);
-            if (batch->writeBackCompletionCount != 0) writeBackCompletions.fetch_sub(batch->writeBackCompletionCount, std::memory_order_acq_rel);
+            if (batch->completionLabelCount != 0) SubtractCount(completionLabels, batch->completionLabelCount);
+            if (batch->completionStoreCount != 0) SubtractCount(completionStores, batch->completionStoreCount);
+            if (batch->writeBackCompletionCount != 0) SubtractCount(writeBackCompletions, batch->writeBackCompletionCount);
+            if (batch->validationCount != 0) SubtractCount(validationCompletions, batch->validationCount);
             // This also runs while the fence-failure throw unwinds: an allocation failure in the
             // rebuild keeps the previous snapshot, which is a superset (a stale entry only causes a
             // false hit, never a miss) rather than terminating.
@@ -5399,6 +5505,32 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
             release(*batch);
             Check(result, fenceless ? "vkWaitSemaphoresKHR recorder" : "vkWaitForFences recorder");
         }
+    }
+    if (!publishActions) {
+        batch->validations.clear();
+        batch->completions.clear();
+        batch->kept.clear();
+        removeLabels(*batch);
+        release(*batch);
+        return;
+    }
+    std::exception_ptr validationFailureHere;
+    for (auto& validation : batch->validations) {
+        try {
+            validation();
+        } catch (...) {
+            validationFailureHere = std::current_exception();
+            break;
+        }
+    }
+    batch->validations.clear();
+    if (validationFailureHere) {
+        if (!validationFailure) validationFailure = validationFailureHere;
+        removeLabels(*batch);
+        batch->completions.clear();
+        batch->kept.clear();
+        release(*batch);
+        std::rethrow_exception(validationFailureHere);
     }
     readGpuTiming(*batch);
     readSamples(*batch);
@@ -5479,9 +5611,10 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
 
 void Recorder::discard(std::unique_ptr<Batch> batch) noexcept {
     removeLabels(*batch);
-    if (batch->completionLabelCount != 0) completionLabels.fetch_sub(batch->completionLabelCount, std::memory_order_acq_rel);
-    if (batch->completionStoreCount != 0) completionStores.fetch_sub(batch->completionStoreCount, std::memory_order_acq_rel);
-    if (batch->writeBackCompletionCount != 0) writeBackCompletions.fetch_sub(batch->writeBackCompletionCount, std::memory_order_acq_rel);
+    if (batch->completionLabelCount != 0) SubtractCount(completionLabels, batch->completionLabelCount);
+    if (batch->completionStoreCount != 0) SubtractCount(completionStores, batch->completionStoreCount);
+    if (batch->writeBackCompletionCount != 0) SubtractCount(writeBackCompletions, batch->writeBackCompletionCount);
+    if (batch->validationCount != 0) SubtractCount(validationCompletions, batch->validationCount);
     if (activeRecorder == this) pendingLabelSince.store(NoPendingLabel, std::memory_order_release);
     release(*batch);
     try {
