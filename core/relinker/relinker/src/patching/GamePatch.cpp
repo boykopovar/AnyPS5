@@ -4,6 +4,7 @@
 #include <io/NativePath.hpp>
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <map>
 #include <set>
 #include <sstream>
@@ -60,6 +61,45 @@ std::string_view Trim(std::string_view text) {
 
 bool IsControlCharacter(const char character) {
     return (static_cast<unsigned char>(character) < 0x20 && character != '\t') || character == 0x7f;
+}
+
+void ValidateUtf8(const std::string_view text) {
+    std::size_t line = 1;
+    for (std::size_t position = 0; position < text.size();) {
+        const auto lead = static_cast<unsigned char>(text[position]);
+        if (lead < 0x80) {
+            if (lead == '\n') ++line;
+            ++position;
+            continue;
+        }
+        unsigned continuationCount;
+        std::uint32_t codepoint;
+        std::uint32_t minimum;
+        if (lead >= 0xc2 && lead <= 0xdf) {
+            continuationCount = 1;
+            codepoint = lead & 0x1f;
+            minimum = 0x80;
+        } else if (lead >= 0xe0 && lead <= 0xef) {
+            continuationCount = 2;
+            codepoint = lead & 0x0f;
+            minimum = 0x800;
+        } else if (lead >= 0xf0 && lead <= 0xf4) {
+            continuationCount = 3;
+            codepoint = lead & 0x07;
+            minimum = 0x10000;
+        } else {
+            FailLine(line, "invalid UTF-8", "patch file");
+        }
+        if (continuationCount > text.size() - position - 1) FailLine(line, "invalid UTF-8", "patch file");
+        for (unsigned index = 0; index < continuationCount; ++index) {
+            const auto byte = static_cast<unsigned char>(text[position + 1 + index]);
+            if ((byte & 0xc0) != 0x80) FailLine(line, "invalid UTF-8", "patch file");
+            codepoint = (codepoint << 6) | (byte & 0x3f);
+        }
+        if (codepoint < minimum || codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff))
+            FailLine(line, "invalid UTF-8", "patch file");
+        position += continuationCount + 1;
+    }
 }
 
 std::string_view StripComment(const std::string_view line, const std::size_t lineNumber) {
@@ -375,6 +415,7 @@ std::string ModuleTargetName(const std::filesystem::path& modulePath, const std:
 }
 
 PatchFile ParsePatchFile(const std::string_view text) {
+    ValidateUtf8(text);
     PatchFile file;
     Table top;
     Table current;
