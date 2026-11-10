@@ -36,6 +36,11 @@ template<typename TAction> static void RequireThrows(TAction action, std::source
     Require(false, location);
 }
 
+static void RequireQueued(std::uint64_t reason, std::source_location location = std::source_location::current()) {
+    Require(ERR_get_error_nid_postfix() == (6u << 24 | 0xfffu << 12 | reason), location);
+    Require(ERR_get_error_nid_postfix() == 0, location);
+}
+
 static int allocationsBeforeFailure = -1;
 static int liveBlocks = 0;
 
@@ -198,13 +203,16 @@ int main() {
           "e37b6a775dc87dbaa4dfa9f96e5e3ffddebd71f8867289865df5a32d20cdc944b6022cac3c4982b10d5eeb55c3e4de15134676fb6de0446065c97440fa8c6a58"}},
     };
 
+    Require(ERR_peek_error_nid_postfix() == 0);
     Require(EVP_MD_size_nid_postfix(nullptr) == -1);
+    RequireQueued(159);
     Require(EVP_md5_nid_postfix() == algorithms[0].md && EVP_sha512_nid_postfix() == algorithms[3].md);
     for (std::size_t i = 0; i < 4; ++i)
         for (std::size_t j = i + 1; j < 4; ++j) Require(algorithms[i].md != algorithms[j].md);
     for (const auto& algorithm : algorithms) {
         Require(algorithm.md != nullptr);
         Require(EVP_MD_size_nid_postfix(algorithm.md) == algorithm.size);
+        Require(ERR_peek_error_nid_postfix() == 0);
         Require(Field<std::int32_t>(algorithm.md, 0) == algorithm.type);
         Require(Field<std::int32_t>(algorithm.md, 4) == algorithm.pkeyType);
         Require(Field<std::int32_t>(algorithm.md, 8) == algorithm.size);
@@ -278,6 +286,7 @@ int main() {
     EVP_MD_CTX_init_nid_postfix(&context);
     Require(AllZero(&context, sizeof(context)));
     Require(EVP_DigestInit_ex_nid_postfix(&context, nullptr, nullptr) == 0);
+    RequireQueued(139);
     RequireThrows([&] { EVP_DigestUpdate_nid_postfix(&context, abc.data(), abc.size()); });
     RequireThrows([&] { EVP_DigestFinal_ex_nid_postfix(&context, nullptr, nullptr); });
     Require(EVP_DigestInit_ex_nid_postfix(&context, sha256, nullptr) == 1);
@@ -315,6 +324,7 @@ int main() {
     Require(EVP_MD_size_nid_postfix(&custom) == 4);
     custom.mdSize = 65;
     Require(EVP_Digest_nid_postfix(bytes, sizeof(bytes), sum, &sumSize, &custom, nullptr) == 0);
+    RequireQueued(164);
 
     HmacContext hmac {};
     const auto* hmacBytes = reinterpret_cast<const unsigned char*>(&hmac);
@@ -329,11 +339,22 @@ int main() {
     Require(HMAC_Init_ex_nid_postfix(&hmac, "Jefe", 4, sha256, nullptr) == 1);
     Require(HMAC_Init_ex_nid_postfix(&hmac, nullptr, 0, md5, nullptr) == 0);
     Require(HMAC_Init_ex_nid_postfix(&hmac, "Jefe", -1, nullptr, nullptr) == 0);
+    RequireQueued(137);
     Require(HMAC_Init_ex_nid_postfix(&hmac, "Jefe", 4, nullptr, nullptr) == 1);
     const auto question = Bytes("what do ya want for nothing?");
     Require(HMAC_Update_nid_postfix(&hmac, question.data(), question.size()) == 1);
     Require(HMAC_Final_nid_postfix(&hmac, mac, &macSize) == 1 && Hex(mac, macSize) == algorithms[1].macs[1]);
     HMAC_CTX_cleanup_nid_postfix(&hmac);
+
+    for (const int block : {129, -1}) {
+        custom.blockSize = block;
+        HMAC_CTX_init_nid_postfix(&hmac);
+        Require(HMAC_Init_ex_nid_postfix(&hmac, "k", 1, &custom, nullptr) == 0);
+        RequireQueued(136);
+        Require(HMAC_Init_ex_nid_postfix(&hmac, nullptr, 0, nullptr, nullptr) == 0);
+        RequireQueued(111);
+        HMAC_CTX_cleanup_nid_postfix(&hmac);
+    }
 
     std::memset(&hmac, 0x33, sizeof(hmac));
     Require(HMAC_Init_nid_postfix(&hmac, "Jefe", 4, md5) == 1);
@@ -372,20 +393,24 @@ int main() {
     EVP_MD_CTX_init_nid_postfix(&context);
     allocationsBeforeFailure = 0;
     Require(EVP_DigestInit_ex_nid_postfix(&context, sha256, nullptr) == 0);
+    RequireQueued(65);
     Require(AllZero(&context, sizeof(context)) && liveBlocks == 0);
     RequireThrows([&] { EVP_DigestUpdate_nid_postfix(&context, abc.data(), abc.size()); });
     RequireThrows([&] { EVP_DigestFinal_ex_nid_postfix(&context, mac, &macSize); });
     Require(DigestInChunks(context, sha256, abc, 1) == algorithms[1].digests[1] && liveBlocks == 1);
     allocationsBeforeFailure = 0;
     Require(EVP_DigestInit_ex_nid_postfix(&context, sha512, nullptr) == 0);
+    RequireQueued(65);
     Require(AllZero(&context, sizeof(context)) && liveBlocks == 0);
     Require(DigestInChunks(context, sha512, abc, 1) == algorithms[3].digests[1] && liveBlocks == 1);
     Require(EVP_MD_CTX_cleanup_nid_postfix(&context) == 1 && liveBlocks == 0);
 
     allocationsBeforeFailure = 0;
     Require(EVP_MD_CTX_create_nid_postfix() == nullptr && liveBlocks == 0);
+    Require(ERR_peek_error_nid_postfix() == 0);
     allocationsBeforeFailure = 0;
     Require(EVP_Digest_nid_postfix(abc.data(), abc.size(), mac, &macSize, sha256, nullptr) == 0 && liveBlocks == 0);
+    RequireQueued(65);
     Require(EVP_Digest_nid_postfix(abc.data(), abc.size(), mac, &macSize, sha256, nullptr) == 1 && Hex(mac, macSize) == algorithms[1].digests[1]);
 
     for (const std::size_t c : {std::size_t(1), std::size_t(4)}) {
@@ -394,6 +419,7 @@ int main() {
             HMAC_CTX_init_nid_postfix(&hmac);
             allocationsBeforeFailure = failure;
             Require(HMAC_Init_ex_nid_postfix(&hmac, key.data(), static_cast<int>(key.size()), sha256, nullptr) == 0);
+            RequireQueued(65);
             Require(allocationsBeforeFailure == -1 && liveBlocks == failure);
             for (const std::size_t offset : {std::size_t(8), std::size_t(56), std::size_t(104)})
                 Require(Field<void*>(&hmac, offset + 24) || (!Field<const void*>(&hmac, offset) && !Field<void*>(&hmac, offset + 40)));
@@ -404,6 +430,7 @@ int main() {
         }
         allocationsBeforeFailure = 2;
         Require(HMAC_nid_postfix(sha256, key.data(), static_cast<int>(key.size()), message.data(), message.size(), mac, &macSize) == nullptr);
+        RequireQueued(65);
         Require(allocationsBeforeFailure == -1 && liveBlocks == 0);
     }
     return 0;
