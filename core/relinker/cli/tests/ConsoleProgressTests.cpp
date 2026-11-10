@@ -1,10 +1,26 @@
 #include <ConsoleProgress.hpp>
+#include <chrono>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
+
+void ModuleCounts() {
+    std::ostringstream stream;
+    Cli::ConsoleProgress progress(stream);
+    progress.IncludeFile("plugin.prx");
+    progress.Report({Domain::ProgressStage::Modules, "plugin.prx", 0, 200});
+    const auto first = stream.str();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    progress.Report({Domain::ProgressStage::Modules, "plugin.prx", 1, 200});
+    const auto second = stream.str().substr(first.size());
+    if (second.find("(1/200)") == std::string::npos)
+        throw std::runtime_error("Module count stayed at zero while percent remained zero");
+}
 
 int main() {
     try {
+        ModuleCounts();
         std::ostringstream stream;
         Cli::ConsoleProgress progress(stream);
         const std::string name = std::string("title") + '\x1b' + "[2J" + '\n' + '\r' + '\t' + '\x7f' + ".prx";
