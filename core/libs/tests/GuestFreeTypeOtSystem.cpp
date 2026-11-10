@@ -15,7 +15,7 @@
 namespace {
 
 using FreeType::GuestMemoryRec;
-using FreeType::GuestOpenArgs;
+using FreeType::GuestStreamOpenArgs;
 using FreeType::GuestRaccessLibrary;
 using FreeType::GuestStreamRec;
 
@@ -170,7 +170,7 @@ void OpenFile() {
 
 void NewStream() {
     Library owner;
-    GuestOpenArgs args{};
+    GuestStreamOpenArgs args{};
     GuestStreamRec* stream = reinterpret_cast<GuestStreamRec*>(&args);
 
     Require(Throws([&] { FT_Stream_New_nid_postfix(&owner.library, &args, nullptr); }), "a null result pointer throws");
