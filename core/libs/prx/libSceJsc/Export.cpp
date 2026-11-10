@@ -1969,12 +1969,16 @@ int APS5_VABI _ZN9Inspector25ConsoleFrontendDispatcher25messageRepeatCountUpdate
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK10Deprecated11ScriptValue10hasNoValueEv() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI _ZNK10Deprecated11ScriptValue10hasNoValueEv(const void* self) {
+    const std::uint64_t* slot = nullptr;
+    std::memcpy(&slot, self, sizeof(slot));
+    return slot == nullptr || *slot == 0;
 }
 
-int APS5_VABI _ZNK10Deprecated11ScriptValue7jsValueEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI _ZNK10Deprecated11ScriptValue7jsValueEv(const void* self) {
+    const std::uint64_t* slot = nullptr;
+    std::memcpy(&slot, self, sizeof(slot));
+    return slot == nullptr ? 0 : *slot;
 }
 
 int APS5_VABI _ZNK3JSC11RegisterSet4dumpERN3WTF11PrintStreamE() {

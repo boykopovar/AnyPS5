@@ -5,6 +5,7 @@
   "PPSA69420": {"seconds": 30, "pad": {"after_s": 6, "events": [{"at_ms": 0, "hold_ms": 250, "buttons": ["down"]}, {"at_ms": 2000, "hold_ms": 250, "buttons": ["cross"]}]}},
   "PPSA69421": {"relink": ["--trap-sdk-syscall-stubs"]},
   "PPSA85300": {"relink": ["--registry"], "seconds": 30, "files": {"app0/media/testsrc2-720p.mp4": {"content": "vlc/testsrc2-720p.mp4"}, "app0/prefs.txt": {"text": "setup_done=1\n"}}, "pad": {"after_s": 8, "events": [{"at_ms": 0, "hold_ms": 250, "buttons": ["cross"]}]}},
+  "PPSA92280": {"seconds": 30, "pad": {"after_s": 8, "events": [{"at_ms": 0, "hold_ms": 250, "buttons": ["cross"]}]}},
   "PPSA97358": {"relink": ["--registry"]},
   "PPSA98766": {"seconds": 30, "pad": {"after_s": 6, "events": [{"at_ms": 0, "hold_ms": 300, "buttons": ["cross"]}, {"at_ms": 400, "hold_ms": 300, "buttons": ["circle"]}, {"at_ms": 800, "hold_ms": 300, "buttons": ["square"]}, {"at_ms": 1200, "hold_ms": 300, "buttons": ["triangle"]}, {"at_ms": 1600, "hold_ms": 300, "buttons": ["l1"]}, {"at_ms": 2000, "hold_ms": 300, "buttons": ["r1"]}, {"at_ms": 2400, "hold_ms": 300, "buttons": ["l2"]}, {"at_ms": 2800, "hold_ms": 300, "buttons": ["r2"]}, {"at_ms": 3200, "hold_ms": 300, "buttons": ["up"]}, {"at_ms": 3600, "hold_ms": 300, "buttons": ["down"]}, {"at_ms": 4000, "hold_ms": 300, "buttons": ["left"]}, {"at_ms": 4400, "hold_ms": 300, "buttons": ["right"]}, {"at_ms": 4800, "hold_ms": 300, "buttons": ["options"]}]}},
   "PPSA99004": {"relink": ["--trap-sdk-syscall-stubs"]},
