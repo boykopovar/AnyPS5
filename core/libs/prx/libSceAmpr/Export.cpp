@@ -20,6 +20,7 @@
 #include <thread>
 #include <unordered_map>
 
+static constexpr int SCE_KERNEL_ERROR_EFAULT = 0x8002000E;
 static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
 static constexpr int SCE_KERNEL_ERROR_EPERM = 0x80020001;
 static constexpr int SCE_KERNEL_ERROR_ESRCH = 0x80020003;
@@ -1043,12 +1044,15 @@ int APS5_VABI sceAmprFpclassifyd(double value) {
 }
 
 int APS5_VABI sceAmprAmmGetUsageStatsData(AmmUsageStatsData* stats) {
-    if (!stats || stats->sizeInBytes > sizeof(AmmUsageStatsData)) return SCE_KERNEL_ERROR_EINVAL;
+    if (!stats) return SCE_KERNEL_ERROR_EINVAL;
+    std::uint64_t sizeInBytes = 0;
+    if (!GuestCopyIn_nid_no_patch(&sizeInBytes, stats, sizeof(sizeInBytes))) return SCE_KERNEL_ERROR_EFAULT;
+    if (sizeInBytes > sizeof(AmmUsageStatsData)) return SCE_KERNEL_ERROR_EINVAL;
     AmmUsageStatsData out{};
-    out.sizeInBytes = stats->sizeInBytes;
+    out.sizeInBytes = sizeInBytes;
     out.numPageTablePoolEntries = AmmPageTablePoolEntries;
     out.ringIdleFlags = AmmRingIdleFlags;
-    std::memcpy(stats, &out, static_cast<std::size_t>(stats->sizeInBytes));
+    if (!GuestCopyOut_nid_no_patch(stats, &out, static_cast<std::size_t>(sizeInBytes))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 }

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -35,6 +36,7 @@ static constexpr std::uint64_t CALL_TRACE_FULL = 16;
 static constexpr std::uint32_t CUSHION_MS = 40;
 // Grains the device has not played are not allowed to run further ahead than this; newer ones are dropped.
 static constexpr std::uint32_t MAX_QUEUED_MS = 250;
+static constexpr std::uint32_t MAX_GRAIN = AUDIO_OUT2_SAMPLE_RATE * MAX_QUEUED_MS / 1000;
 // A blocking push on a full queue gives up after this long.
 static constexpr std::chrono::milliseconds FULL_WAIT_TIMEOUT{200};
 static constexpr std::chrono::milliseconds FULL_WAIT_STEP{1};
@@ -348,23 +350,36 @@ int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle ctx) try {
 
 int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam* params, void* buffer, size_t buffer_size, AudioOut2ContextHandle* ctx) {
     if (!params || !ctx) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    AudioOut2ContextParam guestParams{};
+    if (!GuestCopyIn_nid_no_patch(&guestParams, params, sizeof(guestParams))) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    if (guestParams.num_grains > MAX_GRAIN) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     const float padSpeakerFallbackGain = AudioPadSpeakerFallbackGain();
-    auto* context = new AudioOut2Context();
+    const auto destroyUnpublished = [](AudioOut2Context* unpublished) {
+        CloseDevice(unpublished->device);
+        delete unpublished;
+    };
+    std::unique_ptr<AudioOut2Context, decltype(destroyUnpublished)> context(new AudioOut2Context(), destroyUnpublished);
     context->padSpeakerFallbackGain = padSpeakerFallbackGain;
-    context->grain = params->num_grains ? params->num_grains : AUDIO_OUT2_DEFAULT_GRAIN;
-    context->queueDepth = params->queue_depth ? params->queue_depth : 1;
+    context->grain = guestParams.num_grains ? guestParams.num_grains : AUDIO_OUT2_DEFAULT_GRAIN;
+    context->queueDepth = guestParams.queue_depth ? guestParams.queue_depth : 1;
     context->playHead = Clock::now();
     context->mix.assign(static_cast<std::size_t>(context->grain) * AUDIO_OUT2_OUTPUT_CHANNELS, 0.0f);
     AUDIOOUT2_TRACE("t=%.3f ContextCreate: max_ports=%u max_object_ports=%u guarantee_object_ports=%u queue_depth=%u num_grains=%u flags=0x%x buffer=%p size=%zu -> ctx %p: %u-sample grains (%.2f ms), %u queued, %u Hz stereo float output\n",
-        AudioOut2TraceSeconds(), params->max_ports, params->max_object_ports, params->guarantee_object_ports, params->queue_depth, params->num_grains, params->flags, buffer, buffer_size,
-        static_cast<void*>(context), context->grain, 1000.0 * context->grain / AUDIO_OUT2_SAMPLE_RATE, context->queueDepth, AUDIO_OUT2_SAMPLE_RATE);
+        AudioOut2TraceSeconds(), guestParams.max_ports, guestParams.max_object_ports, guestParams.guarantee_object_ports, guestParams.queue_depth, guestParams.num_grains, guestParams.flags, buffer, buffer_size,
+        static_cast<void*>(context.get()), context->grain, 1000.0 * context->grain / AUDIO_OUT2_SAMPLE_RATE, context->queueDepth, AUDIO_OUT2_SAMPLE_RATE);
     OpenDevice(*context);
     context->deviceBacked = context->device != 0;
     {
         std::lock_guard lock(g_contextsLock);
-        g_contexts.insert(context);
+        g_contexts.insert(context.get());
     }
-    *ctx = reinterpret_cast<AudioOut2ContextHandle>(context);
+    auto handle = reinterpret_cast<AudioOut2ContextHandle>(context.get());
+    if (!GuestCopyOut_nid_no_patch(ctx, &handle, sizeof(handle))) {
+        std::lock_guard lock(g_contextsLock);
+        g_contexts.erase(context.get());
+        return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    }
+    context.release();
     return 0;
 }
 
