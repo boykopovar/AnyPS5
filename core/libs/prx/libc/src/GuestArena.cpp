@@ -927,6 +927,14 @@ void GuestArenaSetHostWriteHook_nid_no_patch(void (*hook)(std::uintptr_t, std::s
     hostWriteHook.store(hook, std::memory_order_release);
 }
 
+void GuestArenaSetArmGate_nid_no_patch(bool (*gate)()) {
+#ifdef _WIN32
+    WindowsMappings::SetArmGate(gate);
+#else
+    static_cast<void>(gate);
+#endif
+}
+
 void GuestArenaSetAccessObserver_nid_postfix(void (*callback)(std::uintptr_t address, std::size_t bytes)) {
     accessObserver.store(callback, std::memory_order_release);
 }

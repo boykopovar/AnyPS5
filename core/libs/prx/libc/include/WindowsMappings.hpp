@@ -18,12 +18,17 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 
 namespace GuestArena {
 
 class WindowsMappings {
 public:
     enum class Collection { All, Armed, Fresh };
+
+    static void SetArmGate(bool (*gate)()) {
+        armGate.store(gate, std::memory_order_release);
+    }
 
     static WindowsMappings& Get() {
         static auto* mappings = new WindowsMappings;
@@ -64,6 +69,7 @@ public:
             if (memory.State == MEM_RESERVE && std::min(end, cursor + granule) <= regionEnd) {
                 privateAllocations.erase(privateAllocations.lower_bound(cursor), privateAllocations.lower_bound(stop));
                 forgetClean(cursor, stop);
+                forgetArmed(cursor, stop);
                 const auto holder = reinterpret_cast<std::uintptr_t>(memory.AllocationBase);
                 if (holder != cursor) cut(holder, cursor - holder, "split guest placeholder prefix");
                 if (stop != regionEnd) cut(cursor, stop - cursor, "split guest placeholder suffix");
@@ -234,6 +240,7 @@ public:
     void SetProtection(std::uintptr_t address, std::size_t bytes, DWORD protection) {
         std::lock_guard lock(mutex);
         disown(address, address + bytes);
+        forgetArmed(address, address + bytes);
         collectableRanges.clear();
         for (auto it = views.lower_bound(address); it != views.end() && it->first < address + bytes; ++it) {
             it->second.protection = protection;
@@ -245,6 +252,7 @@ public:
     void Pin(std::uintptr_t address, std::size_t bytes) {
         std::lock_guard lock(mutex);
         disown(address, address + bytes);
+        openArmed(address, address + bytes);
         ownedPins.emplace(address, address + bytes);
         for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < address + bytes; ++it) {
             if (it->second.resident) {
@@ -330,6 +338,18 @@ public:
         std::lock_guard lock(mutex);
         const auto base = address & ~(pageBytes - 1);
         const auto found = views.find(base);
+        if (const auto block = address & ~(ownedBlockBytes - 1); !armedPrivate.empty() && (found == views.end() || found->second.resident)) {
+            if (const auto armed = armedPrivate.find(block); armed != armedPrivate.end()) {
+                if (armed->second.armed != 0) {
+                    ownedPending[block] |= static_cast<std::uint16_t>(std::uint16_t{1} << ((address - block) / 4096));
+                    openArmedBlock(block, armed->second);
+                    if (armed->second.faults < ArmFaultLimit) ++armed->second.faults;
+                    return true;
+                }
+                const auto memory = query(address);
+                if (memory.State == MEM_COMMIT && (memory.Protect & 0xffu) == PAGE_READWRITE) return true;
+            }
+        }
         if (found == views.end() || !writable(found->second.protection)) return false;
         auto& view = found->second;
         if (view.resident) {
@@ -383,6 +403,7 @@ public:
             if (!writable(it->second.protection)) return false;
         }
         disown(address, end);
+        openArmed(address, end);
         ownedHostAccess.emplace(address, end);
         for (auto it = first; it != views.end() && it->first < end; ++it) {
             auto& view = it->second;
@@ -713,7 +734,17 @@ public:
                 const auto allocationEnd = privateAllocationEnd(cursor);
                 if (allocationEnd == 0) return false;
                 if (capacity == *count) return true;
-                const auto stop = ownedPending.empty() ? std::min(end, allocationEnd) : std::min({end, allocationEnd, (cursor & ~std::uintptr_t{4095}) + (capacity - *count) * 4096});
+                auto stop = ownedPending.empty() ? std::min(end, allocationEnd) : std::min({end, allocationEnd, (cursor & ~std::uintptr_t{4095}) + (capacity - *count) * 4096});
+                const bool arming = armPrivateBlocks() && collection == Collection::All;
+                if (arming) {
+                    const auto open = skipArmed(cursor, stop);
+                    if (open != cursor) {
+                        cursor = open;
+                        continue;
+                    }
+                    stop = beforeArmed(cursor, stop);
+                }
+                const auto reportedBefore = *count;
                 const auto touched = (((stop + 4095) & ~static_cast<std::uintptr_t>(4095)) - (cursor & ~static_cast<std::uintptr_t>(4095))) / 4096;
                 ULONG_PTR available = std::min<ULONG_PTR>(capacity - *count, touched);
                 DWORD granularity = 0;
@@ -729,6 +760,7 @@ public:
                 }
                 if (!committed) staleProof(cursor, stop);
                 *count += available;
+                if (arming && clear && *count < capacity) noteWalkedBlocks(cursor, stop, pages + reportedBefore, *count - reportedBefore);
                 if (*count == capacity) return true;
                 cursor = stop;
             }
@@ -739,6 +771,116 @@ public:
 
 private:
     using OwnedRanges = std::multimap<std::uintptr_t, std::uintptr_t>;
+
+    struct ArmedBlock {
+        std::uint16_t armed = 0;
+        std::uint8_t clean = 0;
+        std::uint8_t faults = 0;
+    };
+    static constexpr std::uint8_t ArmAfterCleanWalks = 3;
+    static constexpr std::uint8_t ArmFaultLimit = 4;
+    static constexpr std::size_t ArmedBlockLimit = std::size_t{1} << 20;
+
+    static inline std::atomic<bool (*)()> armGate{nullptr};
+
+    static bool armPrivateBlocks() {
+        const auto gate = armGate.load(std::memory_order_acquire);
+        return gate != nullptr && gate();
+    }
+
+    bool fullyArmed(std::uintptr_t block) const {
+        const auto found = armedPrivate.find(block);
+        return found != armedPrivate.end() && found->second.armed == 0xffffu && !ownedPending.contains(block);
+    }
+
+    std::uintptr_t skipArmed(std::uintptr_t cursor, std::uintptr_t stop) const {
+        while (cursor < stop && fullyArmed(cursor & ~(ownedBlockBytes - 1))) cursor = std::min(stop, (cursor & ~(ownedBlockBytes - 1)) + ownedBlockBytes);
+        return cursor;
+    }
+
+    std::uintptr_t beforeArmed(std::uintptr_t cursor, std::uintptr_t stop) const {
+        if (armedPrivate.empty()) return stop;
+        for (auto block = (cursor & ~(ownedBlockBytes - 1)) + ownedBlockBytes; block < stop; block += ownedBlockBytes) {
+            if (fullyArmed(block)) return block;
+        }
+        return stop;
+    }
+
+    void openArmedBlock(std::uintptr_t block, ArmedBlock& entry) {
+        DWORD previous = 0;
+        if (!VirtualProtect(reinterpret_cast<void*>(block), ownedBlockBytes, PAGE_READWRITE, &previous)) fail("reopen an armed private guest block");
+        entry.armed = 0;
+        entry.clean = 0;
+    }
+
+    void openArmed(std::uintptr_t first, std::uintptr_t end) {
+        if (armedPrivate.empty() || end <= first) return;
+        for (auto block = first & ~(ownedBlockBytes - 1); block < end; block += ownedBlockBytes) {
+            const auto found = armedPrivate.find(block);
+            if (found == armedPrivate.end() || found->second.armed == 0) continue;
+            for (unsigned bit = 0; bit < ownedBlockBytes / 4096; ++bit) {
+                const auto page = block + bit * 4096;
+                if (page < end && page + 4096 > first) ownedPending[block] |= static_cast<std::uint16_t>(std::uint16_t{1} << bit);
+            }
+            openArmedBlock(block, found->second);
+        }
+    }
+
+    void forgetArmed(std::uintptr_t first, std::uintptr_t end) {
+        if (armedPrivate.empty() || end <= first) return;
+        for (auto block = first & ~(ownedBlockBytes - 1); block < end; block += ownedBlockBytes) armedPrivate.erase(block);
+    }
+
+    void armBlock(std::uintptr_t block, ArmedBlock& entry) {
+        const auto memory = query(block);
+        if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE || memory.Protect != PAGE_READWRITE || reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize < block + ownedBlockBytes) {
+            entry.faults = ArmFaultLimit;
+            return;
+        }
+        DWORD previous = 0;
+        if (!VirtualProtect(reinterpret_cast<void*>(block), ownedBlockBytes, PAGE_READONLY, &previous)) {
+            entry.faults = ArmFaultLimit;
+            return;
+        }
+        std::array<void*, ownedBlockBytes / 4096> written{};
+        ULONG_PTR reported = written.size();
+        DWORD granularity = 0;
+        const bool walked = GetWriteWatch(WRITE_WATCH_FLAG_RESET, reinterpret_cast<void*>(block), ownedBlockBytes, written.data(), &reported, &granularity) == 0;
+        if (!walked || reported != 0) {
+            auto& pending = ownedPending[block];
+            if (walked) {
+                for (ULONG_PTR index = 0; index < reported; ++index) pending |= static_cast<std::uint16_t>(std::uint16_t{1} << ((reinterpret_cast<std::uintptr_t>(written[index]) - block) / 4096));
+            } else {
+                pending = 0xffffu;
+            }
+            openArmedBlock(block, entry);
+            return;
+        }
+        entry.armed = 0xffffu;
+    }
+
+    void noteWalkedBlocks(std::uintptr_t first, std::uintptr_t stop, void* const* written, std::size_t count) {
+        const auto begin = (first + ownedBlockBytes - 1) & ~(ownedBlockBytes - 1);
+        const auto end = stop & ~(ownedBlockBytes - 1);
+        if (end <= begin || armedPrivate.size() >= ArmedBlockLimit) return;
+        std::vector<bool> dirty((end - begin) / ownedBlockBytes);
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto page = reinterpret_cast<std::uintptr_t>(written[index]);
+            if (page >= begin && page < end) dirty[(page - begin) / ownedBlockBytes] = true;
+        }
+        for (auto block = begin; block < end; block += ownedBlockBytes) {
+            auto& entry = armedPrivate[block];
+            if (entry.armed != 0) continue;
+            if (dirty[(block - begin) / ownedBlockBytes]) {
+                entry.clean = 0;
+                continue;
+            }
+            if (entry.clean < ArmAfterCleanWalks) ++entry.clean;
+            if (entry.clean < ArmAfterCleanWalks || entry.faults >= ArmFaultLimit || ownedPending.contains(block)) continue;
+            if (overlapsOwnedRange(ownedPins, block, block + ownedBlockBytes) || overlapsOwnedRange(ownedHostAccess, block, block + ownedBlockBytes)) continue;
+            armBlock(block, entry);
+        }
+    }
 
     static bool ownedRange(std::uintptr_t address, std::size_t bytes, std::size_t count) {
         if (address == 0 || bytes == 0 || address >= (std::uintptr_t{1} << 47) || bytes > (std::uintptr_t{1} << 47) - address) return false;
@@ -1012,7 +1154,26 @@ private:
     void collectResident(std::uintptr_t start, Run& run, std::uintptr_t from, std::uintptr_t stop, void** pages, std::size_t* count, bool clear, Collection collection) {
         if (clear) run.reset = true;
         const auto first = from & ~std::uintptr_t{4095};
-        const bool armed = armResidentRuns() && clear && run.watched && run.fresh == 0 && !run.writeObserved && collection != Collection::Fresh && run.end - start >= 0x40000 && armResident(first, stop);
+        if (run.fresh == 0 && collection == Collection::All && armPrivateBlocks()) {
+            auto cursor = first;
+            while (cursor < stop) {
+                const auto open = skipArmed(cursor, stop);
+                if (open != cursor) {
+                    cursor = open;
+                    continue;
+                }
+                const auto until = beforeArmed(cursor, stop);
+                ULONG_PTR reported = (until - cursor + 4095) / 4096;
+                DWORD granularity = 0;
+                if (collectOwnedWrites(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), until - cursor, pages + *count, &reported, &granularity) != 0) fail("collect resident guest writes");
+                if (clear) noteWalkedBlocks(cursor, until, pages + *count, reported);
+                for (ULONG_PTR index = 0; index < reported; ++index) pages[*count + index] = reinterpret_cast<void*>(std::max(from, reinterpret_cast<std::uintptr_t>(pages[*count + index])));
+                *count += reported;
+                cursor = until;
+            }
+            return;
+        }
+        const bool armed = !armPrivateBlocks() && armResidentRuns() && clear && run.watched && run.fresh == 0 && !run.writeObserved && collection != Collection::Fresh && run.end - start >= 0x40000 && armResident(first, stop);
         if (run.fresh == 0 && collection != Collection::Fresh) {
             ULONG_PTR reported = (stop - first + 4095) / 4096;
             DWORD granularity = 0;
@@ -1073,6 +1234,7 @@ private:
     }
 
     void commitResident(std::uintptr_t base, std::size_t bytes) {
+        forgetArmed(base, base + bytes);
         const DWORD flags = MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER | (watchResident ? MEM_WRITE_WATCH : 0);
         if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(base), bytes, flags, PAGE_READWRITE, nullptr, 0)) fail("replace guest placeholder with resident direct memory");
     }
@@ -1198,6 +1360,7 @@ private:
         if (query(reinterpret_cast<std::uintptr_t>(window.bytes)).State == MEM_RESERVE && !VirtualAlloc(window.bytes, stop - start, MEM_COMMIT, PAGE_READWRITE)) fail("commit direct memory pages");
         std::memcpy(window.bytes, reinterpret_cast<const void*>(start), stop - start);
         close(window);
+        forgetArmed(start, stop);
         if (!VirtualFree(reinterpret_cast<void*>(start), stop - start, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) fail("release resident guest pages");
         physical.merge(staged);
         for (auto& [key, slot] : staged) physical.find(key)->second = std::move(slot);
@@ -1221,6 +1384,7 @@ private:
             invalidate(*view.page);
         }
         if (indexed) residentIndex.erase(entry);
+        forgetArmed(run->first, run->second.end);
         residentRuns.erase(run);
     }
 
@@ -1273,6 +1437,7 @@ private:
         }
         if (indexed) residentIndex.erase(entry);
         forget(freshRanges, start, stop);
+        forgetArmed(run->first, run->second.end);
         residentRuns.erase(run);
     }
 
@@ -1429,6 +1594,7 @@ private:
         const auto end = address + bytes;
         privateAllocations.erase(privateAllocations.lower_bound(address), privateAllocations.lower_bound(end));
         forgetClean(address, end);
+        forgetArmed(address, end);
         breakRun(address);
         breakRun(end);
         breakView(address);
@@ -1523,6 +1689,7 @@ private:
 
     std::map<std::uintptr_t, std::uint64_t> ownedWords;
     std::map<std::uintptr_t, std::uint16_t> ownedPending;
+    std::unordered_map<std::uintptr_t, ArmedBlock> armedPrivate;
     OwnedRanges ownedPins;
     OwnedRanges ownedHostAccess;
     std::uint64_t nextOwned = 1;

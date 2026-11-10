@@ -94,6 +94,7 @@ bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes);
 void GuestArenaEndHostWrite_nid_postfix(void* pointer, std::size_t bytes);
 void GuestArenaSetHostWriteHook_nid_no_patch(void (*hook)(std::uintptr_t address, std::size_t bytes));
 void GuestArenaSetHostReadHook_nid_no_patch(void (*hook)(std::uintptr_t address, std::size_t bytes));
+void GuestArenaSetArmGate_nid_no_patch(bool (*gate)());
 void GuestArenaPrepareHostRead_nid_no_patch(const void* pointer, std::size_t bytes);
 
 }

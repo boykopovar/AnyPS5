@@ -14,6 +14,7 @@ enum class RuntimeSwitch : std::size_t {
     NoBarrierBatch,
     ArmResident,
     NoOwnedDrawInputs,
+    ArmBlocks,
     Count,
 };
 
