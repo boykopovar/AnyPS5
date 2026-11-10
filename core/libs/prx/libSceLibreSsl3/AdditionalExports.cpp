@@ -183,10 +183,6 @@ int APS5_VABI Unknown_AiNud8LR8B4_nid_no_patch() {
 }
 APS5_EXPORT("AiNud8LR8B4", Unknown_AiNud8LR8B4_nid_no_patch);
 
-int APS5_VABI X509_cmp_current_time_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_check_akid_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -210,10 +206,6 @@ int APS5_VABI Unknown_GjO5Ap3E_minus_t4_nid_no_patch() {
 APS5_EXPORT("GjO5Ap3E-t4", Unknown_GjO5Ap3E_minus_t4_nid_no_patch);
 
 int APS5_VABI X509_set_version_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI DES_set_key_unchecked_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -395,10 +387,6 @@ int APS5_VABI EC_POINT_dup_nid_postfix() {
 }
 
 int APS5_VABI d2i_ASN1_SEQUENCE_ANY_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKCS5_PBKDF2_HMAC_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
