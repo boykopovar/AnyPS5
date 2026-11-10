@@ -25,6 +25,7 @@
 #endif
 #endif
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -1081,20 +1082,33 @@ int APS5_VABI sceNetCtlGetInfo(int code, NetCtlInfo* info) {
 int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!info) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    if (info->size != sizeof(NetCtlNatInfo)) return SCE_NET_CTL_ERROR_INVALID_SIZE;
+    std::uint32_t size = 0;
+    const int savedErrno = errno;
+    const bool copiedSize = GuestCopyIn_nid_no_patch(&size, info, sizeof(size));
+    errno = savedErrno;
+    if (!copiedSize) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (size != sizeof(NetCtlNatInfo)) return SCE_NET_CTL_ERROR_INVALID_SIZE;
     HostIpv4Interface host;
     if (!FindHostIpv4Interface(host)) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
     auto& config = GetStunConfig();
     std::uint64_t generation = 0;
     const auto now = std::chrono::steady_clock::now();
+    NetCtlNatInfo cached{};
+    bool hasCached = false;
     {
         std::lock_guard guard(config.lock);
         generation = config.configGeneration;
         if (config.hasCachedResult && config.cachedConfigGeneration == generation &&
             config.cachedLocalAddr == host.address.s_addr && now < config.cachedUntil) {
-            *info = config.cachedResult;
-            return 0;
+            cached = config.cachedResult;
+            hasCached = true;
         }
+    }
+    if (hasCached) {
+        const int copyErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(info, &cached, sizeof(cached));
+        errno = copyErrno;
+        return copied ? 0 : SCE_NET_CTL_ERROR_INVALID_ADDR;
     }
     const NetCtlNatInfo discovered = DiscoverNatInfo(host.address);
     if (discovered.stun_status == NET_CTL_STUN_STATUS_OK) {
@@ -1107,8 +1121,10 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
             config.hasCachedResult = true;
         }
     }
-    *info = discovered;
-    return 0;
+    const int copyErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &discovered, sizeof(discovered));
+    errno = copyErrno;
+    return copied ? 0 : SCE_NET_CTL_ERROR_INVALID_ADDR;
 }
 
 int APS5_VABI sceNetCtlGetResult(int event, int* result) {
