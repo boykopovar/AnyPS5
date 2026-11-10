@@ -313,6 +313,11 @@ int APS5_VABI _Cnd_init_with_default_name_override_nid_postfix(void** handle, co
     return _Cnd_init_nid_postfix(handle);
 }
 
+APS5_EXPORT("2B+V3qCqz4s", sceLibcCndInitWithName);
+int APS5_VABI sceLibcCndInitWithName(void** handle, const char*) {
+    return _Cnd_init_nid_postfix(handle);
+}
+
 void APS5_VABI _Cnd_destroy_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Cnd_destroy: null condition handle pointer");

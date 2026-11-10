@@ -285,6 +285,13 @@ int APS5_VABI sceLibcMspaceMallocStatsFast_nid_postfix(void* handle, MallocManag
     return FillStats(handle, stats);
 }
 
+int APS5_VABI sceLibcMspaceIsHeapEmpty_nid_postfix(void* handle) {
+    std::lock_guard lock(arenaMutex);
+    auto* arena = Find(handle);
+    if (!arena) return 0;
+    return arena->inUse == 0 ? 1 : 0;
+}
+
 std::size_t APS5_VABI sceLibcMspaceMallocUsableSize_nid_postfix(const void* pointer) {
     if (!pointer) return 0;
     std::lock_guard lock(arenaMutex);
@@ -350,5 +357,10 @@ int APS5_VABI sceLibcPafMspaceMallocStats_nid_postfix(void* handle, MallocManage
 
 int APS5_VABI sceLibcPafMspaceMallocStatsFast_nid_postfix(void* handle, MallocManagedSize* stats) {
     return sceLibcMspaceMallocStatsFast_nid_postfix(handle, stats);
+}
+
+int APS5_VABI sceLibcPafMspaceIsHeapEmpty_nid_postfix(void* handle, const void* owner) {
+    (void)owner;
+    return sceLibcMspaceIsHeapEmpty_nid_postfix(handle);
 }
 }

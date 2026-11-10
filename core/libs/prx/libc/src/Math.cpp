@@ -264,6 +264,17 @@ float GuestTgammaf(float x) {
     return std::copysign(0.0f, negative ? -1.0f : 1.0f);
 }
 
+double GuestTgamma(double x) {
+    const int savedErrno = errno;
+    const double result = std::tgamma(x);
+    errno = std::isfinite(x) && x < 0.0 && std::trunc(x) == x ? EDOM : savedErrno;
+    if (std::isnan(result) && !std::isnan(x)) return std::bit_cast<double>(0xfff8000000000000ull);
+    if (result != 0.0 || !std::isfinite(x) || x >= 0.0 || std::trunc(x) == x) return result;
+    const double interval = std::floor(-x);
+    const bool negative = std::fmod(interval, 2.0) == 0.0;
+    return std::copysign(0.0, negative ? -1.0 : 1.0);
+}
+
 float AtanhfLog1p(float x) {
     constexpr float Ln2High = 6.9313812256e-01f, Ln2Low = 9.0580006145e-06f;
     constexpr float Lp1 = 6.6666668653e-01f, Lp2 = 4.0000000596e-01f, Lp3 = 2.8571429849e-01f, Lp4 = 2.2222198546e-01f;
@@ -1224,6 +1235,7 @@ long double APS5_VABI log2l_nid_postfix(long double x) { return std::log2(x); }
 long double APS5_VABI lgammal_nid_postfix(long double x) { return std::lgamma(x); }
 long double APS5_VABI tgammal_nid_postfix(long double x) { return std::tgamma(x); }
 float APS5_VABI tgammaf_nid_postfix(float x) { return GuestTgammaf(x); }
+double APS5_VABI tgamma_nid_postfix(double x) { return GuestTgamma(x); }
 long double APS5_VABI hypotl_nid_postfix(long double x, long double y) {
     if (std::isinf(x) || std::isinf(y)) return std::numeric_limits<long double>::infinity();
     return std::hypot(x, y);
@@ -1764,14 +1776,50 @@ double APS5_VABI erfc_nid_postfix(double x) { return std::erfc(x); }
 float APS5_VABI erfcf_nid_postfix(float x) { return std::erfc(x); }
 int signgam_nid_postfix = 0;
 
-double APS5_VABI lgamma_nid_postfix(double x) {
+static int LgammaSign(double x) {
     const double whole = std::floor(x);
-    if (x == 0) signgam_nid_postfix = std::signbit(x) ? -1 : 1;
-    else signgam_nid_postfix = x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
+    if (x == 0) return std::signbit(x) ? -1 : 1;
+    return x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
+}
+
+static int LgammaSignf(float x) {
+    const float whole = std::floor(x);
+    if (x == 0) return std::signbit(x) ? -1 : 1;
+    return x < 0 && whole != x && std::fmod(whole, 2.0f) != 0 ? -1 : 1;
+}
+
+double APS5_VABI lgamma_nid_postfix(double x) {
+    signgam_nid_postfix = LgammaSign(x);
     const std::uint64_t magnitude = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
     if (magnitude != 0 && magnitude < 0x3c70000000000000ull) return -std::log(std::fabs(x));
     return std::lgamma(x);
 }
+
+float APS5_VABI lgammaf_nid_postfix(float x) { return lgammaf_r_nid_postfix(x, &signgam_nid_postfix); }
+
+double APS5_VABI lgamma_r_nid_postfix(double x, int* sign) {
+    if (!sign) throw std::invalid_argument("lgamma_r: null sign pointer");
+    *sign = LgammaSign(x);
+    const std::uint64_t magnitude = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
+    if (magnitude != 0 && magnitude < 0x3c70000000000000ull) return -std::log(std::fabs(x));
+    return std::lgamma(x);
+}
+
+float APS5_VABI lgammaf_r_nid_postfix(float x, int* sign) {
+    if (!sign) throw std::invalid_argument("lgammaf_r: null sign pointer");
+    *sign = LgammaSignf(x);
+    const std::uint32_t magnitude = std::bit_cast<std::uint32_t>(x) & 0x7fffffffu;
+    if (magnitude != 0 && magnitude < 0x35500000u) return -std::log(std::fabs(x));
+    return std::lgamma(x);
+}
+
+double APS5_VABI gamma_r_nid_postfix(double x, int* sign) { return lgamma_r_nid_postfix(x, sign); }
+
+float APS5_VABI gammaf_r_nid_postfix(float x, int* sign) { return lgammaf_r_nid_postfix(x, sign); }
+
+double APS5_VABI gamma_nid_postfix(double x) { return gamma_r_nid_postfix(x, &signgam_nid_postfix); }
+
+float APS5_VABI gammaf_nid_postfix(float x) { return gammaf_r_nid_postfix(x, &signgam_nid_postfix); }
 
 static const std::int32_t RemPio2Ipio2[] = {
     0xA2F983, 0x6E4E44, 0x1529FC, 0x2757D1, 0xF534DD, 0xC0DB62, 0x95993C, 0x439041, 0xFE5163, 0xABDEBB, 0xC561B7, 0x246E3A,
@@ -3752,6 +3800,10 @@ double APS5_VABI nextafter_nid_postfix(double x, double y) {
     }
     return std::bit_cast<double>(next);
 }
+double APS5_VABI nexttoward_nid_postfix(double x, long double y) { return nextafter_nid_postfix(x, static_cast<double>(y)); }
+float APS5_VABI nexttowardf_nid_postfix(float x, long double y) { return nextafterf_nid_postfix(x, static_cast<float>(y)); }
+long double APS5_VABI nextafterl_nid_postfix(long double x, long double y) { return nextafter_nid_postfix(x, y); }
+long double APS5_VABI nexttowardl_nid_postfix(long double x, long double y) { return nextafterl_nid_postfix(x, y); }
 int APS5_VABI __isfinite_nid_postfix(double x) { return std::isfinite(x) ? 1 : 0; }
 int APS5_VABI __isnan_nid_postfix(double x) { return std::isnan(x) ? 1 : 0; }
 int APS5_VABI __isinf_nid_postfix(double x) { return std::isinf(x) ? 1 : 0; }
