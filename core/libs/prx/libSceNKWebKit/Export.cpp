@@ -11138,10 +11138,6 @@ int APS5_VABI WKPageHideFindUI() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageHorizontalRubberBandingIsEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageIsClosed() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11270,22 +11266,6 @@ int APS5_VABI WKPageResumeActiveDOMObjectsAndAnimations() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageRubberBandsAtBottom() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageRubberBandsAtLeft() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageRubberBandsAtRight() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageRubberBandsAtTop() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageRunBeforeUnloadConfirmPanelResultListenerCall() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11339,14 +11319,6 @@ int APS5_VABI WKPageSetCustomBackingScaleFactor() {
 }
 
 int APS5_VABI WKPageSetCustomUserAgent() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetEnableHorizontalRubberBanding() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetEnableVerticalRubberBanding() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -11454,22 +11426,6 @@ int APS5_VABI WKPageSetPaginationMode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetRubberBandsAtBottom() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetRubberBandsAtLeft() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetRubberBandsAtRight() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetRubberBandsAtTop() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageSetScaleFactor() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11527,10 +11483,6 @@ int APS5_VABI WKPageUseFixedLayout() {
 }
 
 int APS5_VABI WKPageValidateCommand() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageVerticalRubberBandingIsEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 

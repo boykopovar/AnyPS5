@@ -110,6 +110,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [AuthenticationChallenge and AuthenticationDecisionListener](../../../core/libs/prx/libSceNKWebKit/src/AuthenticationChallenge.cpp) (libSceNKWebKit) - WKAuthenticationChallenge* and WKAuthenticationDecisionListener* track challenge URL, counts, credentials, protection space and client decision in host memory; this does not establish integration with the authentication or network producer. The signatures and behaviours of WKAuthenticationChallengCopyRequestURL, WKAuthenticationChallengeIsForMainResource and WKAuthenticationChallengeIsInMainFrame are inferred from export names, not taken from upstream WebKit source or measured on a console.
 - [Resource cache manager cache clearance operations](../../../core/libs/prx/libSceNKWebKit/src/ResourceCacheManager.cpp) (libSceNKWebKit) - `WKResourceCacheManagerClearCacheForAllOrigins`, `WKResourceCacheManagerClearCacheForOrigin` and `WKResourceCacheManagerGetCacheOrigins` manage host-memory origin clearance and return `WKSecurityOrigin` objects; no live cache subsystem populates origins automatically, unrecognized origin types throw `std::invalid_argument`, and disk/network cache integration is unmodeled.
 - [WKImeEvent helpers](../../../core/libs/prx/libSceNKWebKit/src/ImeEvent.cpp) (libSceNKWebKit) - `WKImeEventMake`, `WKImeEventRelease` and `WKImeEventGetInputLanguage` follow [WKImeEvent.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/neko/WKImeEvent.h) and [WKImeEvent.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/neko/WKImeEvent.cpp) at revision `80f77e94c6`. Because `libSceIcu` lacks `uloc_addLikelySubtags`, `WKImeEventGetInputLanguage` expands language/script/region likely subtags locally before matching the 33-entry table (outside-table tags still return undefined); `WKImeEventMake` sets `caretIndex` using the UTF-8 character count rather than calling `mbstowcs_s`. Console ABI and runtime behavior have not been measured. Closes when: compared with a console module and backed by `uloc_addLikelySubtags`.
+- [WKPage rubber banding controls](../../../core/libs/prx/libSceNKWebKit/src/PageRubberBanding.cpp) (libSceNKWebKit) - `WKPageHorizontalRubberBandingIsEnabled`, `WKPageSetEnableHorizontalRubberBanding`, `WKPageVerticalRubberBandingIsEnabled`, `WKPageSetEnableVerticalRubberBanding`, `WKPageRubberBandsAtBottom`, `WKPageSetRubberBandsAtBottom`, `WKPageRubberBandsAtLeft`, `WKPageSetRubberBandsAtLeft`, `WKPageRubberBandsAtRight`, `WKPageSetRubberBandsAtRight`, `WKPageRubberBandsAtTop` and `WKPageSetRubberBandsAtTop` configure and query directional rubber banding settings on the page in host memory. Upstream [WKPage.cpp:745-803](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/WKPage.cpp#L745-L803) setters invoke `CRASH_IF_SUSPENDED` and forward vertical/horizontal values to WebProcess; neither IPC forwarding nor suspension checks are modeled here.
 - [WTF main thread and run loop identification](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - `initializeMainThread`, `isMainThread`, `isMainRunLoop` and `isMainThreadOrGCThread` identify the initialising thread as the WebKit main thread and query whether the current thread is the main thread; garbage-collection worker threads are unmodelled and console execution is unverified.
 - [WTF callOnMainThread and callOnMainRunLoop](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - console execution is unverified. The 8-byte `Function` and `[D1, D0, call]` vtable follow the pinned [Function.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/Function.h#L37-L121). A null or empty `Function` throws. A cross-thread `AndWait` rethrows the callable's exception after destroying it. An `AndWait` blocks forever if the WKRunLoop stops or is reinitialised first, or if called from the `WKRunLoopInitializeMain` thread when `initializeMainThread` ran on another thread or never ran, which upstream's single main thread rules out. Otherwise follows [MainThread.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/MainThread.cpp#L66-L145) without `USE(WEB_THREAD)`. Closes when: compared with a console module.
 - [WKApplicationCacheManager](../../../core/libs/prx/libSceNKWebKit/src/ApplicationCacheManager.cpp) (libSceNKWebKit) - `WKApplicationCacheManagerDeleteAllEntries`, `WKApplicationCacheManagerDeleteEntriesForOrigin` and `WKApplicationCacheManagerGetApplicationCacheOrigins` are empty no-ops following [WKApplicationCacheManager.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/WKApplicationCacheManager.cpp) at revision `80f77e94c6`; console runtime binaries have not been measured. Closes when: compared with a console module.
@@ -207,8 +208,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [Process pool URL scheme registration](../../../core/libs/prx/libSceNKWebKit/src/ContextURLSchemes.cpp) (libSceNKWebKit) - `WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy`, `WKContextRegisterURLSchemeAsCachePartitioned`, `WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest`, `WKContextRegisterURLSchemeAsEmptyDocument` and `WKContextRegisterURLSchemeAsSecure` record registered scheme names on the host `ProcessPool` without network-process or policy enforcement.
 - [WKPage visited links controls](../../../core/libs/prx/libSceNKWebKit/src/PageVisitedLinks.cpp) (libSceNKWebKit) - `WKPageGetAddsVisitedLinks` and `WKPageSetAddsVisitedLinks` read and set the visited links state on the host `Page` object without visited link store notifications.
 - [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5928 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5927 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 - [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - the inventory declarations listed below throw through NotImplemented_nid_no_patch, and a pull request that implements one removes its row; signatures and behavior are unverified. The [generated progress report](https://boykopovar.github.io/AnyPS5/progress.html) counts the throwing exports. The later 13.60-labelled image contains all 8703 inventory declarations; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
-
 | Name | NID |
 | --- | --- |
 | `JSContextCreateBacktrace` | `s77ZLU-juKw` |
@@ -558,7 +559,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageHasSelectedRange` | `pY1NNqZbJ+4` |
 | `WKPageHasVerticalScrollbar` | `gmh9dPLZ8rE` |
 | `WKPageHideFindUI` | `BSE1GBeHulw` |
-| `WKPageHorizontalRubberBandingIsEnabled` | `2S-hLekYP7g` |
 | `WKPageIsClosed` | `ErgHdDWCpVc` |
 | `WKPageIsContentEditable` | `Jub+F7uGS58` |
 | `WKPageIsPlayingAudio` | `Khlt38metko` |
@@ -591,10 +591,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageRestoreFromSessionState` | `0vC8zP+wJyI` |
 | `WKPageRestoreFromSessionStateWithoutNavigation` | `60j3hXkW9+4` |
 | `WKPageResumeActiveDOMObjectsAndAnimations` | `3GC9QQlTKoU` |
-| `WKPageRubberBandsAtBottom` | `l4ZCWwdqXko` |
-| `WKPageRubberBandsAtLeft` | `caZqJUbMXKc` |
-| `WKPageRubberBandsAtRight` | `tI-w0kRXieM` |
-| `WKPageRubberBandsAtTop` | `ErwSbohShIc` |
 | `WKPageRunBeforeUnloadConfirmPanelResultListenerCall` | `T-GOS0yg738` |
 | `WKPageRunJavaScriptAlertResultListenerCall` | `6LmTCyxtXgo` |
 | `WKPageRunJavaScriptConfirmResultListenerCall` | `8tUBw7skPZ0` |
@@ -609,8 +605,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageSetControlledByAutomation` | `EgErBK3HZNc` |
 | `WKPageSetCustomBackingScaleFactor` | `iot3o+WKLVI` |
 | `WKPageSetCustomUserAgent` | `wyOUIvHW0EE` |
-| `WKPageSetEnableHorizontalRubberBanding` | `s7QZGcHR6hI` |
-| `WKPageSetEnableVerticalRubberBanding` | `7ZTLaTyAWFA` |
 | `WKPageSetFixedLayoutSize` | `hwMqSlpTWCk` |
 | `WKPageSetGapBetweenPages` | `1UKzOMAA3bM` |
 | `WKPageSetIgnoresViewportScaleLimits` | `B0VJOvGWnWk` |
@@ -637,10 +631,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageSetPaginationBehavesLikeColumns` | `iUarLNk0Dkg` |
 | `WKPageSetPaginationLineGridEnabled` | `uqcmh9mV7sI` |
 | `WKPageSetPaginationMode` | `JjOoUWau3hA` |
-| `WKPageSetRubberBandsAtBottom` | `078ew7gQLwA` |
-| `WKPageSetRubberBandsAtLeft` | `E6OA1UUy8+4` |
-| `WKPageSetRubberBandsAtRight` | `GuIr1eWRunc` |
-| `WKPageSetRubberBandsAtTop` | `Nn6eNKOy98M` |
 | `WKPageSetScaleFactor` | `LDsNIDCwcLY` |
 | `WKPageSetScrollPinningBehavior` | `XxfxrsCBl5o` |
 | `WKPageSetSuppressScrollbarAnimations` | `mCIjZT8nfvg` |
@@ -656,7 +646,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageUpdateWebsitePolicies` | `ky0keBcpiTk` |
 | `WKPageUseFixedLayout` | `OufFIenC01c` |
 | `WKPageValidateCommand` | `K82wly5zJoc` |
-| `WKPageVerticalRubberBandingIsEnabled` | `p-jMGxCpEF4` |
 | `WKPageWillHandleHorizontalScrollEvents` | `pYHt5lL67G8` |
 | `WKRegistrableDomainCreate` | `BjwTHxBa4gc` |
 | `WKSecurityOriginCopyDatabaseIdentifier` | `YE5ube8wC4w` |
