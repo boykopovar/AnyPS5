@@ -1,5 +1,6 @@
 #include "prx/libSceNotification/include/Api.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -31,6 +32,10 @@ void TestSend() {
     std::string empty;
     Require(sceNotificationSend(0, 0, Pointer(empty)) == Notification::InvalidMessage, "send an empty message");
     Require(sceNotificationSend(0, 0, nullptr) == Notification::InvalidMessage, "send a null message");
+    errno = 71;
+    Require(sceNotificationSend(0, 0, reinterpret_cast<std::uint8_t*>(0x10)) == Notification::InvalidMessage,
+            "send an unreadable message");
+    Require(errno == 71, "unreadable message changed host errno");
 }
 
 void TestSendById() {
@@ -57,6 +62,12 @@ void TestSendById() {
             "send by id with a null id");
     Require(sceNotificationSendById(0, 0, Pointer(id), nullptr) == Notification::InvalidMessage,
             "send by id with a null body");
+    errno = 71;
+    Require(sceNotificationSendById(0, 0, reinterpret_cast<std::uint8_t*>(0x10), Pointer(json)) == Notification::InvalidMessage,
+            "send by id with an unreadable id");
+    Require(sceNotificationSendById(0, 0, Pointer(id), reinterpret_cast<std::uint8_t*>(0x10)) == Notification::InvalidMessage,
+            "send by id with an unreadable body");
+    Require(errno == 71, "unreadable id or body changed host errno");
 }
 
 void TestBanner() {
