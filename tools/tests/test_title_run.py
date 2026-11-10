@@ -344,6 +344,44 @@ class PreparationTests(unittest.TestCase):
         title_run.unwrap_or_copy(source, self.root / "out/eboot.elf")
         self.assertEqual((self.root / "out/eboot.elf").read_bytes(), source.read_bytes())
 
+    def test_module_dirs_are_staged_for_the_relinker(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name in ("eboot.bin", "sce_module/libc.prx", "Media/Modules/Il2CppUserAssemblies.prx", "Media/Plugins/lib_burst_generated.prx", "Media/Other/skip.prx"):
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_bytes(elf)
+        entry = {"relink": ["--trap-sdk-syscall-stubs", "--module-dir", "Media/Modules", "--module-dir", "Media/Plugins"]}
+        self.assertEqual(title_run.module_dirs(entry), ["Media/Modules", "Media/Plugins"])
+        title_run.stage_inputs(source, entry, self.root / "input")
+        staged = sorted(path.relative_to(self.root / "input").as_posix() for path in (self.root / "input").rglob("*.*"))
+        self.assertEqual(staged, ["Media/Modules/Il2CppUserAssemblies.prx", "Media/Plugins/lib_burst_generated.prx", "eboot.elf", "sce_module/libc.prx"])
+        self.assertEqual(title_run.module_dirs({"relink": ["--module-dir"]}), [])
+
+    def test_module_dirs_keep_every_module_and_empty_directories(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name, data in (("eboot.bin", elf), ("Media/Plugins/anchor.prx", elf), ("Media/Plugins/plugin.sprx", elf), ("Media/Plugins/readme.txt", b"text")):
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_bytes(data)
+        (source / "Media/Empty").mkdir(parents=True)
+        entry = {"relink": ["--module-dir", "Media/Plugins", "--module-dir", "Media/Empty", "--module-dir", "Media/Missing"]}
+        title_run.stage_inputs(source, entry, self.root / "input")
+        staged = self.root / "input/Media"
+        self.assertEqual(sorted(path.name for path in (staged / "Plugins").iterdir()), ["anchor.prx", "plugin.sprx"])
+        self.assertTrue((staged / "Empty").is_dir())
+        self.assertFalse((staged / "Missing").exists())
+
+    def test_module_dirs_leave_out_the_executables_and_their_aliases(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name in ("eboot.bin", "tool.elf", "plugin.prx"):
+            (source / name).write_bytes(elf)
+        os.link(source / "eboot.bin", source / "alias.bin")
+        entry = {"relink": ["--module-dir", "."], "executables": ["tool.elf"]}
+        title_run.stage_inputs(source, entry, self.root / "input")
+        staged = sorted(path.name for path in (self.root / "input").iterdir() if path.is_file())
+        self.assertEqual(staged, ["eboot.elf", "plugin.prx", "tool.elf"])
+
     def test_link_tree_skips(self):
         source = package(self.root / "pkg", "PPSA00001")
         (source / "sce_module").mkdir()
