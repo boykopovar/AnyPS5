@@ -27,6 +27,13 @@ struct NpSignalingConnectionStatistics {
 };
 static_assert(sizeof(NpSignalingConnectionStatistics) == 0x10);
 
+struct NpSignalingMemoryInfo {
+    std::uint64_t currentInUse;
+    std::uint64_t peakInUse;
+    std::uint64_t maxSystemSize;
+};
+static_assert(sizeof(NpSignalingMemoryInfo) == 0x18);
+
 extern "C" {
 
 int APS5_VABI sceNpSignalingActivateConnection(int ctxId, const void* peerNpId, int* outConnId);
@@ -52,5 +59,6 @@ int APS5_VABI sceNpSignalingGetPeerNetInfoA(int ctxId, const void* peerAccount, 
 int APS5_VABI sceNpSignalingCancelPeerNetInfo(int ctxId, int reqId);
 int APS5_VABI sceNpSignalingGetPeerNetInfoResult(int ctxId, int connId, NpSignalingNetInfo* peerNetInfo);
 int APS5_VABI sceNpSignalingGetConnectionStatistics(NpSignalingConnectionStatistics* stats);
+int APS5_VABI sceNpSignalingGetMemoryInfo(NpSignalingMemoryInfo* info);
 
 }

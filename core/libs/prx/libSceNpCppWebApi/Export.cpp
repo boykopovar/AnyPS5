@@ -104,34 +104,24 @@ int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi17
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity13getActivityIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity13getActivityIdEv(const void* self) {
+    return static_cast<const std::byte*>(self) + 0x10;
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity7getNameEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity7getNameEv(const void* self) {
+    return static_cast<const std::byte*>(self) + 0x30;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity9getHiddenEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return *reinterpret_cast<const bool*>(static_cast<const std::byte*>(self) + 0x50);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity12matchIdIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return *reinterpret_cast<const bool*>(static_cast<const std::byte*>(self) + 0x78);
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity10getMatchIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity10getMatchIdEv(const void* self) {
+    return static_cast<const std::byte*>(self) + 0x58;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities26GetUsersActivitiesResponse8getUsersEv(const void* self) {
@@ -1473,16 +1463,12 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionRespons
     return false;
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry10getCommentEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const CommonString* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry10getCommentEv(const void* self) {
+    return reinterpret_cast<const CommonString*>(static_cast<const std::byte*>(self) + 0x18);
 }
 
-const char* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry11getObjectIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const CommonString* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry11getObjectIdEv(const void* self) {
+    return reinterpret_cast<const CommonString*>(static_cast<const std::byte*>(self) + 0x48);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry11getOnlineIdEv(void* out, const void* self) {
@@ -1490,55 +1476,47 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry11getOnlineIdEv(void
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry12commentIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return static_cast<const std::uint8_t*>(self)[0x38] != 0;
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry12getAccountIdEv(const void* self) {
     return *reinterpret_cast<const std::uint64_t*>(static_cast<const std::uint8_t*>(self) + 0x10);
 }
 
-const void* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry12getSmallDataEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const CommonBinary* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry12getSmallDataEv(const void* self) {
+    return reinterpret_cast<const CommonBinary*>(static_cast<const std::byte*>(self) + 0xa0);
 }
 
 std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry13getSerialRankEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::uint32_t value;
+    std::memcpy(&value, static_cast<const std::byte*>(self) + 0x98, sizeof(value));
+    return value;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry13objectIdIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return static_cast<const std::uint8_t*>(self)[0x68] != 0;
 }
 
 std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry14getHighestRankEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::uint32_t value;
+    std::memcpy(&value, static_cast<const std::byte*>(self) + 0x3c, sizeof(value));
+    return value;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry14smallDataIsSetEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return false;
+    return static_cast<const std::uint8_t*>(self)[0xb8] != 0;
 }
 
 std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry20getHighestSerialRankEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::uint32_t value;
+    std::memcpy(&value, static_cast<const std::byte*>(self) + 0x40, sizeof(value));
+    return value;
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry7getPcIdEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::int32_t value;
+    std::memcpy(&value, static_cast<const std::byte*>(self) + 0x80, sizeof(value));
+    return value;
 }
 
 std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry7getRankEv(const void* self) {
@@ -4034,6 +4012,19 @@ static void APS5_VABI DestroyMatchesModelString16(void* object) {
     std::free(object);
 }
 
+static void APS5_VABI DestroyMatchesModelStrings16And48(void* object) {
+    DestroyMatchesString(MatchesStringAt(object, 16));
+    DestroyMatchesString(MatchesStringAt(object, 48));
+    std::free(object);
+}
+
+static void APS5_VABI DestroyRequestMatchPlayer(void* object) {
+    DestroyMatchesString(MatchesStringAt(object, 16));
+    DestroyMatchesString(MatchesStringAt(object, 56));
+    DestroyMatchesString(MatchesStringAt(object, 96));
+    std::free(object);
+}
+
 static void APS5_VABI DestroyAddedPlayer(void* object) {
     DestroyMatchesString(MatchesStringAt(object, 16));
     DestroyMatchesString(MatchesStringAt(object, 56));
@@ -4084,6 +4075,29 @@ static void APS5_VABI DestroyRequestMatchResults(void* object) {
     std::free(object);
 }
 
+static void APS5_VABI DestroyMatchesModelString16AndVector48(void* object) {
+    DestroyMatchesString(MatchesStringAt(object, 16));
+    ReleaseMatchesMember(object, 48, VectorReferenceCountOffset);
+    std::free(object);
+}
+
+static void APS5_VABI DestroyMatchesModelString16AndVector72(void* object) {
+    DestroyMatchesString(MatchesStringAt(object, 16));
+    ReleaseMatchesMember(object, 72, VectorReferenceCountOffset);
+    std::free(object);
+}
+
+static void APS5_VABI DestroyMatchesModelVector24(void* object) {
+    ReleaseMatchesMember(object, 24, VectorReferenceCountOffset);
+    std::free(object);
+}
+
+static void APS5_VABI DestroyMatchesModelMembers24And48(void* object) {
+    ReleaseMatchesMember(object, 24, ReferenceCountOffset);
+    ReleaseMatchesMember(object, 48, ReferenceCountOffset);
+    std::free(object);
+}
+
 static int MatchesFactoryCreate(const void* context, IntrusivePtr* out, const std::size_t size, void (APS5_VABI* deleter)(void*)) {
     if (context == nullptr || out == nullptr) return ParameterInvalidArgument;
     void* object = std::calloc(1, size);
@@ -4099,6 +4113,27 @@ static int MatchesFactoryCreate(const void* context, IntrusivePtr* out, const st
     out->object = object;
     out->deleter = deleter;
     out->libContext = const_cast<void*>(context);
+    return 0;
+}
+
+static int CopyMatchesVector(IntrusivePtr* member, const IntrusivePtr* source) {
+    if (source == nullptr) return ParameterInvalidArgument;
+    if (source->object == nullptr) return 0;
+    const IntrusivePtr* begin;
+    const IntrusivePtr* end;
+    const auto* body = static_cast<const VectorBody*>(source->object);
+    if (body->magic == VectorBodyMagic && body->elementKind == 1) {
+        begin = static_cast<const IntrusivePtr*>(body->elements);
+        end = begin + body->size;
+    } else {
+        const auto* vector = reinterpret_cast<const std::uint8_t*>(source);
+        begin = *reinterpret_cast<IntrusivePtr* const*>(vector + 0x18);
+        end = *reinterpret_cast<IntrusivePtr* const*>(vector + 0x28);
+    }
+    for (const IntrusivePtr* element = begin; element != end; ++element) {
+        if (element->object == nullptr) return ParameterInvalidArgument;
+        if (VectorPushBackIntrusivePtr(member, element) != 0) return MatchesOutOfMemory;
+    }
     return 0;
 }
 
@@ -4309,10 +4344,10 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V122RequestMatchStatistics19setPlayer
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V123JoinMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_11AddedPlayerEEEEEPNS9_INS3_16JoinMatchRequestEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V123JoinMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_11AddedPlayerEEEEEPNS9_INS3_16JoinMatchRequestEEE(void* self, const IntrusivePtr* players, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x30, &DestroyMatchesModelVector24);
+    if (created != 0) return created;
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 24), players);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V123RequestMatchTeamFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_16RequestMatchTeamEEE(void* self, const char* name, IntrusivePtr* out) {
@@ -4323,10 +4358,10 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V123RequestMatchTeamFactory6createEPN
     return AssignMatchesString(MatchesStringAt(out->object, 16), name);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V124LeaveMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_13RemovedPlayerEEEEEPNS9_INS3_17LeaveMatchRequestEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V124LeaveMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_13RemovedPlayerEEEEEPNS9_INS3_17LeaveMatchRequestEEE(void* self, const IntrusivePtr* players, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x30, &DestroyMatchesModelVector24);
+    if (created != 0) return created;
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 24), players);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V124RequestCompetitiveResult14setTeamResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_18RequestTeamResultsEEEEE(void* self, const IntrusivePtr* value) {
@@ -4383,22 +4418,36 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V125CreateMatchRequestFactory6createE
     return AssignMatchesString(MatchesStringAt(out->object, 24), name);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V125RequestMatchPlayerFactory6createEPNS1_6Common10LibContextEPKcNS3_10PlayerTypeEPNS5_12IntrusivePtrINS3_18RequestMatchPlayerEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V125RequestMatchPlayerFactory6createEPNS1_6Common10LibContextEPKcNS3_10PlayerTypeEPNS5_12IntrusivePtrINS3_18RequestMatchPlayerEEE(void* self, const char* name, std::int32_t playerType, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x88, &DestroyRequestMatchPlayer);
+    if (created != 0) return created;
+    ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
+    ConstructMatchesString(MatchesStringAt(out->object, 56), out->libContext);
+    ConstructMatchesString(MatchesStringAt(out->object, 96), out->libContext);
+    const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
+    if (assigned < 0) return assigned;
+    *reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(out->object) + 0x30) = playerType;
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V125RequestTeamResultsFactory6createEPNS1_6Common10LibContextEPKciPNS5_12IntrusivePtrINS3_18RequestTeamResultsEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V125RequestTeamResultsFactory6createEPNS1_6Common10LibContextEPKciPNS5_12IntrusivePtrINS3_18RequestTeamResultsEEE(void* self, const char* name, std::int32_t rank, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x68, &DestroyMatchesModelString16AndVector72);
+    if (created != 0) return created;
+    ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
+    const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
+    if (assigned < 0) return assigned;
+    *reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(out->object) + 0x30) = rank;
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V126AdditionalStatisticFactory6createEPNS1_6Common10LibContextEPKcS9_PNS5_12IntrusivePtrINS3_19AdditionalStatisticEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V126AdditionalStatisticFactory6createEPNS1_6Common10LibContextEPKcS9_PNS5_12IntrusivePtrINS3_19AdditionalStatisticEEE(void* self, const char* name, const char* value, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x50, &DestroyMatchesModelStrings16And48);
+    if (created != 0) return created;
+    ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
+    ConstructMatchesString(MatchesStringAt(out->object, 48), out->libContext);
+    const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
+    if (assigned < 0) return assigned;
+    return AssignMatchesString(MatchesStringAt(out->object, 48), value);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V126RequestInGameRosterFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_19RequestInGameRosterEEE(void* self, IntrusivePtr* out) {
@@ -4412,15 +4461,21 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V126RequestMatchResultsFactory6create
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V127ReportResultsRequestFactory6createEPNS1_6Common10LibContextENS5_12IntrusivePtrINS3_19RequestMatchResultsEEEPNS8_INS3_20ReportResultsRequestEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V127ReportResultsRequestFactory6createEPNS1_6Common10LibContextENS5_12IntrusivePtrINS3_19RequestMatchResultsEEEPNS8_INS3_20ReportResultsRequestEEE(void* self, const IntrusivePtr* results, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x50, &DestroyMatchesModelMembers24And48);
+    if (created != 0) return created;
+    if (results == nullptr || results->object == nullptr) return ParameterBodyMissing;
+    CopyIntrusivePtr(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 24), results, ReferenceCountOffset);
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V127RequestPlayerResultsFactory6createEPNS1_6Common10LibContextEPKciPNS5_12IntrusivePtrINS3_20RequestPlayerResultsEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V127RequestPlayerResultsFactory6createEPNS1_6Common10LibContextEPKciPNS5_12IntrusivePtrINS3_20RequestPlayerResultsEEE(void* self, const char* name, std::int32_t rank, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x48, &DestroyMatchesModelString16);
+    if (created != 0) return created;
+    ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
+    const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
+    if (assigned < 0) return assigned;
+    *reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(out->object) + 0x30) = rank;
     return 0;
 }
 
@@ -4435,15 +4490,22 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V129RequestMatchStatisticsFactory6cre
     return MatchesFactoryCreate(self, out, 0x50, &DestroyMatchesModelVectors16And48);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V129RequestPlayerStatisticFactory6createEPNS1_6Common10LibContextEPKcRKNS5_6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEEPNSB_INS3_22RequestPlayerStatisticEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V129RequestPlayerStatisticFactory6createEPNS1_6Common10LibContextEPKcRKNS5_6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEEPNSB_INS3_22RequestPlayerStatisticEEE(void* self, const char* name, const IntrusivePtr* statistics, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x48, &DestroyMatchesModelString16AndVector48);
+    if (created != 0) return created;
+    ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
+    const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
+    if (assigned < 0) return assigned;
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 48), statistics);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V130RequestTeamMemberResultFactory6createEPNS1_6Common10LibContextEPKcdPNS5_12IntrusivePtrINS3_23RequestTeamMemberResultEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V130RequestTeamMemberResultFactory6createEPNS1_6Common10LibContextEPKcdPNS5_12IntrusivePtrINS3_23RequestTeamMemberResultEEE(void* self, const char* name, double score, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x38, &DestroyMatchesModelString16);
+    if (created != 0) return created;
+    ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
+    const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
+    if (assigned < 0) return assigned;
+    *reinterpret_cast<double*>(static_cast<std::uint8_t*>(out->object) + 0x30) = score;
     return 0;
 }
 
@@ -4465,10 +4527,13 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V131UpdateMatchStatusRequestFactory6c
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V133RequestTeamMemberStatisticFactory6createEPNS1_6Common10LibContextEPKcRKNS5_6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEEPNSB_INS3_26RequestTeamMemberStatisticEEE(void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V133RequestTeamMemberStatisticFactory6createEPNS1_6Common10LibContextEPKcRKNS5_6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEEPNSB_INS3_26RequestTeamMemberStatisticEEE(void* self, const char* name, const IntrusivePtr* statistics, IntrusivePtr* out) {
+    const int created = MatchesFactoryCreate(self, out, 0x48, &DestroyMatchesModelString16AndVector48);
+    if (created != 0) return created;
+    ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
+    const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
+    if (assigned < 0) return assigned;
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 48), statistics);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi10leaveMatchEiRKNS4_21ParameterToLeaveMatchERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE(void* self) {
