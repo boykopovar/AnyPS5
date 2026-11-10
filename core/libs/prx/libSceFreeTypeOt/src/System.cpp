@@ -89,7 +89,7 @@ int APS5_VABI FT_Stream_Open_nid_postfix(GuestStreamRec* stream, const char* fil
     return 0;
 }
 
-int APS5_VABI FT_Stream_New_nid_postfix(GuestRaccessLibrary* library, const GuestOpenArgs* args, GuestStreamRec** astream) {
+int APS5_VABI FT_Stream_New_nid_postfix(GuestRaccessLibrary* library, const GuestStreamOpenArgs* args, GuestStreamRec** astream) {
     if (!astream) NotImplemented_nid_no_patch(__func__);
     *astream = nullptr;
     if (!library) return InvalidLibraryHandle;
