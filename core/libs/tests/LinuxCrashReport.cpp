@@ -195,6 +195,21 @@ void Scenario(const std::string& name) {
     Load();
     if (name == "near-null" || name == "logged") WriteNearNull();
     if (name == "trap") Trap();
+    if (name == "guest-abort") asm volatile("int $0x45");
+    if (name == "guest-assert") asm volatile("int $0x41");
+    if (name == "other-interrupt") asm volatile("int $0x44");
+    if (name == "guest-abort-edge" || name == "guest-abort-unreadable" || name == "guest-abort-nonexec") {
+        const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapping = mmap(nullptr, 2 * page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Check(mapping != MAP_FAILED, "cannot reserve interrupt fixture\n");
+        Check(mprotect(mapping, page, PROT_READ | PROT_WRITE) == 0, "cannot populate interrupt fixture\n");
+        auto* instruction = static_cast<unsigned char*>(mapping) + page - 2;
+        instruction[0] = 0xcd;
+        instruction[1] = 0x45;
+        const int protection = name == "guest-abort-unreadable" ? PROT_EXEC : name == "guest-abort-nonexec" ? PROT_READ : PROT_READ | PROT_EXEC;
+        Check(mprotect(mapping, page, protection) == 0, "cannot protect interrupt fixture\n");
+        reinterpret_cast<void (*)()>(instruction)();
+    }
     if (name == "divide") DivideByZero();
     if (name == "sent") kill(getpid(), SIGSEGV);
     if (name == "overflow") {
@@ -349,7 +364,21 @@ int main(int argc, char** argv) {
         Expect(Has(fault, "  rip 0x") && Has(fault, program.c_str()), "fault executable missing");
         Expect(Has(fault, "  rax 0x") && Has(fault, " r15 0x"), "fault registers missing");
         Expect(Has(fault, "  frame chain from rbp:") && Has(fault, "  stack words that point at code, from rsp:"), "fault stack missing");
+        Expect(!Has(fault, "  guest "), "memory fault misidentified as guest interrupt");
         Expect(Has(run("trap", SIGILL), "[libc] fatal SIGILL"), "trap report missing");
+        for (const char* name : {"guest-abort", "guest-abort-edge"}) {
+            const auto result = run(name, SIGSEGV);
+            Expect(Has(result, "  guest abort() (int 0x45)"), std::string(name) + ": guest abort description missing");
+            Expect(!Has(result, "guest assert/break"), std::string(name) + ": guest abort described as assertion");
+        }
+        const auto assertion = run("guest-assert", SIGSEGV);
+        Expect(Has(assertion, "  guest assert/break (int 0x41)"), "guest assertion description missing");
+        Expect(!Has(assertion, "guest abort()"), "guest assertion described as abort");
+        for (const char* name : {"other-interrupt", "guest-abort-unreadable", "guest-abort-nonexec"}) {
+            const auto result = run(name, SIGSEGV);
+            Expect(Has(result, "[libc] fatal SIGSEGV") && Has(result, "  rax 0x"), std::string(name) + ": ordinary fault report incomplete");
+            Expect(!Has(result, "  guest "), std::string(name) + ": unverified interrupt was named");
+        }
         Expect(Has(run("divide", SIGFPE), "[libc] fatal SIGFPE"), "divide report missing");
         Expect(Has(run("bus", SIGBUS), "[libc] fatal SIGBUS"), "bus report missing");
         Expect(Has(run("sent", SIGSEGV), "[libc] fatal SIGSEGV (code 0)"), "sent signal report missing");

@@ -156,10 +156,14 @@ void DescribeAddress(ReportLine& line, std::uint64_t address) {
     line.Text(" ").Text(mapping->name).Text("+").Hex(address - mapping->start + mapping->offset);
 }
 
+bool ReadMemory(std::uint64_t address, void* destination, std::size_t bytes) {
+    iovec local{destination, bytes};
+    iovec remote{reinterpret_cast<void*>(address), bytes};
+    return process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == static_cast<ssize_t>(bytes);
+}
+
 bool ReadWord(std::uint64_t address, std::uint64_t& value) {
-    iovec local{&value, sizeof(value)};
-    iovec remote{reinterpret_cast<void*>(address), sizeof(value)};
-    return process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == static_cast<ssize_t>(sizeof(value));
+    return ReadMemory(address, &value, sizeof(value));
 }
 
 bool IsCode(std::uint64_t address) {
@@ -191,6 +195,13 @@ void Report(int signal, const siginfo_t* info, const ucontext_t* context) {
     line.Text("  rip ");
     DescribeAddress(line, rip);
     line.Write();
+    if (signal == SIGSEGV && info->si_code == SI_KERNEL && registers[REG_TRAPNO] == 13) {
+        std::uint8_t trap[2];
+        if (ReadMemory(rip, trap, sizeof(trap)) && trap[0] == 0xcd && registers[REG_ERR] == ((static_cast<greg_t>(trap[1]) << 3) | 2)) {
+            if (trap[1] == 0x45) line.Text("  guest abort() (int 0x45)").Write();
+            else if (trap[1] == 0x41) line.Text("  guest assert/break (int 0x41)").Write();
+        }
+    }
     static constexpr struct {
         const char* name;
         int index;

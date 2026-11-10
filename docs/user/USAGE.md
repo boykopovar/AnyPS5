@@ -642,6 +642,7 @@ On Linux x86-64, a `SIGSEGV`, `SIGBUS`, `SIGILL` or `SIGFPE` that nothing else h
 
 - the signal, its `si_code`, the fault address and the thread ID;
 - `rip`, as an address and as the mapped file plus its offset in that file, for example `app.elf+0xc77cda` or `libkernel.prx+0xc7e30`;
+- `guest abort()` for `int 0x45`, or `guest assert/break` for `int 0x41`, when the kernel's general-protection context and readable instruction bytes identify that interrupt;
 - the sixteen general registers;
 - the return addresses of the `rbp` frame chain, up to 32;
 - up to 24 stack words within 32 KiB above `rsp` that point at executable mappings.
