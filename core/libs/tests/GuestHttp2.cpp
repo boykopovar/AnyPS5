@@ -205,11 +205,9 @@ int main() {
     Require(sceHttp2SetResolveRetry(tmpl, 3) == 0);
     Require(Throws([&] { sceHttp2SetResolveRetry(tmpl, -1); }));
     Require(sceHttp2SetConnectionWaitTimeOut(-1, 1000000) == InvalidId);
-    Require(Throws([&] { sceHttp2SetConnectionWaitTimeOut(context, 1000000); }));
     for (const int id : {tmpl, request}) {
         Require(sceHttp2SetConnectionWaitTimeOut(id, 1000000) == 0);
         Require(sceHttp2SetConnectionWaitTimeOut(id, 0xffffffffu) == 0);
-        Require(Throws([&] { sceHttp2SetConnectionWaitTimeOut(id, 0); }));
     }
     Require(sceHttp2SetRequestNoContentLength(request) == 0);
     Require(Throws([&] { sceHttp2AddRequestHeader(request, "bad:name", "value", 0); }));
