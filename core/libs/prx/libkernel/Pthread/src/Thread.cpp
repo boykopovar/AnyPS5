@@ -757,7 +757,7 @@ std::vector<LiveGuestThreadName> LiveGuestThreadNames() {
     std::lock_guard lock(registry.lock);
     std::vector<LiveGuestThreadName> threads;
     for (const auto& [id, thread] : registry.threads) {
-        if (thread->_finished.load(std::memory_order_acquire)) continue;
+        if (GuestThreadEnded(thread)) continue;
         std::lock_guard nameLock(thread->nameLock);
         threads.push_back({thread->tid, thread->name});
     }
