@@ -1857,12 +1857,41 @@ bool isJisGraphic(uint32_t byte) {
     return byte >= 0x21 && byte <= 0x7E;
 }
 
+bool isNativeJiscs(uint32_t jiscs) {
+    if (jiscs < 0x100 || jiscs > 0xFFFFFF) return false;
+    return ((jiscs > 0xFFFF ? jiscs >> 16 : jiscs >> 8) & 0xFF) >= 0x80;
+}
+
 bool isMeasuredJiscs(uint32_t jiscs) {
-    return jiscs <= 0xFF || (jiscs >> 16 <= 2 && isJisGraphic(jiscs >> 8 & 0xFF) && isJisGraphic(jiscs & 0xFF));
+    return jiscs <= 0xFF || isNativeJiscs(jiscs) || (jiscs >> 16 <= 2 && isJisGraphic(jiscs >> 8 & 0xFF) && isJisGraphic(jiscs & 0xFF));
 }
 
 JisStrict jisX0208Strictness(const void* profile) {
     return isSjisX0208(profile) ? JisStrict::Sjis : isEucJpX0208(profile) ? JisStrict::Euc : JisStrict::None;
+}
+
+bool isNativeJiscsLead(const void* profile, uint8_t lead) {
+    if (isSjis(profile) || isSjis2004(profile)) {
+        return (lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC) || (lead >= 0xA1 && lead <= 0xDF);
+    }
+    return lead == 0x8E || lead == 0x8F || (lead >= 0xA1 && lead <= 0xFE);
+}
+
+int nativeJiscsToUnicode(const void* profile, uint32_t jiscs, uint32_t& code) {
+    uint8_t mbcs[3];
+    const bool three = jiscs > 0xFFFF;
+    mbcs[0] = static_cast<uint8_t>(jiscs >> (three ? 16 : 8));
+    if (three) {
+        mbcs[1] = static_cast<uint8_t>(jiscs >> 8);
+        mbcs[2] = static_cast<uint8_t>(jiscs);
+    } else {
+        mbcs[1] = static_cast<uint8_t>(jiscs);
+    }
+    if (!isNativeJiscsLead(profile, mbcs[0])) return CES_ERROR_ILLEGAL_CODE;
+    uint32_t length = 0;
+    const int result = decodeMbcs(profile, mbcs, three ? 3 : 2, length, code);
+    if (result == CES_ERROR_SRC_BUFFER_END) throw std::runtime_error("sceCesJiscsToUcs: native code " + hexCode(jiscs) + " ends before its encoding's sequence; its form is not implemented");
+    return result;
 }
 
 uint32_t jiscsCell(uint32_t base, uint32_t cell) {
@@ -1877,6 +1906,7 @@ int jiscsToUnicode(const void* profile, uint32_t jiscs, uint32_t& code) {
         else return CES_ERROR_UNASSIGNED_CODE;
         return 0;
     }
+    if (isNativeJiscs(jiscs)) return nativeJiscsToUnicode(profile, jiscs, code);
     if (jiscs >> 16 != 0) return CES_ERROR_ILLEGAL_CODE;
     const uint32_t index = jisIndex(static_cast<uint16_t>(jiscs));
     code = isJis2004(profile) ? JisX0213::PLANE1[index] : jisX0208ToUnicode(jisX0208Strictness(profile), index);
@@ -3082,7 +3112,7 @@ void* APS5_VABI sceCesUcsProfileInitSJis2004X0213(void* sheet) {
 }
 
 int APS5_VABI sceCesJiscsToUcs(const void* profile, uint32_t jiscs, uint32_t* ucs) {
-    if (!isMeasuredJiscs(jiscs)) throw std::runtime_error("sceCesJiscsToUcs: code " + hexCode(jiscs) + " is neither a single byte nor a row and cell 0x21-0x7E of planes 0-2; its form is not implemented");
+    if (!isMeasuredJiscs(jiscs)) throw std::runtime_error("sceCesJiscsToUcs: code " + hexCode(jiscs) + " is neither a single byte, a native JIS sequence, nor a row and cell 0x21-0x7E of planes 0-2; its form is not implemented");
     if (ucs) *ucs = 0;
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isJiscsProfile(profile)) throw std::runtime_error("sceCesJiscsToUcs: a profile other than the eight JIS profiles is not implemented");
@@ -3100,7 +3130,7 @@ int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jisc
     if (ucs > 0xFFFF && ucs >> 16 != 2) throw std::runtime_error("sceCesUcsToJiscs: code point " + hexCode(ucs) + " outside the BMP and plane 2 is not implemented");
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isJiscsProfile(profile)) throw std::runtime_error("sceCesUcsToJiscs: a profile other than the eight JIS profiles is not implemented");
-    if (ucs > 0xFFFF && !isJis2004(profile)) throw std::runtime_error("sceCesUcsToJiscs: plane 2 with a JIS X 0208 profile is not implemented");
+    if (ucs > 0xFFFF && !isJis2004(profile)) return CES_ERROR_UNASSIGNED_CODE;
     uint32_t code = 0;
     const int result = unicodeToJiscs(profile, ucs, code);
     if (result != 0) return result;

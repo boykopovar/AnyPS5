@@ -11,11 +11,16 @@ add_custom_command(OUTPUT "${fontconfigData}"
         "${fontconfigSource}/src/fcobjs.h"
         "${fontconfigSource}/fontconfig/fontconfig.h"
     VERBATIM)
-add_library(libfontconfig SHARED EXCLUDE_FROM_ALL Export.cpp Sets.cpp Objects.cpp "${fontconfigData}")
+add_library(libfontconfig SHARED EXCLUDE_FROM_ALL Export.cpp Config.cpp Sets.cpp Objects.cpp "${fontconfigData}")
 target_include_directories(libfontconfig PRIVATE ${LIBS_INCLUDE_DIR} "${CMAKE_CURRENT_BINARY_DIR}")
 configure_windows_unwind(libfontconfig)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_fontconfig_config_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontconfigConfig.cpp Config.cpp)
+    configure_host_test_executable(guest_fontconfig_config_tests)
+    target_include_directories(guest_fontconfig_config_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    add_test(NAME guest_fontconfig_config COMMAND guest_fontconfig_config_tests)
+    set_tests_properties(guest_fontconfig_config PROPERTIES TIMEOUT 20)
     add_test_executable(guest_fontconfig_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontconfig.cpp)
     target_include_directories(guest_fontconfig_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_fontconfig_tests PRIVATE libfontconfig libc)
