@@ -553,6 +553,9 @@ AgcDriver::Graphics::Context ForcedContext(AgcDriver::VulkanDevice& device, VkFo
 }
 
 void ForcedHostDepthCase(AgcDriver::VulkanDevice& device, std::uint8_t* block, std::size_t offset, VkFormat expectedHost) {
+    VkFormatProperties properties{};
+    device.graphicsContext().formatProperties(device.graphicsContext().physical, expectedHost, &properties);
+    if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) == 0u) return;
     const auto context = ForcedContext(device, VK_FORMAT_D16_UNORM_S8_UINT, expectedHost == VK_FORMAT_D24_UNORM_S8_UINT ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D24_UNORM_S8_UINT, false, true);
     Require(AgcDriver::Graphics::HostDepthFormat(context, VK_FORMAT_D16_UNORM_S8_UINT) == expectedHost, "the forced depth host format was not selected");
     auto* texels = block + offset;

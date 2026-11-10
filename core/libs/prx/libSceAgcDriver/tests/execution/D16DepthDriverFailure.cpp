@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "VulkanTestDevice.hpp"
 #include <bit>
 #include <chrono>
 #include <cstdint>
@@ -23,9 +24,11 @@ namespace AgcDriver::DriverDetail {
 
 struct DriverTestAccess {
     static std::shared_ptr<VulkanDevice> Device() {
+        std::shared_ptr<VulkanDevice> created = OpenVulkanTestDevice();
+        if (!created) return nullptr;
         auto& driver = Driver::Get();
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
-        if (driver.device == nullptr) driver.device = std::make_shared<VulkanDevice>();
+        if (driver.device == nullptr) driver.device = std::move(created);
         return driver.device.Load();
     }
 };
@@ -51,7 +54,7 @@ std::string FailureOf(const std::function<void()>& action) {
 int main() {
     try {
         auto device = AgcDriver::DriverDetail::DriverTestAccess::Device();
-        Require(device != nullptr, "the driver has no Vulkan device");
+        if (!device) return VulkanTestSkipped;
         std::string first;
         std::string second;
         {
