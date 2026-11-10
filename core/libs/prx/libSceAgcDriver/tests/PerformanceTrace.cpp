@@ -354,12 +354,21 @@ void SummaryFields() {
         "\"frame_ms\":{\"p50\":24.000,\"p90\":24.000,\"p99\":24.000,\"max\":24.000},\"gpu_busy_ms_per_present\":10.000,"
         "\"worker_busy_pct\":{\"queue worker 0x0\":35.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000,\"Driver.Packet.draw\":5.000,\"Driver.Present\":3.000,\"Driver.Present.inflight_wait\":2.000,\"Driver.Completion\":1.000},"
-        "\"owned_draw_counts\":{},\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
+        "\"owned_draw_counts\":{},\"encoder\":{\"posts\":0,\"commands\":0,\"waits\":0,\"wait_ms_per_frame\":0.000},"
+        "\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
     Check(line == expected, "summary line changed");
     auto unboundSummary = summary;
     unboundSummary.ownedDrawUnbound = 3;
     const auto unboundLine = TraceFormat::Summary(unboundSummary, threads, presents);
-    Check(unboundLine.find("\"owned_draw_counts\":{\"OwnedDraw.unbound\":3},\"trace_dropped\":true") != std::string::npos, "unbound draw counts were not marked as incomplete");
+    Check(unboundLine.find("\"owned_draw_counts\":{\"OwnedDraw.unbound\":3},\"encoder\":{\"posts\":0,\"commands\":0,\"waits\":0,\"wait_ms_per_frame\":0.000},\"trace_dropped\":true") != std::string::npos, "unbound draw counts were not marked as incomplete");
+    auto encoded = threads;
+    encoded[0].totals.push_back({"Encoder.post", nullptr, {}, 3});
+    encoded[1].totals.push_back({"Encoder.post", nullptr, {}, 2});
+    encoded[0].totals.push_back({"Encoder.command", nullptr, {}, 40});
+    encoded[1].totals.push_back({"Encoder.wait", nullptr, milliseconds(6), 4});
+    const auto encodedLine = TraceFormat::Summary(summary, encoded, presents);
+    Check(encodedLine.find("\"encoder\":{\"posts\":5,\"commands\":40,\"waits\":4,\"wait_ms_per_frame\":3.000}") != std::string::npos, "encoder posts, commands and waits were not summed across threads");
+    Check(encodedLine.find("Encoder.") == std::string::npos, "encoder scopes were listed as phases");
     auto counted = threads;
     counted[0].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 5});
     counted[1].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 3});
@@ -475,7 +484,7 @@ void IntervalSummaryFields() {
         "\"frame_ms\":{\"p50\":24.000,\"p90\":24.000,\"p99\":24.000,\"max\":24.000},\"gpu_busy_ms_per_present\":10.000,"
         "\"worker_busy_pct\":{\"queue worker 0x0\":30.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000},"
-        "\"owned_draw_counts\":{},\"trace_dropped\":false,\"trace\":\"\"}\n";
+        "\"owned_draw_counts\":{},\"encoder\":{\"posts\":0,\"commands\":0,\"waits\":0,\"wait_ms_per_frame\":0.000},\"trace_dropped\":false,\"trace\":\"\"}\n";
     Check(line == expected, "interval summary line changed");
 }
 

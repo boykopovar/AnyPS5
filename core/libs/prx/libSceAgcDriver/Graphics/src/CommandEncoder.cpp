@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommandEncoder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -526,8 +527,15 @@ std::byte* CommandEncoder::Append(Run run, std::size_t bytes) {
 
 void CommandEncoder::post() {
     if (filling == nullptr || filling->records == 0) return;
-    commandCount.fetch_add(filling->records, std::memory_order_relaxed);
+    const auto records = filling->records;
+    commandCount.fetch_add(records, std::memory_order_relaxed);
     postCount.fetch_add(1, std::memory_order_relaxed);
+    if (PerformanceTrace::Recording()) {
+        if (auto* thread = PerformanceTrace::Thread()) {
+            thread->Count(TraceFormat::EncoderPostScope);
+            thread->Count(TraceFormat::EncoderCommandScope, records);
+        }
+    }
     {
         std::lock_guard lock(queueMutex);
         queue.push_back(std::move(filling));
@@ -558,8 +566,12 @@ void CommandEncoder::await() {
     if (!SpinUntil(HandoffSpinWindow(), [&] { return executed.load(std::memory_order_acquire) >= through; })) {
         for (auto seen = executed.load(std::memory_order_acquire); seen < through; seen = executed.load(std::memory_order_acquire)) executed.wait(seen, std::memory_order_acquire);
     }
+    const auto end = std::chrono::steady_clock::now();
     waitCount.fetch_add(1, std::memory_order_relaxed);
-    waitNs.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
+    waitNs.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count()), std::memory_order_relaxed);
+    if (PerformanceTrace::Recording()) {
+        if (auto* thread = PerformanceTrace::Thread()) thread->Add(TraceFormat::EncoderWaitScope, nullptr, start, end);
+    }
 }
 
 void CommandEncoder::execute(Chunk& chunk) {
