@@ -1,6 +1,3 @@
-# Usage (files start at ARGV4, ARGV3 is this script): cmake -DDEST_DIR=<dir> -P CopyRuntimeFiles.cmake <file>...
-# Several test executables stage the same prx files into one directory in parallel. On Windows the
-# concurrent copies can fail with "Permission denied" or "No such file or directory", so each copy retries.
 if(NOT DEST_DIR)
     message(FATAL_ERROR "DEST_DIR is required")
 endif()
