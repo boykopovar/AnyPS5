@@ -134,6 +134,7 @@ struct PthreadPrivate {
     std::int64_t tid = nextThreadId.fetch_add(1, std::memory_order_relaxed);
 #ifdef _WIN32
     void* nativeHandle = nullptr;
+    bool hostAdopted = false;
 #else
     pthread_t hostThread{};
 #endif
@@ -155,7 +156,11 @@ struct PthreadPrivate {
     int cpuClockThread = 0;
     std::atomic<bool> initialThread{false};
 #ifndef _WIN32
+#ifdef __APPLE__
+    unsigned hostMachThread = 0;
+#else
     clockid_t hostCpuClock{};
+#endif
     bool hostCpuClockBound = false;
     void* guestStack = nullptr;
     std::size_t guestStackBytes = 0;

@@ -106,8 +106,11 @@ struct Ngs2Port {
     Ngs2Handle detachedDest = 0;
     float volume = 1.0f;
     std::int32_t matrix = -1;
-    std::vector<float> rampFrom;
     std::uint32_t destInput = 0;
+    std::vector<float> mixedGains;
+    std::uint32_t mixedOutputs = 0;
+    std::uint32_t mixedSources = 0;
+    bool mixed = false;
 };
 
 struct Ngs2UserFx2 {
@@ -132,6 +135,12 @@ struct Ngs2VoiceCustomGain {
     std::array<float, SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS> target{};
     bool configured = false;
     bool lifecycleUnknown = false;
+};
+
+struct Ngs2SubmixerCompressor {
+    bool configured = false;
+    Ngs2SubmixerVoiceCompressorParam param{};
+    std::array<float, NGS2_MAX_CHANNELS> gain{};
 };
 
 struct Ngs2QueuedCallback {
@@ -195,6 +204,7 @@ struct Ngs2Voice {
     alignas(std::atomic_ref<std::uint32_t>::required_alignment) mutable std::uint32_t queuedBlocks = 0;
     const std::uint8_t* queuedTailEnd = nullptr;
     std::uintptr_t queuedTailUserData = 0;
+    std::uint32_t queuedTailBytes = 0;
     bool decodePendingAtGrain = false;
     std::vector<Ngs2PendingControl> pendingControls;
     bool pendingPlay = false;
@@ -217,6 +227,7 @@ struct Ngs2Voice {
     std::vector<Ngs2UserFx2> userFx;
     std::vector<Ngs2VoiceCustomUserFx> customUserFx;
     std::vector<Ngs2VoiceCustomGain> customGain;
+    Ngs2SubmixerCompressor compressor;
     std::vector<Ngs2PitchShift> customPitchShift;
     Ngs2VoiceTransition outputTransition = Ngs2VoiceTransition::None;
     Ngs2UserFxProcessHandler userFxHandler = nullptr;
@@ -401,9 +412,15 @@ void Ngs2ProcessLegacyUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_
 void Ngs2PublishSamplerState(Ngs2Voice& voice);
 void Ngs2ResetJobSchedulerOption(Ngs2JobSchedulerOption& option);
 void Ngs2ResetUserFx2(Ngs2Voice& voice);
-void Ngs2PrepareControlMix(Ngs2Voice& voice);
 void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
 void Ngs2RenderSilence(const Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
+inline bool Ngs2Ps4UnsupportedChannels(std::uint32_t channels) {
+    return channels == 3 || channels == 4 || channels == 5 || channels == 7;
+}
+inline bool Ngs2Ps4UnsupportedBufferChannels(std::uint32_t channels) {
+    return Ngs2Ps4UnsupportedChannels(channels) || channels > NGS2_MAX_CHANNELS;
+}
+void Ngs2RenderRefused(const Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
 float Ngs2DefaultLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest);
 float Ngs2FixedDownmixLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest);
 int Ngs2PanInit(Ngs2PanWork* work, const float* speaker_angles, float unit_angle, uint32_t num_speakers);

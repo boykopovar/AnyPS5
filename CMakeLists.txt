@@ -8,11 +8,33 @@ project(Relinker CXX)
 set(ANYPS5_TEST_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 
 function(add_test_executable target)
-    add_executable(${target} ${ARGN})
-    set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
+    cmake_parse_arguments(ATE "NO_RUNTIME_DLL_STAGING" "" "" ${ARGN})
+    add_executable(${target} ${ATE_UNPARSED_ARGUMENTS})
+    if(ATE_NO_RUNTIME_DLL_STAGING)
+        set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}/nostage>")
+    else()
+        set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
+    endif()
     if(MINGW)
         target_sources(${target} PRIVATE $<TARGET_OBJECTS:anyps5_windows_test_exit>)
         target_link_options(${target} PRIVATE LINKER:--wrap=main)
+        if(ATE_NO_RUNTIME_DLL_STAGING)
+            get_filename_component(_nostage_compiler_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            foreach(runtime libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
+                if(EXISTS "${_nostage_compiler_dir}/${runtime}")
+                    add_custom_command(TARGET ${target} POST_BUILD
+                        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_nostage_compiler_dir}/${runtime}" "$<TARGET_FILE_DIR:${target}>/"
+                        VERBATIM)
+                endif()
+            endforeach()
+        endif()
+    endif()
+    if(WIN32 AND NOT CMAKE_VERSION VERSION_LESS 3.21 AND NOT ATE_NO_RUNTIME_DLL_STAGING)
+        add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different $<TARGET_RUNTIME_DLLS:${target}> "$<TARGET_FILE:${target}>" "$<TARGET_FILE_DIR:${target}>/"
+                COMMAND_EXPAND_LISTS
+                VERBATIM
+        )
     endif()
 endfunction()
 
@@ -191,6 +213,7 @@ if(BUILD_TESTING)
     add_test(NAME pad_command_file COMMAND pad_command_file_tests)
     set_tests_properties(pad_command_file PROPERTIES TIMEOUT 20)
     if(Python3_Interpreter_FOUND)
+        get_property(windows_tooling_before DIRECTORY PROPERTY TESTS)
         add_test(NAME mingw_host_only_test_targets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_mingw_host_only_test_targets.py)
         add_test(NAME patch_lib_atrac9 COMMAND ${Python3_EXECUTABLE}
@@ -256,6 +279,8 @@ if(BUILD_TESTING)
         set_tests_properties(tools_audit_strict_partial PROPERTIES TIMEOUT 20)
         add_test(NAME import_audit COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
+        add_test(NAME guest_pointer_audit COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_guest_pointer_audit.py)
         if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
             add_test(NAME tools_catalog_json COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_catalog_json.py)
@@ -287,12 +312,22 @@ if(BUILD_TESTING)
                 endif()
             endforeach()
         endif()
+        add_test(NAME export_gap COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_export_gap.py)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
         add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_dump.py)
         add_test(NAME ffmpeg_cache_keys COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_ffmpeg_cache_keys.py)
+        add_test(NAME winlibs_digest COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_winlibs_digest.py)
+        add_test(NAME progress_comment_concurrency COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_comment_concurrency.py)
+        add_test(NAME eligibility_paths COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_eligibility_paths.py)
+        add_test(NAME release_workflow COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_release_workflow.py)
+        set_tests_properties(release_workflow PROPERTIES TIMEOUT 20)
         foreach(shard RANGE 0 11)
             if(shard EQUAL 0)
                 set(conventions_test_name conventions_function_bodies)
@@ -306,6 +341,8 @@ if(BUILD_TESTING)
         add_test(NAME performance_csv COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_csv.py)
         set_tests_properties(performance_csv PROPERTIES TIMEOUT 20)
+        add_test(NAME emsdk_pin COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_emsdk_pin.py)
         set(conventions_wrapped_declarations_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${conventions_wrapped_declarations_source}")
         file(STRINGS "${conventions_wrapped_declarations_source}" conventions_wrapped_declarations_cases REGEX "^class [A-Za-z0-9_]*Tests\\(|^    def test_")
@@ -345,6 +382,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_unknown_nids.py)
         add_test(NAME conventions_debt_length COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_length.py)
+        add_test(NAME conventions_debt_labels COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_labels.py)
         add_test(NAME test_registration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py)
         add_test(NAME unbuilt_exports COMMAND ${Python3_EXECUTABLE}
@@ -407,12 +446,18 @@ if(BUILD_TESTING)
                 set_tests_properties(select_tests_${test_class} PROPERTIES TIMEOUT 30)
             endif()
         endforeach()
+        add_test(NAME relinker_fuzz_configurations COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_configurations.py)
+        set_tests_properties(relinker_fuzz_configurations PROPERTIES TIMEOUT 30)
         add_test(NAME configure_seed COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedTests)
         add_test(NAME configure_seed_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedPathTests)
         add_test(NAME configure_seed_round_trips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedRoundTripTests)
+        add_test(NAME configure_seed_stdout COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedStdoutTests)
+        set_tests_properties(configure_seed_stdout PROPERTIES TIMEOUT 20)
         add_test(NAME configure_seed_parsing COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ChecksParsingTests)
         add_test(NAME vulkan_validation_gate_reports COMMAND ${Python3_EXECUTABLE}
@@ -435,8 +480,28 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py CommandTests)
         add_test(NAME stubgen COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
-        add_test(NAME debt_split COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py)
+        set(debt_split_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${debt_split_source}")
+        file(STRINGS "${debt_split_source}" debt_split_cases REGEX "^class [A-Za-z0-9_]*Tests\\(|^    def test_")
+        set(debt_split_class "")
+        set(debt_split_first TRUE)
+        foreach(test_case IN LISTS debt_split_cases)
+            if(test_case MATCHES "^class ([A-Za-z0-9_]+)")
+                set(debt_split_class "${CMAKE_MATCH_1}")
+            elseif(test_case MATCHES "^    def (test_[A-Za-z0-9_]+)")
+                if(debt_split_first)
+                    set(debt_split_name debt_split)
+                    set(debt_split_first FALSE)
+                else()
+                    set(debt_split_name debt_split_${debt_split_class}_${CMAKE_MATCH_1})
+                endif()
+                add_test(NAME ${debt_split_name} COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py "${debt_split_class}.${CMAKE_MATCH_1}")
+                set_tests_properties(${debt_split_name} PROPERTIES TIMEOUT 20)
+            endif()
+        endforeach()
+        add_test(NAME debt_report COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_report.py)
         add_test(NAME agc_test_split COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_agc_test_split.py)
         add_test(NAME stubgen_stdout_newlines COMMAND ${Python3_EXECUTABLE}
@@ -471,6 +536,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_progress.py)
         add_test(NAME pr_overlap_pages COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_pages.py)
+        add_test(NAME pr_overlap_merge_bases COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_merge_bases.py)
         add_test(NAME pr_overlap_export_cache COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_export_cache.py)
         add_test(NAME pr_overlap_fail_closed COMMAND ${Python3_EXECUTABLE}
@@ -506,7 +573,7 @@ if(BUILD_TESTING)
                         string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${line}")
                         add_test(NAME check_compile_${check_compile_class}_${test_case} COMMAND ${Python3_EXECUTABLE}
                             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py ${check_compile_class}.${test_case})
-                        set_tests_properties(check_compile_${check_compile_class}_${test_case} PROPERTIES TIMEOUT 30)
+                        set_tests_properties(check_compile_${check_compile_class}_${test_case} PROPERTIES TIMEOUT 60)
                     endif()
                 endforeach()
             endif()
@@ -604,6 +671,7 @@ if(BUILD_TESTING)
         set_tests_properties(tools_headers_manifest PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_pr_template COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_pr_template.py)
+        set_tests_properties(conventions_pr_template PROPERTIES TIMEOUT 60)
         add_test(NAME check_compile_preprocessor COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_preprocessor.py)
         set_tests_properties(check_compile_preprocessor PROPERTIES TIMEOUT 20)
@@ -628,6 +696,28 @@ if(BUILD_TESTING)
         add_test(NAME title_run COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run.py)
         set_tests_properties(title_run PROPERTIES TIMEOUT 60)
+        add_test(NAME relinker_fuzz_seeds COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_seeds.py)
+        set_tests_properties(relinker_fuzz_seeds PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            get_property(windows_tooling_after DIRECTORY PROPERTY TESTS)
+            list(REMOVE_ITEM windows_tooling_after ${windows_tooling_before})
+            function(raise_windows_tooling_test_timeouts)
+                foreach(windows_tooling_test IN LISTS ARGN)
+                    get_test_property(${windows_tooling_test} TIMEOUT windows_tooling_timeout)
+                    if(windows_tooling_timeout MATCHES "^[0-9.]+$" AND windows_tooling_timeout LESS 120)
+                        set_tests_properties(${windows_tooling_test} PROPERTIES TIMEOUT 120)
+                    endif()
+                endforeach()
+            endfunction()
+            raise_windows_tooling_test_timeouts(${windows_tooling_after})
+            function(raise_windows_deferred_tooling_test_timeouts)
+                get_property(windows_deferred_tests DIRECTORY PROPERTY TESTS)
+                list(FILTER windows_deferred_tests INCLUDE REGEX "^check_compile_")
+                raise_windows_tooling_test_timeouts(${windows_deferred_tests})
+            endfunction()
+            cmake_language(DEFER CALL raise_windows_deferred_tooling_test_timeouts)
+        endif()
     endif()
 endif()
 

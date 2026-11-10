@@ -53,8 +53,6 @@ int main() {
     RequireStub(&_ZN3JSC22EdenGCActivityCallbackD2Ev);
     RequireStub(&_ZN3JSC22FullGCActivityCallbackD1Ev);
     RequireStub(&_ZN3JSC22FullGCActivityCallbackD2Ev);
-    RequireStub(&_ZN3JSC32JSDestructibleObjectHeapCellTypeD1Ev);
-    RequireStub(&_ZN3JSC32JSDestructibleObjectHeapCellTypeD2Ev);
     RequireStub(&_ZN3JSC6JSLock12DropAllLocksC1ERNS_2VME);
     RequireStub(&_ZN3JSC6JSLock12DropAllLocksC2ERNS_2VME);
     RequireStub(&_ZN7WebCore12ISOWebVTTCueD1Ev);
@@ -127,6 +125,8 @@ int main() {
 
     auto* freed = static_cast<std::uint8_t*>(reinterpret_cast<Allocate>(&_ZN3JSC19HeapSnapshotBuildernwEm)(32));
     Require(freed != nullptr);
+    reinterpret_cast<Release>(&_ZN3JSC32JSDestructibleObjectHeapCellTypeD1Ev)(freed);
+    reinterpret_cast<Release>(&_ZN3JSC32JSDestructibleObjectHeapCellTypeD2Ev)(freed);
     reinterpret_cast<Release>(&_ZN3JSC12HeapCellTypeD0Ev)(freed);
 
     auto* mime = static_cast<std::uint8_t*>(reinterpret_cast<Allocate>(&_ZN7WebCore13MIMETypeCachenwEm)(24));
