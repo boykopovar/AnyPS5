@@ -4,6 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI sceEsvmProcessAckResponse_nid_no_patch(void);
+int APS5_VABI sceEsvmProcessAckResponse(void);
 
 }
