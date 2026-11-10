@@ -255,21 +255,46 @@ class StubGeneratorTests(unittest.TestCase):
 class ReadOnlyOutputTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows sharing locks prevent replacing open files")
     def test_windows_second_output_sharing_lock_restores_first(self):
+        import ctypes
+        from ctypes import wintypes
+
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             nids, code, debt = root / "nids.txt", root / "Export.cpp", root / "debt.md"
             nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
             code.write_text("original code\n", encoding="utf-8")
             debt.write_text("original debt\n", encoding="utf-8")
-            replace = Path.replace
+            replace = os.replace
+            debt_target = debt.resolve()
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateFileW.argtypes = (
+                wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+            )
+            kernel32.CreateFileW.restype = wintypes.HANDLE
+            kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+            kernel32.CloseHandle.restype = wintypes.BOOL
+            file_read_attributes = 0x80
+            file_share_read_write = 0x01 | 0x02
+            open_existing = 3
+            file_attribute_normal = 0x80
 
             def lock_debt(source, destination):
-                if Path(destination) == debt:
-                    with debt.open("rb"):
+                if Path(destination).resolve() == debt_target:
+                    handle = kernel32.CreateFileW(
+                        str(debt), file_read_attributes, file_share_read_write, None,
+                        open_existing, file_attribute_normal, None,
+                    )
+                    if handle == ctypes.c_void_p(-1).value:
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    try:
                         return replace(source, destination)
+                    finally:
+                        if not kernel32.CloseHandle(handle):
+                            raise ctypes.WinError(ctypes.get_last_error())
                 return replace(source, destination)
 
-            with patch.object(Path, "replace", lock_debt), contextlib.redirect_stderr(io.StringIO()):
+            with patch.object(os, "replace", lock_debt), contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as caught:
                     stubgen.main(["--module", "libSceExample", "--nids", str(nids),
                                   "--out", str(code), "--td-out", str(debt)])
@@ -287,15 +312,16 @@ class ReadOnlyOutputTests(unittest.TestCase):
             debt.write_text("original debt\n", encoding="utf-8")
             code.chmod(0o600)
             modes = (code.stat().st_mode & 0o777, debt.stat().st_mode & 0o777)
-            replace = Path.replace
+            replace = os.replace
+            debt_target = debt.resolve()
 
             def locked_debt(source, destination):
-                if Path(destination) == debt:
+                if Path(destination).resolve() == debt_target:
                     raise PermissionError("debt output became locked")
                 return replace(source, destination)
 
             errors = io.StringIO()
-            with patch.object(Path, "replace", locked_debt), contextlib.redirect_stderr(errors):
+            with patch.object(os, "replace", locked_debt), contextlib.redirect_stderr(errors):
                 with self.assertRaises(SystemExit) as caught:
                     stubgen.main(["--module", "libSceExample", "--nids", str(nids),
                                   "--out", str(code), "--td-out", str(debt)])
@@ -312,14 +338,15 @@ class ReadOnlyOutputTests(unittest.TestCase):
             nids, code, debt = root / "nids.txt", root / "Export.cpp", root / "debt.md"
             nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
             debt.write_text("original debt\n", encoding="utf-8")
-            replace = Path.replace
+            replace = os.replace
+            debt_target = debt.resolve()
 
             def locked_debt(source, destination):
-                if Path(destination) == debt:
+                if Path(destination).resolve() == debt_target:
                     raise PermissionError("debt output became locked")
                 return replace(source, destination)
 
-            with patch.object(Path, "replace", locked_debt), contextlib.redirect_stderr(io.StringIO()):
+            with patch.object(os, "replace", locked_debt), contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as caught:
                     stubgen.main(["--module", "libSceExample", "--nids", str(nids),
                                   "--out", str(code), "--td-out", str(debt)])
@@ -335,15 +362,18 @@ class ReadOnlyOutputTests(unittest.TestCase):
             nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
             code.write_text("original code\n", encoding="utf-8")
             debt.write_text("original debt\n", encoding="utf-8")
-            replace = Path.replace
+            replace = os.replace
+            debt_target = debt.resolve()
+            code_target = code.resolve()
 
             def locked_outputs(source, destination):
-                if Path(destination) == debt or (Path(destination) == code and source.name.startswith(".stubgen-backup-")):
+                target = Path(destination).resolve()
+                if target == debt_target or (target == code_target and Path(source).name.startswith(".stubgen-backup-")):
                     raise PermissionError("output became locked")
                 return replace(source, destination)
 
             errors = io.StringIO()
-            with patch.object(Path, "replace", locked_outputs), contextlib.redirect_stderr(errors):
+            with patch.object(os, "replace", locked_outputs), contextlib.redirect_stderr(errors):
                 with self.assertRaises(SystemExit) as caught:
                     stubgen.main(["--module", "libSceExample", "--nids", str(nids),
                                   "--out", str(code), "--td-out", str(debt)])
