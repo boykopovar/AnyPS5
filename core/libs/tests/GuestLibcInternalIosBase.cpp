@@ -69,7 +69,7 @@ int main() {
 
     GuardedStream object;
     object.stream.locale = &_ZSt21_sceLibcClassicLocale_nid_postfix;
-    sceLibcInternalIosBaseCompleteDestructor_nid_no_patch(&object.stream);
+    _ZNSt8ios_baseD1Ev(&object.stream);
     Require(object.stream.locale == nullptr, "the destructor releases the classic locale");
     Require(object.before == 0x12345678 && object.after == 0x87654321, "the destructor writes only the stream");
 
@@ -80,18 +80,18 @@ int main() {
     expected.stream.width = actual.stream.width = 7;
     expected.stream.flags = actual.stream.flags = 0x201;
     _ZNSt8ios_baseD2Ev_nid_postfix(&expected.stream);
-    sceLibcInternalIosBaseCompleteDestructor_nid_no_patch(&actual.stream);
+    _ZNSt8ios_baseD1Ev(&actual.stream);
     Require(actual.stream.locale == expected.stream.locale && actual.stream.width == expected.stream.width && actual.stream.flags == expected.stream.flags,
         "D1 leaves the stream as D2 does");
 
-    Require(Throws([] { sceLibcInternalIosBaseCompleteDestructor_nid_no_patch(nullptr); }), "a null stream is rejected");
+    Require(Throws([] { _ZNSt8ios_baseD1Ev(nullptr); }), "a null stream is rejected");
 
     auto* heapStream = new (_Znwm_nid_postfix(sizeof(GuestLocale::IosBase))) GuestLocale::IosBase{};
     heapStream->locale = &_ZSt21_sceLibcClassicLocale_nid_postfix;
     releases = 0;
-    sceLibcInternalIosBaseDeletingDestructor_nid_no_patch(heapStream);
+    _ZNSt8ios_baseD0Ev(heapStream);
     Require(releases == 1 && lastReleased == heapStream, "the deleting destructor frees the stream through operator delete");
-    Require(Throws([] { sceLibcInternalIosBaseDeletingDestructor_nid_no_patch(nullptr); }), "a null stream is rejected by the deleting destructor");
+    Require(Throws([] { _ZNSt8ios_baseD0Ev(nullptr); }), "a null stream is rejected by the deleting destructor");
 
     std::puts("libc internal ios_base destructor checks passed");
     return 0;
