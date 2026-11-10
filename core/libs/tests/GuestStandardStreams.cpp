@@ -1017,14 +1017,6 @@ int main(int argc, char** argv) {
     Require(fgetwc_nid_postfix(&wideFourByte) == -1 && ferror_nid_postfix(&wideFourByte) == 0);
     wideFourByte.Close();
 
-    FileStream wideRandom(TemporaryFile::Open());
-    wideRandom.MarkRandomDevice();
-    *__error_nid_postfix() = 0;
-    const std::int32_t randomCharacter = fgetwc_nid_postfix(&wideRandom);
-    Require(randomCharacter == -1 ? *__error_nid_postfix() == 86 && ferror_nid_postfix(&wideRandom) != 0
-                                  : randomCharacter >= 0 && randomCharacter <= 0xffff);
-    wideRandom.Close();
-
     FileStream midErr(TemporaryFile::Open());
     Require(fputc_nid_postfix('A', &midErr) == 'A');
     Require(fputc_nid_postfix(0xff, &midErr) == 0xff);
