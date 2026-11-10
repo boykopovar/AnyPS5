@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libSceLibreSsl3/include/Reference.hpp"
 
 extern "C" int APS5_VABI SSL_CTX_add1_chain_cert_nid_postfix(LibreSsl3SslCtx* context, LibreSsl3X509* certificate) {
     if (!context || !certificate) return 0;
@@ -9,5 +10,7 @@ extern "C" int APS5_VABI SSL_CTX_add1_chain_cert_nid_postfix(LibreSsl3SslCtx* co
         context->extraCerts = stack;
     }
     if (!X509_up_ref_nid_postfix(certificate)) return 0;
-    return sk_push_nid_postfix(stack, certificate) ? 1 : 0;
+    if (sk_push_nid_postfix(stack, certificate)) return 1;
+    Release_nid_no_patch(certificate->references);
+    return 0;
 }
