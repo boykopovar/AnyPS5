@@ -692,6 +692,7 @@ struct DescriptorBinding {
     ElementFlags samplerDepthCompare;
     // Guest image elements the shader stores to (or updates atomically); the others are only read.
     ElementFlags imageWritten;
+    ElementFlags imageRead;
     ElementFlags imageDepthCompare;
     ElementFlags imageAtomic;
     ElementFlags imageAtomic64;
