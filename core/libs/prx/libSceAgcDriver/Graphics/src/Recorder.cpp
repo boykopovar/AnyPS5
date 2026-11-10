@@ -1376,6 +1376,10 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores, DeviceFuncti
         cmdBindPipeline = context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline");
         cmdPushConstants = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
         cmdDispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
+        if (encoder != nullptr) {
+            cmdBeginQuery = encodedFunctions->cmdBeginQuery;
+            cmdEndQuery = encodedFunctions->cmdEndQuery;
+        }
     }
     if (!timelineSemaphores) return;
     // The timeline starts at 0 and every Submit signals its serial (1, 2, ...): a value that only
@@ -2815,7 +2819,6 @@ void Recorder::takeSegmentPool(Batch& batch) {
 }
 
 void Recorder::beginSegment(Batch& batch) {
-    quiesce();
     Require(batch.segments != VK_NULL_HANDLE && batch.segmentNext < SegmentSlots, "an occlusion segment begins without a reset query slot");
     batch.segmentSlot = batch.segmentNext++;
     function(cmdBeginQuery, "vkCmdBeginQuery")(batch.commands, batch.segments, batch.segmentSlot, context.occlusionQueryPrecise ? VK_QUERY_CONTROL_PRECISE_BIT : 0u);
@@ -2823,7 +2826,6 @@ void Recorder::beginSegment(Batch& batch) {
 }
 
 void Recorder::endSegment(Batch& batch) {
-    quiesce();
     function(cmdEndQuery, "vkCmdEndQuery")(batch.commands, batch.segments, batch.segmentSlot);
     batch.segmentActive = false;
     pendingSamples.push_back({batch.segmentPool, batch.segments, batch.segmentSlot});

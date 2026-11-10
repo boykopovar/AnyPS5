@@ -11542,6 +11542,39 @@ void uncountedPassTests(const Device& device) {
     if (context.occlusionQueryPrecise) Require(counted == 2 * CoverPass::Samples, "the batch-wide occlusion query counted " + std::to_string(counted) + " samples, not the " + std::to_string(2 * CoverPass::Samples) + " of the two draws around an uncounted pass");
 }
 
+bool encodedSegmentTests(const Device& device) {
+    const auto& context = device.GetContext();
+    DeviceFunctions table{};
+    FillDeviceFunctions(context, table);
+    Recorder recorder(context, false, &table, context.queueFamily);
+    if (!recorder.Encodes()) return false;
+    recorder.CountSamples();
+    const auto base = recorder.SamplesTotal();
+    const auto before = Recorder::SampleDumpCounts().segments;
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(1)); });
+    constexpr std::uint32_t segments = 300;
+    for (std::uint32_t i = 0; i < segments; ++i) {
+        recorder.PrepareSampleSlot();
+        const auto commands = recorder.Commands();
+        const auto counts = recorder.EncoderCounts();
+        {
+            const Recorder::EncodingWindow window(recorder);
+            const VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT};
+            table.cmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+            recorder.NoteSampledDraw(commands);
+            recorder.EndPassSamples();
+        }
+        Require(recorder.EncoderCounts().waits == counts.waits, "an occlusion segment in an encoding window waited for the encoder");
+        Require(recorder.EncoderCounts().commands == counts.commands + 3, "an occlusion segment's queries were not recorded in order through the encoder");
+    }
+    recorder.Submit();
+    recorder.Sync();
+    CommandEncoder::SetDelayForTesting({});
+    Require(Recorder::SampleDumpCounts().segments - before == segments, "the encoded occlusion segments were not all closed");
+    Require(recorder.SamplesTotal() == base, "occlusion segments without draws counted samples");
+    return true;
+}
+
 void cmaskPassTests(const Device& device, Recorder& recorder) {
     namespace GuestMemory = AgcDriver::GuestMemory;
     auto context = device.GetContext();
@@ -15646,6 +15679,18 @@ int main(int argc, char** argv) {
             }
             sampleDumpTests(device, recorder);
             std::cout << "Occlusion counter dump tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--encoded-segments-only") {
+            if (!device.GetContext().bufferDeviceAddress) {
+                std::cout << "skipped, the device lacks buffer device addresses\n";
+                return 77;
+            }
+            if (!encodedSegmentTests(device)) {
+                std::cout << "skipped, commands are recorded inline\n";
+                return 77;
+            }
+            std::cout << "Encoded occlusion segment tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--uncounted-passes-only") {
