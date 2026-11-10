@@ -79,10 +79,7 @@ int main() {
         fullParam.max_text_length = 2;
         fullParam.input_text_buffer = full;
         Require(sceImeDialogInit(&fullParam, nullptr) == 0, "a two-unit buffer opens the dialog");
-        ImeHostInput paste{};
-        paste.kind = ImeHostInputKind::Paste;
-        std::strncpy(paste.text, "ab", sizeof(paste.text) - 1);
-        ImePublishInput_nid_postfix(paste);
+        ImePublishPaste_nid_postfix("ab", 2);
         ImeHostInput enterFull{};
         enterFull.kind = ImeHostInputKind::Enter;
         ImePublishInput_nid_postfix(enterFull);
