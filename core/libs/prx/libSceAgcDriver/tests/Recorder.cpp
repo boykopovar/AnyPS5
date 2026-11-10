@@ -5049,6 +5049,11 @@ void imageTableFirstLayerRevalidateTests(const Device& device, Recorder& recorde
     TextureDetiler detiler(base);
     auto context = base;
     context.detiler = &detiler;
+    struct Clear {
+        const Context& context;
+        Recorder& recorder;
+        ~Clear() { recorder.Sync(); ClearCachedTextures(context.device); }
+    } clear{context, recorder};
     if (context.imageTableCapacity < 1u) {
         std::cout << "image tables unavailable: image table first-layer revalidation not tested\n";
         return;
@@ -5090,14 +5095,18 @@ void imageTableFirstLayerRevalidateTests(const Device& device, Recorder& recorde
         ShaderResources resources(context, compute);
         Require(resources.SampledTextures().size() == 1, "a 2D read of a 2D array in an image table bound no texture");
         const auto bound = resources.SampledTextures().front();
+        const auto before = WriteIndexOutcomesCounted();
         ShaderResources::ProofReport report;
         Require(resources.Revalidate(std::span(&compute, 1), &report), "an image table holding a 2D read of a 2D array did not revalidate");
-        Require(report.path == ShaderResources::ProofPath::Full, "an image table holding a 2D read of a 2D array was not proven on the full path");
+        if (AgcDriver::GuestMemory::WriteIndexEnabled()) {
+            Require(report.path == ShaderResources::ProofPath::Fast && WriteIndexOutcomesCounted().compared == before.compared + 1u, "an image table holding a 2D read of a 2D array was not proven by comparing its unwatched element on the write index's path");
+        } else {
+            Require(report.path == ShaderResources::ProofPath::Full, "an image table holding a 2D read of a 2D array was not proven on the full path");
+        }
         Require(resources.SampledTextures().front() == bound, "revalidating an image table holding a 2D read of a 2D array changed its texture");
         Require(resources.Revalidate(std::span(&compute, 1)), "an image table holding a 2D read of a 2D array did not revalidate twice");
         recorder.Sync();
     }
-    ClearCachedTextures(context.device);
 }
 
 void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
@@ -7068,6 +7077,7 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
         Require(HostPageProtection(memory + offset) == VM_PROT_NONE, "a label stored a pending small tiled image instead of trapping its reads");
+        Require(StorageTexture::StoreSmallPending("flip") == 0 && HostPageProtection(memory + offset) == VM_PROT_NONE, "a flip stored a small image whose reads are trapped");
         Require(readUnlocked([&] { return holds(0x4b); }), "a read of a trapped image did not see its pending results");
         Require(HostPageProtection(memory + offset) != VM_PROT_NONE, "a resolved trap did not give back the image's pages");
         rewrite(0x2d);
@@ -8091,7 +8101,7 @@ bool pendingAfterLeavingWatchTests(const Device& device, Recorder& recorder) {
             if (unitWritten) {
                 if (refused) {
                     std::cout << "(p) " + what + ": refused rather than stored\n";
-                    for (std::size_t i = 0; i < unit; ++i) Require(memory[lastUnit * unit + i] == cpuUnit(i), "(p) " + what + ": the refused write-back changed the CPU's bytes");
+                    for (std::size_t i = 0; i < unit; ++i) if (memory[lastUnit * unit + i] != cpuUnit(i)) Require(false, "(p) " + what + ": the refused write-back changed the CPU's bytes");
                     recorder.Sync();
                     continue;
                 }
@@ -8102,7 +8112,7 @@ bool pendingAfterLeavingWatchTests(const Device& device, Recorder& recorder) {
                     const bool green = std::to_integer<std::uint8_t>(storedUnit[at]) == 0 && std::to_integer<std::uint8_t>(storedUnit[at + 1]) == 255 && std::to_integer<std::uint8_t>(storedUnit[at + 2]) == 0 && std::to_integer<std::uint8_t>(storedUnit[at + 3]) == 255;
                     bool cpu = true;
                     for (std::size_t c = 0; c < 4; ++c) cpu = cpu && std::to_integer<std::uint8_t>(storedUnit[at + c]) == cpuUnit(at + c);
-                    Require(green || cpu, "(p) " + what + ": a texel the GPU did not write holds neither the CPU's bytes nor a result, at +0x" + std::to_string(at));
+                    if (!(green || cpu)) Require(false, "(p) " + what + ": a texel the GPU did not write holds neither the CPU's bytes nor a result, at +0x" + std::to_string(at));
                     greens += green;
                 }
                 if (!partial) Require(greens == unit / 4, "(p) " + what + ": " + std::to_string(greens) + " of " + std::to_string(unit / 4) + " words took the GPU result");
@@ -8111,8 +8121,8 @@ bool pendingAfterLeavingWatchTests(const Device& device, Recorder& recorder) {
                 AgcDriver::GuestMemory::Read(address, rest);
                 for (std::size_t at = 0; at < lastUnit * unit; at += 4) {
                     const bool green = std::to_integer<std::uint8_t>(rest[at]) == 0 && std::to_integer<std::uint8_t>(rest[at + 1]) == 255 && std::to_integer<std::uint8_t>(rest[at + 2]) == 0 && std::to_integer<std::uint8_t>(rest[at + 3]) == 255;
-                    if (!partial) Require(green, "(p) " + what + ": the watched units did not take the GPU result at +0x" + std::to_string(at));
-                    else Require(std::to_integer<std::uint8_t>(rest[at]) == 0x5a, "(p) " + what + ": the watched units changed where the GPU wrote nothing, at +0x" + std::to_string(at));
+                    if (!partial && !green) Require(false, "(p) " + what + ": the watched units did not take the GPU result at +0x" + std::to_string(at));
+                    else if (partial && std::to_integer<std::uint8_t>(rest[at]) != 0x5a) Require(false, "(p) " + what + ": the watched units changed where the GPU wrote nothing, at +0x" + std::to_string(at));
                 }
                 recorder.Sync();
                 continue;
@@ -8139,10 +8149,10 @@ bool pendingAfterLeavingWatchTests(const Device& device, Recorder& recorder) {
             }
             for (std::size_t at = 0; at < surfaceBytes; at += 4) {
                 if (pageWritten && at >= (units - 2) * unit && at < lastUnit * unit) continue;
-                Require(isGreen(at), "(p) " + what + ": GPU results were not stored at +0x" + std::to_string(at) + ";" + unitSummary);
+                if (!isGreen(at)) Require(false, "(p) " + what + ": GPU results were not stored at +0x" + std::to_string(at) + ";" + unitSummary);
             }
             if (pageWritten) {
-                for (std::size_t i = 0; i < 4096; ++i) Require(std::to_integer<std::uint8_t>(read[(units - 2) * unit + i]) == pattern(i), "(p) " + what + ": the GPU results overwrote the CPU's bytes;" + unitSummary);
+                for (std::size_t i = 0; i < 4096; ++i) if (std::to_integer<std::uint8_t>(read[(units - 2) * unit + i]) != pattern(i)) Require(false, "(p) " + what + ": the GPU results overwrote the CPU's bytes;" + unitSummary);
             }
         }
         recorder.Sync();
