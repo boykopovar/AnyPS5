@@ -1377,8 +1377,13 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores, DeviceFuncti
         cmdPushConstants = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
         cmdDispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
         if (encoder != nullptr) {
-            cmdBeginQuery = encodedFunctions->cmdBeginQuery;
-            cmdEndQuery = encodedFunctions->cmdEndQuery;
+            if (encodedFunctions->cmdUpdateBuffer != nullptr) cmdUpdateBuffer = encodedFunctions->cmdUpdateBuffer;
+            if (encodedFunctions->cmdPipelineBarrier != nullptr) cmdPipelineBarrier = encodedFunctions->cmdPipelineBarrier;
+            if (encodedFunctions->cmdBindPipeline != nullptr) cmdBindPipeline = encodedFunctions->cmdBindPipeline;
+            if (encodedFunctions->cmdPushConstants != nullptr) cmdPushConstants = encodedFunctions->cmdPushConstants;
+            if (encodedFunctions->cmdDispatch != nullptr) cmdDispatch = encodedFunctions->cmdDispatch;
+            if (encodedFunctions->cmdBeginQuery != nullptr) cmdBeginQuery = encodedFunctions->cmdBeginQuery;
+            if (encodedFunctions->cmdEndQuery != nullptr) cmdEndQuery = encodedFunctions->cmdEndQuery;
         }
     }
     if (!timelineSemaphores) return;

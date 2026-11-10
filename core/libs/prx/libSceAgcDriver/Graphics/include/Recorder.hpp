@@ -479,6 +479,7 @@ public:
     bool BeginEncoding();
     void EndEncoding();
     bool Encodes() const { return encoder != nullptr; }
+    CommandEncoder::UnwindQuiesce UnwindGuard() const { return CommandEncoder::UnwindQuiesce(encoder.get()); }
     class EncodingWindow {
     public:
         explicit EncodingWindow(Recorder& recorder) : recorder(recorder), opened(recorder.BeginEncoding()) {}

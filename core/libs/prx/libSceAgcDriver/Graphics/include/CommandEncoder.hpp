@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -42,6 +43,19 @@ public:
     };
     Statistics Counts() const;
     static void SetDelayForTesting(std::function<void()> delay);
+    class UnwindQuiesce {
+    public:
+        explicit UnwindQuiesce(CommandEncoder* encoder) : encoder(encoder), exceptions(std::uncaught_exceptions()) {}
+        ~UnwindQuiesce() {
+            if (encoder != nullptr && std::uncaught_exceptions() > exceptions) encoder->Quiesce();
+        }
+        UnwindQuiesce(const UnwindQuiesce&) = delete;
+        UnwindQuiesce& operator=(const UnwindQuiesce&) = delete;
+
+    private:
+        CommandEncoder* encoder;
+        int exceptions;
+    };
 
 private:
     struct Chunk {
