@@ -1,34 +1,50 @@
 #include "prx/libSceEsvmWidevine/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+
 #include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
-int failures = 0;
+void Fail(const std::string& message, int line) {
+    std::fprintf(stderr, "libSceEsvmWidevine catalog export check failed at line %d: %s\n", line, message.c_str());
+    std::abort();
+}
 
 template <typename TFn>
-void RequireThrows(TFn fn, const char *name) {
+void ExpectNotImplemented(TFn stub, const char* name, int line) {
+    const auto before = NotImplementedCalls_nid_no_patch();
+    std::string what;
+    bool threw = false;
     try {
-        fn();
-    } catch (const std::runtime_error &) {
-        return;
+        stub();
+    } catch (const std::runtime_error& error) {
+        threw = true;
+        what = error.what();
     }
-    std::fprintf(stderr, "%s did not throw\n", name);
-    ++failures;
+    if (!threw) Fail(std::string(name) + " returned instead of reporting that it is not implemented", line);
+    if (NotImplementedCalls_nid_no_patch() != before + 1)
+        Fail(std::string(name) + " did not reach libc's shared not-implemented path", line);
+    if (what != std::string(name) + " not implemented")
+        Fail(std::string(name) + " reported \"" + what + "\"", line);
 }
 
 }
+
+#define RequireNotImplemented(stub) ExpectNotImplemented(stub, #stub, __LINE__)
 
 int main() {
-    RequireThrows(sceEsvmCreateMediaKeys2_nid_no_patch, "sceEsvmCreateMediaKeys2");
-    RequireThrows(sceEsvmGetMetrics_nid_no_patch, "sceEsvmGetMetrics");
-    RequireThrows(sceEsvmGetProvisioningRequest_nid_no_patch, "sceEsvmGetProvisioningRequest");
-    RequireThrows(sceEsvmGetServiceCertificateRequest_nid_no_patch, "sceEsvmGetServiceCertificateRequest");
-    RequireThrows(sceEsvmHandleProvisioningResponse_nid_no_patch, "sceEsvmHandleProvisioningResponse");
-    RequireThrows(sceEsvmIsProvisioned_nid_no_patch, "sceEsvmIsProvisioned");
-    RequireThrows(sceEsvmMediaKeysDecryptAudioData_nid_no_patch, "sceEsvmMediaKeysDecryptAudioData");
-    RequireThrows(sceEsvmParseAndLoadServiceCertificateResponse_nid_no_patch, "sceEsvmParseAndLoadServiceCertificateResponse");
-    RequireThrows(sceEsvmSetMediaKeys_nid_no_patch, "sceEsvmSetMediaKeys");
-    RequireThrows(sceEsvmSetServiceCertificate_nid_no_patch, "sceEsvmSetServiceCertificate");
-    return failures == 0 ? 0 : 1;
+    RequireNotImplemented(sceEsvmCreateMediaKeys2_nid_no_patch);
+    RequireNotImplemented(sceEsvmGetMetrics_nid_no_patch);
+    RequireNotImplemented(sceEsvmGetProvisioningRequest_nid_no_patch);
+    RequireNotImplemented(sceEsvmGetServiceCertificateRequest_nid_no_patch);
+    RequireNotImplemented(sceEsvmHandleProvisioningResponse_nid_no_patch);
+    RequireNotImplemented(sceEsvmIsProvisioned_nid_no_patch);
+    RequireNotImplemented(sceEsvmMediaKeysDecryptAudioData_nid_no_patch);
+    RequireNotImplemented(sceEsvmParseAndLoadServiceCertificateResponse_nid_no_patch);
+    RequireNotImplemented(sceEsvmSetMediaKeys_nid_no_patch);
+    RequireNotImplemented(sceEsvmSetServiceCertificate_nid_no_patch);
+    return 0;
 }
