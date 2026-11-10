@@ -2031,6 +2031,7 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
         resident = lookup();
         if (resident != nullptr) materializeRegisterClear(context, color, *resident);
     } catch (const std::exception& error) {
+        resident = nullptr;
         static AgcDriver::Mutex reportMutex;
         static std::set<std::uint64_t> reported;
         std::lock_guard lock(reportMutex);
