@@ -4629,7 +4629,7 @@ bool chargeShaderKey(ChurnCounts& profile, const ResourceCache::Key& key, std::s
             return true;
         }
         at += descriptorWords;
-        for (int flags = 0; flags < 10; ++flags) {
+        for (int flags = 0; flags < 11; ++flags) {
             if (at >= end) {
                 ++profile.layout;
                 return true;
