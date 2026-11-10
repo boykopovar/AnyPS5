@@ -903,6 +903,19 @@ int APS5_VABI malloc_stats_fast_nid_postfix(void* stats) {
     return ApplicationHeapStatsFast_nid_no_patch(stats);
 }
 
+void APS5_VABI malloc_initialize_nid_postfix() {
+    ApplicationHeapEnsureInitialized_nid_no_patch();
+}
+
+void APS5_VABI malloc_finalize_nid_postfix() {
+    ApplicationHeapFinalize_nid_no_patch();
+}
+
+int APS5_VABI _malloc_fini_nid_postfix() {
+    malloc_finalize_nid_postfix();
+    return 0;
+}
+
 size_t APS5_VABI malloc_usable_size_nid_postfix(void* pointer) {
     return ApplicationHeapUsableSize_nid_no_patch(pointer);
 }
@@ -1027,7 +1040,10 @@ void* APS5_VABI reallocalign_nid_postfix(void* ptr, size_t size, size_t alignmen
 void* APS5_VABI calloc_nid_postfix(size_t count, size_t size) {
     const auto allocate = [count, size] { return ApplicationHeapCalloc_nid_no_patch(count, size); };
     if (!ApplicationHeapDefault_nid_no_patch()) return allocationOrNull(allocate);
-    if (size != 0 && count > std::numeric_limits<size_t>::max() / size) return nullptr;
+    if (size != 0 && count > std::numeric_limits<size_t>::max() / size) {
+        errno = 12;
+        return nullptr;
+    }
     return defaultHeapAllocation(count * size, 0, allocate);
 }
 
