@@ -15,6 +15,9 @@ public:
     bool canGoBack = false;
     bool canGoForward = false;
     mutable Retained<Inspector> inspector;
+    double pageZoomFactor = 1.0;
+    double textZoomFactor = 1.0;
+    bool supportsTextZoom = true;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
