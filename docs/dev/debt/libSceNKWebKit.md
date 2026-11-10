@@ -1607,8 +1607,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF3URL7setUserENS_10StringViewE` | `K79kvESFqPQ` |
 | `_ZN3WTF3URL8setQueryENS_10StringViewE` | `EFDd0QoYyP4` |
 | `_ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE` | `ANq4kcABc7A` |
-| `_ZN3WTF40clearDefaultPortForProtocolMapForTestingEv` | `AuhjTeWbn5Y` |
-| `_ZN3WTF40registerDefaultPortForProtocolForTestingEtRKNS_6StringE` | `Sn3WBciBmSE` |
 | `_ZN3WTF4Lock10unlockSlowEv` | `e4I+fGvwugs` |
 | `_ZN3WTF4Lock13safepointSlowEv` | `UX5VJ-OZdTg` |
 | `_ZN3WTF4Lock8lockSlowEv` | `GciZ5UdsizU` |
@@ -1661,8 +1659,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF8WordLock10unlockSlowEv` | `MffI7wLS6TM` |
 | `_ZN3WTF8WordLock8lockSlowEv` | `Acl7E8U+V44` |
 | `_ZN3WTF8dataFileEv` | `iZD+UvpXBfg` |
-| `_ZN3WTF9URLParser19parseURLEncodedFormENS_10StringViewE` | `Ev+2GetBNwE` |
-| `_ZN3WTF9URLParser9serializeERKNS_6VectorINS_12KeyValuePairINS_6StringES3_EELm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE` | `sx-mGnQPyeg` |
 | `_ZN6WebKit14WebProcessMainEiPPc` | `xQI1SMBDGvk` |
 | `_ZN6WebKit18NetworkProcessMainEiPPc` | `SJWwfPd52Ug` |
 | `_ZN7Nicosia6Buffer6createERKN7WebCore7IntSizeEj` | `MfJ3R1TdXCY` |
@@ -6317,7 +6313,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 ### Functional
 - [HitTestResult getters](../../../core/libs/prx/libSceNKWebKit/src/HitTestResult.cpp) (libSceNKWebKit) - WKHitTestResult* getters return image/link/media/PDF URLs, link text, bounding box and content editable flag from the host object.
 
-- [WTF URL scalar helpers](../../../core/libs/prx/libSceNKWebKit/UrlHelpers.cpp) - The device WebKit revision and guest ABI are unmeasured. The port assumes a 16-byte release [StringView](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringView.h), follows the published [UUID](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/UUID.cpp), [URL](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URL.cpp) and [URLParser](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URLParser.cpp) behavior, and supports only the five built-in default ports. Testing-only port override exports still throw; nonempty null pointers throw rather than dereference.
+- [WTF URL scalar helpers](../../../core/libs/prx/libSceNKWebKit/UrlHelpers.cpp) - The device WebKit revision and guest ABI are unmeasured. The port assumes a 16-byte release [StringView](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringView.h), follows the published [UUID](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/UUID.cpp), [URL](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URL.cpp) and [URLParser](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URLParser.cpp) behavior, and uses a synchronized map for default-port test overrides. Null override keys and nonempty views with null storage throw.
+- [WTF URL scheme and form exports](../../../core/libs/prx/libSceNKWebKit/UrlHelpers.cpp) - console behavior and ABI are unverified. The historical [URLParser.cpp](https://github.com/WebKit/WebKit/blob/e12a212a531a/Source/WTF/wtf/URLParser.cpp) matches the String-reference scheme signature and form exports. The return layouts use the [historical Optional](https://github.com/WebKit/WebKit/blob/e12a212a531a/Source/WTF/wtf/Optional.h) engagement flag at offset 0 and String at offset 8, and the existing release Vector layout for pairs of Strings. Null backing storage for nonempty views, malformed vector metadata and string lengths outside the supported range throw.
 - [WTF::URLParser checks](../../../core/libs/prx/libSceNKWebKit/src/WtfString.cpp) - `allValuesEqual` and `internalValuesConsistent` are not compared with a console module. They follow pinned WebKit [URLParser.cpp](https://github.com/WebKit/WebKit/blob/3539f609da3d/Source/WTF/wtf/URLParser.cpp#L2976-L3031) over the [URL fields](https://github.com/WebKit/WebKit/blob/3539f609da3d/Source/WTF/wtf/URL.h#L229-L247), reading the scheme end from bits 6-31 and the port length from bits 3-5 of the bitfield word as the other `URL` accessors do. A null `URL` reference, or a string with a null character pointer and a nonzero length, throws where WebKit dereferences it.
 - [WTF::Thread::yield](../../../core/libs/prx/libSceNKWebKit/Export.cpp) is source-guided, not console-measured; the PS5 build may differ from pinned upstream WebKit [Threading.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/Threading.h#L182) and [ThreadingPOSIX.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/posix/ThreadingPOSIX.cpp#L572-L580). It returns void and requests a yield through libc's existing `_Thrd_yield` helper.
 
