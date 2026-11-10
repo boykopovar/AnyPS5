@@ -1,4 +1,4 @@
-# Usage: cmake -DDEST_DIR=<dir> -P CopyRuntimeFiles.cmake <file>...
+# Usage (files start at ARGV4, ARGV3 is this script): cmake -DDEST_DIR=<dir> -P CopyRuntimeFiles.cmake <file>...
 # Several test executables stage the same prx files into one directory in parallel. On Windows the
 # concurrent copies can fail with "Permission denied" or "No such file or directory", so each copy retries.
 if(NOT DEST_DIR)
@@ -6,7 +6,10 @@ if(NOT DEST_DIR)
 endif()
 set(ANYPS5_COPY_ATTEMPTS 20)
 math(EXPR lastArg "${CMAKE_ARGC} - 1")
-foreach(argIndex RANGE 3 ${lastArg})
+if(NOT CMAKE_ARGV2 STREQUAL "-P" OR lastArg LESS 4)
+    message(FATAL_ERROR "Expected: cmake -DDEST_DIR=<dir> -P CopyRuntimeFiles.cmake <file>...")
+endif()
+foreach(argIndex RANGE 4 ${lastArg})
     set(source "${CMAKE_ARGV${argIndex}}")
     get_filename_component(name "${source}" NAME)
     get_filename_component(sourceDir "${source}" DIRECTORY)
