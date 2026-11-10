@@ -23,6 +23,19 @@ struct GuestAiocb {
     GuestSigevent sigevent;
 };
 
+struct GuestMqAttr {
+    std::int64_t flags;
+    std::int64_t maxmsg;
+    std::int64_t msgsize;
+    std::int64_t curmsgs;
+    std::int64_t reserved[4];
+};
+
+struct GuestTimespec {
+    std::int64_t seconds;
+    std::int64_t nanoseconds;
+};
+
 struct KernelTitleWorkaround {
     std::int32_t version;
     std::int32_t align;
@@ -121,11 +134,11 @@ int APS5_VABI kldstat_nid_postfix(int fileid, void* stat);
 int APS5_VABI kldsym_nid_postfix(int fileid, int cmd, void* data);
 int APS5_VABI kldunload_nid_postfix(int fileid);
 int APS5_VABI kmq_notify_nid_postfix(void);
-int APS5_VABI kmq_open_nid_postfix(void);
-int APS5_VABI kmq_setattr_nid_postfix(void);
-int APS5_VABI kmq_timedreceive_nid_postfix(void);
-int APS5_VABI kmq_timedsend_nid_postfix(void);
-int APS5_VABI kmq_unlink_nid_postfix(void);
+int APS5_VABI kmq_open_nid_postfix(const char* path, int flags, unsigned int mode, const GuestMqAttr* attr);
+int APS5_VABI kmq_setattr_nid_postfix(int descriptor, const GuestMqAttr* attr, GuestMqAttr* oattr);
+std::int64_t APS5_VABI kmq_timedreceive_nid_postfix(int descriptor, char* buffer, std::size_t length, unsigned int* priority, const GuestTimespec* abstime);
+int APS5_VABI kmq_timedsend_nid_postfix(int descriptor, const char* message, std::size_t length, unsigned int priority, const GuestTimespec* abstime);
+int APS5_VABI kmq_unlink_nid_postfix(const char* path);
 int APS5_VABI ksem_close_nid_postfix(void);
 int APS5_VABI ksem_open_nid_postfix(void);
 int APS5_VABI ksem_unlink_nid_postfix(void);
@@ -530,7 +543,7 @@ int APS5_VABI setlogin_nid_postfix(const char* name);
 int APS5_VABI sigqueue_nid_postfix(void);
 int APS5_VABI sigreturn_nid_postfix(const UserUcontext* context);
 int APS5_VABI statfs_nid_postfix(const char* path, KernelStatfs* buf);
-int APS5_VABI swapon_nid_postfix(void);
+int APS5_VABI swapon_nid_postfix(const char* name);
 int APS5_VABI symlinkat_nid_postfix(const char* target, int directory, const char* created);
 int APS5_VABI sysc_e00_nid_postfix(void);
 int APS5_VABI sysc_m00_nid_postfix(void);
