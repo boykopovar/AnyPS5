@@ -1,6 +1,6 @@
 add_library(libSceGnmDriver SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
 target_include_directories(libSceGnmDriver PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceGnmDriver PRIVATE libSceAgcDriver libSceVideoOut)
+target_link_libraries(libSceGnmDriver PRIVATE libSceAgcDriver libSceVideoOut libkernel_sys)
 configure_windows_unwind(libSceGnmDriver)
 
 if(BUILD_TESTING)
@@ -12,6 +12,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_gnm_driver PROPERTIES TIMEOUT 60)
     if(WIN32)
         set_tests_properties(guest_gnm_driver PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriver>")
+    endif()
+
+    add_test_executable(guest_gnm_driver_init_modes tests/InitModes.cpp)
+    target_include_directories(guest_gnm_driver_init_modes PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_gnm_driver_init_modes PRIVATE libSceGnmDriver libkernel_sys)
+    configure_windows_unwind(guest_gnm_driver_init_modes)
+    add_test(NAME guest_gnm_driver_init_modes COMMAND guest_gnm_driver_init_modes)
+    set_tests_properties(guest_gnm_driver_init_modes PROPERTIES TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(guest_gnm_driver_init_modes PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriver>")
     endif()
 
