@@ -1851,7 +1851,7 @@ static void TestFrame() {
         caught = true;
     }
     Require(caught);
-
+}
 
 static int s_runLoopCallCount = 0;
 static void* s_runLoopReceivedContext = nullptr;
