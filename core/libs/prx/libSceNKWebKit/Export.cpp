@@ -11359,10 +11359,6 @@ int APS5_VABI WKFormSubmissionListenerContinue() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKFrameCanProvideSource() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKFrameCopyMIMEType() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11409,18 +11405,6 @@ int APS5_VABI WKFrameGetWebArchive() {
 }
 
 int APS5_VABI WKFrameInfoCreateFrameHandleRef() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFrameIsDisplayingMarkupDocument() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFrameIsDisplayingStandaloneImageDocument() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFrameIsMainFrame() {
     NotImplemented_nid_no_patch(__func__);
 }
 
