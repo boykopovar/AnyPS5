@@ -144,6 +144,58 @@ struct WideNumpunctVtable {
     String* (APS5_VABI *truename)(String* result, const WideNumpunctFacet* self);
 };
 
+struct MoneyPunctFacet {
+    Facet base;
+    const char* grouping;
+    char decimalPoint;
+    char thousandsSep;
+    char fracDigits;
+    std::uint32_t posFormat;
+    std::uint32_t negFormat;
+    const char* currSymbol;
+    const char* positiveSign;
+    const char* negativeSign;
+};
+
+struct MoneyPunctVtable {
+    FacetVtable facet;
+    char (APS5_VABI *decimalPoint)(const MoneyPunctFacet* self);
+    char (APS5_VABI *thousandsSep)(const MoneyPunctFacet* self);
+    String* (APS5_VABI *grouping)(String* result, const MoneyPunctFacet* self);
+    String* (APS5_VABI *currSymbol)(String* result, const MoneyPunctFacet* self);
+    String* (APS5_VABI *positiveSign)(String* result, const MoneyPunctFacet* self);
+    String* (APS5_VABI *negativeSign)(String* result, const MoneyPunctFacet* self);
+    char (APS5_VABI *fracDigits)(const MoneyPunctFacet* self);
+    std::uint32_t (APS5_VABI *posFormat)(const MoneyPunctFacet* self);
+    std::uint32_t (APS5_VABI *negFormat)(const MoneyPunctFacet* self);
+};
+
+struct WideMoneyPunctFacet {
+    Facet base;
+    const char* grouping;
+    std::uint16_t decimalPoint;
+    std::uint16_t thousandsSep;
+    char fracDigits;
+    std::uint32_t posFormat;
+    std::uint32_t negFormat;
+    const std::uint16_t* currSymbol;
+    const std::uint16_t* positiveSign;
+    const std::uint16_t* negativeSign;
+};
+
+struct WideMoneyPunctVtable {
+    FacetVtable facet;
+    std::uint16_t (APS5_VABI *decimalPoint)(const WideMoneyPunctFacet* self);
+    std::uint16_t (APS5_VABI *thousandsSep)(const WideMoneyPunctFacet* self);
+    String* (APS5_VABI *grouping)(String* result, const WideMoneyPunctFacet* self);
+    String* (APS5_VABI *currSymbol)(String* result, const WideMoneyPunctFacet* self);
+    String* (APS5_VABI *positiveSign)(String* result, const WideMoneyPunctFacet* self);
+    String* (APS5_VABI *negativeSign)(String* result, const WideMoneyPunctFacet* self);
+    char (APS5_VABI *fracDigits)(const WideMoneyPunctFacet* self);
+    std::uint32_t (APS5_VABI *posFormat)(const WideMoneyPunctFacet* self);
+    std::uint32_t (APS5_VABI *negFormat)(const WideMoneyPunctFacet* self);
+};
+
 struct IosBase {
     const void* vtable;
     std::int64_t standardStream;

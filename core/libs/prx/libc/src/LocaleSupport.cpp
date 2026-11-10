@@ -274,6 +274,63 @@ GuestLocale::String* APS5_VABI WideNumpunctTruename(GuestLocale::String* result,
 
 const GuestLocale::WideNumpunctVtable g_wideNumpunctVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, WideNumpunctDecimalPoint, WideNumpunctThousandsSep, WideNumpunctGrouping, WideNumpunctFalsename, WideNumpunctTruename};
 
+const GuestLocale::MoneyPunctVtable g_moneyPunctVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, _ZNKSt7_MpunctIcE16do_decimal_pointEv_nid_postfix, _ZNKSt7_MpunctIcE16do_thousands_sepEv_nid_postfix, _ZNKSt7_MpunctIcE11do_groupingEv_nid_postfix, _ZNKSt7_MpunctIcE14do_curr_symbolEv_nid_postfix, _ZNKSt7_MpunctIcE16do_positive_signEv_nid_postfix, _ZNKSt7_MpunctIcE16do_negative_signEv_nid_postfix, _ZNKSt7_MpunctIcE14do_frac_digitsEv_nid_postfix, _ZNKSt7_MpunctIcE13do_pos_formatEv_nid_postfix, _ZNKSt7_MpunctIcE13do_neg_formatEv_nid_postfix};
+
+const GuestLocale::WideMoneyPunctVtable g_wideMoneyPunctVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, _ZNKSt7_MpunctIwE16do_decimal_pointEv_nid_postfix, _ZNKSt7_MpunctIwE16do_thousands_sepEv_nid_postfix, _ZNKSt7_MpunctIwE11do_groupingEv_nid_postfix, _ZNKSt7_MpunctIwE14do_curr_symbolEv_nid_postfix, _ZNKSt7_MpunctIwE16do_positive_signEv_nid_postfix, _ZNKSt7_MpunctIwE16do_negative_signEv_nid_postfix, _ZNKSt7_MpunctIwE14do_frac_digitsEv_nid_postfix, _ZNKSt7_MpunctIwE13do_pos_formatEv_nid_postfix, _ZNKSt7_MpunctIwE13do_neg_formatEv_nid_postfix};
+
+const char g_emptyGrouping[] = "";
+const std::uint16_t g_wideEmptyText[] = {0};
+
+constexpr std::uint32_t MoneyPattern(char first, char second, char third, char fourth) {
+    return static_cast<std::uint32_t>(static_cast<unsigned char>(first)) | static_cast<std::uint32_t>(static_cast<unsigned char>(second)) << 8 | static_cast<std::uint32_t>(static_cast<unsigned char>(third)) << 16 | static_cast<std::uint32_t>(static_cast<unsigned char>(fourth)) << 24;
+}
+
+constexpr char MoneyNone = 0;
+constexpr char MoneySpace = 1;
+constexpr char MoneySymbol = 2;
+constexpr char MoneySign = 3;
+constexpr char MoneyValue = 4;
+
+void InitializeMoneyPunct(GuestLocale::MoneyPunctFacet* self, bool international, unsigned long references) {
+    *self = {{&g_moneyPunctVtable.facet, 0, 0}, g_emptyGrouping, '.', ',', 0, 0, 0, g_emptyGrouping, g_emptyGrouping, g_emptyGrouping};
+    self->base.references = static_cast<std::uint32_t>(references);
+    self->fracDigits = CHAR_MAX;
+    self->posFormat = MoneyPattern(MoneySymbol, MoneySign, MoneyNone, MoneyValue);
+    self->negFormat = MoneyPattern(MoneySign, MoneySymbol, MoneyNone, MoneyValue);
+    static_cast<void>(international);
+}
+
+void InitializeWideMoneyPunct(GuestLocale::WideMoneyPunctFacet* self, bool international, unsigned long references) {
+    *self = {{&g_wideMoneyPunctVtable.facet, 0, 0}, g_emptyGrouping, '.', ',', 0, 0, 0, g_wideEmptyText, g_wideEmptyText, g_wideEmptyText};
+    self->base.references = static_cast<std::uint32_t>(references);
+    self->fracDigits = CHAR_MAX;
+    self->posFormat = MoneyPattern(MoneySymbol, MoneySign, MoneyNone, MoneyValue);
+    self->negFormat = MoneyPattern(MoneySign, MoneySymbol, MoneyNone, MoneyValue);
+    static_cast<void>(international);
+}
+
+void RequireClassicLocaleName(const char* localeName, const char* function) {
+    if (localeName != nullptr && std::strcmp(localeName, "C") != 0) throw std::invalid_argument(std::string(function) + ": only the C locale is supported");
+}
+
+const GuestLocale::MoneyPunctVtable& MoneyPunctuation(const GuestLocale::Facet* facet) {
+    return *reinterpret_cast<const GuestLocale::MoneyPunctVtable*>(facet->vtable);
+}
+
+const GuestLocale::WideMoneyPunctVtable& WideMoneyPunctuation(const GuestLocale::Facet* facet) {
+    return *reinterpret_cast<const GuestLocale::WideMoneyPunctVtable*>(facet->vtable);
+}
+
+const GuestLocale::MoneyPunctFacet* RequireMoneyPunct(const GuestLocale::MoneyPunctFacet* self, const char* function) {
+    if (self == nullptr || self->base.vtable == nullptr) throw std::invalid_argument(std::string(function) + ": null facet");
+    return self;
+}
+
+const GuestLocale::WideMoneyPunctFacet* RequireWideMoneyPunct(const GuestLocale::WideMoneyPunctFacet* self, const char* function) {
+    if (self == nullptr || self->base.vtable == nullptr) throw std::invalid_argument(std::string(function) + ": null facet");
+    return self;
+}
+
 bool APS5_VABI CodecvtAlwaysNoconv(const GuestLocale::Facet*) {
     return true;
 }
@@ -1216,6 +1273,178 @@ GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE9falsenameEv_nid_postfix(GuestL
 
 GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return Punctuation(&RequireNumpunct(self, "numpunct::truename")->base).truename(result, self);
+}
+
+char APS5_VABI _ZNKSt7_MpunctIcE16do_decimal_pointEv_nid_postfix(const GuestLocale::MoneyPunctFacet* self) {
+    return RequireMoneyPunct(self, "_Mpunct::do_decimal_point")->decimalPoint;
+}
+
+char APS5_VABI _ZNKSt7_MpunctIcE16do_thousands_sepEv_nid_postfix(const GuestLocale::MoneyPunctFacet* self) {
+    return RequireMoneyPunct(self, "_Mpunct::do_thousands_sep")->thousandsSep;
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt7_MpunctIcE11do_groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::MoneyPunctFacet* self) {
+    return AssignCString(result, RequireMoneyPunct(self, "_Mpunct::do_grouping")->grouping);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt7_MpunctIcE14do_curr_symbolEv_nid_postfix(GuestLocale::String* result, const GuestLocale::MoneyPunctFacet* self) {
+    return AssignCString(result, RequireMoneyPunct(self, "_Mpunct::do_curr_symbol")->currSymbol);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt7_MpunctIcE16do_positive_signEv_nid_postfix(GuestLocale::String* result, const GuestLocale::MoneyPunctFacet* self) {
+    return AssignCString(result, RequireMoneyPunct(self, "_Mpunct::do_positive_sign")->positiveSign);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt7_MpunctIcE16do_negative_signEv_nid_postfix(GuestLocale::String* result, const GuestLocale::MoneyPunctFacet* self) {
+    return AssignCString(result, RequireMoneyPunct(self, "_Mpunct::do_negative_sign")->negativeSign);
+}
+
+char APS5_VABI _ZNKSt7_MpunctIcE14do_frac_digitsEv_nid_postfix(const GuestLocale::MoneyPunctFacet* self) {
+    return RequireMoneyPunct(self, "_Mpunct::do_frac_digits")->fracDigits;
+}
+
+std::uint32_t APS5_VABI _ZNKSt7_MpunctIcE13do_pos_formatEv_nid_postfix(const GuestLocale::MoneyPunctFacet* self) {
+    return RequireMoneyPunct(self, "_Mpunct::do_pos_format")->posFormat;
+}
+
+std::uint32_t APS5_VABI _ZNKSt7_MpunctIcE13do_neg_formatEv_nid_postfix(const GuestLocale::MoneyPunctFacet* self) {
+    return RequireMoneyPunct(self, "_Mpunct::do_neg_format")->negFormat;
+}
+
+std::uint16_t APS5_VABI _ZNKSt7_MpunctIwE16do_decimal_pointEv_nid_postfix(const GuestLocale::WideMoneyPunctFacet* self) {
+    return RequireWideMoneyPunct(self, "_Mpunct::do_decimal_point")->decimalPoint;
+}
+
+std::uint16_t APS5_VABI _ZNKSt7_MpunctIwE16do_thousands_sepEv_nid_postfix(const GuestLocale::WideMoneyPunctFacet* self) {
+    return RequireWideMoneyPunct(self, "_Mpunct::do_thousands_sep")->thousandsSep;
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt7_MpunctIwE11do_groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::WideMoneyPunctFacet* self) {
+    return AssignCString(result, RequireWideMoneyPunct(self, "_Mpunct::do_grouping")->grouping);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt7_MpunctIwE14do_curr_symbolEv_nid_postfix(GuestLocale::String* result, const GuestLocale::WideMoneyPunctFacet* self) {
+    return AssignWideCString(result, RequireWideMoneyPunct(self, "_Mpunct::do_curr_symbol")->currSymbol);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt7_MpunctIwE16do_positive_signEv_nid_postfix(GuestLocale::String* result, const GuestLocale::WideMoneyPunctFacet* self) {
+    return AssignWideCString(result, RequireWideMoneyPunct(self, "_Mpunct::do_positive_sign")->positiveSign);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt7_MpunctIwE16do_negative_signEv_nid_postfix(GuestLocale::String* result, const GuestLocale::WideMoneyPunctFacet* self) {
+    return AssignWideCString(result, RequireWideMoneyPunct(self, "_Mpunct::do_negative_sign")->negativeSign);
+}
+
+char APS5_VABI _ZNKSt7_MpunctIwE14do_frac_digitsEv_nid_postfix(const GuestLocale::WideMoneyPunctFacet* self) {
+    return RequireWideMoneyPunct(self, "_Mpunct::do_frac_digits")->fracDigits;
+}
+
+std::uint32_t APS5_VABI _ZNKSt7_MpunctIwE13do_pos_formatEv_nid_postfix(const GuestLocale::WideMoneyPunctFacet* self) {
+    return RequireWideMoneyPunct(self, "_Mpunct::do_pos_format")->posFormat;
+}
+
+std::uint32_t APS5_VABI _ZNKSt7_MpunctIwE13do_neg_formatEv_nid_postfix(const GuestLocale::WideMoneyPunctFacet* self) {
+    return RequireWideMoneyPunct(self, "_Mpunct::do_neg_format")->negFormat;
+}
+
+void APS5_VABI _ZNSt7_MpunctIwEC2Emb_nid_postfix(GuestLocale::WideMoneyPunctFacet* self, unsigned long references, bool international) {
+    if (self == nullptr) throw std::invalid_argument("_Mpunct: null object");
+    InitializeWideMoneyPunct(self, international, references);
+}
+
+void APS5_VABI _ZNSt7_MpunctIcED0Ev_nid_postfix(GuestLocale::MoneyPunctFacet* self) {
+    if (self == nullptr) throw std::invalid_argument("_Mpunct destructor: null object");
+    _ZdlPv_nid_postfix(self);
+}
+
+void APS5_VABI _ZNSt7_MpunctIwED0Ev_nid_postfix(GuestLocale::WideMoneyPunctFacet* self) {
+    if (self == nullptr) throw std::invalid_argument("_Mpunct destructor: null object");
+    _ZdlPv_nid_postfix(self);
+}
+
+void APS5_VABI _ZNSt10moneypunctIcLb0EEC2EPKcm_nid_postfix(GuestLocale::MoneyPunctFacet* self, const char* localeName, unsigned long references) {
+    if (self == nullptr) throw std::invalid_argument("moneypunct: null object");
+    RequireClassicLocaleName(localeName, "moneypunct");
+    InitializeMoneyPunct(self, false, references);
+}
+
+void APS5_VABI _ZNSt10moneypunctIcLb0EEC1Em_nid_postfix(GuestLocale::MoneyPunctFacet* self, unsigned long references) {
+    if (self == nullptr) throw std::invalid_argument("moneypunct: null object");
+    InitializeMoneyPunct(self, false, references);
+}
+
+void APS5_VABI _ZNSt10moneypunctIcLb0EEC2Em_nid_postfix(GuestLocale::MoneyPunctFacet* self, unsigned long references) {
+    _ZNSt10moneypunctIcLb0EEC1Em_nid_postfix(self, references);
+}
+
+void APS5_VABI _ZNSt10moneypunctIcLb0EEC1ERKSt8_Locinfomb_nid_postfix(GuestLocale::MoneyPunctFacet* self, const GuestLocale::LocinfoStorage* info, unsigned long references, bool initialize) {
+    if (self == nullptr) throw std::invalid_argument("moneypunct: null object");
+    static_cast<void>(info);
+    static_cast<void>(initialize);
+    InitializeMoneyPunct(self, false, references);
+}
+
+void APS5_VABI _ZNSt10moneypunctIcLb0EEC2ERKSt8_Locinfomb_nid_postfix(GuestLocale::MoneyPunctFacet* self, const GuestLocale::LocinfoStorage* info, unsigned long references, bool initialize) {
+    _ZNSt10moneypunctIcLb0EEC1ERKSt8_Locinfomb_nid_postfix(self, info, references, initialize);
+}
+
+void APS5_VABI _ZNSt10moneypunctIcLb0EED0Ev_nid_postfix(GuestLocale::MoneyPunctFacet* self) {
+    if (self == nullptr) throw std::invalid_argument("moneypunct destructor: null object");
+    _ZdlPv_nid_postfix(self);
+}
+
+void APS5_VABI _ZNSt10moneypunctIcLb1EEC2EPKcm_nid_postfix(GuestLocale::MoneyPunctFacet* self, const char* localeName, unsigned long references) {
+    if (self == nullptr) throw std::invalid_argument("moneypunct: null object");
+    RequireClassicLocaleName(localeName, "moneypunct");
+    InitializeMoneyPunct(self, true, references);
+}
+
+void APS5_VABI _ZNSt10moneypunctIcLb1EEC2Em_nid_postfix(GuestLocale::MoneyPunctFacet* self, unsigned long references) {
+    if (self == nullptr) throw std::invalid_argument("moneypunct: null object");
+    InitializeMoneyPunct(self, true, references);
+}
+
+void APS5_VABI _ZNSt10moneypunctIcLb1EEC2ERKSt8_Locinfomb_nid_postfix(GuestLocale::MoneyPunctFacet* self, const GuestLocale::LocinfoStorage* info, unsigned long references, bool initialize) {
+    if (self == nullptr) throw std::invalid_argument("moneypunct: null object");
+    static_cast<void>(info);
+    static_cast<void>(initialize);
+    InitializeMoneyPunct(self, true, references);
+}
+
+void APS5_VABI _ZNSt10moneypunctIcLb1EED0Ev_nid_postfix(GuestLocale::MoneyPunctFacet* self) {
+    if (self == nullptr) throw std::invalid_argument("moneypunct destructor: null object");
+    _ZdlPv_nid_postfix(self);
+}
+
+void APS5_VABI _ZNSt10moneypunctIcLb1EED1Ev_nid_postfix(GuestLocale::MoneyPunctFacet* self) {
+    if (self == nullptr) throw std::invalid_argument("moneypunct destructor: null object");
+}
+
+void APS5_VABI _ZNSt10moneypunctIcLb1EED2Ev_nid_postfix(GuestLocale::MoneyPunctFacet* self) {
+    _ZNSt10moneypunctIcLb1EED1Ev_nid_postfix(self);
+}
+
+void APS5_VABI _ZNSt10moneypunctIwLb0EEC1EPKcm_nid_postfix(GuestLocale::WideMoneyPunctFacet* self, const char* localeName, unsigned long references) {
+    if (self == nullptr) throw std::invalid_argument("moneypunct: null object");
+    RequireClassicLocaleName(localeName, "moneypunct");
+    InitializeWideMoneyPunct(self, false, references);
+}
+
+void APS5_VABI _ZNSt10moneypunctIwLb0EEC1Em_nid_postfix(GuestLocale::WideMoneyPunctFacet* self, unsigned long references) {
+    if (self == nullptr) throw std::invalid_argument("moneypunct: null object");
+    InitializeWideMoneyPunct(self, false, references);
+}
+
+void APS5_VABI _ZNSt10moneypunctIwLb1EEC2ERKSt8_Locinfomb_nid_postfix(GuestLocale::WideMoneyPunctFacet* self, const GuestLocale::LocinfoStorage* info, unsigned long references, bool initialize) {
+    if (self == nullptr) throw std::invalid_argument("moneypunct: null object");
+    static_cast<void>(info);
+    static_cast<void>(initialize);
+    InitializeWideMoneyPunct(self, true, references);
+}
+
+void APS5_VABI _ZNSt10moneypunctIwLb1EED0Ev_nid_postfix(GuestLocale::WideMoneyPunctFacet* self) {
+    if (self == nullptr) throw std::invalid_argument("moneypunct destructor: null object");
+    _ZdlPv_nid_postfix(self);
 }
 
 std::size_t APS5_VABI _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {

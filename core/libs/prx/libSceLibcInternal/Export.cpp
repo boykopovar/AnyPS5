@@ -501,36 +501,6 @@ int APS5_VABI sceLibcInternalPending4_131_nid_no_patch() {
 }
 APS5_EXPORT("5afBJmEfUQI", sceLibcInternalPending4_131_nid_no_patch);
 
-int APS5_VABI _ZNSt10moneypunctIcLb0EEC1ERKSt8_Locinfomb_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt10moneypunctIcLb0EEC1Em_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt10moneypunctIcLb0EEC2EPKcm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt10moneypunctIcLb0EEC2ERKSt8_Locinfomb_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt10moneypunctIcLb0EEC2Em_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt10moneypunctIcLb0EED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLibcInternalPending4_138_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -566,36 +536,6 @@ int APS5_VABI sceLibcInternalPending4_143_nid_no_patch() {
     return 0;
 }
 APS5_EXPORT("nbTAoMwiO38", sceLibcInternalPending4_143_nid_no_patch);
-
-int APS5_VABI _ZNSt10moneypunctIcLb1EEC2EPKcm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt10moneypunctIcLb1EEC2ERKSt8_Locinfomb_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt10moneypunctIcLb1EEC2Em_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt10moneypunctIcLb1EED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt10moneypunctIcLb1EED1Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt10moneypunctIcLb1EED2Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI sceLibcInternalPending4_150_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);

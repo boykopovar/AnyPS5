@@ -160,66 +160,6 @@ void APS5_VABI warnx_nid_postfix(const char* format, ...) {
 }
 
 extern "C" {
-int APS5_VABI _ZNKSt7_MpunctIcE16do_negative_signEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIcE16do_positive_signEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIcE16do_thousands_sepEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIwE11do_groupingEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIwE13do_neg_formatEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIwE13do_pos_formatEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIwE14do_curr_symbolEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIwE14do_frac_digitsEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIwE16do_decimal_pointEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIwE16do_negative_signEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIwE16do_positive_signEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt7_MpunctIwE16do_thousands_sepEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNKSt7codecvtIDic9_MbstatetE10do_unshiftERS0_PcS3_RS3__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
