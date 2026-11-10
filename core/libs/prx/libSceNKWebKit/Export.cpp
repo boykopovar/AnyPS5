@@ -4703,9 +4703,6 @@ int APS5_VABI _ZN7WebCore11DisplayList17FillRectWithColorC1ERKNS_9FloatRectERKNS
     NotImplemented_nid_no_patch(__func__);
 }
 
-void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient27dispatchWillSendSubmitEventEON3WTF3RefINS_9FormStateENS1_13DumbPtrTraitsIS3_EEEE() {
-}
-
 int APS5_VABI _ZNK7WebCore20ResourceResponseBase3ageEv() {
     NotImplemented_nid_no_patch(__func__);
 }
