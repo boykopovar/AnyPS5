@@ -15,6 +15,12 @@ public:
     bool canGoBack = false;
     bool canGoForward = false;
     mutable Retained<Inspector> inspector;
+    bool horizontalRubberBanding = true;
+    bool verticalRubberBanding = true;
+    bool rubberBandsAtBottom = true;
+    bool rubberBandsAtLeft = true;
+    bool rubberBandsAtRight = true;
+    bool rubberBandsAtTop = true;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
