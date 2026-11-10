@@ -1062,11 +1062,22 @@ void RequireNativeControl(AgcDriver::VulkanDevice& device, const Context& contex
     Require(texture != nullptr, "native D16: the depth plane was not served");
     std::array<std::uint32_t, Threads> values{};
     Load(device, reinterpret_cast<std::uint8_t*>(depth), Shape{Format16Unorm, Width, Height, Type2D, 0u, 0u}, 0, values);
+    std::uint32_t drawnFloatBits = 0u;
+    const float drawnFloat = static_cast<float>(DrawnBits) / 65535.0f;
+    std::memcpy(&drawnFloatBits, &drawnFloat, sizeof(drawnFloatBits));
+    ExpectRaw(values, drawnFloatBits, "native D16: the sampled depth plane holds the drawn normalized value");
+    Load(device, reinterpret_cast<std::uint8_t*>(depth), Shape{Format16Uint, Width, Height, Type2D, 0u, 0u}, 0, values);
     ExpectRaw(values, DrawnBits, "native D16: the depth plane holds the drawn code");
     ClearDepthSurfaces(context.device);
 }
 
 void RunMode(AgcDriver::VulkanDevice& device, const Context& base, const Shaders& shaders, VkFormat expectedHost, VkFormat hiddenA, VkFormat hiddenB, const char* name) {
+    VkFormatProperties properties{};
+    base.formatProperties(base.physical, expectedHost, &properties);
+    if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) == 0u) {
+        std::printf("%s: host format %d is not supported on this device: the mode is skipped\n", name, static_cast<int>(expectedHost));
+        return;
+    }
     AgcDriver::Graphics::ClearCachedPipelines(base.device);
     AgcDriver::Graphics::ClearPipelineLibraries(base.device);
     ClearDepthSurfaces(base.device);
