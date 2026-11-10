@@ -261,6 +261,13 @@ public:
     bool isVisible = false;
 };
 
+class Connection final : public ObjectOf<ObjectType::Connection> {
+public:
+    Retained<Object> lastMessageName;
+    Retained<Object> lastMessageBody;
+    bool clientConfigured = false;
+};
+
 class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
 public:
     bool decided = false;

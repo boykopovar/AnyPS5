@@ -40,4 +40,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_jsc_register_sets_and_constructors PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>")
     endif()
+    add_test_executable(guest_jsc_script_value_tests ${LIBS_INCLUDE_DIR}/tests/GuestJscScriptValue.cpp)
+    target_include_directories(guest_jsc_script_value_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_jsc_script_value_tests PRIVATE libSceJsc libc)
+    configure_windows_unwind(guest_jsc_script_value_tests)
+    add_test(NAME guest_jsc_script_value COMMAND guest_jsc_script_value_tests)
+    if(WIN32)
+        set_tests_properties(guest_jsc_script_value PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>")
+    endif()
 endif()
