@@ -5,6 +5,7 @@
 - [`X509_PUBKEY_get0_param`](../../../core/libs/prx/libSceLibreSsl3/src/X509PubkeyParam.cpp) follows LibreSSL 4.0.0 `crypto/asn1/x_pubkey.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_pubkey.c) and its `x509_local.h`, `x509.h` and `asn1.h` layouts. The function returns borrowed pointers and writes the encoded key length only when the key output is requested. The PS5 layout and malformed-object behavior are not verified on hardware; layout assertions match the pinned x86-64 source declarations.
 ### Functional
 
+- [X509_new](../../../core/libs/prx/libSceLibreSsl3/src/X509New.cpp) - allocates a zeroed 216-byte certificate and 104-byte certificate-info block on the guest heap, links them and initialises the reference count to one; an allocation failure returns null and frees the partial allocation. The parent X509 free path is not reworked here. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
 - [SSL_get_version](../../../core/libs/prx/libSceLibreSsl3/src/Ssl.cpp) - maps the SSL version field to the LibreSSL strings `TLSv1`, `TLSv1.1`, `TLSv1.2`, `TLSv1.3`, `DTLSv1`, `DTLSv1.2` or `unknown`; a null SSL throws. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
 - [RSA_bits, BN_is_negative, EVP_CIPHER_nid and ERR_load_ERR_strings](../../../core/libs/prx/libSceLibreSsl3/src/InventoryNames.cpp) - name four NIDs the 13.60 inventory identifies but the tree exported only as `Unknown_*`: RSA_bits returns the bit length of `n` through libSceLibreSsl's `BN_num_bits`, BN_is_negative reads the sign, EVP_CIPHER_nid reads the cipher's nid, and ERR_load_ERR_strings is a no-op because the error-string table is not modelled. Null keys or ciphers throw where LibreSSL dereferences them, and a null RSA modulus returns 0. The PS5 ABI and console behaviour are unverified. Closes when: compared with the console.
 - [libtls context and configuration lifecycle](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Ten exports implement only preconnection lifecycle and configuration. TLS handshake, read/write, certificate validation and encrypted transport still throw; callers cannot establish TLS sessions. No PS5 native ABI or error strings have been measured. Signatures and config ownership follow the [LibreSSL libtls API](https://man.openbsd.org/tls_init.3) and [source](https://github.com/libressl/openbsd/tree/master/src/lib/libtls): independent config allocation, refcounts held by client/server contexts, copied key memory zeroized on replacement/free, error pointers and fresh-context close/configure behavior. A server without a certificate fails. Future transport must consume the retained config and implement certificate/SSL context state.
@@ -93,7 +94,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 85 still-unimplemented callable exports: 80 named and 5 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 84 still-unimplemented callable exports: 79 named and 5 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -130,7 +131,6 @@
 | `ERR_load_PEM_strings` | `M7ze0mz2jQM` |
 | `OpenSSL_add_all_digests` | `O9Thca3enw8` |
 | `unknown` | `PBYz0kpXwg8` |
-| `X509_new` | `PNfwr3s6dEs` |
 | `SSL_get0_verified_chain` | `QKIOxHfZLh8` |
 | `EVP_PKEY_derive` | `QYEjNnn6PT4` |
 | `EVP_PKEY_sign` | `QhYzE+Jdvuk` |
