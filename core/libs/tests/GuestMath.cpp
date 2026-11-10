@@ -3667,6 +3667,11 @@ int main() {
     errno = 0;
     Require(std::isinf(tgamma_nid_postfix(200.)));
     Require(errno == 0);
+    const double negativeDoubleGammaUnderflow = tgamma_nid_postfix(-190.5);
+    const double positiveDoubleGammaUnderflow = tgamma_nid_postfix(-191.5);
+    Require(negativeDoubleGammaUnderflow == 0.0 && std::signbit(negativeDoubleGammaUnderflow));
+    Require(positiveDoubleGammaUnderflow == 0.0 && !std::signbit(positiveDoubleGammaUnderflow));
+    Require(errno == 0);
     int rSign = 7;
     Require(lgamma_r_nid_postfix(1., &rSign) == 0. && rSign == 1);
     rSign = 7;

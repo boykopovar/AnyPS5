@@ -1219,7 +1219,9 @@ double APS5_VABI tgamma_nid_postfix(double x) {
     const int savedErrno = errno;
     const double result = std::tgamma(x);
     errno = std::isfinite(x) && x < 0.0 && std::trunc(x) == x ? EDOM : savedErrno;
-    return result;
+    if (result != 0.0 || !std::isfinite(x) || x >= 0.0 || std::trunc(x) == x) return result;
+    const bool negative = std::fmod(std::floor(-x), 2.0) == 0.0;
+    return std::copysign(0.0, negative ? -1.0 : 1.0);
 }
 long double APS5_VABI hypotl_nid_postfix(long double x, long double y) {
     if (std::isinf(x) || std::isinf(y)) return std::numeric_limits<long double>::infinity();
