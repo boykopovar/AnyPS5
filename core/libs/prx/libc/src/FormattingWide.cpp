@@ -264,7 +264,7 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
             else if (length.empty()) *static_cast<int*>(pointer) = count;
             else *static_cast<long long*>(pointer) = count;
-        } else if (conversion == u'S' || (conversion < 0x80 && !std::strchr(LibcDetail::KnownConversions, static_cast<char>(conversion)))) {
+        } else if (conversion == u'S' || (conversion < 0x80 && !std::strchr(LibcDetail::KnownConversions, static_cast<char>(conversion))) || (conversion >= 0xd800 && conversion < 0xdc00)) {
             std::u16string text = u"%";
             if (conversion != u'%') text.push_back(conversion);
             if (conversion >= 0xd800 && conversion < 0xdc00 && *format >= 0xdc00 && *format < 0xe000) text.push_back(*format++);
