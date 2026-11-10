@@ -1,5 +1,4 @@
 add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
-        ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Acb/src/Control.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Acb/src/Dispatch.cpp
@@ -589,6 +588,20 @@ if(BUILD_TESTING)
     set_tests_properties(agc_create_shader PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(agc_create_shader PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agc_suspend_status_tests EXCLUDE_FROM_ALL tests/SuspendStatus.cpp)
+target_include_directories(agc_suspend_status_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_suspend_status_tests PRIVATE libSceAgc libSceAgcDriver libc)
+configure_windows_unwind(agc_suspend_status_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_suspend_status_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    add_test(NAME agc_suspend_status COMMAND agc_suspend_status_tests)
+    set_tests_properties(agc_suspend_status PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_suspend_status PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
