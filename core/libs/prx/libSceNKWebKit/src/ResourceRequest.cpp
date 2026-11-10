@@ -220,4 +220,19 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(dou
     defaultTimeoutInterval = timeoutInterval;
 }
 
+void APS5_VABI _ZN7WebCore19ResourceRequestBase17makeUnconditionalEv(ResourceRequestBase* self) {
+    auto& request = Checked(self);
+    UpdateResourceRequest(request);
+    auto* headers = reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields);
+    constexpr HTTPHeaderName conditionalHeaders[] = {
+        HTTPHeaderName::IfMatch,
+        HTTPHeaderName::IfModifiedSince,
+        HTTPHeaderName::IfNoneMatch,
+        HTTPHeaderName::IfRange,
+        HTTPHeaderName::IfUnmodifiedSince,
+    };
+    for (auto header : conditionalHeaders)
+        _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(headers, header);
+}
+
 }
