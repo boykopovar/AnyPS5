@@ -20,10 +20,16 @@ inline std::atomic<LookupHook>& LookupHookSlot() {
 }
 
 using ConnectHook = int (*)(int socket, const void* address, std::uint32_t size);
+using PollHook = int (*)(std::uintptr_t native, bool write, bool both);
 using WriteHook = std::int64_t (*)(int socket, const void* data, std::size_t size, int flags);
 
 inline std::atomic<ConnectHook>& ConnectHookSlot() {
     static std::atomic<ConnectHook> hook{nullptr};
+    return hook;
+}
+
+inline std::atomic<PollHook>& PollHookSlot() {
+    static std::atomic<PollHook> hook{nullptr};
     return hook;
 }
 
@@ -92,4 +98,5 @@ std::shared_ptr<Request> CreateRequest_nid_no_patch(int id, int version, int ssl
 extern "C" void Http2SetLookupHook_nid_no_patch(Http2::LookupHook hook);
 
 extern "C" void Http2SetConnectHook_nid_no_patch(Http2::ConnectHook hook);
+extern "C" void Http2SetPollHook_nid_no_patch(Http2::PollHook hook);
 extern "C" void Http2SetWriteHook_nid_no_patch(Http2::WriteHook hook);

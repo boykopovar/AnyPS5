@@ -451,13 +451,17 @@ struct Request::State {
     void Wait(bool write, Limit deadline, bool both = false) {
         for (;;) {
             Check(deadline);
+            int result;
+            if (const auto poll = PollHookSlot().load(std::memory_order_acquire)) result = poll(native, write, both);
+            else {
 #ifdef _WIN32
-            WSAPOLLFD entry{static_cast<SOCKET>(native), static_cast<short>(both ? POLLWRNORM | POLLRDNORM : write ? POLLWRNORM : POLLRDNORM), 0};
-            const auto result = WSAPoll(&entry, 1, 5);
+                WSAPOLLFD entry{static_cast<SOCKET>(native), static_cast<short>(both ? POLLWRNORM | POLLRDNORM : write ? POLLWRNORM : POLLRDNORM), 0};
+                result = WSAPoll(&entry, 1, 5);
 #else
-            pollfd entry{static_cast<int>(native), static_cast<short>(both ? POLLOUT | POLLIN : write ? POLLOUT : POLLIN), 0};
-            const auto result = poll(&entry, 1, 5);
+                pollfd entry{static_cast<int>(native), static_cast<short>(both ? POLLOUT | POLLIN : write ? POLLOUT : POLLIN), 0};
+                result = ::poll(&entry, 1, 5);
 #endif
+            }
             Require(result >= 0, "sceHttp2: host poll failed");
             if (result > 0) { Check(deadline); return; }
         }

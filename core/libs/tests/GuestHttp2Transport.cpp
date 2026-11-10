@@ -1717,27 +1717,52 @@ int DelayedConnect(int, const void*, std::uint32_t) {
     return 0;
 }
 
-std::atomic<bool> resetWriteArmed{false};
+std::string resetWriteHeaders;
+std::size_t resetWriteLimit = 16384;
+unsigned resetWriteCalls = 0;
+unsigned resetWriteFailures = 0;
 
 std::int64_t ResetWrite(int socket, const void* data, std::size_t size, int flags) {
-    if (!resetWriteArmed.load()) {
-        const auto count = sceNetSend(socket, data, size, flags);
-        if (count > 0) resetWriteArmed.store(true);
+    ++resetWriteCalls;
+    if (resetWriteHeaders.find("\r\n\r\n") == std::string::npos) {
+        const auto count = sceNetSend(socket, data, std::min(size, resetWriteLimit), flags);
+        if (count > 0) resetWriteHeaders.append(static_cast<const char*>(data), static_cast<std::size_t>(count));
         return count;
     }
+    ++resetWriteFailures;
     *sceNetErrnoLoc() = 54;
     return static_cast<int>(0x80410136);
 }
 
-void InjectedConnectTimeout(int ssl, bool overall) {
+unsigned pendingConnectCalls = 0;
+unsigned pendingConnectPolls = 0;
+
+int PendingConnect(int, const void*, std::uint32_t) {
+    ++pendingConnectCalls;
+    *sceNetErrnoLoc() = 36;
+    return static_cast<int>(0x80410124);
+}
+
+int PendingConnectPoll(std::uintptr_t, bool write, bool both) {
+    Require(write && !both, "pending connect waits for write readiness");
+    if (++pendingConnectPolls > 100) throw std::runtime_error("pending connect wait ignored its deadline");
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    return 0;
+}
+
+void InjectedConnectTimeout(int ssl, bool overall, bool pending) {
     Client client(ssl, 1, 0, 2);
     client.Create("http://127.0.0.1:1/");
     Require(sceHttp2SetConnectTimeOut(client.request, overall ? 200000 : 80000) == 0, "connect phase limit");
     Require(sceHttp2SetTimeOut(client.request, overall ? 80000 : 200000) == 0, "overall limit during connect");
-    Http2SetConnectHook_nid_no_patch(DelayedConnect);
+    pendingConnectCalls = pendingConnectPolls = 0;
+    Http2SetConnectHook_nid_no_patch(pending ? PendingConnect : DelayedConnect);
+    if (pending) Http2SetPollHook_nid_no_patch(PendingConnectPoll);
     const auto begin = std::chrono::steady_clock::now();
     const int result = sceHttp2SendRequest(client.request, nullptr, 0);
     Http2SetConnectHook_nid_no_patch(nullptr);
+    Http2SetPollHook_nid_no_patch(nullptr);
+    if (pending) Require(pendingConnectCalls == 1 && pendingConnectPolls != 0, "connect remained pending inside the poll wait");
     const int expected = static_cast<int>(overall ? 0x817b1068 : 0x817b1221);
     Require(result == expected, "injected connect delay returns the earlier deadline code");
     const auto elapsed = std::chrono::steady_clock::now() - begin;
@@ -1745,24 +1770,30 @@ void InjectedConnectTimeout(int ssl, bool overall) {
     AfterFailedSend(client, expected);
 }
 
-void InjectedWriteReset(int ssl) {
+void InjectedWriteReset(int ssl, std::size_t maximumWrite) {
     Server server(Mode::Http11StallRequest, "/another", 302, {}, false, true);
     Client client(ssl, 1, 0, 2);
     const std::string upload(65536, 'u');
     client.Create(server.Url(), "POST", upload.size());
-    resetWriteArmed.store(false);
+    resetWriteHeaders.clear();
+    resetWriteLimit = maximumWrite;
+    resetWriteCalls = resetWriteFailures = 0;
     Http2SetWriteHook_nid_no_patch(ResetWrite);
     const int result = sceHttp2SendRequest(client.request, upload.data(), upload.size());
     Http2SetWriteHook_nid_no_patch(nullptr);
     Require(result == static_cast<int>(0x80410136), "reset inside TryWrite returns the console code");
+    Require(resetWriteHeaders.ends_with("\r\n\r\n") && resetWriteFailures == 1, "reset follows complete request headers");
+    if (maximumWrite == 1) Require(resetWriteCalls >= resetWriteHeaders.size() + 1, "header sends are forced to one byte");
     AfterFailedSend(client, result);
     server.Join();
 }
 
 void Http1Cleartext(int ssl) {
-    InjectedConnectTimeout(ssl, false);
-    InjectedConnectTimeout(ssl, true);
-    InjectedWriteReset(ssl);
+    for (const bool pending : {false, true}) {
+        InjectedConnectTimeout(ssl, false, pending);
+        InjectedConnectTimeout(ssl, true, pending);
+    }
+    for (const std::size_t maximumWrite : {std::size_t{1}, std::size_t{16384}}) InjectedWriteReset(ssl, maximumWrite);
     PlainFailedSend(ssl, Mode::Http11StallHeaders, static_cast<int>(0x817b1222), 1);
     PlainFailedSend(ssl, Mode::Http11StallHeaders, static_cast<int>(0x817b1068), 3);
     PlainFailedSend(ssl, Mode::Http11StallRequest, static_cast<int>(0x817b1223), 2);

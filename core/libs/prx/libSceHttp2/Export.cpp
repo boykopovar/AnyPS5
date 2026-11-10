@@ -633,6 +633,10 @@ extern "C" void Http2SetConnectHook_nid_no_patch(Http2::ConnectHook hook) {
     Http2::ConnectHookSlot().store(hook, std::memory_order_release);
 }
 
+extern "C" void Http2SetPollHook_nid_no_patch(Http2::PollHook hook) {
+    Http2::PollHookSlot().store(hook, std::memory_order_release);
+}
+
 extern "C" void Http2SetWriteHook_nid_no_patch(Http2::WriteHook hook) {
     Http2::WriteHookSlot().store(hook, std::memory_order_release);
 }
