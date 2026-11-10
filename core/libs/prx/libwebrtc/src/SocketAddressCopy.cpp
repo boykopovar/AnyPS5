@@ -45,40 +45,50 @@
 #include "prx/libc/GuestStringStorage.hpp"
 
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
-WebRtcGuestString CopyString(const WebRtcGuestString& source) {
-    WebRtcGuestString result{};
-    result.reserved = source.reserved;
-    result.size = source.size;
-    result.capacity = source.capacity;
-    const char* sourceData = WebRtcGuestStringData(source);
-    if (source.capacity <= WebRtcGuestStringInlineCapacity) {
-        std::memcpy(result.buffer, sourceData, source.size + 1);
-    } else {
-        result.pointer = static_cast<char*>(GuestStringStorage::Allocate(source.capacity + 1));
-        std::memcpy(result.pointer, sourceData, source.size + 1);
-    }
-    return result;
+constexpr std::size_t CapacityMask = 15;
+
+char* Data(WebRtcGuestString& string) {
+    return string.capacity > WebRtcGuestStringInlineCapacity ? string.pointer : string.buffer;
 }
 
-void ReleaseString(WebRtcGuestString& string) {
+void InitEmpty(WebRtcGuestString& string) {
+    string.reserved = 0;
+    std::memset(string.buffer, 0, sizeof(string.buffer));
+    string.size = 0;
+    string.capacity = WebRtcGuestStringInlineCapacity;
+}
+
+void AssignString(WebRtcGuestString& string, const WebRtcGuestString& source) {
+    const char* sourceData = WebRtcGuestStringData(source);
+    const std::size_t count = source.size;
+    if (count <= string.capacity) {
+        if (count != 0)
+            std::memmove(Data(string), sourceData, count);
+        string.size = count;
+        Data(string)[count] = 0;
+        return;
+    }
+    const std::size_t capacity = count | CapacityMask;
+    auto* data = static_cast<char*>(GuestStringStorage::Allocate(capacity + 1));
+    std::memcpy(data, sourceData, count);
+    data[count] = 0;
     if (string.capacity > WebRtcGuestStringInlineCapacity)
         GuestStringStorage::Deallocate(string.pointer, string.capacity + 1);
+    string.pointer = data;
+    string.capacity = capacity;
+    string.size = count;
 }
 
-WebRtcSocketAddress* Assign(WebRtcSocketAddress* address, const WebRtcSocketAddress* other) {
-    if (address == other)
-        return address;
-    WebRtcGuestString hostname = CopyString(other->hostname);
-    ReleaseString(address->hostname);
-    address->hostname = hostname;
-    address->ip = other->ip;
-    address->port = other->port;
-    address->literal = other->literal;
-    address->scopeId = other->scopeId;
-    return address;
+void CopyFields(WebRtcSocketAddress& address, const WebRtcSocketAddress& other) {
+    address.ip.family = other.ip.family;
+    address.ip.address = other.ip.address;
+    address.port = other.port;
+    address.literal = other.literal;
+    address.scopeId = other.scopeId;
 }
 
 }
@@ -86,15 +96,22 @@ WebRtcSocketAddress* Assign(WebRtcSocketAddress* address, const WebRtcSocketAddr
 extern "C" {
 
 WebRtcSocketAddress* APS5_VABI _ZN3rtc13SocketAddressaSERKS0__nid_postfix(WebRtcSocketAddress* address, const WebRtcSocketAddress* other) {
-    return Assign(address, other);
+    if (!address || !other)
+        throw std::invalid_argument("SocketAddress::operator= requires two addresses");
+    if (address == other)
+        return address;
+    AssignString(address->hostname, other->hostname);
+    CopyFields(*address, *other);
+    return address;
 }
 
 void APS5_VABI _ZN3rtc13SocketAddressC1ERKS0__nid_postfix(WebRtcSocketAddress* address, const WebRtcSocketAddress* other) {
-    address->hostname = CopyString(other->hostname);
-    address->ip = other->ip;
-    address->port = other->port;
-    address->literal = other->literal;
-    address->scopeId = other->scopeId;
+    if (!address || !other)
+        throw std::invalid_argument("SocketAddress::SocketAddress requires two addresses");
+    InitEmpty(address->hostname);
+    AssignString(address->hostname, other->hostname);
+    address->ip = WebRtcIpAddress{};
+    CopyFields(*address, *other);
 }
 
 }
