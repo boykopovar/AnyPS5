@@ -110,6 +110,15 @@ void MultisampledTargetsDecode() {
     Check(Failure([] { Decode(4u, 4u, FastClear, false); }).find("has no CMASK address") != std::string::npos, "a 4x GCN fast clear without a CMASK address was accepted");
 }
 
+void SingleSampleFastClearDecode() {
+    const auto cleared = Decode(1u, 1u, FastClear);
+    Check(cleared.samples == 1u && cleared.cmaskFastClear, "a single-sample GCN color target with FAST_CLEAR is not a CMASK fast clear");
+    Check(cleared.cmaskAddress == AddressOf(cmaskMemory) && cleared.cmaskBytes == CmaskBytes, "a single-sample GCN fast clear lost its CMASK address or size");
+    const auto compressed = Decode(1u, 1u, Compression);
+    Check(compressed.cmaskAddress == 0u && !compressed.cmaskFastClear, "a single-sample GCN color target with only COMPRESSION took a CMASK");
+    Check(Failure([] { Decode(1u, 1u, FastClear, false); }).find("has no CMASK address") != std::string::npos, "a single-sample GCN fast clear without a CMASK address was accepted");
+}
+
 std::string FmaskDecompress(std::uint32_t visibleHeight) {
     AgcDriver::QueueState queue;
     auto& cx = queue.context;
@@ -150,12 +159,13 @@ int main() {
         }
         cmaskMemory = colorMemory + ColorBytes;
         MultisampledTargetsDecode();
+        SingleSampleFastClearDecode();
         PaddedTargetsAreCovered();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
     if (failures != 0) return 1;
-    std::puts("GCN multisampled color targets decode with their CMASK, and a metadata pass over the visible rows of a padded target is covered");
+    std::puts("GCN multisampled and fast-cleared single-sample color targets decode with their CMASK, and a metadata pass over the visible rows of a padded target is covered");
     return 0;
 }
