@@ -1285,12 +1285,13 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
             }
             const auto zigzag = code - 1u;
             const auto delta = static_cast<std::int64_t>(zigzag >> 1u) ^ -static_cast<std::int64_t>(zigzag & 1u);
-            const auto index = static_cast<std::int64_t>(current) + delta;
-            if (index < 0 || index >= static_cast<std::int64_t>(records.size())) {
+            const auto base = static_cast<std::int64_t>(current);
+            const auto limit = static_cast<std::int64_t>(records.size());
+            if (delta < -base || delta >= limit - base) {
                 in.Fail();
                 return;
             }
-            argument = static_cast<std::uint32_t>(index);
+            argument = static_cast<std::uint32_t>(base + delta);
         }
         if (record.opcode == IrOpcode::Phi) {
             record.phiBlocks.resize(record.arguments.size());
