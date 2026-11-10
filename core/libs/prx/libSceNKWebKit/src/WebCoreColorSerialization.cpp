@@ -24,6 +24,7 @@
  * DAMAGE.
  */
 
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
@@ -34,11 +35,8 @@
 
 namespace {
 
-constexpr std::uint64_t kValid = 1ULL << 50;
 constexpr std::uint64_t kOutOfLine = 1ULL << 51;
 constexpr std::uint64_t kUseColorFunctionSerialization = 1ULL << 49;
-constexpr std::uint64_t kSRGBColorSpace = 17ULL << 56;
-constexpr std::uint64_t kColorSpaceMask = 0xFFULL << 56;
 
 unsigned FractionDigits(std::uint8_t alpha, std::array<char, 4>& digits) {
     const auto digit = [](unsigned value) { return static_cast<char>('0' + value); };
@@ -65,9 +63,10 @@ extern "C" NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore20serializationForHTMLE
     if (!color) throw std::invalid_argument("Color::serializationForHTML: null color");
 
     const std::uint64_t bits = color->m_colorAndFlags;
-    if (!(bits & kValid) || (bits & kOutOfLine) || (bits & kUseColorFunctionSerialization)
-        || (bits & kColorSpaceMask) != kSRGBColorSpace)
-        throw std::invalid_argument("Color::serializationForHTML: unsupported color representation");
+    if (bits & kOutOfLine)
+        NotImplemented_nid_no_patch("Color::serializationForHTML: out-of-line color");
+    if (bits & kUseColorFunctionSerialization)
+        NotImplemented_nid_no_patch("Color::serializationForHTML: color function serialization");
 
     const unsigned red = (bits >> 24) & 0xFF;
     const unsigned green = (bits >> 16) & 0xFF;
