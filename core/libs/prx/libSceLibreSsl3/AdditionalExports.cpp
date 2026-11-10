@@ -7,10 +7,6 @@ int APS5_VABI tls_config_set_cert_mem_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BN_dup_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ERR_func_error_string_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -85,10 +81,6 @@ int APS5_VABI TLS_server_method_nid_postfix() {
 }
 
 int APS5_VABI X509_EXTENSION_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI X509_STORE_CTX_get0_param_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -246,10 +238,6 @@ int APS5_VABI ERR_load_PEM_strings_nid_postfix() {
 }
 
 int APS5_VABI OpenSSL_add_all_digests_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI EVP_PKEY_base_id_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

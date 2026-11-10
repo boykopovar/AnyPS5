@@ -53,11 +53,6 @@ int APS5_VABI BIO_write_nid_postfix(LibreSsl::Bio* bio, const void* source, int 
     return LibreSslBioWrite_nid_no_patch(bio, source, size);
 }
 
-int APS5_VABI BN_print_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 void APS5_VABI CONF_modules_free_nid_postfix(void) {}
 
 int APS5_VABI CONF_modules_load_file_nid_postfix(void) {

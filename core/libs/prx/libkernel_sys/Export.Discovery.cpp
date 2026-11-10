@@ -142,31 +142,6 @@ int APS5_VABI kmq_notify_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI kmq_open_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kmq_setattr_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kmq_timedreceive_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kmq_timedsend_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kmq_unlink_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI ksem_close_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -2094,11 +2069,6 @@ int APS5_VABI sigreturn_nid_postfix(const UserUcontext* context) {
 
 int APS5_VABI statfs_nid_postfix(const char* path, KernelStatfs* buf) {
     return PosixStatfs_nid_no_patch(path, buf);
-}
-
-int APS5_VABI swapon_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sysc_e00_nid_postfix(void) {
