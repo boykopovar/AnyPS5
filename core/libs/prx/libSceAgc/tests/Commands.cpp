@@ -1179,7 +1179,7 @@ void testAcquireMem() {
     const auto* packet = sceAgcDcbAcquireMem(&storage.buffer, 0, 0, 0x1234u, base, 0x1000, 400);
     const std::array<std::uint32_t, 8> expected{0xc0065800u, 0, 0x11, 0, 0x12345678u, 0, 25, 0x1234u};
     check(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), storage.words.begin()), "acquire packet does not round its range outward to 256 bytes");
-    const std::array<std::pair<std::uint32_t, std::uint32_t>, 13> polls{{{0, 0}, {1, 0}, {15, 0}, {16, 1}, {39, 2}, {40, 2}, {80, 5}, {160, 10}, {400, 25}, {1000, 62}, {4000, 250}, {100000, 6250}, {1000000, 62500}}};
+    const std::array<std::pair<std::uint32_t, std::uint32_t>, 18> polls{{{0, 0}, {1, 0}, {15, 0}, {16, 1}, {39, 2}, {40, 2}, {80, 5}, {160, 10}, {400, 25}, {1000, 62}, {4000, 250}, {100000, 6250}, {1000000, 62500}, {0x100000u, 0xffffu}, {0xfffff0u, 0xffffu}, {0x1000000u, 0xffffu}, {0xffffffffu, 0xffffu}, {0x44444444u, 0xffffu}}};
     for (const auto& [pollCycles, pollWord] : polls) {
         Storage measured;
         sceAgcDcbAcquireMem(&measured.buffer, 0, 0, 0x4380u, base, 0x1000, pollCycles);
@@ -1218,8 +1218,9 @@ void testAcquireMem() {
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcDcbAcquireMem(&rejected.buffer, 0, 0, 0x80000u, base, 0x100, 0); });
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcDcbAcquireMem(&rejected.buffer, 0, 0, 0, base, 0x100, 40u * 0x10000u); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    Storage saturatedAsync;
+    sceAgcAcbAcquireMem(&saturatedAsync.buffer, 0, base, 0x100, 0xffffffffu);
+    check(saturatedAsync.words[6] == 0xffffu, "the asynchronous compute acquire did not saturate the poll word at 0xffff");
     check(sceAgcDcbAcquireMemGetSize() == 32 && sceAgcAcbAcquireMemGetSize() == 32, "acquire packet size");
 }
 
