@@ -28,8 +28,14 @@ public:
     void Close();
     void Quiesce();
     void Settle();
-    bool OpenOnThisThread() const { return target.load(std::memory_order_relaxed) != VK_NULL_HANDLE && owner.load(std::memory_order_relaxed) == std::this_thread::get_id(); }
-    bool Defers(VkCommandBuffer commands) const { return commands != VK_NULL_HANDLE && target.load(std::memory_order_relaxed) == commands; }
+    [[noreturn]] static void RefuseForeignProducer();
+    bool OpenOnThisThread() const { return target.load(std::memory_order_acquire) != VK_NULL_HANDLE && owner.load(std::memory_order_relaxed) == std::this_thread::get_id(); }
+    bool OpenOnOtherThread() const { return target.load(std::memory_order_acquire) != VK_NULL_HANDLE && owner.load(std::memory_order_relaxed) != std::this_thread::get_id(); }
+    bool Defers(VkCommandBuffer commands) const {
+        if (commands == VK_NULL_HANDLE || target.load(std::memory_order_acquire) != commands) return false;
+        if (owner.load(std::memory_order_relaxed) != std::this_thread::get_id()) RefuseForeignProducer();
+        return true;
+    }
     bool Behind(VkCommandBuffer commands) const { return commands == recent.load(std::memory_order_relaxed) && executed.load(std::memory_order_acquire) < posted.load(std::memory_order_acquire); }
     std::byte* Append(Run run, std::size_t bytes);
     std::mutex& PoolMutex() { return poolMutex; }

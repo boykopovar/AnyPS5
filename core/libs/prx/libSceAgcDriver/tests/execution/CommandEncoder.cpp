@@ -389,6 +389,89 @@ void UnwindingSettlesQueuedRecording() {
     encoder.Quiesce();
 }
 
+struct RecordedAtDestruction {
+    VkCommandBuffer commands;
+    std::size_t& seen;
+    ~RecordedAtDestruction() {
+        std::lock_guard lock(logMutex);
+        seen = recorded[commands].size();
+    }
+};
+
+void OwnersOutliveTheUnwindDrain() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x46);
+    CommandEncoder encoder(device, table);
+    const auto commands = Handle<VkCommandBuffer>(0xa00);
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(30)); });
+    std::size_t recordedAtRelease = 0;
+    try {
+        encoder.Open(commands);
+        RecordedAtDestruction owner{commands, recordedAtRelease};
+        const CommandEncoder::UnwindQuiesce guard(&encoder);
+        table.cmdDraw(commands, 1, 1, 0, 0);
+        table.cmdDraw(commands, 2, 1, 0, 0);
+        encoder.Close();
+        throw std::runtime_error("injected failure after the window closed");
+    } catch (const std::runtime_error&) {
+    }
+    CommandEncoder::SetDelayForTesting({});
+    Require(recordedAtRelease == 2, "an owner of a queued draw was released while the encoder had recorded " + std::to_string(recordedAtRelease) + " of 2 commands");
+    encoder.Quiesce();
+}
+
+void ForeignThreadCannotProduceIntoAnOpenWindow() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x47);
+    CommandEncoder encoder(device, table);
+    const auto commands = Handle<VkCommandBuffer>(0xb00);
+    encoder.Open(commands);
+    table.cmdDraw(commands, 1, 1, 0, 0);
+    std::atomic<bool> refused{false};
+    std::thread other([&] {
+        try {
+            table.cmdDraw(commands, 9, 1, 0, 0);
+        } catch (const std::logic_error&) {
+            refused.store(true);
+        }
+    });
+    other.join();
+    Require(refused.load(), "a call on a command buffer with an open window from another thread was not refused");
+    table.cmdDraw(commands, 2, 1, 0, 0);
+    encoder.Close();
+    std::thread later([&] { table.cmdDraw(commands, 3, 1, 0, 0); });
+    later.join();
+    encoder.Quiesce();
+    Compare({{commands, {"draw 1 1 0 0", "draw 2 1 0 0", "draw 3 1 0 0"}}}, "a foreign producer");
+}
+
+void ForeignLookupIsRefusedWhileAWindowIsOpen() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x48);
+    CommandEncoder encoder(device, table);
+    const auto commands = Handle<VkCommandBuffer>(0xc00);
+    encoder.Open(commands);
+    table.cmdDraw(commands, 1, 1, 0, 0);
+    std::atomic<bool> refused{false};
+    std::thread other([&] {
+        try {
+            AgcDriver::Graphics::BeforeCommandLookup(device);
+        } catch (const std::logic_error&) {
+            refused.store(true);
+        }
+    });
+    other.join();
+    Require(refused.load(), "a command lookup from another thread while a window was open was not refused");
+    encoder.Close();
+    std::thread later([&] { AgcDriver::Graphics::BeforeCommandLookup(device); });
+    later.join();
+    encoder.Quiesce();
+    Compare({{commands, {"draw 1 1 0 0"}}}, "a foreign lookup");
+}
+
 }
 
 int main() {
@@ -399,6 +482,9 @@ int main() {
         NestedWindowKeepsOrder();
         LargeRecordsSpanChunks();
         UnwindingSettlesQueuedRecording();
+        OwnersOutliveTheUnwindDrain();
+        ForeignThreadCannotProduceIntoAnOpenWindow();
+        ForeignLookupIsRefusedWhileAWindowIsOpen();
         std::cout << "command encoder tests passed\n";
         return 0;
     } catch (const std::exception& error) {
