@@ -36,7 +36,7 @@ alignas(256) std::array<std::uint32_t, 12> SdwaCode{
     0xbf810000,
 };
 
-constexpr std::array<std::uint32_t, 16> Vectors{{
+constexpr std::array<std::uint32_t, 17> Vectors{{
     0xfe0cffffu,
     0x00ff0000u,
     0x000000ffu,
@@ -53,6 +53,7 @@ constexpr std::array<std::uint32_t, 16> Vectors{{
     0x80008000u,
     0x75307530u,
     0x00b1004du,
+    0x0b090700u,
 }};
 
 std::string Hex(std::uint32_t value) {
