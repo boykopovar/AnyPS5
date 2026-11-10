@@ -372,6 +372,21 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+target_sources(libSceIcu PRIVATE Titlecase.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_titlecase_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Titlecase.cpp)
+    target_include_directories(guest_icu_titlecase_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_titlecase_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_titlecase_tests)
+    add_test(NAME guest_icu_titlecase COMMAND guest_icu_titlecase_tests)
+    set_tests_properties(guest_icu_titlecase PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_titlecase PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()
+
 if(BUILD_TESTING)
     add_test_executable(guest_icu_data_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Data.cpp)
     target_include_directories(guest_icu_data_tests PRIVATE ${LIBS_INCLUDE_DIR})
