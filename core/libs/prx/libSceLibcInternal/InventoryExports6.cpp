@@ -1,6 +1,7 @@
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/Api.hpp"
 
 extern "C" {
 
@@ -101,9 +102,8 @@ int APS5_VABI _ZTv0_n24_NSiD0Ev_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNSt7codecvtIwc9_MbstatetED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt7codecvtIwc9_MbstatetED0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI _ZNSt7codecvtIcc9_MbstatetEC1Em_nid_postfix() {
@@ -302,17 +302,12 @@ int APS5_VABI _ZNSt7_MpunctIcEC2Emb() {
     return 0;
 }
 
-int APS5_VABI _ZNSt16nested_exceptionD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 void APS5_VABI _thread_init_stub(void) {
 }
 
-int APS5_VABI _ZNSt24_Iostream_error_categoryD0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt24_Iostream_error_categoryD0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI _ZNSt7_MpunctIwEC2Emb_nid_postfix() {
@@ -401,9 +396,8 @@ int APS5_VABI _ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1Em
     return 0;
 }
 
-int APS5_VABI _ZNSt8messagesIwED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt8messagesIwED0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI _ZNSt9exception18_Set_raise_handlerEPFvRKS_E_nid_postfix() {
@@ -435,11 +429,6 @@ void APS5_VABI _rtld_atfork_post(int* locks) {
 }
 
 int APS5_VABI malloc_finalize_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZSt10unexpectedv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -490,9 +479,8 @@ int APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_Ini
     return 0;
 }
 
-int APS5_VABI _ZNSt8messagesIcED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt8messagesIcED0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI _ZNSt10moneypunctIwLb1EEC2ERKSt8_Locinfomb_nid_postfix() {
@@ -527,9 +515,8 @@ int APS5_VABI _ZSt8_XLgammad() {
     return 0;
 }
 
-int APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0Ev(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI malloc_get_footer_value() {
@@ -597,9 +584,8 @@ int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE5imbueERKSt6locale_nid_po
     return 0;
 }
 
-int APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI _ZNSt8numpunctIcED0Ev_nid_postfix() {

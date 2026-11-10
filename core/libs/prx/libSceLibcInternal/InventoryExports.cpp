@@ -10,10 +10,6 @@ int APS5_VABI _ZNKSt22_System_error_category23default_error_conditionEi() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNKSt22_System_error_category4nameEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNKSt22_System_error_category7messageEi() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -202,14 +198,6 @@ std::streamsize APS5_VABI _ZNSt15basic_streambufIwSt11char_traitsIwEE9showmanycE
     return 0;
 }
 
-int APS5_VABI _ZNSt16nested_exceptionD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI libSceLibcInternalInventory_053_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("8R00hgzXQDY", libSceLibcInternalInventory_053_nid_no_patch);
 
 int APS5_VABI _ZNSt24_Iostream_error_categoryD1Ev() {
     NotImplemented_nid_no_patch(__func__);
@@ -935,15 +923,6 @@ int APS5_VABI _ZSt13resetiosflagsNSt5_IosbIiE9_FmtflagsE() {
 int APS5_VABI _ZSt14_Debug_messagePKcS0_j() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI _ZSt14get_unexpectedv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI libSceLibcInternalInventory_241_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("Eva2i4D5J6I", libSceLibcInternalInventory_241_nid_no_patch);
 
 int APS5_VABI _ZSt17_Future_error_mapi() {
     NotImplemented_nid_no_patch(__func__);

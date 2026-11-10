@@ -12,7 +12,6 @@ struct ErrorCode;
 extern "C" {
 
 int APS5_VABI _ZNKSt22_System_error_category23default_error_conditionEi();
-int APS5_VABI _ZNKSt22_System_error_category4nameEv();
 int APS5_VABI _ZNKSt22_System_error_category7messageEi();
 int APS5_VABI _ZNSt10moneypunctIwLb0EEC2EPKcm();
 int APS5_VABI _ZNSt10moneypunctIwLb0EEC2ERKSt8_Locinfomb();
@@ -60,8 +59,6 @@ std::streamsize APS5_VABI _ZNSt15basic_streambufIcSt11char_traitsIcEE9showmanycE
 int APS5_VABI _ZNSt15basic_streambufIwSt11char_traitsIwEE6xsgetnEPwi();
 int APS5_VABI _ZNSt15basic_streambufIwSt11char_traitsIwEE6xsputnEPKwi();
 std::streamsize APS5_VABI _ZNSt15basic_streambufIwSt11char_traitsIwEE9showmanycEv(std::basic_streambuf<wchar_t>*);
-int APS5_VABI _ZNSt16nested_exceptionD1Ev();
-int APS5_VABI libSceLibcInternalInventory_053_nid_no_patch();
 int APS5_VABI _ZNSt24_Iostream_error_categoryD1Ev();
 int APS5_VABI _ZNSt4_Pad7_LaunchEPKcPP12pthread_attrPP7pthread();
 int APS5_VABI _ZNSt4_Pad7_LaunchEPKcPP7pthread();
@@ -241,8 +238,6 @@ int APS5_VABI _ZSt10_GetloctxtIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEiRT
 int APS5_VABI _ZSt10_Rng_abortPKc();
 int APS5_VABI _ZSt13resetiosflagsNSt5_IosbIiE9_FmtflagsE();
 int APS5_VABI _ZSt14_Debug_messagePKcS0_j();
-int APS5_VABI _ZSt14get_unexpectedv();
-int APS5_VABI libSceLibcInternalInventory_241_nid_no_patch();
 int APS5_VABI _ZSt17_Future_error_mapi();
 int APS5_VABI _ZSt22_Random_device_entropyv();
 int APS5_VABI _ZSt6_ThrowRKSt9exception();

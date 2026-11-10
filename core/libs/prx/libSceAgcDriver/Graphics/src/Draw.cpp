@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/StagedMerge.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
@@ -446,6 +447,13 @@ bool writesStencilTarget(const State& state) {
 
 bool writesDepthTarget(const State& state) {
     return state.depthWrite || writesStencilTarget(state);
+}
+
+std::optional<std::uint8_t> overwrittenStencil(const State& state) {
+    const auto replaces = [](const VkStencilOpState& face) { return face.compareOp == VK_COMPARE_OP_ALWAYS && face.passOp == VK_STENCIL_OP_REPLACE && face.writeMask == 0xffu; };
+    if (!state.depthTest || !state.depthWrite || state.depthCompare != VK_COMPARE_OP_ALWAYS || state.depthBoundsTest || !state.stencilTest) return std::nullopt;
+    if (!replaces(state.stencilFront) || !replaces(state.stencilBack) || state.stencilFront.reference != state.stencilBack.reference) return std::nullopt;
+    return static_cast<std::uint8_t>(state.stencilFront.reference);
 }
 
 std::size_t colorKeyCount(const ColorTarget& color, std::size_t bytes) {
@@ -1444,9 +1452,20 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
     DrawInputCopy copy;
     if (recorder != nullptr && bytes != 0) {
         GuestMemory::FlushGpuWrites(address, bytes);
+#ifdef _WIN32
+        const bool owned = !RuntimeSwitches::Set(RuntimeSwitch::NoOwnedDrawInputs);
+#else
+        constexpr bool owned = false;
+#endif
+        if (owned) copy.buffer = recorder->ReusableOwnedDrawInput(address, bytes, use, &copy.derived);
+        if (copy.buffer != nullptr) {
+            copy.reused = true;
+            return copy;
+        }
         copy.registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         copy.generation = GuestMemory::CollectWrites(address, bytes);
         if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived);
+        else if (owned) copy.owned = recorder->ArmOwnedDrawInput(address, bytes);
         if (copy.buffer != nullptr) {
             copy.reused = true;
             return copy;
@@ -1489,7 +1508,11 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
 }
 
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived) {
-    if (recorder == nullptr || copy.reused || copy.generation == 0 || copy.buffer == nullptr) return;
+    if (recorder == nullptr || copy.reused || copy.buffer == nullptr) return;
+    if (copy.generation == 0) {
+        if (!copy.owned.words.empty() && !RuntimeSwitches::Set(RuntimeSwitch::NoOwnedDrawInputs)) recorder->KeepOwnedDrawInput(address, copy.buffer->Bytes().size(), copy.owned, copy.buffer, use, derived);
+        return;
+    }
     recorder->KeepDrawSnapshot(address, copy.buffer->Bytes().size(), copy.generation, copy.registryGeneration, copy.buffer, use, derived);
 }
 
@@ -3430,7 +3453,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         targetViews.push_back(binding.target->View());
     }
     if (state.depth) {
-        targetViews.push_back(DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state)));
+        targetViews.push_back(DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state), overwrittenStencil(state)));
     }
     timer.phase(PhasePrepare);
     const bool recordDraws = RecordDraws();
@@ -4246,7 +4269,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     }
     if (recipe.hasDepth) {
         timer.phase(PhaseSetup);
-        const auto depthView = DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state));
+        const auto depthView = DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state), overwrittenStencil(state));
         timer.phase(PhaseReadTarget);
         if (recipe.targetViews.back() != depthView) return miss(DrawRecipeMiss::TargetGone);
     }
