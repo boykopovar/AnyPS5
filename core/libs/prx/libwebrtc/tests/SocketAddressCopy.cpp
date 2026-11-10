@@ -74,8 +74,10 @@ void TestInlineCopyConstructorAndAssignment() {
     Require(copy.hostname.capacity == WebRtcGuestStringInlineCapacity);
 
     WebRtcSocketAddress assigned{};
+    SetInline(assigned.hostname, "");
     _ZN3rtc13SocketAddressaSERKS0__nid_postfix(&assigned, &source);
     RequireCopy(assigned, source);
+    Require(assigned.hostname.capacity == WebRtcGuestStringInlineCapacity);
     Require(_ZN3rtc13SocketAddressaSERKS0__nid_postfix(&assigned, &assigned) == &assigned);
 }
 
