@@ -261,7 +261,13 @@ int APS5_VABI scePthreadSetschedparam(Pthread thread, int policy, const KernelSc
 
 int APS5_VABI pthread_getschedparam_nid_postfix(Pthread thread, int* policy, KernelSchedParam* param) {
     if (!policy || !param) return PosixThread::GUEST_EINVAL;
-    return PosixThread::ToErrno(scePthreadGetschedparam(thread, policy, param));
+    int currentPolicy = 0;
+    KernelSchedParam currentParam{};
+    if (const int error = PosixThread::ToErrno(scePthreadGetschedparam(thread, &currentPolicy, &currentParam))) return error;
+    if (!GuestCopyOut_nid_no_patch(policy, &currentPolicy, sizeof(currentPolicy)) ||
+        !GuestCopyOut_nid_no_patch(param, &currentParam, sizeof(currentParam)))
+        return PosixThread::GUEST_EFAULT;
+    return 0;
 }
 
 static std::unique_lock<std::mutex> SchedTarget(int pid, Pthread& thread, const char* function) {
@@ -470,7 +476,8 @@ int APS5_VABI pthread_getcpuclockid_nid_postfix(Pthread thread, int* clockId) {
     constexpr int guestFault = 14;
     if (!thread) return PosixThread::GUEST_EINVAL;
     if (!clockId) return guestFault;
-    *clockId = GuestThreadCpuClockId(thread);
+    const int id = GuestThreadCpuClockId(thread);
+    if (!GuestCopyOut_nid_no_patch(clockId, &id, sizeof(id))) return guestFault;
     return 0;
 }
 
@@ -498,7 +505,9 @@ int APS5_VABI pthread_setprio_nid_postfix(Pthread thread, int prio) {
 
 int APS5_VABI pthread_setschedparam_nid_postfix(Pthread thread, int policy, const KernelSchedParam* param) {
     if (!param) return PosixThread::GUEST_EINVAL;
-    return PosixThread::ToErrno(scePthreadSetschedparam(thread, policy, param));
+    KernelSchedParam requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return PosixThread::GUEST_EFAULT;
+    return PosixThread::ToErrno(scePthreadSetschedparam(thread, policy, &requested));
 }
 
 void APS5_VABI pthread_testcancel_nid_postfix(void) {

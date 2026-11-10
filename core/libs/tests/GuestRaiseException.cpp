@@ -1,4 +1,5 @@
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
@@ -85,8 +86,7 @@ static_assert(offsetof(SpinState, r12) == 8 && offsetof(SpinState, xmm8) == 16 &
 
 extern "C" void APS5_VABI RaiseTestSpinUntilR12(SpinState* state);
 asm(".text\n"
-    ".globl RaiseTestSpinUntilR12\n"
-    "RaiseTestSpinUntilR12:\n"
+    APS5_ASM_FUNCTION("RaiseTestSpinUntilR12")
     "    pushq %r12\n"
     "    pushq %r13\n"
     "    subq $8, %rsp\n"
