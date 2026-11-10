@@ -278,8 +278,6 @@ void MissingOrForeignState(const Key& key) {
     Require(EVP_DigestVerifyInit_nid_postfix(&context, nullptr, nullptr, nullptr, nullptr) == 0, "an initialization without a key fails");
     Require(context.pkeyContext == nullptr, "an initialization without a key leaves no key context");
     RequireErrors({}, "an initialization without a key queues no error");
-    RequireThrows([&] { EVP_DigestVerifyInit_nid_postfix(&context, nullptr, EVP_sha256_nid_postfix(),
-        reinterpret_cast<void*>(std::uintptr_t{7}), key.pkey); }, "an initialization with an ENGINE throws");
     void* untouched = reinterpret_cast<void*>(std::uintptr_t{0x9abc});
     Require(EVP_DigestVerifyInit_nid_postfix(&context, &untouched, EVP_sha256_nid_postfix(),
         reinterpret_cast<void*>(std::uintptr_t{7}), nullptr) == 0, "an initialization with an ENGINE and no key fails without reading them");

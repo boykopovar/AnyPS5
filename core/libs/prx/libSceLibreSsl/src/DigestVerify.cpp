@@ -87,35 +87,35 @@ void QueueEvp(int reason) {
     LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, reason, __FILE__, __LINE__);
 }
 
-int RsaContextInit(PkeyContext* context);
-void RsaContextCleanup(PkeyContext* context);
+int APS5_VABI RsaContextInit(PkeyContext* context);
+void APS5_VABI RsaContextCleanup(PkeyContext* context);
 
-int UnavailableSign(PkeyContext*, unsigned char* signature, std::size_t* signatureLength, const unsigned char*, std::size_t) {
+int APS5_VABI UnavailableSign(PkeyContext*, unsigned char* signature, std::size_t* signatureLength, const unsigned char*, std::size_t) {
     NotImplemented_nid_no_patch("EVP_PKEY_sign with a key context this library created");
     return -2;
 }
 
-int UnavailableVerifyRecover(PkeyContext*, unsigned char* output, std::size_t* outputLength, const unsigned char*, std::size_t) {
+int APS5_VABI UnavailableVerifyRecover(PkeyContext*, unsigned char* output, std::size_t* outputLength, const unsigned char*, std::size_t) {
     NotImplemented_nid_no_patch("EVP_PKEY_verify_recover with a key context this library created");
     return -2;
 }
 
-int UnavailableEncrypt(PkeyContext*, unsigned char* output, std::size_t* outputLength, const unsigned char*, std::size_t) {
+int APS5_VABI UnavailableEncrypt(PkeyContext*, unsigned char* output, std::size_t* outputLength, const unsigned char*, std::size_t) {
     NotImplemented_nid_no_patch("EVP_PKEY_encrypt with a key context this library created");
     return -2;
 }
 
-int UnavailableDecrypt(PkeyContext*, unsigned char* output, std::size_t* outputLength, const unsigned char*, std::size_t) {
+int APS5_VABI UnavailableDecrypt(PkeyContext*, unsigned char* output, std::size_t* outputLength, const unsigned char*, std::size_t) {
     NotImplemented_nid_no_patch("EVP_PKEY_decrypt with a key context this library created");
     return -2;
 }
 
-int UnavailableKeyGeneration(PkeyContext*, void*) {
+int APS5_VABI UnavailableKeyGeneration(PkeyContext*, void*) {
     NotImplemented_nid_no_patch("EVP_PKEY_keygen with a key context this library created");
     return -2;
 }
 
-int UnavailableControlString(PkeyContext*, const char*, const char*) {
+int APS5_VABI UnavailableControlString(PkeyContext*, const char*, const char*) {
     NotImplemented_nid_no_patch("EVP_PKEY_CTX_ctrl_str with a key context this library created");
     return -2;
 }
@@ -130,7 +130,7 @@ RsaPkeyContext& RequireRsaContextData(PkeyContext& context, const char* function
     return *static_cast<RsaPkeyContext*>(context.data);
 }
 
-int RsaContextCopy(PkeyContext* target, PkeyContext* source) {
+int APS5_VABI RsaContextCopy(PkeyContext* target, PkeyContext* source) {
     if (!RsaContextInit(target)) return 0;
     const auto& from = RequireRsaContextData(*source, "pkey_rsa_copy");
     auto& to = RequireRsaContextData(*target, "pkey_rsa_copy");
@@ -154,7 +154,7 @@ int SetupTemporaryBuffer(RsaPkeyContext& data, const LibreSslRsa& rsa, const cha
     return data.buffer ? 1 : 0;
 }
 
-int RsaVerify(PkeyContext* context, const unsigned char* signature, std::size_t signatureLength, const unsigned char* data, std::size_t dataLength) {
+int APS5_VABI RsaVerify(PkeyContext* context, const unsigned char* signature, std::size_t signatureLength, const unsigned char* data, std::size_t dataLength) {
     auto& method = RequireRsaContextData(*context, "pkey_rsa_verify");
     auto* rsa = KeyOf(*context, "pkey_rsa_verify");
     if (method.digest) {
@@ -189,7 +189,7 @@ bool CheckPaddingDigest(const EvpMd* digest, int padding) {
     return true;
 }
 
-int RsaControl(PkeyContext* context, int command, int argument, void* pointer) {
+int APS5_VABI RsaControl(PkeyContext* context, int command, int argument, void* pointer) {
     auto& data = RequireRsaContextData(*context, "pkey_rsa_ctrl");
     switch (command) {
     case ControlMd:
@@ -203,7 +203,7 @@ int RsaControl(PkeyContext* context, int command, int argument, void* pointer) {
     }
 }
 
-int RsaContextInit(PkeyContext* context) {
+int APS5_VABI RsaContextInit(PkeyContext* context) {
     auto* data = static_cast<RsaPkeyContext*>(malloc_nid_postfix(sizeof(RsaPkeyContext)));
     if (!data) return 0;
     std::memset(data, 0, sizeof(*data));
@@ -216,7 +216,7 @@ int RsaContextInit(PkeyContext* context) {
     return 1;
 }
 
-void RsaContextCleanup(PkeyContext* context) {
+void APS5_VABI RsaContextCleanup(PkeyContext* context) {
     auto* data = static_cast<RsaPkeyContext*>(context->data);
     if (!data) return;
     if (data->publicExponent) NotImplemented_nid_no_patch("pkey_rsa_cleanup of a key context with a keygen public exponent");
