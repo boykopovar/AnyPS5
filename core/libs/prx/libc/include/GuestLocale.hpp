@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 #include "general/VabiMacros.hpp"
 
 struct GuestTm;
@@ -76,6 +77,9 @@ struct String {
     std::uint64_t size;
     std::uint64_t capacity;
 };
+
+constexpr std::size_t StringInlineCapacity = 15;
+constexpr std::size_t StringCapacityMask = 15;
 
 void* AllocateStringStorage(std::size_t bytes);
 void ReleaseStringStorage(String& string);
@@ -188,10 +192,37 @@ struct OutputIterator {
     Streambuf* buffer;
 };
 
+struct InputIterator {
+    std::uint64_t words[2];
+};
+
+static_assert(sizeof(InputIterator) == 0x10);
+static_assert(std::is_trivially_copyable_v<InputIterator>);
+
 struct TimePutVtable {
     FacetVtable facet;
     OutputIterator (APS5_VABI *put)(const Facet* self, OutputIterator out, IosBase* stream, char fill, const GuestTm* time, char format, char modifier);
 };
+
+struct TimeGetVtable {
+    FacetVtable facet;
+    std::int32_t (APS5_VABI *dateOrder)(const Facet* self);
+    InputIterator (APS5_VABI *getTime)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, GuestTm* time);
+    InputIterator (APS5_VABI *getDate)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, GuestTm* time);
+    InputIterator (APS5_VABI *getWeekday)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, GuestTm* time);
+    InputIterator (APS5_VABI *getMonthname)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, GuestTm* time);
+    InputIterator (APS5_VABI *getYear)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, GuestTm* time);
+    InputIterator (APS5_VABI *get)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, GuestTm* time, char format, char modifier);
+};
+
+static_assert(offsetof(TimeGetVtable, dateOrder) == 0x20);
+static_assert(offsetof(TimeGetVtable, getTime) == 0x28);
+static_assert(offsetof(TimeGetVtable, getDate) == 0x30);
+static_assert(offsetof(TimeGetVtable, getWeekday) == 0x38);
+static_assert(offsetof(TimeGetVtable, getMonthname) == 0x40);
+static_assert(offsetof(TimeGetVtable, getYear) == 0x48);
+static_assert(offsetof(TimeGetVtable, get) == 0x50);
+static_assert(sizeof(TimeGetVtable) == 0x58);
 
 struct NumPutVtable {
     FacetVtable facet;
@@ -210,6 +241,8 @@ struct CtypeVtable {
     const void* caseMethods[4];
     char (APS5_VABI *widen)(const Facet* self, char character);
     const char* (APS5_VABI *widenRange)(const Facet* self, const char* first, const char* last, char* destination);
+    char (APS5_VABI *narrow)(const Facet* self, char character, char fallback);
+    const char* (APS5_VABI *narrowRange)(const Facet* self, const char* first, const char* last, char fallback, char* destination);
 };
 
 static_assert(offsetof(StreambufVtable, overflow) == 0x20);
@@ -219,7 +252,10 @@ static_assert(sizeof(OutputIterator) == 0x10);
 static_assert(offsetof(TimePutVtable, put) == 0x20);
 static_assert(offsetof(NumPutVtable, putBool) == 0x20);
 static_assert(offsetof(NumPutVtable, putPointer) == 0x58);
+static_assert(offsetof(CtypeVtable, widen) == 0x40);
 static_assert(offsetof(CtypeVtable, widenRange) == 0x48);
+static_assert(offsetof(CtypeVtable, narrow) == 0x50);
+static_assert(offsetof(CtypeVtable, narrowRange) == 0x58);
 static_assert(sizeof(Facet) == 0x10);
 static_assert(offsetof(Implementation, facets) == 0x10);
 static_assert(offsetof(Implementation, facetCount) == 0x18);
@@ -263,6 +299,8 @@ static_assert(offsetof(SceV2Locinfo, name) == 8);
 static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 
 }
+
+extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last);
 
 inline constexpr std::size_t kNumPutCharVtableSlots = 14;
 static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
