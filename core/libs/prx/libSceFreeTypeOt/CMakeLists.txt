@@ -1,10 +1,5 @@
-add_library(libSceFreeTypeOt SHARED EXCLUDE_FROM_ALL
-        Export.cpp
-        ../libSceFreeType/src/OutlineBitmap.cpp
-        ../libSceFreeType/src/OutlineBorders.cpp
-        ../libSceFreeType/src/OutlineDecompose.cpp
-        ../libSceFreeType/src/OutlineOrientation.cpp
-        ../libSceFreeType/src/Trigonometry.cpp
+add_library(libSceFreeTypeOt SHARED EXCLUDE_FROM_ALL Export.cpp ../libSceFreeType/src/OutlineBitmap.cpp ../libSceFreeType/src/OutlineBorders.cpp
+        ../libSceFreeType/src/OutlineDecompose.cpp ../libSceFreeType/src/OutlineOrientation.cpp ../libSceFreeType/src/Trigonometry.cpp
         ../libSceFreeType/src/MemoryRecord.cpp)
 target_include_directories(libSceFreeTypeOt PRIVATE ${LIBS_INCLUDE_DIR})
 include("${CMAKE_CURRENT_LIST_DIR}/Stream.cmake")
@@ -13,6 +8,16 @@ if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libSceFreeTypeOt PRIVATE LINKER:--exclude-libs,ALL)
 endif()
 configure_windows_unwind(libSceFreeTypeOt)
+
+target_sources(libSceFreeTypeOt PRIVATE ForwardExports.cpp)
+if(APPLE)
+    target_link_libraries(libSceFreeTypeOt PRIVATE "-Wl,-needed_library,$<TARGET_FILE:libSceFreeType>")
+    add_dependencies(libSceFreeTypeOt libSceFreeType)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(libSceFreeTypeOt PRIVATE "-Wl,--no-as-needed" libSceFreeType "-Wl,--as-needed")
+else()
+    target_link_libraries(libSceFreeTypeOt PRIVATE libSceFreeType)
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_freetype_ot_constants_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtConstants.cpp)
@@ -54,7 +59,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
     endif()
 
-    add_test_executable(guest_freetype_ot_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOt.cpp)
+    add_test_executable(guest_freetype_ot_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOt.cpp)
     target_include_directories(guest_freetype_ot_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_ot_tests PRIVATE freetype ${CMAKE_DL_LIBS})
     if(WIN32)
@@ -110,7 +115,7 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
-    add_test_executable(guest_freetype_ot_outline_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtOutline.cpp)
+    add_test_executable(guest_freetype_ot_outline_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtOutline.cpp)
     target_include_directories(guest_freetype_ot_outline_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_ot_outline_tests PRIVATE ${CMAKE_DL_LIBS})
     if(WIN32)
@@ -144,6 +149,26 @@ if(BUILD_TESTING)
     set_tests_properties(guest_freetype_ot_glyph_slot PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_freetype_ot_glyph_slot PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
+    endif()
+endif()
+
+target_sources(libSceFreeTypeOt PRIVATE src/SizeMetrics.cpp)
+if(ANYPS5_USE_SYSTEM_DEPS)
+    target_compile_definitions(libSceFreeTypeOt PRIVATE ANYPS5_FREETYPEOT_SYSTEM_DEPS)
+endif()
+if(BUILD_TESTING AND NOT ANYPS5_USE_SYSTEM_DEPS)
+    add_test_executable(guest_freetype_ot_size_metrics_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtSizeMetrics.cpp)
+    target_include_directories(guest_freetype_ot_size_metrics_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_ot_size_metrics_tests PRIVATE libSceFreeTypeOt)
+    if(WIN32)
+        target_link_libraries(guest_freetype_ot_size_metrics_tests PRIVATE libc)
+    endif()
+    configure_windows_unwind(guest_freetype_ot_size_metrics_tests)
+    add_test(NAME guest_freetype_ot_size_metrics COMMAND guest_freetype_ot_size_metrics_tests)
+    set_tests_properties(guest_freetype_ot_size_metrics PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_freetype_ot_size_metrics PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
     endif()
 endif()

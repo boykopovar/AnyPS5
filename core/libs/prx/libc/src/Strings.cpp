@@ -752,6 +752,10 @@ extern "C" {
 
 int APS5_VABI strcasecmp_nid_postfix(const char* s1, const char* s2) {
     for (;; ++s1, ++s2) {
+        if (*s1 == *s2) {
+            if (*s1 == 0) return 0;
+            continue;
+        }
         const int a = tolower_nid_postfix(static_cast<unsigned char>(*s1));
         const int b = tolower_nid_postfix(static_cast<unsigned char>(*s2));
         if (a != b || *s1 == 0) return (a > b) - (a < b);
@@ -760,6 +764,10 @@ int APS5_VABI strcasecmp_nid_postfix(const char* s1, const char* s2) {
 
 int APS5_VABI strncasecmp_nid_postfix(const char* s1, const char* s2, size_t n) {
     for (; n != 0; ++s1, ++s2, --n) {
+        if (*s1 == *s2) {
+            if (*s1 == 0) break;
+            continue;
+        }
         const int a = tolower_nid_postfix(static_cast<unsigned char>(*s1));
         const int b = tolower_nid_postfix(static_cast<unsigned char>(*s2));
         if (a != b) return a < b ? -1 : 1;
