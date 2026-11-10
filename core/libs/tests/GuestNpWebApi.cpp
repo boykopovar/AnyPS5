@@ -627,6 +627,22 @@ void TestMultipartParts() {
     Require(sceNpWebApiTerminate(context) == 0, "terminate multipart parts library context");
 }
 
+void TestIntCreateCtxIndExtdPushEventFilter() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int other = sceNpWebApiInitialize(1, 0x10000);
+    const int handle = sceNpWebApiCreateHandle(context);
+    Require(context > 0 && other > 0 && handle > 0, "library contexts and handle for extended push event filter");
+    unsigned char filterParam[64] = {};
+
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(context, handle, nullptr, 1) == InvalidArgument, "extended push event filter without its parameter");
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(context, handle, filterParam, 0) == InvalidArgument, "extended push event filter with no parameters");
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(0x7fff + 1, handle, nullptr, 1) == InvalidArgument, "the argument is checked before the library context");
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(0x7fff + 1, handle, filterParam, 1) == LibContextNotFound, "extended push event filter of an unknown context");
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(other, handle, filterParam, 1) == HandleNotFound, "extended push event filter with another context's handle");
+
+    Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the extended push event filter library contexts");
+}
+
 }
 
 int main() {
@@ -645,5 +661,6 @@ int main() {
     TestMultipartRequests();
     TestRequestTimeouts();
     TestMultipartParts();
+    TestIntCreateCtxIndExtdPushEventFilter();
     return 0;
 }
