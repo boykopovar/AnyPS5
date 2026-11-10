@@ -46,5 +46,13 @@ int main() {
     RequireInvalidArgument([&] { SHA1_nid_postfix(abc, 3, nullptr); });
     RequireInvalidArgument([&] { SHA1_nid_postfix(nullptr, 1, digest); });
 
+    Require(EVP_MD_block_size_nid_postfix(EVP_md5_nid_postfix()) == 64);
+    Require(EVP_MD_block_size_nid_postfix(EVP_sha1_nid_postfix()) == 64);
+    Require(EVP_MD_block_size_nid_postfix(EVP_sha224_nid_postfix()) == 64);
+    Require(EVP_MD_block_size_nid_postfix(EVP_sha256_nid_postfix()) == 64);
+    Require(EVP_MD_block_size_nid_postfix(EVP_sha384_nid_postfix()) == 128);
+    Require(EVP_MD_block_size_nid_postfix(EVP_sha512_nid_postfix()) == 128);
+    Require(EVP_MD_block_size_nid_postfix(nullptr) == -1);
+
     std::puts("libSceLibreSsl3 digest tests passed");
 }

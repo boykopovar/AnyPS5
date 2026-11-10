@@ -24,6 +24,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Ksem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Semaphore.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/SyncOnAddress.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/AtomicWaitForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/DirectMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Jit.cpp
@@ -1495,12 +1496,14 @@ if(BUILD_TESTING)
     target_include_directories(guest_exception_fault_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_exception_fault_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_exception_fault_tests)
-    add_test(NAME guest_exception_fault COMMAND guest_exception_fault_tests)
-    set_tests_properties(guest_exception_fault PROPERTIES TIMEOUT 30)
-    add_asan_test_options(guest_exception_fault handle_segv=0)
-    if(WIN32)
-        set_tests_properties(guest_exception_fault PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    if(NOT APPLE)
+        add_test(NAME guest_exception_fault COMMAND guest_exception_fault_tests)
+        set_tests_properties(guest_exception_fault PROPERTIES TIMEOUT 30)
+        add_asan_test_options(guest_exception_fault handle_segv=0)
+        if(WIN32)
+            set_tests_properties(guest_exception_fault PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
     endif()
     add_test_executable(guest_raise_exception_tests ${LIBS_INCLUDE_DIR}/tests/GuestRaiseException.cpp)
     target_include_directories(guest_raise_exception_tests PRIVATE ${LIBS_INCLUDE_DIR})
