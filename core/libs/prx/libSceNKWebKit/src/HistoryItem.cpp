@@ -27,8 +27,8 @@
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
-#include <chrono>
 #include <stdexcept>
 #include <utility>
 
@@ -128,8 +128,7 @@ bool APS5_VABI _ZNK7WebCore11HistoryItem11hasChildrenEv(const HistoryItem* self)
 bool APS5_VABI _ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(const HistoryItem* self) {
     const auto* cachedPage = static_cast<const CachedPage*>(Checked(self).cachedPage);
     if (!cachedPage) return false;
-    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    return now > cachedPage->expirationTime;
+    return _ZN3WTF13MonotonicTime3nowEv().m_value > cachedPage->expirationTime;
 }
 
 void* APS5_VABI _ZN7WebCore11HistoryItem8formDataEv(HistoryItem* self) {
