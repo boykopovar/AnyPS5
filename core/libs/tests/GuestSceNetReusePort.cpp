@@ -67,7 +67,7 @@ static void Flags(int family, int type) {
         Require(std::all_of(bytes.begin() + size, bytes.end(), [](auto value) { return value == 0xa5; }),
             "preserve output tail");
     }
-    Require(sceNetSetsockopt(net, 0xffff, 0x200, nullptr, sizeof(one)) == static_cast<int>(0x80410116u),
+    Require(sceNetSetsockopt(net, 0xffff, 0x200, nullptr, sizeof(one)) == static_cast<int>(0x8041010eu),
         "reject null option value");
     Require(sceNetSetsockopt(net, 0xffff, 0x200, &one, 3) == static_cast<int>(0x80410116u),
         "reject short option value");

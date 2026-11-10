@@ -58,14 +58,14 @@ int main() {
         CheckValue(socket, 4);
         std::uint32_t size = 0;
         int value = 99;
-        Require(sceNetGetsockopt(socket, 6, 1, nullptr, &size) < 0 && *sceNetErrnoLoc() == 22);
-        Require(sceNetGetsockopt(socket, 6, 1, &value, nullptr) < 0 && *sceNetErrnoLoc() == 22);
+        Require(sceNetGetsockopt(socket, 6, 1, nullptr, &size) == 0 && size == 0);
+        Require(sceNetGetsockopt(socket, 6, 1, &value, nullptr) < 0 && *sceNetErrnoLoc() == 14);
         for (const std::uint32_t capacity : {0u, 3u, 4u}) {
             size = capacity;
             Require(sceNetGetsockopt(datagram, 6, 1, &value, &size) < 0 && *sceNetErrnoLoc() == 22);
             Require(size == capacity && value == 99);
             Require(sceNetGetsockopt(socket, 6, 0x7fffffff, &value, &size) < 0);
-            Require(*sceNetErrnoLoc() == (capacity < 4 ? 22 : 42));
+            Require(*sceNetErrnoLoc() == 42);
             Require(size == capacity && value == 99);
         }
         owner.reset();

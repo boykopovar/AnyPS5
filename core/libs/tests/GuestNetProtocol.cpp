@@ -38,14 +38,14 @@ int main() {
                 CheckProtocol(socket, expected);
                 std::uint32_t size = 4;
                 int value = 99;
-                Require(sceNetGetsockopt(socket, 0xffff, 0x1016, nullptr, &size) < 0 && *sceNetErrnoLoc() == 22);
-                Require(sceNetGetsockopt(socket, 0xffff, 0x1016, &value, nullptr) < 0 && *sceNetErrnoLoc() == 22);
-                Require(value == 99 && size == 4);
+                Require(sceNetGetsockopt(socket, 0xffff, 0x1016, nullptr, &size) == 0 && size == 0);
+                Require(sceNetGetsockopt(socket, 0xffff, 0x1016, &value, nullptr) < 0 && *sceNetErrnoLoc() == 14);
+                Require(value == 99 && size == 0);
                 Require(sceNetSetsockopt(socket, 0xffff, 0x1016, &value, sizeof(value)) < 0);
                 CheckProtocol(socket, expected);
                 Require(sceNetSocketClose(socket) == 0);
                 Require(sceNetGetsockopt(socket, 0xffff, 0x1016, &value, &size) < 0 && *sceNetErrnoLoc() == 9);
-                Require(value == 99 && size == 4);
+                Require(value == 99 && size == 0);
             }
         }
         const int listener = sceNetSocket("protocol-listener", family, 1, 0);

@@ -41,9 +41,9 @@ int main() {
     CheckProtocol(socket, protocol);
     std::uint32_t size = 4;
     int value = 99;
-    Require(sceNetGetsockopt(socket, 0xffff, 0x1016, nullptr, &size) < 0 && *sceNetErrnoLoc() == 22);
-    Require(sceNetGetsockopt(socket, 0xffff, 0x1016, &value, nullptr) < 0 && *sceNetErrnoLoc() == 22);
-    Require(value == 99 && size == 4);
+    Require(sceNetGetsockopt(socket, 0xffff, 0x1016, nullptr, &size) == 0 && size == 0);
+    Require(sceNetGetsockopt(socket, 0xffff, 0x1016, &value, nullptr) < 0 && *sceNetErrnoLoc() == 14);
+    Require(value == 99 && size == 0);
     Require(sceNetSocketClose(socket) == 0);
     const int unlistedProtocol = 17;
     const int unlisted = sceNetSocket("raw-unlisted-protocol", 2, 3, unlistedProtocol);
@@ -58,8 +58,8 @@ int main() {
     CheckProtocol(unlisted, 0);
     std::uint32_t unlistedSize = 4;
     int unlistedValue = 99;
-    Require(sceNetGetsockopt(unlisted, 0xffff, 0x1016, nullptr, &unlistedSize) < 0 && *sceNetErrnoLoc() == 22);
-    Require(sceNetGetsockopt(unlisted, 0xffff, 0x1016, &unlistedValue, nullptr) < 0 && *sceNetErrnoLoc() == 22);
-    Require(unlistedValue == 99 && unlistedSize == 4);
+    Require(sceNetGetsockopt(unlisted, 0xffff, 0x1016, nullptr, &unlistedSize) == 0 && unlistedSize == 0);
+    Require(sceNetGetsockopt(unlisted, 0xffff, 0x1016, &unlistedValue, nullptr) < 0 && *sceNetErrnoLoc() == 14);
+    Require(unlistedValue == 99 && unlistedSize == 0);
     Require(sceNetSocketClose(unlisted) == 0);
 }

@@ -104,10 +104,10 @@ int main() {
                 std::uint32_t size = 4;
                 std::array<std::uint8_t, 8> bytes;
                 bytes.fill(0xa5);
-                Require(NetFails(sceNetGetsockopt(socket, TcpLevel, option, nullptr, &size), Invalid) && size == 4);
-                Require(NetFails(sceNetGetsockopt(socket, TcpLevel, option, bytes.data(), nullptr), Invalid));
+                Require(sceNetGetsockopt(socket, TcpLevel, option, nullptr, &size) == 0 && size == 0);
+                Require(NetFails(sceNetGetsockopt(socket, TcpLevel, option, bytes.data(), nullptr), Fault));
                 Require(std::all_of(bytes.begin(), bytes.end(), [](auto value) { return value == 0xa5; }));
-                Require(NetFails(sceNetSetsockopt(socket, TcpLevel, option, nullptr, sizeof(int)), Invalid));
+                Require(NetFails(sceNetSetsockopt(socket, TcpLevel, option, nullptr, sizeof(int)), Fault));
                 Require(NetFails(sceNetSetsockopt(socket, TcpLevel, option, nullptr, 0), Invalid));
                 Require(KernelFails(setsockopt_nid_postfix(socket, TcpLevel, option, nullptr, sizeof(int)), Fault));
                 Require(KernelFails(setsockopt_nid_postfix(socket, TcpLevel, option, nullptr, 0), Invalid) && *sceNetErrnoLoc() == Invalid);
@@ -129,7 +129,7 @@ int main() {
                 Require(NetFails(sceNetSetsockopt(socket, TcpLevel, unsupported, &one, sizeof(one)), NoProtocolOption));
                 Require(KernelFails(setsockopt_nid_postfix(socket, TcpLevel, unsupported, &one, sizeof(one)), NoProtocolOption) &&
                     *sceNetErrnoLoc() == NoProtocolOption);
-                CheckGetFailure(socket, unsupported, Invalid, NoProtocolOption);
+                CheckGetFailure(socket, unsupported, NoProtocolOption, NoProtocolOption);
             }
 
             Require(SetNet(socket, TcpKeepIdle, 1));
