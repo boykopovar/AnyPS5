@@ -36,6 +36,6 @@ void ExpectNotImplemented(TFn stub, const char* name, int line) {
 #define RequireNotImplemented(stub) ExpectNotImplemented(stub, #stub, __LINE__)
 
 int main() {
-    RequireNotImplemented(sceEsvmUseCustomMusicCoreForDecoderMode_nid_no_patch);
+    RequireNotImplemented(sceEsvmUseCustomMusicCoreForDecoderMode);
     return 0;
 }
