@@ -163,8 +163,8 @@ int ReadValue(void* destination, const void* source, std::size_t bytes) {
 
 int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t size) {
     const std::uint32_t count = output ? std::min(*length, size) : 0;
-    if (count != 0 && !GuestCopyOut_nid_no_patch(output, value, count)) return ErrorFault;
     if (!GuestCopyOut_nid_no_patch(length, &count, sizeof(count))) return ErrorFault;
+    if (count != 0 && !GuestCopyOut_nid_no_patch(output, value, count)) return ErrorFault;
     return 0;
 }
 

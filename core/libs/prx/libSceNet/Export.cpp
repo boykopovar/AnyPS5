@@ -2000,6 +2000,8 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
         if (optname == NET_SO_RCVBUF) it->second.rcv_buffer = value;
         if (optname == NET_SO_ONESBCAST) it->second.onesbcast = value;
         if (optname == NET_SO_KEEPALIVE) it->second.keepalive = value != 0 ? NET_SO_KEEPALIVE : 0;
+        if (optname == NET_SO_DONTROUTE || optname == NET_SO_BROADCAST)
+            it->second.reuseFlags = value != 0 ? it->second.reuseFlags | optname : it->second.reuseFlags & ~optname;
     }
     return 0;
 }
@@ -2011,8 +2013,8 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
     if (static_cast<std::int32_t>(capacity) < 0) return fail(NET_EINVAL);
     const auto store = [&](const void* data, std::size_t size) {
         const auto count = static_cast<std::uint32_t>(std::min<std::size_t>(capacity, size));
-        if (count != 0 && !GuestCopyOut_nid_no_patch(optval, data, count)) return fail(NET_EFAULT);
         if (!GuestCopyOut_nid_no_patch(optlen, &count, sizeof(count))) return fail(NET_EFAULT);
+        if (count != 0 && !GuestCopyOut_nid_no_patch(optval, data, count)) return fail(NET_EFAULT);
         return 0;
     };
     Sock socket;
@@ -2106,6 +2108,10 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
     switch (timeout_option(optname)) {
         case NET_SO_DONTROUTE:
         case NET_SO_BROADCAST: {
+            if (optname == NET_SO_BROADCAST && (socket.family != NET_AF_INET || socket.type != NET_SOCK_DGRAM)) {
+                value = socket.reuseFlags & NET_SO_BROADCAST;
+                break;
+            }
             int enabled = 0;
             NativeLength size = sizeof(enabled);
             const int nativeOption = optname == NET_SO_DONTROUTE ? SO_DONTROUTE : SO_BROADCAST;

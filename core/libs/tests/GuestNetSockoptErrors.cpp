@@ -107,7 +107,11 @@ int main() {
         const std::uint32_t full = option == 0x80 ? 8 : option == 0x1005 || option == 0x1006 ? 16 : 4;
         std::array<std::uint8_t, 24> reference{};
         size = static_cast<std::uint32_t>(reference.size());
-        Require(sceNetGetsockopt(stream, socketLevel, option, reference.data(), &size) == 0);
+        if (const int result = sceNetGetsockopt(stream, socketLevel, option, reference.data(), &size); result != 0) {
+            std::fprintf(stderr, "sceNetGetsockopt(stream, SOL_SOCKET, 0x%x) returned %d errno %d\n", option, result,
+                *sceNetErrnoLoc());
+            Require(false);
+        }
         Require(size == full);
         for (const std::uint32_t capacity : {0u, 1u, 2u, 3u, 4u, 8u, 12u, 16u, 20u}) {
             std::array<std::uint8_t, 24> bytes;
