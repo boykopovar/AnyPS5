@@ -32,6 +32,8 @@ public:
     // The aspect-fitting blit of RecordBlit from any image: presenting a resident render target needs
     // no copy into the source image first.
     static void RecordBlitFrom(const Graphics::Context& context, VkCommandBuffer commands, VkImage image, VkImageLayout layout, std::uint32_t width, std::uint32_t height, VkFilter filter, VkImage destinationImage, std::uint32_t destinationWidth, std::uint32_t destinationHeight, std::uint32_t layer = 0);
+    void RecordStretch(VkCommandBuffer commands, VkImage destinationImage, const AspectFitRect& destination);
+    static void RecordStretchFrom(const Graphics::Context& context, VkCommandBuffer commands, VkImage image, VkImageLayout layout, std::uint32_t width, std::uint32_t height, VkFilter filter, VkImage destinationImage, const AspectFitRect& destination, std::uint32_t layer = 0);
     void RecordLetterbox(VkCommandBuffer commands, std::uint32_t width, std::uint32_t height, VkImage destinationImage, std::uint32_t destinationWidth, std::uint32_t destinationHeight);
     static std::vector<AspectFitRect> LetterboxBands(std::uint32_t width, std::uint32_t height, std::uint32_t destinationWidth, std::uint32_t destinationHeight);
     std::uint32_t SourceWidth() const { return sourceWidth; }
