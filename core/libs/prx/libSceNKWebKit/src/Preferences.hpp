@@ -233,6 +233,7 @@ bool APS5_VABI WKPreferencesGetSubpixelCSSOMElementMetricsEnabled(const void* pr
 bool APS5_VABI WKPreferencesGetSuppressesIncrementalRendering(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetSyntheticEditingCommandsEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetTabsToLinks(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetTabToLinksEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetTelephoneNumberParsingEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetTextAreasAreResizable(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetTextAutosizingEnabled(const void* preferencesRef);
@@ -432,6 +433,7 @@ void APS5_VABI WKPreferencesSetSubpixelCSSOMElementMetricsEnabled(const void* pr
 void APS5_VABI WKPreferencesSetSuppressesIncrementalRendering(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetSyntheticEditingCommandsEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetTabsToLinks(const void* preferencesRef, bool tabsToLinks);
+void APS5_VABI WKPreferencesSetTabToLinksEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetTelephoneNumberParsingEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetTextAreasAreResizable(const void* preferencesRef, bool resizable);
 void APS5_VABI WKPreferencesSetTextAutosizingEnabled(const void* preferencesRef, bool textAutosizingEnabled);

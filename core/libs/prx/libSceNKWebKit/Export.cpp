@@ -3815,10 +3815,6 @@ int APS5_VABI _ZN7WebCore11DisplayList8DrawLineC2ERKNS_10FloatPointES4_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPreferencesSetTabToLinksEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_NDJ1JNuoSNI_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9225,10 +9221,6 @@ int APS5_VABI _ZNK7WebCore17FrameLoaderClient32isServiceWorkerFrameLoaderClientE
 }
 
 int APS5_VABI _ZN7WebCore16scriptNameToCodeERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPreferencesGetTabToLinksEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -177,6 +177,7 @@ const BooleanCase booleanCases[]{
     {"SuppressesIncrementalRendering", WKPreferencesSetSuppressesIncrementalRendering, WKPreferencesGetSuppressesIncrementalRendering, false},
     {"SyntheticEditingCommandsEnabled", WKPreferencesSetSyntheticEditingCommandsEnabled, WKPreferencesGetSyntheticEditingCommandsEnabled, true},
     {"TabsToLinks", WKPreferencesSetTabsToLinks, WKPreferencesGetTabsToLinks, false},
+    {"TabToLinksEnabled", WKPreferencesSetTabToLinksEnabled, WKPreferencesGetTabToLinksEnabled, false},
     {"TelephoneNumberParsingEnabled", WKPreferencesSetTelephoneNumberParsingEnabled, WKPreferencesGetTelephoneNumberParsingEnabled, false},
     {"TextAreasAreResizable", WKPreferencesSetTextAreasAreResizable, WKPreferencesGetTextAreasAreResizable, true},
     {"TextAutosizingEnabled", WKPreferencesSetTextAutosizingEnabled, WKPreferencesGetTextAutosizingEnabled, false},
@@ -215,6 +216,16 @@ void Booleans() {
         RequireThrows<std::invalid_argument>([&] { entry.get(nullptr); });
         RequireThrows<std::invalid_argument>([&] { entry.set(nullptr, true); });
     }
+}
+
+void LegacyTabToLinks() {
+    auto preferences = Create();
+    WKPreferencesSetTabToLinksEnabled(preferences.Get(), true);
+    Require(WKPreferencesGetTabsToLinks(preferences.Get()));
+    auto copy = Copy(preferences.Get());
+    WKPreferencesSetTabsToLinks(copy.Get(), false);
+    Require(!WKPreferencesGetTabToLinksEnabled(copy.Get()));
+    Require(WKPreferencesGetTabToLinksEnabled(preferences.Get()));
 }
 
 void Deprecated() {
@@ -561,6 +572,7 @@ void CreationAndUnknownDefaults() {
 
 int main() {
     Booleans();
+    LegacyTabToLinks();
     Deprecated();
     Numeric();
     Strings();
