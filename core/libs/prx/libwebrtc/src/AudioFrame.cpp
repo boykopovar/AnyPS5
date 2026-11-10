@@ -102,7 +102,7 @@ void APS5_VABI _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(WebRtcAudioFram
     if (frame == source) return;
     if (frame->packetInfos || source->packetInfos) NotImplemented_nid_no_patch(__func__);
     if (source->numChannels && source->samplesPerChannel > WebRtcAudioFrameMaxDataSizeSamples / source->numChannels) {
-        NotImplemented_nid_no_patch("AudioFrame::CopyFrom sample count exceeds the frame data buffer");
+        throw std::runtime_error("AudioFrame::CopyFrom: samples_per_channel_ * num_channels_ exceeds kMaxDataSizeSamples");
     }
     const std::size_t sampleCount = source->samplesPerChannel * source->numChannels;
 
