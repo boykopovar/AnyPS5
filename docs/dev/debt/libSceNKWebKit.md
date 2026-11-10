@@ -48,6 +48,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [Process pool cache model and accessibility settings](../../../core/libs/prx/libSceNKWebKit/src/ContextSettings.cpp) (libSceNKWebKit) - `WKContextGetCacheModel`, `WKContextSetCacheModel`, `WKContextGetAccessibilityEnabled` and `WKContextSetAccessibilityEnabled` inspect and configure cache model and accessibility settings on the process pool in host memory.
 - [Process pool process termination and visited links](../../../core/libs/prx/libSceNKWebKit/src/ContextTermination.cpp) (libSceNKWebKit) - `WKContextDisableProcessTermination`, `WKContextEnableProcessTermination`, `WKContextAddVisitedLink` and `WKContextClearVisitedLinks` control process termination policy and visited link cache on the process pool in host memory.
 - [User media permission requests](../../../core/libs/prx/libSceNKWebKit/src/UserMediaPermissionRequest.cpp) (libSceNKWebKit) - `WKUserMediaPermissionRequestAllow` and `WKUserMediaPermissionRequestDeny` record user media permission decisions in host memory; UI prompt interaction is unmodeled.
+- [Frame state queries](../../../core/libs/prx/libSceNKWebKit/src/Frame.cpp) (libSceNKWebKit) - WKFrameCanProvideSource, WKFrameIsDisplayingMarkupDocument, WKFrameIsDisplayingStandaloneImageDocument and WKFrameIsMainFrame query state from host WKFrame instances following [WebFrameProxy.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/WebFrameProxy.cpp#L189-L192) where canProvideSource returns isDisplayingMarkupDocument(). Upstream isMainFrame and markup/image queries derive from the page's main frame and MIME types; currently these flags are only set in test instances. Null or mismatched pointers throw.
 - [WTF main thread and run loop identification](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - `initializeMainThread`, `isMainThread`, `isMainRunLoop` and `isMainThreadOrGCThread` identify the initialising thread as the WebKit main thread and query whether the current thread is the main thread; garbage-collection worker threads are unmodelled and console execution is unverified.
 
 - [User content URL pattern matching](../../../core/libs/prx/libSceNKWebKit/src/UserContentURLPattern.cpp) (libSceNKWebKit) - URL canonicalization, port matching, non-standard schemes and console execution remain unverified against the device. Host matching follows the pinned [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/UserContentURLPattern.cpp).
@@ -390,7 +391,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKErrorCopyFailingURL` | `Rcz4V01xRBo` |
 | `WKErrorGetErrorCode` | `Jx+jaw-BVuE` |
 | `WKFormSubmissionListenerContinue` | `NRF4gBL1p9o` |
-| `WKFrameCanProvideSource` | `pupKRlW6z-w` |
+| WKFrameCanShowMIMEType | K5V0IcHAoOE |
 | `WKFrameCopyMIMEType` | `UwMYQFss8oM` |
 | `WKFrameCopyProvisionalURL` | `dAKWNwkRfZw` |
 | `WKFrameCopyTitle` | `kEags+FqdZQ` |
@@ -404,9 +405,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKFrameGetResourceData` | `heyzb1EgSYg` |
 | `WKFrameGetWebArchive` | `OF6uR63q+Ss` |
 | `WKFrameInfoCreateFrameHandleRef` | `lQUbnRQ699M` |
-| `WKFrameIsDisplayingMarkupDocument` | `vwFaWsNoiQw` |
-| `WKFrameIsDisplayingStandaloneImageDocument` | `3HDn1r7lsGM` |
-| `WKFrameIsMainFrame` | `fo3MaNfUAUE` |
 | `WKFramePolicyListenerDownload` | `IT1HfKWFBQ0` |
 | `WKFramePolicyListenerIgnore` | `0ppk-ExuWJA` |
 | `WKFramePolicyListenerUseInNewProcess` | `P67QGjv0uSA` |

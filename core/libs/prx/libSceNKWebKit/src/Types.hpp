@@ -284,4 +284,11 @@ public:
     }
 };
 
+class Frame final : public ObjectOf<ObjectType::Frame> {
+public:
+    bool isDisplayingMarkupDocument = false;
+    bool isDisplayingStandaloneImageDocument = false;
+    bool isMainFrame = false;
+};
+
 }  // namespace NKWebKit
