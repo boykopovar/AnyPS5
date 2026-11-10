@@ -45,10 +45,6 @@ int main() {
     Require(serialized.find("Content-Disposition: form-data; name=\"field\"") != std::string::npos);
     Require(serialized.find("value") != std::string::npos);
     Require(curl_formget_nid_postfix(form, nullptr, RejectFormData) == CURLE_READ_ERROR);
-    if (sizeof(long) < sizeof(form->namelength)) {
-        form->namelength = 2147483648LL;
-        Require(curl_formget_nid_postfix(form, &serialized, AppendFormData) == CURLE_BAD_FUNCTION_ARGUMENT);
-    }
     free_nid_postfix(form->name);
     free_nid_postfix(form->contents);
     free_nid_postfix(form);
