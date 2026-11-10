@@ -95,6 +95,8 @@ def compilation_database(text, source, skip_empty_commands=False):
                 raise ValueError(f"{context}: {field} must be a nonempty string")
         if skip_empty_commands and "arguments" not in entry and entry.get("command") == "":
             continue
+        if "output" in entry and not isinstance(entry["output"], str):
+            raise ValueError(f"{context}: output must be a string")
         if "arguments" in entry:
             try:
                 validate_arguments(entry["arguments"])

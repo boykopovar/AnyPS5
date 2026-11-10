@@ -700,6 +700,16 @@ class CheckCompileDatabaseTests(CheckCompileFixture):
             self.assertEqual(commands["src/b.cpp"], database[2:])
 
 
+class CheckCompileDatabaseOutputMetadataTests(unittest.TestCase):
+    def test_rejects_non_string_output_metadata(self):
+        import check_compile
+        for output in (None, 7, [], {}, False):
+            with self.subTest(output=output):
+                text = json.dumps([{"directory": "build", "file": "unit.c", "command": "cc unit.c", "output": output}])
+                with self.assertRaisesRegex(ValueError, "output must be a string"):
+                    check_compile.compilation_database(text, "compile_commands.json")
+
+
 class CheckCompileOutputTests(CheckCompileFixture):
     def test_dependency_options_do_not_make_syntax_checks_fail_or_rewrite_outputs(self):
         compiler = shutil.which("clang")
