@@ -44,6 +44,10 @@ void CheckAvSettingCallbackFuncs() {
     CheckAvSettingCallbackFuncsInit(sceAvSettingCallbackFuncsInit_, 0x20);
     CheckAvSettingCallbackFuncsInit(sceAvSettingCallbackFuncsInitForLnc, 0x10);
     CheckAvSettingCallbackFuncsInit(sceAvSettingCallbackFuncsInitForLnc_, 0x10);
+    sceAvSettingCallbackFuncsInit(reinterpret_cast<void*>(0x10));
+    sceAvSettingCallbackFuncsInit_(reinterpret_cast<void*>(0x10));
+    sceAvSettingCallbackFuncsInitForLnc(reinterpret_cast<void*>(0x10));
+    sceAvSettingCallbackFuncsInitForLnc_(reinterpret_cast<void*>(0x10));
 }
 
 void CheckAvSettingModeHelpers() {
@@ -70,12 +74,17 @@ void CheckAvSettingModeHelpers() {
     check(sceAvSettingSetAudioOutModeInvalid_, 0x00);
     check(sceAvSettingSetVideoOutModeAny_, 0xff);
     check(sceAvSettingSetVideoOutModeInvalid_, 0x00);
+    sceAvSettingSetAudioOutModeAny_(reinterpret_cast<void*>(0x10), 8);
+    sceAvSettingSetAudioOutModeInvalid_(reinterpret_cast<void*>(0x10), 8);
+    sceAvSettingSetVideoOutModeAny_(reinterpret_cast<void*>(0x10), 8);
+    sceAvSettingSetVideoOutModeInvalid_(reinterpret_cast<void*>(0x10), 8);
     std::int32_t source = 0x12345678;
     sceAvSettingSetVideoOutSource(&source, 7);
     Require(source == 7);
     source = 0x12345678;
     sceAvSettingSetVideoOutSource(nullptr, 7);
     Require(source == 0x12345678);
+    sceAvSettingSetVideoOutSource(reinterpret_cast<std::int32_t*>(0x10), 7);
 }
 
 void CheckComposite() {
