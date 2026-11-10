@@ -14,6 +14,17 @@ class Page : public ObjectOf<ObjectType::Page> {
 public:
     bool canGoBack = false;
     bool canGoForward = false;
+    bool suppressScrollbarAnimations = false;
+    bool hasHorizontalScrollbar = false;
+    bool hasVerticalScrollbar = false;
+    bool willHandleHorizontalScrollEvents = false;
+    std::uint32_t scrollPinningBehavior = 0;
+    bool useFixedLayout = false;
+    SizeValue fixedLayoutSize{ 0.0, 0.0 };
+    std::uint32_t paginationMode = 0;
+    bool paginationBehavesLikeColumns = false;
+    double gapBetweenPages = 0.0;
+    double pageLength = 0.0;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
