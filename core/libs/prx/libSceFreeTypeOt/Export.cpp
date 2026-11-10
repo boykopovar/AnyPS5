@@ -6,7 +6,8 @@
 #include "SceTypes.hpp"
 #include "prx/libSceFreeTypeOt/include/Calc.hpp"
 #include "prx/libc/include/General.hpp"
-#include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
+
+void FreeTypeOtStrokerExport(void* stroker, FreeType::GuestOutline* outline);
 
 namespace {
 
