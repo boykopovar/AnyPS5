@@ -770,6 +770,8 @@ void CheckPlusAndContentRestriction() {
     bad.ageRestrictionCount = 0x101;
     bad.ageRestrictions = ages;
     Require(SetContentRestriction(bad) == InvalidArgument, "sceNpSetContentRestriction must reject more than 256 restrictions");
+    bad.ageRestrictionCount = -1;
+    Require(SetContentRestriction(bad) == InvalidArgument, "sceNpSetContentRestriction must reject a negative restriction count");
     bad.ageRestrictionCount = 0x100;
     Require(SetContentRestriction(bad) == 0, "sceNpSetContentRestriction must accept 256 restrictions");
     bad.ageRestrictions = nullptr;
