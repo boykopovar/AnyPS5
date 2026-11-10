@@ -32,6 +32,8 @@ public:
     void SetFloat64(bool enabled) { float64 = enabled; }
     void SetSharedVectorRegisters(std::uint32_t base, std::uint32_t count) { sharedVectorBase = base; sharedVectorCount = count; }
     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
+    void SetVectorWindowActive(bool active) { ir.SetVectorWindowActive(active); }
+    void SyncVectorWindow(bool toWindow) { ir.SyncVectorWindow(toWindow); }
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
     void TranslateUnlinkedCall(const RdnaInstruction& instruction);
     IrValue* ReadOperand(const RdnaOperand& operand, IrType type) { return readOperand(operand, type); }
