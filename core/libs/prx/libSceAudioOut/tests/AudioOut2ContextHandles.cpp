@@ -1,6 +1,7 @@
 #include "prx/libSceAudioOut/libSceAudioOut.hpp"
 #include "SceTypes.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -80,6 +81,22 @@ void UncreatedContextIsInvalid() {
     std::uint32_t available = 99;
     Require(sceAudioOut2ContextGetQueueLevel(live, &level, &available) == 0 && level + available == 1, "a live context lost its queue level");
     Require(sceAudioOut2ContextDestroy(live) == 0, "a live context was not destroyed");
+}
+
+void QueueLevelRejectsUnwritableOutputs() {
+    const auto context = CreateContext();
+    auto* const invalidOutput = reinterpret_cast<std::uint32_t*>(0x10);
+    std::uint32_t level = 77;
+    std::uint32_t available = 78;
+    errno = 73;
+    Require(sceAudioOut2ContextGetQueueLevel(context, invalidOutput, &available) == static_cast<int>(0x80260502), "an unwritable queue-level output was accepted");
+    Require(available == 78 && errno == 73, "a failed queue-level copy changed the other output or errno");
+    Require(sceAudioOut2ContextGetQueueLevel(context, &level, invalidOutput) == static_cast<int>(0x80260502), "an unwritable available-queue output was accepted");
+    Require(level <= 1 && errno == 73, "a failed available-queue copy lost the first output or changed errno");
+    Require(sceAudioOut2LoContextGetQueueLevel(context, invalidOutput, nullptr) == static_cast<int>(0x80260502), "the low-latency wrapper accepted an unwritable queue-level output");
+    Require(errno == 73, "the low-latency wrapper changed errno");
+    Require(sceAudioOut2ContextGetQueueLevel(context, &level, &available) == 0 && level + available == 1, "a valid queue query failed after rejected outputs");
+    Require(sceAudioOut2ContextDestroy(context) == 0, "the queue-query context was not destroyed");
 }
 
 void FirmwareExSignatures() {
@@ -192,6 +209,7 @@ int main() {
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
     FirmwareExSignatures();
     UncreatedContextIsInvalid();
+    QueueLevelRejectsUnwritableOutputs();
     DestroyedContextIsInvalid();
     std::filesystem::remove(path);
     std::puts("audio out2 context handles: PASS");
