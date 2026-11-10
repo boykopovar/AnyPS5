@@ -39,9 +39,22 @@ std::int32_t APS5_VABI sceBluetoothHidRegisterCallback(BluetoothHidCallback call
     if (!initialized) return NotInitialized;
     if (callback == nullptr) return InvalidArgument;
     if (param != nullptr) {
-        if (param->reserved != 0) return InvalidArgument;
-        if (param->threadParam != nullptr) {
-            if (param->threadParam->reserved != 0) return InvalidArgument;
+        BluetoothHidParam localParam{};
+        const int savedErrno = errno;
+        if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) {
+            errno = savedErrno;
+            return InvalidArgument;
+        }
+        errno = savedErrno;
+        if (localParam.reserved != 0) return InvalidArgument;
+        if (localParam.threadParam != nullptr) {
+            BluetoothHidThreadParam localThreadParam{};
+            if (!GuestCopyIn_nid_no_patch(&localThreadParam, localParam.threadParam, sizeof(localThreadParam))) {
+                errno = savedErrno;
+                return InvalidArgument;
+            }
+            errno = savedErrno;
+            if (localThreadParam.reserved != 0) return InvalidArgument;
             throw std::runtime_error("sceBluetoothHidRegisterCallback: custom worker scheduling is not implemented");
         }
     }
@@ -164,9 +177,20 @@ int APS5_VABI sceBluetoothHidSetFeatureReport(std::uint64_t deviceHandle, std::u
 
 int APS5_VABI sceBluetoothHidThreadParamInitialize(BluetoothHidThreadParam* param, std::int32_t priority, std::uint64_t affinityMask) {
     if (param == nullptr) return InvalidArgument;
-    param->priority = priority;
-    param->affinityMask = affinityMask;
-    param->reserved = 0;
+    BluetoothHidThreadParam localParam{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) {
+        errno = savedErrno;
+        return InvalidArgument;
+    }
+    localParam.priority = priority;
+    localParam.affinityMask = affinityMask;
+    localParam.reserved = 0;
+    if (!GuestCopyOut_nid_no_patch(param, &localParam, sizeof(localParam))) {
+        errno = savedErrno;
+        return InvalidArgument;
+    }
+    errno = savedErrno;
     return 0;
 }
 

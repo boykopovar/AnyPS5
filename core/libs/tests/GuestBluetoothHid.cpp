@@ -61,6 +61,9 @@ int main() {
     threadParam.reserved = 1;
     param.threadParam = &threadParam;
     Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, &param) == invalidArgument, "thread reserved field validation");
+    param.threadParam = reinterpret_cast<BluetoothHidThreadParam*>(0x10);
+    Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, &param) == invalidArgument, "unmapped thread parameter was not refused");
+    Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, reinterpret_cast<BluetoothHidParam*>(0x10)) == invalidArgument, "unmapped parameter was not refused");
     Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, nullptr) == 0, "optional parameters rejected");
     bool threw = false;
     Require(sceBluetoothHidGetDeviceName(1, nullptr) == invalidArgument, "null device name output");
@@ -141,6 +144,7 @@ int main() {
     Require(std::memcmp(threadBytes + 16, expected + 16, 4) == 0, "the word at offset 16 was not cleared");
     Require(sceBluetoothHidThreadParamInitialize(nullptr, 700, 0x3f) == invalidArgument, "a null thread parameter block was not refused");
     Require(sceBluetoothHidThreadParamInitialize(nullptr, 0, 0) == invalidArgument, "a null thread parameter block with zero values was not refused");
+    Require(sceBluetoothHidThreadParamInitialize(reinterpret_cast<BluetoothHidThreadParam*>(0x10), 700, 0x3f) == invalidArgument, "unmapped thread parameter was not refused");
     std::puts("BluetoothHid tests passed");
     return 0;
 }
