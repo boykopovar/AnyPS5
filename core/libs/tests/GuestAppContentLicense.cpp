@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
 
+#include <cerrno>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -88,6 +89,9 @@ int main() {
     Require(checkBundleLicense(0, nullptr) == Parameter, "a null label was taken by the bundle license check");
     Require(getGameTrialsFlag(&flag) == 0 && flag == 0, "the game trials flag was not 0");
     Require(getGameTrialsFlag(nullptr) == Parameter, "a null game trials flag was taken");
+    errno = 71;
+    Require(getGameTrialsFlag(reinterpret_cast<std::uint32_t*>(0x10)) == Parameter, "unwritable game trials flag pointer");
+    Require(errno == 71, "errno modified by invalid pointer check");
     Require(getPlayableStatus(0, &label, &status) == NotFound && getPlayableStatus(7, &label, &status) == NotFound && status == Untouched, "a playable status was given for unknown content");
     Require(getPlayableStatus(0, nullptr, &status) == Parameter && getPlayableStatus(0, &label, nullptr) == Parameter && status == Untouched, "a null argument was taken by the playable status");
 

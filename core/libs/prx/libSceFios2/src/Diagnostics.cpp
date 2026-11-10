@@ -2,6 +2,7 @@
 #include "Runtime.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include <algorithm>
 #include <array>
@@ -25,7 +26,6 @@ std::mutex g_timestampMutex;
 std::vector<Timestamp> g_timestamps;
 bool g_timestampOverflow = false;
 std::uint32_t g_dllOverlayCount = 0;
-thread_local std::string g_dumpBuffer;
 
 const char* CopyDump(const std::string& text, char* output, std::size_t capacity) {
     if (output != nullptr) {
@@ -36,8 +36,10 @@ const char* CopyDump(const std::string& text, char* output, std::size_t capacity
         if (!Fios::CopyOut(output + count, &terminator, 1)) return nullptr;
         return output;
     }
-    g_dumpBuffer = text;
-    return g_dumpBuffer.c_str();
+    struct DumpBufferStorage {};
+    auto& buffer = HostThreadLocal<std::string, DumpBufferStorage>();
+    buffer = text;
+    return buffer.c_str();
 }
 
 const char* ErrorName(std::int32_t error) {
