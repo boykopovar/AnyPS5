@@ -690,6 +690,20 @@ void TestLongLogAt53Bits() {
     }
 }
 
+void TestLongLogExports() {
+    Require(SameBits(log10l_nid_postfix(1000.0L), 0xc000000000000000ull, 0x4000), "log10l of 1000 is exactly 3");
+    Require(SameBits(log2l_nid_postfix(8.0L), 0xc000000000000000ull, 0x4000), "log2l of 8 is exactly 3");
+    Require(SameBits(logl_nid_postfix(Extended(0xb333333333333333ull, 0x3ffe)), 0xb69e192709fa762aull, 0xbffd), "logl of the measured fraction");
+    Require(SameBits(logl_nid_postfix(1.0L), 0x0000000000000000ull, 0x0000), "logl of 1 is positive zero");
+    std::feclearexcept(FE_ALL_EXCEPT);
+    *__error_nid_postfix() = 0;
+    Require(SameBits(logl_nid_postfix(0.0L), 0x8000000000000000ull, 0xffff) && *__error_nid_postfix() == RangeError && std::fetestexcept(FE_DIVBYZERO) != 0, "logl of zero");
+    std::feclearexcept(FE_ALL_EXCEPT);
+    *__error_nid_postfix() = 0;
+    Require(SameBits(logl_nid_postfix(-1.0L), 0xc000000000000000ull, 0x7fff) && *__error_nid_postfix() == DomainError && std::fetestexcept(FE_INVALID) != 0, "logl of a negative argument");
+    *__error_nid_postfix() = 0;
+}
+
 }
 
 int main() {
@@ -708,4 +722,5 @@ int main() {
     TestLongDoubleHelpers();
     TestLongLog();
     TestLongLogAt53Bits();
+    TestLongLogExports();
 }
