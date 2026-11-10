@@ -6,7 +6,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -14,7 +13,7 @@
 #include <stdexcept>
 
 extern "C" const void* GetPixelFormatFromHash(unsigned char hash);
-extern "C" std::int64_t PKCodecFactory_CreateDecoderFromFile(const char* filename, void** decoder);
+extern "C" long PKCodecFactory_CreateDecoderFromFile(const char* filename, void** decoder);
 
 namespace {
 
@@ -144,11 +143,7 @@ void TestCreateDecoderFromFileErrors() {
     const char* unsupported = "anyps5-decoder-file.unsupported";
     const auto expectedUnsupported = PKCodecFactory_CreateDecoderFromFile(unsupported, &expected);
     const auto actualUnsupported = PKCodecFactory_CreateDecoderFromFile_nid_postfix(unsupported, &actual);
-    if (actualUnsupported != expectedUnsupported || actual != expected) {
-        std::fprintf(stderr, "decoder file test: unsupported extension returned %lld, expected %lld; output %p, expected %p\n",
-                     static_cast<long long>(actualUnsupported), static_cast<long long>(expectedUnsupported), actual, expected);
-        std::abort();
-    }
+    Require(actualUnsupported == expectedUnsupported && actual == expected);
 
     constexpr const char* missing = "anyps5-decoder-file-does-not-exist.jxr";
     const auto hostPath = ResolvePath_nid_no_patch(missing).string();
@@ -156,11 +151,7 @@ void TestCreateDecoderFromFileErrors() {
     actual = expected;
     const auto expectedMissing = PKCodecFactory_CreateDecoderFromFile(hostPath.c_str(), &expected);
     const auto actualMissing = PKCodecFactory_CreateDecoderFromFile_nid_postfix(missing, &actual);
-    if (actualMissing != expectedMissing || actual != expected) {
-        std::fprintf(stderr, "decoder file test: missing file returned %lld, expected %lld; output %p, expected %p\n",
-                     static_cast<long long>(actualMissing), static_cast<long long>(expectedMissing), actual, expected);
-        std::abort();
-    }
+    Require(actualMissing == expectedMissing && actual == expected);
     RequireThrows([] { PKCodecFactory_CreateDecoderFromFile_nid_postfix(nullptr, nullptr); });
 }
 
