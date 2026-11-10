@@ -42,7 +42,8 @@ inline constexpr std::uint32_t WorkgroupOffsetBase = 8241u;
 inline constexpr std::uint32_t WorkgroupOffsetWords = 3u;
 inline constexpr std::uint32_t PushedDataBase = 8244u;
 inline constexpr std::uint32_t PushedDataCount = 8245u;
-inline constexpr std::uint32_t RootItemPositionBase = 8246u;
+inline constexpr std::uint32_t RootItemPositionBase = 8448u;
+inline constexpr std::uint32_t RootItemPositions = 16u;
 inline constexpr std::uint32_t HeapCountBase = 8256u;
 inline constexpr std::uint32_t MipCountBase = 8320u;
 inline constexpr std::uint32_t StoreQuantizeBase = 12288u;
@@ -65,8 +66,10 @@ inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint3
     return DescriptorIndexBase + binding * DescriptorIndexStride + element;
 }
 
+static_assert(MipCountBase < RootItemPositionBase && RootItemPositionBase + RootItemPositions <= StoreQuantizeBase);
+
 inline constexpr bool IsPushPlacement(std::uint32_t id) {
-    return id == PushedDataBase || id == PushedDataCount || (id >= BufferRootPosition && id <= BufferOverflowPosition) || (id >= RootItemPositionBase && id < HeapCountBase);
+    return id == PushedDataBase || id == PushedDataCount || (id >= BufferRootPosition && id <= BufferOverflowPosition) || (id >= RootItemPositionBase && id < RootItemPositionBase + RootItemPositions);
 }
 
 inline constexpr bool IsWorkgroupOffset(std::uint32_t id) {

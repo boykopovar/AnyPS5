@@ -288,6 +288,7 @@ void NoteImageTableBuild();
 std::uint64_t ImageTableBuilds();
 void NoteDataAddressPush();
 void NotePushedUserDataKeep();
+void NoteUserWordsRewrite(std::size_t blockWords, std::size_t userWords);
 std::uint64_t PushedUserDataKeeps();
 void NoteEmptyResourceSet();
 std::uint64_t EmptyResourceSets();

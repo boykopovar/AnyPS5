@@ -106,6 +106,7 @@ inline std::vector<StagePushPlacement> PlacePushData(std::span<const PushStage> 
         }
     };
     constexpr auto globalItems = Abi::RootItemBit(Abi::RootItem::ShaderData) - 1u;
+    constexpr auto optionalItems = Abi::RootItemBit(Abi::RootItem::UserData);
     constexpr std::array parts{PushPart::Fragment, PushPart::Compute, PushPart::PreRasterization};
     std::vector<std::uint32_t> overflows(stages.size(), Abi::NoPushPosition);
     for (const auto part : parts) {
@@ -122,7 +123,7 @@ inline std::vector<StagePushPlacement> PlacePushData(std::span<const PushStage> 
             for (std::uint32_t item = 0; item < Abi::RootItemCount; ++item) {
                 if ((stages[index].items & globalItems & (1u << item)) != 0u) placements[index].items[item] = shared[item];
             }
-            placeRoot(stages[index].items & ~globalItems, top, placements[index].items);
+            placeRoot(stages[index].items & ~globalItems & ~optionalItems, top, placements[index].items);
             placements[index].pushedBuffers = stages[index].pushedBuffers;
         }
     }
@@ -148,6 +149,16 @@ inline std::vector<StagePushPlacement> PlacePushData(std::span<const PushStage> 
             if (overflowed && overflows[index] == Abi::NoPushPosition) throw std::runtime_error("the push data has no room for a stage's buffer addresses");
             if (overflowed) placements[index].bufferOverflow = overflows[index];
             else if (overflows[index] != Abi::NoPushPosition) used &= ~(3ull << overflows[index]);
+        }
+        used &= ~reserved;
+    }
+    for (const auto part : parts) {
+        const bool top = part != PushPart::PreRasterization;
+        const auto reserved = part == PushPart::Fragment ? PushFeatureDwords(true, true, true) & ~used : 0u;
+        used |= reserved;
+        for (std::size_t index = 0; index < stages.size(); ++index) {
+            if (stages[index].part != part || (stages[index].items & Abi::RootItemBit(Abi::RootItem::UserData)) == 0u) continue;
+            placements[index].items[static_cast<std::uint32_t>(Abi::RootItem::UserData)] = tryTake(2u, true, top);
         }
         used &= ~reserved;
     }
@@ -229,6 +240,8 @@ inline std::vector<StagePushPlacement> PlacePushData(std::span<const PushStage> 
     return placements;
 }
 
+static_assert(RuntimeAbi::RootItemCount <= PipelineSpecialization::RootItemPositions);
+
 inline StagePushPlacement StandalonePushPlacement(ShaderStage stage, std::uint32_t pushItems, std::size_t pushedWanted, std::uint32_t pushedBuffers = 0u) {
     const PushStage pushStage{PushPartOf(stage), pushItems & RootItemMask, static_cast<std::uint32_t>(pushedWanted), pushedBuffers};
     return PlacePushData(std::span(&pushStage, 1), StagePushFeatures(stage, pushItems)).front();
@@ -236,7 +249,8 @@ inline StagePushPlacement StandalonePushPlacement(ShaderStage stage, std::uint32
 
 inline void AppendPushSpecialization(std::vector<PipelineSpecializationConstant>& constants, const StagePushPlacement& placement) {
     for (std::uint32_t item = 0; item < RuntimeAbi::RootItemCount; ++item) {
-        if (placement.items[item] != RuntimeAbi::NoPushPosition) constants.push_back({PipelineSpecialization::RootItemPositionBase + item, placement.items[item]});
+        const bool optional = item == static_cast<std::uint32_t>(RuntimeAbi::RootItem::UserData);
+        if (optional || placement.items[item] != RuntimeAbi::NoPushPosition) constants.push_back({PipelineSpecialization::RootItemPositionBase + item, placement.items[item]});
     }
     for (std::uint32_t buffer = 0; buffer < std::min(placement.pushedBuffers, RuntimeAbi::PushedBufferLimit); ++buffer) constants.push_back({PipelineSpecialization::BufferRootPosition + buffer, placement.bufferRoots[buffer]});
     if (placement.pushedBuffers != 0u) constants.push_back({PipelineSpecialization::BufferOverflowPosition, placement.bufferOverflow});

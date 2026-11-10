@@ -370,8 +370,9 @@ int main() {
         const auto keepsBefore = AgcDriver::Graphics::PushedUserDataKeeps();
         for (int round = 0; round < 2; ++round) Require(Submit(slices) == SecondAlphaByte, "the draw of the moved buffer did not read it");
         const auto keeps = AgcDriver::Graphics::PushedUserDataKeeps() - keepsBefore;
-        if (!AgcDriver::Graphics::DescriptorHeapEnabled() || std::getenv("APS5_NO_PUSHED_USER_DATA_KEEP") != nullptr) Require(keeps == 0u, "draws kept a shader-data block for pushed user data " + std::to_string(keeps) + " times with the keep off");
-        else Require(keeps >= 2u, "heap draws whose only change was the moved buffer's pushed user words kept their shader-data block " + std::to_string(keeps) + " times, expected at least 2");
+        if (!AgcDriver::Graphics::DescriptorHeapEnabled()) Require(keeps == 0u, "draws without the GPU heap kept a pushed user-data block " + std::to_string(keeps) + " times");
+        else Require(keeps >= 2u, "heap draws whose only change was the moved buffer's pushed user words kept their user-data block " + std::to_string(keeps) + " times, expected at least 2");
+
         const auto hitsBefore = AgcDriver::VulkanDevice::DrawRecipeHits();
         const auto pathsBefore = AgcDriver::Graphics::HeapBufferPaths();
         Require(Submit(slices) == SecondAlphaByte, "the repeated draw of the moved buffer did not read it");

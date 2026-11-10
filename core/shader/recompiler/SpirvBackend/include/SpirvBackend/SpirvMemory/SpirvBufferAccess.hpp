@@ -21,6 +21,7 @@ std::uint32_t EmitRootAddress(SpirvEmitterState& state, RuntimeAbi::RootItem ite
 std::uint32_t EmitStageRingWordPointer(SpirvEmitterState& state, RuntimeAbi::RootItem item, std::uint32_t index);
 std::uint32_t EmitFlattenedSrtLoad(SpirvEmitterState& state, std::uint32_t index);
 bool HasFlattenedSrt(const SpirvEmitterState& state);
+bool SplitUserData(const SpirvEmitterState& state);
 void EmitMemoryOffsets(SpirvEmitterState& state);
 std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index);
 std::uint32_t LoadHeapSlotWord(SpirvEmitterState& state, std::uint32_t dword);

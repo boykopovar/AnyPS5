@@ -243,7 +243,7 @@ public:
         DescriptorCache::SetAllocation allocation;
         std::vector<Snapshot> snapshots;
         bool addressOffsets = false;
-        std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
+        std::array<std::uint64_t, 3u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
         std::vector<VkDeviceAddressRangeEXT> addressOverrides;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> movedReads;
         ~DrawBindings();
@@ -744,7 +744,7 @@ private:
     };
     bool splitSets = false;
     bool heapStage = false;
-    mutable std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
+    mutable std::array<std::uint64_t, 3u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
     void writeHeapStage(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader);
     struct HeapStageState {
         std::uint64_t inertProgram = 0;
@@ -755,6 +755,8 @@ private:
         VkShaderStageFlags laidOutFor = 0;
         std::uint32_t touchedEpoch = 0;
         std::uint32_t pushedPlaced = 0;
+        std::uint32_t userWords = 0;
+        bool splitUser = false;
         std::vector<std::uint32_t> owned;
         std::vector<std::uintptr_t> key;
         struct KindRange {
@@ -772,7 +774,7 @@ private:
             std::vector<std::uint32_t> words;
             BindlessHeap::SpanMark mark;
         };
-        KeptSpan data, flat, map;
+        KeptSpan data, flat, map, user;
         std::vector<std::uint32_t> dataInput;
         std::span<const std::uint32_t> Slots(std::uint32_t kind) const {
             for (const auto& range : kindRanges) {
@@ -796,7 +798,9 @@ private:
     void takeHeapSlots(BindlessHeap& heap, HeapStageState& state, std::span<const std::uint32_t> owned, std::span<const std::uintptr_t> key);
     static void noteHeapSlotGenerations(const BindlessHeap& heap, HeapStageState& state);
     void verifyHeapSlots(const BindlessHeap& heap, const HeapStageState& state, VkShaderStageFlags stageBit) const;
-    void patchHeapSlotWords(const CompiledShader& shader, const HeapStageState& stageState, std::vector<std::uint32_t>& patched, bool current) const;
+    void patchHeapSlotWords(const CompiledShader& shader, const HeapStageState& stageState, std::vector<std::uint32_t>& patched, bool current, bool leading = false) const;
+    std::pair<std::uint64_t, std::uint64_t> writeSplitHeapStage(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader, HeapStageState& stageState,
+                             std::span<const std::uint32_t> words, std::span<const std::uint32_t> userData, bool sameWalk, bool current);
     static constexpr std::int64_t HeapRingDataFirst = -2;
     static constexpr std::int64_t HeapRingData(std::size_t stage) { return HeapRingDataFirst - static_cast<std::int64_t>(stage); }
     static constexpr bool IsHeapRingData(std::int64_t allocation) { return allocation <= HeapRingDataFirst && allocation > HeapRingDataFirst - static_cast<std::int64_t>(ShaderRecompiler::RuntimeAbi::StageCount); }
@@ -824,7 +828,6 @@ private:
     VkDeviceAddress emptyAddress = 0;
     VkDeviceAddress resolvedGds = 0;
     std::size_t gdsAllocation = std::numeric_limits<std::size_t>::max();
-    std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::StageCount> heapSrtDwords{};
     std::array<std::uint64_t, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMaps{};
     std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMapSet{};
     void writeHeapTableMap(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader, std::size_t stageIndex);

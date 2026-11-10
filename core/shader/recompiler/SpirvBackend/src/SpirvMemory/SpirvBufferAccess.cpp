@@ -80,7 +80,16 @@ std::uint32_t EmitRootItemDword(SpirvEmitterState& state, RuntimeAbi::RootItem i
     if (!state.program.Metadata().bindings.UsesDataAddress()) FailEmit("the root is read only by stages that take their data through it");
     state.pushItems |= RuntimeAbi::RootItemBit(item);
     const auto u32 = TypeU32(state);
-    const auto position = state.module.SpecializationConstant(u32, PipelineSpecialization::RootItemPositionBase + static_cast<std::uint32_t>(item), 0u);
+    std::uint32_t position = 0;
+    if (item == RuntimeAbi::RootItem::UserData) {
+        state.pushItems |= RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::ShaderData);
+        const auto user = state.module.SpecializationConstant(u32, PipelineSpecialization::RootItemPositionBase + static_cast<std::uint32_t>(item), RuntimeAbi::NoPushPosition);
+        const auto data = state.module.SpecializationConstant(u32, PipelineSpecialization::RootItemPositionBase + static_cast<std::uint32_t>(RuntimeAbi::RootItem::ShaderData), 0u);
+        const auto placed = Binary(state, spv::OpINotEqual, TypeBool(state), user, ConstantU32(state, RuntimeAbi::NoPushPosition));
+        position = Select(state, u32, placed, user, data);
+    } else {
+        position = state.module.SpecializationConstant(u32, PipelineSpecialization::RootItemPositionBase + static_cast<std::uint32_t>(item), 0u);
+    }
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0), word == 0u ? position : Binary(state, spv::OpIAdd, u32, position, ConstantU32(state, word)));
     const auto value = state.module.AllocateId();
@@ -160,13 +169,14 @@ std::uint32_t EmitStageRingWordPointer(SpirvEmitterState& state, RuntimeAbi::Roo
 namespace {
 
 std::uint32_t dataAddressLoad(SpirvEmitterState& state, RuntimeAbi::RootItem item, std::uint32_t index) {
-    if (item == RuntimeAbi::RootItem::ShaderData && state.shaderDataUniformVariable != 0u) {
+    const auto uniform = item == RuntimeAbi::RootItem::ShaderData ? state.shaderDataUniformVariable : item == RuntimeAbi::RootItem::UserData ? state.userDataUniformVariable : 0u;
+    if (uniform != 0u) {
         const auto u32 = TypeU32(state);
         const auto vector = Binary(state, spv::OpShiftRightLogical, u32, index, ConstantU32(state, 2u));
         const auto component = Binary(state, spv::OpBitwiseAnd, u32, index, ConstantU32(state, 3u));
         const auto u32x4 = TypeU32Vector(state, 4);
         const auto element = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassUniform, u32x4), element, state.shaderDataUniformVariable, ConstantU32(state, 0u), vector);
+        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassUniform, u32x4), element, uniform, ConstantU32(state, 0u), vector);
         const auto words = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, u32x4, words, element);
         const auto value = state.module.AllocateId();
@@ -183,7 +193,19 @@ bool HasFlattenedSrt(const SpirvEmitterState& state) {
     return state.flattenedSrtVariable != 0 || state.flattenedSrtAddressed;
 }
 
+bool SplitUserData(const SpirvEmitterState& state) {
+    const auto& layout = state.program.Metadata().bindings;
+    return layout.UsesDataAddress() && !layout.userDataRegisters.empty();
+}
+
 std::uint32_t EmitShaderDataWordLoad(SpirvEmitterState& state, std::uint32_t index) {
+    if (SplitUserData(state)) {
+        const auto u32 = TypeU32(state);
+        const auto userWords = static_cast<std::uint32_t>(state.program.Metadata().bindings.userDataRegisters.size());
+        const auto user = Binary(state, spv::OpULessThan, TypeBool(state), index, ConstantU32(state, userWords));
+        const auto userValue = dataAddressLoad(state, RuntimeAbi::RootItem::UserData, Select(state, u32, user, index, ConstantU32(state, 0u)));
+        return Select(state, u32, user, userValue, dataAddressLoad(state, RuntimeAbi::RootItem::ShaderData, index));
+    }
     if (state.program.Metadata().bindings.UsesDataAddress()) return dataAddressLoad(state, RuntimeAbi::RootItem::ShaderData, index);
     if (state.shaderDataStorageVariable == 0) FailEmit("shader data is neither in push constants nor in a storage buffer");
     const auto pointer = state.module.AllocateId();
@@ -196,7 +218,8 @@ std::uint32_t EmitShaderDataWordLoad(SpirvEmitterState& state, std::uint32_t ind
 std::uint32_t EmitFlattenedSrtLoad(SpirvEmitterState& state, std::uint32_t index) {
     if (state.flattenedSrtAddressed) {
         const auto u32 = TypeU32(state);
-        const auto dwords = EmitRootItemDword(state, RuntimeAbi::RootItem::SrtDwords, 0u);
+        const auto& resources = state.program.Resources();
+        const auto dwords = ConstantU32(state, resources.srtGuardOffset + static_cast<std::uint32_t>(resources.guardedSrtSlots.size()));
         const auto inBounds = Binary(state, spv::OpULessThan, TypeBool(state), index, dwords);
         const auto last = Select(state, u32, Binary(state, spv::OpIEqual, TypeBool(state), dwords, ConstantU32(state, 0u)), ConstantU32(state, 0u), Binary(state, spv::OpISub, u32, dwords, ConstantU32(state, 1u)));
         const auto clamped = Select(state, u32, inBounds, index, last);
@@ -215,7 +238,8 @@ std::uint32_t EmitShaderDataDwordLoad(SpirvEmitterState& state, std::uint32_t dw
     const IrBindingLayout& layout = state.program.Metadata().bindings;
     if (layout.UsesDataAddress()) {
         const auto pushed = std::ranges::find(layout.pushedData, dwordIndex);
-        const auto ring = dataAddressLoad(state, RuntimeAbi::RootItem::ShaderData, ConstantU32(state, dwordIndex));
+        const bool user = SplitUserData(state) && dwordIndex < layout.userDataRegisters.size();
+        const auto ring = dataAddressLoad(state, user ? RuntimeAbi::RootItem::UserData : RuntimeAbi::RootItem::ShaderData, ConstantU32(state, dwordIndex));
         if (pushed == layout.pushedData.end()) return ring;
         return EmitPushedDataSelect(state, static_cast<std::uint32_t>(pushed - layout.pushedData.begin()), ring);
     }

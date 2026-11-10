@@ -648,9 +648,10 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
         } else if (variable.storage == spv::StorageClassUniform) {
             namespace Abi = ShaderRecompiler::RuntimeAbi;
             constexpr auto bindingCount = static_cast<std::uint32_t>(Abi::Binding::Count);
+            const auto kind = decoration.binding ? *decoration.binding % bindingCount : bindingCount;
             Require(shader.dataAddressPush && decoration.set && decoration.binding && *decoration.set == Abi::GpuDataSet &&
-                        *decoration.binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::ShaderData),
-                    "a uniform buffer is only the GPU heap's shader data");
+                        (kind == static_cast<std::uint32_t>(Abi::Binding::ShaderData) || kind == static_cast<std::uint32_t>(Abi::Binding::UserData)),
+                    "a uniform buffer is only the GPU heap's shader data or user data");
         } else {
             Require(variable.storage == spv::StorageClassStorageBuffer && decoration.set && decoration.binding, "unsupported or unbound shader resource");
             const auto key = std::make_pair(*decoration.set, *decoration.binding);

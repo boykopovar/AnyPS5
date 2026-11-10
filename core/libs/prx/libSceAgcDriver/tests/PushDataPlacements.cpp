@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "PushDataLayout.hpp"
 #include "RuntimeAbi.hpp"
+#include "IntermediateRepresentation/IrMetadata/ShaderInfo.hpp"
 #include <cstdio>
 #include <exception>
 #include <array>
@@ -68,8 +69,9 @@ void disjoint(const std::vector<Stage>& stages, const std::vector<StagePushPlace
         for (std::uint32_t item = 0; item < Abi::RootItemCount; ++item) {
             const bool wanted = (stages[index].items & (1u << item)) != 0u;
             const auto position = placements[index].items[item];
-            require(wanted == (position != Abi::NoPushPosition), std::string("a stage's root items and its placement disagree: ") + what);
-            if (!wanted) continue;
+            const bool optional = static_cast<Item>(item) == Item::UserData;
+            require(wanted == (position != Abi::NoPushPosition) || (optional && wanted), std::string("a stage's root items and its placement disagree: ") + what);
+            if (position == Abi::NoPushPosition) continue;
             const auto kind = static_cast<Item>(item);
             if (Abi::RootAddressItem(kind)) require(position % 2u == 0u, std::string("a root address is not 8-byte aligned: ") + what);
             claim(position, Abi::RootAddressItem(kind) ? 2u : 1u, static_cast<std::uint32_t>(kind) < static_cast<std::uint32_t>(Abi::RootItem::ShaderData));
@@ -100,7 +102,7 @@ void disjoint(const std::vector<Stage>& stages, const std::vector<StagePushPlace
 int main() {
     try {
         const bool defaultCap = AgcDriver::Graphics::PushedBufferRecordCap() == Abi::PushedBufferLimit;
-        const auto vertexItems = bits({Item::PagetableAddress, Item::ShaderData, Item::FlattenedSrt});
+        const auto vertexItems = bits({Item::PagetableAddress, Item::ShaderData, Item::SrtAddress});
         const auto pixelItems = bits({Item::PagetableAddress, Item::ShaderData, Item::TableMap});
         {
             const std::vector<Stage> stages{{ShaderStage::Vertex, vertexItems, 6}, {ShaderStage::Fragment, pixelItems, 30}};
@@ -111,10 +113,31 @@ int main() {
             require(placements[0].Item(Item::PagetableAddress) != placements[1].Item(Item::PagetableAddress), "the pre-rasterization and fragment parts hold their own globals");
         }
         {
+            const auto user = Abi::RootItemBit(Item::UserData);
+            const std::vector<Stage> stages{{ShaderStage::Vertex, vertexItems | user, 6, 4}, {ShaderStage::Fragment, pixelItems | user, 30, 4}};
+            const auto placements = place(stages);
+            disjoint(stages, placements, 0, "vertex and pixel stages with user-data roots");
+            require(placements[0].Item(Item::UserData) != Abi::NoPushPosition && placements[1].Item(Item::UserData) != Abi::NoPushPosition, "stages with room place their user-data roots");
+            const std::vector<Stage> without{{ShaderStage::Vertex, vertexItems, 6, 4}, {ShaderStage::Fragment, pixelItems, 30, 4}};
+            const auto plain = place(without);
+            for (std::size_t index = 0; index < plain.size(); ++index) {
+                for (std::uint32_t item = 0; item < Abi::RootItemCount; ++item) {
+                    if (static_cast<Item>(item) != Item::UserData) require(plain[index].items[item] == placements[index].items[item], "a user-data root moves another root item");
+                }
+                require(plain[index].bufferRoots == placements[index].bufferRoots, "a user-data root moves a pushed buffer");
+            }
+            const auto pushedTotal = [](const std::vector<StagePushPlacement>& stages) {
+                std::size_t total = 0;
+                for (const auto& stage : stages) total += stage.pushed.count;
+                return total;
+            };
+            require(pushedTotal(placements) + 2u * placements.size() >= pushedTotal(plain), "a user-data root takes more than its own dwords from pushed data");
+        }
+        {
             const std::vector<Stage> stages{{ShaderStage::Vertex, vertexItems, 40}, {ShaderStage::Fragment, pixelItems, 40}};
             const auto placements = place(stages);
             disjoint(stages, placements, 0, "stages that want too much");
-            require(placements[0].pushed.count == 27 && placements[1].pushed.count == 26, "stages that want too much share the room evenly");
+            require(placements[0].pushed.count == 26 && placements[1].pushed.count == 26, "stages that want too much share the room evenly");
         }
         {
             const std::vector<Stage> stages{{ShaderStage::Local, vertexItems, 4}, {ShaderStage::TessellationControl, bits({Item::PagetableAddress, Item::ShaderData}), 3}, {ShaderStage::TessellationEvaluation, vertexItems, 10}, {ShaderStage::Fragment, pixelItems, 48}};
@@ -193,6 +216,12 @@ int main() {
                 require(Ids::IsPushPlacement(id), "a buffer root specialization id is not a push placement");
             }
             for (std::uint32_t id = Ids::StoreQuantizeBase; id < Ids::DescriptorIndexBase; ++id) require(!Ids::IsPushPlacement(id), "a store quantization specialization id counts as a push placement");
+            for (std::uint32_t id = Ids::HeapCountBase; id < Ids::MipCountBase + ShaderRecompiler::ShaderInfo::MaxImages; ++id) require(!Ids::IsPushPlacement(id), "a heap or mip count specialization id counts as a push placement");
+            for (std::uint32_t item = 0; item < Abi::RootItemCount; ++item) {
+                const auto id = Ids::RootItemPositionBase + item;
+                require(id >= Ids::MipCountBase + ShaderRecompiler::ShaderInfo::MaxImages && id < Ids::StoreQuantizeBase, "a root item specialization id lies inside another constant's range");
+                require(Ids::IsPushPlacement(id), "a root item specialization id is not a push placement");
+            }
         }
         {
             const auto all = (1u << Abi::RootItemCount) - 1u;

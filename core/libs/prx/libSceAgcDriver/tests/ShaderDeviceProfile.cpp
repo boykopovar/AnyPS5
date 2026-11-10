@@ -199,7 +199,7 @@ void CheckAbi() {
             Require(bindings.insert(BindingNumber(static_cast<Stage>(stage), static_cast<Binding>(binding))).second, "runtime ABI bindings overlap");
         }
     }
-    Require(BindingNumber(Stage::Main, Binding::ShaderData) == 62u && BindingNumber(Stage::Fragment, Binding::ShaderData) == 127u, "runtime ABI binding numbers changed");
+    Require(BindingNumber(Stage::Main, Binding::ShaderData) == 62u && BindingNumber(Stage::Fragment, Binding::ShaderData) == 128u, "runtime ABI binding numbers changed");
     Require(BindingNumber(Stage::Main, Binding::ImageTable) == ShaderRecompiler::RuntimeAbi::ImageTableBinding && BindingNumber(Stage::TessellationEvaluation, Binding::ImageTable) == ShaderRecompiler::RuntimeAbi::ImageTableBinding && !bindings.contains(ShaderRecompiler::RuntimeAbi::ImageTableBinding), "the shared image table binding overlaps a stage binding");
     for (std::uint32_t stage = 0u; stage < ShaderRecompiler::RuntimeAbi::StageCount; ++stage) {
         for (std::uint32_t binding = 0u; binding < static_cast<std::uint32_t>(Binding::Count); ++binding) {

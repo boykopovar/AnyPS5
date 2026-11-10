@@ -80,6 +80,9 @@ std::atomic<bool> descriptorHeapDevice{false};
 std::atomic<std::uint64_t> imageTableBuilds{0};
 std::atomic<std::uint64_t> dataAddressPushes{0};
 std::atomic<std::uint64_t> pushedUserDataKeeps{0};
+std::atomic<std::uint64_t> userWordsRewrites{0};
+std::atomic<std::uint64_t> userWordsRewriteBlockWords{0};
+std::atomic<std::uint64_t> userWordsRewriteUserWords{0};
 std::atomic<std::uint64_t> embeddedSamplerMappings{0};
 std::atomic<std::uint64_t> slotPressureSubmits{0};
 std::atomic<std::uint64_t> heapSlotEvictions{0};
@@ -110,6 +113,12 @@ std::uint64_t DataAddressPushes() {
 
 void NotePushedUserDataKeep() {
     pushedUserDataKeeps.fetch_add(1, std::memory_order_relaxed);
+}
+
+void NoteUserWordsRewrite(std::size_t blockWords, std::size_t userWords) {
+    userWordsRewrites.fetch_add(1, std::memory_order_relaxed);
+    userWordsRewriteBlockWords.fetch_add(blockWords, std::memory_order_relaxed);
+    userWordsRewriteUserWords.fetch_add(userWords, std::memory_order_relaxed);
 }
 
 std::uint64_t PushedUserDataKeeps() {
@@ -1005,7 +1014,9 @@ bool heapBindings(std::span<const std::uint32_t> spirv, const HeapBindingRoots& 
             use.scratchPoolMemory = true;
             continue;
         }
-        if (set == Abi::GpuDataSet && binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::ShaderData) && binding / bindingCount < Abi::StageCount) {
+        const auto dataKind = binding % bindingCount;
+        const bool dataBlock = dataKind == static_cast<std::uint32_t>(Abi::Binding::ShaderData) || dataKind == static_cast<std::uint32_t>(Abi::Binding::UserData);
+        if (set == Abi::GpuDataSet && dataBlock && binding / bindingCount < Abi::StageCount) {
             use.dataUniforms.push_back(binding);
             continue;
         }
@@ -1085,7 +1096,9 @@ VkDescriptorSetAndBindingMappingEXT dataUniformMapping(std::uint32_t binding, co
     mapping.bindingCount = 1;
     mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT;
     mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_PUSH_ADDRESS_EXT;
-    mapping.sourceData.pushAddressOffset = rootItemOffset(placement, Abi::RootItem::ShaderData);
+    const bool user = binding % static_cast<std::uint32_t>(Abi::Binding::Count) == static_cast<std::uint32_t>(Abi::Binding::UserData);
+    const bool userPlaced = user && placement != nullptr && placement->Item(Abi::RootItem::UserData) != Abi::NoPushPosition;
+    mapping.sourceData.pushAddressOffset = rootItemOffset(placement, userPlaced ? Abi::RootItem::UserData : Abi::RootItem::ShaderData);
     return mapping;
 }
 
@@ -1376,14 +1389,19 @@ void reportHeapStatistics() {
     const auto pushedKeepsTotal = PushedUserDataKeeps();
     const auto pushedKeeps = windowDelta(pushedKeepsTotal, lastPushedKeeps);
     lastPushedKeeps = pushedKeepsTotal;
+    static std::array<std::uint64_t, 3> lastUserRewrites{};
+    const std::array<std::uint64_t, 3> userRewriteTotals{userWordsRewrites.load(std::memory_order_relaxed), userWordsRewriteBlockWords.load(std::memory_order_relaxed), userWordsRewriteUserWords.load(std::memory_order_relaxed)};
+    std::array<std::uint64_t, 3> userRewrites{};
+    for (std::size_t i = 0; i < userRewrites.size(); ++i) userRewrites[i] = windowDelta(userRewriteTotals[i], lastUserRewrites[i]);
+    lastUserRewrites = userRewriteTotals;
     const auto templates = ShaderRecompiler::HeapTemplateCounts();
     std::fprintf(stderr,
                  "[gpu-heap] (10 s): draws %llu heap / %llu plain, dispatches %llu heap / %llu plain; "
                  "heap binds %llu over %llu command buffers; set binds:%s; excluded:%s; draw stages:%s; "
-                 "CPU buffer copies %llu (%llu MiB); spans %llu written / %llu kept (%llu for pushed user data only) / %llu expired; data pool %llu MiB written, %llu blocks (%llu MiB), %llu made / %llu recycled / %llu freed, since start at most %llu KiB per batch and %llu KiB per span; image descriptors %llu encoded / %llu copied; image slots %llu of %u held, %llu evicted (%llu waits); samplers evicted %llu; slot pressure submits %llu; templates %llu (%llu MiB, %llu evicted)\n",
+                 "CPU buffer copies %llu (%llu MiB); spans %llu written / %llu kept (%llu for pushed user data only) / %llu expired, %llu written for user words only (%llu block words, %llu user words); data pool %llu MiB written, %llu blocks (%llu MiB), %llu made / %llu recycled / %llu freed, since start at most %llu KiB per batch and %llu KiB per span; image descriptors %llu encoded / %llu copied; image slots %llu of %u held, %llu evicted (%llu waits); samplers evicted %llu; slot pressure submits %llu; templates %llu (%llu MiB, %llu evicted)\n",
                  printed(heapDraws), printed(plainDraws), printed(heapDispatches), printed(plainDispatches), printed(heapBindsSeen),
                  printed(commandBuffers), binds.c_str(), excluded.c_str(), stageReasons.c_str(), printed(copies), printed(copiedMiB),
-                 printed(spansWritten), printed(spansKept), printed(pushedKeeps), printed(spansExpired), printed(poolMiB), printed(totals.poolBlocksHeld), printed(totals.poolBlockBytes >> 20u), printed(poolMade), printed(poolRecycled), printed(poolFreed), printed(totals.poolBatchPeakBytes >> 10u), printed(totals.spanPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(samplersEvicted), printed(slotPressureSubmits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
+                 printed(spansWritten), printed(spansKept), printed(pushedKeeps), printed(spansExpired), printed(userRewrites[0]), printed(userRewrites[1]), printed(userRewrites[2]), printed(poolMiB), printed(totals.poolBlocksHeld), printed(totals.poolBlockBytes >> 20u), printed(poolMade), printed(poolRecycled), printed(poolFreed), printed(totals.poolBatchPeakBytes >> 10u), printed(totals.spanPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(samplersEvicted), printed(slotPressureSubmits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
 }
 
 void forgetHeapBinding(VkCommandBuffer commands) {

@@ -7,6 +7,7 @@
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvDescriptors.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvInputOutput.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <limits>
@@ -604,7 +605,6 @@ void DefineDescriptors(SpirvEmitterState& state) {
                 break;
             }
             state.storageBufferVariable = Define(ArrayType(StorageBufferBlockType(state)), "buffers");
-            if (layout.UsesDataAddress()) state.pushItems |= RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::FlattenedSrt);
             if (state.requirements.coherentBufferAlias) state.storageBufferCoherentVariable = Define(ArrayType(StorageBufferBlockType(state)), "buffers_coherent");
             if (state.requirements.bufferU64View) state.storageBufferU64Variable = Define(ArrayType(StorageBufferU64BlockType(state)), "buffers_u64");
             if (state.storageBufferU64Variable != 0u || state.storageBufferCoherentVariable != 0u) {
@@ -643,6 +643,16 @@ void DefineDescriptors(SpirvEmitterState& state) {
                 const auto block = state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpDecorate, {spv::DecorationBlock}}, {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}}}, array);
                 state.shaderDataUniformVariable = Define(block, "shader_data", spv::StorageClassUniform);
                 state.pushItems |= RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::ShaderData);
+            }
+            if (layout.UsesDataAddress() && SplitUserData(state) && layout.userDataRegisters.size() <= state.heapDataUniformDwords) {
+                const auto vectors = static_cast<std::uint32_t>((layout.userDataRegisters.size() + 3u) / 4u);
+                const auto array = state.module.DecoratedType(spv::OpTypeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 16u}}}, TypeU32Vector(state, 4), ConstantU32(state, vectors));
+                const auto block = state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpDecorate, {spv::DecorationBlock}}, {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}}}, array);
+                state.userDataUniformVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniform, block), spv::StorageClassUniform);
+                state.module.AddName(state.userDataUniformVariable, "user_data");
+                state.module.AddAnnotation(spv::OpDecorate, state.userDataUniformVariable, spv::DecorationDescriptorSet, RuntimeAbi::GpuDataSet);
+                state.module.AddAnnotation(spv::OpDecorate, state.userDataUniformVariable, spv::DecorationBinding, NativeBinding(stage, DescriptorBindingKind::UserData));
+                state.pushItems |= RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::UserData) | RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::ShaderData);
             }
             break;
         case DescriptorBindingKind::FlattenedSrt:

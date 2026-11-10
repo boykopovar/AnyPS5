@@ -9,7 +9,7 @@
 
 namespace ShaderRecompiler::RuntimeAbi {
 
-inline constexpr std::uint32_t Version = 16u;
+inline constexpr std::uint32_t Version = 17u;
 inline constexpr std::uint32_t DescriptorSet = 0u;
 inline constexpr std::uint32_t FragmentDescriptorSet = 1u;
 inline constexpr std::uint32_t StageCount = 4u;
@@ -63,7 +63,8 @@ enum class Binding : std::uint32_t {
     ShaderData = 62u,
     SamplerTable = 63u,
     ImageTableMap = 64u,
-    Count = 65u,
+    UserData = 65u,
+    Count = 66u,
     ImageTable = 256u,
     ImageStorageTable = 257u
 };
@@ -97,12 +98,12 @@ inline constexpr std::uint32_t NoEmbeddedSampler = ~0u;
 inline constexpr std::uint32_t GdsBytes = 0x10000u;
 inline constexpr std::uint32_t PushDataDwords = 64u;
 inline constexpr std::uint32_t PushedDataWantedLimit = 48u;
-enum class RootItem : std::uint32_t { PagetableAddress, FaultAddress, GdsAddress, PagetableDwords, StencilReference, ShaderData, TableMap, SrtAddress, FlattenedSrt, SrtDwords, Count };
+enum class RootItem : std::uint32_t { PagetableAddress, FaultAddress, GdsAddress, StencilReference, ShaderData, TableMap, SrtAddress, UserData, Count };
 inline constexpr std::uint32_t RootItemCount = static_cast<std::uint32_t>(RootItem::Count);
 inline constexpr std::uint32_t RootItemBit(RootItem item) { return 1u << static_cast<std::uint32_t>(item); }
 inline constexpr bool RootAddressItem(RootItem item) {
     return item == RootItem::PagetableAddress || item == RootItem::FaultAddress || item == RootItem::GdsAddress || item == RootItem::ShaderData || item == RootItem::TableMap ||
-           item == RootItem::SrtAddress;
+           item == RootItem::SrtAddress || item == RootItem::UserData;
 }
 inline constexpr std::uint32_t DepthRemapPushBit = 1u << 16u;
 inline constexpr std::uint32_t NoPushPosition = 0xffffffffu;
@@ -193,7 +194,7 @@ inline bool UintStorageImageBinding(std::uint32_t number) {
 }
 
 static_assert(FirstImageBinding + ImageBindingCount == static_cast<std::uint32_t>(Binding::Samplers));
-static_assert(static_cast<std::uint32_t>(Binding::ImageTable) > static_cast<std::uint32_t>(Binding::Count) && ImageStorageTableBinding == 260u && ImageTableBinding == 261u);
+static_assert(static_cast<std::uint32_t>(Binding::ImageTable) > static_cast<std::uint32_t>(Binding::Count) && ImageStorageTableBinding == 264u && ImageTableBinding == 265u);
 
 }
 
