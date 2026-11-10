@@ -34,6 +34,48 @@ T& Checked(T* ptr) {
     return *ptr;
 }
 
+char HexDigit(unsigned nibble) {
+    return "0123456789ABCDEF"[nibble & 0xF];
+}
+
+void EscapeString(StringBuilder& builder, const StringImpl* string) {
+    if (!string) return;
+    if (string->length && !string->data) throw std::invalid_argument("invalid WTF string storage");
+    const bool is8Bit = string->hashAndFlags & 4;
+    for (unsigned i = 0; i < string->length; ++i) {
+        const char16_t codeUnit = is8Bit ? static_cast<const unsigned char*>(string->data)[i] : static_cast<const char16_t*>(string->data)[i];
+        switch (codeUnit) {
+        case '\b':
+            NKWebKit::WtfAbi::AppendCString(builder, "\\b");
+            continue;
+        case '\f':
+            NKWebKit::WtfAbi::AppendCString(builder, "\\f");
+            continue;
+        case '\n':
+            NKWebKit::WtfAbi::AppendCString(builder, "\\n");
+            continue;
+        case '\r':
+            NKWebKit::WtfAbi::AppendCString(builder, "\\r");
+            continue;
+        case '\t':
+            NKWebKit::WtfAbi::AppendCString(builder, "\\t");
+            continue;
+        case '\\':
+            NKWebKit::WtfAbi::AppendCString(builder, "\\\\");
+            continue;
+        case '"':
+            NKWebKit::WtfAbi::AppendCString(builder, "\\\"");
+            continue;
+        }
+        if (codeUnit >= 32 && codeUnit < 127 && codeUnit != '<' && codeUnit != '>') {
+            NKWebKit::WtfAbi::AppendCharacter(builder, static_cast<unsigned char>(codeUnit));
+            continue;
+        }
+        const char escaped[] = {'\\', 'u', HexDigit(codeUnit >> 12), HexDigit(codeUnit >> 8), HexDigit(codeUnit >> 4), HexDigit(codeUnit), 0};
+        NKWebKit::WtfAbi::AppendCString(builder, escaped);
+    }
+}
+
 void APS5_VABI ValueWriteJSON(const Value* self, StringBuilder& output) {
     const auto& value = Checked(self);
     switch (value.valueType) {
@@ -52,10 +94,9 @@ void APS5_VABI ValueWriteJSON(const Value* self, StringBuilder& output) {
         NKWebKit::WtfAbi::AppendCString(output, NKWebKit::WtfAbi::NumberToString(value.data.number).c_str());
         return;
     case ValueType::String: {
-        auto* string = value.data.string;
-        if (string) string->refCount += 2U;
-        String wrappedString(string);
-        _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(&output, wrappedString);
+        NKWebKit::WtfAbi::AppendCharacter(output, '"');
+        EscapeString(output, value.data.string);
+        NKWebKit::WtfAbi::AppendCharacter(output, '"');
         return;
     }
     case ValueType::Object:
