@@ -1257,6 +1257,24 @@ void verifyPersist() {
     requireSameArtifact(variant.artifact, persisted->artifact, "a persisted entry whose file was replaced and removed");
 }
 
+void verifyReleaseMapped() {
+    const std::vector<std::uint32_t> words{0x07230203u, 0x00010000u, 1u, 2u, 3u};
+    const SharedSpirv owned(words);
+    ShaderDiskCache::ReleaseMapped(owned);
+    require(!owned.Mapped() && std::ranges::equal(words, owned.Words()), "releasing an owned module changed its words");
+    SampleRequest sample;
+    const auto key = sample.Key();
+    const auto variant = sampleVariant();
+    const auto persisted = ShaderDiskCache::Persist(key, variant);
+    require(persisted != nullptr, "a persisted entry was not read back");
+#ifdef _WIN32
+    require(persisted->artifact.spirv.Mapped(), "persisted SPIR-V is not a mapped cache entry");
+#endif
+    ShaderDiskCache::ReleaseMapped(persisted->artifact.spirv);
+    ShaderDiskCache::ReleaseMapped(persisted->artifact.spirv);
+    requireSameArtifact(variant.artifact, persisted->artifact, "a mapped entry whose pages were released");
+}
+
 #ifdef _WIN32
 void verifyLongHostPaths() {
     using namespace ShaderRecompiler::ShaderDiskCache;
@@ -2846,6 +2864,7 @@ int main(int argc, char** argv) {
         verifySharedPlans();
         verifyStore();
         verifyPersist();
+        verifyReleaseMapped();
         verifyAcrossProcesses(argv[0]);
         verifyPrebuiltAcrossProcesses(argv[0], directory);
         verifyPlanAcrossProcesses(argv[0]);
