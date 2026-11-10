@@ -34,6 +34,8 @@ class TitlesTests(unittest.TestCase):
     def test_repository_file_is_valid(self):
         titles = title_run.load_titles(title_run.ROOT / "tools/titles.json")
         self.assertEqual(titles["PPSA85300"]["relink"], ["--registry"])
+        self.assertEqual(sorted(title_id for title_id, entry in titles.items() if entry.get("smoke")),
+                         ["PPSA17641", "PPSA85300", "PPSA98766", "PPSA99203", "PPSA99505", "PPSA99666"])
 
     def test_unknown_field_is_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: unknown field rlink"):
@@ -42,6 +44,8 @@ class TitlesTests(unittest.TestCase):
     def test_wrong_type_is_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: seconds must be a positive integer"):
             title_run.load_titles(self.write({"PPSA00001": {"seconds": "60"}}))
+        with self.assertRaisesRegex(ValueError, "PPSA00001: smoke must be bool"):
+            title_run.load_titles(self.write({"PPSA00001": {"smoke": 1}}))
 
     def test_catalog_seconds_must_be_a_positive_integer(self):
         for value in (True, False, 0, -1):
@@ -332,6 +336,30 @@ class PreparationTests(unittest.TestCase):
         again = title_run.lock_work(out / "work/PPSA00001.lock")
         self.assertIsNotNone(again)
         again.close()
+
+    def test_smoke_runs_the_marked_titles(self):
+        for title_id in ("PPSA00001", "PPSA00002", "PPSA00003"):
+            package(self.root / "games" / title_id, title_id)
+        titles = self.root / "titles.json"
+        titles.write_text(json.dumps({"PPSA00001": {"smoke": True}, "PPSA00002": {}, "PPSA00003": {"smoke": True}}), encoding="utf-8")
+        out = self.root / "out"
+        held = [title_run.lock_work(out / f"work/{title_id}.lock") for title_id in ("PPSA00001", "PPSA00002", "PPSA00003")]
+        for handle in held:
+            self.addCleanup(handle.close)
+        with self.assertRaisesRegex(SystemExit, r"already running in .*: PPSA00001, PPSA00003$"):
+            title_run.main(["--games", str(self.root / "games"), "--out", str(out), "--titles", str(titles), "--smoke"])
+
+    def test_smoke_refuses_title_ids_and_an_empty_set(self):
+        package(self.root / "games/PPSA00001", "PPSA00001")
+        titles = self.root / "titles.json"
+        titles.write_text(json.dumps({"PPSA00001": {}}), encoding="utf-8")
+        common = ["--games", str(self.root / "games"), "--out", str(self.root / "out"), "--titles", str(titles), "--smoke"]
+        with unittest.mock.patch("sys.stderr"), self.assertRaises(SystemExit) as raised:
+            title_run.main(common + ["PPSA00001"])
+        self.assertEqual(raised.exception.code, 2)
+        with self.assertRaisesRegex(SystemExit, "no title in .* is marked smoke"):
+            title_run.main(common)
+        self.assertFalse((self.root / "out").exists())
 
     def test_discover(self):
         package(self.root / "a/src/PPSA00001", "PPSA00001", "01.000.110", "Light")
