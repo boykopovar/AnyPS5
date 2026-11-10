@@ -459,10 +459,6 @@ int APS5_VABI uloc_addLikelySubtags() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uloc_canonicalize() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uloc_countAvailable() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -475,31 +471,11 @@ int APS5_VABI uloc_getAvailable() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uloc_getBaseName() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uloc_getCharacterOrientation() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uloc_getCountry() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uloc_getDefault() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_getKeywordValue() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_getLanguage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_getScript() {
     NotImplemented_nid_no_patch(__func__);
 }
 
