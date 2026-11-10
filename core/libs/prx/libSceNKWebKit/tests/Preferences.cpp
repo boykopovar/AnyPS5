@@ -88,6 +88,7 @@ const BooleanCase booleanCases[]{
     {"DOMTimersThrottlingEnabled", WKPreferencesSetDOMTimersThrottlingEnabled, WKPreferencesGetDOMTimersThrottlingEnabled, true},
     {"DataTransferItemsEnabled", WKPreferencesSetDataTransferItemsEnabled, WKPreferencesGetDataTransferItemsEnabled, false},
     {"DatabasesEnabled", WKPreferencesSetDatabasesEnabled, WKPreferencesGetDatabasesEnabled, true},
+    {"DeferredCSSParserEnabled", WKPreferencesSetDeferredCSSParserEnabled, WKPreferencesGetDeferredCSSParserEnabled, false},
     {"DeveloperExtrasEnabled", WKPreferencesSetDeveloperExtrasEnabled, WKPreferencesGetDeveloperExtrasEnabled, false},
     {"DiagnosticLoggingEnabled", WKPreferencesSetDiagnosticLoggingEnabled, WKPreferencesGetDiagnosticLoggingEnabled, false},
     {"DirectoryUploadEnabled", WKPreferencesSetDirectoryUploadEnabled, WKPreferencesGetDirectoryUploadEnabled, false},
