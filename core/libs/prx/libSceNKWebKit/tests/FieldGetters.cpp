@@ -41,7 +41,6 @@ std::uint64_t APS5_VABI WKAuthenticationChallengeGetDecisionListener(const void*
 std::uint64_t APS5_VABI WKBundlePageGetMainFrame(const void*);
 std::uint64_t APS5_VABI WKFrameGetCertificateInfo(const void*);
 std::uint64_t APS5_VABI WKInspectorGetPage(const void*);
-std::uint64_t APS5_VABI WKNotificationGetID(const void*);
 std::uint64_t APS5_VABI WKNotificationGetSecurityOrigin(const void*);
 std::uint64_t APS5_VABI WKPageGetBackForwardList(const void*);
 std::uint64_t APS5_VABI WKPageGetFocusedFrame(const void*);
@@ -209,9 +208,6 @@ int main() {
     const std::uint64_t value6 = 0x1122334455667788ull;
     std::memcpy(object + 40, &value6, sizeof(value6));
     Require(WKInspectorGetPage(object) == value6);
-    const std::uint64_t value7 = 0x1122334455667788ull;
-    std::memcpy(object + 16, &value7, sizeof(value7));
-    Require(WKNotificationGetID(object) == value7);
     const std::uint64_t value8 = 0x1122334455667788ull;
     std::memcpy(object + 72, &value8, sizeof(value8));
     Require(WKNotificationGetSecurityOrigin(object) == value8);

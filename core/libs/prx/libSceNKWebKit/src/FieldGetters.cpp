@@ -528,10 +528,6 @@ std::uint64_t APS5_VABI WKInspectorGetPage(const void* self) {
     return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0x28);
 }
 
-std::uint64_t APS5_VABI WKNotificationGetID(const void* self) {
-    return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0x10);
-}
-
 std::uint64_t APS5_VABI WKNotificationGetSecurityOrigin(const void* self) {
     return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0x48);
 }
@@ -568,6 +564,3 @@ std::uint64_t APS5_VABI _ZThn64_NK7WebCore10ScrollView12contentsSizeEv(const voi
     return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0xa0);
 }
 }
-
-
-
