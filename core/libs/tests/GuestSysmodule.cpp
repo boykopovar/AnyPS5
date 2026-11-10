@@ -52,6 +52,7 @@ constexpr std::uint16_t kAcmModuleId = 0x010b;
 constexpr std::uint16_t kTrophy2ModuleId = 0x0110;
 constexpr std::uint16_t kVoiceChatModuleId = 0x0114;
 constexpr std::uint16_t kPerfModuleId = 0x0005;
+constexpr std::uint16_t kNpPartyModuleId = 0x0097;
 constexpr std::uint16_t kVrSetupDialogModuleId = 0x0130;
 constexpr std::uint16_t kProprietaryVoiceChatHelperModuleId = 0x0132;
 constexpr std::uint16_t kPsmlModuleId = 0x0137;
@@ -370,6 +371,13 @@ int main() {
     Require(sceSysmoduleIsLoaded(kVoiceChatModuleId) == 0);
     Require(sceSysmoduleUnloadModule(kVoiceChatModuleId) == 0);
     Require(sceSysmoduleIsLoaded(kVoiceChatModuleId) == kModuleUnloaded);
+
+    Require(sceSysmoduleIsLoaded(kNpPartyModuleId) == kModuleUnloaded);
+    Require(sceSysmoduleUnloadModule(kNpPartyModuleId) == kModuleUnloaded);
+    Require(sceSysmoduleLoadModule(kNpPartyModuleId) == 0);
+    Require(sceSysmoduleIsLoaded(kNpPartyModuleId) == 0);
+    Require(sceSysmoduleUnloadModule(kNpPartyModuleId) == 0);
+    Require(sceSysmoduleIsLoaded(kNpPartyModuleId) == kModuleUnloaded);
 
     Require(sceSysmoduleIsLoaded(kPsmlModuleId) == kModuleUnloaded);
     Require(sceSysmoduleUnloadModule(kPsmlModuleId) == kModuleUnloaded);
