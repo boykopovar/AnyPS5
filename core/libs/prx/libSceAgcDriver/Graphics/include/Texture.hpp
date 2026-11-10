@@ -404,6 +404,14 @@ public:
         std::uint64_t flushedAfterSkipSameSite;
     };
     static HookSkipCounts TakeHookSkipCounts();
+    struct OrderedSkipCounts {
+        std::uint64_t flushes;
+        std::uint64_t refreshes;
+    };
+    static OrderedSkipCounts TakeOrderedSkipCounts();
+    static void SetFlushFailureForTest(bool fail);
+    static int TakeFlushFailureForTest();
+    static bool OrderedFlushArmedForTest();
     // A consumer found the image current and used it (Refresh, the fast revalidation).
     void NoteProved() const;
     // Whether the storage cache holds this image (set and cleared by the cache under its mutex, the

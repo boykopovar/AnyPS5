@@ -7,10 +7,12 @@
 #include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
+#include <cerrno>
 #include <mutex>
 #include <array>
 #include <chrono>
@@ -49,7 +51,6 @@
 #endif
 #include <windows.h>
 #else
-#include <cerrno>
 #include <cstdint>
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -2663,17 +2664,14 @@ static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool 
 }
 
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
-    ForgetKnownZero(address, bytes);
     return markWritten(address, bytes, true);
 }
 
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes) {
-    ForgetKnownZero(address, bytes);
     return markWritten(address, bytes, false);
 }
 
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes, std::uint64_t& order) {
-    ForgetKnownZero(address, bytes);
     return markWritten(address, bytes, false, &order);
 }
 
@@ -3267,26 +3265,6 @@ void GuardRead(std::uint64_t address, std::size_t bytes) {
     if (const auto guard = readGuard.load(std::memory_order_acquire)) guard(address, bytes);
 }
 
-void ForgetKnownZero(std::uint64_t address, std::size_t bytes) {
-#ifdef _WIN32
-    GuestArena::GuestArenaForgetKnownZero_nid_no_patch(static_cast<std::uintptr_t>(address), bytes);
-#else
-    static_cast<void>(address);
-    static_cast<void>(bytes);
-#endif
-}
-
-void MaterializeKnownZero(std::uint64_t address, std::size_t bytes) {
-#ifdef _WIN32
-    GuestArena::GuestArenaKnownZero_nid_no_patch(static_cast<std::uintptr_t>(address), bytes, [](void*, std::uintptr_t first, std::uintptr_t last) {
-        for (auto page = first; page < last; page += 4096) static_cast<void>(*reinterpret_cast<const volatile unsigned char*>(page));
-    }, nullptr);
-#else
-    static_cast<void>(address);
-    static_cast<void>(bytes);
-#endif
-}
-
 void FlushGpuWrites(std::uint64_t address, std::size_t bytes) {
     if (const auto hook = flushHook.load(std::memory_order_acquire)) hook(address, bytes);
 }
@@ -3551,6 +3529,12 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
 Compare CopyMapped(std::uint64_t address, std::span<std::byte> out) {
     if (out.empty()) return Compare::Equal;
     if (address == 0 || out.size() > std::numeric_limits<std::uintptr_t>::max() - address) return Compare::Unmapped;
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
+    const int savedErrno = errno;
+    const bool copied = GuestCopyInUnsynced_nid_no_patch(out.data(), reinterpret_cast<const void*>(address), out.size());
+    errno = savedErrno;
+    return copied ? Compare::Equal : Compare::Unmapped;
+#else
     auto outcome = Compare::Equal;
     const bool queried = describePages(static_cast<std::uintptr_t>(address), out.size(), [&](const PageRun& run) {
         if (!run.readable) outcome = Compare::Unmapped;
@@ -3558,6 +3542,7 @@ Compare CopyMapped(std::uint64_t address, std::span<std::byte> out) {
         return outcome == Compare::Equal;
     });
     return queried ? outcome : Compare::Unmapped;
+#endif
 }
 
 void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
