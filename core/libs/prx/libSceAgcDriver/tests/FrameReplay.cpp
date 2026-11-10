@@ -421,7 +421,7 @@ public:
         writer.WriteCall(call);
     }
 
-    void delta(std::uint64_t inFlight, std::initializer_list<std::pair<std::size_t, std::size_t>> pages) {
+    void delta(std::uint64_t inFlight, std::initializer_list<std::pair<std::size_t, std::size_t>> pages, std::initializer_list<std::size_t> parked) {
         ++group;
         for (const auto& [first, last] : pages) writer.WriteDelta(group, submitted - inFlight, address(first * PageWords), std::as_bytes(std::span(words).subspan(first * PageWords, (last - first) * PageWords)));
         AgcDriver::FrameCall call;
@@ -430,7 +430,9 @@ public:
         call.thread = 1;
         call.accepted = submitted;
         call.completed = submitted - inFlight;
-        call.values = {group};
+        call.values = {group, parked.size()};
+        for (const auto index : parked) call.values.push_back(address(index));
+        std::sort(call.values.begin() + 2, call.values.end());
         writer.WriteCall(call);
     }
 
@@ -483,7 +485,7 @@ void testChainedRewindGates(const std::filesystem::path& tool) {
     capture.place(1, std::array{AgcDriver::Pm4::RewindValid, RewindHeader, AgcDriver::Pm4::RewindValid});
     capture.place(4, capture.chain(Segment, write.size()));
     capture.place(Segment, write);
-    capture.delta(0, {{0, 1}, {2, 3}});
+    capture.delta(0, {{0, 1}, {2, 3}}, {});
     check(capture.replay(tool, Label) == Done, "the replay did not run the segment behind the second of two REWINDs released by one memory group");
 }
 
@@ -502,7 +504,7 @@ void testRewindControlAtPageStart(const std::filesystem::path& tool) {
     capture.submit(start, Control + 1 + write.size() - start);
     capture.place(Control, std::array{AgcDriver::Pm4::RewindValid});
     capture.place(Control + 1, write);
-    capture.delta(1, {{5, 6}});
+    capture.delta(1, {{5, 6}}, {Control});
     check(capture.replay(tool, Label) == Done, "the replay did not run the tail of a REWIND whose control word starts a memory chunk");
 }
 
@@ -514,9 +516,9 @@ void testZeroRewindControlRewritten(const std::filesystem::path& tool) {
     capture.start();
     capture.submit(0, 2 + write.size());
     capture.place(2, write);
-    capture.delta(1, {{0, 1}});
+    capture.delta(1, {{0, 1}}, {1});
     capture.place(1, std::array{AgcDriver::Pm4::RewindValid});
-    capture.delta(0, {{0, 1}});
+    capture.delta(0, {{0, 1}}, {});
     check(capture.replay(tool, Label) == Done, "the replay did not run the tail of a REWIND whose block was rewritten while its control stayed zero");
 }
 
@@ -531,7 +533,7 @@ void testEarlyReleaseRestoredInOrder(const std::filesystem::path& tool) {
     capture.place(1, std::array{AgcDriver::Pm4::RewindValid});
     capture.place(2, write);
     capture.place(Label, std::array{Reset});
-    capture.delta(0, {{0, 1}, {3, 4}});
+    capture.delta(0, {{0, 1}, {3, 4}}, {});
     const auto label = capture.replay(tool, Label);
     check(label == Reset, "the replay left " + std::to_string(label) + " in a label that the group released early holds as " + std::to_string(Reset) + " after the tail wrote " + std::to_string(Done));
 }

@@ -950,6 +950,7 @@ struct Replay {
                 if (at > first && !waiting && ((header >> 30u) != 3u || ((header >> 8u) & 0xffu) != 0x59u)) continue;
                 std::uint32_t value = 0;
                 std::memcpy(&value, bytes.data() + at, sizeof(value));
+                if (again && (value & AgcDriver::Pm4::RewindValid) == 0) continue;
                 kept.push_back(at);
                 if (!again) (waiting ? releases : controls).emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
             }
