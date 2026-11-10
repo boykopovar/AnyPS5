@@ -613,7 +613,6 @@ void BeforeCommandLookup(VkDevice device) {
         auto* encoder = state.encoder.load(std::memory_order_acquire);
         if (encoder == nullptr || state.device != device) continue;
         if (encoder->OpenOnThisThread()) encoder->Quiesce();
-        else if (encoder->OpenOnOtherThread()) CommandEncoder::RefuseForeignProducer();
         else encoder->Settle();
     }
 }

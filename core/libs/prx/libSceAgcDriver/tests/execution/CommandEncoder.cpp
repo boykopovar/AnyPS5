@@ -534,29 +534,50 @@ void ForeignThreadCannotProduceIntoAnOpenWindow() {
     Compare({{commands, {"draw 1 1 0 0", "draw 2 1 0 0", "draw 3 1 0 0"}}}, "a foreign producer");
 }
 
-void ForeignLookupIsRefusedWhileAWindowIsOpen() {
+void ForeignLookupWhileAWindowIsOpenProceeds() {
     Reset();
     auto table = FakeTable();
     const auto device = Handle<VkDevice>(0x48);
     CommandEncoder encoder(device, table);
     const auto commands = Handle<VkCommandBuffer>(0xc00);
+    const auto own = Handle<VkCommandBuffer>(0xc80);
     encoder.Open(commands);
     table.cmdDraw(commands, 1, 1, 0, 0);
     std::atomic<bool> refused{false};
     std::thread other([&] {
         try {
             AgcDriver::Graphics::BeforeCommandLookup(device);
+            table.cmdDraw(own, 7, 1, 0, 0);
         } catch (const std::logic_error&) {
             refused.store(true);
         }
     });
     other.join();
-    Require(refused.load(), "a command lookup from another thread while a window was open was not refused");
+    Require(!refused.load(), "a command lookup from another thread for its own command buffer was refused while a window was open");
+    table.cmdDraw(commands, 2, 1, 0, 0);
     encoder.Close();
-    std::thread later([&] { AgcDriver::Graphics::BeforeCommandLookup(device); });
-    later.join();
     encoder.Quiesce();
-    Compare({{commands, {"draw 1 1 0 0"}}}, "a foreign lookup");
+    Compare({{commands, {"draw 1 1 0 0", "draw 2 1 0 0"}}, {own, {"draw 7 1 0 0"}}}, "a foreign lookup");
+}
+
+void RawCallAfterLookupKeepsOrder() {
+    Reset();
+    auto table = FakeTable();
+    const auto raw = table;
+    const auto device = Handle<VkDevice>(0x49);
+    CommandEncoder encoder(device, table);
+    const auto commands = Handle<VkCommandBuffer>(0xd00);
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(5)); });
+    encoder.Open(commands);
+    table.cmdDraw(commands, 1, 1, 0, 0);
+    table.cmdDraw(commands, 2, 1, 0, 0);
+    AgcDriver::Graphics::BeforeCommandLookup(device);
+    raw.cmdDraw(commands, 3, 1, 0, 0);
+    table.cmdDraw(commands, 4, 1, 0, 0);
+    encoder.Close();
+    encoder.Quiesce();
+    CommandEncoder::SetDelayForTesting({});
+    Compare({{commands, {"draw 1 1 0 0", "draw 2 1 0 0", "draw 3 1 0 0", "draw 4 1 0 0"}}}, "a raw call after a lookup inside a window");
 }
 
 }
@@ -572,7 +593,8 @@ int main() {
         UnwindingSettlesQueuedRecording();
         OwnersOutliveTheUnwindDrain();
         ForeignThreadCannotProduceIntoAnOpenWindow();
-        ForeignLookupIsRefusedWhileAWindowIsOpen();
+        ForeignLookupWhileAWindowIsOpenProceeds();
+        RawCallAfterLookupKeepsOrder();
         std::cout << "command encoder tests passed\n";
         return 0;
     } catch (const std::exception& error) {
