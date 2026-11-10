@@ -1,5 +1,9 @@
 # libSceNetCtlAp technical debt
 
+### Silent stubs
+
+- [sceNetCtlApGetResult, sceNetCtlApGetState, sceNetCtlApRegisterCallback](../../../core/libs/prx/libSceNetCtlAp/Export.cpp) - returning `NET_CTL_AP_ERROR_INVALID_ADDR` for unwritable output pointers is a host-safety fallback with console behavior unmeasured.
+
 ### Functional
 
 - [libSceNetCtlAp](../../../core/libs/prx/libSceNetCtlAp/Export.cpp) (libSceNetCtlAp) - the access point never starts: a title starts it through [libSceNetCtlApDialog](libSceNetCtlApDialog.md), which always reports the user as having cancelled. `sceNetCtlApGetState` reports Stopped (0), `sceNetCtlApGetInfo`, `sceNetCtlApGetConnectInfo` and `sceNetCtlApStop` return `NOT_STARTED` (`0x8041298F`) without writing, and no callback ever fires. Signatures, states, structure sizes (152 and 184 bytes), the 8-callback limit and error codes come from [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Net/NetCtlAp.cs)

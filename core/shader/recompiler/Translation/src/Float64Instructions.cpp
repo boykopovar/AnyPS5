@@ -32,7 +32,6 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
         writeF64Result(inst.destination, *result);
         return true;
     }
-    rejectHalfOrDoubleOutputModifier(inst.destination);
     RdnaOperand destination = inst.destination;
     destination.omod = 0u;
     writeOperand(destination, result);
@@ -130,11 +129,39 @@ bool TranslationContext::vCvtF64F32(const RdnaInstruction& inst) {
     return true;
 }
 
+IrValue& TranslationContext::scaleF64Result(std::uint32_t omod, IrValue& value) {
+    IrValue& low = ir.CompositeExtract(value, 0u);
+    IrValue& high = ir.CompositeExtract(value, 1u);
+    IrValue& magnitude = ir.BitwiseAnd(high, ir.Constant(0x7fffffffu));
+    IrValue& sign = ir.BitwiseAnd(high, ir.Constant(0x80000000u));
+    IrValue* scaledHigh = nullptr;
+    IrValue* scaledLow = nullptr;
+    if (omod == 3u) {
+        IrValue& underflow = ir.ULessThan(magnitude, ir.Constant(0x00200000u));
+        scaledHigh = &ir.Select(underflow, sign, ir.ISub(high, ir.Constant(0x00100000u)));
+        scaledLow = &ir.Select(underflow, ir.Constant(0u), low);
+    } else {
+        const std::uint32_t exponentStep = omod == 1u ? 0x00100000u : 0x00200000u;
+        IrValue& inRange = ir.ULessThan(magnitude, ir.Constant(0x7ff00000u - exponentStep));
+        scaledHigh = &ir.Select(inRange, ir.IAdd(high, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x7ff00000u)));
+        scaledLow = &ir.Select(inRange, low, ir.Constant(0u));
+    }
+    IrValue& denormal = ir.ULessThan(magnitude, ir.Constant(0x00100000u));
+    scaledHigh = &ir.Select(denormal, sign, *scaledHigh);
+    scaledLow = &ir.Select(denormal, ir.Constant(0u), *scaledLow);
+    IrValue& special = ir.UGreaterThan(magnitude, ir.Constant(0x7fefffffu));
+    scaledHigh = &ir.Select(special, high, *scaledHigh);
+    scaledLow = &ir.Select(special, low, *scaledLow);
+    return ir.ConstructU64(*scaledLow, *scaledHigh);
+}
+
 void TranslationContext::writeF64Result(const RdnaOperand& operand, IrValue& value) {
-    rejectHalfOrDoubleOutputModifier(operand);
+    IrValue* result = &value;
+    if (operand.omod != 0u && outputModifierApplies(6u)) {
+        result = &scaleF64Result(operand.omod, *result);
+    }
     RdnaOperand destination = operand;
     destination.omod = 0u;
-    IrValue* result = &value;
     if (destination.clamp) {
         result = &ir.Emit(IrOpcode::FPSaturate64, IrType::U64, {result});
         if (!dx10Clamp()) {
