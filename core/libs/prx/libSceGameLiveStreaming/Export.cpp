@@ -11,6 +11,8 @@
 
 static std::mutex g_mutex;
 static bool g_initialized = false;
+static void* g_callback = nullptr;
+static void* g_callbackUserData = nullptr;
 static constexpr int ErrorInvalidArgument = static_cast<int>(0x80A00002);
 static constexpr int ErrorAlreadyInitialized = static_cast<int>(0x80A00003);
 static constexpr int ErrorNotInitialized = static_cast<int>(0x80A00004);
@@ -122,7 +124,10 @@ int APS5_VABI sceGameLiveStreamingSetMaxBitrate(std::uint32_t bitrate) {
 }
 
 int APS5_VABI sceGameLiveStreamingGetCurrentStatus(GameLiveStreamingStatus* status) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return ErrorNotInitialized;
+    if (status == nullptr) return ErrorInvalidArgument;
+    std::memset(status, 0, sizeof(*status));
     return 0;
 }
 
@@ -248,13 +253,19 @@ int APS5_VABI sceGameLiveStreamingStopGenerateStandbyScreenResource(void) {
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingRegisterCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGameLiveStreamingRegisterCallback(void* callback, void* userData) {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return ErrorNotInitialized;
+    g_callback = callback;
+    g_callbackUserData = userData;
     return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingUnregisterCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return ErrorNotInitialized;
+    g_callback = nullptr;
+    g_callbackUserData = nullptr;
     return 0;
 }
 

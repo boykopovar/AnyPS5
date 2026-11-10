@@ -1,5 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -36,6 +38,7 @@
 #include <iterator>
 #include <map>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -222,6 +225,16 @@ void ReleaseFlexibleMappingRange(std::uintptr_t address, size_t len) {
     _releaseFlexible(address, len);
 }
 
+size_t DirectMemorySize() {
+    static const size_t size = [] {
+        if (std::getenv("APS5_DIRECT_MEMORY_FROM_FLEXIBLE") == nullptr) return DIRECT_MEMORY_SIZE;
+        const size_t flexible = _configuredFlexibleSize();
+        if (flexible >= GAME_MEMORY_SIZE) throw std::runtime_error("param.json kernel.flexibleMemorySize leaves no direct memory");
+        return GAME_MEMORY_SIZE - flexible;
+    }();
+    return size;
+}
+
 extern "C" {
 
 int APS5_VABI sceKernelAllocateDirectMemory(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
@@ -229,11 +242,11 @@ int APS5_VABI sceKernelAllocateDirectMemory(int64_t search_start, int64_t search
   || (len & (PS5_PAGE_SIZE - 1)) || !phys_addr_out
   || (alignment != 0 && (alignment & (PS5_PAGE_SIZE - 1))))
   return SCE_KERNEL_ERROR_EINVAL;
- return DirectMemoryAlloc(search_start, search_end, len, alignment, memory_type, phys_addr_out);
+ return DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, memory_type, phys_addr_out);
 }
 
 int APS5_VABI sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
- return sceKernelAllocateDirectMemory(0, static_cast<int64_t>(DIRECT_MEMORY_SIZE), len, alignment, memory_type, phys_addr_out);
+ return sceKernelAllocateDirectMemory(0, static_cast<int64_t>(DirectMemorySize()), len, alignment, memory_type, phys_addr_out);
 }
 
 int APS5_VABI sceKernelAllocateDirectMemoryForApp(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
@@ -243,7 +256,7 @@ int APS5_VABI sceKernelAllocateDirectMemoryForApp(int64_t search_start, int64_t 
 int APS5_VABI sceKernelAvailableDirectMemorySize(int64_t search_start, int64_t search_end, size_t alignment, int64_t* phys_addr_out, size_t* size_out) {
  int64_t start = 0;
  size_t size = 0;
- const int result = DirectMemoryLargestFree(search_start, search_end, alignment, &start, &size);
+ const int result = DirectMemoryLargestFree(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), alignment, &start, &size);
  if (result != 0) return result;
  if (phys_addr_out && !GuestCopyOut_nid_no_patch(phys_addr_out, &start, sizeof(start))) return SCE_KERNEL_ERROR_EFAULT;
  if (size_out && !GuestCopyOut_nid_no_patch(size_out, &size, sizeof(size))) return SCE_KERNEL_ERROR_EFAULT;
@@ -274,7 +287,7 @@ int APS5_VABI sceKernelGetDirectMemoryType(int64_t offset, int* memory_type, int
 }
 
 size_t APS5_VABI sceKernelGetDirectMemorySize(void) {
- return DIRECT_MEMORY_SIZE;
+ return DirectMemorySize();
 }
 
 int APS5_VABI sceKernelEnableDmemAliasing(void) {
@@ -291,6 +304,7 @@ int APS5_VABI sceKernelMapDirectMemory(void** addr, size_t len, int prot, int fl
 
 int APS5_VABI sceKernelMapDirectMemory2(void** addr, size_t len, int type, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
  if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
+ if (static_cast<unsigned>(flags) >= 0x1000000u || (alignment & ((alignment - 1) | 0x3fff)) != 0 || std::bit_width(std::max<size_t>(alignment, 0x4000)) - 1 > 30) return SCE_KERNEL_ERROR_EINVAL;
  (void)type;
  const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
  if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
@@ -341,7 +355,10 @@ int APS5_VABI sceKernelMunmap(uint64_t vaddr, size_t len) {
 int APS5_VABI sceKernelMmap(void* addr, size_t len, int prot, int flags, int fd, int64_t offset, void** res) {
  void* mapped = mmap_nid_postfix(addr, len, prot, flags, fd, offset);
  if (mapped == reinterpret_cast<void*>(static_cast<uintptr_t>(-1))) return SceKernelError(*__error_nid_postfix());
- *res = mapped;
+ if (!GuestCopyOut_nid_no_patch(res, &mapped, sizeof(mapped))) {
+  munmap_nid_postfix(mapped, len);
+  return SCE_KERNEL_ERROR_EFAULT;
+ }
  return 0;
 }
 
