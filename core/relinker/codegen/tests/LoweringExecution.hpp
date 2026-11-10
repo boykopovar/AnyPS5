@@ -10,6 +10,8 @@
 #include <stdexcept>
 #include <vector>
 #if (defined(__linux__) || defined(__APPLE__)) && defined(__x86_64__)
+#include <csetjmp>
+#include <signal.h>
 #include <sys/mman.h>
 #define LOWERING_EXECUTION_AVAILABLE 1
 #else
@@ -44,6 +46,42 @@ inline State InitialState() {
 }
 
 #if LOWERING_EXECUTION_AVAILABLE
+
+inline sigjmp_buf& ProbeJump() {
+    static sigjmp_buf jump;
+    return jump;
+}
+
+inline bool HostExecutes(const Bytes& instruction) {
+    auto* const code = static_cast<std::uint8_t*>(mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    if (code == MAP_FAILED) throw std::runtime_error("Cannot allocate the instruction probe page");
+    std::memcpy(code, instruction.data(), instruction.size());
+    code[instruction.size()] = 0xC3;
+    if (mprotect(code, 4096, PROT_READ | PROT_EXEC) != 0) {
+        munmap(code, 4096);
+        throw std::runtime_error("Cannot make the instruction probe executable");
+    }
+    alignas(64) std::uint8_t scratch[64] = {};
+    struct sigaction action {};
+    action.sa_handler = [](int) { siglongjmp(ProbeJump(), 1); };
+    sigemptyset(&action.sa_mask);
+    struct sigaction previous {};
+    sigaction(SIGILL, &action, &previous);
+    volatile bool executed = false;
+    if (sigsetjmp(ProbeJump(), 1) == 0) {
+        asm volatile(
+            "sub $128, %%rsp\n\t"
+            "call *%[code]\n\t"
+            "add $128, %%rsp\n\t"
+            :
+            : [code] "r"(code), "D"(scratch)
+            : "rax", "rcx", "rdx", "xmm0", "memory", "cc");
+        executed = true;
+    }
+    sigaction(SIGILL, &previous, nullptr);
+    munmap(code, 4096);
+    return executed;
+}
 
 class Execution {
 public:
