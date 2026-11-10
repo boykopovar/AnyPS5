@@ -168,7 +168,11 @@ void testPs4Buffers() {
     check(expectFailure([&] { sceVideoOutRegisterBuffers2(handle, 3, 5, &second, 1, &ps5, 0, nullptr); }).find("64 KiB alignment") != std::string::npos, "a PS5 buffer was accepted at 4 KiB alignment");
     check(sceVideoOutRegisterBuffers(handle, 0, pair, 2, &attribute) == 0, "the first PS4 set index is not 0");
     void* const third[1] = {storage.data() + 49152};
-    check(sceVideoOutRegisterBuffers(handle, 2, third, 1, &attribute) == 1, "the second PS4 set index is not 1");
+    auto neighbour = attribute;
+    neighbour.width = 48;
+    neighbour.height = 32;
+    neighbour.pitch_in_pixel = 80;
+    check(sceVideoOutRegisterBuffers(handle, 2, third, 1, &neighbour) == 1, "the second PS4 set index is not 1");
     {
         const auto cfg = VideoOutDriver::Get().GetConfig(handle);
         std::lock_guard lock(cfg->mutex);
@@ -229,11 +233,105 @@ void testPs4Buffers() {
         if (cfg->failure) std::rethrow_exception(cfg->failure);
         check(cfg->flipStatus.flipArg == 7 && cfg->flipStatus.currentBuffer == 1, "the PS4 flip status is wrong");
     }
+    const auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    auto changed = attribute;
+    changed.pixel_format = 0x80002200u;
+    changed.width = 40;
+    changed.height = 24;
+    changed.pitch_in_pixel = 72;
+    check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &changed) == 0, "the legacy attribute change failed");
+    const auto unchanged = [&] {
+        std::lock_guard lock(cfg->mutex);
+        const auto& group = cfg->groups[0];
+        const auto& value = group.attribute;
+        check(group.ps4 && group.occupied && group.category == VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED && group.ps4Pitch == 0, "the changed group lost its legacy flags");
+        check(value.pixel_format == 0x8000000022000000ull && value.width == 40 && value.height == 24 && value.pitch_in_pixel == 72 && value.tiling_mode == 1 && value.aspect_ratio == 0 && value.option == 0 && value.reserved0 == 0 && value.pad0 == 0 && value.reserved1[0] == 0 && value.reserved1[1] == 0 && value.reserved1[2] == 0 && value.dcc_control == 0 && value.dcc_cb_register_clear_color == 0, "the legacy change converted fields wrongly");
+        const auto& other = cfg->groups[1];
+        check(other.ps4 && other.occupied && other.category == VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED && other.attribute.pixel_format == 0x8000000000000000ull && other.attribute.width == 48 && other.attribute.height == 32 && other.attribute.pitch_in_pixel == 80 && other.attribute.tiling_mode == 1 && other.attribute.aspect_ratio == 0 && other.attribute.option == 0, "the legacy change modified its neighbouring group");
+        check(cfg->buffers[0].groupIndex == 0 && cfg->buffers[0].dataAddress == reinterpret_cast<uint64_t>(pair[0]) && cfg->buffers[0].metadataAddress == 0 && cfg->buffers[1].groupIndex == 0 && cfg->buffers[1].dataAddress == reinterpret_cast<uint64_t>(pair[1]) && cfg->buffers[1].metadataAddress == 0 && cfg->buffers[2].groupIndex == 1 && cfg->buffers[2].dataAddress == reinterpret_cast<uint64_t>(third[0]) && cfg->buffers[2].metadataAddress == 0, "the legacy change modified buffer addresses or group indices");
+    };
+    unchanged();
+    const auto rejected = [&](auto action, const char* message) {
+        check(expectFailure(action).find(message) != std::string::npos, "the legacy change threw the wrong error");
+        unchanged();
+    };
+    for (int index : {-1, VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX, std::numeric_limits<int>::max()}) {
+        rejected([&] { sceVideoOutSubmitChangeBufferAttribute(handle, index, &changed); }, "VIDEO_OUT_ERROR_INVALID_INDEX");
+    }
+    rejected([&] { sceVideoOutSubmitChangeBufferAttribute(handle, 3, &changed); }, "VIDEO_OUT_ERROR_INVALID_INDEX");
+    for (int index : {0, 1, 3, -1, VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX}) {
+        check(sceVideoOutSubmitChangeBufferAttribute(handle, index, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "the legacy change checked its index before a null attribute");
+        unchanged();
+    }
+    for (int invalid : {-1, 0, VIDEO_OUT_NUM_MAX}) {
+        check(sceVideoOutSubmitChangeBufferAttribute(invalid, -1, &changed) == VIDEO_OUT_ERROR_INVALID_HANDLE, "the legacy change checked arguments before its handle");
+        unchanged();
+        check(sceVideoOutSubmitChangeBufferAttribute(invalid, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "the legacy change checked its handle before a null attribute");
+        unchanged();
+    }
+    for (int field = 0; field < 3; ++field) {
+        auto invalid = changed;
+        if (field == 0) invalid.reserved0 = 1;
+        if (field == 1) invalid.reserved1 = 1;
+        if (field == 2) invalid.option = 1;
+        rejected([&] { sceVideoOutSubmitChangeBufferAttribute(handle, 0, &invalid); }, "VIDEO_OUT_ERROR_INVALID_OPTION");
+    }
+    for (int field = 0; field < 3; ++field) {
+        auto invalid = changed;
+        const int error = field == 0 ? VIDEO_OUT_ERROR_INVALID_ASPECT_RATIO : field == 1 ? VIDEO_OUT_ERROR_INVALID_PITCH : VIDEO_OUT_ERROR_INVALID_TILING_MODE;
+        if (field == 0) invalid.aspect_ratio = 1;
+        if (field == 1) invalid.pitch_in_pixel = invalid.width - 1;
+        if (field == 2) invalid.tiling_mode = 2;
+        check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &invalid) == error, "the legacy change returned the wrong validation error");
+        unchanged();
+    }
+    auto legacyTiled = changed;
+    legacyTiled.tiling_mode = 0;
+    legacyTiled.pitch_in_pixel = 0;
+    check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &legacyTiled) == VIDEO_OUT_ERROR_INVALID_PITCH, "the legacy change accepted a tiled pitch below its width");
+    unchanged();
+    for (uint32_t pitch : {128u, 256u}) {
+        legacyTiled.pitch_in_pixel = pitch;
+        check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &legacyTiled) == 0, "the legacy change to a tiled buffer failed");
+        std::lock_guard lock(cfg->mutex);
+        const auto& group = cfg->groups[0];
+        const auto display = DescribeVideoOutBuffer(cfg->buffers[1], group);
+        check(group.ps4 && group.attribute.tiling_mode == 0 && group.attribute.pitch_in_pixel == 0 && group.attribute.width == 40 && group.attribute.height == 24 && group.attribute.pixel_format == 0x8000000022000000ull && group.ps4Pitch == pitch && display.tilingMode == AgcDriver::DisplayTilingGcn && display.pitchInPixel == pitch && display.alignment == 4096 && display.address == reinterpret_cast<uint64_t>(pair[1]), "the legacy change to a tiled buffer is not a GCN display buffer with its pitch");
+        const auto& other = cfg->groups[1];
+        check(other.attribute.tiling_mode == 1 && other.attribute.pitch_in_pixel == 80 && other.ps4Pitch == 0, "the legacy change to a tiled buffer modified its neighbouring group");
+    }
+    check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &changed) == 0, "the legacy change back to a linear buffer failed");
+    unchanged();
+    auto invalid = changed;
+    invalid.width = 0;
+    rejected([&] { sceVideoOutSubmitChangeBufferAttribute(handle, 0, &invalid); }, "dimensions");
+    auto gate = std::make_shared<Gate>();
+    AgcDriverRegisterVideoOutput_nid_postfix(7, gate);
+    std::array<uint32_t, 6> held{0xc004105c, 7, 0xfffffffeu, 1, 0, 0};
+    Packet heldPacket{held.data(), 6, 0, {}};
+    check(sceAgcDriverSubmitDcb(&heldPacket) == 0, "the legacy change gate was not accepted");
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 8) == 0, "the changed legacy buffer flip was not accepted");
+    check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &changed) == 0, "a pending legacy flip prevented the attribute change");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->flipStatus.flipPendingNum == 1 && cfg->flipStatus.count == 1, "the legacy change consumed a pending flip");
+    }
+    unchanged();
+    gate->Release();
+    {
+        std::unique_lock lock(cfg->mutex);
+        check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == 2; }), "the changed legacy flip did not complete");
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(cfg->flipStatus.currentBuffer == 0 && cfg->flipStatus.flipArg == 8 && cfg->flipStatus.flipPendingNum == 0, "the changed legacy flip status is wrong");
+    }
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, gate);
     sceVideoOutClose(handle);
     const int ps5Handle = sceVideoOutOpen(255, 0, 0, nullptr);
     raw.fill(0xaa);
     check(sceVideoOutGetFlipStatus(ps5Handle, reinterpret_cast<VideoOutFlipStatus*>(raw.data())) == 0, "the PS5 flip status failed");
     check(std::all_of(raw.begin() + sizeof(VideoOutFlipStatusPs4), raw.end(), [](std::uint8_t value) { return value == 0; }), "the PS5 flip status did not fill its 128 bytes");
+    VideoOutBuffers ps5Buffer{storage.data(), nullptr, {nullptr, nullptr}};
+    check(sceVideoOutRegisterBuffers2(ps5Handle, 0, 0, &ps5Buffer, 1, &ps5, 0, nullptr) == 0, "the PS5 group was not registered");
     sceVideoOutClose(ps5Handle);
     LibcRunShutdown_nid_postfix();
 }
