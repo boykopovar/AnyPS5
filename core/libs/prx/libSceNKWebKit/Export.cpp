@@ -11678,14 +11678,6 @@ int APS5_VABI WKPageCallAfterNextPresentationUpdate() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageCanGoBack() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageCanGoForward() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageCenterSelectionInVisibleArea() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -26167,10 +26159,6 @@ int APS5_VABI _ZN7WebCore7PatternD1Ev() {
 }
 
 int APS5_VABI _ZN7WebCore7PatternD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore7Process10identifierEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

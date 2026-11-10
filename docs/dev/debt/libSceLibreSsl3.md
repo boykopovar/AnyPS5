@@ -5,6 +5,7 @@
 ### Functional
 
 - [X509_set_pubkey](../../../core/libs/prx/libSceLibreSsl3/src/X509SetPubkey.cpp) - allocates a zeroed 24-byte `X509_PUBKEY` with the supplied `EVP_PKEY` and stores it at certificate-info offset 48; a null certificate, certificate info or key returns 0. The previous public key is replaced without an ownership-aware teardown. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
+- [RSA_bits, BN_is_negative, EVP_CIPHER_nid and ERR_load_ERR_strings](../../../core/libs/prx/libSceLibreSsl3/src/InventoryNames.cpp) - name four NIDs the 13.60 inventory identifies but the tree exported only as `Unknown_*`: RSA_bits returns the bit length of `n` through libSceLibreSsl's `BN_num_bits`, BN_is_negative reads the sign, EVP_CIPHER_nid reads the cipher's nid, and ERR_load_ERR_strings is a no-op because the error-string table is not modelled. Null keys or ciphers throw where LibreSSL dereferences them, and a null RSA modulus returns 0. The PS5 ABI and console behaviour are unverified. Closes when: compared with the console.
 - [libtls context and configuration lifecycle](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Ten exports implement only preconnection lifecycle and configuration. TLS handshake, read/write, certificate validation and encrypted transport still throw; callers cannot establish TLS sessions. No PS5 native ABI or error strings have been measured. Signatures and config ownership follow the [LibreSSL libtls API](https://man.openbsd.org/tls_init.3) and [source](https://github.com/libressl/openbsd/tree/master/src/lib/libtls): independent config allocation, refcounts held by client/server contexts, copied key memory zeroized on replacement/free, error pointers and fresh-context close/configure behavior. A server without a certificate fails. Future transport must consume the retained config and implement certificate/SSL context state.
 
 - [libtls CA memory and verification settings](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Four additional exports copy owned CA bytes, assign a protocol bitmask, and set client-certificate and hostname-verification flags. They follow [OpenBSD libtls `tls_config.c`](https://github.com/openbsd/src/blob/master/lib/libtls/tls_config.c). TLS transport, certificate parsing and cipher-list validation remain unimplemented; `tls_config_set_cert_mem` and `tls_config_set_ciphers` still throw; `tls_config_parse_protocols` is implemented in `TlsProtocols.cpp`. Native PS5 ABI and option interoperability are unverified.
@@ -60,6 +61,7 @@
 - [X509_get_X509_PUBKEY, X509_get_signature_nid and X509_get_ext_by_NID](../../../core/libs/prx/libSceLibreSsl3/src/X509Accessors.cpp) (libSceLibreSsl3) - nothing is checked on the console. The forwarded 2.5.4 `OBJ_create` numbers objects from 956, which [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/objects/obj_dat.c) gives to built-in objects, so `X509_get_ext_by_NID` reaches an added object only from NID 1056. Otherwise they follow 4.0.0 `x509_set.c`, `x_x509.c`, `x509_v3.c` and `obj_dat.c`. [Objects.cpp](../../../core/libs/prx/libSceLibreSsl3/src/Objects.cpp) adds 4.0.0's 100 newer objects to libSceLibreSsl's 2.5.4 table; a BSD `bsearch` gives NID 676 for the OID 1.3 it shares with 379. Null pointers it dereferences, a last position of `INT_MAX` and, once objects are added, a length that overflows its hash throw. Closes when: compared with the console.
 
 - [ASN1_TIME_diff](../../../core/libs/prx/libSceLibreSsl3/src/Time.cpp) has no console ABI or behavior verification. Its signature and date rules follow LibreSSL 4.0.0 [a_time.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time.c), [a_time_tm.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c) and [a_time_posix.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_posix.c), using the existing 24-byte string layout. Null inputs use the host wall clock; the console clock relationship is unverified. Null output pointers throw after valid input parsing, where the reference dereferences them. Closes when: measured on a PS5.
+- [ERR_lib_error_string, ERR_func_error_string and ERR_reason_error_string](../../../core/libs/prx/libSceLibreSsl3/src/ErrorStrings.cpp) (libSceLibreSsl3) - nothing is checked on the console. They return null for every code. The [firmware 13.42 module run on a PC](https://github.com/boykopovar/AnyPS5/pull/9535#issuecomment-6407060914) returned null from all three for all 917 LibreSSL table codes after its loaders ran, its string loader init routines are a single `ret`, its image holds none of the library names, and the module exports no `ERR_load_strings` that could add strings. Closes when: compared with the console.
 - [EVP_chacha20 and EVP_chacha20_poly1305](../../../core/libs/prx/libSceLibreSsl3/src/ChaCha.cpp) (libSceLibreSsl3) - nothing is checked on the console. They run inside libSceLibreSsl's forwarded 2.5.4 `EVP_*Update`, which passes a zero-length update to the cipher: with a null input, `EVP_chacha20_poly1305` takes it as the final call and computes or checks the tag early, where LibreSSL 4.0.0 returns 1 without calling the cipher. Otherwise they follow [4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp) `e_chacha.c` and `e_chacha20poly1305.c`, with Poly1305 from mbedtls; a zero-length update with an input, or a negative length, leaves the state alone. A null input or output with a non-zero length, or a null pointer for `EVP_CTRL_AEAD_GET_IVLEN`, `EVP_CTRL_AEAD_GET_TAG` or `EVP_CTRL_AEAD_SET_IV_FIXED`, which LibreSSL dereferences, throws. Closes when: compared with the console.
 - [BIO_get_data, BIO_set_data, BIO_set_init, BIO_get_shutdown, BIO_set_shutdown, BIO_set_flags and BIO_clear_flags](../../../core/libs/prx/libSceLibreSsl3/src/BioFields.cpp) (libSceLibreSsl3) - nothing is checked on the console. They read or write `ptr`, `init`, `shutdown` and `flags` as [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/bio/bio_lib.c#L205-L266) `bio_lib.c` does. This port's BIOs come from libSceLibreSsl's forwarded `BIO_new`, so the fields are at their 2.5.4 offsets in the 104-byte `LibreSsl::Bio`; 4.0.0 adds `callback_ex` before them, which moves them 8 bytes, but its `BIO` is opaque to titles. A null BIO, which LibreSSL dereferences, throws. Closes when: compared with the console.
 - [BIO_meth_new, BIO_meth_free, BIO_meth_set_write, BIO_meth_set_read, BIO_meth_set_ctrl, BIO_meth_set_create and BIO_meth_set_destroy](../../../core/libs/prx/libSceLibreSsl3/src/BioMethod.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/bio/bio_meth.c) `bio_meth.c`, `BIO_meth_new` returns a zeroed `BIO_METHOD` from the guest heap with its type and name, or null without an error when the allocation fails, `BIO_meth_free` frees it, and each setter stores its callback and returns 1. The 80-byte `BIO_METHOD` is laid out as in 2.5.4, so the forwarded libSceLibreSsl `BIO_new`, `BIO_write`, `BIO_ctrl` and `BIO_free` call the callbacks. A null method passed to a setter, which LibreSSL dereferences, throws. Closes when: compared with the console.
@@ -69,6 +71,12 @@
 - [ASN1_TIME_new and X509_gmtime_adj](../../../core/libs/prx/libSceLibreSsl3/src/TimeNew.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c) `a_time_tm.c` and `tasn_new.c`, `ASN1_TIME_new` returns a zeroed 24-byte string from the guest heap with type -1 and the multi-string flag, queueing two ASN1 malloc failures when the allocation fails, and `X509_gmtime_adj` writes the host wall clock plus the offset as UTCTime for 1950 to 2049 and GeneralizedTime otherwise, reusing the given string or a new one, and returns null without an error outside years 0 to 9999. The console clock and the heap the guest frees these with are unverified. Closes when: compared with the console.
 - [BN_dup](../../../core/libs/prx/libSceLibreSsl3/src/BignumDup.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/bn/bn_lib.c#L71-L307) `bn_lib.c`, a null source returns null and any other is copied into a new `BN_FLG_MALLOCED` BIGNUM: `top` words in a zeroed guest-heap array of exactly that size (none for zero), the sign and `BN_FLG_CONSTTIME`. A failed allocation queues `ERR_R_MALLOC_FAILURE` and a source over `INT_MAX / 256` words queues `BN_R_BIGNUM_TOO_LONG`, both on the shared libSceLibreSsl error queue with function code `0xfff`, and return null; a negative `top` returns null without an error. The 24-byte layout is the one both versions use. A source with words but no storage throws, where LibreSSL dereferences it. Closes when: compared with the console.
 - [EVP_PKEY_base_id](../../../core/libs/prx/libSceLibreSsl3/src/PkeyBaseId.cpp) (libSceLibreSsl3) - nothing is checked on the console. It returns the base `pkey_id` that `EVP_PKEY_type` finds for the key's `type` in the `asn1_methods` table of [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/p_lib.c#L149-L164) `p_lib.c`: RSA2 maps to RSA, DSA1 to DSA4 map to DSA, the other listed types return themselves and any other type returns `NID_undef`. `type` is the first field in 4.0.0 and in the [2.5.4 layout](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/evp.h) of the keys the forwarded `EVP_PKEY_new` returns. The forwarded `EVP_PKEY_type` still uses the 2.5.4 table. A null key, which LibreSSL dereferences, throws. Closes when: compared with the console.
+- [DES_set_key_unchecked](../../../core/libs/prx/libSceLibreSsl3/src/DesKey.cpp) (libSceLibreSsl3) - nothing is checked on the console. [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/des/des_key.c#L311-L345) `des_key.c` builds the schedule without parity or weak-key checks, which is what `DES_set_key` does while `DES_check_key` is 0. It fills the schedule through the forwarded libSceLibreSsl `DES_set_key`, so it inherits that function's 128-byte layout (the key followed by zeros, not the precomputed subkeys) and the forwarded `DES_ecb_encrypt` reads it. Closes when: compared with the console.
+- [PKCS5_PBKDF2_HMAC](../../../core/libs/prx/libSceLibreSsl3/src/Pbkdf2.cpp) (libSceLibreSsl3) - nothing is checked on the console. It derives RFC 8018 PBKDF2 blocks with the forwarded libSceLibreSsl HMAC and handles its arguments as [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/evp_pbe.c#L329-L401) `evp_pbe.c` does: a length of -1 means `strlen`, a null digest queues `EVP_R_MESSAGE_DIGEST_IS_NULL` on the shared libSceLibreSsl error queue and returns 0, a null password or a negative length makes the HMAC key setup fail and returns 0, a key length of 0 then returns 1 without reading the salt or output, and fewer than two iterations run one. After that, a negative key length, a null output, a negative salt length or a null salt with a nonzero length, where LibreSSL faults, throw, as do digest sizes outside 1 to 64 bytes. Closes when: compared with the console.
+- [X509_cmp_current_time](../../../core/libs/prx/libSceLibreSsl3/src/X509CmpTime.cpp) (libSceLibreSsl3) - nothing is checked on the console. It follows `X509_cmp_time` with the current time in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_vfy.c#L1886-L1929) `x509_vfy.c`, `x509_verify.c` and [a_time_tm.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c#L199-L307): a 13-byte UTCTime or 15-byte GeneralizedTime ending in `Z`, whose `type` is 0 or matches its length, and which uses UTCTime before 2050 and GeneralizedTime from 2050, returns -1 when it is not later than now and 1 when it is. Any other time, including a null one, returns 0. Closes when: compared with the console.
+- [X509V3_set_ctx](../../../core/libs/prx/libSceLibreSsl3/src/X509V3Context.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_conf.c#L430-L440) `x509_conf.c`, it stores the issuer, subject, request, CRL and flags in the caller's context and leaves `db` unchanged. The context is the 48-byte `X509V3_CTX` of the public 4.0.0 [x509v3.h](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509v3.h#L123-L131), which titles build against; 2.5.4 had an extra `db_meth` before `db`. A null context, which LibreSSL dereferences, throws. Closes when: compared with the console.
+
+- [EVP_sha512_256](../../../core/libs/prx/libSceLibreSsl3/src/Sha512_256.cpp) (libSceLibreSsl3) - nothing is checked on the console. Its type 1030, key type 1026, 32-byte output, `EVP_MD_FLAG_DIGALGID_ABSENT` flag, 128-byte block, 224-byte context and FIPS 180-4 initial hash follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/m_sha1.c#L321-L358) `m_sha1.c` and `sha512.c`. The method is laid out as the [2.5.4](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/evp.h) `EVP_MD` the forwarded libSceLibreSsl `EVP_Digest*` exports read, with the RSA key types of its other digests in `required_pkey_type`. It hashes with libSceLibreSsl's SHA-512, whose final accepts only 48 and 64 bytes, so the context keeps `md_len` 64 and the first 32 bytes are returned. Closes when: compared with the console.
 
 - [SSL_SESSION_get_timeout, SSL_SESSION_set_time and SSL_SESSION_get_protocol_version](../../../core/libs/prx/libSceLibreSsl3/src/SessionMetadata.cpp) - forwarded session lifecycle interoperability, independent console execution, resumption, serialization and expiry remain unverified. The fields follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libssl). [LibreSSL 2.5.4](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libssl/ssl.h) instead puts timeout/time at 144/152; these accessors must not receive that older layout. Tests use caller-owned storage. A null protocol-version input throws instead of dereferencing it.
 - [Session metadata fields](../../../core/libs/prx/libSceLibreSsl3/src/SessionMetadata.cpp) - other firmware revisions are unverified. [BunnyFl reports disassembly only](https://github.com/boykopovar/AnyPS5/pull/15119#pullrequestreview-5742135511) of firmware 13.42 `system/common/lib/libSceLibreSsl3.sprx` (SHA256 `ee2c529c87fe21b7ef1e5f13d10c47ee90944f52a1f848fe0995e031817c2c3a`): getter `0xf2130` reads 64-bit timeout at 168 with null returning zero; setter `0xf2150` writes 64-bit creation time at 176 and returns it, with null returning zero; getter `0xf2170` reads 32-bit version at 0 without a null check. The module and listing have not been independently acquired or executed here.
@@ -84,7 +92,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 98 still-unimplemented callable exports: 89 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 86 still-unimplemented callable exports: 81 named and 5 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -96,7 +104,6 @@
 | `AUTHORITY_KEYID_free` | `2bIZM-OfE8Y` |
 | `X509V3_EXT_d2i` | `2l+JidqxyZQ` |
 | `TLS_method` | `31eWdro1jqs` |
-| `unknown` | `3KZ-L4y1gak` |
 | `tls_accept_socket` | `4Q3bvOy4LY8` |
 | `unknown` | `4pEl-5DmrrM` |
 | `SSL_set_accept_state` | `5BoCLZK9mGk` |
@@ -106,17 +113,13 @@
 | `EC_POINT_set_affine_coordinates_GFp` | `8AGfaSvdDq4` |
 | `unknown` | `A-Hs-8mau+8` |
 | `ERR_load_X509_strings` | `A0lZtFjhcTw` |
-| `unknown` | `AiNud8LR8B4` |
-| `X509_cmp_current_time` | `Ax+Uu++rnrA` |
 | `X509_check_akid` | `C7eFtWPfLdk` |
 | `SSL_CTX_set_default_verify_paths` | `DZ6fywqpaik` |
 | `TLS_server_method` | `EtM5Jwx4EFo` |
-| `ERR_lib_error_string` | `F7jknWesBTY` |
 | `unknown` | `GjO5Ap3E-t4` |
 | `EVP_PKEY_verify` | `HEuvmk+aHs4` |
 | `X509_set_version` | `IOutZPRNNPo` |
 | `d2i_SSL_SESSION` | `IiG4HLr+cOw` |
-| `DES_set_key_unchecked` | `J437jVn9pjI` |
 | `EVP_PKEY_CTX_new_id` | `J5ZLHxWkT6k` |
 | `RSAPublicKey_dup` | `JSqFTYGaWhU` |
 | `SSL_CTX_add1_chain_cert` | `L897DuAuXKk` |
@@ -129,7 +132,6 @@
 | `SSL_get0_verified_chain` | `QKIOxHfZLh8` |
 | `EVP_PKEY_derive` | `QYEjNnn6PT4` |
 | `EVP_PKEY_sign` | `QhYzE+Jdvuk` |
-| `EVP_sha512_256` | `Sea+FOS2GOI` |
 | `EVP_PKEY_derive_init` | `Ssfu1yw4Em4` |
 | `X509V3_EXT_conf_nid` | `TKGJOgbeyuA` |
 | `X509_sign` | `TpBvY92mrSM` |
@@ -137,12 +139,10 @@
 | `SSL_CTX_set0_chain` | `UHkYqkyfwOs` |
 | `EVP_PKEY2PKCS8` | `UT6E1YgI8mw` |
 | `X509_STORE_load_locations` | `V3JtebYui1A` |
-| `ERR_func_error_string` | `VXuysR7ySzw` |
 | `X509_set_issuer_name` | `XK3FmaTS6pg` |
 | `X509_add_ext` | `YJ7bfxMHniE` |
 | `tls_connect_socket` | `ZERQN8ewpgk` |
 | `SSL_CTX_set_quic_method` | `ZFeTGo4ybcw` |
-| `unknown` | `aLdgrI2jAF0` |
 | `EC_POINT_clear_free` | `aSO3Svp7umY` |
 | `d2i_PKCS8_PRIV_KEY_INFO` | `as+t2ZOg5fw` |
 | `ECDSA_do_sign` | `ba4o0Ih6kSs` |
@@ -158,7 +158,6 @@
 | `i2d_PKCS8_PRIV_KEY_INFO` | `iFlkTGEbE9k` |
 | `X509_CRL_get_ext_d2i` | `je-ydGAbgFg` |
 | `X509_digest` | `k1AHUWet-oU` |
-| `X509V3_set_ctx` | `kO-jQ3HS9kE` |
 | `tls_config_set_ciphers` | `lTdt9OsPAV0` |
 | `SSL_set_alpn_protos` | `lyk0UDADPAc` |
 | `RSA_pkey_ctx_ctrl` | `mKlCMgWMU84` |
@@ -167,10 +166,8 @@
 | `SSL_provide_quic_data` | `mhAgol4ETgY` |
 | `d2i_PUBKEY` | `o3Q8yQAMT-k` |
 | `EVP_PKEY_derive_set_peer` | `ovH4WphWIQQ` |
-| `unknown` | `pdxCm9+CCc4` |
 | `unknown` | `qGsc6uT6p1E` |
 | `EVP_PKEY_verify_init` | `qseLIVbdvMQ` |
-| `ERR_reason_error_string` | `rJZ-aiNIYCA` |
 | `X509_add1_ext_i2d` | `s8WMaKNjwvE` |
 | `EC_GROUP_cmp` | `sENJFZ7WbLU` |
 | `SSL_do_handshake` | `tJsbVTdWjT4` |
@@ -179,7 +176,6 @@
 | `HKDF` | `uJ2ZXq4z3As` |
 | `EVP_PKEY_CTX_free` | `ulzAPWCIBkw` |
 | `d2i_ASN1_SEQUENCE_ANY` | `vR0po3nBkBs` |
-| `PKCS5_PBKDF2_HMAC` | `vnwZHU5FvBQ` |
 | `X509_EXTENSION_free` | `wbJDMMsje6s` |
 | `OBJ_obj2txt` | `xZ1BME5qDv0` |
 | `SSL_set_quic_transport_params` | `xf6anoZpWRM` |

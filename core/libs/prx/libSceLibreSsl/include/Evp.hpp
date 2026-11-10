@@ -30,4 +30,10 @@ static_assert(offsetof(LibreSslEvpCipherCtx, num) == 88);
 static_assert(offsetof(LibreSslEvpCipherCtx, flags) == 112);
 static_assert(offsetof(LibreSslEvpCipherCtx, final) == 136);
 
+extern "C" {
+
+int CopyContext_nid_no_patch(EvpMdContext& target, const EvpMdContext& source, const char* function);
+
+}
+
 #endif
