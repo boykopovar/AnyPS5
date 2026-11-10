@@ -3,7 +3,6 @@
 
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
 
 using NKWebKit::HttpAbi::CommonHeader;
 using NKWebKit::HttpAbi::HTTPHeaderMap;
@@ -19,7 +18,7 @@ static HTTPHeaderMap& Headers(ResourceRequestBase& request) {
 }
 
 static void TestRemovalAndInvalidation() {
-    ResourceRequestBase request;
+    ResourceRequestBase request{};
     request.resourceRequestUpdated = true;
     request.platformRequestUpdated = true;
     CommonHeader entries[] {
@@ -35,28 +34,21 @@ static void TestRemovalAndInvalidation() {
     Require(_ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(&Headers(request), HTTPHeaderName::Accept));
 }
 
-static void TestInvalidSynchronizationState() {
-    ResourceRequestBase request;
-    request.resourceRequestUpdated = false;
-    bool threw = false;
-    try {
-        _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv(&request);
-    } catch (const std::logic_error&) {
-        threw = true;
-    }
-    Require(threw);
+static void TestInvalidationWithoutOrigin() {
+    ResourceRequestBase request{};
+    request.resourceRequestUpdated = true;
+    request.platformRequestUpdated = true;
+    CommonHeader entry{HTTPHeaderName::Accept, NKWebKit::WtfAbi::String{}};
+    Headers(request) = {{&entry, 1, 1}, {nullptr, 0, 0}};
 
-    threw = false;
-    try {
-        _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv(nullptr);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
+    _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv(&request);
+
+    Require(!request.platformRequestUpdated);
+    Require(_ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(&Headers(request), HTTPHeaderName::Accept));
 }
 
 int main() {
     TestRemovalAndInvalidation();
-    TestInvalidSynchronizationState();
+    TestInvalidationWithoutOrigin();
     return 0;
 }
