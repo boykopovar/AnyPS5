@@ -137,20 +137,12 @@ std::int64_t APS5_VABI CreateWS_Memory_nid_postfix(Jxr::Stream** stream, void* b
     return WmpErrSuccess;
 }
 
-int APS5_VABI EOSWS_File_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 std::int32_t APS5_VABI EOSWS_Memory_nid_postfix(Jxr::Stream* stream) {
     if (!stream) APS5_INVALID_ARG_EX;
     return stream->state[MemorySize] <= stream->state[MemoryPosition];
 }
 
 int APS5_VABI FreeDescMetadata_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI GetPosWS_File_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -229,8 +221,8 @@ std::int64_t APS5_VABI PKCreateFactory_nid_postfix(void** factory, std::uint32_t
     return WmpErrSuccess;
 }
 
-int APS5_VABI PKFormatConverter_Convert_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_Convert_nid_postfix(void* converter, const void* rect, std::uint8_t* pixels, std::uint32_t stride) {
+    return WmpErrSuccess;
 }
 
 int APS5_VABI PKFormatConverter_Copy_nid_postfix() {
@@ -281,35 +273,15 @@ int APS5_VABI PKImageDecode_Create_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageDecode_SelectFrame_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKImageDecode_SelectFrame_nid_postfix(void* decoder, std::uint32_t frame) {
+    return WmpErrSuccess;
 }
 
-int APS5_VABI PKImageEncode_CreateNewFrame_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKImageEncode_CreateNewFrame_nid_postfix(void* encoder, void* param, std::size_t paramSize) {
+    return WmpErrSuccess;
 }
 
 int APS5_VABI PKImageEncode_Create_WMP_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKImageEncode_Create_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKImageEncode_Initialize_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKImageEncode_Release_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKImageEncode_SetColorContext_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKImageEncode_SetDescriptiveMetadata_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -332,39 +304,19 @@ int APS5_VABI PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageEncode_SetPixelFormat_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKImageEncode_SetResolution_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKImageEncode_SetSize_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI PKImageEncode_SetXMPMetadata_WMP_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageEncode_Terminate_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKImageEncode_Terminate_nid_postfix(void* encoder) {
+    return WmpErrSuccess;
 }
 
 int APS5_VABI PKImageEncode_Transcode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageEncode_WritePixels_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI PKImageEncode_WriteSource_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ReadWS_File_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -380,10 +332,6 @@ std::int64_t APS5_VABI ReadWS_Memory_nid_postfix(Jxr::Stream* stream, void* buff
     }
     state[MemoryPosition] += size;
     return WmpErrSuccess;
-}
-
-int APS5_VABI SetPosWS_File_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 std::int64_t APS5_VABI SetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::size_t position) {
@@ -405,10 +353,6 @@ std::int64_t APS5_VABI WMPFree_nid_postfix(void** memory) {
         *memory = nullptr;
     }
     return WmpErrSuccess;
-}
-
-int APS5_VABI WriteWS_File_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 std::int64_t APS5_VABI WriteWS_Memory_nid_postfix(Jxr::Stream* stream, const void* buffer, std::size_t size) {

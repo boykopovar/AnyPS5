@@ -246,15 +246,6 @@ std::streamsize APS5_VABI libSceLibcInternalInventory_050_nid_no_patch(std::basi
 }
 APS5_EXPORT("olsoiZsezkk", libSceLibcInternalInventory_050_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_052_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("+qKS53qzWdA", libSceLibcInternalInventory_052_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_053_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("8R00hgzXQDY", libSceLibcInternalInventory_053_nid_no_patch);
 
 int APS5_VABI libSceLibcInternalInventory_058_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -1158,16 +1149,6 @@ int APS5_VABI libSceLibcInternalInventory_239_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("Zn44KZgJtWY", libSceLibcInternalInventory_239_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_240_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("zPWCqkg7V+o", libSceLibcInternalInventory_240_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_241_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("Eva2i4D5J6I", libSceLibcInternalInventory_241_nid_no_patch);
 
 int APS5_VABI libSceLibcInternalInventory_243_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
