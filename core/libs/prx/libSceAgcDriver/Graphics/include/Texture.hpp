@@ -402,6 +402,14 @@ public:
         std::uint64_t flushedAfterSkipSameSite;
     };
     static HookSkipCounts TakeHookSkipCounts();
+    struct OrderedSkipCounts {
+        std::uint64_t flushes;
+        std::uint64_t refreshes;
+    };
+    static OrderedSkipCounts TakeOrderedSkipCounts();
+    static void SetFlushFailureForTest(bool fail);
+    static int TakeFlushFailureForTest();
+    static bool OrderedFlushArmedForTest();
     // A consumer found the image current and used it (Refresh, the fast revalidation).
     void NoteProved() const;
     // Whether the storage cache holds this image (set and cleared by the cache under its mutex, the
@@ -673,6 +681,7 @@ private:
     void refreshGeneration();
     std::uint64_t collectedLayerGeneration(std::uint32_t layer, std::uint64_t whole, bool uncached = false) const;
     bool refreshProved();
+    bool keysReplacedByClear() const;
     void takeRefreshProof(bool aliased);
     bool otherPendingOverlaps() const;
     // Marks `count` tracked layers from `first` pending and registers the image (MarkDirty's
