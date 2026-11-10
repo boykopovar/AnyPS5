@@ -36,9 +36,9 @@ void ExpectNotImplemented(TFn stub, const char* name, int line) {
 #define RequireNotImplemented(stub) ExpectNotImplemented(stub, #stub, __LINE__)
 
 int main() {
-    RequireNotImplemented(sceVrHandDebugGetConfig_nid_no_patch);
-    RequireNotImplemented(sceVrHandDebugGetInternalResult_nid_no_patch);
-    RequireNotImplemented(sceVrHandDebugSetConfig_nid_no_patch);
-    RequireNotImplemented(sceVrHandSetDebugInterface_nid_no_patch);
+    RequireNotImplemented(sceVrHandDebugGetConfig);
+    RequireNotImplemented(sceVrHandDebugGetInternalResult);
+    RequireNotImplemented(sceVrHandDebugSetConfig);
+    RequireNotImplemented(sceVrHandSetDebugInterface);
     return 0;
 }
