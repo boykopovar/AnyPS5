@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
@@ -4409,7 +4410,10 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
                 if (unsaved[layer]) pendingMiss[layer] = BaselineMiss::SavedBytesDropped;
             }
         }
-        GuestMemory::CollectWritesUncached(layerBegin(first), static_cast<std::size_t>(layerBegin(first + count - 1) + layerBytes(first + count - 1) - layerBegin(first)));
+        const auto collectFrom = layerBegin(first);
+        const auto collectBytes = static_cast<std::size_t>(layerBegin(first + count - 1) + layerBytes(first + count - 1) - layerBegin(first));
+        if (RuntimeSwitches::Set(RuntimeSwitch::NoMemoPendingCollect)) GuestMemory::CollectWritesUncached(collectFrom, collectBytes);
+        else GuestMemory::CollectWrites(collectFrom, collectBytes);
         if (!completionKept.empty()) {
             for (std::uint32_t layer = first; layer < first + count; ++layer) {
                 if (layerPending[layer]) continue;
