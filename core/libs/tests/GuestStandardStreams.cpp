@@ -1013,7 +1013,8 @@ int main(int argc, char** argv) {
     Require(std::fwrite("\xF0\x9F\x98\x80", 1, 4, wideFourByte.GetHandle()) == 4);
     Require(fseeko_nid_postfix(&wideFourByte, 0, SEEK_SET) == 0);
     *__error_nid_postfix() = 0;
-    Require(fgetwc_nid_postfix(&wideFourByte) == -1 && *__error_nid_postfix() == 86 && ferror_nid_postfix(&wideFourByte) != 0);
+    Require(fgetwc_nid_postfix(&wideFourByte) == 0xd83d && fgetwc_nid_postfix(&wideFourByte) == 0xde00);
+    Require(fgetwc_nid_postfix(&wideFourByte) == -1 && ferror_nid_postfix(&wideFourByte) == 0);
     wideFourByte.Close();
 
     FileStream wideRandom(TemporaryFile::Open());
