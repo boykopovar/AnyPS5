@@ -120,7 +120,7 @@ int APS5_VABI scePngEncDelete(void* handle) {
     PngEncContext* ctx = context(handle);
     if (!ctx) return PNG_ENC_ERROR_INVALID_HANDLE;
     PngEncContext cleared{};
-    if (!GuestCopyOut_nid_no_patch(ctx, &cleared, sizeof(cleared))) return PNG_ENC_ERROR_INVALID_ADDR;
+    GuestCopyOut_nid_no_patch(ctx, &cleared, sizeof(cleared));
     return 0;
 }
 

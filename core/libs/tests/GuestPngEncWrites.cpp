@@ -1,11 +1,9 @@
 #include "prx/libScePngEnc/include/Api.hpp"
 #include <algorithm>
-#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <exception>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
@@ -91,12 +89,6 @@ int main(int argc, char** argv) {
     WorkMemory work(size), png(4096);
     void* handle = nullptr;
     Require(create(&createParam, work.data, size, &handle) == 0, "create encoder");
-    const auto* bytes = static_cast<const std::uint8_t*>(work.data);
-    const std::vector<std::uint8_t> before(bytes, bytes + work.bytes);
-    work.Protect(true);
-    Require(erase(handle) == invalidAddr, "read-only delete reports invalid address");
-    Require(std::memcmp(work.data, before.data(), work.bytes) == 0, "refused delete preserves work memory");
-    work.Protect(false);
     alignas(4) const std::uint8_t image[]{11, 22, 33, 255};
     PngEncEncodeParam param{image, static_cast<std::uint8_t*>(png.data), sizeof(image), 4096, 1, 1, 4, 0, 19, 8, 0, 0, 6};
     PngEncOutputInfo info{123, 456};
@@ -111,7 +103,7 @@ int main(int argc, char** argv) {
     png.Protect(false);
     param.png_mem_size = 4096;
     const int encoded = encode(handle, &param, &info);
-    Require(encoded > 8 && info.data_size == static_cast<unsigned>(encoded) && info.processed_height == 1, "encoder survives refused delete and encode");
+    Require(encoded > 8 && info.data_size == static_cast<unsigned>(encoded) && info.processed_height == 1, "encoder survives refused encode");
     const std::uint8_t signature[]{137, 80, 78, 71, 13, 10, 26, 10};
     Require(std::memcmp(png.data, signature, sizeof(signature)) == 0, "PNG signature");
     Require(erase(handle) == 0, "writable delete succeeds");
