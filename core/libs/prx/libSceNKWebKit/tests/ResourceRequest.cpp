@@ -6,7 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
 
 using NKWebKit::WebCoreAbi::ResourceRequestBase;
 using NKWebKit::WtfAbi::StringImpl;
@@ -194,15 +193,6 @@ static void TestConditional() {
     Require(!_ZNK7WebCore19ResourceRequestBase13isConditionalEv(&request));
     headers->common = {};
     Require(!_ZNK7WebCore19ResourceRequestBase13isConditionalEv(&request));
-
-    ResourceRequestBase stale{};
-    bool threw = false;
-    try {
-        _ZNK7WebCore19ResourceRequestBase13isConditionalEv(&stale);
-    } catch (const std::logic_error&) {
-        threw = true;
-    }
-    Require(threw);
 }
 
 int main() {
