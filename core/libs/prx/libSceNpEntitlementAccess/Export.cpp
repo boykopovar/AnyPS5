@@ -117,8 +117,16 @@ int APS5_VABI sceNpEntitlementAccessGetEntitlementKey(
 }
 
 int APS5_VABI sceNpEntitlementAccessInitialize(const NpEntitlementAccessInitParam* init_param, NpEntitlementAccessBootParam* boot_param) {
-    (void)init_param;
-    (void)boot_param;
+    constexpr int errorParameter = static_cast<int>(0x817D0002);
+    constexpr int errorAlreadyInitialized = static_cast<int>(0x817D0003);
+    static std::mutex mutex;
+    static bool initialized = false;
+    std::lock_guard lock(mutex);
+    if (initialized) return errorAlreadyInitialized;
+    if (init_param == nullptr || boot_param == nullptr) return errorParameter;
+    if (!std::all_of(std::begin(init_param->reserved), std::end(init_param->reserved), [](char value) { return value == 0; })) return errorParameter;
+    if (!std::all_of(std::begin(boot_param->reserved), std::end(boot_param->reserved), [](char value) { return value == 0; })) return errorParameter;
+    initialized = true;
     return 0;
 }
 
