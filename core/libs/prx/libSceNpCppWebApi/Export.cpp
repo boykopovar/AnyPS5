@@ -1045,6 +1045,20 @@ static void LibContextDeallocate(void* libContext, void* object) {
     if (state != nullptr) sceLibcMspaceFree_nid_postfix(state->mspace, object);
 }
 
+static void* AllocateContextOrHost(void* libContext, const std::size_t size) {
+    return LibContextStateFor(libContext) != nullptr ? LibContextAllocate(libContext, size) : std::malloc(size);
+}
+
+static void* ReallocateContextOrHost(void* libContext, void* object, const std::size_t size) {
+    return LibContextStateFor(libContext) != nullptr ? LibContextReallocate(libContext, object, size) : std::realloc(object, size);
+}
+
+static void DeallocateContextOrHost(void* libContext, void* object) {
+    if (object == nullptr) return;
+    if (LibContextStateFor(libContext) != nullptr) LibContextDeallocate(libContext, object);
+    else std::free(object);
+}
+
 static void ReleaseLibContextArena(LibContextState* state) {
     if (state == nullptr) return;
     void* mspace = state->mspace;
@@ -1544,7 +1558,7 @@ static constexpr int StringInvalidArgument = static_cast<int>(0x80553503);
 static constexpr int StringOutOfMemory = static_cast<int>(0x80553504);
 
 static void ResetString(CommonString* self) {
-    LibContextDeallocate(self->libContext, self->buffer);
+    DeallocateContextOrHost(self->libContext, self->buffer);
     self->buffer = nullptr;
     self->bufferSize = 0;
 }
@@ -2090,10 +2104,8 @@ static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementK
 static bool VectorGrow(VectorBody* body, const std::size_t elementSize) {
     if (body->size < body->capacity) return true;
     const std::uint64_t capacity = body->capacity != 0 ? body->capacity * 2 : 4;
-    void* elements = body->libContext != nullptr
-        ? LibContextReallocate(body->libContext, body->elements,
-                               static_cast<std::size_t>(capacity) * elementSize)
-        : std::realloc(body->elements, static_cast<std::size_t>(capacity) * elementSize);
+    void* elements = ReallocateContextOrHost(body->libContext, body->elements,
+                                             static_cast<std::size_t>(capacity) * elementSize);
     if (elements == nullptr) return false;
     body->elements = elements;
     body->capacity = capacity;
@@ -2142,13 +2154,13 @@ static int VectorPushBackString(IntrusivePtr* self, const CommonString* element)
     copy.libContext = body->libContext;
     if (element->buffer != nullptr) {
         const std::size_t length = std::strlen(element->buffer) + 1;
-        copy.buffer = static_cast<char*>(LibContextAllocate(body->libContext, length));
+        copy.buffer = static_cast<char*>(AllocateContextOrHost(body->libContext, length));
         if (copy.buffer == nullptr) return StringOutOfMemory;
         std::memcpy(copy.buffer, element->buffer, length);
         copy.bufferSize = length;
     }
     if (!VectorGrow(body, sizeof(CommonString))) {
-        LibContextDeallocate(body->libContext, copy.buffer);
+        DeallocateContextOrHost(body->libContext, copy.buffer);
         return StringOutOfMemory;
     }
     static_cast<CommonString*>(body->elements)[body->size] = copy;
@@ -2211,7 +2223,8 @@ static bool VectorReserve(VectorBody* body, const std::size_t elementSize, const
     if (body->capacity >= count) return true;
     std::uint64_t capacity = body->capacity != 0 ? body->capacity : 4;
     while (capacity < count) capacity *= 2;
-    void* elements = std::realloc(body->elements, static_cast<std::size_t>(capacity) * elementSize);
+    void* elements = ReallocateContextOrHost(body->libContext, body->elements,
+                                             static_cast<std::size_t>(capacity) * elementSize);
     if (elements == nullptr) return false;
     body->elements = elements;
     body->capacity = capacity;
@@ -2227,7 +2240,6 @@ static int HostVectorCopyFrom(IntrusivePtr* self, const IntrusivePtr* source, co
     void** const selfContext = body == static_cast<VectorBody*>(static_cast<void*>(self)) ? &body->libContext : &self->libContext;
     void* const sourceContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
     if (*selfContext == nullptr) *selfContext = sourceContext;
-    if (body->libContext == nullptr) body->libContext = *selfContext;
     if (sourceBody != nullptr && (sourceBody->magic != VectorBodyMagic || sourceBody->elementKind != 1)) {
         NotImplemented_nid_no_patch(function);
         return ParameterAllocationFailed;
@@ -2286,14 +2298,13 @@ static int HostVectorCopyFromStrings(IntrusivePtr* self, const IntrusivePtr* sou
     void** const selfContext = body == static_cast<VectorBody*>(static_cast<void*>(self)) ? &body->libContext : &self->libContext;
     void* const sourceContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
     if (*selfContext == nullptr) *selfContext = sourceContext;
-    if (body->libContext == nullptr) body->libContext = *selfContext;
     if (sourceBody != nullptr && (sourceBody->magic != VectorBodyMagic || sourceBody->elementKind != 2)) {
         NotImplemented_nid_no_patch(function);
         return ParameterAllocationFailed;
     }
     if (sourceBody != nullptr && body == sourceBody) return 0;
     auto* elements = static_cast<CommonString*>(body->elements);
-    for (std::uint64_t index = 0; index < body->size; ++index) DestroyHostString(&elements[index]);
+    for (std::uint64_t index = 0; index < body->size; ++index) ResetString(&elements[index]);
     body->size = 0;
     const std::uint64_t count = sourceBody != nullptr ? sourceBody->size : 0;
     if (count == 0) return 0;
@@ -2305,10 +2316,10 @@ static int HostVectorCopyFromStrings(IntrusivePtr* self, const IntrusivePtr* sou
         copy.referenceCount = 0;
         copy.buffer = nullptr;
         copy.bufferSize = 0;
-        if (copy.libContext == nullptr) copy.libContext = sourceElements[index].libContext;
+        copy.libContext = body->libContext;
         if (sourceElements[index].buffer != nullptr) {
             const std::size_t length = std::strlen(sourceElements[index].buffer) + 1;
-            copy.buffer = static_cast<char*>(std::malloc(length));
+            copy.buffer = static_cast<char*>(AllocateContextOrHost(body->libContext, length));
             if (copy.buffer == nullptr) {
                 body->size = index;
                 return ParameterAllocationFailed;

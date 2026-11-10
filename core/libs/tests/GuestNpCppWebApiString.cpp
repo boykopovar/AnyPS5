@@ -1,4 +1,5 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
+#include "prx/libSceNpCppWebApi/include/Internal.hpp"
 #include "NpCppWebApiFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
@@ -32,6 +33,7 @@ constexpr std::size_t kVectorSize = 0x48;
 constexpr std::size_t kVectorReferenceCountOffset = 0x38;
 constexpr std::size_t kObjectOffset = 0x00;
 constexpr std::size_t kBodyMagicOffset = 0x00;
+constexpr std::size_t kBodyLibContextOffset = 0x08;
 constexpr std::size_t kBodyReferenceCountOffset = 0x30;
 constexpr std::size_t kBodyElementKindOffset = 0x34;
 constexpr std::size_t kBodyElementsOffset = 0x38;
@@ -561,6 +563,45 @@ void TestVectorCopyFromStrings() {
     Require(GuardIntact(element) && VectorGuardIntact(source) && VectorGuardIntact(target));
 }
 
+void TestVectorCopyAndPushStringWithoutContext() {
+    NpCppWebApiTest::LibContext sourceContext;
+    VectorStorage source;
+    VectorStorage target;
+    Storage element;
+    std::memset(source.bytes, kFill, sizeof(source.bytes));
+    std::memset(target.bytes, kFill, sizeof(target.bytes));
+    std::memset(element.bytes, kFill, sizeof(element.bytes));
+
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(source.bytes), sourceContext.value());
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(target.bytes), nullptr);
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), sourceContext.value());
+    const char* const payload = "string without a context";
+    Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(element.bytes), payload) == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(reinterpret_cast<IntrusivePtr*>(source.bytes), reinterpret_cast<const CommonString*>(element.bytes)) == 0);
+
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8copyFromERKS5_(reinterpret_cast<IntrusivePtr*>(target.bytes), reinterpret_cast<const IntrusivePtr*>(source.bytes)) == 0);
+    void* targetBody = LoadBody<void*>(target.bytes, kObjectOffset);
+    Require(targetBody != nullptr);
+    Require(LoadBody<void*>(targetBody, kBodyLibContextOffset) == nullptr);
+    Require(LoadBody<std::uint64_t>(targetBody, kBodySizeOffset) == 1);
+    const auto* targetElements = LoadBody<const unsigned char*>(targetBody, kBodyElementsOffset);
+    Require(targetElements != nullptr);
+    Require(LoadBody<char*>(targetElements, kBufferOffset) != nullptr && std::strcmp(LoadBody<char*>(targetElements, kBufferOffset), payload) == 0);
+    Require(LoadBody<void*>(targetElements, kLibContextOffset) == nullptr);
+
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(reinterpret_cast<IntrusivePtr*>(target.bytes), reinterpret_cast<const CommonString*>(element.bytes)) == 0);
+    Require(LoadBody<std::uint64_t>(targetBody, kBodySizeOffset) == 2);
+    targetElements = LoadBody<const unsigned char*>(targetBody, kBodyElementsOffset);
+    const auto* appended = targetElements + kStringSize;
+    Require(LoadBody<char*>(appended, kBufferOffset) != nullptr && std::strcmp(LoadBody<char*>(appended, kBufferOffset), payload) == 0);
+    Require(LoadBody<void*>(appended, kLibContextOffset) == nullptr);
+
+    _ZN3sce2Np9CppWebApi6Common6StringD1Ev(reinterpret_cast<CommonString*>(element.bytes));
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(reinterpret_cast<IntrusivePtr*>(source.bytes));
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(reinterpret_cast<IntrusivePtr*>(target.bytes));
+    Require(GuardIntact(element) && VectorGuardIntact(source) && VectorGuardIntact(target));
+}
+
 void TestVectorCopyFromEmptySourceEndsAtBegin() {
     NpCppWebApiTest::LibContext libContext;
     VectorStorage target;
@@ -667,8 +708,8 @@ void TestVectorCopyFromResolvesDirectBodies() {
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE3endEv(lastIterator, reinterpret_cast<IntrusivePtr*>(targetBody));
     Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEneERKS5_(firstIterator, lastIterator));
 
-    std::free(LoadBody<char*>(directCopied, kBufferOffset));
-    std::free(directCopied);
+    NpCppWebApiContextDeallocate(targetContext.value(), LoadBody<char*>(directCopied, kBufferOffset));
+    NpCppWebApiContextDeallocate(targetContext.value(), directCopied);
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(self);
     std::free(directBuffer);
     std::free(directElements);
@@ -686,6 +727,7 @@ int main(int argc, char** argv) {
     TestVectorIterationVisitsStringsInOrder();
     TestVectorIterationRejectsOtherBodies();
     TestVectorCopyFromStrings();
+    TestVectorCopyAndPushStringWithoutContext();
     TestVectorCopyFromEmptySourceEndsAtBegin();
     TestVectorCopyFromResolvesDirectBodies();
     TestStringEmptyAndEquals();
