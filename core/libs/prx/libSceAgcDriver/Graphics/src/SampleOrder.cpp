@@ -212,9 +212,26 @@ public:
         context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, target.image, located ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL, copy->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region3d);
         if (located) transitionLocated(context, commands, target.image, target.format, info, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, fragmentStages, depthAccess);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, fragmentStages, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | depthAccess);
+        drawDepth(commands, target, map, region, order, copy->depthView, stencil ? copy->stencilView : copy->depthView, kept);
+    }
+
+    void Import(VkCommandBuffer commands, const SampleOrderTarget& target, VkImageView samples, std::vector<std::shared_ptr<void>>& kept) {
+        constexpr std::uint32_t sameSamplesDrawn = KeptSampleOrder | 0x88888888u;
+        constexpr std::array<std::uint32_t, 4> map{sameSamplesDrawn, sameSamplesDrawn, sameSamplesDrawn, sameSamplesDrawn};
+        drawDepth(commands, target, map, target.extent, SampleOrderPass{}, samples, samples, kept);
+    }
+
+    Context context;
+
+private:
+    void drawDepth(VkCommandBuffer commands, const SampleOrderTarget& target, const std::array<std::uint32_t, 4>& map, VkExtent2D region, const SampleOrderPass& order, VkImageView depthSource, VkImageView stencilSource, std::vector<std::shared_ptr<void>>& kept) {
+        const bool stencil = target.method != SampleOrderMethod::Depth;
+        const auto& locations = order.locations;
+        const bool located = order.located;
+        const VkSampleLocationsInfoEXT info{VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT, nullptr, static_cast<VkSampleCountFlagBits>(target.samples), {1, 1}, target.samples, locations.data()};
         const auto& pass = depthPass(target.format, target.samples, target.method, located, locations);
         const auto set = allocate(sampledSetLayout, {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, setsPerPool * 2u}});
-        std::array<VkDescriptorImageInfo, 2> images{{{VK_NULL_HANDLE, copy->depthView, VK_IMAGE_LAYOUT_GENERAL}, {VK_NULL_HANDLE, stencil ? copy->stencilView : copy->depthView, VK_IMAGE_LAYOUT_GENERAL}}};
+        std::array<VkDescriptorImageInfo, 2> images{{{VK_NULL_HANDLE, depthSource, VK_IMAGE_LAYOUT_GENERAL}, {VK_NULL_HANDLE, stencilSource, VK_IMAGE_LAYOUT_GENERAL}}};
         std::array<VkWriteDescriptorSet, 2> writes{};
         for (std::uint32_t binding = 0; binding < writes.size(); ++binding) {
             writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -261,9 +278,6 @@ public:
         context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
     }
 
-    Context context;
-
-private:
     struct Ring {
         std::vector<VkDescriptorPool> pools;
         std::vector<std::uint64_t> serials;
@@ -660,6 +674,15 @@ void RecordDepthSampleLocations(const Context& context, VkCommandBuffer commands
     const VkSampleLocationsInfoEXT info{VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT, nullptr, static_cast<VkSampleCountFlagBits>(depth.samples), depth.grid, depth.samples * depth.grid.width * depth.grid.height, depth.locations.data()};
     transitionLocated(context, commands, depth.image, depth.format, info, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, anyWrite, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
     transitionLocated(context, commands, depth.image, depth.format, info, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, anyAccess);
+}
+
+void RecordDepthSampleImport(const Context& context, VkCommandBuffer commands, const SampleOrderTarget& target, VkImageView samples, std::vector<std::shared_ptr<void>>& kept) {
+    Require(target.image != VK_NULL_HANDLE && target.view != VK_NULL_HANDLE && samples != VK_NULL_HANDLE && target.samples > 1u, "a depth sample import needs a multisampled depth attachment and a sampled source");
+    Require(target.method == SampleOrderMethod::Depth && exactDepth(target.format), "a depth sample import writes only depth, through FragDepth into an exactly stored depth format");
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, reorderStages, anyWrite, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    ordersFor(context).Import(commands, target, samples, kept);
+    if (target.keep != nullptr) kept.push_back(target.keep);
+    RecordMemoryBarrier(context, commands, reorderStages, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, anyAccess);
 }
 
 std::array<std::span<const std::uint32_t>, 9> SampleOrderShaderModules() {

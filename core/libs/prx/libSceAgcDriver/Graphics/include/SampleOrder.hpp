@@ -66,6 +66,7 @@ std::vector<SampleOrderStep> PlanSampleOrder(const Context& context, const State
 SampleOrderPass SampleOrderPassFor(const Context& context, const State& state, const SampleOrder& order);
 void RecordSampleOrder(const Context& context, VkCommandBuffer commands, const SampleOrderPass& pass, std::span<const SampleOrderTarget> targets, bool toHost, std::vector<std::shared_ptr<void>>& kept);
 void RecordDepthSampleLocations(const Context& context, VkCommandBuffer commands, const DepthSampleLocations& depth);
+void RecordDepthSampleImport(const Context& context, VkCommandBuffer commands, const SampleOrderTarget& target, VkImageView samples, std::vector<std::shared_ptr<void>>& kept);
 std::array<std::span<const std::uint32_t>, 9> SampleOrderShaderModules();
 void ClearSampleOrders(VkDevice device);
 
