@@ -217,7 +217,7 @@ static void LocalTimePointerValidation() {
 #endif
     Require(Throws<std::invalid_argument>([&] { _ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb("2000", readOnly); }));
 #ifdef _WIN32
-    Require(VirtualFree(readOnly, 0, MEM_RELEASE) == 0);
+    Require(VirtualFree(readOnly, 0, MEM_RELEASE) != 0);
 #else
     Require(munmap(readOnly, sizeof(bool)) == 0);
 #endif
