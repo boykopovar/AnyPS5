@@ -83,7 +83,7 @@ std::int64_t APS5_VABI PKCreateCodecFactory_nid_postfix(void** factory, std::uin
 std::int64_t APS5_VABI PKCreateFactory_CreateStream_nid_postfix(void** stream);
 std::int64_t APS5_VABI PKCreateFactory_Release_nid_postfix(void** factory);
 std::int64_t APS5_VABI PKCreateFactory_nid_postfix(void** factory, std::uint32_t version);
-int APS5_VABI PKFormatConverter_Convert_nid_postfix();
+std::int64_t APS5_VABI PKFormatConverter_Convert_nid_postfix(void* converter, const void* rect, std::uint8_t* pixels, std::uint32_t stride);
 int APS5_VABI PKFormatConverter_Copy_nid_postfix();
 int APS5_VABI PKFormatConverter_EnumConversions_nid_postfix();
 int APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix();
@@ -104,8 +104,8 @@ std::int64_t APS5_VABI PKImageDecode_GetResolution_nid_postfix(void* decoder, fl
 std::int64_t APS5_VABI PKImageDecode_GetSize_nid_postfix(void* decoder, std::int32_t* width, std::int32_t* height);
 std::int64_t APS5_VABI PKImageDecode_Initialize_nid_postfix(void* decoder, Jxr::Stream* stream);
 std::int64_t APS5_VABI PKImageDecode_Release_nid_postfix(void** decoder);
-int APS5_VABI PKImageDecode_SelectFrame_nid_postfix();
-int APS5_VABI PKImageEncode_CreateNewFrame_nid_postfix();
+std::int64_t APS5_VABI PKImageDecode_SelectFrame_nid_postfix(void* decoder, std::uint32_t frame);
+std::int64_t APS5_VABI PKImageEncode_CreateNewFrame_nid_postfix(void* encoder, void* param, std::size_t paramSize);
 int APS5_VABI PKImageEncode_Create_WMP_nid_postfix();
 int APS5_VABI PKImageEncode_Create_nid_postfix();
 int APS5_VABI PKImageEncode_Initialize_nid_postfix();
@@ -121,7 +121,7 @@ int APS5_VABI PKImageEncode_SetPixelFormat_nid_postfix();
 int APS5_VABI PKImageEncode_SetResolution_nid_postfix();
 int APS5_VABI PKImageEncode_SetSize_nid_postfix();
 int APS5_VABI PKImageEncode_SetXMPMetadata_WMP_nid_postfix();
-int APS5_VABI PKImageEncode_Terminate_nid_postfix();
+std::int64_t APS5_VABI PKImageEncode_Terminate_nid_postfix(void* encoder);
 int APS5_VABI PKImageEncode_Transcode_nid_postfix();
 int APS5_VABI PKImageEncode_WritePixels_nid_postfix();
 int APS5_VABI PKImageEncode_WriteSource_nid_postfix();
