@@ -318,7 +318,25 @@ void Allocation() {
     memory = &calls;
     Require(WMPAlloc_nid_postfix(&memory, Max) == -101 && memory == nullptr, "failed allocation did not report out of memory");
     RequireInvalidArgument([] { WMPAlloc_nid_postfix(nullptr, 24); }, "allocation accepted a null pointer");
+    RequireInvalidArgument([] { WMPAlloc_nid_postfix(reinterpret_cast<void**>(0x10), 24); }, "allocation accepted an unmapped pointer");
     RequireInvalidArgument([] { WMPFree_nid_postfix(nullptr); }, "free accepted a null pointer");
+    RequireInvalidArgument([] { WMPFree_nid_postfix(reinterpret_cast<void**>(0x10)); }, "free accepted an unmapped pointer");
+    constexpr std::size_t slotSize = 0x4000;
+    std::int64_t slotPhys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, slotSize, 0, 0, &slotPhys) == 0, "allocate direct memory for slot");
+    void* slotMap = nullptr;
+    Require(sceKernelMapDirectMemory(&slotMap, slotSize, 3, 0, slotPhys, 0) == 0 && slotMap != nullptr, "map direct memory for slot");
+    void* allocBuf = nullptr;
+    Require(WMPAlloc_nid_postfix(&allocBuf, 32) == 0 && allocBuf != nullptr, "allocate buffer for slot test");
+    auto** slotPtr = static_cast<void**>(slotMap);
+    slotPtr[0] = allocBuf;
+    Require(sceKernelMprotect(slotMap, slotSize, 1) == 0, "protect slot read-only");
+    RequireInvalidArgument([slotPtr] { WMPFree_nid_postfix(slotPtr); }, "free accepted a read-only slot");
+    Require(slotPtr[0] == allocBuf, "read-only slot still contains original pointer");
+    Require(sceKernelMprotect(slotMap, slotSize, 3) == 0, "restore slot writability");
+    Require(WMPFree_nid_postfix(slotPtr) == 0 && slotPtr[0] == nullptr, "free succeeds after restoring writability");
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(slotMap), slotSize) == 0, "unmap direct memory for slot");
+    Require(sceKernelReleaseDirectMemory(slotPhys, slotSize) == 0, "release direct memory for slot");
 }
 
 void MemoryCreate() {
