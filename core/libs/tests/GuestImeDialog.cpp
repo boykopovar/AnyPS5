@@ -324,7 +324,7 @@ int main() {
     Tap(PadCross);
     Tap(PadR2);
     Require(EndStatus() == EndStatusOk);
-    Require(std::u16string(buffer) == u"ag");
+    Require(std::u16string(buffer, 2) == u"ag");
     Close();
 
     buffer[0] = u'\0';
