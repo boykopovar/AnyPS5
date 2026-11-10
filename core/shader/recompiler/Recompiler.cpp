@@ -511,7 +511,7 @@ std::atomic<std::uint64_t>& resourcePlanBudgetBytes() {
     static std::atomic<std::uint64_t> budget{[] {
         const char* value = std::getenv("APS5_RESOURCE_PLAN_MB");
         if (value != nullptr && *value != '\0') return static_cast<std::uint64_t>(std::strtoull(value, nullptr, 10)) << 20u;
-        return ResourcePlanBudgetFor(0);
+        return std::uint64_t{0};
     }()};
     return budget;
 }
@@ -2334,18 +2334,6 @@ void SetResultMemoTrimHook(std::function<void()> hook) {
 
 std::uint64_t ResultMemoBytes() {
     return resultMemoCounters().heldBytes.load(std::memory_order_relaxed);
-}
-
-std::uint64_t ResourcePlanBudgetFor(std::uint64_t physicalBytes) {
-    constexpr std::uint64_t GiB = 1ull << 30u;
-    if (physicalBytes == 0) return 2u * GiB;
-    return std::clamp<std::uint64_t>(physicalBytes / 8u, GiB, 8u * GiB);
-}
-
-void SizeResourcePlanBudget(std::uint64_t physicalBytes) {
-    const char* value = std::getenv("APS5_RESOURCE_PLAN_MB");
-    if (value != nullptr && *value != '\0') return;
-    SetResourcePlanBudget(ResourcePlanBudgetFor(physicalBytes));
 }
 
 void SetResourcePlanBudget(std::uint64_t bytes) {

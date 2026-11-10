@@ -2447,7 +2447,6 @@ void verifyPlanBudget() {
     const auto afterPrepared = ShaderDiskCache::Totals();
     require(afterPrepared.planHits == beforePrepared.planHits + 1u && afterPrepared.planMisses == beforePrepared.planMisses && afterPrepared.planWrites == beforePrepared.planWrites && afterPrepared.misses == beforePrepared.misses && afterPrepared.writes == beforePrepared.writes && ResourcePlanTotals().reloads == beforePreparedTrim.reloads + 1u, "plan budget: a prepared shader's evicted plan did not reload from its own disk cache entry");
     SetResourcePlanBudget(0u);
-    require(ResourcePlanBudgetFor(0u) == (2ull << 30u) && ResourcePlanBudgetFor(4ull << 30u) == (1ull << 30u) && ResourcePlanBudgetFor(32ull << 30u) == (4ull << 30u) && ResourcePlanBudgetFor(256ull << 30u) == (8ull << 30u), "plan budget: the default budget is not an eighth of the host memory between 1 and 8 GiB");
 }
 
 void verifySharedPlanBudget() {

@@ -870,8 +870,6 @@ struct ResourcePlanCounters {
     std::uint64_t evictions = 0;
     std::uint64_t reloads = 0;
 };
-[[nodiscard]] std::uint64_t ResourcePlanBudgetFor(std::uint64_t physicalBytes);
-void SizeResourcePlanBudget(std::uint64_t physicalBytes);
 void SetResourcePlanBudget(std::uint64_t bytes);
 [[nodiscard]] ResourcePlanCounters ResourcePlanTotals();
 struct ResourcePlanInterval {
