@@ -35,6 +35,15 @@ int main() {
     Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, &deviceId) == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseOpen(1, 0, 0, nullptr) == MOUSE_ERROR_NOT_INITIALIZED);
+    Require(sceMouseConnectPort() == MOUSE_ERROR_NOT_INITIALIZED);
+    Require(sceMouseDeviceOpen() == MOUSE_ERROR_NOT_INITIALIZED);
+    Require(sceMouseDisconnectDevice() == MOUSE_ERROR_NOT_INITIALIZED);
+    Require(sceMouseDisconnectPort() == MOUSE_ERROR_NOT_INITIALIZED);
+    Require(sceMouseGetDeviceInfo(0, nullptr) == MOUSE_ERROR_NOT_INITIALIZED);
+    Require(sceMouseMbusInit() == MOUSE_ERROR_NOT_INITIALIZED);
+    Require(sceMouseSetHandType(0, 0) == MOUSE_ERROR_NOT_INITIALIZED);
+    Require(sceMouseSetPointerSpeed(0, 0) == MOUSE_ERROR_NOT_INITIALIZED);
+    Require(sceMouseSetProcessPrivilege() == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseInit() == MOUSE_OK);
     Require(sceMouseInit() == MOUSE_OK);
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_ERROR_INVALID_HANDLE);

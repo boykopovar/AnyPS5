@@ -20,6 +20,20 @@ inline constexpr std::uint64_t PrecisePauseThresholdTicks(std::uint64_t freq) {
     return PreciseHundredNanosToQpcTicks(2ULL, freq);
 }
 
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#include <immintrin.h>
+#endif
+
+inline void PreciseSpinPause() {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    _mm_pause();
+#elif defined(__aarch64__)
+    asm volatile("yield" ::: "memory");
+#else
+    std::atomic_signal_fence(std::memory_order_seq_cst);
+#endif
+}
+
 #ifdef _WIN32
 #include <windows.h>
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -119,18 +133,6 @@ inline void PreciseSleepHundredNanos(unsigned long long hundredNanos) {
 #ifdef __linux__
 #include <sys/prctl.h>
 #endif
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-#include <immintrin.h>
-#endif
-
-inline void PreciseSpinPause() {
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-    _mm_pause();
-#else
-    std::atomic_signal_fence(std::memory_order_seq_cst);
-#endif
-}
-
 inline std::uint64_t PreciseMonotonicNanos() {
     struct timespec ts;
 #if defined(__APPLE__) && defined(_LIBCPP_VERSION) && defined(CLOCK_MONOTONIC_RAW)
@@ -140,6 +142,10 @@ inline std::uint64_t PreciseMonotonicNanos() {
 #endif
     return static_cast<std::uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<std::uint64_t>(ts.tv_nsec);
 }
+
+#ifdef __APPLE__
+extern "C" bool PreciseKernelTimerSleep_nid_no_patch(std::uint64_t wakeNanos);
+#endif
 
 #ifdef __linux__
 inline unsigned long long PreciseLinuxSpinTailNanos_nid_no_patch() {
@@ -181,9 +187,11 @@ inline void PreciseSleepFromNanosWithSlack(std::uint64_t startNanos, unsigned lo
     }
 #elif defined(__APPLE__)
     (void)allowLowSlack;
+    constexpr unsigned long long kKernelTimerTailNanos = 30000ULL;
     constexpr unsigned long long kSpinTailNanos = 100000ULL;
     constexpr unsigned long long kMaxWakeMarginNanos = 5000000ULL;
-    if (nanos > kSpinTailNanos) [[unlikely]] {
+    const bool timed = nanos > kKernelTimerTailNanos && PreciseKernelTimerSleep_nid_no_patch(deadlineNanos - kKernelTimerTailNanos);
+    if (!timed && nanos > kSpinTailNanos) [[unlikely]] {
         const unsigned long long beforeTail = nanos - kSpinTailNanos;
         const unsigned long long margin = beforeTail * 3ULL / 10ULL;
         const unsigned long long sleepNanos = beforeTail - (margin < kMaxWakeMarginNanos ? margin : kMaxWakeMarginNanos);

@@ -316,6 +316,8 @@ def load(path, thread=None):
             continue
         fields = line.strip().rsplit(None, 3)
         if len(fields) == 4 and fields[1].startswith("0x") and fields[2].isdigit() and fields[3].isdigit():
+            if thread is not None and current is None:
+                raise ValueError(f"{path}:{number}: thread filtering requires thread headings in an address capture")
             if thread is None or current == thread:
                 samples.self_counts[(fields[0], fields[1])] += int(fields[2])
                 samples.inclusive[(fields[0], fields[1])] += int(fields[3])

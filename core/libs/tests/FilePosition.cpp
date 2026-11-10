@@ -1,11 +1,18 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <limits>
+#include <string>
+#include <thread>
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -33,6 +40,80 @@ static void CheckFseekBounds() {
     Require(fgetc_nid_postfix(&file) == '7');
     Require(fseek_nid_postfix(&file, 100, SEEK_SET) == 0 && ftello_nid_postfix(&file) == 100);
     Require(fgetc_nid_postfix(&file) == EOF && feof_nid_postfix(&file) != 0);
+    file.Close();
+}
+
+static void CheckRejectedBufferedSeeks() {
+    const auto root = std::filesystem::temp_directory_path() / ("anyps5-failed-seek-" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto host = root.string();
+    AddPathAlias_nid_no_patch("/failed-seek", host.c_str());
+    auto* writer = fopen_nid_postfix("/failed-seek/input", "wb");
+    Require(writer != nullptr);
+    Require(fwrite_nid_postfix("12345678", 1, 8, writer) == 8);
+    Require(fclose_nid_postfix(writer) == 0);
+    auto* reader = fopen_nid_postfix("/failed-seek/input", "rb");
+    Require(reader != nullptr);
+    char buffer[4];
+    Require(fread_nid_postfix(buffer, 1, sizeof(buffer), reader) == 4);
+    Require(std::string(buffer, sizeof(buffer)) == "1234");
+    const int endOfFile = feof_nid_postfix(reader);
+    const int error = ferror_nid_postfix(reader);
+    const std::int64_t negative = -1;
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        errno = 0;
+        const int result = attempt == 0 ? fsetpos_nid_postfix(reader, &negative) :
+            attempt == 1 ? fseeko_nid_postfix(reader, -1, SEEK_SET) :
+            attempt == 2 ? fseek_nid_postfix(reader, -5, SEEK_CUR) :
+            attempt == 3 ? fseeko_nid_postfix(reader, -9, SEEK_END) :
+            fseeko_nid_postfix(reader, std::numeric_limits<std::int64_t>::max(), SEEK_CUR);
+        Require(result == -1);
+        Require(errno == (attempt == 4 ? 84 : 22));
+        Require(ftello_nid_postfix(reader) == 4);
+        Require(feof_nid_postfix(reader) == endOfFile);
+        Require(ferror_nid_postfix(reader) == error);
+    }
+    Require(fgetc_nid_postfix(reader) == '5');
+    Require(ungetc_nid_postfix('5', reader) == '5');
+    errno = 0;
+    Require(fseeko_nid_postfix(reader, -5, SEEK_CUR) == -1 && errno == 22);
+    Require(ftello_nid_postfix(reader) == 4);
+    Require(feof_nid_postfix(reader) == endOfFile);
+    Require(ferror_nid_postfix(reader) == error);
+    Require(fgetc_nid_postfix(reader) == '5');
+    Require(ungetc_nid_postfix('X', reader) == 'X');
+    errno = 0;
+    Require(fseeko_nid_postfix(reader, -1, SEEK_SET) == -1 && errno == 22);
+    Require(ftello_nid_postfix(reader) == 4);
+    Require(feof_nid_postfix(reader) == endOfFile);
+    Require(ferror_nid_postfix(reader) == error);
+    Require(fgetc_nid_postfix(reader) == 'X');
+    Require(fgetc_nid_postfix(reader) == '6');
+    Require(fclose_nid_postfix(reader) == 0);
+    RemovePathAlias_nid_no_patch("/failed-seek");
+    Require(std::filesystem::remove(root / "input"));
+    Require(std::filesystem::remove(root));
+}
+
+static void CheckConcurrentRelativeSeeks() {
+    FileStream file(TemporaryFile::Open());
+    constexpr int Seeks = 20000;
+    std::atomic<int> ready{0};
+    std::atomic<bool> failed{false};
+    const auto seek = [&] {
+        ready.fetch_add(1);
+        while (ready.load() < 2) std::this_thread::yield();
+        for (int index = 0; index < Seeks; ++index) {
+            if (fseeko_nid_postfix(&file, 1, SEEK_CUR) != 0) failed.store(true);
+        }
+    };
+    std::thread first(seek);
+    std::thread second(seek);
+    first.join();
+    second.join();
+    Require(!failed.load());
+    Require(ftello_nid_postfix(&file) == 2 * Seeks);
     file.Close();
 }
 
@@ -72,6 +153,8 @@ static void CheckSeekFromEndAfterBufferedWrite() {
 }
 
 int main() {
+    CheckRejectedBufferedSeeks();
+    CheckConcurrentRelativeSeeks();
     CheckFseekBounds();
     CheckFailedSeekKeepsPosition();
     CheckSeekFromEndAfterBufferedWrite();

@@ -1,5 +1,6 @@
 #include "prx/libSceLoginDialog/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -58,8 +59,11 @@ int APS5_VABI sceLoginDialogGetResult(LoginDialogResult* result) {
  if (result == nullptr) return LOGIN_DIALOG_ERROR_INVALID_ARGUMENT;
  const int status = g_status.load();
  if (status == COMMON_DIALOG_STATUS_NONE) return LOGIN_DIALOG_ERROR_NOT_INITIALIZED;
- result->result = COMMON_DIALOG_RESULT_USER_CANCELED;
- result->errorCode = LOGIN_DIALOG_ERROR_INVALID_USER;
+ const std::int32_t fields[2] = {COMMON_DIALOG_RESULT_USER_CANCELED, LOGIN_DIALOG_ERROR_INVALID_USER};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(result, fields, sizeof(fields));
+ errno = savedErrno;
+ if (!copied) return LOGIN_DIALOG_ERROR_INVALID_ARGUMENT;
  if (status != COMMON_DIALOG_STATUS_FINISHED) return LOGIN_DIALOG_ERROR_BUSY;
  return 0;
 }

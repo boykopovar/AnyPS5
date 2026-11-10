@@ -90,10 +90,6 @@ int APS5_VABI u_charAge_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI u_charDigitValue_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI u_charDirection_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -111,10 +107,6 @@ int APS5_VABI u_charName_nid_postfix() {
 }
 
 int APS5_VABI u_charType_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI u_digit_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

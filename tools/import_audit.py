@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import json
 import os
+import posixpath
 import re
 import struct
 import subprocess
@@ -74,7 +75,15 @@ def elf_program_dynamic_symbols(path, data):
         raise AuditError(f"{path}: sectionless ELF needs little-endian ELF64 program headers")
     take(data, program_offset, program_count * program_size, path, "program header table")
     segments = [unpack("<IIQQQQQQ", data, program_offset + index * program_size, path, f"program header {index}") for index in range(program_count)]
-    loads = [segment for segment in segments if segment[0] == 1]
+    loads = []
+    for segment in segments:
+        if segment[0] == 1:
+            _, _, offset, _, _, file_size, mem_size, _ = segment
+            if file_size > mem_size:
+                raise AuditError(f"{path}: load segment file size {file_size} exceeds memory size {mem_size}")
+            if file_size:
+                take(data, offset, file_size, path, "load segment")
+            loads.append(segment)
 
     def file_offset(address, size, what):
         for segment in loads:
@@ -436,11 +445,11 @@ def audit_host_dependencies(direct, libraries, modules, windows=()):
                     raise AuditError(f"ambiguous Windows host library {name}: {', '.join(sorted(matches))}")
                 name = next(iter(matches), name)
                 chain[-1] = name
-            if name not in available:
+            if origin_name(name) not in available:
                 missing.append({"importer": root, "chain": chain})
-            elif name in direct and name not in expanded and name not in chain[1:-1]:
-                expanded.add(name)
-                for dependency in reversed(direct[name]):
+            elif origin_name(name) in direct and origin_name(name) not in expanded and name not in chain[1:-1]:
+                expanded.add(origin_name(name))
+                for dependency in reversed(direct[origin_name(name)]):
                     if dependency in chain:
                         continue
                     stack.append((dependency, chain + [dependency]))
@@ -666,33 +675,47 @@ def source_stub_classes(source):
     stubs = {}
     partial = set()
     shared = {}
+    done_by_library = {}
     for library in sorted(item for item in Path(source).iterdir() if item.is_dir()):
         aliases = {}
         for file in nid_names.source_files(library):
             for nid, name in nid_names.source_aliases(file.read_text(encoding="utf-8-sig", errors="ignore")):
                 aliases.setdefault(name, set()).add(nid)
         group = progress.scan_library(library)
-        if "shared_sources" in group:
-            shared[library.name] = group["shared_sources"]
+        shared[library.name] = progress.shared_source_owners(library)
         done = {nid for name in group["done_names"] for nid in nids_of(name, aliases)}
+        done_by_library[library.name] = done
         conditional = conditional_stubs(library) if group["todo_names"] else set()
         for name in group["todo_names"]:
             for nid in nids_of(name, aliases) - done:
                 stubs.setdefault((library.name + ".prx", nid), name)
                 if name in conditional:
                     partial.add((library.name + ".prx", nid))
-    for library, owner in shared.items():
-        chain = [library]
-        while owner in shared:
-            if owner in chain:
-                raise AuditError(f"{source}: shared source cycle: {' -> '.join(chain + [owner])}")
-            chain.append(owner)
-            owner = shared[owner]
-        for (provider, nid), name in list(stubs.items()):
-            if provider == owner + ".prx":
-                stubs[(library + ".prx", nid)] = name
-                if (provider, nid) in partial:
-                    partial.add((library + ".prx", nid))
+    resolved = set()
+
+    def inherit(library, chain):
+        if library in chain:
+            raise AuditError(f"{source}: shared source cycle: {' -> '.join(chain + [library])}")
+        if library in resolved:
+            return
+        for owner in shared[library]:
+            inherit(owner, chain + [library])
+            done_by_library[library].update(done_by_library[owner])
+            for (provider, nid), name in list(stubs.items()):
+                if provider == owner + ".prx":
+                    key = (library + ".prx", nid)
+                    stubs.setdefault(key, name)
+                    if (provider, nid) in partial:
+                        partial.add(key)
+        resolved.add(library)
+
+    for library in shared:
+        inherit(library, [])
+    for library, done in done_by_library.items():
+        for nid in done:
+            key = (library + ".prx", nid)
+            stubs.pop(key, None)
+            partial.discard(key)
     return stubs, partial
 
 
@@ -738,6 +761,12 @@ def check_conservation(references, records):
         raise AuditError(f"conservation failed: {references} references in, {classified} classified, unknown classes {unknown}")
 
 
+def origin_name(name):
+    if isinstance(name, str) and name.startswith(("$ORIGIN/", "${ORIGIN}/")):
+        return posixpath.basename(posixpath.normpath(name.split("/", 1)[1]))
+    return name
+
+
 MODULE_FILE_SUFFIXES = (".debug_prx", ".suprx", ".sprx", ".prx")
 
 
@@ -763,6 +792,7 @@ class ModuleNames(set):
     def __contains__(self, library):
         if not isinstance(library, str):
             return False
+        library = origin_name(library)
         filename = library.lower() if self.fold else library
         return filename in self.files or module_stem(library, self.fold) in self.stems
 
@@ -792,6 +822,8 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
                         return normalized
                     if len(candidates) == 1:
                         return next(iter(candidates))
+                    if normalized in libraries:
+                        return normalized
             if name.casefold().endswith(".prx"):
                 normalized = name[:-4] + ".prx"
                 candidates = windows_names.get(normalized.casefold(), ())
@@ -810,6 +842,7 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         guest_names[provider] = ModuleNames(names, fold=getattr(modules, "fold", False))
 
     def guest_matches(name):
+        name = origin_name(name)
         filename = name.lower() if getattr(modules, "fold", False) else name
         exact = {provider for provider, names in guest_names.items() if filename in names.files}
         return exact or {provider for provider, names in guest_names.items() if name in names}

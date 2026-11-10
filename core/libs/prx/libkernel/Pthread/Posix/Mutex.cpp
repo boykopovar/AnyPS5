@@ -38,6 +38,11 @@ int _toSce(int result) {
     return result == 0 ? 0 : SceKernelError(result);
 }
 
+bool _slotUsable(PthreadMutex* mutex) {
+    PthreadMutex current = nullptr;
+    return GuestCopyIn_nid_no_patch(&current, mutex, sizeof(current)) && GuestCopyOut_nid_no_patch(mutex, &current, sizeof(current));
+}
+
 void _initializeStatic(PthreadMutex* mutex, const char* funcName) {
     if (!mutex) throw std::runtime_error(std::string(funcName) + ": null mutex");
     std::atomic_ref<PthreadMutex> slot(*mutex);
@@ -55,14 +60,22 @@ extern "C" {
 
 int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex) {
     if (!mutex) throw std::runtime_error("pthread_mutex_destroy: null mutex");
-    if (_isStaticInitializer(*mutex)) {
-        *mutex = nullptr;
+    PthreadMutex current = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&current, mutex, sizeof(current))) return PosixThread::GUEST_EFAULT;
+    if (_isStaticInitializer(current)) {
+        if (current && !GuestCopyOut_nid_no_patch(mutex, &(current = nullptr), sizeof(current))) return PosixThread::GUEST_EFAULT;
         return 0;
     }
     return PosixThread::ToErrno(scePthreadMutexDestroy(mutex));
 }
 
 int APS5_VABI pthread_mutex_init_nid_postfix(PthreadMutex* mutex, const PthreadMutexattr* attr) {
+    if (attr) {
+        PthreadMutexattr handle = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&handle, attr, sizeof(handle))) return PosixThread::GUEST_EFAULT;
+        if (handle && (handle->type < MutexType::ErrorCheck || handle->type > MutexType::Adaptive)) return POSIX_EINVAL;
+    }
+    if (mutex && !_slotUsable(mutex)) return PosixThread::GUEST_EFAULT;
     const int result = scePthreadMutexInit(mutex, attr, nullptr);
     if (result == 0 && (!attr || !*attr)) (*mutex)->_type = MutexType::ErrorCheck;
     return PosixThread::ToErrno(result);
@@ -154,52 +167,53 @@ int APS5_VABI pthread_mutexattr_destroy_nid_postfix(PthreadMutexattr* attr) {
 }
 
 int APS5_VABI pthread_mutexattr_init_nid_postfix(PthreadMutexattr* attr) {
-    const int result = scePthreadMutexattrInit(attr);
-    if (result == 0) (*attr)->type = MutexType::ErrorCheck;
-    return PosixThread::ToErrno(result);
+    return PosixThread::ToErrno(scePthreadMutexattrInit(attr));
 }
 
 int APS5_VABI pthread_mutexattr_getpshared_nid_postfix(const PthreadMutexattr* attr, int* pshared) {
-    if (!attr || !*attr) return POSIX_EINVAL;
-    if (!pshared) throw std::runtime_error("pthread_mutexattr_getpshared: null pshared");
-    *pshared = (*attr)->pshared;
+    PthreadMutexattr handle = nullptr;
+    if (const int error = MutexOperations::LoadAttribute(attr, handle)) return PosixThread::ToErrno(error);
+    if (!GuestCopyOut_nid_no_patch(pshared, &handle->pshared, sizeof(handle->pshared))) return PosixThread::GUEST_EFAULT;
     return 0;
 }
 
 int APS5_VABI pthread_mutexattr_setpshared_nid_postfix(PthreadMutexattr* attr, int pshared) {
-    if (!attr || !*attr) return POSIX_EINVAL;
+    PthreadMutexattr handle = nullptr;
+    if (const int error = MutexOperations::LoadAttribute(attr, handle)) return PosixThread::ToErrno(error);
     if (pshared != POSIX_PROCESS_PRIVATE) return POSIX_EINVAL;
-    (*attr)->pshared = pshared;
+    handle->pshared = pshared;
     return 0;
 }
 
 int APS5_VABI pthread_mutexattr_setprotocol_nid_postfix(PthreadMutexattr* attr, int protocol) {
-    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
+    PthreadMutexattr handle = nullptr;
+    if (const int error = MutexOperations::LoadAttribute(attr, handle)) return PosixThread::ToErrno(error);
     if (protocol < 0 || protocol > POSIX_PRIO_PROTECT) return POSIX_EINVAL;
-    (*attr)->protocol = protocol;
-    (*attr)->ceiling = sched_get_priority_max_nid_postfix(POSIX_SCHED_RR);
+    handle->protocol = protocol;
+    handle->ceiling = sched_get_priority_max_nid_postfix(POSIX_SCHED_RR);
     return 0;
 }
 
 int APS5_VABI pthread_mutexattr_getprotocol_nid_postfix(const PthreadMutexattr* attr, int* protocol) {
-    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
-    if (!protocol) throw std::runtime_error("pthread_mutexattr_getprotocol: null protocol");
-    *protocol = (*attr)->protocol;
+    PthreadMutexattr handle = nullptr;
+    if (const int error = MutexOperations::LoadAttribute(attr, handle)) return PosixThread::ToErrno(error);
+    if (!GuestCopyOut_nid_no_patch(protocol, &handle->protocol, sizeof(handle->protocol))) return PosixThread::GUEST_EFAULT;
     return 0;
 }
 
 int APS5_VABI pthread_mutexattr_setprioceiling_nid_postfix(PthreadMutexattr* attr, int prioceiling) {
-    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
-    if ((*attr)->protocol != POSIX_PRIO_PROTECT || prioceiling < 256 || prioceiling > 767) return POSIX_EINVAL;
-    (*attr)->ceiling = prioceiling;
+    PthreadMutexattr handle = nullptr;
+    if (const int error = MutexOperations::LoadAttribute(attr, handle)) return PosixThread::ToErrno(error);
+    if (handle->protocol != POSIX_PRIO_PROTECT || prioceiling < 256 || prioceiling > 767) return POSIX_EINVAL;
+    handle->ceiling = prioceiling;
     return 0;
 }
 
 int APS5_VABI pthread_mutexattr_getprioceiling_nid_postfix(const PthreadMutexattr* attr, int* prioceiling) {
-    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
-    if (!prioceiling) throw std::runtime_error("pthread_mutexattr_getprioceiling: null prioceiling");
-    if ((*attr)->protocol != POSIX_PRIO_PROTECT) return POSIX_EINVAL;
-    *prioceiling = (*attr)->ceiling;
+    PthreadMutexattr handle = nullptr;
+    if (const int error = MutexOperations::LoadAttribute(attr, handle)) return PosixThread::ToErrno(error);
+    if (handle->protocol != POSIX_PRIO_PROTECT) return POSIX_EINVAL;
+    if (!GuestCopyOut_nid_no_patch(prioceiling, &handle->ceiling, sizeof(handle->ceiling))) return PosixThread::GUEST_EFAULT;
     return 0;
 }
 
@@ -208,19 +222,21 @@ int APS5_VABI pthread_mutexattr_settype_nid_postfix(PthreadMutexattr* attr, int 
 }
 
 int APS5_VABI pthread_mutexattr_gettype_nid_postfix(const PthreadMutexattr* attr, int* type) {
-    if (!attr || !*attr) return POSIX_EINVAL;
-    if (!type) throw std::runtime_error("pthread_mutexattr_gettype: null type");
-    if (static_cast<int>((*attr)->type) > static_cast<int>(MutexType::Adaptive)) return POSIX_EINVAL;
-    *type = static_cast<int>((*attr)->type);
+    PthreadMutexattr handle = nullptr;
+    if (const int error = MutexOperations::LoadAttribute(attr, handle)) return PosixThread::ToErrno(error);
+    if (static_cast<int>(handle->type) > static_cast<int>(MutexType::Adaptive)) return POSIX_EINVAL;
+    const int value = static_cast<int>(handle->type);
+    if (!GuestCopyOut_nid_no_patch(type, &value, sizeof(value))) return PosixThread::GUEST_EFAULT;
     return 0;
 }
 
 int APS5_VABI pthread_mutexattr_setkind_np_nid_postfix(PthreadMutexattr* attr, int kind) {
-    if (!attr || !*attr) {
-        *__error_nid_postfix() = POSIX_EINVAL;
+    PthreadMutexattr handle = nullptr;
+    if (const int error = MutexOperations::LoadAttribute(attr, handle)) {
+        *__error_nid_postfix() = PosixThread::ToErrno(error);
         return -1;
     }
-    (*attr)->type = static_cast<MutexType>(static_cast<std::int32_t>(static_cast<std::int16_t>(kind)));
+    handle->type = static_cast<MutexType>(static_cast<std::int32_t>(static_cast<std::int16_t>(kind)));
     return 0;
 }
 
