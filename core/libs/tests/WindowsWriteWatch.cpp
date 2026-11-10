@@ -752,6 +752,71 @@ DWORD ProtectionAt(const unsigned char* address) {
     return info.State == MEM_COMMIT ? info.Protect : 0;
 }
 
+void CheckSplitRunReportsRacingStores() {
+    auto& mappings = Mappings::Get();
+    constexpr std::size_t Page = 16384;
+    constexpr std::size_t Span = 64 * Page;
+    constexpr std::size_t Rounds = 2000;
+    constexpr std::size_t Races = 16;
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Span, nullptr);
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Span));
+    Require(section && memory, "cannot allocate split run race test memory");
+    mappings.ForgetSection(section);
+    auto* target = memory + 50 * Page;
+    const auto collect = [&](std::size_t first, std::size_t count, Collection collection) {
+        std::array<void*, 32> pages{};
+        std::size_t available = pages.size();
+        Require(mappings.Collect(reinterpret_cast<std::uintptr_t>(memory + first * Page), count * Page, pages.data(), &available, true, collection), "split run race collection failed");
+        std::set<std::size_t> result;
+        for (std::size_t i = 0; i < available; ++i) result.insert((reinterpret_cast<std::uintptr_t>(pages[i]) - reinterpret_cast<std::uintptr_t>(memory)) / Small);
+        return result;
+    };
+    std::atomic<std::size_t> round{0};
+    std::atomic<std::size_t> finished{0};
+    std::atomic<std::size_t> raced{0};
+    std::atomic<bool> split{false};
+    unsigned char value = 0;
+    std::jthread writer([&](std::stop_token stop) {
+        for (std::size_t seen = 0; !stop.stop_requested();) {
+            const auto current = round.load(std::memory_order_acquire);
+            if (current == seen) {
+                std::this_thread::yield();
+                continue;
+            }
+            seen = current;
+            while (!split.load(std::memory_order_acquire) && !stop.stop_requested()) {
+                MEMORY_BASIC_INFORMATION info{};
+                if (VirtualQuery(target, &info, sizeof(info)) != sizeof(info) || info.State != MEM_COMMIT || info.Protect != PAGE_EXECUTE_READWRITE) continue;
+                static_cast<volatile unsigned char*>(target)[8] = value;
+                ++raced;
+                break;
+            }
+            finished.store(seen, std::memory_order_release);
+        }
+    });
+    for (std::size_t current = 1; current <= Rounds && raced < Races; ++current) {
+        mappings.Map(memory, Span, section, 0, PAGE_READWRITE);
+        for (std::size_t page = 12; page <= 50; page += 2) collect(page, 1, Collection::All);
+        Require(ProtectionAt(target) == PAGE_READONLY && ProtectionAt(target - Page) == PAGE_READWRITE, "collection did not arm every other page of the run that races its split");
+        const unsigned char before = target[8];
+        value = static_cast<unsigned char>(before + 1);
+        split.store(false, std::memory_order_relaxed);
+        round.store(current, std::memory_order_release);
+        mappings.Reset(memory + 10 * Page, Page);
+        split.store(true, std::memory_order_release);
+        while (finished.load(std::memory_order_acquire) != current) std::this_thread::yield();
+        const bool stored = target[8] != before;
+        Require(collect(12, 39, Collection::Armed) == (stored ? std::set<std::size_t>{50 * Page / Small} : std::set<std::size_t>{}), stored ? "a store that raced the split of its run was not reported" : "a split of a run reported a page nobody stored to");
+    }
+    writer.request_stop();
+    writer.join();
+    Require(raced > 0, "no store landed in the writable window of a split, so the race was not exercised");
+    mappings.Reset(memory, Span);
+    VirtualFree(memory, 0, MEM_RELEASE);
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+}
+
 void CheckSharedRunIsOneView() {
     constexpr std::size_t Gib = std::size_t{1} << 30;
     HANDLE large = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, static_cast<DWORD>(Gib), nullptr);
@@ -873,6 +938,7 @@ int main(int argc, char** argv) {
         CheckFailureAndHoles();
         CheckPrivate();
         CheckConcurrentWrites();
+        CheckSplitRunReportsRacingStores();
         CheckForgottenSectionKeepsNoPages();
         CheckSharedMapQueriesPerMapping();
         CheckSharedRunIsOneView();
