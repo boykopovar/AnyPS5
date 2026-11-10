@@ -104,7 +104,6 @@ int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent20setPauseOnAssertionsERN3WTF
 int APS5_VABI _ZN7WebCore14ResourceLoader5startEv();
 int APS5_VABI _ZNK7WebCore27TranslateTransformOperation5cloneEv();
 int APS5_VABI WKPageCanDelete();
-int APS5_VABI WKNotificationCopyDir();
 int APS5_VABI WKUserContentExtensionStoreRemove();
 int APS5_VABI _ZN9Inspector21InspectorRuntimeAgent6enableERN3WTF6StringE();
 int APS5_VABI _ZN7WebCore19ResourceRequestBase17removeCredentialsEv();
