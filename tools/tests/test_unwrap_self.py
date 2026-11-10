@@ -1474,28 +1474,60 @@ class UnwrapTest(unittest.TestCase):
 
     def test_segments_outside_the_file_backed_load_range_preserve_existing_output(self):
         output = Path(self.directory) / "output.elf"
-        for address, size, memory_size in ((0x1078, 0x10, 0x80), (0x1078, 0x10, 0x100),
-                                            (0x1080, 0x10, 0x100)):
-            for kind in (PT_DYNAMIC, PT_TLS):
-                with self.subTest(address=address, size=size, memory_size=memory_size, kind=kind):
-                    segments = default_segments()
-                    segments[2] = (kind, 4, 0x1580, address, size, 8)
-                    payloads = default_payloads()
-                    payloads[0xA80] = pattern(23, 0x100)
-                    container = bytearray(build_container(segments, default_records(), payloads))
-                    struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 40,
-                                     memory_size)
-                    output.write_bytes(b"previous output")
-                    result, output = self.convert(container)
-                    self.assertEqual(result.returncode, 2, result.stderr)
-                    self.assertIn("file-backed range of PT_LOAD 1", result.stderr)
-                    self.assertNotIn("Traceback", result.stderr)
-                    self.assertEqual(output.read_bytes(), b"previous output")
-                    self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+        cases = ((PT_DYNAMIC, 0x1078, 0x80), (PT_DYNAMIC, 0x1078, 0x100), (PT_DYNAMIC, 0x1080, 0x100),
+                 (PT_TLS, 0x1078, 0x80), (PT_TLS, 0x1080, 0x88))
+        for kind, address, memory_size in cases:
+            with self.subTest(kind=kind, address=address, memory_size=memory_size):
+                segments = default_segments()
+                segments[2] = (kind, 4, 0x1580, address, 0x10, 8)
+                payloads = default_payloads()
+                payloads[0xA80] = pattern(23, 0x100)
+                container = bytearray(build_container(segments, default_records(), payloads))
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 40, memory_size)
+                output.write_bytes(b"previous output")
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("file-backed range of PT_LOAD 1", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(output.read_bytes(), b"previous output")
+                self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
+    def test_tls_image_past_the_file_backed_load_range_reads_the_zero_fill(self):
+        for address, memory_size, backed in ((0x1078, 0x100, 8), (0x1080, 0x100, 0), (0x1080, 0x90, 0),
+                                             (0x10F0, 0x100, 0)):
+            with self.subTest(address=address, memory_size=memory_size):
+                segments = default_segments()
+                segments[2] = (PT_TLS, 4, 0x1580, address, 0x10, 8)
+                payloads = default_payloads()
+                payloads[0xA80] = pattern(23, 0x100)
+                container = bytearray(build_container(segments, default_records(), payloads))
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 40, memory_size)
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 2 * 56 + 40, 0x40)
+                result, output = self.convert(bytes(container))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                load, tls = headers[1:3]
+                self.assertEqual(tls, (PT_TLS, 4, tls[2], address, address, 0x10, 0x40, 8))
+                self.assertEqual(tls[2] % 8, address % 8)
+                self.assertEqual(data[tls[2]:tls[2] + 0x10], pattern(9, 0x80)[0x80 - backed:] + bytes(0x10 - backed))
+                self.assertEqual(load[5], 0x80)
+                self.assertEqual(data[load[2]:load[2] + 0x80], pattern(9, 0x80))
+
+    def test_huge_zero_filled_tls_image_is_refused_before_allocation(self):
+        segments = default_segments()
+        segments[2] = (PT_TLS, 4, 0x1580, 0x1080, 0x20000000, 8)
+        container = bytearray(build_container(segments, default_records(), default_payloads()))
+        struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 40, 0x40000000)
+        struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 2 * 56 + 40, 0x20000000)
+        result, output = self.convert(bytes(container))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("segment 2 needs 536870912 bytes of output", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(output.exists())
 
     def test_file_empty_load_cannot_supply_segment_bytes_from_container_padding(self):
         segments = default_segments() + [(PT_LOAD, 6, 0x1900, 0x4000, 0, PAGE),
-                                         (PT_TLS, 4, 0x1900, 0x4000, 0x10, 8)]
+                                         (PT_DYNAMIC, 6, 0x1900, 0x4000, 0x10, 8)]
         payloads = default_payloads()
         payloads[0x1900] = pattern(23, 0x10)
         container = bytearray(build_container(segments, default_records(), payloads))
@@ -1506,6 +1538,21 @@ class UnwrapTest(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertFalse(output.exists())
         self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
+    def test_tls_image_in_a_file_empty_load_is_zero_not_container_padding(self):
+        segments = default_segments() + [(PT_LOAD, 6, 0x1900, 0x4000, 0, PAGE),
+                                         (PT_TLS, 4, 0x1900, 0x4000, 0x10, 8)]
+        payloads = default_payloads()
+        payloads[0x1900] = b"\xa5" * 0x10
+        container = bytearray(build_container(segments, default_records(), payloads))
+        struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 3 * 56 + 40, 0x2000)
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data, headers = read_program_headers(output)
+        tls = headers[4]
+        self.assertEqual(tls[:6], (PT_TLS, 4, tls[2], 0x4000, 0x4000, 0x10))
+        self.assertEqual(data[tls[2]:tls[2] + 0x10], bytes(0x10))
+        self.assertNotIn(b"\xa5" * 0x10, data)
 
     def test_segment_ending_at_the_file_backed_load_boundary_is_preserved(self):
         for kind in (PT_DYNAMIC, PT_TLS):
