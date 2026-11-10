@@ -446,12 +446,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKNavigationActionShouldPerformDownload` | `dy5gXrUocbc` |
 | `WKNavigationDataCopyOriginalRequest` | `S-xPXI+4q9E` |
 | `WKNavigationResponseCanShowMIMEType` | `zDNEy9hON-w` |
-| `WKNotificationCopyBody` | `mLDfb0Bl+A8` |
-| `WKNotificationCopyIconURL` | `WFLFSRXPRn0` |
-| `WKNotificationCopyLang` | `C0Zzwfz-3bw` |
-| `WKNotificationCopyTag` | `OP-xJR9Y+G0` |
-| `WKNotificationCopyTitle` | `TFclhiSEXqI` |
-| `WKNotificationGetID` | `6+JjX8dugXY` |
 | `WKNotificationGetSecurityOrigin` | `f5y9sv5r5hs` |
 | `WKNotificationManagerProviderDidClickNotification` | `U3ua0NGm+jE` |
 | `WKNotificationManagerProviderDidCloseNotifications` | `IeQSRVoUfPw` |

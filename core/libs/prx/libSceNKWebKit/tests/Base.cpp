@@ -1651,6 +1651,58 @@ static void TestOpenPanelParameters() {
     WKRelease(notParameters);
 }
 
+static void TestNotification() {
+    Require(WKNotificationGetTypeID() == 76);
+
+    auto notif = NKWebKit::Make<NKWebKit::Notification>();
+    notif->title = u"Alert";
+    notif->body = u"Something happened";
+    notif->iconURL = u"https://example.com/icon.png";
+    notif->tag = u"tag1";
+    notif->lang = u"en-US";
+    notif->dir = u"ltr";
+    notif->notificationID = 42;
+
+    const void* ref = NKWebKit::ToRef(notif);
+
+    auto* title = WKNotificationCopyTitle(ref);
+    Require(WKStringIsEqualToUTF8CString(title, "Alert"));
+    WKRelease(title);
+
+    auto* body = WKNotificationCopyBody(ref);
+    Require(WKStringIsEqualToUTF8CString(body, "Something happened"));
+    WKRelease(body);
+
+    auto* icon = WKNotificationCopyIconURL(ref);
+    Require(WKGetTypeID(icon) == 21);
+    Require(WKStringIsEqualToUTF8CString(icon, "https://example.com/icon.png"));
+    WKRelease(icon);
+
+    auto* tag = WKNotificationCopyTag(ref);
+    Require(WKStringIsEqualToUTF8CString(tag, "tag1"));
+    WKRelease(tag);
+
+    auto* lang = WKNotificationCopyLang(ref);
+    Require(WKStringIsEqualToUTF8CString(lang, "en-US"));
+    WKRelease(lang);
+
+    auto* dir = WKNotificationCopyDir(ref);
+    Require(WKStringIsEqualToUTF8CString(dir, "ltr"));
+    WKRelease(dir);
+
+    Require(WKNotificationGetID(ref) == 42);
+
+    bool threw = false;
+    try {
+        WKNotificationCopyTitle(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    WKRelease(ref);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -1863,6 +1915,7 @@ int main() {
     TestPermissionRequests();
     TestFrameHandle();
     TestOpenPanelParameters();
+    TestNotification();
     TestCertificateInfo();
     TestEmptyFrameLoaderClient();
     TestInspector();
