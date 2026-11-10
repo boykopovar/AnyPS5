@@ -1082,10 +1082,6 @@ int APS5_VABI _ZN7WebCore8Settings18setDefaultFontSizeEi() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPreferencesGetWebAnimationsEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore24RotateTransformOperation6createEddddNS_18TransformOperation13OperationTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1660,10 +1656,6 @@ int APS5_VABI _ZN7WebCore15GraphicsContext5scaleERKNS_9FloatSizeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPreferencesGetWebRTCLegacyAPIEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_9_plus_uzG6bu_minus_R8_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1751,10 +1743,6 @@ int APS5_VABI _ZN7WebCore24CoordinatedGraphicsLayer13addChildBelowEON3WTF3RefINS
 }
 
 int APS5_VABI _ZThn24_N7WebCore14DocumentLoader35enqueueSecurityPolicyViolationEventEONS_28SecurityPolicyViolationEvent4InitE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPreferencesSetJavaEnabledForLocalFiles() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -2727,10 +2715,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_G1vXshIWBi8_nid_no_patch() {
 }
 APS5_EXPORT("G1vXshIWBi8", libSceNKWebKitLegacyUnknown_G1vXshIWBi8_nid_no_patch);
 
-int APS5_VABI WKPreferencesGetWebAnimationsCSSIntegrationEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore12ISOWebVTTCue8durationEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -2826,10 +2810,6 @@ int APS5_VABI _ZN7WebCore11DisplayList11SetLineJoinC2ENS_8LineJoinE() {
 }
 
 int APS5_VABI _ZN7WebCore10JSDocument23visitAdditionalChildrenERN3JSC11SlotVisitorE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPreferencesSetWebRTCMDNSICECandidatesEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -3336,10 +3316,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_Jr1tSCtuUiY_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("Jr1tSCtuUiY", libSceNKWebKitLegacyUnknown_Jr1tSCtuUiY_nid_no_patch);
-
-int APS5_VABI WKPreferencesGetModernMediaControlsEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZNK7WebCore21WheelEventDeltaFilter17isFilteringDeltasEv() {
     NotImplemented_nid_no_patch(__func__);
@@ -5106,10 +5082,6 @@ int APS5_VABI _ZNK7WebCore26Matrix3DTransformOperation19isRepresentableIn2DEv() 
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPreferencesGetJavaEnabledForLocalFiles() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList8DrawPathD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -5363,10 +5335,6 @@ int APS5_VABI _ZN7WebCore8JSPath2D14finishCreationERN3JSC2VME() {
 }
 
 int APS5_VABI _ZNK7WebCore14SecurityOrigin10canDisplayERKN3WTF3URLE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPreferencesSetWebRTCLegacyAPIEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6205,10 +6173,6 @@ int APS5_VABI _ZNK7WebCore11JSDOMWindow12openDatabaseERN3JSC14JSGlobalObjectE() 
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPreferencesSetModernMediaControlsEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleSetAllowStorageAccessFromFileURLS() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6417,10 +6381,6 @@ int APS5_VABI _ZNK7WebCore21ContentSecurityPolicy21allowScriptFromSourceERKN3WTF
 }
 
 int APS5_VABI _ZNK7WebCore12SharedBuffer11DataSegment4dataEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPreferencesSetWebAnimationsCSSIntegrationEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9027,10 +8987,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_uRAfWptGSjA_nid_no_patch() {
 }
 APS5_EXPORT("uRAfWptGSjA", libSceNKWebKitLegacyUnknown_uRAfWptGSjA_nid_no_patch);
 
-int APS5_VABI WKPreferencesGetWebRTCMDNSICECandidatesEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore17JSHTMLLinkElementC1EPN3JSC9StructureERNS_17JSDOMGlobalObjectEON3WTF3RefINS_15HTMLLinkElementENS6_13DumbPtrTraitsIS8_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9731,10 +9687,6 @@ int APS5_VABI _ZN7WebCore29DeprecatedCSSOMPrimitiveValue13setFloatValueEtd() {
 }
 
 int APS5_VABI _ZN7WebCore17LibWebRTCProviderC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPreferencesSetWebAnimationsEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 

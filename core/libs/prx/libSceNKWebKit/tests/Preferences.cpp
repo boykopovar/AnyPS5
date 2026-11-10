@@ -140,6 +140,7 @@ const BooleanCase booleanCases[]{
     {"MetaRefreshEnabled", WKPreferencesSetMetaRefreshEnabled, WKPreferencesGetMetaRefreshEnabled, true},
     {"MockCaptureDevicesEnabled", WKPreferencesSetMockCaptureDevicesEnabled, WKPreferencesGetMockCaptureDevicesEnabled, false},
     {"MockScrollbarsEnabled", WKPreferencesSetMockScrollbarsEnabled, WKPreferencesGetMockScrollbarsEnabled, false},
+    {"ModernMediaControlsEnabled", WKPreferencesSetModernMediaControlsEnabled, WKPreferencesGetModernMediaControlsEnabled, true},
     {"NeedsSiteSpecificQuirks", WKPreferencesSetNeedsSiteSpecificQuirks, WKPreferencesGetNeedsSiteSpecificQuirks, true},
     {"NeedsStorageAccessFromFileURLsQuirk", WKPreferencesSetNeedsStorageAccessFromFileURLsQuirk, WKPreferencesGetNeedsStorageAccessFromFileURLsQuirk, true},
     {"NotificationsEnabled", WKPreferencesSetNotificationsEnabled, WKPreferencesGetNotificationsEnabled, false},
@@ -188,10 +189,14 @@ const BooleanCase booleanCases[]{
     {"UseGiantTiles", WKPreferencesSetUseGiantTiles, WKPreferencesGetUseGiantTiles, false},
     {"VideoPlaybackRequiresUserGesture", WKPreferencesSetVideoPlaybackRequiresUserGesture, WKPreferencesGetVideoPlaybackRequiresUserGesture, false},
     {"ViewGestureDebuggingEnabled", WKPreferencesSetViewGestureDebuggingEnabled, WKPreferencesGetViewGestureDebuggingEnabled, false},
+    {"WebAnimationsCSSIntegrationEnabled", WKPreferencesSetWebAnimationsCSSIntegrationEnabled, WKPreferencesGetWebAnimationsCSSIntegrationEnabled, true},
+    {"WebAnimationsEnabled", WKPreferencesSetWebAnimationsEnabled, WKPreferencesGetWebAnimationsEnabled, true},
     {"WebArchiveDebugModeEnabled", WKPreferencesSetWebArchiveDebugModeEnabled, WKPreferencesGetWebArchiveDebugModeEnabled, false},
     {"WebAudioEnabled", WKPreferencesSetWebAudioEnabled, WKPreferencesGetWebAudioEnabled, false},
     {"WebAuthenticationEnabled", WKPreferencesSetWebAuthenticationEnabled, WKPreferencesGetWebAuthenticationEnabled, false},
     {"WebGLEnabled", WKPreferencesSetWebGLEnabled, WKPreferencesGetWebGLEnabled, true},
+    {"WebRTCLegacyAPIEnabled", WKPreferencesSetWebRTCLegacyAPIEnabled, WKPreferencesGetWebRTCLegacyAPIEnabled, false},
+    {"WebRTCMDNSICECandidatesEnabled", WKPreferencesSetWebRTCMDNSICECandidatesEnabled, WKPreferencesGetWebRTCMDNSICECandidatesEnabled, false},
     {"WebSecurityEnabled", WKPreferencesSetWebSecurityEnabled, WKPreferencesGetWebSecurityEnabled, true},
     {"WebShareEnabled", WKPreferencesSetWebShareEnabled, WKPreferencesGetWebShareEnabled, false},
 };
@@ -266,6 +271,10 @@ void Deprecated() {
     Require(WKPreferencesGetJavaEnabled(nullptr) == false);
     WKPreferencesSetJavaEnabled(nullptr, false);
     Require(WKPreferencesGetJavaEnabled(nullptr) == false);
+    WKPreferencesSetJavaEnabledForLocalFiles(nullptr, true);
+    Require(WKPreferencesGetJavaEnabledForLocalFiles(nullptr) == false);
+    WKPreferencesSetJavaEnabledForLocalFiles(nullptr, false);
+    Require(WKPreferencesGetJavaEnabledForLocalFiles(nullptr) == false);
     WKPreferencesSetKeygenElementEnabled(nullptr, true);
     Require(WKPreferencesGetKeygenElementEnabled(nullptr) == false);
     WKPreferencesSetKeygenElementEnabled(nullptr, false);
