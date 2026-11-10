@@ -10,7 +10,7 @@ void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWit
 void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidClearWindowObjectInWorldERNS_15DOMWrapperWorldE(WebCore::DOMWrapperWorld&) {
 }
 
-bool APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient26shouldUseCredentialStorageEPNS_14DocumentLoaderEm(WebCore::DocumentLoader*, std::uint64_t) {
+bool APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient26shouldUseCredentialStorageEPNS_14DocumentLoaderEm(void*, WebCore::DocumentLoader*, std::uint64_t) {
     return false;
 }
 
