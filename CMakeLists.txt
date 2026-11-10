@@ -505,6 +505,8 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME debt_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_report.py)
+        add_test(NAME debt_format COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_format.py)
         add_test(NAME agc_test_split COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_agc_test_split.py)
         add_test(NAME stubgen_stdout_newlines COMMAND ${Python3_EXECUTABLE}
