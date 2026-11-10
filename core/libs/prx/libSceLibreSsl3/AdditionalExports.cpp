@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -166,8 +167,10 @@ int APS5_VABI EC_POINT_set_affine_coordinates_GFp_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI SSL_CTX_set_max_early_data_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI SSL_CTX_set_max_early_data_nid_postfix(void* ctx, std::uint32_t maxEarlyData) {
+    (void)ctx;
+    (void)maxEarlyData;
+    return 1;
 }
 
 int APS5_VABI Unknown_A_minus_Hs_minus_8mau_plus_8_nid_no_patch() {
@@ -192,8 +195,9 @@ int APS5_VABI X509_check_akid_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI SSL_set_quic_use_legacy_codepoint_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI SSL_set_quic_use_legacy_codepoint_nid_postfix(void* ssl, int useLegacy) {
+    (void)ssl;
+    (void)useLegacy;
 }
 
 int APS5_VABI SSL_CTX_set_default_verify_paths_nid_postfix() {
@@ -298,8 +302,9 @@ int APS5_VABI SSL_CTX_set_quic_method_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI SSL_process_quic_post_handshake_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI SSL_process_quic_post_handshake_nid_postfix(void* ssl) {
+    (void)ssl;
+    return 1;
 }
 
 int APS5_VABI Unknown_aLdgrI2jAF0_nid_no_patch() {
@@ -405,8 +410,9 @@ int APS5_VABI PKCS5_PBKDF2_HMAC_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI SSL_CTX_set_post_handshake_auth_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI SSL_CTX_set_post_handshake_auth_nid_postfix(void* ctx, int value) {
+    (void)ctx;
+    (void)value;
 }
 
 int APS5_VABI OBJ_obj2txt_nid_postfix() {
