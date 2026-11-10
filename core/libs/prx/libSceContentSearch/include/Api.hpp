@@ -23,9 +23,9 @@ int APS5_VABI sceContentBinderReset();
 int APS5_VABI sceContentBinderSearchDifference();
 int APS5_VABI sceContentBinderStart();
 int APS5_VABI sceContentBinderTerminate();
-int APS5_VABI sceContentSearchGetApplicationLastUpdateId();
-int APS5_VABI sceContentSearchGetMyApplicationIndex();
-int APS5_VABI sceContentSearchGetNumOfApplication();
+int APS5_VABI sceContentSearchGetApplicationLastUpdateId(std::int64_t* lastUpdateId);
+int APS5_VABI sceContentSearchGetMyApplicationIndex(std::int32_t* index);
+int APS5_VABI sceContentSearchGetNumOfApplication(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, const ContentSearchContentOrderByCondition* orderByConditions, std::uint32_t orderByConditionsLength, std::int64_t* numOfApplication, std::int64_t* lastUpdateId);
 int APS5_VABI sceContentSearchSearchApplication();
 
 }

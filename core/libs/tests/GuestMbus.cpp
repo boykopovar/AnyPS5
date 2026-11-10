@@ -48,6 +48,14 @@ void CheckDeviceIdConversion() {
     Require(sceMbusConvertToMbusDeviceId(1, 0, nullptr) == unconvertibleClass, "refusal without an output");
 }
 
+void CheckInit() {
+    Require(sceMbusInit() == 0, "the first initialization failed");
+    Require(sceMbusInit() == 0, "a second initialization failed");
+    Require(sceMbusTerm() == 0, "termination failed");
+    Require(sceMbusInit() == 0, "an initialization after termination failed");
+    Require(sceMbusTerm() == 0, "a second termination failed");
+}
+
 }
 
 int main() {
@@ -68,6 +76,7 @@ int main() {
     for (const auto byte : callbackBytes) Require(byte == 0x5a, "zero-size callback initialization changed memory");
 
     CheckDeviceIdConversion();
+    CheckInit();
     DeviceServiceInitParam param{};
     constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
     Require(sceDeviceServiceInitialize(3, &param) == invalidArgument, "invalid parameter size accepted");
@@ -88,6 +97,7 @@ int main() {
     std::int32_t count = 7;
     std::int32_t reserved = 0;
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, 0, 0, info.data(), 1, &count, &reserved, info.size()) == 0 && count == 0, "a device was listed");
+    Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, info.data(), 1, reinterpret_cast<std::int32_t*>(0x10), nullptr, info.size()) == invalidArgument, "unwritable count accepted");
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, info.data(), 1, nullptr, &reserved, info.size()) == 0, "optional count output rejected");
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, nullptr, 0, nullptr, nullptr, info.size()) == 0, "empty query rejected");
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, nullptr, 1, &count, nullptr, info.size()) == invalidArgument, "null record buffer accepted");

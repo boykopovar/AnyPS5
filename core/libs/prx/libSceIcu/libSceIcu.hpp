@@ -13,6 +13,7 @@
 #include "RecoveredInventory.hpp"
 #include "ConverterCallbacks.hpp"
 #include "CString.hpp"
+#include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "Space.hpp"
 #include "Unescape.hpp"
 #include "Properties.hpp"
@@ -20,3 +21,12 @@
 #include "Identified.hpp"
 
 #include "prx/libSceIcu/include/Api.hpp"
+#include "Api.hpp"
+#include "Utf32.hpp"
+#include "JavaUtf8.hpp"
+#include "Compare.hpp"
+#include "Search.hpp"
+#include "Character.hpp"
+#include "Configuration.hpp"
+
+#include "ConverterHelpers.hpp"

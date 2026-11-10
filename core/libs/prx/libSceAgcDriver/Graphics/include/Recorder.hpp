@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PassHazards.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SubmissionSnapshots.hpp"
 #include <unordered_map>
 #include <atomic>
 #include <chrono>
@@ -122,7 +123,7 @@ public:
     static constexpr std::size_t KeptBytesBudget = std::size_t{512} << 20u;
     void BoundKeptBytes();
     std::size_t InFlightKeptBytes() const { return inFlightKeptBytes; }
-    enum class SnapshotUse : std::uint8_t { Storage, Vertex, Index16, Index32, Index16Restart, Index32Restart };
+    enum class SnapshotUse : std::uint8_t { Storage, Vertex, Index16, Index32, Index16Restart, Index32Restart, PaddedVertex };
     static constexpr std::size_t DrawSnapshotBudget = std::size_t{1024} << 20u;
     static constexpr std::size_t DrawSnapshotEntries = 1024;
     static constexpr std::size_t UnwrittenSnapshotEntries = 4096;
@@ -131,8 +132,18 @@ public:
     std::shared_ptr<Buffer> UnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, VkDeviceSize* offset = nullptr);
     void NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, std::shared_ptr<Buffer> buffer, VkDeviceSize offset = 0);
     std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::uint64_t generation = 0, VkDeviceSize* offset = nullptr);
+    struct OwnedDrawInputProof {
+        std::vector<std::uint64_t> words;
+        std::uint64_t since = 0;
+        std::uint64_t registry = 0;
+        std::uint64_t forget = 0;
+        std::uint64_t note = 0;
+    };
+    OwnedDrawInputProof ArmOwnedDrawInput(std::uint64_t address, std::size_t bytes) const;
+    std::shared_ptr<Buffer> ReusableOwnedDrawInput(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived);
+    void KeepOwnedDrawInput(std::uint64_t address, std::size_t bytes, const OwnedDrawInputProof& proof, std::shared_ptr<Buffer> buffer, SnapshotUse use, std::uint32_t derived);
     static constexpr std::size_t ContainingSnapshotProbes = 16;
-    void KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use = SnapshotUse::Storage, std::uint32_t derived = 0);
+    void KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use = SnapshotUse::Storage, std::uint32_t derived = 0, bool ownedInsertion = false);
     static constexpr std::size_t DrawUploadChunk = std::size_t{1} << 20u;
     struct UploadSlice {
         std::shared_ptr<Buffer> buffer;
@@ -249,6 +260,7 @@ public:
     bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
     void NoteSampledDraw(VkCommandBuffer commands);
     void NoteDrawTraceToken(std::uint64_t token) noexcept;
+    void NoteFaultToken(AgcDriver::FaultToken token) noexcept;
     bool QueuesSampleDumps() const;
     void PrepareSampleSlot();
     void EndPassSamples();
@@ -393,6 +405,7 @@ public:
     // After the calling worker recorded (or dropped) its queued labels: its ranges are cleared and
     // the entries of its dwords still without a batch (stored by the CPU, or dropped) leave the table.
     static void ForgetQueuedLabels();
+    static bool QueuedLabelsPending();
     // The function the flush hook calls, on the accessing thread (which may hold the GPU mutex),
     // when an access overlaps one of that thread's queued labels; it records them. Set once.
     static void SetQueuedLabelRecorder(void (*recorder)());
@@ -450,6 +463,7 @@ public:
     // so a batch is submitted after a bounded amount of work (APS5_BATCH_CAP).
     static std::uint64_t RecordedWorkSinceSubmit();
     static void CountRecordedWork();
+    bool NoteGuestWork(VkCommandBuffer commands);
 
     // The recorder of the current device, for code that only has guest addresses (the flush hook)
     // and for helpers that must not recycle resources the recorded work still uses.
@@ -628,8 +642,12 @@ private:
         std::vector<ReadListNote> readLists;
         // Submission number (1-based): identifies a batch after its allocation may have been reused.
         std::uint64_t serial = 0;
+        std::uint64_t predictedSerial = 0;
+        AgcDriver::FaultToken firstToken = 0;
+        AgcDriver::FaultToken lastToken = 0;
         std::uint64_t traceId = 0;
         bool submitted = false;
+        bool guestWork = false;
         std::atomic<bool> submitStarted{false};
         // The GpuMutex queue tag of the thread that opened the batch, and when it was submitted
         // (the [syncwait] line reports what a wait's target and the batches ahead of it were).
@@ -932,6 +950,7 @@ private:
         std::list<DrawSnapshotKey>::iterator recent;
         std::shared_ptr<Buffer> buffer;
         std::uint32_t derived;
+        OwnedDrawInputProof owned;
     };
     struct DrawSnapshotPool {
         std::list<DrawSnapshotKey> recency;
@@ -957,11 +976,20 @@ private:
     };
     std::map<DrawSnapshotKey, IndexRange> indexRanges;
     std::list<DrawSnapshotKey> indexRangeRecency;
+    bool ownedDrawInputHolds(std::uint64_t address, std::size_t bytes, const OwnedDrawInputProof& proof) const;
     bool refreshDrawSnapshot(DrawSnapshot& entry, std::uint64_t address, std::size_t bytes);
     std::shared_ptr<Buffer> containingDrawSnapshot(std::uint64_t address, std::size_t bytes, VkDeviceSize* offset);
     mutable std::weak_ptr<const WriteRanges> publishedWriteRanges;
     mutable bool publishedWriteRangesValid = false;
 };
+
+inline void EmitNvCheckpointToken(VkCommandBuffer commands, AgcDriver::FaultToken token, PFN_vkCmdSetCheckpointNV setCheckpoint) noexcept {
+    try {
+        if (commands == VK_NULL_HANDLE || setCheckpoint == nullptr || token == 0) return;
+        setCheckpoint(commands, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(token)));
+    } catch (...) {
+    }
+}
 
 }
 

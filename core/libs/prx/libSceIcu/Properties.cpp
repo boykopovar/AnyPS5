@@ -134,14 +134,6 @@ std::int8_t APS5_VABI u_isUUppercase_nid_postfix(std::int32_t character) {
     return u_isUUppercase(character);
 }
 
-std::int32_t APS5_VABI u_charDigitValue_nid_postfix(std::int32_t character) {
-    return u_charDigitValue(character);
-}
-
-std::int32_t APS5_VABI u_digit_nid_postfix(std::int32_t character, std::int8_t radix) {
-    return u_digit(character, radix);
-}
-
 double APS5_VABI u_getNumericValue_nid_postfix(std::int32_t character) {
     return u_getNumericValue(character);
 }

@@ -30,8 +30,6 @@ std::int8_t APS5_VABI u_isJavaIDPart_nid_postfix(std::int32_t);
 std::int8_t APS5_VABI u_isUAlphabetic_nid_postfix(std::int32_t);
 std::int8_t APS5_VABI u_isULowercase_nid_postfix(std::int32_t);
 std::int8_t APS5_VABI u_isUUppercase_nid_postfix(std::int32_t);
-std::int32_t APS5_VABI u_charDigitValue_nid_postfix(std::int32_t);
-std::int32_t APS5_VABI u_digit_nid_postfix(std::int32_t, std::int8_t);
 double APS5_VABI u_getNumericValue_nid_postfix(std::int32_t);
 void APS5_VABI u_charAge_nid_postfix(std::int32_t, std::uint8_t*);
 std::uint8_t APS5_VABI u_getCombiningClass_nid_postfix(std::int32_t);
