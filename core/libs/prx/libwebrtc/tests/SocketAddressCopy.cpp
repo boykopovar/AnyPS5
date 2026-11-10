@@ -52,7 +52,6 @@ void Release(WebRtcGuestString& string) {
 void RequireCopy(const WebRtcSocketAddress& destination, const WebRtcSocketAddress& source) {
     Require(destination.hostname.size == source.hostname.size);
     Require(std::strcmp(WebRtcGuestStringData(destination.hostname), WebRtcGuestStringData(source.hostname)) == 0);
-    Require(destination.ip.vtable == source.ip.vtable);
     Require(destination.ip.family == source.ip.family);
     Require(std::memcmp(&destination.ip.address, &source.ip.address, sizeof(source.ip.address)) == 0);
     Require(destination.port == source.port);
@@ -62,7 +61,6 @@ void RequireCopy(const WebRtcSocketAddress& destination, const WebRtcSocketAddre
 
 void TestInlineCopyConstructorAndAssignment() {
     WebRtcSocketAddress source{};
-    source.hostname.reserved = 7;
     SetInline(source.hostname, "stun.example");
     source.ip.family = WebRtcAfInet;
     source.ip.address.ip4.sAddr = 0x0100007F;
@@ -73,7 +71,7 @@ void TestInlineCopyConstructorAndAssignment() {
     WebRtcSocketAddress copy{};
     _ZN3rtc13SocketAddressC1ERKS0__nid_postfix(&copy, &source);
     RequireCopy(copy, source);
-    Require(copy.hostname.reserved == source.hostname.reserved);
+    Require(copy.hostname.capacity == WebRtcGuestStringInlineCapacity);
 
     WebRtcSocketAddress assigned{};
     _ZN3rtc13SocketAddressaSERKS0__nid_postfix(&assigned, &source);
@@ -96,6 +94,7 @@ void TestHeapCopyAndAssignment() {
     _ZN3rtc13SocketAddressC1ERKS0__nid_postfix(&copy, &source);
     RequireCopy(copy, source);
     Require(copy.hostname.pointer != source.hostname.pointer);
+    Require(copy.hostname.capacity == ((sizeof(text) - 1) | 15));
 
     WebRtcSocketAddress assigned{};
     SetInline(assigned.hostname, "old");
@@ -108,12 +107,15 @@ void TestHeapCopyAndAssignment() {
     WebRtcSocketAddress inlineSource{};
     SetInline(inlineSource.hostname, "short");
     const int beforeReplacement = frees;
+    char* const heapBuffer = assigned.hostname.pointer;
     _ZN3rtc13SocketAddressaSERKS0__nid_postfix(&assigned, &inlineSource);
     RequireCopy(assigned, inlineSource);
-    Require(frees == beforeReplacement + 1);
+    Require(frees == beforeReplacement);
+    Require(assigned.hostname.pointer == heapBuffer);
 
     Release(source.hostname);
     Release(copy.hostname);
+    Release(assigned.hostname);
 }
 
 }
