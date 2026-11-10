@@ -343,6 +343,7 @@ public:
     // Whether an image with results pending, or one a FlushPending is storing right now, overlaps
     // any of the [begin, end) ranges: one acquisition of the registry's mutex.
     static bool AnyPendingOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    static bool AnyPendingUnitsOverlap(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static bool AnyLiveOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static std::uint64_t StampKeepingNewerResults(std::uint64_t address, std::size_t bytes, std::uint64_t recorded, const std::function<std::uint64_t()>& stamp);
     // Moves with every change of the pending registry (an image marked dirty, stored, flushed or
