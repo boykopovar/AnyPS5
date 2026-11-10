@@ -306,7 +306,7 @@ std::int64_t APS5_VABI SSL_CTX_set_timeout_nid_postfix(LibreSsl3SslCtx* context,
 std::int64_t APS5_VABI SSL_SESSION_get_timeout_nid_postfix(const void* session);
 std::int64_t APS5_VABI SSL_SESSION_set_time_nid_postfix(void* session, std::int64_t time);
 int APS5_VABI SSL_do_handshake_nid_postfix();
-int APS5_VABI SSL_get_version_nid_postfix();
+const char* APS5_VABI SSL_get_version_nid_postfix(const LibreSsl3Ssl* ssl);
 int APS5_VABI SSL_set_accept_state_nid_postfix();
 int APS5_VABI SSL_set_alpn_protos_nid_postfix();
 int APS5_VABI SSL_set_info_callback_nid_postfix();
@@ -434,6 +434,6 @@ int APS5_VABI SSL_set_quic_transport_params_nid_postfix();
 int APS5_VABI SSL_is_quic_nid_postfix();
 LibreSsl3X509Pubkey* APS5_VABI X509_get_X509_PUBKEY_nid_postfix(const LibreSsl3Certificate* certificate);
 void APS5_VABI ECDSA_SIG_get0_nid_postfix(const LibreSsl3EcdsaSig* sig, const void** r, const void** s);
-int APS5_VABI EVP_MD_block_size_nid_postfix();
+int APS5_VABI EVP_MD_block_size_nid_postfix(const void* md);
 
 }
