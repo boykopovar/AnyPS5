@@ -798,11 +798,12 @@ def main(argv=None):
     previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
     titles = load_titles(args.titles)
-    chosen = [title_id for title_id, entry in sorted(titles.items()) if entry.get("smoke")] if args.smoke else args.ids
-    if args.smoke and not chosen:
-        raise SystemExit(f"no title in {args.titles} is marked smoke")
-    found = discover(args.games, chosen)
-    ids = chosen or sorted(found)
+    if args.smoke:
+        args.ids = [title_id for title_id, entry in sorted(titles.items()) if entry.get("smoke")]
+        if not args.ids:
+            raise SystemExit(f"no title in {args.titles} is marked smoke")
+    found = discover(args.games, args.ids)
+    ids = args.ids or sorted(found)
     missing = [title_id for title_id in ids if title_id not in found]
     if missing:
         raise SystemExit(f"not found under --games: {', '.join(missing)}")
@@ -810,7 +811,7 @@ def main(argv=None):
     busy = [title_id for title_id, handle in locks.items() if handle is None]
     if busy:
         raise SystemExit(f"already running in {args.out.resolve() / 'work'}: {', '.join(busy)}")
-    if previous and chosen:
+    if previous and args.ids:
         previous["titles"] = {title_id: title for title_id, title in previous["titles"].items() if title_id in ids}
     source = source_root(args.build)
     commit = git(source, "rev-parse", "--short", "HEAD")
