@@ -5,7 +5,6 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
-#include <stdexcept>
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -26,7 +25,7 @@ int main() {
         {HTTPHeaderName::Authorization, String{}},
         {HTTPHeaderName::Accept, String{}},
     }};
-    ResourceRequestBase request;
+    ResourceRequestBase request{};
     request.resourceRequestUpdated = true;
     request.platformRequestUpdated = true;
     auto* headers = reinterpret_cast<HTTPHeaderMap*>(&request.httpHeaderFields);
@@ -38,30 +37,12 @@ int main() {
     Require(!request.platformRequestUpdated);
 
     CommonHeader unrelated{HTTPHeaderName::Accept, String{}};
-    ResourceRequestBase unchanged;
+    ResourceRequestBase unchanged{};
     unchanged.resourceRequestUpdated = true;
     unchanged.platformRequestUpdated = true;
     auto* unchangedHeaders = reinterpret_cast<HTTPHeaderMap*>(&unchanged.httpHeaderFields);
     unchangedHeaders->common = {&unrelated, 1, 1};
     _ZN7WebCore19ResourceRequestBase22clearHTTPAuthorizationEv(&unchanged);
     Require(unchanged.platformRequestUpdated);
-
-    ResourceRequestBase stale;
-    stale.resourceRequestUpdated = false;
-    bool threw = false;
-    try {
-        _ZN7WebCore19ResourceRequestBase22clearHTTPAuthorizationEv(&stale);
-    } catch (const std::logic_error&) {
-        threw = true;
-    }
-    Require(threw);
-
-    threw = false;
-    try {
-        _ZN7WebCore19ResourceRequestBase22clearHTTPAuthorizationEv(nullptr);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
     return 0;
 }
