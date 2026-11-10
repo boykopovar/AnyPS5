@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -66,6 +67,8 @@ struct ShaderComputeStageInfo {
     std::uint32_t threadIdComponentCount;
     std::array<std::uint32_t, 3> partialThreads;
     std::uint32_t scratchDwords = 0;
+    std::uint32_t granulatedVgprCount = 0;
+    std::uint32_t sharedVgprBlocks = 0;
 
     [[nodiscard]] bool PartialGroups() const {
         return partialThreads != std::array<std::uint32_t, 3>{};
@@ -303,6 +306,13 @@ struct GuestContext {
     bool convertedSamples = false;
     bool layerRowSamples = false;
 };
+
+struct SharedVectorRegisters {
+    std::uint32_t base = 0;
+    std::uint32_t count = 0;
+};
+
+[[nodiscard]] SharedVectorRegisters GuestSharedVectorRegisters(const GuestContext& context);
 
 struct MeshTargetLimits {
     std::array<std::uint32_t, 3> maxWorkgroupSize;
@@ -644,6 +654,14 @@ public:
             if ((*this)[index] != other[index]) return false;
         }
         return true;
+    }
+    template<typename TVisit>
+    void ForEachSet(TVisit&& visit) const {
+        if (count <= InlineFlags) {
+            for (auto rest = bits; rest != 0; rest &= rest - 1) visit(static_cast<std::size_t>(std::countr_zero(rest)));
+            return;
+        }
+        for (auto it = std::find(spill.begin(), spill.end(), true); it != spill.end(); it = std::find(it + 1, spill.end(), true)) visit(static_cast<std::size_t>(it - spill.begin()));
     }
 
 private:
