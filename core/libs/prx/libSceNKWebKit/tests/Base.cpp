@@ -1996,7 +1996,7 @@ static void TestSerializedScriptValue() {
     Require(deUndef != nullptr && JSValueIsUndefined(ctx, deUndef));
     WKRelease(serUndef);
 
-    auto* jsJsonStr = JSStringCreateWithUTF8CString_nid_postfix(""hello AnyPS5"");
+    auto* jsJsonStr = JSStringCreateWithUTF8CString_nid_postfix("\"hello AnyPS5\"");
     Require(jsJsonStr != nullptr);
     auto* strVal = JSValueMakeFromJSONString(ctx, jsJsonStr);
     JSStringRelease_nid_postfix(jsJsonStr);
