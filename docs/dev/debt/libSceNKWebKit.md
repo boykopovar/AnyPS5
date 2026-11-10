@@ -113,7 +113,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
 - [WebCore text dumps](../../../core/libs/prx/libSceNKWebKit/src/WebCoreDump.cpp) (libSceNKWebKit) - the `operator<<(TextStream&, ...)` overloads for geometry, transforms, `ScrollAlignment` and scrolling and graphics enums follow the pinned [`FloatPoint.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatPoint.cpp), [`GraphicsTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/GraphicsTypes.cpp) and [`ScrollTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/ScrollTypes.cpp); expectations are hand-derived and not checked against console binaries. They rely on the `TextStream` exports and layout of the WTF text change. `XYZ_D65` prints `XYZ-D50`, as in that source; a `CompositeOperator` or `BlendMode` outside its name table throws.
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6178 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6050 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -4564,10 +4564,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector21InspectorConsoleAgentD0Ev` | `Cbgna+rzoKg` |
 | `_ZN9Inspector21InspectorConsoleAgentD1Ev` | `8-R5U3iiEI8` |
 | `_ZN9Inspector21InspectorConsoleAgentD2Ev` | `9majkc5-mso` |
-| `_ZN9Inspector21InspectorConsoleAgentnaEmPv` | `nsqL77brn7c` |
-| `_ZN9Inspector21InspectorConsoleAgentnwEm10NotNullTagPv` | `8FKB-KCBLXU` |
-| `_ZN9Inspector21InspectorConsoleAgentnwEmPv` | `8IEd1z5hqb8` |
-| `_ZN9Inspector21InspectorRuntimeAgent21injectedScriptManagerEv` | `MyM-PBaGyn4` |
 | `_ZN9Inspector21InspectorRuntimeAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE` | `e9w1QH3vMDw` |
 | `_ZN9Inspector21InspectorRuntimeAgent27setTypeProfilerEnabledStateEb` | `IVfINJV3j44` |
 | `_ZN9Inspector21InspectorRuntimeAgent29willDestroyFrontendAndBackendENS_16DisconnectReasonE` | `xdtEozwG5LM` |
@@ -5850,9 +5846,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK9Inspector15ScriptArguments12globalObjectEv` | `UFKbZ7T8IB4` |
 | `_ZNK9Inspector15ScriptArguments24getFirstArgumentAsStringERN3WTF6StringE` | `rCyg+xFA0kA` |
 | `_ZNK9Inspector15ScriptArguments7isEqualERKS0_` | `oHFYzEYKvhw` |
-| `_ZNK9Inspector15ScriptCallFrame10lineNumberEv` | `Q9v0SoVlNwA` |
-| `_ZNK9Inspector15ScriptCallFrame12columnNumberEv` | `J5VVuT74c6c` |
-| `_ZNK9Inspector15ScriptCallFrame12functionNameEv` | `n1O+i3JtWqk` |
 | `_ZNK9Inspector15ScriptCallFrame20buildInspectorObjectEv` | `k0+WgfI1FWM` |
 | `_ZNK9Inspector15ScriptCallFrame7isEqualERKS0_` | `osFy-sM72sI` |
 | `_ZNK9Inspector15ScriptCallFrame8isNativeEv` | `uyWPJAXD42g` |
