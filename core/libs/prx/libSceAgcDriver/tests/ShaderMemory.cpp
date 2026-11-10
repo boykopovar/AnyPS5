@@ -5738,6 +5738,30 @@ void verifyImageTableKeyBounds() {
         require(snapshot.keys == 65u && snapshot.records == 65u && !snapshot.outside && snapshot.codes.size() == 65u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [](std::uint32_t code) { return (code & Abi::PoisonFlag) != 0u; }), "image table key bounds: a v_min_u32 clamp did not enumerate 65 keys");
         require(TableCovered(compiled.regions, heap[64].data(), sizeof(heap[64])), "image table key bounds: the last clamped key's record was not captured");
     }
+    {
+        FillTableSrt(guest, heap.data(), 32u, 128u);
+        const auto code = wholeWith({0x7e007500u, 0x7e027501u, 0x4a000101u});
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 62u && Abi::KeyRecords(column.maxKey, column.stride) == 63u, "image table key bounds: adding two findLSB sentinels was not bounded to their sum");
+        const auto compiled = CompileTable(request);
+        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        require(snapshot.keys == 63u && snapshot.records == 63u && !snapshot.outside && snapshot.codes.size() == 63u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [](std::uint32_t code) { return (code & Abi::PoisonFlag) != 0u; }), "image table key bounds: adding two findLSB bounds did not enumerate 63 keys");
+        require(TableCovered(compiled.regions, heap[62].data(), sizeof(heap[62])), "image table key bounds: the last summed findLSB key's record was not captured");
+    }
+    {
+        FillTableSrt(guest, heap.data(), 32u, 128u);
+        const auto code = wholeWith({0x7e007500u, 0x280000a8u});
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 40u && Abi::KeyRecords(column.maxKey, column.stride) == 41u, "image table key bounds: an unsigned max of a findLSB sentinel and 40 was not bounded to 40");
+        const auto compiled = CompileTable(request);
+        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        require(snapshot.keys == 41u && snapshot.records == 41u && !snapshot.outside && snapshot.codes.size() == 41u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [](std::uint32_t code) { return (code & Abi::PoisonFlag) != 0u; }), "image table key bounds: the sentinel-preserving unsigned max did not enumerate 41 keys");
+        require(TableCovered(compiled.regions, heap[40].data(), sizeof(heap[40])), "image table key bounds: the unsigned max key's record was not captured");
+    }
 }
 
 void verifyImageTableRegistration() {
