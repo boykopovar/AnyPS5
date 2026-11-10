@@ -568,7 +568,9 @@ struct Request::State {
             Require(sceNetSetsockopt(socket, 0xffff, 0x1200, &enabled, sizeof(enabled)) == 0,
                 "sceHttp2: cannot set nonblocking socket");
             Require(KernelLookupSocketNative_nid_no_patch(socket, &socketOwner, &native), "sceHttp2: native socket lookup failed");
-            result = sceNetConnect(socket, address.bytes.data(), address.size);
+            const auto connect = ConnectHookSlot().load(std::memory_order_acquire);
+            result = connect ? connect(socket, address.bytes.data(), address.size) : sceNetConnect(socket, address.bytes.data(), address.size);
+            Check(connectDeadline);
             if (result < 0 && *sceNetErrnoLoc() == 36) {
                 Wait(true, connectDeadline);
                 int error = 0;
@@ -617,8 +619,11 @@ struct Request::State {
 
     int TryWrite(const void* data, std::size_t size) {
         size = std::min<std::size_t>(size, 16384);
-        const auto count = url.secure ? sceSslWrite(ssl, const_cast<void*>(data), size, 0) : sceNetSend(socket, data, size, 0);
+        const auto write = WriteHookSlot().load(std::memory_order_acquire);
+        const auto count = url.secure ? sceSslWrite(ssl, const_cast<void*>(data), size, 0) :
+            write ? write(socket, data, size, 0) : sceNetSend(socket, data, size, 0);
         if (!url.secure && count < 0 && *sceNetErrnoLoc() == 35) return WantWrite;
+        if (!url.secure && count == ConnectionReset) Raise(ConnectionReset, "sceHttp2: connection reset during write");
         Require((count > 0 && static_cast<std::uint64_t>(count) <= size) || count == WantRead || count == WantWrite,
             "sceHttp2: write failed; console error mapping is unknown");
         return static_cast<int>(count);
@@ -1054,7 +1059,7 @@ Request::~Request() = default;
 int Request::Send(const void* data, std::size_t size) {
     auto lock = state->Lock();
     if (state->started && state->networkResult) return state->networkResult;
-    if (state->started && state->ended && state->body.empty()) return AlreadySent;
+    if (state->started && state->ended) return AlreadySent;
     Require(!state->started, "sceHttp2SendRequest: request reuse is not implemented");
     Require(data || size == 0, "sceHttp2SendRequest: null body");
     Require(state->settings.noContentLength || size == state->settings.contentLength, "sceHttp2SendRequest: body length mismatch");

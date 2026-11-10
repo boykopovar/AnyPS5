@@ -1279,6 +1279,8 @@ void Gzip(int ssl) {
         int kind = -1;
         std::uint64_t length = 0;
         Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0, "gzip length");
+        if (enabled) Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x817b1066),
+            "another send with the complete body still buffered");
         std::array<char, 64> buffer{};
         const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
         if (enabled) {
@@ -1710,7 +1712,57 @@ void PlainShortBody(int ssl) {
     server.Join();
 }
 
+int DelayedConnect(int, const void*, std::uint32_t) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    return 0;
+}
+
+std::atomic<bool> resetWriteArmed{false};
+
+std::int64_t ResetWrite(int socket, const void* data, std::size_t size, int flags) {
+    if (!resetWriteArmed.load()) {
+        const auto count = sceNetSend(socket, data, size, flags);
+        if (count > 0) resetWriteArmed.store(true);
+        return count;
+    }
+    *sceNetErrnoLoc() = 54;
+    return static_cast<int>(0x80410136);
+}
+
+void InjectedConnectTimeout(int ssl, bool overall) {
+    Client client(ssl, 1, 0, 2);
+    client.Create("http://127.0.0.1:1/");
+    Require(sceHttp2SetConnectTimeOut(client.request, overall ? 200000 : 80000) == 0, "connect phase limit");
+    Require(sceHttp2SetTimeOut(client.request, overall ? 80000 : 200000) == 0, "overall limit during connect");
+    Http2SetConnectHook_nid_no_patch(DelayedConnect);
+    const auto begin = std::chrono::steady_clock::now();
+    const int result = sceHttp2SendRequest(client.request, nullptr, 0);
+    Http2SetConnectHook_nid_no_patch(nullptr);
+    const int expected = static_cast<int>(overall ? 0x817b1068 : 0x817b1221);
+    Require(result == expected, "injected connect delay returns the earlier deadline code");
+    const auto elapsed = std::chrono::steady_clock::now() - begin;
+    Require(elapsed >= std::chrono::milliseconds(80) && elapsed < std::chrono::seconds(1), "bounded connect timeout");
+    AfterFailedSend(client, expected);
+}
+
+void InjectedWriteReset(int ssl) {
+    Server server(Mode::Http11StallRequest, "/another", 302, {}, false, true);
+    Client client(ssl, 1, 0, 2);
+    const std::string upload(65536, 'u');
+    client.Create(server.Url(), "POST", upload.size());
+    resetWriteArmed.store(false);
+    Http2SetWriteHook_nid_no_patch(ResetWrite);
+    const int result = sceHttp2SendRequest(client.request, upload.data(), upload.size());
+    Http2SetWriteHook_nid_no_patch(nullptr);
+    Require(result == static_cast<int>(0x80410136), "reset inside TryWrite returns the console code");
+    AfterFailedSend(client, result);
+    server.Join();
+}
+
 void Http1Cleartext(int ssl) {
+    InjectedConnectTimeout(ssl, false);
+    InjectedConnectTimeout(ssl, true);
+    InjectedWriteReset(ssl);
     PlainFailedSend(ssl, Mode::Http11StallHeaders, static_cast<int>(0x817b1222), 1);
     PlainFailedSend(ssl, Mode::Http11StallHeaders, static_cast<int>(0x817b1068), 3);
     PlainFailedSend(ssl, Mode::Http11StallRequest, static_cast<int>(0x817b1223), 2);
