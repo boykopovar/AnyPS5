@@ -60,6 +60,7 @@ static void TestTypeIDs() {
     Require(WKAXObjectGetTypeID() == 132);
     WKRenderLayerGetTypeID();
     WKRenderObjectGetTypeID();
+    Require(WKSessionStateGetTypeID() == 19);
     Require(WKContextGetTypeID() == 85);
 }
 
@@ -1650,6 +1651,58 @@ static void TestOpenPanelParameters() {
     WKRelease(notParameters);
 }
 
+static void TestNotification() {
+    Require(WKNotificationGetTypeID() == 76);
+
+    auto notif = NKWebKit::Make<NKWebKit::Notification>();
+    notif->title = u"Alert";
+    notif->body = u"Something happened";
+    notif->iconURL = u"https://example.com/icon.png";
+    notif->tag = u"tag1";
+    notif->lang = u"en-US";
+    notif->dir = u"ltr";
+    notif->notificationID = 42;
+
+    const void* ref = NKWebKit::ToRef(notif);
+
+    auto* title = WKNotificationCopyTitle(ref);
+    Require(WKStringIsEqualToUTF8CString(title, "Alert"));
+    WKRelease(title);
+
+    auto* body = WKNotificationCopyBody(ref);
+    Require(WKStringIsEqualToUTF8CString(body, "Something happened"));
+    WKRelease(body);
+
+    auto* icon = WKNotificationCopyIconURL(ref);
+    Require(WKGetTypeID(icon) == 21);
+    Require(WKStringIsEqualToUTF8CString(icon, "https://example.com/icon.png"));
+    WKRelease(icon);
+
+    auto* tag = WKNotificationCopyTag(ref);
+    Require(WKStringIsEqualToUTF8CString(tag, "tag1"));
+    WKRelease(tag);
+
+    auto* lang = WKNotificationCopyLang(ref);
+    Require(WKStringIsEqualToUTF8CString(lang, "en-US"));
+    WKRelease(lang);
+
+    auto* dir = WKNotificationCopyDir(ref);
+    Require(WKStringIsEqualToUTF8CString(dir, "ltr"));
+    WKRelease(dir);
+
+    Require(WKNotificationGetID(ref) == 42);
+
+    bool threw = false;
+    try {
+        WKNotificationCopyTitle(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    WKRelease(ref);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -1661,6 +1714,30 @@ static void TestCertificateInfo() {
 
 static void TestEmptyFrameLoaderClient() {
     _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
+}
+
+static void TestSessionState() {
+    Require(WKSessionStateCreateFromData(nullptr) == nullptr);
+    Require(WKSessionStateCopyData(nullptr) == nullptr);
+
+    const unsigned char raw[] = { 0x12, 0x34, 0x56, 0x78 };
+    auto* d = WKDataCreate(raw, sizeof(raw));
+    auto* sessionState = WKSessionStateCreateFromData(d);
+    Require(sessionState != nullptr);
+    Require(WKGetTypeID(sessionState) == WKSessionStateGetTypeID());
+
+    auto* copiedData = WKSessionStateCopyData(sessionState);
+    Require(copiedData != nullptr);
+    Require(WKGetTypeID(copiedData) == WKDataGetTypeID());
+    Require(WKDataGetSize(copiedData) == sizeof(raw));
+    Require(std::memcmp(WKDataGetBytes(copiedData), raw, sizeof(raw)) == 0);
+
+    WKRetain(sessionState);
+    WKRelease(sessionState);
+
+    WKRelease(copiedData);
+    WKRelease(sessionState);
+    WKRelease(d);
 }
 
 static void TestInspector() {
@@ -1735,6 +1812,45 @@ static void TestInspector() {
         threw = true;
     }
     Require(threw);
+}
+static void TestFrame() {
+    Require(WKFrameGetTypeID() == 55);
+
+    auto frame = NKWebKit::Make<NKWebKit::Frame>();
+    const void* ref = frame.Get();
+
+    Require(!WKFrameCanProvideSource(ref));
+    Require(!WKFrameIsDisplayingMarkupDocument(ref));
+    Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(!WKFrameIsMainFrame(ref));
+
+    frame->isDisplayingMarkupDocument = true;
+    Require(WKFrameCanProvideSource(ref));
+    Require(WKFrameIsDisplayingMarkupDocument(ref));
+    Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(!WKFrameIsMainFrame(ref));
+
+    frame->isDisplayingMarkupDocument = false;
+    frame->isDisplayingStandaloneImageDocument = true;
+    Require(!WKFrameCanProvideSource(ref));
+    Require(!WKFrameIsDisplayingMarkupDocument(ref));
+    Require(WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(!WKFrameIsMainFrame(ref));
+
+    frame->isDisplayingStandaloneImageDocument = false;
+    frame->isMainFrame = true;
+    Require(!WKFrameCanProvideSource(ref));
+    Require(!WKFrameIsDisplayingMarkupDocument(ref));
+    Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(WKFrameIsMainFrame(ref));
+
+    bool caught = false;
+    try {
+        WKFrameIsMainFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        caught = true;
+    }
+    Require(caught);
 }
 
 static int s_runLoopCallCount = 0;
@@ -1838,11 +1954,14 @@ int main() {
     TestPermissionRequests();
     TestFrameHandle();
     TestOpenPanelParameters();
+    TestNotification();
     TestCertificateInfo();
     TestEmptyFrameLoaderClient();
     TestInspector();
     TestContext();
+    TestSessionState();
     TestRunLoop();
+    TestFrame();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }
