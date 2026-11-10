@@ -30,7 +30,7 @@ std::vector<std::uint32_t> shaderKey(bool dataWords, bool movable, const std::ve
         for (const auto word : {0u, static_cast<std::uint32_t>(binding.role), 0u, 0u, binding.count, 0u, 0u, static_cast<std::uint32_t>(binding.words.size())}) key.push_back(word);
         const bool emitted = (movable && binding.role == DescriptorRole::GuestBuffers && binding.words.size() == binding.count * 4u) || (dataWords && !movable) || !data;
         if (emitted) key.insert(key.end(), binding.words.begin(), binding.words.end());
-        for (int flags = 0; flags < 10; ++flags) key.push_back(0u);
+        for (int flags = 0; flags < 11; ++flags) key.push_back(0u);
         key.push_back(0u);
         key.push_back(static_cast<std::uint32_t>(binding.shapes.size()));
         key.insert(key.end(), binding.shapes.begin(), binding.shapes.end());
@@ -123,6 +123,70 @@ void testDispatchKeyWithDevice() {
     expectOnly(diff, ContentKeyComponent::Other, "dispatch device change");
 }
 
+void testRealContentKey() {
+    using namespace ShaderRecompiler;
+    RecompileResult program;
+    program.variantId = 0x123456789abcdef0ull;
+    DescriptorBinding table{};
+    table.kind = DescriptorKind::StorageImage;
+    table.role = DescriptorRole::ImageStorageTable;
+    table.descriptorSet = 0;
+    table.binding = RuntimeAbi::ImageStorageTableBinding;
+    table.count = 33;
+    table.guestDescriptor.resize(static_cast<std::size_t>(table.count) * 8u);
+    for (std::size_t i = 0; i < table.guestDescriptor.size(); ++i) table.guestDescriptor[i] = static_cast<std::uint32_t>(0x1000u + i);
+    table.imageWritten.assign(table.count, true);
+    table.imageUintStorage.assign(table.count, false);
+    table.samplerDepthCompare.assign(table.count, false);
+    table.imageDepthCompare.assign(table.count, false);
+    table.imageAtomic.assign(table.count, false);
+    table.samplerUnnormalized.assign(table.count, false);
+    table.samplerIntegerBorder.assign(table.count, false);
+    table.samplerCoordinatesIgnored.assign(table.count, false);
+    table.imageUnnormalized.assign(table.count, false);
+    table.imageUnnormalizedBaseLevel.assign(table.count, false);
+    table.bufferWritten.assign(table.count, false);
+    table.imageSamplers.assign(table.count, 0x12345678u);
+    table.imageShapes.assign(table.count, DescriptorImageShape::Image2D);
+    program.bindings.push_back(std::move(table));
+    DescriptorBinding buffers{};
+    buffers.kind = DescriptorKind::StorageBuffer;
+    buffers.role = DescriptorRole::GuestBuffers;
+    buffers.descriptorSet = 0;
+    buffers.binding = 0;
+    buffers.count = 33;
+    buffers.guestDescriptor.resize(static_cast<std::size_t>(buffers.count) * 4u);
+    for (std::size_t i = 0; i < buffers.guestDescriptor.size(); ++i) buffers.guestDescriptor[i] = static_cast<std::uint32_t>(0x2000u + i);
+    buffers.bufferWritten.assign(buffers.count, false);
+    program.bindings.push_back(std::move(buffers));
+
+    const Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
+    const auto base = ShaderResources::ContentKey(shader, true, false);
+    check(base.capacity() == base.size(), "real content key reserved a different word count than it serialized");
+    std::vector<std::uint32_t> appended;
+    ShaderResources::AppendContentKey(shader, true, false, appended);
+    check(appended == base, "AppendContentKey disagreed with ContentKey");
+    ContentKeyDiff diff;
+    check(ShaderResources::DiffContentKeys(base, base, false, diff), "real content key was not self-comparable");
+    expectOnly(diff, std::nullopt, "real self key reported a difference");
+
+    const auto original = program.bindings;
+    const auto changed = [&](auto mutate, ContentKeyComponent expected, const char* message) {
+        mutate();
+        const auto key = ShaderResources::ContentKey(shader, true, false);
+        program.bindings = original;
+        check(ShaderResources::DiffContentKeys(base, key, false, diff), message);
+        expectOnly(diff, expected, message);
+    };
+    changed([&] { program.bindings[0].imageWritten[32] = false; }, ContentKeyComponent::Other, "real imageWritten word");
+    changed([&] { program.bindings[0].imageUintStorage[32] = true; }, ContentKeyComponent::Other, "real imageUintStorage word");
+    changed([&] { program.bindings[0].bufferWritten[32] = true; }, ContentKeyComponent::Other, "real table bufferWritten word");
+    changed([&] { program.bindings[0].imageSamplers[32] += 1u; }, ContentKeyComponent::Sampler, "real sampler association");
+    changed([&] { program.bindings[0].imageShapes[32] = DescriptorImageShape::Image3D; }, ContentKeyComponent::Image, "real image shape");
+    changed([&] { program.bindings[1].guestDescriptor[0] += 1u; }, ContentKeyComponent::BufferWord0, "real buffer word");
+    changed([&] { program.bindings[1].bufferWritten[32] = true; }, ContentKeyComponent::Other, "real bufferWritten word");
+}
+
 void testDrawKey() {
     ContentKeyDiff diff;
     const auto base = drawKey(5, shaderKey(true, true, bindings()), 0x1000);
@@ -146,6 +210,7 @@ int main() {
     try {
         testDispatchKey();
         testDispatchKeyWithDevice();
+        testRealContentKey();
         testDrawKey();
         std::puts("Key miss attribution passed");
         return 0;
