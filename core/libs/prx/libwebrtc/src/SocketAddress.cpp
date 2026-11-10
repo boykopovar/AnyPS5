@@ -120,7 +120,9 @@ void APS5_VABI _ZN3rtc13SocketAddressC1ERKNS_9IPAddressEi_nid_postfix(WebRtcSock
         throw std::invalid_argument("SocketAddress::SocketAddress requires an IP address");
     const WebRtcIpAddress source = *ip;
     InitHostname(target.hostname);
-    target.ip = source;
+    target.ip = WebRtcIpAddress{};
+    target.ip.family = source.family;
+    target.ip.address = source.address;
     target.port = static_cast<std::uint16_t>(port);
     target.scopeId = 0;
     target.literal = false;
