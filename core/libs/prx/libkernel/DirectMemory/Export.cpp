@@ -483,7 +483,10 @@ static int QueryVirtualRange(const void* addr, int flags, VirtualQueryInfo* info
 int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size) {
  constexpr int findNext = 1;
  constexpr std::uintptr_t firstRejectedAddress = 0x800000004000;
- if ((flags & ~findNext) != 0 || reinterpret_cast<std::uintptr_t>(addr) >= firstRejectedAddress) return SCE_KERNEL_ERROR_EINVAL;
+ if ((flags & ~findNext) != 0) return SCE_KERNEL_ERROR_EINVAL;
+ const auto address = reinterpret_cast<std::uintptr_t>(addr);
+ if (address >= firstRejectedAddress) return SCE_KERNEL_ERROR_EINVAL;
+ if (address >= 0x800000000000) return SCE_KERNEL_ERROR_EACCES;
  VirtualQueryInfo found{};
  const int result = QueryVirtualRange(addr, flags, &found);
  if (result != 0) return result;
