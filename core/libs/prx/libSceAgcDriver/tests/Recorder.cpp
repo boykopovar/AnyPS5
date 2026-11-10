@@ -1209,7 +1209,7 @@ void changedCopyTests(const Device& device, Recorder& recorder) {
     }
 }
 
-void boundChangedCopyRun(const Context& context, const std::string& limit) {
+void boundChangedCopyRun(const Device& device, const Context& context, const std::string& limit) {
     Recorder recorder(context);
     constexpr std::uint32_t words = 70001;
     constexpr VkDeviceSize resultOffset = 4;
@@ -1280,14 +1280,14 @@ bool boundChangedCopyTests(const Device& device) {
         std::cout << "bound changed copy tests skipped: no push descriptors\n";
         return false;
     }
-    boundChangedCopyRun(context, "the device limits");
+    boundChangedCopyRun(device, context, "the device limits");
     auto groups = context;
     groups.limits.maxComputeWorkGroupCount[0] = 16;
-    boundChangedCopyRun(groups, "1024 words per dispatch");
+    boundChangedCopyRun(device, groups, "1024 words per dispatch");
     auto range = context;
     const auto alignment = std::max<VkDeviceSize>(range.limits.minStorageBufferOffsetAlignment, sizeof(std::uint32_t));
     range.limits.maxStorageBufferRange = static_cast<std::uint32_t>(alignment + 1001 * sizeof(std::uint32_t));
-    boundChangedCopyRun(range, "1001 words per dispatch");
+    boundChangedCopyRun(device, range, "1001 words per dispatch");
     return true;
 }
 
