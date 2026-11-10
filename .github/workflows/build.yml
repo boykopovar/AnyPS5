@@ -630,7 +630,7 @@ jobs:
     needs: eligibility
     if: ${{ ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.eligibility.outputs.full == 'true') || (github.event_name == 'pull_request' && needs.eligibility.outputs.mingw-host-tests == 'true') }}
     runs-on: windows-latest
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.select == false && 90 || 45 }}
+    timeout-minutes: 90
     env:
       WINLIBS_RELEASE: 15.2.0posix-14.0.0-ucrt-r7
       WINLIBS_ZIP: winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip
