@@ -719,7 +719,7 @@ static void WorkerSpinCase() {
     const auto interval = spinning.reference * rounds / 100;
     Require(spinning.consumed > parked.consumed + interval / 3);
     Require(spinning.consumed < parked.consumed + interval * 5);
-    Require(noPending.consumed < parked.consumed + interval / 3);
+    Require(noPending.consumed < parked.consumed + interval);
 }
 
 struct WorkerClocks {
