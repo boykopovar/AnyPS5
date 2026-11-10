@@ -954,9 +954,7 @@ int APS5_VABI _ZNK7WebCore22CSSAnimationController33allowsNewAnimationsWhileSusp
 int APS5_VABI libSceNKWebKitLegacyUnknown_NwfBp8_plus_IAFk_nid_no_patch();
 int APS5_VABI libSceNKWebKitLegacyUnknown_NxHsvCeeBmE_nid_no_patch();
 int APS5_VABI _ZN7WebCore27TranslateTransformOperationD0Ev();
-int APS5_VABI _ZN7WebCore15AffineTransformC2Ev();
 int APS5_VABI WKViewSetPageScaleFactor();
-int APS5_VABI _ZN7WebCore15AffineTransformC2Edddddd();
 int APS5_VABI _ZNK7WebCore18AdClickAttribution13urlForTestingERKN3WTF3URLE();
 int APS5_VABI _ZN7WebCore6LengthC1EON3WTF3RefINS_16CalculationValueENS1_13DumbPtrTraitsIS3_EEEE();
 int APS5_VABI _ZN7WebCore24RotateTransformOperationC2EddddNS_18TransformOperation13OperationTypeE();
@@ -1349,7 +1347,6 @@ int APS5_VABI _ZN7WebCore9FrameView29setLayoutViewportOverrideRectEN3WTF8Optiona
 int APS5_VABI _ZNK7WebCore9FrameView35convertFromContainingViewToRendererEPKNS_13RenderElementERKNS_9FloatRectE();
 int APS5_VABI _ZThn112_N7WebCore9DOMWindowD1Ev();
 int APS5_VABI _ZN7WebCore17FrameLoaderClient29dispatchGlobalObjectAvailableERNS_15DOMWrapperWorldE();
-int APS5_VABI _ZNK7WebCore15AffineTransform7inverseEv();
 int APS5_VABI _ZN7WebCore6toHSLAERKNS_5SRGBAIfEE();
 int APS5_VABI _ZN7WebCore12PrintContext16isPageBoxVisibleEPNS_5FrameEi();
 int APS5_VABI _ZN7WebCore12PrintContextC1EPNS_5FrameE();
@@ -1829,7 +1826,6 @@ int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal20dispatchMessageAsyncERK
 int APS5_VABI _ZN7WebCore16SQLiteFileSystem22computeHashForFileNameERKN3WTF6StringE();
 int APS5_VABI WKBundleRemoveUserStyleSheets();
 int APS5_VABI _ZN7WebCore13GraphicsLayer17distributeOpacityEf();
-int APS5_VABI _ZN7WebCore15AffineTransformC1Ev();
 int APS5_VABI _ZN7WebCore13JSHTMLElement6createEPN3JSC9StructureEPNS_17JSDOMGlobalObjectEON3WTF3RefINS_11HTMLElementENS6_13DumbPtrTraitsIS8_EEEE();
 int APS5_VABI _ZN7WebCore20LegacySchemeRegistry34shouldLoadURLSchemeAsEmptyDocumentERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore22SkewTransformOperationC1EddNS_18TransformOperation13OperationTypeE();
@@ -2219,7 +2215,6 @@ int APS5_VABI _ZN7WebCore13JSDOMRectList6createEPN3JSC9StructureEPNS_17JSDOMGlob
 int APS5_VABI _ZN7WebCore11DisplayList10DrawGlyphsD2Ev();
 int APS5_VABI _ZNK7WebCore16HTMLMediaElement19isVisibleInViewportEv();
 int APS5_VABI _ZN7WebCore20TransformationMatrix6blend4ERKS0_d();
-int APS5_VABI _ZN7WebCore15AffineTransformC1Edddddd();
 int APS5_VABI _ZN7WebCore14ScrollableArea6scrollENS_15ScrollDirectionENS_17ScrollGranularityEf();
 int APS5_VABI _ZN7WebCore7Pattern6createEON3WTF3RefINS_5ImageENS1_13DumbPtrTraitsIS3_EEEEbb();
 int APS5_VABI _ZN7WebCore11DisplayList8DrawLineD0Ev();
