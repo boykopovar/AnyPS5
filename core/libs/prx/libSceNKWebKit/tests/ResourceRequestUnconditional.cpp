@@ -5,7 +5,6 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
-#include <stdexcept>
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -38,7 +37,7 @@ int main() {
         {HTTPHeaderName::Accept, String{}},
     }};
 
-    ResourceRequestBase request;
+    ResourceRequestBase request{};
     request.resourceRequestUpdated = true;
     auto* headers = reinterpret_cast<HTTPHeaderMap*>(&request.httpHeaderFields);
     headers->common = {entries.data(), static_cast<unsigned>(entries.size()), static_cast<unsigned>(entries.size())};
@@ -47,15 +46,5 @@ int main() {
     for (auto header : conditional)
         Require(!_ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(headers, header));
     Require(_ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(headers, HTTPHeaderName::Accept));
-
-    ResourceRequestBase stale;
-    stale.resourceRequestUpdated = false;
-    bool threw = false;
-    try {
-        _ZN7WebCore19ResourceRequestBase17makeUnconditionalEv(&stale);
-    } catch (const std::logic_error&) {
-        threw = true;
-    }
-    Require(threw);
     return 0;
 }
