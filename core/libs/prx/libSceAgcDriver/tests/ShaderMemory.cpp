@@ -5725,6 +5725,19 @@ void verifyImageTableKeyBounds() {
         const auto column = columnOf(*plan);
         require(column.keyDomains.size() == 1u && column.keyDomains[0].stride == 4u, "image table key bounds: an offset add changed the key domain's four-byte stride");
     }
+    {
+        for (std::uint32_t entry = 0; entry < 128u; entry++) heap[entry] = TableT(textures[entry % 2u].bytes.data(), entry % 2u == 0u ? TableFormat8888UNorm : TableFormat32UInt, TableType2D, entry + 1u);
+        FillTableSrt(guest, heap.data(), 32u, 128u);
+        const auto code = wholeWith({0x260000c0u});
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 64u && Abi::KeyRecords(column.maxKey, column.stride) == 65u, "image table key bounds: a v_min_u32 clamp was not bounded to its 65 keys");
+        const auto compiled = CompileTable(request);
+        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        require(snapshot.keys == 65u && snapshot.records == 65u && !snapshot.outside && snapshot.codes.size() == 65u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [](std::uint32_t code) { return (code & Abi::PoisonFlag) != 0u; }), "image table key bounds: a v_min_u32 clamp did not enumerate 65 keys");
+        require(TableCovered(compiled.regions, heap[64].data(), sizeof(heap[64])), "image table key bounds: the last clamped key's record was not captured");
+    }
 }
 
 void verifyImageTableRegistration() {

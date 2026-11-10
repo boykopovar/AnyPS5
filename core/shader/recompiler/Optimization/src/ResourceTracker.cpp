@@ -126,6 +126,10 @@ std::uint32_t possibleU32UpperBoundDepth(const IrValue* value, std::uint32_t dep
             return value->ArgumentCount() >= 1u ? possibleU32UpperBoundDepth(value->Argument(0), depth - 1u) : std::numeric_limits<std::uint32_t>::max();
         case IrOpcode::SelectU32:
             return value->ArgumentCount() == 3u ? (possibleU32UpperBoundDepth(value->Argument(1), depth - 1u) | possibleU32UpperBoundDepth(value->Argument(2), depth - 1u)) : std::numeric_limits<std::uint32_t>::max();
+        case IrOpcode::UMin32:
+            return value->ArgumentCount() == 2u ? std::min(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u)) : std::numeric_limits<std::uint32_t>::max();
+        case IrOpcode::UMax32:
+            return value->ArgumentCount() == 2u ? std::max(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u)) : std::numeric_limits<std::uint32_t>::max();
         case IrOpcode::IAdd32:
             return value->ArgumentCount() == 2u ? add(possibleU32UpperBoundDepth(value->Argument(0), depth - 1u), possibleU32UpperBoundDepth(value->Argument(1), depth - 1u)) : std::numeric_limits<std::uint32_t>::max();
         case IrOpcode::Phi: {
