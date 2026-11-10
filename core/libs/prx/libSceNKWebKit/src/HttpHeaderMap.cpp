@@ -221,6 +221,18 @@ NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore13HTTPHeaderMap3getENS_14HTTPHead
     return index == vector.size ? String() : String(vector.buffer[index].value);
 }
 
+String APS5_VABI _ZNK7WebCore13HTTPHeaderMap3getERKN3WTF6StringE(const HTTPHeaderMap* self, const String& name) {
+    HTTPHeaderName known;
+    if (FindName(name, known)) return _ZNK7WebCore13HTTPHeaderMap3getENS_14HTTPHeaderNameE(self, known);
+    return _ZNK7WebCore13HTTPHeaderMap17getUncommonHeaderERKN3WTF6StringE(self, name);
+}
+
+String APS5_VABI _ZNK7WebCore13HTTPHeaderMap17getUncommonHeaderERKN3WTF6StringE(const HTTPHeaderMap* self, const String& name) {
+    const auto& vector = Map(self).uncommon;
+    const auto index = Find(vector, [&](const auto& entry) { return Equal(entry.key, name); });
+    return index == vector.size ? String() : String(vector.buffer[index].value);
+}
+
 bool APS5_VABI _ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(const NKWebKit::HttpAbi::HTTPHeaderMap* self, NKWebKit::HttpAbi::HTTPHeaderName name) {
     const auto& vector = Map(self).common;
     return Find(vector, [&](const auto& entry) { return entry.key == name; }) != vector.size;
