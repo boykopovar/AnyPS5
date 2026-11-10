@@ -28,10 +28,6 @@ int APS5_VABI EVP_PKEY_verify_init_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EVP_sha512_256_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI HKDF_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -325,10 +321,6 @@ int APS5_VABI X509_CRL_get_ext_d2i_nid_postfix() {
 }
 
 int APS5_VABI X509_digest_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI X509V3_set_ctx_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

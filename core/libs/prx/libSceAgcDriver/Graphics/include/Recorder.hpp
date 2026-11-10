@@ -161,13 +161,17 @@ public:
     void NotePendingWordFill(std::uint64_t address, std::size_t bytes, std::uint32_t word);
     // Notes several [begin, end) ranges and publishes the snapshot once (a dispatch writes many buffers).
     void NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    static constexpr std::int16_t ReachValue = -2;
+    void NotePendingReach(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     bool PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
+    bool PendingStoreOverlaps(std::uint64_t address, std::size_t bytes) const;
     // Whether no unfinished batch writes the range any more: no open-batch overlap, and every
     // overlapping in-flight batch's fence has signaled (its in-place GPU stores are final in host
     // memory; its completion stores are the caller's business, see VulkanDevice::CopyBuffer).
     bool PendingWriteSettled(std::uint64_t address, std::size_t bytes) const;
     std::uint64_t LastWriteNote(std::uint64_t address, std::size_t bytes) const;
     std::uint64_t NewestWriteNote(std::uint64_t address, std::size_t bytes) const;
+    std::uint64_t NewestStoreNote(std::uint64_t address, std::size_t bytes) const;
     struct PendingWrite {
         std::uint64_t begin;
         std::uint64_t end;
@@ -879,6 +883,8 @@ private:
     // `ownLabel`: the range is a label's own store (NoteLabel, AfterCompletions), which does not
     // overwrite the table entries it covers; any other range flags them (table mutex, briefly).
     bool noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel = false, int value = -1, std::int64_t word = -1);
+    void notePendingRanges(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, int value);
+    std::uint64_t newestNote(std::uint64_t address, std::size_t bytes, bool reach) const;
     // Appends one range to `batch` (open or in flight) and publishes the snapshot if needed.
     void noteWriteOn(Batch& batch, std::uint64_t address, std::size_t bytes, bool ownLabel = false);
     void noteLabelOn(Batch& batch, std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool behindCompletion = false);
