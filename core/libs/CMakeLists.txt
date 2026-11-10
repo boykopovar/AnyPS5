@@ -323,6 +323,25 @@ include(prx/libSceLibreSsl/Cmac.cmake)
 include(prx/libSceLibreSsl/ProtocolSelection.cmake)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_kernel_sys_paths_tests tests/GuestKernelSysPaths.cpp
+        nid/src/NidCompute.cpp nid/src/Sha1.cpp)
+    target_include_directories(guest_kernel_sys_paths_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
+    target_link_libraries(guest_kernel_sys_paths_tests PRIVATE ${CMAKE_DL_LIBS})
+    add_custom_target(guest_kernel_sys_paths_libraries DEPENDS
+        ${PATCHED_DIR}/libkernel_sys.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+    add_dependencies(guest_kernel_sys_paths_tests guest_kernel_sys_paths_libraries)
+    configure_windows_unwind(guest_kernel_sys_paths_tests)
+    if(MINGW)
+        target_compile_options(guest_kernel_sys_paths_tests PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(guest_kernel_sys_paths_tests PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+    foreach(case IN ITEMS statfs symlinkat symlinkat_errors futimesat)
+        add_test(NAME guest_kernel_sys_paths_${case} COMMAND guest_kernel_sys_paths_tests ${UNPATCHED_DIR} unpatched ${case})
+        add_test(NAME guest_kernel_sys_paths_${case}_patched COMMAND guest_kernel_sys_paths_tests ${PATCHED_DIR} patched ${case})
+        set_tests_properties(guest_kernel_sys_paths_${case} guest_kernel_sys_paths_${case}_patched PROPERTIES TIMEOUT 20)
+    endforeach()
+    set_tests_properties(guest_kernel_sys_paths_symlinkat guest_kernel_sys_paths_symlinkat_patched PROPERTIES SKIP_RETURN_CODE 77)
+
     add_test_executable(guest_posix_scalar_io_tests tests/GuestPosixScalarIo.cpp)
     target_include_directories(guest_posix_scalar_io_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_posix_scalar_io_tests PRIVATE libkernel libc)
@@ -407,7 +426,8 @@ if(BUILD_TESTING)
     add_test(NAME nid_buffer_validation COMMAND nid_buffer_validation_tests)
     set_tests_properties(nid_buffer_validation PROPERTIES TIMEOUT 10)
 
-    add_test_executable(guest_dinkumware_fetch_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestDinkumwareFetch.cpp
+    add_test_executable(guest_dinkumware_fetch_tests NO_RUNTIME_DLL_STAGING
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestDinkumwareFetch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/NidCompute.cpp ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/Sha1.cpp)
     target_include_directories(guest_dinkumware_fetch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
     target_link_libraries(guest_dinkumware_fetch_tests PRIVATE ${CMAKE_DL_LIBS})
@@ -479,6 +499,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_gnu_hash.py $<TARGET_FILE:nid_patcher>)
         add_test(NAME nid_elf_duplicates COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_elf_duplicates.py $<TARGET_FILE:nid_patcher>)
+        add_test(NAME nid_mangled_imports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_mangled_imports.py $<TARGET_FILE:nid_patcher>)
         add_test(NAME nid_patcher_macho COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_macho_nids.py $<TARGET_FILE:nid_patcher>)
         add_test(NAME nid_patcher_native_paths COMMAND ${Python3_EXECUTABLE}
@@ -1230,6 +1252,17 @@ if(BUILD_TESTING)
         add_subdirectory(tests/register_context)
     endif()
 
+    add_test_executable(guest_kernel_sys_mqueue_tests tests/GuestKernelSysMqueue.cpp)
+    target_include_directories(guest_kernel_sys_mqueue_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_mqueue_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_mqueue_tests)
+    add_test(NAME guest_kernel_sys_mqueue COMMAND guest_kernel_sys_mqueue_tests)
+    set_tests_properties(guest_kernel_sys_mqueue PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_mqueue PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
     add_test_executable(savedata_memory_metadata_tests tests/SaveDataMemoryMetadata.cpp)
     target_include_directories(savedata_memory_metadata_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(savedata_memory_metadata_tests PRIVATE libSceSaveData.native)
@@ -1416,7 +1449,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
 
-    add_test_executable(guest_kernel_process_exports_tests tests/GuestKernelProcessExports.cpp)
+    add_test_executable(guest_kernel_process_exports_tests NO_RUNTIME_DLL_STAGING tests/GuestKernelProcessExports.cpp)
     target_include_directories(guest_kernel_process_exports_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_process_exports_tests PRIVATE ${CMAKE_DL_LIBS})
     configure_host_test_executable(guest_kernel_process_exports_tests)

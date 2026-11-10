@@ -240,7 +240,7 @@ int APS5_VABI EVP_CipherInit_ex_nid_postfix(LibreSslEvpCipherCtx* ctx, const Lib
         ctx->cipher = cipher;
         ctx->cipherData = nullptr;
         if (cipher->contextSize) {
-            ctx->cipherData = malloc_nid_postfix(static_cast<std::size_t>(cipher->contextSize));
+            ctx->cipherData = calloc_nid_postfix(1, static_cast<std::size_t>(cipher->contextSize));
             if (!ctx->cipherData) return 0;
         }
         ctx->keyLen = cipher->keyLength;

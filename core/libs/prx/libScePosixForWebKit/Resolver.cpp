@@ -300,6 +300,7 @@ int APS5_VABI scePosixForWebKit_gethostbyname_r(const char* name, GuestResolver:
 }
 
 GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* name, const char* protocol) {
+    if (!name) return nullptr;
     for (const auto& service : Services) {
         bool named = std::strcmp(name, service.name) == 0;
         for (const char* alias : service.aliases)
