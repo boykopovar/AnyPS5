@@ -428,8 +428,6 @@ int APS5_VABI WKPageBackgroundExtendsBeyondPage();
 int APS5_VABI WKPageBeginPrinting();
 int APS5_VABI WKPageBlurFocusedNode();
 int APS5_VABI WKPageCallAfterNextPresentationUpdate();
-int APS5_VABI WKPageCanGoBack();
-int APS5_VABI WKPageCanGoForward();
 int APS5_VABI WKPageCenterSelectionInVisibleArea();
 int APS5_VABI WKPageClearLoadedSubresourceDomains();
 int APS5_VABI WKPageClearSelection();

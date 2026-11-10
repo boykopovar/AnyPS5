@@ -158,6 +158,8 @@ std::uint32_t APS5_VABI WKOpenPanelParametersGetTypeID();
 void APS5_VABI WKOpenPanelResultListenerCancel(const void* listenerRef);
 void APS5_VABI WKOpenPanelResultListenerChooseFiles(const void* listenerRef, const void* fileURLsRef, const void* allowedMimeTypesRef);
 std::uint32_t APS5_VABI WKOpenPanelResultListenerGetTypeID();
+bool APS5_VABI WKPageCanGoBack(const void* page);
+bool APS5_VABI WKPageCanGoForward(const void* page);
 std::uint32_t APS5_VABI WKPageConfigurationGetTypeID();
 std::uint32_t APS5_VABI WKPageGetTypeID();
 std::uint32_t APS5_VABI WKPageGroupGetTypeID();

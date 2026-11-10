@@ -129,10 +129,6 @@ int APS5_VABI X509V3_EXT_d2i_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI Unknown_3KZ_minus_L4y1gak_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("3KZ-L4y1gak", Unknown_3KZ_minus_L4y1gak_nid_no_patch);
 
 int APS5_VABI X509_set_pubkey_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -170,10 +166,6 @@ int APS5_VABI ERR_load_X509_strings_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI Unknown_AiNud8LR8B4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("AiNud8LR8B4", Unknown_AiNud8LR8B4_nid_no_patch);
 
 int APS5_VABI X509_check_akid_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -283,11 +275,6 @@ int APS5_VABI SSL_process_quic_post_handshake_nid_postfix(void* ssl) {
     return 1;
 }
 
-int APS5_VABI Unknown_aLdgrI2jAF0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("aLdgrI2jAF0", Unknown_aLdgrI2jAF0_nid_no_patch);
-
 int APS5_VABI EC_POINT_clear_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -343,11 +330,6 @@ int APS5_VABI SSL_provide_quic_data_nid_postfix() {
 int APS5_VABI d2i_PUBKEY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI Unknown_pdxCm9_plus_CCc4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("pdxCm9+CCc4", Unknown_pdxCm9_plus_CCc4_nid_no_patch);
 
 int APS5_VABI Unknown_qGsc6uT6p1E_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
