@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import sys
@@ -315,6 +316,15 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "PPSA00001 found more than once"):
             title_run.discover([self.root])
 
+    def test_git_refuses_a_failed_call(self):
+        failed = subprocess.CompletedProcess(["git"], 128, stdout="", stderr="fatal: not a git repository")
+        with unittest.mock.patch.object(title_run.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(SystemExit, "exit 128.*not a git repository"):
+                title_run.git(self.root, "rev-parse", "--short", "HEAD")
+        with unittest.mock.patch.object(title_run.subprocess, "run", side_effect=FileNotFoundError("git")):
+            with self.assertRaisesRegex(SystemExit, "cannot run git"):
+                title_run.git(self.root, "status", "--porcelain")
+
     def test_discover_refuses_a_package_without_title_id(self):
         package(self.root / "a/PPSA00001", "PPSA00001")
         param = self.root / "a/PPSA00001/sce_sys/param.json"
@@ -453,6 +463,31 @@ class SessionTests(unittest.TestCase):
         session = self.start(f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}])", owned=Path(sys.executable).parent)
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 7)
+
+    @unittest.skipUnless(os.name == "nt", "junctions are Windows-specific")
+    def test_exit_code_follows_a_junctioned_interpreter(self):
+        target = Path(sys.executable).parent
+        directory = Path(tempfile.mkdtemp(prefix="title-run-junction-"))
+        link = directory / "python"
+        session = None
+        try:
+            made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, text=True)
+            if made.returncode != 0:
+                self.skipTest("cannot create a junction: " + made.stderr.strip())
+            child = "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])"
+            session = title_run.Session([str(link / Path(sys.executable).name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
+            self.assertTrue(wait_until(lambda: not session.alive()))
+            self.assertEqual(session.exit_code(), 7)
+        finally:
+            if session is not None:
+                session.kill()
+            if link.exists():
+                try:
+                    os.rmdir(link)
+                except OSError:
+                    pass
+            if not link.exists():
+                shutil.rmtree(directory, ignore_errors=True)
 
     @unittest.skipUnless(os.name == "nt", "window placement is Windows-specific")
     def test_new_windows_go_behind_the_others_without_polling(self):

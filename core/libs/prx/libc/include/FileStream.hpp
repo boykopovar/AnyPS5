@@ -376,7 +376,10 @@ public:
         }
         if ((state.load() & (UcrtReading | UcrtUpdate)) != UcrtUpdate) return true;
         const bool switched = (state.load() & UcrtWriting) == 0 || ::_fflush_nolock(native) == 0;
-        if (switched) state.fetch_or(UcrtReading);
+        if (switched) {
+            state.fetch_and(~UcrtWriting);
+            state.fetch_or(UcrtReading);
+        }
         SyncUnlockedStatus();
         return switched;
 #elif defined(__GLIBC__)

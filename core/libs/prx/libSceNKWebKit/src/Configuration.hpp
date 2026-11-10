@@ -50,6 +50,10 @@ public:
 
     Retained<ProcessPoolConfiguration> configuration;
     bool usesSingleWebProcess = false;
+    std::uint32_t cacheModel = 0;
+    bool accessibilityEnabled = false;
+    bool processTerminationEnabled = true;
+    std::vector<std::string> visitedLinks;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
