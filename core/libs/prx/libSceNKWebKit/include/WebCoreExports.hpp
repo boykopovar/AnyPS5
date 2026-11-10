@@ -15,6 +15,9 @@ void APS5_VABI _ZN7WebCore10LayoutRect5scaleEf(WebCore::LayoutRect* self, float 
 void APS5_VABI _ZN7WebCore10LayoutRect5uniteERKS0_(WebCore::LayoutRect* self, const WebCore::LayoutRect& other);
 void APS5_VABI _ZN7WebCore10LayoutRectC1ERKNS_9FloatRectE(WebCore::LayoutRect* self, const WebCore::FloatRect& r);
 void APS5_VABI _ZN7WebCore10LayoutRectC2ERKNS_9FloatRectE(WebCore::LayoutRect* self, const WebCore::FloatRect& r);
+void APS5_VABI _ZN7WebCore13AXObjectCache19enableAccessibilityEv();
+void APS5_VABI _ZN7WebCore13AXObjectCache20disableAccessibilityEv();
+void APS5_VABI _ZN7WebCore13AXObjectCache37setEnhancedUserInterfaceAccessibilityEb(bool flag);
 void APS5_VABI _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_( WebCore::RoundedRect* self, const WebCore::LayoutRect& rect, const WebCore::LayoutSize& topLeft, const WebCore::LayoutSize& topRight, const WebCore::LayoutSize& bottomLeft, const WebCore::LayoutSize& bottomRight);
 void APS5_VABI _ZN7WebCore11RoundedRectC2ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_( WebCore::RoundedRect* self, const WebCore::LayoutRect& rect, const WebCore::LayoutSize& topLeft, const WebCore::LayoutSize& topRight, const WebCore::LayoutSize& bottomLeft, const WebCore::LayoutSize& bottomRight);
 WebCore::IntRect APS5_VABI _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(const WebCore::FloatRect& rect);
@@ -73,8 +76,6 @@ void APS5_VABI _ZN7WebCore7IntRectC2ERKNS_10LayoutRectE(WebCore::IntRect* self, 
 void APS5_VABI _ZN7WebCore7IntRectC2ERKNS_9FloatRectE(WebCore::IntRect* self, const WebCore::FloatRect& r);
 void APS5_VABI _ZN7WebCore7IntSizeC1ERKNS_9FloatSizeE(WebCore::IntSize* self, const WebCore::FloatSize& s);
 void APS5_VABI _ZN7WebCore7IntSizeC2ERKNS_9FloatSizeE(WebCore::IntSize* self, const WebCore::FloatSize& s);
-std::uint64_t APS5_VABI _ZN7WebCore7Process10identifierEv();
-void APS5_VABI _ZN7WebCore7Process13setIdentifierEN3WTF23ObjectIdentifierGenericINS_21ProcessIdentifierTypeENS1_38ObjectIdentifierMainThreadAccessTraitsEEE(std::uint64_t identifier);
 void APS5_VABI _ZN7WebCore8IntPointC1ERKNS_10FloatPointE(WebCore::IntPoint* self, const WebCore::FloatPoint& p);
 void APS5_VABI _ZN7WebCore8IntPointC2ERKNS_10FloatPointE(WebCore::IntPoint* self, const WebCore::FloatPoint& p);
 void APS5_VABI _ZN7WebCore9FloatRect5scaleEff(WebCore::FloatRect* self, float sx, float sy);
