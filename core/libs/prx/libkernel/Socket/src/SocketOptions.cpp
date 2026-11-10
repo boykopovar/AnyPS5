@@ -46,6 +46,11 @@ constexpr int GuestTcpNoDelay = 1;
 constexpr int GuestReusePort = 0x200;
 constexpr int KeptFlags = 0x1 | GuestReuseAddress | 0x40 | GuestReusePort | 0x400 | 0x2000 | 0x10000;
 constexpr int WriteOnlyFlags = 0x4000 | 0x8000;
+constexpr int GuestTimestamp = 0x400;
+constexpr int GuestBinaryTime = 0x2000;
+constexpr int GuestDatagram = 2;
+constexpr int GuestInet = 2;
+constexpr int GuestInet6 = 28;
 constexpr int GuestTcpNoDelayFlag = 4;
 constexpr int GuestTcpMaximumSegment = 2;
 constexpr int GuestTcpKeepIdle = 0x100;
@@ -264,6 +269,25 @@ int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
             if (::setsockopt(handle, SOL_SOCKET, SO_REUSEPORT, reinterpret_cast<NativeOptionValue>(&reusePort), sizeof(reusePort))) return HostError();
 #endif
             if (::setsockopt(handle, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<NativeOptionValue>(&reuseAddress), sizeof(reuseAddress))) return HostError();
+        }
+        if ((option == GuestTimestamp || option == GuestBinaryTime) && type == GuestDatagram && (family == GuestInet || family == GuestInet6)) {
+            const bool stamped = (flags & (GuestTimestamp | GuestBinaryTime)) != 0;
+#ifdef _WIN32
+            struct {
+                ULONG flags;
+                USHORT bufferedSends;
+            } config{stamped ? 1u : 0u, 0};
+            DWORD returned = 0;
+            WSAIoctl(handle, _WSAIOW(IOC_VENDOR, 235), &config, sizeof(config), nullptr, 0, &returned, nullptr, nullptr);
+#else
+            const int arrival = stamped ? 1 : 0;
+#ifdef __linux__
+            const int nativeOption = SO_TIMESTAMPNS;
+#else
+            const int nativeOption = SO_TIMESTAMP;
+#endif
+            if (::setsockopt(handle, SOL_SOCKET, nativeOption, reinterpret_cast<NativeOptionValue>(&arrival), sizeof(arrival))) return HostError();
+#endif
         }
         state.keptFlags = flags;
         return 0;
