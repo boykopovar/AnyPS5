@@ -453,11 +453,6 @@ void APS5_VABI sceLibcInternalUnknown6_093_R2QKo3hBLkw_nid_no_patch(int* locks) 
 }
 APS5_EXPORT("R2QKo3hBLkw", sceLibcInternalUnknown6_093_R2QKo3hBLkw_nid_no_patch);
 
-int APS5_VABI malloc_finalize_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNSt10moneypunctIwLb0EEC1EPKcm_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
