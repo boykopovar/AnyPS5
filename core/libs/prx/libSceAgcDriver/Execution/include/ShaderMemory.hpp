@@ -87,7 +87,7 @@ public:
         std::uint64_t calls, blocks, refused, words;
     };
     static VouchCounts Vouches();
-    static bool Vouched(PendingWriteQuery pending, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp);
+    static bool Vouched(PendingWriteQuery pending, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp, bool uncached = false);
     static std::uint64_t descriptorScope(void* context, std::size_t bytes);
 
 private:
@@ -212,7 +212,7 @@ struct VouchedRegions {
     std::uint64_t low = 0;
     std::uint64_t high = 0;
 };
-std::size_t VouchSharedRegions(std::span<const SharedWords> shared, std::size_t regions, ShaderMemory::PendingWriteQuery pending, std::vector<VouchedRegions>& vouched);
+std::size_t VouchSharedRegions(std::span<const SharedWords> shared, std::size_t regions, ShaderMemory::PendingWriteQuery pending, std::vector<VouchedRegions>& vouched, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> restampable = {}, bool (*restamp)(const ShaderRecompiler::SrtGuestWords&, ShaderMemory::PendingWriteQuery) = nullptr);
 
 }
 

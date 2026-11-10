@@ -82,9 +82,9 @@ bool InCode(const ShaderRecompiler::MemoryRegion& region, const std::shared_ptr<
     return !code->header.empty() && region.guestAddress >= code->headerAddress && region.guestAddress < code->headerAddress + code->header.size();
 }
 
-bool OverlapsRange(std::span<const ShaderRecompiler::MemoryRegion> regions, const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, const std::shared_ptr<const ShaderSnapshot>& code) {
+bool OverlapsRange(std::span<const ShaderRecompiler::MemoryRegion> regions, const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, const std::shared_ptr<const ShaderSnapshot>& code, const PreparedShaderState::UserDataLink* linking) {
     for (const auto& region : regions) {
-        if (InCode(region, code)) continue;
+        if (InCode(region, code) && (linking == nullptr || !linking->Overlaps(region.guestAddress, region.bytes.size()))) continue;
         for (const auto& [begin, end] : ranges) {
             if (begin < region.guestAddress + region.bytes.size() && region.guestAddress < end) return true;
         }
@@ -293,7 +293,8 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                     ++stats.labelOverlaps;
                     break;
                 }
-                if (OverlapsRange(found->second.captured, writes, found->second.registeredShader)) {
+                const auto* linking = found->second.linking != nullptr ? found->second.linking.get() : found->second.keepVariant != nullptr ? found->second.keepVariant->linking.get() : nullptr;
+                if (OverlapsRange(found->second.captured, writes, found->second.registeredShader, linking)) {
                     resolved.erase(found);
                     ++stats.writtenBefore;
                     break;
@@ -311,7 +312,7 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                     std::array<double, DriverPhaseCount> phaseMs{};
                     auto phaseLap = lap;
                     DispatchPhaseTiming phaseTiming{profile, lap, phaseMs, phaseLap};
-                    insertDispatch(found->second.address, found->second.key, found->second.noDispatchCache, profile, found->second.registeredShader, found->second.forgetAtCapture, memory, found->second.shaderMemory, found->second.captured, found->second.capture, found->second.compiledResult, found->second.missedEntry, found->second.missedDiffering, found->second.attachVariant, phaseTiming);
+                    insertDispatch(found->second.address, found->second.key, found->second.noDispatchCache, profile, found->second.registeredShader, found->second.forgetAtCapture, memory, found->second.shaderMemory, found->second.captured, found->second.capture, found->second.compiledResult, found->second.missedEntry, found->second.missedDiffering, found->second.attachVariant, phaseTiming, found->second.linking);
                 }
                 bool bounded = false;
                 const auto itemWrites = DispatchWriteRanges(*found->second.compiledResult, bounded);

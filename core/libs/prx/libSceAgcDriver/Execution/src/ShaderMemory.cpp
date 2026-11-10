@@ -682,12 +682,12 @@ ShaderRecompiler::SrtWriteStamp ShaderMemory::stampWrites(void* context, std::ui
     return {generation, layout};
 }
 
-bool ShaderMemory::Vouched(PendingWriteQuery pending, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp) {
+bool ShaderMemory::Vouched(PendingWriteQuery pending, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp, bool uncached) {
     CaptureTotals().vouchCalls.fetch_add(1, std::memory_order_relaxed);
     if (stamp.generation == 0 || bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes || stamp.layout != GuestAllocations::GuestAllocationsGeneration_nid_postfix()) return false;
     if (pending != nullptr && pending(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return false;
     GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
-    if (GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes)) == 0) return false;
+    if ((uncached ? GuestMemory::CollectWritesUncached(address, static_cast<std::size_t>(bytes)) : GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes))) == 0) return false;
     return GuestMemory::UnchangedSince(address, static_cast<std::size_t>(bytes), stamp.generation);
 }
 
@@ -1051,7 +1051,7 @@ bool SameCapturedWords(std::span<const std::uint32_t> left, std::span<const Shar
     return same;
 }
 
-std::size_t VouchSharedRegions(std::span<const SharedWords> shared, std::size_t regions, ShaderMemory::PendingWriteQuery pending, std::vector<VouchedRegions>& vouched) {
+std::size_t VouchSharedRegions(std::span<const SharedWords> shared, std::size_t regions, ShaderMemory::PendingWriteQuery pending, std::vector<VouchedRegions>& vouched, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> restampable, bool (*restamp)(const ShaderRecompiler::SrtGuestWords&, ShaderMemory::PendingWriteQuery)) {
     vouched.clear();
     if (shared.empty() || regions == 0) return 0;
     thread_local std::vector<std::pair<const ShaderRecompiler::SrtGuestWords*, bool>>* blocksSlot = nullptr;
@@ -1065,7 +1065,8 @@ std::size_t VouchSharedRegions(std::span<const SharedWords> shared, std::size_t 
         if (block == nullptr || block->low >= block->high) continue;
         auto known = std::find_if(blocks.begin(), blocks.end(), [&](const auto& seen) { return seen.first == block.get(); });
         if (known == blocks.end()) {
-            const bool good = ShaderMemory::Vouched(pending, block->low, block->high - block->low, ShaderRecompiler::LoadStamp(*block));
+            const bool recoverable = restamp != nullptr && std::ranges::find(restampable, block) != restampable.end();
+            const bool good = ShaderMemory::Vouched(pending, block->low, block->high - block->low, ShaderRecompiler::LoadStamp(*block), recoverable) || (recoverable && restamp(*block, pending));
             (good ? totals.vouchedBlocks : totals.refusedBlocks).fetch_add(1, std::memory_order_relaxed);
             known = blocks.insert(blocks.end(), {block.get(), good});
         }

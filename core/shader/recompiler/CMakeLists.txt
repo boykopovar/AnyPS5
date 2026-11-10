@@ -274,6 +274,7 @@ function(add_shader_recompiler target runtimeTarget)
             SetDiagnosticSink
             Recompile
             RecompileCacheKey::ContextHash
+            RecompileCacheKey::HashCode
             RecompileCacheKey::SealFeatureDigest
             RecompileResult
             PrepareShader
@@ -322,6 +323,7 @@ function(add_shader_recompiler target runtimeTarget)
             FindTableCalls
             LinkCalls
             LoadStamp
+            StoreStamp
             WriteFileAtomically
     )
     set(shaderCacheManifest)
