@@ -1,8 +1,15 @@
 #include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
+#ifdef APS5_NGS2_PS4_LIBRARY
+#include "tests/ProcessParametersFixture.hpp"
+#endif
 
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <numbers>
+#include <utility>
 #include <vector>
 
 static Ngs2CustomSubmixerRackOption RackOption(std::uint32_t count, std::uint32_t channels = 2) {
@@ -79,14 +86,17 @@ static uintptr_t Input(uintptr_t system, const std::vector<std::int16_t>& pcm, s
     return voice;
 }
 
-static void Render(uintptr_t system, const std::vector<float>& expected, std::uint32_t channels = 2, std::uint32_t grain = Grain) {
+static void Render(uintptr_t system, const std::vector<float>& expected, std::uint32_t channels = 2, std::uint32_t grain = Grain, bool startup = false, const std::vector<float>& scale = {}) {
     Require(sceNgs2SystemSetGrainSamples(system, grain) == SCE_NGS2_OK);
     std::vector<std::vector<float>> samples(expected.size(), std::vector<float>(grain * channels, 9.0f));
     std::vector<Ngs2RenderBufferInfo> info;
     for (auto& output : samples) info.push_back({output.data(), output.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, channels});
     Require(sceNgs2SystemRender(system, info.data(), static_cast<std::uint32_t>(info.size())) == SCE_NGS2_OK);
     for (std::size_t port = 0; port < expected.size(); port++) {
-        for (const auto sample : samples[port]) Require(std::fabs(sample - expected[port]) <= 0.000001f);
+        for (std::size_t i = 0; i < samples[port].size(); ++i) {
+            const float value = startup && i / channels < 3 ? 0.0f : expected[port] * (scale.empty() ? 1.0f : scale[i % channels]);
+            Require(std::fabs(samples[port][i] - value) <= 0.000001f);
+        }
     }
 }
 
@@ -105,7 +115,7 @@ static void TestNoModules(std::uint32_t count, std::vector<float> expected) {
         input1 = Input(system, pcm1);
         Route(input1, 0, custom, 1);
     }
-    Render(system, expected);
+    Render(system, expected, 2, Grain, true);
     if (count > 1) {
         Route(input1, 0, custom, 0);
         expected[count - 1] = -0.5f;
@@ -153,7 +163,7 @@ static void TestGainRouting() {
             input1 = Input(system, pcm1);
             Route(input1, 0, custom, 1);
         }
-        Render(system, test.expected);
+        Render(system, test.expected, 2, Grain, true);
         Render(system, test.expected, 2, 64);
         Route(input0, 0, 0);
         if (input1 != 0) Route(input1, 0, 0);
@@ -188,13 +198,29 @@ static void TestUnityCopy() {
     }
     Require(sceNgs2SystemRender(system, info.data(), info.size()) == SCE_NGS2_OK);
     for (const auto& output : outputs) {
-        for (std::uint32_t i = 0; i < Grain; i++) Require(output[i * 2] == 0.25f && output[i * 2 + 1] == -0.5f);
+        for (std::uint32_t i = 0; i < Grain; i++) Require(output[i * 2] == (i < 3 ? 0.0f : 0.25f) && output[i * 2 + 1] == (i < 3 ? 0.0f : -0.5f));
     }
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+#ifdef APS5_NGS2_PS4_LIBRARY
+static constexpr bool Ps4Library = true;
+#else
+static constexpr bool Ps4Library = false;
+#endif
+
+static std::vector<float> MasteringScale(std::uint32_t channels) {
+    if (Ps4Library) return {};
+    constexpr float half = std::numbers::sqrt2_v<float> / 2.0f;
+    if (channels == 3) return {1.0f + half, 1.0f + half, 0.0f};
+    if (channels == 5) return {1.0f, 1.0f, 1.0f, 0.0f, 1.0f};
+    if (channels == 7) return {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, half};
+    return {};
+}
+
 static void TestIndependentVoicesAndSilentRamp(std::uint32_t channels) {
     const auto system = CreateSystem();
+    const auto scale = MasteringScale(channels);
     auto option = RackOption(4, channels);
     AddGain(option, 0, 3);
     const auto rack = CustomRack(system, option);
@@ -211,23 +237,284 @@ static void TestIndependentVoicesAndSilentRamp(std::uint32_t channels) {
     const auto input1 = Input(system, pcm1, channels);
     Route(input0, 0, first, 0, channels);
     Route(input1, 0, second, 0, channels);
-    Render(system, {0.5f, 0.75f}, channels);
+    Render(system, {0.5f, 0.75f}, channels, Grain, true, scale);
     Route(input0, 0, 0, 0, channels);
-    Render(system, {0.0f, 0.75f}, channels);
+    Render(system, {0.0f, 0.75f}, channels, Grain, false, scale);
     SetGain(first, 4.0f);
-    Render(system, {0.0f, 0.75f}, channels);
+    Render(system, {0.0f, 0.75f}, channels, Grain, false, scale);
     Route(input0, 0, first, 0, channels);
-    Render(system, {1.0f, 0.75f}, channels);
+    Render(system, {1.0f, 0.75f}, channels, Grain, false, scale);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestSubmixerKeyInput() {
+    const auto system = CreateSystem();
+    Ngs2SubmixerRackOption option{};
+    option.rack_option.size = sizeof(option);
+    option.rack_option.max_grain_samples = 512;
+    option.rack_option.max_voices = 1;
+    option.rack_option.max_matrices = 1;
+    option.rack_option.max_ports = 1;
+    option.max_channels = 2;
+    option.max_envelope_points = 1;
+    option.max_inputs = 2;
+    option.num_peak_meter_blocks = 1;
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SUBMIXER, &option.rack_option, &query) == SCE_NGS2_OK);
+    const auto info = Buffer(query);
+    uintptr_t rack = 0;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SUBMIXER, &option.rack_option, &info, &rack) == SCE_NGS2_OK);
+    uintptr_t submixer = 0;
+    Require(sceNgs2RackGetVoiceHandle(rack, 0, &submixer) == SCE_NGS2_OK);
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, 2, 0});
+    Event(submixer, SCE_NGS2_VOICE_EVENT_PLAY);
+    Output(system, submixer, 0, 0);
+    const std::vector<std::int16_t> pcm0(Grain * 2 * 16, 8192);
+    const std::vector<std::int16_t> pcm1(Grain * 2 * 16, -24576);
+    const auto input0 = Input(system, pcm0);
+    const auto input1 = Input(system, pcm1);
+    Route(input0, 0, submixer);
+    Route(input1, 0, submixer, 1);
+    Render(system, {0.25f}, 2, Grain, true);
+    Route(input1, 0, submixer, 0);
+    Render(system, {-0.5f});
+    Route(input1, 0, submixer, 1);
+    Render(system, {0.25f});
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestSubmixerFilterOff() {
+    const auto system = CreateSystem();
+    Ngs2SubmixerRackOption option{};
+    option.rack_option.size = sizeof(option);
+    option.rack_option.max_grain_samples = 512;
+    option.rack_option.max_voices = 1;
+    option.rack_option.max_matrices = 1;
+    option.rack_option.max_ports = 1;
+    option.max_channels = 2;
+    option.max_envelope_points = 1;
+    option.max_filters = 2;
+    option.max_inputs = 1;
+    option.num_peak_meter_blocks = 1;
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SUBMIXER, &option.rack_option, &query) == SCE_NGS2_OK);
+    const auto info = Buffer(query);
+    uintptr_t rack = 0;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SUBMIXER, &option.rack_option, &info, &rack) == SCE_NGS2_OK);
+    uintptr_t submixer = 0;
+    Require(sceNgs2RackGetVoiceHandle(rack, 0, &submixer) == SCE_NGS2_OK);
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, 2, 0});
+    Event(submixer, SCE_NGS2_VOICE_EVENT_PLAY);
+    Output(system, submixer, 0, 0);
+    const std::vector<std::int16_t> pcm(Grain * 2 * 16, 8192);
+    Route(Input(system, pcm), 0, submixer);
+    for (const std::uint32_t index : {0u, 1u}) {
+        Ngs2SamplerVoiceFilterParam filter{};
+        filter.index = index;
+        filter.q = 1.0f;
+        filter.level = 1.0f;
+        Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_FILTER, filter);
+    }
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, Ngs2SubmixerVoiceCompressorParam{{}, 1, 0.1f, 0.01f, 0.0f, 0.0f, 0.0f, 1.0f, 0});
+    Render(system, {0.25f}, 2, Grain, true);
+    Render(system, {0.25f});
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static std::int32_t APS5_VABI Steady(Ngs2UserFxProcessContext* context) {
+    const auto* signal = reinterpret_cast<const float*>(context->user_data0);
+    for (std::uint32_t c = 0; c < context->num_channels; c++) {
+        for (std::uint32_t i = 0; i < context->num_grain_samples; i++) context->channel_data[c][i] = context->user_data1 != 0 && i % 2 != 0 ? 0.0f : signal[c];
+    }
+    return SCE_NGS2_OK;
+}
+
+struct CompressorGraph {
+    std::vector<float> signal;
+    std::uint32_t channels;
+    uintptr_t system = CreateSystem();
+    uintptr_t compressor = 0;
+
+    explicit CompressorGraph(std::vector<float> input, bool alternate = false)
+        : signal(std::move(input)), channels(static_cast<std::uint32_t>(signal.size())) {
+        const auto master = Mastering(system, channels);
+        compressor = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SUBMIXER));
+        Control(compressor, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, channels, 0});
+        const auto source = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SUBMIXER));
+        Control(source, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, channels, 0});
+        Control(source, SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX,
+                Ngs2SubmixerVoiceUserFxParam{{}, Steady, reinterpret_cast<std::uintptr_t>(signal.data()), alternate ? 1u : 0u, 0});
+        Patch(source, compressor);
+        Event(source, SCE_NGS2_VOICE_EVENT_PLAY);
+        Patch(compressor, master);
+        Event(compressor, SCE_NGS2_VOICE_EVENT_PLAY);
+    }
+
+    ~CompressorGraph() { Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK); }
+
+    void Set(std::uint32_t flags, float attack = 0.0f, float level = 1.0f, float knee = 0.0f) {
+        Control(compressor, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, Ngs2SubmixerVoiceCompressorParam{{}, flags, 0.5f, 0.5f, knee, attack, 0.0f, level, 0});
+    }
+
+    std::vector<float> Render() {
+        std::vector<float> out(Grain * channels, -9.0f);
+        const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, channels};
+        Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+        return out;
+    }
+
+    void Expect(const std::vector<float>& frame, bool alternate = false) {
+        const auto out = Render();
+        for (std::uint32_t i = 0; i < Grain; i++) {
+            for (std::uint32_t c = 0; c < channels; c++) Require(std::fabs(out[i * channels + c] - (alternate && i % 2 != 0 ? 0.0f : frame[c])) <= 0.00001f);
+        }
+    }
+};
+
+#ifdef APS5_NGS2_PS4_LIBRARY
+alignas(16) static std::array<std::byte, 0x40> processParameters{};
+
+static void SetCompiledSdkVersion(std::uint32_t version) {
+    std::memcpy(processParameters.data() + 0x10, &version, sizeof(version));
+}
+#endif
+
+static void TestSubmixerCompressor() {
+    {
+        CompressorGraph graph({0.8f, 0.8f});
+        graph.Set(0);
+        graph.Expect({0.65f, 0.65f});
+        graph.Expect({0.65f, 0.65f});
+        graph.Set(0x1);
+        graph.Expect({0.8f, 0.8f});
+        graph.Set(0, 0.0f, 2.0f);
+        graph.Expect({1.3f, 1.3f});
+        graph.Set(0x1, 0.0f, 2.0f);
+        graph.Expect({0.8f, 0.8f});
+    }
+    {
+        CompressorGraph graph({0.3f, 0.3f});
+        graph.Set(0);
+        graph.Expect({0.3f, 0.3f});
+    }
+    {
+        CompressorGraph graph({0.8f, 0.8f}, true);
+        graph.Set(0x2);
+        graph.Expect({0.8f * 0.941942f, 0.8f * 0.941942f}, true);
+        graph.Set(0);
+        graph.Expect({0.65f, 0.65f}, true);
+    }
+    {
+        CompressorGraph graph({0.8f, 0.2f});
+        graph.Set(0);
+        graph.Expect({0.65f, 0.1625f});
+    }
+    {
+        CompressorGraph graph({0.2f, 0.2f, 0.2f, 0.8f, 0.2f, 0.2f});
+        graph.Set(0);
+        graph.Expect({0.1625f, 0.1625f, 0.1625f, 0.65f, 0.1625f, 0.1625f});
+    }
+    {
+        CompressorGraph graph({0.8f, 0.8f});
+        graph.Set(0, 0.0f, 1.0f, 0.4f);
+        graph.Expect({0.65f, 0.65f});
+    }
+    {
+        CompressorGraph graph({0.3f, 0.3f});
+        graph.Set(0, 0.0f, 1.0f, 0.4f);
+        graph.Expect({0.3f, 0.3f});
+    }
+    {
+        CompressorGraph graph({0.8f, 0.8f});
+        graph.Set(0, 0.01f);
+        const auto out = graph.Render();
+        const float coefficient = std::exp(-1.0f / 480.0f);
+        float gain = 1.0f;
+        for (std::uint32_t i = 0; i < 32; i++) {
+            gain = coefficient * gain + (1.0f - coefficient) * 0.8125f;
+            Require(std::fabs(out[i * 2] - 0.8f * gain) <= 0.00001f);
+        }
+        Require(std::fabs(gain - 0.987908f) <= 0.00001f);
+    }
+#ifdef APS5_NGS2_PS4_LIBRARY
+    {
+        CompressorGraph graph({0.2f, 0.2f, 0.2f, 0.8f, 0.2f, 0.2f});
+        graph.Set(0x8);
+        graph.Expect({0.2f, 0.2f, 0.2f, 0.65f, 0.2f, 0.2f});
+        graph.Set(0xa);
+        graph.Expect({0.2f, 0.2f, 0.2f, 0.65f, 0.2f, 0.2f});
+    }
+    {
+        CompressorGraph graph({0.8f, 0.2f});
+        graph.Set(0x20);
+        graph.Expect({0.65f, 0.1625f});
+        graph.Set(0x10);
+        graph.Expect({0.65f, 0.1625f});
+    }
+    {
+        CompressorGraph graph({0.45f, 0.45f});
+        SetCompiledSdkVersion(0x1700000);
+        graph.Set(0, 0.0f, 1.0f, 0.4f);
+        graph.Expect({0.44375f, 0.44375f});
+        SetCompiledSdkVersion(0x16fffff);
+        graph.Expect({0.45f, 0.45f});
+    }
+#else
+    {
+        CompressorGraph graph({0.8f, 0.8f});
+        graph.Set(0x8);
+        graph.Expect({0.65f, 0.65f});
+    }
+    {
+        CompressorGraph graph({0.8f, 0.8f}, true);
+        graph.Set(0x4);
+        graph.Expect({0.65f, 0.65f}, true);
+    }
+    {
+        CompressorGraph graph({0.8f, 0.2f});
+        graph.Set(0x20);
+        graph.Expect({0.65f, 0.2f});
+        graph.Set(0x10);
+        graph.Expect({0.65f, 0.1625f});
+    }
+    {
+        CompressorGraph graph({0.2f, 0.2f, 0.2f, 0.8f, 0.2f, 0.2f});
+        graph.Set(0x10);
+        graph.Expect({0.2f, 0.2f, 0.2f, 0.65f, 0.2f, 0.2f});
+    }
+    {
+        CompressorGraph graph({0.2f, 0.2f, 0.2f, 0.2f, 0.8f, 0.2f});
+        graph.Set(0x10);
+        graph.Expect({0.1625f, 0.1625f, 0.1625f, 0.2f, 0.65f, 0.1625f});
+    }
+    {
+        CompressorGraph graph({0.45f, 0.45f});
+        graph.Set(0, 0.0f, 1.0f, 0.4f);
+        graph.Expect({0.44375f, 0.44375f});
+    }
+#endif
+}
+
 int main() {
+#ifdef APS5_NGS2_PS4_LIBRARY
+    const std::uint64_t processSize = processParameters.size();
+    const std::uint32_t processMagic = 0x4942524f;
+    std::memcpy(processParameters.data(), &processSize, sizeof(processSize));
+    std::memcpy(processParameters.data() + 8, &processMagic, sizeof(processMagic));
+    Require(ProcessParametersFixture::Install(processParameters.data(), processParameters.size()));
+#endif
     TestNoModules(1, {0.25f});
     TestNoModules(2, {-0.75f, 0.25f});
     TestNoModules(3, {0.0f, -0.75f, 0.25f});
     TestNoModules(4, {0.0f, 0.0f, -0.75f, 0.25f});
     TestGainRouting();
+    TestSubmixerKeyInput();
+    TestSubmixerFilterOff();
+    TestSubmixerCompressor();
     TestUnityCopy();
-    for (std::uint32_t channels = 1; channels <= 8; channels++) TestIndependentVoicesAndSilentRamp(channels);
+    for (std::uint32_t channels = 1; channels <= 8; channels++) {
+        if (Ps4Library && (channels == 3 || channels == 4 || channels == 5 || channels == 7)) continue;
+        TestIndependentVoicesAndSilentRamp(channels);
+    }
     return 0;
 }

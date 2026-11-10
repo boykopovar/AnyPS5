@@ -15,6 +15,12 @@
 using Message = GuestLocale::String* (APS5_VABI *)(GuestLocale::String*, const LibcException::CategoryObject*, int);
 using Name = const char* (APS5_VABI *)(const LibcException::CategoryObject*);
 using Raise = void (APS5_VABI *)(const LibcException::FutureErrorObject*);
+using What = const char* (APS5_VABI *)(const LibcException::FutureErrorObject*);
+
+static const char* GuestWhat(const std::exception& error) {
+    const auto* object = reinterpret_cast<const LibcException::FutureErrorObject*>(&error);
+    return std::bit_cast<What>(static_cast<const std::uintptr_t*>(object->vtable)[2])(object);
+}
 
 bool failAllocation = false;
 
@@ -86,6 +92,14 @@ static void CheckBaseCategory() {
     const auto mapped = _ZNKSt14error_category23default_error_conditionEi_nid_postfix(future, 7);
     REQUIRE(mapped.reserved == 0 && mapped.value == 7 && mapped.category == future);
     _ZNSt14error_categoryD2Ev_nid_postfix(nullptr);
+    _ZNSt14error_categoryD1Ev_nid_postfix(nullptr);
+    bool trapped = false;
+    try {
+        _ZNSt14error_categoryD0Ev_nid_postfix(nullptr);
+    } catch (const std::runtime_error& error) {
+        trapped = std::strstr(error.what(), "traps (ud2)") != nullptr;
+    }
+    REQUIRE(trapped);
 }
 
 static void CheckFutureCategory() {
@@ -141,7 +155,7 @@ static void CheckFutureError() {
     try { _ZSt19_Throw_future_errorRKSt10error_code_nid_postfix(&code); }
     catch (const std::exception& error) {
         caught = true;
-        REQUIRE(error.what() != nullptr && std::strcmp(error.what(), "future already retrieved") == 0);
+        REQUIRE(GuestWhat(error) != nullptr && std::strcmp(GuestWhat(error), "future already retrieved") == 0);
     }
     REQUIRE(caught);
 
@@ -150,7 +164,7 @@ static void CheckFutureError() {
     try { _ZSt19_Throw_future_errorRKSt10error_code_nid_postfix(&code); }
     catch (const std::exception& error) {
         caught = true;
-        REQUIRE(error.what() == nullptr);
+        REQUIRE(GuestWhat(error) == nullptr);
     }
     REQUIRE(caught);
 

@@ -90,6 +90,21 @@ int main(int argc, char** argv) {
         char text[64];
         RtcTick tick{std::numeric_limits<std::uint64_t>::max()};
         Require(sceRtcFormatRFC3339(text, &tick, 1) == static_cast<int>(0x80B50003));
+        Require(sceRtcFormatRFC3339Precise(text, &tick, 60, 6) == static_cast<int>(0x80B50003));
+        const RtcTick year65536{2068084742400000000ull}, year65537{2068116364800000000ull}, year75535{2383622726400000000ull}, distant{4239646359910459728ull};
+        Require(sceRtcFormatRFC3339(text, &year65536, 0) == static_cast<int>(0x80B50008));
+        Require(sceRtcFormatRFC2822(text, &year65536, 0) == static_cast<int>(0x80B50008));
+        Require(sceRtcFormatRFC3339Precise(text, &year65536, 0, 6) == static_cast<int>(0x80B50008));
+        Require(sceRtcFormatRFC3339(text, &year65537, 60) == 0 && std::strcmp(text, "0001-01-01T01:00:00.00+01:00") == 0);
+        Require(sceRtcFormatRFC2822(text, &year65537, 0) == 0 && std::strcmp(text, "Mon, 01 Jan 0001 00:00:00 +0000") == 0);
+        Require(sceRtcFormatRFC3339Precise(text, &year65537, 60, 6) == 0 && std::strcmp(text, "0001-01-01T01:00:00.000000+01:00") == 0);
+        Require(sceRtcFormatRFC3339(text, &year75535, -60) == 0 && std::strcmp(text, "9998-12-31T23:00:00.00-01:00") == 0);
+        Require(sceRtcFormatRFC2822(text, &year75535, 0) == 0 && std::strcmp(text, "Fri, 01 Jan 9999 00:00:00 +0000") == 0);
+        Require(sceRtcFormatRFC3339Precise(text, &year75535, -60, 6) == 0 && std::strcmp(text, "9998-12-31T23:00:00.000000-01:00") == 0);
+        Require(sceRtcFormatRFC2822(text, &distant, -821) == 0 && std::strcmp(text, "Mon, 17 Jan 3278 10:44:10 -1341") == 0);
+        const RtcTick westBound{3600000000ull}, westBelow{3599999999ull};
+        Require(sceRtcFormatRFC3339Precise(text, &westBound, -60, 6) == 0 && std::strcmp(text, "0001-01-01T00:00:00.000000-01:00") == 0);
+        Require(sceRtcFormatRFC3339Precise(text, &westBelow, -60, 6) == static_cast<int>(0x80B50003));
         return 0;
     }
     EnterTitleDirectory("CUSA00000");
@@ -913,6 +928,14 @@ int main(int argc, char** argv) {
         Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &pastMaximum, 3) == invalidYear);
         SetTimeZone("XXX+3");
         Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &pastMaximum, 3) == 0 && std::strcmp(precise, "9999-12-31T21:00:00.000-03:00") == 0);
+        SetTimeZone("XXX+23:59");
+        const RtcTick farthest{315537897599999999ull + 1439ull * 60000000ull}, beyond{farthest.tick + 1}, half{1ull << 63};
+        Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &farthest, 6) == 0 && std::strcmp(precise, "9999-12-31T23:59:59.999999-23:59") == 0);
+        for (const RtcTick& tick : {beyond, half, huge}) {
+            std::memset(precise, '#', sizeof(precise));
+            Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &tick, 6) == invalidYear && precise[0] == '#');
+            Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &tick, 7) == invalidValue && precise[0] == '#');
+        }
         SetTimeZone("UTC0");
         Require(sceRtcCompareTick(&first, &second) == -1 && sceRtcCompareTick(&second, &first) == 1 && sceRtcCompareTick(&first, &first) == 0);
         Require(sceRtcCompareTick(nullptr, &first) == invalidPointer && sceRtcCompareTick(&first, nullptr) == invalidPointer);
@@ -939,6 +962,11 @@ int main(int argc, char** argv) {
         Require(sceRtcGetCurrentAdNetworkTick(&current) == 0 && current.tick >= adClock.tick && current.tick < adClock.tick + 1000000);
         Require(sceRtcGetCurrentDebugNetworkTick(&current) == 0 && current.tick >= debugClock.tick && current.tick < debugClock.tick + 1000000);
         Require(sceRtcGetCurrentRawNetworkTick(&current) == 0 && current.tick > unixEpochTick);
+        Require(sceRtcGetCurrentTick(nullptr) == invalidPointer);
+        Require(sceRtcGetCurrentNetworkTick(nullptr) == invalidPointer);
+        Require(sceRtcGetCurrentRawNetworkTick(nullptr) == invalidPointer);
+        Require(sceRtcGetCurrentAdNetworkTick(nullptr) == invalidPointer);
+        Require(sceRtcGetCurrentDebugNetworkTick(nullptr) == invalidPointer);
     }
     SetCompiledSdkVersion(process.data(), 0x02ffffff);
     Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidYear && sceRtcGetDayOfWeek(10000, 1, 1) == 6);
@@ -978,4 +1006,53 @@ int main(int argc, char** argv) {
     Require(sceRtcFormatRFC3339(ranges, &shifted, -1) == 0 && std::strcmp(ranges, "9999-12-31T23:59:00.00-00:01") == 0);
     Require(sceRtcInit() == 0);
     Require(sceRtcEnd() == 0);
+    Require(sceRtcGetCurrentTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentNetworkTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentClock(reinterpret_cast<RtcDateTime*>(0x10), 0) == invalidPointer);
+    Require(sceRtcGetCurrentClockLocalTime(reinterpret_cast<RtcDateTime*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentClockUtc(reinterpret_cast<RtcDateTime*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentRawNetworkTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentAdNetworkTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentDebugNetworkTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcSetCurrentTick(reinterpret_cast<const RtcTick*>(0x10)) == invalidPointer);
+    {
+        const RtcDateTime validDate{2020, 1, 1, 0, 0, 0, 0};
+        const RtcDateTime preEpochDate{1969, 1, 1, 0, 0, 0, 0};
+        const RtcDateTime preWin32EpochDate{1600, 12, 31, 23, 59, 59, 0};
+        const RtcDateTime outOfRangeDosDate{1979, 1, 1, 0, 0, 0, 0};
+        Require(sceRtcGetTick(&validDate, reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+        Require(sceRtcGetTick(reinterpret_cast<const RtcDateTime*>(0x10), &shifted) == invalidPointer);
+        Require(sceRtcSetTick(reinterpret_cast<RtcDateTime*>(0x10), &shifted) == invalidPointer);
+        Require(sceRtcSetTick(&ranged, reinterpret_cast<const RtcTick*>(0x10)) == invalidPointer);
+        Require(sceRtcConvertDateTimeToTick(&validDate, reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+        Require(sceRtcConvertDateTimeToTick(reinterpret_cast<const RtcDateTime*>(0x10), &shifted) == invalidPointer);
+        Require(sceRtcConvertTickToDateTime(&shifted, reinterpret_cast<RtcDateTime*>(0x10)) == invalidPointer);
+        Require(sceRtcConvertTickToDateTime(reinterpret_cast<const RtcTick*>(0x10), &ranged) == invalidPointer);
+        int64_t querySeconds = 0;
+        Require(sceRtcGetTime_t(&validDate, reinterpret_cast<int64_t*>(0x10)) == invalidPointer);
+        Require(sceRtcGetTime_t(&preEpochDate, reinterpret_cast<int64_t*>(0x10)) == invalidPointer);
+        Require(sceRtcGetTime_t(reinterpret_cast<const RtcDateTime*>(0x10), &querySeconds) == invalidPointer);
+        Require(sceRtcSetTime_t(reinterpret_cast<RtcDateTime*>(0x10), 0) == invalidPointer);
+        Require(sceRtcConvertDateTimeToTime_t(&validDate, reinterpret_cast<int64_t*>(0x10)) == invalidPointer);
+        Require(sceRtcConvertDateTimeToTime_t(reinterpret_cast<const RtcDateTime*>(0x10), &querySeconds) == invalidPointer);
+        Require(sceRtcConvertTime_tToDateTime(0, reinterpret_cast<RtcDateTime*>(0x10)) == invalidPointer);
+        uint64_t queryWin32Time = 0;
+        Require(sceRtcGetWin32FileTime(&validDate, reinterpret_cast<uint64_t*>(0x10)) == invalidPointer);
+        Require(sceRtcGetWin32FileTime(&preEpochDate, reinterpret_cast<uint64_t*>(0x10)) == invalidPointer);
+        Require(sceRtcGetWin32FileTime(&preWin32EpochDate, reinterpret_cast<uint64_t*>(0x10)) == invalidPointer);
+        Require(sceRtcGetWin32FileTime(reinterpret_cast<const RtcDateTime*>(0x10), &queryWin32Time) == invalidPointer);
+        Require(sceRtcSetWin32FileTime(reinterpret_cast<RtcDateTime*>(0x10), 0) == invalidPointer);
+        uint32_t queryDosTime = 0;
+        Require(sceRtcGetDosTime(&validDate, reinterpret_cast<uint32_t*>(0x10)) == invalidPointer);
+        Require(sceRtcGetDosTime(&outOfRangeDosDate, reinterpret_cast<uint32_t*>(0x10)) == invalidPointer);
+        Require(sceRtcGetDosTime(reinterpret_cast<const RtcDateTime*>(0x10), &queryDosTime) == invalidPointer);
+        Require(sceRtcSetDosTime(reinterpret_cast<RtcDateTime*>(0x10), 0) == invalidPointer);
+    }
+    for (const std::uint64_t value : {maxTick + 1, std::uint64_t{1} << 63, std::numeric_limits<std::uint64_t>::max()}) {
+        const RtcTick outOfRange{value};
+        Require(sceRtcSetCurrentTick(&outOfRange) == 0);
+        ranged = sentinel;
+        Require(sceRtcGetCurrentClockUtc(&ranged) == invalidValue && Equal(ranged, sentinel));
+        Require(sceRtcGetCurrentClockLocalTime(&ranged) == invalidValue && Equal(ranged, sentinel));
+    }
 }

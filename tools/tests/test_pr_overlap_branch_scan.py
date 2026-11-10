@@ -39,6 +39,7 @@ class BranchScanTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         os.chdir(self.tmp.name)
         run("init", "-q")
+        run("config", "core.safecrlf", "false")
         for name in ("a.txt", "b.txt", "c.txt"):
             write(name, "one\ntwo\nthree\n")
         write("core/libs/prx/lib/Existing.cpp", "int Existing() { return 0; }\n")
@@ -145,6 +146,27 @@ class BranchScanTests(unittest.TestCase):
         with patch.object(pr_overlap, "merge", side_effect=record):
             pr_overlap.scan_all(prs, 2)
         self.assertIn("refs/pr/6", merged)
+
+    def test_a_pull_request_exporting_the_same_nid_under_another_name_is_merged(self):
+        base = run("rev-parse", "refs/pr/base")
+        nid = pr_overlap.nid_names.compute_nid("shared")
+        alias = commit_on_base(base, "same nid by alias", {
+            "core/libs/prx/lib/Alias.cpp": f'int APS5_VABI renamed(int value) {{ return value; }}\nAPS5_EXPORT("{nid}", renamed);\n'
+        })
+        run("update-ref", "refs/pr/5", alias)
+        self.prs[5] = {"ref": "refs/pr/5", "sha": alias, "author": "author5", "depends": set()}
+        merged = []
+        real = pr_overlap.merge
+
+        def record(*args):
+            merged.append(args[1])
+            return real(*args)
+
+        with patch.object(pr_overlap, "merge", side_effect=record):
+            pr_overlap.scan_all(self.prs, 2)
+
+        self.assertIn("refs/pr/5", merged)
+        self.assertEqual(pr_overlap.overlaps(self.prs, 0, 5)["exports"], {"shared", "renamed"})
 
 
 if __name__ == "__main__":

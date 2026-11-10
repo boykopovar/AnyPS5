@@ -74,14 +74,14 @@ jobs:
         run: Add-Content -LiteralPath $env:GITHUB_PATH -Value "$env:MSYS2_LOCATION\ucrt64\bin"
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
-          key: windows-msys2
+          key: msys2
           save: ${{ github.ref == 'refs/heads/main' }}
           evict-old-files: job
       - id: ffmpeg-cache
         uses: actions/cache/restore@v6
         with:
           path: build/externals
-          key: ffmpeg-${{ runner.os }}-${{ steps.submodules.outputs.ffmpeg }}
+          key: ffmpeg-${{ runner.os }}-msys2-${{ steps.submodules.outputs.ffmpeg }}
       - shell: cmd
         run: cmake -S . -B build %CONFIGURE% "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown"
       - if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
@@ -99,7 +99,7 @@ jobs:
         run: cmake --build build --target libs
       - shell: cmd
         working-directory: build
-        run: ctest --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit ctest.xml
+        run: ctest --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit ctest.xml --no-tests=error
       - run: python tools/check_skips.py build/ctest.xml --job windows
       - name: Report tests slower than 30 s
         if: ${{ !cancelled() }}

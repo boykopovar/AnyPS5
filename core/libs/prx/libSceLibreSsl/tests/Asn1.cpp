@@ -11,6 +11,7 @@
 #include <exception>
 #include <limits>
 #include <span>
+#include <string>
 #include <utility>
 #include <stdexcept>
 #include <vector>
@@ -164,19 +165,53 @@ void Integers() {
     Require(value.length == original.length && value.type == original.type && value.data == original.data
         && value.flags == original.flags && minimum == std::array<unsigned char, 8>{0x80, 0, 0, 0, 0, 0, 0, 0}, "minimum integer preserves input");
     value.type = 2;
-    RequireThrows([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "positive magnitude above signed maximum");
+    RequireInvalidArgument([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "positive magnitude above signed maximum");
     value.type = 0x102;
     minimum.back() = 1;
-    RequireThrows([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "negative magnitude below signed minimum");
+    RequireInvalidArgument([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "negative magnitude below signed minimum");
     value.data = maximum.data();
     maximum[0] = 0x80;
     for (int type : {2, 0x102}) {
         value.type = type;
-        RequireThrows([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "source signed-overflow path throws");
+        RequireInvalidArgument([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "source signed-overflow path throws");
     }
     std::array<unsigned char, 9> zero{};
     value = {9, 2, zero.data(), 0};
     Require(ASN1_INTEGER_get_nid_postfix(&value) == -1, "overlength leading zeros are not trimmed");
+}
+
+std::string Printed(const Asn1String& value, int expected = 1) {
+    LibreSsl::Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "a memory BIO");
+    Require(ASN1_STRING_print_nid_postfix(bio, &value) == expected, "ASN1_STRING_print result");
+    char* data = nullptr;
+    const auto length = BIO_ctrl_nid_postfix(bio, 3, 0, &data);
+    std::string text(data, static_cast<std::size_t>(length));
+    BIO_free_nid_postfix(bio);
+    return text;
+}
+
+void Print() {
+    unsigned char mixed[] = {'h', 'i', '\n', '\r', '\t', 0, 0x7e, 0x7f, 0x80, 0xff, ' '};
+    Asn1String value{sizeof(mixed), 4, mixed, 0};
+    Require(Printed(value) == std::string("hi\n\r..~... "), "only printable ASCII, LF and CR are kept");
+    std::string letters;
+    for (int index = 0; index < 200; ++index) letters += static_cast<char>('a' + index % 26);
+    value = {200, 22, reinterpret_cast<unsigned char*>(letters.data()), 0};
+    Require(Printed(value) == letters, "output longer than the 80-byte chunk is complete");
+    value = {0, 4, nullptr, 0};
+    Require(Printed(value).empty(), "an empty string prints nothing");
+    value.length = -1;
+    Require(Printed(value).empty(), "a negative length prints nothing");
+    Require(ASN1_STRING_print_nid_postfix(nullptr, nullptr) == 0, "a null string prints nothing");
+    value = {2, 4, mixed, 0};
+    Require(ASN1_STRING_print_nid_postfix(nullptr, &value) == 0, "a failed write returns 0");
+    LibreSsl::Bio* readOnly = BIO_new_mem_buf_nid_postfix("x", 1);
+    Require(readOnly && ASN1_STRING_print_nid_postfix(readOnly, &value) == 0, "a read-only BIO returns 0");
+    BIO_free_nid_postfix(readOnly);
+    ERR_clear_error_nid_postfix();
+    value.data = nullptr;
+    RequireInvalidArgument([&] { ASN1_STRING_print_nid_postfix(nullptr, &value); }, "null data with a positive length");
 }
 
 void Strings() {
@@ -221,6 +256,40 @@ void Strings() {
     RequireThrows([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &value); }, "null nonempty string data");
     value.length = -1;
     RequireThrows([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &value); }, "null terminated-string data");
+}
+
+std::string PrintedTime(int type, const char* text, int expected) {
+    Asn1String time{static_cast<int>(std::strlen(text)), type, reinterpret_cast<unsigned char*>(const_cast<char*>(text)), 0};
+    LibreSsl::Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "a memory BIO");
+    Require(ASN1_TIME_print_nid_postfix(bio, &time) == expected, text);
+    char* data = nullptr;
+    const auto length = BIO_ctrl_nid_postfix(bio, 3, 0, &data);
+    std::string output(data, static_cast<std::size_t>(length));
+    BIO_free_nid_postfix(bio);
+    return output;
+}
+
+void Times() {
+    const std::pair<const char*, const char*> utc[] = {{"170102030405Z", "Jan  2 03:04:05 2017 GMT"}, {"4912312359Z", "Dec 31 23:59:00 2049 GMT"},
+        {"500101000000", "Jan  1 00:00:00 1950"}, {"991231235959+0100", "Dec 31 23:59:59 1999"}, {"17010203040aZ", "Jan  2 03:04:00 2017 GMT"}};
+    for (const auto& [input, output] : utc) Require(PrintedTime(23, input, 1) == output, input);
+    const std::pair<const char*, const char*> generalized[] = {{"20170102030405Z", "Jan  2 03:04:05 2017 GMT"},
+        {"20170102030405.123Z", "Jan  2 03:04:05.123 2017 GMT"}, {"20170102030405.Z", "Jan  2 03:04:05. 2017 GMT"},
+        {"20170102030405.12a", "Jan  2 03:04:05.12 2017"}, {"201701020304", "Jan  2 03:04:00 2017"}, {"19991231235959.5", "Dec 31 23:59:59.5 1999"}};
+    for (const auto& [input, output] : generalized) Require(PrintedTime(24, input, 1) == output, input);
+    const std::pair<int, const char*> bad[] = {{23, "1713"}, {23, "171302030405Z"}, {23, "170002030405Z"}, {23, "17x102030405Z"},
+        {24, "20170102030"}, {24, "20171302030405Z"}, {4, "170102030405Z"}, {22, "x"}};
+    for (const auto& [type, input] : bad) Require(PrintedTime(type, input, 0) == "Bad time value", input);
+    Asn1String time{13, 23, reinterpret_cast<unsigned char*>(const_cast<char*>("170102030405Z")), 0};
+    Require(ASN1_TIME_print_nid_postfix(nullptr, &time) == 1, "a valid time returns 1 even when the write fails");
+    time.type = 4;
+    Require(ASN1_TIME_print_nid_postfix(nullptr, &time) == 0, "an invalid time returns 0 without a BIO");
+    Asn1String empty{0, 23, nullptr, 0};
+    Require(ASN1_TIME_print_nid_postfix(nullptr, &empty) == 0, "an empty time is bad");
+    RequireInvalidArgument([] { ASN1_TIME_print_nid_postfix(nullptr, nullptr); }, "a null time");
+    time.data = nullptr;
+    RequireInvalidArgument([&] { ASN1_TIME_print_nid_postfix(nullptr, &time); }, "null time data with a positive length");
 }
 
 std::size_t lastAllocationSize = 0;
@@ -293,7 +362,9 @@ int main(int argc, char**) {
     std::array<void*, 10> api{};
     ApplicationHeapRegister_nid_no_patch(api.data());
     Accessors();
+    Print();
     Integers();
     Strings();
     MalformedStrings();
+    Times();
 }

@@ -199,6 +199,11 @@ MemoryResourceAccess PrepareMemoryResourceAccess(SpirvEmitterState& state, const
         access.length = state.gdsLength;
         return access;
     case ResourceKind::Scratch:
+        if (ScratchPoolActive(state)) {
+            access.objectPointer = state.scratchPoolVariable;
+            access.length = ConstantU32(state, state.program.Info().scratchDwords);
+            return access;
+        }
         if (state.scratchVariable.at(state.laneHalf) == 0) {
             FailEmit("scratch storage was not prepared before function emission");
         }
@@ -259,6 +264,9 @@ std::uint32_t EmitMemoryElementPointer(SpirvEmitterState& state, const MemoryRes
     }
     if (access.kind == ResourceKind::Lds && LdsInDeviceMemory(state)) {
         return EmitStorageBufferElementPointer(state, access, EmitAddU32(state, state.ldsBufferBase, index), TypeStorageBufferElementPointer(state));
+    }
+    if (access.kind == ResourceKind::Scratch && ScratchPoolActive(state)) {
+        return EmitScratchPoolElementPointer(state, index);
     }
     if (access.kind == ResourceKind::Lds || access.kind == ResourceKind::Scratch) {
         const auto pointer = state.module.AllocateId();

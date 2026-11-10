@@ -1,3 +1,4 @@
+#include "prx/libSceNpGameIntent/include/InventoryExports.hpp"
 #include "prx/libSceNpGameIntent/include/Api.hpp"
 #include <atomic>
 #include <cstdint>
@@ -30,6 +31,27 @@ std::atomic_bool& AppLauncherInitialized() {
 }
 
 extern "C" {
+
+int APS5_VABI sceNpGameIntentGetPermittedIntentTypes() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpGameIntentLaunchAppForPinvoke() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpGameIntentLaunchAppRequestToGkp() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpGameIntentRemoveLaunchCallback() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpGameIntentRequest() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData* intentData, const char* key, char* valueBuf, size_t bufSize) {
 	if (!NpGameIntentInitialized()) {
@@ -106,8 +128,7 @@ int APS5_VABI sceNpAppLauncherLaunchApp(std::int32_t arg0, const char* arg2, con
     (void)arg0;
     if (!AppLauncherInitialized()) return NpAppLauncherErrorNotInitialized;
     if (arg2 == nullptr || *arg2 == '\0' || (arg3 != nullptr && std::memchr(arg3, '\0', 0x2001) == nullptr)) return NpAppLauncherErrorInvalidArgument;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return NpAppLauncherErrorNotInitialized;
 }
 
 int APS5_VABI sceNpAppLauncherTerminate() {
@@ -116,21 +137,33 @@ int APS5_VABI sceNpAppLauncherTerminate() {
 }
 
 int APS5_VABI sceNpGameIntentGetUdsNpComId() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpGameIntentLaunchApp() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpGameIntentLaunchApp2() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpGameIntentNotifyAppLaunched() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -138,6 +171,10 @@ int APS5_VABI sceNpGameIntentNotifyAppLaunched() {
 int APS5_VABI sceNpSessionServiceGetJoinedPartySession() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceNpSessionServiceInitialize() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceNpSessionServiceGetRunningGamePlayerSession() {
@@ -148,6 +185,14 @@ int APS5_VABI sceNpSessionServiceGetRunningGamePlayerSession() {
 int APS5_VABI sceNpSessionServiceSendPlayerSessionInvitations() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceNpSessionServiceSendPlayerSessionRequestToJoin() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSessionServiceTerminate() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }
