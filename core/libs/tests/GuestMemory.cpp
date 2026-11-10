@@ -699,15 +699,31 @@ static void CheckCheckedReleaseDirectMemory() {
 
 static void CheckDirectMemoryFollowsPhysicalPages() {
     constexpr std::size_t page = 0x4000;
+    std::int64_t invalidPhys = -1;
+    Require(sceKernelAllocateDirectMemory(-1, 0x10000, page, 0, 0, &invalidPhys) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelAllocateDirectMemory(0x20000, 0x10000, page, 0, 0, &invalidPhys) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelAllocateDirectMemory(0, 0x10000, 0, 0, 0, &invalidPhys) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelAllocateDirectMemory(0, 0x10000, page + 1, 0, 0, &invalidPhys) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelAllocateDirectMemory(0, 0x10000, page, 0, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelAllocateDirectMemory(0, 0x10000, page, page - 1, 0, &invalidPhys) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseDirectMemory(-1, page) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseDirectMemory(0, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseDirectMemory(1, page) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseDirectMemory(0, page + 1) == SCE_KERNEL_ERROR_EINVAL);
     std::int64_t phys = 0;
     Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
     void* first = nullptr;
     Require(sceKernelMapDirectMemory(&first, page * 2, 3, 0, phys, 0) == 0);
+    Require(!DirectMemoryAliased_nid_postfix(reinterpret_cast<std::uintptr_t>(first), page));
+    Require(!DirectMemoryAliased_nid_postfix(reinterpret_cast<std::uintptr_t>(first) + page, page));
     static_cast<unsigned char*>(first)[0] = 11;
     static_cast<unsigned char*>(first)[page + 5] = 22;
     Require(sceKernelEnableDmemAliasing() == 0);
     void* alias = nullptr;
     Require(sceKernelMapDirectMemory(&alias, page, 3, 0, phys + page, 0) == 0);
+    Require(DirectMemoryAliased_nid_postfix(reinterpret_cast<std::uintptr_t>(alias), page));
+    Require(DirectMemoryAliased_nid_postfix(reinterpret_cast<std::uintptr_t>(first) + page, page));
+    Require(!DirectMemoryAliased_nid_postfix(reinterpret_cast<std::uintptr_t>(first), page));
     Require(alias != first && static_cast<unsigned char*>(alias)[5] == 22);
     static_cast<unsigned char*>(alias)[5] = 37;
     Require(static_cast<unsigned char*>(first)[page + 5] == 37);
@@ -720,6 +736,7 @@ static void CheckDirectMemoryFollowsPhysicalPages() {
     static_cast<unsigned char*>(alias)[5] = 22;
     Require(static_cast<unsigned char*>(first)[page + 5] == 22);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(alias), page) == 0);
+    Require(!DirectMemoryAliased_nid_postfix(reinterpret_cast<std::uintptr_t>(first) + page, page));
     static_cast<unsigned char*>(first)[page + 5] = 22;
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(first), page * 2) == 0);
     void* filler = nullptr;
