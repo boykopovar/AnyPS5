@@ -47,7 +47,7 @@ static void SetTimeZone(const char* zone) {
 }
 
 static bool OmittedResolutionSucceeds() {
-    constexpr int clocks[] = {0, 1, 2, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 3, 6, 9999, -1, INT_MIN, INT_MAX};
+    constexpr int clocks[] = {0, 1, 2, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 21, 3, 6, 9999, -1, INT_MIN, INT_MAX};
     for (const int clock : clocks) {
         *__error_nid_postfix() = 77;
         try {
@@ -136,17 +136,6 @@ static std::int64_t Nanos(int clockId) {
     return time.tv_sec * NANOS_PER_SECOND + time.tv_nsec;
 }
 
-static std::int64_t ResolutionNanos(int clockId) {
-    KernelTimespec resolution{-1, -1};
-    Require(clock_getres_nid_postfix(clockId, &resolution) == SCE_OK);
-    Require(resolution.tv_sec == 0);
-    Require(resolution.tv_nsec > 0 && resolution.tv_nsec < NANOS_PER_SECOND);
-    KernelTimespec sceResolution{-1, -1};
-    Require(sceKernelClockGetres(clockId, &sceResolution) == SCE_OK);
-    Require(sceResolution.tv_sec == resolution.tv_sec && sceResolution.tv_nsec == resolution.tv_nsec);
-    return resolution.tv_nsec;
-}
-
 static void RequireNeverDecreases(int clockId) {
     std::int64_t previous = Nanos(clockId);
     for (int i = 0; i < 10000; ++i) {
@@ -156,21 +145,35 @@ static void RequireNeverDecreases(int clockId) {
     }
 }
 
-static void WallAndUptimeClocksReportSubsecondResolutions() {
-    const int clocks[] = {GUEST_CLOCK_REALTIME, GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_REALTIME_FAST, GUEST_CLOCK_MONOTONIC,
-                          GUEST_CLOCK_MONOTONIC_PRECISE, GUEST_CLOCK_MONOTONIC_FAST, GUEST_CLOCK_UPTIME, GUEST_CLOCK_UPTIME_PRECISE,
-                          GUEST_CLOCK_UPTIME_FAST};
-    for (const int clockId : clocks) ResolutionNanos(clockId);
+static void RequireResolution(int clockId, std::int64_t seconds, std::int64_t nanoseconds) {
+    KernelTimespec resolution{-1, -1};
+    *__error_nid_postfix() = 77;
+    Require(clock_getres_nid_postfix(clockId, &resolution) == SCE_OK && *__error_nid_postfix() == 77);
+    Require(resolution.tv_sec == seconds && resolution.tv_nsec == nanoseconds);
+    resolution = {-1, -1};
+    Require(sceKernelClockGetres(clockId, &resolution) == SCE_OK);
+    Require(resolution.tv_sec == seconds && resolution.tv_nsec == nanoseconds);
+}
+
+static void ResolutionsAreTheConsoles() {
+    for (const int clockId : {GUEST_CLOCK_REALTIME, GUEST_CLOCK_MONOTONIC, GUEST_CLOCK_UPTIME, GUEST_CLOCK_UPTIME_PRECISE, GUEST_CLOCK_UPTIME_FAST,
+             GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_REALTIME_FAST, GUEST_CLOCK_MONOTONIC_PRECISE, GUEST_CLOCK_MONOTONIC_FAST})
+        RequireResolution(clockId, 0, 81);
+    RequireResolution(GUEST_CLOCK_VIRTUAL, 0, NANOS_PER_MILLISECOND);
+    RequireResolution(GUEST_CLOCK_PROF, 0, NANOS_PER_MILLISECOND);
+    RequireResolution(GUEST_CLOCK_SECOND, 1, 0);
+    RequireResolution(GUEST_CLOCK_THREAD_CPUTIME_ID, 0, 1000);
+    RequireResolution(21, 0, 1000);
+    KernelTimespec resolution{-1, -1};
+    *__error_nid_postfix() = 0;
+    Require(clock_getres_nid_postfix(GUEST_CLOCK_PROCESS_CPUTIME_ID, &resolution) == -1 && *__error_nid_postfix() == 22);
+    Require(resolution.tv_sec == -1 && resolution.tv_nsec == -1);
+    Require(sceKernelClockGetres(GUEST_CLOCK_PROCESS_CPUTIME_ID, &resolution) == static_cast<int>(0x80020016u));
+    Require(resolution.tv_sec == -1 && resolution.tv_nsec == -1);
+    Read(GUEST_CLOCK_PROCESS_CPUTIME_ID);
 }
 
 static void SecondClockReportsWholeSeconds() {
-    KernelTimespec resolution{-1, -1};
-    Require(clock_getres_nid_postfix(GUEST_CLOCK_SECOND, &resolution) == SCE_OK);
-    Require(resolution.tv_sec == 1 && resolution.tv_nsec == 0);
-    resolution = {-1, -1};
-    Require(sceKernelClockGetres(GUEST_CLOCK_SECOND, &resolution) == SCE_OK);
-    Require(resolution.tv_sec == 1 && resolution.tv_nsec == 0);
-
     KernelTimespec sceSecond{-1, -1};
     Require(sceKernelClockGettime(GUEST_CLOCK_SECOND, &sceSecond) == SCE_OK);
     Require(sceSecond.tv_sec > 0 && sceSecond.tv_nsec == 0);
@@ -188,8 +191,7 @@ static void SecondClockReportsWholeSeconds() {
 }
 
 static void ProcessClocksAreOrdered() {
-    const std::int64_t profResolution = ResolutionNanos(GUEST_CLOCK_PROF);
-    Require(ResolutionNanos(GUEST_CLOCK_VIRTUAL) == profResolution);
+    constexpr std::int64_t profResolution = NANOS_PER_MILLISECOND;
     for (int i = 0; i < 1000; ++i) {
         const std::int64_t user = Nanos(GUEST_CLOCK_VIRTUAL);
         const std::int64_t userAndSystem = Nanos(GUEST_CLOCK_PROF);
@@ -381,7 +383,7 @@ int main() {
     CalendarConversionsFollowTheHostZone();
     TimezoneReportsTheStandardOffsetAndDaylightAmount();
     SecondClockReportsWholeSeconds();
-    WallAndUptimeClocksReportSubsecondResolutions();
+    ResolutionsAreTheConsoles();
     KernelTimezone zone{-1, -1};
     Require(gettimeofday_nid_postfix(nullptr, nullptr) == SCE_OK);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
