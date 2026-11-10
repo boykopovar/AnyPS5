@@ -443,6 +443,10 @@ void AudioOut2MarkInitialized_nid_no_patch() {
     g_audioOut2Initialized.store(true);
 }
 
+bool AudioOut2TryInitialize_nid_no_patch() {
+    return !g_audioOut2Initialized.exchange(true);
+}
+
 extern "C" {
 
 int APS5_VABI sceAudioOut2Initialize(void) {
