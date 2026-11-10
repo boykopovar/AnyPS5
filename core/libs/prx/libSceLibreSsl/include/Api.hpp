@@ -681,7 +681,7 @@ int APS5_VABI EVP_Digest_nid_postfix(const void* data, std::size_t length, unsig
 int APS5_VABI EVP_DigestFinal_ex_nid_postfix(EvpMdContext* context, unsigned char* digest, std::uint32_t* size);
 int APS5_VABI EVP_DigestInit_ex_nid_postfix(EvpMdContext* context, const EvpMd* type, void* engine);
 int APS5_VABI EVP_DigestUpdate_nid_postfix(EvpMdContext* context, const void* data, std::size_t length);
-int APS5_VABI EVP_DigestVerifyFinal_nid_postfix(void);
+int APS5_VABI EVP_DigestVerifyFinal_nid_postfix(EvpMdContext* context, unsigned char* signature, std::size_t signatureLength);
 int APS5_VABI EVP_DigestVerifyInit_nid_postfix(EvpMdContext* context, void** pctx, const EvpMd* type, void* engine, void* pkey);
 int APS5_VABI EVP_EncryptFinal_ex_nid_postfix(LibreSslEvpCipherCtx* ctx, unsigned char* out, int* outl);
 int APS5_VABI EVP_EncryptInit_ex_nid_postfix(LibreSslEvpCipherCtx* ctx, const LibreSslEvpCipher* cipher, void* engine, const unsigned char* key, const unsigned char* iv);
@@ -800,7 +800,7 @@ void APS5_VABI SSL_CTX_set_next_proto_select_cb_nid_postfix(LibreSslCtx* ctx, vo
 void APS5_VABI SSL_CTX_set_quiet_shutdown_nid_postfix(LibreSslCtx* ctx, int mode);
 int APS5_VABI SSL_CTX_set_session_id_context_nid_postfix(LibreSslCtx* ctx, const unsigned char* sidCtx, unsigned int length);
 void APS5_VABI SSL_CTX_set_verify_nid_postfix(LibreSslCtx* ctx, int mode, void* callback);
-int APS5_VABI SSL_CTX_use_PrivateKey_nid_postfix(void);
+int APS5_VABI SSL_CTX_use_PrivateKey_nid_postfix(LibreSslCtx* ctx, void* pkey);
 int APS5_VABI SSL_CTX_use_PrivateKey_ASN1_nid_postfix(void);
 int APS5_VABI SSL_CTX_use_PrivateKey_file_nid_postfix(void);
 int APS5_VABI SSL_CTX_use_certificate_nid_postfix(void);
