@@ -260,5 +260,14 @@ void APS5_VABI sceLibcInternalPending4_008_nid_no_patch(const void* self, int ca
 int APS5_VABI sceLibcInternalPending4_013_nid_no_patch(const void* self, const void* name, const void* locale);
 void APS5_VABI sceLibcInternalPending4_014_nid_no_patch(const void* self, int catalog);
 
+using LibcUnexpectedHandler = void (*)();
+
+LibcUnexpectedHandler APS5_VABI _ZSt14set_unexpectedPFvvE_nid_postfix(LibcUnexpectedHandler handler);
+LibcUnexpectedHandler APS5_VABI _ZSt14get_unexpectedv_nid_postfix();
+[[noreturn]] void APS5_VABI _ZSt10unexpectedv_nid_postfix();
+void APS5_VABI _ZNSt16nested_exceptionD0Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt16nested_exceptionD1Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt16nested_exceptionD2Ev_nid_postfix(void* self);
+
 
 }
