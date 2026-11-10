@@ -2,7 +2,7 @@
 
 ### Unknown function info
 
-- [Additional libSceFaceTracker exports](../../../core/libs/prx/libSceFaceTracker/Export.cpp) - the 11 name/NID pairs below are defined function exports recovered from the GTAVC-bundled `libSceFaceTracker.prx` export table (the 4.03 firmware dump does not ship this module; the GTAVC bundle is the only concrete binary evidence). Their signatures and behavior are unknown; parameterless `int` declarations are import placeholders, not verified ABI prototypes. Every call throws through `NotImplemented_nid_no_patch`. No tracking, update, or result behavior is implemented.
+- [Additional libSceFaceTracker exports](../../../core/libs/prx/libSceFaceTracker/Export.cpp) - the 10 name/NID pairs below are defined function exports recovered from the GTAVC-bundled `libSceFaceTracker.prx` export table (the 4.03 firmware dump does not ship this module; the GTAVC bundle is the only concrete binary evidence). Their signatures and behavior are unknown; parameterless `int` declarations are import placeholders, not verified ABI prototypes. Every call throws through `NotImplemented_nid_no_patch`. No tracking, update, or result behavior is implemented.
 
 | Name | NID |
 | --- | --- |
@@ -10,7 +10,6 @@
 | `sceFaceTrackerStopTracking` | `Tb-iOd+G2Zs` |
 | `sceFaceTrackerReset` | `i0DbE5x06fw` |
 | `sceFaceTrackerAddUserFeature` | `XuqmYJfdEzI` |
-| `sceFaceTrackerGetDefaultConfig` | `N9K6D-eO6UI` |
 | `sceFaceTrackerGetWorkingMemorySize` | `zN4908PoI3k` |
 | `sceFaceTrackerInitialize` | `SknJO3Bt+-o` |
 | `sceFaceTrackerFinalize` | `kgoY4sueNqU` |
@@ -30,6 +29,6 @@ The context layout below was verified against the bundled module disassembly. Al
 
 ### Partially decoded, not yet ported
 
-- [`sceFaceTrackerGetDefaultConfig`](../../../core/libs/prx/libSceFaceTracker/Export.cpp) is a five-stage defaults fill. Fully decoded sub-fills: `+0x38 = {f32 0.841, f32 2.0}`, `+0x40 = {f32 2.0, 0, 0, f32 0.3}`, `+0x50 = 4`; `+0x54 = {f32 90.0, u32 5, f32 50.0, u32 10}`, `+0x64 = 1`; `+0x6c = f32 52.0`; inline `+0x68 = 0xf`, `+0x70 = {u32 30, u32 15}`, `+0x78 = 5`, bytes `+0x7c/+0x7d = 1`. The first 0x38 bytes are copied from a defaults structure returned by an imported libSceFace function reached through the packed SCE import table; the import-to-PLT mapping was not resolvable statically, so the fields are not fabricated.
+- [`sceFaceTrackerGetDefaultConfig`](../../../core/libs/prx/libSceFaceTracker/Export.cpp) is a five-stage defaults fill, implemented. Sub-fills: `+0x38 = {f32 0.841, f32 2.0}`, `+0x40 = {f32 2.0, u32 2, u32 2, f32 0.3}`, `+0x50 = 4`; `+0x54 = {f32 90.0, u32 5, f32 50.0, u32 10}`, `+0x64 = 1`; `+0x6c = f32 52.0`; inline `+0x68 = 0xf`, `+0x70 = {u32 30, u32 15}`, `+0x78 = 5`, bytes `+0x7c/+0x7d = 1`. The first 0x38 bytes are a field remap of the `0x38`-byte defaults block from `sceFaceDetectionGetDefaultParam` (resolved through `JMPREL[14]` → symtab `ZyC0HzaV6VU`); the bundled module imports it from libSceFace and this port links `libSceFace` for the same call. A null config returns `0x812a0001`; a nonzero return from the face call skips the first block only — firmware discards every sub-fill result and still returns 0. The 0x7e-byte layout is verified up to the `+0x7c` word; whether the caller-visible config struct is exactly 0x80 bytes or larger is unmeasured.
 - [`sceFaceTrackerInitialize`](../../../core/libs/prx/libSceFaceTracker/Export.cpp) validates a config struct (`[cfg+0x30] >= 0`, `[cfg+0x70]-1 <= 0x257`, `[cfg+0x74] > 0`, `[cfg+0x78] > 0`, `[cfg+0x6c]` bounded float), queries a two-part working-memory size, rejects re-init of a live context with `0x812a0004`, then builds internal state including a face-analysis engine. Not ported.
 - [`sceFaceTrackerStartTracking`/`StopTracking`/`Reset`](../../../core/libs/prx/libSceFaceTracker/Export.cpp) operate on the record table above plus the stop-tracking callback slot and were traced through their internal helpers but not fully reduced; `sceFaceTrackerUpdate` dispatches into the analysis engine (~39 internal calls); `sceFaceTrackerSearchTarget`, `sceFaceTrackerGetResult`, `sceFaceTrackerAddUserFeature`, `sceFaceTrackerGetWorkingMemorySize`, and `sceFaceTrackerFinalize` remain untraced or engine-bound.
