@@ -39,6 +39,9 @@ int main() {
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
     Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
+    errno = 72;
+    Require(scePlayerSelectionDialogOpen(reinterpret_cast<PlayerSelectionDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 72);
     Require(scePlayerSelectionDialogParamInitialize(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogParamInitialize(&param) == 0);
     errno = 71;
@@ -173,6 +176,10 @@ int main() {
     multiPlayers[1].option0 = 0;
     multiPlayers[1].option1 = 0;
     multiPlayers[1].mode = 0;
+    param.players = reinterpret_cast<PlayerSelectionDialogPlayer*>(0x10);
+    errno = 73;
+    Require(scePlayerSelectionDialogOpen(&param) == kErrArgNull);
+    Require(errno == 73);
     param.players = multiPlayers;
     param.playerCount = 2;
     param.maxPlayers = 2;
