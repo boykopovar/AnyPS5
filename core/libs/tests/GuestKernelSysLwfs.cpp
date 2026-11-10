@@ -1,7 +1,9 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
+#include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
@@ -53,6 +55,20 @@ void ExpectCompression(int fd, std::int64_t sceError, int guestErrno, std::sourc
 } // namespace
 
 int main() {
+    const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path = (std::filesystem::temp_directory_path() / ("anyps5-lwfs-" + std::to_string(unique))).string();
+    const int file = open_nid_postfix(path.c_str(), 0x602, 0600);
+    Require(file >= 0);
+    ExpectAll(file, SceEnotty, 25);
+    ExpectCompression(file, SceEnotty, 25);
+    for (const void* data : {static_cast<const void*>(nullptr), reinterpret_cast<const void*>(0x10)}) {
+        *__error_nid_postfix() = 0;
+        Require(sceKernelLwfsWrite(file, data, 16) == static_cast<std::int32_t>(0x8002000eu));
+        Require(*__error_nid_postfix() == 14);
+    }
+    Require(close_nid_postfix(file) == 0);
+    Require(unlink_nid_postfix(path.c_str()) == 0);
+
     ExpectAll(-1, SceEbadf, 9);
     ExpectAll(100000, SceEbadf, 9);
 
