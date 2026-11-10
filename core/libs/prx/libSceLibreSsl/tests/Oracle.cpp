@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -42,6 +43,21 @@ void ConfModulesFree();
 int I2tAsn1Object(char* buffer, int length, const void* object);
 unsigned long ErrGetError();
 void ErrClearError();
+std::size_t MdContextSize();
+void MdContextInit(void* context);
+int MdContextCleanup(void* context);
+void* DigestMethod(int kind);
+void* GenerateRsa(int bits);
+void RsaFree(void* rsa);
+int RsaSign(int type, const unsigned char* message, unsigned int messageLength, unsigned char* signature, unsigned int* signatureLength, void* rsa);
+int I2dRsaPubKey(void* rsa, unsigned char** output);
+void ReferenceFree(void* pointer);
+void* PkeyNew();
+int PkeySet1Rsa(void* pkey, void* rsa);
+void PkeyFree(void* pkey);
+int DigestUpdateContext(void* context, const void* data, std::size_t length);
+int DigestVerifyInit(void* context, void** pctx, const void* digest, void* pkey);
+int DigestVerifyFinal(void* context, unsigned char* signature, std::size_t signatureLength);
 }
 
 namespace {
@@ -407,12 +423,222 @@ void CompareCreatedObjects() {
     LibreSslReference::ObjCleanup();
 }
 
+struct VerifyKey {
+    std::vector<unsigned char> der;
+    void* referenceKey;
+    void* referencePkey;
+    void* minePkey;
+};
+
+int DigestNid(int kind) {
+    switch (kind) {
+    case 1: return 4;
+    case 2: return 64;
+    case 3: return 675;
+    case 4: return 672;
+    case 5: return 673;
+    default: return 674;
+    }
+}
+
+std::size_t DigestBytes(int kind) {
+    switch (kind) {
+    case 1: return 16;
+    case 2: return 20;
+    case 3: return 28;
+    case 4: return 32;
+    case 5: return 48;
+    default: return 64;
+    }
+}
+
+const EvpMd* EmulatorDigest(int kind) {
+    switch (kind) {
+    case 1: return EVP_md5_nid_postfix();
+    case 4: return EVP_sha256_nid_postfix();
+    case 5: return EVP_sha384_nid_postfix();
+    case 6: return EVP_sha512_nid_postfix();
+    default: return nullptr;
+    }
+}
+
+std::string CryptoErrors(const std::function<unsigned long()>& next) {
+    std::string text;
+    while (const unsigned long code = next()) {
+        const std::uint64_t library = (code >> 24) & 0xff;
+        if (library != 4 && library != 6) continue;
+        text += " " + std::to_string(code);
+    }
+    return text;
+}
+
+void CompareDigestVerify() {
+    LibreSslReference::AddAllAlgorithms();
+    std::vector<VerifyKey> keys;
+    for (const int bits : {512, 1024, 2048}) {
+        void* rsa = LibreSslReference::GenerateRsa(bits);
+        if (!rsa) continue;
+        void* referencePkey = LibreSslReference::PkeyNew();
+        if (!referencePkey || LibreSslReference::PkeySet1Rsa(referencePkey, rsa) != 1) {
+            Record("EVP_DigestVerifyInit", false, [&] { return std::to_string(bits) + " bit key: the reference did not keep the RSA key"; });
+            LibreSslReference::RsaFree(rsa);
+            continue;
+        }
+        unsigned char* der = nullptr;
+        const int length = LibreSslReference::I2dRsaPubKey(rsa, &der);
+        if (length <= 0 || !der) {
+            Record("EVP_DigestVerifyInit", false, [&] { return std::to_string(bits) + " bit key: the reference wrote no public key"; });
+            LibreSslReference::RsaFree(rsa);
+            LibreSslReference::PkeyFree(referencePkey);
+            continue;
+        }
+        VerifyKey key {{der, der + length}, rsa, referencePkey, nullptr};
+        LibreSslReference::ReferenceFree(der);
+        const unsigned char* cursor = key.der.data();
+        LibreSslRsa* mineRsa = nullptr;
+        const auto error = Attempt([&] { mineRsa = d2i_RSA_PUBKEY_nid_postfix(nullptr, &cursor, static_cast<long>(key.der.size())); });
+        if (!error.empty() || !mineRsa) {
+            Record("EVP_DigestVerifyInit", false, [&] { return std::to_string(bits) + " bit key: " + (error.empty() ? std::string("the public key was not read") : error); });
+            LibreSslReference::RsaFree(rsa);
+            LibreSslReference::PkeyFree(referencePkey);
+            continue;
+        }
+        key.minePkey = EVP_PKEY_new_nid_postfix();
+        const int taken = key.minePkey ? EVP_PKEY_set1_RSA_nid_postfix(key.minePkey, mineRsa) : 0;
+        RSA_free_nid_postfix(mineRsa);
+        if (taken != 1) {
+            Record("EVP_DigestVerifyInit", false, [&] { return std::to_string(bits) + " bit key: the emulator did not keep the RSA key"; });
+            LibreSslReference::RsaFree(rsa);
+            LibreSslReference::PkeyFree(referencePkey);
+            continue;
+        }
+        keys.push_back(key);
+    }
+    if (keys.empty()) {
+        Record("EVP_DigestVerifyInit", false, [] { return std::string("no reference RSA key was generated"); });
+        return;
+    }
+    static const int verifiable[] = {1, 4, 5, 6, 7};
+    std::array<unsigned char, 256> hashState {};
+    std::array<unsigned char, 64> hash {};
+    std::array<unsigned char, 512> signature {};
+    std::array<unsigned char, 512> attempt {};
+    std::vector<std::uint64_t> theirs((LibreSslReference::MdContextSize() + 7) / 8);
+    for (int round = 0; round < 900; ++round) {
+        const VerifyKey& key = keys[static_cast<std::size_t>(round) % keys.size()];
+        ERR_clear_error_nid_postfix();
+        LibreSslReference::ErrClearError();
+        const int signKind = 1 + static_cast<int>(generator() % 6);
+        const int verifyKind = verifiable[generator() % (sizeof verifiable / sizeof verifiable[0])];
+        const auto message = Bytes(1 + static_cast<std::size_t>(generator() % 120));
+        auto signedBytes = message;
+        if (generator() % 3 == 0) signedBytes = Bytes(signedBytes.size());
+        LibreSslReference::DigestInit(signKind, hashState.data());
+        LibreSslReference::DigestUpdate(signKind, hashState.data(), signedBytes.data(), signedBytes.size());
+        LibreSslReference::DigestFinal(signKind, hash.data(), hashState.data());
+        unsigned int signatureLength = 0;
+        if (LibreSslReference::RsaSign(DigestNid(signKind), hash.data(), static_cast<unsigned int>(DigestBytes(signKind)), signature.data(), &signatureLength,
+                key.referenceKey) != 1 || signatureLength == 0 || static_cast<std::size_t>(signatureLength) > signature.size())
+            continue;
+        attempt = signature;
+        std::size_t attemptLength = signatureLength;
+        switch (static_cast<int>(generator() % 8)) {
+        case 0:
+            break;
+        case 1:
+            attempt[generator() % attemptLength] ^= static_cast<unsigned char>(1ull << (generator() % 8));
+            break;
+        case 2:
+            attemptLength = generator() % attemptLength;
+            break;
+        case 3:
+            attemptLength += 1 + generator() % 4;
+            break;
+        case 4:
+            attemptLength = 0;
+            break;
+        case 5:
+            attempt[attemptLength - 1] = static_cast<unsigned char>(generator());
+            break;
+        case 6:
+            std::swap(attempt[0], attempt[attemptLength - 1]);
+            break;
+        default:
+            for (std::size_t at = 0; at + 8 < attemptLength; at += 8) std::swap(attempt[at], attempt[at + 8]);
+            break;
+        }
+        const std::string caseText = "sign " + std::to_string(signKind) + " verify " + std::to_string(verifyKind) + " length " + std::to_string(attemptLength)
+            + " of " + std::to_string(signatureLength) + " signature " + Hex(attempt.data(), std::min<std::size_t>(12, attemptLength));
+        EvpMdContext mine {};
+        void* minePctx = nullptr;
+        void* theirPctx = nullptr;
+        std::string mineText;
+        std::string theirText;
+        int mineResult = 0;
+        auto mineError = Attempt([&] { mineResult = EVP_DigestVerifyInit_nid_postfix(&mine, &minePctx, EmulatorDigest(verifyKind), nullptr, key.minePkey); });
+        int theirResult = LibreSslReference::DigestVerifyInit(theirs.data(), &theirPctx,
+            verifyKind == 7 ? nullptr : LibreSslReference::DigestMethod(verifyKind), key.referencePkey);
+        mineText = (mineError.empty() ? std::to_string(mineResult) : mineError) + (minePctx ? " pctx" : " none") + CryptoErrors(ERR_get_error_nid_postfix);
+        theirText = std::to_string(theirResult) + (theirPctx ? " pctx" : " none") + CryptoErrors(LibreSslReference::ErrGetError);
+        Record("EVP_DigestVerifyInit", mineError.empty() && mineText == theirText,
+            [&] { return caseText + " message " + std::to_string(message.size()) + "\n      mine   " + mineText + "\n      theirs " + theirText; });
+        if (round % 5 == 0 && mineError.empty() && mineResult == 1 && theirResult == 1) {
+            mineResult = 0;
+            mineError = Attempt([&] { mineResult = EVP_DigestVerifyInit_nid_postfix(&mine, &minePctx, EmulatorDigest(verifyKind), nullptr, key.minePkey); });
+            theirResult = LibreSslReference::DigestVerifyInit(theirs.data(), &theirPctx,
+                verifyKind == 7 ? nullptr : LibreSslReference::DigestMethod(verifyKind), key.referencePkey);
+            mineText = (mineError.empty() ? std::to_string(mineResult) : mineError) + (minePctx ? " pctx" : " none") + CryptoErrors(ERR_get_error_nid_postfix);
+            theirText = std::to_string(theirResult) + (theirPctx ? " pctx" : " none") + CryptoErrors(LibreSslReference::ErrGetError);
+            Record("EVP_DigestVerifyInit again", mineError.empty() && mineText == theirText,
+                [&] { return caseText + "\n      mine   " + mineText + "\n      theirs " + theirText; });
+        }
+        if (mineError.empty() && mineResult == 1 && theirResult == 1) {
+            const std::size_t split = generator() % (message.size() + 1);
+            mineResult = 0;
+            mineError = Attempt([&] {
+                mineResult = EVP_DigestUpdate_nid_postfix(&mine, message.data(), split) &&
+                    EVP_DigestUpdate_nid_postfix(&mine, message.data() + split, message.size() - split);
+            });
+            theirResult = LibreSslReference::DigestUpdateContext(theirs.data(), message.data(), split) &&
+                LibreSslReference::DigestUpdateContext(theirs.data(), message.data() + split, message.size() - split);
+            mineText = (mineError.empty() ? std::to_string(mineResult) : mineError) + CryptoErrors(ERR_get_error_nid_postfix);
+            theirText = std::to_string(theirResult) + CryptoErrors(LibreSslReference::ErrGetError);
+            Record("EVP_DigestVerifyUpdate", mineError.empty() && mineText == theirText,
+                [&] { return caseText + " split " + std::to_string(split) + "\n      mine   " + mineText + "\n      theirs " + theirText; });
+            if (mineError.empty() && mineResult == 1 && theirResult == 1) {
+                mineResult = 0;
+                mineError = Attempt([&] { mineResult = EVP_DigestVerifyFinal_nid_postfix(&mine, attempt.data(), attemptLength); });
+                theirResult = LibreSslReference::DigestVerifyFinal(theirs.data(), attempt.data(), attemptLength);
+                mineText = (mineError.empty() ? std::to_string(mineResult) : mineError) + CryptoErrors(ERR_get_error_nid_postfix);
+                theirText = std::to_string(theirResult) + CryptoErrors(LibreSslReference::ErrGetError);
+                Record("EVP_DigestVerifyFinal", mineError.empty() && mineText == theirText,
+                    [&] { return caseText + "\n      mine   " + mineText + "\n      theirs " + theirText; });
+            }
+        }
+        mineResult = 0;
+        mineError = Attempt([&] { mineResult = EVP_MD_CTX_cleanup_nid_postfix(&mine); });
+        theirResult = LibreSslReference::MdContextCleanup(theirs.data());
+        mineText = (mineError.empty() ? std::to_string(mineResult) : mineError) + CryptoErrors(ERR_get_error_nid_postfix);
+        theirText = std::to_string(theirResult) + CryptoErrors(LibreSslReference::ErrGetError);
+        Record("EVP_MD_CTX_cleanup after verify", mineError.empty() && mineText == theirText,
+            [&] { return caseText + "\n      mine   " + mineText + "\n      theirs " + theirText; });
+    }
+    for (const auto& key : keys) {
+        LibreSslReference::PkeyFree(key.referencePkey);
+        LibreSslReference::RsaFree(key.referenceKey);
+        EVP_PKEY_free_nid_postfix(key.minePkey);
+    }
+}
+
 }
 
 int main() {
+    std::array<void*, 10> heap {};
+    ApplicationHeapRegister_nid_no_patch(heap.data());
     CompareAesKeys();
     CompareAesModes();
     CompareDigests();
+    CompareDigestVerify();
     CompareDesParity();
     CompareStrings();
     CompareCreatedObjects();
