@@ -9,6 +9,10 @@ namespace NKWebKit {
 struct PointValue;
 struct SizeValue;
 struct RectValue;
+struct OpaqueJSContext;
+struct OpaqueJSValue;
+using JSContextRef = const OpaqueJSContext*;
+using JSValueRef = const OpaqueJSValue*;
 }
 
 extern "C" {
