@@ -130,7 +130,8 @@ WebRtcIpAddress* APS5_VABI _ZN3rtc10TruncateIPERKNS_9IPAddressEi_nid_postfix(Web
         return result;
     if (source.family == WebRtcAfInet) {
         if (length > 31) {
-            *result = source;
+            result->family = source.family;
+            result->address = source.address;
             return result;
         }
         result->family = WebRtcAfInet;
@@ -144,7 +145,8 @@ WebRtcIpAddress* APS5_VABI _ZN3rtc10TruncateIPERKNS_9IPAddressEi_nid_postfix(Web
     }
     if (source.family == WebRtcAfInet6) {
         if (length > 127) {
-            *result = source;
+            result->family = source.family;
+            result->address = source.address;
             return result;
         }
         result->family = WebRtcAfInet6;
