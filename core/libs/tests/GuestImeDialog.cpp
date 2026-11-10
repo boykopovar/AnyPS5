@@ -105,10 +105,14 @@ int main() {
     const Param param = DialogParam(buffer, 8);
     Require(!ImeCapturesKeyboard_nid_postfix());
     Require(sceImeDialogGetStatus() == StatusNone);
-    Require(sceImeDialogTerm() == ErrorNotOpened);
-    Require(sceImeDialogAbort() == ErrorNotOpened);
-    Result earlyResult{};
-    Require(sceImeDialogGetResult(&earlyResult) == ErrorNotOpened);
+    Require(sceImeDialogTerm() == ErrorNotInUse);
+    Require(sceImeDialogAbort() == ErrorNotInUse);
+    Result earlyResult;
+    std::memset(&earlyResult, 0xcc, sizeof(earlyResult));
+    Require(sceImeDialogGetResult(&earlyResult) == ErrorNotInUse);
+    Result untouched;
+    std::memset(&untouched, 0xcc, sizeof(untouched));
+    Require(std::memcmp(&earlyResult, &untouched, sizeof(earlyResult)) == 0);
     Require(sceImeDialogInit(nullptr, nullptr) == ErrorInvalidAddress);
     Require(sceImeDialogInitInternal(nullptr, nullptr) == ErrorInvalidAddress);
 
@@ -128,7 +132,7 @@ int main() {
     Require(std::u16string(buffer) == u"Hi\u00e9\U0001F600");
     Require(sceImeDialogAbort() == ErrorNotOpened);
     Close();
-    Require(sceImeDialogTerm() == ErrorNotOpened);
+    Require(sceImeDialogTerm() == ErrorNotInUse);
 
     buffer[0] = u'\0';
     Open(param);
@@ -186,8 +190,8 @@ int main() {
     Press(SDL_SCANCODE_RETURN);
     Require(std::u16string(buffer) == u"keep");
     Result closed{};
-    Require(sceImeDialogGetResult(&closed) == ErrorNotOpened);
-    Require(sceImeDialogTerm() == ErrorNotOpened);
+    Require(sceImeDialogGetResult(&closed) == ErrorNotInUse);
+    Require(sceImeDialogTerm() == ErrorNotInUse);
     Require(sceImeDialogForceClose() == ErrorNotInUse);
 
     Open(param);
@@ -347,9 +351,9 @@ int main() {
     Require(std::u16string(buffer) == u"!");
     Close();
 
-    Require(sceImeDialogTerm() == ErrorNotOpened);
-    Require(sceImeDialogAbort() == ErrorNotOpened);
-    Require(sceImeDialogGetResult(&earlyResult) == ErrorNotOpened);
+    Require(sceImeDialogTerm() == ErrorNotInUse);
+    Require(sceImeDialogAbort() == ErrorNotInUse);
+    Require(sceImeDialogGetResult(&earlyResult) == ErrorNotInUse);
     Require(sceImeDialogInit(nullptr, nullptr) == ErrorInvalidAddress);
     Require(sceImeDialogInitInternal(nullptr, nullptr) == ErrorInvalidAddress);
 }

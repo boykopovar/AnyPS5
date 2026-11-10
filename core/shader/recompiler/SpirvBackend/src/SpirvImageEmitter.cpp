@@ -708,7 +708,7 @@ std::uint32_t LoadedTexelResult(SpirvValueEmitContext& ctx, const ImageEmitAcces
 
 SpirvBufferFormatInfo PackedTexelFormat(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     const auto format = access.image.packedFormat;
-    if (format == IrBufferFormat::Invalid || access.image.table != NoTable || access.image.depthBits || access.image.conversionFormat != IrBufferFormat::Invalid) {
+    if (format == IrBufferFormat::Invalid || access.image.depthBits || access.image.conversionFormat != IrBufferFormat::Invalid) {
         ctx.Fail(access.inst, "accesses packed texels of an image without a packed format");
     }
     const auto info = GetFormatInfo(format);

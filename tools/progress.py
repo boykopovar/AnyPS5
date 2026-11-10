@@ -27,6 +27,7 @@ ISA_FORMS = Path(__file__).resolve().parent / "rdna2_isa_forms.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
+ASM_DEFINITION = re.compile(rf'\b(?:{"|".join(sorted(tokenizer.ASM_FUNCTION_MACROS))})\s*\(\s*"(\w+)"\s*\)')
 STUB = "NotImplemented_nid_no_patch"
 CALL = re.compile(r"\b(\w+)\s*\(")
 KEYWORDS = r"return|else|do|throw|co_return|co_await|co_yield|and|or|not|xor|bitand|bitor|compl"
@@ -169,11 +170,31 @@ def inert_wrappers(text):
         names |= found
 
 
+def shared_source_owners(path):
+    cmake = path / "CMakeLists.txt"
+    texts = [(CMAKE_SHARED, cmake.read_text(encoding="utf-8", errors="ignore"))] if cmake.is_file() else []
+    texts += [(SOURCE_SHARED, source.read_text(encoding="utf-8", errors="ignore")) for source in sorted(path.glob("*.cpp"))]
+    owners = [m[1] for pattern, content in texts for m in pattern.finditer(content)]
+    return list(dict.fromkeys(owner for owner in owners if owner != path.name and (path.parent / owner).is_dir()))
+
+
 def scan_library(path):
     done, todo, inert, live = set(), set(), set(), set()
-    texts = [code(source.read_text(encoding="utf-8", errors="ignore")) for source in path.rglob("*.cpp")
-             if "tests" not in source.relative_to(path).parts]
+    sources = [source.read_text(encoding="utf-8", errors="ignore") for source in path.rglob("*.cpp")
+               if "tests" not in source.relative_to(path).parts]
+    texts = [code(source) for source in sources]
     exported = {match.group(1) for text in texts for match in EXPORT.finditer(text)}
+    for source in sources:
+        definitions = {match.start(): match.group(1) for match in ASM_DEFINITION.finditer(source)}
+        if not definitions:
+            continue
+        for token in CPP_TOKEN.finditer(source):
+            if token.group("code") is None or token.start() not in definitions:
+                continue
+            name = definitions[token.start()]
+            if not name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) or name in exported:
+                done.add(name)
+                live.add(name)
     for text in texts:
         calls = stub_calls(text)
         wrappers = inert_wrappers(text)
@@ -193,11 +214,7 @@ def scan_library(path):
     group = {"name": path.name, "label": path.name.removeprefix("libSce"), "done": len(done), "todo": len(todo),
              "done_names": sorted(done), "todo_names": sorted(todo), "inert_names": sorted(inert)}
     if not (done or todo):
-        cmake = path / "CMakeLists.txt"
-        texts = [(CMAKE_SHARED, cmake.read_text(encoding="utf-8", errors="ignore"))] if cmake.is_file() else []
-        texts += [(SOURCE_SHARED, source.read_text(encoding="utf-8", errors="ignore")) for source in sorted(path.glob("*.cpp"))]
-        owners = [m[1] for pattern, content in texts for m in pattern.finditer(content)]
-        owners = [o for o in owners if o != path.name and (path.parent / o).is_dir()]
+        owners = shared_source_owners(path)
         if owners:
             group["shared_sources"] = owners[0]
     return group
@@ -369,11 +386,11 @@ def still_needed(source):
     def groups(kind, selected):
         return [(form_label(f), f[kind]) for f in forms if f[kind] and f["form"] in selected]
 
-    lists = [
+    lists = [(heading, found) for heading, found in (
         (f'Instruction forms not decoded ({sum(len(f["missing"]) for f in forms if f["form"] in plain)})', groups("missing", plain)),
         (f'DPP forms not decoded ({sum(len(f["missing"]) for f in forms if f["form"] in dpp)})', groups("missing", dpp)),
         (f'Decoded, no translator case ({sum(len(f["untranslated"]) for f in forms)})', groups("untranslated", plain + dpp)),
-    ]
+    ) if found] or [("Every instruction form is decoded and translated", [])]
     formats = source["formats"]
     return {
         "lists": lists,
@@ -418,7 +435,7 @@ def still_needed_svg(source, top):
     for heading, groups in data["lists"]:
         parts.append(plain_text(right + 4, y + 11, heading, 13))
         y += ROW
-        for label, names in groups or [("none", [])]:
+        for label, names in groups:
             rows = textwrap.wrap(", ".join(names), NAMES_WIDTH) or [""]
             parts.append(plain_text(right + 12, y + 11, label, 11))
             for row in rows:
@@ -502,7 +519,8 @@ def still_needed_html(source):
     right = ["<h3>Instruction forms still needed</h3>"]
     for heading, groups in data["lists"]:
         right.append(f"<h4>{escape(heading)}</h4>")
-        right.append("<table>" + "".join(f"<tr><td>{escape(label)}</td><td class='names'><code>{escape(', '.join(names))}</code></td></tr>" for label, names in groups) + "</table>" if groups else "<p>None.</p>")
+        if groups:
+            right.append("<table>" + "".join(f"<tr><td>{escape(label)}</td><td class='names'><code>{escape(', '.join(names))}</code></td></tr>" for label, names in groups) + "</table>")
     return "\n".join(["<h2>Still needed</h2>", '<div class="cols">', "<div>", *left, "</div>", "<div>", *right, "</div>", "</div>"])
 
 
