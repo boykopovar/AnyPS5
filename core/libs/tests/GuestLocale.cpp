@@ -619,6 +619,8 @@ static void CheckCtypeCharConversions() {
     Require(std::memcmp(destination.data(), source + 1, 4) == 0 && destination[4] == '#');
     Require(slots->widenRange(&facet, source, source, nullptr) == source);
     Require(slots->narrowRange(&facet, source + 3, source + 3, '?', nullptr) == source + 3);
+}
+
 static void CheckTimePutWideVtableObject() {
     Require(sizeof(_ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix) == kTimePutWideVtableSlots * sizeof(std::uintptr_t));
     for (std::uintptr_t& slot : _ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix) {
