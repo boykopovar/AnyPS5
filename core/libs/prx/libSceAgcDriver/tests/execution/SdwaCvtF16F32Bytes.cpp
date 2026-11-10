@@ -19,7 +19,7 @@ using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
-constexpr std::uint32_t Inputs = 6;
+constexpr std::uint32_t Inputs = 8;
 constexpr std::uint32_t ResultsPerCase = 19;
 constexpr std::uint32_t Results = Inputs * ResultsPerCase;
 constexpr std::uint32_t Garbage = 0xabcd1234u;
@@ -42,6 +42,8 @@ constexpr TestCase TestCases[Inputs] = {
     {0x0au, 0xbf800000u, 0x0000bc00u, true, "v_cvt_f16_f32 -1.0"},
     {0x0au, 0x00000000u, 0x00000000u, true, "v_cvt_f16_f32 0.0"},
     {0x0au, 0xc0000000u, 0x0000c000u, true, "v_cvt_f16_f32 -2.0"},
+    {0x0au, 0x3f8ccccdu, 0x00003c66u, true, "v_cvt_f16_f32 1.1"},
+    {0x0au, 0xc2f6e979u, 0x0000d7b7u, true, "v_cvt_f16_f32 -123.456"},
 };
 
 std::string Hex(std::uint32_t value) {
