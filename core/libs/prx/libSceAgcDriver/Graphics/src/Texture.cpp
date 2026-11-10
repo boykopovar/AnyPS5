@@ -2398,6 +2398,17 @@ bool StorageTexture::RefreshLayers(std::uint32_t first, std::uint32_t count) {
     return refresh(firstLayer, lastLayer);
 }
 
+namespace {
+
+bool& GpuOrderedFlush();
+bool& GpuOrderedSkipped();
+std::atomic<std::uint64_t> orderedFlushSkips{0};
+std::atomic<std::uint64_t> orderedRefreshSkips{0};
+std::atomic<bool> flushFailureForTest{false};
+std::atomic<int> flushFailureFiredForTest{0};
+
+}
+
 bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) {
     const bool profile = LookupOutcomes::Profiled();
     auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -2462,7 +2473,28 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     handedOver.clear();
     handedUnits.clear();
     const auto handOverKeys = alias == nullptr && !scoped ? clearHandOver() : std::nullopt;
-    const bool flushed = !handOverKeys.has_value() && FlushPending(scopeBegin, scopeBytes, alias.get(), "storage refresh", PublishScope::None);
+    static const bool refreshOrdered = std::getenv("APS5_NO_REFRESH_GPU_ORDERED") == nullptr;
+    const bool orderedEligible = refreshOrdered && !scoped && alias == nullptr && !handOverKeys.has_value() && descriptor.dccAddress == 0 && !layerPending.Any() && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr;
+    bool orderedSkipped = false;
+    bool flushed = false;
+    {
+        struct OrderedRefreshScope {
+            bool previousOrdered;
+            bool previousSkipped;
+            explicit OrderedRefreshScope(bool eligible) : previousOrdered(GpuOrderedFlush()), previousSkipped(GpuOrderedSkipped()) {
+                GpuOrderedFlush() = eligible;
+                GpuOrderedSkipped() = false;
+            }
+            ~OrderedRefreshScope() {
+                const bool skipped = GpuOrderedSkipped();
+                GpuOrderedFlush() = previousOrdered;
+                GpuOrderedSkipped() = previousSkipped || skipped;
+            }
+        } ordered{orderedEligible};
+        flushed = !handOverKeys.has_value() && FlushPending(scopeBegin, scopeBytes, alias.get(), "storage refresh", PublishScope::None);
+        orderedSkipped = orderedEligible && GpuOrderedSkipped();
+    }
+    if (orderedSkipped) orderedRefreshSkips.fetch_add(1, std::memory_order_relaxed);
     pruneAdoptedSources();
     if (profile && flushed) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
     // `original` holds the guest bytes the image was last uploaded from or written back as; while the
@@ -2586,7 +2618,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
             if (changed[layer] && layerPending[layer]) pendingChanged = true;
         }
-        if (!unchanged && !keysChanged && !pendingChanged && (scoped ? originalHolds(scopeBegin, scopeBytes) : originalHolds(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) && equalsOriginal()) {
+        if (!orderedSkipped && !unchanged && !keysChanged && !pendingChanged && (scoped ? originalHolds(scopeBegin, scopeBytes) : originalHolds(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) && equalsOriginal()) {
             unchanged = true;
             stamped = false;
             if (!scoped) outside.clear();
@@ -2614,6 +2646,12 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
                 borrowedUnits.clear();
             }
         }
+    }
+    if (orderedSkipped) {
+        changed.assign(trackedLayers, true);
+        unchanged = false;
+        anyBorrowed = false;
+        borrowed.clear();
     }
     const bool outsideChanged = std::any_of(outside.begin(), outside.end(), [](bool value) { return value; });
     if (scoped) noteLayersBehind(firstLayer, lastLayer, outside);
@@ -3082,7 +3120,6 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
     const auto elementBytes = BytesPerElement(descriptor.format);
     const auto linearBytes = sliceLinearBytes * arrayLayers;
     if (layers != nullptr && ((!blockUnits && trackedLayers != arrayLayers) || std::all_of(layers->begin(), layers->end(), [](bool selected) { return selected; }))) layers = nullptr;
-    GuestMemory::MaterializeKnownZero(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     auto now = GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     const auto stampLayers = [&](bool selectedOnly) {
         const bool whole = !selectedOnly || layers == nullptr;
@@ -4320,7 +4357,6 @@ std::uint64_t StorageTexture::OccasionalLabelStores() {
 }
 
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
-    if (count != 0) GuestMemory::ForgetKnownZero(layerBegin(first), static_cast<std::size_t>(layerBegin(first + count - 1) + layerBytes(first + count - 1) - layerBegin(first)));
     {
         auto& records = LayoutWrites();
         std::lock_guard lock(records.mutex);
@@ -4758,6 +4794,20 @@ void waitForIdlePublish(const char* reason) {
 
 }
 
+namespace {
+
+bool& GpuOrderedFlush() {
+    thread_local bool flag = false;
+    return flag;
+}
+
+bool& GpuOrderedSkipped() {
+    thread_local bool flag = false;
+    return flag;
+}
+
+}
+
 bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published, bool waited, VkDevice device) {
     static_cast<void>(FlushDepthPlanes(address, bytes));
     if (published != nullptr) *published = false;
@@ -4866,7 +4916,28 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     }
     std::lock_guard gpu(GuestMemory::GpuMutex());
     if (!ownNotes.empty() && (flush.size() != 1 || std::any_of(flush.begin(), flush.end(), [](const std::shared_ptr<StorageTexture>& texture) { return ExistingHostImportFor(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)) == nullptr; }))) ownNotes.clear();
-    if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion()) {
+    auto* const orderedRecorder = Recorder::Active();
+    const auto publishesNothing = [&](const Recorder& active) {
+        if (scope == PublishScope::None) return true;
+        if (!LiveShadowedRanges(address, bytes, scope).empty()) return false;
+        constexpr std::uint64_t block = 65536;
+        constexpr auto top = std::numeric_limits<std::uint64_t>::max();
+        const auto first = address / block * block;
+        const auto end = bytes > top - address ? top : address + bytes;
+        const auto last = end > top - block ? end : (end + block - 1) / block * block;
+        return active.PendingLeaseSerial(first, static_cast<std::size_t>(last - first)) == 0;
+    };
+    const bool orderedSkip = GpuOrderedFlush() && orderedRecorder != nullptr && !Recorder::InCompletion() && !flush.empty() && std::all_of(flush.begin(), flush.end(), [orderedRecorder](const std::shared_ptr<StorageTexture>& texture) { return texture->context.device == orderedRecorder->Device() && HostImportFor(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)) != nullptr; }) && publishesNothing(*orderedRecorder);
+    if (orderedSkip) {
+        GpuOrderedSkipped() = true;
+        orderedFlushSkips.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (flushFailureForTest.exchange(false, std::memory_order_acq_rel)) {
+        for (const auto& texture : flush) texture->reconcilePending();
+        flushFailureFiredForTest.store(GpuOrderedFlush() ? 2 : 1, std::memory_order_release);
+        throw std::runtime_error("StorageTexture::FlushPending: injected failure for a test");
+    }
+    if (auto* recorder = Recorder::Active(); !orderedSkip && recorder != nullptr && !Recorder::InCompletion()) {
         try {
             static const bool wholeRange = std::getenv("APS5_FLUSH_WAIT_WHOLE_RANGE") != nullptr;
             const bool publishes = !wholeRange && scope != PublishScope::None;
@@ -5298,6 +5369,12 @@ std::size_t StorageTexture::StoreSmallPending(const char* reason) {
 void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice device) {
     static const bool disabled = std::getenv("APS5_NO_LABEL_READBACK_STORE") != nullptr;
     if (disabled) return;
+    static const bool gpuOrdered = std::getenv("APS5_NO_FLUSH_GPU_ORDERED") == nullptr;
+    struct OrderedScope {
+        bool previous;
+        explicit OrderedScope(bool on) : previous(GpuOrderedFlush()) { GpuOrderedFlush() = previous || on; }
+        ~OrderedScope() { GpuOrderedFlush() = previous; }
+    } ordered{gpuOrdered};
     std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
     std::vector<std::pair<std::uint64_t, std::size_t>> occasional;
     {
@@ -5569,6 +5646,27 @@ bool StorageTexture::AnyPendingOverlaps(std::span<const std::pair<std::uint64_t,
     return false;
 }
 
+bool StorageTexture::AnyPendingUnitsOverlap(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    auto& pending = Pending();
+    std::lock_guard lock(pending.mutex);
+    for (const auto& [begin, end] : ranges) {
+        if (end <= begin) continue;
+        const auto bytes = static_cast<std::size_t>(end - begin);
+        for (const auto* texture : pending.flushing) {
+            if (texture->overlaps(begin, bytes)) return true;
+        }
+        if (!pending.textures.MayOverlap(begin, bytes)) continue;
+        for (const auto* texture : pending.textures) {
+            if (!texture->overlaps(begin, bytes)) continue;
+            for (std::uint32_t layer = 0; layer < texture->trackedLayers; ++layer) {
+                const auto unit = texture->layerBegin(layer);
+                if (texture->layerPending[layer] && unit < end && begin < unit + texture->layerBytes(layer)) return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool StorageTexture::AnyLiveOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     auto& live = Live();
     std::lock_guard lock(live.mutex);
@@ -5745,6 +5843,22 @@ bool StorageTexture::skippedResultsInside(std::uint64_t address, std::size_t byt
 
 StorageTexture::HookSkipCounts StorageTexture::TakeHookSkipCounts() {
     return {flushedAfterSkip.exchange(0, std::memory_order_relaxed), flushedAfterSkipSameSite.exchange(0, std::memory_order_relaxed)};
+}
+
+StorageTexture::OrderedSkipCounts StorageTexture::TakeOrderedSkipCounts() {
+    return {orderedFlushSkips.exchange(0, std::memory_order_relaxed), orderedRefreshSkips.exchange(0, std::memory_order_relaxed)};
+}
+
+void StorageTexture::SetFlushFailureForTest(bool fail) {
+    flushFailureForTest.store(fail, std::memory_order_release);
+}
+
+int StorageTexture::TakeFlushFailureForTest() {
+    return flushFailureFiredForTest.exchange(0, std::memory_order_acq_rel);
+}
+
+bool StorageTexture::OrderedFlushArmedForTest() {
+    return GpuOrderedFlush();
 }
 
 void StorageTexture::BumpPendingSerial() {

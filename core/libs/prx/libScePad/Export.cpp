@@ -1289,42 +1289,60 @@ int APS5_VABI scePadSetMuteLed(std::int32_t handle, std::uint32_t mode) {
 }
 
 int APS5_VABI scePadBondUpdateInit(void) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch("scePadBondUpdateInit: the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadBondUpdateIsReady(std::int32_t deviceId, std::int32_t* ready) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (ready == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadBondUpdateIsReady: the driver answer behind the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadBondUpdateStart(std::int32_t handle, const PadUpdateParameter* parameter) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)handle;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (parameter == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadBondUpdateStart: the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadBondUpdateGetStatus(std::int32_t deviceId, std::int32_t* status) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (status == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadBondUpdateGetStatus: the driver answer behind the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadBondUpdateSendData(std::int32_t deviceId, const PadUpdateData* data) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (data == nullptr || data->size != 0x8000) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadBondUpdateSendData: the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadBondUpdateResetBond(std::int32_t deviceId) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch("scePadBondUpdateResetBond: the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadBondUpdateGetReconnectStatus(std::int32_t* status) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (status == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadBondUpdateGetReconnectStatus: the driver answer behind the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadBondUpdateTerm(void) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch("scePadBondUpdateTerm: the bond-update ioctl");
     return 0;
 }
 
