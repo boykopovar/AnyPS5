@@ -30,7 +30,6 @@ public:
     void Settle();
     [[noreturn]] static void RefuseForeignProducer();
     bool OpenOnThisThread() const { return target.load(std::memory_order_acquire) != VK_NULL_HANDLE && owner.load(std::memory_order_relaxed) == std::this_thread::get_id(); }
-    bool OpenOnOtherThread() const { return target.load(std::memory_order_acquire) != VK_NULL_HANDLE && owner.load(std::memory_order_relaxed) != std::this_thread::get_id(); }
     bool Defers(VkCommandBuffer commands) const {
         if (commands == VK_NULL_HANDLE || target.load(std::memory_order_acquire) != commands) return false;
         if (owner.load(std::memory_order_relaxed) != std::this_thread::get_id()) RefuseForeignProducer();
