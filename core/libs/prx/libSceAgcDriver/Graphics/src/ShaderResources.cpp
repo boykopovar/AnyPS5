@@ -7576,15 +7576,43 @@ void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConsta
 void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const std::vector<VkDeviceAddressRangeEXT>* overrides, VkDeviceAddress empty) const {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
     static const bool verify = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
-    const std::vector<VkDeviceAddressRangeEXT>* kept = nullptr;
+    const auto uniformAlignment = UniformConstantBuffersEnabled() ? context.limits.minUniformBufferOffsetAlignment : VkDeviceSize{1};
+    const auto clampedSize = [](const VkDeviceAddressRangeEXT& range) {
+        return static_cast<std::uint32_t>(std::min<VkDeviceSize>(range.size, 0xffffffffu));
+    };
+    const auto record = [&](VkDeviceAddress address, std::uint32_t size) {
+        Require(address % uniformAlignment == 0, "a pushed buffer address is off the uniform buffer offset alignment");
+        return std::array<std::uint32_t, Abi::OverflowRecordWords>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), size, 0u};
+    };
+    const auto encode = [&](const VkDeviceAddressRangeEXT& range) {
+        const auto size = clampedSize(range);
+        const auto address = size != 0u && range.address != 0u ? range.address : empty;
+        return record(address, address == empty ? 0u : size);
+    };
+    const PushedRanges* kept = nullptr;
     if (overrides == nullptr && !verify) {
         auto& cached = pushedRanges[stage];
         if (!cached.built) {
-            cached.constant = constantBufferRanges(static_cast<std::uint32_t>(stage));
-            cached.built = cached.constant || !resolvedAddresses.empty();
-            if (cached.constant) bufferRanges(static_cast<std::uint32_t>(stage), nullptr, cached.ranges);
+            const bool constant = constantBufferRanges(static_cast<std::uint32_t>(stage));
+            if (constant) {
+                bufferRanges(static_cast<std::uint32_t>(stage), nullptr, cached.ranges);
+                cached.records.assign(cached.ranges.size() * Abi::OverflowRecordWords, 0u);
+                cached.emptyRecords.clear();
+                for (std::size_t index = 0; index < cached.ranges.size(); ++index) {
+                    const auto& range = cached.ranges[index];
+                    const auto size = clampedSize(range);
+                    if (size == 0u || range.address == 0u) {
+                        cached.emptyRecords.push_back(static_cast<std::uint32_t>(index));
+                        continue;
+                    }
+                    const auto words = record(range.address, size);
+                    std::copy(words.begin(), words.end(), cached.records.begin() + static_cast<std::ptrdiff_t>(index * Abi::OverflowRecordWords));
+                }
+            }
+            cached.constant = constant;
+            cached.built = constant || !resolvedAddresses.empty();
         }
-        if (cached.constant) kept = &cached.ranges;
+        if (cached.constant) kept = &cached;
     }
     struct RangeStorage {};
     auto& scratch = HostThreadLocal<std::vector<VkDeviceAddressRangeEXT>, RangeStorage>();
@@ -7592,17 +7620,29 @@ void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConsta
         scratch.clear();
         bufferRanges(static_cast<std::uint32_t>(stage), overrides, scratch);
     }
-    const auto& ranges = kept != nullptr ? *kept : scratch;
+    const auto& ranges = kept != nullptr ? kept->ranges : scratch;
     Require(ranges.size() == placement.pushedBuffers, "a stage's buffer addresses do not match its push layout's buffer count");
-    heapPushedStages.fetch_add(1, std::memory_order_relaxed);
+    heapPushedStages.store(heapPushedStages.load(std::memory_order_relaxed) + 1u, std::memory_order_relaxed);
     Require(empty != 0u, "a stage with pushed buffers has no shader data to stand in for an empty buffer");
-    const auto uniformAlignment = UniformConstantBuffersEnabled() ? context.limits.minUniformBufferOffsetAlignment : VkDeviceSize{1};
-    const auto record = [&](std::size_t index) {
-        const auto size = static_cast<std::uint32_t>(std::min<VkDeviceSize>(ranges[index].size, 0xffffffffu));
-        const auto address = size != 0u && ranges[index].address != 0u ? ranges[index].address : empty;
-        Require(address % uniformAlignment == 0, "a pushed buffer address is off the uniform buffer offset alignment");
-        return std::array<std::uint32_t, Abi::OverflowRecordWords>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), address == empty ? 0u : size, 0u};
-    };
+    struct RecordStorage {};
+    auto& records = HostThreadLocal<std::vector<std::uint32_t>, RecordStorage>();
+    if (kept != nullptr) {
+        records.assign(kept->records.begin(), kept->records.end());
+        if (!kept->emptyRecords.empty()) {
+            const auto stand = encode({0u, 0u});
+            for (const auto index : kept->emptyRecords)
+                std::copy(stand.begin(), stand.end(), records.begin() + static_cast<std::ptrdiff_t>(index * Abi::OverflowRecordWords));
+        }
+        for (std::size_t index = 0; index < ranges.size(); ++index) {
+            if (ranges[index].address == empty) records[index * Abi::OverflowRecordWords + 2u] = 0u;
+        }
+    } else {
+        records.resize(ranges.size() * Abi::OverflowRecordWords);
+        for (std::size_t index = 0; index < ranges.size(); ++index) {
+            const auto words = encode(ranges[index]);
+            std::copy(words.begin(), words.end(), records.begin() + static_cast<std::ptrdiff_t>(index * Abi::OverflowRecordWords));
+        }
+    }
     const auto put = [&](std::uint32_t position, std::span<const std::uint32_t> words) {
         Require(position != Abi::NoPushPosition && (position + words.size()) * sizeof(std::uint32_t) <= bytes.size(), "a stage's pushed buffer words lie outside the push data");
         std::memcpy(bytes.data() + position * sizeof(std::uint32_t), words.data(), words.size_bytes());
@@ -7614,16 +7654,12 @@ void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConsta
             overflowed = true;
             continue;
         }
-        const auto words = record(index);
-        put(root, std::span(words).first(Abi::PushedBufferWords));
+        put(root, std::span<const std::uint32_t>(records).subspan(index * Abi::OverflowRecordWords, Abi::PushedBufferWords));
     }
     if (!overflowed) return;
     heapOverflowStages.fetch_add(1, std::memory_order_relaxed);
     const auto span = BindlessHeap::For(context).Allocate(ranges.size() * Abi::OverflowRecordWords);
-    for (std::size_t index = 0; index < ranges.size(); ++index) {
-        const auto words = record(index);
-        std::copy(words.begin(), words.end(), span.words.begin() + static_cast<std::ptrdiff_t>(index * Abi::OverflowRecordWords));
-    }
+    std::copy(records.begin(), records.end(), span.words.begin());
     const std::array<std::uint32_t, 2> address{static_cast<std::uint32_t>(span.address), static_cast<std::uint32_t>(span.address >> 32u)};
     put(placement.bufferOverflow, address);
 }

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <type_traits>
 #include <bit>
 #include <chrono>
 #include <cstdio>
@@ -103,8 +104,17 @@ std::uint64_t ImageTableBuilds() {
     return imageTableBuilds.load(std::memory_order_relaxed);
 }
 
+namespace {
+
+template <typename TValue>
+void countOnRecordingThread(std::atomic<TValue>& counter, std::type_identity_t<TValue> amount) {
+    counter.store(counter.load(std::memory_order_relaxed) + amount, std::memory_order_relaxed);
+}
+
+}
+
 void NoteDataAddressPush() {
-    dataAddressPushes.fetch_add(1, std::memory_order_relaxed);
+    countOnRecordingThread(dataAddressPushes, 1);
 }
 
 std::uint64_t DataAddressPushes() {
@@ -112,13 +122,13 @@ std::uint64_t DataAddressPushes() {
 }
 
 void NotePushedUserDataKeep() {
-    pushedUserDataKeeps.fetch_add(1, std::memory_order_relaxed);
+    countOnRecordingThread(pushedUserDataKeeps, 1);
 }
 
 void NoteUserWordsRewrite(std::size_t blockWords, std::size_t userWords) {
-    userWordsRewrites.fetch_add(1, std::memory_order_relaxed);
-    userWordsRewriteBlockWords.fetch_add(blockWords, std::memory_order_relaxed);
-    userWordsRewriteUserWords.fetch_add(userWords, std::memory_order_relaxed);
+    countOnRecordingThread(userWordsRewrites, 1);
+    countOnRecordingThread(userWordsRewriteBlockWords, blockWords);
+    countOnRecordingThread(userWordsRewriteUserWords, userWords);
 }
 
 std::uint64_t PushedUserDataKeeps() {
@@ -138,7 +148,7 @@ std::uint64_t HeapSlotEvictions() {
 }
 
 void NoteEmptyResourceSet() {
-    emptyResourceSets.fetch_add(1, std::memory_order_relaxed);
+    countOnRecordingThread(emptyResourceSets, 1);
 }
 
 std::uint64_t EmptyResourceSets() {

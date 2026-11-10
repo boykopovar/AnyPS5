@@ -399,6 +399,8 @@ public:
         bool built = false;
         bool constant = false;
         std::vector<VkDeviceAddressRangeEXT> ranges;
+        std::vector<std::uint32_t> records;
+        std::vector<std::uint32_t> emptyRecords;
     };
     mutable std::array<PushedRanges, ShaderRecompiler::RuntimeAbi::StageCount> pushedRanges;
     struct RootRoles {
