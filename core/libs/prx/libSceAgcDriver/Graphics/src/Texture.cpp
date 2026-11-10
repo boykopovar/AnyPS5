@@ -3120,7 +3120,6 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
     const auto elementBytes = BytesPerElement(descriptor.format);
     const auto linearBytes = sliceLinearBytes * arrayLayers;
     if (layers != nullptr && ((!blockUnits && trackedLayers != arrayLayers) || std::all_of(layers->begin(), layers->end(), [](bool selected) { return selected; }))) layers = nullptr;
-    GuestMemory::MaterializeKnownZero(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     auto now = GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     const auto stampLayers = [&](bool selectedOnly) {
         const bool whole = !selectedOnly || layers == nullptr;
@@ -4358,7 +4357,6 @@ std::uint64_t StorageTexture::OccasionalLabelStores() {
 }
 
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
-    if (count != 0) GuestMemory::ForgetKnownZero(layerBegin(first), static_cast<std::size_t>(layerBegin(first + count - 1) + layerBytes(first + count - 1) - layerBegin(first)));
     {
         auto& records = LayoutWrites();
         std::lock_guard lock(records.mutex);
@@ -5644,6 +5642,27 @@ bool StorageTexture::AnyPendingOverlaps(std::span<const std::pair<std::uint64_t,
     }
     for (const auto* texture : pending.flushing) {
         if (overlapsAny(texture)) return true;
+    }
+    return false;
+}
+
+bool StorageTexture::AnyPendingUnitsOverlap(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    auto& pending = Pending();
+    std::lock_guard lock(pending.mutex);
+    for (const auto& [begin, end] : ranges) {
+        if (end <= begin) continue;
+        const auto bytes = static_cast<std::size_t>(end - begin);
+        for (const auto* texture : pending.flushing) {
+            if (texture->overlaps(begin, bytes)) return true;
+        }
+        if (!pending.textures.MayOverlap(begin, bytes)) continue;
+        for (const auto* texture : pending.textures) {
+            if (!texture->overlaps(begin, bytes)) continue;
+            for (std::uint32_t layer = 0; layer < texture->trackedLayers; ++layer) {
+                const auto unit = texture->layerBegin(layer);
+                if (texture->layerPending[layer] && unit < end && begin < unit + texture->layerBytes(layer)) return true;
+            }
+        }
     }
     return false;
 }
