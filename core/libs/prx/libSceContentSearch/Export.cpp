@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceContentSearch/include/InventoryExports.hpp"
 #include "prx/libSceContentSearch/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -18,6 +19,13 @@ constexpr int ErrorInvalidArgument = static_cast<int>(0x809D1003u);
 constexpr int ErrorLimitTooBig = static_cast<int>(0x809D100Au);
 constexpr std::uint32_t MaxSearchLimit = 92;
 constexpr std::int64_t LibraryUpdateId = 0;
+
+bool CopyGuestOutPreservingErrno_nid_no_patch(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
+}
 
 bool IsContentColumn(std::int32_t column) {
     switch (column) {
@@ -123,8 +131,10 @@ int APS5_VABI sceContentSearchSearchContent(const ContentSearchContentColumnSet*
     if (numOfContent == nullptr || lastUpdateId == nullptr || infos == nullptr) return ErrorInvalidArgument;
     ValidateColumnSets(__func__, columnSet, columnSetLength);
     ValidateOrderBy(__func__, orderByConditions, orderByConditionsLength);
-    *numOfContent = 0;
-    *lastUpdateId = LibraryUpdateId;
+    const std::int64_t zero = 0;
+    const std::int64_t updateId = LibraryUpdateId;
+    if (!CopyGuestOutPreservingErrno_nid_no_patch(numOfContent, &zero, sizeof(zero))) return ErrorInvalidArgument;
+    if (!CopyGuestOutPreservingErrno_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
     return 0;
 }
 
@@ -213,8 +223,10 @@ int APS5_VABI sceContentSearchGetNumOfApplication(const ContentSearchContentColu
     if ((columnSet == nullptr) != (columnSetLength == 0) || (orderByConditions == nullptr) != (orderByConditionsLength == 0) || numOfApplication == nullptr || lastUpdateId == nullptr) return ErrorInvalidArgument;
     ValidateColumnSets(__func__, columnSet, columnSetLength);
     ValidateOrderBy(__func__, orderByConditions, orderByConditionsLength);
-    *numOfApplication = 0;
-    *lastUpdateId = LibraryUpdateId;
+    const std::int64_t zero = 0;
+    const std::int64_t updateId = LibraryUpdateId;
+    if (!CopyGuestOutPreservingErrno_nid_no_patch(numOfApplication, &zero, sizeof(zero))) return ErrorInvalidArgument;
+    if (!CopyGuestOutPreservingErrno_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
     return 0;
 }
 int APS5_VABI sceContentSearchSearchApplication() {
