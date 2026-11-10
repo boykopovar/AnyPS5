@@ -1,10 +1,12 @@
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNet/libSceNet.hpp"
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -45,6 +47,10 @@ int main() {
     constexpr int noOption = 42;
     constexpr int unsupported = 45;
     void* const unmapped = reinterpret_cast<void*>(0x10);
+    int writable = 0;
+    errno = 1234;
+    Require(GuestWritable_nid_no_patch(&writable, sizeof(writable)) && errno == 1234);
+    Require(!GuestWritable_nid_no_patch(unmapped, sizeof(writable)) && errno == 1234);
     Require(sceNetInit_nid_postfix() == 0);
     const int stream = sceNetSocket("sockopt-stream", 2, 1, 0);
     const int datagram = sceNetSocket("sockopt-datagram", 2, 2, 0);

@@ -825,6 +825,10 @@ extern "C" std::filesystem::path ResolveArchivedPath_nid_no_patch(const char* pa
 }
 
 extern "C" bool GuestWritable_nid_no_patch(void* destination, std::size_t bytes) {
+    struct RestoreErrno {
+        int value = errno;
+        ~RestoreErrno() { errno = value; }
+    } restore;
     if (bytes == 0) return true;
     const auto start = reinterpret_cast<std::uintptr_t>(destination);
     if (start == 0 || bytes > UINTPTR_MAX - start) return false;
