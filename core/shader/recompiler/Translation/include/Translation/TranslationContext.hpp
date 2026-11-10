@@ -72,18 +72,14 @@ private:
     void trackInactiveExecHalves(const RdnaInstruction& inst);
     IrF32 applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value);
     IrF32 scaleF32Result(std::uint32_t omod, IrF32 value);
-    IrF32 applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value);
-    IrF32 applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> overflowSources);
-    IrF32 clampF16Result(const RdnaOperand& operand, IrF32 value);
-    IrF32 scaleF16Result(std::uint32_t omod, IrF32 value);
-    IrU32 scaleF16Bits(std::uint32_t omod, IrU32 bits);
+    IrU32 scaleF16Bits(std::uint32_t omod, IrU32 bits, bool followsRoundMode);
     IrValue& scaleF64Result(std::uint32_t omod, IrValue& value);
     bool outputModifierApplies(std::uint32_t denormalShift) const;
     bool dx10Clamp() const { return !floatMode.has_value() || floatMode->dx10Clamp; }
     bool fp16Overflow() const { return floatMode.has_value() && floatMode->fp16Overflow; }
     bool nativeFloat16Mode() const { return nativeFloat16 && (!floatMode.has_value() || (floatMode->floatMode & 0xccu) == 0xc0u); }
     IrF32 clampF16Overflow(IrF32 value, std::initializer_list<IrValue*> sources);
-    IrU32 clampF16Bits(const RdnaOperand& operand, IrU32 bits);
+    IrU32 clampF16Bits(const RdnaOperand& operand, IrU32 bits, bool followsRoundMode = true);
     void writeOperand(const RdnaOperand& operand, IrValue* value);
     IrU32 packHalf2x16(IrF32 low, IrF32 high, bool nanPayloadUnused = false);
     void write16Bits(const RdnaOperand& operand, IrU32 value);
