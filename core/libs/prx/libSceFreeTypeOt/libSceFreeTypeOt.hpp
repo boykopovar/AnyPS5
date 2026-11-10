@@ -14,5 +14,5 @@
 extern "C" {
 int APS5_VABI FT_Trace_Get_Count_nid_no_patch();
 const char* APS5_VABI FT_Trace_Get_Name_nid_no_patch(int idx);
-void APS5_VABI sceFreeTypeOtStrokerExport_nid_no_patch(void* stroker, FreeType::GuestOutline* outline);
+void APS5_VABI FT_Stroker_ExportForward_nid_no_patch(void* stroker, FreeType::GuestOutline* outline);
 }
