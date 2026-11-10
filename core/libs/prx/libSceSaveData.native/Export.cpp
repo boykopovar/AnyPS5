@@ -859,7 +859,7 @@ static int deleteSave(const SaveDataDelete* del) {
 
 int APS5_VABI sceSaveDataDelete(const SaveDataDelete* del) {
     const int rc = deleteSave(del);
-    SAVEDATA_TRACE("delete dir=%s -> 0x%08x", del != nullptr && del->dir_name != nullptr ? del->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("delete dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), del != nullptr && del->dir_name != nullptr ? del->dir_name->data : "(null)", static_cast<unsigned>(rc));
     return rc;
 }
 
