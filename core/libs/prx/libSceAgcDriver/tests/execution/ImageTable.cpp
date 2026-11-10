@@ -523,6 +523,36 @@ alignas(256) constexpr std::array<std::uint32_t, 69> PointerSiblingKeySpillCode{
     0x02010234u, 0xd7610006u, 0x02010440u, 0x8afe3032u, 0xbf89ffdbu, 0xbefe042eu, 0x7e120202u, 0x34101286u,
     0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
+alignas(256) constexpr std::array<std::uint32_t, 60> PointerSamplerPairCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
+    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
+    0x7e280503u, 0xd4c20030u, 0x02020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
+    0xbf068012u, 0xbf850002u, 0xbeac03ffu, 0x000000eau, 0xf4080d16u, 0xfa000000u, 0xbf8cc07fu, 0xf42c091au,
+    0xfa000000u, 0xf42c0e1au, 0xfa000020u, 0xbf8cc07fu, 0xf09c0f08u, 0x01c90401u, 0xf09c0f08u, 0x01e90b01u,
+    0xbf8c3f70u, 0x7e0a030bu, 0x8afe3032u, 0xbf89ffe4u, 0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u,
+    0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 64> PointerSamplerPairSpillCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
+    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
+    0x7e280503u, 0xd4c20030u, 0x02020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
+    0xbf068012u, 0xbf850002u, 0xbeac03ffu, 0x000000eau, 0xf4080d16u, 0xfa000000u, 0xbf8cc07fu, 0xf42c091au,
+    0xfa000000u, 0xf42c0e1au, 0xfa000020u, 0xbf8cc07fu, 0xf09c0f08u, 0x01c90401u, 0xf09c0f08u, 0x01e90b01u,
+    0xbf8c3f70u, 0xd7610006u, 0x02010038u, 0xd7610006u, 0x0201023cu, 0x7e0a030bu, 0x8afe3032u, 0xbf89ffe0u,
+    0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 61> PointerSiblingKeyWideCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
+    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
+    0x7e280503u, 0xd4c20030u, 0x02020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
+    0xbf068012u, 0xbf850002u, 0xbeac03ffu, 0x000000eau, 0xf4080d16u, 0xfa000000u, 0xbf8cc07fu, 0xf42c131au,
+    0xfa000010u, 0xf4081116u, 0xfa000040u, 0xbf8cc07fu, 0x9041904du, 0x8f418541u, 0xf42c0922u, 0x82000000u,
+    0xbf8cc07fu, 0xf09c0f08u, 0x02890401u, 0x8afe3032u, 0xbf89ffe3u, 0xbefe042eu, 0x7e120202u, 0x34101286u,
+    0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
 alignas(256) constexpr std::array<std::uint32_t, 77> PointerChildKeyArmCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
     0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
@@ -2648,6 +2678,111 @@ void RunPointerSharedVsharpTests(AgcDriver::VulkanDevice& device, bool reuse) {
     std::puts((name + ": both T#s read at their own offsets of one V# loaded through a record pointer checked, by the records' values").c_str());
 }
 
+void RunPointerSamplerPairTests(AgcDriver::VulkanDevice& device, bool spill) {
+    constexpr std::uint32_t SamplerWord = 0x20u;
+    Fill();
+    alignas(256) std::array<std::array<std::uint32_t, 64>, 2> records{};
+    alignas(256) std::array<std::array<std::uint32_t, 64>, 2> palettes{};
+    Table = {};
+    Keys = {};
+    const std::array images{Image(FloatTexels.data(), Format32Float), Image(OtherFloatTexels.data(), Format32Float)};
+    std::array<std::uint32_t, 2> wrapFirst{1u, 0u};
+    const auto fill = [&](std::uint32_t palette) {
+        auto& words = palettes[palette];
+        words.fill(0u);
+        std::copy(images[palette].begin(), images[palette].end(), words.begin());
+        const auto& first = wrapFirst[palette] != 0u ? PointWrap : PointClamp;
+        const auto& second = wrapFirst[palette] != 0u ? PointClamp : PointWrap;
+        std::copy(first.begin(), first.end(), words.begin() + SamplerWord / 4u);
+        std::copy(second.begin(), second.end(), words.begin() + SamplerWord / 4u + 4u);
+    };
+    const auto point = [&](std::uint32_t record, std::uint32_t palette) {
+        const auto descriptor = Buffer(palettes[palette].data(), static_cast<std::uint32_t>(sizeof(palettes[palette])));
+        std::copy(descriptor.begin(), descriptor.end(), records[record].begin());
+    };
+    for (std::uint32_t palette = 0; palette < 2u; ++palette) {
+        fill(palette);
+        point(palette, palette);
+    }
+    const auto link = [&](std::uint32_t record, std::uint32_t target) {
+        const auto pointer = reinterpret_cast<std::uintptr_t>(records[target].data());
+        Table[record * 4u + 2u] = static_cast<std::uint32_t>(pointer);
+        Table[record * 4u + 3u] = static_cast<std::uint32_t>(pointer >> 32u);
+    };
+    for (std::uint32_t record = 0; record < 3u; ++record) link(record, record % 2u);
+    const std::string name = std::string("pointer V# table with two S#s read by one scalar load through the V# that holds their T#") + (spill ? ", the S#s' first words also written to VGPR lanes" : "");
+    const std::array<AgcDriver::Graphics::GuestMemorySnapshot, 2> live{{
+        {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
+        {reinterpret_cast<std::uintptr_t>(palettes.data()), std::as_bytes(std::span(palettes))},
+    }};
+    const std::span<const std::uint32_t> shader = spill ? std::span<const std::uint32_t>(PointerSamplerPairSpillCode) : std::span<const std::uint32_t>(PointerSamplerPairCode);
+    const auto run = [&] {
+        const auto table = Buffer(Table.data(), 64u);
+        const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+        Srt = {};
+        std::copy(table.begin(), table.end(), Srt.begin());
+        std::copy(keys.begin(), keys.end(), Srt.begin() + 4u);
+        std::copy(output.begin(), output.end(), Srt.begin() + 8u);
+        std::copy(PointWrap.begin(), PointWrap.end(), Srt.begin() + 12u);
+        const std::vector<ShaderRecompiler::MemoryRegion> memory{
+            {reinterpret_cast<std::uintptr_t>(shader.data()), std::as_bytes(shader)},
+            {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+            {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
+            {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
+            {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
+            {reinterpret_cast<std::uintptr_t>(palettes.data()), std::as_bytes(std::span(palettes))},
+        };
+        const auto inputTable = Table;
+        const auto inputKeys = Keys;
+        const auto inputRecords = records;
+        const auto inputPalettes = palettes;
+        auto result = Execute(device, shader, Srt.data(), memory, 4u, Lanes, 64u, live);
+        Require(Table == inputTable && Keys == inputKeys && records == inputRecords && palettes == inputPalettes, name + ": dispatch modified its input memory");
+        Require(std::all_of(Output.begin() + 4u * Lanes * 4u, Output.end(), [](auto word) { return word == 0xdeadbeefu; }), name + ": dispatch wrote past its output");
+        return result;
+    };
+    const std::array<std::array<std::uint32_t, 2>, 4> keys{{{1u, 2u}, {2u, 1u}, {1u, 1u}, {2u, 2u}}};
+    for (std::uint32_t group = 0; group < 4u; ++group) {
+        Keys[group * 4u] = keys[group][0];
+        Keys[group * 4u + 1u] = keys[group][1];
+    }
+    std::array<std::uint32_t, 3> paletteOf{0u, 1u, 0u};
+    const auto check = [&](const Outcome& outcome, const std::string& what) {
+        Require(!Faulted(outcome) && !AddressFaulted(outcome), name + ": " + what + " faulted:\n" + outcome.log);
+        for (std::uint32_t group = 0; group < 4u; ++group) {
+            const auto last = paletteOf[keys[group][1]];
+            for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+                const auto palette = paletteOf[keys[group][lane < 32u ? 0u : 1u]];
+                const auto texel = [&](bool wrap) { return std::bit_cast<std::uint32_t>(palette != 0u ? OtherFloatTexels[wrap ? lane % Width : Width - 1u] : FloatTexels[wrap ? lane % Width : Width - 1u]); };
+                const auto spilled = spill && lane < 2u ? palettes[last][SamplerWord / 4u + lane * 4u] : 0u;
+                const std::array<std::uint32_t, 4> expected{texel(wrapFirst[palette] != 0u), texel(wrapFirst[palette] == 0u), spilled, 0x3f800000u};
+                const auto* actual = outcome.words.data() + (group * Lanes + lane) * 4u;
+                Require(std::equal(expected.begin(), expected.end(), actual), name + ": " + what + ": group " + std::to_string(group) + " lane " + std::to_string(lane) + " is " + Hex(actual[0]) + " " + Hex(actual[1]) + " " + Hex(actual[2]) + " " + Hex(actual[3]) + ", expected " + Hex(expected[0]) + " " + Hex(expected[1]) + " " + Hex(expected[2]) + " " + Hex(expected[3]));
+            }
+        }
+    };
+    const auto taken = run();
+    check(taken, "the S#s at offsets 0x20 and 0x30 of the V# behind the record's pointer in a waterfall loop");
+    wrapFirst = {0u, 1u};
+    fill(0u);
+    fill(1u);
+    const auto swapped = run();
+    Require(swapped.artifactId == taken.artifactId, name + ": swapping the S#s recompiled the shader");
+    check(swapped, "the S#s swapped in both V#s");
+    link(1u, 0u);
+    paletteOf[1] = 0u;
+    const auto moved = run();
+    Require(moved.artifactId == taken.artifactId, name + ": moving a record's pointer recompiled the shader");
+    check(moved, "the S#s after record 1's pointer moved to the other V#");
+    point(0u, 1u);
+    paletteOf = {1u, 1u, 1u};
+    const auto repointed = run();
+    Require(repointed.artifactId == taken.artifactId, name + ": moving the V# behind a record's pointer recompiled the shader");
+    check(repointed, "the S#s after the V# behind records 0 and 1 moved to the other palette");
+    std::puts((name + ": each S# sampled at its own offset of the one load, checked by the records' values, with swapped S#s, a moved record pointer and a moved V#").c_str());
+}
+
 void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm) {
     constexpr std::uint32_t KeyWord = 0x14u;
     constexpr std::uint32_t SamplerWord = 0x20u;
@@ -2793,7 +2928,7 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm) {
     std::puts((name + ": T#s indexed by a word read through the same pointer-loaded V#, with its S#, checked for several keys and the largest inside the V#; keys past the V# read null T#s, and a key the snapshot did not hold faults").c_str());
 }
 
-void RunPointerSiblingKeyTests(AgcDriver::VulkanDevice& device, bool spill) {
+void RunPointerSiblingKeyTests(AgcDriver::VulkanDevice& device, bool spill, bool wide = false) {
     constexpr std::uint32_t KeyWord = 0x14u;
     constexpr std::uint32_t SamplerWord = 0x20u;
     constexpr std::uint32_t SiblingWord = 0x40u;
@@ -2840,7 +2975,7 @@ void RunPointerSiblingKeyTests(AgcDriver::VulkanDevice& device, bool spill) {
         Table[record * 4u + 3u] = static_cast<std::uint32_t>(pointer >> 32u);
     };
     for (std::uint32_t record = 0; record < 3u; ++record) link(record, record % 2u);
-    const std::string name = std::string("pointer V# table with a T# array in one V# indexed by a word read from a sibling V# of the same record pointer") + (spill ? ", both V#s and the key word also written to VGPR lanes" : "");
+    const std::string name = std::string("pointer V# table with a T# array in one V# indexed by a word read from a sibling V# of the same record pointer") + (spill ? ", both V#s and the key word also written to VGPR lanes" : "") + (wide ? ", the key word and the S# read by one scalar load" : "");
     const std::array<AgcDriver::Graphics::GuestMemorySnapshot, 3> live{{
         {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
         {reinterpret_cast<std::uintptr_t>(heads.data()), std::as_bytes(std::span(heads))},
@@ -2892,7 +3027,7 @@ void RunPointerSiblingKeyTests(AgcDriver::VulkanDevice& device, bool spill) {
             }
         }
     };
-    const std::span<const std::uint32_t> shader = spill ? std::span<const std::uint32_t>(PointerSiblingKeySpillCode) : std::span<const std::uint32_t>(PointerSiblingKeyCode);
+    const std::span<const std::uint32_t> shader = wide ? std::span<const std::uint32_t>(PointerSiblingKeyWideCode) : spill ? std::span<const std::uint32_t>(PointerSiblingKeySpillCode) : std::span<const std::uint32_t>(PointerSiblingKeyCode);
     const auto taken = run(shader);
     check(taken, "keys 2 and 5 at offset 0x14 of the V# at the record pointer, T#s in the V# at +0x40");
     const auto rekey = [&](std::uint32_t first, std::uint32_t second) {
@@ -3272,6 +3407,18 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-sibling-key-spill") == 0) {
             RunPointerSiblingKeyTests(*device, true);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-sibling-key-wide") == 0) {
+            RunPointerSiblingKeyTests(*device, false, true);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-sampler-pair") == 0) {
+            RunPointerSamplerPairTests(*device, false);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-sampler-pair-spill") == 0) {
+            RunPointerSamplerPairTests(*device, true);
             return 0;
         }
         RunTests(*device);

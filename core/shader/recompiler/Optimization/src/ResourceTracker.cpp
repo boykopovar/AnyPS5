@@ -162,9 +162,11 @@ public:
         }
         std::vector<std::pair<IrValue*, IrValue*>> unrewritten;
         for (const auto& plan : m_tableColumns) {
-            for (IrValue* read : plan.reads) {
-                IrValue* buffer = read->Argument(0)->Resolve();
-                if (FindTableColumn(*buffer) == nullptr || std::ranges::find(m_tablePlanningReads, read) != m_tablePlanningReads.end()) continue;
+            if (plan.handle->Opcode() != IrOpcode::GetBufferResource) continue;
+            IrValue* buffer = plan.handle;
+            const std::vector<IrValue*> reads(buffer->Uses().begin(), buffer->Uses().end());
+            for (IrValue* read : reads) {
+                if (std::ranges::find(m_tablePlanningReads, read) != m_tablePlanningReads.end()) continue;
                 auto copy = std::ranges::find(unrewritten, buffer, &std::pair<IrValue*, IrValue*>::first);
                 if (copy == unrewritten.end()) {
                     std::vector<IrValue*> words;
@@ -986,7 +988,8 @@ private:
         if (MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) {
             if (fixed) return false;
         } else {
-            if (address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource || !std::ranges::all_of(heapHandle->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return false;
+            if (address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource) return false;
+            const bool sharedHandle = !std::ranges::all_of(heapHandle->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); });
             const auto sameHandle = [&](const IrValue* user) {
                 if (user->Opcode() != handle.Opcode() || user->ArgumentCount() != handle.ArgumentCount()) return false;
                 for (std::uint32_t argument = 0; argument < handle.ArgumentCount(); argument++) {
@@ -999,7 +1002,7 @@ private:
             if (!TryMakeTableColumn(*heapHandle, false, false, parent, true)) return false;
             if (parent.parentPointer == nullptr) return false;
             const bool rereadable = RereadableVsharp(*heapHandle, parent);
-            if (otherUsers && !rereadable) return false;
+            if ((otherUsers || sharedHandle) && !rereadable) return false;
             if (!std::ranges::all_of(parent.reads, [&](const IrValue* read) {
                 return std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
                     if (rereadable && LaneSpill(*user, *read)) return true;
