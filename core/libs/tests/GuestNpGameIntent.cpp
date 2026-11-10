@@ -144,6 +144,8 @@ int main() {
     std::vector<char> unterminated(0x2001, 'x');
     Require(sceNpAppLauncherLaunchApp(0, "app", unterminated.data()) == kLauncherInvalidArgument,
             "non-terminated 0x2001-byte argument must be invalid");
+    Require(sceNpAppLauncherLaunchApp(0, "app", nullptr) == kLauncherNotInitialized,
+            "launch without a connected service must report not-initialized");
     Require(sceNpAppLauncherTerminate() == 0, "app launcher terminate failed");
     Require(sceNpAppLauncherLaunchApp(0, "app", nullptr) == kLauncherNotInitialized,
             "launch after terminate must report not-initialized");
