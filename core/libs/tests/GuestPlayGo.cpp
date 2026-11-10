@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
+#include <cerrno>
 #include <source_location>
 #include <filesystem>
 #include <fstream>
@@ -519,6 +520,16 @@ int main(int argc, char** argv) {
     Require(scePlayGoOpen(&validHandle, nullptr) == 0);
     constexpr int badHandleError = static_cast<int>(0x80B20009);
     constexpr int badPointerError = static_cast<int>(0x80B2000A);
+    errno = 0x5a;
+    Require(scePlayGoSnapshot(-1, "snap.bin") == badHandleError && errno == 0x5a);
+    errno = 0x5a;
+    Require(scePlayGoSnapshot(0, "snap.bin") == badHandleError && errno == 0x5a);
+    errno = 0x5a;
+    Require(scePlayGoSnapshot(validHandle + 1, "snap.bin") == badHandleError && errno == 0x5a);
+    errno = 0x5a;
+    Require(scePlayGoSnapshot(validHandle, nullptr) == badPointerError && errno == 0x5a);
+    errno = 0x5a;
+    Require(scePlayGoSnapshot(validHandle, "snap.bin") == 0 && errno == 0x5a);
     Require(scePlayGoGetEta(-1, nullptr, 0, &eta) == badHandleError);
     Require(scePlayGoGetEta(validHandle, nullptr, 0, nullptr) == badPointerError);
     Require(scePlayGoGetInstallSpeed(-1, &speed) == badHandleError);

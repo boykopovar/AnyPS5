@@ -2,6 +2,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <cerrno>
 #include <charconv>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -372,8 +373,17 @@ int APS5_VABI scePlayGoSetLanguageMask(int handle, uint64_t language_mask) {
     return 0;
 }
 
-int APS5_VABI scePlayGoSnapshot() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI scePlayGoSnapshot(int handle, const char* filename) {
+    const int savedErrno = errno;
+    if (handle != PLAYGO_HANDLE) {
+        errno = savedErrno;
+        return SCE_PLAYGO_ERROR_BAD_HANDLE;
+    }
+    if (!filename) {
+        errno = savedErrno;
+        return SCE_PLAYGO_ERROR_BAD_POINTER;
+    }
+    errno = savedErrno;
     return 0;
 }
 
