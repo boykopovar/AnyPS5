@@ -39,6 +39,34 @@ for (const moduleDirectories of [["sce_modules"], ["prx"], ["sce_module", "prx"]
     } finally { await archive.close(); }
   }
 }
+for (const directory of ["Media/Modules", "Media/Plugins"]) {
+  for (const suffix of ["prx", "sprx", "suprx", "debug_prx", "bin"]) {
+    const name = `title/${directory}/provider.${suffix}`;
+    const entries = [["title/main.elf", false], [name, false]];
+    for (const selection of [await zipped(entries), entries.map(([path, , bytes = header]) => ({ path, file: new Blob([bytes]) }))]) {
+      const archive = new Archive(selection);
+      try {
+        await assert.rejects(archive.inspect(() => {}), {
+          message: `${directory}/provider.${suffix} is a Unity ELF module the web converter cannot relink. Use the native relinker with --module-dir ${directory}.`
+        });
+      } finally { await archive.close(); }
+    }
+  }
+}
+for (const directory of ["Media/Modules", "Media/Plugins"]) {
+  const archive = new Archive(await zipped([
+    ["title/main.elf", false],
+    [`title/${directory}/readme.txt`, false, new TextEncoder().encode("Unity asset")],
+    [`title/${directory}/provider.guest.prx`, false],
+    [`title/${directory}/encrypted.prx`, false, new Uint8Array([0x4f, 0x15, 0x3d, 0x1d])]
+  ]));
+  try {
+    const summary = await archive.inspect(() => {});
+    assert.equal(summary.root, "title/");
+    assert.equal(summary.modules, 0);
+    assert(summary.warnings.some(warning => warning.includes(`${directory}/encrypted.prx`) && warning.includes("SELF container")));
+  } finally { await archive.close(); }
+}
 for (const entries of [
   [["main.elf", false], ["sce_module/a.prx", false], ["sce_modules/b.prx", false]],
   [["main.elf", false], ["sce_module/", true], ["sce_modules/", true]]

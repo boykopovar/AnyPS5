@@ -182,6 +182,7 @@ export class Archive {
     this.prefix = prefix;
     this.files = this.entries.filter(entry => entry.filename.startsWith(prefix) && entry.filename !== prefix).map(entry => ({ entry, name: entry.filename.slice(prefix.length) }));
     const moduleDirs = ["sce_module", "sce_modules", "prx"];
+    const unityDirs = ["Media/Modules", "Media/Plugins"];
     const present = directory => this.files.some(item => item.name.startsWith(directory + "/"));
     if (present("sce_module") && present("sce_modules")) throw new Error("Both sce_module and sce_modules exist in the app root");
     const executables = [];
@@ -193,10 +194,15 @@ export class Archive {
       report({ phase: "Inspecting files", input: item.name, completed: index, total: this.files.length });
       if (item.entry.directory || item.name.startsWith("sce_sys/")) continue;
       const moduleDir = moduleDirs.find(directory => item.name.startsWith(directory + "/"));
-      if (!moduleDir && item.name.includes("/")) continue;
-      if (moduleDir && item.name.endsWith(".guest.prx")) continue;
+      const unityDir = unityDirs.find(directory => item.name.startsWith(directory + "/")
+        && !item.name.slice(directory.length + 1).includes("/"));
+      if (!moduleDir && !unityDir && item.name.includes("/")) continue;
+      if ((moduleDir || unityDir) && item.name.endsWith(".guest.prx")) continue;
       const header = await headerBytes(item.entry);
-      if (moduleDir) {
+      if (unityDir) {
+        if (isElf(header)) throw new Error(`${item.name} is a Unity ELF module the web converter cannot relink. Use the native relinker with --module-dir ${unityDir}.`);
+        if (isSelf(header)) selfModules.push(item.name);
+      } else if (moduleDir) {
         if (isElf(header)) this.modules.push(item);
         else if (isSelf(header)) selfModules.push(item.name);
       } else if (isElf(header)) {
