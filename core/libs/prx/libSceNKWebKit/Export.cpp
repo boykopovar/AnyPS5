@@ -827,10 +827,6 @@ int APS5_VABI _ZN7WebCore21resolveCharacterRangeERKNS_11SimpleRangeENS_14Charact
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextConfigurationSetCookieStoragePath() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore17SubresourceLoader6createERNS_5FrameERNS_14CachedResourceEONS_15ResourceRequestERKNS_21ResourceLoaderOptionsEON3WTF17CompletionHandlerIFvONSA_6RefPtrIS0_NSA_13DumbPtrTraitsIS0_EEEEEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -3898,10 +3894,6 @@ int APS5_VABI _ZN7WebCore29DeprecatedCSSOMPrimitiveValue14setStringValueEtRKN3WT
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextConfigurationSetProcessSwapsOnWindowOpenWithOpener() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_NXkvdp_minus_rsg8_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4375,10 +4367,6 @@ int APS5_VABI _ZN7WebCore11DisplayList23FillRectWithRoundedHoleC2ERKNS_9FloatRec
 }
 
 int APS5_VABI _ZN7WebCore4PathC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextConfigurationCopyCookieStoragePath() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8732,10 +8720,6 @@ int APS5_VABI _ZN7WebCore12SettingsBase26defaultMinimumZoomFontSizeEv() {
 }
 
 int APS5_VABI _ZN7WebCore19CryptoAlgorithmECDH18platformDeriveBitsERKNS_11CryptoKeyECES3_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextConfigurationProcessSwapsOnWindowOpenWithOpener() {
     NotImplemented_nid_no_patch(__func__);
 }
 
