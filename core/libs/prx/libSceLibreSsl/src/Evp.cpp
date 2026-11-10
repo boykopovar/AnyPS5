@@ -168,6 +168,8 @@
 
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Evp.hpp"
+#include "prx/libSceLibreSsl/include/PkeyContext.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -266,7 +268,6 @@ template<class TContext> TContext& RequireContext(TContext* context, const char*
 
 void RequireNoEngineOrKey(const EvpMdContext& context, const char* function) {
     if (context.engine) NotImplemented_nid_no_patch((std::string(function) + ": ENGINE").c_str());
-    if (context.pkeyContext) NotImplemented_nid_no_patch((std::string(function) + ": EVP_PKEY_CTX").c_str());
 }
 
 void ReleaseData(EvpMdContext& context) {
@@ -280,6 +281,7 @@ int CleanupContext(EvpMdContext& context, const char* function) {
     RequireNoEngineOrKey(context, function);
     if (context.digest && context.digest->cleanup && !(context.flags & FlagCleaned)) context.digest->cleanup(&context);
     ReleaseData(context);
+    PkeyContextFree_nid_no_patch(static_cast<PkeyContext*>(context.pkeyContext));
     std::memset(&context, 0, sizeof(context));
     return 1;
 }
@@ -298,6 +300,8 @@ int DigestInit(EvpMdContext& context, const EvpMd* type, void* engine, const cha
             if (type->contextSize < 0) throw std::invalid_argument(std::string(function) + ": negative digest context size");
             context.mdData = malloc_nid_postfix(static_cast<std::size_t>(type->contextSize));
             if (!context.mdData) {
+                PkeyContextFree_nid_no_patch(static_cast<PkeyContext*>(context.pkeyContext));
+                context.pkeyContext = nullptr;
                 context.digest = nullptr;
                 context.update = nullptr;
                 return 0;
@@ -356,6 +360,13 @@ int CopyContext(EvpMdContext& to, const EvpMdContext& from, const char* function
         std::memmove(to.mdData, from.mdData, size);
     }
     to.update = from.update;
+    if (from.pkeyContext) {
+        to.pkeyContext = PkeyContextDuplicate_nid_no_patch(static_cast<PkeyContext*>(from.pkeyContext));
+        if (!to.pkeyContext) {
+            CleanupContext(to, function);
+            return 0;
+        }
+    }
     if (to.digest->copy) return to.digest->copy(&to, &from);
     return 1;
 }
@@ -428,6 +439,10 @@ int HmacFinal(HmacContext& context, unsigned char* digest, std::uint32_t* length
     if (!DigestFinal(context.mdContext, digest, length, function)) return 0;
     return 1;
 }
+}
+
+extern "C" int CopyContext_nid_no_patch(EvpMdContext& to, const EvpMdContext& from, const char* function) {
+    return CopyContext(to, from, function);
 }
 
 extern "C" {
