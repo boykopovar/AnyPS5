@@ -5,6 +5,7 @@
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 
 #include "prx/libSceNKWebKit/include/Api.hpp"
+#include "prx/libSceNKWebKit/include/ContentTypeExports.hpp"
 #include "prx/libSceNKWebKit/include/FieldSettersExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/JscExports.hpp"
@@ -21,6 +22,8 @@
 #include "prx/libSceNKWebKit/include/WtfBitVector.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfFastBitVector.hpp"
+#include "prx/libSceNKWebKit/include/WtfConcurrentPtrHashSet.hpp"
+#include "prx/libSceNKWebKit/include/ArgumentReturnExports.hpp"
 #include "prx/libSceNKWebKit/src/Preferences.hpp"
 #include "prx/libSceNKWebKit/include/DiagnosticLoggingKeysExports.hpp"
 #include "prx/libSceNKWebKit/include/MediaExports.hpp"
