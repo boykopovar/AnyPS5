@@ -11,7 +11,7 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libScePlayReady4/Export.cpp) - 9 entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. Eight NIDs also appear in the later labelled `libScePlayReady4L` image; resolution between providers requires separate verification. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented.
+- [Additional callable exports](../../../core/libs/prx/libScePlayReady4/Export.cpp) - the entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. Eight NIDs also appear in the later labelled `libScePlayReady4L` image; resolution between providers requires separate verification. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented.
 
 | Name | NID |
 | --- | --- |

@@ -35,6 +35,7 @@ RULES = {
     "pr-title": ("error", "docs/dev/CONVENTIONS.md", "Pull request title is not Conventional Commits"),
     "pr-template": ("error", ".github/pull_request_template.md", "Fill in the pull request template"),
     "env-reference": ("error", "docs/dev/ENVIRONMENT.md", "Every APS5_* or ANYPS5_* name a pull request adds to the code has a row in docs/dev/ENVIRONMENT.md, a row whose name the pull request stops reading is removed, and a row the pull request removes is no longer read"),
+    "debt-spacing": ("error", "CONTRIBUTING.md#documentation", "Technical debt entries are separated by a blank line; python3 tools/debt_format.py adds the missing ones"),
     "debt-length": ("warning", "CONTRIBUTING.md#documentation", "Technical debt entry over 1000 characters: state the gap first (what differs from the console, what is unverified, what throws) and keep only the behaviour it needs"),
     "debt-labels": ("warning", "docs/dev/TechnicalDebt.md", "Unknown label in a technical debt entry's Labels: trailer, which ends the entry; the labels are console, firmware, gpu, title, code, no-test, tested, windows, macos and linux"),
 }
@@ -372,6 +373,10 @@ class Check:
                 for label in debt_labels(text) if number in entry_lines else []:
                     if label not in known:
                         self.report("debt-labels", path, number, label)
+            added = {number for number, _ in lines}
+            for number in unspaced_debt(self.show(path)):
+                if number in added or number - 1 in added:
+                    self.report("debt-spacing", path, number)
 
     def workflows(self):
         for path in sorted(self.status):
@@ -495,6 +500,18 @@ def long_debt_entry(text):
 def debt_labels(text):
     match = DEBT_LABEL_TRAILER.search(text)
     return [label.strip() for label in match.group(1).split(",") if label.strip()] if match else []
+def unspaced_debt(text):
+    lines = text.split("\n")
+    return [number for number, (previous, line) in enumerate(zip(lines, lines[1:]), 2) if line.startswith("- ") and previous.strip()]
+
+
+def space_debt(text):
+    lines = []
+    for line in text.split("\n"):
+        if line.startswith("- ") and lines and lines[-1].strip():
+            lines.append("\r" if lines[-1].endswith("\r") else "")
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def debt_entries(text):
