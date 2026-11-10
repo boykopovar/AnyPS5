@@ -1634,244 +1634,196 @@ APS5_EXPORT("ydRWehw26Kk", libSceFsInternalForVshUnknown_ydRWehw26Kk_nid_no_patc
 }
 
 extern "C" {
-int APS5_VABI sceFsBfsCopyFile_nid_no_patch(void) {
+int APS5_VABI sceFsBfsCopyFile(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("R7V5IdMuVK0", sceFsBfsCopyFile_nid_no_patch);
-int APS5_VABI sceFsBfsCreateFakeSpace_nid_no_patch(void) {
+int APS5_VABI sceFsBfsCreateFakeSpace(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("AOqvOZssEEU", sceFsBfsCreateFakeSpace_nid_no_patch);
-int APS5_VABI sceFsBfsDeleteFakeSpace_nid_no_patch(void) {
+int APS5_VABI sceFsBfsDeleteFakeSpace(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("caqmx7zGtTw", sceFsBfsDeleteFakeSpace_nid_no_patch);
-int APS5_VABI sceFsBfsGetBlockStatus_nid_no_patch(void) {
+int APS5_VABI sceFsBfsGetBlockStatus(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("SBvYHmCc+5c", sceFsBfsGetBlockStatus_nid_no_patch);
-int APS5_VABI sceFsBfsGetCapacityInfoForTelemetry_nid_no_patch(void) {
+int APS5_VABI sceFsBfsGetCapacityInfoForTelemetry(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("0jP1IzZnnI8", sceFsBfsGetCapacityInfoForTelemetry_nid_no_patch);
-int APS5_VABI sceFsBfsGetRwDeactivateStatus_nid_no_patch(void) {
+int APS5_VABI sceFsBfsGetRwDeactivateStatus(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("afsvKkAJuN4", sceFsBfsGetRwDeactivateStatus_nid_no_patch);
-int APS5_VABI sceFsBfsGetRwDeactivateStatusForShutdown_nid_no_patch(void) {
+int APS5_VABI sceFsBfsGetRwDeactivateStatusForShutdown(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("FXHHOnfiZwQ", sceFsBfsGetRwDeactivateStatusForShutdown_nid_no_patch);
-int APS5_VABI sceFsBfsUnmount_nid_no_patch(void) {
+int APS5_VABI sceFsBfsUnmount(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("ExGX9dO+bEI", sceFsBfsUnmount_nid_no_patch);
-int APS5_VABI sceFsDevpfsAllocateFile2_nid_no_patch(void) {
+int APS5_VABI sceFsDevpfsAllocateFile2(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("C6IhO5MAiT0", sceFsDevpfsAllocateFile2_nid_no_patch);
-int APS5_VABI sceFsExfatfsMountForCronos_nid_no_patch(void) {
+int APS5_VABI sceFsExfatfsMountForCronos(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("nFV4fQoIlTE", sceFsExfatfsMountForCronos_nid_no_patch);
-int APS5_VABI sceFsExfatfsUnmount_nid_no_patch(void) {
+int APS5_VABI sceFsExfatfsUnmount(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("n+qkEOI9FDM", sceFsExfatfsUnmount_nid_no_patch);
-int APS5_VABI sceFsFgcEmuDisable_nid_no_patch(void) {
+int APS5_VABI sceFsFgcEmuDisable(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("kICj7nG2XZw", sceFsFgcEmuDisable_nid_no_patch);
-int APS5_VABI sceFsFgcEmuEnable_nid_no_patch(void) {
+int APS5_VABI sceFsFgcEmuEnable(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("PuOwbk4HBIU", sceFsFgcEmuEnable_nid_no_patch);
-int APS5_VABI sceFsFgcEmuInitializeParams_nid_no_patch(void) {
+int APS5_VABI sceFsFgcEmuInitializeParams(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("XdtbcKQR4DQ", sceFsFgcEmuInitializeParams_nid_no_patch);
-int APS5_VABI sceFsFgcEmuSetParams_nid_no_patch(void) {
+int APS5_VABI sceFsFgcEmuSetParams(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("q76mk1uZWCQ", sceFsFgcEmuSetParams_nid_no_patch);
-int APS5_VABI sceFsM2StorageGetDebugInfo_nid_no_patch(void) {
+int APS5_VABI sceFsM2StorageGetDebugInfo(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("1ICoO0mqyNo", sceFsM2StorageGetDebugInfo_nid_no_patch);
-int APS5_VABI sceFsM2StorageGetDeviceInfo_nid_no_patch(void) {
+int APS5_VABI sceFsM2StorageGetDeviceInfo(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("NoXU3Apuy4I", sceFsM2StorageGetDeviceInfo_nid_no_patch);
-int APS5_VABI sceFsM2StorageLocalSandboxMount_nid_no_patch(void) {
+int APS5_VABI sceFsM2StorageLocalSandboxMount(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("eQDoY-eORKw", sceFsM2StorageLocalSandboxMount_nid_no_patch);
-int APS5_VABI sceFsM2StorageLocalSandboxUnmount_nid_no_patch(void) {
+int APS5_VABI sceFsM2StorageLocalSandboxUnmount(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("84wJYcea6Ck", sceFsM2StorageLocalSandboxUnmount_nid_no_patch);
-int APS5_VABI sceFsM2StorageQAC_nid_no_patch(void) {
+int APS5_VABI sceFsM2StorageQAC(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("aArnHLVIs+w", sceFsM2StorageQAC_nid_no_patch);
-int APS5_VABI sceFsM2StorageThermalShutdownTest_nid_no_patch(void) {
+int APS5_VABI sceFsM2StorageThermalShutdownTest(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("tAGD6COl0xo", sceFsM2StorageThermalShutdownTest_nid_no_patch);
-int APS5_VABI sceFsNTBAddDevice_nid_no_patch(void) {
+int APS5_VABI sceFsNTBAddDevice(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("zIkHDB9rot4", sceFsNTBAddDevice_nid_no_patch);
-int APS5_VABI sceFsNTBCreatePartitionTable_nid_no_patch(void) {
+int APS5_VABI sceFsNTBCreatePartitionTable(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("1Bj5GKpwjFo", sceFsNTBCreatePartitionTable_nid_no_patch);
-int APS5_VABI sceFsNTBCreateSavedataSnapshot_nid_no_patch(void) {
+int APS5_VABI sceFsNTBCreateSavedataSnapshot(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("YeI7dOX5VWM", sceFsNTBCreateSavedataSnapshot_nid_no_patch);
-int APS5_VABI sceFsNTBCronosUserPersonalizedKey_nid_no_patch(void) {
+int APS5_VABI sceFsNTBCronosUserPersonalizedKey(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("ucNmBmaPUsc", sceFsNTBCronosUserPersonalizedKey_nid_no_patch);
-int APS5_VABI sceFsNTBGetAttachedDeviceType_nid_no_patch(void) {
+int APS5_VABI sceFsNTBGetAttachedDeviceType(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("1iIciJFd4x8", sceFsNTBGetAttachedDeviceType_nid_no_patch);
-int APS5_VABI sceFsNTBGetDeviceInfo_nid_no_patch(void) {
+int APS5_VABI sceFsNTBGetDeviceInfo(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("1xVIeXL2-eU", sceFsNTBGetDeviceInfo_nid_no_patch);
-int APS5_VABI sceFsNTBInvalidateBlockRange_nid_no_patch(void) {
+int APS5_VABI sceFsNTBInvalidateBlockRange(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("zAQ+LpqH0yQ", sceFsNTBInvalidateBlockRange_nid_no_patch);
-int APS5_VABI sceFsNTBRemoveDevice_nid_no_patch(void) {
+int APS5_VABI sceFsNTBRemoveDevice(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("0T-kRNLcpAs", sceFsNTBRemoveDevice_nid_no_patch);
-int APS5_VABI sceFsNTBVerifyPartitionTable_nid_no_patch(void) {
+int APS5_VABI sceFsNTBVerifyPartitionTable(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("0IZsBaLdkCw", sceFsNTBVerifyPartitionTable_nid_no_patch);
-int APS5_VABI sceFsPprSaveDataConvertSize_nid_no_patch(void) {
+int APS5_VABI sceFsPprSaveDataConvertSize(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("Mn6na4Iuxtc", sceFsPprSaveDataConvertSize_nid_no_patch);
-int APS5_VABI sceFsPprSaveDataConvertToCoW_nid_no_patch(void) {
+int APS5_VABI sceFsPprSaveDataConvertToCoW(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("00zMiYUftKw", sceFsPprSaveDataConvertToCoW_nid_no_patch);
-int APS5_VABI sceFsPprSaveDataGetBlkBitmap_nid_no_patch(void) {
+int APS5_VABI sceFsPprSaveDataGetBlkBitmap(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("wEUCciwb9lI", sceFsPprSaveDataGetBlkBitmap_nid_no_patch);
-int APS5_VABI sceFsPs4SaveDataGetBlkBitmap_nid_no_patch(void) {
+int APS5_VABI sceFsPs4SaveDataGetBlkBitmap(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("5CsRwwvY00k", sceFsPs4SaveDataGetBlkBitmap_nid_no_patch);
-int APS5_VABI sceFsSaveDataDisableWriteThrottling_nid_no_patch(void) {
+int APS5_VABI sceFsSaveDataDisableWriteThrottling(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("CD-3hc2tSpY", sceFsSaveDataDisableWriteThrottling_nid_no_patch);
-int APS5_VABI sceFsSaveDataGetBlockNumber_nid_no_patch(void) {
+int APS5_VABI sceFsSaveDataGetBlockNumber(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("JDEtv94j9S0", sceFsSaveDataGetBlockNumber_nid_no_patch);
-int APS5_VABI sceFsSaveDataGetImageType_nid_no_patch(void) {
+int APS5_VABI sceFsSaveDataGetImageType(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("BVvGzlLKHBE", sceFsSaveDataGetImageType_nid_no_patch);
-int APS5_VABI sceFsSaveDataTrimDeviceFile_nid_no_patch(void) {
+int APS5_VABI sceFsSaveDataTrimDeviceFile(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("SeRWJPGbL4U", sceFsSaveDataTrimDeviceFile_nid_no_patch);
-int APS5_VABI sceFsTransactionPprNoCowSaveDataMountEx_nid_no_patch(void) {
+int APS5_VABI sceFsTransactionPprNoCowSaveDataMountEx(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("ZTaptF6eWhY", sceFsTransactionPprNoCowSaveDataMountEx_nid_no_patch);
-int APS5_VABI sceFsTransactionPprSaveDataMountEx_nid_no_patch(void) {
+int APS5_VABI sceFsTransactionPprSaveDataMountEx(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("cH4J9Qv54p0", sceFsTransactionPprSaveDataMountEx_nid_no_patch);
-int APS5_VABI sceFsTransactionSaveDataReadParamEx_nid_no_patch(void) {
+int APS5_VABI sceFsTransactionSaveDataReadParamEx(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("hp1x7uEYRGA", sceFsTransactionSaveDataReadParamEx_nid_no_patch);
-int APS5_VABI sceFsTransactionSaveDataReadParamEx2_nid_no_patch(void) {
+int APS5_VABI sceFsTransactionSaveDataReadParamEx2(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("OsIf8W2tdI8", sceFsTransactionSaveDataReadParamEx2_nid_no_patch);
-int APS5_VABI sceFsTransactionSaveDataWriteParamEx_nid_no_patch(void) {
+int APS5_VABI sceFsTransactionSaveDataWriteParamEx(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("SsAU1C4skpI", sceFsTransactionSaveDataWriteParamEx_nid_no_patch);
-int APS5_VABI sceFsTransactionSaveDataWriteParamEx2_nid_no_patch(void) {
+int APS5_VABI sceFsTransactionSaveDataWriteParamEx2(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("WBUsNv1qTp0", sceFsTransactionSaveDataWriteParamEx2_nid_no_patch);
-int APS5_VABI sceFsUfsMkfsForCronos_nid_no_patch(void) {
+int APS5_VABI sceFsUfsMkfsForCronos(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("18ZEUpr-I0Q", sceFsUfsMkfsForCronos_nid_no_patch);
-int APS5_VABI sceFsUfsMountForCronos_nid_no_patch(void) {
+int APS5_VABI sceFsUfsMountForCronos(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("01INsSA61LU", sceFsUfsMountForCronos_nid_no_patch);
-int APS5_VABI sceFsUfsUnmountForCronos_nid_no_patch(void) {
+int APS5_VABI sceFsUfsUnmountForCronos(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("56Pd74ezOeQ", sceFsUfsUnmountForCronos_nid_no_patch);
-int APS5_VABI sceFsUpdatePackageMetadataFlexcont_nid_no_patch(void) {
+int APS5_VABI sceFsUpdatePackageMetadataFlexcont(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("1kNkjmBJdjU", sceFsUpdatePackageMetadataFlexcont_nid_no_patch);
 }
