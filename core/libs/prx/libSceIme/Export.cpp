@@ -86,6 +86,7 @@ struct Session {
     ImeComposition composition;
     std::uint64_t id = 0;
     std::uint64_t revision = 0;
+    bool controllerDisabled = false;
 };
 
 struct DeferredFilter {
@@ -763,6 +764,8 @@ int APS5_VABI sceImeConfirmCandidate(std::int32_t index) {
 int APS5_VABI sceImeDisableController(void) {
     std::lock_guard lock(g_imeMutex);
     if (!g_session) return ErrorNotOpened;
+    if (g_session->controllerDisabled) NotImplemented_nid_no_patch(__func__);
+    g_session->controllerDisabled = true;
     return 0;
 }
 

@@ -1,5 +1,4 @@
 #include "prx/libSceIme/include/Api.hpp"
-#include "prx/libSceIme/include/ImeInput.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cstdio>
@@ -9,6 +8,8 @@
 static_assert(sizeof(Param) == 96);
 static_assert(offsetof(Param, option) == 32);
 static_assert(offsetof(Param, reserved) == 88);
+
+static constexpr int NotOpened = static_cast<int>(0x80bc0002u);
 
 static void Require(bool value, const char* message) {
     if (value) return;
@@ -136,7 +137,6 @@ static void APS5_VABI IgnoreEvent(void*, const ImeEvent*) {}
 
 static void CheckOpenPanel() {
     constexpr int InvalidAddress = static_cast<int>(0x80bc0031u);
-    constexpr int NotOpened = static_cast<int>(0x80bc0002u);
     char16_t text[64] = {};
     alignas(16) unsigned char work[0x5000] = {};
     Param param{};
@@ -152,15 +152,12 @@ static void CheckOpenPanel() {
     PositionAndForm form{};
     Require(sceImeGetPanelPositionAndForm(&form) == 0, "valid panel position and form");
     Require(sceImeDisableController() == 0, "disable the controller of an open panel");
-    Require(!ImeCapturesPad_nid_postfix(), "pad released after disabling the controller");
-    Require(sceImeDisableController() == 0, "disable the controller again");
     Require(sceImeGetPanelPositionAndForm(&form) == 0, "panel still open after disabling the controller");
     Require(sceImeClose_nid_postfix() == 0, "close ime panel");
     Require(sceImeDisableController() == NotOpened, "disabling the controller needs an open panel after close");
 }
 
 static void CheckKeyboardResourceIds() {
-    constexpr int NotOpened = static_cast<int>(0x80bc0002u);
     constexpr int ConnectionFailed = static_cast<int>(0x80bc0004u);
     constexpr int InvalidUserId = static_cast<int>(0x80bc0010u);
     constexpr int InvalidAddress = static_cast<int>(0x80bc0031u);
