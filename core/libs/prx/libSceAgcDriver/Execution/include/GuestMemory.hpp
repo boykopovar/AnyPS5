@@ -46,9 +46,6 @@ bool EqualsCommittedUnsynced(std::uint64_t address, std::span<const std::byte> b
 // space cannot be queried).
 enum class Compare : std::uint8_t { Equal, Differs, Unmapped };
 Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes);
-// CompareMapped's walk with a copy in place of the compare: the bytes at `address` are copied into
-// `out` (Equal), or Unmapped as CompareMapped answers it (the dispatch-cache validation's masked
-// re-read of a differing run).
 Compare CopyMapped(std::uint64_t address, std::span<std::byte> out);
 void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment = 1);
