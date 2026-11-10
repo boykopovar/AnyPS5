@@ -64,6 +64,39 @@ class AuditDumpTests(unittest.TestCase):
         self.assertEqual(extra, ["Media/Modules", "Media/Plugins", "."])
         self.assertEqual(directories, [source / "sce_module", source / "Media/Modules", source / "Media/Plugins", source])
 
+    def test_modules_with_other_names_are_staged_by_magic(self):
+        locations = (*audit_dump.STANDARD_DIRECTORIES, *audit_dump.EXTRA_DIRECTORIES, ".")
+        source = self.root / "source"
+        messages = []
+        for location in locations:
+            self.module(Path(location) / "guest.bin", ELF)
+            self.module(Path(location) / "guest.dat", SELF)
+            self.module(Path(location) / "asset.bin", b"ordinary data")
+        directories, extra = audit_dump.prepare(self.dump, source, log=messages.append)
+        for location in locations:
+            with self.subTest(location=location):
+                self.assertEqual((source / location / "guest.bin").read_bytes(), ELF)
+                self.assertEqual((source / location / "guest.dat").read_bytes(), ELF + b"guest.dat")
+                self.assertFalse((source / location / "asset.bin").exists())
+        self.assertFalse((source / "eboot.bin").exists())
+        self.assertEqual(directories, [source / location for location in locations])
+        self.assertEqual(extra, [*audit_dump.EXTRA_DIRECTORIES, "."])
+        self.assertEqual(messages, ["staged eboot.bin and 12 modules"])
+
+    def test_eboot_alias_is_not_staged_as_an_extra_module(self):
+        alias = self.dump / "eboot-alias.bin"
+        try:
+            os.link(self.dump / "eboot.bin", alias)
+        except OSError:
+            self.skipTest("hard links unavailable")
+        source = self.root / "source"
+        messages = []
+        directories, extra = audit_dump.prepare(self.dump, source, log=messages.append)
+        self.assertFalse((source / alias.name).exists())
+        self.assertEqual(directories, [])
+        self.assertEqual(extra, [])
+        self.assertEqual(messages, ["staged eboot.bin and 0 modules"])
+
     def test_a_module_that_is_neither_a_self_nor_an_elf_is_refused(self):
         self.module("sce_module/broken.prx", b"MZ" + b"\0" * 62)
         with self.assertRaises(unwrap_self.Refused):
