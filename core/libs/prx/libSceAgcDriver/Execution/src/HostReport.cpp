@@ -226,8 +226,18 @@ std::string DescribeMissingRequirements(const HostGpuFacts& gpu, const std::vect
     }
     std::string driver = gpu.driverName.empty() ? std::string("unknown driver") : gpu.driverName;
     if (!gpu.driverInfo.empty()) driver += " " + gpu.driverInfo;
+    std::string driverName = gpu.driverName;
+    std::transform(driverName.begin(), driverName.end(), driverName.begin(), [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    const bool honeykrispStores = driverName.find("honeykrisp") != std::string::npos &&
+        std::any_of(missing.begin(), missing.end(), [](const auto& item) { return item.name == "vertexPipelineStoresAndAtomics"; });
     std::string text = "Vulkan: " + gpu.name + " (" + driver + ", Vulkan " + vulkanVersion(gpu.apiVersion) + ") lacks " + std::to_string(missing.size()) +
-        (missing.size() == 1 ? " item" : " items") + " AnyPS5 needs: " + lacks + ". Update the graphics driver; an older GPU or driver may not offer them.";
+        (missing.size() == 1 ? " item" : " items") + " AnyPS5 needs: " + lacks + ".";
+    if (honeykrispStores) {
+        text += " Honeykrisp may expose vertexPipelineStoresAndAtomics with hk_enable_vertex_pipeline_stores_atomics=true; this driver opt-in may be unstable.";
+        if (missing.size() > 1) text += " Other missing items may still require a graphics driver update.";
+    } else {
+        text += " Update the graphics driver; an older GPU or driver may not offer them.";
+    }
     std::vector<std::string> others;
     for (const auto& candidate : gpu.candidates)
         if (candidate != gpu.name) others.push_back(candidate);

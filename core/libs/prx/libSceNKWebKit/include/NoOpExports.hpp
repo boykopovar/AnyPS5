@@ -4,6 +4,7 @@
 
 extern "C" {
 
+void APS5_VABI JSRemoteInspectorSetParentProcessInformation();
 void APS5_VABI WKAddMockMediaDevice();
 void APS5_VABI WKBundleExtendClassesForParameterCoder();
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabled();

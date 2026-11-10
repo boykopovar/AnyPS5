@@ -1655,6 +1655,13 @@ void Recorder::ForgetQueuedLabels() {
     labelTableOwner->recordedLabels.store(recorded.size(), std::memory_order_relaxed);
 }
 
+bool Recorder::QueuedLabelsPending() {
+    std::lock_guard tableLock(labelTableMutex);
+    if (labelTableOwner == nullptr) return false;
+    const auto& recorded = labelTableOwner->labels;
+    return !labelTableOwner->queuedLabels.empty() || std::any_of(recorded.begin(), recorded.end(), [](const auto& entry) { return entry.second.batch == nullptr; });
+}
+
 void Recorder::SetQueuedLabelRecorder(void (*recorder)()) {
     queuedLabelRecorder.store(recorder, std::memory_order_release);
 }
@@ -3546,6 +3553,7 @@ void Recorder::OnComplete(std::function<void()> action) {
 bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel, int value, std::int64_t word) {
     CaptureTrace::Log("buffer-write batch=%llu address=%llx bytes=%zu label=%d", static_cast<unsigned long long>(submissions + 1), static_cast<unsigned long long>(address), bytes, ownLabel);
     if (bytes == 0) return false;
+    GuestMemory::ForgetKnownZero(address, bytes);
     ensureOpen();
     const auto end = address + bytes;
     open->writes.emplace_back(address, end);
@@ -3567,6 +3575,7 @@ bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel
 
 void Recorder::noteWriteOn(Batch& batch, std::uint64_t address, std::size_t bytes, bool ownLabel) {
     if (bytes == 0) return;
+    if (&batch != open.get()) GuestMemory::ForgetKnownZero(address, bytes);
     if (&batch == open.get()) {
         if (!noteWrite(address, bytes, ownLabel)) return;
         const std::array ranges{std::pair{address, address + bytes}};
