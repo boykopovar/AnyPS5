@@ -144,6 +144,7 @@ int main() {
     Require(sceErrorDialogClose() == kErrInvalidState);
 
     Require(sceErrorDialogOpen(nullptr) == kErrParam);
+    Require(sceErrorDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrParam);
     ErrorDialogParam bad{8, 0, 0, 0};
     Require(sceErrorDialogOpen(&bad) == kErrParam);
     ErrorDialogParam badZero{0, 0, 0, 0};

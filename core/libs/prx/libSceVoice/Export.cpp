@@ -236,8 +236,8 @@ int APS5_VABI sceVoiceDisconnectIPortFromOPort(uint32_t input_port_id, uint32_t 
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
     RequirePort(voice, input_port_id, __func__);
-    RequirePort(voice, output_port_id, __func__);
-    if (voice.connections.erase({input_port_id, output_port_id}) == 0) Fail(__func__, "ports are not connected");
+    if (output_port_id > 127) Fail(__func__, "the result for a second port id above 127 is unknown");
+    if (!voice.ports.contains(output_port_id) || voice.connections.erase({input_port_id, output_port_id}) == 0) return PortNotFound;
     return 0;
 }
 
@@ -340,11 +340,14 @@ int APS5_VABI sceVoiceReadFromOPort(uint32_t output_port_id, void* data, uint32_
 }
 
 int APS5_VABI sceVoiceWriteToIPort(uint32_t input_port_id, const void* data, uint32_t* size, int16_t frame_gaps) {
-    (void)input_port_id;
-    (void)data;
-    (void)size;
     (void)frame_gaps;
-    NotImplemented_nid_no_patch(__func__);
+    auto& voice = State();
+    std::lock_guard lock(voice.mutex);
+    if (!voice.initialized) return NotInitialized;
+    if (input_port_id > 127) return InvalidPort;
+    if (data == nullptr || size == nullptr) return InvalidArgument;
+    if (!IsInput(RequirePort(voice, input_port_id, __func__).type)) Fail(__func__, "port is not an input port");
+    *size = 0;
     return 0;
 }
 

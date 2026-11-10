@@ -1,6 +1,7 @@
 #include "prx/libSceSigninDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 
@@ -61,6 +62,9 @@ int main() {
 
     Require(sceSigninDialogGetResult(nullptr) == kErrArgNull);
     Require(sceSigninDialogGetResult(result) == 0);
+    errno = 71;
+    Require(sceSigninDialogGetResult(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == 0);
     Require(result[2] == 0);

@@ -627,6 +627,29 @@ static int DeviceFilesystem(KernelStatfs* fs) {
 }
 
 #ifdef _WIN32
+static int NativeStatfs(const std::filesystem::path& path, KernelStatfs* fs) {
+    std::wstring root(path.native().size() + 2, L'\0');
+    if (!::GetVolumePathNameW(path.c_str(), root.data(), static_cast<DWORD>(root.size())))
+        throw std::runtime_error("_fstatfs: GetVolumePathNameW failed for " + path.string() + ", error=" + std::to_string(::GetLastError()));
+    DWORD sectorsPerCluster = 0, bytesPerSector = 0, freeClusters = 0, totalClusters = 0;
+    ULARGE_INTEGER available{}, total{}, totalFree{};
+    DWORD nameMax = 0, volumeFlags = 0;
+    if (!::GetDiskFreeSpaceW(root.c_str(), &sectorsPerCluster, &bytesPerSector, &freeClusters, &totalClusters) ||
+        !::GetDiskFreeSpaceExW(root.c_str(), &available, &total, &totalFree) ||
+        !::GetVolumeInformationW(root.c_str(), nullptr, 0, nullptr, &nameMax, &volumeFlags, nullptr, 0))
+        throw std::runtime_error("_fstatfs: volume query failed for " + path.string() + ", error=" + std::to_string(::GetLastError()));
+    const std::uint64_t cluster = static_cast<std::uint64_t>(sectorsPerCluster) * bytesPerSector;
+    if (cluster == 0) throw std::runtime_error("_fstatfs: volume of " + path.string() + " reports no cluster size");
+    fs->f_flags = (volumeFlags & FILE_READ_ONLY_VOLUME) ? KERNEL_MNT_RDONLY : 0;
+    fs->f_bsize = cluster;
+    fs->f_iosize = cluster;
+    fs->f_blocks = total.QuadPart / cluster;
+    fs->f_bfree = totalFree.QuadPart / cluster;
+    fs->f_bavail = static_cast<std::int64_t>(available.QuadPart / cluster);
+    fs->f_namemax = nameMax;
+    return 0;
+}
+
 static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
     if (!File::IsDirectoryDescriptor(descriptor)) {
         const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
@@ -639,26 +662,7 @@ static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
     }
     const auto path = File::WindowsDescriptorPath_nid_no_patch(descriptor);
     if (!path) throw std::runtime_error("_fstatfs: no path for descriptor " + std::to_string(descriptor) + ", errno=" + std::to_string(errno));
-    std::wstring root(path->native().size() + 2, L'\0');
-    if (!::GetVolumePathNameW(path->c_str(), root.data(), static_cast<DWORD>(root.size())))
-        throw std::runtime_error("_fstatfs: GetVolumePathNameW failed for " + path->string() + ", error=" + std::to_string(::GetLastError()));
-    DWORD sectorsPerCluster = 0, bytesPerSector = 0, freeClusters = 0, totalClusters = 0;
-    ULARGE_INTEGER available{}, total{}, totalFree{};
-    DWORD nameMax = 0, volumeFlags = 0;
-    if (!::GetDiskFreeSpaceW(root.c_str(), &sectorsPerCluster, &bytesPerSector, &freeClusters, &totalClusters) ||
-        !::GetDiskFreeSpaceExW(root.c_str(), &available, &total, &totalFree) ||
-        !::GetVolumeInformationW(root.c_str(), nullptr, 0, nullptr, &nameMax, &volumeFlags, nullptr, 0))
-        throw std::runtime_error("_fstatfs: volume query failed for " + path->string() + ", error=" + std::to_string(::GetLastError()));
-    const std::uint64_t cluster = static_cast<std::uint64_t>(sectorsPerCluster) * bytesPerSector;
-    if (cluster == 0) throw std::runtime_error("_fstatfs: volume of " + path->string() + " reports no cluster size");
-    fs->f_flags = (volumeFlags & FILE_READ_ONLY_VOLUME) ? KERNEL_MNT_RDONLY : 0;
-    fs->f_bsize = cluster;
-    fs->f_iosize = cluster;
-    fs->f_blocks = total.QuadPart / cluster;
-    fs->f_bfree = totalFree.QuadPart / cluster;
-    fs->f_bavail = static_cast<std::int64_t>(available.QuadPart / cluster);
-    fs->f_namemax = nameMax;
-    return 0;
+    return NativeStatfs(*path, fs);
 }
 
 static bool NativeIsPipe(int descriptor) {
@@ -686,6 +690,8 @@ static bool NativeIsPipe(int descriptor) {
 #endif
 }
 
+static int FillStatfs(const struct statvfs& host, KernelStatfs* fs);
+
 static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
     struct stat file{};
     if (::fstat(descriptor, &file) != 0) return SceErrorFromErrno(errno) & 0xffff;
@@ -699,6 +705,10 @@ static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
     if (S_ISCHR(file.st_mode)) return DeviceFilesystem(fs);
     struct statvfs host{};
     if (::fstatvfs(descriptor, &host) != 0) return SceErrorFromErrno(errno) & 0xffff;
+    return FillStatfs(host, fs);
+}
+
+static int FillStatfs(const struct statvfs& host, KernelStatfs* fs) {
     if (host.f_flag & ST_RDONLY) fs->f_flags |= KERNEL_MNT_RDONLY;
     if (host.f_flag & ST_NOSUID) fs->f_flags |= KERNEL_MNT_NOSUID;
 #ifdef __APPLE__
@@ -717,6 +727,14 @@ static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
     fs->f_namemax = static_cast<std::uint32_t>(host.f_namemax);
     return 0;
 }
+
+static int NativeStatfs(const std::filesystem::path& path, KernelStatfs* fs) {
+    struct statvfs host{};
+    if (::statvfs(path.c_str(), &host) != 0) return SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(path) : errno) & 0xffff;
+    return FillStatfs(host, fs);
+}
+
+
 #endif
 
 extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
@@ -1031,6 +1049,21 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
 #endif
 }
 
+#ifdef __linux__
+static std::mutex g_flockTransitions;
+
+static bool HoldsSharedFlock(int descriptor) {
+    std::FILE* info = std::fopen(("/proc/self/fdinfo/" + std::to_string(descriptor)).c_str(), "re");
+    if (info == nullptr) throw std::runtime_error("flock: cannot read the lock state of fd=" + std::to_string(descriptor) + ", errno=" + std::to_string(errno));
+    char line[256];
+    bool shared = false;
+    while (std::fgets(line, sizeof(line), info) != nullptr)
+        if (std::strncmp(line, "lock:", 5) == 0 && std::strstr(line, " FLOCK ") != nullptr && std::strstr(line, " READ ") != nullptr) shared = true;
+    std::fclose(info);
+    return shared;
+}
+#endif
+
 int APS5_VABI flock_nid_postfix(int d, int operation) {
     if (File::IsVirtualDirectoryDescriptor(d)) return PosixFailure(GUEST_EISDIR);
     if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EOPNOTSUPP);
@@ -1046,6 +1079,11 @@ int APS5_VABI flock_nid_postfix(int d, int operation) {
 #endif
     const int type = operation & 8 ? 8 : operation & 2 ? 2 : operation & 1 ? 1 : 0;
     if (type == 0) return PosixFailure(GUEST_EBADF);
+#ifdef __linux__
+    std::unique_lock serial(g_flockTransitions, std::defer_lock);
+    if ((operation & 4) || type == 8) serial.lock();
+    const bool keepShared = type == 2 && (operation & 4) && HoldsSharedFlock(d);
+#endif
     if (NativeFlock(d, type | (operation & 4)) != 0) {
 #ifdef _WIN32
         const auto error = ::GetLastError();
@@ -1053,7 +1091,13 @@ int APS5_VABI flock_nid_postfix(int d, int operation) {
         throw std::runtime_error(std::string(__func__) + ": flock failed, fd=" + std::to_string(d) + ", error=" + std::to_string(error));
 #else
         const int error = errno;
-        if ((operation & 4) && error == EWOULDBLOCK) return PosixFailure(GUEST_EWOULDBLOCK);
+        if ((operation & 4) && error == EWOULDBLOCK) {
+#ifdef __linux__
+            if (keepShared && ::flock(d, LOCK_SH | LOCK_NB) != 0)
+                throw std::runtime_error(std::string(__func__) + ": cannot take back the shared lock the host dropped in a failed upgrade, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
+#endif
+            return PosixFailure(GUEST_EWOULDBLOCK);
+        }
         throw std::runtime_error(std::string(__func__) + ": flock failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(error));
 #endif
     }
@@ -1070,6 +1114,26 @@ int APS5_VABI _fstatfs_nid_postfix(int d, KernelStatfs* buf) {
     if (const int error = NativeFstatfs(d, &result)) return PosixFailure(error);
     if (!GuestCopyOut_nid_no_patch(buf, &result, sizeof(result))) return PosixFailure(GUEST_EFAULT);
     return 0;
+}
+
+
+int PosixStatfs_nid_no_patch(const char* path, KernelStatfs* buf) {
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
+    std::filesystem::path native;
+    if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
+    AppArchiveRefuseOnly_nid_no_patch(native, path, "statfs");
+#ifdef _WIN32
+    std::error_code error;
+    const auto status = std::filesystem::status(native, error);
+    if (const int failure = PathLookupFailure(error)) return PosixResult(failure);
+    if (!std::filesystem::exists(status)) return PosixFailure(NotFoundError_nid_no_patch(native));
+#endif
+    KernelStatfs result{};
+    result.f_version = KERNEL_STATFS_VERSION;
+    if (const int error = NativeStatfs(native, &result)) return PosixFailure(error);
+    return GuestCopyOut_nid_no_patch(buf, &result, sizeof(result)) ? 0 : PosixFailure(GUEST_EFAULT);
 }
 
 int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
@@ -1582,8 +1646,10 @@ static int CopyIovecs(const KernelIovec* iov, int iovcnt, std::vector<KernelIove
 #elif defined(__linux__)
     iovec local{vectors.data(), bytes};
     iovec remote{const_cast<KernelIovec*>(iov), bytes};
+    const int saved = errno;
     const auto copied = ::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0 && errno != EFAULT) throw std::runtime_error("iovec: process_vm_readv failed with errno " + std::to_string(errno));
+    errno = saved;
     if (copied < 0 || static_cast<std::size_t>(copied) != bytes) return SceErrorFromErrno(GUEST_EFAULT);
 #elif defined(__APPLE__)
     mach_vm_size_t copied = 0;
@@ -2017,6 +2083,20 @@ int APS5_VABI utimes_nid_postfix(const char* path, const KernelTimeval* times) {
     if (const int error = PathError(path, copy)) return PosixFailure(error);
     path = copy.c_str();
     return PosixResult(sceKernelUtimes_nid_postfix(path, times));
+}
+
+int PosixUtimesAt_nid_no_patch(int directory, const char* path, const KernelTimeval* times) {
+    if (InvalidTimes(times)) return PosixFailure(GUEST_EINVAL);
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
+    if (directory == -100 || *path == '/') return utimes_nid_postfix(path, times);
+    int error = 0;
+    const char* base = GetDirectoryDescriptorPath_nid_no_patch(directory, &error);
+    if (!base) return PosixFailure(error);
+    const auto native = std::filesystem::path(base) / std::filesystem::path(reinterpret_cast<const char8_t*>(path));
+    if (NativeUtimes(native, times) != 0) return PosixFailure(SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(native) : errno) & 0xffff);
+    return 0;
 }
 
 int APS5_VABI lutimes_nid_postfix(const char* path, const KernelTimeval* times) {
