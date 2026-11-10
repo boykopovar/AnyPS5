@@ -74,7 +74,7 @@ jobs:
         run: Add-Content -LiteralPath $env:GITHUB_PATH -Value "$env:MSYS2_LOCATION\ucrt64\bin"
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
-          key: windows-msys2
+          key: msys2
           save: ${{ github.ref == 'refs/heads/main' }}
           evict-old-files: job
       - id: ffmpeg-cache

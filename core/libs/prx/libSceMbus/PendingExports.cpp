@@ -404,7 +404,6 @@ int APS5_VABI sceMbusGetSparkState(std::uint64_t deviceId, MbusSparkState* state
 }
 
 int APS5_VABI sceMbusInit() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
