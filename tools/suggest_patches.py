@@ -69,6 +69,15 @@ def conversion_options(args, patch):
     return command_line(options)
 
 
+def unique_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
 def read_catalog(directory, object_pairs_hook=None):
     data = json.loads(confined(directory, "index.json").read_text(encoding="utf-8"), object_pairs_hook=object_pairs_hook)
     if not isinstance(data, dict) or set(data) != {"format", "entries"} or type(data["format"]) is not int or data["format"] != 1 or not isinstance(data["entries"], list):
@@ -78,7 +87,7 @@ def read_catalog(directory, object_pairs_hook=None):
 
 def load_catalog(directory, title, version):
     entries = []
-    for number, entry in enumerate(read_catalog(directory), 1):
+    for number, entry in enumerate(read_catalog(directory, object_pairs_hook=unique_json_keys), 1):
         if not isinstance(entry, dict) or (entry.get("titleId"), entry.get("contentVersion")) != (title, version):
             continue
         entries.append((number, entry))
@@ -215,7 +224,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     prefix = "No verified catalog entries" if args.list_verified else "No recommendation"
     try:
-        metadata = json.loads(args.param_json.read_text(encoding="utf-8"))
+        metadata = json.loads(args.param_json.read_text(encoding="utf-8"), object_pairs_hook=unique_json_keys)
         if not isinstance(metadata, dict):
             raise ValueError("param.json must be an object")
         title = metadata.get("titleId")
