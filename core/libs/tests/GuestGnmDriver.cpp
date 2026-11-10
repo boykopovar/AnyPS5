@@ -43,6 +43,8 @@ bool ThrowsRuntimeError(TFunction function) {
 }
 
 void TestWriters() {
+    check(sceGnmGetOffChipTessellationBufferSize_nid_disambig1() == 0x800000, "the off-chip tessellation buffer size is not 8 MiB");
+    check(!sceGnmDriverTraceInProgress_nid_disambig1(), "a retail driver trace was reported in progress");
     std::array<std::uint32_t, 0x100> words{};
     words.fill(0xdeadbeefu);
     check(sceGnmDrawInitDefaultHardwareState175(words.data(), 0xff) == 0 && words[0] == 0xdeadbeefu, "the draw default state wrote into a short buffer");
