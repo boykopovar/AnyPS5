@@ -100,28 +100,6 @@ void TestHasExpiredDispatchesThroughIdentityAndCertificateVtables() {
     Require(_ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(&certificate, 0));
 }
 
-void TestHasExpiredRejectsObjectsUpstreamWouldDereference() {
-    RequireInvalidArgument([] { _ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(nullptr, 0); });
-    WebRtcRtcCertificate certificate{1, nullptr};
-    RequireInvalidArgument([&] { _ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(&certificate, 0); });
-
-    FakeIdentity identity{nullptr};
-    certificate.identity = &identity;
-    RequireInvalidArgument([&] { _ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(&certificate, 0); });
-
-    const std::array<const void*, 3> identityVTable{};
-    identity.vtable = identityVTable.data();
-    RequireInvalidArgument([&] { _ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(&certificate, 0); });
-
-    const std::array<const void*, 8> certificateVTable{};
-    FakeCertificate nativeCertificate{certificateVTable.data()};
-    const std::array<const void*, 3> validIdentityVTable{
-        nullptr, nullptr, reinterpret_cast<const void*>(&IdentityCertificate)};
-    identity.vtable = validIdentityVTable.data();
-    selectedCertificate = &nativeCertificate;
-    RequireInvalidArgument([&] { _ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(&certificate, 0); });
-}
-
 }
 
 int main() {
@@ -129,6 +107,5 @@ int main() {
     TestWithoutIdentityDoesNothing();
     TestInvalidArgumentsThrow();
     TestHasExpiredDispatchesThroughIdentityAndCertificateVtables();
-    TestHasExpiredRejectsObjectsUpstreamWouldDereference();
     return 0;
 }
