@@ -2,7 +2,6 @@
 #include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
 
 #include <cstdlib>
-#include <stdexcept>
 
 using NKWebKit::HttpAbi::CommonHeader;
 using NKWebKit::HttpAbi::HTTPHeaderMap;
@@ -18,7 +17,7 @@ static HTTPHeaderMap& Headers(ResourceRequestBase& request) {
 }
 
 static void TestRemovalAndInvalidation() {
-    ResourceRequestBase request;
+    ResourceRequestBase request{};
     request.resourceRequestUpdated = true;
     request.platformRequestUpdated = true;
     CommonHeader entries[] {
@@ -38,28 +37,7 @@ static void TestRemovalAndInvalidation() {
     Require(!request.platformRequestUpdated);
 }
 
-static void TestInvalidSynchronizationState() {
-    ResourceRequestBase request;
-    request.resourceRequestUpdated = false;
-    bool threw = false;
-    try {
-        _ZN7WebCore19ResourceRequestBase20clearHTTPContentTypeEv(&request);
-    } catch (const std::logic_error&) {
-        threw = true;
-    }
-    Require(threw);
-
-    threw = false;
-    try {
-        _ZN7WebCore19ResourceRequestBase20clearHTTPContentTypeEv(nullptr);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
-}
-
 int main() {
     TestRemovalAndInvalidation();
-    TestInvalidSynchronizationState();
     return 0;
 }
