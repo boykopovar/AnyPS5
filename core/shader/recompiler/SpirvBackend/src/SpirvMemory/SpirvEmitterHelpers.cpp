@@ -231,7 +231,7 @@ void DefineInputs(SpirvEmitterState& state) {
     })) {
         state.inputs.push_back(SpirvInputBinding {{StageInputKind::LocalInvocationIndex, 0u, 1u, "gl_LocalInvocationIndex", false}});
     }
-    if (LdsInDeviceMemory(state) || ScratchPoolActive(state)) {
+    if (LdsInDeviceMemory(state) || ScratchPoolActive(state) || state.meshAsCompute) {
         if (std::none_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
             return input.kind == StageInputKind::WorkgroupId;
         })) {

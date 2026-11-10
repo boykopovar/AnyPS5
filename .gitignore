@@ -116,3 +116,5 @@ cookies.txt
 
 .env
 .env.local
+
+.slim/deepwork/

@@ -381,6 +381,7 @@ struct SpirvTarget {
     bool shaderImageMinLod = false;
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
+    bool meshAsCompute = false;
 };
 
 struct BindingLayout {
@@ -447,7 +448,26 @@ inline constexpr std::uint32_t MeshArgumentBytes = 20;
 inline constexpr std::uint32_t MeshIndexRestartTable = 0x100;
 inline constexpr std::uint32_t MeshLayerStrideShift = 16;
 inline constexpr std::uint32_t MeshLayerStrideLimit = 0xffff;
-inline constexpr std::uint32_t MeshRestartLengthDword = MeshArgumentBytes / 4;
+inline constexpr std::uint32_t MeshOutputAddressDword = MeshArgumentBytes / 4;
+inline constexpr std::uint32_t MeshRestartLengthDword = MeshOutputAddressDword + 2;
+inline constexpr std::uint32_t MeshOutputHeaderBytes = 16;
+
+inline std::uint32_t MeshRecordLayout(std::uint32_t clipDistances, std::uint32_t cullDistances, bool layer, std::uint32_t provokingVertex, std::uint32_t primitiveSize) {
+    return clipDistances | (cullDistances << 4u) | (layer ? 0x100u : 0u) | (provokingVertex << 9u) | (primitiveSize << 11u);
+}
+
+inline std::uint32_t MeshRecordClipDistances(std::uint32_t layout) { return layout & 0xfu; }
+inline std::uint32_t MeshRecordCullDistances(std::uint32_t layout) { return (layout >> 4u) & 0xfu; }
+inline bool MeshRecordLayer(std::uint32_t layout) { return (layout & 0x100u) != 0u; }
+inline std::uint32_t MeshRecordProvokingVertex(std::uint32_t layout) { return (layout >> 9u) & 3u; }
+inline std::uint32_t MeshRecordPrimitiveSize(std::uint32_t layout) { return (layout >> 11u) & 3u; }
+
+inline std::uint32_t MeshRecordExtraOffset(std::uint32_t parameters) { return 16u * (1u + parameters); }
+
+inline std::uint32_t MeshRecordBytes(std::uint32_t parameters, std::uint32_t layout) {
+    const auto extras = MeshRecordClipDistances(layout) + MeshRecordCullDistances(layout) + (MeshRecordLayer(layout) ? 1u : 0u);
+    return MeshRecordExtraOffset(parameters) + 16u * ((extras + 3u) / 4u);
+}
 inline constexpr std::uint32_t MeshRestartTableDword = MeshRestartLengthDword + 1;
 inline constexpr std::uint32_t MeshCapturedCounterDword = MeshArgumentBytes / 4;
 inline constexpr std::uint32_t MeshCapturedCapacityDword = MeshCapturedCounterDword + 1;
@@ -929,6 +949,7 @@ struct CompiledShaderArtifact {
     bool bdaWrites = false;
     bool layerReplaySafe = false;
     std::uint32_t stencilReferenceDword = 0xffffffffu;
+    std::uint32_t meshRecordLayout = 0;
     std::uint64_t variantId = 0;
 };
 
@@ -1060,6 +1081,7 @@ struct BarycentricTessellationShaders {
 };
 
 [[nodiscard]] BarycentricTessellationShaders BuildBarycentricTessellationShaders(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target, std::uint32_t maxFragmentInputComponents, std::uint32_t provokingVertex);
+[[nodiscard]] RecompileResult BuildMeshReadbackVertexShader(const RecompileResult& mesh, std::uint32_t vulkanVersion);
 
 }
 
