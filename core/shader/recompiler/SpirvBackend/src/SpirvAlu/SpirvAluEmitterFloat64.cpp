@@ -271,6 +271,28 @@ std::uint32_t Nan32(SpirvEmitterState& state, std::uint32_t bits) {
     return Binary(state, spv::OpUGreaterThan, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), bits, ConstantU32(state, 0x7fffffffu)), ConstantU32(state, 0x7f800000u));
 }
 
+std::uint32_t FmaScaleF32(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs, std::uint32_t addend, std::uint32_t scale) {
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto product = Exact(state, spv::OpFMul, FromF32Exact(state, lhs), FromF32Exact(state, rhs));
+    const auto wideAddend = FromF32Exact(state, addend);
+    const auto scaled = Exact(state, spv::OpFMul, AddRoundToOdd(state, product, wideAddend), PowerOfTwo(state, scale));
+    const auto finite = F32BitsOfRounded(state, RoundToPrecision(state, scaled, 23u, 874u));
+    const auto inputs = std::array{Unary(state, spv::OpBitcast, u32, lhs), Unary(state, spv::OpBitcast, u32, rhs), Unary(state, spv::OpBitcast, u32, addend)};
+    const auto unbounded = Split(state, FromF64(state, Exact(state, spv::OpFAdd, product, wideAddend)));
+    auto special = Select(state, u32, Classify(state, Join(state, unbounded)).nan, ConstantU32(state, 0xffc00000u), Binary(state, spv::OpBitwiseOr, u32, Binary(state, spv::OpBitwiseAnd, u32, unbounded.high, ConstantU32(state, 0x80000000u)), ConstantU32(state, 0x7f800000u)));
+    auto nonFinite = NonFinite32(state, inputs[0]);
+    for (const auto input : {inputs[1], inputs[2]}) nonFinite = Binary(state, spv::OpLogicalOr, boolean, nonFinite, NonFinite32(state, input));
+    const auto zero = [&](std::uint32_t bits) { return Binary(state, spv::OpIEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, bits, ConstantU32(state, 0x7fffffffu)), ConstantU32(state, 0u)); };
+    const auto infinite = [&](std::uint32_t bits) { return Binary(state, spv::OpIEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, bits, ConstantU32(state, 0x7fffffffu)), ConstantU32(state, 0x7f800000u)); };
+    const auto invalidProduct = Binary(state, spv::OpLogicalOr, boolean, Binary(state, spv::OpLogicalAnd, boolean, infinite(inputs[0]), zero(inputs[1])), Binary(state, spv::OpLogicalAnd, boolean, zero(inputs[0]), infinite(inputs[1])));
+    const auto quiet = [&](std::uint32_t bits) { return Binary(state, spv::OpBitwiseOr, u32, bits, ConstantU32(state, 0x00400000u)); };
+    special = Select(state, u32, Binary(state, spv::OpLogicalAnd, boolean, Nan32(state, inputs[2]), Unary(state, spv::OpLogicalNot, boolean, invalidProduct)), quiet(inputs[2]), special);
+    special = Select(state, u32, Nan32(state, inputs[1]), quiet(inputs[1]), special);
+    special = Select(state, u32, Nan32(state, inputs[0]), quiet(inputs[0]), special);
+    return Unary(state, spv::OpBitcast, TypeF32(state), Select(state, u32, nonFinite, special, finite));
+}
+
 std::uint32_t FlushDenormal32(SpirvEmitterState& state, std::uint32_t value, bool flush, std::uint32_t smallestNormal) {
     if (!flush) return value;
     const auto u32 = TypeU32(state);
@@ -837,6 +859,38 @@ std::uint32_t EmitFPFma64(SpirvEmitterState& state, std::uint32_t arg0, std::uin
 
 std::uint32_t EmitFPFmaScale64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3) {
     return FusedMultiplyAdd(state, arg0, arg1, arg2, Unary(state, spv::OpBitcast, TypeI32(state), arg3));
+}
+
+std::uint32_t EmitFPFmaScale32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3) {
+    const auto f32 = TypeF32(state);
+    const auto i32 = TypeI32(state);
+    if (state.fmaScaleF32Function == 0u) {
+        const auto id = state.module.AllocateId();
+        struct Restore {
+            SpirvEmitterState& state;
+            std::uint32_t label;
+            ~Restore() {
+                state.module.EndHelperFunction();
+                state.currentLabel = label;
+            }
+        };
+        state.module.BeginHelperFunction();
+        const Restore restore{state, state.currentLabel};
+        state.module.AddName(id, "fma_scale_f32_exact");
+        state.module.AddFunction(spv::OpFunction, f32, id, spv::FunctionControlMaskNone, state.module.Type(spv::OpTypeFunction, f32, f32, f32, f32, i32));
+        std::array<std::uint32_t, 4> parameters{};
+        for (std::size_t index = 0; index < parameters.size(); ++index) {
+            parameters[index] = state.module.AllocateId();
+            state.module.AddFunction(spv::OpFunctionParameter, index == 3u ? i32 : f32, parameters[index]);
+        }
+        EmitLabel(state, state.module.AllocateId());
+        state.module.AddFunction(spv::OpReturnValue, FmaScaleF32(state, parameters[0], parameters[1], parameters[2], parameters[3]));
+        state.module.AddFunction(spv::OpFunctionEnd);
+        state.fmaScaleF32Function = id;
+    }
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionCall, f32, result, state.fmaScaleF32Function, arg0, arg1, arg2, Unary(state, spv::OpBitcast, i32, arg3));
+    return result;
 }
 
 std::uint32_t EmitFPMin64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {

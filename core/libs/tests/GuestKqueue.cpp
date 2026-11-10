@@ -374,6 +374,28 @@ static void UnsupportedFilters() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void EqueueIsKqueueDescriptor() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "kqueue descriptor") == SceOk);
+    const int kq = static_cast<int>(static_cast<std::uint32_t>(eq));
+    Require((eq >> 32) != 0 && kq > 0 && kq < FirstSocket);
+    Require(Apply(kq, Change(9, EvfiltUser, EvAdd | EvClear)) == 0);
+    Require(Apply(kq, Change(9, EvfiltUser, 0, NoteTrigger)) == 0);
+    KernelEvent events[2]{};
+    int out = 0;
+    const KernelUseconds none = 0;
+    Require(sceKernelWaitEqueue(eq, events, 2, &out, &none) == SceOk && out == 1 && events[0].ident == 9 && events[0].filter == EvfiltUser);
+    Require(sceKernelDeleteEqueue(eq ^ (KernelEqueue{1} << 32)) == SceEbadf);
+    Require(sceKernelDeleteEqueue(eq) == SceOk);
+    RequireFailure(Poll(kq, events, 2), GuestEbadf);
+    Require(sceKernelDeleteEqueue(eq) == SceEbadf);
+
+    Require(sceKernelCreateEqueue(&eq, "closed descriptor") == SceOk);
+    Require(close_nid_postfix(static_cast<int>(static_cast<std::uint32_t>(eq))) == 0);
+    Require(sceKernelWaitEqueue(eq, events, 2, &out, &none) == SceEbadf);
+    Require(sceKernelDeleteEqueue(eq) == SceEbadf);
+}
+
 static void FilesystemEvents() {
     const int kq = kqueue_nid_postfix();
     int marker = 0;
@@ -559,10 +581,14 @@ static void PipeWrite() {
     Require(empty >= PipeAtomic);
     Require(write_nid_postfix(pipe[1], "abc", 3) == 3);
     Require(Poll(kq, events, 4) == 1 && events[0].data == empty - 3);
-#ifndef _WIN32
+    std::int64_t queued = 3;
+#ifdef _WIN32
+    const std::string fill(static_cast<std::size_t>(empty - queued), 'x');
+    Require(write_nid_postfix(pipe[1], fill.data(), static_cast<std::int64_t>(fill.size())) == static_cast<std::int64_t>(fill.size()));
+    queued += static_cast<std::int64_t>(fill.size());
+#else
     Require(fcntl_nid_postfix(pipe[1], SetStatusFlags, NonBlocking) == 0);
     const std::string chunk(4096, 'x');
-    std::int64_t queued = 3;
     for (;;) {
         const std::int64_t written = write_nid_postfix(pipe[1], chunk.data(), static_cast<std::int64_t>(chunk.size()));
         if (written < 0) {
@@ -571,6 +597,7 @@ static void PipeWrite() {
         }
         queued += written;
     }
+#endif
     Require(queued > PipeAtomic);
     Require(Poll(kq, events, 4) == 0);
     const KernelTimespec limit{5, 0};
@@ -591,11 +618,6 @@ static void PipeWrite() {
     Require(waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(4));
     Require(events[0].ident == writeEnd && events[0].data >= PipeAtomic && (events[0].flags & EvEof) == 0);
     Require(Poll(kq, events, 4) == 1 && events[0].data == empty);
-#else
-    char back[3];
-    Require(read_nid_postfix(pipe[0], back, 3) == 3);
-    Require(Poll(kq, events, 4) == 1 && events[0].data == empty);
-#endif
     Require(close_nid_postfix(pipe[0]) == 0);
     Require(Poll(kq, events, 4) == 1 && events[0].data == 0 && (events[0].flags & EvEof) != 0);
     const int late = kqueue_nid_postfix();
@@ -1847,6 +1869,7 @@ int main(int argc, char** argv) {
     StandardInputReplacement();
     StandardInput();
     CreateAndClose();
+    EqueueIsKqueueDescriptor();
     SocketReplacesDescriptor();
     KqueueDescriptorOperations();
     Timers();

@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 namespace {
 
@@ -169,6 +170,29 @@ int main() {
             "cyclic member list type did not fail safely");
     Require(isobmf_box_getflags32b_nid_postfix(cycleBox) == 0,
             "cyclic flags list did not fail safely");
+
+    auto *prefixBox = static_cast<std::byte *>(Allocate(0xa0));
+    auto *prefixMember = static_cast<std::byte *>(Allocate(0x70));
+    const std::string prefixName(64, 'a');
+    auto *exactName = static_cast<std::byte *>(Allocate(0x41));
+    auto *longName = static_cast<std::byte *>(Allocate(0x42));
+    Write(exactName, prefixName.c_str(), prefixName.size() + 1);
+    Write(longName, (prefixName + "b").c_str(), prefixName.size() + 2);
+    Write(prefixMember + 0x18, prefixName.data(), prefixName.size());
+    WriteField(prefixMember, 0x68, std::uint32_t{4});
+    WriteField(prefixMember, 0x6c, std::uint32_t{0});
+    WriteField(prefixBox, 0x40, prefixMember);
+    Require(isobmf_box_getmember_length_nid_postfix(prefixBox, reinterpret_cast<const char *>(exactName)) == 4,
+            "64-character member name did not match itself");
+    Require(isobmf_box_getmember_ptr_nid_postfix(prefixBox, reinterpret_cast<const char *>(exactName)) ==
+                prefixMember + 0x58,
+            "64-character member name pointer is wrong");
+    Require(isobmf_box_getmember_length_nid_postfix(prefixBox, reinterpret_cast<const char *>(longName)) == 0,
+            "over-long name matched a member by its 64-character prefix");
+    Require(isobmf_box_getmember_ptr_nid_postfix(prefixBox, reinterpret_cast<const char *>(longName)) == nullptr,
+            "over-long name pointer matched a member by its 64-character prefix");
+    Require(isobmf_box_getmember_type_nid_postfix(prefixBox, reinterpret_cast<const char *>(longName)) == 0,
+            "over-long name type matched a member by its 64-character prefix");
 
     std::puts("BEISOBMF BOXES tests passed");
     return 0;

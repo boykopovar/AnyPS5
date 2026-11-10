@@ -148,6 +148,14 @@ void TestRejectedArguments() {
     Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, &gatherState, nullptr) == invalidArgument);
     Require(sceAmprCommandBufferReset(nullptr) == invalidArgument);
     Require(sceAmprCommandBufferSetBuffer(nullptr, memory.data(), memory.size()) == invalidArgument);
+    alignas(8) std::uint64_t target = 0;
+    Require(sceAmprCommandBufferWriteAddress_04_00(nullptr, &target, 0x1122334455667788ull, 0) == invalidArgument);
+    Require(target == 0);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(nullptr) == nullptr);
+    Require(sceAmprCommandBufferGetCurrentOffset(nullptr) == 0);
+    Require(sceAmprCommandBufferGetNumCommands(nullptr) == 0);
+    Require(sceAmprCommandBufferGetSize(nullptr) == 0);
+    Require(sceAmprCommandBufferGetType(nullptr) == 0);
 }
 
 void TestFullBuffer() {
@@ -1019,6 +1027,7 @@ void TestAmmRangesAboveHintedMaps() {
 void TestAmmUsageStats() {
     std::array<std::uint64_t, 4> stats{};
     Require(sceAmprAmmGetUsageStatsData(nullptr) == static_cast<int>(0x80020016));
+    Require(sceAmprAmmGetUsageStatsData(reinterpret_cast<AmmUsageStatsData*>(0x10)) == static_cast<int>(0x8002000E));
     stats[0] = 0x19;
     Require(sceAmprAmmGetUsageStatsData(reinterpret_cast<AmmUsageStatsData*>(stats.data())) == static_cast<int>(0x80020016));
     stats = {0x18, 0xdeadbeef, 0xdeadbeef, 0xdeadbeef};
@@ -1619,6 +1628,9 @@ void TestWriteAddressCommand() {
     alignas(8) std::uint64_t target = 0;
     const auto offset = recorder.Offset();
     const auto commands = recorder.Commands();
+    alignas(8) std::array<std::uint32_t, 4> misaligned{};
+    Require(sceAmprCommandBufferWriteAddress_04_00(&recorder.buffer, reinterpret_cast<std::uint64_t*>(misaligned.data() + 1), 0x87654321u, 0) == invalidArgument);
+    Require(recorder.Offset() == offset && recorder.Commands() == commands);
     Require(sceAmprCommandBufferWriteAddress_04_00(&recorder.buffer, &target, 0x1122334455667788ull, 0) == 0);
     RequireAppended(recorder, offset, commands, Apr::Opcode::WriteAddress, sceAmprMeasureCommandSizeWriteAddress_04_00());
     Apr::WriteAddressCommand command{};
