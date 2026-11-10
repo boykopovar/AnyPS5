@@ -621,21 +621,21 @@ int APS5_VABI sceNpManagerIntGetAccountCountryA(int userId, void* countryCode) {
     if (userId == USER_SERVICE_USER_ID_INVALID || !countryCode) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetAccountCountrySdk(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetAccountCountrySdk(int userId, void* countryCode) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !countryCode) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetAccountDateOfBirthSdk(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetAccountDateOfBirthSdk(int userId, void* dateOfBirth) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !dateOfBirth) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetAccountId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetAccountId(int userId, std::uint64_t* accountId) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !accountId) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetAccountIdSdk(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetAccountIdSdk(int userId, std::uint64_t* accountId) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !accountId) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetAccountLanguage(int userId, const void* accountId, void* language) {
     if (userId == USER_SERVICE_USER_ID_INVALID || !accountId || !language) return SCE_NP_ERROR_INVALID_ARGUMENT;
@@ -646,21 +646,22 @@ int APS5_VABI sceNpManagerIntGetAccountLanguageA(int reqId, int userId, void* la
     if (userId == USER_SERVICE_USER_ID_INVALID || !language) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetAccountNpEnv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetAccountNpEnv(int userId, void* npEnv) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !npEnv) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetAccountType(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetAccountType(int userId, std::int32_t* accountType) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !accountType) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    *accountType = 0;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetActiveSigninState(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetActiveSigninState(int userId, void* state) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !state) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetAuthServerErrorFlag(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetAuthServerErrorFlag(int userId, void* flag) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !flag) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetAuthorizationCode(int reqId, int userId, const void* firstParameter, const void* secondParameter, const void* optionalParameter, std::uint32_t mode, std::uint8_t flag, void* optionalOutput, void* output) {
     (void)reqId;
@@ -696,41 +697,44 @@ int APS5_VABI sceNpManagerIntGetIssuerId(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetNpEnv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetNpEnv(void* npEnv) {
+    if (!npEnv) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::memset(npEnv, 0, 0x18);
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetNpId(int userId, NpId* npId) {
     if (userId == USER_SERVICE_USER_ID_INVALID || !npId) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetNpIdByOnlineId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetNpIdByOnlineId(const NpOnlineId* onlineId, NpId* npId) {
+    if (!onlineId || !npId) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetNpIdSdk(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetNpIdSdk(int userId, NpId* npId) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !npId) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetOfflineAccountId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetOfflineAccountId(int userId, void* accountId, void* flag) {
+    (void)accountId;
+    (void)flag;
+    if (userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetOnlineId(int userId, NpOnlineId* onlineId) {
     if (userId == USER_SERVICE_USER_ID_INVALID || !onlineId) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetOnlineIdChangeFlag(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetOnlineIdChangeFlag(int userId, void* flag) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !flag) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetOnlineIdSdk(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetOnlineIdSdk(int userId, NpOnlineId* onlineId) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !onlineId) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetParentalControlFlag(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetParentalControlFlag(int userId, void* flag) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !flag) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetParentalControlInfo(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -740,17 +744,17 @@ int APS5_VABI sceNpManagerIntGetPlusMemberType(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetPlusMemberTypeNB(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetPlusMemberTypeNB(int userId, void* memberType) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !memberType) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetServerError(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetServerError(int userId, void* error) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !error) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetSigninState(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetSigninState(int userId, void* state) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !state) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetSigninTelemetryInfo(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -772,9 +776,13 @@ int APS5_VABI sceNpManagerIntGetTitleTokenWithCheck(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetUserIdByAccountId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetUserIdByAccountId(std::uint64_t accountId, int* userId) {
+    if (accountId == 0 || !userId) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
+}
+int APS5_VABI sceNpManagerIntGetOnlineIdByAccountId(std::uint64_t accountId, NpOnlineId* onlineId) {
+    if (accountId == 0 || !onlineId) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetUserIdByNpId(const NpId* npId, int* userId) {
     if (!npId || !userId) return SCE_NP_ERROR_INVALID_ARGUMENT;
@@ -784,17 +792,17 @@ int APS5_VABI sceNpManagerIntGetUserIdByOnlineId(const NpOnlineId* onlineId, int
     if (!onlineId || !userId) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetUserIdByOnlineIdSdk(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetUserIdByOnlineIdSdk(const NpOnlineId* onlineId, int* userId) {
+    if (!onlineId || !userId) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetUserList(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetUserNum(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetUserNum(int userId, void* userNum) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !userNum) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetVshAccessToken(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -804,9 +812,9 @@ int APS5_VABI sceNpManagerIntGetVshAccessTokenWithCheck(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetVshClientId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetVshClientId(void* clientId) {
+    if (!clientId) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntIsSubAccount(int userId, void* isSubAccount) {
     if (userId == USER_SERVICE_USER_ID_INVALID || !isSubAccount) return SCE_NP_ERROR_INVALID_ARGUMENT;
@@ -1102,7 +1110,7 @@ int APS5_VABI sceNpSetContentRestriction(const NpContentRestriction* restriction
     if (!restriction) return SCE_NP_ERROR_INVALID_ARGUMENT;
     const auto* fields = reinterpret_cast<const Fields*>(restriction);
     if (fields->size != sizeof(Fields)) return SCE_NP_ERROR_INVALID_SIZE;
-    if (fields->defaultAgeRestriction < 0 || fields->ageRestrictionCount > 0x100) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (fields->defaultAgeRestriction < 0 || fields->ageRestrictionCount < 0 || fields->ageRestrictionCount > 0x100) return SCE_NP_ERROR_INVALID_ARGUMENT;
     if (fields->ageRestrictionCount > 0 && !fields->ageRestrictions) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }

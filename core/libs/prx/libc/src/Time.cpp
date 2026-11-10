@@ -17,6 +17,7 @@
 #include <windows.h>
 #endif
 
+#include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/GuestTimeZoneName.hpp"
@@ -582,6 +583,23 @@ int64_t APS5_VABI _Xtime_get_ticks_nid_postfix() {
 #endif
 }
 
+int APS5_VABI timespec_get_nid_postfix(KernelTimespec* ts, int base) {
+    if (ts == nullptr || base != TIME_UTC) return 0;
+#ifdef _WIN32
+    FILETIME ft{};
+    GetSystemTimePreciseAsFileTime(&ft);
+    const uint64_t hundredNs = ((static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime) - 116444736000000000ULL;
+    ts->tv_sec = static_cast<std::int64_t>(hundredNs / 10000000ULL);
+    ts->tv_nsec = static_cast<std::int64_t>((hundredNs % 10000000ULL) * 100ULL);
+#else
+    timespec host{};
+    if (clock_gettime(CLOCK_REALTIME, &host) != 0) return 0;
+    ts->tv_sec = host.tv_sec;
+    ts->tv_nsec = host.tv_nsec;
+#endif
+    return TIME_UTC;
+}
+
 double APS5_VABI libc_difftime_nid_postfix(int64_t time1, int64_t time0) {
     if (time1 >= time0) return static_cast<double>(static_cast<uint64_t>(time1) - static_cast<uint64_t>(time0));
     return -static_cast<double>(static_cast<uint64_t>(time0) - static_cast<uint64_t>(time1));
@@ -593,11 +611,13 @@ double APS5_VABI difftime_nid_postfix(int64_t time1, int64_t time0) {
 
 GuestTm* APS5_VABI libc_gmtime_nid_postfix(const int64_t* timer) {
     static thread_local GuestTm result;
+    if (timer == nullptr) return nullptr;
     return gmtime_s_nid_postfix(timer, &result);
 }
 
 GuestTm* APS5_VABI libc_localtime_nid_postfix(const int64_t* timer) {
     static thread_local GuestTm result;
+    if (timer == nullptr) return nullptr;
     return localtime_s_nid_postfix(timer, &result);
 }
 
@@ -606,7 +626,10 @@ GuestTm* APS5_VABI localtime_nid_postfix(const int64_t* timer) {
 }
 
 GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result) {
-    if (timer == nullptr || result == nullptr) return nullptr;
+    if (timer == nullptr || result == nullptr) {
+        SonyInvokeConstraintHandler("localtime_s: bad argument", nullptr, EINVAL);
+        return nullptr;
+    }
     const ZoneScope zone;
     std::tm host{};
     const int callerError = errno;
@@ -646,7 +669,10 @@ GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result
 }
 
 GuestTm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, GuestTm* result) {
-    if (timer == nullptr || result == nullptr) return nullptr;
+    if (timer == nullptr || result == nullptr) {
+        SonyInvokeConstraintHandler("gmtime_s: bad argument", nullptr, EINVAL);
+        return nullptr;
+    }
     if (!utcCalendarFields(*timer, *result)) return nullptr;
     result->tm_gmtoff = 0;
     result->tm_zone = "UTC";
