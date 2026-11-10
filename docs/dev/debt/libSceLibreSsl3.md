@@ -144,7 +144,6 @@
 | `X509_add_ext` | `YJ7bfxMHniE` |
 | `tls_connect_socket` | `ZERQN8ewpgk` |
 | `SSL_CTX_set_quic_method` | `ZFeTGo4ybcw` |
-| `EC_POINT_clear_free` | `aSO3Svp7umY` |
 | `d2i_PKCS8_PRIV_KEY_INFO` | `as+t2ZOg5fw` |
 | `ECDSA_do_sign` | `ba4o0Ih6kSs` |
 | `SSL_CTX_set_ciphersuites` | `bpOQdoGE2es` |
@@ -188,5 +187,7 @@
 ### Functional
 
 - [RSA_set0_key, RSA_set0_factors, RSA_set0_crt_params and BN_clear_free](../../../core/libs/prx/libSceLibreSsl3/src/RsaSetters.cpp) have no console verification or key-constructor/destructor interoperability measurement. They use the existing 152-byte RSA layout and the 24-byte BIGNUM layout of [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto), following `rsa/rsa_lib.c` and `bn/bn_lib.c`: a successful setter owns supplied components, retains omitted components and clears replaced components through the guest allocator; static limb arrays are borrowed. Missing required components return zero before mutation. Null RSA objects and negative owned limb capacities throw instead of dereferencing invalid memory or erasing an unbounded range. Malformed pointers and aliased component ownership are unverified. Closes when: compared with the console and complete key lifetimes.
+
+- [`EC_POINT_clear_free`](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) releases the opaque legacy `EcPoint` wrapper through `EC_POINT_free`; mbedTLS zeroizes and frees each coordinate limb. This matches LibreSSL's clear-free delegation, but the host wrapper itself follows its existing C++ destructor/allocation path rather than LibreSSL's native struct `freezero` allocation path. PS5-specific behavior is unverified.
 
 - [Forwarded BN_new and BN_free](../../../core/libs/prx/libSceLibreSsl3/ParentExports.cpp) still throw in the parent library. Future implementations must allocate owned BIGNUM limbs and structs from the same guest heap used by the RSA setters and set `BN_FLG_MALLOCED` on heap-owned structs. Constructor/setter/destructor interoperability remains unverified.
