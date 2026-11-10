@@ -23,6 +23,7 @@ constexpr int kStatusFinished = 3;
 constexpr int kErrOk = 0;
 constexpr int kErrNotInitialized = static_cast<int>(0x80B80003u);
 constexpr int kErrBusy = static_cast<int>(0x80B80007u);
+constexpr int kErrNotFinished = static_cast<int>(0x80B80005u);
 constexpr int kErrNotRunning = static_cast<int>(0x80B8000Bu);
 constexpr int kErrParam = static_cast<int>(0x80B80001u);
 constexpr int kErrArgNull = static_cast<int>(0x80B8000Du);
@@ -53,7 +54,7 @@ bool Present(const MsgDialog::ParsedParam& parsed) {
     return ModalDialogOpen_nid_postfix(request);
 }
 
-int Poll() {
+int Poll(bool advanceHeadless = true) {
     std::lock_guard g(g_lock);
     if (g_status == kStatusRunning && g_presented) {
         std::size_t chosen = 0;
@@ -64,7 +65,7 @@ int Poll() {
         bool done = false;
         if (g_mode == kModeProgressBar) {
             done = std::chrono::steady_clock::now() - g_openedAt > std::chrono::seconds(30);
-        } else {
+        } else if (advanceHeadless) {
             done = --g_pollsLeft <= 0;
         }
         if (done) g_status = kStatusFinished;
@@ -104,6 +105,17 @@ int APS5_VABI sceMsgDialogOpen(const void* param) {
 }
 int APS5_VABI sceMsgDialogGetStatus(void) {
  return Poll();
+}
+int APS5_VABI sceMsgDialogGetResult_nid_disambig1(MsgDialogResult* result) {
+ Poll(false);
+ std::lock_guard g(g_lock);
+ if (g_status == kStatusNone) return kErrNotInitialized;
+ if (result == nullptr) return kErrArgNull;
+ if (g_status != kStatusFinished) return kErrNotFinished;
+ MsgDialogResult value{};
+ value.button_id = g_buttonId;
+ if (!GuestCopyOut_nid_no_patch(result, &value, sizeof(value))) return kErrArgNull;
+ return kErrOk;
 }
 int APS5_VABI sceMsgDialogUpdateStatus(void) {
  return Poll();

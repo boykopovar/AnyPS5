@@ -8,6 +8,7 @@ int APS5_VABI sceMsgDialogInitialize(void);
 int APS5_VABI sceMsgDialogTerminate(void);
 int APS5_VABI sceMsgDialogOpen(const void* param);
 int APS5_VABI sceMsgDialogGetStatus(void);
+int APS5_VABI sceMsgDialogGetResult_nid_disambig1(MsgDialogResult* result);
 int APS5_VABI sceMsgDialogUpdateStatus(void);
 int APS5_VABI sceMsgDialogClose(void);
 int APS5_VABI sceMsgDialogProgressBarInc(int target, std::uint32_t delta);

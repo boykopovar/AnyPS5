@@ -14,6 +14,8 @@ namespace {
 constexpr int StatusRunning = 2;
 constexpr int StatusFinished = 3;
 constexpr int ErrBusy = static_cast<int>(0x80B80007u);
+constexpr int ErrNotInitialized = static_cast<int>(0x80B80003u);
+constexpr int ErrNotFinished = static_cast<int>(0x80B80005u);
 constexpr int ErrParam = static_cast<int>(0x80B80001u);
 constexpr int ErrNotRunning = static_cast<int>(0x80B8000Bu);
 constexpr int ErrArgNull = static_cast<int>(0x80B8000Du);
@@ -49,13 +51,21 @@ ModalDialogState Session(std::size_t* chosen = nullptr) {
 void Headless() {
     UserMessage user{MsgDialog::ButtonTypeYesNo, 0, "Continue?"};
     Param param(MsgDialog::ModeUserMsg, &user);
+    MsgDialogResult result{};
     Require(!ModalDialogHasPresenter_nid_postfix(), "a presenter is registered");
+    Require(sceMsgDialogGetResult_nid_disambig1(&result) == ErrNotInitialized, "result before initialization");
     Require(sceMsgDialogInitialize() == 0, "initialize");
     Require(sceMsgDialogOpen(&param) == 0, "open without a presenter");
     Require(Session() == ModalDialogState::Idle, "a dialog was shown without a presenter");
     Require(sceMsgDialogGetStatus() == StatusRunning, "first poll without a presenter");
+    result.mode = -1;
+    Require(sceMsgDialogGetResult_nid_disambig1(&result) == ErrNotFinished && result.mode == -1, "result advanced an unfinished headless dialog");
     Require(sceMsgDialogGetStatus() == StatusFinished, "second poll without a presenter");
+    Require(sceMsgDialogGetResult_nid_disambig1(&result) == 0 && result.mode == 0 && result.result == 0 && result.button_id == MsgDialog::ButtonIdOk, "headless result");
+    Require(sceMsgDialogGetResult_nid_disambig1(nullptr) == ErrArgNull, "null result");
+    Require(sceMsgDialogGetResult_nid_disambig1(reinterpret_cast<MsgDialogResult*>(0x10)) == ErrArgNull, "unwritable result");
     Require(sceMsgDialogTerminate() == 0, "terminate");
+    Require(sceMsgDialogGetResult_nid_disambig1(&result) == ErrNotInitialized, "result after termination");
 }
 
 void Shown() {
@@ -73,6 +83,8 @@ void Shown() {
     Require(sceMsgDialogProgressBarSetMsg(0, "test") == ErrNotRunning, "progress bar set msg during running user message dialog");
     ModalDialogPublishInput_nid_postfix(ModalDialogInputKind::Next);
     ModalDialogPublishInput_nid_postfix(ModalDialogInputKind::Confirm);
+    MsgDialogResult result{};
+    Require(sceMsgDialogGetResult_nid_disambig1(&result) == 0 && result.mode == 0 && result.button_id == MsgDialog::ButtonIdNo, "result did not consume the shown answer");
     Require(sceMsgDialogGetStatus() == StatusFinished, "an answered dialog did not finish");
     Require(sceMsgDialogClose() == ErrNotRunning, "a finished dialog could be closed");
     Require(sceMsgDialogOpen(&param) == 0 && Session() == ModalDialogState::Showing, "a new dialog was not shown after the answer");
@@ -104,7 +116,11 @@ void NotPresented() {
     Require(sceMsgDialogProgressBarSetMsg(1, "test") == ErrParam, "ProgressBarSetMsg invalid target");
     Require(sceMsgDialogProgressBarSetMsg(0, nullptr) == ErrArgNull, "ProgressBarSetMsg null msg");
     Require(sceMsgDialogProgressBarSetMsg(0, "test") == 0, "ProgressBarSetMsg valid");
+    MsgDialogResult result{};
+    result.mode = -1;
+    Require(sceMsgDialogGetResult_nid_disambig1(&result) == ErrNotFinished && result.mode == -1, "running progress dialog result");
     Require(sceMsgDialogClose() == 0, "close of the progress bar");
+    Require(sceMsgDialogGetResult_nid_disambig1(&result) == 0 && result.mode == 0 && result.button_id == MsgDialog::ButtonIdOk, "progress dialog result");
     Param system(MsgDialog::ModeSystemMsg, &user);
     Require(sceMsgDialogOpen(&system) == 0 && Session() == ModalDialogState::Idle, "a system message was shown");
     Require(sceMsgDialogGetStatus() == StatusRunning && sceMsgDialogGetStatus() == StatusFinished, "a system message did not finish on the second poll");
