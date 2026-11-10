@@ -72,6 +72,25 @@ void TestWriters() {
     check(sceGnmInsertPopMarker(words.data(), 6) == 0 && words[0] == Header(0x10, 5) && words[1] == 0x68750002u && WholePackets(words.data(), 6), "the pop marker packet is wrong");
 }
 
+void TestWorkloads() {
+    std::uint32_t stream = 0xdeadbeefu;
+    check(sceGnmCreateWorkloadStream_nid_disambig1(1, nullptr) == 3, "a null workload stream output was accepted");
+    check(sceGnmCreateWorkloadStream_nid_disambig1(0, &stream) == 3 && stream == 0xdeadbeefu, "a zero workload stream name changed the output");
+    check(sceGnmCreateWorkloadStream_nid_disambig1(1, &stream) == 0 && stream == 1, "a workload stream was not created");
+
+    std::uint64_t workload = 0xdeadbeefdeadbeefull;
+    check(sceGnmBeginWorkload_nid_disambig1(stream, nullptr) == 3, "a null workload output was accepted");
+    check(sceGnmBeginWorkload_nid_disambig1(stream, &workload) == 0 && workload == 1, "the created stream did not begin a workload");
+    check(sceGnmEndWorkload_nid_disambig1(workload) == 0, "the created workload did not end");
+    check(sceGnmBeginWorkload_nid_disambig1(0xf, &workload) == 0 && workload == 1, "the highest valid stream was rejected");
+    check(sceGnmBeginWorkload_nid_disambig1(0x10, &workload) == 1 && workload == 0, "the first invalid stream was accepted");
+    check(sceGnmBeginWorkload_nid_disambig1(0xffffffffu, &workload) == 1 && workload == 0, "the maximum stream was accepted");
+
+    check(sceGnmEndWorkload_nid_disambig1(0) == 2, "a zero workload was accepted");
+    check(sceGnmEndWorkload_nid_disambig1(0x0f00000000000001ull) == 0, "the highest valid workload tag was rejected");
+    check(sceGnmEndWorkload_nid_disambig1(0x1000000000000001ull) == 2, "the first invalid workload tag was accepted");
+}
+
 void TestSubmitValidation() {
     std::uint32_t draw[] = {Header(0x10, 1), 0};
     std::uint32_t* dcbs[] = {draw};
@@ -129,6 +148,7 @@ void TestFillerSubmit() {
 int main() {
     try {
         TestWriters();
+        TestWorkloads();
         TestSubmitValidation();
         TestFillerSubmit();
         LibcRunShutdown_nid_postfix();

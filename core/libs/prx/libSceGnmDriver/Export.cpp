@@ -19,6 +19,7 @@
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include "prx/libSceVideoOut/include/Buffer.hpp"
 #include "prx/libSceGnmDriver/include/CommandStream.hpp"
+#include "prx/libSceGnmDriver/include/WorkloadLifecycle.hpp"
 
 namespace {
 
@@ -313,6 +314,18 @@ void WriteMarker(std::uint32_t* at, std::uint32_t kind, const char* marker, std:
 }
 
 extern "C" {
+
+int APS5_VABI sceGnmCreateWorkloadStream_nid_disambig1(std::uint64_t name, std::uint32_t* stream) {
+    return GnmWorkload::CreateStream(name, stream);
+}
+
+int APS5_VABI sceGnmBeginWorkload_nid_disambig1(std::uint32_t stream, std::uint64_t* workload) {
+    return GnmWorkload::Begin(stream, workload);
+}
+
+int APS5_VABI sceGnmEndWorkload_nid_disambig1(std::uint64_t workload) {
+    return GnmWorkload::End(workload);
+}
 
 int APS5_VABI sceGnmSetPsShader(std::uint32_t* cmd, std::uint32_t size, const std::uint32_t* regs) {
     if (!cmd || size <= 0x27) return -1;
