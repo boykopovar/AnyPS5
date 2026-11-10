@@ -43,9 +43,11 @@ void CheckAddresses() {
     VirtualQueryInfo info{};
     for (const std::uintptr_t address : {std::uintptr_t{0x800000000000ull}, std::uintptr_t{0x800000000001ull}, std::uintptr_t{0x800000003fffull}}) {
         const auto* pointer = reinterpret_cast<const void*>(address);
-        Require(sceKernelVirtualQuery(pointer, 0, &info, sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
-        Require(sceKernelVirtualQuery(pointer, 0, nullptr, 0) == SCE_KERNEL_ERROR_EACCES);
-        Require(sceKernelVirtualQuery(pointer, 0, reinterpret_cast<VirtualQueryInfo*>(1), sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
+        for (const int flags : {0, 1}) {
+            Require(sceKernelVirtualQuery(pointer, flags, &info, sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
+            Require(sceKernelVirtualQuery(pointer, flags, nullptr, 0) == SCE_KERNEL_ERROR_EACCES);
+            Require(sceKernelVirtualQuery(pointer, flags, reinterpret_cast<VirtualQueryInfo*>(1), sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
+        }
         Require(sceKernelVirtualQuery(pointer, 2, nullptr, 0) == SCE_KERNEL_ERROR_EINVAL);
     }
     Require(sceKernelVirtualQuery(reinterpret_cast<const void*>(0x1000), 0, &info, sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
