@@ -2,6 +2,7 @@
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -84,6 +85,36 @@ void CheckDirectMappings() {
     Require(sceKernelReleaseDirectMemory(physical, 4 * Granule) == 0);
 }
 
+struct StackContext {
+    std::atomic<bool> ready{false};
+    std::atomic<bool> release{false};
+    const void* address = nullptr;
+};
+
+void* APS5_VABI StackWorker(void* argument) {
+    auto& context = *static_cast<StackContext*>(argument);
+    int local = 0;
+    void* start = nullptr;
+    void* end = nullptr;
+    Require(sceKernelIsStack(&local, &start, &end) == 0);
+    Require(start <= static_cast<void*>(&local) && static_cast<void*>(&local) < end);
+    Require(PageSizeAt(&local) == Small);
+    context.address = &local;
+    context.ready.store(true);
+    while (!context.release.load()) scePthreadYield();
+    return nullptr;
+}
+
+void CheckGuestStack() {
+    StackContext context;
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, StackWorker, &context, "page-size-stack") == 0);
+    while (!context.ready.load()) scePthreadYield();
+    Require(PageSizeAt(context.address) == Small);
+    context.release.store(true);
+    Require(scePthreadJoin(thread, nullptr) == 0);
+}
+
 void CheckOtherMemory() {
     int local = 0;
     Require(PageSizeAt(&local) == Small);
@@ -126,6 +157,7 @@ void CheckArguments() {
 
 int main() {
     CheckDirectMappings();
+    CheckGuestStack();
     CheckOtherMemory();
     CheckArguments();
     return 0;

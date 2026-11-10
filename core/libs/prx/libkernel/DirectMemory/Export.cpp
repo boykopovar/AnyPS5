@@ -690,7 +690,11 @@ extern "C" int GuestMappingPageSize_nid_no_patch(const void* address, std::uint6
         std::uint64_t physicalOffset = 0;
         int memoryType = 0;
         if (QueryDirectMapping(location, &directStart, &directEnd, &physicalOffset, &memoryType)) size = DirectMappingPageSize(location);
-        else if (range->releasable) return GuestEinval;
+        else if (range->releasable) {
+            std::uintptr_t stackStart = 0;
+            std::uintptr_t stackEnd = 0;
+            if (!GuestThreadStack(location, &stackStart, &stackEnd)) return GuestEinval;
+        }
     } else {
         VirtualQueryInfo info{};
         if (sceKernelVirtualQuery(address, 0, &info, sizeof(info)) != 0) return GuestEinval;
