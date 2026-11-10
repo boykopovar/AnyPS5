@@ -12,12 +12,12 @@ static void Require(bool condition) {
     if (!condition) std::abort();
 }
 
-static size_t AppendFormData(void* argument, const char* data, size_t size) {
+static size_t APS5_VABI AppendFormData(void* argument, const char* data, size_t size) {
     static_cast<std::string*>(argument)->append(data, size);
     return size;
 }
 
-static size_t RejectFormData(void*, const char*, size_t) {
+static size_t APS5_VABI RejectFormData(void*, const char*, size_t) {
     return 0;
 }
 
