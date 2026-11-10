@@ -132,7 +132,7 @@ static void CheckShortCharacterScanLocking(bool secure, int (APS5_VABI* scanner)
     constexpr std::size_t bytes = 1u << 20;
     auto* native = TemporaryFile::Open();
     Require(native != nullptr);
-    const std::unique_ptr<std::FILE, int (*)(std::FILE*)> owner(native, std::fclose);
+    std::unique_ptr<std::FILE, int (*)(std::FILE*)> owner(native, std::fclose);
     const std::vector<char> input(bytes, 'a');
     Require(std::fwrite(input.data(), 1, input.size(), native) == input.size());
     std::rewind(native);
