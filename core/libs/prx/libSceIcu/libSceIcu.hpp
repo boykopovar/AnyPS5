@@ -27,3 +27,4 @@
 #include "Character.hpp"
 #include "Configuration.hpp"
 #include "Script.hpp"
+#include "ConverterHelpers.hpp"

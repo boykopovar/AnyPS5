@@ -21,7 +21,6 @@ FcBool APS5_VABI FcPatternAddDouble(FcPattern* pattern, const char* object, doub
 FcPattern* APS5_VABI FcPatternDuplicate(const FcPattern* pattern);
 int APS5_VABI FcFontMatch();
 int APS5_VABI FcPatternFilter();
-int APS5_VABI FcConfigCreate();
 int APS5_VABI FcPatternGetFTFace();
 FcBool APS5_VABI FcPatternEqual(const FcPattern* first, const FcPattern* second);
 uint32_t APS5_VABI FcCharSetSubtractCount(const FcCharSet* first, const FcCharSet* second);
@@ -32,7 +31,6 @@ int APS5_VABI FcCharSetMerge(FcCharSet* target, const FcCharSet* source, int* ch
 int APS5_VABI FcPatternGetCharSet();
 void APS5_VABI FcCharSetDestroy(FcCharSet* set);
 FcBool APS5_VABI FcPatternDel(FcPattern* pattern, const char* object);
-int APS5_VABI FcConfigDestroy();
 void APS5_VABI FcPatternReference(FcPattern* pattern);
 FcResult APS5_VABI FcPatternGet(const FcPattern* pattern, const char* object, int id, FcValue* value);
 FcBool APS5_VABI FcPatternAddMatrix(FcPattern* pattern, const char* object, const FcMatrix* value);
@@ -49,7 +47,6 @@ int APS5_VABI FcDefaultSubstitute();
 int APS5_VABI FcPatternAddLangSet();
 int APS5_VABI FcPatternGetLangSet();
 FcPattern* APS5_VABI FcPatternCreate();
-int APS5_VABI FcConfigReference();
 int APS5_VABI FcPatternFormat();
 
 }

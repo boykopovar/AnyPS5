@@ -166,6 +166,25 @@ void CheckVersionBounds() {
                "clamped minimum without a DTLS form");
 }
 
+void CheckContextTimeout() {
+    Guarded<LibreSsl3SslCtx> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    guarded.object.sessionTimeout = 7200;
+    auto expected = Bytes(guarded);
+    Require(SSL_CTX_set_timeout_nid_postfix(&guarded.object, 7200) == 7200, "same timeout");
+    Require(Same(guarded, expected), "same timeout changed the context");
+    Require(SSL_CTX_set_timeout_nid_postfix(&guarded.object, 300) == 7200, "previous timeout");
+    Require(guarded.object.sessionTimeout == 300, "new timeout");
+    guarded.object.sessionTimeout = 7200;
+    Require(Same(guarded, expected), "timeout changed another field");
+    const auto large = std::numeric_limits<std::int64_t>::max();
+    Require(SSL_CTX_set_timeout_nid_postfix(&guarded.object, large) == 7200, "timeout before the 64-bit value");
+    Require(SSL_CTX_set_timeout_nid_postfix(&guarded.object, -1) == large, "64-bit timeout");
+    Require(SSL_CTX_set_timeout_nid_postfix(&guarded.object, 0) == -1, "negative timeout");
+    Require(SSL_CTX_set_timeout_nid_postfix(&guarded.object, 0) == 0, "zero timeout");
+    Require(SSL_CTX_set_timeout_nid_postfix(nullptr, 300) == 0, "null context");
+}
+
 void CheckClientRandom() {
     LibreSsl3Ssl3State state;
     std::array<unsigned char, sizeof(state)> stateBytes;
@@ -263,6 +282,7 @@ int main() {
     CheckRetain<LibreSsl3SslSession>(SSL_SESSION_up_ref_nid_postfix, 184);
     CheckVersionBounds();
     CheckClientRandom();
+    CheckContextTimeout();
     CheckRetain<LibreSsl3X509>(X509_up_ref_nid_postfix, 28);
     CheckX509Version();
     return 0;

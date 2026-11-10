@@ -4,10 +4,12 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <span>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -82,9 +84,59 @@ void WriteCharacter(unsigned char*& output, std::uint32_t value) {
         *output++ = static_cast<unsigned char>(0x80 | ((value >> (6 * index)) & 0x3f));
 }
 
+int TwoDigits(const char* text) {
+    return (text[0] - '0') * 10 + (text[1] - '0');
+}
+
+bool AllDigits(const char* text, int count) {
+    for (int index = 0; index < count; ++index)
+        if (text[index] < '0' || text[index] > '9') return false;
+    return true;
+}
+
+int PrintTime(LibreSsl::Bio* bio, const Asn1String& time) {
+    static constexpr const char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    const bool generalized = time.type == 24;
+    const int length = time.length;
+    const char* text = reinterpret_cast<const char*>(time.data);
+    const int digits = generalized ? 12 : 10;
+    if ((time.type != 23 && !generalized) || length < digits || !AllDigits(text, digits)) return -1;
+    const int fields = generalized ? 4 : 2;
+    const int year = generalized ? TwoDigits(text) * 100 + TwoDigits(text + 2) : TwoDigits(text) + (TwoDigits(text) < 50 ? 2000 : 1900);
+    const int month = TwoDigits(text + fields);
+    if (month < 1 || month > 12) return -1;
+    const int day = TwoDigits(text + fields + 2);
+    const int hour = TwoDigits(text + fields + 4);
+    const int minute = TwoDigits(text + fields + 6);
+    int second = 0;
+    int fraction = 0;
+    if (length >= digits + 2 && AllDigits(text + digits, 2)) {
+        second = TwoDigits(text + digits);
+        if (generalized && length >= 15 && text[14] == '.') {
+            fraction = 1;
+            while (14 + fraction < length && text[14 + fraction] >= '0' && text[14 + fraction] <= '9') ++fraction;
+        }
+    }
+    const char* zone = text[length - 1] == 'Z' ? " GMT" : "";
+    const char* decimals = fraction ? text + 14 : "";
+    const char* format = "%s %2d %02d:%02d:%02d%.*s %d%s";
+    const int size = std::snprintf(nullptr, 0, format, months[month - 1], day, hour, minute, second, fraction, decimals, year, zone);
+    std::string output(static_cast<std::size_t>(size) + 1, char{});
+    std::snprintf(output.data(), output.size(), format, months[month - 1], day, hour, minute, second, fraction, decimals, year, zone);
+    LibreSslBioWrite_nid_no_patch(bio, output.data(), size);
+    return 1;
+}
+
 } // namespace
 
 extern "C" {
+
+int APS5_VABI ASN1_TIME_print_nid_postfix(LibreSsl::Bio* bio, const Asn1String* time) {
+    if (!time || (time->length > 0 && !time->data)) APS5_INVALID_ARG_EX;
+    if (PrintTime(bio, *time) == 1) return 1;
+    LibreSslBioWrite_nid_no_patch(bio, "Bad time value", 14);
+    return 0;
+}
 
 std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value) {
     if (!value) return 0;

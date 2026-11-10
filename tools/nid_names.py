@@ -321,7 +321,7 @@ def symbol_file(path):
         text = sys.stdin.buffer.read().decode("utf-8-sig") if hasattr(sys.stdin, "buffer") else sys.stdin.read().removeprefix("\ufeff")
     else:
         text = Path(path).read_text(encoding="utf-8-sig")
-    return [line for raw in text.split("\n") if (line := raw.removesuffix("\r"))]
+    return [line for raw in text.split("\n") if (line := raw.removesuffix("\r")).strip()]
 
 
 def main(argv=None):
