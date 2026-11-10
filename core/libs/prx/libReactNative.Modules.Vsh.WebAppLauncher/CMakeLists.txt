@@ -1,0 +1,16 @@
+add_library(libReactNative.Modules.Vsh.WebAppLauncher SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libReactNative.Modules.Vsh.WebAppLauncher PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libReactNative.Modules.Vsh.WebAppLauncher)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_web_app_launcher_catalog_exports_tests ${LIBS_INCLUDE_DIR}/tests/GuestWebAppLauncherCatalogExports.cpp)
+    target_include_directories(guest_web_app_launcher_catalog_exports_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_web_app_launcher_catalog_exports_tests PRIVATE libReactNative.Modules.Vsh.WebAppLauncher libkernel libc)
+    configure_windows_unwind(guest_web_app_launcher_catalog_exports_tests)
+    add_test(NAME guest_web_app_launcher_catalog_exports COMMAND guest_web_app_launcher_catalog_exports_tests)
+    set_tests_properties(guest_web_app_launcher_catalog_exports PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_web_app_launcher_catalog_exports PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libReactNative.Modules.Vsh.WebAppLauncher>")
+    endif()
+endif()
