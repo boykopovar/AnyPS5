@@ -381,7 +381,7 @@ class ReadOnlyOutputTests(unittest.TestCase):
             backups = list(root.glob(".stubgen-backup-*.tmp"))
             self.assertEqual(len(backups), 1)
             self.assertEqual(backups[0].read_text(encoding="utf-8"), "original code\n")
-            self.assertIn(str(backups[0]), errors.getvalue())
+            self.assertIn(str(backups[0].resolve()), errors.getvalue())
             self.assertEqual(debt.read_text(encoding="utf-8"), "original debt\n")
 
     def test_later_staging_failure_preserves_original_error_and_cleans_readonly_temporary(self):
