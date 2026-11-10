@@ -178,7 +178,7 @@ Encoded encodeVop3(std::span<const std::uint32_t> code, std::uint32_t index, std
     const auto word0 = code[index];
     const auto opcode = (word0 >> 17u) & 0x1ffu;
     if (const auto shift = reversedShift(opcode)) return encodeVop3Words(swapAbsolute(word0), swapSources(code[index + 1]), *shift, false);
-    const auto mapped = mapOpcode(GcnTables::Vop3, opcode);
+    const auto mapped = opcode < 0x40u ? mapOpcode(GcnTables::Vopc, opcode) : mapOpcode(GcnTables::Vop3, opcode);
     if (!mapped) unsupported("VOP3", opcode, programCounter);
     auto out = encodeVop3Words(word0, code[index + 1], *mapped, gcnVop3bCarryOut(opcode));
     if (compareWritesExec(opcode)) out.compareDestination = word0 & 0xffu;

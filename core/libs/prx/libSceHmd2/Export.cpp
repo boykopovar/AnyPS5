@@ -6,6 +6,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceHmd/Hmd.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
 
@@ -116,7 +117,17 @@ std::int32_t GetDeviceInformation(Hmd2::DeviceInformation* info) {
 extern "C" {
 
 int APS5_VABI sceHmd2ReprojectionGetStatus(Hmd2::ReprojectionStatus* status) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(reprojectionMutex);
+    if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
+    if (status == nullptr) return Hmd2::ParameterNull;
+    auto* bytes = reinterpret_cast<std::byte*>(status);
+    std::memset(bytes, 0, 0x68);
+    const std::uint64_t now = sceKernelGetProcessTime();
+    const std::uint64_t step = reprojectionState->timingUs != 0 ? reprojectionState->timingUs : Hmd2::ReprojectionTimingDefault;
+    for (std::size_t index = 0; index < 4; ++index) {
+        const std::uint64_t timestamp = now + index * step;
+        std::memcpy(bytes + 0x28 + index * 8, &timestamp, sizeof(timestamp));
+    }
     return 0;
 }
 

@@ -4,6 +4,7 @@
 
 - [libSceSigninDialog](../../../core/libs/prx/libSceSigninDialog/Export.cpp) shows no sign-in UI and immediately transitions to finished status with a user-cancelled result.
 - [sceSigninDialogOpen, sceSigninDialogClose](../../../core/libs/prx/libSceSigninDialog/Export.cpp) (libSceSigninDialog) - calling `sceSigninDialogOpen` on an already finished dialog succeeds with status remaining `FINISHED`, and calling `sceSigninDialogClose` while finished returns 0; this finished-state reopen and close lifecycle is emulator stub behavior and is unmeasured on console hardware.
+- [sceSigninDialogGetResult](../../../core/libs/prx/libSceSigninDialog/Export.cpp) - returning `COMMON_DIALOG_ERROR_ARG_NULL` for an unwritable result pointer is a host-safety fallback with console behavior unmeasured.
 
 ### Unknown function info
 
