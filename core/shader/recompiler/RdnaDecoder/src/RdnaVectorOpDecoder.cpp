@@ -1079,6 +1079,18 @@ bool supportsVop1Clamp(RdnaOpcode opcode) {
     return isVop1FloatResultOpcode(opcode) || usesInexactClampControl(opcode);
 }
 
+bool ignoresVop1SdwaOutputModifiers(RdnaOpcode opcode) {
+    switch (opcode) {
+        case RdnaOpcode::VMovB32:
+        case RdnaOpcode::VNotB32:
+        case RdnaOpcode::VBfrevB32:
+        case RdnaOpcode::VFfbhU32:
+        case RdnaOpcode::VFfblB32:
+        case RdnaOpcode::VFfbhI32: return true;
+        default: return false;
+    }
+}
+
 constexpr std::uint32_t sdwaSel(std::uint32_t sel) {
     return 1u << sel;
 }
@@ -1209,7 +1221,7 @@ void validateVop1Sdwa(const RdnaInstruction& instruction, std::uint32_t destinat
     if (sourceSelector > 6u || destinationSelector > 6u) {
         throw std::invalid_argument("VOP1 SDWA selector is invalid");
     }
-    if ((clamp != 0u && !supportsVop1Clamp(instruction.op)) || (omod != 0u && !isVop1FloatResultOpcode(instruction.op))) {
+    if (!ignoresVop1SdwaOutputModifiers(instruction.op) && ((clamp != 0u && !supportsVop1Clamp(instruction.op)) || (omod != 0u && !isVop1FloatResultOpcode(instruction.op)))) {
         throw std::invalid_argument("VOP1 SDWA output modifiers are not supported");
     }
     if (!isVop1SdwaDestinationSupported(instruction.op, destinationSelector, destinationUnused, sourceSelector)) {
@@ -1258,8 +1270,9 @@ void decodeVop1Sdwa(std::uint32_t programCounter, std::span<const std::uint32_t>
     instruction.destination.sdwaSel = dstSel;
     instruction.destination.sdwaDstUnused = dstUnused;
     instruction.destination.explicitSdwaDst = true;
-    instruction.destination.clamp = clamp != 0u;
-    instruction.destination.omod = omod;
+    const bool outputModifiers = !ignoresVop1SdwaOutputModifiers(instruction.op);
+    instruction.destination.clamp = outputModifiers && clamp != 0u;
+    instruction.destination.omod = outputModifiers ? omod : 0u;
     instruction.source0.sdwaSel = src0Sel;
     instruction.source0.sdwaSext = src0Sext != 0u;
     instruction.source0.negate = src0Neg != 0u;
@@ -1373,9 +1386,9 @@ const Vop2SdwaRule* findVop2SdwaRule(std::uint32_t encoding) {
     return &vop2SdwaRules[static_cast<std::size_t>(info->sdwaProfile)];
 }
 
-bool supportsVop2SdwaIntegerClamp(RdnaOpcode op, std::uint32_t encoding) {
+bool isVop2SdwaIntegerOpcode(std::uint32_t encoding) {
     const auto* info = findVectorOpcodeEntry(vop2Opcodes, encoding);
-    return info != nullptr && info->sdwaProfile == Vop2SdwaProfile::Integer && op != RdnaOpcode::VCndmaskB32;
+    return info != nullptr && info->sdwaProfile == Vop2SdwaProfile::Integer;
 }
 
 bool isVop2SdwaDestinationSupported(const Vop2SdwaRule& rule, const Vop2SdwaFields& fields) {
@@ -1397,8 +1410,7 @@ void validateVop2Sdwa(const RdnaInstruction& instruction, std::uint32_t opcode, 
         throw std::invalid_argument("VOP2 SDWA selector is invalid");
     }
     const bool floatResult = isVop2FloatOpcode(instruction.op) || instruction.op == RdnaOpcode::VLdexpF16;
-    const bool clampSupported = floatResult || supportsVop2SdwaIntegerClamp(instruction.op, opcode);
-    if ((fields.clamp != 0u && !clampSupported) || (fields.omod != 0u && !floatResult)) {
+    if ((fields.clamp != 0u || fields.omod != 0u) && !floatResult && !isVop2SdwaIntegerOpcode(opcode)) {
         throw std::invalid_argument("VOP2 SDWA output modifiers are not supported");
     }
     if (hasUnsupportedVop2SourceModifiers(instruction.op, fields.src0Neg != 0u || fields.src0Abs != 0u, fields.src1Neg != 0u || fields.src1Abs != 0u)) {
@@ -1474,7 +1486,7 @@ void decodeVop2Sdwa(std::uint32_t programCounter, std::span<const std::uint32_t>
     instruction.destination.sdwaDstUnused = fields.dstUnused;
     instruction.destination.explicitSdwaDst = true;
     instruction.destination.clamp = fields.clamp != 0u;
-    instruction.destination.omod = fields.omod;
+    instruction.destination.omod = isVop2SdwaIntegerOpcode(opcode) ? 0u : fields.omod;
     instruction.source0.sdwaSel = fields.src0Sel;
     instruction.source0.sdwaSext = fields.src0Sext != 0u;
     instruction.source0.negate = fields.src0Neg != 0u;
