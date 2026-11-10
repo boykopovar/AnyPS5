@@ -3899,6 +3899,80 @@ void CheckSingleSampleView(Context context, std::uint32_t samples) {
     std::printf("Native depth single-sample view samples=%u: guest memory before the first draw and after the publication, refused while host-written\n", samples);
 }
 
+void CheckPendingUnitsBeyondPlanes(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{200u, 130u};
+    constexpr std::size_t beyond = 2u << 20u;
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    TargetMemory memory(depthBytes + stencilBytes + beyond, true), metadata(65536u, true);
+    std::memset(memory.Data() + depthBytes, 0x5a, stencilBytes);
+    std::memset(metadata.Data(), 0, metadataBytes);
+    DepthTarget target{memory.Address(), memory.Address() + depthBytes, extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.0f, 0x5au, metadata.Address(), false, samples};
+    target.depthSwizzle = 24u;
+    target.pipeBankXor = samples == 2u ? 0u : 0x8c00u;
+    target.iterate256 = samples != 8u;
+    target.htilePipeAligned = true;
+    target.htileDepthOnly = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    std::unique_ptr<DepthRaster> raster;
+    std::shared_ptr<StorageTexture> image;
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); ClearMultisampleTargets(context.device); }
+    } cleanup{recorder, context};
+    GuestTextureResource storage{};
+    storage.baseAddress = target.stencilAddress + stencilBytes - 65536u;
+    storage.width = 256u;
+    storage.height = 1152u;
+    storage.mipCount = storage.allocatedMipCount = 1u;
+    storage.dimension = TextureDimension::k2D;
+    storage.tileMode = TextureTileMode::kStandard64KB;
+    storage.format = 22u;
+    storage.dstSelX = 4u;
+    storage.dstSelY = storage.dstSelZ = 0u;
+    storage.dstSelW = 1u;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        image = StorageTexture::Create(context, *context.detiler, storage, 0u);
+        const auto commands = recorder.Commands();
+        recorder.Keep(image);
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, 1u};
+        VkClearColorValue value{};
+        value.uint32[0] = 0x5a5a5a5au;
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1u, &range);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        image->MarkWholeWritten();
+    }
+    recorder.Sync();
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> past{{{target.stencilAddress + stencilBytes, storage.baseAddress + image->GuestBytes()}}};
+    const auto view = DepthSurfaceView(context, target);
+    Require(view != VK_NULL_HANDLE && DepthSurfaceAt(target.address), "the target next to a pending storage image has no attachment");
+    Require(StorageTexture::AnyPendingOverlaps(past), "the storage units past the planes were stored by the import");
+    NoteDepthSurfaceWrite(context, target);
+    raster = std::make_unique<DepthRaster>(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x20u}, false, false);
+    raster->Run(recorder.Commands(), 0.25f);
+    recorder.Sync();
+    std::array<std::byte, 1> probe;
+    AgcDriver::GuestMemory::Read(target.address, probe);
+    const MultisampleTextureLayout depthLayout(TextureTileMode::kZ64KBX, 4u, samples, extent.width, extent.height, 1u, target.pipeBankXor);
+    const MultisampleTextureLayout stencilLayout(TextureTileMode::kZ64KBX, 1u, samples, extent.width, extent.height, 1u, target.pipeBankXor);
+    for (std::uint32_t y = 0u; y < extent.height; ++y) {
+        for (std::uint32_t x = 0u; x < extent.width; ++x) {
+            for (std::uint32_t sample = 0u; sample < samples; ++sample) {
+                float published = 0.0f;
+                std::memcpy(&published, memory.Data() + depthLayout.Offset(x, y, 0u, sample), 4u);
+                Require(published == 0.25f + static_cast<float>(sample + 1u) / 16.0f && memory.Data()[depthBytes + stencilLayout.Offset(x, y, 0u, sample)] == std::byte{0x20}, "an owner next to pending storage units did not publish its sample at " + std::to_string(x) + "," + std::to_string(y) + " sample " + std::to_string(sample));
+            }
+        }
+    }
+    Require(StorageTexture::AnyPendingOverlaps(past), "the storage units past the planes were stored by the owner's publication");
+    std::printf("Native depth owner next to pending storage units samples=%u: published while the units past its planes stay pending\n", samples);
+}
+
 void CheckUniformPlaneAliasedDepth(Context context, std::uint32_t samples) {
     constexpr VkExtent2D extent{5u, 3u};
     const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
@@ -4300,6 +4374,18 @@ int main(int argc, char** argv) {
             for (const auto samples : {2u, 4u, 8u}) {
                 if (!DepthSupported(context, VK_FORMAT_D32_SFLOAT_S8_UINT, samples) || (context.limits.framebufferStencilSampleCounts & samples) == 0u) continue;
                 CheckSingleSampleView(publishing, samples);
+                ++checked;
+            }
+            return checked != 0u ? 0 : VulkanTestSkipped;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pending-units") {
+            TextureDetiler detiler(context);
+            auto publishing = context;
+            publishing.detiler = &detiler;
+            std::uint32_t checked = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!DepthSupported(context, VK_FORMAT_D32_SFLOAT_S8_UINT, samples) || (context.limits.framebufferStencilSampleCounts & samples) == 0u) continue;
+                CheckPendingUnitsBeyondPlanes(publishing, samples);
                 ++checked;
             }
             return checked != 0u ? 0 : VulkanTestSkipped;

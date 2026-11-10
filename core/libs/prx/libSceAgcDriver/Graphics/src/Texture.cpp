@@ -5646,6 +5646,27 @@ bool StorageTexture::AnyPendingOverlaps(std::span<const std::pair<std::uint64_t,
     return false;
 }
 
+bool StorageTexture::AnyPendingUnitsOverlap(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    auto& pending = Pending();
+    std::lock_guard lock(pending.mutex);
+    for (const auto& [begin, end] : ranges) {
+        if (end <= begin) continue;
+        const auto bytes = static_cast<std::size_t>(end - begin);
+        for (const auto* texture : pending.flushing) {
+            if (texture->overlaps(begin, bytes)) return true;
+        }
+        if (!pending.textures.MayOverlap(begin, bytes)) continue;
+        for (const auto* texture : pending.textures) {
+            if (!texture->overlaps(begin, bytes)) continue;
+            for (std::uint32_t layer = 0; layer < texture->trackedLayers; ++layer) {
+                const auto unit = texture->layerBegin(layer);
+                if (texture->layerPending[layer] && unit < end && begin < unit + texture->layerBytes(layer)) return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool StorageTexture::AnyLiveOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     auto& live = Live();
     std::lock_guard lock(live.mutex);
