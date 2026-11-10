@@ -41,6 +41,15 @@ int main() {
     Check(c, {0, 0, 0, 0});
     cairo_line_to(c, 3, 4);
     Check(c, {1, 2, 3, 4});
+    double onlyX2 = 99, onlyY2 = 99;
+    cairo_path_extents(c, nullptr, nullptr, &onlyX2, &onlyY2);
+    assert(onlyX2 == 3 && onlyY2 == 4);
+    double onlyX1 = 99;
+    cairo_path_extents(c, &onlyX1, nullptr, nullptr, nullptr);
+    assert(onlyX1 == 1);
+    double invalidY1 = 99;
+    cairo_path_extents(nullptr, nullptr, &invalidY1, nullptr, nullptr);
+    assert(invalidY1 == 0);
     cairo_new_path(c);
     cairo_move_to(c, 0, 0);
     cairo_curve_to(c, 0, 100, 100, 100, 100, 0);

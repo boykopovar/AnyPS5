@@ -695,10 +695,15 @@ CairoPath* APS5_VABI cairo_copy_path(CairoContext* context) {
 
 void APS5_VABI cairo_path_extents(CairoContext* context, double* x1, double* y1,
                                  double* x2, double* y2) {
-    if (!x1 || !y1 || !x2 || !y2) return;
-    *x1 = *y1 = *x2 = *y2 = 0;
+    double px1 = 0, py1 = 0, px2 = 0, py2 = 0;
+    const auto store = [&] {
+        if (x1) *x1 = px1;
+        if (y1) *y1 = py1;
+        if (x2) *x2 = px2;
+        if (y2) *y2 = py2;
+    };
     auto* state = Valid(context);
-    if (!state || !state->path) return;
+    if (!state || !state->path) return store();
 
     PathRange xRange, yRange;
     double currentX = 0, currentY = 0, startX = 0, startY = 0;
@@ -725,9 +730,9 @@ void APS5_VABI cairo_path_extents(CairoContext* context, double* x1, double* y1,
             currentY = startY;
         }
     }
-    if (!std::isfinite(xRange.minimum) || !std::isfinite(yRange.minimum)) return;
+    if (!std::isfinite(xRange.minimum) || !std::isfinite(yRange.minimum)) return store();
     CairoMatrix inverse = state->matrix;
-    if (cairo_matrix_invert(&inverse) != kSuccess) return;
+    if (cairo_matrix_invert(&inverse) != kSuccess) return store();
     PathRange usersX, usersY;
     for (double deviceX : {xRange.minimum, xRange.maximum}) {
         for (double deviceY : {yRange.minimum, yRange.maximum}) {
@@ -737,10 +742,11 @@ void APS5_VABI cairo_path_extents(CairoContext* context, double* x1, double* y1,
             usersY.Add(y);
         }
     }
-    *x1 = usersX.minimum;
-    *y1 = usersY.minimum;
-    *x2 = usersX.maximum;
-    *y2 = usersY.maximum;
+    px1 = usersX.minimum;
+    py1 = usersY.minimum;
+    px2 = usersX.maximum;
+    py2 = usersY.maximum;
+    store();
 }
 
 void APS5_VABI cairo_append_path(CairoContext* context, const CairoPath* path) {
