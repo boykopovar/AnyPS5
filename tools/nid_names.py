@@ -75,8 +75,10 @@ def source_files(root):
 
 
 def source_aliases(text):
-    tokens = [match.group() for match in CPP_TOKEN.finditer(text.replace("\\\n", "").replace("\\\r\n", ""))
-              if match.group("comment") is None]
+    text = text.replace("\\\n", "").replace("\\\r\n", "")
+    if "APS5_EXPORT" not in text:
+        return
+    tokens = [match.group() for match in CPP_TOKEN.finditer(text) if match.group("comment") is None]
     for index, token in enumerate(tokens):
         if token != "APS5_EXPORT" or index + 5 >= len(tokens):
             continue
@@ -93,12 +95,17 @@ def source_definitions(text):
     def mask(match):
         return match.group() if match.group("code") is not None else re.sub(r"[^\n]", " ", match.group())
 
-    return DEFINITION.finditer(CPP_TOKEN.sub(mask, text.replace("\\\n", "").replace("\\\r\n", "")))
+    text = text.replace("\\\n", "").replace("\\\r\n", "")
+    if "APS5_VABI" not in text:
+        return iter(())
+    return DEFINITION.finditer(CPP_TOKEN.sub(mask, text))
 
 
 def source_assembly_definitions(text):
-    tokens = [match for match in CPP_TOKEN.finditer(text.replace("\\\n", "").replace("\\\r\n", ""))
-              if match.group("comment") is None]
+    text = text.replace("\\\n", "").replace("\\\r\n", "")
+    if not any(macro in text for macro in ASM_FUNCTION_MACROS):
+        return
+    tokens = [match for match in CPP_TOKEN.finditer(text) if match.group("comment") is None]
     for index, token in enumerate(tokens):
         if token.group("code") is None or token.group() not in ASM_FUNCTION_MACROS:
             continue
@@ -314,7 +321,7 @@ def symbol_file(path):
         text = sys.stdin.buffer.read().decode("utf-8-sig") if hasattr(sys.stdin, "buffer") else sys.stdin.read().removeprefix("\ufeff")
     else:
         text = Path(path).read_text(encoding="utf-8-sig")
-    return [line for raw in text.split("\n") if (line := raw.removesuffix("\r"))]
+    return [line for raw in text.split("\n") if (line := raw.removesuffix("\r")).strip()]
 
 
 def main(argv=None):

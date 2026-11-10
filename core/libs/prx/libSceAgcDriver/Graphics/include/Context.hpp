@@ -180,10 +180,13 @@ struct Context {
     VkDeviceSize hostImportAlignment = 0;
     bool drawInputsInPlace = true;
     bool discreteGpu = false;
+    bool integratedGpu = false;
     bool dmaBufImport = false;
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
     bool sparseResidencyAliased = false;
+    bool sparseResidencyImage2D = false;
+    PFN_vkGetPhysicalDeviceSparseImageFormatProperties sparseImageFormatProperties = nullptr;
     std::uint32_t queueFamily = 0;
     std::uint32_t sparseFamily = VK_QUEUE_FAMILY_IGNORED;
     VkQueue sparseQueue = VK_NULL_HANDLE;
@@ -249,6 +252,7 @@ struct Context {
     bool largePoints = false;
     bool sampleRateShading = false;
     bool fillModeNonSolid = false;
+    bool wideLines = false;
     bool maintenance5 = false;
     bool storageImageMultisample = false;
     bool storageImageWriteWithoutFormat = false;
