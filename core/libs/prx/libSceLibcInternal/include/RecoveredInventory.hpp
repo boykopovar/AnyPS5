@@ -17,7 +17,6 @@ std::uint8_t APS5_VABI __std_min_1u_nid_postfix(const void* first, const void* l
 int APS5_VABI __std_min_element_f_nid_postfix();
 int APS5_VABI __std_minmax_f_nid_postfix();
 int APS5_VABI __std_min_f_nid_postfix();
-int APS5_VABI __truncdfhf2_nid_postfix();
 int APS5_VABI sceLibcInternalPrimitiveMallocStatsFast_nid_postfix();
 int APS5_VABI __std_atomic_wait_direct_8_nid_postfix();
 int APS5_VABI __std_max_d_nid_postfix();
