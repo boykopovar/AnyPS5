@@ -66,8 +66,9 @@ curl_httppost* TranslateCurlForm(const guest_curl_httppost* form,
     if (form->namelength < minLength || form->namelength > maxLength ||
         form->contentslength < minLength || form->contentslength > maxLength ||
         form->bufferlength < minLength || form->bufferlength > maxLength) {
-        throw std::overflow_error("curl_formget host length overflow");
+        throw std::out_of_range("curl_formget length does not fit host long");
     }
+    if (form->flags & (CURL_HTTPPOST_FILENAME | CURL_HTTPPOST_READFILE)) NotImplemented_nid_no_patch("curl_formget file part");
     const auto found = translated.find(form);
     if (found != translated.end()) return found->second;
     auto host = std::make_unique<curl_httppost>();
@@ -754,8 +755,6 @@ int APS5_VABI curl_formget_nid_postfix(struct guest_curl_httppost* form, void* a
         return ::curl_formget(hostForm, &context, CurlFormGetAppend);
     } catch (const std::bad_alloc&) {
         return CURLE_OUT_OF_MEMORY;
-    } catch (const std::overflow_error&) {
-        return CURLE_BAD_FUNCTION_ARGUMENT;
     }
 }
 
