@@ -272,7 +272,6 @@ int APS5_VABI sceKernelGetCpuCoreClock();
 int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion();
 int APS5_VABI sceKernelGetNandInfo();
 int APS5_VABI sceKernelGetPackageInfo();
-int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version);
 int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid(int pid, std::int32_t* version);
 int APS5_VABI sceKernelGetPs4CompiledSdkVersion(std::int32_t* version);
 int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid(int pid, std::int32_t* version);

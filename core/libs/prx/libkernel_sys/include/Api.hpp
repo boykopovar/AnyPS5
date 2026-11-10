@@ -36,12 +36,6 @@ struct GuestTimespec {
     std::int64_t nanoseconds;
 };
 
-struct KernelTitleWorkaround {
-    std::int32_t version;
-    std::int32_t align;
-    std::uint64_t ids[2];
-};
-
 struct KernelAuthInfo {
     std::uint64_t programAuthorityId;
     std::uint64_t capabilities[4];
@@ -69,7 +63,6 @@ std::int64_t APS5_VABI aio_return_nid_postfix(GuestAiocb* aiocb);
 int APS5_VABI aio_suspend_nid_postfix(const GuestAiocb* const* list, int count, const KernelTimespec* timeout);
 std::int64_t APS5_VABI aio_waitcomplete_nid_postfix(GuestAiocb** result, const KernelTimespec* timeout);
 int APS5_VABI aio_cancel_nid_postfix(int descriptor, GuestAiocb* aiocb);
-int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version);
 int APS5_VABI fork_nid_postfix(void);
 int APS5_VABI setsid_nid_postfix(void);
 std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t mask);
@@ -106,7 +99,6 @@ int APS5_VABI renameat_nid_postfix(int oldfd, const char* from, int newfd, const
 int APS5_VABI pthread_set_defaultstacksize_np_nid_postfix(std::size_t size);
 int APS5_VABI scePthreadSetDefaultstacksize(std::size_t size);
 void APS5_VABI scePthreadSetName(Pthread thread, const char* name);
-int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled);
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled2(const KernelTitleWorkaround* workaround, std::uint64_t selector, std::uint32_t bit, std::int32_t* enabled);
 int APS5_VABI sceKernelGetProcessType(int pid);
 int APS5_VABI amd64_set_fsbase_nid_postfix(void);
@@ -236,7 +228,6 @@ int APS5_VABI sceKernelEventLogWrite(void);
 int APS5_VABI sceKernelExpectedHddFormat(void);
 int APS5_VABI sceKernelFlock(void);
 int APS5_VABI sceKernelGetACInfoAllForCoredump(void);
-int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* categoryType);
 int APS5_VABI sceKernelGetAppInfoByAppId(void);
 int APS5_VABI sceKernelGetAppState(void);
 int APS5_VABI sceKernelGetAslrStatus(void);
@@ -383,7 +374,6 @@ int APS5_VABI sceKernelIsM2DeviceAttached(void);
 int APS5_VABI sceKernelIsMainOnStanbyMode(void);
 int APS5_VABI sceKernelIsMainOnStandbyMode(void);
 int APS5_VABI sceKernelIsModuleLoaded(const char* name);
-int APS5_VABI sceKernelIsNeoMode(void);
 int APS5_VABI sceKernelIsProspero(void);
 int APS5_VABI sceKernelIsPs4Process(void);
 int APS5_VABI sceKernelIsTestKit(void);

@@ -85,6 +85,7 @@ constexpr int freebsdGroupsMax = 1023;
 std::mutex supplementaryGroupsMutex;
 std::vector<std::uint32_t> supplementaryGroups{0};
 constexpr unsigned freebsdWaitOptions = 0x8000003Fu;
+constexpr std::uint32_t PARAM_SFO_ATTRIBUTE_SUPPORT_NEO_MODE = 0x00800000;
 constexpr std::size_t ExecArgumentBytesLimit = 262144;
 constexpr std::string_view ExecDefaultSearchPath = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin";
 constexpr std::string_view ExecApplicationRoot = "/app0/";
@@ -894,6 +895,57 @@ int APS5_VABI sceKernelGetMainSocId(void) {
 }
 
 int APS5_VABI sceKernelGetCpumode(void) {
+    return 0;
+}
+
+int APS5_VABI sceKernelIsNeoMode(void) {
+    std::uint32_t attribute = 0;
+    if (!GetAppParamSfoAttribute_nid_no_patch(&attribute)) NotImplemented_nid_no_patch(__func__);
+    return (attribute & PARAM_SFO_ATTRIBUTE_SUPPORT_NEO_MODE) != 0 ? 1 : 0;
+}
+
+int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* categoryType) {
+    if (categoryType == nullptr) return SCE_KERNEL_ERROR_EINVAL;
+    if (pid != getpid_nid_postfix()) NotImplemented_nid_no_patch(__func__);
+    std::uint32_t value = 0;
+    if (!GetAppCategoryType_nid_no_patch(&value)) NotImplemented_nid_no_patch(__func__);
+    if (!GuestCopyOut_nid_no_patch(categoryType, &value, sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
+    return 0;
+}
+
+int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version) {
+    if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
+    static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    const int saved = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(version, parameters + 0x10, sizeof(*version));
+    errno = saved;
+    if (!copied) return SCE_KERNEL_ERROR_EFAULT;
+    return 0;
+}
+
+int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version) {
+    if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
+    static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    const int saved = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(version, parameters + 0x14, sizeof(*version));
+    errno = saved;
+    if (!copied) return SCE_KERNEL_ERROR_EFAULT;
+    return 0;
+}
+
+int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
+    if (workaround == nullptr || enabled == nullptr) return static_cast<int>(0x8002000E);
+    if (static_cast<std::uint32_t>(bit) > 0x57) return static_cast<int>(0x80020016);
+    KernelTitleWorkaround localWorkaround{};
+    const int saved = errno;
+    if (!GuestCopyIn_nid_no_patch(&localWorkaround, workaround, sizeof(localWorkaround))) {
+        errno = saved;
+        return static_cast<int>(0x8002000E);
+    }
+    const std::int32_t value = static_cast<std::int32_t>((localWorkaround.ids[bit >> 6] >> (bit & 0x3F)) & 1);
+    const bool copied = GuestCopyOut_nid_no_patch(enabled, &value, sizeof(value));
+    errno = saved;
+    if (!copied) return static_cast<int>(0x8002000E);
     return 0;
 }
 

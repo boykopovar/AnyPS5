@@ -49,6 +49,12 @@ struct GuestOnce {
     void* mutex;
 };
 
+struct KernelTitleWorkaround {
+    std::int32_t version;
+    std::int32_t align;
+    std::uint64_t ids[2];
+};
+
 struct GuestPollDescriptor {
     int descriptor;
     short events;
@@ -705,6 +711,11 @@ int APS5_VABI execve_nid_postfix(const char* path, char* const* arguments, char*
 int APS5_VABI sceKernelGetCurrentCpu(void);
 int APS5_VABI sceKernelGetMainSocId(void);
 int APS5_VABI sceKernelGetCpumode(void);
+int APS5_VABI sceKernelIsNeoMode(void);
+int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* categoryType);
+int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version);
+int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version);
+int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled);
 std::uint64_t APS5_VABI sceKernelGetGPI(void);
 void APS5_VABI sceKernelSetGPO(std::uint32_t bits);
 int APS5_VABI sceKernelGetOpenPsId(void* openPsIdOutput);
