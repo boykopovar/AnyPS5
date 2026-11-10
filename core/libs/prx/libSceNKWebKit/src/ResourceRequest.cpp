@@ -220,4 +220,13 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(dou
     defaultTimeoutInterval = timeoutInterval;
 }
 
+void APS5_VABI _ZN7WebCore19ResourceRequestBase22clearHTTPAuthorizationEv(ResourceRequestBase* self) {
+    auto& request = Checked(self);
+    UpdateResourceRequest(request);
+    auto* headers = reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields);
+    if (!_ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(headers, HTTPHeaderName::Authorization))
+        return;
+    request.platformRequestUpdated = false;
+}
+
 }
