@@ -17,6 +17,8 @@
 
 ### Unknown function info
 
+- [sceImeSetCaret and sceImeSetText](../../../core/libs/prx/libSceIme/Export.cpp) (libSceIme) - the PS5's response to a caret index within a UTF-16 surrogate pair, or to replacement text crossing the previous caret, is unmeasured. The host text path advances such a caret past the pair, following the existing text-filter normalization so later typing cannot split a valid character.
+
 - [sceImeVshOpen](../../../core/libs/prx/libSceIme/Export.cpp) (libSceIme) - VSH context, UTF-16 text and dictionary argument registers are recovered. The VSH parameter is copied as 256 bytes; preedit metadata is eight bytes. Dictionary operations transfer 224-byte records, with a fixed 11200-byte output for GetWords; the 64-bit dictionary selector and record fields still need receiver-side identification. These payload types remain incomplete. UpdateTextInfo and RemoteEventParam use the existing 64-byte ImeEditText and event payload at offset eight; their byte-sized repair flag permits correcting invalid text ranges and caret positions.
 
 - [sceImeGetPanelPositionAndForm](../../../core/libs/prx/libSceIme/Export.cpp) (libSceIme) - the output is taken to be the `PositionAndForm` that `sceImeDialogGetPanelPositionAndForm` fills. While a panel is open it reports the type, position and alignments passed to `sceImeOpen` and the size `sceImeGetPanelSize` gives; the console's values for a panel moved by its own position adjustment are unknown.

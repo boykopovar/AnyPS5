@@ -392,6 +392,34 @@ void CheckMultiline() {
     Require(sceImeClose_nid_postfix() == 0, "multiline close");
 }
 
+void CheckCaretSurrogateBoundary() {
+    Buffers buffers;
+    Param param = MakeParam(buffers, 16);
+    Require(sceImeOpen_nid_postfix(&param, nullptr) == 0, "surrogate caret open");
+    Drain();
+
+    Require(sceImeSetText(u"A\U0001F600B", 4) == 0, "set text with a surrogate pair");
+    Caret caret{};
+    caret.index = 2;
+    Require(sceImeSetCaret(&caret) == 0, "set caret within a surrogate pair");
+    Publish(ImeHostInputKind::Text, "X");
+    auto events = Drain();
+    Require(events.size() == 1, "caret edit event count");
+    RequireText(events[0], EventUpdateText, u"A\U0001F600XB", 4, 3, 1);
+    Require(std::u16string(buffers.text) == u"A\U0001F600XB", "caret edit preserves the surrogate pair");
+
+    Require(sceImeSetText(u"a", 1) == 0, "set short text before a surrogate pair");
+    caret.index = 1;
+    Require(sceImeSetCaret(&caret) == 0, "set caret at the short text end");
+    Require(sceImeSetText(u"\U0001F600", 2) == 0, "replace text around the existing caret");
+    Publish(ImeHostInputKind::Text, "Y");
+    events = Drain();
+    Require(events.size() == 1, "replacement edit event count");
+    RequireText(events[0], EventUpdateText, u"\U0001F600Y", 3, 2, 1);
+    Require(std::u16string(buffers.text) == u"\U0001F600Y", "replacement edit preserves the surrogate pair");
+    Require(sceImeClose_nid_postfix() == 0, "surrogate caret close");
+}
+
 void CheckTextFilter() {
     Buffers buffers;
     std::memcpy(buffers.text, u"ab", sizeof(u"ab"));
@@ -569,6 +597,7 @@ int main() {
     CheckValidation();
     CheckEditing();
     CheckMultiline();
+    CheckCaretSurrogateBoundary();
     CheckTextFilter();
     CheckHostEvents();
 }
