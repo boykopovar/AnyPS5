@@ -134,7 +134,12 @@ bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::
 // submission runs. The driver's own writes (Write, WriteChanged, MarkWritten) stamp their blocks, so
 // they are never hidden. APS5_NO_COLLECT_MEMO=1 disables the memo. CollectWritesUncached always walks:
 // for decisions about which blocks the CPU wrote while a GPU result was pending (a stale answer there
-// stores old texels over reused memory).
+// stores old texels over reused memory). The collect that starts such a pending period
+// (StorageTexture::markLayersPending) may be memoized: its caller reads TrackerGeneration after it,
+// so a store the memoized walk missed is stamped above that generation by a later walk (at the
+// latest the decision's own uncached one) and counts as made while the result was pending, while a
+// store ordered before the draw was made before the epoch's ordering point, so the memoized walk,
+// which started after that point, stamped it. APS5_NO_MEMO_PENDING_COLLECT walks there again.
 // The epoch is per queue worker: BumpCollectEpoch advances the calling thread's epoch to a value no
 // other thread ever holds (one worker's walk never satisfies another's check) at the hardware
 // ordering points of its queue: the start of a submission, a WAIT_REG_MEM the CPU may have satisfied

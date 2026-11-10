@@ -261,6 +261,7 @@ struct LiveImages {
 };
 
 std::atomic<void (*)()> publishHookForTest{nullptr};
+std::atomic<void (*)(std::uint64_t, std::size_t)> pendingHookForTest{nullptr};
 
 LiveImages& Live() {
     static LiveImages live;
@@ -4412,6 +4413,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
         }
         const auto collectFrom = layerBegin(first);
         const auto collectBytes = static_cast<std::size_t>(layerBegin(first + count - 1) + layerBytes(first + count - 1) - layerBegin(first));
+        if (const auto hook = pendingHookForTest.load(std::memory_order_acquire)) hook(collectFrom, collectBytes);
         if (RuntimeSwitches::Set(RuntimeSwitch::NoMemoPendingCollect)) GuestMemory::CollectWritesUncached(collectFrom, collectBytes);
         else GuestMemory::CollectWrites(collectFrom, collectBytes);
         if (!completionKept.empty()) {
@@ -5038,6 +5040,10 @@ bool StorageTexture::hashedAtUnwatch(std::uint64_t address, std::size_t bytes) c
 
 void StorageTexture::SetPublishHookForTest(void (*hook)()) {
     publishHookForTest.store(hook, std::memory_order_release);
+}
+
+void StorageTexture::SetPendingHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes)) {
+    pendingHookForTest.store(hook, std::memory_order_release);
 }
 
 bool StorageTexture::UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
