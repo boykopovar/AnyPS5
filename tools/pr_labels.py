@@ -30,7 +30,10 @@ COMMENT = (f"{MARKER}\nThis pull request is labeled `perf`, so it needs the summ
 
 
 def gh(*args):
-    return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True).stdout
+    try:
+        return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True).stdout
+    except FileNotFoundError as error:
+        raise ValueError("GitHub CLI 'gh' is required on PATH") from error
 
 
 def repository():
