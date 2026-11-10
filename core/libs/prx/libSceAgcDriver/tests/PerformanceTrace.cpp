@@ -327,6 +327,23 @@ void FullBufferEvents() {
     Check(TraceFormat::Events(7, origin, std::vector<TraceThread::Snapshot>{snapshot}, 0, presents, 5).find("trace buffer full") == std::string::npos, "a thread that lost nothing got a cut-off event");
 }
 
+void SummaryAllPhaseTotals() {
+    const auto origin = Clock::now();
+    AgcDriver::TraceSummary summary;
+    const std::vector<Clock::time_point> presents{origin, origin + milliseconds(16), origin + milliseconds(32)};
+    std::vector<TraceThread::Total> totals;
+    for (const auto* scope : {"A", "B", "C", "D", "E", "F", "G", "H", "I"}) totals.push_back({scope, nullptr, milliseconds(1), 1});
+    totals.push_back({"Small", nullptr, microseconds(5), 2});
+    const std::vector<TraceThread::Snapshot> threads{{"a", {}, totals, false}, {"b", {}, {{"Small", nullptr, microseconds(7), 3}}, false}};
+    const auto compact = TraceFormat::Summary(summary, threads, presents);
+    Check(compact.find("\"phase_totals\":{") == std::string::npos, "compact summary exported the gated phase totals");
+    Check(compact.find("\"Small\":{") == std::string::npos, "compact summary carried per-phase count objects");
+    summary.environment = {{"APS5_TRACE_ALL_PHASES", "1"}};
+    const auto full = TraceFormat::Summary(summary, threads, presents);
+    Check(full.find("\"phase_totals\":{") != std::string::npos, "full phase totals were not exported");
+    Check(full.find("\"Small\":{\"count\":5,\"sum_ms\":0.012,\"ms_per_present\":0.006}") != std::string::npos, "short phase totals or counts did not merge across threads");
+}
+
 void SummaryFields() {
     const auto origin = Clock::now();
     AgcDriver::TraceSummary summary;
@@ -859,6 +876,7 @@ int main() {
         BatchIds();
         SummaryFields();
         SummaryRetainsAllPhases();
+        SummaryAllPhaseTotals();
         GpuClock();
         IntervalDue();
         SummaryOnlyThread();
