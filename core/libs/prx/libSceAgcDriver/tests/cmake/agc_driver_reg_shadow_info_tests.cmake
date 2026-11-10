@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(agc_driver_reg_shadow_info_tests tests/RegShadowInfo.cpp)
+    target_include_directories(agc_driver_reg_shadow_info_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_driver_reg_shadow_info_tests PRIVATE libSceAgcDriver)
+    configure_windows_unwind(agc_driver_reg_shadow_info_tests)
+    add_test(NAME agc_driver_reg_shadow_info COMMAND agc_driver_reg_shadow_info_tests)
+    set_tests_properties(agc_driver_reg_shadow_info PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(agc_driver_reg_shadow_info PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>")
+    endif()
+endif()

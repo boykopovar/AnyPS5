@@ -1,8 +1,12 @@
 # libSceIcu technical debt
 
+### Functional locale parsing and metadata
+
+- [LocaleCore.cpp](../../../core/libs/prx/libSceIcu/LocaleCore.cpp) implements six public ICU C entry points: `uloc_getLanguage`, `uloc_getCountry`, `uloc_getScript`, `uloc_getBaseName`, `uloc_canonicalize`, and `uloc_getKeywordValue`. These use typed System V guest signatures with 32-bit length/status fields, copy and overflow semantics, case normalization, locale components, and keyword lookup. Release-active guest tests and Linux ASan/UBSan/leak checks cover bounded buffers, malformed keyword items, and status propagation; 22,647 additional input/capacity combinations were differential-checked against *native desktop ICU 74*. This is a source-compatible subset, not an assertion of PS5 firmware 68 binary equivalence. Long/host-specific aliases, obscure locale grammar, data-driven locale operations, and arbitrary malformed input remain unverified. Neither PS5 hardware calls nor a console trace was available.
+
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 72 functions match typed NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Prototypes and behavior are unverified. Each declaration throws through `NotImplemented_nid_no_patch`; no runtime functionality is implemented.
+- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 66 remaining throwing functions match NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Their prototypes and behavior are unverified and retain `NotImplemented_nid_no_patch`. The six locale functions described above have been removed from this throwing inventory.
 
 - [Per-image ELF records](https://gist.github.com/kyon-eth/a8e9ce3fc8802f48d30cd94c413904b7/211c546f6f8e79a23b5ec6ea8fd0610527beabee) describe the module, library, raw names, type, values and sizes for the declarations in [Export.cpp](../../../core/libs/prx/libSceIcu/Export.cpp). The metadata SHA-256 is `551b2d4f646b934cb7eae6a2f2f3bf58e4fb2ba53644d2d1af40f133fda15eb9`; image provenance and labels are not authenticated.
 
@@ -46,17 +50,11 @@
 | `udata_setCommonData` | `wHZwCpZVcGI` |
 | `udata_setFileAccess` | `mCyTdtewGpk` |
 | `uloc_addLikelySubtags` | `HQ6DCQrAXD4` |
-| `uloc_canonicalize` | `G-Jl6md9fz4` |
 | `uloc_countAvailable` | `J5lZTL2H6Aw` |
 | `uloc_forLanguageTag` | `a+8yAm1ZfCE` |
 | `uloc_getAvailable` | `JnzWSfYU-xg` |
-| `uloc_getBaseName` | `CZ0z95gBgXg` |
 | `uloc_getCharacterOrientation` | `pMLs993oHk0` |
-| `uloc_getCountry` | `SIZrguvplN4` |
 | `uloc_getDefault` | `m1nD9D9LmP0` |
-| `uloc_getKeywordValue` | `QYSES3tXUHM` |
-| `uloc_getLanguage` | `dxyWDe5AwgY` |
-| `uloc_getScript` | `9lLmMrDj590` |
 | `uloc_minimizeSubtags` | `yb9tILRzD1k` |
 | `uloc_setKeywordValue` | `sw98L1MbqpM` |
 | `uloc_toLanguageTag` | `zmMWRKwedmw` |
@@ -106,6 +104,8 @@
 
 - [Space classification](../../../core/libs/prx/libSceIcu/Space.cpp) is unverified on a console. `u_isspace`, `u_isblank`, `u_isWhitespace`, `u_isJavaSpaceChar` and `u_isUWhiteSpace` follow ICU 78.1 [uchar.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/uchar.cpp#L196-L244) over fixed Zs, Zl, Zp and White_Space sets instead of ICU's property data; the sets are unchanged from ICU 65.1 to 78.1. Firmware 13.42 exports `u_isUWhiteSpace` but not the other four ([#11013](https://github.com/boykopovar/AnyPS5/pull/11013#issuecomment-6401310351)), which are kept from the 3.20 inventory for older firmware (see ICU export availability). Closes when: compared with the console.
 
+- [Converter-name and signature helpers](../../../core/libs/prx/libSceIcu/ConverterHelpers.cpp) have no console ABI or behavior verification. The four names/NIDs occur in the pinned PS5 3.20 inventory above; behavior follows ICU 78.1 [ucnv_io.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ucnv_io.cpp) and [ucnv.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ucnv.cpp). Name comparison uses the ASCII charset family; the explicit EBCDIC normalizer keeps EBCDIC output. Null normalization arguments throw instead of reproducing upstream invalid memory access. Signature detection preserves ICU status and optional-length behavior, including NUL-terminated input. Cross-firmware availability and native invalid-pointer behavior remain unverified.
+
 - [C string helpers](../../../core/libs/prx/libSceIcu/CString.cpp) have no console ABI or behavior verification. Their names/NIDs are in the PS5 3.20 inventory; signatures and behavior follow ICU 78.1's [cstring.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/cstring.cpp), unchanged since 65.1 apart from casts. Formatting accepts radices 2–16; null buffers or other radices throw an invalid-argument exception, whereas ICU dereferences the buffer and only asserts the radix. Signed minima and outputs exceeding ICU's 30-byte temporary use unsigned arithmetic and caller storage without reproducing upstream undefined behavior. Parsing uses guest LP64 `strtoul` and keeps the low 32 bits; a null source throws. Cross-firmware availability, native invalid-input behavior and the undefined upstream cases remain unverified.
 
 - [Converter STOP/SKIP callbacks](../../../core/libs/prx/libSceIcu/ConverterCallbacks.cpp) have no console ABI or behavior verification. Signatures and decisions follow ICU 78.1's [ucnv_err.h](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/unicode/ucnv_err.h) and [ucnv_err.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ucnv_err.cpp). The callback-specific default-ignorable ranges include U+180F, which ICU 65.1 excludes; firmware-dependent selection is not implemented. Reasons outside the upstream enum's 0–7 value range and a null error pointer on a path that writes it throw `invalid_argument`; native behavior there is undefined. Untouched pointers remain unread, including the error pointer on no-write paths. Converter argument structures stay opaque because these callbacks do not access them; converter execution and other callbacks remain unavailable.
@@ -151,7 +151,9 @@
 
 ### Known export names; ABI prototypes unverified
 
-- The 76 `sceIcuUnknown_*_nid_no_patch` and named `*_nid_postfix` stubs in [Export.cpp](../../../core/libs/prx/libSceIcu/Export.cpp) are present in the PS5 3.20 export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Their prototypes and behavior are unverified. Each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`; these declarations make no ABI or behavior claim.
+- [Unicode decimal digit helpers](../../../core/libs/prx/libSceIcu/CharacterDigits.cpp) `u_charDigitValue` and `u_digit` are unverified on a console. The 72 decimal ranges cover the 770 decimal code points in ICU 78.1's Unicode 17.0 data, and `u_digit` follows the pinned ICU [u_digit implementation](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/uchar.cpp#L449-L468), including ASCII and fullwidth Latin letters for radices 2–36. Console ABI, firmware data version, behavior and title compatibility remain unverified.
+
+- The 74 `sceIcuUnknown_*_nid_no_patch` and named `*_nid_postfix` stubs in [Export.cpp](../../../core/libs/prx/libSceIcu/Export.cpp) are present in the PS5 3.20 export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Their prototypes and behavior are unverified. Each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`; these declarations make no ABI or behavior claim.
 - The 72 named stubs declared in [Identified.hpp](../../../core/libs/prx/libSceIcu/Identified.hpp) carry the ICU C API names whose `tools/nid_names.py` hash equals the inventory NID; the names were taken from the identifiers of the ICU 78.1 `common`, `i18n` and `io` sources. A name match does not show that the console function has ICU's prototype or behavior. Most of them read Unicode property, case-folding or resource data that no host library provides.
 
 - [Resource type classification](../../../core/libs/prx/libSceIcu/Resource.cpp) has no console ABI or behavior verification. `res_getPublicType` (NID `WPrktCwd+iw` in the PS5 3.20 inventory above) takes an unsigned 32-bit resource and returns a signed 32-bit public type, following ICU 65.1 and [ICU 78.1](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/uresdata.cpp). Both use the same mapping of the high four bits; the low 28 bits do not affect the result. Cross-firmware export availability and native behavior remain unverified. Closes when: compared with the console.

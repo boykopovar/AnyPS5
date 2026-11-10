@@ -488,6 +488,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::FPMul64: return Invoke(EmitFPMul64, ctx, inst);
         case IrOpcode::FPFma64: return Invoke(EmitFPFma64, ctx, inst);
         case IrOpcode::FPFmaScale64: return Invoke(EmitFPFmaScale64, ctx, inst);
+        case IrOpcode::FPFmaScale32: return Invoke(EmitFPFmaScale32, ctx, inst);
         case IrOpcode::FPMin64: return Invoke(EmitFPMin64, ctx, inst);
         case IrOpcode::FPMax64: return Invoke(EmitFPMax64, ctx, inst);
         case IrOpcode::FPSaturate64: return Invoke(EmitFPSaturate64, ctx, inst);
@@ -517,6 +518,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::Permlane16U32: return Invoke(EmitPermlane16U32, ctx, inst);
         case IrOpcode::BpermuteU32: return Invoke(EmitBpermuteU32, ctx, inst);
         case IrOpcode::PermuteU32: return Invoke(EmitPermuteU32, ctx, inst);
+        case IrOpcode::HalfSwapU32: return Invoke(EmitHalfSwapU32, ctx, inst);
         case IrOpcode::GetSrtResource: return Invoke(EmitGetSrtResource, ctx, inst);
         case IrOpcode::GetBufferResource: return Invoke(EmitGetBufferResource, ctx, inst);
         case IrOpcode::GetAddressResource: return Invoke(EmitGetAddressResource, ctx, inst);

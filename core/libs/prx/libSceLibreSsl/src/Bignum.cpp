@@ -319,7 +319,7 @@ int APS5_VABI BN_hex2bn_nid_postfix(Bignum** a, const char* str) {
     const char* digits = str + negative;
     std::size_t count = 0;
     while (HexValue(digits[count]) >= 0) count++;
-    if (count == 0 || count > 0x7FFFFFFF / 4) return 0;
+    if (count > 0x7FFFFFFF / 4) return 0;
     const int consumed = static_cast<int>(count + negative);
     if (!a) return consumed;
     Mag m((count + 15) / 16, 0);
@@ -334,6 +334,7 @@ int APS5_VABI BN_hex2bn_nid_postfix(Bignum** a, const char* str) {
         if (!*a) FreeBignum(target);
         return 0;
     }
+    target->neg = negative ? 1 : 0;
     *a = target;
     return consumed;
 }
@@ -359,6 +360,23 @@ int APS5_VABI BN_mul_nid_postfix(Bignum* r, const Bignum* a, const Bignum* b, Bi
     const Int y = Load(Checked(b, __func__));
     const Mag product = MulMag(x.mag, y.mag);
     return Store(r, product, x.neg != y.neg);
+}
+
+int APS5_VABI BN_print_nid_postfix(LibreSsl::Bio* bio, const Bignum* a) {
+    static constexpr char digits[] = "0123456789ABCDEF";
+    Checked(a, __func__);
+    if (a->neg && LibreSslBioWrite_nid_no_patch(bio, "-", 1) != 1) return 0;
+    if (a->top == 0 && LibreSslBioWrite_nid_no_patch(bio, "0", 1) != 1) return 0;
+    bool started = false;
+    for (int i = a->top - 1; i >= 0; i--) {
+        for (int shift = 60; shift >= 0; shift -= 4) {
+            const int digit = static_cast<int>(a->d[i] >> shift) & 15;
+            if (!started && digit == 0) continue;
+            if (LibreSslBioWrite_nid_no_patch(bio, &digits[digit], 1) != 1) return 0;
+            started = true;
+        }
+    }
+    return 1;
 }
 
 Bignum* APS5_VABI BN_mod_inverse_nid_postfix(Bignum* r, const Bignum* a, const Bignum* n, BignumContext*) {
