@@ -2355,9 +2355,92 @@ static bool WriteGuest(void* destination, const void* source, std::size_t bytes)
     return true;
 #endif
 }
-static std::vector<unsigned char> ArrivalTimestamps(const Socket& socket, int keptFlags) {
+static bool ArrivalStamped(const Socket& socket, int keptFlags) {
+    return socket.type == 2 && (socket.family == 2 || socket.family == 28) && (keptFlags & (0x400 | 0x2000)) != 0;
+}
+static std::int64_t ReceiveStamped(const Socket& socket, char* data, std::size_t length, int nativeFlags, sockaddr_storage& address, socklen_t& size, std::int64_t& age) {
+    constexpr std::int64_t second = 1000000000;
+    age = 0;
+#ifdef _WIN32
+    GUID extension = WSAID_WSARECVMSG;
+    LPFN_WSARECVMSG receive = nullptr;
+    DWORD returned = 0;
+    if (WSAIoctl(socket.value, SIO_GET_EXTENSION_FUNCTION_POINTER, &extension, sizeof(extension), &receive, sizeof(receive), &returned, nullptr, nullptr) != 0 || !receive)
+        return ::recvfrom(socket.value, data, static_cast<int>(length), nativeFlags, reinterpret_cast<sockaddr*>(&address), &size);
+    constexpr int arrivalCounter = 0x300A;
+    alignas(WSACMSGHDR) char control[128];
+    WSABUF vector{static_cast<ULONG>(length), data};
+    WSAMSG host{};
+    host.name = reinterpret_cast<sockaddr*>(&address);
+    host.namelen = size;
+    host.lpBuffers = &vector;
+    host.dwBufferCount = 1;
+    host.Control.buf = control;
+    host.Control.len = sizeof(control);
+    host.dwFlags = static_cast<ULONG>(nativeFlags);
+    DWORD count = 0;
+    const bool failed = receive(socket.value, &host, &count, nullptr, nullptr) != 0;
+    const bool truncated = failed && WSAGetLastError() == WSAEMSGSIZE;
+    if (failed && !truncated) return -1;
+    size = host.namelen;
+    if ((host.dwFlags & MSG_CTRUNC) == 0) {
+        for (auto* entry = WSA_CMSG_FIRSTHDR(&host); entry; entry = WSA_CMSG_NXTHDR(&host, entry)) {
+            if (entry->cmsg_level != SOL_SOCKET || entry->cmsg_type != arrivalCounter || entry->cmsg_len < WSA_CMSG_LEN(sizeof(std::uint64_t))) continue;
+            std::uint64_t arrived = 0;
+            std::memcpy(&arrived, WSA_CMSG_DATA(entry), sizeof(arrived));
+            LARGE_INTEGER now{};
+            LARGE_INTEGER frequency{};
+            QueryPerformanceCounter(&now);
+            QueryPerformanceFrequency(&frequency);
+            const auto current = static_cast<std::uint64_t>(now.QuadPart);
+            const auto rate = static_cast<std::uint64_t>(frequency.QuadPart);
+            if (rate == 0 || arrived == 0 || arrived > current) continue;
+            const auto elapsed = current - arrived;
+            age = static_cast<std::int64_t>(elapsed / rate * second + elapsed % rate * second / rate);
+        }
+    }
+    if (truncated) {
+        WSASetLastError(WSAEMSGSIZE);
+        return -1;
+    }
+    return static_cast<std::int64_t>(count);
+#else
+    alignas(cmsghdr) char control[128];
+    iovec vector{data, length};
+    msghdr host{};
+    host.msg_name = &address;
+    host.msg_namelen = size;
+    host.msg_iov = &vector;
+    host.msg_iovlen = 1;
+    host.msg_control = control;
+    host.msg_controllen = sizeof(control);
+    const auto received = ::recvmsg(socket.value, &host, nativeFlags);
+    if (received < 0) return received;
+    size = host.msg_namelen;
+    for (auto* entry = CMSG_FIRSTHDR(&host); entry; entry = CMSG_NXTHDR(&host, entry)) {
+        if (entry->cmsg_level != SOL_SOCKET) continue;
+        std::int64_t arrived = 0;
+#ifdef __linux__
+        if (entry->cmsg_type != SCM_TIMESTAMPNS || entry->cmsg_len < CMSG_LEN(sizeof(timespec))) continue;
+        timespec stamp{};
+        std::memcpy(&stamp, CMSG_DATA(entry), sizeof(stamp));
+        arrived = static_cast<std::int64_t>(stamp.tv_sec) * second + stamp.tv_nsec;
+#else
+        if (entry->cmsg_type != SCM_TIMESTAMP || entry->cmsg_len < CMSG_LEN(sizeof(timeval))) continue;
+        timeval stamp{};
+        std::memcpy(&stamp, CMSG_DATA(entry), sizeof(stamp));
+        arrived = static_cast<std::int64_t>(stamp.tv_sec) * second + static_cast<std::int64_t>(stamp.tv_usec) * 1000;
+#endif
+        timespec now{};
+        if (::clock_gettime(CLOCK_REALTIME, &now) != 0) continue;
+        age = std::max<std::int64_t>(0, static_cast<std::int64_t>(now.tv_sec) * second + now.tv_nsec - arrived);
+    }
+    return received;
+#endif
+}
+static std::vector<unsigned char> ArrivalTimestamps(const Socket& socket, int keptFlags, std::int64_t age) {
     std::vector<unsigned char> records;
-    if (socket.type != 2 || (socket.family != 2 && socket.family != 28)) return records;
+    if (!ArrivalStamped(socket, keptFlags)) return records;
     const bool binary = socket.family == 2 && (keptFlags & 0x2000) != 0;
     const bool micro = (keptFlags & 0x400) != 0;
     if (!binary && !micro) return records;
@@ -2374,8 +2457,14 @@ static std::vector<unsigned char> ArrivalTimestamps(const Socket& socket, int ke
         std::memcpy(records.data() + at + 16, &seconds, sizeof(seconds));
         std::memcpy(records.data() + at + 24, &fraction, sizeof(fraction));
     };
-    const auto seconds = static_cast<std::int64_t>(now.tv_sec);
-    const auto nanoseconds = static_cast<std::uint64_t>(now.tv_nsec);
+    constexpr std::int64_t second = 1000000000;
+    auto seconds = static_cast<std::int64_t>(now.tv_sec) - age / second;
+    auto remainder = static_cast<std::int64_t>(now.tv_nsec) - age % second;
+    if (remainder < 0) {
+        remainder += second;
+        --seconds;
+    }
+    const auto nanoseconds = static_cast<std::uint64_t>(remainder);
     if (binary) append(4, seconds, nanoseconds * 18446744073ull);
     if (micro) append(2, seconds, nanoseconds / 1000);
     return records;
@@ -2414,6 +2503,13 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
 #endif
     bool shut = ReceiveShut(*socket);
     std::vector<unsigned char> stamps;
+    int keptFlags = 0;
+    {
+        std::lock_guard lock(socket->modeMutex);
+        keptFlags = socket->options.keptFlags;
+    }
+    const bool stamped = header.control && ArrivalStamped(*socket, keptFlags);
+    std::int64_t age = 0;
     if (!shut && (total != 0 || socket->type == 1 || ReadableNow(*socket))) {
         size = sizeof(native);
         if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
@@ -2453,8 +2549,10 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
             if (const int error = rights.Install((flags & GuestControlCloseOnExec) != 0)) return Fail(error);
         } else
 #endif
-        if (!shut) received = ::recvfrom(socket->value, buffer.data(), static_cast<int>(buffer.size()),
-            NativeReceiveFlags(flags, socket->type), reinterpret_cast<sockaddr*>(&native), &size);
+        if (!shut) received = stamped
+            ? ReceiveStamped(*socket, buffer.data(), buffer.size(), NativeReceiveFlags(flags, socket->type), native, size, age)
+            : ::recvfrom(socket->value, buffer.data(), static_cast<int>(buffer.size()),
+                NativeReceiveFlags(flags, socket->type), reinterpret_cast<sockaddr*>(&native), &size);
         if (received < 0) {
 #ifdef _WIN32
             if (!records || WSAGetLastError() != WSAEMSGSIZE) return Fail(NativeError());
@@ -2463,14 +2561,7 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
             return Fail(NativeError());
 #endif
         }
-        if (header.control && !(received == 0 && ReceiveShut(*socket))) {
-            int keptFlags = 0;
-            {
-                std::lock_guard lock(socket->modeMutex);
-                keptFlags = socket->options.keptFlags;
-            }
-            stamps = ArrivalTimestamps(*socket, keptFlags);
-        }
+        if (stamped && !(received == 0 && ReceiveShut(*socket))) stamps = ArrivalTimestamps(*socket, keptFlags, age);
     }
     header.flags = flags;
     if (received > total) {

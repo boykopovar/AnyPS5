@@ -329,14 +329,14 @@ static void CheckArrivalTimestamps(int family) {
         const std::uint32_t expected = (binary ? 32u : 0u) + (micro ? 32u : 0u);
         for (const std::uint32_t capacity : {0u, 8u, 16u, 40u, 64u, 80u}) {
             const char payload[] = "stamped";
+            KernelTimespec before{};
+            Require(clock_gettime_nid_postfix(0, &before) == 0);
             Require(sendto_nid_postfix(sender, payload, sizeof(payload), 0, nullptr, 0) == sizeof(payload));
             std::array<unsigned char, 80> control;
             control.fill(0xa5);
             char received[sizeof(payload)]{};
             KernelIovec vector{received, sizeof(received)};
             GuestMsghdr message{nullptr, 0, &vector, 1, control.data(), capacity, -1};
-            KernelTimespec before{};
-            Require(clock_gettime_nid_postfix(0, &before) == 0);
             Require(recvmsg_nid_postfix(receiver, &message, 0) == sizeof(payload));
             KernelTimespec after{};
             Require(clock_gettime_nid_postfix(0, &after) == 0);
