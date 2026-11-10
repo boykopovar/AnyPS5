@@ -1209,13 +1209,7 @@ void changedCopyTests(const Device& device, Recorder& recorder) {
     }
 }
 
-bool boundChangedCopyTests(const Device& device) {
-    auto context = device.GetContext();
-    context.pushDescriptors = device.PushDescriptors();
-    if (!context.pushDescriptors) {
-        std::cout << "bound changed copy tests skipped: no push descriptors\n";
-        return false;
-    }
+void boundChangedCopyRun(const Context& context, const std::string& limit) {
     Recorder recorder(context);
     constexpr std::uint32_t words = 70001;
     constexpr VkDeviceSize resultOffset = 4;
@@ -1271,12 +1265,29 @@ bool boundChangedCopyTests(const Device& device) {
     std::vector<std::uint32_t> stored(words);
     std::memcpy(stored.data(), target->Bytes().data() + targetOffset, words * 4u);
     for (std::uint32_t i = 0; i < words; ++i) {
-        Require(stored[i] == expected[i], "bound changed copy word " + std::to_string(i) + ": " + std::to_string(stored[i]) + ", expected " + std::to_string(expected[i]));
+        Require(stored[i] == expected[i], "bound changed copy word " + std::to_string(i) + " with " + limit + ": " + std::to_string(stored[i]) + ", expected " + std::to_string(expected[i]));
     }
     std::uint32_t counted = 0;
     std::memcpy(&counted, counter->Bytes().data(), sizeof(counted));
-    Require(counted == contested, "the bound changed copy counted " + std::to_string(counted) + " words with bytes both sides changed, expected " + std::to_string(contested));
-    std::cout << "Bound changed copies store the shader's changed bytes over the target's own at unaligned offsets\n";
+    Require(counted == contested, "the bound changed copy with " + limit + " counted " + std::to_string(counted) + " words with bytes both sides changed, expected " + std::to_string(contested));
+    std::cout << "Bound changed copies store the shader's changed bytes over the target's own at unaligned offsets with " << limit << '\n';
+}
+
+bool boundChangedCopyTests(const Device& device) {
+    auto context = device.GetContext();
+    context.pushDescriptors = device.PushDescriptors();
+    if (!context.pushDescriptors) {
+        std::cout << "bound changed copy tests skipped: no push descriptors\n";
+        return false;
+    }
+    boundChangedCopyRun(context, "the device limits");
+    auto groups = context;
+    groups.limits.maxComputeWorkGroupCount[0] = 16;
+    boundChangedCopyRun(groups, "1024 words per dispatch");
+    auto range = context;
+    const auto alignment = std::max<VkDeviceSize>(range.limits.minStorageBufferOffsetAlignment, sizeof(std::uint32_t));
+    range.limits.maxStorageBufferRange = static_cast<std::uint32_t>(alignment + 1001 * sizeof(std::uint32_t));
+    boundChangedCopyRun(range, "1001 words per dispatch");
     return true;
 }
 
