@@ -1386,6 +1386,7 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores, DeviceFuncti
             if (encodedFunctions->cmdDispatch != nullptr) cmdDispatch = encodedFunctions->cmdDispatch;
             if (encodedFunctions->cmdBeginQuery != nullptr) cmdBeginQuery = encodedFunctions->cmdBeginQuery;
             if (encodedFunctions->cmdEndQuery != nullptr) cmdEndQuery = encodedFunctions->cmdEndQuery;
+            queriesEncoded = encodedFunctions->cmdBeginQuery != nullptr && encodedFunctions->cmdEndQuery != nullptr;
         }
     }
     if (!timelineSemaphores) return;
@@ -2826,6 +2827,7 @@ void Recorder::takeSegmentPool(Batch& batch) {
 }
 
 void Recorder::beginSegment(Batch& batch) {
+    if (!queriesEncoded) quiesce();
     Require(batch.segments != VK_NULL_HANDLE && batch.segmentNext < SegmentSlots, "an occlusion segment begins without a reset query slot");
     batch.segmentSlot = batch.segmentNext++;
     function(cmdBeginQuery, "vkCmdBeginQuery")(batch.commands, batch.segments, batch.segmentSlot, context.occlusionQueryPrecise ? VK_QUERY_CONTROL_PRECISE_BIT : 0u);
@@ -2833,6 +2835,7 @@ void Recorder::beginSegment(Batch& batch) {
 }
 
 void Recorder::endSegment(Batch& batch) {
+    if (!queriesEncoded) quiesce();
     function(cmdEndQuery, "vkCmdEndQuery")(batch.commands, batch.segments, batch.segmentSlot);
     batch.segmentActive = false;
     pendingSamples.push_back({batch.segmentPool, batch.segments, batch.segmentSlot});

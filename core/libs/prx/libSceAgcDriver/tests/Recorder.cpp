@@ -11135,6 +11135,22 @@ public:
         return continued;
     }
 
+    void DrawThrough(Recorder& recorder, const DeviceFunctions& table) const {
+        const auto commands = recorder.StartDrawPass(PassKey, true, false, PassAccess{}).commands;
+        recorder.PrepareSampleSlot();
+        begin(commands);
+        table.cmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        {
+            const Recorder::EncodingWindow window(recorder);
+            table.cmdDraw(commands, 3, 1, 0, 0);
+            recorder.NoteSampledDraw(commands);
+            table.cmdDraw(commands, 3, 1, 0, 0);
+            recorder.EndPassSamples();
+            table.cmdDraw(commands, 3, 1, 0, 0);
+        }
+        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, false, PassAccess{});
+    }
+
     void Record(VkCommandBuffer commands) const {
         begin(commands);
         context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
@@ -11542,6 +11558,31 @@ void uncountedPassTests(const Device& device) {
     if (context.occlusionQueryPrecise) Require(counted == 2 * CoverPass::Samples, "the batch-wide occlusion query counted " + std::to_string(counted) + " samples, not the " + std::to_string(2 * CoverPass::Samples) + " of the two draws around an uncounted pass");
 }
 
+void encodedSegmentCountTest(const Device& device, bool queriesHooked) {
+    const auto& context = device.GetContext();
+    DeviceFunctions table{};
+    FillDeviceFunctions(context, table);
+    if (!queriesHooked) {
+        table.cmdBeginQuery = nullptr;
+        table.cmdEndQuery = nullptr;
+    }
+    Recorder recorder(context, false, &table, context.queueFamily);
+    if (!recorder.Encodes()) return;
+    CoverPass cover(context);
+    recorder.CountSamples();
+    const auto base = recorder.SamplesTotal();
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(1)); });
+    constexpr std::uint64_t passes = 4;
+    for (std::uint64_t i = 0; i < passes; ++i) cover.DrawThrough(recorder, table);
+    recorder.Submit();
+    recorder.Sync();
+    CommandEncoder::SetDelayForTesting({});
+    const auto counted = recorder.SamplesTotal() - base;
+    const std::string kind = queriesHooked ? "encoded" : "raw";
+    Require(counted != 0, "no samples were counted for draws inside " + kind + " occlusion segments");
+    if (context.occlusionQueryPrecise) Require(counted == passes * CoverPass::Samples, kind + " occlusion segments counted " + std::to_string(counted) + " samples, not the " + std::to_string(passes * CoverPass::Samples) + " of the one draw inside each");
+}
+
 bool encodedSegmentTests(const Device& device) {
     const auto& context = device.GetContext();
     DeviceFunctions table{};
@@ -11572,6 +11613,8 @@ bool encodedSegmentTests(const Device& device) {
     CommandEncoder::SetDelayForTesting({});
     Require(Recorder::SampleDumpCounts().segments - before == segments, "the encoded occlusion segments were not all closed");
     Require(recorder.SamplesTotal() == base, "occlusion segments without draws counted samples");
+    encodedSegmentCountTest(device, true);
+    encodedSegmentCountTest(device, false);
     return true;
 }
 
