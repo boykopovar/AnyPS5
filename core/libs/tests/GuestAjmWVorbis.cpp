@@ -1,3 +1,4 @@
+#include "prx/libSceAjm.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
@@ -6,24 +7,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
-struct HeaderPacketParam {
-    std::uint64_t size;
-    std::uint32_t channels;
-    std::uint32_t sampleRate;
-    std::int32_t bytesPerSecond;
-    std::int32_t blockSize0Log2;
-    std::int32_t blockSize1Log2;
-    std::uint32_t reserved;
-    const std::uint8_t* setupPacket;
-    std::uint64_t setupPacketSize;
-    std::uint8_t* output;
-    std::uint64_t outputSize;
-    std::uint64_t writtenSize;
-};
-static_assert(sizeof(HeaderPacketParam) == 0x48);
-
-extern "C" int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(HeaderPacketParam* param);
+static_assert(sizeof(WVorbisHeaderPacketParameter) == 0x48);
 
 namespace {
 
@@ -40,11 +26,19 @@ void Require(bool value, const char* message) {
 
 constexpr std::array<std::uint8_t, 12> Setup {5, 'v', 'o', 'r', 'b', 'i', 's', 9, 0, 0xAA, 0xBB, 0xCC};
 
-HeaderPacketParam Valid(std::uint8_t* output, std::size_t outputSize) {
-    return {sizeof(HeaderPacketParam), 2, 48000, 16000, 8, 11, 0, Setup.data(), Setup.size(), output, outputSize, 0};
+WVorbisHeaderPacketParameter Valid(std::uint8_t* output, std::size_t outputSize) {
+    return {sizeof(WVorbisHeaderPacketParameter), 2, 48000, 16000, 8, 11, 0, Setup.data(), Setup.size(), output, outputSize, 0};
 }
 
-int Create(HeaderPacketParam param) { return sceAjmDecWVorbisCreateHeaderPacket(&param); }
+int Create(WVorbisHeaderPacketParameter param) { return sceAjmDecWVorbisCreateHeaderPacket(&param); }
+
+std::vector<std::uint8_t> LargeSetup(std::size_t size, std::uint16_t part1) {
+    std::vector<std::uint8_t> setup(size, 0x5A);
+    std::memcpy(setup.data(), Setup.data(), 7);
+    setup[7] = static_cast<std::uint8_t>(part1 & 0xFF);
+    setup[8] = static_cast<std::uint8_t>(part1 >> 8);
+    return setup;
+}
 
 void TestValidation() {
     std::array<std::uint8_t, 128> output {};
@@ -56,15 +50,15 @@ void TestValidation() {
     param.bytesPerSecond = -1;
     Require(Create(param) == InvalidParameter, "a negative byte rate is refused");
     param = Valid(output.data(), output.size());
-    param.blockSize0Log2 = 5;
+    param.shortBlockExponent = 5;
     Require(Create(param) == InvalidParameter, "a block size below 64 is refused");
-    param.blockSize0Log2 = 38;
-    param.blockSize1Log2 = 38;
+    param.shortBlockExponent = 38;
+    param.longBlockExponent = 38;
     Require(Create(param) == 0, "block size exponents are taken modulo 32 as the console's shift does");
     param = Valid(output.data(), output.size());
-    param.blockSize1Log2 = 7;
+    param.longBlockExponent = 7;
     Require(Create(param) == InvalidParameter, "block size 1 below block size 0 is refused");
-    param.blockSize1Log2 = 14;
+    param.longBlockExponent = 14;
     Require(Create(param) == InvalidParameter, "a block size above 8192 is refused");
     param = Valid(output.data(), output.size());
     param.setupPacket = nullptr;
@@ -73,6 +67,17 @@ void TestValidation() {
     param = Valid(output.data(), output.size());
     param.setupPacketSize = 8;
     Require(Create(param) == InvalidSetup, "a setup packet below 9 bytes is refused");
+    std::vector<std::uint8_t> longRemainder = LargeSetup(0x10009, 9);
+    std::vector<std::uint8_t> longRemainderOutput(56 + longRemainder.size());
+    param = Valid(longRemainderOutput.data(), longRemainderOutput.size());
+    param.setupPacket = longRemainder.data();
+    param.setupPacketSize = longRemainder.size();
+    Require(Create(param) == InvalidSetup, "a setup remainder that does not fit the 16-bit length field is refused");
+    auto shortSetup = Setup;
+    shortSetup[7] = 13;
+    param = Valid(output.data(), output.size());
+    param.setupPacket = shortSetup.data();
+    Require(Create(param) == InvalidSetup, "a first setup part longer than the packet is refused");
     param = Valid(nullptr, 0);
     Require(Create(param) == InvalidParameter, "a null output is refused before its size");
     param = Valid(output.data(), 9);
@@ -86,7 +91,7 @@ void TestPacket() {
     output.fill(0xEE);
     auto param = Valid(output.data(), output.size());
     Require(sceAjmDecWVorbisCreateHeaderPacket(&param) == 0, "a valid header packet is built");
-    Require(param.writtenSize == 56 + Setup.size(), "the written size covers the table, both headers and the setup packet");
+    Require(param.outputSize == 56 + Setup.size(), "the written size covers the table, both headers and the setup packet");
     constexpr std::uint8_t Expected[] {
         0, 0, 30, 0, 16, 0, 9, 0, 3, 0,
         1, 'v', 'o', 'r', 'b', 'i', 's', 0, 0, 0, 0, 2, 0x80, 0xBB, 0, 0, 0, 0, 0, 0, 0x00, 0xF4, 0x01, 0x00, 0, 0, 0, 0, 0xB8, 1,
@@ -98,10 +103,25 @@ void TestPacket() {
     Require(output[56 + Setup.size()] == 0xEE, "nothing is written past the packet");
 }
 
+void TestLargePacket() {
+    const std::vector<std::uint8_t> setup = LargeSetup(0x10000, 0x8000);
+    std::vector<std::uint8_t> output(56 + setup.size() + 1, 0xEE);
+    auto param = Valid(output.data(), output.size());
+    param.setupPacket = setup.data();
+    param.setupPacketSize = setup.size();
+    Require(sceAjmDecWVorbisCreateHeaderPacket(&param) == 0, "a 65536-byte setup packet whose two parts each fit a 16-bit length is built");
+    Require(param.outputSize == 56 + setup.size(), "the written size covers the table, both headers and the large setup packet");
+    constexpr std::uint8_t Lengths[] {0x00, 0x80, 0x00, 0x80};
+    Require(std::memcmp(output.data() + 6, Lengths, sizeof(Lengths)) == 0, "both setup lengths are 32768");
+    Require(std::memcmp(output.data() + 56, setup.data(), setup.size()) == 0, "the large setup packet follows unchanged");
+    Require(output[56 + setup.size()] == 0xEE, "nothing is written past the large packet");
+}
+
 }
 
 int main() {
     TestValidation();
     TestPacket();
+    TestLargePacket();
     std::puts("guest ajm wvorbis header packet: PASS");
 }

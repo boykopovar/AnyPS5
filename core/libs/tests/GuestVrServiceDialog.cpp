@@ -1,16 +1,8 @@
+#include "prx/libSceVrServiceDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceVrServiceDialogInitialize(void);
-int APS5_VABI sceVrServiceDialogOpen(const void* param);
-int APS5_VABI sceVrServiceDialogUpdateStatus(void);
-int APS5_VABI sceVrServiceDialogGetStatus(void);
-int APS5_VABI sceVrServiceDialogGetResult(void* result);
-int APS5_VABI sceVrServiceDialogClose(void);
-int APS5_VABI sceVrServiceDialogTerminate(void);
-}
 
 namespace {
 
@@ -32,8 +24,10 @@ int main() {
     std::int32_t result[2] = {-1, -1};
 
     Require(sceVrServiceDialogTerminate() == kErrNotInitialized);
+    Require(sceVrServiceDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceVrServiceDialogOpen(&param) == kErrNotInitialized);
     Require(sceVrServiceDialogClose() == kErrNotInitialized);
+    Require(sceVrServiceDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceVrServiceDialogGetResult(result) == kErrNotInitialized);
     Require(sceVrServiceDialogGetStatus() == kStatusNone);
     Require(sceVrServiceDialogUpdateStatus() == kStatusNone);
@@ -44,13 +38,18 @@ int main() {
     Require(sceVrServiceDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceVrServiceDialogOpen(nullptr) == kErrArgNull);
+    Require(sceVrServiceDialogGetResult(nullptr) == kErrArgNull);
     Require(sceVrServiceDialogGetResult(result) == kErrNotFinished);
+    Require(result[0] == -1 && result[1] == -1);
 
     Require(sceVrServiceDialogOpen(&param) == 0);
     Require(sceVrServiceDialogGetStatus() == kStatusFinished);
     Require(sceVrServiceDialogUpdateStatus() == kStatusFinished);
 
     Require(sceVrServiceDialogGetResult(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceVrServiceDialogGetResult(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceVrServiceDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == -1);
@@ -58,6 +57,9 @@ int main() {
     Require(sceVrServiceDialogClose() == 0);
     Require(sceVrServiceDialogTerminate() == 0);
     Require(sceVrServiceDialogTerminate() == kErrNotInitialized);
+    Require(sceVrServiceDialogClose() == kErrNotInitialized);
+    Require(sceVrServiceDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceVrServiceDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceVrServiceDialogGetStatus() == kStatusNone);
     Require(sceVrServiceDialogUpdateStatus() == kStatusNone);
 
@@ -68,5 +70,16 @@ int main() {
     result[0] = -1;
     Require(sceVrServiceDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
+    errno = 71;
+    Require(sceVrServiceDialogGetResult(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceVrServiceDialogTerminate() == 0);
+    Require(sceVrServiceDialogTerminate() == kErrNotInitialized);
+    Require(sceVrServiceDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceVrServiceDialogOpen(&param) == kErrNotInitialized);
+    Require(sceVrServiceDialogClose() == kErrNotInitialized);
+    Require(sceVrServiceDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceVrServiceDialogGetResult(result) == kErrNotInitialized);
+    Require(sceVrServiceDialogGetStatus() == kStatusNone);
+    Require(sceVrServiceDialogUpdateStatus() == kStatusNone);
 }

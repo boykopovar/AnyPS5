@@ -1,6 +1,9 @@
+#include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
+#include "tests/ExportLookup.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -17,24 +20,6 @@
 
 struct NpUniversalDataSystemEvent;
 struct NpUniversalDataSystemEventPropertyObject;
-
-extern "C" {
-int APS5_VABI sceNpUniversalDataSystemCreateContext(int*, int, uint32_t, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemRegisterContext(int, int, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemCreateHandle(int*);
-int APS5_VABI sceNpUniversalDataSystemCreateEvent(const char*, const NpUniversalDataSystemEventPropertyObject*, NpUniversalDataSystemEvent**, NpUniversalDataSystemEventPropertyObject**);
-int APS5_VABI sceNpUniversalDataSystemDestroyEvent(NpUniversalDataSystemEvent*);
-int APS5_VABI sceNpUniversalDataSystemPostEvent(int, int, const void*, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemCreateEventPropertyObject(NpUniversalDataSystemEventPropertyObject**);
-int APS5_VABI sceNpUniversalDataSystemDestroyEventPropertyObject(NpUniversalDataSystemEventPropertyObject*);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt32(NpUniversalDataSystemEventPropertyObject*, const char*, int32_t);
-int APS5_VABI sceNpTrophy2CreateContext(int*, int, uint32_t, uint64_t);
-int APS5_VABI sceNpTrophy2GetGameInfo(int, int, NpTrophy2GameDetails*, NpTrophy2GameData*);
-int APS5_VABI sceNpTrophy2GetGroupInfo(int, int, int, NpTrophy2GroupDetails*, NpTrophy2GroupData*);
-int APS5_VABI sceNpTrophy2GetGroupInfoArray(int, int, uint32_t, uint32_t, NpTrophy2GroupDetails*, NpTrophy2GroupData*, uint32_t*);
-int APS5_VABI sceNpTrophy2GetTrophyInfo(int, int, int, NpTrophy2Details*, NpTrophy2Data*);
-int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int, int, uint32_t, uint32_t, NpTrophy2Details*, NpTrophy2Data*, uint32_t*);
-}
 
 static constexpr int InitialUser = 0x10000000;
 static constexpr int InvalidTrophyId = static_cast<int>(0x8055390Au);
@@ -239,7 +224,33 @@ static void ReportPlaceholders() {
     }
 }
 
-int main() {
+static void ReportExportLinked() {
+    auto* volatile linked = &sceNpUniversalDataSystemIntInitialize;
+    Require(linked != nullptr, "sceNpUniversalDataSystemIntInitialize is not linked");
+}
+
+static void ResolveInternalExports(const char* path) {
+    struct Export {
+        int (APS5_VABI* function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {sceNpUniversalDataSystemIntAbortHandle, "sceNpUniversalDataSystemIntAbortHandle"},
+        {sceNpUniversalDataSystemIntCheckNetSyncTitles, "sceNpUniversalDataSystemIntCheckNetSyncTitles"},
+        {sceNpUniversalDataSystemIntCreateContext, "sceNpUniversalDataSystemIntCreateContext"},
+        {sceNpUniversalDataSystemIntCreateHandle, "sceNpUniversalDataSystemIntCreateHandle"},
+        {sceNpUniversalDataSystemIntDeleteAllData, "sceNpUniversalDataSystemIntDeleteAllData"},
+        {sceNpUniversalDataSystemIntDeleteUserDataWithServerData, "sceNpUniversalDataSystemIntDeleteUserDataWithServerData"},
+        {sceNpUniversalDataSystemIntDestroyContext, "sceNpUniversalDataSystemIntDestroyContext"},
+        {sceNpUniversalDataSystemIntDestroyHandle, "sceNpUniversalDataSystemIntDestroyHandle"},
+        {sceNpUniversalDataSystemIntNetSyncTitles, "sceNpUniversalDataSystemIntNetSyncTitles"},
+        {sceNpUniversalDataSystemIntTerminate, "sceNpUniversalDataSystemIntTerminate"},
+    };
+    Require(ExportsResolveByName(path, exports, "sceNpUniversalDataSystemIntNotExported"),
+            "the internal exports do not all resolve by name");
+}
+
+int main(int argc, char** argv) {
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-trophy-data-" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(root);
@@ -252,6 +263,8 @@ int main() {
     ReportTrophyData(context);
     PostUnlocks(context);
     ReportPlaceholders();
+    ReportExportLinked();
+    ResolveInternalExports(argc > 1 ? argv[1] : nullptr);
 
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);

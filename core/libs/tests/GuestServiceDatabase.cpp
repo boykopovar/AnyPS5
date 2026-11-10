@@ -1,3 +1,4 @@
+#include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libScePosixForWebKit/GuestResolver.hpp"
 #include <cerrno>
@@ -7,8 +8,6 @@
 #include <cstring>
 #include <source_location>
 #include <thread>
-
-extern "C" GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char*, const char*);
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
@@ -50,6 +49,8 @@ int main() {
     Require(getservbyname_nid_postfix("domain", "sctp") == nullptr);
     Require(getservbyname_nid_postfix("ntp", "TCP") == nullptr);
     Require(getservbyname_nid_postfix("HTTP", "tcp") == nullptr);
+    Require(getservbyname_nid_postfix(nullptr, "tcp") == nullptr);
+    Require(getservbyname_nid_postfix(nullptr, nullptr) == nullptr);
 
     auto* ntp = getservbyname_nid_postfix("ntp", "udp");
     Require(ntp && NetworkPort(ntp, 123));

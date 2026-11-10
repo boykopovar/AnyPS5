@@ -71,8 +71,17 @@ std::string Join(const std::vector<std::string>& messages) {
     return text;
 }
 
+std::string ExpectedHead() {
+    const std::string path = __FILE__;
+    const std::string name = "LogMacros.cpp";
+    Require(path.size() > name.size(), "source path");
+    const char separator = path[path.size() - name.size() - 1];
+    Require(separator == '/' || separator == '\\', "source path separator");
+    return std::string("[tests") + separator + name + ":";
+}
+
 bool HasLine(const std::string& text, const std::string& tail, bool timestamped) {
-    const std::string head = "[tests/LogMacros.cpp:";
+    const std::string head = ExpectedHead();
     std::size_t headStart = 0;
     if (timestamped) {
         const auto timestampEnd = text.find(" s] ");

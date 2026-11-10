@@ -17,10 +17,16 @@ void write(const std::filesystem::path& path, const std::string& text) {
     require(std::filesystem::is_regular_file(path), "Cannot create " + path.string());
 }
 
-void requireMissing(const std::filesystem::path& first, const std::filesystem::path& second) {
+void requireMissing(
+    const std::filesystem::path& first,
+    const std::filesystem::path& second,
+    const std::filesystem::path& missing
+) {
     try {
         Io::SameFile(first, second);
-    } catch (const std::filesystem::filesystem_error&) {
+    } catch (const std::filesystem::filesystem_error& error) {
+        require(error.code() == std::errc::no_such_file_or_directory, "SameFile reported the wrong error for a missing path");
+        require(error.path1() == missing, "SameFile reported the wrong missing path");
         return;
     }
     throw std::runtime_error("SameFile accepted a missing file");
@@ -41,8 +47,9 @@ void run(const std::filesystem::path& directory) {
     require(!Io::SameFile(first, copy), "A copy with the same contents is the same file");
     require(Io::SameFile(folder, directory / "folder" / "."), "Two spellings of one directory differ");
     require(!Io::SameFile(first, folder), "A file is the same as a directory");
-    requireMissing(directory / "missing.bin", first);
-    requireMissing(first, directory / "missing.bin");
+    const auto missing = directory / "missing.bin";
+    requireMissing(missing, first, missing);
+    requireMissing(first, missing, missing);
 }
 
 }

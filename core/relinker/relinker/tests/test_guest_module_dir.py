@@ -10,6 +10,7 @@ from test_guest_intel_trampolines import main_fixture, pe_sections
 from test_guest_module_directories import module_with_symbol, needed_libraries
 from test_guest_needed_modules import executable_with_needed, module_with_needed
 from test_macos_output import MachO
+from test_windows_import_modules import executable, provider
 
 
 def pe_export_names(data):
@@ -199,6 +200,21 @@ def main():
             else:
                 assert "$ORIGIN/app0/Media/Modules/needed.prx.guest.prx" in needed_libraries(output.read_bytes()), needed_libraries(output.read_bytes())
 
+            for directory, deferred in (("Media/Modules", True), ("sce_module", False)):
+                case = work / f"{windows}-imported-{deferred}"
+                (case / directory).mkdir(parents=True)
+                (case / directory / "needed.prx").write_bytes(provider(42))
+                result, output = convert(case, windows, ["--module-dir", directory] if deferred else [], executable("needed.prx"))
+                assert result.returncode == 0, (result.stdout, result.stderr)
+                line = f"Deferred module app0/{directory}/needed.prx.guest.prx: the executable imports from it, but it starts only when the title loads it\n"
+                if windows:
+                    assert (line.encode() in output.read_bytes()) == deferred, directory
+                    if os.name == "nt":
+                        run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
+                        assert run.returncode == 42 and (line in run.stdout) == deferred, (directory, run.returncode, run.stdout, run.stderr)
+                else:
+                    assert f"$ORIGIN/app0/{directory}/needed.prx.guest.prx" in needed_libraries(output.read_bytes()), needed_libraries(output.read_bytes())
+
             case = work / f"{windows}-root"
             case.mkdir()
             (case / "root.prx").write_bytes(module_with_symbol(True))
@@ -251,7 +267,8 @@ def main():
             for rejected, message in ((str(plugins), "inside the guest module parent directory"),
                                       ("../outside", "inside the guest module parent directory"),
                                       ("Media/Missing", "not a directory"),
-                                      ("sce_module", "Duplicate guest module directory")):
+                                      ("sce_module", "Duplicate guest module directory"),
+                                      ("sce_module", "sce_module, sce_modules and prx are relinked without --module-dir")):
                 result, output = convert(case, windows, ["--module-dir", rejected])
                 assert result.returncode == 2 and message in result.stderr, (rejected, result.stderr)
 
@@ -262,6 +279,7 @@ def main():
             for names in aliases:
                 result, output = convert(case, windows, [option for name in names for option in ("--module-dir", name)])
                 assert result.returncode == 2 and "Duplicate guest module directory" in result.stderr, (names, result.stderr)
+                assert ("relinked without --module-dir" in result.stderr) == (names != ["Media/Plugins", "media/plugins"]), (names, result.stderr)
             if not (case / "MEDIA").exists():
                 (case / "SCE_MODULE").mkdir()
                 result, output = convert(case, windows, ["--module-dir", "SCE_MODULE"])

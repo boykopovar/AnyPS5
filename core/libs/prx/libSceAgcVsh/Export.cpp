@@ -1,10 +1,11 @@
-#include <cstdint>
-#include <cstddef>
-#include "SceTypes.hpp"
-#include "prx/libc/include/General.hpp"
+#include "prx/libSceAgcVsh/include/Api.hpp"
 
 extern "C" {
 
-APS5_DUMMY_FUN
+int APS5_VABI sceAgcSuspendPointAndCheckStatus_nid_no_patch(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+APS5_EXPORT("b+fis+WZ3Ig", sceAgcSuspendPointAndCheckStatus_nid_no_patch);
 
 }

@@ -1,16 +1,8 @@
+#include "prx/libSceGameCustomDataDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
+#include <cerrno>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceGameCustomDataDialogInitialize(void);
-int APS5_VABI sceGameCustomDataDialogOpenA(const void* param);
-int APS5_VABI sceGameCustomDataDialogUpdateStatus(void);
-int APS5_VABI sceGameCustomDataDialogGetStatus(void);
-int APS5_VABI sceGameCustomDataDialogGetResultA(void* result);
-int APS5_VABI sceGameCustomDataDialogClose(void);
-int APS5_VABI sceGameCustomDataDialogTerminate(void);
-}
 
 namespace {
 
@@ -32,8 +24,12 @@ int main() {
     std::int32_t result[2] = {-1, -1};
 
     Require(sceGameCustomDataDialogTerminate() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogOpen() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogOpenA(nullptr) == kErrNotInitialized);
     Require(sceGameCustomDataDialogOpenA(&param) == kErrNotInitialized);
     Require(sceGameCustomDataDialogClose() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetResult() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetResultA(nullptr) == kErrNotInitialized);
     Require(sceGameCustomDataDialogGetResultA(result) == kErrNotInitialized);
     Require(sceGameCustomDataDialogGetStatus() == kStatusNone);
     Require(sceGameCustomDataDialogUpdateStatus() == kStatusNone);
@@ -44,6 +40,7 @@ int main() {
     Require(sceGameCustomDataDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceGameCustomDataDialogOpenA(nullptr) == kErrArgNull);
+    Require(sceGameCustomDataDialogGetResultA(nullptr) == kErrArgNull);
     Require(sceGameCustomDataDialogGetResultA(result) == kErrNotFinished);
 
     Require(sceGameCustomDataDialogOpenA(&param) == 0);
@@ -52,12 +49,19 @@ int main() {
 
     Require(sceGameCustomDataDialogGetResultA(nullptr) == kErrArgNull);
     Require(sceGameCustomDataDialogGetResultA(result) == 0);
+    errno = 71;
+    Require(sceGameCustomDataDialogGetResultA(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == -1);
 
     Require(sceGameCustomDataDialogClose() == 0);
     Require(sceGameCustomDataDialogTerminate() == 0);
     Require(sceGameCustomDataDialogTerminate() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogOpen() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogOpenA(nullptr) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetResult() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetResultA(nullptr) == kErrNotInitialized);
     Require(sceGameCustomDataDialogGetStatus() == kStatusNone);
     Require(sceGameCustomDataDialogUpdateStatus() == kStatusNone);
 
@@ -69,4 +73,14 @@ int main() {
     Require(sceGameCustomDataDialogGetResultA(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(sceGameCustomDataDialogTerminate() == 0);
+    Require(sceGameCustomDataDialogTerminate() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogOpen() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogOpenA(nullptr) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogOpenA(&param) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogClose() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetResult() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetResultA(nullptr) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetResultA(result) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetStatus() == kStatusNone);
+    Require(sceGameCustomDataDialogUpdateStatus() == kStatusNone);
 }

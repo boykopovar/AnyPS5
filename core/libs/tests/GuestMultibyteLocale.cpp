@@ -1,24 +1,10 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-std::size_t APS5_VABI mbrtowc_nid_postfix(std::uint16_t*, const char*, std::size_t, void*);
-std::size_t APS5_VABI mbrlen_nid_postfix(const char*, std::size_t, void*);
-int APS5_VABI mbtowc_nid_postfix(std::uint16_t*, const char*, std::size_t);
-int APS5_VABI mblen_nid_postfix(const char*, std::size_t);
-std::size_t APS5_VABI wcrtomb_nid_postfix(char*, std::uint16_t, void*);
-int APS5_VABI wctomb_nid_postfix(char*, std::uint16_t);
-int APS5_VABI mbsinit_nid_postfix(const void*);
-int APS5_VABI _Getmbcurmax_nid_postfix();
-std::size_t APS5_VABI mbstowcs_nid_postfix(std::uint16_t*, const char*, std::size_t);
-std::size_t APS5_VABI wcstombs_nid_postfix(char*, const std::uint16_t*, std::size_t);
-std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t*, const char**, std::size_t, void*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 constexpr auto Invalid = static_cast<std::size_t>(-1);
 constexpr auto Incomplete = static_cast<std::size_t>(-2);
@@ -83,6 +69,7 @@ static void CheckState() {
     Require(mbtowc_nid_postfix(&value, "\xa9", 1) == 1 && value == 0xe9, "mbtowc keeps the partial character");
     Require(mbtowc_nid_postfix(&value, "\xe2\x82\xac", 8) == 3 && value == 0x20ac, "mbtowc limits the count to three bytes");
     mbtowc_nid_postfix(&value, "\xc3", 1);
+
     Require(mbtowc_nid_postfix(nullptr, nullptr, 0) == 0 && mbtowc_nid_postfix(&value, "A", 1) == 1, "a null string resets mbtowc");
     Require(mblen_nid_postfix("\xc3", 1) == -1 && mblen_nid_postfix("\xa9", 1) == -1, "mblen keeps no state");
     Require(mblen_nid_postfix("\xe2\x82\xac", 3) == 3 && mblen_nid_postfix(nullptr, 0) == 0, "mblen");
@@ -127,10 +114,54 @@ static void CheckStrings() {
     Require(wcstombs_nid_postfix(nullptr, source, 0) == 6, "wcstombs counts bytes");
 }
 
+static void CheckMbrlen() {
+    unsigned char state[16]{};
+    Require(mbrlen_nid_postfix("A", 1, state) == 1, "mbrlen counts an ASCII byte");
+    Require(mbrlen_nid_postfix("\xc3\xa9", 2, state) == 2, "mbrlen counts a two-byte form");
+    Require(mbrlen_nid_postfix("\xe2\x82\xac" "A", 4, state) == 3 && mbsinit_nid_postfix(state), "mbrlen counts one three-byte form");
+    Require(mbrlen_nid_postfix("", 1, state) == 0 && mbsinit_nid_postfix(state), "mbrlen returns 0 for a NUL byte");
+    Require(mbrlen_nid_postfix("A", 0, state) == Incomplete && mbsinit_nid_postfix(state), "mbrlen of no bytes is incomplete");
+    Require(mbrlen_nid_postfix("\xe2\x82", 2, state) == Incomplete && !mbsinit_nid_postfix(state), "mbrlen keeps a partial form pending");
+    Require(mbrlen_nid_postfix("\xac", 1, state) == 1 && mbsinit_nid_postfix(state), "mbrlen counts only the byte that completes the form");
+    *__error_nid_postfix() = 0;
+    Require(mbrlen_nid_postfix("\x80", 1, state) == Invalid && *__error_nid_postfix() == 86, "mbrlen rejects a lone continuation byte with EILSEQ");
+    Require(mbrlen_nid_postfix(nullptr, 0, state) == 0 && mbsinit_nid_postfix(state), "mbrlen with a null string resets the state");
+
+    std::uint16_t value = 0;
+    Require(mbrlen_nid_postfix("\xe2", 1, nullptr) == Incomplete, "mbrlen keeps a partial form in its own internal state");
+    Require(mbrtowc_nid_postfix(&value, "A", 1, nullptr) == 1 && value == 'A', "mbrtowc does not share mbrlen's internal state");
+    Require(mbrlen_nid_postfix("\x82\xac", 2, nullptr) == 2, "mbrlen completes the form from its internal state");
+}
+
+static void CheckDinkumwareHelpers() {
+    unsigned char state[16]{};
+    unsigned char referenceState[16]{};
+    std::uint16_t value = 0;
+    std::uint16_t reference = 0;
+    Require(_Mbrtowc_nid_postfix(&value, "\xe2\x82\xac", 3, state) == mbrtowc_nid_postfix(&reference, "\xe2\x82\xac", 3, referenceState),
+        "_Mbrtowc matches mbrtowc for a three-byte form");
+    Require(value == reference && value == 0x20ac, "_Mbrtowc decodes the character");
+    std::memset(state, 0, sizeof(state));
+    std::memset(referenceState, 0, sizeof(referenceState));
+    Require(_Mbrtowc_nid_postfix(&value, "\xe2", 1, state) == mbrtowc_nid_postfix(&reference, "\xe2", 1, referenceState),
+        "_Mbrtowc matches mbrtowc for an incomplete form");
+    Require(_Mbrtowc_nid_postfix(nullptr, nullptr, 0, nullptr) == mbrtowc_nid_postfix(nullptr, nullptr, 0, nullptr),
+        "_Mbrtowc matches mbrtowc for a null string and state");
+
+    char encoded[8]{};
+    char referenceEncoded[8]{};
+    const auto encodedLength = _Wcrtomb_nid_postfix(encoded, 0x20ac, nullptr);
+    Require(encodedLength == wcrtomb_nid_postfix(referenceEncoded, 0x20ac, nullptr), "_Wcrtomb matches wcrtomb");
+    Require(encodedLength == 3 && std::memcmp(encoded, referenceEncoded, encodedLength) == 0, "_Wcrtomb encodes the character");
+    Require(_Wcrtomb_nid_postfix(nullptr, 'A', nullptr) == 1, "_Wcrtomb accepts a null destination");
+}
+
 int main() {
     CheckDecoding();
     CheckState();
+    CheckMbrlen();
     CheckEncoding();
     CheckStrings();
+    CheckDinkumwareHelpers();
     return 0;
 }

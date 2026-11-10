@@ -1,15 +1,8 @@
+#include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
-
-extern "C" {
-int APS5_VABI sceGnmDrawInitDefaultHardwareState(std::uint32_t*, std::uint32_t);
-int APS5_VABI sceGnmDrawInitDefaultHardwareState200(std::uint32_t*, std::uint32_t);
-int APS5_VABI sceGnmDrawInitDefaultHardwareState350(std::uint32_t*, std::uint32_t);
-int APS5_VABI sceGnmDrawInitToDefaultContextState(std::uint32_t*, std::uint32_t);
-int APS5_VABI sceGnmDrawInitToDefaultContextState400(std::uint32_t*, std::uint32_t);
-}
 
 namespace {
 
@@ -36,6 +29,7 @@ void RequireUntouchedFrom(std::uint32_t at) {
 }
 
 void CheckHardwareState(StateWriter writer, std::uint32_t stateWords, std::initializer_list<std::uint32_t> tail) {
+    Require(writer(nullptr, 0x100) == -1);
     Require(writer(Fresh(), 0xff) == 0);
     RequireUntouchedFrom(0);
 
@@ -54,6 +48,7 @@ void CheckHardwareState(StateWriter writer, std::uint32_t stateWords, std::initi
 }
 
 void CheckContextState(StateWriter writer, std::uint32_t packetWords, std::uint32_t stateWords, std::initializer_list<std::uint32_t> tail) {
+    Require(writer(nullptr, packetWords) == -1);
     Require(writer(Fresh(), packetWords - 1) == 0);
     RequireUntouchedFrom(0);
     Require(writer(Fresh(), packetWords + 1) == 0);

@@ -1,5 +1,6 @@
 import { abortAndDiscardOutput, OutputDirectoryTransaction } from "./output-directory.mjs";
 import { batchMemoryEstimate } from "./batch.mjs";
+import { failureReport } from "./failure-report.mjs";
 
 const $ = id => document.getElementById(id);
 const stages = ["Converting executable", "Converting PRX modules", "Scanning syscalls", "Scanning instructions", "Converting instructions", "Analysing imports", "Building output image", "Writing output"];
@@ -67,8 +68,9 @@ function update() {
     const totalBytes = sum(summaries.map(summary => summary.totalBytes));
     const modules = sum(summaries.map(summary => summary.modules));
     const sizeText = value => value === null ? "beyond the supported size range" : bytes(value);
+    const countText = value => value === null ? "beyond the supported range" : value;
     $("archive-info").textContent = multi
-      ? `${selectedInputs.length} apps · ${sizeText(totalFiles)} files · ${sizeText(totalBytes)} expanded · ${sizeText(modules)} modules · ${sizeText(selectedBytes)} ${target} conversion input`
+      ? `${selectedInputs.length} apps · ${countText(totalFiles)} files · ${sizeText(totalBytes)} expanded · ${countText(modules)} modules · ${sizeText(selectedBytes)} ${target} conversion input`
       : `${summaries[0].files} files · ${bytes(summaries[0].totalBytes)} expanded · ${summaries[0].modules} modules · ${bytes(target === "windows" ? summaries[0].windowsSelectedBytes : summaries[0].selectedBytes)} ${target} conversion input` + (summaries[0].root ? ` · Root: ${summaries[0].root}` : "");
   }
   $("save-note").textContent = multi ? $("save").value === "memory" ? "Creates one ZIP with each app in its own folder. The complete bundle must fit in the 256 MiB memory-download budget." : "Writes one compressed ZIP containing each app in its own folder, without holding the whole bundle in memory." : $("save").value === "disk" ? "Creates a subfolder with the executable, libs and app0. No ZIP compression. Incomplete output folders are removed after cancellation or failure. Browsers may block DLL and other restricted files; use ZIP for those apps." : $("save").value === "zip" ? "Writes a compressed ZIP directly to disk without holding the whole archive in memory." : "Up to 256 MiB including expanded files and output overhead.";
@@ -86,6 +88,14 @@ function lock(value) {
 async function fail(message) {
   if (failing) return;
   failing = true;
+  const report = failureReport({
+    message,
+    phase: $("phase").textContent,
+    input: $("current-file").textContent,
+    target: document.querySelector('input[name="target"]:checked').value,
+    release,
+    log: logs
+  });
   worker?.terminate();
   worker = null;
   working = true;
@@ -102,7 +112,16 @@ async function fail(message) {
   const activeSink = sink;
   sink = null;
   for (const failure of await abortAndDiscardOutput(transaction, activeSink)) message += `\n${failure}`;
-  $("error").textContent = message;
+  if (report === message) $("error").textContent = message;
+  else {
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "Failure details";
+    const text = document.createElement("pre");
+    text.textContent = report;
+    details.append(summary, text);
+    $("error").replaceChildren(document.createTextNode(message), details);
+  }
   $("error").hidden = false;
   $("status").hidden = true;
   $("cancel").hidden = true;
@@ -117,7 +136,8 @@ async function fail(message) {
   update();
 }
 
-async function onMessage({ data }) {
+async function onMessage({ data }, currentWorker) {
+  if (currentWorker !== worker || failing) return;
   try {
     if (data.type === "progress") {
       if (data.message) {
@@ -176,27 +196,41 @@ async function onMessage({ data }) {
       if (parts.some(part => !part || part === "." || part === ".." || part.includes("\\"))) throw new Error("Invalid output path");
       const filename = data.type === "open-file" ? parts.pop() : null;
       let parent = outputDirectory;
-      for (const part of parts) parent = await parent.getDirectoryHandle(part, { create: true });
+      for (const part of parts) {
+        parent = await parent.getDirectoryHandle(part, { create: true });
+        if (currentWorker !== worker) return;
+      }
       if (filename) {
         try {
           const handle = await parent.getFileHandle(filename, { create: true });
-          sink = await handle.createWritable();
+          if (currentWorker !== worker) return;
+          const writable = await handle.createWritable();
+          if (currentWorker !== worker) {
+            await writable.abort().catch(() => {});
+            return;
+          }
+          sink = writable;
         } catch (error) {
           throw new Error(`Cannot write ${data.name}: ${error.message}. Choose ZIP output if the browser blocks this file type.`);
         }
       }
-      worker?.postMessage({ type: "written" });
+      if (currentWorker === worker) currentWorker.postMessage({ type: "written" });
     } else if (data.type === "close-file") {
       if (!sink) throw new Error("No output file is open");
       await sink.close();
+      if (currentWorker !== worker) return;
       sink = null;
-      worker?.postMessage({ type: "written" });
+      currentWorker.postMessage({ type: "written" });
     } else if (data.type === "write") {
       if (!sink) throw new Error("No output file is open");
       await sink.write(data.bytes);
-      worker?.postMessage({ type: "written" });
+      if (currentWorker === worker) currentWorker.postMessage({ type: "written" });
     } else if (data.type === "complete") {
-      if (sink) { await sink.close(); sink = null; }
+      if (sink) {
+        await sink.close();
+        if (currentWorker !== worker) return;
+        sink = null;
+      }
       working = false;
       $("done").hidden = false;
       $("status").hidden = true;
@@ -226,7 +260,9 @@ async function onMessage({ data }) {
       lock(false);
       update();
     } else if (data.type === "error") await fail(data.message);
-  } catch (error) { await fail(error.message); }
+  } catch (error) {
+    if (currentWorker === worker) await fail(error.message);
+  }
 }
 
 async function selectInputs(inputs) {
@@ -253,21 +289,28 @@ async function selectInputs(inputs) {
   $("progress").removeAttribute("value");
   lock(true);
   update();
-  worker = new Worker(new URL("./worker.mjs", import.meta.url), { type: "module" });
-  worker.onmessage = onMessage;
-  worker.onerror = event => fail(event.message || "The converter worker stopped. Try a smaller app or use the native relinker.");
-  worker.postMessage({ type: "inspect", inputs });
+  const currentWorker = new Worker(new URL("./worker.mjs", import.meta.url), { type: "module" });
+  worker = currentWorker;
+  currentWorker.onmessage = event => onMessage(event, currentWorker);
+  currentWorker.onerror = event => {
+    if (currentWorker === worker) return fail(event.message || "The converter worker stopped. Try a smaller app or use the native relinker.");
+  };
+  currentWorker.postMessage({ type: "inspect", inputs });
 }
 
 $("choose").onclick = () => { $("file").value = ""; $("file").click(); };
 $("change").onclick = () => {
   if (working) return;
+  worker?.terminate();
+  worker = null;
   if (downloadUrl) { URL.revokeObjectURL(downloadUrl); downloadUrl = null; }
-  file = null;
-  summary = null;
+  selectedInputs = [];
+  summaries = [];
+  inspectionComplete = false;
   $("file").value = "";
   $("folder").value = "";
-  for (const id of ["selection", "warnings", "error", "done", "download"]) $(id).hidden = true;
+  $("app-list").replaceChildren();
+  for (const id of ["selection", "warnings", "error", "done", "download", "app-list"]) $(id).hidden = true;
   $("acknowledge").checked = false;
   $("drop").hidden = false;
   update();
@@ -294,6 +337,7 @@ for (const id of ["save", "target", "acknowledge"]) $(id).addEventListener("chan
 $("cancel").onclick = () => fail("Cancelled. Choose the ZIP or folder again to restart.");
 $("convert").onclick = async () => {
   if ($("convert").disabled) return;
+  const currentWorker = worker;
   working = true;
   lock(true);
   update();
@@ -302,18 +346,31 @@ $("convert").onclick = async () => {
     if ($("save").value === "zip") {
       const name = selectedInputs.length > 1 ? `anyps5-${target}-apps.zip` : `${selectedInputs[0].name.replace(/\.zip$/iu, "")}-${target}.zip`;
       const handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: "ZIP archive", accept: { "application/zip": [".zip"] } }] });
-      sink = await handle.createWritable();
+      if (currentWorker !== worker) return;
+      const writable = await handle.createWritable();
+      if (currentWorker !== worker) {
+        await writable.abort().catch(() => {});
+        return;
+      }
+      sink = writable;
     } else if ($("save").value === "disk") {
-      const parent = await window.showDirectoryPicker({ mode: "readwrite" });
       const name = selectedInputs[0].name.replace(/\.zip$/iu, "") + "-" + target;
-      outputTransaction = await OutputDirectoryTransaction.create(parent, name);
-      outputDirectory = outputTransaction.directory;
+      const parent = await window.showDirectoryPicker({ mode: "readwrite" });
+      if (currentWorker !== worker) return;
+      const transaction = await OutputDirectoryTransaction.create(parent, name);
+      if (currentWorker !== worker) {
+        await transaction.discard();
+        return;
+      }
+      outputTransaction = transaction;
+      outputDirectory = transaction.directory;
     }
     $("status").hidden = false;
     $("cancel").hidden = false;
     $("error").hidden = true;
-    worker.postMessage({ type: "convert", target, toIntel: $("intel").checked, mode: $("save").value });
+    currentWorker.postMessage({ type: "convert", target, toIntel: $("intel").checked, mode: $("save").value });
   } catch (error) {
+    if (currentWorker !== worker) return;
     if (error.name === "AbortError") { working = false; lock(false); update(); }
     else await fail(error.message);
   }
@@ -328,7 +385,7 @@ if (supported) fetch("./release.json", { cache: "no-cache" }).then(response => {
   if (!value.tag || !["windows", "linux"].every(target => Number.isSafeInteger(value.platforms?.[target]?.expandedBytes))) throw new Error("Invalid release information");
   release = value;
   update();
-}).catch(error => fail(error.message));
+}).catch(error => fail(error instanceof TypeError ? "Cannot reach the release information: check the connection and reload the page." : error.message));
 
 if (!("webkitdirectory" in $("folder"))) {
   $("choose-folder").disabled = true;

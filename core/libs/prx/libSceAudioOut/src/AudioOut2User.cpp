@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -23,6 +24,11 @@ int APS5_VABI sceAudioOut2UserCreate(uint32_t user_id, AudioOut2UserHandle* hand
     g_users.insert(g_nextUser);
     *handle = g_nextUser++;
     return 0;
+}
+
+int APS5_VABI sceAudioOut2UserCreateEx(uint32_t user_id, const void* attributes, AudioOut2UserHandle* handle) {
+    (void)attributes;
+    return sceAudioOut2UserCreate(user_id, handle);
 }
 
 int APS5_VABI sceAudioOut2UserDestroy(AudioOut2UserHandle handle) {

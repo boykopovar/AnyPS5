@@ -1,5 +1,6 @@
 #include <relinker/output/CallRegistryWriter.hpp>
 #include <cstdint>
+#include <locale>
 #include <sstream>
 
 namespace Relinker {
@@ -66,6 +67,7 @@ static std::string _jsonString(const std::string& s) {
 
 static std::string _hexOffset(FileByteOffset v) {
     std::ostringstream oss;
+    oss.imbue(std::locale::classic());
     oss << "\"0x" << std::hex << std::uppercase << v << "\"";
     return oss.str();
 }
