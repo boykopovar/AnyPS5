@@ -4413,9 +4413,10 @@ static int MatchesFactoryCreate(const void* context, IntrusivePtr* out, const st
     return 0;
 }
 
-static int CopyMatchesVector(IntrusivePtr* member, const IntrusivePtr* source) {
+static int CopyMatchesVector(IntrusivePtr* member, const IntrusivePtr* source, void* libContext) {
     if (source == nullptr) return ParameterInvalidArgument;
     if (source->object == nullptr) return 0;
+    if (member->libContext == nullptr) member->libContext = libContext;
     const IntrusivePtr* begin;
     const IntrusivePtr* end;
     const auto* body = static_cast<const VectorBody*>(source->object);
@@ -4644,7 +4645,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V122RequestMatchStatistics19setPlayer
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V123JoinMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_11AddedPlayerEEEEEPNS9_INS3_16JoinMatchRequestEEE(void* self, const IntrusivePtr* players, IntrusivePtr* out) {
     const int created = MatchesFactoryCreate(self, out, 0x30, &DestroyMatchesModelVector24);
     if (created != 0) return created;
-    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 24), players);
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 24), players, out->libContext);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V123RequestMatchTeamFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_16RequestMatchTeamEEE(void* self, const char* name, IntrusivePtr* out) {
@@ -4658,7 +4659,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V123RequestMatchTeamFactory6createEPN
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V124LeaveMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_13RemovedPlayerEEEEEPNS9_INS3_17LeaveMatchRequestEEE(void* self, const IntrusivePtr* players, IntrusivePtr* out) {
     const int created = MatchesFactoryCreate(self, out, 0x30, &DestroyMatchesModelVector24);
     if (created != 0) return created;
-    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 24), players);
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 24), players, out->libContext);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V124RequestCompetitiveResult14setTeamResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_18RequestTeamResultsEEEEE(void* self, const IntrusivePtr* value) {
@@ -4793,7 +4794,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V129RequestPlayerStatisticFactory6cre
     ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
     const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
     if (assigned < 0) return assigned;
-    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 48), statistics);
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 48), statistics, out->libContext);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V130RequestTeamMemberResultFactory6createEPNS1_6Common10LibContextEPKcdPNS5_12IntrusivePtrINS3_23RequestTeamMemberResultEEE(void* self, const char* name, double score, IntrusivePtr* out) {
@@ -4830,7 +4831,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V133RequestTeamMemberStatisticFactory
     ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
     const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
     if (assigned < 0) return assigned;
-    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 48), statistics);
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 48), statistics, out->libContext);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi10leaveMatchEiRKNS4_21ParameterToLeaveMatchERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE(void* self) {
