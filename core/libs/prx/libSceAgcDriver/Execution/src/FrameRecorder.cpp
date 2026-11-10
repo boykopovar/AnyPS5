@@ -677,6 +677,7 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
         if (!allocation->readable) continue;
         const auto first = allocation->address;
         const auto end = first + allocation->bytes;
+        const auto firstRange = result.size();
         const bool host = first < base || end > base + size;
         const auto access = FrameRangeAccess::Readable | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
         for (auto address = first; address < end;) {
@@ -695,7 +696,7 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
                 else if (info.Type == MEM_PRIVATE) range.kind = GuestMemory::Watched(range.address, static_cast<std::size_t>(range.bytes)) ? FrameRangeKind::Watched : FrameRangeKind::Unwatched;
                 else range.kind = FrameRangeKind::Section;
                 auto& last = result.empty() ? range : result.back();
-                if (!result.empty() && last.address + last.bytes == range.address && last.kind == range.kind && last.protection == range.protection && last.readable == range.readable && last.access == range.access) last.bytes += range.bytes;
+                if (result.size() > firstRange && last.address + last.bytes == range.address && last.kind == range.kind && last.protection == range.protection && last.readable == range.readable && last.access == range.access) last.bytes += range.bytes;
                 else result.push_back(range);
             }
             address = regionEnd;
@@ -712,6 +713,7 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
         if (!allocation->readable) continue;
         const auto first = allocation->address;
         const auto end = first + allocation->bytes;
+        const auto firstRange = result.size();
         const bool host = first < base || end > base + size;
         const auto access = FrameRangeAccess::Readable | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
         HostMapping::Walk(first, end, "frame capture", [&](const HostMapping::Mapping& mapping) {
@@ -729,7 +731,7 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
                 else if (!mapping.shared && mapping.inode == 0) range.kind = FrameRangeKind::Unwatched;
                 else range.kind = FrameRangeKind::Section;
                 auto& last = result.empty() ? range : result.back();
-                if (!result.empty() && last.address + last.bytes == range.address && last.kind == range.kind && last.protection == range.protection && last.readable == range.readable && last.access == range.access) last.bytes += range.bytes;
+                if (result.size() > firstRange && last.address + last.bytes == range.address && last.kind == range.kind && last.protection == range.protection && last.readable == range.readable && last.access == range.access) last.bytes += range.bytes;
                 else result.push_back(range);
             };
             const auto address = std::max<std::uint64_t>(first, mapping.start);
