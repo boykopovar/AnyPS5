@@ -491,7 +491,11 @@ static int32_t InitializeFiber(FiberObject* object, const char* name, GuestFiber
     if (const auto valid = ValidateContext(addr_context, size_context); valid != SCE_OK) return valid;
     if ((flags & ~(FIBER_FLAG_NO_ULOBJMGR | FIBER_FLAG_CONTEXT_SIZE_CHECK | FIBER_FLAG_SET_FPU_REGISTERS)) != 0) throw std::runtime_error("_sceFiberInitializeWithInternalOptionImpl: unsupported flags " + std::to_string(flags));
     auto* fiber = reinterpret_cast<Fiber*>(object);
-    if (fiber->magic == FIBER_MAGIC) DetachStack(fiber);
+    if (fiber->magic == FIBER_MAGIC) {
+        const auto state = fiber->state.load(std::memory_order_acquire);
+        if (state == FiberState::Running || state == FiberState::Suspending) return SCE_FIBER_ERROR_STATE;
+        DetachStack(fiber);
+    }
     std::memset(object, 0, FIBER_OBJECT_SIZE);
     fiber->magic = FIBER_MAGIC;
     fiber->state.store(FiberState::Idle, std::memory_order_relaxed);
