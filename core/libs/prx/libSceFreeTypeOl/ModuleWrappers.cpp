@@ -47,6 +47,14 @@ FREETYPEOL_STUB("4to3tThESn0", sceFreeTypeOlFtaSupportFormatBdf)
 FREETYPEOL_STUB("2D3H+1nhwqQ", sceFreeTypeOlFtaSupportFormatPcf)
 FREETYPEOL_STUB("upeKra1FaQk", sceFreeTypeOlFtaSupportFormatPfr)
 FREETYPEOL_STUB("Yu7mmGCjSYM", sceFreeTypeOlFtaSupportFormatWinFonts)
+FREETYPEOL_STUB("JuzrPZClLew", sceFreeTypeOlFtaSupportFormatCid)
+FREETYPEOL_STUB("sylevnx-fqk", sceFreeTypeOlFtaSupportFormatOpenType)
+FREETYPEOL_STUB("0RSuGozMl9o", sceFreeTypeOlFtaSupportFormatOpenTypeOtf)
+FREETYPEOL_STUB("J3HnvW8FJV8", sceFreeTypeOlFtaSupportFormatOpenTypeTtf)
+FREETYPEOL_STUB("YpxR8CqGMIM", sceFreeTypeOlFtaSupportFormatTrueType)
+FREETYPEOL_STUB("83qtpn8+XnA", sceFreeTypeOlFtaSupportFormatTrueTypeGx)
+FREETYPEOL_STUB("g2p7fkJpuC0", sceFreeTypeOlFtaSupportFormatType1)
+FREETYPEOL_STUB("xqjAbn8VNGo", sceFreeTypeOlFtaSupportFormatType42)
 FREETYPEOL_STUB("oM0zMNCfXKM", sceFreeTypeOlFtaSupportModules)
 FREETYPEOL_STUB("SDPzjFN7y4E", sceFreeTypeOlFtaSupportHinterAutoFitter)
 FREETYPEOL_STUB("3dTNNBoujn0", sceFreeTypeOlFtaSupportRendererRaster1)
@@ -120,8 +128,17 @@ const FT_Module_Class* ModuleClass(const T& value) {
     return reinterpret_cast<const FT_Module_Class*>(&value);
 }
 
+FT_Library ReadGuestHost(void* library) {
+    if (!library || reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) != 0) return nullptr;
+    FT_Library host = nullptr;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&host, &static_cast<GuestLibrary*>(library)->host, sizeof(host));
+    errno = savedErrno;
+    return copied ? host : nullptr;
+}
+
 int AddModule(void* library, const FT_Module_Class* module) {
-    const auto host = library ? static_cast<GuestLibrary*>(library)->host : nullptr;
+    const auto host = ReadGuestHost(library);
     if (!host) return 0x21;
     if (!module) return 6;
     const auto existing = FT_Get_Module(host, module->module_name);
@@ -132,6 +149,11 @@ int AddModule(void* library, const FT_Module_Class* module) {
 int SupportModule(void* library, const FT_Module_Class* module) {
     const int error = AddModule(library, module);
     return error == 5 ? 0 : error;
+}
+
+int SupportModules(void* library, const FT_Module_Class* first, const FT_Module_Class* second) {
+    const int error = SupportModule(library, first);
+    return error != 0 ? error : SupportModule(library, second);
 }
 
 int RemoveModule(void* library, const char* name) {
@@ -276,7 +298,7 @@ const void* ExportModule(const FT_Module_Class* native) {
 }
 
 int AddGuestModule(void* library, const void* module, const char* caller) {
-    const auto host = library ? static_cast<GuestLibrary*>(library)->host : nullptr;
+    const auto host = ReadGuestHost(library);
     if (!host) return FT_Err_Invalid_Library_Handle;
     if (!module) return FT_Err_Invalid_Argument;
     for (const auto& entry : ExportedModules()) {
@@ -536,6 +558,46 @@ int APS5_VABI sceFreeTypeOlFtaSupportFormatWinFonts_nid_postfix(void* library) {
 }
 APS5_EXPORT("Yu7mmGCjSYM", sceFreeTypeOlFtaSupportFormatWinFonts_nid_postfix);
 
+int APS5_VABI sceFreeTypeOlFtaSupportFormatCid_nid_postfix(void* library) {
+    return SupportModule(library, ModuleClass(t1cid_driver_class));
+}
+APS5_EXPORT("JuzrPZClLew", sceFreeTypeOlFtaSupportFormatCid_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatOpenType_nid_postfix(void* library) {
+    return SupportModules(library, ModuleClass(cff_driver_class), ModuleClass(tt_driver_class));
+}
+APS5_EXPORT("sylevnx-fqk", sceFreeTypeOlFtaSupportFormatOpenType_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatOpenTypeOtf_nid_postfix(void* library) {
+    return SupportModule(library, ModuleClass(cff_driver_class));
+}
+APS5_EXPORT("0RSuGozMl9o", sceFreeTypeOlFtaSupportFormatOpenTypeOtf_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatOpenTypeTtf_nid_postfix(void* library) {
+    return SupportModule(library, ModuleClass(tt_driver_class));
+}
+APS5_EXPORT("J3HnvW8FJV8", sceFreeTypeOlFtaSupportFormatOpenTypeTtf_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatTrueType_nid_postfix(void* library) {
+    return SupportModule(library, ModuleClass(tt_driver_class));
+}
+APS5_EXPORT("YpxR8CqGMIM", sceFreeTypeOlFtaSupportFormatTrueType_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatTrueTypeGx_nid_postfix(void* library) {
+    return SupportModules(library, ModuleClass(tt_driver_class), ModuleClass(gxv_module_class));
+}
+APS5_EXPORT("83qtpn8+XnA", sceFreeTypeOlFtaSupportFormatTrueTypeGx_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatType1_nid_postfix(void* library) {
+    return SupportModule(library, ModuleClass(t1_driver_class));
+}
+APS5_EXPORT("g2p7fkJpuC0", sceFreeTypeOlFtaSupportFormatType1_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatType42_nid_postfix(void* library) {
+    return SupportModule(library, ModuleClass(t42_driver_class));
+}
+APS5_EXPORT("xqjAbn8VNGo", sceFreeTypeOlFtaSupportFormatType42_nid_postfix);
+
 int APS5_VABI sceFreeTypeOlFtaSupportHinterAutoFitter_nid_postfix(void* library) {
     return SupportModule(library, ModuleClass(autofit_module_class));
 }
@@ -552,12 +614,8 @@ int APS5_VABI sceFreeTypeOlFtaSupportRendererSmooth_nid_postfix(void* library) {
 APS5_EXPORT("b7S96aD8dkE", sceFreeTypeOlFtaSupportRendererSmooth_nid_postfix);
 
 int APS5_VABI sceFreeTypeOlFtaSupportModules_nid_postfix(void* library) {
-    if (!library) return 0x21;
-    FT_Library host = nullptr;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&host, &static_cast<GuestLibrary*>(library)->host, sizeof(host));
-    errno = savedErrno;
-    if (!copied || !host) return 0x21;
+    const auto host = ReadGuestHost(library);
+    if (!host) return 0x21;
     FT_Add_Default_Modules(host);
     return 0;
 }
