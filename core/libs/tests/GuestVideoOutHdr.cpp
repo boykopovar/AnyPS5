@@ -9,7 +9,6 @@
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
-#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -55,45 +54,6 @@ bool OutputModeEventArrives(KernelEqueue queue, KernelUseconds timeout) {
     return sceKernelWaitEqueue(queue, &event, 1, &count, &timeout) == 0 && count == 1 && sceVideoOutGetEventId(&event) == OutputModeEvent;
 }
 
-void ValidateBt2020ColorGamut() {
-    constexpr float RedX = 0.708f;
-    constexpr float RedY = 0.292f;
-    constexpr float GreenX = 0.170f;
-    constexpr float GreenY = 0.797f;
-    constexpr float BlueX = 0.131f;
-    constexpr float BlueY = 0.046f;
-    constexpr float WhiteX = 0.3127f;
-    constexpr float WhiteY = 0.3290f;
-
-    constexpr uint16_t RedXInt = 35400;
-    constexpr uint16_t RedYInt = 14600;
-    constexpr uint16_t GreenXInt = 8500;
-    constexpr uint16_t GreenYInt = 39850;
-    constexpr uint16_t BlueXInt = 6550;
-    constexpr uint16_t BlueYInt = 2300;
-    constexpr uint16_t WhiteXInt = 15635;
-    constexpr uint16_t WhiteYInt = 16450;
-
-    Require(RedX + RedY <= 1.0f, "BT.2020 red primary sum exceeds 1");
-    Require(GreenX + GreenY <= 1.0f, "BT.2020 green primary sum exceeds 1");
-    Require(BlueX + BlueY <= 1.0f, "BT.2020 blue primary sum exceeds 1");
-    Require(WhiteX + WhiteY <= 1.0f, "BT.2020 white point sum exceeds 1");
-
-    Require(RedXInt <= 50000 && RedYInt <= 50000, "BT.2020 red integer coordinates out of bounds");
-    Require(GreenXInt <= 50000 && GreenYInt <= 50000, "BT.2020 green integer coordinates out of bounds");
-    Require(BlueXInt <= 50000 && BlueYInt <= 50000, "BT.2020 blue integer coordinates out of bounds");
-    Require(WhiteXInt <= 50000 && WhiteYInt <= 50000, "BT.2020 white integer coordinates out of bounds");
-
-    Require(RedXInt == static_cast<uint16_t>(RedX * 50000.0f + 0.5f), "BT.2020 red X coordinate mismatch");
-    Require(RedYInt == static_cast<uint16_t>(RedY * 50000.0f + 0.5f), "BT.2020 red Y coordinate mismatch");
-    Require(GreenXInt == static_cast<uint16_t>(GreenX * 50000.0f + 0.5f), "BT.2020 green X coordinate mismatch");
-    Require(GreenYInt == static_cast<uint16_t>(GreenY * 50000.0f + 0.5f), "BT.2020 green Y coordinate mismatch");
-    Require(BlueXInt == static_cast<uint16_t>(BlueX * 50000.0f + 0.5f), "BT.2020 blue X coordinate mismatch");
-    Require(BlueYInt == static_cast<uint16_t>(BlueY * 50000.0f + 0.5f), "BT.2020 blue Y coordinate mismatch");
-    Require(WhiteXInt == static_cast<uint16_t>(WhiteX * 50000.0f + 0.5f), "BT.2020 white X coordinate mismatch");
-    Require(WhiteYInt == static_cast<uint16_t>(WhiteY * 50000.0f + 0.5f), "BT.2020 white Y coordinate mismatch");
-}
-
 void ValidateLuminanceClampingBounds() {
     const auto qnan = std::numeric_limits<float>::quiet_NaN();
     const auto inf = std::numeric_limits<float>::infinity();
@@ -132,20 +92,14 @@ void ValidateLuminanceClampingBounds() {
 
     const float maxCllDisplay = AgcDriver::PqToSdrWhiteNits(hostStatus);
     Require(maxCllDisplay == 850.0f, "MaxCLL did not fall back to display peak luminance");
-    const float maxFallDisplay = std::min(hostStatus.display.maxFullFrameLuminance, maxCllDisplay);
-    Require(maxFallDisplay == 600.0f, "MaxFALL was not clamped to full frame luminance");
 
     hostStatus.reportedToneMapPeak = 500.0f;
     const float maxCllToneMap = AgcDriver::PqToSdrWhiteNits(hostStatus);
     Require(maxCllToneMap == 500.0f, "MaxCLL was not set from reported tone map peak");
-    const float maxFallToneMap = std::min(hostStatus.display.maxFullFrameLuminance, maxCllToneMap);
-    Require(maxFallToneMap == 500.0f, "MaxFALL was not clamped by MaxCLL tone map peak");
 
     hostStatus.reportedToneMapPeak = 950.0f;
     const float maxCllHigh = AgcDriver::PqToSdrWhiteNits(hostStatus);
     Require(maxCllHigh == 950.0f, "high MaxCLL was not set from reported tone map peak");
-    const float maxFallCapped = std::min(hostStatus.display.maxFullFrameLuminance, maxCllHigh);
-    Require(maxFallCapped == 600.0f, "MaxFALL was not capped at full frame luminance when MaxCLL is higher");
 
     hostStatus.available = false;
     hostStatus.reportedToneMapPeak = 0.0f;
@@ -298,7 +252,6 @@ int main() {
     const auto underFull = AgcDriver::DisplayHdrFromOutput(true, 600.0f, 0.01f, 0.5f);
     Require(underFull.maxFullFrameLuminance == 600.0f, "full frame luminance < 1.0f must clamp to max luminance");
 
-    ValidateBt2020ColorGamut();
     ValidateLuminanceClampingBounds();
 
     KernelEqueue queue = 0;
