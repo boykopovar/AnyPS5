@@ -104,6 +104,13 @@ def compilation_database(text, source, skip_empty_commands=False):
             raise ValueError(f"{context}: expected arguments or command")
         elif not isinstance(entry["command"], str) or not entry["command"].strip():
             raise ValueError(f"{context}: command must be a nonempty string")
+        values = [entry["directory"], entry["file"]]
+        if "arguments" in entry:
+            values.extend(entry["arguments"])
+        else:
+            values.append(entry["command"])
+        if any("\0" in value for value in values):
+            raise ValueError(f"{context}: NUL byte in compilation command fields")
         commands.append(entry)
     return commands
 
