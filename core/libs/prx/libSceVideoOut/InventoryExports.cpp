@@ -51,10 +51,6 @@ int APS5_VABI sceVideoOutAddS3dHmdPrivilege() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutAddSetModeEvent() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceVideoOutAddStereoBuffer() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -136,10 +132,6 @@ int APS5_VABI sceVideoOutDeleteDisplayPositionEvent() {
 }
 
 int APS5_VABI sceVideoOutDeleteDriver() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceVideoOutDeleteSetModeEvent() {
     NotImplemented_nid_no_patch(__func__);
 }
 

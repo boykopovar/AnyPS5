@@ -398,6 +398,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(guest_video_out_set_mode_event_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutSetModeEvent.cpp)
+    target_include_directories(guest_video_out_set_mode_event_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_out_set_mode_event_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
+    configure_windows_unwind(guest_video_out_set_mode_event_tests)
+    add_test(NAME guest_video_out_set_mode_event COMMAND guest_video_out_set_mode_event_tests)
+    set_tests_properties(guest_video_out_set_mode_event PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
+    if(WIN32)
+        set_tests_properties(guest_video_out_set_mode_event PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(video_out_hdr_probe_tests tests/HdrProbe.cpp)
     target_include_directories(video_out_hdr_probe_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
     target_link_libraries(video_out_hdr_probe_tests PRIVATE libSceVideoOut libSceAgcDriver libc ${videoOutSdl})
