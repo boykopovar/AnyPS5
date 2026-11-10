@@ -2,7 +2,7 @@
 
 ### Unknown function info
 
-- The 22 Sony-specific exports in [Export.cpp](../../../core/libs/prx/libSceGLSlimVSH/Export.cpp) have names recovered by `tools/nid_names.py` from its pinned [NID database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv). Each name hashes to the original explicit NID. Their prototypes and behavior remain unverified; all retain no-parameter throwing placeholders. No recovered name is a standard EGL or GLES2 function.
+- The 21 Sony-specific exports in [Export.cpp](../../../core/libs/prx/libSceGLSlimVSH/Export.cpp) have names recovered by `tools/nid_names.py` from its pinned [NID database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv). Each name hashes to the original explicit NID. Their prototypes and behavior remain unverified; all retain no-parameter throwing placeholders. No recovered name is a standard EGL or GLES2 function.
 
 | Name | NID |
 | --- | --- |
@@ -15,7 +15,6 @@
 | `scePigletGetConfigurationVSH` | `3gtNzvkq-XY` |
 | `scePigletReleaseSystemMemoryEx` | `T-+xooU3VvQ` |
 | `scePigletReleaseVideoMemoryEx` | `AcruVcmKz78` |
-| `sceSlimglClientStartIPC` | `QvXbiLqpn6c` |
 | `sceSlimglCompositorAllocateIndex` | `mgKTS0PIvd8` |
 | `sceSlimglCompositorCreateIndirectRenderTarget` | `RP5cXUjm48U` |
 | `sceSlimglCompositorDeleteIndirectRenderTarget` | `srJHx3p48v0` |
@@ -29,9 +28,11 @@
 | `sceSlimglCompositorSetIndirectCompositionCommand` | `BrNgn7z6A40` |
 | `sceSlimglCompositorSetIndirectRenderTargetConfigCommand` | `iyTnezpw1jE` |
 
+- [sceSlimglClientStartIPC and sceSlimglIPCSetup](../../../core/libs/prx/libSceGLSlimVSH/Export.cpp) (`QvXbiLqpn6c`, `F4pQ5tsDo74`) - their prototypes are unverified and they keep the no-parameter declarations. In firmware 13.42 both bodies are `xor %eax,%eax; ret`: they return 0 without reading an argument or setting up any IPC, and so do these. Read from disassembly, not measured on a console.
+
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceGLSlimVSH/Export.cpp) - 7 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceGLSlimVSH.c) and the [selected export metadata](https://gist.github.com/kyon-eth/e1b845e2be0047e065a7dbb2c2e92322/7a180a59bf97bf6ea42020d4eedf9a8d631b0fd3) from two version-labelled images (SHA-256 `5d1eb4913d2914be044c05a48c4287a3a73e526605f21ec37ce9acfb5b2170ad`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Additional callable exports](../../../core/libs/prx/libSceGLSlimVSH/Export.cpp) - 6 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceGLSlimVSH.c) and the [selected export metadata](https://gist.github.com/kyon-eth/e1b845e2be0047e065a7dbb2c2e92322/7a180a59bf97bf6ea42020d4eedf9a8d631b0fd3) from two version-labelled images (SHA-256 `5d1eb4913d2914be044c05a48c4287a3a73e526605f21ec37ce9acfb5b2170ad`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
 
 | Name | NID |
 | --- | --- |
@@ -41,7 +42,6 @@
 | `sceSlimglCompositorWaitEndOfRendering` | `lcaik1AxwEY` |
 | `sceSlimglCompositorWaitPostEvent` | `HwBlC8TLKHQ` |
 | `sceSlimglIPCEnd` | `Fa0atOcWPaI` |
-| `sceSlimglIPCSetup` | `F4pQ5tsDo74` |
 
 - [`scePigletSetConfigurationVSH`](../../../core/libs/prx/libSceGLSlimVSH/Export.cpp) (`M9RtXpjSYtE`) is listed in the same 3.20 catalogue and is declared as a no-parameter throwing placeholder; its prototype and behavior are unverified.
 
