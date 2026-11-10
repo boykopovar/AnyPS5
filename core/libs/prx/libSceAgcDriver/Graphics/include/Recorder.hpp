@@ -312,7 +312,8 @@ public:
     // the last queued one joins its vkCmdUpdateBuffer, one inside it replaces its bytes (the
     // later store wins, as in program order), and every store after the first of its group gets a
     // transfer-to-transfer barrier first (WAW for one overlapping a store queued earlier, program
-    // order otherwise), so the run's stores land for a polling host in program order too. Debug
+    // order otherwise), so the run's stores land for a polling host in program order too and each
+    // earlier one is available to it. Debug
     // aids: APS5_LABEL_RUNS_INLINE=1 records the stores at once and closes the run at the next
     // command (Commands()) or at Submit, as before; APS5_NO_LABEL_RUNS=1 gives every store
     // barriers of its own.
