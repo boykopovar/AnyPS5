@@ -58,7 +58,7 @@ bool Throws(TCall call) {
     return false;
 }
 
-enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, Trailers, StallUpload, Cookie, CookieFlood, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11BadChunk, Http11Gzip, Http11HeadersClose, Http11ResponseClose, Http11ResponseReset, Http11StallRequest, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
+enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, Trailers, StallUpload, Cookie, CookieFlood, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11TruncatedSplit, Http11BadChunk, Http11Gzip, Http11HeadersClose, Http11ResponseClose, Http11ResponseReset, Http11StallRequest, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
 const char* Protocols[] = {"h2", nullptr};
 const char* Http1Protocols[] = {"http/1.1", nullptr};
 
@@ -511,6 +511,7 @@ private:
         for (const auto& [name, value] : configured.headers) response += name + ": " + value + "\r\n";
         response += "X-Loopback: yes\r\nConnection: close\r\n\r\n";
         if (mode == Mode::Http11StallBody) { write(response); Stage(2); Stall(); return; }
+        if (mode == Mode::Http11TruncatedSplit) { write(response + "sh"); Stall(); write("ort"); return; }
         if (headers.find(":method")->second != "HEAD") {
             if (mode == Mode::Http11Chunked) response += "8;test=yes\r\nresponse\r\n5\r\n body\r\n0\r\nX-Trailer: done\r\n\r\n";
             else if (mode == Mode::Http11BadChunk) response += "z\r\n";
@@ -1699,15 +1700,23 @@ void PlainReadFailure(int ssl, bool abort) {
     server.Join();
 }
 
-void PlainShortBody(int ssl) {
-    std::fprintf(stderr, "HTTP1 cleartext short body scenario\n");
-    Server server(Mode::Http11Truncated, "/another", 302, {}, false, true);
+void PlainShortBody(int ssl, bool split) {
+    std::fprintf(stderr, "HTTP1 cleartext short body scenario %d\n", split);
+    Server server(split ? Mode::Http11TruncatedSplit : Mode::Http11Truncated, "/another", 302, {}, false, true);
     Client client(ssl, 1, 0, 2);
     client.Create(server.Url());
     Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "cleartext short body headers");
     std::array<char, 32> buffer{};
-    Require(sceHttp2ReadData(client.request, buffer.data(), buffer.size()) == 5 && std::string_view(buffer.data(), 5) == "short", "short body bytes");
-    Require(sceHttp2ReadData(client.request, buffer.data(), buffer.size()) == 0, "short body ends");
+    std::string body;
+    for (int count; (count = sceHttp2ReadData(client.request, buffer.data(), buffer.size())) != 0;) {
+        Require(count > 0 && body.size() + count <= 5, "short body read");
+        if (split && body.empty()) {
+            Require(count <= 2, "short body arrives in fragments");
+            server.Release();
+        }
+        body.append(buffer.data(), count);
+    }
+    Require(body == "short", "short body bytes");
     Require(sceHttp2ReadData(client.request, buffer.data(), buffer.size()) == 0, "short body stays ended");
     server.Join();
 }
@@ -1805,7 +1814,7 @@ void Http1Cleartext(int ssl) {
     PlainAbort(ssl, false);
     PlainReadFailure(ssl, false);
     PlainReadFailure(ssl, true);
-    PlainShortBody(ssl);
+    for (const bool split : {false, true}) PlainShortBody(ssl, split);
 }
 
 void HostAuthority(int ssl) {
