@@ -131,7 +131,7 @@ bool ScansInProcess(const char* format) {
         return true;
     }
 #ifdef _WIN32
-    return HasNarrowScan(format, "cxXip");
+    return HasNarrowScan(format, "cxXipaAeEfFgG");
 #else
     return HasNarrowCharacterScan(format);
 #endif
