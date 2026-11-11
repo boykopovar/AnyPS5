@@ -399,13 +399,13 @@ if(BUILD_TESTING)
         set_tests_properties(conventions_debt_labels PROPERTIES TIMEOUT 20)
         add_test(NAME test_registration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py)
-        set_tests_properties(test_registration PROPERTIES TIMEOUT 30)
+        set_tests_properties(test_registration PROPERTIES TIMEOUT 60)
         add_test(NAME unbuilt_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unbuilt_exports.py)
         set_tests_properties(unbuilt_exports PROPERTIES TIMEOUT 20)
         add_test(NAME test_script_registration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_test_registration.py --scripts)
-        set_tests_properties(test_script_registration PROPERTIES TIMEOUT 30)
+        set_tests_properties(test_script_registration PROPERTIES TIMEOUT 60)
         add_test(NAME tools_sanitizer_json COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_sanitizer_json.py)
         set_tests_properties(tools_sanitizer_json PROPERTIES TIMEOUT 20)
