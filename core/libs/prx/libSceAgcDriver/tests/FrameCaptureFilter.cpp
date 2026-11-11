@@ -258,6 +258,14 @@ void testOverflowPlanIndex(const std::filesystem::path& root) {
     checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted an overflowing index");
 }
 
+
+void testBlankPlanLines(const std::filesystem::path& root) {
+    const auto path = root / "blank-lines.plan";
+    { std::ofstream output(path); output << "aps5-frame-filter 1\n\ncall 3\n\n"; }
+    const auto plan = AgcDriverTools::ReadFrameCaptureFilterPlan(path);
+    check(plan.calls == std::set<std::uint64_t>{3}, "plan reader did not ignore blank lines");
+}
+
 }
 
 int main() {
@@ -276,6 +284,7 @@ int main() {
     testMissingPlanIndex(root);
     testNegativePlanIndex(root);
     testOverflowPlanIndex(root);
+    testBlankPlanLines(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
