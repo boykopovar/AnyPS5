@@ -1752,13 +1752,14 @@ ImportRun crossedRun(const GuestAllocations::Lease& lease, std::uint64_t begin, 
     return run;
 }
 
-ImportRun joinedRun(const GuestAllocations::Lease& lease, std::uint64_t begin, std::uint64_t end) {
+ImportRun joinedRun(const GuestAllocations::Lease& lease, std::uint64_t begin, std::uint64_t end, bool straddling = false) {
     const auto window = importWindow.load(std::memory_order_relaxed);
     if (window == 0) return {};
     auto run = crossedRun(lease, begin, end);
     if (run.ranges.empty()) return run;
     if (std::all_of(run.ranges.begin(), run.ranges.end(), [window](const auto& range) { return range->bytes > window; })) return run;
     if (begin == run.base) return run;
+    if (straddling && run.bytes <= end - begin + 2 * window) return run;
     return {};
 }
 
@@ -2198,10 +2199,10 @@ std::vector<ImportPiece> budgetedImportPieces(const Context& context, HostImport
     return pieces;
 }
 
-const HostImport* importJoined(const Context& context, HostImports& state, std::uint64_t begin, std::uint64_t end, const GuestAllocations::Lease& lease) {
+const HostImport* importJoined(const Context& context, HostImports& state, std::uint64_t begin, std::uint64_t end, const GuestAllocations::Lease& lease, bool straddling = false) {
     if (const auto* low = peekImport(state, begin, begin + 1); low != nullptr && low->joined) begin = low->base;
     if (const auto* high = peekImport(state, end - 1, end); high != nullptr && high->joined) end = high->base + high->bytes;
-    auto run = joinedRun(lease, begin, end);
+    auto run = joinedRun(lease, begin, end, straddling);
     if (run.ranges.empty()) return nullptr;
     if (const auto failed = state.failedJoins.find(run.base); failed != state.failedJoins.end() && sameRun(failed->second, run)) return nullptr;
     const auto existing = state.imports.find(run.base);
@@ -5691,17 +5692,30 @@ bool segmentBuffersEnabled() {
     return !disabled;
 }
 
+bool joinStraddleEnabled() {
+    static const bool disabled = std::getenv("APS5_NO_JOIN_STRADDLE") != nullptr;
+    return !disabled;
+}
+
 struct SegmentedBufferStats {
     std::atomic<std::uint64_t> served{0};
     std::atomic<std::uint64_t> servedBytes{0};
     std::atomic<std::uint64_t> segments{0};
     std::atomic<std::uint64_t> fallbacks{0};
     std::atomic<std::uint64_t> fallbackBytes{0};
+    std::atomic<std::uint64_t> inPlace{0};
+    std::atomic<std::uint64_t> inPlaceBytes{0};
+    std::atomic<std::uint64_t> joinedCopies{0};
 };
 
 SegmentedBufferStats& SegmentedStats() {
     static SegmentedBufferStats stats;
     return stats;
+}
+
+bool crossesImportWindow(std::uint64_t begin, std::uint64_t end) {
+    const auto window = importWindow.load(std::memory_order_relaxed);
+    return window != 0 && begin / window != (end - 1) / window;
 }
 
 std::vector<BufferCopySegment> straddlingSegments(const Context& context, HostImports& state, std::uint64_t begin, std::uint64_t end, const GuestAllocations::Lease& lease, bool& registered) {
@@ -5861,7 +5875,12 @@ bool deviceLocalHasRoom(const Context& context, std::size_t bytes) {
         VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
         VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &reported};
         if (context.memoryProperties2 != nullptr && context.physical != VK_NULL_HANDLE) context.memoryProperties2(context.physical, &properties);
-        const auto heap = context.memory.memoryTypes[context.MemoryType(~0u, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)].heapIndex;
+        std::optional<std::uint32_t> deviceHeap;
+        for (std::uint32_t index = 0; index < context.memory.memoryTypeCount && !deviceHeap; ++index) {
+            if ((context.memory.memoryTypes[index].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) deviceHeap = context.memory.memoryTypes[index].heapIndex;
+        }
+        if (!deviceHeap) return false;
+        const auto heap = *deviceHeap;
         const auto budget = reported.heapBudget[heap];
         const auto usage = reported.heapUsage[heap];
         room.store(budget == 0 ? std::numeric_limits<std::uint64_t>::max() : usage + budget / 8u < budget ? budget - budget / 8u - usage : 0u, std::memory_order_relaxed);
@@ -6051,7 +6070,14 @@ void GuestBufferMemory::resolveOverlays() {
 
 SegmentedBufferCounts GuestBufferMemory::SegmentedBuffers() {
     const auto& stats = SegmentedStats();
-    return {stats.served.load(std::memory_order_relaxed), stats.servedBytes.load(std::memory_order_relaxed), stats.segments.load(std::memory_order_relaxed), stats.fallbacks.load(std::memory_order_relaxed), stats.fallbackBytes.load(std::memory_order_relaxed)};
+    SegmentedBufferCounts counts{stats.served.load(std::memory_order_relaxed), stats.servedBytes.load(std::memory_order_relaxed), stats.segments.load(std::memory_order_relaxed), stats.fallbacks.load(std::memory_order_relaxed), stats.fallbackBytes.load(std::memory_order_relaxed), stats.inPlace.load(std::memory_order_relaxed), stats.inPlaceBytes.load(std::memory_order_relaxed), stats.joinedCopies.load(std::memory_order_relaxed)};
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    const auto& joins = state.counts[static_cast<std::size_t>(ImportRequester::Join)];
+    counts.joinsMade = joins.made;
+    counts.joinsMadeBytes = joins.madeBytes;
+    counts.joinsRefused = joins.refused + joins.failed;
+    return counts;
 }
 
 void GuestBufferMemory::UploadPrepare(bool addressable) {
@@ -6315,10 +6341,11 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
         std::lock_guard lock(state.mutex);
         if (importsStale(context, state)) refreshImports(context, state, importRanges());
         importsRefreshed = true;
+        const bool straddleJoins = joinStraddleEnabled();
         for (const auto& region : regions) {
             if (!region.pending || region.mirror != nullptr || region.direct != nullptr || sparseHeapCandidate(region)) continue;
             if (findImport(state, region.begin, region.end) != nullptr || runCovers(importRanges(), region.begin, region.end)) continue;
-            static_cast<void>(importJoined(context, state, region.begin, region.end, importRanges()));
+            static_cast<void>(importJoined(context, state, region.begin, region.end, importRanges(), straddleJoins && !region.sparse && (region.hostBacked || region.writable)));
         }
     }
     if (space != nullptr && context.hostImportAlignment != 0) {
@@ -6427,6 +6454,11 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
             // without a recorder to record the copies it binds in place like any other.
             const bool staged = recorder != nullptr && stagingEligible(region, addressable);
             if (entry != nullptr && !staged && bindableInPlace(HostImportOffset(*entry, region.begin), addressable)) {
+                if (entry->joined && crossesImportWindow(region.begin, region.end)) {
+                    auto& stats = SegmentedStats();
+                    stats.inPlace.fetch_add(1, std::memory_order_relaxed);
+                    stats.inPlaceBytes.fetch_add(bytes, std::memory_order_relaxed);
+                }
                 region.direct = entry;
                 region.runCut = runImport;
                 region.snapshot.clear();
@@ -6440,6 +6472,7 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
                 // below could retire the entry (the batch opened below keeps a retired import's
                 // buffer alive).
                 copyOnGpu = true;
+                if (entry->joined && crossesImportWindow(region.begin, region.end)) SegmentedStats().joinedCopies.fetch_add(1, std::memory_order_relaxed);
                 region.deviceLocal = staged;
                 region.copySource = entry->buffer;
                 const auto start = HostImportBufferStart(*entry);

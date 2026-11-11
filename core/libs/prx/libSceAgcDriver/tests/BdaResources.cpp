@@ -699,8 +699,11 @@ void importJoinTests(const Context& context) {
     auto* heap = guest + 3 * large + 2 * piece;
     change(heap, piece, true);
     change(heap + piece, piece, true);
-    Require(bind(reinterpret_cast<std::uintptr_t>(heap + piece) - 16).second != 0 && HostImportFor(importing, reinterpret_cast<std::uintptr_t>(heap + piece) - 16, 32) == nullptr, "two pieces no larger than the import window were joined");
     const auto heapBase = reinterpret_cast<std::uintptr_t>(heap);
+    const auto crossing = heapBase + piece - 16;
+    const auto [straddledBuffer, straddledCopied] = bind(crossing);
+    const auto* straddled = HostImportFor(importing, crossing, 32);
+    Require(straddled != nullptr && straddled->joined && straddled->base == heapBase && straddled->bytes == 2 * piece && straddledBuffer == straddled->buffer && straddledCopied == 0, "a buffer bound from inside the first of two pieces no larger than the import window across the import window boundary was not joined and bound in place");
     const auto [piecesBuffer, piecesCopied] = bind(heapBase, 2 * piece);
     const auto* pieces = HostImportFor(importing, heapBase, 2 * piece);
     Require(pieces != nullptr && pieces->base == heapBase && pieces->bytes == 2 * piece && piecesBuffer == pieces->buffer && piecesCopied == 0, "a buffer bound exactly over two pieces no larger than the import window was not imported as one");
@@ -2405,7 +2408,7 @@ void spaceReadAcrossImportsTests(const Context& context, const BdaTestAccess& ac
         GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
     };
     for (std::size_t index = 0; index < 3; ++index) change(guest + index * piece, true);
-    for (int build = 0; build < 2; ++build) {
+    for (int build = 0; build < 3; ++build) {
         const auto before = AddressSpaceCounters();
         GuestBufferMemory leased(importing);
         leased.AcquireRegistered();
@@ -2414,13 +2417,22 @@ void spaceReadAcrossImportsTests(const Context& context, const BdaTestAccess& ac
         std::uint32_t adjustment = 0;
         const auto view = leased.Descriptor(boundary - 256, 512, adjustment);
         Require(view.buffer != VK_NULL_HANDLE && view.range == 512 + adjustment, "a read-only V# across two imports has no descriptor");
-        const auto bytes = access.bytes(view.buffer);
-        Require(view.offset + adjustment + 512 <= bytes.size() && bytes[view.offset + adjustment] == std::byte{0x5a} && bytes[view.offset + adjustment + 256] == std::byte{0x6b}, "a read-only V# across two imports misses the bytes of either range");
+        const auto* joined = HostImportFor(importing, boundary - 256, 512);
+        if (joined != nullptr && joined->joined) {
+            Require(joined->base == first + piece && joined->bytes == 2 * piece && view.buffer == joined->buffer && view.offset + adjustment == HostImportOffset(*joined, boundary - 256), "a read-only V# across two imports is not bound in place at its offset in the joined import");
+        } else {
+            const auto bytes = access.bytes(view.buffer);
+            Require(view.offset + adjustment + 512 <= bytes.size() && bytes[view.offset + adjustment] == std::byte{0x5a} && bytes[view.offset + adjustment + 256] == std::byte{0x6b}, "a read-only V# across two imports misses the bytes of either range");
+        }
         const auto ranges = leased.AddressRanges();
-        Require(std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin <= first && boundary <= range.end; }) && std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin <= boundary && boundary + piece <= range.end; }), "an import is missing from the BDA table of a build with a read-only V# across it");
+        auto covered = first;
+        for (const auto& range : ranges) {
+            if (range.begin <= covered && covered < range.end) covered = range.end;
+        }
+        Require(covered >= boundary + piece, "an import is missing from the BDA table of a build with a read-only V# across it");
         leased.WriteBack();
         const auto after = AddressSpaceCounters();
-        if (after.enabled && build == 1) Require(after.hits == before.hits + 1 && after.dissolvedOverlap == before.dissolvedOverlap, "a read-only V# across two imports dissolved the cached address space");
+        if (after.enabled && build == 2) Require(after.hits == before.hits + 1 && after.dissolvedOverlap == before.dissolvedOverlap && after.dissolvedImports == before.dissolvedImports, "a read-only V# across two imports dissolved the cached address space once its imports were joined");
     }
     for (std::size_t index = 0; index < 3; ++index) change(guest + index * piece, false);
     SetHostImportWindow(0);

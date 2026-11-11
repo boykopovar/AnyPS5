@@ -9140,6 +9140,7 @@ void splitBufferTests(const Device& device, Recorder& recorder) {
         return;
     }
     static const bool optedOut = std::getenv("APS5_NO_SEGMENT_BUFFER") != nullptr;
+    static const bool joinsOff = std::getenv("APS5_NO_JOIN_STRADDLE") != nullptr;
     constexpr std::size_t piece = 65536;
     constexpr std::size_t window = 2 * piece;
     constexpr std::size_t pieces = 6;
@@ -9147,7 +9148,10 @@ void splitBufferTests(const Device& device, Recorder& recorder) {
     recorder.Activate();
     SetHostImportWindow(window);
     struct Window {
-        ~Window() { SetHostImportWindow(0); }
+        ~Window() {
+            SetHostImportWindow(0);
+            SetHostImportMaxBytes(0);
+        }
     } windowGuard;
 #ifdef _WIN32
     void* raw = VirtualAlloc(nullptr, span + window, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -9159,28 +9163,32 @@ void splitBufferTests(const Device& device, Recorder& recorder) {
     const auto first = reinterpret_cast<std::uint64_t>(guest);
     const auto pattern = [](std::size_t i) { return static_cast<std::uint8_t>(i * 131u + 7u); };
     for (std::size_t i = 0; i < span; ++i) guest[i] = pattern(i);
-    {
+    const auto registerPieces = [&] {
         GuestAllocations::Mutation mutation;
         for (std::size_t index = 0; index < pieces; ++index) mutation.Add(guest + index * piece, piece, true, true, true);
-    }
+    };
+    const std::function<void()> unregisterPieces = [&] {
+        {
+            GuestAllocations::Mutation mutation;
+            for (std::size_t index = 0; index < pieces; ++index) mutation.Remove(guest + index * piece);
+        }
+        HostImportFor(context, first, span);
+    };
+    registerPieces();
+    bool registered = true;
     struct Unregister {
-        const Context& context;
         void* raw;
-        std::uint8_t* guest;
-        std::uint64_t first;
+        bool& registered;
+        const std::function<void()>& unregisterPieces;
         ~Unregister() {
-            {
-                GuestAllocations::Mutation mutation;
-                for (std::size_t index = 0; index < pieces; ++index) mutation.Remove(guest + index * piece);
-            }
-            HostImportFor(context, first, span);
+            if (registered) unregisterPieces();
 #ifdef _WIN32
             VirtualFree(raw, 0, MEM_RELEASE);
 #else
             std::free(raw);
 #endif
         }
-    } unregister{context, raw, guest, first};
+    } unregister{raw, registered, unregisterPieces};
     const auto settle = [&] {
         recorder.Submit();
         device.WaitQueue();
@@ -9192,21 +9200,31 @@ void splitBufferTests(const Device& device, Recorder& recorder) {
     const auto length = static_cast<std::size_t>(end - begin);
     Require(HostImportFor(context, begin, length) == nullptr, "one import covers a range that crosses the import windows");
     std::string failures;
-    for (const bool written : {false, true}) {
-        const std::string what = written ? "written buffer" : "read-only buffer";
+    std::uint64_t joinedSerial = 0;
+    enum class Expect { InPlace, Segments, Cpu };
+    const auto upload = [&](const std::string& what, bool written, Expect expect, std::uint64_t joinsExpected, bool reused) {
         const auto before = GuestBufferMemory::SegmentedBuffers();
         GuestBufferMemory memory(context);
         if (written) memory.AddWritable(begin, length);
         else memory.AddReadable(begin, length);
         memory.Upload(false);
         const auto after = GuestBufferMemory::SegmentedBuffers();
-        if (!optedOut) {
+        if (expect == Expect::InPlace) {
+            if (memory.HasGpuCopies()) failures += what + ": the range crossing the import windows was copied instead of bound in place\n";
+            if (after.inPlace - before.inPlace != 1 || after.inPlaceBytes - before.inPlaceBytes != length || after.served != before.served || after.fallbacks != before.fallbacks || after.joinedCopies != before.joinedCopies) failures += what + ": the counters did not count one range served in place\n";
+            const auto* joined = HostImportFor(context, begin, length);
+            if (joined == nullptr || !joined->joined || joined->base != first || joined->bytes != span) failures += what + ": no single joined import over the pieces covers the range\n";
+            const auto serial = joined != nullptr ? HostImportSerial(context, begin, length, false) : 0;
+            if (reused && serial != joinedSerial) failures += what + ": the second upload did not reuse the joined import\n";
+            joinedSerial = serial;
+        } else if (expect == Expect::Segments) {
             if (!memory.HasGpuCopies()) failures += what + ": the range crossing the import windows was copied through the CPU\n";
-            if (after.served - before.served != 1 || after.segments - before.segments != 3 || after.servedBytes - before.servedBytes != length || after.fallbacks != before.fallbacks) failures += what + ": the segment counters did not count one range of three segments\n";
+            if (after.served - before.served != 1 || after.segments - before.segments != 3 || after.servedBytes - before.servedBytes != length || after.fallbacks != before.fallbacks || after.inPlace != before.inPlace) failures += what + ": the segment counters did not count one range of three segments\n";
         } else {
             if (memory.HasGpuCopies()) failures += what + ": the range was copied by the GPU although segments are disabled\n";
-            if (after.served != before.served || after.fallbacks - before.fallbacks != 1 || after.fallbackBytes - before.fallbackBytes != length) failures += what + ": the fallback counters did not count the range\n";
+            if (after.served != before.served || after.fallbacks - before.fallbacks != 1 || after.fallbackBytes - before.fallbackBytes != length || after.inPlace != before.inPlace) failures += what + ": the fallback counters did not count the range\n";
         }
+        if (after.joinsMade - before.joinsMade != joinsExpected) failures += what + ": " + std::to_string(after.joinsMade - before.joinsMade) + " joined imports were made, expected " + std::to_string(joinsExpected) + "\n";
         std::uint32_t adjustment = 0;
         const auto view = memory.Descriptor(begin, length, adjustment);
         const std::size_t fillFrom = 2 * piece - 1000 - beginOffset;
@@ -9235,7 +9253,7 @@ void splitBufferTests(const Device& device, Recorder& recorder) {
                 memory.RecordCopyBacks(recorder);
             }
             memory.MarkDirectWrites();
-            if (!optedOut && memory.HasCopiedWrites()) failures += what + ": the written range still needs a CPU write-back after its copy-back\n";
+            if (expect != Expect::Cpu && memory.HasCopiedWrites()) failures += what + ": the written range still needs a CPU write-back after its copy-back\n";
             settle();
         }
         memory.WriteBack();
@@ -9250,6 +9268,18 @@ void splitBufferTests(const Device& device, Recorder& recorder) {
             }
         }
         for (std::size_t i = 0; i < span; ++i) guest[i] = pattern(i);
+    };
+    const Expect expect = !joinsOff ? Expect::InPlace : optedOut ? Expect::Cpu : Expect::Segments;
+    upload("read-only buffer", false, expect, joinsOff ? 0 : 1, false);
+    upload("written buffer", true, expect, 0, !joinsOff);
+    if (!joinsOff && !optedOut) {
+        unregisterPieces();
+        registerPieces();
+        HostImportFor(context, first, span);
+        SetHostImportMaxBytes(span - piece);
+        upload("read-only buffer with the join refused", false, Expect::Segments, 0, false);
+        upload("written buffer with the join refused", true, Expect::Segments, 0, false);
+        SetHostImportMaxBytes(0);
     }
     if (!failures.empty()) throw std::runtime_error("split buffer:\n" + failures);
     std::cout << "split buffer: ok\n";

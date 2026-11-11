@@ -84,6 +84,12 @@ struct SegmentedBufferCounts {
     std::uint64_t segments = 0;
     std::uint64_t fallbacks = 0;
     std::uint64_t fallbackBytes = 0;
+    std::uint64_t inPlace = 0;
+    std::uint64_t inPlaceBytes = 0;
+    std::uint64_t joinedCopies = 0;
+    std::uint64_t joinsMade = 0;
+    std::uint64_t joinsMadeBytes = 0;
+    std::uint64_t joinsRefused = 0;
 };
 
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };
