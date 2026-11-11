@@ -261,6 +261,18 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(guest_abstract_youtube_immediate_returns_tests tests/GuestAbstractYoutubeImmediateReturns.cpp)
+    target_include_directories(guest_abstract_youtube_immediate_returns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_abstract_youtube_immediate_returns_tests PRIVATE libSceAbstractYoutube libc)
+    configure_windows_unwind(guest_abstract_youtube_immediate_returns_tests)
+    add_test(NAME guest_abstract_youtube_immediate_returns COMMAND guest_abstract_youtube_immediate_returns_tests)
+    if(WIN32)
+        set_tests_properties(guest_abstract_youtube_immediate_returns PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAbstractYoutube>")
+    endif()
+endif()
+
 include(prx/libSceFreeType/PostScriptInfo.cmake)
 
 if(APS5_ENABLE_TRACY)
@@ -1261,6 +1273,17 @@ if(BUILD_TESTING)
 
     if(UNIX AND (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$" OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))
         add_subdirectory(tests/register_context)
+    endif()
+
+    add_test_executable(guest_kernel_sys_mqueue_tests tests/GuestKernelSysMqueue.cpp)
+    target_include_directories(guest_kernel_sys_mqueue_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_mqueue_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_mqueue_tests)
+    add_test(NAME guest_kernel_sys_mqueue COMMAND guest_kernel_sys_mqueue_tests)
+    set_tests_properties(guest_kernel_sys_mqueue PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_mqueue PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
 
     add_test_executable(savedata_memory_metadata_tests tests/SaveDataMemoryMetadata.cpp)
