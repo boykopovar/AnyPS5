@@ -228,6 +228,8 @@ struct CaseSpec {
     std::uint8_t clearStencil = 0u;
     std::vector<StepSpec> steps;
     std::uint32_t expectedCovered = 0u;
+    bool skipOnD32Fallback = false;
+    bool matchNativeD16 = false;
 };
 
 VkStencilOpState MakeStencil(VkCompareOp compare, VkStencilOp passOp, VkStencilOp depthFailOp, VkStencilOp failOp, std::uint32_t reference) {
@@ -781,6 +783,83 @@ std::vector<CaseSpec> BuildCases(std::vector<FragExportSpec>& fragSpecs, const C
         slopeBiasEqual.steps = {s1, s2};
         slopeBiasEqual.expectedCovered = Covered;
         cases.push_back(std::move(slopeBiasEqual));
+
+        CaseSpec slopeBiasMultiStepLess;
+        slopeBiasMultiStepLess.name = "depthBias_slope_multistep_bucket_32768_to_32772_LESS";
+        StepSpec ms1;
+        ms1.triangle = {BucketCenter(32768u), BucketOffset(32768u, 0.25f), BucketCenter(32768u)};
+        ms1.depthWrite = true;
+        ms1.depthCompare = VK_COMPARE_OP_ALWAYS;
+        ms1.depthBias = true;
+        ms1.depthBiasSlope = 2048.0f;
+        StepSpec ms2;
+        ms2.triangle = FlatTriangle(BucketCenter(32771u));
+        ms2.depthWrite = false;
+        ms2.depthCompare = VK_COMPARE_OP_LESS;
+        slopeBiasMultiStepLess.steps = {ms1, ms2};
+        slopeBiasMultiStepLess.expectedCovered = Covered;
+        cases.push_back(std::move(slopeBiasMultiStepLess));
+
+        CaseSpec slopeBiasMultiStepEqual;
+        slopeBiasMultiStepEqual.name = "depthBias_slope_multistep_bucket_32768_to_32772_EQUAL";
+        ms2.triangle = FlatTriangle(BucketCenter(32772u));
+        ms2.depthCompare = VK_COMPARE_OP_EQUAL;
+        slopeBiasMultiStepEqual.steps = {ms1, ms2};
+        slopeBiasMultiStepEqual.expectedCovered = Covered;
+        cases.push_back(std::move(slopeBiasMultiStepEqual));
+
+        CaseSpec slopeBiasMultiStepUnbiasedEqual;
+        slopeBiasMultiStepUnbiasedEqual.name = "depthBias_slope_multistep_not_unbiased_32768_EQUAL";
+        ms2.triangle = FlatTriangle(BucketCenter(32768u));
+        ms2.depthCompare = VK_COMPARE_OP_EQUAL;
+        slopeBiasMultiStepUnbiasedEqual.steps = {ms1, ms2};
+        slopeBiasMultiStepUnbiasedEqual.expectedCovered = 0u;
+        cases.push_back(std::move(slopeBiasMultiStepUnbiasedEqual));
+
+        StepSpec cs1;
+        cs1.triangle = FlatTriangle(BucketCenter(32768u));
+        cs1.depthWrite = true;
+        cs1.depthCompare = VK_COMPARE_OP_ALWAYS;
+        cs1.depthBias = true;
+        cs1.depthBiasConstant = 4.0f;
+
+        CaseSpec constBiasMultiStepLess;
+        constBiasMultiStepLess.name = "depthBias_constant_multistep_bucket_32768_LESS";
+        StepSpec cs2;
+        cs2.triangle = FlatTriangle(BucketCenter(32771u));
+        cs2.depthWrite = false;
+        cs2.depthCompare = VK_COMPARE_OP_LESS;
+        constBiasMultiStepLess.steps = {cs1, cs2};
+        constBiasMultiStepLess.expectedCovered = Covered;
+        constBiasMultiStepLess.skipOnD32Fallback = true;
+        cases.push_back(std::move(constBiasMultiStepLess));
+
+        CaseSpec constBiasMultiStepEqual32772;
+        constBiasMultiStepEqual32772.name = "depthBias_constant_multistep_native_D16_32772_EQUAL";
+        cs2.triangle = FlatTriangle(BucketCenter(32772u));
+        cs2.depthCompare = VK_COMPARE_OP_EQUAL;
+        constBiasMultiStepEqual32772.steps = {cs1, cs2};
+        constBiasMultiStepEqual32772.skipOnD32Fallback = true;
+        constBiasMultiStepEqual32772.matchNativeD16 = true;
+        cases.push_back(std::move(constBiasMultiStepEqual32772));
+
+        CaseSpec constBiasMultiStepEqual32776;
+        constBiasMultiStepEqual32776.name = "depthBias_constant_multistep_native_D16_32776_EQUAL";
+        cs2.triangle = FlatTriangle(BucketCenter(32776u));
+        cs2.depthCompare = VK_COMPARE_OP_EQUAL;
+        constBiasMultiStepEqual32776.steps = {cs1, cs2};
+        constBiasMultiStepEqual32776.skipOnD32Fallback = true;
+        constBiasMultiStepEqual32776.matchNativeD16 = true;
+        cases.push_back(std::move(constBiasMultiStepEqual32776));
+
+        CaseSpec constBiasMultiStepUnbiasedEqual;
+        constBiasMultiStepUnbiasedEqual.name = "depthBias_constant_multistep_not_unbiased_32768_EQUAL";
+        cs2.triangle = FlatTriangle(BucketCenter(32768u));
+        cs2.depthCompare = VK_COMPARE_OP_EQUAL;
+        constBiasMultiStepUnbiasedEqual.steps = {cs1, cs2};
+        constBiasMultiStepUnbiasedEqual.expectedCovered = 0u;
+        constBiasMultiStepUnbiasedEqual.skipOnD32Fallback = true;
+        cases.push_back(std::move(constBiasMultiStepUnbiasedEqual));
     }
 
     addTwoDrawCase("control_D16_UNORM_no_stencil_subquantum_LESS", 0.500004f, 0.500002f, VK_COMPARE_OP_LESS, 0u, 1.0f, VK_FORMAT_D16_UNORM);
@@ -969,24 +1048,36 @@ ModeResult RunMode(AgcDriver::VulkanDevice& device, const Context& context, std:
     std::fflush(stdout);
 
     ModeResult summary{};
+    std::size_t ran = 0u;
     for (std::size_t index = 0; index < cases.size(); ++index) {
         const auto& testCase = cases[index];
+        if (testCase.skipOnD32Fallback && expectedHostFormat == VK_FORMAT_D32_SFLOAT_S8_UINT) continue;
+        ++ran;
+        std::uint32_t expected = testCase.expectedCovered;
+        if (testCase.matchNativeD16) {
+            CaseSpec nativeCase = testCase;
+            nativeCase.format = VK_FORMAT_D16_UNORM;
+            ClearDepthSurfaces(context.device);
+            for (const auto& step : nativeCase.steps) {
+                expected = ExecuteStep(device, context, baseShaders, fragShaders, nativeCase, step);
+            }
+        }
         ClearDepthSurfaces(context.device);
         std::uint32_t actual = 0u;
         for (const auto& step : testCase.steps) {
             actual = ExecuteStep(device, context, baseShaders, fragShaders, testCase, step);
         }
-        const bool ok = (actual == testCase.expectedCovered);
+        const bool ok = (actual == expected);
         if (ok) {
             ++summary.passed;
         } else {
             ++summary.failed;
         }
         std::printf("  [%02zu/%02zu] %-54s expected=%4u actual=%4u [%s]\n",
-                    index + 1u,
+                    ran,
                     cases.size(),
                     testCase.name.c_str(),
-                    testCase.expectedCovered,
+                    expected,
                     actual,
                     ok ? "PASS" : "FAIL");
     }
@@ -994,7 +1085,7 @@ ModeResult RunMode(AgcDriver::VulkanDevice& device, const Context& context, std:
                 static_cast<int>(modeName.size()),
                 modeName.data(),
                 summary.passed,
-                cases.size(),
+                ran,
                 summary.failed);
     std::fflush(stdout);
     return summary;
