@@ -3155,6 +3155,81 @@ static void CheckLongDoubleHyperbolic() {
     Require(std::isinf(_LSinh_nid_postfix(-11360.0L, 1.0L)) && std::signbit(_LSinh_nid_postfix(-11360.0L, 1.0L)));
 }
 
+static void CheckLongDoublePower() {
+    const long double infinity = std::numeric_limits<long double>::infinity();
+    const long double nan = std::numeric_limits<long double>::quiet_NaN();
+    const long double operands[] = {nan, 0.0L, -0.0L, infinity, -infinity, 2.5L, -2.5L};
+    for (const long double x : operands) {
+        Require(ExtendedBits(powl_nid_postfix(x, 0.0L), 0x8000000000000000ull, 0x3fff));
+        Require(ExtendedBits(powl_nid_postfix(x, -0.0L), 0x8000000000000000ull, 0x3fff));
+    }
+    const long double exponents[] = {nan, infinity, -infinity, 2.5L, -3.0L};
+    for (const long double y : exponents) {
+        Require(ExtendedBits(powl_nid_postfix(1.0L, y), 0x8000000000000000ull, 0x3fff));
+    }
+    Require(ExtendedBits(powl_nid_postfix(-1.0L, infinity), 0x8000000000000000ull, 0x3fff));
+    Require(ExtendedBits(powl_nid_postfix(-1.0L, -infinity), 0x8000000000000000ull, 0x3fff));
+    Require(std::isnan(powl_nid_postfix(2.0L, nan)) && std::isnan(powl_nid_postfix(nan, 2.0L)) && std::isnan(powl_nid_postfix(-1.0L, nan)));
+    Require(ExtendedBits(powl_nid_postfix(0.0L, -3.0L), 0x8000000000000000ull, 0x7fff));
+    Require(ExtendedBits(powl_nid_postfix(-0.0L, -3.0L), 0x8000000000000000ull, 0xffff));
+    Require(ExtendedBits(powl_nid_postfix(-0.0L, -2.0L), 0x8000000000000000ull, 0x7fff));
+    Require(ExtendedBits(powl_nid_postfix(-0.0L, -2.5L), 0x8000000000000000ull, 0x7fff));
+    Require(ExtendedBits(powl_nid_postfix(0.0L, 3.0L), 0, 0));
+    Require(ExtendedBits(powl_nid_postfix(-0.0L, 3.0L), 0, 0x8000));
+    Require(ExtendedBits(powl_nid_postfix(-0.0L, 2.0L), 0, 0));
+    Require(ExtendedBits(powl_nid_postfix(-0.0L, 0.5L), 0, 0));
+    Require(ExtendedBits(powl_nid_postfix(0.0L, infinity), 0, 0));
+    Require(ExtendedBits(powl_nid_postfix(0.0L, -infinity), 0x8000000000000000ull, 0x7fff));
+    Require(std::isnan(powl_nid_postfix(-2.0L, 0.5L)) && std::isnan(powl_nid_postfix(-2.0L, -1.5L)));
+    Require(ExtendedBits(powl_nid_postfix(0.5L, -infinity), 0x8000000000000000ull, 0x7fff));
+    Require(ExtendedBits(powl_nid_postfix(-0.5L, -infinity), 0x8000000000000000ull, 0x7fff));
+    Require(ExtendedBits(powl_nid_postfix(2.0L, -infinity), 0, 0));
+    Require(ExtendedBits(powl_nid_postfix(-2.0L, -infinity), 0, 0));
+    Require(ExtendedBits(powl_nid_postfix(0.5L, infinity), 0, 0));
+    Require(ExtendedBits(powl_nid_postfix(-0.5L, infinity), 0, 0));
+    Require(ExtendedBits(powl_nid_postfix(2.0L, infinity), 0x8000000000000000ull, 0x7fff));
+    Require(ExtendedBits(powl_nid_postfix(-2.0L, infinity), 0x8000000000000000ull, 0x7fff));
+    Require(ExtendedBits(powl_nid_postfix(-infinity, -3.0L), 0, 0x8000));
+    Require(ExtendedBits(powl_nid_postfix(-infinity, -2.0L), 0, 0));
+    Require(ExtendedBits(powl_nid_postfix(-infinity, 3.0L), 0x8000000000000000ull, 0xffff));
+    Require(ExtendedBits(powl_nid_postfix(-infinity, 2.0L), 0x8000000000000000ull, 0x7fff));
+    Require(ExtendedBits(powl_nid_postfix(infinity, -2.5L), 0, 0));
+    Require(ExtendedBits(powl_nid_postfix(infinity, 2.5L), 0x8000000000000000ull, 0x7fff));
+    Require(ExtendedBits(powl_nid_postfix(10.0L, 5000.5L), 0x8000000000000000ull, 0x7fff));
+    Require(ExtendedBits(powl_nid_postfix(2.0L, 20000.0L), 0x8000000000000000ull, 0x7fff));
+    Require(ExtendedBits(powl_nid_postfix(10.0L, -5000.5L), 0, 0));
+    Require(ExtendedBits(powl_nid_postfix(2.0L, -20000.0L), 0, 0));
+    Require(ExtendedBits(powl_nid_postfix(2.0L, -16440.5L), 0x17, 0));
+    struct Case {
+        long double x;
+        long double y;
+        std::uint64_t mantissa;
+        std::uint16_t signExponent;
+    };
+    const Case cases[] = {
+        {10.0L, -3.5L, 0xa5cb5f4e16d15f14ull, 0x3ff3},
+        {7.25L, -2.75L, 0x8d190d237cc8d183ull, 0x3ff7},
+        {9.0L, 3.3L, 0xb029454f7d63d612ull, 0x4009},
+        {1.5L, 100.75L, 0xf4b79d3aac634ddbull, 0x4039},
+        {3.0L, -1234.5L, 0xa4b6025319383d5eull, 0x385a},
+        {0.1L, 10.3L, 0xdc6caa7cb16f836eull, 0x3fdc},
+        {1.0000001L, 1000000.0L, 0x8d763d8ef21fb778ull, 0x3fff},
+        {1e300L, 3.5L, 0x8231368808840353ull, 0x4d9f},
+        {12345.678L, -1000.0L, 0x9b958eeefec202d5ull, 0x0ae7},
+        {1.1L, 50.0L, 0xeac81dde5fad7828ull, 0x4005},
+        {-1.1L, 51.0L, 0x812143a0b49f687cull, 0xc006},
+        {2.5L, -33.0L, 0xa6274bbdd0fadd62ull, 0x3fd3},
+        {1.0001L, 9999.0L, 0xadf1a65fda9969f7ull, 0x4000},
+        {-3.0L, -7.0L, 0xefbab407f5b2fa44ull, 0xbff3},
+    };
+    for (const Case& test : cases) {
+        if (!ExtendedBits(powl_nid_postfix(test.x, test.y), test.mantissa, test.signExponent)) {
+            std::fprintf(stderr, "Guest powl failed for %La %La\n", test.x, test.y);
+            std::abort();
+        }
+    }
+}
+
 static void CheckLongDoubleFunctions() {
     const long double infinity = std::numeric_limits<long double>::infinity();
     const long double nan = std::numeric_limits<long double>::quiet_NaN();
@@ -4114,6 +4189,7 @@ int main() {
     CheckFrexpEnvironment();
     CheckScaling();
     CheckLongDoubleFunctions();
+    CheckLongDoublePower();
     CheckLongDoubleHyperbolic();
     CheckDinkumwareFloatCharacteristics();
     CheckFrexpfEnvironment();

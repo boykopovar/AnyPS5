@@ -161,6 +161,7 @@
  */
 #include "prx/libc/include/Api.hpp"
 #include <mutex>
+#include <optional>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -3847,6 +3848,273 @@ float APS5_VABI cbrtf_nid_postfix(float x) {
     T = T * (static_cast<double>(x) + x + r) / (x + r + r);
     return static_cast<float>(T);
 }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/ld80/e_powl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/e_powl.c */
+/*-
+ * Copyright (c) 2008 Stephen L. Moshier <steve@moshier.net>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+static constexpr int PowlTableSize = 32;
+static constexpr int PowlTableShift = 5;
+static constexpr long double PowlLogP[] = {
+    8.3319510773868690346226E-4L,
+    4.9000050881978028599627E-1L,
+    1.7500123722550302671919E0L,
+    1.4000100839971580279335E0L,
+};
+static constexpr long double PowlLogQ[] = {
+    5.2500282295834889175431E0L,
+    8.4000598057587009834666E0L,
+    4.2000302519914740834728E0L,
+};
+static constexpr long double PowlA[33] = {
+    1.0000000000000000000000E0L,
+    9.7857206208770013448287E-1L,
+    9.5760328069857364691013E-1L,
+    9.3708381705514995065011E-1L,
+    9.1700404320467123175367E-1L,
+    8.9735453750155359320742E-1L,
+    8.7812608018664974155474E-1L,
+    8.5930964906123895780165E-1L,
+    8.4089641525371454301892E-1L,
+    8.2287773907698242225554E-1L,
+    8.0524516597462715409607E-1L,
+    7.8799042255394324325455E-1L,
+    7.7110541270397041179298E-1L,
+    7.5458221379671136985669E-1L,
+    7.3841307296974965571198E-1L,
+    7.2259040348852331001267E-1L,
+    7.0710678118654752438189E-1L,
+    6.9195494098191597746178E-1L,
+    6.7712777346844636413344E-1L,
+    6.6261832157987064729696E-1L,
+    6.4841977732550483296079E-1L,
+    6.3452547859586661129850E-1L,
+    6.2092890603674202431705E-1L,
+    6.0762367999023443907803E-1L,
+    5.9460355750136053334378E-1L,
+    5.8186242938878875689693E-1L,
+    5.6939431737834582684856E-1L,
+    5.5719337129794626814472E-1L,
+    5.4525386633262882960438E-1L,
+    5.3357020033841180906486E-1L,
+    5.2213689121370692017331E-1L,
+    5.1094857432705833910408E-1L,
+    5.0000000000000000000000E-1L,
+};
+static constexpr long double PowlB[17] = {
+    0.0000000000000000000000E0L,
+    2.6176170809902549338711E-20L,
+    -1.0126791927256478897086E-20L,
+    1.3438228172316276937655E-21L,
+    1.2207982955417546912101E-20L,
+    -6.3084814358060867200133E-21L,
+    1.3164426894366316434230E-20L,
+    -1.8527916071632873716786E-20L,
+    1.8950325588932570796551E-20L,
+    1.5564775779538780478155E-20L,
+    6.0859793637556860974380E-21L,
+    -2.0208749253662532228949E-20L,
+    1.4966292219224761844552E-20L,
+    3.3540909728056476875639E-21L,
+    -8.6987564101742849540743E-22L,
+    -1.2327176863327626135542E-20L,
+    0.0000000000000000000000E0L,
+};
+static constexpr long double PowlExp2R[] = {
+    1.5089970579127659901157E-5L,
+    1.5402715328927013076125E-4L,
+    1.3333556028915671091390E-3L,
+    9.6181291046036762031786E-3L,
+    5.5504108664798463044015E-2L,
+    2.4022650695910062854352E-1L,
+    6.9314718055994530931447E-1L,
+};
+static constexpr long double PowlMaxExponent = PowlTableSize * 16384.0L;
+static constexpr long double PowlMinExponent = -PowlTableSize * (16384.0L + 64.0L);
+static constexpr long double PowlLog2eMinusOne = 0.44269504088896340735992L;
+static constexpr long double PowlMaxLog = 1.1356523406294143949492E4L;
+static constexpr long double PowlMinLog = -1.13994985314888605586758E4L;
+static constexpr long double PowlLn2 = 6.9314718055994530941723E-1L;
+static volatile long double PowlHuge = 0x1p10000L;
+static volatile long double PowlTwoPowerMinus10000 = 0x1p-10000L;
+
+static long double PowlPolynomial(long double x, const long double* coefficients, int degree) {
+    long double y = *coefficients++;
+    do {
+        y = y * x + *coefficients++;
+    } while (--degree);
+    return y;
+}
+
+static long double PowlMonicPolynomial(long double x, const long double* coefficients, int degree) {
+    degree -= 1;
+    long double y = x + *coefficients++;
+    do {
+        y = y * x + *coefficients++;
+    } while (--degree);
+    return y;
+}
+
+static long double PowlReduce(long double x) {
+    long double t = std::ldexp(x, PowlTableShift);
+    t = std::floor(t);
+    return std::ldexp(t, -PowlTableShift);
+}
+
+static long double PowlIntegerPower(long double x, int power) {
+    int asign = 0;
+    if (x < 0.0L) {
+        asign = -1;
+        x = -x;
+    }
+    int sign = 1;
+    int n = power;
+    if (power < 0) {
+        sign = -1;
+        n = -power;
+    }
+    int lx;
+    long double s = std::frexp(x, &lx);
+    const int e = (lx - 1) * n;
+    if (e == 0 || e > 64 || e < -64) {
+        s = (s - 7.0710678118654752e-1L) / (s + 7.0710678118654752e-1L);
+        s = (2.9142135623730950L * s - 0.5L + lx) * power * PowlLn2;
+    } else {
+        s = PowlLn2 * e;
+    }
+    if (s > PowlMaxLog) return PowlHuge * PowlHuge;
+    if (s < PowlMinLog) return PowlTwoPowerMinus10000 * PowlTwoPowerMinus10000;
+    if (s < (-PowlMaxLog + 2.0L)) {
+        x = 1.0L / x;
+        sign = -sign;
+    }
+    long double y = 1.0L;
+    if (n & 1) {
+        y = x;
+    } else {
+        asign = 0;
+    }
+    long double ww = x;
+    for (n >>= 1; n != 0; n >>= 1) {
+        ww = ww * ww;
+        if (n & 1) y *= ww;
+    }
+    if (asign) y = -y;
+    if (sign < 0) y = 1.0L / y;
+    return y;
+}
+
+static std::optional<long double> PowlHugeExponent(long double x, long double y) {
+    constexpr long double largest = std::numeric_limits<long double>::max();
+    const long double magnitude = std::fabs(x);
+    if ((y < largest && y > -largest) || x == 0.0L || magnitude == 1.0L) return std::nullopt;
+    return (magnitude > 1.0L) == (y > 0.0L) ? std::numeric_limits<long double>::infinity() : 0.0L;
+}
+
+static std::optional<long double> PowlExceptionalOperands(long double x, long double y) {
+    if (y == 0.0L || x == 1.0L) return 1.0L;
+    if (std::isnan(x)) return x;
+    if (std::isnan(y)) return y;
+    if (y == 1.0L) return x;
+    if (!std::isfinite(y) && x == -1.0L) return 1.0L;
+    if (const std::optional<long double> huge = PowlHugeExponent(x, y)) return huge;
+    if (x >= std::numeric_limits<long double>::max()) return y > 0.0L ? std::numeric_limits<long double>::infinity() : 0.0L;
+    return std::nullopt;
+}
+
+static std::optional<long double> PowlNonPositiveBase(long double x, long double y, bool integerExponent, bool oddExponent) {
+    if (x > 0.0L) return std::nullopt;
+    if (x == 0.0L || x <= -std::numeric_limits<long double>::max()) {
+        const bool toInfinity = (x == 0.0L) == (y < 0.0L);
+        const long double magnitude = toInfinity ? std::numeric_limits<long double>::infinity() : 0.0L;
+        return std::signbit(x) && oddExponent ? -magnitude : magnitude;
+    }
+    if (!integerExponent) return (x - x) / (x - x);
+    return std::nullopt;
+}
+
+struct PowlLog2Parts {
+    long double exponent;
+    long double fraction;
+};
+
+static PowlLog2Parts PowlBase2Log(long double x, int e) {
+    int i = 1;
+    if (x <= PowlA[17]) i = 17;
+    if (x <= PowlA[i + 8]) i += 8;
+    if (x <= PowlA[i + 4]) i += 4;
+    if (x <= PowlA[i + 2]) i += 2;
+    if (x >= PowlA[1]) i = -1;
+    i += 1;
+    x -= PowlA[i];
+    x -= PowlB[i / 2];
+    x /= PowlA[i];
+    volatile long double z = x * x;
+    long double w = x * (z * PowlPolynomial(x, PowlLogP, 3) / PowlMonicPolynomial(x, PowlLogQ, 3));
+    w = w - std::ldexp(z, -1);
+    z = PowlLog2eMinusOne * w;
+    z += w;
+    z += PowlLog2eMinusOne * x;
+    z += x;
+    w = -i;
+    w = std::ldexp(w, -PowlTableShift);
+    w += e;
+    return {w, z};
+}
+
+static long double PowlExponential(PowlLog2Parts log2, long double y, bool negativeBase) {
+    const long double ya = PowlReduce(y);
+    const long double yb = y - ya;
+    const long double f = log2.fraction * y + log2.exponent * yb;
+    const long double fa = PowlReduce(f);
+    const long double fb = f - fa;
+    const long double g = fa + log2.exponent * ya;
+    const long double ga = PowlReduce(g);
+    const long double gb = g - ga;
+    const long double h = fb + gb;
+    const long double ha = PowlReduce(h);
+    const long double scaled = std::ldexp(ga + ha, PowlTableShift);
+    if (scaled > PowlMaxExponent) return PowlHuge * PowlHuge;
+    if (scaled < PowlMinExponent) return PowlTwoPowerMinus10000 * PowlTwoPowerMinus10000;
+    int e = static_cast<int>(scaled);
+    long double hb = h - ha;
+    if (hb > 0.0L) {
+        e += 1;
+        hb -= (1.0L / PowlTableSize);
+    }
+    long double z = hb * PowlPolynomial(hb, PowlExp2R, 6);
+    const int i = e / PowlTableSize + (e < 0 ? 0 : 1);
+    const long double a = PowlA[PowlTableSize * i - e];
+    z = a * z;
+    z = z + a;
+    z = std::ldexp(z, i);
+    if (negativeBase && std::ldexp(std::floor(std::ldexp(y, -1)), 1) != y) z = -z;
+    return z;
+}
+
+static long double PowlMsun(long double x, long double y) {
+    if (const std::optional<long double> special = PowlExceptionalOperands(x, y)) return *special;
+    const long double w = std::floor(y);
+    const bool integerExponent = w == y;
+    const bool oddExponent = integerExponent && std::floor(0.5L * std::fabs(y)) != 0.5L * std::fabs(w);
+    if (const std::optional<long double> base = PowlNonPositiveBase(x, y, integerExponent, oddExponent)) return *base;
+    if (integerExponent && std::floor(x) == x && std::fabs(y) < 32768.0L) return PowlIntegerPower(x, static_cast<int>(y));
+    int e;
+    const long double significand = std::frexp(std::fabs(x), &e);
+    return PowlExponential(PowlBase2Log(significand, e), y, x < 0.0L);
+}
+
 static long double PartialRemainder(long double x, long double y, std::uint16_t* status) {
     long double remainder;
     asm("1:\n\tfprem1\n\tfnstsw %%ax\n\ttestw $0x400, %%ax\n\tjnz 1b" : "=t"(remainder), "=a"(*status) : "0"(x), "u"(y));
@@ -4037,7 +4305,7 @@ long double APS5_VABI expl_nid_postfix(long double x) { return std::exp(x); }
 long double APS5_VABI exp2l_nid_postfix(long double x) { return std::exp2(x); }
 long double APS5_VABI logl_nid_postfix(long double x) { return std::log(x); }
 long double APS5_VABI log10l_nid_postfix(long double x) { return std::log10(x); }
-long double APS5_VABI powl_nid_postfix(long double base, long double exp) { return std::pow(base, exp); }
+long double APS5_VABI powl_nid_postfix(long double base, long double exp) { return PowlMsun(base, exp); }
 long double APS5_VABI ldexpl_nid_postfix(long double x, int exp) { return std::ldexp(x, exp); }
 long double APS5_VABI truncl_nid_postfix(long double x) { return std::trunc(x); }
 long double APS5_VABI ceill_nid_postfix(long double x) { return std::ceil(x); }
