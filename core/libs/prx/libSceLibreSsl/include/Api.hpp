@@ -945,7 +945,7 @@ int APS5_VABI X509_print_ex_nid_postfix(void);
 int APS5_VABI X509_verify_cert_nid_postfix(void);
 const char* APS5_VABI X509_verify_cert_error_string_nid_postfix(std::int64_t error);
 int APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(void);
-int APS5_VABI d2i_PKCS12_bio_nid_postfix(void);
+void* APS5_VABI d2i_PKCS12_bio_nid_postfix(LibreSsl::Bio* bio, void** output);
 int APS5_VABI d2i_PKCS12_fp_nid_postfix(void);
 LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, long length);
 int APS5_VABI d2i_X509_nid_postfix(void);
