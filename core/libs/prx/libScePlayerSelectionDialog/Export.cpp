@@ -37,20 +37,29 @@ int APS5_VABI scePlayerSelectionDialogInitialize(void) {
 
 int APS5_VABI scePlayerSelectionDialogOpen(const PlayerSelectionDialogParam* param) {
  if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
- if (!ValidateCommonDialogBaseParam(param->base)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ PlayerSelectionDialogParam localParam{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+ errno = savedErrno;
+ if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
+ if (localParam.base.size != sizeof(localParam.base) || localParam.base.magic != static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(param)) - 1060003575u || !std::all_of(std::begin(localParam.base.reserved), std::end(localParam.base.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  const int status = g_status.load();
  if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
- if (param->size != sizeof(*param) || param->userId == -1) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ if (localParam.size != sizeof(localParam) || localParam.userId == -1) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  UserServiceLoginUserIdList users{};
- if (sceUserServiceGetLoginUserIdList(&users) != 0 || std::find(std::begin(users.user_id), std::end(users.user_id), param->userId) == std::end(users.user_id)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
- if (param->maxPlayers > 256 || param->mode > 3 || param->playerCount > 256) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
- if (param->playerCount != 0 && param->players == nullptr) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
- for (std::uint32_t index = 0; index < param->playerCount; ++index) {
-  const auto& player = param->players[index];
+ if (sceUserServiceGetLoginUserIdList(&users) != 0 || std::find(std::begin(users.user_id), std::end(users.user_id), localParam.userId) == std::end(users.user_id)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ if (localParam.maxPlayers > 256 || localParam.mode > 3 || localParam.playerCount > 256) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ if (localParam.playerCount != 0 && localParam.players == nullptr) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ for (std::uint32_t index = 0; index < localParam.playerCount; ++index) {
+  PlayerSelectionDialogPlayer player{};
+  const int savedErrnoPlayer = errno;
+  const bool copiedPlayer = GuestCopyIn_nid_no_patch(&player, &localParam.players[index], sizeof(player));
+  errno = savedErrnoPlayer;
+  if (!copiedPlayer) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
   if (player.accountId == 0 || player.option0 > 1 || player.option1 > 1 || player.mode > 2 || !std::all_of(std::begin(player.reserved), std::end(player.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
-  if (param->maxPlayers == 1 && player.option0 == 1) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+  if (localParam.maxPlayers == 1 && player.option0 == 1) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  }
- if (!std::all_of(std::begin(param->reserved), std::end(param->reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ if (!std::all_of(std::begin(localParam.reserved), std::end(localParam.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
  g_status = COMMON_DIALOG_STATUS_FINISHED;
  return 0;

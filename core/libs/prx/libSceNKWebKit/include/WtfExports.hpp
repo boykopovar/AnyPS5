@@ -149,6 +149,7 @@ void APS5_VABI _ZN3WTF25fastMallocDumpMallocStatsEv();
 bool APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_(const NKWebKit::WtfAbi::URL* a, const NKWebKit::WtfAbi::URL* b);
 void APS5_VABI _ZN3WTF27releaseFastMallocFreeMemoryEv();
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF28displayNameForLanguageLocaleERKNS_6StringE(const NKWebKit::WtfAbi::String* localeName);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE(const NKWebKit::WtfAbi::String& input);
 void APS5_VABI _ZN3WTF28removeLanguageChangeObserverEPv(void* context);
 void APS5_VABI _ZN3WTF29cryptographicallyRandomValuesEPvm(void* buffer, std::size_t length);
 bool APS5_VABI _ZN3WTF29equalIgnoringASCIICaseNonNullEPKNS_10StringImplES2_(const NKWebKit::WtfAbi::StringImpl* a, const NKWebKit::WtfAbi::StringImpl* b);
@@ -312,6 +313,7 @@ NKWebKit::WtfAbi::StringView APS5_VABI _ZNK3WTF3URL8protocolEv(const NKWebKit::W
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(const NKWebKit::WtfAbi::LogSiteIdentifier* self);
 std::int32_t APS5_VABI _ZNK3WTF6String19characterStartingAtEj(const NKWebKit::WtfAbi::String* self, unsigned index);
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String20substringSharingImplEjj(const NKWebKit::WtfAbi::String* self, unsigned start, unsigned length);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String18simplifyWhiteSpaceEPFbDsE(const NKWebKit::WtfAbi::String* self, bool (APS5_VABI *predicate)(char16_t));
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String23convertToASCIILowercaseEv(const NKWebKit::WtfAbi::String* self);
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String23convertToASCIIUppercaseEv(const NKWebKit::WtfAbi::String* self);
 bool APS5_VABI _ZNK3WTF6String27isSafeToSendToAnotherThreadEv(const NKWebKit::WtfAbi::String* self);

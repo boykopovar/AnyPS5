@@ -1,4 +1,5 @@
 #include "prx/libSceRtc/include/Rtc.hpp"
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
@@ -396,7 +397,13 @@ bool parseAsctimeDateTime(const char* cursor, RtcDateTime& time) {
 extern "C" {
 
 int APS5_VABI sceRtcCheckValid(const RtcDateTime* time) {
-    return validate(time);
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    RtcDateTime localTime{};
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&localTime, time, sizeof(localTime));
+    errno = savedErrno;
+    if (!read) return SCE_RTC_ERROR_INVALID_POINTER;
+    return validate(&localTime);
 }
 
 int APS5_VABI sceRtcIsLeapYear(int year) {
