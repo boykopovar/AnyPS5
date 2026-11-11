@@ -37,6 +37,7 @@ constexpr int SCE_AJM_ERROR_INVALID_BATCH = static_cast<int>(0x80930004);
 constexpr int SCE_AJM_ERROR_INVALID_PARAMETER = static_cast<int>(0x80930005);
 constexpr int SCE_AJM_ERROR_OUT_OF_RESOURCES = static_cast<int>(0x80930007);
 constexpr int SCE_AJM_ERROR_MALFORMED_BATCH = static_cast<int>(0x80930011);
+constexpr int SCE_AJM_ERROR_JOB_CREATION = static_cast<int>(0x80930012);
 constexpr int SCE_AJM_ERROR_INVALID_ADDRESS = static_cast<int>(0x80930016);
 
 constexpr std::int32_t AJM_RESULT_NOT_INITIALIZED = 0x00000001;
@@ -136,6 +137,7 @@ struct Resampler {
 };
 
 struct Instance {
+    std::uint32_t context = 0;
     std::uint32_t codec = 0;
     std::uint64_t flags = 0;
     void* decoder = nullptr;
@@ -1950,7 +1952,7 @@ int APS5_VABI sceAjmFinalize(uint32_t context) {
 int APS5_VABI sceAjmModuleRegister(uint32_t context, uint32_t codec, int64_t reserved) {
     (void)context;
     (void)codec;
-    (void)reserved;
+    if (reserved != 0) return SCE_AJM_ERROR_INVALID_PARAMETER;
     return 0;
 }
 
@@ -1974,9 +1976,10 @@ int APS5_VABI sceAjmMemoryUnregister(uint32_t context, void* ptr) {
 }
 
 int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t flags, uint32_t* instance) {
-    (void)context;
+    if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
     if (!instance) return SCE_AJM_ERROR_INVALID_PARAMETER;
     auto created = std::make_unique<Instance>();
+    created->context = context;
     created->codec = codec;
     created->flags = flags;
     if (codec == CODEC_MP3) {
@@ -1997,10 +2000,13 @@ int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t fl
 }
 
 int APS5_VABI sceAjmInstanceDestroy(uint32_t context, uint32_t instance) {
-    (void)context;
+    if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
     AJM_TRACE("[ajm] instance %u destroy\n", instance);
     std::lock_guard lock(g_lock);
-    return g_instances.erase(instance) ? 0 : SCE_AJM_ERROR_INVALID_INSTANCE;
+    const auto found = g_instances.find(instance);
+    if (found == g_instances.end() || found->second->context != context) return SCE_AJM_ERROR_INVALID_INSTANCE;
+    g_instances.erase(found);
+    return 0;
 }
 
 int APS5_VABI sceAjmDecAt9ParseConfigData(const void* config_data, AjmDecAt9ConfigDataInfo* config_info) {
@@ -2063,19 +2069,37 @@ int APS5_VABI sceAjmBatchJobControl(AjmBatchInfo* info, uint32_t instance, uint6
     return CheckedAppend(info, header, &input, nullptr);
 }
 
-int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size) {
+int AppendRun(AjmBatchInfo* info, std::uint32_t instance, std::uint64_t flags, const AjmBuffer* input_buffers, std::size_t input_buffers_num, const AjmBuffer* output_buffers, std::size_t output_buffers_num, void* sideband_output, std::size_t sideband_output_size) {
     if (input_buffers_num > 0xffu || output_buffers_num > 0xffu) return SCE_AJM_ERROR_INVALID_PARAMETER;
     auto header = MakeHeader(JobKind::Run, instance, sideband_output, sideband_output_size);
     header.flags = flags;
     header.inputCount = static_cast<std::uint32_t>(input_buffers_num);
     header.outputCount = static_cast<std::uint32_t>(output_buffers_num);
-    return CheckedAppend(info, header, input_buffers, output_buffers);
+    if (const int rejected = JobRejected(info, header)) return rejected;
+    if ((input_buffers_num && !input_buffers) || (output_buffers_num && !output_buffers)) throw std::runtime_error("AJM batch job with a null buffer list and a nonzero buffer count is not implemented");
+    return Append(info, header, input_buffers, output_buffers);
+}
+
+int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size) {
+    if (!info || sideband_output_size < sizeof(SidebandResult)) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (input_buffers_num != 0 && !input_buffers) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (output_buffers_num != 0 && !output_buffers) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    const std::uint64_t buffers = static_cast<std::uint64_t>(input_buffers_num) + output_buffers_num;
+    const std::uint64_t limit = UINT64_MAX - sizeof(PackedJob);
+    if (buffers < input_buffers_num || info->offset > limit || buffers > (limit - info->offset) / sizeof(AjmBuffer)) NotImplemented_nid_no_patch("sceAjmBatchJobRunSplit (a job size past 64 bits)");
+    const std::uint64_t end = info->offset + sizeof(PackedJob) + buffers * sizeof(AjmBuffer);
+    if (end > info->size) {
+        info->offset = end;
+        return SCE_AJM_ERROR_JOB_CREATION;
+    }
+    if (input_buffers_num > 0xffu || output_buffers_num > 0xffu) NotImplemented_nid_no_patch("sceAjmBatchJobRunSplit (more than 255 input or output buffers in one job)");
+    return AppendRun(info, instance, flags, input_buffers, input_buffers_num, output_buffers, output_buffers_num, sideband_output, sideband_output_size);
 }
 
 int APS5_VABI sceAjmBatchJobRun(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const void* data_input, size_t data_input_size, void* data_output, size_t data_output_size, void* sideband_output, size_t sideband_output_size) {
     const AjmBuffer input{const_cast<void*>(data_input), data_input_size};
     const AjmBuffer output{data_output, data_output_size};
-    return sceAjmBatchJobRunSplit(info, instance, flags, &input, 1, &output, 1, sideband_output, sideband_output_size);
+    return AppendRun(info, instance, flags, &input, 1, &output, 1, sideband_output, sideband_output_size);
 }
 
 int APS5_VABI sceAjmBatchJobSetResampleParameters(AjmBatchInfo* info, uint32_t instance, float ratio, uint32_t flags, void* result) {
@@ -2106,7 +2130,7 @@ int APS5_VABI sceAjmBatchJobDecode(AjmBatchInfo* info, uint32_t instance, const 
 }
 
 int APS5_VABI sceAjmBatchJobDecodeSplit(AjmBatchInfo* info, uint32_t instance, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* result) {
-    return sceAjmBatchJobRunSplit(info, instance, SIDEBAND_STREAM, input_buffers, input_buffers_num, output_buffers, output_buffers_num, result, sizeof(SidebandResult) + sizeof(SidebandStream));
+    return AppendRun(info, instance, SIDEBAND_STREAM, input_buffers, input_buffers_num, output_buffers, output_buffers_num, result, sizeof(SidebandResult) + sizeof(SidebandStream));
 }
 
 int APS5_VABI sceAjmBatchJobDecodeSingle(AjmBatchInfo* info, uint32_t instance, const void* bitstream_input, size_t bitstream_input_size, void* pcm_output, size_t pcm_output_size, void* result) {
@@ -2114,15 +2138,15 @@ int APS5_VABI sceAjmBatchJobDecodeSingle(AjmBatchInfo* info, uint32_t instance, 
 }
 
 int APS5_VABI sceAjmBatchJobGetGaplessDecode(AjmBatchInfo* info, uint32_t instance, void* result) {
-    return sceAjmBatchJobRunSplit(info, instance, SIDEBAND_GAPLESS_DECODE, nullptr, 0, nullptr, 0, result, sizeof(SidebandResult) + sizeof(SidebandGaplessDecode));
+    return AppendRun(info, instance, SIDEBAND_GAPLESS_DECODE, nullptr, 0, nullptr, 0, result, sizeof(SidebandResult) + sizeof(SidebandGaplessDecode));
 }
 
 int APS5_VABI sceAjmBatchJobGetInfo(AjmBatchInfo* info, uint32_t instance, void* result) {
-    return sceAjmBatchJobRunSplit(info, instance, SIDEBAND_FORMAT, nullptr, 0, nullptr, 0, result, sizeof(SidebandResult) + sizeof(SidebandFormat));
+    return AppendRun(info, instance, SIDEBAND_FORMAT, nullptr, 0, nullptr, 0, result, sizeof(SidebandResult) + sizeof(SidebandFormat));
 }
 
 int APS5_VABI sceAjmBatchJobGetCodecInfo(AjmBatchInfo* info, uint32_t instance, void* result, size_t result_size) {
-    return sceAjmBatchJobRunSplit(info, instance, RUN_GET_CODEC_INFO, nullptr, 0, nullptr, 0, result, result_size);
+    return AppendRun(info, instance, RUN_GET_CODEC_INFO, nullptr, 0, nullptr, 0, result, result_size);
 }
 
 int APS5_VABI sceAjmBatchJobGetStatistics(AjmBatchInfo* info, float interval, void* result) {
