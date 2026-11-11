@@ -8,6 +8,16 @@
 
 static void Require(bool value) { if (!value) std::abort(); }
 
+template <typename TCall>
+static bool ReportsNotImplemented(const char* name, TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(name) + " not implemented";
+    }
+    return false;
+}
+
 int main() {
     int32_t intVal = 0;
     char strBuf[64] = {};
@@ -97,6 +107,40 @@ int main() {
     Require(sceRegMgrCheckError() == 0);
     Require(sceRegMgrNonSysCheckError() == 0);
     Require(sceRegMgrIsInitOK() == 1);
+
+    Require(sceRegMgrSetInt(0x3006, 1) == 0);
+    Require(sceRegMgrIsChange(0x3006, 0x0d010001u) == 1);
+    Require(sceRegMgrIsChange(0x3006, 0x0d010001u) == 0);
+    Require(sceRegMgrSetInt(0x3006, 2) == 0);
+    Require(sceRegMgrIsChange(0x3006, 0x0d010002u) == 1);
+    Require(sceRegMgrIsChange(0x3006, 1u) == 0);
+
+    Require(sceRegMgrSetInt(0x3007, 5) == 0);
+    Require(sceRegMgrIsChange(0x3007, 0x0d010001u) == 1);
+    Require(sceRegMgrSetInt(0x3007, 5) == 0);
+    Require(sceRegMgrIsChange(0x3007, 0x0d010001u) == 0);
+    Require(sceRegMgrIsChange(0x3007, 0x0d010002u) == 1);
+
+    Require(sceRegMgrSetInt(0x3003, 9) == 0);
+    Require(sceRegMgrResetVal(0x3003, 0) == 0);
+    intVal = 0x55AA;
+    Require(sceRegMgrGetInt(0x3003, &intVal) == static_cast<int>(0x80820002));
+    Require(intVal == 0x55AA);
+    Require(sceRegMgrIsChange(0x3003, 0x0d010001u) == 1);
+    Require(sceRegMgrResetVal(0x3004, -1) == 0);
+    Require(sceRegMgrResetVal(static_cast<std::int32_t>(0xC0808003u), 0) == 0);
+    intVal = 0x55AA;
+    Require(sceRegMgrGetInt(static_cast<std::int64_t>(0xC0808003u), &intVal) == static_cast<int>(0x80820002));
+    Require(intVal == 0x55AA);
+
+    Require(sceRegMgrSetInt(static_cast<std::int32_t>(0xC0808002u), 3) == 0);
+    Require(sceRegMgrIsChange(0xC0808002u, 0x0d010001u) == 1);
+
+    Require(ReportsNotImplemented("sceRegMgrGetIntInitVal", [&] { sceRegMgrGetIntInitVal(0x3005, &intVal); }));
+    Require(ReportsNotImplemented("sceRegMgrGetIntInitVal", [&] { sceRegMgrGetIntInitVal(0x3005, nullptr); }));
+    Require(ReportsNotImplemented("sceRegMgrGetStrInitVal", [&] { sceRegMgrGetStrInitVal(); }));
+    Require(ReportsNotImplemented("sceRegMgrGetBinInitVal", [&] { sceRegMgrGetBinInitVal(); }));
+    Require(ReportsNotImplemented("sceRegMgrSrvGetQAFforReg", [&] { sceRegMgrSrvGetQAFforReg(); }));
 
     return 0;
 }
