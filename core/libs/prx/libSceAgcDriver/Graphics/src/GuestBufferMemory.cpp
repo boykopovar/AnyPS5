@@ -2817,9 +2817,10 @@ std::uint64_t collectUploadWrites(std::uint64_t begin, bool sparse, const Upload
 
 bool uploadUnchanged(std::uint64_t begin, bool sparse, const UploadCopies::Pieces& backed, std::size_t bytes, std::uint64_t generation) {
     if (generation == 0) return false;
-    if (!sparse) return GuestMemory::UnchangedSince(begin, bytes, generation);
+    if (!sparse) return GuestMemory::CollectWritesUncached(begin, bytes) != 0 && GuestMemory::UnchangedSince(begin, bytes, generation);
     for (const auto& [first, last] : backed) {
-        if (!GuestMemory::UnchangedSince(first, static_cast<std::size_t>(last - first), generation)) return false;
+        const auto size = static_cast<std::size_t>(last - first);
+        if (GuestMemory::CollectWritesUncached(first, size) == 0 || !GuestMemory::UnchangedSince(first, size, generation)) return false;
     }
     return true;
 }
