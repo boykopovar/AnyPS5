@@ -732,9 +732,14 @@ size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, File
         stream->SyncStatus();
         return count;
     }
-    if (!stream->SwitchToReading()) return 0;
+    const int previousError = errno;
+    errno = 0;
+    if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return 0; }
     const auto result = std::fread(buffer, size, count, handle);
+    const int nativeError = errno;
     stream->SyncStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result < count);
     return result;
 }
@@ -1171,14 +1176,9 @@ void APS5_VABI qsort_nid_postfix(void* base, size_t count, size_t size, int (APS
 }
 
 int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestContextCompare compare, void* context) {
-    constexpr size_t RsizeMax = std::numeric_limits<size_t>::max() >> 1;
-    const char* const violation = count > RsizeMax ? "qsort_s : n > RSIZE_MAX"
-        : size > RsizeMax ? "qsort_s : es > RSIZE_MAX"
-        : count != 0 && !base ? "qsort_s : a == NULL"
-        : count != 0 && !compare ? "qsort_s : cmp == NULL"
-        : nullptr;
-    if (violation) {
-        SonyInvokeConstraintHandler(violation, nullptr, 22);
+    constexpr size_t RsizeMax = std::numeric_limits<size_t>::max() >> 3;
+    if (count > RsizeMax || size > RsizeMax || (count != 0 && (!base || !compare))) {
+        SonyInvokeConstraintHandler("qsort_s: bad argument", nullptr, 22);
         return 22;
     }
     if (count == 0) return 0;

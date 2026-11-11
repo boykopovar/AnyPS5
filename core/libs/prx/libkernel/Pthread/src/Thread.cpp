@@ -751,6 +751,19 @@ bool LiveGuestThreadExists(std::int64_t tid) {
     return false;
 }
 
+std::vector<LiveGuestThreadName> LiveGuestThreadNames() {
+    scePthreadSelf();
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    std::vector<LiveGuestThreadName> threads;
+    for (const auto& [id, thread] : registry.threads) {
+        if (GuestThreadEnded(thread)) continue;
+        std::lock_guard nameLock(thread->nameLock);
+        threads.push_back({thread->tid, thread->name});
+    }
+    return threads;
+}
+
 bool GuestThreadCpuNanos(int cpuClockThread, std::uint64_t* nanos) {
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
