@@ -517,16 +517,6 @@ int APS5_VABI libwebrtcUnknown21(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3rtc10SentPacketC1Ell_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc10SentPacketC1EllRKNS_10PacketInfoE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
