@@ -1,6 +1,7 @@
 #include "prx/libSceNpTrophy/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -148,6 +149,10 @@ int main() {
     Require(sceNpTrophyGetTrophyInfo(context, handle, 0, &trophyDetails, nullptr) == NotRegistered, "trophy info before registration");
     Require(sceNpTrophyRegisterContext(context, handle, 0) == 0, "register the context");
     Require(sceNpTrophyRegisterContext(context, handle, 0) == AlreadyRegistered, "register twice");
+    errno = 71;
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(0x10), &count) == InvalidArgument, "unwritable flags rejected");
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument, "unwritable count rejected");
+    Require(errno == 71, "errno preserved");
     Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0 && count == 2 && flags[0] == 0, "two trophies, none unlocked");
 
     std::uint64_t size = 0;
