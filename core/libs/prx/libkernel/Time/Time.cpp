@@ -645,7 +645,13 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
         return -1;
     }
     KernelTimespec value{};
-    if (ReadClock(clockId, &value) != 0) return -1;
+    if (clockId == GUEST_CLOCK_PROCESS_CPUTIME_ID) {
+        const auto elapsed = GetMonotonicNanos() - GetStartNanos();
+        value.tv_sec = static_cast<std::int64_t>(elapsed / 1000000000ULL);
+        value.tv_nsec = static_cast<std::int64_t>(elapsed % 1000000000ULL);
+    } else if (ReadClock(clockId, &value) != 0) {
+        return -1;
+    }
     if (tp == nullptr) {
         *__error_nid_postfix() = GUEST_EFAULT;
         return -1;

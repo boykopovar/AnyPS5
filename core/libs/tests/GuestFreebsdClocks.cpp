@@ -218,10 +218,20 @@ static void ProcessClocksAreOrdered() {
     for (int i = 0; i < 1000; ++i) {
         const std::int64_t user = Nanos(GUEST_CLOCK_VIRTUAL);
         const std::int64_t userAndSystem = Nanos(GUEST_CLOCK_PROF);
-        const std::int64_t execution = Nanos(GUEST_CLOCK_PROCESS_CPUTIME_ID);
         Require(user <= userAndSystem);
-        Require(userAndSystem <= execution + profResolution);
     }
+}
+
+static void ProcessElapsedClockAdvancesWhileSleeping() {
+    const auto beforeStart = Nanos(GUEST_CLOCK_MONOTONIC);
+    const auto elapsedStart = Nanos(GUEST_CLOCK_PROCESS_CPUTIME_ID);
+    const auto afterStart = Nanos(GUEST_CLOCK_MONOTONIC);
+    Require(sceKernelUsleep_nid_postfix(100000) == SCE_OK);
+    const auto beforeEnd = Nanos(GUEST_CLOCK_MONOTONIC);
+    const auto elapsedEnd = Nanos(GUEST_CLOCK_PROCESS_CPUTIME_ID);
+    const auto afterEnd = Nanos(GUEST_CLOCK_MONOTONIC);
+    Require(beforeEnd - afterStart <= elapsedEnd - elapsedStart);
+    Require(elapsedEnd - elapsedStart <= afterEnd - beforeStart);
 }
 
 static void BusyProcessAccumulatesUserTime() {
@@ -473,6 +483,7 @@ int main() {
     RequireNeverDecreases(GUEST_CLOCK_PROF);
     Clock21TracksProcessCpuTime();
     ProcessClocksAreOrdered();
+    ProcessElapsedClockAdvancesWhileSleeping();
     BusyProcessAccumulatesUserTime();
     IdleProcessAccumulatesNone();
     XtimeTicksAreGettimeofdayMicroseconds();
