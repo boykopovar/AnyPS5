@@ -107,6 +107,15 @@ static void Errors() {
             for (const bool null : {false, true}) CheckForward(result, write, null, {7, 7654321});
         }
     }
+    RegisterClockGetres_nid_no_patch(nullptr);
+    KernelTimespec value{123, 456};
+    bool threw = false;
+    try {
+        timespec_getres_nid_postfix(&value, 1);
+    } catch (const std::runtime_error& error) {
+        threw = std::string(error.what()) == "timespec_getres: missing kernel clock provider";
+    }
+    Require(threw);
 }
 
 static void Integration() {
