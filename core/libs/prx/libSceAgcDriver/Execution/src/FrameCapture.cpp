@@ -365,8 +365,9 @@ FrameCaptureReader::FrameCaptureReader(const std::filesystem::path& directory) :
     const auto callsPath = directory / FrameCaptureWriter::CallsName;
     const auto callBytes = readFile(callsPath);
     if (hasMagic(callBytes, FrameCaptureWriter::CallsMagicV1)) version = 1;
+    else if (hasMagic(callBytes, FrameCaptureWriter::CallsMagicV2)) version = 2;
     else requireMagic(callBytes, FrameCaptureWriter::CallsMagic, callsPath);
-    std::size_t at = (version == 1 ? FrameCaptureWriter::CallsMagicV1 : FrameCaptureWriter::CallsMagic).size();
+    std::size_t at = (version == 1 ? FrameCaptureWriter::CallsMagicV1 : version == 2 ? FrameCaptureWriter::CallsMagicV2 : FrameCaptureWriter::CallsMagic).size();
     while (at < callBytes.size()) {
         if (callBytes.size() - at < 8) {
             truncated = true;

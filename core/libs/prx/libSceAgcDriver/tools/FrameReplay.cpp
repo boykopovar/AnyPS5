@@ -545,11 +545,18 @@ struct Replay {
     bool atCapturedPark(const FrameCall& call) {
         std::array<AgcDriver::AwaitedWait, 64> awaited{};
         const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
-        std::vector<std::uint64_t> parked;
-        for (std::size_t slot = 0; slot < count; ++slot) parked.push_back(awaited[slot].address);
+        const std::size_t fields = reader.Version() >= 3 ? 4 : 1;
+        if (call.values.size() != 2 + fields * call.values[1]) throw std::runtime_error("frame replay: memory delta at call " + std::to_string(call.ordinal) + " lists " + std::to_string(call.values[1]) + " parked waits in " + std::to_string(call.values.size()) + " values");
+        std::vector<std::array<std::uint64_t, 4>> parked;
+        for (std::size_t slot = 0; slot < count; ++slot) {
+            const auto& wait = awaited[slot];
+            parked.push_back(fields == 4 && wait.bytes != 0 ? std::array<std::uint64_t, 4>{wait.address, wait.reference, wait.mask, wait.function | (std::uint64_t{wait.bytes} << 32u)} : std::array<std::uint64_t, 4>{wait.address, 0, 0, 0});
+        }
         std::ranges::sort(parked);
+        std::vector<std::uint64_t> flat;
+        for (const auto& wait : parked) flat.insert(flat.end(), wait.begin(), wait.begin() + static_cast<std::ptrdiff_t>(fields));
         const auto [accepted, completed] = progress();
-        return accepted - completed == call.accepted - call.completed && std::ranges::equal(parked, std::span(call.values).subspan(2));
+        return accepted - completed == call.accepted - call.completed && std::ranges::equal(flat, std::span(call.values).subspan(2));
     }
 
     void restoreAtCapturedPark(const FrameCall& call) {

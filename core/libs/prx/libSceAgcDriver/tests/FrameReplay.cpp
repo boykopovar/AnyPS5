@@ -494,6 +494,112 @@ void testStoreAfterGatedCopy(const std::filesystem::path& tool) {
     check(replayed(tool, checkCapture(1), layout.firstTarget, DataBytes) == stored, "the replay applied the CPU store before the copy that preceded it");
 }
 
+void checkStoreAfterCopyBehindIdleWait(const std::filesystem::path& tool, bool rewound) {
+    const auto layout = allocate();
+    const auto copied = pattern(7);
+    const auto stored = pattern(211);
+    std::memcpy(layout.source, copied.data(), copied.size());
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+
+    flip();
+    const auto gatedCopy = [&](CommandBuffer& buffer) {
+        sceAgcDcbDmaData(&buffer, 0, DmaMemory, 0, at(layout.firstTarget), DmaMemory, 0, at(layout.source), DataBytes, 0, 1, 0);
+        writeDone(buffer, layout.label);
+    };
+    if (rewound) {
+        release(submitRewound(layout.firstCommands, [](CommandBuffer&) {}, gatedCopy));
+    } else {
+        auto* const gate = layout.label + 1;
+        auto buffer = commands(layout.firstCommands);
+        sceAgcDcbWaitRegMem(&buffer, 0, 3, 0, 0, gate, Done, 0xffffffffu, 0);
+        gatedCopy(buffer);
+        Packet packet{layout.firstCommands, static_cast<std::uint32_t>(buffer.cursor_up - layout.firstCommands), 0, {}};
+        check(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
+        std::atomic_ref<std::uint32_t>(*gate).store(Done, std::memory_order_release);
+    }
+    waitUntil([&] { return std::atomic_ref<std::uint32_t>(*layout.label).load() == Done; }, "the gated copy did not run");
+    std::memcpy(layout.firstTarget, stored.data(), stored.size());
+    flip();
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    check(equal(layout.firstTarget, stored), "the driver did not finish the gated copy before the CPU store");
+    check(replayed(tool, checkCapture(0), layout.firstTarget, DataBytes, " --no-release") == stored, rewound ? "the replay applied the CPU store before the copy in the tail of the REWIND that preceded it" : "the replay applied the CPU store before the gated copy that preceded it");
+}
+
+void testStoreAfterGatedCopyIdle(const std::filesystem::path& tool) {
+    checkStoreAfterCopyBehindIdleWait(tool, false);
+}
+
+void testStoreAfterRewoundCopyIdle(const std::filesystem::path& tool) {
+    checkStoreAfterCopyBehindIdleWait(tool, true);
+}
+
+void testStoreBeforeSecondWaitOnGate(const std::filesystem::path& tool) {
+    const auto layout = allocate();
+    const auto copied = pattern(7);
+    const auto stored = pattern(211);
+    std::memcpy(layout.source, copied.data(), copied.size());
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+
+    flip();
+    auto* const gate = layout.label + 1;
+    auto buffer = commands(layout.firstCommands);
+    sceAgcDcbWaitRegMem(&buffer, 0, 3, 0, 0, gate, Done, 0xffffffffu, 0);
+    sceAgcDcbDmaData(&buffer, 0, DmaMemory, 0, at(layout.firstTarget), DmaMemory, 0, at(layout.source), DataBytes, 0, 1, 0);
+    writeDone(buffer, layout.label);
+    sceAgcDcbWaitRegMem(&buffer, 0, 3, 0, 0, gate, Done + 1, 0xffffffffu, 0);
+    Packet packet{layout.firstCommands, static_cast<std::uint32_t>(buffer.cursor_up - layout.firstCommands), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
+    std::atomic_ref<std::uint32_t>(*gate).store(Done, std::memory_order_release);
+    waitUntil([&] { return std::atomic_ref<std::uint32_t>(*layout.label).load() == Done; }, "the gated copy did not run");
+    std::memcpy(layout.firstTarget, stored.data(), stored.size());
+    flip();
+    std::atomic_ref<std::uint32_t>(*gate).store(Done + 1, std::memory_order_release);
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    check(equal(layout.firstTarget, stored), "the driver did not finish the gated copy before the CPU store");
+    check(replayed(tool, checkCapture(1), layout.firstTarget, DataBytes, " --no-release") == stored, "the replay ran the copy behind the gate's first wait after restoring the CPU store the capture read while the queue waited on the gate's second value");
+}
+
+void testUnwatchedStoreBeforeReservation(const std::filesystem::path& tool) {
+    const auto layout = allocate();
+    const auto copied = pattern(7);
+    const auto stored = pattern(211);
+    std::memcpy(layout.source, copied.data(), copied.size());
+    AgcDriver::GuestMemory::Unwatch(at(layout.firstTarget), DataBytes);
+    check(!AgcDriver::GuestMemory::Watched(at(layout.firstTarget), DataBytes), "the copy target did not lose write-watch coverage");
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+
+    flip();
+    auto* const gate = layout.label + 1;
+    auto gated = commands(layout.firstCommands);
+    sceAgcDcbWaitRegMem(&gated, 0, 3, 0, 0, gate, Done, 0xffffffffu, 0);
+    sceAgcDcbDmaData(&gated, 0, DmaMemory, 0, at(layout.firstTarget), DmaMemory, 0, at(layout.source), DataBytes, 0, 1, 0);
+    writeDone(gated, layout.label);
+    Packet packet{layout.firstCommands, static_cast<std::uint32_t>(gated.cursor_up - layout.firstCommands), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
+    std::atomic_ref<std::uint32_t>(*gate).store(Done, std::memory_order_release);
+    waitUntil([&] { return std::atomic_ref<std::uint32_t>(*layout.label).load() == Done; }, "the gated copy did not run");
+    std::memcpy(layout.firstTarget, stored.data(), stored.size());
+    const auto token = AgcDriverReserveEopFlip_nid_postfix(AgcDriver::FlipInfo{Handle, -1, 1, 0});
+    check(token != 0, "the EOP flip was not reserved");
+    auto reading = commands(layout.secondCommands);
+    sceAgcDcbDmaData(&reading, 0, DmaMemory, 0, at(layout.secondTarget), DmaMemory, 0, at(layout.firstTarget), DataBytes, 0, 1, 0);
+    const auto flipped = at(layout.label + 2);
+    const std::array<std::uint32_t, 8> eop{0xc0064900u, 0x06200504u, 0x42010000u, static_cast<std::uint32_t>(flipped), static_cast<std::uint32_t>(flipped >> 32u), Done, 0u, token};
+    std::memcpy(reading.cursor_up, eop.data(), sizeof(eop));
+    reading.cursor_up += eop.size();
+    Packet flipping{layout.secondCommands, static_cast<std::uint32_t>(reading.cursor_up - layout.secondCommands), 0, {}};
+    check(sceAgcDriverSubmitDcb(&flipping) == 0, "the flipping submission failed");
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    check(equal(layout.secondTarget, stored), "the driver did not copy the CPU store");
+    check(replayed(tool, checkCapture(0), layout.secondTarget, DataBytes, " --no-release") == stored, "the replay copied the gated copy's bytes, not the CPU store recorded before the EOP flip reservation");
+}
+
 void testCopyInFlightAtDelta(const std::filesystem::path& tool) {
     constexpr std::size_t CopyBytes = 128u << 20;
     constexpr std::size_t Stored = 64;
@@ -971,9 +1077,9 @@ void testFillClearedBeforeRange(const std::filesystem::path& tool) {
 int main(int argc, char** argv) {
     const std::string mode = argc == 3 ? argv[2] : "";
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
-        {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"gpu_store", testGpuStoreBehindRewind}, {"gpu_fill", testFillRewrittenByTitle}, {"gpu_restore_cached", testGpuFillRestoredToCachedValue}, {"unwatched_start", testInitiallyUnwatchedTitleStores}, {"unwatched_late", testLaterUnwatchedTitleStores}, {"unwatched_shared", testSharedTitleStores}, {"gpu_cleared", testFillClearedBeforeRange}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}};
+        {"rewind_store", testStoreAfterGatedCopy}, {"store_idle", testStoreAfterGatedCopyIdle}, {"store_idle_rewind", testStoreAfterRewoundCopyIdle}, {"store_idle_unwatched", testUnwatchedStoreBeforeReservation}, {"store_second_wait", testStoreBeforeSecondWaitOnGate}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"gpu_store", testGpuStoreBehindRewind}, {"gpu_fill", testFillRewrittenByTitle}, {"gpu_restore_cached", testGpuFillRestoredToCachedValue}, {"unwatched_start", testInitiallyUnwatchedTitleStores}, {"unwatched_late", testLaterUnwatchedTitleStores}, {"unwatched_shared", testSharedTitleStores}, {"gpu_cleared", testFillClearedBeforeRange}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}};
     if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || rewound.contains(mode)))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|gpu_store|gpu_fill|gpu_restore_cached|unwatched_start|unwatched_late|unwatched_shared|gpu_cleared|fence_reuse|busy_queue]\n");
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|store_idle|store_idle_rewind|store_idle_unwatched|store_second_wait|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|gpu_store|gpu_fill|gpu_restore_cached|unwatched_start|unwatched_late|unwatched_shared|gpu_cleared|fence_reuse|busy_queue]\n");
         return 2;
     }
     int status = 0;
