@@ -2322,7 +2322,8 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
         }
     } else {
         // The CPU-read records with the driver's rules: an InPlace dimension takes the record's
-        // value, a Constant one (the CP writes nowhere) the constant.
+        // value, a Constant one (the CP writes nowhere, or the program never reads the register) the
+        // constant.
         using Rule = Pm4::DrawParameters::IndirectDraw::Rule;
         for (const auto& record : indirect->records) {
             if (record.count == 0 || record.instances == 0) continue;
