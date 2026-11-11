@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
 
@@ -39,6 +40,11 @@ int main() {
     Require(EVP_EncryptInit_nid_postfix(&context, &cipher, key, iv) == 1);
     Require(calls == 1 && lastEncrypt == 1 && lastKey == key && lastIv == iv);
     Require(context.cipher == &cipher && context.encrypt == 1);
+
+    LibreSslEvpCipherCtx stale;
+    std::memset(&stale, 0xa5, sizeof(stale));
+    Require(EVP_EncryptInit_nid_postfix(&stale, &cipher, key, iv) == 1);
+    Require(calls == 2 && stale.cipher == &cipher && stale.encrypt == 1 && stale.engine == nullptr);
 
     LibreSslEvpCipherCtx empty{};
     Require(EVP_EncryptInit_nid_postfix(&empty, nullptr, nullptr, nullptr) == 0);
