@@ -73,6 +73,10 @@ class SummaryValidationTests(unittest.TestCase):
                                                    "runs": [{"outcome": "rendering", "fps": 60}]}}}
             path.write_text(json.dumps(summary), encoding="utf-8")
             self.assertEqual(performance_bisect.sample_summary(path, "PPSA00000", GOOD)["fps"], 60)
+            summary["build"]["commit"] = GOOD[:9]
+            path.write_text(json.dumps(summary), encoding="utf-8")
+            self.assertEqual(performance_bisect.sample_summary(path, "PPSA00000", GOOD)["fps"], 60)
+            summary["build"]["commit"] = GOOD[:7]
             summary["build"]["dirty"] = True
             path.write_text(json.dumps(summary), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "not the requested clean commit"):
