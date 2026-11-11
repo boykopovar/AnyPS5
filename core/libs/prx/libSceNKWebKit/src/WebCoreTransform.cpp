@@ -1,5 +1,8 @@
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceNKWebKit/include/TransformOperationExports.hpp"
+#include "prx/libSceNKWebKit/include/WebCoreDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -1225,6 +1228,849 @@ void APS5_VABI _ZN7WebCore20TransformationMatrix5blendERKS0_d(
     } else {
         _ZN7WebCore20TransformationMatrix6blend4ERKS0_d(self, from, progress);
     }
+}
+
+}
+
+namespace WebCore {
+
+namespace {
+
+using NKWebKit::TransformAbi::TransformOperationRef;
+using NKWebKit::TransformAbi::TransformOperationVtable;
+using NKWebKit::TransformAbi::TransformOperationVtableStorage;
+using NKWebKit::WtfAbi::TextStream;
+using OperationType = TransformOperation::OperationType;
+
+constexpr unsigned NumberRespectingIntegersFlag = 1u << 1;
+
+double BlendDouble(double from, double to, double progress) {
+    return from + (to - from) * progress;
+}
+
+bool IsSameType(const TransformOperation& first, const TransformOperation& second) {
+    return first.m_type == second.m_type;
+}
+
+void InitializeOperation(TransformOperation& operation, const TransformOperationVtableStorage& vtable, OperationType type) {
+    operation.m_vptr = const_cast<TransformOperationVtable*>(&vtable.dispatch);
+    operation.m_refCount = 1;
+    operation.m_type = type;
+}
+
+template<typename T> T* AllocateOperation() {
+    return static_cast<T*>(_ZN3WTF10fastMallocEm(sizeof(T)));
+}
+
+TransformOperationRef RefSelf(TransformOperation* self) {
+    NKWebKit::TransformAbi::RefOperation(self);
+    return TransformOperationRef(self);
+}
+
+TransformationMatrix AffineMatrix(double a, double b, double c, double d, double e, double f) {
+    TransformationMatrix matrix;
+    matrix.m_matrix[0][0] = a;
+    matrix.m_matrix[0][1] = b;
+    matrix.m_matrix[1][0] = c;
+    matrix.m_matrix[1][1] = d;
+    matrix.m_matrix[3][0] = e;
+    matrix.m_matrix[3][1] = f;
+    return matrix;
+}
+
+bool MatricesEqual(const TransformationMatrix& first, const TransformationMatrix& second) {
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            if (first.m_matrix[i][j] != second.m_matrix[i][j]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+const char* OperationTypeName(OperationType type) {
+    switch (type) {
+    case OperationType::ScaleX: return "scaleX";
+    case OperationType::ScaleY: return "scaleY";
+    case OperationType::Scale: return "scale";
+    case OperationType::TranslateX: return "translateX";
+    case OperationType::TranslateY: return "translateY";
+    case OperationType::Translate: return "translate";
+    case OperationType::Rotate: return "rotate";
+    case OperationType::SkewX: return "skewX";
+    case OperationType::SkewY: return "skewY";
+    case OperationType::Skew: return "skew";
+    case OperationType::Matrix: return "matrix";
+    case OperationType::ScaleZ: return "scaleX";
+    case OperationType::Scale3D: return "scale3d";
+    case OperationType::TranslateZ: return "translateZ";
+    case OperationType::Translate3D: return "translate3d";
+    case OperationType::RotateX: return "rotateX";
+    case OperationType::RotateY: return "rotateY";
+    case OperationType::Rotate3D: return "rotate3d";
+    case OperationType::Matrix3D: return "matrix3d";
+    case OperationType::Perspective: return "perspective";
+    case OperationType::Identity: return "identity";
+    case OperationType::NoOperation: return "none";
+    }
+    return "";
+}
+
+TextStream& Text(TextStream& stream, const char* text) {
+    return _ZN3WTF10TextStreamlsEPKc(&stream, text);
+}
+
+TextStream& TypeName(TextStream& stream, OperationType type) {
+    return Text(stream, OperationTypeName(type));
+}
+
+TextStream& Number(TextStream& stream, double value) {
+    struct Restore {
+        TextStream& stream;
+        unsigned flags;
+        ~Restore() { stream.formattingFlags = flags; }
+    } restore{stream, stream.formattingFlags};
+    stream.formattingFlags |= NumberRespectingIntegersFlag;
+    return _ZN3WTF10TextStreamlsEd(&stream, value);
+}
+
+template<typename T, void (APS5_VABI* Function)(T*)>
+void APS5_VABI DestructorSlot(TransformOperation* self) {
+    Function(static_cast<T*>(self));
+}
+
+template<typename T, TransformOperationRef (APS5_VABI* Function)(const T*)>
+TransformOperationRef APS5_VABI CloneSlot(const TransformOperation* self) {
+    return Function(static_cast<const T*>(self));
+}
+
+template<typename T, bool (APS5_VABI* Function)(const T*, const TransformOperation&)>
+bool APS5_VABI EqualsSlot(const TransformOperation* self, const TransformOperation& other) {
+    return Function(static_cast<const T*>(self), other);
+}
+
+template<typename T, bool (APS5_VABI* Function)(const T*)>
+bool APS5_VABI PredicateSlot(const TransformOperation* self) {
+    return Function(static_cast<const T*>(self));
+}
+
+template<typename T, bool (APS5_VABI* Function)(const T*, TransformationMatrix&, const FloatSize&)>
+bool APS5_VABI ApplySlot(const TransformOperation* self, TransformationMatrix& transform, const FloatSize& borderBoxSize) {
+    return Function(static_cast<const T*>(self), transform, borderBoxSize);
+}
+
+template<typename T, TransformOperationRef (APS5_VABI* Function)(T*, const TransformOperation*, double, bool)>
+TransformOperationRef APS5_VABI BlendSlot(TransformOperation* self, const TransformOperation* from, double progress, bool blendToIdentity) {
+    return Function(static_cast<T*>(self), from, progress, blendToIdentity);
+}
+
+template<typename T, void (APS5_VABI* Function)(const T*, TextStream&)>
+void APS5_VABI DumpSlot(const TransformOperation* self, TextStream& stream) {
+    Function(static_cast<const T*>(self), stream);
+}
+
+bool APS5_VABI NotAffectedByTransformOriginSlot(const TransformOperation*) {
+    return false;
+}
+
+bool APS5_VABI RepresentableIn2DSlot(const TransformOperation*) {
+    return true;
+}
+
+const TransformOperationVtableStorage IdentityVtable{0, nullptr, {
+    DestructorSlot<IdentityTransformOperation, _ZN7WebCore26IdentityTransformOperationD1Ev>,
+    DestructorSlot<IdentityTransformOperation, _ZN7WebCore26IdentityTransformOperationD0Ev>,
+    CloneSlot<IdentityTransformOperation, _ZNK7WebCore26IdentityTransformOperation5cloneEv>,
+    EqualsSlot<IdentityTransformOperation, _ZNK7WebCore26IdentityTransformOperationeqERKNS_18TransformOperationE>,
+    PredicateSlot<IdentityTransformOperation, _ZNK7WebCore26IdentityTransformOperation10isIdentityEv>,
+    ApplySlot<IdentityTransformOperation, _ZNK7WebCore26IdentityTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE>,
+    BlendSlot<IdentityTransformOperation, _ZN7WebCore26IdentityTransformOperation5blendEPKNS_18TransformOperationEdb>,
+    NotAffectedByTransformOriginSlot,
+    RepresentableIn2DSlot,
+    DumpSlot<IdentityTransformOperation, _ZNK7WebCore26IdentityTransformOperation4dumpERN3WTF10TextStreamE>,
+}};
+
+const TransformOperationVtableStorage RotateVtable{0, nullptr, {
+    DestructorSlot<RotateTransformOperation, _ZN7WebCore24RotateTransformOperationD1Ev>,
+    DestructorSlot<RotateTransformOperation, _ZN7WebCore24RotateTransformOperationD0Ev>,
+    CloneSlot<RotateTransformOperation, _ZNK7WebCore24RotateTransformOperation5cloneEv>,
+    EqualsSlot<RotateTransformOperation, _ZNK7WebCore24RotateTransformOperationeqERKNS_18TransformOperationE>,
+    PredicateSlot<RotateTransformOperation, _ZNK7WebCore24RotateTransformOperation10isIdentityEv>,
+    ApplySlot<RotateTransformOperation, _ZNK7WebCore24RotateTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE>,
+    BlendSlot<RotateTransformOperation, _ZN7WebCore24RotateTransformOperation5blendEPKNS_18TransformOperationEdb>,
+    PredicateSlot<RotateTransformOperation, _ZNK7WebCore24RotateTransformOperation27isAffectedByTransformOriginEv>,
+    PredicateSlot<RotateTransformOperation, _ZNK7WebCore24RotateTransformOperation19isRepresentableIn2DEv>,
+    DumpSlot<RotateTransformOperation, _ZNK7WebCore24RotateTransformOperation4dumpERN3WTF10TextStreamE>,
+}};
+
+const TransformOperationVtableStorage ScaleVtable{0, nullptr, {
+    DestructorSlot<ScaleTransformOperation, _ZN7WebCore23ScaleTransformOperationD1Ev>,
+    DestructorSlot<ScaleTransformOperation, _ZN7WebCore23ScaleTransformOperationD0Ev>,
+    CloneSlot<ScaleTransformOperation, _ZNK7WebCore23ScaleTransformOperation5cloneEv>,
+    EqualsSlot<ScaleTransformOperation, _ZNK7WebCore23ScaleTransformOperationeqERKNS_18TransformOperationE>,
+    PredicateSlot<ScaleTransformOperation, _ZNK7WebCore23ScaleTransformOperation10isIdentityEv>,
+    ApplySlot<ScaleTransformOperation, _ZNK7WebCore23ScaleTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE>,
+    BlendSlot<ScaleTransformOperation, _ZN7WebCore23ScaleTransformOperation5blendEPKNS_18TransformOperationEdb>,
+    PredicateSlot<ScaleTransformOperation, _ZNK7WebCore23ScaleTransformOperation27isAffectedByTransformOriginEv>,
+    PredicateSlot<ScaleTransformOperation, _ZNK7WebCore23ScaleTransformOperation19isRepresentableIn2DEv>,
+    DumpSlot<ScaleTransformOperation, _ZNK7WebCore23ScaleTransformOperation4dumpERN3WTF10TextStreamE>,
+}};
+
+const TransformOperationVtableStorage SkewVtable{0, nullptr, {
+    DestructorSlot<SkewTransformOperation, _ZN7WebCore22SkewTransformOperationD1Ev>,
+    DestructorSlot<SkewTransformOperation, _ZN7WebCore22SkewTransformOperationD0Ev>,
+    CloneSlot<SkewTransformOperation, _ZNK7WebCore22SkewTransformOperation5cloneEv>,
+    EqualsSlot<SkewTransformOperation, _ZNK7WebCore22SkewTransformOperationeqERKNS_18TransformOperationE>,
+    PredicateSlot<SkewTransformOperation, _ZNK7WebCore22SkewTransformOperation10isIdentityEv>,
+    ApplySlot<SkewTransformOperation, _ZNK7WebCore22SkewTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE>,
+    BlendSlot<SkewTransformOperation, _ZN7WebCore22SkewTransformOperation5blendEPKNS_18TransformOperationEdb>,
+    PredicateSlot<SkewTransformOperation, _ZNK7WebCore22SkewTransformOperation27isAffectedByTransformOriginEv>,
+    RepresentableIn2DSlot,
+    DumpSlot<SkewTransformOperation, _ZNK7WebCore22SkewTransformOperation4dumpERN3WTF10TextStreamE>,
+}};
+
+const TransformOperationVtableStorage MatrixVtable{0, nullptr, {
+    DestructorSlot<MatrixTransformOperation, _ZN7WebCore24MatrixTransformOperationD1Ev>,
+    DestructorSlot<MatrixTransformOperation, _ZN7WebCore24MatrixTransformOperationD0Ev>,
+    CloneSlot<MatrixTransformOperation, _ZNK7WebCore24MatrixTransformOperation5cloneEv>,
+    EqualsSlot<MatrixTransformOperation, _ZNK7WebCore24MatrixTransformOperationeqERKNS_18TransformOperationE>,
+    PredicateSlot<MatrixTransformOperation, _ZNK7WebCore24MatrixTransformOperation10isIdentityEv>,
+    ApplySlot<MatrixTransformOperation, _ZNK7WebCore24MatrixTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE>,
+    BlendSlot<MatrixTransformOperation, _ZN7WebCore24MatrixTransformOperation5blendEPKNS_18TransformOperationEdb>,
+    PredicateSlot<MatrixTransformOperation, _ZNK7WebCore24MatrixTransformOperation27isAffectedByTransformOriginEv>,
+    RepresentableIn2DSlot,
+    DumpSlot<MatrixTransformOperation, _ZNK7WebCore24MatrixTransformOperation4dumpERN3WTF10TextStreamE>,
+}};
+
+const TransformOperationVtableStorage Matrix3DVtable{0, nullptr, {
+    DestructorSlot<Matrix3DTransformOperation, _ZN7WebCore26Matrix3DTransformOperationD1Ev>,
+    DestructorSlot<Matrix3DTransformOperation, _ZN7WebCore26Matrix3DTransformOperationD0Ev>,
+    CloneSlot<Matrix3DTransformOperation, _ZNK7WebCore26Matrix3DTransformOperation5cloneEv>,
+    EqualsSlot<Matrix3DTransformOperation, _ZNK7WebCore26Matrix3DTransformOperationeqERKNS_18TransformOperationE>,
+    PredicateSlot<Matrix3DTransformOperation, _ZNK7WebCore26Matrix3DTransformOperation10isIdentityEv>,
+    ApplySlot<Matrix3DTransformOperation, _ZNK7WebCore26Matrix3DTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE>,
+    BlendSlot<Matrix3DTransformOperation, _ZN7WebCore26Matrix3DTransformOperation5blendEPKNS_18TransformOperationEdb>,
+    PredicateSlot<Matrix3DTransformOperation, _ZNK7WebCore26Matrix3DTransformOperation27isAffectedByTransformOriginEv>,
+    PredicateSlot<Matrix3DTransformOperation, _ZNK7WebCore26Matrix3DTransformOperation19isRepresentableIn2DEv>,
+    DumpSlot<Matrix3DTransformOperation, _ZNK7WebCore26Matrix3DTransformOperation4dumpERN3WTF10TextStreamE>,
+}};
+
+}  // namespace
+}  // namespace WebCore
+
+extern "C" {
+
+void APS5_VABI _ZN7WebCore26IdentityTransformOperationC1Ev(WebCore::IdentityTransformOperation* self) {
+    WebCore::InitializeOperation(*self, WebCore::IdentityVtable, WebCore::OperationType::Identity);
+}
+
+void APS5_VABI _ZN7WebCore26IdentityTransformOperationC2Ev(WebCore::IdentityTransformOperation* self) {
+    _ZN7WebCore26IdentityTransformOperationC1Ev(self);
+}
+
+void APS5_VABI _ZN7WebCore26IdentityTransformOperationD1Ev(WebCore::IdentityTransformOperation*) {
+}
+
+void APS5_VABI _ZN7WebCore26IdentityTransformOperationD2Ev(WebCore::IdentityTransformOperation* self) {
+    _ZN7WebCore26IdentityTransformOperationD1Ev(self);
+}
+
+void APS5_VABI _ZN7WebCore26IdentityTransformOperationD0Ev(WebCore::IdentityTransformOperation* self) {
+    _ZN7WebCore26IdentityTransformOperationD1Ev(self);
+    _ZN3WTF8fastFreeEPv(self);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore26IdentityTransformOperation6createEv() {
+    auto* operation = WebCore::AllocateOperation<WebCore::IdentityTransformOperation>();
+    _ZN7WebCore26IdentityTransformOperationC1Ev(operation);
+    return NKWebKit::TransformAbi::TransformOperationRef(operation);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZNK7WebCore26IdentityTransformOperation5cloneEv(const WebCore::IdentityTransformOperation*) {
+    return _ZN7WebCore26IdentityTransformOperation6createEv();
+}
+
+bool APS5_VABI _ZNK7WebCore26IdentityTransformOperation10isIdentityEv(const WebCore::IdentityTransformOperation*) {
+    return true;
+}
+
+bool APS5_VABI _ZNK7WebCore26IdentityTransformOperationeqERKNS_18TransformOperationE(
+    const WebCore::IdentityTransformOperation* self, const WebCore::TransformOperation& other) {
+    return WebCore::IsSameType(*self, other);
+}
+
+bool APS5_VABI _ZNK7WebCore26IdentityTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(
+    const WebCore::IdentityTransformOperation*, WebCore::TransformationMatrix&, const WebCore::FloatSize&) {
+    return false;
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore26IdentityTransformOperation5blendEPKNS_18TransformOperationEdb(
+    WebCore::IdentityTransformOperation* self, const WebCore::TransformOperation*, double, bool) {
+    return WebCore::RefSelf(self);
+}
+
+void APS5_VABI _ZNK7WebCore26IdentityTransformOperation4dumpERN3WTF10TextStreamE(
+    const WebCore::IdentityTransformOperation* self, NKWebKit::WtfAbi::TextStream& stream) {
+    WebCore::TypeName(stream, self->m_type);
+}
+
+void APS5_VABI _ZN7WebCore24RotateTransformOperationC1EddddNS_18TransformOperation13OperationTypeE(
+    WebCore::RotateTransformOperation* self, double x, double y, double z, double angle, WebCore::TransformOperation::OperationType type) {
+    WebCore::InitializeOperation(*self, WebCore::RotateVtable, type);
+    self->m_x = x;
+    self->m_y = y;
+    self->m_z = z;
+    self->m_angle = angle;
+}
+
+void APS5_VABI _ZN7WebCore24RotateTransformOperationC2EddddNS_18TransformOperation13OperationTypeE(
+    WebCore::RotateTransformOperation* self, double x, double y, double z, double angle, WebCore::TransformOperation::OperationType type) {
+    _ZN7WebCore24RotateTransformOperationC1EddddNS_18TransformOperation13OperationTypeE(self, x, y, z, angle, type);
+}
+
+void APS5_VABI _ZN7WebCore24RotateTransformOperationD1Ev(WebCore::RotateTransformOperation*) {
+}
+
+void APS5_VABI _ZN7WebCore24RotateTransformOperationD2Ev(WebCore::RotateTransformOperation* self) {
+    _ZN7WebCore24RotateTransformOperationD1Ev(self);
+}
+
+void APS5_VABI _ZN7WebCore24RotateTransformOperationD0Ev(WebCore::RotateTransformOperation* self) {
+    _ZN7WebCore24RotateTransformOperationD1Ev(self);
+    _ZN3WTF8fastFreeEPv(self);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore24RotateTransformOperation6createEddddNS_18TransformOperation13OperationTypeE(
+    double x, double y, double z, double angle, WebCore::TransformOperation::OperationType type) {
+    auto* operation = WebCore::AllocateOperation<WebCore::RotateTransformOperation>();
+    _ZN7WebCore24RotateTransformOperationC1EddddNS_18TransformOperation13OperationTypeE(operation, x, y, z, angle, type);
+    return NKWebKit::TransformAbi::TransformOperationRef(operation);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore24RotateTransformOperation6createEdNS_18TransformOperation13OperationTypeE(
+    double angle, WebCore::TransformOperation::OperationType type) {
+    return _ZN7WebCore24RotateTransformOperation6createEddddNS_18TransformOperation13OperationTypeE(0.0, 0.0, 1.0, angle, type);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZNK7WebCore24RotateTransformOperation5cloneEv(const WebCore::RotateTransformOperation* self) {
+    return _ZN7WebCore24RotateTransformOperation6createEddddNS_18TransformOperation13OperationTypeE(
+        self->m_x, self->m_y, self->m_z, self->m_angle, self->m_type);
+}
+
+double APS5_VABI _ZNK7WebCore24RotateTransformOperation1xEv(const WebCore::RotateTransformOperation* self) {
+    return self->m_x;
+}
+
+double APS5_VABI _ZNK7WebCore24RotateTransformOperation1yEv(const WebCore::RotateTransformOperation* self) {
+    return self->m_y;
+}
+
+double APS5_VABI _ZNK7WebCore24RotateTransformOperation1zEv(const WebCore::RotateTransformOperation* self) {
+    return self->m_z;
+}
+
+double APS5_VABI _ZNK7WebCore24RotateTransformOperation5angleEv(const WebCore::RotateTransformOperation* self) {
+    return self->m_angle;
+}
+
+bool APS5_VABI _ZNK7WebCore24RotateTransformOperation10isIdentityEv(const WebCore::RotateTransformOperation* self) {
+    return self->m_angle == 0.0;
+}
+
+bool APS5_VABI _ZNK7WebCore24RotateTransformOperation27isAffectedByTransformOriginEv(const WebCore::RotateTransformOperation* self) {
+    return !_ZNK7WebCore24RotateTransformOperation10isIdentityEv(self);
+}
+
+bool APS5_VABI _ZNK7WebCore24RotateTransformOperation19isRepresentableIn2DEv(const WebCore::RotateTransformOperation* self) {
+    return (self->m_x == 0.0 && self->m_y == 0.0) || self->m_angle == 0.0;
+}
+
+bool APS5_VABI _ZNK7WebCore24RotateTransformOperationeqERKNS_18TransformOperationE(
+    const WebCore::RotateTransformOperation* self, const WebCore::TransformOperation& other) {
+    if (!WebCore::IsSameType(*self, other)) {
+        return false;
+    }
+    const auto& rotate = static_cast<const WebCore::RotateTransformOperation&>(other);
+    return self->m_x == rotate.m_x && self->m_y == rotate.m_y && self->m_z == rotate.m_z && self->m_angle == rotate.m_angle;
+}
+
+bool APS5_VABI _ZNK7WebCore24RotateTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(
+    const WebCore::RotateTransformOperation* self, WebCore::TransformationMatrix& transform, const WebCore::FloatSize&) {
+    if (self->m_type == WebCore::OperationType::Rotate) {
+        _ZN7WebCore20TransformationMatrix6rotateEd(&transform, self->m_angle);
+    } else {
+        _ZN7WebCore20TransformationMatrix8rotate3dEdddd(&transform, self->m_x, self->m_y, self->m_z, self->m_angle);
+    }
+    return false;
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore24RotateTransformOperation5blendEPKNS_18TransformOperationEdb(
+    WebCore::RotateTransformOperation* self, const WebCore::TransformOperation* from, double progress, bool blendToIdentity) {
+    if (from && !WebCore::IsSameType(*from, *self)) {
+        return WebCore::RefSelf(self);
+    }
+    if (blendToIdentity) {
+        return _ZN7WebCore24RotateTransformOperation6createEddddNS_18TransformOperation13OperationTypeE(
+            self->m_x, self->m_y, self->m_z, self->m_angle - self->m_angle * progress, self->m_type);
+    }
+    const auto* fromOp = static_cast<const WebCore::RotateTransformOperation*>(from);
+    if (!fromOp || (fromOp->m_x == 0.0 && fromOp->m_y == 0.0 && fromOp->m_z == 1.0)
+        || (fromOp->m_x == 0.0 && fromOp->m_y == 1.0 && fromOp->m_z == 0.0)
+        || (fromOp->m_x == 1.0 && fromOp->m_y == 0.0 && fromOp->m_z == 0.0)) {
+        double fromAngle = fromOp ? fromOp->m_angle : 0.0;
+        return _ZN7WebCore24RotateTransformOperation6createEddddNS_18TransformOperation13OperationTypeE(
+            fromOp ? fromOp->m_x : self->m_x, fromOp ? fromOp->m_y : self->m_y, fromOp ? fromOp->m_z : self->m_z,
+            WebCore::BlendDouble(fromAngle, self->m_angle, progress), self->m_type);
+    }
+    WebCore::TransformationMatrix fromT;
+    WebCore::TransformationMatrix toT;
+    _ZN7WebCore20TransformationMatrix8rotate3dEdddd(&fromT, fromOp->m_x, fromOp->m_y, fromOp->m_z, fromOp->m_angle);
+    _ZN7WebCore20TransformationMatrix8rotate3dEdddd(&toT, self->m_x, self->m_y, self->m_z, self->m_angle);
+    _ZN7WebCore20TransformationMatrix5blendERKS0_d(&toT, fromT, progress);
+    WebCore::Decomposed4 decomp{};
+    WebCore::Decompose4(toT, decomp);
+    double x = -decomp.quaternion[0];
+    double y = -decomp.quaternion[1];
+    double z = -decomp.quaternion[2];
+    double length = std::hypot(x, y, z);
+    double angle = 0.0;
+    if (length > 0.00001) {
+        x /= length;
+        y /= length;
+        z /= length;
+        angle = WebCore::Rad2Deg(std::acos(decomp.quaternion[3]) * 2.0);
+    } else {
+        x = 0.0;
+        y = 0.0;
+        z = 1.0;
+    }
+    return _ZN7WebCore24RotateTransformOperation6createEddddNS_18TransformOperation13OperationTypeE(
+        x, y, z, angle, WebCore::OperationType::Rotate3D);
+}
+
+void APS5_VABI _ZNK7WebCore24RotateTransformOperation4dumpERN3WTF10TextStreamE(
+    const WebCore::RotateTransformOperation* self, NKWebKit::WtfAbi::TextStream& stream) {
+    WebCore::TypeName(stream, self->m_type);
+    WebCore::Text(stream, "(");
+    WebCore::Number(stream, self->m_x);
+    WebCore::Text(stream, ", ");
+    WebCore::Number(stream, self->m_y);
+    WebCore::Text(stream, ", ");
+    WebCore::Number(stream, self->m_z);
+    WebCore::Text(stream, ", ");
+    WebCore::Number(stream, self->m_angle);
+    WebCore::Text(stream, "deg)");
+}
+
+void APS5_VABI _ZN7WebCore23ScaleTransformOperationC1EdddNS_18TransformOperation13OperationTypeE(
+    WebCore::ScaleTransformOperation* self, double sx, double sy, double sz, WebCore::TransformOperation::OperationType type) {
+    WebCore::InitializeOperation(*self, WebCore::ScaleVtable, type);
+    self->m_x = sx;
+    self->m_y = sy;
+    self->m_z = sz;
+}
+
+void APS5_VABI _ZN7WebCore23ScaleTransformOperationC2EdddNS_18TransformOperation13OperationTypeE(
+    WebCore::ScaleTransformOperation* self, double sx, double sy, double sz, WebCore::TransformOperation::OperationType type) {
+    _ZN7WebCore23ScaleTransformOperationC1EdddNS_18TransformOperation13OperationTypeE(self, sx, sy, sz, type);
+}
+
+void APS5_VABI _ZN7WebCore23ScaleTransformOperationD1Ev(WebCore::ScaleTransformOperation*) {
+}
+
+void APS5_VABI _ZN7WebCore23ScaleTransformOperationD2Ev(WebCore::ScaleTransformOperation* self) {
+    _ZN7WebCore23ScaleTransformOperationD1Ev(self);
+}
+
+void APS5_VABI _ZN7WebCore23ScaleTransformOperationD0Ev(WebCore::ScaleTransformOperation* self) {
+    _ZN7WebCore23ScaleTransformOperationD1Ev(self);
+    _ZN3WTF8fastFreeEPv(self);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore23ScaleTransformOperation6createEdddNS_18TransformOperation13OperationTypeE(
+    double sx, double sy, double sz, WebCore::TransformOperation::OperationType type) {
+    auto* operation = WebCore::AllocateOperation<WebCore::ScaleTransformOperation>();
+    _ZN7WebCore23ScaleTransformOperationC1EdddNS_18TransformOperation13OperationTypeE(operation, sx, sy, sz, type);
+    return NKWebKit::TransformAbi::TransformOperationRef(operation);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore23ScaleTransformOperation6createEddNS_18TransformOperation13OperationTypeE(
+    double sx, double sy, WebCore::TransformOperation::OperationType type) {
+    return _ZN7WebCore23ScaleTransformOperation6createEdddNS_18TransformOperation13OperationTypeE(sx, sy, 1.0, type);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZNK7WebCore23ScaleTransformOperation5cloneEv(const WebCore::ScaleTransformOperation* self) {
+    return _ZN7WebCore23ScaleTransformOperation6createEdddNS_18TransformOperation13OperationTypeE(self->m_x, self->m_y, self->m_z, self->m_type);
+}
+
+double APS5_VABI _ZNK7WebCore23ScaleTransformOperation1xEv(const WebCore::ScaleTransformOperation* self) {
+    return self->m_x;
+}
+
+double APS5_VABI _ZNK7WebCore23ScaleTransformOperation1yEv(const WebCore::ScaleTransformOperation* self) {
+    return self->m_y;
+}
+
+double APS5_VABI _ZNK7WebCore23ScaleTransformOperation1zEv(const WebCore::ScaleTransformOperation* self) {
+    return self->m_z;
+}
+
+bool APS5_VABI _ZNK7WebCore23ScaleTransformOperation10isIdentityEv(const WebCore::ScaleTransformOperation* self) {
+    return self->m_x == 1.0 && self->m_y == 1.0 && self->m_z == 1.0;
+}
+
+bool APS5_VABI _ZNK7WebCore23ScaleTransformOperation27isAffectedByTransformOriginEv(const WebCore::ScaleTransformOperation* self) {
+    return !_ZNK7WebCore23ScaleTransformOperation10isIdentityEv(self);
+}
+
+bool APS5_VABI _ZNK7WebCore23ScaleTransformOperation19isRepresentableIn2DEv(const WebCore::ScaleTransformOperation* self) {
+    return self->m_z == 1.0;
+}
+
+bool APS5_VABI _ZNK7WebCore23ScaleTransformOperationeqERKNS_18TransformOperationE(
+    const WebCore::ScaleTransformOperation* self, const WebCore::TransformOperation& other) {
+    if (!WebCore::IsSameType(*self, other)) {
+        return false;
+    }
+    const auto& scale = static_cast<const WebCore::ScaleTransformOperation&>(other);
+    return self->m_x == scale.m_x && self->m_y == scale.m_y && self->m_z == scale.m_z;
+}
+
+bool APS5_VABI _ZNK7WebCore23ScaleTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(
+    const WebCore::ScaleTransformOperation* self, WebCore::TransformationMatrix& transform, const WebCore::FloatSize&) {
+    _ZN7WebCore20TransformationMatrix7scale3dEddd(&transform, self->m_x, self->m_y, self->m_z);
+    return false;
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore23ScaleTransformOperation5blendEPKNS_18TransformOperationEdb(
+    WebCore::ScaleTransformOperation* self, const WebCore::TransformOperation* from, double progress, bool blendToIdentity) {
+    if (from && !WebCore::IsSameType(*from, *self)) {
+        return WebCore::RefSelf(self);
+    }
+    if (blendToIdentity) {
+        return _ZN7WebCore23ScaleTransformOperation6createEdddNS_18TransformOperation13OperationTypeE(
+            WebCore::BlendDouble(self->m_x, 1.0, progress), WebCore::BlendDouble(self->m_y, 1.0, progress),
+            WebCore::BlendDouble(self->m_z, 1.0, progress), self->m_type);
+    }
+    const auto* fromOp = static_cast<const WebCore::ScaleTransformOperation*>(from);
+    double fromX = fromOp ? fromOp->m_x : 1.0;
+    double fromY = fromOp ? fromOp->m_y : 1.0;
+    double fromZ = fromOp ? fromOp->m_z : 1.0;
+    return _ZN7WebCore23ScaleTransformOperation6createEdddNS_18TransformOperation13OperationTypeE(
+        WebCore::BlendDouble(fromX, self->m_x, progress), WebCore::BlendDouble(fromY, self->m_y, progress),
+        WebCore::BlendDouble(fromZ, self->m_z, progress), self->m_type);
+}
+
+void APS5_VABI _ZNK7WebCore23ScaleTransformOperation4dumpERN3WTF10TextStreamE(
+    const WebCore::ScaleTransformOperation* self, NKWebKit::WtfAbi::TextStream& stream) {
+    WebCore::TypeName(stream, self->m_type);
+    WebCore::Text(stream, "(");
+    WebCore::Number(stream, self->m_x);
+    WebCore::Text(stream, ", ");
+    WebCore::Number(stream, self->m_y);
+    WebCore::Text(stream, ", ");
+    WebCore::Number(stream, self->m_z);
+    WebCore::Text(stream, ")");
+}
+
+void APS5_VABI _ZN7WebCore22SkewTransformOperationC1EddNS_18TransformOperation13OperationTypeE(
+    WebCore::SkewTransformOperation* self, double angleX, double angleY, WebCore::TransformOperation::OperationType type) {
+    WebCore::InitializeOperation(*self, WebCore::SkewVtable, type);
+    self->m_angleX = angleX;
+    self->m_angleY = angleY;
+}
+
+void APS5_VABI _ZN7WebCore22SkewTransformOperationC2EddNS_18TransformOperation13OperationTypeE(
+    WebCore::SkewTransformOperation* self, double angleX, double angleY, WebCore::TransformOperation::OperationType type) {
+    _ZN7WebCore22SkewTransformOperationC1EddNS_18TransformOperation13OperationTypeE(self, angleX, angleY, type);
+}
+
+void APS5_VABI _ZN7WebCore22SkewTransformOperationD1Ev(WebCore::SkewTransformOperation*) {
+}
+
+void APS5_VABI _ZN7WebCore22SkewTransformOperationD2Ev(WebCore::SkewTransformOperation* self) {
+    _ZN7WebCore22SkewTransformOperationD1Ev(self);
+}
+
+void APS5_VABI _ZN7WebCore22SkewTransformOperationD0Ev(WebCore::SkewTransformOperation* self) {
+    _ZN7WebCore22SkewTransformOperationD1Ev(self);
+    _ZN3WTF8fastFreeEPv(self);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore22SkewTransformOperation6createEddNS_18TransformOperation13OperationTypeE(
+    double angleX, double angleY, WebCore::TransformOperation::OperationType type) {
+    auto* operation = WebCore::AllocateOperation<WebCore::SkewTransformOperation>();
+    _ZN7WebCore22SkewTransformOperationC1EddNS_18TransformOperation13OperationTypeE(operation, angleX, angleY, type);
+    return NKWebKit::TransformAbi::TransformOperationRef(operation);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZNK7WebCore22SkewTransformOperation5cloneEv(const WebCore::SkewTransformOperation* self) {
+    return _ZN7WebCore22SkewTransformOperation6createEddNS_18TransformOperation13OperationTypeE(self->m_angleX, self->m_angleY, self->m_type);
+}
+
+double APS5_VABI _ZNK7WebCore22SkewTransformOperation6angleXEv(const WebCore::SkewTransformOperation* self) {
+    return self->m_angleX;
+}
+
+double APS5_VABI _ZNK7WebCore22SkewTransformOperation6angleYEv(const WebCore::SkewTransformOperation* self) {
+    return self->m_angleY;
+}
+
+bool APS5_VABI _ZNK7WebCore22SkewTransformOperation10isIdentityEv(const WebCore::SkewTransformOperation* self) {
+    return self->m_angleX == 0.0 && self->m_angleY == 0.0;
+}
+
+bool APS5_VABI _ZNK7WebCore22SkewTransformOperation27isAffectedByTransformOriginEv(const WebCore::SkewTransformOperation* self) {
+    return !_ZNK7WebCore22SkewTransformOperation10isIdentityEv(self);
+}
+
+bool APS5_VABI _ZNK7WebCore22SkewTransformOperationeqERKNS_18TransformOperationE(
+    const WebCore::SkewTransformOperation* self, const WebCore::TransformOperation& other) {
+    if (!WebCore::IsSameType(*self, other)) {
+        return false;
+    }
+    const auto& skew = static_cast<const WebCore::SkewTransformOperation&>(other);
+    return self->m_angleX == skew.m_angleX && self->m_angleY == skew.m_angleY;
+}
+
+bool APS5_VABI _ZNK7WebCore22SkewTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(
+    const WebCore::SkewTransformOperation* self, WebCore::TransformationMatrix& transform, const WebCore::FloatSize&) {
+    _ZN7WebCore20TransformationMatrix4skewEdd(&transform, self->m_angleX, self->m_angleY);
+    return false;
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore22SkewTransformOperation5blendEPKNS_18TransformOperationEdb(
+    WebCore::SkewTransformOperation* self, const WebCore::TransformOperation* from, double progress, bool blendToIdentity) {
+    if (from && !WebCore::IsSameType(*from, *self)) {
+        return WebCore::RefSelf(self);
+    }
+    if (blendToIdentity) {
+        return _ZN7WebCore22SkewTransformOperation6createEddNS_18TransformOperation13OperationTypeE(
+            WebCore::BlendDouble(self->m_angleX, 0.0, progress), WebCore::BlendDouble(self->m_angleY, 0.0, progress), self->m_type);
+    }
+    const auto* fromOp = static_cast<const WebCore::SkewTransformOperation*>(from);
+    double fromAngleX = fromOp ? fromOp->m_angleX : 0.0;
+    double fromAngleY = fromOp ? fromOp->m_angleY : 0.0;
+    return _ZN7WebCore22SkewTransformOperation6createEddNS_18TransformOperation13OperationTypeE(
+        WebCore::BlendDouble(fromAngleX, self->m_angleX, progress), WebCore::BlendDouble(fromAngleY, self->m_angleY, progress), self->m_type);
+}
+
+void APS5_VABI _ZNK7WebCore22SkewTransformOperation4dumpERN3WTF10TextStreamE(
+    const WebCore::SkewTransformOperation* self, NKWebKit::WtfAbi::TextStream& stream) {
+    WebCore::TypeName(stream, self->m_type);
+    WebCore::Text(stream, "(");
+    WebCore::Number(stream, self->m_angleX);
+    WebCore::Text(stream, "deg, ");
+    WebCore::Number(stream, self->m_angleY);
+    WebCore::Text(stream, "deg)");
+}
+
+void APS5_VABI _ZN7WebCore24MatrixTransformOperationC1Edddddd(
+    WebCore::MatrixTransformOperation* self, double a, double b, double c, double d, double e, double f) {
+    WebCore::InitializeOperation(*self, WebCore::MatrixVtable, WebCore::OperationType::Matrix);
+    self->m_a = a;
+    self->m_b = b;
+    self->m_c = c;
+    self->m_d = d;
+    self->m_e = e;
+    self->m_f = f;
+}
+
+void APS5_VABI _ZN7WebCore24MatrixTransformOperationC2Edddddd(
+    WebCore::MatrixTransformOperation* self, double a, double b, double c, double d, double e, double f) {
+    _ZN7WebCore24MatrixTransformOperationC1Edddddd(self, a, b, c, d, e, f);
+}
+
+void APS5_VABI _ZN7WebCore24MatrixTransformOperationC1ERKNS_20TransformationMatrixE(
+    WebCore::MatrixTransformOperation* self, const WebCore::TransformationMatrix& matrix) {
+    _ZN7WebCore24MatrixTransformOperationC1Edddddd(self, matrix.m_matrix[0][0], matrix.m_matrix[0][1],
+        matrix.m_matrix[1][0], matrix.m_matrix[1][1], matrix.m_matrix[3][0], matrix.m_matrix[3][1]);
+}
+
+void APS5_VABI _ZN7WebCore24MatrixTransformOperationC2ERKNS_20TransformationMatrixE(
+    WebCore::MatrixTransformOperation* self, const WebCore::TransformationMatrix& matrix) {
+    _ZN7WebCore24MatrixTransformOperationC1ERKNS_20TransformationMatrixE(self, matrix);
+}
+
+void APS5_VABI _ZN7WebCore24MatrixTransformOperationD1Ev(WebCore::MatrixTransformOperation*) {
+}
+
+void APS5_VABI _ZN7WebCore24MatrixTransformOperationD2Ev(WebCore::MatrixTransformOperation* self) {
+    _ZN7WebCore24MatrixTransformOperationD1Ev(self);
+}
+
+void APS5_VABI _ZN7WebCore24MatrixTransformOperationD0Ev(WebCore::MatrixTransformOperation* self) {
+    _ZN7WebCore24MatrixTransformOperationD1Ev(self);
+    _ZN3WTF8fastFreeEPv(self);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore24MatrixTransformOperation6createEdddddd(
+    double a, double b, double c, double d, double e, double f) {
+    auto* operation = WebCore::AllocateOperation<WebCore::MatrixTransformOperation>();
+    _ZN7WebCore24MatrixTransformOperationC1Edddddd(operation, a, b, c, d, e, f);
+    return NKWebKit::TransformAbi::TransformOperationRef(operation);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore24MatrixTransformOperation6createERKNS_20TransformationMatrixE(
+    const WebCore::TransformationMatrix& matrix) {
+    auto* operation = WebCore::AllocateOperation<WebCore::MatrixTransformOperation>();
+    _ZN7WebCore24MatrixTransformOperationC1ERKNS_20TransformationMatrixE(operation, matrix);
+    return NKWebKit::TransformAbi::TransformOperationRef(operation);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZNK7WebCore24MatrixTransformOperation5cloneEv(const WebCore::MatrixTransformOperation* self) {
+    return _ZN7WebCore24MatrixTransformOperation6createERKNS_20TransformationMatrixE(_ZNK7WebCore24MatrixTransformOperation6matrixEv(self));
+}
+
+bool APS5_VABI _ZNK7WebCore24MatrixTransformOperation10isIdentityEv(const WebCore::MatrixTransformOperation* self) {
+    return self->m_a == 1.0 && self->m_b == 0.0 && self->m_c == 0.0 && self->m_d == 1.0 && self->m_e == 0.0 && self->m_f == 0.0;
+}
+
+bool APS5_VABI _ZNK7WebCore24MatrixTransformOperation27isAffectedByTransformOriginEv(const WebCore::MatrixTransformOperation* self) {
+    return !_ZNK7WebCore24MatrixTransformOperation10isIdentityEv(self);
+}
+
+bool APS5_VABI _ZNK7WebCore24MatrixTransformOperationeqERKNS_18TransformOperationE(
+    const WebCore::MatrixTransformOperation* self, const WebCore::TransformOperation& other) {
+    if (!WebCore::IsSameType(*self, other)) {
+        return false;
+    }
+    const auto& m = static_cast<const WebCore::MatrixTransformOperation&>(other);
+    return self->m_a == m.m_a && self->m_b == m.m_b && self->m_c == m.m_c && self->m_d == m.m_d && self->m_e == m.m_e && self->m_f == m.m_f;
+}
+
+bool APS5_VABI _ZNK7WebCore24MatrixTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(
+    const WebCore::MatrixTransformOperation* self, WebCore::TransformationMatrix& transform, const WebCore::FloatSize&) {
+    WebCore::TransformationMatrix matrix = WebCore::AffineMatrix(self->m_a, self->m_b, self->m_c, self->m_d, self->m_e, self->m_f);
+    _ZN7WebCore20TransformationMatrix8multiplyERKS0_(&transform, matrix);
+    return false;
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore24MatrixTransformOperation5blendEPKNS_18TransformOperationEdb(
+    WebCore::MatrixTransformOperation* self, const WebCore::TransformOperation* from, double progress, bool blendToIdentity) {
+    if (from && !WebCore::IsSameType(*from, *self)) {
+        return WebCore::RefSelf(self);
+    }
+    WebCore::TransformationMatrix fromT;
+    WebCore::TransformationMatrix toT = WebCore::AffineMatrix(self->m_a, self->m_b, self->m_c, self->m_d, self->m_e, self->m_f);
+    if (from) {
+        const auto& m = static_cast<const WebCore::MatrixTransformOperation&>(*from);
+        fromT = WebCore::AffineMatrix(m.m_a, m.m_b, m.m_c, m.m_d, m.m_e, m.m_f);
+    }
+    if (blendToIdentity) {
+        _ZN7WebCore20TransformationMatrix5blendERKS0_d(&fromT, toT, progress);
+        return _ZN7WebCore24MatrixTransformOperation6createERKNS_20TransformationMatrixE(fromT);
+    }
+    _ZN7WebCore20TransformationMatrix5blendERKS0_d(&toT, fromT, progress);
+    return _ZN7WebCore24MatrixTransformOperation6createERKNS_20TransformationMatrixE(toT);
+}
+
+void APS5_VABI _ZNK7WebCore24MatrixTransformOperation4dumpERN3WTF10TextStreamE(
+    const WebCore::MatrixTransformOperation* self, NKWebKit::WtfAbi::TextStream& stream) {
+    WebCore::Text(stream, "(");
+    WebCore::Number(stream, self->m_a);
+    WebCore::Text(stream, ", ");
+    WebCore::Number(stream, self->m_b);
+    WebCore::Text(stream, ", ");
+    WebCore::Number(stream, self->m_c);
+    WebCore::Text(stream, ", ");
+    WebCore::Number(stream, self->m_d);
+    WebCore::Text(stream, ", ");
+    WebCore::Number(stream, self->m_e);
+    WebCore::Text(stream, ", ");
+    WebCore::Number(stream, self->m_f);
+    WebCore::Text(stream, ")");
+}
+
+void APS5_VABI _ZN7WebCore26Matrix3DTransformOperationC1ERKNS_20TransformationMatrixE(
+    WebCore::Matrix3DTransformOperation* self, const WebCore::TransformationMatrix& matrix) {
+    WebCore::InitializeOperation(*self, WebCore::Matrix3DVtable, WebCore::OperationType::Matrix3D);
+    self->m_matrix = matrix;
+}
+
+void APS5_VABI _ZN7WebCore26Matrix3DTransformOperationC2ERKNS_20TransformationMatrixE(
+    WebCore::Matrix3DTransformOperation* self, const WebCore::TransformationMatrix& matrix) {
+    _ZN7WebCore26Matrix3DTransformOperationC1ERKNS_20TransformationMatrixE(self, matrix);
+}
+
+void APS5_VABI _ZN7WebCore26Matrix3DTransformOperationD1Ev(WebCore::Matrix3DTransformOperation*) {
+}
+
+void APS5_VABI _ZN7WebCore26Matrix3DTransformOperationD2Ev(WebCore::Matrix3DTransformOperation* self) {
+    _ZN7WebCore26Matrix3DTransformOperationD1Ev(self);
+}
+
+void APS5_VABI _ZN7WebCore26Matrix3DTransformOperationD0Ev(WebCore::Matrix3DTransformOperation* self) {
+    _ZN7WebCore26Matrix3DTransformOperationD1Ev(self);
+    _ZN3WTF8fastFreeEPv(self);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore26Matrix3DTransformOperation6createERKNS_20TransformationMatrixE(
+    const WebCore::TransformationMatrix& matrix) {
+    auto* operation = WebCore::AllocateOperation<WebCore::Matrix3DTransformOperation>();
+    _ZN7WebCore26Matrix3DTransformOperationC1ERKNS_20TransformationMatrixE(operation, matrix);
+    return NKWebKit::TransformAbi::TransformOperationRef(operation);
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZNK7WebCore26Matrix3DTransformOperation5cloneEv(const WebCore::Matrix3DTransformOperation* self) {
+    return _ZN7WebCore26Matrix3DTransformOperation6createERKNS_20TransformationMatrixE(self->m_matrix);
+}
+
+WebCore::TransformationMatrix APS5_VABI _ZNK7WebCore26Matrix3DTransformOperation6matrixEv(const WebCore::Matrix3DTransformOperation* self) {
+    return self->m_matrix;
+}
+
+bool APS5_VABI _ZNK7WebCore26Matrix3DTransformOperation10isIdentityEv(const WebCore::Matrix3DTransformOperation* self) {
+    return WebCore::IsIdentity(self->m_matrix);
+}
+
+bool APS5_VABI _ZNK7WebCore26Matrix3DTransformOperation27isAffectedByTransformOriginEv(const WebCore::Matrix3DTransformOperation* self) {
+    return !_ZNK7WebCore26Matrix3DTransformOperation10isIdentityEv(self);
+}
+
+bool APS5_VABI _ZNK7WebCore26Matrix3DTransformOperation19isRepresentableIn2DEv(const WebCore::Matrix3DTransformOperation* self) {
+    return WebCore::IsAffine(self->m_matrix);
+}
+
+bool APS5_VABI _ZNK7WebCore26Matrix3DTransformOperationeqERKNS_18TransformOperationE(
+    const WebCore::Matrix3DTransformOperation* self, const WebCore::TransformOperation& other) {
+    return WebCore::IsSameType(*self, other)
+        && WebCore::MatricesEqual(self->m_matrix, static_cast<const WebCore::Matrix3DTransformOperation&>(other).m_matrix);
+}
+
+bool APS5_VABI _ZNK7WebCore26Matrix3DTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(
+    const WebCore::Matrix3DTransformOperation* self, WebCore::TransformationMatrix& transform, const WebCore::FloatSize&) {
+    _ZN7WebCore20TransformationMatrix8multiplyERKS0_(&transform, self->m_matrix);
+    return false;
+}
+
+NKWebKit::TransformAbi::TransformOperationRef APS5_VABI _ZN7WebCore26Matrix3DTransformOperation5blendEPKNS_18TransformOperationEdb(
+    WebCore::Matrix3DTransformOperation* self, const WebCore::TransformOperation* from, double progress, bool blendToIdentity) {
+    if (from && !WebCore::IsSameType(*from, *self)) {
+        return WebCore::RefSelf(self);
+    }
+    WebCore::FloatSize size;
+    WebCore::TransformationMatrix fromT;
+    WebCore::TransformationMatrix toT;
+    if (from) {
+        NKWebKit::TransformAbi::Dispatch(*from).apply(from, fromT, size);
+    }
+    _ZNK7WebCore26Matrix3DTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(self, toT, size);
+    if (blendToIdentity) {
+        _ZN7WebCore20TransformationMatrix5blendERKS0_d(&fromT, toT, progress);
+        return _ZN7WebCore26Matrix3DTransformOperation6createERKNS_20TransformationMatrixE(fromT);
+    }
+    _ZN7WebCore20TransformationMatrix5blendERKS0_d(&toT, fromT, progress);
+    return _ZN7WebCore26Matrix3DTransformOperation6createERKNS_20TransformationMatrixE(toT);
+}
+
+void APS5_VABI _ZNK7WebCore26Matrix3DTransformOperation4dumpERN3WTF10TextStreamE(
+    const WebCore::Matrix3DTransformOperation* self, NKWebKit::WtfAbi::TextStream& stream) {
+    WebCore::TypeName(stream, self->m_type);
+    WebCore::Text(stream, "(");
+    _ZN7WebCorelsERN3WTF10TextStreamERKNS_20TransformationMatrixE(stream, self->m_matrix);
+    WebCore::Text(stream, ")");
 }
 
 }
