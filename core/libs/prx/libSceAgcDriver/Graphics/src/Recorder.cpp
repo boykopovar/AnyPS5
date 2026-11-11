@@ -3635,9 +3635,17 @@ void Recorder::NotePendingWordFill(std::uint64_t address, std::size_t bytes, std
 }
 
 void Recorder::NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    notePendingRanges(ranges, -1);
+}
+
+void Recorder::NotePendingReach(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    notePendingRanges(ranges, ReachValue);
+}
+
+void Recorder::notePendingRanges(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, int value) {
     bool publish = false;
     for (const auto& [begin, end] : ranges) {
-        if (end > begin && noteWrite(begin, static_cast<std::size_t>(end - begin))) publish = true;
+        if (end > begin && noteWrite(begin, static_cast<std::size_t>(end - begin), false, value)) publish = true;
     }
     if (!publish) return;
     publishPendingWrites(ranges);
@@ -3714,6 +3722,20 @@ bool Recorder::PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) co
     return false;
 }
 
+bool Recorder::PendingStoreOverlaps(std::uint64_t address, std::size_t bytes) const {
+    if (bytes == 0) return false;
+    if (published != nullptr && !SnapshotOverlaps(published.get(), address, bytes)) return false;
+    const auto end = address + bytes;
+    const auto stores = [&](const Batch& batch) {
+        for (std::size_t index = 0; index < batch.writes.size(); ++index) {
+            if (batch.writeValues[index] != ReachValue && address < batch.writes[index].second && batch.writes[index].first < end) return true;
+        }
+        return false;
+    };
+    if (open != nullptr && stores(*open)) return true;
+    return std::any_of(inFlight.begin(), inFlight.end(), [&](const auto& batch) { return stores(*batch); });
+}
+
 bool Recorder::OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const {
     return bytes != 0 && open != nullptr && overlaps(*open, address, address + bytes);
 }
@@ -3781,12 +3803,20 @@ std::uint64_t Recorder::LastWriteNote(std::uint64_t address, std::size_t bytes) 
 }
 
 std::uint64_t Recorder::NewestWriteNote(std::uint64_t address, std::size_t bytes) const {
+    return newestNote(address, bytes, true);
+}
+
+std::uint64_t Recorder::NewestStoreNote(std::uint64_t address, std::size_t bytes) const {
+    return newestNote(address, bytes, false);
+}
+
+std::uint64_t Recorder::newestNote(std::uint64_t address, std::size_t bytes, bool reach) const {
     if (bytes == 0) return 0;
     const auto end = address + bytes;
     std::uint64_t newest = 0;
     const auto scan = [&](const Batch& batch) {
         for (std::size_t i = 0; i < batch.writes.size(); ++i) {
-            if (address < batch.writes[i].second && batch.writes[i].first < end) newest = std::max(newest, batch.writeNotes[i]);
+            if ((reach || batch.writeValues[i] != ReachValue) && address < batch.writes[i].second && batch.writes[i].first < end) newest = std::max(newest, batch.writeNotes[i]);
         }
     };
     if (open != nullptr) scan(*open);

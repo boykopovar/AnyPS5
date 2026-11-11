@@ -16,6 +16,7 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ExData.cpp)
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PemReadBioX509.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_bn_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslBn.cpp)
@@ -650,6 +651,22 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509NameOneline.cpp)
+
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/DigestVerify.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_digest_verify_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/DigestVerify.cpp)
+    target_include_directories(guest_libressl_digest_verify_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_digest_verify_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_digest_verify_tests)
+    add_test(NAME guest_libressl_digest_verify COMMAND guest_libressl_digest_verify_tests)
+    add_test(NAME guest_libressl_digest_verify_allocator COMMAND guest_libressl_digest_verify_tests allocator)
+    set_tests_properties(guest_libressl_digest_verify guest_libressl_digest_verify_allocator PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_digest_verify guest_libressl_digest_verify_allocator PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_x509_name_oneline_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509NameOneline.cpp)
