@@ -357,9 +357,32 @@ int APS5_VABI SSL_CTX_use_certificate_ASN1_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_CTX_use_certificate_chain_file_nid_postfix(void) {
+int APS5_VABI SSL_CTX_use_certificate_chain_file_nid_postfix(LibreSslCtx* ctx, const char* file) {
+    constexpr int ErrorLibrarySsl = 20;
+    constexpr int ErrorFunctionUnknown = 0xfff;
+    constexpr int ErrorReasonBuffer = 7;
+    constexpr int ErrorReasonSystem = 2;
+    constexpr int BioControlSetFilename = 108;
+    constexpr int BioClose = 0x01;
+    constexpr int BioFileRead = 0x02;
+
+    LibreSsl::Bio* input = BIO_new_nid_postfix(BIO_s_file_nid_postfix());
+    if (input == nullptr) {
+        LibreSslPutError_nid_no_patch(ErrorLibrarySsl, ErrorFunctionUnknown, ErrorReasonBuffer, __FILE__, __LINE__);
+        return 0;
+    }
+    struct BioGuard {
+        LibreSsl::Bio* bio;
+        ~BioGuard() { BIO_free_nid_postfix(bio); }
+    } guard{input};
+
+    if (BIO_ctrl_nid_postfix(input, BioControlSetFilename, BioClose | BioFileRead, const_cast<char*>(file)) <= 0) {
+        LibreSslPutError_nid_no_patch(ErrorLibrarySsl, ErrorFunctionUnknown, ErrorReasonSystem, __FILE__, __LINE__);
+        return 0;
+    }
+    ERR_clear_error_nid_postfix();
+    static_cast<void>(ctx);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI SSL_CTX_use_certificate_file_nid_postfix(void) {
