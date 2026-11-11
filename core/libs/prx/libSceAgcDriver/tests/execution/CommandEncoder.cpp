@@ -62,6 +62,12 @@ VKAPI_ATTR void VKAPI_CALL FakeSetViewport(VkCommandBuffer commands, std::uint32
     Log(commands, text);
 }
 
+VKAPI_ATTR void VKAPI_CALL FakeSetColorWriteMask(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const VkColorComponentFlags* masks) {
+    std::string text = "mask " + std::to_string(first);
+    for (std::uint32_t index = 0; index < count; ++index) text += " " + std::to_string(masks[index]);
+    Log(commands, text);
+}
+
 VKAPI_ATTR void VKAPI_CALL FakePushConstants(VkCommandBuffer commands, VkPipelineLayout layout, VkShaderStageFlags stages, std::uint32_t offset, std::uint32_t size, const void* values) {
     std::string text = "push " + std::to_string(Raw(layout)) + " " + std::to_string(stages) + " " + std::to_string(offset);
     for (std::uint32_t index = 0; index < size; ++index) text += " " + std::to_string(static_cast<const std::uint8_t*>(values)[index]);
@@ -102,6 +108,7 @@ DeviceFunctions FakeTable() {
     table.cmdDraw = &FakeDraw;
     table.cmdBindPipeline = &FakeBindPipeline;
     table.cmdSetViewport = &FakeSetViewport;
+    table.cmdSetColorWriteMask = &FakeSetColorWriteMask;
     table.cmdPushConstants = &FakePushConstants;
     table.cmdBindDescriptorSets = &FakeBindDescriptorSets;
     table.cmdPipelineBarrier = &FakePipelineBarrier;
@@ -117,7 +124,7 @@ struct Oracle {
 
     void call(std::mt19937& random, VkCommandBuffer commands) {
         const auto value = static_cast<std::uint32_t>(random() % 251);
-        switch (random() % 9) {
+        switch (random() % 10) {
         case 0:
             table.cmdDraw(commands, value, 1, value / 2, 0);
             FakeExpect(commands, "draw " + std::to_string(value) + " 1 " + std::to_string(value / 2) + " 0");
@@ -189,6 +196,17 @@ struct Oracle {
             for (std::uint32_t index = 0; index < info.clearValueCount; ++index) text += " " + std::to_string(clears[index].color.uint32[0]);
             table.cmdBeginRenderPass(commands, &info, VK_SUBPASS_CONTENTS_INLINE);
             clears[0].color.uint32[0] = 0;
+            FakeExpect(commands, text);
+            break;
+        }
+        case 8: {
+            VkColorComponentFlags masks[3]{value & 0xfu, (value >> 1) & 0xfu, (value >> 2) & 0xfu};
+            const std::uint32_t first = value % 2;
+            const std::uint32_t count = 1 + value % 3;
+            std::string text = "mask " + std::to_string(first);
+            for (std::uint32_t index = 0; index < count; ++index) text += " " + std::to_string(masks[index]);
+            table.cmdSetColorWriteMask(commands, first, count, masks);
+            std::fill(std::begin(masks), std::end(masks), 0u);
             FakeExpect(commands, text);
             break;
         }
@@ -292,6 +310,32 @@ void RandomProgramRecordsWhatInlineRecords(std::uint32_t seed, bool delays) {
     }
     CommandEncoder::SetDelayForTesting({});
     Require(table.cmdDraw == &FakeDraw, "the device table kept an encoder entry after the encoder was destroyed");
+}
+
+// A command the encoder does not interpose runs on the producing thread at once, ahead of everything
+// queued before it: a state it sets lands on the wrong draws and races the encoder's own recording.
+// Every command of the device table must therefore be replaced, so the next command added to the
+// table without an encoder entry fails here instead of in a draw. The three listed members are the
+// table's non-command entry points.
+void EveryCommandOfTheTableIsInterposed() {
+    static_assert(std::is_standard_layout_v<DeviceFunctions> && sizeof(DeviceFunctions) % sizeof(void*) == 0, "the table must be a plain array of entry points");
+    constexpr std::size_t entries = sizeof(DeviceFunctions) / sizeof(void*);
+    const std::size_t notCommands[]{offsetof(DeviceFunctions, updateDescriptorSets) / sizeof(void*), offsetof(DeviceFunctions, allocateDescriptorSets) / sizeof(void*), offsetof(DeviceFunctions, getFenceStatus) / sizeof(void*)};
+    DeviceFunctions table{};
+    void* before[entries];
+    for (std::size_t index = 0; index < entries; ++index) before[index] = reinterpret_cast<void*>(&FakeDraw);
+    std::memcpy(&table, before, sizeof(table));
+    {
+        const auto attached = Attached(Handle<VkDevice>(0x4f), table);
+        void* after[entries];
+        std::memcpy(after, &table, sizeof(table));
+        for (std::size_t index = 0; index < entries; ++index) {
+            const bool command = std::find(std::begin(notCommands), std::end(notCommands), index) == std::end(notCommands);
+            Require(!command || after[index] != before[index], "entry " + std::to_string(index) + " of the device table is a command the encoder does not interpose; add it to install() in CommandEncoder.cpp, or list it as a non-command here");
+            Require(command || after[index] == before[index], "entry " + std::to_string(index) + " of the device table is not a command but the encoder replaced it");
+        }
+    }
+    Require(std::memcmp(&table, before, sizeof(table)) == 0, "destroying the encoder did not restore the device table");
 }
 
 void OtherThreadsRecordDirectlyWhileAWindowIsOpen() {
@@ -752,6 +796,7 @@ int main() {
         for (std::uint32_t seed = 1; seed <= 6; ++seed) RandomProgramRecordsWhatInlineRecords(seed, seed % 2 == 0);
         OtherThreadsRecordDirectlyWhileAWindowIsOpen();
         HookDuringUnencodedOpsWaits();
+        EveryCommandOfTheTableIsInterposed();
         NestedWindowKeepsOrder();
         LargeRecordsSpanChunks();
         UnwindingSettlesQueuedRecording();

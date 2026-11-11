@@ -142,6 +142,21 @@ VKAPI_ATTR void VKAPI_CALL setScissor(VkCommandBuffer commands, std::uint32_t fi
     slots()[S].real.cmdSetScissor(commands, first, count, scissors);
 }
 
+template<std::size_t S>
+VKAPI_ATTR void VKAPI_CALL setColorWriteMask(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const VkColorComponentFlags* masks) {
+    if (auto* encoder = deferring<S>(commands)) {
+        auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
+            const auto header = unpack<RangeHeader>(payload);
+            const auto* at = payload + aligned(sizeof(RangeHeader));
+            functions.cmdSetColorWriteMask(target, header.first, header.count, arrayAt<VkColorComponentFlags>(at, header.count));
+        }, aligned(sizeof(RangeHeader)) + aligned(sizeof(VkColorComponentFlags) * count));
+        new (at) RangeHeader{first, count};
+        copyArray(at + aligned(sizeof(RangeHeader)), masks, count);
+        return;
+    }
+    slots()[S].real.cmdSetColorWriteMask(commands, first, count, masks);
+}
+
 struct BindSetsHeader {
     VkPipelineBindPoint bindPoint;
     VkPipelineLayout layout;
@@ -319,6 +334,7 @@ void install(DeviceFunctions& table) {
     APS5_PLAIN(cmdEndRendering);
     APS5_CUSTOM(cmdSetViewport, setViewport);
     APS5_CUSTOM(cmdSetScissor, setScissor);
+    APS5_CUSTOM(cmdSetColorWriteMask, setColorWriteMask);
     APS5_PLAIN(cmdSetDepthBounds);
     APS5_PLAIN(cmdSetDepthBias);
     APS5_PLAIN(cmdSetCullMode);
