@@ -9133,6 +9133,128 @@ void splitUploadTests(const Device& device, Recorder& recorder) {
     std::cout << "split upload: ok\n";
 }
 
+void splitBufferTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    if (context.hostImportAlignment == 0 || 65536 % context.hostImportAlignment != 0) {
+        std::cout << "host imports unavailable: the split buffer upload not tested\n";
+        return;
+    }
+    static const bool optedOut = std::getenv("APS5_NO_SEGMENT_BUFFER") != nullptr;
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t window = 2 * piece;
+    constexpr std::size_t pieces = 6;
+    constexpr std::size_t span = pieces * piece;
+    recorder.Activate();
+    SetHostImportWindow(window);
+    struct Window {
+        ~Window() { SetHostImportWindow(0); }
+    } windowGuard;
+#ifdef _WIN32
+    void* raw = VirtualAlloc(nullptr, span + window, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* raw = std::aligned_alloc(65536, span + window);
+#endif
+    Require(raw != nullptr, "cannot allocate the split buffer block");
+    auto* guest = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(raw) + window - 1) / window * window);
+    const auto first = reinterpret_cast<std::uint64_t>(guest);
+    const auto pattern = [](std::size_t i) { return static_cast<std::uint8_t>(i * 131u + 7u); };
+    for (std::size_t i = 0; i < span; ++i) guest[i] = pattern(i);
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < pieces; ++index) mutation.Add(guest + index * piece, piece, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* raw;
+        std::uint8_t* guest;
+        std::uint64_t first;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                for (std::size_t index = 0; index < pieces; ++index) mutation.Remove(guest + index * piece);
+            }
+            HostImportFor(context, first, span);
+#ifdef _WIN32
+            VirtualFree(raw, 0, MEM_RELEASE);
+#else
+            std::free(raw);
+#endif
+        }
+    } unregister{context, raw, guest, first};
+    const auto settle = [&] {
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    };
+    constexpr std::size_t beginOffset = 40000;
+    const auto begin = first + beginOffset;
+    const auto end = first + 5 * piece + 12345;
+    const auto length = static_cast<std::size_t>(end - begin);
+    Require(HostImportFor(context, begin, length) == nullptr, "one import covers a range that crosses the import windows");
+    std::string failures;
+    for (const bool written : {false, true}) {
+        const std::string what = written ? "written buffer" : "read-only buffer";
+        const auto before = GuestBufferMemory::SegmentedBuffers();
+        GuestBufferMemory memory(context);
+        if (written) memory.AddWritable(begin, length);
+        else memory.AddReadable(begin, length);
+        memory.Upload(false);
+        const auto after = GuestBufferMemory::SegmentedBuffers();
+        if (!optedOut) {
+            if (!memory.HasGpuCopies()) failures += what + ": the range crossing the import windows was copied through the CPU\n";
+            if (after.served - before.served != 1 || after.segments - before.segments != 3 || after.servedBytes - before.servedBytes != length || after.fallbacks != before.fallbacks) failures += what + ": the segment counters did not count one range of three segments\n";
+        } else {
+            if (memory.HasGpuCopies()) failures += what + ": the range was copied by the GPU although segments are disabled\n";
+            if (after.served != before.served || after.fallbacks - before.fallbacks != 1 || after.fallbackBytes - before.fallbackBytes != length) failures += what + ": the fallback counters did not count the range\n";
+        }
+        std::uint32_t adjustment = 0;
+        const auto view = memory.Descriptor(begin, length, adjustment);
+        const std::size_t fillFrom = 2 * piece - 1000 - beginOffset;
+        const std::size_t fillBytes = 2 * piece + 2000;
+        Buffer readback(context, length, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        {
+            std::unique_lock gpu(GpuMutex());
+            const auto commands = recorder.Commands();
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            CopyBuffer(context, commands, view.buffer, view.offset, readback.Handle(), 0, length);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        }
+        settle();
+        readback.Invalidate();
+        if (std::memcmp(readback.Bytes().data(), guest + beginOffset, length) != 0) failures += what + ": the buffer does not hold the guest bytes of the range\n";
+        if (written) {
+            {
+                std::unique_lock gpu(GpuMutex());
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, view.buffer, view.offset + fillFrom, fillBytes, 0xa5a5a5a5u);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            }
+            {
+                std::unique_lock gpu(GpuMutex());
+                memory.RecordCopyBacks(recorder);
+            }
+            memory.MarkDirectWrites();
+            if (!optedOut && memory.HasCopiedWrites()) failures += what + ": the written range still needs a CPU write-back after its copy-back\n";
+            settle();
+        }
+        memory.WriteBack();
+        settle();
+        for (std::size_t i = 0; i < span; ++i) {
+            const auto address = first + i;
+            const bool inFill = written && address >= begin + fillFrom && address < begin + fillFrom + fillBytes;
+            const auto expected = inFill ? std::uint8_t{0xa5} : pattern(i);
+            if (guest[i] != expected) {
+                failures += what + ": guest byte " + std::to_string(i) + (inFill ? " was not written back from the buffer\n" : " changed outside the written range\n");
+                break;
+            }
+        }
+        for (std::size_t i = 0; i < span; ++i) guest[i] = pattern(i);
+    }
+    if (!failures.empty()) throw std::runtime_error("split buffer:\n" + failures);
+    std::cout << "split buffer: ok\n";
+}
+
 void writeBackBlockTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0 || 65536 % base.hostImportAlignment != 0) {
@@ -15750,6 +15872,14 @@ int main(int argc, char** argv) {
             splitUploadTests(device, recorder);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--split-buffer-only") {
+            if (device.GetContext().hostImportAlignment == 0) {
+                std::cout << "skipped, host imports are unavailable\n";
+                return 77;
+            }
+            splitBufferTests(device, recorder);
+            return 0;
+        }
         if (argc == 3 && std::string_view(argv[1]) == "--alias-overwrite-only") {
             if (device.GetContext().hostImportAlignment == 0) {
                 std::cout << "skipped, host imports are unavailable\n";
@@ -15957,6 +16087,7 @@ int main(int argc, char** argv) {
         writeBackPaddingTests(device, recorder, true);
         splitWriteBackTests(device, recorder);
         splitUploadTests(device, recorder);
+        splitBufferTests(device, recorder);
         writeBackBlockTests(device, recorder);
         flushWaitMipChainTests(device, recorder);
         singlePassTests(device, recorder, false);

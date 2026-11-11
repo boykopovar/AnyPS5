@@ -5686,6 +5686,47 @@ bool gpuCopiesEnabled() {
     return !disabled;
 }
 
+bool segmentBuffersEnabled() {
+    static const bool disabled = std::getenv("APS5_NO_SEGMENT_BUFFER") != nullptr;
+    return !disabled;
+}
+
+struct SegmentedBufferStats {
+    std::atomic<std::uint64_t> served{0};
+    std::atomic<std::uint64_t> servedBytes{0};
+    std::atomic<std::uint64_t> segments{0};
+    std::atomic<std::uint64_t> fallbacks{0};
+    std::atomic<std::uint64_t> fallbackBytes{0};
+};
+
+SegmentedBufferStats& SegmentedStats() {
+    static SegmentedBufferStats stats;
+    return stats;
+}
+
+std::vector<BufferCopySegment> straddlingSegments(const Context& context, HostImports& state, std::uint64_t begin, std::uint64_t end, const GuestAllocations::Lease& lease, bool& registered) {
+    std::vector<BufferCopySegment> segments;
+    for (auto cursor = begin; cursor < end;) {
+        const auto* entry = findImport(state, cursor, cursor + 1);
+        if (entry == nullptr) {
+            const auto bounds = importRunBounds(lease, cursor);
+            if (!bounds.found) {
+                registered = false;
+                return {};
+            }
+            const auto pieceEnd = std::min(end, lease[bounds.last]->address + lease[bounds.last]->bytes);
+            entry = importAccess(context, state, cursor, pieceEnd, lease, ImportRequester::Build);
+            if (entry == nullptr) return {};
+        }
+        const auto to = std::min(end, entry->base + entry->bytes);
+        if (to <= cursor) return {};
+        const auto start = HostImportBufferStart(*entry);
+        segments.push_back({cursor, to, entry->buffer, start.guest, start.device});
+        cursor = to;
+    }
+    return segments;
+}
+
 std::uint64_t gpuCopyLimit() {
     static const std::uint64_t limit = [] {
         const char* value = std::getenv("APS5_GPU_COPY_MAX_KIB");
@@ -6006,6 +6047,11 @@ void GuestBufferMemory::resolveOverlays() {
         ++kept;
     }
     regions.erase(regions.begin() + static_cast<std::ptrdiff_t>(kept), regions.end());
+}
+
+SegmentedBufferCounts GuestBufferMemory::SegmentedBuffers() {
+    const auto& stats = SegmentedStats();
+    return {stats.served.load(std::memory_order_relaxed), stats.servedBytes.load(std::memory_order_relaxed), stats.segments.load(std::memory_order_relaxed), stats.fallbacks.load(std::memory_order_relaxed), stats.fallbackBytes.load(std::memory_order_relaxed)};
 }
 
 void GuestBufferMemory::UploadPrepare(bool addressable) {
@@ -6360,6 +6406,23 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
                 if (!covers(entry)) entry = nullptr;
                 runImport = entry != nullptr;
             }
+            if (entry == nullptr && !sparseRun && !region.sparse && (region.hostBacked || region.writable) && !runCovers(importRanges(), region.begin, region.end)) {
+                auto& stats = SegmentedStats();
+                bool registered = leasedIndexContaining(importRanges(), region.begin) != importRanges().size();
+                if (registered && recorder != nullptr && gpuCopiesEnabled() && segmentBuffersEnabled()) region.copySegments = straddlingSegments(context, state, region.begin, region.end, importRanges(), registered);
+                if (!region.copySegments.empty()) {
+                    stats.served.fetch_add(1, std::memory_order_relaxed);
+                    stats.servedBytes.fetch_add(bytes, std::memory_order_relaxed);
+                    stats.segments.fetch_add(region.copySegments.size(), std::memory_order_relaxed);
+                    region.deviceLocal = false;
+                    region.buffer.reset();
+                    region.snapshot.clear();
+                    copyOnGpu = true;
+                } else if (registered) {
+                    stats.fallbacks.fetch_add(1, std::memory_order_relaxed);
+                    stats.fallbackBytes.fetch_add(bytes, std::memory_order_relaxed);
+                }
+            }
             // A staged region (see stagingEligible) is copied out of the import even when aligned;
             // without a recorder to record the copies it binds in place like any other.
             const bool staged = recorder != nullptr && stagingEligible(region, addressable);
@@ -6598,7 +6661,8 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
         std::shared_ptr<Buffer> inputSnapshot;
         auto copySource = region->copySource;
         auto copyOffset = region->begin - region->copySourceBase;
-        if (!pendingWriter && !writable) {
+        const bool segmented = !region->copySegments.empty();
+        if (!segmented && !pendingWriter && !writable) {
             inputSnapshot = std::make_shared<Buffer>(context, static_cast<std::size_t>(bytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             std::memcpy(inputSnapshot->Bytes().data(), reinterpret_cast<const void*>(address), static_cast<std::size_t>(bytes));
             copySource = inputSnapshot->Handle();
@@ -6613,7 +6677,11 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
                 expected.assign(snapshotBytes.begin(), snapshotBytes.end());
             }
         }
-        CopyBuffer(context, commands, copySource, copyOffset, region->buffer->Handle(), 0, bytes);
+        if (segmented) {
+            for (const auto& segment : region->copySegments) CopyBuffer(context, commands, segment.buffer, segment.begin - segment.base, region->buffer->Handle(), segment.begin - region->begin, segment.end - segment.begin);
+        } else {
+            CopyBuffer(context, commands, copySource, copyOffset, region->buffer->Handle(), 0, bytes);
+        }
         if (!expected.empty()) {
             auto readback = std::make_shared<Buffer>(context, expected.size(), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -6736,36 +6804,47 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
                 }
                 recording = true;
             }
-            // Exactly the sub-range the shader may write, in place in the import: what the shader
-            // would have stored there itself had the range been bindable.
-            auto whole = from;
-            auto wholeEnd = to;
-            if (region.shadowCopy != nullptr && region.copySourceAddress != 0 && region.begin % 4u == 0 && region.copySourceBase % 4u == 0) {
-                const auto alignedFrom = (from + 3u) & ~std::uint64_t{3};
-                const auto alignedTo = to & ~std::uint64_t{3};
-                static const bool traceDivergence = std::getenv("APS5_TRACE_COPY_BACK") != nullptr;
-                std::shared_ptr<Buffer> counter;
-                if (traceDivergence && alignedFrom < alignedTo) {
-                    counter = std::make_shared<Buffer>(context, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-                    std::memset(counter->Bytes().data(), 0, 16);
-                }
-                if (alignedFrom < alignedTo && recorder.RecordChangedCopy(commands, region.buffer->DeviceAddress() + (alignedFrom - region.begin), region.shadowCopy->DeviceAddress() + (alignedFrom - region.begin), region.copySourceAddress + (alignedFrom - region.copySourceBase), static_cast<std::uint32_t>((alignedTo - alignedFrom) / 4u), counter != nullptr ? counter->DeviceAddress() : 0)) {
-                    if (counter != nullptr) {
-                        recorder.Keep(counter);
-                        recorder.OnComplete([counter, alignedFrom, alignedTo, regionBegin = region.begin, regionEnd = region.end] {
-                            std::uint32_t diverged = 0;
-                            std::memcpy(&diverged, counter->Bytes().data(), sizeof(diverged));
-                            static const bool alwaysCopy = std::getenv("APS5_CHANGED_COPY_ALWAYS") != nullptr;
-                            if (diverged != 0) std::fprintf(stderr, "[copy-back] 0x%llx+0x%llx (region 0x%llx+0x%llx): %u dwords where the shader and the CPU changed the same bytes; %s\n", static_cast<unsigned long long>(alignedFrom), static_cast<unsigned long long>(alignedTo - alignedFrom), static_cast<unsigned long long>(regionBegin), static_cast<unsigned long long>(regionEnd - regionBegin), diverged, alwaysCopy ? "the shader's bytes were stored (APS5_CHANGED_COPY_ALWAYS)" : "the CPU's bytes were kept");
-                        });
+            const auto copyBack = [&](VkBuffer source, std::uint64_t sourceBase, VkDeviceAddress sourceAddress, std::uint64_t pieceFrom, std::uint64_t pieceTo) {
+                // Exactly the sub-range the shader may write, in place in the import: what the shader
+                // would have stored there itself had the range been bindable.
+                auto whole = pieceFrom;
+                auto wholeEnd = pieceTo;
+                if (region.shadowCopy != nullptr && sourceAddress != 0 && region.begin % 4u == 0 && sourceBase % 4u == 0) {
+                    const auto alignedFrom = (pieceFrom + 3u) & ~std::uint64_t{3};
+                    const auto alignedTo = pieceTo & ~std::uint64_t{3};
+                    static const bool traceDivergence = std::getenv("APS5_TRACE_COPY_BACK") != nullptr;
+                    std::shared_ptr<Buffer> counter;
+                    if (traceDivergence && alignedFrom < alignedTo) {
+                        counter = std::make_shared<Buffer>(context, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+                        std::memset(counter->Bytes().data(), 0, 16);
                     }
-                    if (from < alignedFrom) CopyBuffer(context, commands, region.buffer->Handle(), from - region.begin, region.copySource, from - region.copySourceBase, alignedFrom - from);
-                    if (alignedTo < to) CopyBuffer(context, commands, region.buffer->Handle(), alignedTo - region.begin, region.copySource, alignedTo - region.copySourceBase, to - alignedTo);
-                    whole = wholeEnd;
-                    recorder.Keep(region.shadowCopy);
+                    if (alignedFrom < alignedTo && recorder.RecordChangedCopy(commands, region.buffer->DeviceAddress() + (alignedFrom - region.begin), region.shadowCopy->DeviceAddress() + (alignedFrom - region.begin), sourceAddress + (alignedFrom - sourceBase), static_cast<std::uint32_t>((alignedTo - alignedFrom) / 4u), counter != nullptr ? counter->DeviceAddress() : 0)) {
+                        if (counter != nullptr) {
+                            recorder.Keep(counter);
+                            recorder.OnComplete([counter, alignedFrom, alignedTo, regionBegin = region.begin, regionEnd = region.end] {
+                                std::uint32_t diverged = 0;
+                                std::memcpy(&diverged, counter->Bytes().data(), sizeof(diverged));
+                                static const bool alwaysCopy = std::getenv("APS5_CHANGED_COPY_ALWAYS") != nullptr;
+                                if (diverged != 0) std::fprintf(stderr, "[copy-back] 0x%llx+0x%llx (region 0x%llx+0x%llx): %u dwords where the shader and the CPU changed the same bytes; %s\n", static_cast<unsigned long long>(alignedFrom), static_cast<unsigned long long>(alignedTo - alignedFrom), static_cast<unsigned long long>(regionBegin), static_cast<unsigned long long>(regionEnd - regionBegin), diverged, alwaysCopy ? "the shader's bytes were stored (APS5_CHANGED_COPY_ALWAYS)" : "the CPU's bytes were kept");
+                            });
+                        }
+                        if (pieceFrom < alignedFrom) CopyBuffer(context, commands, region.buffer->Handle(), pieceFrom - region.begin, source, pieceFrom - sourceBase, alignedFrom - pieceFrom);
+                        if (alignedTo < pieceTo) CopyBuffer(context, commands, region.buffer->Handle(), alignedTo - region.begin, source, alignedTo - sourceBase, pieceTo - alignedTo);
+                        whole = wholeEnd;
+                        recorder.Keep(region.shadowCopy);
+                    }
+                }
+                if (whole < wholeEnd) CopyBuffer(context, commands, region.buffer->Handle(), whole - region.begin, source, whole - sourceBase, wholeEnd - whole);
+            };
+            if (region.copySegments.empty()) {
+                copyBack(region.copySource, region.copySourceBase, region.copySourceAddress, from, to);
+            } else {
+                for (const auto& segment : region.copySegments) {
+                    const auto pieceFrom = std::max(from, segment.begin);
+                    const auto pieceTo = std::min(to, segment.end);
+                    if (pieceFrom < pieceTo) copyBack(segment.buffer, segment.base, segment.address, pieceFrom, pieceTo);
                 }
             }
-            if (whole < wholeEnd) CopyBuffer(context, commands, region.buffer->Handle(), whole - region.begin, region.copySource, whole - region.copySourceBase, wholeEnd - whole);
             copiedBytes += to - from;
             recorder.Keep(region.buffer);
             if (profile) {

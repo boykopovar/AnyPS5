@@ -70,6 +70,22 @@ inline HostImportStart HostImportBufferStart(const HostImport& import) {
     return {import.base - import.lead, import.address - import.lead};
 }
 
+struct BufferCopySegment {
+    std::uint64_t begin;
+    std::uint64_t end;
+    VkBuffer buffer;
+    std::uint64_t base;
+    VkDeviceAddress address;
+};
+
+struct SegmentedBufferCounts {
+    std::uint64_t served = 0;
+    std::uint64_t servedBytes = 0;
+    std::uint64_t segments = 0;
+    std::uint64_t fallbacks = 0;
+    std::uint64_t fallbackBytes = 0;
+};
+
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };
 enum class SnapshotService : std::uint8_t { Served, Outside, Partial, Changed };
 
@@ -343,6 +359,7 @@ public:
     // copied blocks) are timed by AcquireRegistered on the calling thread; the caller adds the
     // snapshot compares it made after it (ShaderResources::prepareAddressBindings).
     static void CountAddressBuild(double snapshotsUs);
+    static SegmentedBufferCounts SegmentedBuffers();
     // A guest range bound through a descriptor. Both read live guest memory at upload and bind the
     // same way (a storage buffer); AddWritable also notes the range in Writes(), so it gets the
     // write-back's reference copy, a write-back, the recorder's pending-write note and the
@@ -513,6 +530,7 @@ private:
         VkBuffer copySource = VK_NULL_HANDLE;
         std::uint64_t copySourceBase = 0;
         VkDeviceAddress copySourceAddress = 0;
+        std::vector<BufferCopySegment> copySegments {};
         bool copiedBack = false;
         std::shared_ptr<Buffer> shadowCopy;
         // An element the shader updates atomically lies inside (AddWritable's `atomic`).
