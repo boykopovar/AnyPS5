@@ -183,5 +183,15 @@ if command == 'inspect':
             self.assertEqual(result, 2)
             self.assertIn("missing calls or chunks", stderr.getvalue())
 
+    def test_inspection_requires_chunks_list(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arguments, _, _, _ = self.empty_cli(root, filter_source="print('{\"calls\": []}')\n")
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+                result = frame_capture_minimize.main(arguments)
+            self.assertEqual(result, 2)
+            self.assertIn("missing calls or chunks", stderr.getvalue())
+
 if __name__ == "__main__":
     unittest.main()
