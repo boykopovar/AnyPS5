@@ -145,12 +145,21 @@ void testNestedDestination(const std::filesystem::path& root) {
     checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, source / "nested", plan); }, "filtering accepted an output nested under its source");
 }
 
+
+void testParentDestination(const std::filesystem::path& root) {
+    const auto source = root / "source";
+    writeCapture(source);
+    AgcDriverTools::FrameCaptureFilterPlan plan;
+    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, root, plan); }, "filtering accepted an output parent of its source");
+}
+
 }
 
 int main() {
     const auto root = std::filesystem::temp_directory_path() / ("aps5-frame-capture-filter-test-" + std::to_string(getpid()));
     testOutOfRangeChunk(root);
     testNestedDestination(root);
+    testParentDestination(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
