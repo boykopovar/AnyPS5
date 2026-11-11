@@ -121,6 +121,22 @@ void Matches(const GuestGlyphRec* guest, FT_Glyph native, const GuestLibrary* li
     for (std::uint32_t index = 0; index < a.n_contours; ++index) Require(a.contours[index] == b.contours[index], "outline contours match");
 }
 
+void EditGuestOutline(GuestGlyphRec* guest) {
+    auto& guestOutline = reinterpret_cast<FreeType::GuestOutlineGlyphRec*>(guest)->outline;
+    guestOutline.points[0].x += 137;
+    guestOutline.points[0].y -= 29;
+    guestOutline.flags ^= FT_OUTLINE_EVEN_ODD_FILL;
+    guest->advance.x += 11;
+}
+
+void EditNativeOutline(FT_Glyph native) {
+    auto& nativeOutline = reinterpret_cast<FT_OutlineGlyph>(native)->outline;
+    nativeOutline.points[0].x += 137;
+    nativeOutline.points[0].y -= 29;
+    nativeOutline.flags ^= FT_OUTLINE_EVEN_ODD_FILL;
+    native->advance.x += 11;
+}
+
 struct StrokerPair {
     void* guest = nullptr;
     FT_Stroker native = nullptr;
@@ -140,6 +156,8 @@ struct StrokerPair {
 void BitmapConversion(const Exports& ot, FT_Bool destroy) {
     Fixture fixture;
     auto [guest, native] = fixture.Glyph();
+    EditGuestOutline(guest);
+    EditNativeOutline(native);
     const auto* oldGuest = guest;
     const FT_Glyph oldNative = native;
     const GuestVector origin{17, -9};
@@ -160,6 +178,8 @@ void BitmapConversion(const Exports& ot, FT_Bool destroy) {
 void TransformGlyph(const Exports& ot) {
     Fixture fixture;
     auto [guest, native] = fixture.Glyph();
+    EditGuestOutline(guest);
+    EditNativeOutline(native);
     const GuestMatrix matrix{0x18000, 0x08000, -0x04000, 0x10000};
     const FT_Matrix nativeMatrix{0x18000, 0x08000, -0x04000, 0x10000};
     const GuestVector delta{137, -211};
@@ -171,10 +191,29 @@ void TransformGlyph(const Exports& ot) {
     FT_Done_Glyph(native);
 }
 
+void TransformOptional(const Exports& ot, bool useMatrix, bool useDelta) {
+    Fixture fixture;
+    auto [guest, native] = fixture.Glyph();
+    EditGuestOutline(guest);
+    EditNativeOutline(native);
+    const GuestMatrix matrix{0x10000, 0x04000, -0x02000, 0x10000};
+    const FT_Matrix nativeMatrix{0x10000, 0x04000, -0x02000, 0x10000};
+    const GuestVector delta{23, -31};
+    const FT_Vector nativeDelta{23, -31};
+    Require(ot.transform(guest, useMatrix ? &matrix : nullptr, useDelta ? &delta : nullptr) ==
+                FT_Glyph_Transform(native, useMatrix ? &nativeMatrix : nullptr, useDelta ? &nativeDelta : nullptr),
+            "optional transform arguments match FreeType");
+    Matches(guest, native, fixture.library, false);
+    FT_Done_Glyph_nid_postfix(guest);
+    FT_Done_Glyph(native);
+}
+
 void StrokeGlyph(const Exports& ot, FT_Bool destroy) {
     Fixture fixture;
     StrokerPair stroker(fixture);
     auto [guest, native] = fixture.Glyph();
+    EditGuestOutline(guest);
+    EditNativeOutline(native);
     auto* oldGuest = guest;
     const FT_Glyph oldNative = native;
     Require(ot.stroke(&guest, stroker.guest, destroy) == FT_Glyph_Stroke(&native, stroker.native, destroy), "stroke error matches FreeType");
@@ -192,6 +231,8 @@ void StrokeBorderGlyph(const Exports& ot, FT_Bool inside, FT_Bool destroy) {
     Fixture fixture;
     StrokerPair stroker(fixture);
     auto [guest, native] = fixture.Glyph();
+    EditGuestOutline(guest);
+    EditNativeOutline(native);
     auto* oldGuest = guest;
     const FT_Glyph oldNative = native;
     Require(ot.strokeBorder(&guest, stroker.guest, inside, destroy) == FT_Glyph_StrokeBorder(&native, stroker.native, inside, destroy),
@@ -212,12 +253,64 @@ void InvalidBitmapStroke(const Exports& ot) {
     auto [guest, native] = fixture.Glyph();
     Require(ot.toBitmap(&guest, FT_RENDER_MODE_NORMAL, nullptr, 1) == FT_Glyph_To_Bitmap(&native, FT_RENDER_MODE_NORMAL, nullptr, 1),
             "setup bitmap conversion matches FreeType");
+    auto& guestBitmap = *reinterpret_cast<FreeType::GuestBitmapGlyphRec*>(guest);
+    auto nativeBitmap = reinterpret_cast<FT_BitmapGlyph>(native);
+    guestBitmap.left += 2;
+    guestBitmap.top -= 3;
+    guest->advance.x += 13;
+    nativeBitmap->left += 2;
+    nativeBitmap->top -= 3;
+    native->advance.x += 13;
+    Require(ot.toBitmap(&guest, FT_RENDER_MODE_NORMAL, nullptr, 1) == FT_Glyph_To_Bitmap(&native, FT_RENDER_MODE_NORMAL, nullptr, 1),
+            "existing bitmap conversion matches FreeType");
+    Matches(guest, native, fixture.library, true);
     auto* oldGuest = guest;
     const FT_Glyph oldNative = native;
     const auto guestError = ot.stroke(&guest, stroker.guest, 1);
     const auto nativeError = FT_Glyph_Stroke(&native, stroker.native, 1);
     Require(guestError == nativeError && guest == oldGuest && native == oldNative, "invalid bitmap stroke preserves input and matches error");
     Matches(guest, native, fixture.library, true);
+    FT_Done_Glyph_nid_postfix(guest);
+    FT_Done_Glyph(native);
+}
+
+void InvalidHandles(const Exports& ot) {
+    GuestGlyphRec* guest = nullptr;
+    FT_Glyph native = nullptr;
+    Require(ot.toBitmap(&guest, FT_RENDER_MODE_NORMAL, nullptr, 1) == FT_Glyph_To_Bitmap(&native, FT_RENDER_MODE_NORMAL, nullptr, 1),
+            "null bitmap conversion matches FreeType");
+    Require(ot.transform(nullptr, nullptr, nullptr) == FT_Glyph_Transform(nullptr, nullptr, nullptr), "null transform matches FreeType");
+    Require(ot.stroke(&guest, nullptr, 1) == FT_Glyph_Stroke(&native, nullptr, 1), "null glyph stroke matches FreeType");
+    Require(ot.strokeBorder(&guest, nullptr, 1, 1) == FT_Glyph_StrokeBorder(&native, nullptr, 1, 1),
+            "null glyph border stroke matches FreeType");
+    GuestGlyphRec foreign{};
+    bool threw = false;
+    try {
+        ot.transform(&foreign, nullptr, nullptr);
+    } catch (const std::runtime_error& error) {
+        threw = std::string(error.what()).find("FT_Glyph_Transform") != std::string::npos;
+    }
+    Require(threw, "foreign glyph handle is not accepted");
+}
+
+void InvalidOutlinePointerPreservesOwner(const Exports& ot) {
+    Fixture fixture;
+    auto [guest, native] = fixture.Glyph();
+    auto& outline = reinterpret_cast<FreeType::GuestOutlineGlyphRec*>(guest)->outline;
+    auto* originalPoints = outline.points;
+    GuestVector foreignPoint{};
+    outline.points = &foreignPoint;
+    bool threw = false;
+    try {
+        ot.transform(guest, nullptr, nullptr);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    outline.points = originalPoints;
+    Require(threw, "rebound outline point storage is rejected");
+    Require(ot.transform(guest, nullptr, nullptr) == FT_Glyph_Transform(native, nullptr, nullptr),
+            "original owner survives rejected point storage");
+    Matches(guest, native, fixture.library, false);
     FT_Done_Glyph_nid_postfix(guest);
     FT_Done_Glyph(native);
 }
@@ -249,14 +342,22 @@ int main(int argc, char** argv) {
     try {
         BitmapConversion(ot, 0);
         BitmapConversion(ot, 1);
+        BitmapConversion(ot, 2);
         TransformGlyph(ot);
+        TransformOptional(ot, false, false);
+        TransformOptional(ot, false, true);
+        TransformOptional(ot, true, false);
         StrokeGlyph(ot, 0);
         StrokeGlyph(ot, 1);
+        StrokeGlyph(ot, 2);
         for (const auto inside : {FT_Bool{0}, FT_Bool{1}}) {
             StrokeBorderGlyph(ot, inside, 0);
             StrokeBorderGlyph(ot, inside, 1);
         }
+        StrokeBorderGlyph(ot, 2, 2);
         InvalidBitmapStroke(ot);
+        InvalidHandles(ot);
+        InvalidOutlinePointerPreservesOwner(ot);
     } catch (const std::runtime_error& error) {
         std::fprintf(stderr, "FreeType Ot glyph mutations: %s\n", error.what());
         return 1;

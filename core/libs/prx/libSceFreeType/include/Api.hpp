@@ -43,6 +43,10 @@ int APS5_VABI FT_Get_Advance_nid_postfix(FreeType::GuestFaceRec* face, std::uint
 int APS5_VABI FT_Get_Advances_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t start, std::uint32_t count, std::int32_t flags, std::int64_t* advances);
 int APS5_VABI FT_Get_Glyph_nid_postfix(FreeType::GuestGlyphSlotRec* slot, FreeType::GuestGlyphRec** target);
 int APS5_VABI FT_Glyph_Copy_nid_postfix(FreeType::GuestGlyphRec* source, FreeType::GuestGlyphRec** target);
+int APS5_VABI FT_Glyph_To_Bitmap_nid_postfix(FreeType::GuestGlyphRec** glyph, std::int32_t renderMode, const FreeType::GuestVector* origin, std::uint8_t destroy);
+int APS5_VABI FT_Glyph_Transform_nid_postfix(FreeType::GuestGlyphRec* glyph, const FreeType::GuestMatrix* matrix, const FreeType::GuestVector* delta);
+int APS5_VABI FT_Glyph_Stroke_nid_postfix(FreeType::GuestGlyphRec** glyph, void* stroker, std::uint8_t destroy);
+int APS5_VABI FT_Glyph_StrokeBorder_nid_postfix(FreeType::GuestGlyphRec** glyph, void* stroker, std::uint8_t inside, std::uint8_t destroy);
 void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(FreeType::GuestGlyphRec* glyph, std::uint32_t mode, FreeType::GuestBBox* box);
 void APS5_VABI FT_Done_Glyph_nid_postfix(FreeType::GuestGlyphRec* glyph);
 int APS5_VABI FT_Get_Gasp_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t ppem);
