@@ -3716,6 +3716,10 @@ int main() {
     Require(rand_r_nid_postfix(&randomState) == 2147466840 && randomState == 2147466840u);
     randomState = 0xffffffffu;
     Require(rand_r_nid_postfix(&randomState) == 2147466840 && randomState == 2147466840u);
+    randomState = 0x3039u;
+    Require(rand_r_nid_postfix(&randomState) == 0xc5dee2f && rand_r_nid_postfix(&randomState) == 0x6ac05600);
+    randomState = 0x80000000u;
+    Require(rand_r_nid_postfix(&randomState) == 0x7fffbe58 && rand_r_nid_postfix(&randomState) == 0x6f29c50e);
     srand_nid_postfix(1);
     Require(rand_nid_postfix() == 408024109 && rand_nid_postfix() == 11635919 && rand_nid_postfix() == 196474438);
     srand_nid_postfix(0);
