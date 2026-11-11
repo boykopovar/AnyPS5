@@ -319,3 +319,26 @@ class CliParserTests(unittest.TestCase):
         self.assertIn("without a shell", help_text)
         self.assertIn("monotonic regression", help_text)
         self.assertIn("max_spread_pct", help_text)
+
+
+class CliExecutionTests(unittest.TestCase):
+    def test_main_reports_the_first_bad_and_good_commit(self):
+        report = {"first_bad": {"commit": "bad", "median_fps": 54.0},
+                  "previous_good": {"commit": "good", "median_fps": 60.0}}
+        with patch.object(performance_bisect, "load_recipe", return_value={}), \
+                patch.object(performance_bisect, "bisect", return_value=report) as bisect, \
+                patch("sys.stdout", new_callable=__import__("io").StringIO) as stdout:
+            result = performance_bisect.main(["--good", "good", "--bad", "bad", "--recipe", "recipe.json"])
+        self.assertEqual(result, 0)
+        self.assertIn("first measured regression: bad (54.00 FPS)", stdout.getvalue())
+        bisect.assert_called_once()
+
+    def test_main_rejects_a_missing_temporary_directory(self):
+        from contextlib import redirect_stderr
+        from io import StringIO
+        stderr = StringIO()
+        with redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+            performance_bisect.main(["--good", "good", "--bad", "bad", "--recipe", "recipe.json",
+                                     "--temp-dir", "/path/that/does/not/exist"])
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("--temp-dir must name an existing directory", stderr.getvalue())
