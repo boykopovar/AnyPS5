@@ -122,12 +122,40 @@ void TestRwlockattr() {
     });
 }
 
+void TestAttr() {
+    Case("pthread_attr_setstackaddr", [] {
+        PthreadAttr attr = nullptr;
+        void* dummy = reinterpret_cast<void*>(0x1000000);
+        if (pthread_attr_setstackaddr_nid_postfix(&attr, dummy) != GUEST_EINVAL) return false;
+        if (pthread_attr_setstackaddr_nid_postfix(nullptr, dummy) != GUEST_EINVAL) return false;
+        if (pthread_attr_init_nid_postfix(&attr) != 0 || attr == nullptr) return false;
+        if (pthread_attr_setstackaddr_nid_postfix(&attr, nullptr) != GUEST_EINVAL) return false;
+        if (pthread_attr_setstackaddr_nid_postfix(&attr, dummy) != 0) return false;
+        void* retrieved = nullptr;
+        if (pthread_attr_getstackaddr_nid_postfix(&attr, &retrieved) != 0 || retrieved != dummy) return false;
+        return pthread_attr_destroy_nid_postfix(&attr) == 0;
+    });
+    Case("pthread_attr_getsolosched_np", [] {
+        PthreadAttr attr = nullptr;
+        int solosched = -1;
+        if (pthread_attr_getsolosched_np_nid_postfix(&attr, &solosched) != GUEST_EINVAL) return false;
+        if (pthread_attr_getsolosched_np_nid_postfix(nullptr, &solosched) != GUEST_EINVAL) return false;
+        if (pthread_attr_init_nid_postfix(&attr) != 0 || attr == nullptr) return false;
+        if (pthread_attr_getsolosched_np_nid_postfix(&attr, nullptr) != GUEST_EINVAL) return false;
+        if (pthread_attr_getsolosched_np_nid_postfix(&attr, &solosched) != 0 || solosched != 0) return false;
+        if (pthread_attr_setsolosched_np_nid_postfix(&attr, 16) != 0) return false;
+        if (pthread_attr_getsolosched_np_nid_postfix(&attr, &solosched) != 0 || solosched != 16) return false;
+        return pthread_attr_destroy_nid_postfix(&attr) == 0;
+    });
+}
+
 }
 
 int main(int argc, char** argv) {
     const std::string_view mode = argc > 1 ? argv[1] : "";
     if (mode == "rwlockattr") TestRwlockattr();
     else if (mode == "kind") TestKind();
+    else if (mode == "attr") TestAttr();
     else return 2;
     if (failures == 0) std::printf("all cases passed\n");
     return failures == 0 ? 0 : 1;

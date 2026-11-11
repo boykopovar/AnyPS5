@@ -43,7 +43,10 @@ int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, c
     (void)name;
     auto replacement = std::make_unique<PthreadSemPrivate>(value);
     std::lock_guard lock(semInitializationMutex);
-    std::atomic_ref<PthreadSem>(*sem).store(replacement.release(), std::memory_order_release);
+    PthreadSem handle = replacement.get();
+    if (!GuestCopyOut_nid_no_patch(sem, &handle, sizeof(handle)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    replacement.release();
     return 0;
 }
 
@@ -101,11 +104,16 @@ int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, KernelUseconds usec) {
 }
 
 int APS5_VABI scePthreadSemGetvalue(PthreadSem* sem, int* value) {
+    if (sem) {
+        PthreadSem probe = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&probe, sem, sizeof(probe)))
+            return SCE_KERNEL_ERROR_EFAULT;
+    }
     auto* current = resolveSem(sem);
-    if (!value)
-        throw std::invalid_argument("Semaphore value pointer is null");
     std::lock_guard lock(current->_mutex);
-    *value = current->_count;
+    const int count = current->_count;
+    if (!GuestCopyOut_nid_no_patch(value, &count, sizeof(count)))
+        return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
