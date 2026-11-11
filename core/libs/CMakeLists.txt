@@ -261,6 +261,18 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(guest_abstract_youtube_immediate_returns_tests tests/GuestAbstractYoutubeImmediateReturns.cpp)
+    target_include_directories(guest_abstract_youtube_immediate_returns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_abstract_youtube_immediate_returns_tests PRIVATE libSceAbstractYoutube libc)
+    configure_windows_unwind(guest_abstract_youtube_immediate_returns_tests)
+    add_test(NAME guest_abstract_youtube_immediate_returns COMMAND guest_abstract_youtube_immediate_returns_tests)
+    if(WIN32)
+        set_tests_properties(guest_abstract_youtube_immediate_returns PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAbstractYoutube>")
+    endif()
+endif()
+
 include(prx/libSceFreeType/PostScriptInfo.cmake)
 
 if(APS5_ENABLE_TRACY)
