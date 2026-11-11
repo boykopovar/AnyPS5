@@ -216,12 +216,12 @@ int APS5_VABI __sys_workaround8849_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable) {
+    Ubsan::ReportCfiCheckFail(data, value, validVtable, true);
 }
 
-int APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable) {
+    Ubsan::ReportCfiCheckFail(data, value, validVtable, false);
 }
 
 int APS5_VABI _dup2_nid_postfix(int from, int to) {
