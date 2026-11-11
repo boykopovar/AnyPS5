@@ -396,6 +396,7 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_comment_concurrency.py)
         add_test(NAME eligibility_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_eligibility_paths.py)
+        set_tests_properties(ffmpeg_cache_keys winlibs_digest progress_comment_concurrency eligibility_paths PROPERTIES TIMEOUT 30)
         add_test(NAME release_workflow COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_release_workflow.py)
         set_tests_properties(release_workflow PROPERTIES TIMEOUT 20)
         foreach(shard RANGE 0 11)
