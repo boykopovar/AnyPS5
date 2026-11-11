@@ -718,8 +718,8 @@ int APS5_VABI kill_nid_postfix(int pid, int guest) {
     return RaiseWithCode(guest, GuestSiUser);
 }
 int APS5_VABI killpg_nid_postfix(int pgrp, int guest) {
-    if (pgrp < 0) { *__error_nid_postfix() = 22; return -1; }
-    return kill_nid_postfix(-pgrp, guest);
+    if (pgrp == 1) { *__error_nid_postfix() = 3; return -1; }
+    return kill_nid_postfix(static_cast<int>(0u - static_cast<unsigned>(pgrp)), guest);
 }
 int APS5_VABI pthread_kill_nid_postfix(Pthread thread, int guest) {
     if (guest < 0 || guest > MaxSignal) return PosixThread::GUEST_EINVAL;
