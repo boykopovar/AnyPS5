@@ -2962,8 +2962,6 @@ int APS5_VABI _ZN7WebCore18platformStrategiesEv();
 int APS5_VABI _ZN7WebCore18pluginScriptObjectEPN3JSC14JSGlobalObjectEPNS_13JSHTMLElementE();
 int APS5_VABI _ZN7WebCore18pluginTooSmallTextEv();
 int APS5_VABI _ZN7WebCore18throwThisTypeErrorERN3JSC14JSGlobalObjectERNS0_10ThrowScopeEPKcS6_();
-int APS5_VABI _ZN7WebCore19AccessibilityObject13isARIAControlENS_17AccessibilityRoleE();
-int APS5_VABI _ZN7WebCore19AccessibilityObject21ariaRoleToWebCoreRoleERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore19BlurFilterOperation6createENS_6LengthE();
 int APS5_VABI _ZN7WebCore19BlurFilterOperationC1ENS_6LengthE();
 int APS5_VABI _ZN7WebCore19BlurFilterOperationC2ENS_6LengthE();

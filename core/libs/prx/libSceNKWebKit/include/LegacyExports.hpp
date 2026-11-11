@@ -164,7 +164,6 @@ int APS5_VABI _ZN7WebCore21SerializedScriptValue8toStringEv();
 int APS5_VABI _ZN7WebCore11DisplayList12PutImageDataD0Ev();
 int APS5_VABI _ZN7WebCore9GLContext22createOffscreenContextEPNS_15PlatformDisplayE();
 int APS5_VABI _ZN7WebCore18JSHTMLInputElement14finishCreationERN3JSC2VME();
-int APS5_VABI _ZN7WebCore19AccessibilityObject11isARIAInputENS_17AccessibilityRoleE();
 int APS5_VABI _ZN7WebCore6Editor19insertEditableImageEv();
 int APS5_VABI _ZN7WebCore4Path5clearEv();
 int APS5_VABI _ZN7WebCore5Style8Resolver21pseudoStyleForElementERKNS_7ElementERKNS0_20PseudoElementRequestERKNS_11RenderStyleEPS9_PKNS_14SelectorFilterE();
