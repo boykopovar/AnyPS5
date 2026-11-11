@@ -156,7 +156,7 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     const bool gcn = IsGcnTiled(tileMode);
     std::array<std::uint32_t, 26> values{elementBytes, gcn ? 0u : BlockBytesFor(tileMode), tileMode == TextureTileMode::kLinear ? 0u : 1u, retile ? 1u : 0u};
     if (gcn) {
-        Require(!thick, "PS4 tiled surfaces are detiled thin");
+        Require(!thick || IsGcnThick(tileMode), "PS4 thin tiled surfaces are detiled thin");
         const auto geometry = GcnTiling(tileMode, elementBytes);
         values[1] = geometry.blockBytes;
         values[2] = 2u;
@@ -234,7 +234,7 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     Require(source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "texture detiling requires source and destination buffers");
     std::uint32_t columnEnd = 0, rowEnd = 0;
     checkWindow(layout, window, columnEnd, rowEnd);
-    const auto target = pipeline(MipTileMode(tileMode, layout), elementBytes, retile, thick);
+    const auto target = pipeline(MipTileMode(tileMode, layout), elementBytes, retile, thick && !(IsGcnThick(tileMode) && layout.gcnMicroTiled));
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
     const auto sourceDescriptorOffset = sourceOffset - sourceOffset % alignment;
     const auto destinationDescriptorOffset = destinationOffset - destinationOffset % alignment;
@@ -293,7 +293,7 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, groupsX, groupsY, 1);
 }
 
-void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes) {
+void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes, bool depthToFloat) {
     Require(commands != VK_NULL_HANDLE && source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "a texel repack needs a command buffer and its buffers");
     Require(bytes != 0 && bytes % 4u == 0 && sourceOffset % 4u == 0 && destinationOffset % 4u == 0, "a texel repack needs whole aligned words");
     if (repackPipeline == VK_NULL_HANDLE) {
@@ -333,7 +333,7 @@ void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, s
     context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
     context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, repackPipeline);
     context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
-    const std::array<std::uint32_t, 4> push{static_cast<std::uint32_t>(sourceOffset - sourceDescriptorOffset), static_cast<std::uint32_t>(destinationOffset - destinationDescriptorOffset), static_cast<std::uint32_t>(words), static_cast<std::uint32_t>(std::min(words, rowWords))};
+    const std::array<std::uint32_t, 5> push{static_cast<std::uint32_t>(sourceOffset - sourceDescriptorOffset), static_cast<std::uint32_t>(destinationOffset - destinationDescriptorOffset), static_cast<std::uint32_t>(words), static_cast<std::uint32_t>(std::min(words, rowWords)), static_cast<std::uint32_t>(depthToFloat)};
     context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
     context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, static_cast<std::uint32_t>((std::min(words, rowWords) + 63u) / 64u), static_cast<std::uint32_t>(rows), 1);
 }
