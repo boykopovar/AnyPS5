@@ -156,6 +156,19 @@ static void RequireNeverDecreases(int clockId) {
     }
 }
 
+static void Clock20UsesScaledMonotonicTime() {
+    constexpr int clockId = 20;
+    constexpr std::int64_t tickCeilingNanos = 30519;
+    const auto before = Nanos(GUEST_CLOCK_MONOTONIC) / 64;
+    const auto posix = Nanos(clockId);
+    KernelTimespec sceTime{-1, -1};
+    Require(sceKernelClockGettime(clockId, &sceTime) == SCE_OK);
+    const auto sce = sceTime.tv_sec * NANOS_PER_SECOND + sceTime.tv_nsec;
+    const auto after = Nanos(GUEST_CLOCK_MONOTONIC) / 64;
+    Require(before - tickCeilingNanos <= posix && posix <= sce && sce <= after);
+    Require(posix % 1000 == 0 && sce % 1000 == 0);
+}
+
 static void WallAndUptimeClocksReportSubsecondResolutions() {
     const int clocks[] = {GUEST_CLOCK_REALTIME, GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_REALTIME_FAST, GUEST_CLOCK_MONOTONIC,
                           GUEST_CLOCK_MONOTONIC_PRECISE, GUEST_CLOCK_MONOTONIC_FAST, GUEST_CLOCK_UPTIME, GUEST_CLOCK_UPTIME_PRECISE,
@@ -421,6 +434,7 @@ int main() {
     OmittedTimeIsFaultAfterClockValidation();
     InvalidClockIdFailsGettime();
     ClockIoErrorIds();
+    Clock20UsesScaledMonotonicTime();
     SettimeIsRefusedLikeAJailedProcess();
     CalendarConversionsInitializeTheirState();
     CalendarConversionsFollowTheHostZone();
