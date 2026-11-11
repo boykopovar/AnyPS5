@@ -58,10 +58,6 @@ int APS5_VABI FcFontMatch() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcPatternFilter() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI FcPatternGetFTFace() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -100,12 +96,8 @@ int APS5_VABI FcCharSetMerge(FcCharSet* target, const FcCharSet* source, int* ch
     return 1;
 }
 
-int APS5_VABI FcPatternGetCharSet() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 void APS5_VABI FcCharSetDestroy(FcCharSet* set) {
-    delete set;
+    if (set && set->references.fetch_sub(1, std::memory_order_acq_rel) == 1) delete set;
 }
 
 FcCharSet* APS5_VABI FcCharSetCreate() {
@@ -152,19 +144,7 @@ void APS5_VABI FcMatrixMultiply(FcMatrix* result, const FcMatrix* first, const F
     *result = product;
 }
 
-int APS5_VABI FcPatternAddCharSet() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI FcDefaultSubstitute() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternAddLangSet() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternGetLangSet() {
     NotImplemented_nid_no_patch(__func__);
 }
 

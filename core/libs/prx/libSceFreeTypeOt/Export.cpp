@@ -428,6 +428,37 @@ std::uint32_t APS5_VABI ft_highpow2_nid_postfix(std::uint32_t value) {
     return std::bit_floor(value);
 }
 
+void APS5_VABI ft_synthesize_vertical_metrics_nid_postfix(FreeType::GuestGlyphMetrics* metrics, std::int64_t advance) {
+    if (!metrics) {
+        return;
+    }
+    std::int64_t height = metrics->height;
+    if (metrics->horiBearingY < 0) {
+        if (height < metrics->horiBearingY) {
+            height = metrics->horiBearingY;
+        }
+    } else if (metrics->horiBearingY > 0) {
+        height -= metrics->horiBearingY;
+    }
+    if (!advance) {
+        advance = height * 12 / 10;
+    }
+    metrics->vertBearingX = metrics->horiBearingX - metrics->horiAdvance / 2;
+    metrics->vertBearingY = (advance - height) / 2;
+    metrics->vertAdvance = advance;
+}
+
+void* APS5_VABI ft_service_list_lookup_nid_postfix(const GuestServiceDesc* descriptors, const char* service_id) {
+    if (descriptors && service_id) {
+        for (; descriptors->serv_id; ++descriptors) {
+            if (std::strcmp(descriptors->serv_id, service_id) == 0) {
+                return descriptors->serv_data;
+            }
+        }
+    }
+    return nullptr;
+}
+
 int APS5_VABI sceFreeTypeOtUnknown_uSNqxrARpEQ_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

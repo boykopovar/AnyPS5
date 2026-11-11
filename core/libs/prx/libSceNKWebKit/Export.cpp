@@ -11451,19 +11451,11 @@ int APS5_VABI WKHTTPCookieStoreSetHTTPCookieAcceptPolicy() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKImageCreate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKImageCreateCairoSurface() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI WKImageCreateFromCairoSurface() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKImageGetSize() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -16041,10 +16033,6 @@ int APS5_VABI _ZN3WTF25activateSignalHandlersForENS_6SignalE() {
 }
 
 int APS5_VABI _ZN3WTF26getAndResetAccumulatedLogsEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -21652,10 +21640,6 @@ int APS5_VABI _ZN7WebCore18isEditablePositionERKNS_8PositionENS_12EditableTypeE(
 }
 
 int APS5_VABI _ZN7WebCore18isStartOfParagraphERKNS_15VisiblePositionENS_27EditingBoundaryCrossingRuleE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore18isValidContentTypeERKN3WTF6StringENS_4ModeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -29579,10 +29563,6 @@ int APS5_VABI _ZNK3WTF3URL4dumpERNS_11PrintStreamE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-int APS5_VABI _ZNK3WTF6String18simplifyWhiteSpaceEPFbDsE() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZNK3WTF6String28convertToLowercaseWithLocaleERKNS_10AtomStringE() {
     NotImplemented_nid_no_patch(__func__);

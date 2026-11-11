@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include <cerrno>
 #include "prx/libSceNpTrophy/include/InventoryExports.hpp"
 #include <stdexcept>
 #include "prx/libSceNpTrophy/include/Api.hpp"
@@ -270,9 +271,16 @@ int APS5_VABI sceNpTrophyGetTrophyUnlockState(int contextId, int handle, TrophyF
     Context* context = nullptr;
     if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
-    std::memset(flags, 0, sizeof(*flags));
-    for (const auto id : context->unlocked) flags->bits[id >> 5] |= 1u << (id & 31);
-    *count = static_cast<std::uint32_t>(context->trophies);
+    TrophyFlagArray localFlags{};
+    for (const auto id : context->unlocked) localFlags.bits[id >> 5] |= 1u << (id & 31);
+    const std::uint32_t localCount = static_cast<std::uint32_t>(context->trophies);
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(flags, &localFlags, sizeof(localFlags)) ||
+        !GuestCopyOut_nid_no_patch(count, &localCount, sizeof(localCount))) {
+        errno = savedErrno;
+        return NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    }
+    errno = savedErrno;
     return 0;
 }
 

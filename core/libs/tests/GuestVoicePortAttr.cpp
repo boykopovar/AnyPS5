@@ -52,6 +52,12 @@ int main() {
         if (type == 5) param.device.type = 2;
         std::uint32_t port = 0;
         Require(sceVoiceCreatePort(&port, &param) == 0);
+        if (type == 0 || type >= 3) {
+            std::array<unsigned char, 0x40> info;
+            info.fill(0xcc);
+            Require(sceVoiceGetPortInfo(port, reinterpret_cast<VoicePortInfo*>(info.data())) == static_cast<std::int32_t>(0x804e080au));
+            for (std::size_t i = 0; i < info.size(); ++i) Require(info[i] == (i < 0x20 ? 0 : 0xcc));
+        }
         for (const auto attr : {1000, 1001, 1002, 1003, 2000, 2001, 2002}) {
             const auto size = attr == 1003 ? 2 : attr == 1002 || attr == 2001 ? 4 : 1;
             Require(sceVoiceGetPortAttr(port, attr, buffer.data() + 1, size + 1) == invalidArgument);
