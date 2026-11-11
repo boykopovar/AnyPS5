@@ -14,6 +14,9 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
@@ -23,6 +26,42 @@ namespace {
 int CompareUnits(char16_t left, char16_t right) {
     return left < right ? -1 : 1;
 }
+
+#if defined(__SSE2__)
+size_t BlocksInPage(const char16_t* s) {
+    return (4096 - (reinterpret_cast<uintptr_t>(s) & 4095)) / 16;
+}
+
+template<bool StopAtZero>
+[[gnu::no_sanitize("address")]] unsigned MismatchedUnits(const char16_t* s1, const char16_t* s2) {
+    const __m128i left = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s1));
+    const __m128i right = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s2));
+    unsigned mask = ~static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(left, right))) & 0xffff;
+    if constexpr (StopAtZero) mask |= static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(left, _mm_setzero_si128())));
+    return mask;
+}
+
+template<bool StopAtZero>
+size_t EqualUnits(const char16_t* s1, const char16_t* s2, size_t n) {
+    size_t index = 0;
+    while (n - index >= 8) {
+        size_t blocks = (n - index) / 8;
+        if constexpr (StopAtZero) {
+            blocks = (std::min)({blocks, BlocksInPage(s1 + index), BlocksInPage(s2 + index)});
+            if (blocks == 0) {
+                if (s1[index] != s2[index] || s1[index] == 0) return index;
+                ++index;
+                continue;
+            }
+        }
+        for (; blocks != 0; --blocks, index += 8) {
+            const unsigned mask = MismatchedUnits<StopAtZero>(s1 + index, s2 + index);
+            if (mask != 0) return index + std::countr_zero(mask) / 2;
+        }
+    }
+    return index;
+}
+#endif
 
 int ByteDifference(const void* s1, const void* s2, size_t n, bool stopAtNul) {
     const auto* left = static_cast<const unsigned char*>(s1);
@@ -673,6 +712,7 @@ long long APS5_VABI atoll_nid_postfix(const char* str) {
 }
 
 std::div_t APS5_VABI div_nid_postfix(int numerator, int denominator) {
+    if (denominator == -1) return {static_cast<int>(0u - static_cast<unsigned int>(numerator)), 0};
     return std::div(numerator, denominator);
 }
 
@@ -684,6 +724,12 @@ const char16_t* APS5_VABI wmemchr_nid_postfix(const char16_t* s, char16_t c, siz
 }
 
 int APS5_VABI wmemcmp_nid_postfix(const char16_t* s1, const char16_t* s2, size_t n) {
+#if defined(__SSE2__)
+    const size_t equal = EqualUnits<false>(s1, s2, n);
+    s1 += equal;
+    s2 += equal;
+    n -= equal;
+#endif
     for (; n != 0; ++s1, ++s2, --n) {
         if (*s1 != *s2) return CompareUnits(*s1, *s2);
     }
@@ -706,6 +752,10 @@ extern "C" {
 
 int APS5_VABI strcasecmp_nid_postfix(const char* s1, const char* s2) {
     for (;; ++s1, ++s2) {
+        if (*s1 == *s2) {
+            if (*s1 == 0) return 0;
+            continue;
+        }
         const int a = tolower_nid_postfix(static_cast<unsigned char>(*s1));
         const int b = tolower_nid_postfix(static_cast<unsigned char>(*s2));
         if (a != b || *s1 == 0) return (a > b) - (a < b);
@@ -714,6 +764,10 @@ int APS5_VABI strcasecmp_nid_postfix(const char* s1, const char* s2) {
 
 int APS5_VABI strncasecmp_nid_postfix(const char* s1, const char* s2, size_t n) {
     for (; n != 0; ++s1, ++s2, --n) {
+        if (*s1 == *s2) {
+            if (*s1 == 0) break;
+            continue;
+        }
         const int a = tolower_nid_postfix(static_cast<unsigned char>(*s1));
         const int b = tolower_nid_postfix(static_cast<unsigned char>(*s2));
         if (a != b) return a < b ? -1 : 1;
@@ -816,6 +870,11 @@ size_t APS5_VABI wcsnlen_s_nid_postfix(const char16_t* s, size_t maxlen) {
 }
 
 int APS5_VABI wcscmp_nid_postfix(const char16_t* s1, const char16_t* s2) {
+#if defined(__SSE2__)
+    const size_t equal = EqualUnits<true>(s1, s2, SIZE_MAX);
+    s1 += equal;
+    s2 += equal;
+#endif
     for (; *s1 == *s2; ++s1, ++s2) {
         if (*s1 == 0) return 0;
     }
@@ -823,6 +882,12 @@ int APS5_VABI wcscmp_nid_postfix(const char16_t* s1, const char16_t* s2) {
 }
 
 int APS5_VABI wcsncmp_nid_postfix(const char16_t* s1, const char16_t* s2, size_t n) {
+#if defined(__SSE2__)
+    const size_t equal = EqualUnits<true>(s1, s2, n);
+    s1 += equal;
+    s2 += equal;
+    n -= equal;
+#endif
     for (; n != 0; ++s1, ++s2, --n) {
         if (*s1 != *s2) return CompareUnits(*s1, *s2);
         if (*s1 == 0) return 0;

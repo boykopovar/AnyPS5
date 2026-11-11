@@ -207,7 +207,9 @@ export class Archive {
     }
     if (executables.length !== 1) {
       if (selfContainers.length > 0) throw new Error(`${selfContainers.join(", ")} is a SELF container, not an ELF: unwrap the app before converting it`);
-      throw new Error(`Expected exactly one executable ELF in the app root; found ${executables.length}`);
+      if (executables.length === 0 && !this.files.some(item => item.name.startsWith("sce_sys/"))) throw new Error("This doesn't look like a PS5 app. Choose the dumped game folder (the one containing sce_sys and sce_module), or a ZIP of it.");
+      if (executables.length === 0) throw new Error("No game executable (eboot.bin) was found next to sce_sys. Make sure the dump is complete and decrypted.");
+      throw new Error(`Found ${executables.length} executables next to sce_sys (${executables.map(item => item.name).join(", ")}). The app folder should contain exactly one, usually eboot.bin.`);
     }
     this.executable = executables[0];
     if (this.executable.name.includes("/")) throw new Error("Place the executable next to sce_sys and sce_module, not inside another folder");

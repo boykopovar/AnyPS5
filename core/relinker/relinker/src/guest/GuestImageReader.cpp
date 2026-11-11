@@ -15,7 +15,7 @@
 
 namespace Relinker {
 
-GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector<std::uint8_t> bytes, const bool windows) const try {
+GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector<std::uint8_t> bytes, const bool windows, const bool functionSymbolRoots) const try {
     const auto fail = [&](const std::string& message) { throw Domain::RelinkerException(Io::Utf8Path(path) + ": " + message); };
     const auto range = [&](std::uint64_t offset, std::uint64_t size) {
         if (offset > bytes.size() || size > bytes.size() - offset) {
@@ -32,6 +32,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     range(Io::ReadU64(bytes, 32), static_cast<std::uint64_t>(Io::ReadU16(bytes, 56)) * 56);
     GuestImage image;
     image.SourcePath = path;
+    image.FunctionSymbolRoots = functionSymbolRoots;
     image.OutputName = path.filename().string() + GuestModuleSuffix;
     image.Headers = ElfReader(bytes).ReadProgramHeaders();
     const Domain::ProgramHeader* dynamic = nullptr;
@@ -220,7 +221,11 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         }
         if (section >= 0xff00 && (section != AbsoluteSection || (info & 15) == 6)) fail("Unsupported special symbol section: " + name);
         if ((info & 15) == 6 && section != 0 && (tls == nullptr || value > tls->MemorySize || size > tls->MemorySize - value)) fail("TLS symbol exceeds TLS segment: " + name);
-        if (section != 0 && section != AbsoluteSection && (info & 15) != 6) mapped(value, std::max<std::uint64_t>(size, 1), (info & 15) == 2 ? 1 : 0);
+        if (section != 0 && section != AbsoluteSection && (info & 15) != 6) {
+            const bool functionRoot = functionSymbolRoots && (info & 15) == 2;
+            mapped(value, functionRoot ? 1 : std::max<std::uint64_t>(size, 1), (info & 15) == 2 ? 1 : 0);
+            if (functionRoot) translate(value, 1);
+        }
         if (image.Dynamic.DynStrData.size() > std::numeric_limits<std::uint32_t>::max()) fail("String table too large");
         Io::WriteU32(image.Dynamic.DynSymData, offset, static_cast<std::uint32_t>(image.Dynamic.DynStrData.size()));
         Io::AppendString(image.Dynamic.DynStrData, name);

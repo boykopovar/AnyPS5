@@ -42,6 +42,7 @@ LINE_ADDRESS = re.compile(r"^\s*([0-9a-f]+):")
 STUB = re.compile(r"^\s*([0-9a-f]+):\s+(?:\w+\s+)*jmpq?\s+\*(?:-?0x[0-9a-f]+)?\(%(?:rip|eip)\)\s+# 0x([0-9a-f]+)")
 BRANCH = re.compile(r"\b(?:call|jmp)q?\s+0x([0-9a-f]+)")
 REFERENCE = re.compile(r"# 0x([0-9a-f]+)")
+LEA = re.compile(r"^\s*[0-9a-f]+:\s+(?:\w+\s+)*lea[wlq]?\s")
 
 
 class ModuleError(Exception):
@@ -142,6 +143,8 @@ class Module:
 
     def count_gnu_symbols(self, table):
         buckets, symoffset, bloom_size, _ = self.unpack("<IIII", self.address(table, 16))
+        if bloom_size == 0 or (bloom_size & (bloom_size - 1)) != 0:
+            raise ModuleError("GNU hash Bloom filter count %d is not a power of two" % bloom_size)
         buckets_at = table + 16 + bloom_size * 8
         chains_at = buckets_at + buckets * 4
         self.address(table, chains_at - table)
@@ -262,7 +265,7 @@ def disassemble(code, vaddr):
 
 
 def referenced_address(line):
-    if "%fs:" in line or "%gs:" in line:
+    if ("%fs:" in line or "%gs:" in line) and not LEA.match(line):
         return None
     reference = REFERENCE.search(line)
     if reference is None:
