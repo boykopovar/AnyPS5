@@ -216,6 +216,13 @@ void testMalformedPlanHeader(const std::filesystem::path& root) {
     checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted an unsupported version");
 }
 
+
+void testUnknownPlanEntry(const std::filesystem::path& root) {
+    const auto path = root / "unknown-entry.plan";
+    { std::ofstream output(path); output << "aps5-frame-filter 1\nrange 1\n"; }
+    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted an unknown entry kind");
+}
+
 }
 
 int main() {
@@ -228,6 +235,7 @@ int main() {
     testSharedGroup(root);
     testAllGroupCallsRemoved(root);
     testMalformedHeader(root);
+    testUnknownEntry(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
