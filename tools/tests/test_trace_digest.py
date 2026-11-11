@@ -401,6 +401,42 @@ class TraceDigestTests(unittest.TestCase):
                         self.assertEqual(result.stdout, "")
                         self.assertEqual(path.read_bytes(), data)
 
+    def test_summary_jsonl_duplicate_fields_name_the_source_line(self):
+        path = Path(self.directory.name) / "duplicate-summary.jsonl"
+        records = {
+            "commit": '{"commit":"first","commit":"second"}',
+            "p99": '{"frame_ms":{"p99":1,"p99":2}}',
+            "setting": '{"extra":[{"setting":false,"setting":true}]}',
+        }
+        for field, record in records.items():
+            path.write_text("{}\n\n" + record + "\n", encoding="utf-8-sig")
+            for mode in ("capture", "intervals"):
+                with self.subTest(field=field, mode=mode):
+                    with self.assertRaises(ValueError) as raised:
+                        if mode == "capture":
+                            trace_digest.load_summary(path, self.trace)
+                        else:
+                            trace_digest.load_intervals(path)
+                    self.assertEqual(str(raised.exception), f"{path}:3: duplicate JSON field: {field!r}")
+
+    def test_cli_rejects_duplicate_fields_without_partial_output(self):
+        path = self.trace.with_name("aps5-summary.jsonl")
+        encoded = json.dumps(SUMMARY)
+        nested = encoded.replace('"p99": 20.0', '"p99": 1.0, "p99": 20.0')
+        cases = ((encoded[:-1] + ',"commit":"ambiguous"}', [str(self.trace), "--summary", str(path), "--json"]),
+                 (nested, [str(self.trace)]), (nested, [str(path), "--json"]))
+        for record, arguments in cases:
+            original = (record + "\n").encode("utf-8")
+            path.write_bytes(original)
+            with self.subTest(record=record, arguments=arguments):
+                result = subprocess.run([sys.executable, trace_digest.__file__, *arguments],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(f"{path}:1: duplicate JSON field:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(path.read_bytes(), original)
+
     def test_mixed_summary_jsonl_objects_preserve_selection_and_intervals(self):
         path = self.trace.with_name("aps5-summary.jsonl")
         expected = self.json_output(self.trace)
