@@ -140,17 +140,29 @@ static void CheckFlexibleMappingIgnoresFlag8000() {
     Require(static_cast<volatile unsigned char*>(again)[length - 1] == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(again), length) == 0);
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
-    bool rejected = false;
-    void* unknown = nullptr;
-    try { sceKernelMapFlexibleMemory(&unknown, length, 3, 0x20000); } catch (const std::exception&) { rejected = true; }
-    Require(rejected && unknown == nullptr);
-    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
     Require(sceKernelAvailableFlexibleMemorySize(nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelAvailableFlexibleMemorySize(reinterpret_cast<std::size_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     std::size_t configured = 0;
     Require(sceKernelConfiguredFlexibleMemorySize(&configured) == 0 && configured > 0);
     Require(sceKernelConfiguredFlexibleMemorySize(nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelConfiguredFlexibleMemorySize(reinterpret_cast<std::size_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+}
+
+static void CheckFlexibleMappingRefusesMeasuredFlags() {
+    constexpr std::size_t length = 0x10000;
+    std::size_t before = 0;
+    std::size_t available = 0;
+    Require(sceKernelAvailableFlexibleMemorySize(&before) == 0);
+    for (const int flag : {0x1, 0x2, 0x4, 0x8, 0x20, 0x40, 0x100, 0x200, 0x400, 0x800, 0x1000, 0x2000, 0x4000, 0x10000, 0x20000, 0x40000, 0x80000, 0x100000}) {
+        void* mapped = nullptr;
+        Require(sceKernelMapFlexibleMemory(&mapped, length, 3, flag) == SCE_KERNEL_ERROR_EINVAL && mapped == nullptr);
+        void* sentinel = reinterpret_cast<void*>(0x1000);
+        Require(sceKernelMapFlexibleMemory(&sentinel, length, 3, flag) == SCE_KERNEL_ERROR_EINVAL && sentinel == reinterpret_cast<void*>(0x1000));
+        Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
+    }
+    void* named = nullptr;
+    Require(sceKernelMapNamedFlexibleMemory(&named, length, 3, 0x8000, "flag 8000") == SCE_KERNEL_ERROR_EINVAL && named == nullptr);
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
 }
 
 static void CheckPageTableStats() {
@@ -4320,6 +4332,7 @@ int main(int argc, char** argv) {
     CheckMemoryPoolBlockStats();
     CheckReleaseFlexibleMemory();
     CheckFlexibleMappingIgnoresFlag8000();
+    CheckFlexibleMappingRefusesMeasuredFlags();
     CheckPrtApertures();
     CheckSceKernelMmap();
     CheckInternalMemoryAvailableSize();

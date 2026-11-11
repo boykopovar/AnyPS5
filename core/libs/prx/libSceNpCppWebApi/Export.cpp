@@ -6455,6 +6455,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matche
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE7reserveEi() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
