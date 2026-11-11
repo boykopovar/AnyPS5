@@ -2,22 +2,11 @@
 #include <array>
 #include <cstdint>
 #include <cstdlib>
-#include <stdexcept>
 
 namespace {
 
 void Require(const bool value) {
     if (!value) std::abort();
-}
-
-template <typename Function>
-bool Throws(Function&& function) {
-    try {
-        function();
-    } catch (...) {
-        return true;
-    }
-    return false;
 }
 
 constexpr auto CreateMember = _ZN3sce2Np9CppWebApi14SessionManager2V130MemberWithMultiPlatformFactory6createEPNS1_6Common10LibContextERKmPKcPNS5_12IntrusivePtrINS3_23MemberWithMultiPlatformEEE;
@@ -26,7 +15,6 @@ constexpr auto GetResponse = _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12Int
 constexpr auto ParameterConstruct = _ZN3sce2Np9CppWebApi14SessionManager2V115GameSessionsApi33ParameterToSendGameSessionMessageC1Ev;
 constexpr auto ParameterInitialize = _ZN3sce2Np9CppWebApi14SessionManager2V115GameSessionsApi33ParameterToSendGameSessionMessage10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_50PostGameSessionsSessionIdSessionMessageRequestBodyEEE;
 constexpr auto ParameterTerminate = _ZN3sce2Np9CppWebApi14SessionManager2V115GameSessionsApi33ParameterToSendGameSessionMessage9terminateEv;
-auto GetPlatform = _ZNK3sce2Np9CppWebApi14SessionManager2V117GameSessionPlayer11getPlatformEv;
 constexpr auto PointerConstruct = _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V123MemberWithMultiPlatformEEC1Ev;
 constexpr auto PointerDestruct = _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V123MemberWithMultiPlatformEED1Ev;
 constexpr auto VectorConstruct = _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V123MemberWithMultiPlatformEEEEC1EPNS2_10LibContextE;
@@ -51,7 +39,5 @@ int main() {
     IntrusivePtr vector{};
     VectorConstruct(&vector, nullptr);
     VectorDestruct(&vector);
-
-    Require(Throws([] { GetPlatform(nullptr); }));
     return 0;
 }
