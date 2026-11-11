@@ -246,5 +246,13 @@ if command == 'inspect':
     def test_python_filter_command_uses_current_interpreter(self):
         self.assertEqual(frame_capture_minimize.Minimizer.command(Path("filter.py")), [sys.executable, "filter.py"])
 
+    def test_nonexistent_temp_dir_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arguments, _, _, _ = self.empty_cli(root)
+            arguments.extend(["--temp-dir", str(root / "missing")])
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                frame_capture_minimize.parse_args(arguments)
+
 if __name__ == "__main__":
     unittest.main()
