@@ -144,6 +144,46 @@ void CheckManyCircles() {
     cairo_destroy(context);
 }
 
+void CheckDegenerateCurves() {
+    CairoContext* context = Create(1);
+    cairo_curve_to(context, 5, 5, 5, 5, 5, 5);
+    Expect(context, {"empty", "MC", {{5, 5}, {5, 5}, {5, 5}, {5, 5}}}, 0);
+    cairo_curve_to(context, 0, 0, 0, 0, 0, 0);
+    Expect(context, {"empty at the origin", "M", {{0, 0}}}, 0);
+    cairo_move_to(context, 5, 5);
+    cairo_line_to(context, 9, 9);
+    cairo_new_sub_path(context);
+    cairo_curve_to(context, 9, 9, 9, 9, 9, 9);
+    Expect(context, {"at the point before a new sub-path", "MLM", {{5, 5}, {9, 9}, {9, 9}}}, 0);
+    cairo_move_to(context, 5, 5);
+    cairo_line_to(context, 9, 9);
+    cairo_new_sub_path(context);
+    cairo_curve_to(context, 7, 7, 7, 7, 7, 7);
+    Expect(context, {"elsewhere after a new sub-path", "MLMC", {{5, 5}, {9, 9}, {7, 7}, {7, 7}, {7, 7}, {7, 7}}}, 0);
+    cairo_move_to(context, 5, 5);
+    cairo_curve_to(context, 5, 5, 5, 5, 5, 5);
+    Expect(context, {"at the current point", "ML", {{5, 5}, {5, 5}}}, 0);
+    cairo_move_to(context, 5, 5);
+    cairo_line_to(context, 9, 9);
+    cairo_curve_to(context, 9, 9, 9, 9, 9, 9);
+    Expect(context, {"after a line", "ML", {{5, 5}, {9, 9}}}, 0);
+    cairo_move_to(context, 5, 5);
+    cairo_line_to(context, 9, 9);
+    cairo_new_path(context);
+    cairo_curve_to(context, 9, 9, 9, 9, 9, 9);
+    Expect(context, {"at the point before a new path", "MC", {{9, 9}, {9, 9}, {9, 9}, {9, 9}}}, 0);
+    cairo_move_to(context, 5, 5);
+    cairo_line_to(context, 9, 9);
+    cairo_new_path(context);
+    cairo_curve_to(context, 0, 0, 0, 0, 0, 0);
+    cairo_line_to(context, 1, 1);
+    Expect(context, {"at the origin after a new path", "ML", {{0, 0}, {1, 1}}}, 0);
+    cairo_move_to(context, 3, 3);
+    cairo_curve_to(context, 3, 3, 4, 4, 3, 3);
+    Expect(context, {"loop", "MC", {{3, 3}, {3, 3}, {4, 4}, {3, 3}}}, 0);
+    cairo_destroy(context);
+}
+
 void CheckErrors() {
     CairoContext* context = Create(1);
     cairo_restore(context);
@@ -162,6 +202,7 @@ void CheckErrors() {
 int main() {
     CheckReferences();
     CheckManyCircles();
+    CheckDegenerateCurves();
     CheckErrors();
     std::puts("cairo arc tests passed");
     return 0;
