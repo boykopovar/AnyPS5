@@ -328,6 +328,12 @@ static void CheckPoolStats() {
     Require(sceNetGetMemoryPoolStats(pool, &stats) == 0);
     Require(stats.pool_size == 0x4000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0);
     Require(Failed(sceNetGetMemoryPoolStats(pool, nullptr), 22));
+    errno = 71;
+    Require(Failed(sceNetGetMemoryPoolStats(pool, reinterpret_cast<NetMemoryPoolStats*>(std::uintptr_t{0x10})), 14));
+    Require(errno == 14);
+    errno = 71;
+    Require(sceNetGetMemoryPoolStats(pool, &stats) == 0);
+    Require(errno == 71);
     Require(sceNetPoolDestroy(pool) == 0);
     Require(Failed(sceNetGetMemoryPoolStats(pool, &stats), 9));
 }
@@ -578,7 +584,12 @@ static void CheckInitParam() {
     Require(Failed(sceNetGetRandom(&randomOutput), 200));
     Require(Failed(sceNetInitParam(nullptr), 22));
     Require(Failed(sceNetGetRandom(&randomOutput), 200));
+    errno = 71;
+    Require(Failed(sceNetInitParam(reinterpret_cast<const NetInitializeParameter*>(std::uintptr_t{0x10})), 14));
+    Require(errno == 14);
+    errno = 71;
     Require(sceNetInitParam(initialize) == 0);
+    Require(errno == 71);
     Require(sceNetGetRandom(&randomOutput) == 0);
     Require(Failed(sceNetInitParam(initialize), 16));
     Require(Failed(sceNetInitParam(nullptr), 16));
@@ -2259,6 +2270,7 @@ static std::array<std::uint8_t, 0xa0> RequireSockInfo(int socket, int type, int 
     std::array<std::uint8_t, 0xa0> expected{};
     std::memcpy(expected.data() + 0x24, &socket, sizeof(socket));
     expected[0x28] = static_cast<std::uint8_t>(type);
+    expected[0x2a] = 0x10;
     std::memcpy(expected.data() + 0x34, local.data() + 4, 4);
     std::memcpy(expected.data() + 0x38, remote.data() + 4, 4);
     std::memcpy(expected.data() + 0x3c, local.data() + 2, 2);
@@ -2371,6 +2383,7 @@ static void CheckSockInfo() {
     std::array<std::uint8_t, 0xa0> kernelExpected{};
     std::memcpy(kernelExpected.data() + 0x24, &kernel, sizeof(kernel));
     kernelExpected[0x28] = 2;
+    kernelExpected[0x2a] = 0x10;
     std::memcpy(kernelExpected.data() + 0x34, kernelAddress.data() + 4, 4);
     std::memcpy(kernelExpected.data() + 0x3c, kernelAddress.data() + 2, 2);
     kernelExpected[0x48] = 1;
@@ -3154,6 +3167,23 @@ int main() {
             Require(dns == before);
         }
         Require(Failed(sceNetGetDnsInfo(nullptr, 0), 22));
+        Require(errno == 22);
+        errno = 71;
+        Require(Failed(sceNetGetDnsInfo(reinterpret_cast<NetDnsInfo*>(std::uintptr_t{0x10}), 0), 14));
+        Require(errno == 14);
+        NetDnsInfo validDns{};
+        errno = 71;
+        Require(sceNetGetDnsInfo(&validDns, 0) >= 0);
+        Require(errno == 71);
+        Require(Failed(sceNetGetDns6Info(nullptr, 0), 22));
+        Require(errno == 22);
+        errno = 71;
+        Require(Failed(sceNetGetDns6Info(reinterpret_cast<NetDns6Info*>(std::uintptr_t{0x10}), 0), 14));
+        Require(errno == 14);
+        NetDns6Info validDns6{};
+        errno = 71;
+        Require(sceNetGetDns6Info(&validDns6, 0) >= 0);
+        Require(errno == 71);
     }
     NetCtlIfStat first{};
     first.device = 7;

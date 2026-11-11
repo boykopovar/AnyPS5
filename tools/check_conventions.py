@@ -60,6 +60,13 @@ DEBT_LABEL_TRAILER = re.compile(r"\bLabels:[ \t]*([^\n]*?)\.?[ \t]*$", re.M)
 CONVENTIONAL = re.compile(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: \S")
 STRINGS = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
 ALLOWED_COMMENT = re.compile(r"^\s*(#\s*endif\b|}\s*;?\s*//\s*(end\s+)?namespace\b)")
+LICENSE_MARKER = re.compile(
+    r"SPDX-License-Identifier"
+    r"|Copyright\s*(?:\([cC]\)|©|\d{4})"
+    r"|Permission is hereby granted"
+    r"|Permission to use,? copy,? modify"
+    r"|Redistribution and use in source and binary forms",
+    re.I)
 CMAKE_TOKEN = re.compile(r'\[(=*)\[.*?\]\1\]|"(?:\\.|[^"\\])*"|(?P<comment>#\[(?P<level>=*)\[.*?\](?P=level)\]|#[^\n]*)|\\.', re.S)
 EXPORT = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\(")
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -192,7 +199,7 @@ class Check:
             constants, starts = None, None
             for number, text in lines:
                 bare = masked[number - 1]
-                if ("//" in bare or "/*" in bare) and not ALLOWED_COMMENT.match(bare):
+                if ("//" in bare or "/*" in bare) and not ALLOWED_COMMENT.match(bare) and not license_run(source, expanded, number - 1):
                     self.report("comment", path, number)
                 if EXTENSION.search(bare):
                     self.report("extension", path, number, EXTENSION.search(bare).group(0))
@@ -687,6 +694,17 @@ def cpp_mask(match, preserve_comments=False):
 
 def cpp_text(text, preserve_comments=False):
     return CPP_TOKEN.sub(lambda match: cpp_mask(match, preserve_comments), text)
+
+
+def license_run(source, expanded, index):
+    if expanded[index].strip():
+        return False
+    start = end = index
+    while start > 0 and not expanded[start - 1].strip() and source[start - 1].strip():
+        start -= 1
+    while end + 1 < len(expanded) and not expanded[end + 1].strip() and source[end + 1].strip():
+        end += 1
+    return bool(LICENSE_MARKER.search("\n".join(source[start:end + 1])))
 
 
 def cpp_pieces(text):
