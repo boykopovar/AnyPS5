@@ -1,7 +1,9 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include <cerrno>
 #include "prx/libSceNpTrophy/include/InventoryExports.hpp"
 #include <stdexcept>
 #include "prx/libSceNpTrophy/include/Api.hpp"
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -269,9 +271,16 @@ int APS5_VABI sceNpTrophyGetTrophyUnlockState(int contextId, int handle, TrophyF
     Context* context = nullptr;
     if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
-    std::memset(flags, 0, sizeof(*flags));
-    for (const auto id : context->unlocked) flags->bits[id >> 5] |= 1u << (id & 31);
-    *count = static_cast<std::uint32_t>(context->trophies);
+    TrophyFlagArray localFlags{};
+    for (const auto id : context->unlocked) localFlags.bits[id >> 5] |= 1u << (id & 31);
+    const std::uint32_t localCount = static_cast<std::uint32_t>(context->trophies);
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(flags, &localFlags, sizeof(localFlags)) ||
+        !GuestCopyOut_nid_no_patch(count, &localCount, sizeof(localCount))) {
+        errno = savedErrno;
+        return NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    }
+    errno = savedErrno;
     return 0;
 }
 
@@ -836,20 +845,38 @@ int APS5_VABI sceNpTrophySystemWrapGetTrophyDetails() {
 
 }
 
+namespace {
+
+constexpr std::array<std::uint32_t, 20> NpTrophySharedResultCodes = {
+    0x8002002du, 0x80020060u, 0x80551611u, 0x80551615u, 0x80551616u,
+    0x80551618u, 0x80551627u, 0x8055168cu, 0x805516a2u, 0x805516a3u,
+    0x805516a7u, 0x805516aeu, 0x805516b2u, 0x805516b7u, 0x805516b8u,
+    0x805516c4u, 0x805516ceu, 0x805516e9u, 0x805516f4u, 0x805516fbu
+};
+
+bool IsNpTrophySharedResultCode(std::uint32_t code) {
+    return std::find(NpTrophySharedResultCodes.begin(), NpTrophySharedResultCodes.end(), code) != NpTrophySharedResultCodes.end();
+}
+
+}
+
+
 extern "C" {
 
-int APS5_VABI libSceNpTrophyUnknown__plus_O9vU1CpGZA_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI libSceNpTrophyUnknown__plus_O9vU1CpGZA_nid_no_patch(int result) {
+    const auto code = static_cast<std::uint32_t>(result);
+    return code == 0x8055169bu || code == 0x805516d1u;
 }
 APS5_EXPORT("+O9vU1CpGZA", libSceNpTrophyUnknown__plus_O9vU1CpGZA_nid_no_patch);
 
-int APS5_VABI libSceNpTrophyUnknown__plus_not13BEdVI_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI libSceNpTrophyUnknown__plus_not13BEdVI_nid_no_patch(int result) {
+    const auto code = static_cast<std::uint32_t>(result);
+    return IsNpTrophySharedResultCode(code) || code == 0x805516b4u;
 }
 APS5_EXPORT("+not13BEdVI", libSceNpTrophyUnknown__plus_not13BEdVI_nid_no_patch);
 
-int APS5_VABI libSceNpTrophyUnknown_FJZW2oHUHFk_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI libSceNpTrophyUnknown_FJZW2oHUHFk_nid_no_patch(int result) {
+    return static_cast<std::uint32_t>(result) == 0x80551612u;
 }
 APS5_EXPORT("FJZW2oHUHFk", libSceNpTrophyUnknown_FJZW2oHUHFk_nid_no_patch);
 
@@ -863,8 +890,8 @@ int APS5_VABI libSceNpTrophyUnknown_lX611WLCvX0_nid_no_patch() {
 }
 APS5_EXPORT("lX611WLCvX0", libSceNpTrophyUnknown_lX611WLCvX0_nid_no_patch);
 
-int APS5_VABI libSceNpTrophyUnknown_n4AHGHb_minus_pfY_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI libSceNpTrophyUnknown_n4AHGHb_minus_pfY_nid_no_patch(int result) {
+    return IsNpTrophySharedResultCode(static_cast<std::uint32_t>(result));
 }
 APS5_EXPORT("n4AHGHb-pfY", libSceNpTrophyUnknown_n4AHGHb_minus_pfY_nid_no_patch);
 
