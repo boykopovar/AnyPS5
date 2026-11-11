@@ -1538,6 +1538,7 @@ std::uint32_t CommandState::DynamicSlots(std::span<const VkDynamicState> states)
         case VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK: slots |= Mask(CompareMaskFront) | Mask(CompareMaskBack); break;
         case VK_DYNAMIC_STATE_STENCIL_WRITE_MASK: slots |= Mask(WriteMaskFront) | Mask(WriteMaskBack); break;
         case VK_DYNAMIC_STATE_STENCIL_REFERENCE: slots |= Mask(ReferenceFront) | Mask(ReferenceBack); break;
+        case VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT: slots |= Mask(ColorWriteMask); break;
         default: throw std::runtime_error("AGC graphics: a pipeline declares a dynamic state the command tracker does not follow");
         }
     }
@@ -1653,6 +1654,15 @@ void CommandState::SetStencilWriteMask(const Context& context, VkStencilFaceFlag
 
 void CommandState::SetStencilReference(const Context& context, VkStencilFaceFlags faces, std::uint32_t reference) {
     applyFaces(ReferenceFront, faces, &CommandState::references, reference, [&](VkStencilFaceFlags needed) { context.tracked(&DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, needed, reference); });
+}
+
+void CommandState::SetColorWriteMasks(const Context& context, std::span<const VkColorComponentFlags> masks) {
+    ColorWriteMasks value{};
+    Require(!masks.empty() && masks.size() <= value.masks.size(), "color write masks exceed the color attachments");
+    value.count = static_cast<std::uint32_t>(masks.size());
+    std::ranges::copy(masks, value.masks.begin());
+    const auto covered = [](const ColorWriteMasks& known, const ColorWriteMasks& wanted) { return wanted.count <= known.count && std::equal(wanted.masks.begin(), wanted.masks.begin() + wanted.count, known.masks.begin()); };
+    apply(ColorWriteMask, &CommandState::colorWriteMasks, value, covered, [&] { context.tracked(&DeviceFunctions::cmdSetColorWriteMask, "vkCmdSetColorWriteMaskEXT")(commands, 0, value.count, masks.data()); });
 }
 
 CommandState& Recorder::GraphicsState() {

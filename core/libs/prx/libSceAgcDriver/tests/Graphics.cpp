@@ -13690,7 +13690,10 @@ void commandStateTests() {
     const auto library = CommandState::DynamicSlots(PipelineLibraryDynamicStates());
     const std::array<VkDynamicState, 2> viewportScissor{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     const auto fixed = CommandState::DynamicSlots(viewportScissor);
-    Require(library == (1u << CommandState::SlotCount) - 1u, "the pipeline library's dynamic states do not cover every tracked slot");
+    const std::array<VkDynamicState, 1> colorWriteMask{VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT};
+    const auto maskSlot = CommandState::DynamicSlots(colorWriteMask);
+    Require(maskSlot == CommandState::Mask(Slot::ColorWriteMask), "the color write mask dynamic state mapped to another slot");
+    Require((library | maskSlot) == (1u << CommandState::SlotCount) - 1u && (library & maskSlot) == 0, "the pipeline library's dynamic states and the color write mask do not cover every tracked slot");
     Require(fixed == (CommandState::Mask(Slot::Viewport) | CommandState::Mask(Slot::Scissor)), "the viewport and scissor dynamic states mapped to other slots");
     const std::array<VkDynamicState, 2> unmodelled{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_LINE_WIDTH};
     bool rejected = false;
@@ -13719,6 +13722,52 @@ void commandStateTests() {
         tracker.SetCullMode(context, 1u);
         expectStateLog({stateLine("cull", 1u)}, "a cull mode after invalidation");
     }
+
+    {
+        CommandState tracker;
+        tracker.Begin(commands);
+        const std::array<VkColorComponentFlags, 8> masks{0xfu, 0x5u, 0x0u, 0x8u, 0x1u, 0x2u, 0x4u, 0xfu};
+        auto changed = masks;
+        changed[7] = 0x3u;
+        const auto set = [&](const std::array<VkColorComponentFlags, 8>& values, std::size_t count) { tracker.SetColorWriteMasks(context, std::span(values).first(count)); };
+        tracker.BindPipeline(context, pipelineA, library | maskSlot);
+        set(masks, 1);
+        set(masks, 1);
+        set(masks, 2);
+        set(masks, 2);
+        set(masks, 1);
+        set(masks, 8);
+        set(masks, 8);
+        set(masks, 2);
+        set(changed, 8);
+        set(masks, 7);
+        set(changed, 8);
+        expectStateLog({stateLine("bind", 0u, pipelineA), stateLine("colormask", 0u, 1u, 0xfu), stateLine("colormask", 0u, 2u, 0xfu, 0x5u), stateLine("colormask", 0u, 8u, 0xfu, 0x5u, 0x0u, 0x8u, 0x1u, 0x2u, 0x4u, 0xfu), stateLine("colormask", 0u, 8u, 0xfu, 0x5u, 0x0u, 0x8u, 0x1u, 0x2u, 0x4u, 0x3u)}, "color write masks per attachment count");
+        tracker.BindPipeline(context, pipelineA, library | maskSlot);
+        set(changed, 8);
+        Require(tracker.Known(Slot::ColorWriteMask), "a repeated bind of a pipeline with dynamic color write masks forgot them");
+        tracker.BindPipeline(context, pipelineB, library);
+        Require(!tracker.Known(Slot::ColorWriteMask), "binding a pipeline with static color write masks kept them known");
+        tracker.BindPipeline(context, pipelineA, library | maskSlot);
+        set(changed, 1);
+        set(changed, 1);
+        tracker.Invalidate();
+        set(changed, 1);
+        CommandState unsuppressed;
+        unsuppressed.Begin(commands, false);
+        unsuppressed.SetColorWriteMasks(context, std::span(changed).first(1));
+        unsuppressed.SetColorWriteMasks(context, std::span(changed).first(1));
+        expectStateLog({stateLine("bind", 0u, pipelineB), stateLine("bind", 0u, pipelineA), stateLine("colormask", 0u, 1u, 0xfu), stateLine("colormask", 0u, 1u, 0xfu), stateLine("colormask", 0u, 1u, 0xfu), stateLine("colormask", 0u, 1u, 0xfu)}, "color write masks after binds, invalidation and in a tracker that does not suppress");
+        bool rejected = false;
+        try {
+            set(masks, 0);
+        } catch (const std::exception&) {
+            rejected = true;
+        }
+        Require(rejected, "an empty color write mask set was accepted");
+        stateLog.clear();
+    }
+
 
     {
         CommandState tracker;

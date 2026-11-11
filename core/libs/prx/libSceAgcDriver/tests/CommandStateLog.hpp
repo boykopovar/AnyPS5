@@ -60,6 +60,12 @@ inline VKAPI_ATTR void VKAPI_CALL stateCompareMask(VkCommandBuffer, VkStencilFac
 inline VKAPI_ATTR void VKAPI_CALL stateWriteMask(VkCommandBuffer, VkStencilFaceFlags faces, std::uint32_t mask) { stateNote("writemask", static_cast<std::uint32_t>(faces), mask); }
 inline VKAPI_ATTR void VKAPI_CALL stateReference(VkCommandBuffer, VkStencilFaceFlags faces, std::uint32_t reference) { stateNote("reference", static_cast<std::uint32_t>(faces), reference); }
 
+inline VKAPI_ATTR void VKAPI_CALL stateColorWriteMask(VkCommandBuffer, std::uint32_t first, std::uint32_t count, const VkColorComponentFlags* masks) {
+    auto line = stateLine("colormask", first, count);
+    for (std::uint32_t index = 0; index < count; ++index) line += ' ' + std::to_string(masks[index]);
+    stateLog.push_back(line);
+}
+
 inline void expectStateLog(const std::vector<std::string>& expected, const std::string& what) {
     if (stateLog != expected) {
         std::string actual;
@@ -95,6 +101,7 @@ inline DeviceFunctions stateFunctions() {
     functions.cmdSetStencilCompareMask = stateCompareMask;
     functions.cmdSetStencilWriteMask = stateWriteMask;
     functions.cmdSetStencilReference = stateReference;
+    functions.cmdSetColorWriteMask = stateColorWriteMask;
     return functions;
 }
 

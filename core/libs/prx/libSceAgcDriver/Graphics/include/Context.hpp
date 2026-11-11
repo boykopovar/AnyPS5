@@ -106,9 +106,9 @@ void TrackedCommandOutsideCommandState();
 class FunctionName {
 public:
     consteval FunctionName(const char* name) : value(name) {
-        constexpr std::array<std::string_view, 31> tracked{
+        constexpr std::array<std::string_view, 32> tracked{
             "vkCmdBindPipeline", "vkCmdSetViewport", "vkCmdSetViewportWithCount", "vkCmdSetViewportWithCountEXT",
-            "vkCmdSetScissor", "vkCmdSetScissorWithCount", "vkCmdSetScissorWithCountEXT", "vkCmdSetDepthBias",
+            "vkCmdSetScissor", "vkCmdSetScissorWithCount", "vkCmdSetScissorWithCountEXT", "vkCmdSetColorWriteMaskEXT", "vkCmdSetDepthBias",
             "vkCmdSetDepthBias2EXT", "vkCmdSetDepthBounds", "vkCmdSetCullMode", "vkCmdSetCullModeEXT",
             "vkCmdSetFrontFace", "vkCmdSetFrontFaceEXT", "vkCmdSetDepthTestEnable", "vkCmdSetDepthTestEnableEXT",
             "vkCmdSetDepthWriteEnable", "vkCmdSetDepthWriteEnableEXT", "vkCmdSetDepthCompareOp", "vkCmdSetDepthCompareOpEXT",
@@ -157,7 +157,7 @@ struct DeviceFunctions {
     PFN_vkCmdEndRenderingKHR cmdEndRendering = nullptr;
     TrackedFunction<PFN_vkCmdSetViewport> cmdSetViewport;
     TrackedFunction<PFN_vkCmdSetScissor> cmdSetScissor;
-    PFN_vkCmdSetColorWriteMaskEXT cmdSetColorWriteMask = nullptr;
+    TrackedFunction<PFN_vkCmdSetColorWriteMaskEXT> cmdSetColorWriteMask;
     TrackedFunction<PFN_vkCmdSetDepthBounds> cmdSetDepthBounds;
     TrackedFunction<PFN_vkCmdSetDepthBias> cmdSetDepthBias;
     TrackedFunction<PFN_vkCmdSetCullModeEXT> cmdSetCullMode;

@@ -677,8 +677,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         if (depthBounds) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BOUNDS);
         if (depthBias) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BIAS);
         if (libraries) dynamicStates.assign(PipelineLibraryDynamicStates().begin(), PipelineLibraryDynamicStates().end());
-        dynamicSlots = CommandState::DynamicSlots(dynamicStates);
         if (context.dynamicColorWriteMask) dynamicStates.push_back(VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT);
+        dynamicSlots = CommandState::DynamicSlots(dynamicStates);
         VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
         dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size());
         dynamic.pDynamicStates = dynamicStates.data();
@@ -986,7 +986,7 @@ void Pipeline::Continue(CommandState& recording, const State& state, const State
     recording.BindPipeline(context, best != VK_NULL_HANDLE ? best : pipeline, dynamicSlots);
     recording.SetViewport(context, state.viewport);
     recording.SetScissor(context, state.scissor);
-    setColorWriteMasks(recording.Commands(), state, masked, false);
+    setColorWriteMasks(recording, state, masked, false);
     if (state.stencilReplayReference) recording.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, *state.stencilReplayReference);
     if (libraries) {
         setLibraryState(recording, state);
@@ -1027,19 +1027,19 @@ void Pipeline::setLibraryState(CommandState& recording, const State& state) cons
 void Pipeline::ContinueSecondChannel(CommandState& recording, const State& state, const State* masked) const {
     Require(secondChannel != VK_NULL_HANDLE, "the pipeline blends every channel in one pass");
     recording.BindPipeline(context, secondChannel, dynamicSlots);
-    setColorWriteMasks(recording.Commands(), state, masked, true);
+    setColorWriteMasks(recording, state, masked, true);
 }
 
-void Pipeline::setColorWriteMasks(VkCommandBuffer commands, const State& state, const State* masked, bool secondChannel) const {
+void Pipeline::setColorWriteMasks(CommandState& recording, const State& state, const State* masked, bool secondChannel) const {
     if (!context.dynamicColorWriteMask || state.blends.empty()) return;
     const auto masks = channelWriteMasks(state, masked != nullptr ? std::span(masked->blends) : std::span(state.blends), secondChannel);
-    context.Resolved(&DeviceFunctions::cmdSetColorWriteMask, "vkCmdSetColorWriteMaskEXT")(commands, 0, static_cast<std::uint32_t>(state.blends.size()), masks.data());
+    recording.SetColorWriteMasks(context, std::span(masks).first(state.blends.size()));
 }
 
 void Pipeline::ContinueBackFaces(CommandState& recording, const State& state, const State* masked) const {
     Require(backFaces != VK_NULL_HANDLE, "the pipeline draws both faces in one pass");
     recording.BindPipeline(context, backFaces, dynamicSlots);
-    setColorWriteMasks(recording.Commands(), state, masked, false);
+    setColorWriteMasks(recording, state, masked, false);
     recording.SetViewport(context, state.viewport);
     recording.SetScissor(context, state.scissor);
     recording.SetDepthBias(context, HostDepthBiasConstant(context, state.depth->format, state.backDepthBiasConstant), state.depthBiasClamp, state.backDepthBiasSlope);
