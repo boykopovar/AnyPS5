@@ -338,7 +338,6 @@ class Check:
                 files[path] = list(enumerate(self.show(path).split("\n"), 1))
         for path, lines in files.items():
             source = self.show(path)
-            fenced = fenced_lines(source)
             entries = debt_entries(source) if is_debt(path) else {}
             for number, text in lines:
                 if is_debt(path) and text.startswith("- "):
@@ -346,11 +345,10 @@ class Check:
                     expected = f"{DEBT_DIR}{name}.md" if name else DEBT
                     if path != expected:
                         self.report("debt-file", path, number, expected)
-                if number in fenced:
-                    continue
-                for target, resolved in links(path, text):
-                    if resolved not in self.tree and resolved not in self.dirs:
-                        self.report("doc-link", path, number, target)
+            changed = {number for number, _ in lines}
+            for target, resolved, first, last in link_references(path, source):
+                if any(number in changed for number in range(first, last + 1)) and resolved not in self.tree and resolved not in self.dirs:
+                    self.report("doc-link", path, first, target)
         deleted = {path for path, status in self.status.items() if status == "D"} | self.renamed_from
         deleted |= {str(parent) for path in deleted for parent in PurePosixPath(path).parents}
         if deleted:
@@ -359,13 +357,11 @@ class Check:
                     continue
                 checked = {number for number, _ in files.get(path, [])}
                 source = self.show(path)
-                fenced = fenced_lines(source)
-                for number, text in enumerate(source.split("\n"), 1):
-                    if number in checked or number in fenced:
+                for target, resolved, first, last in link_references(path, source):
+                    if any(number in checked for number in range(first, last + 1)):
                         continue
-                    for target, resolved in links(path, text):
-                        if resolved in deleted and resolved not in self.tree and resolved not in self.dirs:
-                            self.report("doc-link", path, number, target)
+                    if resolved in deleted and resolved not in self.tree and resolved not in self.dirs:
+                        self.report("doc-link", path, first, target)
 
     def debt_entries(self):
         known = {label for labels in DEBT_LABELS.values() for label in labels}
@@ -539,15 +535,20 @@ def link_span(text, start):
     close = text.find(delimiter, title)
     if close < 0 or (delimiter == ")" and "(" in text[title:close]):
         return None
+    if re.search(r"(?:\r\n|\r|\n)[ \t]*(?:\r\n|\r|\n)", text[title:close]):
+        return None
     close = space_end(close + 1)
     return (end, close + 1) if close is not None and close < len(text) and text[close] == ")" else None
 
 
-def links(path, text):
+def link_references(path, text):
     result = []
     escaped = BACKSLASH_ESCAPE.sub(lambda match: "\0" * len(match[0]), text)
+    fenced = fenced_lines(text)
+    syntax = "\n".join(" " * len(line) if number in fenced else link_syntax(line)
+                       for number, line in enumerate(text.split("\n"), 1))
     cursor = 0
-    for match in LINK.finditer(link_syntax(text)):
+    for match in LINK.finditer(syntax):
         if match.start() < cursor:
             continue
         span = link_span(escaped, match.start(1))
@@ -562,8 +563,13 @@ def links(path, text):
             continue
         target = target.split("#", 1)[0].split("?", 1)[0]
         decoded = unquote(target)
-        result.append((target, posixpath.normpath(decoded.lstrip("/") if decoded.startswith("/") else str(PurePosixPath(path).parent / decoded))))
+        resolved = posixpath.normpath(decoded.lstrip("/") if decoded.startswith("/") else str(PurePosixPath(path).parent / decoded))
+        result.append((target, resolved, text.count("\n", 0, match.start()) + 1, text.count("\n", 0, cursor) + 1))
     return result
+
+
+def links(path, text):
+    return [(target, resolved) for target, resolved, _, _ in link_references(path, text)]
 
 
 def is_debt(path):

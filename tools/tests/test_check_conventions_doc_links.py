@@ -151,6 +151,33 @@ class DocLinkTests(unittest.TestCase):
                     self.assertEqual(result.stdout.count("[doc-link]"), 1, result.stdout)
                     self.assertIn("docs/user/missing(draft).md", result.stdout)
 
+    def test_cli_checks_multiline_destinations_when_continuation_or_target_changes(self):
+        cases = (
+            ({"README.md": "Guide\n", "docs/user/guide(draft).md": "Draft\n"},
+             {"README.md": '[guide](docs/user/missing(draft).md\n "Title")\n'}),
+            ({"README.md": '[guide](docs/user/missing(draft).md\n "Old title")\n'},
+             {"README.md": '[guide](docs/user/missing(draft).md\n "New title")\n'}),
+            ({"README.md": '[guide](docs/user/guide(draft).md\n "Title")\n', "docs/user/guide(draft).md": "Draft\n"},
+             {"docs/user/guide(draft).md": None}),
+        )
+        for base, head in cases:
+            with self.subTest(head=head), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                repository(root, base, head)
+                result = subprocess.run([sys.executable, str(Path(check_conventions.__file__)),
+                                         "--base", "base", "--head", "HEAD"],
+                                        cwd=root, capture_output=True, encoding="utf-8", errors="strict",
+                                        env={key: value for key, value in os.environ.items()
+                                             if key not in ("GITHUB_ACTIONS", "GITHUB_EVENT_PATH", "GITHUB_STEP_SUMMARY")})
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(result.stdout.count("[doc-link]"), 1, result.stdout)
+                self.assertIn("README.md:1:", result.stdout)
+
+    def test_unmatched_code_delimiters_do_not_hide_links_in_later_blocks(self):
+        tick = chr(96)
+        text = f"{tick}literal\n# [guide](missing(a).md)\nend{tick}\n"
+        self.assertEqual(check_conventions.links("docs/x.md", text), [("missing(a).md", "docs/missing(a).md")])
+
     def test_angle_absolute_urls_fragments_and_empty_destinations_are_ignored(self):
         for target in ("https://example.test/guide", "HTTPS://example.test/a b)", "mailto:person@example.test",
                        "//example.test/guide", "#details", ""):
