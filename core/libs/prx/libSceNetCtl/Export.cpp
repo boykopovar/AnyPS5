@@ -1329,7 +1329,11 @@ int APS5_VABI sceNetCtlGetResultV6(int event_type, int* error_code) {
     if (event_type < NET_CTL_EVENT_DISCONNECTED || event_type > NET_CTL_EVENT_IPOBTAINED) {
         throw std::runtime_error("sceNetCtlGetResultV6: event type " + std::to_string(event_type) + " is not implemented");
     }
-    *error_code = 0;
+    const int val = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(error_code, &val, sizeof(val));
+    errno = savedErrno;
+    if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 

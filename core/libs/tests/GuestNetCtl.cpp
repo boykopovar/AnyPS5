@@ -1,4 +1,5 @@
 #include "prx/libSceNetCtl/include/NetCtl.hpp"
+#include <cerrno>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -731,6 +732,9 @@ int main() {
         Require(sceNetCtlGetResult(eventType, &errorCode) == 0 && errorCode == 0);
     }
     Require(sceNetCtlGetResultV6(kEventIpObtained, nullptr) == kErrInvalidAddr);
+    errno = 71;
+    Require(sceNetCtlGetResultV6(kEventIpObtained, reinterpret_cast<int*>(0x10)) == kErrInvalidAddr);
+    Require(errno == 71);
     for (const int eventType : {kEventDisconnected, 2, kEventIpObtained}) {
         int errorCodeV6 = -1;
         Require(sceNetCtlGetResultV6(eventType, &errorCodeV6) == 0 && errorCodeV6 == 0);
