@@ -65,3 +65,28 @@ def load_recipe(path):
                   regression_pct=float(regression_pct), max_spread_pct=float(max_spread_pct),
                   titles=str(Path(titles).resolve()), content=str(Path(content).resolve()) if content is not None else None)
     return recipe
+
+
+def sample_summary(path, title_id, commit):
+    summary = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(summary, dict) or not isinstance(summary.get("build"), dict):
+        raise ValueError(f"{path}: title runner summary has no build identity")
+    build = summary["build"]
+    if build.get("commit") != commit[:7] or build.get("dirty") is not False:
+        raise ValueError(f"{path}: measured build is not the requested clean commit {commit}")
+    machine = summary.get("machine")
+    title = summary.get("titles", {}).get(title_id)
+    if not isinstance(machine, dict) or not isinstance(title, dict):
+        raise ValueError(f"{path}: title runner summary is missing machine or title data")
+    run_list = title.get("runs")
+    if not isinstance(run_list, list) or len(run_list) != 1 or not isinstance(run_list[0], dict):
+        raise ValueError(f"{path}: expected exactly one measured title run")
+    run = run_list[0]
+    fps = run.get("fps")
+    if run.get("outcome") != "rendering" or type(fps) not in (int, float) or not math.isfinite(fps) or fps <= 0:
+        raise ValueError(f"{path}: title did not render with a finite positive FPS measurement")
+    identity = {key: machine.get(key, "") for key in ("os", "gpu", "driver", "cpu")}
+    identity.update(title_id=title_id, title=title.get("name", ""), content_version=title.get("version", ""))
+    if any(not identity[key] for key in ("os", "gpu", "driver", "title")):
+        raise ValueError(f"{path}: measurement is missing machine, title, or content identity")
+    return {"commit": commit, "fps": float(fps), "identity": identity, "outcome": run["outcome"]}
