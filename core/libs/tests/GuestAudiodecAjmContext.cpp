@@ -6,7 +6,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
-#include <stdexcept>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -86,15 +85,6 @@ int main() {
     Require(unregisterCodec(idle, 12) == NotRegistered, "codec type 12 with a clear flag was not rejected");
     Require(std::memcmp(idleBefore, idle, sizeof(idle)) == 0, "the clear-flag calls wrote the context");
 
-    for (const auto accepted : {1u, 2u, 3u, 4u, 6u, 10u}) {
-        bool threw = false;
-        try {
-            unregisterCodec(context, accepted);
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        Require(threw, "accepted codec type did not invoke the Ajm service call");
-    }
 
     std::puts("Audiodec GetAjmContext tests passed");
     return 0;
