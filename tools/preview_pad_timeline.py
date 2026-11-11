@@ -10,8 +10,11 @@ def preview(document, repeat=1, gap_ms=200):
     compiled = compile_timeline(document, 1, repeat, gap_ms)
     events = []
     for line in compiled.splitlines()[1:]:
-        at_ms, hold_ms, buttons = map(int, line.split())
-        events.append({"at_ms": at_ms, "hold_ms": hold_ms, "buttons": buttons})
+        at_ms, hold_ms, buttons, *axes = map(int, line.split())
+        event = {"at_ms": at_ms, "hold_ms": hold_ms, "buttons": buttons}
+        if axes:
+            event["left_stick"], event["right_stick"] = axes[:2], axes[2:]
+        events.append(event)
     return {"preview": True, "event_count": len(events), "duration_ms": events[-1]["at_ms"] + events[-1]["hold_ms"],
             "events": events}
 
@@ -37,7 +40,8 @@ def main(argv=None):
         print(f"Preview only: {result['event_count']} events, ending at {result['duration_ms']} ms. No controller command file was written.")
         print("at_ms hold_ms button_mask")
         for event in result["events"]:
-            print(f"{event['at_ms']} {event['hold_ms']} 0x{event['buttons']:x}")
+            sticks = f" left {event['left_stick']} right {event['right_stick']}" if "left_stick" in event else ""
+            print(f"{event['at_ms']} {event['hold_ms']} 0x{event['buttons']:x}{sticks}")
     return 0
 
 

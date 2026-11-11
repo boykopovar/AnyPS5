@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <condition_variable>
 #include <cstring>
+#include <cerrno>
 #include <mutex>
 #include <memory>
 #include <stdexcept>
@@ -180,38 +181,63 @@ void requireNoPropagation(bool none, const char* function) {
     if (!none) throw std::runtime_error(std::string(function) + ": rays or audio paths are outside the no-propagation model");
 }
 
+template <typename T>
+bool copyGuestIn(T& dst, const T* src) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&dst, src, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
+
+template <typename T>
+bool copyGuestOut(T* dst, const T& src) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dst, &src, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
+
 }
 
 extern "C" {
 
 std::int32_t APS5_VABI sceAudioPropagationSystemQueryMemory(const SystemOptions* options, AudioPropagationSystemMemory* outMemory) {
     if (!options || !outMemory) return ErrorNullPointer;
-    if (outMemory->desc.id != SystemMemoryId || outMemory->desc.size != SystemMemorySize) return static_cast<std::int32_t>(0x8A700007);
-    outMemory->p_cpu_mem = nullptr;
-    outMemory->size_cpu_mem = 0;
-    outMemory->p_gpu_mem = nullptr;
-    outMemory->size_gpu_mem = 0;
-    if (options->desc.id != SystemOptionsId || options->desc.size != SystemOptionsSize) return static_cast<std::int32_t>(0x8A700007);
-    if (options->maxSources == 0 || options->maxSources > 64 || options->maxMaterials == 0 || options->maxMaterials > 64 || options->parameter24 != 6 || options->reflectionOrder == 0 || options->reflectionOrder > 2) return ErrorInvalidArgument;
-    const auto frameSamples = options->frameSamples;
+    AudioPropagationSystemMemory localMemory{};
+    if (!copyGuestIn(localMemory, outMemory)) return ErrorNullPointer;
+    if (localMemory.desc.id != SystemMemoryId || localMemory.desc.size != SystemMemorySize) return static_cast<std::int32_t>(0x8A700007);
+    SystemOptions localOptions{};
+    if (!copyGuestIn(localOptions, options)) return ErrorNullPointer;
+    localMemory.p_cpu_mem = nullptr;
+    localMemory.size_cpu_mem = 0;
+    localMemory.p_gpu_mem = nullptr;
+    localMemory.size_gpu_mem = 0;
+    if (!copyGuestOut(outMemory, localMemory)) return ErrorNullPointer;
+    if (localOptions.desc.id != SystemOptionsId || localOptions.desc.size != SystemOptionsSize) return static_cast<std::int32_t>(0x8A700007);
+    if (localOptions.maxSources == 0 || localOptions.maxSources > 64 || localOptions.maxMaterials == 0 || localOptions.maxMaterials > 64 || localOptions.parameter24 != 6 || localOptions.reflectionOrder == 0 || localOptions.reflectionOrder > 2) return ErrorInvalidArgument;
+    const auto frameSamples = localOptions.frameSamples;
     if (frameSamples != 256 && frameSamples != 512 && frameSamples != 1024 && frameSamples != 2048 && frameSamples != 4096) return ErrorInvalidArgument;
-    if (!(options->propagationSpeed > 0x1p-23f) || options->propagationSpeed > 1372.0f || !(options->maxPathLength > 0x1p-23f) || options->maxPathLength > 1372.0f || options->flags > 31 || ((options->flags & 1) && frameSamples != 512)) return ErrorInvalidArgument;
-    if (options->flags & 1) throw std::runtime_error(std::string(__func__) + ": GPU memory requirements depend on an unsupported native runtime query");
-    const std::uint64_t sources = options->maxSources;
-    const std::uint64_t paths = sources * (options->reflectionOrder == 1 ? 6 : 36);
-    const float delaySeconds = options->maxPathLength / options->propagationSpeed;
+    if (!(localOptions.propagationSpeed > 0x1p-23f) || localOptions.propagationSpeed > 1372.0f || !(localOptions.maxPathLength > 0x1p-23f) || localOptions.maxPathLength > 1372.0f || localOptions.flags > 31 || ((localOptions.flags & 1) && frameSamples != 512)) return ErrorInvalidArgument;
+    if (localOptions.flags & 1) throw std::runtime_error(std::string(__func__) + ": GPU memory requirements depend on an unsupported native runtime query");
+    const std::uint64_t sources = localOptions.maxSources;
+    const std::uint64_t paths = sources * (localOptions.reflectionOrder == 1 ? 6 : 36);
+    const float delaySeconds = localOptions.maxPathLength / localOptions.propagationSpeed;
     const float delaySamples = delaySeconds * 48000.0f;
     const auto delayCapacity = static_cast<std::uint64_t>(std::ceil(delaySamples));
-    std::uint64_t bytes = sources * 1024 + paths * (32 * (options->reflectionOrder + 2) + 8928);
+    std::uint64_t bytes = sources * 1024 + paths * (32 * (localOptions.reflectionOrder + 2) + 8928);
     bytes += frameSamples == 256 ? 2048 : 4 * frameSamples;
     bytes += 4 * delayCapacity * sources;
     bytes += bytes & 15;
-    bytes += 160 * paths + 12352 + 4208 * options->maxMaterials;
-    if (frameSamples == 256) bytes += sources * ((options->flags & 2) ? 36896 : 16416);
-    if (options->flags & 4) bytes += 2000656;
-    if (options->flags & 8) bytes += 288 * paths;
-    if (options->flags & 16) bytes += 144 * paths;
-    outMemory->size_cpu_mem = bytes + 5368 - ((bytes & 15) ^ 8);
+    bytes += 160 * paths + 12352 + 4208 * localOptions.maxMaterials;
+    if (frameSamples == 256) bytes += sources * ((localOptions.flags & 2) ? 36896 : 16416);
+    if (localOptions.flags & 4) bytes += 2000656;
+    if (localOptions.flags & 8) bytes += 288 * paths;
+    if (localOptions.flags & 16) bytes += 144 * paths;
+    localMemory.p_cpu_mem = nullptr;
+    localMemory.size_cpu_mem = bytes + 5368 - ((bytes & 15) ^ 8);
+    localMemory.p_gpu_mem = nullptr;
+    localMemory.size_gpu_mem = 0;
+    if (!copyGuestOut(outMemory, localMemory)) return ErrorNullPointer;
     return 0;
 }
 

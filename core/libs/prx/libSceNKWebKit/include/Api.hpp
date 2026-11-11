@@ -76,7 +76,6 @@ int APS5_VABI _ZN3WTF21MemoryPressureHandler15setProcessStateENS_18WebsamProcess
 int APS5_VABI _ZThn16_N9Inspector21InspectorConsoleAgent6enableERN3WTF6StringE();
 int APS5_VABI _ZN7WebCore27TranslateTransformOperationC1ERKNS_6LengthES3_S3_NS_18TransformOperation13OperationTypeE();
 void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidClearWindowObjectInWorldERNS_15DOMWrapperWorldE(WebCore::DOMWrapperWorld&);
-int APS5_VABI WKDownloadCancel();
 int APS5_VABI _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_();
 int APS5_VABI _ZNK7WebCore11MessagePort5derefEv();
 int APS5_VABI _ZNK7WebCore17MouseRelatedEvent1yEv();
