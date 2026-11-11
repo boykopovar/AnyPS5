@@ -596,9 +596,10 @@ bool ProbeStencilShadowCopy(const Context& context, VkFormat format, std::uint32
     std::shared_ptr<OwnedImage> source;
     std::shared_ptr<OwnedImage> shadow;
     try {
-        constexpr VkExtent3D extent{8u, 8u, 1u};
-        const auto make = [&](VkImageUsageFlags usage) {
+        constexpr VkExtent3D extent{129u, 67u, 1u};
+        const auto make = [&](VkImageUsageFlags usage, VkImageCreateFlags flags = 0) {
             VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            info.flags = flags;
             info.imageType = VK_IMAGE_TYPE_2D;
             info.format = format;
             info.extent = extent;
@@ -621,8 +622,9 @@ bool ProbeStencilShadowCopy(const Context& context, VkFormat format, std::uint32
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory stencil shadow probe");
             return owned;
         };
-        source = make(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-        shadow = make(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        source = make(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            SampleLocationsCompatibleDepth(context, format, samples) ? VK_IMAGE_CREATE_SAMPLE_LOCATIONS_COMPATIBLE_DEPTH_BIT_EXT : 0);
+        shadow = make(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (HasStencil(format) ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : 0u));
         CommandBatch batch(context);
         const auto commands = batch.Handle();
         const VkImageSubresourceRange aspects{VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
