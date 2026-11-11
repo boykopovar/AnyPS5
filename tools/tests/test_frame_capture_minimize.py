@@ -254,5 +254,11 @@ if command == 'inspect':
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 frame_capture_minimize.parse_args(arguments)
 
+    def test_predicate_enforces_trial_budget(self):
+        args = SimpleNamespace(max_trials=0, filter="filter", replay="replay", capture="capture", output="output")
+        minimizer = frame_capture_minimize.Minimizer(args, re.compile("failure"))
+        with self.assertRaises(frame_capture_minimize.TrialLimitReached):
+            minimizer.predicate(set(), set())
+
 if __name__ == "__main__":
     unittest.main()
