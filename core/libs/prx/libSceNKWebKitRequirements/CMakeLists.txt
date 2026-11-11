@@ -72,7 +72,7 @@ if(BUILD_TESTING)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKitRequirements>")
     endif()
 
-    foreach(topic IN ITEMS Jpeg Xml Psl)
+    foreach(topic IN ITEMS Jpeg JpegRestart Xml Psl)
         string(TOLOWER ${topic} test_name)
         add_test_executable(guest_nk_req_${test_name}_tests tests/${topic}.cpp)
         target_include_directories(guest_nk_req_${test_name}_tests PRIVATE
