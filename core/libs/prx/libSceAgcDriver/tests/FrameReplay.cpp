@@ -503,8 +503,13 @@ void testCopyInFlightAtDelta(const std::filesystem::path& tool) {
     AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
 
     flip();
+    constexpr std::size_t ChunkBytes = 32u << 20;
     auto* const control = submitRewound(layout.firstCommands, [&](CommandBuffer& buffer) {
-        sceAgcDcbDmaData(&buffer, 0, DmaMemory, 0, at(target + Stored), DmaMemory, 0, at(source), CopyBytes - Stored, 0, 1, 0);
+        for (std::size_t copied = 0; copied < CopyBytes - Stored; copied += ChunkBytes) {
+            const std::size_t remaining = CopyBytes - Stored - copied;
+            const std::size_t span = remaining < ChunkBytes ? remaining : ChunkBytes;
+            sceAgcDcbDmaData(&buffer, 0, DmaMemory, 0, at(target + Stored + copied), DmaMemory, 0, at(source + copied), span, 0, 1, 0);
+        }
     }, [&](CommandBuffer& buffer) { writeDone(buffer, layout.label); });
     std::memset(target, 0x5a, Stored);
     const auto gpuWaits = AgcDriver::Graphics::Recorder::ThreadHookWaits();
