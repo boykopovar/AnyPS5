@@ -161,5 +161,17 @@ if command == 'inspect':
             self.assertIn("invalid --match-regex", stderr.getvalue())
             self.assertFalse(output.exists())
 
+    def test_inspection_rejects_invalid_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bad_filter = "import sys\nprint('not json')\n"
+            arguments, _, _, output = self.empty_cli(root, filter_source=bad_filter)
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+                result = frame_capture_minimize.main(arguments)
+            self.assertEqual(result, 2)
+            self.assertIn("invalid inspection JSON", stderr.getvalue())
+            self.assertFalse(output.exists())
+
 if __name__ == "__main__":
     unittest.main()
