@@ -1,6 +1,7 @@
 #include "prx/libSceLoginDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
@@ -75,6 +76,9 @@ int main() {
     Require(result.result == 1 && result.errorCode == static_cast<int>(0x81340007u));
     Require(result.data[0] == 11 && result.data[1] == 22 && result.data[2] == 33 && result.data[3] == 44 &&
             result.data[4] == 55 && result.data[5] == 66 && result.data[6] == 77 && result.data[7] == 88);
+    errno = 71;
+    Require(sceLoginDialogGetResult(reinterpret_cast<LoginDialogResult*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
 
     param.size = 63;
     Require(sceLoginDialogOpen(&param) == kErrArgNull);
@@ -99,6 +103,9 @@ int main() {
     Require(sceLoginDialogUpdateStatus() == kStatusFinished);
 
     Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceLoginDialogGetResult(reinterpret_cast<LoginDialogResult*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceLoginDialogGetResult(&result) == 0);
     Require(result.result == kResultUserCanceled);
     Require(result.errorCode == static_cast<int>(0x81340007u));
@@ -122,6 +129,9 @@ int main() {
     result.result = -1;
     Require(sceLoginDialogGetResult(&result) == 0);
     Require(result.result == kResultUserCanceled);
+    errno = 71;
+    Require(sceLoginDialogGetResult(reinterpret_cast<LoginDialogResult*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceLoginDialogTerminate() == 0);
     Require(sceLoginDialogTerminate() == kErrNotInitialized);
     Require(sceLoginDialogClose() == kErrNotInitialized);

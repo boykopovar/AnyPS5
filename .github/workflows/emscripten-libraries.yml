@@ -27,7 +27,7 @@ jobs:
           cmake -S core/libs/tests/emscripten -B build-native -DCMAKE_BUILD_TYPE=Release
           cmake --build build-native --parallel 2
           ctest --test-dir build-native --output-on-failure --no-tests=error
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '26'
       - name: Compile memory64 libraries and test conversions and module errors

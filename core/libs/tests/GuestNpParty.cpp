@@ -36,7 +36,8 @@ bool uninitializedTests() {
         && check(sceNpPartyGetVoiceChatPriority(nullptr) == kNotInitialized, "get priority before initialize did not fail")
         && check(sceNpPartySetVoiceChatPriority(1) == kNotInitialized, "set priority before initialize did not fail")
         && check(sceNpPartyRegisterPrivateHandler(out) == kNotInitialized, "register private handler before initialize did not fail")
-        && check(sceNpPartyUnregisterPrivateHandler() == kNotInitialized, "unregister private handler before initialize did not fail");
+        && check(sceNpPartyUnregisterPrivateHandler() == kNotInitialized, "unregister private handler before initialize did not fail")
+        && check(sceNpPartyLeave() == kNotInitialized, "leave before initialize did not fail");
     for (std::uint8_t byte : out) ok = ok && check(byte == 0xa5, "a call before initialize wrote its output");
     return ok;
 }
@@ -162,7 +163,8 @@ bool notInPartyTests() {
         && check(sceNpPartyGetMemberVoiceInfo(1, 2, nullptr) == kInvalidArgument, "a null voice state was not refused")
         && check(sceNpPartyGetMemberVoiceInfo(1, 2, out) == kNotInParty, "get voice info did not report NOT_IN_PARTY")
         && check(sceNpPartySendBinaryMessage(nullptr) == kInvalidArgument, "null send params were not refused")
-        && check(sceNpPartySendBinaryMessage(out) == kNotInParty, "send did not report NOT_IN_PARTY");
+        && check(sceNpPartySendBinaryMessage(out) == kNotInParty, "send did not report NOT_IN_PARTY")
+        && check(sceNpPartyLeave() == kNotInParty, "leave did not report NOT_IN_PARTY");
     for (std::uint8_t byte : out) ok = ok && check(byte == 0xa5, "a NOT_IN_PARTY call wrote its output");
     return ok;
 }

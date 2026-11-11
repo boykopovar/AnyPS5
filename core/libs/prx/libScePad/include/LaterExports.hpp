@@ -4,6 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI sceAppContentDownloadDataGetBlockSize();
+int APS5_VABI scePadIsInitialUserHandle();
 
 }

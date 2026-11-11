@@ -3,6 +3,7 @@
 #include "prx/libSceNKWebKit/src/Object.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -58,6 +59,31 @@ public:
     explicit Data(std::vector<std::uint8_t> bytes) : bytes(std::move(bytes)) {}
 
     std::vector<std::uint8_t> bytes;
+};
+
+enum class SerializedScriptValueKind {
+    Json,
+    Undefined,
+    NaN,
+    PositiveInfinity,
+    NegativeInfinity,
+};
+
+class SerializedScriptValue final : public ObjectOf<ObjectType::SerializedScriptValue> {
+public:
+    std::string data;
+    SerializedScriptValueKind kind = SerializedScriptValueKind::Json;
+
+    SerializedScriptValue() = default;
+    SerializedScriptValue(std::string str, SerializedScriptValueKind k = SerializedScriptValueKind::Json)
+        : data(std::move(str)), kind(k) {}
+};
+
+class SessionState final : public ObjectOf<ObjectType::SessionState> {
+public:
+    explicit SessionState(std::vector<std::uint8_t> data) : data(std::move(data)) {}
+
+    std::vector<std::uint8_t> data;
 };
 
 template<ObjectType kind, typename Value>
@@ -148,6 +174,20 @@ public:
     }
 };
 
+class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
+public:
+};
+
+class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
+public:
+    BundleDOMWindowExtension() = default;
+    BundleDOMWindowExtension(Retained<BundleFrame> frame, Retained<BundleScriptWorld> scriptWorld)
+        : frame(std::move(frame)), scriptWorld(std::move(scriptWorld)) {}
+
+    Retained<BundleFrame> frame;
+    Retained<BundleScriptWorld> scriptWorld;
+};
+
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
     Retained<URL> absoluteImageURL;
@@ -185,6 +225,113 @@ class OpenPanelResultListener final : public ObjectOf<ObjectType::OpenPanelResul
 public:
     bool cancelled = false;
     std::vector<Retained<String>> chosenFiles;
+};
+
+class GeolocationPermissionRequest final : public ObjectOf<ObjectType::GeolocationPermissionRequest> {
+public:
+    enum class State { Pending, Allowed, Denied };
+    using DecisionHandler = std::function<void(bool)>;
+
+    GeolocationPermissionRequest() = default;
+    explicit GeolocationPermissionRequest(DecisionHandler handler) : decisionHandler(std::move(handler)) {}
+
+    void Allow() {
+        state = State::Allowed;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(true);
+        }
+    }
+
+    void Deny() {
+        state = State::Denied;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(false);
+        }
+    }
+
+    State state = State::Pending;
+    DecisionHandler decisionHandler;
+};
+
+class NotificationPermissionRequest final : public ObjectOf<ObjectType::NotificationPermissionRequest> {
+public:
+    enum class State { Pending, Allowed, Denied };
+    using DecisionHandler = std::function<void(bool)>;
+
+    NotificationPermissionRequest() = default;
+    explicit NotificationPermissionRequest(DecisionHandler handler) : decisionHandler(std::move(handler)) {}
+
+    void Allow() {
+        state = State::Allowed;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(true);
+        }
+    }
+
+    void Deny() {
+        state = State::Denied;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(false);
+        }
+    }
+
+    State state = State::Pending;
+    DecisionHandler decisionHandler;
+};
+
+class Inspector final : public ObjectOf<ObjectType::Inspector> {
+public:
+    bool isAttached = false;
+    bool isConnected = false;
+    bool isElementSelectionActive = false;
+    bool isFront = false;
+    bool isProfilingPage = false;
+    bool isVisible = false;
+};
+
+class Connection final : public ObjectOf<ObjectType::Connection> {
+public:
+    Retained<Object> lastMessageName;
+    Retained<Object> lastMessageBody;
+    bool clientConfigured = false;
+};
+
+class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
+public:
+    bool decided = false;
+    bool allowed = false;
+
+    void Allow() {
+        decided = true;
+        allowed = true;
+    }
+
+    void Deny() {
+        decided = true;
+        allowed = false;
+    }
+};
+
+class Notification final : public ObjectOf<ObjectType::Notification> {
+public:
+    std::u16string title;
+    std::u16string body;
+    std::u16string iconURL;
+    std::u16string tag;
+    std::u16string lang;
+    std::u16string dir;
+    std::uint64_t notificationID = 0;
+};
+
+class Frame final : public ObjectOf<ObjectType::Frame> {
+public:
+    bool isDisplayingMarkupDocument = false;
+    bool isDisplayingStandaloneImageDocument = false;
+    bool isMainFrame = false;
 };
 
 }  // namespace NKWebKit

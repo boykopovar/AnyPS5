@@ -1,10 +1,12 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
 
@@ -103,11 +105,36 @@ static void TestSetPasswordUserdata() {
     Require(ctx.defaultPasswdCallbackUserdata == nullptr);
 }
 
+static void TestUsePrivateKey() {
+    constexpr std::uint64_t nullParameter = 0x14fff043;
+    TestCtx ctx {};
+    unsigned char original[sizeof(ctx)];
+    std::memcpy(original, &ctx, sizeof(ctx));
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(8, 0xfff, 101);
+    Require(SSL_CTX_use_PrivateKey_nid_postfix(nullptr, nullptr) == 0);
+    Require(SSL_CTX_use_PrivateKey_nid_postfix(Context(&ctx), nullptr) == 0);
+    Require(std::memcmp(&ctx, original, sizeof(ctx)) == 0);
+    Require(ERR_get_error_nid_postfix() == 0x08fff065);
+    Require(ERR_get_error_nid_postfix() == nullParameter);
+    Require(ERR_get_error_nid_postfix() == nullParameter);
+
+    auto* const inaccessible = reinterpret_cast<LibreSslCtx*>(1);
+    Require(SSL_CTX_use_PrivateKey_nid_postfix(inaccessible, nullptr) == 0);
+    Require(ERR_get_error_nid_postfix() == nullParameter);
+
+    RequireThrows([] { SSL_CTX_use_PrivateKey_nid_postfix(nullptr, reinterpret_cast<void*>(1)); });
+    RequireThrows([&] { SSL_CTX_use_PrivateKey_nid_postfix(inaccessible, reinterpret_cast<void*>(1)); });
+    Require(std::memcmp(&ctx, original, sizeof(ctx)) == 0);
+    Require(ERR_get_error_nid_postfix() == 0);
+}
+
 int main() {
     TestGetVerifyMode();
     TestGetCertStore();
     TestSetQuietShutdown();
     TestSetPasswordCallback();
     TestSetPasswordUserdata();
+    TestUsePrivateKey();
     return 0;
 }

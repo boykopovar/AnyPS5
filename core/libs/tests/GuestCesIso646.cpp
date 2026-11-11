@@ -9,8 +9,12 @@
 
 namespace {
 
+constexpr int invalidParameter = static_cast<int>(0x805C0001);
+constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
 constexpr int invalidEncode = static_cast<int>(0x805C0014);
 constexpr int unassignedCode = static_cast<int>(0x805C0020);
+constexpr int invalidDstBuffer = static_cast<int>(0x805C0030);
+constexpr int dstBufferEnd = static_cast<int>(0x805C0031);
 
 void Require(bool value) { if (!value) std::abort(); }
 
@@ -178,6 +182,16 @@ void CheckStrings() {
     Require(sceCesMbcsUcsContextInit(context, sceCesRefersUcsProfileAscii()) == 0);
     Require(sceCesUtf8StrToMbcsStr(context, reinterpret_cast<const std::uint8_t*>("\x5C"), 1, &used, back, sizeof(back), &produced) == 0);
     Require(used == 1 && produced == 1 && back[0] == 0x5C);
+    Require(sceCesMbcsUcsContextInit(context, sceCesRefersUcsProfileJisX0201()) == 0);
+    Require(sceCesMbcsStrToUtf8Str(nullptr, jis, sizeof(jis), &used, utf8, sizeof(utf8), &produced) == invalidParameter);
+    Require(sceCesMbcsStrToUtf8Str(context, nullptr, sizeof(jis), &used, utf8, sizeof(utf8), &produced) == invalidSrcBuffer);
+    Require(sceCesMbcsStrToUtf8Str(context, jis, sizeof(jis), &used, nullptr, sizeof(utf8), &produced) == invalidDstBuffer);
+    Require(sceCesMbcsStrToUtf8Str(context, jis, sizeof(jis), &used, utf8, 4, &produced) == dstBufferEnd);
+    const std::uint8_t sampleUtf8[] = {0x41, 0x42, 0x43, 0x44};
+    Require(sceCesUtf8StrToMbcsStr(nullptr, sampleUtf8, sizeof(sampleUtf8), &used, back, sizeof(back), &produced) == invalidParameter);
+    Require(sceCesUtf8StrToMbcsStr(context, nullptr, sizeof(sampleUtf8), &used, back, sizeof(back), &produced) == invalidSrcBuffer);
+    Require(sceCesUtf8StrToMbcsStr(context, sampleUtf8, sizeof(sampleUtf8), &used, nullptr, sizeof(back), &produced) == invalidDstBuffer);
+    Require(sceCesUtf8StrToMbcsStr(context, sampleUtf8, sizeof(sampleUtf8), &used, back, 2, &produced) == dstBufferEnd);
 }
 
 }
