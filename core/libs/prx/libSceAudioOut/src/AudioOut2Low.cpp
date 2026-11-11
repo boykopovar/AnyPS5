@@ -127,4 +127,12 @@ int APS5_VABI sceAudioOut2LoPortGetState(AudioOut2PortHandle port, AudioOut2Port
     return sceAudioOut2PortGetState(port, state);
 }
 
+int APS5_VABI sceAudioOut2LoPortGetStateEx(AudioOut2PortHandle port, AudioOut2PortState* state, uint8_t* extra) {
+    if (extra != nullptr) {
+        uint8_t zero = 0;
+        if (!GuestCopyOut_nid_no_patch(extra, &zero, sizeof(zero))) return static_cast<int>(0x80268001);
+    }
+    return sceAudioOut2PortGetState(port, state);
+}
+
 }
