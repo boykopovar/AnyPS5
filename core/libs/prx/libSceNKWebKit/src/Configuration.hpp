@@ -14,6 +14,7 @@ class Page : public ObjectOf<ObjectType::Page> {
 public:
     bool canGoBack = false;
     bool canGoForward = false;
+    mutable Retained<Inspector> inspector;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
