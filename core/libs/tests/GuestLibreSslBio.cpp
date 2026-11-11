@@ -1000,14 +1000,12 @@ void TestCertificateChainFileErrorPaths() {
 void TestPemReadX509FileWrapper() {
     auto* const sentinel = reinterpret_cast<LibreSslX509*>(std::uintptr_t{1});
     LibreSslX509* output = sentinel;
-    bool nullReaderThrew = false;
-    try {
-        PEM_read_X509_nid_postfix(nullptr, &output, nullptr, nullptr);
-    } catch (...) {
-        nullReaderThrew = true;
-    }
-    Require(nullReaderThrew && allocations == 0 && output == sentinel,
-            "null FILE still reaches the unsupported reader and frees its BIO");
+
+    ERR_clear_error_nid_postfix();
+    Require(PEM_read_X509_nid_postfix(nullptr, &output, nullptr, nullptr) == nullptr,
+            "null FILE reaches the reader and returns null");
+    RequireError(0x09fff06c);
+    Require(allocations == 0 && output == sentinel, "null FILE frees its borrowed BIO and preserves the output");
 
     std::FILE* native = std::tmpfile();
     Require(native != nullptr, "open temporary PEM file");
@@ -1020,16 +1018,28 @@ void TestPemReadX509FileWrapper() {
     RequireError(0x09fff007);
     Require(allocations == 0 && output == sentinel, "BIO allocation failure has no leak or output write");
 
-    bool readerThrew = false;
-    try {
-        PEM_read_X509_nid_postfix(&stream, &output, nullptr, nullptr);
-    } catch (...) {
-        readerThrew = true;
-    }
-    Require(readerThrew, "unknown lower X509 PEM reader propagates its exception");
+    Require(PEM_read_X509_nid_postfix(&stream, &output, nullptr, nullptr) == nullptr,
+            "empty PEM file returns null through the reader");
     Require(allocations == 0 && stream.IsOpen() && output == sentinel,
-            "reader exception frees only the borrowed BIO and preserves the stream and output");
-    Require(fclose_nid_postfix(&stream) == 0, "close borrowed PEM file after reader exception");
+            "empty PEM file frees only the borrowed BIO and keeps the stream open");
+    RequireError(0x09fff06c);
+
+    constexpr char beginLine[] = "-----BEGIN CERTIFICATE-----\n";
+    Require(fwrite_nid_postfix(beginLine, 1, sizeof(beginLine) - 1, &stream) == sizeof(beginLine) - 1,
+            "write a BEGIN line to the borrowed PEM file");
+    Require(fflush_nid_postfix(&stream) == 0, "flush the BEGIN line before reading it back");
+    Require(fseek_nid_postfix(&stream, 0, SEEK_SET) == 0, "rewind the BEGIN line file");
+    bool conversionThrew = false;
+    try {
+        static_cast<void>(PEM_read_X509_nid_postfix(&stream, &output, nullptr, nullptr));
+    } catch (const std::runtime_error&) {
+        conversionThrew = true;
+    }
+    Require(conversionThrew, "a BEGIN line reaches the unsupported conversion and propagates");
+    Require(allocations == 0 && stream.IsOpen() && output == sentinel,
+            "reader exception frees only the borrowed BIO and preserves stream and output");
+    Require(ERR_get_error_nid_postfix() == 0, "the unsupported conversion queues no OpenSSL errors");
+    Require(fclose_nid_postfix(&stream) == 0, "close borrowed PEM file after the reader exception");
 }
 #endif
 
