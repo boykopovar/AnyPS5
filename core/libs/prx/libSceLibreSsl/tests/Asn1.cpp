@@ -258,6 +258,40 @@ void Strings() {
     RequireThrows([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &value); }, "null terminated-string data");
 }
 
+std::string PrintedTime(int type, const char* text, int expected) {
+    Asn1String time{static_cast<int>(std::strlen(text)), type, reinterpret_cast<unsigned char*>(const_cast<char*>(text)), 0};
+    LibreSsl::Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "a memory BIO");
+    Require(ASN1_TIME_print_nid_postfix(bio, &time) == expected, text);
+    char* data = nullptr;
+    const auto length = BIO_ctrl_nid_postfix(bio, 3, 0, &data);
+    std::string output(data, static_cast<std::size_t>(length));
+    BIO_free_nid_postfix(bio);
+    return output;
+}
+
+void Times() {
+    const std::pair<const char*, const char*> utc[] = {{"170102030405Z", "Jan  2 03:04:05 2017 GMT"}, {"4912312359Z", "Dec 31 23:59:00 2049 GMT"},
+        {"500101000000", "Jan  1 00:00:00 1950"}, {"991231235959+0100", "Dec 31 23:59:59 1999"}, {"17010203040aZ", "Jan  2 03:04:00 2017 GMT"}};
+    for (const auto& [input, output] : utc) Require(PrintedTime(23, input, 1) == output, input);
+    const std::pair<const char*, const char*> generalized[] = {{"20170102030405Z", "Jan  2 03:04:05 2017 GMT"},
+        {"20170102030405.123Z", "Jan  2 03:04:05.123 2017 GMT"}, {"20170102030405.Z", "Jan  2 03:04:05. 2017 GMT"},
+        {"20170102030405.12a", "Jan  2 03:04:05.12 2017"}, {"201701020304", "Jan  2 03:04:00 2017"}, {"19991231235959.5", "Dec 31 23:59:59.5 1999"}};
+    for (const auto& [input, output] : generalized) Require(PrintedTime(24, input, 1) == output, input);
+    const std::pair<int, const char*> bad[] = {{23, "1713"}, {23, "171302030405Z"}, {23, "170002030405Z"}, {23, "17x102030405Z"},
+        {24, "20170102030"}, {24, "20171302030405Z"}, {4, "170102030405Z"}, {22, "x"}};
+    for (const auto& [type, input] : bad) Require(PrintedTime(type, input, 0) == "Bad time value", input);
+    Asn1String time{13, 23, reinterpret_cast<unsigned char*>(const_cast<char*>("170102030405Z")), 0};
+    Require(ASN1_TIME_print_nid_postfix(nullptr, &time) == 1, "a valid time returns 1 even when the write fails");
+    time.type = 4;
+    Require(ASN1_TIME_print_nid_postfix(nullptr, &time) == 0, "an invalid time returns 0 without a BIO");
+    Asn1String empty{0, 23, nullptr, 0};
+    Require(ASN1_TIME_print_nid_postfix(nullptr, &empty) == 0, "an empty time is bad");
+    RequireInvalidArgument([] { ASN1_TIME_print_nid_postfix(nullptr, nullptr); }, "a null time");
+    time.data = nullptr;
+    RequireInvalidArgument([&] { ASN1_TIME_print_nid_postfix(nullptr, &time); }, "null time data with a positive length");
+}
+
 std::size_t lastAllocationSize = 0;
 int allocationCount = 0;
 bool failAllocation = false;
@@ -332,4 +366,5 @@ int main(int argc, char**) {
     Integers();
     Strings();
     MalformedStrings();
+    Times();
 }

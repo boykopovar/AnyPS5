@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -308,6 +309,17 @@ static void TestRoundedRect() {
     _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_(&rr1, lr, sz, sz, sz, sz);
     Require(rr1.m_radii.m_topLeft.m_width.m_value == 640);
 
+    WebCore::LayoutSize maxWidth{std::numeric_limits<int>::max(), 0};
+    WebCore::RoundedRect overflowing;
+    _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_(&overflowing, lr, maxWidth, maxWidth, WebCore::LayoutSize{0, 0}, WebCore::LayoutSize{0, 0});
+    Require(!_ZNK7WebCore11RoundedRect8containsERKNS_10LayoutRectE(&overflowing, lr));
+
+    WebCore::LayoutRect maxLr{WebCore::LayoutPoint{0, 0}, WebCore::LayoutSize{std::numeric_limits<int>::max(), 6400}};
+    WebCore::RoundedRect saturating;
+    _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_(&saturating, maxLr, maxWidth, maxWidth, WebCore::LayoutSize{0, 0}, WebCore::LayoutSize{0, 0});
+    WebCore::LayoutRect smallLr{WebCore::LayoutPoint{64, 64}, WebCore::LayoutSize{128, 128}};
+    Require(_ZNK7WebCore11RoundedRect8containsERKNS_10LayoutRectE(&saturating, smallLr));
+
     WebCore::RoundedRect rr2;
     _ZN7WebCore11RoundedRectC2ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_(&rr2, lr, sz, sz, sz, sz);
     Require(rr2.m_radii.m_topLeft.m_width.m_value == 640);
@@ -555,6 +567,15 @@ static void TestMatrixTransformOperation() {
     Require(AlmostEqual(tm.m_matrix[3][3], 1.0));
 }
 
+static void TestIntRectScaleOverflowGivesIntMin() {
+    WebCore::IntRect ir{WebCore::IntPoint{1000000000, -1000000000}, WebCore::IntSize{1000000000, 3}};
+    _ZN7WebCore7IntRect5scaleEf(&ir, 10.0f);
+    Require(ir.m_location.m_x == std::numeric_limits<int>::min());
+    Require(ir.m_location.m_y == std::numeric_limits<int>::min());
+    Require(ir.m_size.m_width == std::numeric_limits<int>::min());
+    Require(ir.m_size.m_height == 30);
+}
+
 int main() {
     TestFloatPoint();
     TestFloatSize();
@@ -568,5 +589,6 @@ int main() {
     TestAffineTransform();
     TestTransformationMatrix();
     TestMatrixTransformOperation();
+    TestIntRectScaleOverflowGivesIntMin();
     return 0;
 }
