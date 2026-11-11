@@ -1701,8 +1701,11 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
     bool storageSkipped = false;
     std::size_t sampledBuilds = 0;
     std::unordered_set<const Texture*> held;
+    std::vector<std::pair<const Texture*, std::uint64_t>> heldBytes;
+    std::size_t charged = 0;
     for (bool retry = false;; retry = true) {
         held.clear();
+        heldBytes.clear();
         auto& cache = Textures();
         std::unique_lock lock(cache.mutex, std::defer_lock);
         const bool inherited = sampledCacheHeld != 0;
@@ -1711,7 +1714,7 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
         } else {
             for (auto it = cache.transient.begin(); it != cache.transient.end() && freed < bytes;) {
                 if (it->second.texture.use_count() != 1) {
-                    held.insert(it->second.texture.get());
+                    if (held.insert(it->second.texture.get()).second) heldBytes.emplace_back(it->second.texture.get(), it->second.texture->AllocationBytes());
                     ++it;
                     continue;
                 }
@@ -1725,7 +1728,7 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
                 --it;
                 if (it->source != nullptr && it->source->Dirty()) continue;
                 if (it->texture.use_count() != 1) {
-                    held.insert(it->texture.get());
+                    if (held.insert(it->texture.get()).second) heldBytes.emplace_back(it->texture.get(), it->texture->AllocationBytes());
                     continue;
                 }
                 const auto next = std::next(it);
@@ -1736,7 +1739,17 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
                 it = next;
             }
         }
-        if (lock.owns_lock()) lock.unlock();
+        if (lock.owns_lock()) {
+            if (auto* recorder = Recorder::Active(); freed < bytes && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread() && recorder->Recording()) {
+                charged = 0;
+                for (const auto& [texture, size] : heldBytes) {
+                    const auto before = recorder->OpenKeptBytes();
+                    recorder->KeepBytes(texture, static_cast<std::size_t>(size));
+                    if (recorder->OpenKeptBytes() != before) ++charged;
+                }
+            }
+            lock.unlock();
+        }
         if (retry || sampledSkipped || freed >= bytes || held.empty()) break;
         std::vector<std::shared_ptr<ShaderResources>> resources;
         if (!SharedResourceCache().TryRemoveTextures(held, &resources) || resources.empty()) break;
@@ -1795,7 +1808,7 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
         }
     }
     freed = ImageMemoryReleasedBytes() - releasedBefore;
-    std::fprintf(stderr, "[gpu] texture caches released %llu MiB of the %llu MiB asked for: %zu sampled entries%s, %zu cached builds holding sampled textures dropped, %zu sampled textures still held, %zu storage images%s, %zu with pending results kept\n", static_cast<unsigned long long>(freed >> 20u), static_cast<unsigned long long>(bytes >> 20u), sampledEntries, sampledSkipped ? " (cache busy, skipped)" : "", sampledBuilds, held.size(), storageEntries, storageSkipped ? " (cache or device busy, skipped)" : "", storageKept);
+    std::fprintf(stderr, "[gpu] texture caches released %llu MiB of the %llu MiB asked for: %zu sampled entries%s, %zu cached builds holding sampled textures dropped, %zu sampled textures still held (%zu charged to the open batch), %zu storage images%s, %zu with pending results kept\n", static_cast<unsigned long long>(freed >> 20u), static_cast<unsigned long long>(bytes >> 20u), sampledEntries, sampledSkipped ? " (cache busy, skipped)" : "", sampledBuilds, held.size(), charged, storageEntries, storageSkipped ? " (cache or device busy, skipped)" : "", storageKept);
     return freed;
 }
 

@@ -898,6 +898,39 @@ void pressureReleaseTests(Context context) {
     std::puts("texture cache release of cached descriptor sets passed");
 }
 
+void batchHeldReleaseTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    ClearCachedTextures(context.device);
+    SharedResourceCache().Clear();
+    Block block(context);
+    std::weak_ptr<Texture> texture;
+    {
+        Recorder recorder(context);
+        recorder.Activate();
+        recorder.Commands();
+        auto kept = ImageResources(context, block, 0, 1, true);
+        texture = kept->SampledTextures().front();
+        const auto bytes = static_cast<std::size_t>(texture.lock()->AllocationBytes());
+        Require(bytes != 0, "the batch fixture's sampled texture owns no memory");
+        recorder.Keep(std::move(kept));
+        const auto before = recorder.OpenKeptBytes();
+        ReleaseTextureCaches(~std::uint64_t{0});
+        Require(!texture.expired(), "a release freed a sampled texture the open batch still binds");
+        Require(recorder.OpenKeptBytes() >= before + bytes, "a release short of memory did not charge the sampled texture the open batch holds to that batch, so the batch is not submitted to free it");
+        ReleaseTextureCaches(~std::uint64_t{0});
+        Require(recorder.OpenKeptBytes() >= before + bytes && recorder.OpenKeptBytes() < before + 2 * bytes, "a second release charged the same held texture to the open batch twice");
+        recorder.Sync();
+        ReleaseTextureCaches(~std::uint64_t{0});
+        Require(texture.expired(), "a release after the batch holding a sampled texture completed did not free it");
+    }
+    SharedResourceCache().Clear();
+    ClearCachedTextures(context.device);
+    std::puts("texture cache release of textures held by the open batch passed");
+}
+
 void rescanTests(const Context& context) {
     constexpr std::uint32_t SmallSide = 128;
     constexpr std::size_t SmallBytes = std::size_t{SmallSide} * SmallSide * 4u;
@@ -1599,6 +1632,7 @@ int main(int argc, char** argv) {
             heldTests(context);
             releasedTests(context);
             pressureReleaseTests(context);
+            batchHeldReleaseTests(context);
             rescanTests(context);
             viewEvictionTests(context);
             viewTests(context);
