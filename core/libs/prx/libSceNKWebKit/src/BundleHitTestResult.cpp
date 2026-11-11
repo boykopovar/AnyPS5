@@ -63,4 +63,20 @@ std::uint32_t APS5_VABI WKBundleHitTestResultGetMediaType(const void* hitTestRes
     return result->mediaType;
 }
 
+const void* APS5_VABI WKBundleHitTestResultCopyNodeHandle(const void* hitTestResultRef) {
+    const auto* result = NKWebKit::Cast<NKWebKit::BundleHitTestResult>(hitTestResultRef, __func__);
+    return result->nodeHandle ? NKWebKit::ToRef(result->nodeHandle) : nullptr;
+}
+
+const void* APS5_VABI WKBundleHitTestResultCopyURLElementHandle(const void* hitTestResultRef) {
+    const auto* result = NKWebKit::Cast<NKWebKit::BundleHitTestResult>(hitTestResultRef, __func__);
+    return result->urlElementHandle ? NKWebKit::ToRef(result->urlElementHandle) : nullptr;
+}
+
+NKWebKit::RectValue APS5_VABI WKBundleHitTestResultGetImageRect(const void* hitTestResultRef) {
+    const auto* result = NKWebKit::Cast<NKWebKit::BundleHitTestResult>(hitTestResultRef, __func__);
+    return result->imageRect;
+}
+
+
 }

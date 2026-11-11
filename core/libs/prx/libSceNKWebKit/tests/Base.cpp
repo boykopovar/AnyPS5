@@ -1272,7 +1272,7 @@ static void TestBundleHitTestResult() {
     Require(WKStringIsEqualToUTF8CString(title, "Example Title"));
     WKRelease(title);
 
-    hit->linkSuggestedFilename = NKWebKit::String::FromUtf8("example_file.pdf");
+hit->linkSuggestedFilename = NKWebKit::String::FromUtf8("example_file.pdf");
     hit->isSelected = true;
     hit->mediaType = 1;
     hit->isDownloadableMedia = true;
@@ -1288,6 +1288,29 @@ static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultIsDownloadableMedia(ref));
     Require(WKBundleHitTestResultMediaHasAudio(ref));
     Require(WKBundleHitTestResultMediaIsInFullscreen(ref));
+
+    Require(WKBundleHitTestResultCopyNodeHandle(ref) == nullptr);
+    Require(WKBundleHitTestResultCopyURLElementHandle(ref) == nullptr);
+    auto defaultRect = WKBundleHitTestResultGetImageRect(ref);
+    Require(defaultRect.origin.x == 0.0 && defaultRect.size.width == 0.0);
+
+    auto node = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    auto urlElem = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    hit->nodeHandle = node;
+    hit->urlElementHandle = urlElem;
+    hit->imageRect = NKWebKit::RectValue{{10.0, 20.0}, {30.0, 40.0}};
+
+    auto* copiedNode = WKBundleHitTestResultCopyNodeHandle(ref);
+    Require(copiedNode == node.Get());
+    WKRelease(copiedNode);
+
+    auto* copiedUrlElem = WKBundleHitTestResultCopyURLElementHandle(ref);
+    Require(copiedUrlElem == urlElem.Get());
+    WKRelease(copiedUrlElem);
+
+    auto rect = WKBundleHitTestResultGetImageRect(ref);
+    Require(rect.origin.x == 10.0 && rect.origin.y == 20.0);
+    Require(rect.size.width == 30.0 && rect.size.height == 40.0);
 
     bool threw = false;
     try {

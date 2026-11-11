@@ -73,6 +73,9 @@ std::uint32_t APS5_VABI WKBundleHitTestResultGetMediaType(const void* hitTestRes
 bool APS5_VABI WKBundleHitTestResultIsDownloadableMedia(const void* hitTestResultRef);
 bool APS5_VABI WKBundleHitTestResultMediaHasAudio(const void* hitTestResultRef);
 bool APS5_VABI WKBundleHitTestResultMediaIsInFullscreen(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultCopyNodeHandle(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultCopyURLElementHandle(const void* hitTestResultRef);
+NKWebKit::RectValue APS5_VABI WKBundleHitTestResultGetImageRect(const void* hitTestResultRef);
 std::uint32_t APS5_VABI WKBundleInspectorGetTypeID();
 std::uint32_t APS5_VABI WKBundleNavigationActionGetTypeID();
 std::uint32_t APS5_VABI WKBundleNodeHandleGetTypeID();
