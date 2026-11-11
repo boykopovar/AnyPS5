@@ -1,8 +1,10 @@
 from pathlib import Path
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_conventions
@@ -139,7 +141,22 @@ class RemovedDocLinkGitTests(unittest.TestCase):
             return subprocess.run(
                 [sys.executable, str(Path(check_conventions.__file__)), "--base", "base", "--head", "HEAD"],
                 cwd=root, capture_output=True, encoding="utf-8", errors="strict",
+                env={key: value for key, value in os.environ.items()
+                     if key not in ("GITHUB_ACTIONS", "GITHUB_EVENT_PATH", "GITHUB_STEP_SUMMARY")},
             )
+
+    def test_cli_fixture_ignores_inherited_workflow_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary.md"
+            event = Path(directory) / "event.json"
+            with patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_PATH": str(event),
+                                         "GITHUB_STEP_SUMMARY": str(summary)}):
+                base = {"README.md": "See [guide](docs/user/old/).\n", "docs/user/old/guide.md": "Guide\n"}
+                result = self.check_revision(base, {"docs/user/old/guide.md": None})
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertEqual(result.stdout.count("[doc-link]"), 1, result.stdout)
+            self.assertNotIn("::error", result.stdout)
+            self.assertFalse(summary.exists())
 
     def test_deleted_directory_links_are_reported_from_an_unchanged_doc(self):
         base = {
