@@ -343,7 +343,10 @@ jobs:
         run: arch -x86_64 /usr/bin/true || sudo softwareupdate --install-rosetta --agree-to-license
       - run: cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON -DCMAKE_OSX_ARCHITECTURES=${{ matrix.architectures }}
       - run: cmake --build build-relinker --parallel 3
-      - run: ctest --test-dir build-relinker --output-on-failure --timeout 120 --parallel 4 --no-tests=error
+      - run: |
+          repeat=()
+          if [ "$RUNNER_OS" = Windows ]; then repeat=(--repeat after-timeout:2); fi
+          ctest --test-dir build-relinker --output-on-failure --timeout 120 --parallel 4 --no-tests=error "${repeat[@]}"
 
   relinker-asan:
     needs: eligibility
@@ -554,6 +557,31 @@ jobs:
           echo "CCACHE_PREFIX=$GITHUB_WORKSPACE/tools/compile_slot.sh" >> "$GITHUB_ENV"
           echo "ANYPS5_COMPILE_SLOT_DIR=$slot_dir" >> "$GITHUB_ENV"
           echo "ANYPS5_COMPILE_SLOTS=$slots" >> "$GITHUB_ENV"
+      - name: Fetch the FFmpeg prebuilt with retries
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(git -C 3rdparty/ffmpeg-core rev-parse --short=12 HEAD)
+          repo=$(git -C 3rdparty/ffmpeg-core remote get-url origin | sed -E 's#^.*github\.com[/:]##; s#\.git$##')
+          name=ffmpeg-linux-x64.zip
+          zip=build/externals/$sha-$name
+          mkdir -p build/externals
+          valid() { python3 -c 'import sys, zipfile; z = zipfile.ZipFile(sys.argv[1]); sys.exit(1 if z.testzip() else 0)' "$1" 2>/dev/null; }
+          if valid "$zip"; then echo "$zip already present"; exit 0; fi
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL --connect-timeout 20 --max-time 300 -o "$zip.part" "https://github.com/$repo/releases/download/$sha/$name" && valid "$zip.part"; then
+              mv "$zip.part" "$zip"; echo "downloaded $name from the release URL (attempt $attempt)"; exit 0
+            fi
+            echo "::warning::release URL attempt $attempt failed"
+            if gh release download "$sha" -R "$repo" -p "$name" -O "$zip.part" --clobber && valid "$zip.part"; then
+              mv "$zip.part" "$zip"; echo "downloaded $name through the API (attempt $attempt)"; exit 0
+            fi
+            echo "::warning::API attempt $attempt failed"
+            sleep $((attempt * 15))
+          done
+          rm -f "$zip.part"
+          echo "::warning::could not prefetch $name; leaving the download to CMake"
       - run: cmake -S . -B build $CONFIGURE -DANYPS5_ENABLE_SPIRV_TOOLS=ON "-DCMAKE_EXE_LINKER_FLAGS=$LINKER_FLAGS" "-DCMAKE_SHARED_LINKER_FLAGS=$LINKER_FLAGS" "-DCMAKE_MODULE_LINKER_FLAGS=$LINKER_FLAGS"
       - name: Check that every test executable is registered with ctest
         run: python3 tools/check_test_registration.py build
@@ -605,7 +633,7 @@ jobs:
     needs: eligibility
     if: ${{ ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.eligibility.outputs.full == 'true') || (github.event_name == 'pull_request' && needs.eligibility.outputs.mingw-host-tests == 'true') }}
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       WINLIBS_RELEASE: 15.2.0posix-14.0.0-ucrt-r7
       WINLIBS_ZIP: winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip

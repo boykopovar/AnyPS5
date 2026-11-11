@@ -193,7 +193,10 @@ int APS5_VABI sceHttpCreateEpoll(int http_ctx_id, HttpEpollHandle* eh) {
     auto epoll = std::make_shared<HttpEpoll>();
     const auto handle = epoll.get();
     g_epolls.emplace(handle, std::move(epoll));
-    *eh = handle;
+    if (!GuestCopyOut_nid_no_patch(eh, &handle, sizeof(handle))) {
+        g_epolls.erase(handle);
+        return ERROR_INVALID_VALUE;
+    }
     return 0;
 }
 
@@ -852,8 +855,8 @@ int APS5_VABI sceHttpAddQuery(int id, const char* query) {
 }
 
 int APS5_VABI sceHttpSetDelayBuildRequestEnabled(int id, int enabled) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    return SetHttpOption(id, &HttpOptions::delayBuildRequest, enabled != 0) ? 0 : ERROR_INVALID_ID;
 }
 
 }

@@ -27,7 +27,9 @@
 
 static_assert(sizeof(GuestSigaction) == 32 && offsetof(GuestSigaction, flags) == 8 && offsetof(GuestSigaction, mask) == 12);
 
-extern "C" GuestSignalSet _sigintr_nid_postfix{};
+extern "C" {
+GuestSignalSet _sigintr_nid_postfix{};
+}
 
 namespace {
 

@@ -18,7 +18,7 @@ class Texture;
 class StorageTexture;
 
 VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten = true, bool stencilTested = false);
-VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilTested, bool stencilWritten);
+VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilTested, bool stencilWritten, std::optional<std::uint8_t> overwrittenStencil = std::nullopt);
 SampleOrderTarget DepthSurfaceOrderTarget(const Context& context, const DepthTarget& target);
 DepthSampleLocations DepthSurfaceSampleLocations(const Context& context, const DepthTarget& target);
 enum class DepthPlaneScope { Overlapped, Whole };
@@ -43,7 +43,7 @@ std::uint64_t DepthTransferPassCount();
 std::uint64_t MultisampledDepthBytes_nid_no_patch(VkExtent2D extent, std::uint32_t bytesPerTexel, std::uint32_t samples);
 void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt, bool allowPublication = true);
 void AppendHostWrittenDepthRanges(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
-enum class DepthPublicationStage { ReadCaptured, GuestCopied, BeforeCommit, PlaneCommitted };
+enum class DepthPublicationStage { ReadCaptured, GuestCopied, BeforeCommit, PlaneCommitted, StencilPlaneRead };
 void SetDepthPublicationHookForTest(void (*hook)(DepthPublicationStage));
 bool HasResidentDepthGuards_nid_no_patch();
 bool ResidentDepthGuardOverlaps_nid_no_patch(std::uint64_t address, std::size_t bytes);
