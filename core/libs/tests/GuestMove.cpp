@@ -134,11 +134,6 @@ int main() {
     Require(second == kFirstHandle + kHandleStep);
     Require(sceMoveOpen(kUserId, 0, 0) == kAlreadyOpened);
     Require(sceMoveOpen(kUserId, 0, 1) == kAlreadyOpened);
-    Require(sceMoveOpen(0, 0, 2) == kInvalidArg);
-    Require(sceMoveOpen(-1, 0, 2) == kInvalidArg);
-    Require(sceMoveOpen(kUserId, -1, 2) == kInvalidArg);
-    Require(sceMoveOpen(kUserId, 0, -1) == kInvalidArg);
-    Require(sceMoveOpen(kUserId, 0, 4) == kInvalidArg);
     Require(Throws([] { sceMoveOpen(kUserId + 1, 0, 2); }));
 
     Require(sceMoveGetDeviceInfo(first, nullptr) == kInvalidArg);
