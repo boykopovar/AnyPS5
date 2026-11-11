@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -56,13 +55,11 @@ std::string Decimal(Number number) {
 
 extern "C" int APS5_VABI OBJ_obj2txt_nid_postfix(char* buffer, int bufferLength, const Asn1Object_nid_no_patch* object, int noName) {
     if (buffer && bufferLength > 0) buffer[0] = '\0';
-    if (!object) return 0;
-    if (object->length < 0) throw std::invalid_argument("OBJ_obj2txt: negative encoded length");
-    if (object->length > 0 && !object->data) throw std::invalid_argument("OBJ_obj2txt: missing encoded data");
+    if (!object || !object->data) return 0;
     std::string text;
     if (!noName && (object->longName || object->shortName)) {
         text = object->longName ? object->longName : object->shortName;
-    } else {
+    } else if (object->length > 0) {
         Number number;
         bool first = true;
         bool continued = false;

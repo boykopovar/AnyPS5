@@ -4,10 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI tls_config_set_cert_mem_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EVP_PKEY_CTX_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -369,8 +365,10 @@ int APS5_VABI SSL_is_quic_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EVP_MD_block_size_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI EVP_MD_block_size_nid_postfix(const void* md) {
+    if (!md) return -1;
+    if (md == EVP_sha1_nid_postfix() || md == EVP_sha224_nid_postfix()) return static_cast<const LibreSsl3::DigestMethod*>(md)->blockSize;
+    return static_cast<const EvpMd*>(md)->blockSize;
 }
 
 }

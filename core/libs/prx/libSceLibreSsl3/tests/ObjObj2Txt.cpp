@@ -54,5 +54,14 @@ int main() {
     std::memset(buffer.data(), 'x', buffer.size());
     Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), nullptr, 1) == 0);
     Require(buffer[0] == '\0');
+    object.longName = "rsaEncryption";
+    object.length = 9;
+    object.data = nullptr;
+    std::memset(buffer.data(), 'x', buffer.size());
+    Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 0) == 0);
+    Require(buffer[0] == '\0');
+    object.length = -1;
+    object.data = zero.data();
+    Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 1) == 0);
     std::puts("libSceLibreSsl3 OBJ_obj2txt tests passed");
 }
