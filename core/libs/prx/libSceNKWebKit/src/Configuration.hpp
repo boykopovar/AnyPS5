@@ -10,8 +10,11 @@
 
 namespace NKWebKit {
 
-class ProcessPool : public ObjectOf<ObjectType::ProcessPool> {};
-class Page : public ObjectOf<ObjectType::Page> {};
+class Page : public ObjectOf<ObjectType::Page> {
+public:
+    bool canGoBack = false;
+    bool canGoForward = false;
+};
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
@@ -42,6 +45,19 @@ public:
     bool usesWebProcessCache = false;
     bool shouldConfigureJSCForTesting = false;
     std::vector<std::u16string> overrideLanguages;
+};
+
+class ProcessPool final : public ObjectOf<ObjectType::ProcessPool> {
+public:
+    ProcessPool() : configuration(Make<ProcessPoolConfiguration>()) {}
+    explicit ProcessPool(Retained<ProcessPoolConfiguration> config) : configuration(std::move(config)) {}
+
+    Retained<ProcessPoolConfiguration> configuration;
+    bool usesSingleWebProcess = false;
+    std::uint32_t cacheModel = 0;
+    bool accessibilityEnabled = false;
+    bool processTerminationEnabled = true;
+    std::vector<std::string> visitedLinks;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {

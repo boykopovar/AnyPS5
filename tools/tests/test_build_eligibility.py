@@ -143,6 +143,11 @@ class RelinkerEligibilityTests(unittest.TestCase):
         self.assertIs(result["outputs"]["relinker"], True)
         self.assertEqual(result["calls"], [["listCommits", "main", "author"]])
 
+    def test_pull_requests_run_one_macos_architecture_and_manual_runs_both(self):
+        macos = lambda result: [host.get("architectures", "native") for host in json.loads(result["outputs"]["relinker-hosts"]) if host["os"].startswith("macos")]
+        self.assertEqual(macos(self.run_gate([{"sha": "a"}], None)), ["native"])
+        self.assertEqual(macos(self.run_gate([{"sha": "a"}], None, manual=True)), ["native", "x86_64"])
+
     def test_author_with_only_merged_pull_requests_runs_the_relinker(self):
         result = self.run_gate([], {"total_count": 12, "incomplete_results": False, "items": []})
         self.assertIs(result["outputs"]["relinker"], True)
@@ -174,6 +179,11 @@ class RelinkerEligibilityTests(unittest.TestCase):
         self.assertIs(result["outputs"]["relinker"], False)
         self.assertIs(result["outputs"]["write-watch"], True)
         self.assertEqual(result["calls"], [])
+
+    def test_write_watch_backing_test_runs_the_write_watch_job(self):
+        for path in ("core/libs/tests/WriteWatchBacking.cpp", "core/libs/tests/WriteWatch.cpp"):
+            with self.subTest(path=path):
+                self.assertIs(self.run_gate([], None, files=(path,))["outputs"]["write-watch"], True)
 
     def test_relinker_build_inputs_outside_the_relinker_run_the_relinker(self):
         for path in ("core/libs/nid/src/NidCompute.cpp", "core/libs/nid/src/Sha1.cpp",

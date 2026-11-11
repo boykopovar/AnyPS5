@@ -19,6 +19,8 @@ unless --summary names another file.
 
 Buffer-full markers report lost events even without a summary. Slice-based timings, waits and batch
 inventories then describe retained events only; untraced time is not evidence of idle time.
+The gpu thread's busy time is the union of its retained ranges within the frame window; the producer's summary
+and the per-slice inventories retain accumulated durations and can count overlapping work separately.
 
 A summary file written by APS5_TRACE_SUMMARY_EVERY (aps5-summary.jsonl, or any .jsonl) is digested as a table with
 one row per interval and a text sparkline of the frame p99 and of the GPU busy time per present; the lines of
@@ -66,7 +68,7 @@ class Trace:
         self.threads = {}
         self.slices = collections.defaultdict(list)
         self.presents = []
-        self.folded = collections.defaultdict(float)
+        self.folded = collections.defaultdict(list)
         self.batched = []
         self.losses = []
         if not isinstance(document, (list, dict)):
@@ -112,7 +114,8 @@ class Trace:
                     self.losses.append((tid, ts, lost))
             elif phase == "C":
                 tid = _event_tid(event, index)
-                self.folded[tid] += sum(_event_value(value, "args value", index) for value in _event_args(event, index).values())
+                self.folded[tid].append((_event_number(event, "ts", index),
+                    sum(_event_value(value, "args value", index) for value in _event_args(event, index).values())))
         self.presents.sort(key=lambda present: present[0])
         for slices in self.slices.values():
             slices.sort(key=lambda entry: (entry[0], -entry[1]))
@@ -122,7 +125,7 @@ class Trace:
                 while stack and start >= round(stack[-1][0] * 1000) + round(stack[-1][1] * 1000):
                     stack.pop()
                 entry[3] = len(stack)
-                entry[4] = any(is_wait(parent[2]) for parent in stack)
+                entry[4] = bool(stack and (stack[-1][4] or is_wait(stack[-1][2])))
                 stack.append(entry)
 
     def select_threads(self, names):
@@ -290,22 +293,30 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
         traced = 0.0
         waited = 0.0
         leaders = collections.Counter()
+        gpu = trace.name(tid) == "gpu"
+        covered_until = -math.inf
         for ts, dur, name, depth, nested in slices:
-            overlap = max(min(ts + dur, frames[-1][2]) - max(ts, frames[0][1]), 0.0) if frames else dur
+            waiting = is_wait(name)
+            begin = max(ts, frames[0][1]) if frames else ts
+            end = min(ts + dur, frames[-1][2]) if frames else ts + dur
+            overlap = max(end - begin, 0.0)
             if overlap > 0:
                 totals[name] += overlap
-                if depth == 0:
-                    traced += overlap
-                    if not is_wait(name):
-                        leaders[name] += overlap
-                if is_wait(name) and not nested:
+                if depth == 0 or gpu:
+                    contribution = max(end - max(begin, covered_until), 0.0) if gpu else overlap
+                    covered_until = max(covered_until, end)
+                    traced += contribution
+                    if contribution > 0 and not waiting:
+                        leaders[name] += contribution
+                if waiting and not nested:
                     waited += overlap
-            if is_wait(name) and not nested and (overlap > 0 or not frames):
+            if waiting and not nested and (overlap > 0 or not frames):
                 waits.append((overlap, name, trace.name(tid), max(ts, frames[0][1]) if frames else ts))
         threads.append({"thread": trace.name(tid), "busy_ms_per_frame": (traced - waited) / 1000.0 / count,
                         "wait_ms_per_frame": waited / 1000.0 / count,
                         "untraced_ms_per_frame": max(span_us - traced, 0.0) / 1000.0 / count,
-                        "folded_ms_per_frame": trace.folded.get(tid, 0.0) / count,
+                        "folded_ms_per_frame": sum(value for ts, value in trace.folded.get(tid, [])
+                                                   if not frames or frames[0][1] <= ts < frames[-1][2]) / count,
                         "busy_pct": 100.0 * (traced - waited) / span_us if span_us else 0.0,
                         "wait_pct": 100.0 * waited / span_us if span_us else 0.0,
                         "top": [{"name": name, "ms_per_frame": us / 1000.0 / count} for name, us in leaders.most_common(2)]})
@@ -475,6 +486,9 @@ def validate_interval(record):
             raise ValueError(f"{field} must be an object")
         for name, value in values.items():
             interval_number(value, f"{field}.{name}")
+    counts = record.get("owned_draw_counts", {})
+    if not isinstance(counts, dict) or any(not isinstance(name, str) or type(value) is not int or value < 0 for name, value in counts.items()):
+        raise ValueError("owned_draw_counts must map names to non-negative integers")
     if "trace_dropped" in record and type(record["trace_dropped"]) is not bool:
         raise ValueError("trace_dropped must be a boolean")
 
@@ -497,7 +511,7 @@ def digest_intervals(lines):
                      "frame_ms": line["frame_ms"], "gpu_busy_ms_per_present": line["gpu_busy_ms_per_present"],
                      "busiest_worker": {"thread": busiest[0], "pct": busiest[1]} if busiest else None,
                      "top_phase": {"name": largest[0], "ms_per_frame": largest[1]} if largest else None,
-                     "trace_dropped": line.get("trace_dropped", False)})
+                     "trace_dropped": line.get("trace_dropped", False), "owned_draw_counts": line.get("owned_draw_counts")})
     first = lines[0] if lines else {}
     keys = ("commit", "dirty", "env", "gpu", "driver", "os", "resolution",
             "cpu", "cpu_threads", "memory_mib", "title_id", "title", "content_version")
@@ -522,6 +536,11 @@ def markdown_intervals(result):
         phase = f"{row['top_phase']['name']} {row['top_phase']['ms_per_frame']:.1f}" if row["top_phase"] else "-"
         lines.append(f"| {index} | {row['start_s']:.0f}-{row['end_s']:.0f}{' (dropped)' if row['trace_dropped'] else ''} | {row['presents']} | {frame['p50']:.1f} | {frame['p90']:.1f} "
                      f"| {frame['p99']:.1f} | {frame['max']:.1f} | {row['gpu_busy_ms_per_present']:.1f} | {worker} | {table_cell(phase)} |")
+    count_names = sorted({name for row in rows for name in (row["owned_draw_counts"] or {})})
+    if count_names:
+        lines += ["", "| # | " + " | ".join(table_cell(name) for name in count_names) + " |", "|---|" + "---|" * len(count_names)]
+        for index, row in enumerate(rows, 1):
+            lines.append(f"| {index} | " + " | ".join(str(row["owned_draw_counts"].get(name, 0)) if row["owned_draw_counts"] is not None else "-" for name in count_names) + " |")
     p99 = [row["frame_ms"]["p99"] for row in rows]
     gpu = [row["gpu_busy_ms_per_present"] for row in rows]
     lines += ["", "```", f"p99 ms  {sparkline(p99)}  0-{max(p99):.1f}", f"gpu ms  {sparkline(gpu)}  0-{max(gpu):.1f}", "```"]
