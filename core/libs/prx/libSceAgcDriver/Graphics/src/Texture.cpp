@@ -262,6 +262,7 @@ struct LiveImages {
 };
 
 std::atomic<void (*)()> publishHookForTest{nullptr};
+std::atomic<void (*)()> flushingHookForTest{nullptr};
 
 LiveImages& Live() {
     static LiveImages live;
@@ -5064,6 +5065,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             throw;
         }
     }
+    if (const auto hook = flushingHookForTest.load(std::memory_order_acquire)) hook();
     std::exception_ptr failure;
     const auto previousReason = std::exchange(flushReason, reason);
     for (const auto& texture : flush) {
@@ -5107,6 +5109,10 @@ bool StorageTexture::hashedAtUnwatch(std::uint64_t address, std::size_t bytes) c
 
 void StorageTexture::SetPublishHookForTest(void (*hook)()) {
     publishHookForTest.store(hook, std::memory_order_release);
+}
+
+void StorageTexture::SetFlushingHookForTest(void (*hook)()) {
+    flushingHookForTest.store(hook, std::memory_order_release);
 }
 
 bool StorageTexture::UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {

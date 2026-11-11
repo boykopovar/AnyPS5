@@ -46,6 +46,7 @@ struct ImageOverwriteDispatch {
 [[nodiscard]] inline bool ImageOverwriteCovers(const ImageOverwrite& proof, const ImageOverwriteDispatch& dispatch, std::uint32_t width, std::uint32_t height) {
     if (!proof.proved) return false;
     for (std::uint32_t axis = 0; axis < 3; ++axis) {
+        if (dispatch.groups[axis] == 0u) return false;
         if ((proof.fullGroups & (1u << axis)) != 0u && dispatch.partialThreads[axis] != 0u) return false;
     }
     for (const auto& range : proof.ranges) {

@@ -578,7 +578,7 @@ std::optional<ImageOverwrite> ProveImage(const IrProgram& program, std::uint32_t
             }
             if (index == 2 || bound.scale != static_cast<std::int64_t>(proof.axes[index].tile)) return std::nullopt;
             for (std::size_t lane = 0; lane < prover.Lanes(); ++lane) {
-                if (store.atoms.active[lane] && bound.lane[lane] > store.coordinate[index].lane[lane]) return std::nullopt;
+                if (store.atoms.active[lane] && (bound.lane[lane] < 0 || bound.lane[lane] > store.coordinate[index].lane[lane])) return std::nullopt;
             }
             if (bound.reg != NoRegister) {
                 if (reg[index] != NoRegister && reg[index] != bound.reg) return std::nullopt;

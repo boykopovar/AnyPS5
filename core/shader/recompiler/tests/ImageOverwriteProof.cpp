@@ -194,6 +194,40 @@ void LooseBound() {
     Require(!kernel.Prove(image).proved, "a bound one texel ahead of the coordinate is proved to cover every texel below it");
 }
 
+void WrappingBound() {
+    Kernel kernel;
+    const auto image = kernel.Image(ImageResourceClass::Storage, true, false);
+    auto& x = kernel.Tiled(0, 3);
+    auto& behind = kernel.Emit(IrOpcode::ISub32, IrType::U32, {&x, &kernel.Immediate(5)});
+    auto& inX = kernel.Emit(IrOpcode::ULessThan32, IrType::Bool, {&behind, &kernel.Immediate(100)});
+    kernel.Store(image, x, kernel.Tiled(1, 3), inX);
+    Require(!kernel.Prove(image).proved, "a bound whose term wraps below zero for the first lanes is proved to cover them");
+}
+
+void EmptyGrid() {
+    Kernel kernel;
+    const auto image = kernel.Image(ImageResourceClass::Storage, true, false);
+    kernel.Store(image, kernel.Tiled(0, 3), kernel.Tiled(1, 3), kernel.Bool(true));
+    const auto& proof = kernel.Prove(image);
+    Require(proof.proved, "a store at the global thread id of every texel is not proved");
+    auto empty = Grid(200, 113);
+    empty.groups[2] = 0;
+    Require(!ImageOverwriteCovers(proof, empty, 1600, 900), "a dispatch with no groups on the third axis covers the image");
+}
+
+void FullGroupsPartialDispatch() {
+    Kernel kernel;
+    const auto image = kernel.Image(ImageResourceClass::Storage, true, false);
+    auto& inX = kernel.Emit(IrOpcode::ULessThan32, IrType::Bool, {&kernel.Builtin(StageInputKind::GlobalInvocationId, 0), &kernel.Builtin(StageInputKind::DispatchThreadLimit, 0)});
+    kernel.Store(image, kernel.Tiled(0, 3), kernel.Tiled(1, 3), inX);
+    const auto& proof = kernel.Prove(image);
+    Require(proof.proved && proof.fullGroups == 1u, "a store guarded by the dispatch's thread limit on x is not proved for full groups");
+    Require(ImageOverwriteCovers(proof, Grid(200, 113), 1600, 900), "a dispatch of full groups is refused");
+    auto partial = Grid(200, 113);
+    partial.partialThreads = {4, 0, 0};
+    Require(!ImageOverwriteCovers(proof, partial, 1600, 900), "a dispatch whose last group on x is partial covers the image");
+}
+
 void WrappedTruncation() {
     Kernel kernel;
     const auto image = kernel.Image(ImageResourceClass::Storage, true, false);
@@ -281,6 +315,9 @@ int main() {
         Branched(BranchCondition::ExecZero, false, false, "a store skipped on another mask is proved");
         WrappedTruncation();
         PackedCoordinates();
+        WrappingBound();
+        EmptyGrid();
+        FullGroupsPartialDispatch();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "image overwrite proof: %s\n", error.what());
         return 1;
