@@ -807,7 +807,6 @@ int APS5_VABI _ZN6icu_6817CanonicalIterator9setSourceERKNS_13UnicodeStringER10UE
 int APS5_VABI _ZN6icu_687UVector15insertElementAtEiiR10UErrorCode_nid_postfix();
 int APS5_VABI _ZNK6icu_6813UnicodeString5cloneEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_Jf4entCVZCU_nid_no_patch();
-int APS5_VABI unorm_compare_nid_postfix();
 int APS5_VABI _ZN6icu_686LocaleC1EPKcS2_S2_S2__nid_postfix();
 int APS5_VABI _ZN6icu_6813UnicodeString16getStaticClassIDEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_JpxcMELea4U_nid_no_patch();
