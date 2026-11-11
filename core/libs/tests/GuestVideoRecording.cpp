@@ -11,6 +11,7 @@ namespace {
 
 constexpr int StatusNone = 0;
 constexpr int InvalidArgument = static_cast<int>(0x80a80003);
+constexpr int Unavailable = static_cast<int>(0x80a80002);
 constexpr int NotOpen = static_cast<int>(0x80a80006);
 constexpr int NoVideoFormat = static_cast<int>(0x80a80008);
 constexpr int MinimumHeap = 0x1000;
@@ -69,6 +70,9 @@ int main() {
         Require(Query(RecordingParam(format)) == InvalidArgument, "an unknown video format was accepted");
     }
     Require(Query(RecordingParam(0)) == NoVideoFormat, "the option without a video format was accepted");
+    for (const std::uint32_t format : {0x1u, 0x2u, 0x10u, 0x11u, 0x28u, 0x40u, 0x41u}) {
+        Require(Query(RecordingParam(format)) == Unavailable, "a heap size was reported for a video format");
+    }
     for (const std::uint64_t size : {0x0ull, 0x8ull, 0xfull}) {
         VideoRecordingParam param = RecordingParam(1);
         param.size = size;
@@ -128,6 +132,9 @@ int main() {
     Require(sceVideoRecordingOpen("clip.mp4", &minimal, heap.data(), MinimumHeap - 1) == InvalidArgument, "the recorder opened with a heap smaller than QueryMemSize asks");
     VideoRecordingParam optionOnly = RecordingParam(0);
     Require(sceVideoRecordingOpen("clip.mp4", &optionOnly, heap.data(), static_cast<int>(heap.size())) == NoVideoFormat, "the recorder opened with the option and no format");
+    Require(sceVideoRecordingOpen("clip.mp4", &video, heap.data(), static_cast<int>(heap.size())) == Unavailable, "the recorder opened with valid parameters");
+    Require(sceVideoRecordingOpen("clip.mp4", &minimal, heap.data(), MinimumHeap) == Unavailable, "the recorder opened with minimal parameters");
+    Require(videoRecordingUnknown_iQS6DUtLybE() == Unavailable, "the unknown call did not report the recorder as unavailable");
     for (const std::uint8_t value : heap) Require(value == Sentinel, "the heap was written");
     Require(sceVideoRecordingGetStatus() == StatusNone, "a failed open changed the status");
     Require(sceVideoRecordingStart() == NotOpen, "a failed open left a recorder to start");

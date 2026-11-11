@@ -25,6 +25,7 @@ static_assert(offsetof(VideoRecordingParam2, format) == 36);
 namespace {
 constexpr int SceVideoRecordingStatusNone = 0;
 constexpr int ErrorInvalidArgument = static_cast<int>(0x80a80003);
+constexpr int ErrorUnavailable = static_cast<int>(0x80a80002);
 constexpr int ErrorNotOpen = static_cast<int>(0x80a80006);
 constexpr int ErrorNoVideoFormat = static_cast<int>(0x80a80008);
 constexpr int MinimumHeapSize = 0x1000;
@@ -141,8 +142,7 @@ int APS5_VABI sceVideoRecordingOpen(const char* path, const VideoRecordingParam*
  const int result = CheckParam(param);
  if (result < 0) return result;
  if (result == MinimumHeapSize && heapSize < MinimumHeapSize) return ErrorInvalidArgument;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return ErrorUnavailable;
 }
 
 int APS5_VABI sceVideoRecordingOpen2(const char* path, const VideoRecordingParam2* param, void* heap, int heapSize) {
@@ -162,8 +162,7 @@ std::int64_t APS5_VABI sceVideoRecordingQueryHddSize2(const VideoRecordingParam2
 
 int APS5_VABI sceVideoRecordingQueryMemSize(const VideoRecordingParam* param) {
  const int result = CheckParam(param);
- if (result == 0) NotImplemented_nid_no_patch("sceVideoRecordingQueryMemSize (heap size for a video format)");
- return result;
+ return result == 0 ? ErrorUnavailable : result;
 }
 
 int APS5_VABI sceVideoRecordingQueryMemSize2(const VideoRecordingParam2* param) {
@@ -218,8 +217,7 @@ int APS5_VABI sceVideoRecordingTerm(void) {
 
 APS5_EXPORT("iQS6DUtLybE", videoRecordingUnknown_iQS6DUtLybE);
 int APS5_VABI videoRecordingUnknown_iQS6DUtLybE(void) {
- NotImplemented_nid_no_patch("iQS6DUtLybE");
- return 0;
+ return ErrorUnavailable;
 }
 
 int APS5_VABI sceVideoRecordingGetCopyrightImageMemory() {
