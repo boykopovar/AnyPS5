@@ -4,6 +4,9 @@
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CompileBudget.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ShaderCachePrefetch.hpp"
+#include "ShaderCacheDirectory.hpp"
+#include "ShaderDiskCache.hpp"
 #include "BdaAbi.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
@@ -2770,6 +2773,15 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
 
 void VulkanDevice::startJournalReplay() {
     if (!state->journalReplayPending.exchange(false, std::memory_order_acq_rel)) return;
+    if (ShaderRecompiler::ShaderDiskCache::Enabled()) {
+        auto directory = ShaderRecompiler::ShaderDiskCache::EntryDirectory();
+#ifdef _WIN32
+        std::error_code error;
+        const auto native = ShaderRecompiler::NativeCachePath_nid_no_patch(directory, error);
+        if (!error) directory = native;
+#endif
+        StartShaderCachePrefetch(std::move(directory), Graphics::PipelineSwitch("APS5_SHADER_CACHE_PREFETCH_MIB", 512u) << 20u, 4u);
+    }
     state->journalReplay = Graphics::StartPipelineJournalReplay(graphicsContext(), Graphics::PipelineJournalDeviceFingerprint(state->properties), {[this](const ShaderRecompiler::RecompileResult& shader, bool pushConstants) { return ReplayComputePipeline(shader, pushConstants); }});
 }
 
