@@ -10,7 +10,9 @@
 #include <cstring>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -76,6 +78,34 @@ void CheckRetain(TRetain retain, std::size_t referenceOffset) {
     const std::int32_t finalCount = 4001;
     std::memcpy(expected.data() + offset, &finalCount, sizeof(finalCount));
     Require(Same(guarded, expected), "concurrent count or adjacent bytes changed");
+}
+
+void CheckVersionName() {
+    const std::array<std::pair<std::int32_t, const char*>, 10> cases = {{{0x0301, "TLSv1"},
+                                                                         {0x0302, "TLSv1.1"},
+                                                                         {0x0303, "TLSv1.2"},
+                                                                         {0x0304, "TLSv1.3"},
+                                                                         {0xFEFF, "DTLSv1"},
+                                                                         {0xFEFD, "DTLSv1.2"},
+                                                                         {0x0300, "unknown"},
+                                                                         {0x0305, "unknown"},
+                                                                         {0xFEFE, "unknown"},
+                                                                         {0, "unknown"}}};
+    for (const auto& [version, name] : cases) {
+        Guarded<LibreSsl3Ssl> guarded;
+        std::memset(&guarded, 0x5A, sizeof(guarded));
+        guarded.object.version = version;
+        const auto expected = Bytes(guarded);
+        Require(std::strcmp(SSL_get_version_nid_postfix(&guarded.object), name) == 0, "version name");
+        Require(Same(guarded, expected), "version name changed the connection");
+    }
+    bool threw = false;
+    try {
+        SSL_get_version_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null connection");
 }
 
 struct Versions {
@@ -280,6 +310,7 @@ void CheckX509Version() {
 int main() {
     CheckRetain<LibreSsl3Ssl>(SSL_up_ref_nid_postfix, 176);
     CheckRetain<LibreSsl3SslSession>(SSL_SESSION_up_ref_nid_postfix, 184);
+    CheckVersionName();
     CheckVersionBounds();
     CheckClientRandom();
     CheckContextTimeout();
