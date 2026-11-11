@@ -245,3 +245,23 @@ class EndpointValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "identity changed"):
             performance_bisect.validate_regression_endpoints(
                 baseline, {"median_fps": 50.0, "identity": dict(IDENTITY, gpu="Other")}, 5.0)
+
+
+class BisectSearchTests(unittest.TestCase):
+    def test_binary_search_returns_the_first_bad_and_previous_good_commit(self):
+        commits = [f"commit-{index}" for index in range(1, 8)]
+        baseline = {"median_fps": 60.0, "identity": IDENTITY}
+        values = {commit: 60.0 for commit in commits}
+        values.update({commit: 54.0 for commit in commits[4:]})
+
+        def measure(repo, worktree, results, recipe, commit):
+            return {"median_fps": values[commit], "identity": IDENTITY, "samples": []}
+
+        with patch.object(performance_bisect, "measure_commit", side_effect=measure) as measured:
+            first_bad, previous_good, samples = performance_bisect.find_first_bad_commit(
+                "repo", Path("worktree"), Path("results"), {"regression_pct": 5},
+                "good", baseline, "bad", commits)
+        self.assertEqual(first_bad, commits[4])
+        self.assertEqual(previous_good, commits[3])
+        self.assertLessEqual(measured.call_count, 4)
+        self.assertIn(previous_good, samples)
