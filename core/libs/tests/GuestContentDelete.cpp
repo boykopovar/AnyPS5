@@ -1,5 +1,6 @@
 #include "prx/libSceContentDelete/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -26,6 +27,9 @@ std::string LogicErrorMessage(TAction action) {
 int main() {
     Require(sceContentDeleteTerminate() == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteInitialize(nullptr) == static_cast<int>(0x809D5001u));
+    errno = 71;
+    Require(sceContentDeleteInitialize(reinterpret_cast<const ContentDeleteInitParam*>(0x10)) == static_cast<int>(0x809D5001u));
+    Require(errno == 71);
     Require(sceContentDeleteById(1) == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath("/user/av_contents/photo/a.png") == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath(nullptr) == static_cast<int>(0x809D5002u));

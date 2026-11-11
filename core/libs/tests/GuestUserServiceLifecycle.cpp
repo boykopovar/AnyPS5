@@ -225,6 +225,8 @@ void RequireNotInitialized() {
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(event.user_id == static_cast<int>(0xAAAAAAAAu));
     Require(sceUserServiceGetEvent(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceIsLoggedIn(USER_SERVICE_INITIAL_USER_ID) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceIsLoggedInWithoutLock(USER_SERVICE_INITIAL_USER_ID) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 }
 
 void RequireLoginOnce() {
@@ -311,6 +313,10 @@ int main() {
     Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
     Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
     RequireLoginOnce();
+    Require(sceUserServiceIsLoggedIn(USER_SERVICE_INITIAL_USER_ID) == 1);
+    Require(sceUserServiceIsLoggedInWithoutLock(USER_SERVICE_INITIAL_USER_ID) == 1);
+    Require(sceUserServiceIsLoggedIn(USER_SERVICE_INITIAL_USER_ID + 1) == 0);
+    Require(sceUserServiceIsLoggedIn(USER_SERVICE_USER_ID_INVALID) == 0);
 
     Require(sceUserServiceTerminate() == USER_SERVICE_OK);
     Require(sceUserServiceTerminate() == USER_SERVICE_ERROR_NOT_INITIALIZED);
@@ -326,6 +332,8 @@ int main() {
     Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
     Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
     Require(list.user_id[1] == USER_SERVICE_INITIAL_USER_ID + 1);
+    Require(sceUserServiceIsLoggedIn(USER_SERVICE_INITIAL_USER_ID + 1) == 1);
+    Require(sceUserServiceIsLoggedInWithoutLock(USER_SERVICE_INITIAL_USER_ID + 1) == 1);
 
     UserServiceSetUserConnected_nid_postfix(1, false);
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
@@ -333,6 +341,8 @@ int main() {
     Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
     Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
     Require(list.user_id[1] == USER_SERVICE_USER_ID_INVALID);
+    Require(sceUserServiceIsLoggedIn(USER_SERVICE_INITIAL_USER_ID + 1) == 0);
+    Require(sceUserServiceIsLoggedInWithoutLock(USER_SERVICE_INITIAL_USER_ID + 1) == 0);
 
     for (int i = 0; i < 50; ++i) {
         UserServiceSetUserConnected_nid_postfix(1, true);

@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
@@ -150,6 +151,27 @@ void LookupStack() {
     X509_STORE_free_nid_postfix(store);
 }
 
+void AddNullCrl() {
+    ERR_clear_error_nid_postfix();
+    auto* store = X509_STORE_new_nid_postfix();
+    Require(store != nullptr, "allocate a CRL test store");
+    std::array<unsigned char, sizeof(LibreSslX509Store)> before{};
+    std::memcpy(before.data(), store, before.size());
+    LibreSslPutError_nid_no_patch(8, 0xfff, 101);
+    LibreSslPutError_nid_no_patch(8, 0xfff, 102);
+    constexpr std::uint64_t firstError = 0x08fff065;
+    constexpr std::uint64_t lastError = 0x08fff066;
+    Require(X509_STORE_add_crl_nid_postfix(store, nullptr) == 0, "a null CRL returns zero");
+    Require(X509_STORE_add_crl_nid_postfix(reinterpret_cast<LibreSslX509Store*>(1), nullptr) == 0, "a null CRL does not access the store");
+    Require(ERR_peek_error_nid_postfix() == firstError, "a null CRL preserves the oldest queued error");
+    Require(ERR_get_error_nid_postfix() == (std::uint64_t{8} << 24 | std::uint64_t{0xfff} << 12 | 101)
+        && ERR_get_error_nid_postfix() == lastError && ERR_get_error_nid_postfix() == 0, "a null CRL preserves the full error queue");
+    Require(std::memcmp(before.data(), store, before.size()) == 0, "a null CRL leaves the store unchanged");
+    X509_STORE_free_nid_postfix(store);
+
+    RequireThrows([] { X509_STORE_add_crl_nid_postfix(reinterpret_cast<LibreSslX509Store*>(1), reinterpret_cast<void*>(1)); }, "a non-null CRL is unsupported before store access");
+}
+
 const char* Host(const LibreSslX509VerifyParam* param, int index) {
     const auto* hosts = static_cast<const Stack*>(param->id->hosts);
     return hosts && index < hosts->num ? hosts->data[index] : nullptr;
@@ -266,4 +288,5 @@ int main(int argc, char**) {
     Unsupported();
     Hosts();
     LookupStack();
+    AddNullCrl();
 }
