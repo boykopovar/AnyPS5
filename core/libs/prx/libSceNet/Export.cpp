@@ -349,8 +349,6 @@ struct Sock {
     bool connectRefused = false;
 #endif
     bool aborted = false;
-    bool sending_shut = false;
-    bool read_shut = false;
     bool oobInline = false;
     int reported_error = 0;
     int snd_buffer = 0;
@@ -701,11 +699,11 @@ int connect_within(NativeSocket native, const sockaddr* address, NativeLength le
 short closed_stream_events(const Sock& socket, short native, short requested) {
     if (socket.type != NET_SOCK_STREAM || (native & (POLLHUP | POLLERR)) != POLLHUP) return native;
     native = static_cast<short>(native | (requested & POLLRDNORM));
-    return socket.sending_shut ? native : static_cast<short>(native & ~POLLHUP);
+    return (socket.native->shutdownFlags.load() & KernelSocketPoll::SendShut) ? native : static_cast<short>(native & ~POLLHUP);
 }
 #elif defined(__APPLE__)
 short closed_stream_events(const Sock& socket, short native, short requested) {
-    if (socket.type != NET_SOCK_STREAM || (native & (POLLHUP | POLLERR)) != POLLHUP || socket.sending_shut) return native;
+    if (socket.type != NET_SOCK_STREAM || (native & (POLLHUP | POLLERR)) != POLLHUP || (socket.native->shutdownFlags.load() & KernelSocketPoll::SendShut)) return native;
     return static_cast<short>((native & ~POLLHUP) | (requested & POLLOUT));
 }
 #endif
@@ -866,7 +864,8 @@ int wait_for_local_address(int s, const Sock& socket, bool empty, int flags) {
         NativeLength length = sizeof(peer);
         if (::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&peer), &length) != 0) {
             const int error = native_error();
-            return !socket.connectAttempted && !socket.aborted && !socket.read_shut && error == NET_ENOTCONN ? error : 0;
+            const bool readShut = (socket.native->shutdownFlags.load() & KernelSocketPoll::ReceiveShut) != 0;
+            return !socket.connectAttempted && !socket.aborted && !readShut && error == NET_ENOTCONN ? error : 0;
         }
         WSAPOLLFD state{};
         state.fd = socket.native->value;
@@ -878,7 +877,7 @@ int wait_for_local_address(int s, const Sock& socket, bool empty, int flags) {
     }
     if (socket.bound) return 0;
     const bool named = has_local_address(socket.native->value);
-    if (!named && (socket.read_shut || empty)) return RECEIVE_NOTHING;
+    if (!named && ((socket.native->shutdownFlags.load() & KernelSocketPoll::ReceiveShut) || empty)) return RECEIVE_NOTHING;
     if (!named && (socket.native->nonblock || (flags & NET_MSG_DONTWAIT) != 0)) return NET_EAGAIN;
     const int timeout = socket.native->receiveTimeout;
     const auto deadline = timeout > 0
@@ -893,7 +892,7 @@ int wait_for_local_address(int s, const Sock& socket, bool empty, int flags) {
             lk.unlock();
             return waited ? wait_for_datagram(socket, deadline) : 0;
         }
-        if (it->second.read_shut) return RECEIVE_NOTHING;
+        if (it->second.native->shutdownFlags.load() & KernelSocketPoll::ReceiveShut) return RECEIVE_NOTHING;
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline) return NET_EAGAIN;
         g_cv.WaitUntil(lk, std::min(deadline, now + std::chrono::milliseconds(10)));
@@ -1137,6 +1136,9 @@ const KernelSocketPoll::Forwards g_socketForwards{
         const std::int64_t result = ReceiveForKernel(descriptor, buffer, length, flags, address, addressLength);
         *error = ErrorOf(result);
         return result;
+    },
+    [](int descriptor, int how) {
+        return ErrorOf(sceNetShutdown(descriptor, how));
     },
 };
 
@@ -1850,18 +1852,15 @@ int APS5_VABI sceNetShutdown(int s, int how) {
         socket = it->second;
     }
     const int error = ::shutdown(socket.native->value, how) == 0 ? 0 : native_error();
+    unsigned flags = 0;
+    if (how != 1) flags |= KernelSocketPoll::ReceiveShut;
+    if (error == 0 && how != 0) flags |= KernelSocketPoll::SendShut;
+    socket.native->shutdownFlags.fetch_or(flags);
     if (how != 1) {
         std::lock_guard lk(g_mutex);
-        const auto it = g_socks.find(s);
-        if (it != g_socks.end() && it->second.native == socket.native) it->second.read_shut = true;
         g_cv.NotifyAll();
     }
     if (error != 0) return fail(error);
-    if (how != 0) {
-        std::lock_guard lk(g_mutex);
-        const auto it = g_socks.find(s);
-        if (it != g_socks.end() && it->second.native == socket.native) it->second.sending_shut = true;
-    }
     return 0;
 }
 
