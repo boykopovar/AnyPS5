@@ -57,6 +57,18 @@ std::uint64_t Number(std::string_view text, int base = 10) {
     return number;
 }
 
+std::uint64_t ContentLength(std::string_view text) {
+    std::optional<std::uint64_t> length;
+    for (;;) {
+        const auto comma = text.find(',');
+        const auto number = Number(Trim(text.substr(0, comma)));
+        if (length && *length != number) throw HttpFailure("conflicting HTTP content lengths");
+        length = number;
+        if (comma == std::string_view::npos) return number;
+        text.remove_prefix(comma + 1);
+    }
+}
+
 std::optional<std::chrono::sys_seconds> HttpDate(const std::string& text) {
     if (text.size() != 29 || text[3] != ',' || text[4] != ' ' || text[7] != ' ' || text[11] != ' ' ||
         text[16] != ' ' || text[19] != ':' || text[22] != ':' || text.substr(25) != " GMT") return {};
@@ -400,7 +412,9 @@ struct HttpClientState : Aps5HttpClient {
                     const auto [name, value] = Field(field);
                     if (name != "content-range" && name != "content-length" && name != "content-encoding" && name != "transfer-encoding" && name != "location" && name != "etag" && name != "last-modified" && name != "date") continue;
                     const auto [found, inserted] = headers.emplace(name, value);
-                    if (!inserted && (name == "transfer-encoding" || found->second != value)) throw HttpFailure("conflicting HTTP headers");
+                    if (!inserted && name == "transfer-encoding") throw HttpFailure("repeated HTTP transfer coding fields");
+                    if (!inserted && found->second != value &&
+                        (name != "content-length" || ContentLength(found->second) != ContentLength(value))) throw HttpFailure("conflicting HTTP headers");
                 }
                 if (status < 100 || status >= 200) break;
                 if (status == 101) throw HttpFailure("HTTP upgrade is not a media file");
@@ -444,7 +458,7 @@ struct HttpClientState : Aps5HttpClient {
                     connection.Append(body, count);
                     if (!connection.Line().empty()) throw HttpFailure("invalid HTTP chunk terminator");
                 }
-            } else if (headers.contains("content-length")) connection.Append(body, Number(headers.at("content-length")));
+            } else if (headers.contains("content-length")) connection.Append(body, ContentLength(headers.at("content-length")));
             else connection.UntilClosed(body);
             if (empty) body.clear();
             auto responseEtag = std::move(trailerEtag);
