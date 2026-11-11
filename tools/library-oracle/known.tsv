@@ -1,11 +1,11 @@
-agcbuild_AcbAcquireMem_a	throw	the ACQUIRE_MEM encoding; #16855 and its follow-up
-agcbuild_AcbAcquireMem_b	diff	the ACQUIRE_MEM encoding; #16855 and its follow-up
-agcbuild_AcbAcquireMem_c	throw	the ACQUIRE_MEM encoding; #16855 and its follow-up
+agcbuild_AcbAcquireMem_a	throw	the ACQUIRE_MEM encoding; #18479
+agcbuild_AcbAcquireMem_b	diff	the ACQUIRE_MEM encoding; #18479
+agcbuild_AcbAcquireMem_c	throw	the ACQUIRE_MEM encoding; #18479
 agcbuild_AcbAtomicGds_a	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_AcbAtomicGds_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_AcbAtomicGds_c	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_AcbAtomicMem_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbAtomicMem_b	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_AcbAtomicMem_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_AcbAtomicMem_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbCondExec_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbCondExec_b	throw	AnyPS5 throws for arguments the console encodes
@@ -61,14 +61,14 @@ agcbuild_CbReleaseMem_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbReleaseMem_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbSetShRegisterRangeDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbSetUcRegisterRangeDirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbAcquireMem_a	throw	the ACQUIRE_MEM encoding; #16855 and its follow-up
-agcbuild_DcbAcquireMem_b	throw	the ACQUIRE_MEM encoding; #16855 and its follow-up
-agcbuild_DcbAcquireMem_c	throw	the ACQUIRE_MEM encoding; #16855 and its follow-up
+agcbuild_DcbAcquireMem_a	throw	the ACQUIRE_MEM encoding; #18479
+agcbuild_DcbAcquireMem_b	diff	the ACQUIRE_MEM encoding; #18479
+agcbuild_DcbAcquireMem_c	throw	the ACQUIRE_MEM encoding; #18479
 agcbuild_DcbAtomicGds_a	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicGds_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicGds_c	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicMem_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbAtomicMem_b	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbAtomicMem_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicMem_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbCondExec_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbCondExec_b	throw	AnyPS5 throws for arguments the console encodes
