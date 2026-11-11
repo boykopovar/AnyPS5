@@ -23071,10 +23071,6 @@ int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient24revertToProvisionalStateEPNS_
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient25setMainFrameDocumentReadyEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient26updateCachedDocumentLoaderERNS_14DocumentLoaderE() {
     NotImplemented_nid_no_patch(__func__);
 }
