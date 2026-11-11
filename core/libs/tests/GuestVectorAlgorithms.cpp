@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <vector>
 
 
@@ -432,6 +433,39 @@ static void CheckMaxValue() {
     Require(__std_max_8u_nid_postfix(repeated, repeated + 4) == 9);
 }
 
+template <typename Function>
+static void RequireInvalidRange(Function function, const void* first, const void* last) {
+    try {
+        function(first, last);
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    std::abort();
+}
+
+template <typename Element, typename Function>
+static void CheckFaultingRanges(Function function) {
+    const Element values[] = {5, 3, 7, 2};
+    const auto* bytes = reinterpret_cast<const unsigned char*>(values);
+    RequireInvalidRange(function, values + 2, values + 2);
+    RequireInvalidRange(function, nullptr, nullptr);
+    RequireInvalidRange(function, values + 3, values + 2);
+    RequireInvalidRange(function, values, bytes + 2 * sizeof(Element) + sizeof(Element) / 2);
+    RequireInvalidRange(function, values + 1, bytes + sizeof(Element) + sizeof(Element) - 1);
+    Require(function(values + 1, values + 2) == 3);
+}
+
+static void CheckInvalidRanges() {
+    CheckFaultingRanges<std::int32_t>(__std_min_4i_nid_postfix);
+    CheckFaultingRanges<std::uint32_t>(__std_min_4u_nid_postfix);
+    CheckFaultingRanges<std::int32_t>(__std_max_4i_nid_postfix);
+    CheckFaultingRanges<std::uint32_t>(__std_max_4u_nid_postfix);
+    CheckFaultingRanges<std::int64_t>(__std_min_8i_nid_postfix);
+    CheckFaultingRanges<std::uint64_t>(__std_min_8u_nid_postfix);
+    CheckFaultingRanges<std::int64_t>(__std_max_8i_nid_postfix);
+    CheckFaultingRanges<std::uint64_t>(__std_max_8u_nid_postfix);
+}
+
 int main() {
     CheckMinValue();
     CheckSizedHelpers();
@@ -444,5 +478,6 @@ int main() {
     CheckMaxValue();
     CheckReverseAndSwap();
     CheckSignedMin64Value();
+    CheckInvalidRanges();
     return 0;
 }

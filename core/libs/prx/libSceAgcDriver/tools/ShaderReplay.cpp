@@ -16,9 +16,11 @@
 #endif
 
 #include <cstdio>
+#include <cstdint>
 #include <exception>
 #include <fstream>
 #include <sstream>
+#include <span>
 #include <stdexcept>
 #include <string>
 
@@ -57,6 +59,34 @@ bool g_shaderFma = false;
 bool g_code = false;
 bool g_float16WidenNans = false;
 bool g_float16NarrowNans = false;
+
+bool OutputSpirv(const char* path, std::span<const std::uint32_t> spirv) {
+    if (g_spirv) {
+        std::string name(path);
+        name = name.substr(name.find_last_of("/\\") + 1) + ".spv";
+        std::ofstream file(name, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(spirv.data()), static_cast<std::streamsize>(spirv.size_bytes()));
+        file.close();
+        if (!file) {
+            std::printf("  could not write %s\n", name.c_str());
+            return false;
+        }
+    }
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    if (g_disassemble) {
+        spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_2);
+        std::string text;
+        if (!tools.Disassemble(spirv.data(), spirv.size(), &text, SPV_BINARY_TO_TEXT_OPTION_FRIENDLY_NAMES)) {
+            std::printf("  could not disassemble SPIR-V\n");
+            return false;
+        }
+        std::printf("%s\n", text.c_str());
+    }
+#else
+    if (g_disassemble) std::printf("  (--dis needs ANYPS5_ENABLE_SPIRV_TOOLS=ON)\n");
+#endif
+    return true;
+}
 
 bool Replay(const char* path) {
     auto request = ShaderRecompiler::RequestSerializer{}.Deserialize(ReadText(path));
@@ -178,8 +208,9 @@ bool Replay(const char* path) {
                 phase = "materialize";
                 const auto result = invocation->Materialize(*capture);
                 std::printf("  materialized: %zu SPIR-V words\n", result->spirv.size());
+                return OutputSpirv(path, result->spirv);
             }
-            return true;
+            return OutputSpirv(path, ShaderRecompiler::GetPreparedArtifact(*handle).spirv);
         } catch (const std::exception& error) {
             std::printf("  %s failed: %s\n", phase, FirstLine(error.what()).c_str());
             return false;
@@ -188,11 +219,6 @@ bool Replay(const char* path) {
     try {
         const auto result = ShaderRecompiler::Recompile(request.request);
         std::printf("  recompiled: %zu SPIR-V words\n", result.spirv.size());
-        if (g_spirv) {
-            std::string name(path);
-            name = name.substr(name.find_last_of("/\\") + 1) + ".spv";
-            std::ofstream(name, std::ios::binary).write(reinterpret_cast<const char*>(result.spirv.data()), static_cast<std::streamsize>(result.spirv.size() * sizeof(result.spirv[0])));
-        }
         if (g_memory) {
             for (const auto& binding : result.bindings) {
                 if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
@@ -203,16 +229,7 @@ bool Replay(const char* path) {
                 }
             }
         }
-#if ANYPS5_ENABLE_SPIRV_TOOLS
-        if (g_disassemble) {
-            spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_2);
-            std::string text;
-            if (tools.Disassemble(result.spirv.data(), result.spirv.size(), &text, SPV_BINARY_TO_TEXT_OPTION_FRIENDLY_NAMES)) std::printf("%s\n", text.c_str());
-        }
-#else
-        if (g_disassemble) std::printf("  (--dis needs ANYPS5_ENABLE_SPIRV_TOOLS=ON)\n");
-#endif
-        return true;
+        return OutputSpirv(path, result.spirv);
     } catch (const std::exception& error) {
         std::printf("  recompile failed: %s\n", FirstLine(error.what()).c_str());
         return false;

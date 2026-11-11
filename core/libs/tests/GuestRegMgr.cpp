@@ -8,21 +8,7 @@
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-template <typename TCall>
-static bool ReportsNotImplemented(const char* name, TCall call) {
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()) == std::string(name) + " not implemented";
-    }
-    return false;
-}
-
 int main() {
-    std::int32_t value = 0;
-    Require(ReportsNotImplemented("sceRegMgrNonSysGetInt", [&] { sceRegMgrNonSysGetInt(0, 0, &value); }));
-    Require(ReportsNotImplemented("sceRegMgrNonSysGetInt", [&] { sceRegMgrNonSysGetInt(-1, 1, nullptr); }));
-
     int32_t intVal = 0;
     char strBuf[64] = {};
     uint8_t binBuf[32] = {};
@@ -84,6 +70,33 @@ int main() {
     Require(sceRegMgrSetStr(static_cast<int32_t>(0xC0808001u), "hi", 3) == 0);
     std::memset(strBuf, 0, sizeof(strBuf));
     Require(sceRegMgrGetStr(3229646849, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "hi") == 0);
+
+    Require(sceRegMgrNonSysGetInt(999999, 0, nullptr) == static_cast<int>(0x800D0202));
+    intVal = 0x55AA;
+    Require(sceRegMgrNonSysGetInt(999999, 0, &intVal) == static_cast<int>(0x80820002));
+    Require(intVal == 0x55AA);
+    Require(sceRegMgrNonSysSetInt(0x3000, 7, 0x1234) == 0);
+    Require(sceRegMgrNonSysGetInt(0x3000, 9, &intVal) == 0 && intVal == 0x1234);
+    Require(sceRegMgrNonSysSetStr(0x3001, 3, "abc", 3) == 0);
+    Require(sceRegMgrNonSysGetStr(0x3001, 3, nullptr, 8) == static_cast<int>(0x800D0202));
+    Require(sceRegMgrNonSysGetStr(0x3001, 3, strBuf, 0x801) == static_cast<int>(0x800D0208));
+    Require(sceRegMgrNonSysGetStr(0x3001, 3, strBuf, 0) == static_cast<int>(0x80820004));
+    std::memset(strBuf, 0, sizeof(strBuf));
+    Require(sceRegMgrNonSysGetStr(0x3001, 3, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "abc") == 0);
+    Require(sceRegMgrNonSysSetBin(0x3002, 0, data, sizeof(data)) == 0);
+    Require(sceRegMgrNonSysGetBin(0x3002, 0, nullptr, 8) == static_cast<int>(0x800D0202));
+    Require(sceRegMgrNonSysGetBin(0x3002, 0, binBuf, 0x801) == static_cast<int>(0x800D0208));
+    Require(sceRegMgrNonSysGetBin(0x3002, 0, binBuf, 0) == static_cast<int>(0x80820004));
+    std::memset(binBuf, 0, sizeof(binBuf));
+    Require(sceRegMgrNonSysGetBin(0x3002, 0, binBuf, sizeof(binBuf)) == 0);
+    Require(std::memcmp(binBuf, data, sizeof(data)) == 0);
+    Require(sceRegMgrNonSysSetStr(0x3003, 0, nullptr, 4) == static_cast<int>(0x800D0202));
+    Require(sceRegMgrNonSysSetBin(0x3003, 0, nullptr, 4) == static_cast<int>(0x800D0202));
+    Require(sceRegMgrNonSysSetStr(0x3003, 0, "x", 0x801) == static_cast<int>(0x800D0208));
+    Require(sceRegMgrNonSysSetBin(0x3003, 0, data, 0x801) == static_cast<int>(0x800D0208));
+    Require(sceRegMgrCheckError() == 0);
+    Require(sceRegMgrNonSysCheckError() == 0);
+    Require(sceRegMgrIsInitOK() == 1);
 
     return 0;
 }
