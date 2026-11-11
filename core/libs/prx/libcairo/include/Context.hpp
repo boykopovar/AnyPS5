@@ -25,4 +25,21 @@ void APS5_VABI cairo_user_to_device(CairoContext* context, double* x, double* y)
 void APS5_VABI cairo_user_to_device_distance(CairoContext* context, double* dx, double* dy);
 void APS5_VABI cairo_device_to_user(CairoContext* context, double* x, double* y);
 void APS5_VABI cairo_device_to_user_distance(CairoContext* context, double* dx, double* dy);
+
+void APS5_VABI cairo_set_antialias(CairoContext* context, int antialias);
+int APS5_VABI cairo_get_antialias(CairoContext* context);
+void APS5_VABI cairo_set_fill_rule(CairoContext* context, int fillRule);
+int APS5_VABI cairo_get_fill_rule(CairoContext* context);
+void APS5_VABI cairo_set_line_cap(CairoContext* context, int cap);
+int APS5_VABI cairo_get_line_cap(CairoContext* context);
+void APS5_VABI cairo_set_line_join(CairoContext* context, int join);
+int APS5_VABI cairo_get_line_join(CairoContext* context);
+void APS5_VABI cairo_set_line_width(CairoContext* context, double width);
+double APS5_VABI cairo_get_line_width(CairoContext* context);
+void APS5_VABI cairo_set_miter_limit(CairoContext* context, double limit);
+double APS5_VABI cairo_get_miter_limit(CairoContext* context);
+void APS5_VABI cairo_set_dash(CairoContext* context, const double* dashes,
+                             int numDashes, double offset);
+void APS5_VABI cairo_get_dash(CairoContext* context, double* dashes, double* offset);
+int APS5_VABI cairo_get_dash_count(CairoContext* context);
 }

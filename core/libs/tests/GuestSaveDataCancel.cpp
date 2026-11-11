@@ -36,14 +36,29 @@ int main() {
         return 1;
     }
     const bool reported = ReportsNotImplemented(0);
+    if (!reported) return 1;
+
+    if (sceSaveDataInitialize3(nullptr) != 0) {
+        std::fprintf(stderr, "SaveData did not initialize nested session\n");
+        return 1;
+    }
+    if (!ReportsNotImplemented(1)) return 1;
+
+    if (sceSaveDataTerminate() != 0) {
+        std::fprintf(stderr, "SaveData nested session did not terminate\n");
+        return 1;
+    }
+    if (!ReportsNotImplemented(2)) return 1;
+
     if (sceSaveDataTerminate() != 0) {
         std::fprintf(stderr, "SaveData did not terminate\n");
         return 1;
     }
-    if (!reported) return 1;
-    if (sceSaveDataCancel(0) != SaveDataErrorNotInitialized) {
-        std::fprintf(stderr, "sceSaveDataCancel after termination did not report not initialized\n");
-        return 1;
+    for (const std::uint32_t argument : {0u, 1u, 2u, 0x1000u, 0xffffffffu}) {
+        if (sceSaveDataCancel(argument) != SaveDataErrorNotInitialized) {
+            std::fprintf(stderr, "sceSaveDataCancel(%#x) after final termination did not report not initialized\n", argument);
+            return 1;
+        }
     }
     return 0;
 }

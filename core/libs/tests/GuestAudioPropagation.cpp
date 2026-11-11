@@ -1,4 +1,5 @@
 #include "prx/libSceAudioPropagation/include/Api.hpp"
+#include <cerrno>
 #include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 
 #include <atomic>
@@ -179,6 +180,13 @@ int main() {
     Require(memory.size_gpu_mem == 0 && memory.p_cpu_mem == nullptr && memory.p_gpu_mem == nullptr, "query wrote more than the sizes");
     Require(sceAudioPropagationSystemQueryMemory(nullptr, &memory) == AudioPropagation::ErrorNullPointer, "null options");
     Require(sceAudioPropagationSystemQueryMemory(&options, nullptr) == AudioPropagation::ErrorNullPointer, "null memory");
+    errno = 71;
+    Require(sceAudioPropagationSystemQueryMemory(&options, reinterpret_cast<AudioPropagationSystemMemory*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable memory");
+    Require(errno == 71, "errno preserved");
+    auto badOptionsMemory = Memory();
+    errno = 71;
+    Require(sceAudioPropagationSystemQueryMemory(reinterpret_cast<const AudioPropagation::SystemOptions*>(0x10), &badOptionsMemory) == AudioPropagation::ErrorNullPointer, "unreadable options");
+    Require(errno == 71, "errno preserved for unreadable options");
     auto wrong = Memory();
     wrong.desc.size = 0x28;
     Require(sceAudioPropagationSystemQueryMemory(&options, &wrong) == static_cast<std::int32_t>(0x8A700007), "wrong descriptor size");
@@ -561,10 +569,15 @@ int main() {
     Require(sceAudioPropagationSystemDestroy(system) == 0, "destroy after address reuse failed");
 
     Require(sceAudioPropagationSystemLock(0) == AudioPropagation::ErrorInvalidHandle, "system lock invalid handle");
+    Require(sceAudioPropagationSystemLock(0xdeadbeef) == AudioPropagation::ErrorInvalidHandle, "system lock non-zero invalid handle");
+    Require(sceAudioPropagationSystemUnlock(0) == AudioPropagation::ErrorInvalidHandle, "system unlock invalid handle");
+    Require(sceAudioPropagationSystemUnlock(0xdeadbeef) == AudioPropagation::ErrorInvalidHandle, "system unlock non-zero invalid handle");
 
     ReportProbe probe{};
     AudioPropagation::ReportRegistration* registration = nullptr;
+    Require(sceAudioPropagationReportRegisterHandler(-1, CaptureReport, &probe, &registration) == -4, "negative report category");
     Require(sceAudioPropagationReportRegisterHandler(2, CaptureReport, &probe, &registration) == -4, "invalid report category");
+    Require(sceAudioPropagationReportRegisterHandler(3, CaptureReport, &probe, &registration) == -4, "out of bounds report category");
     Require(sceAudioPropagationReportRegisterHandler(0, nullptr, &probe, &registration) == -2, "null report handler");
     Require(sceAudioPropagationReportRegisterHandler(0, CaptureReport, &probe, &registration) == 0 && registration, "report handler registration");
     Require(sceAudioPropagationReportApi(0, 0x1234, -7, 9, "sceAudioPropagationTest", "%d %s %f", 42, "ok", 3.25) == 0, "report dispatch");
@@ -572,6 +585,7 @@ int main() {
     Require(sceAudioPropagationReportUnregisterHandler(registration) == 0, "report handler unregister");
     Require(sceAudioPropagationReportUnregisterHandler(registration) == -1, "duplicate report handler unregister");
     Require(sceAudioPropagationReportUnregisterHandler(nullptr) == -1, "null report registration");
+    Require(sceAudioPropagationReportUnregisterHandler(reinterpret_cast<AudioPropagation::ReportRegistration*>(0xdeadbeef)) == -1, "invalid pointer report registration");
 
     MixedReportProbe firstMixed{};
     MixedReportProbe secondMixed{};

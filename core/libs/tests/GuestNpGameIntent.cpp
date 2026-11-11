@@ -35,6 +35,7 @@ int main() {
     constexpr int kLauncherInvalidArgument = -2141898236;
     constexpr int kLauncherNotInitialized = -2141898238;
 
+    Require(sceNpGameIntentInitialize(nullptr) == kInvalidArgument, "initialization with a null parameter must report invalid argument");
     Require(Throws<std::invalid_argument>([] { sceNpGameIntentInitParamInit(nullptr); }),
             "null param init did not throw");
 
