@@ -59,6 +59,21 @@ static void Require(bool value, std::source_location location = std::source_loca
 }
 constexpr int StandardExceptions = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
 
+static void CheckLdexpSpecialValues() {
+    constexpr double infinity = std::numeric_limits<double>::infinity();
+    Require(ldexp_nid_postfix(1., 10) == 1024. && ldexp_nid_postfix(-1.5, 3) == -12. && ldexp_nid_postfix(3., -1) == 1.5);
+    Require(ldexp_nid_postfix(5., 0) == 5.);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(0., 1000)) == 0);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(-0., -1000)) == 0x8000000000000000ull);
+    Require(ldexp_nid_postfix(infinity, -5) == infinity && ldexp_nid_postfix(-infinity, -5) == -infinity);
+    Require(std::isnan(ldexp_nid_postfix(std::numeric_limits<double>::quiet_NaN(), 3)));
+    Require(ldexp_nid_postfix(1., 2000) == infinity && ldexp_nid_postfix(-1., 2000) == -infinity);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(1., -2000)) == 0);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(-1., -2000)) == 0x8000000000000000ull);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(1., -1074)) == 1);
+    Require(ldexp_nid_postfix(0x1p-1074, 1074) == 1.);
+}
+
 static void CheckSquareRoot() {
     Require(sqrt_nid_postfix(4.) == 2. && sqrtf_nid_postfix(6.25f) == 2.5f);
     Require(std::bit_cast<std::uint64_t>(sqrt_nid_postfix(2.)) == 0x3ff6a09e667f3bcdull);
@@ -1067,6 +1082,59 @@ static void CheckExpConsoleBits() {
         errno = 1234;
         Require(std::bit_cast<std::uint64_t>(exp_nid_postfix(std::bit_cast<double>(item.input))) == item.expected);
         Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+
+static void CheckErfConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t error;
+        std::uint64_t complement;
+        int complementErrno;
+    } cases[] = {
+        {0x0000000000000000ull, 0x0000000000000000ull, 0x3ff0000000000000ull, 0},
+        {0x8000000000000000ull, 0x8000000000000000ull, 0x3ff0000000000000ull, 0},
+        {0x0000000000000001ull, 0x0000000000000001ull, 0x3ff0000000000000ull, 0},
+        {0x007fffffffffffffull, 0x00820dd750429b6cull, 0x3ff0000000000000ull, 0},
+        {0x0080000000000000ull, 0x00820dd750429b6dull, 0x3ff0000000000000ull, 0},
+        {0x3c6fffffffffffffull, 0x3c720dd750429b6cull, 0x3ff0000000000000ull, 0},
+        {0x3c70000000000000ull, 0x3c720dd750429b6dull, 0x3ff0000000000000ull, 0},
+        {0x3e2fffffffffffffull, 0x3e320dd750429b6cull, 0x3feffffffdbe4516ull, 0},
+        {0x3e30000000000000ull, 0x3e320dd750429b6dull, 0x3feffffffdbe4516ull, 0},
+        {0x3fcfffffffffffffull, 0x3fd1af54e232d608ull, 0x3fe728558ee694fcull, 0},
+        {0x3fd0000000000000ull, 0x3fd1af54e232d609ull, 0x3fe728558ee694fcull, 0},
+        {0x3feaffffffffffffull, 0x3fe88d1cd474a2e0ull, 0x3fcdcb8cae2d7480ull, 0},
+        {0x3feb000000000000ull, 0x3fe88d1cd474a2e0ull, 0x3fcdcb8cae2d747eull, 0},
+        {0xbfeb000000000000ull, 0xbfe88d1cd474a2e0ull, 0x3ffc468e6a3a5170ull, 0},
+        {0x3ff0000000000000ull, 0x3feaf767a741088bull, 0x3fc4226162fbddd5ull, 0},
+        {0x3ff3ffffffffffffull, 0x3fed8865d98abe00ull, 0x3fb3bcd133aa0fffull, 0},
+        {0x3ff4000000000000ull, 0x3fed8865d98abe00ull, 0x3fb3bcd133aa0ffcull, 0},
+        {0x4006db6cffffffffull, 0x3fefff9031ef839bull, 0x3f0bf3841f194ad8ull, 0},
+        {0x4006db6d00000000ull, 0x3fefff9031ef839bull, 0x3f0bf3841f194ac3ull, 0},
+        {0x4006db6e00000000ull, 0x3fefff903243cbcdull, 0x3f0bf36f0d0cbb06ull, 0},
+        {0x4017ffffffffffffull, 0x3ff0000000000000ull, 0x3c78cf81557d2101ull, 0},
+        {0x4018000000000000ull, 0x3ff0000000000000ull, 0x3c78cf81557d20b7ull, 0},
+        {0xc018000000000000ull, 0xbff0000000000000ull, 0x4000000000000000ull, 0},
+        {0x4024000000000000ull, 0x3ff0000000000000ull, 0x36a7d8a7f2a8a2d0ull, 0},
+        {0x403bffffffffffffull, 0x3ff0000000000000ull, 0x0000000000000000ull, ERANGE},
+        {0x403c000000000000ull, 0x3ff0000000000000ull, 0x0000000000000000ull, 0},
+        {0xc03c000000000000ull, 0xbff0000000000000ull, 0x4000000000000000ull, 0},
+        {0x7fefffffffffffffull, 0x3ff0000000000000ull, 0x0000000000000000ull, 0},
+        {0x7ff0000000000000ull, 0x3ff0000000000000ull, 0x0000000000000000ull, 0},
+        {0xfff0000000000000ull, 0xbff0000000000000ull, 0x4000000000000000ull, 0},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0x7ff8000000000001ull, 0},
+        {0x400ff61d33b37096ull, 0x3feffffff7632d41ull, 0x3e5139a57ee24a43ull, 0},
+        {0x3ff6c0af626eed43ull, 0x3fee94f29b14a377ull, 0x3fa6b0d64eb5c894ull, 0},
+        {0x400fbae9bd32efceull, 0x3feffffff51582c8ull, 0x3e55d4fa70605759ull, 0},
+        {0x3fa3ce527a209e11ull, 0x3fa65664b6c29cccull, 0x3fee9a99b493d633ull, 0},
+    };
+    for (const auto& item : cases) {
+        const double x = std::bit_cast<double>(item.input);
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(erf_nid_postfix(x)) == item.error && errno == 1234);
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(erfc_nid_postfix(x)) == item.complement);
+        Require(errno == (item.complementErrno != 0 ? item.complementErrno : 1234));
     }
 }
 
@@ -3716,12 +3784,22 @@ int main() {
     Require(rand_r_nid_postfix(&randomState) == 2147466840 && randomState == 2147466840u);
     randomState = 0xffffffffu;
     Require(rand_r_nid_postfix(&randomState) == 2147466840 && randomState == 2147466840u);
+    randomState = 0x3039u;
+    Require(rand_r_nid_postfix(&randomState) == 0xc5dee2f && rand_r_nid_postfix(&randomState) == 0x6ac05600);
+    randomState = 0x80000000u;
+    Require(rand_r_nid_postfix(&randomState) == 0x7fffbe58 && rand_r_nid_postfix(&randomState) == 0x6f29c50e);
     srand_nid_postfix(1);
     Require(rand_nid_postfix() == 408024109 && rand_nid_postfix() == 11635919 && rand_nid_postfix() == 196474438);
     srand_nid_postfix(0);
     Require(rand_nid_postfix() == 0 && rand_nid_postfix() == 408024109);
     srand_nid_postfix(0xffffffffu);
     Require(rand_nid_postfix() == 876841727 && rand_nid_postfix() == 830605684);
+    srand_nid_postfix(0x2au);
+    Require(rand_nid_postfix() == 0x3d720f6e && rand_nid_postfix() == 0x3800fec1 && rand_nid_postfix() == 0xf6ada53);
+    srand_nid_postfix(0x7fffffffu);
+    Require(rand_nid_postfix() == 0xdf8cb69 && rand_nid_postfix() == 0x30ba327f && rand_nid_postfix() == 0x2ebfb7d2);
+    srand_nid_postfix(0x80000000u);
+    Require(rand_nid_postfix() == 0x264abf96 && rand_nid_postfix() == 0x1919cb21 && rand_nid_postfix() == 0x39c42149);
     for (int step = 0; step < 1000; ++step) Require(static_cast<unsigned int>(rand_nid_postfix()) <= 0x3fffffffu);
     bool threw = false;
     try { rand_r_nid_postfix(nullptr); } catch (...) { threw = true; }
@@ -3829,6 +3907,7 @@ int main() {
     Require(ilogbf_nid_postfix(std::numeric_limits<float>::denorm_min()) == -149);
     Require(exp2_nid_postfix(-3.) == 0.125);
     Require(ldexp_nid_postfix(0.75, 4) == 12.);
+    CheckLdexpSpecialValues();
     CheckSquareRoot();
     CheckExp2Errno();
     CheckExactOperations();
@@ -3877,6 +3956,7 @@ int main() {
     CheckHypotConsoleBits();
     CheckPowConsoleBits();
     CheckExpConsoleBits();
+    CheckErfConsoleBits();
     CheckLog10ConsoleBits();
     CheckAcoshMsunBits();
     CheckAcoshLargeArguments();

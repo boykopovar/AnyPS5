@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cmath>
 #include <thread>
 #include <cstddef>
 #include <cstdint>
@@ -61,6 +62,7 @@ static void TestTypeIDs() {
     WKRenderLayerGetTypeID();
     WKRenderObjectGetTypeID();
     Require(WKSessionStateGetTypeID() == 19);
+    Require(WKSerializedScriptValueGetTypeID() == 20);
     Require(WKContextGetTypeID() == 85);
 }
 
@@ -1123,6 +1125,43 @@ static void TestBundleScriptWorld() {
     Require(threw);
 }
 
+static void TestBundleDOMWindowExtension() {
+    Require(WKBundleDOMWindowExtensionGetTypeID() == 118);
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    auto world = NKWebKit::Make<NKWebKit::BundleScriptWorld>();
+    world->name = NKWebKit::String::FromUtf8("CustomExtensionWorld");
+
+    auto* ext = WKBundleDOMWindowExtensionCreate(frame.Get(), world.Get());
+    Require(ext != nullptr);
+    Require(WKGetTypeID(ext) == WKBundleDOMWindowExtensionGetTypeID());
+    Require(WKBundleDOMWindowExtensionGetFrame(ext) == frame.Get());
+    Require(WKBundleDOMWindowExtensionGetScriptWorld(ext) == world.Get());
+    WKRelease(ext);
+
+    auto* emptyExt = WKBundleDOMWindowExtensionCreate(nullptr, nullptr);
+    Require(emptyExt != nullptr);
+    Require(WKGetTypeID(emptyExt) == WKBundleDOMWindowExtensionGetTypeID());
+    Require(WKBundleDOMWindowExtensionGetFrame(emptyExt) == nullptr);
+    Require(WKBundleDOMWindowExtensionGetScriptWorld(emptyExt) == nullptr);
+    WKRelease(emptyExt);
+
+    bool threw = false;
+    try {
+        WKBundleDOMWindowExtensionGetFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleDOMWindowExtensionGetScriptWorld(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultGetTypeID() == 120);
     auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
@@ -1217,6 +1256,18 @@ static void TestDownload() {
     bool threw = false;
     try {
         WKDownloadGetWasUserInitiated(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    Require(!download->isCancelled);
+    WKDownloadCancel(ref);
+    Require(download->isCancelled);
+
+    threw = false;
+    try {
+        WKDownloadCancel(nullptr);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -1651,6 +1702,58 @@ static void TestOpenPanelParameters() {
     WKRelease(notParameters);
 }
 
+static void TestNotification() {
+    Require(WKNotificationGetTypeID() == 76);
+
+    auto notif = NKWebKit::Make<NKWebKit::Notification>();
+    notif->title = u"Alert";
+    notif->body = u"Something happened";
+    notif->iconURL = u"https://example.com/icon.png";
+    notif->tag = u"tag1";
+    notif->lang = u"en-US";
+    notif->dir = u"ltr";
+    notif->notificationID = 42;
+
+    const void* ref = NKWebKit::ToRef(notif);
+
+    auto* title = WKNotificationCopyTitle(ref);
+    Require(WKStringIsEqualToUTF8CString(title, "Alert"));
+    WKRelease(title);
+
+    auto* body = WKNotificationCopyBody(ref);
+    Require(WKStringIsEqualToUTF8CString(body, "Something happened"));
+    WKRelease(body);
+
+    auto* icon = WKNotificationCopyIconURL(ref);
+    Require(WKGetTypeID(icon) == 21);
+    Require(WKStringIsEqualToUTF8CString(icon, "https://example.com/icon.png"));
+    WKRelease(icon);
+
+    auto* tag = WKNotificationCopyTag(ref);
+    Require(WKStringIsEqualToUTF8CString(tag, "tag1"));
+    WKRelease(tag);
+
+    auto* lang = WKNotificationCopyLang(ref);
+    Require(WKStringIsEqualToUTF8CString(lang, "en-US"));
+    WKRelease(lang);
+
+    auto* dir = WKNotificationCopyDir(ref);
+    Require(WKStringIsEqualToUTF8CString(dir, "ltr"));
+    WKRelease(dir);
+
+    Require(WKNotificationGetID(ref) == 42);
+
+    bool threw = false;
+    try {
+        WKNotificationCopyTitle(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    WKRelease(ref);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -1761,6 +1864,45 @@ static void TestInspector() {
     }
     Require(threw);
 }
+static void TestFrame() {
+    Require(WKFrameGetTypeID() == 55);
+
+    auto frame = NKWebKit::Make<NKWebKit::Frame>();
+    const void* ref = frame.Get();
+
+    Require(!WKFrameCanProvideSource(ref));
+    Require(!WKFrameIsDisplayingMarkupDocument(ref));
+    Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(!WKFrameIsMainFrame(ref));
+
+    frame->isDisplayingMarkupDocument = true;
+    Require(WKFrameCanProvideSource(ref));
+    Require(WKFrameIsDisplayingMarkupDocument(ref));
+    Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(!WKFrameIsMainFrame(ref));
+
+    frame->isDisplayingMarkupDocument = false;
+    frame->isDisplayingStandaloneImageDocument = true;
+    Require(!WKFrameCanProvideSource(ref));
+    Require(!WKFrameIsDisplayingMarkupDocument(ref));
+    Require(WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(!WKFrameIsMainFrame(ref));
+
+    frame->isDisplayingStandaloneImageDocument = false;
+    frame->isMainFrame = true;
+    Require(!WKFrameCanProvideSource(ref));
+    Require(!WKFrameIsDisplayingMarkupDocument(ref));
+    Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(WKFrameIsMainFrame(ref));
+
+    bool caught = false;
+    try {
+        WKFrameIsMainFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        caught = true;
+    }
+    Require(caught);
+}
 
 static int s_runLoopCallCount = 0;
 static void* s_runLoopReceivedContext = nullptr;
@@ -1837,6 +1979,101 @@ static void TestContext() {
     WKRelease(pathStr);
 }
 
+static void TestSerializedScriptValue() {
+    Require(WKSerializedScriptValueGetTypeID() == 20);
+    Require(WKSerializedScriptValueCreate(nullptr, nullptr, nullptr) == nullptr);
+    Require(WKSerializedScriptValueDeserialize(nullptr, nullptr, nullptr) == nullptr);
+
+    auto* ctx = JSGlobalContextCreate(nullptr);
+    Require(ctx != nullptr);
+    Require(WKSerializedScriptValueCreate(ctx, nullptr, nullptr) == nullptr);
+
+    auto* numVal = JSValueMakeNumber(ctx, 42.0);
+    auto* serNum = WKSerializedScriptValueCreate(ctx, numVal, nullptr);
+    Require(serNum != nullptr);
+    Require(WKGetTypeID(serNum) == WKSerializedScriptValueGetTypeID());
+    Require(WKSerializedScriptValueDeserialize(serNum, nullptr, nullptr) == nullptr);
+    auto* deNum = WKSerializedScriptValueDeserialize(serNum, ctx, nullptr);
+    Require(deNum != nullptr);
+    Require(JSValueIsNumber(ctx, deNum));
+    Require(JSValueToNumber(ctx, deNum, nullptr) == 42.0);
+
+    auto* retained = WKRetain(serNum);
+    Require(retained == serNum);
+    WKRelease(retained);
+    WKRelease(serNum);
+
+    auto* nanVal = JSValueMakeNumber(ctx, std::numeric_limits<double>::quiet_NaN());
+    auto* serNan = WKSerializedScriptValueCreate(ctx, nanVal, nullptr);
+    Require(serNan != nullptr);
+    auto* deNan = WKSerializedScriptValueDeserialize(serNan, ctx, nullptr);
+    Require(deNan != nullptr && JSValueIsNumber(ctx, deNan) && std::isnan(JSValueToNumber(ctx, deNan, nullptr)));
+    WKRelease(serNan);
+
+    auto* infVal = JSValueMakeNumber(ctx, std::numeric_limits<double>::infinity());
+    auto* serInf = WKSerializedScriptValueCreate(ctx, infVal, nullptr);
+    Require(serInf != nullptr);
+    auto* deInf = WKSerializedScriptValueDeserialize(serInf, ctx, nullptr);
+    Require(deInf != nullptr && JSValueIsNumber(ctx, deInf) && std::isinf(JSValueToNumber(ctx, deInf, nullptr)) && JSValueToNumber(ctx, deInf, nullptr) > 0);
+    WKRelease(serInf);
+
+    auto* negInfVal = JSValueMakeNumber(ctx, -std::numeric_limits<double>::infinity());
+    auto* serNegInf = WKSerializedScriptValueCreate(ctx, negInfVal, nullptr);
+    Require(serNegInf != nullptr);
+    auto* deNegInf = WKSerializedScriptValueDeserialize(serNegInf, ctx, nullptr);
+    Require(deNegInf != nullptr && JSValueIsNumber(ctx, deNegInf) && std::isinf(JSValueToNumber(ctx, deNegInf, nullptr)) && JSValueToNumber(ctx, deNegInf, nullptr) < 0);
+    WKRelease(serNegInf);
+
+    auto* boolVal = JSValueMakeBoolean(ctx, true);
+    auto* serBool = WKSerializedScriptValueCreate(ctx, boolVal, nullptr);
+    Require(serBool != nullptr);
+    auto* deBool = WKSerializedScriptValueDeserialize(serBool, ctx, nullptr);
+    Require(deBool != nullptr && JSValueIsBoolean(ctx, deBool) && JSValueToBoolean(ctx, deBool));
+    WKRelease(serBool);
+
+    auto* nullVal = JSValueMakeNull(ctx);
+    auto* serNull = WKSerializedScriptValueCreate(ctx, nullVal, nullptr);
+    Require(serNull != nullptr);
+    auto* deNull = WKSerializedScriptValueDeserialize(serNull, ctx, nullptr);
+    Require(deNull != nullptr && JSValueIsNull(ctx, deNull));
+    WKRelease(serNull);
+
+    auto* undefVal = JSValueMakeUndefined(ctx);
+    auto* serUndef = WKSerializedScriptValueCreate(ctx, undefVal, nullptr);
+    Require(serUndef != nullptr);
+    auto* deUndef = WKSerializedScriptValueDeserialize(serUndef, ctx, nullptr);
+    Require(deUndef != nullptr && JSValueIsUndefined(ctx, deUndef));
+    WKRelease(serUndef);
+
+    auto* jsJsonStr = JSStringCreateWithUTF8CString_nid_postfix("\"hello AnyPS5\"");
+    Require(jsJsonStr != nullptr);
+    auto* strVal = JSValueMakeFromJSONString(ctx, jsJsonStr);
+    JSStringRelease_nid_postfix(jsJsonStr);
+    Require(strVal != nullptr);
+    auto* serStr = WKSerializedScriptValueCreate(ctx, strVal, nullptr);
+    Require(serStr != nullptr);
+
+    auto* otherCtx = JSGlobalContextCreate(nullptr);
+    Require(otherCtx != nullptr);
+    auto* deStrOther = WKSerializedScriptValueDeserialize(serStr, otherCtx, nullptr);
+    Require(deStrOther != nullptr && JSValueIsString(otherCtx, deStrOther));
+    auto* outStr = JSValueToStringCopy(otherCtx, deStrOther, nullptr);
+    Require(outStr != nullptr && JSStringIsEqualToUTF8CString(outStr, "hello AnyPS5"));
+    JSStringRelease_nid_postfix(outStr);
+    JSGlobalContextRelease(otherCtx);
+
+    WKRelease(serStr);
+
+    NKWebKit::JSValueRef exc = nullptr;
+    auto* badSer = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::SerializedScriptValue>("invalid json {{{", NKWebKit::SerializedScriptValueKind::Json));
+    auto* deBad = WKSerializedScriptValueDeserialize(badSer, ctx, &exc);
+    Require(deBad == nullptr);
+    Require(exc != nullptr);
+    WKRelease(badSer);
+
+    JSGlobalContextRelease(ctx);
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -1854,6 +2091,7 @@ int main() {
     TestHitTestResult();
     TestBackForwardList();
     TestBundleScriptWorld();
+    TestBundleDOMWindowExtension();
     TestBundleHitTestResult();
     TestDownload();
     TestAXObject();
@@ -1863,12 +2101,15 @@ int main() {
     TestPermissionRequests();
     TestFrameHandle();
     TestOpenPanelParameters();
+    TestNotification();
     TestCertificateInfo();
     TestEmptyFrameLoaderClient();
     TestInspector();
     TestContext();
     TestSessionState();
+    TestSerializedScriptValue();
     TestRunLoop();
+    TestFrame();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }

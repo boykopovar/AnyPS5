@@ -703,6 +703,11 @@ short closed_stream_events(const Sock& socket, short native, short requested) {
     native = static_cast<short>(native | (requested & POLLRDNORM));
     return socket.sending_shut ? native : static_cast<short>(native & ~POLLHUP);
 }
+#elif defined(__APPLE__)
+short closed_stream_events(const Sock& socket, short native, short requested) {
+    if (socket.type != NET_SOCK_STREAM || (native & (POLLHUP | POLLERR)) != POLLHUP || socket.sending_shut) return native;
+    return static_cast<short>((native & ~POLLHUP) | (requested & POLLOUT));
+}
 #endif
 
 std::int64_t message_length(const NetMsghdr* message) {
@@ -2172,6 +2177,7 @@ constexpr int NET_SOCKINFO_F_NONBLOCK = 0x200000;
 constexpr int NET_SOCKINFO_F_IPV6 = 0x400000;
 constexpr int NET_SOCKINFO_TIME_WAIT = 0x40;
 constexpr int NET_SOCKINFO6_IPV46 = 0x1000;
+constexpr std::int8_t NET_SOCKINFO_DEFAULT_PRIORITY = 0x10;
 
 struct NetSockInfo {
     char name[32];
@@ -2270,6 +2276,7 @@ static int fill_sock_info(int s, NetSockInfo& record) {
     if (const int error = sock_buffer_size(socket, true, record.send_buffer_size)) return error;
     record.s = s;
     record.socket_type = static_cast<std::int8_t>(socket.type);
+    record.priority = NET_SOCKINFO_DEFAULT_PRIORITY;
     record.local_adr = local.sin_addr.s_addr;
     record.remote_adr = remote.sin_addr.s_addr;
     record.local_port = local.sin_port;
@@ -2674,6 +2681,11 @@ int APS5_VABI sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int
                 descriptors[index].revents = closed_stream_events(watches[index].socket, descriptors[index].revents, descriptors[index].events);
 #else
         const int ready_count = ::poll(descriptors.data(), descriptors.size(), wait_ms);
+#ifdef __APPLE__
+        for (std::size_t index = 0; index < descriptors.size(); ++index)
+            if (!watches[index].kernelOwner)
+                descriptors[index].revents = closed_stream_events(watches[index].socket, descriptors[index].revents, descriptors[index].events);
+#endif
 #endif
         if (ready_count < 0) return fail(native_error());
         {
