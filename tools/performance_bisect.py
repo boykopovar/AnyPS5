@@ -19,7 +19,8 @@ RECIPE_FIELDS = {"title_id", "build_commands", "build_dir", "games", "seconds", 
 
 
 def load_recipe(path):
-    recipe = json.loads(Path(path).read_text(encoding="utf-8"))
+    recipe_path = Path(path).resolve()
+    recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
     if not isinstance(recipe, dict):
         raise ValueError("recipe must be a JSON object")
     unknown = set(recipe) - RECIPE_FIELDS
@@ -38,8 +39,18 @@ def load_recipe(path):
     if not isinstance(build_dir, str) or not build_dir or Path(build_dir).is_absolute() or ".." in Path(build_dir).parts or Path(build_dir) == Path("."):
         raise ValueError("recipe.build_dir must be a non-root relative path inside the worktree")
     games = recipe.get("games")
-    if not isinstance(games, list) or not games or any(not isinstance(item, str) or not Path(item).is_dir() for item in games):
+    if not isinstance(games, list) or not games:
         raise ValueError("recipe.games must list existing extracted-game directories")
+    normalized_games = []
+    for game in games:
+        if not isinstance(game, str) or not game:
+            raise ValueError("recipe.games entries must be non-empty paths")
+        game_path = Path(game)
+        if not game_path.is_absolute():
+            game_path = recipe_path.parent / game_path
+        if not game_path.is_dir():
+            raise ValueError(f"recipe.games entry is not an existing directory: {game}")
+        normalized_games.append(str(game_path.resolve()))
     seconds = recipe.get("seconds", 60)
     if type(seconds) is not int or seconds < 20:
         raise ValueError("recipe.seconds must be an integer of at least 20")
@@ -55,15 +66,24 @@ def load_recipe(path):
     titles = recipe.get("titles", str(TOOLS_DIR / "titles.json"))
     if not isinstance(titles, str):
         raise ValueError("recipe.titles must be a path string")
-    if not Path(titles).is_file():
+    titles_path = Path(titles)
+    if not titles_path.is_absolute():
+        titles_path = recipe_path.parent / titles_path
+    if not titles_path.is_file():
         raise ValueError("recipe.titles must name an existing title catalog")
     content = recipe.get("content")
+    content_path = None
     if content is not None:
-        if not isinstance(content, str) or not Path(content).is_dir():
+        if not isinstance(content, str) or not content:
             raise ValueError("recipe.content must name an existing content directory")
-    recipe.update(build_dir=build_dir, seconds=seconds, repetitions=repetitions,
+        content_path = Path(content)
+        if not content_path.is_absolute():
+            content_path = recipe_path.parent / content_path
+        if not content_path.is_dir():
+            raise ValueError("recipe.content must name an existing content directory")
+    recipe.update(build_dir=build_dir, games=normalized_games, seconds=seconds, repetitions=repetitions,
                   regression_pct=float(regression_pct), max_spread_pct=float(max_spread_pct),
-                  titles=str(Path(titles).resolve()), content=str(Path(content).resolve()) if content is not None else None)
+                  titles=str(titles_path.resolve()), content=str(content_path.resolve()) if content_path is not None else None)
     return recipe
 
 
