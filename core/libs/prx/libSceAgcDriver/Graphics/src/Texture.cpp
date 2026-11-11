@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
@@ -2523,6 +2524,21 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     handedOver.clear();
     handedUnits.clear();
     const auto handOverKeys = alias == nullptr && !scoped ? clearHandOver() : std::nullopt;
+    if (!handOverKeys.has_value() && RuntimeSwitches::Set(RuntimeSwitch::TakeoverDiscard) && !DepthSurfaceOverlaps(context.device, scopeBegin, scopeBytes)) {
+        bool any = false;
+        bool foreign = true;
+        {
+            auto& pending = Pending();
+            std::lock_guard lock(pending.mutex);
+            for (auto* texture : pending.textures) {
+                if (texture == this || texture == alias.get() || !texture->overlaps(scopeBegin, scopeBytes)) continue;
+                any = true;
+                const auto& theirs = texture->descriptor;
+                if (theirs.width == descriptor.width && theirs.height == descriptor.height && theirs.tileMode == descriptor.tileMode && BytesPerElement(theirs.format) == BytesPerElement(descriptor.format)) foreign = false;
+            }
+        }
+        if (any && foreign) static_cast<void>(DiscardPendingInside(scopeBegin, scopeBytes));
+    }
     static const bool refreshOrdered = std::getenv("APS5_NO_REFRESH_GPU_ORDERED") == nullptr;
     const bool orderedEligible = refreshOrdered && !scoped && alias == nullptr && !handOverKeys.has_value() && descriptor.dccAddress == 0 && !layerPending.Any() && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr;
     bool orderedSkipped = false;
@@ -4269,6 +4285,16 @@ bool StorageTexture::overlaps(std::uint64_t address, std::size_t bytes) const {
     return address < descriptor.baseAddress + guestBytes && descriptor.baseAddress < address + bytes;
 }
 
+bool StorageTexture::pendingUnitsOverlap(std::uint64_t address, std::size_t bytes) const {
+    if (!overlaps(address, bytes)) return false;
+    for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
+        if (!layerPending[unit]) continue;
+        const auto unitBegin = layerBegin(unit);
+        if (unitBegin < address + bytes && address < unitBegin + layerBytes(unit)) return true;
+    }
+    return false;
+}
+
 bool StorageTexture::overlapsLive(std::uint64_t address, std::size_t bytes) const {
     return !released && guestBytes != 0 && overlaps(address, bytes);
 }
@@ -5544,8 +5570,10 @@ std::shared_ptr<StorageTexture> StorageTexture::FindPending(std::uint64_t addres
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     StorageTexture* containing = nullptr;
+    const bool units = RuntimeSwitches::Set(RuntimeSwitch::TakeoverDiscard);
     for (auto* texture : pending.textures) {
         if (texture->descriptor.baseAddress != address || texture->guestBytes < bytes) continue;
+        if (units && !texture->pendingUnitsOverlap(address, static_cast<std::size_t>(bytes))) continue;
         if (texture->guestBytes == bytes) return texture->weak_from_this().lock();
         // Containment, not equality: a descriptor of a chain's first mips (its own guestBytes are
         // shorter) is served by the chain's image; CanCopyFrom then checks the geometry.
@@ -5936,9 +5964,11 @@ bool StorageTexture::ScanPending(std::span<PendingQuery> queries) {
         if (query.end <= query.begin) continue;
         const auto bytes = static_cast<std::size_t>(query.end - query.begin);
         if (pending.textures.MayOverlap(query.begin, bytes)) {
+            const bool units = RuntimeSwitches::Set(RuntimeSwitch::TakeoverDiscard);
             for (const auto* texture : pending.textures) {
-                if (query.found == nullptr && texture->descriptor.baseAddress == query.begin && texture->guestBytes >= bytes) query.found = texture;
-                if (texture != query.except && texture->overlaps(query.begin, bytes)) query.overlaps = true;
+                const bool holds = !units || texture->pendingUnitsOverlap(query.begin, bytes);
+                if (query.found == nullptr && holds && texture->descriptor.baseAddress == query.begin && texture->guestBytes >= bytes) query.found = texture;
+                if (texture != query.except && holds && texture->overlaps(query.begin, bytes)) query.overlaps = true;
             }
         }
         for (const auto* texture : pending.flushing) {

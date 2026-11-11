@@ -441,6 +441,7 @@
 
 ### Opt-in draw paths
 
+- [Takeover discard](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp) (`APS5_TAKEOVER_DISCARD`) - opt-in and unsound: it drops the pending results of an image of another shape when a new image is refreshed over its memory, without proof that the new image's work overwrites those bytes before anything reads them. A pass that reads bytes the new image leaves unwritten reads the older guest bytes instead.
 - [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The Linux main-image page table it adds matches what Windows already does by default.
 - [Multi-submit count overflow and buffer validation](../../../core/libs/prx/libSceAgcDriver/Submit/src/Dcb.cpp) (libSceAgcDriver) - whether the console driver imposes an architectural submission packet limit or allows null buffer pointers with non-zero sizes in multi-submit arrays is unmeasured; AgcDriver::SubmitMany validates count against 32-bit pointer array bounds overflow and rejects null addresses for non-empty command buffers with a runtime exception.
 
