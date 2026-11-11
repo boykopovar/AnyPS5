@@ -436,8 +436,8 @@ const StyleStateBlock* Font::ApplyStyleFrame(const StyleStateBlock* base, const 
     } else {
         const std::uint32_t wantX = frame->hDpi == 0 ? temporary.dpi_x : frame->hDpi;
         const std::uint32_t wantY = frame->vDpi == 0 ? temporary.dpi_y : frame->vDpi;
-        temporary.dpi_x = wantX != 0 ? 0x48 : 0;
-        temporary.dpi_y = wantY != 0 ? 0x48 : 0;
+        temporary.dpi_x = wantX;
+        temporary.dpi_y = wantY;
     }
     if ((frame->flags1 & STYLE_FRAME_FLAG_SLANT) != 0) temporary.slant_ratio = frame->slantRatio;
     if ((frame->flags1 & STYLE_FRAME_FLAG_WEIGHT) != 0) {
