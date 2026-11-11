@@ -1,0 +1,15 @@
+add_library(libSceSisrSys SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceSisrSys PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceSisrSys)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_sisr_sys_tests ${LIBS_INCLUDE_DIR}/tests/GuestSisrSys.cpp)
+    target_include_directories(guest_sisr_sys_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sisr_sys_tests PRIVATE libSceSisrSys libc)
+    configure_windows_unwind(guest_sisr_sys_tests)
+    add_test(NAME guest_sisr_sys COMMAND guest_sisr_sys_tests)
+    if(WIN32)
+        set_tests_properties(guest_sisr_sys PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSisrSys>")
+    endif()
+endif()
