@@ -258,6 +258,21 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     REQUIRE(sceFiosStatSync(nullptr, file.c_str(), nullptr) == SCE_FIOS_ERROR_BAD_PTR);
 }
 
+static void CheckPathCompare() {
+    REQUIRE(sceFiosPathcmp("a/b", "a/b") == 0);
+    REQUIRE(sceFiosPathcmp("", "") == 0);
+    REQUIRE(sceFiosPathcmp("a", "b") < 0);
+    REQUIRE(sceFiosPathcmp("b", "a") > 0);
+    REQUIRE(sceFiosPathcmp("A", "a") < 0);
+    REQUIRE(sceFiosPathcmp("ab", "a") > 0);
+    REQUIRE(sceFiosPathcmp("a", "ab") < 0);
+    REQUIRE(sceFiosPathncmp("abcdef", "abcxyz", 3) == 0);
+    REQUIRE(sceFiosPathncmp("abcdef", "abcxyz", 4) < 0);
+    REQUIRE(sceFiosPathncmp("abcxyz", "abcdef", 4) > 0);
+    REQUIRE(sceFiosPathncmp("ab", "ac", 10) < 0);
+    REQUIRE(sceFiosPathncmp("abc", "xyz", 0) == 0);
+}
+
 static void CheckOperationLifecycle(const std::string& file) {
     const SceFiosOp op = sceFiosFileGetSize(nullptr, file.c_str());
     REQUIRE(op > 0);
@@ -748,6 +763,7 @@ int main() {
     }
     CheckInitialization();
     CheckQueries(directory.generic_string(), file);
+    CheckPathCompare();
     CheckOperationLifecycle(file);
     CheckCallbacks(file);
     CheckSuspension(file);
