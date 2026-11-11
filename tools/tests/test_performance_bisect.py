@@ -161,3 +161,42 @@ class CommandTests(unittest.TestCase):
             self.assertEqual(actual, build_dir)
             self.assertTrue(build_dir.is_dir())
 
+
+
+class TitleRunIntegrationTests(unittest.TestCase):
+    def test_title_runner_sample_is_parsed_from_its_output_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tools = root / "tools"
+            tools.mkdir()
+            fake_runner = tools / "title_run.py"
+            fake_runner.write_text("""import json, pathlib, subprocess, sys
+args = sys.argv[1:]
+out = pathlib.Path(args[args.index('--out') + 1])
+build = pathlib.Path(args[args.index('--build') + 1])
+commit = subprocess.check_output(['git', '-C', str(build.parent), 'rev-parse', '--short', 'HEAD'], text=True).strip()
+target = out / 'run' / 'summary.json'
+target.parent.mkdir(parents=True)
+target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'machine': {'os': 'Linux', 'gpu': 'GPU', 'driver': 'Driver', 'cpu': 'CPU'}, 'titles': {'PPSA00000': {'name': 'Example', 'version': '01.00', 'runs': [{'outcome': 'rendering', 'fps': 60.0}]}}}))
+""", encoding="utf-8")
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.name", "Test"], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.email", "test@example.invalid"], check=True)
+            (repo / "source").write_text("source", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "source"], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "test: source"], check=True)
+            commit = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+            game = root / "game"
+            game.mkdir()
+            titles = root / "titles.json"
+            titles.write_text("{}", encoding="utf-8")
+            recipe = {"title_id": "PPSA00000", "games": [str(game)], "titles": str(titles), "seconds": 20, "content": None}
+            result_dir = root / "sample"
+            with patch.object(performance_bisect, "TOOLS_DIR", tools):
+                sample = performance_bisect.run_sample(repo, repo / "build", result_dir, recipe, commit)
+            self.assertEqual(sample["fps"], 60)
+            self.assertEqual(sample["identity"]["gpu"], "GPU")
+            self.assertTrue((result_dir / "run" / "summary.json").is_file())
+
