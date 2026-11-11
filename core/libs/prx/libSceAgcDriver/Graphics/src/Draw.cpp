@@ -1083,7 +1083,7 @@ bool ValidationKey(const Context& context, std::span<const CompiledShader> shade
             }
             add(shader.stage);
             add(generated ? std::uint64_t{0} : program.PipelineVariantId());
-            add(shader.pushConstantOffset);
+            add(KeyedPushOffset(shader));
             add(program.pushConstants.size());
             add(program.bdaAbiVersion);
             add(program.vertexAttributes.size());
@@ -3197,7 +3197,7 @@ bool sameStages(std::span<const std::uint64_t> kept, std::span<const CompiledSha
     std::size_t at = 0;
     for (const auto& shader : shaders) {
         const auto identity = shader.program->Identity();
-        if (identity.Empty() || kept[at] != static_cast<std::uint64_t>(shader.stage) || kept[at + 1] != identity.low || kept[at + 2] != identity.high || kept[at + 3] != shader.pushConstantOffset) return false;
+        if (identity.Empty() || kept[at] != static_cast<std::uint64_t>(shader.stage) || kept[at + 1] != identity.low || kept[at + 2] != identity.high || kept[at + 3] != KeyedPushOffset(shader)) return false;
         at += 4;
     }
     return kept[at] == PushConstantStages(shaders);
@@ -3251,7 +3251,7 @@ void rememberShape(const Context& context, std::uint64_t shape, std::span<const 
     for (const auto& shader : shaders) {
         const auto identity = shader.program->Identity();
         if (identity.Empty()) return;
-        choice.stages.insert(choice.stages.end(), {static_cast<std::uint64_t>(shader.stage), identity.low, identity.high, shader.pushConstantOffset});
+        choice.stages.insert(choice.stages.end(), {static_cast<std::uint64_t>(shader.stage), identity.low, identity.high, KeyedPushOffset(shader)});
     }
     choice.stages.push_back(PushConstantStages(shaders));
     choice.bindings = input.bindings;

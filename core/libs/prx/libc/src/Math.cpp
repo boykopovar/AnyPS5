@@ -2948,9 +2948,58 @@ float APS5_VABI atanhf_nid_postfix(float x) {
     return std::signbit(x) ? -t : t;
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_sincos.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_sincos.c */
+/*-
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ * 
+ * s_sin.c and s_cos.c merged by Steven G. Kargl.  Descriptions of the
+ * algorithms are contained in the original files.
+ */
 void APS5_VABI sincos_nid_postfix(double x, double* sinp, double* cosp) {
-    *sinp = std::sin(x);
-    *cosp = std::cos(x);
+    const std::int32_t ix = HighWord(x) & 0x7fffffff;
+    if (ix <= 0x3fe921fb) {
+        if (ix < 0x3e400000 && static_cast<int>(x) == 0) {
+            *sinp = x;
+            *cosp = 1;
+            return;
+        }
+        *sinp = KernelSin(x, 0, 0);
+        *cosp = KernelCos(x, 0);
+        return;
+    }
+    if (ix >= 0x7ff00000) {
+        if (ix == 0x7ff00000) {
+            errno = EDOM;
+        }
+        *sinp = x - x;
+        *cosp = x - x;
+        return;
+    }
+    double y[2];
+    switch (RemPio2(x, y) & 3) {
+        case 0:
+            *sinp = KernelSin(y[0], y[1], 1);
+            *cosp = KernelCos(y[0], y[1]);
+            break;
+        case 1:
+            *sinp = KernelCos(y[0], y[1]);
+            *cosp = -KernelSin(y[0], y[1], 1);
+            break;
+        case 2:
+            *sinp = -KernelSin(y[0], y[1], 1);
+            *cosp = -KernelCos(y[0], y[1]);
+            break;
+        default:
+            *sinp = -KernelCos(y[0], y[1]);
+            *cosp = KernelSin(y[0], y[1], 1);
+    }
 }
 
 float APS5_VABI atanf_nid_postfix(float x) {
