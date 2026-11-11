@@ -1,6 +1,9 @@
 #include <cstdint>
 #include "prx/libharfbuzz/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "IcuScriptNames.hpp"
+
+#include <hb.h>
 
 extern "C" {
 
@@ -8,8 +11,10 @@ int APS5_VABI hb_ft_face_create_cached_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_icu_script_to_script_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint32_t APS5_VABI hb_icu_script_to_script_nid_postfix(std::int32_t scriptCode) {
+    if (scriptCode < 0 || static_cast<std::size_t>(scriptCode) >= HarfBuzz::IcuScriptNames.size()) return HB_SCRIPT_INVALID;
+    const auto name = HarfBuzz::IcuScriptNames[static_cast<std::size_t>(scriptCode)];
+    return hb_script_from_string(name.data(), static_cast<int>(name.size()));
 }
 
 std::uint32_t APS5_VABI hb_ot_tag_to_script_nid_postfix(std::uint32_t tag) {
@@ -56,10 +61,6 @@ std::uint32_t APS5_VABI hb_ot_tag_to_script_nid_postfix(std::uint32_t tag) {
     }
 
     return tag & ~0x20000000u;
-}
-
-int APS5_VABI hb_shape_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 }

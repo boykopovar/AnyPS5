@@ -192,6 +192,21 @@ int main() {
     Require(sceNpSessionSignalingActivateSession(contextId, activateSessionId, 0, &sessionParam, &activatedGroup) == Unavailable, "activate without network");
     Require(activatedGroup == 0xa5a5a5a5u, "a failed activation wrote a group id");
 
+    std::uint32_t requestGroup = 0xa5a5a5a5u;
+    std::uint32_t requestConnection = 0xa5a5a5a5u;
+    Require(sceNpSessionSignalingCreateJoinActivate(nullptr, &requestGroup, nullptr) == InvalidArgument, "create join activate accepted a null session id");
+    Require(sceNpSessionSignalingCreateJoinActivate(activateSessionId, nullptr, nullptr) == InvalidArgument, "create join activate accepted a null group id");
+    Require(sceNpSessionSignalingCreateJoinActivate(activateSessionId, &requestGroup, &requestConnection) == Unavailable, "create join activate without network");
+    Require(requestGroup == 0xa5a5a5a5u && requestConnection == 0xa5a5a5a5u, "a failed create join activate wrote an output");
+    const std::array<unsigned char, 8> joinParam = {1};
+    const std::array<unsigned char, 8> zeroMode{};
+    Require(sceNpSessionSignalingJoinActivate(nullptr, joinParam.data(), &requestGroup, nullptr) == InvalidArgument, "join activate accepted a null session id");
+    Require(sceNpSessionSignalingJoinActivate(activateSessionId, nullptr, &requestGroup, nullptr) == InvalidArgument, "join activate accepted a null parameter");
+    Require(sceNpSessionSignalingJoinActivate(activateSessionId, joinParam.data(), nullptr, nullptr) == InvalidArgument, "join activate accepted a null group id");
+    Require(sceNpSessionSignalingJoinActivate(activateSessionId, zeroMode.data(), &requestGroup, nullptr) == InvalidArgument, "join activate accepted a zero mode");
+    Require(sceNpSessionSignalingJoinActivate(activateSessionId, joinParam.data(), &requestGroup, &requestConnection) == Unavailable, "join activate without network");
+    Require(requestGroup == 0xa5a5a5a5u && requestConnection == 0xa5a5a5a5u, "a failed join activate wrote an output");
+
     const auto* peerAddressParam = reinterpret_cast<const SessionSignalingPeerAddress*>(peer);
     std::uint32_t connectionId = 0xa5a5a5a5u;
     Require(sceNpSessionSignalingActivateUser(contextId, nullptr, &connectionId) == InvalidArgument, "null activation peer address");
