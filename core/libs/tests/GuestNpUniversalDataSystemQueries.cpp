@@ -69,6 +69,12 @@ int main() {
     char tiny[2] = {'x', 'x'};
     CHECK(sceNpUniversalDataSystemEventToString(event, tiny, sizeof(tiny), nullptr) == 0 && tiny[0] == '{' && tiny[1] == '\0');
     CHECK(sceNpUniversalDataSystemDestroyEvent(event) == 0);
+
+    int udsHandle = -1;
+    CHECK(sceNpUniversalDataSystemCreateHandle(&udsHandle) == 0 && udsHandle != -1);
+    CHECK(sceNpUniversalDataSystemDestroyHandle(udsHandle) == 0);
+    CHECK(sceNpUniversalDataSystemAbortHandle(udsHandle) == 0);
+
     std::puts("UDS query tests passed");
     return 0;
 }

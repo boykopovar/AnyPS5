@@ -47,6 +47,7 @@ constexpr std::size_t MaxCertList = 280;
 constexpr std::size_t ReadAhead = 288;
 constexpr std::size_t MaxSendFragment = 296;
 constexpr std::size_t TicketKeys = 312;
+constexpr std::size_t ContextCertificate = 264;
 
 constexpr std::uint64_t ShouldNotHaveBeenCalled = 0x14FFF042;
 constexpr std::uint64_t InvalidTicketKeysLength = 0x14FFF145;
@@ -141,6 +142,11 @@ struct Fixture {
         Require(std::memcmp(actual.internal, expected.internal, InternalSize) == 0, location);
         Require(ERR_get_error_nid_postfix() == error, location);
         Require(ERR_get_error_nid_postfix() == 0, location);
+    }
+
+    void VerifyBytes(std::source_location location = std::source_location::current()) {
+        Require(std::memcmp(actual.ctx, expected.ctx, CtxSize) == 0, location);
+        Require(std::memcmp(actual.internal, expected.internal, InternalSize) == 0, location);
     }
 
     void Ctrl(int cmd, std::int64_t larg, void* parg, std::int64_t result, std::uint64_t error = 0, std::source_location location = std::source_location::current()) {
@@ -400,6 +406,29 @@ static void TestNullContext() {
     Require(ERR_get_error_nid_postfix() == 0);
 }
 
+static void TestCheckPrivateKey() {
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(2, 1, 2);
+    Require(SSL_CTX_check_private_key_nid_postfix(nullptr) == 0);
+    Require(ERR_get_error_nid_postfix() == 0x02001002);
+    Require(ERR_get_error_nid_postfix() == 0x14fff0b1);
+    Require(ERR_get_error_nid_postfix() == 0);
+
+    Fixture f;
+    f.SetInternal<void*>(ContextCertificate, nullptr);
+    LibreSslPutError_nid_no_patch(2, 1, 2);
+    Require(SSL_CTX_check_private_key_nid_postfix(f.Context()) == 0);
+    f.VerifyBytes();
+    Require(ERR_get_error_nid_postfix() == 0x02001002);
+    Require(ERR_get_error_nid_postfix() == 0x14fff0b1);
+    Require(ERR_get_error_nid_postfix() == 0);
+
+    Fixture noInternal;
+    noInternal.SetCtx<void*>(CtxInternal, nullptr);
+    RequireThrows([&] { SSL_CTX_check_private_key_nid_postfix(noInternal.Context()); });
+    noInternal.Verify(0, std::source_location::current());
+}
+
 static void TestNullInternal() {
     Fixture f;
     f.SetCtx<void*>(CtxInternal, nullptr);
@@ -448,6 +477,7 @@ int main() {
     TestSetVerify();
     TestSetSessionIdContext();
     TestNullContext();
+    TestCheckPrivateKey();
     TestNullInternal();
     TestAddClientCa();
     return 0;
