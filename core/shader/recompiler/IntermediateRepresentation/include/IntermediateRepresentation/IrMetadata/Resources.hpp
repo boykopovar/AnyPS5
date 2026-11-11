@@ -167,6 +167,10 @@ inline bool SamplesBaseLevelIfUnnormalized(const SamplerResource& sampler) {
     return (sampler.uses & (SamplerUseImplicitLod | SamplerUseGradient)) != 0u && (sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseImplicitLod | SamplerUseGradient | SamplerUseNonZeroLod | SamplerUseOffset)) == 0u && !sampler.depthCompare;
 }
 
+inline bool SamplesScaledIfUnnormalized(const SamplerResource& sampler) {
+    return sampler.table == NoTable && !sampler.depthCompare && (sampler.uses & SamplerUseNonZeroLod) != 0u && (sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseNonZeroLod | SamplerUseOffset)) == 0u;
+}
+
 inline bool MirrorsIfUnnormalized(const SamplerResource& sampler) {
     return sampler.table == NoTable && !sampler.depthCompare && sampler.uses != 0u && ((sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseOffset | SamplerUseNonZeroLod)) == 0u || SamplesBaseLevelIfUnnormalized(sampler));
 }

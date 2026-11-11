@@ -180,7 +180,7 @@ void FillTexture(std::span<std::uint8_t> texels, std::uint32_t levels) {
                 auto* texel = &texels[mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + x * 4u];
                 const auto value = TexelOf(level, static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
                 for (std::uint32_t component = 0; component < 4u; ++component) {
-                    texel[component] = level <= 1u ? static_cast<std::uint8_t>(value[component]) : OtherLevelTexel;
+                    texel[component] = level <= 1u ? static_cast<std::uint8_t>(value[component]) : static_cast<std::uint8_t>(OtherLevelTexel + level * 16u);
                 }
             }
         }
@@ -257,6 +257,7 @@ std::array<double, 4> Fetch(const SamplerCase& sampler, std::uint32_t level, std
     if (sampler.mirrorX && x < 0) x = -x - 1;
     if (sampler.mirrorY && y < 0) y = -y - 1;
     if (sampler.border && (x < 0 || x >= width || y < 0 || y >= height)) return {0.0, 0.0, 0.0, 0.0};
+    if (level > 1u) return {OtherLevelTexel + 16.0 * level, OtherLevelTexel + 16.0 * level, OtherLevelTexel + 16.0 * level, OtherLevelTexel + 16.0 * level};
     return TexelOf(level, std::clamp(x, 0, width - 1), std::clamp(y, 0, height - 1));
 }
 
@@ -276,7 +277,13 @@ std::array<double, 4> Reference(const SamplerCase& sampler, std::uint32_t level,
     return result;
 }
 
-void Check(const Program& program, const SamplerCase& sampler, std::uint32_t level, const char* image, const std::vector<Coordinate>& coordinates, const Samples& samples) {
+bool ScaledUnnormalized(const std::array<std::uint32_t, 4>& words) {
+    const auto clampX = words[0] & 7u;
+    const auto clampY = (words[0] >> 3u) & 7u;
+    return clampX != 1u && clampX != 3u && clampY != 1u && clampY != 3u && (words[2] & 0x3fffu) == 0u && ((words[2] >> 26u) & 3u) == 1u && ((words[2] >> 20u) & 3u) == ((words[2] >> 22u) & 3u) && ((words[2] >> 20u) & 3u) <= 1u && ((words[0] >> 29u) & 3u) == 0u;
+}
+
+void Check(const Program& program, const SamplerCase& sampler, const std::array<std::uint32_t, 3>& levels, const char* image, const std::vector<Coordinate>& coordinates, const Samples& samples) {
     Require(samples.size() == coordinates.size(), "image sample unnormalized: a dispatch lost samples");
     const double tolerance = sampler.linear ? 0.5 : 0.25;
     for (std::size_t index = 0; index < coordinates.size(); ++index) {
@@ -285,7 +292,7 @@ void Check(const Program& program, const SamplerCase& sampler, std::uint32_t lev
             const auto offset = program.offsets[instruction];
             const std::int32_t du = offset == Offset::Lane ? coordinate.du : offset == Offset::Constant ? ConstantOffsetU : 0;
             const std::int32_t dv = offset == Offset::Lane ? coordinate.dv : offset == Offset::Constant ? ConstantOffsetV : 0;
-            const auto expected = Reference(sampler, level, {coordinate.u + static_cast<float>(du), coordinate.v + static_cast<float>(dv)});
+            const auto expected = Reference(sampler, levels[instruction], {coordinate.u + static_cast<float>(du), coordinate.v + static_cast<float>(dv)});
             for (std::uint32_t component = 0; component < 4u; ++component) {
                 const double value = static_cast<double>(std::bit_cast<float>(samples[index][instruction * 4u + component])) * 255.0;
                 Require(std::fabs(value - expected[component]) <= tolerance, std::string(program.instructions[instruction]) + ", " + sampler.name + ", " + image + ": (" + std::to_string(coordinate.u) + ", " + std::to_string(coordinate.v) + ") offset (" + std::to_string(du) + ", " + std::to_string(dv) + ") component " + std::to_string(component) + " is " + std::to_string(value) + ", expected " + std::to_string(expected[component]));
@@ -324,36 +331,42 @@ int main() {
         const auto offsetCoordinates = OffsetCoordinates();
         for (const auto& sampler : Samplers) {
             const auto singleSamples = Run(*device, Plain, single, sampler.words, coordinates);
-            Check(Plain, sampler, 0u, "1-level image", coordinates, singleSamples);
+            Check(Plain, sampler, {0u}, "1-level image", coordinates, singleSamples);
             const auto multiSamples = Run(*device, Plain, multi, sampler.words, coordinates);
-            Check(Plain, sampler, 0u, "first level of a 4-level image", coordinates, multiSamples);
+            Check(Plain, sampler, {0u}, "first level of a 4-level image", coordinates, multiSamples);
             Require(multiSamples == singleSamples, std::string(sampler.name) + ": the first level of a 4-level image does not sample like a 1-level image");
-            Check(Offsets, sampler, 0u, "1-level image", offsetCoordinates, Run(*device, Offsets, single, sampler.words, offsetCoordinates));
-            Check(Gradient, sampler, 0u, "1-level image", coordinates, Run(*device, Gradient, single, sampler.words, coordinates));
-            Check(Gradient, sampler, 0u, "first level of a 4-level image", coordinates, Run(*device, Gradient, multi, sampler.words, coordinates));
+            if (ScaledUnnormalized(sampler.words)) Check(Plain, sampler, {0u, 3u, 0u}, "4-level view through a point-mip S#", coordinates, Run(*device, Plain, chain, sampler.words, coordinates));
+            Check(Offsets, sampler, {0u}, "1-level image", offsetCoordinates, Run(*device, Offsets, single, sampler.words, offsetCoordinates));
+            Check(Gradient, sampler, {0u}, "1-level image", coordinates, Run(*device, Gradient, single, sampler.words, coordinates));
+            Check(Gradient, sampler, {0u}, "first level of a 4-level image", coordinates, Run(*device, Gradient, multi, sampler.words, coordinates));
             if (!sampler.atBaseLevel) continue;
             const auto levelZeroSingle = Run(*device, LevelZero, single, sampler.words, coordinates);
             const auto levelZeroChain = Run(*device, LevelZero, chain, sampler.words, coordinates);
-            Check(LevelZero, sampler, 0u, "4-level view", coordinates, levelZeroChain);
+            Check(LevelZero, sampler, {0u}, "4-level view", coordinates, levelZeroChain);
             Require(levelZeroChain == levelZeroSingle, std::string(sampler.name) + ": a 4-level view read by image_sample_lz does not sample its base level like a 1-level image");
-            if (driverSamplesUnnormalizedAboveMipZero) Check(LevelZero, sampler, 1u, "3-level view starting at mip 1", levelOneCoordinates, Run(*device, LevelZero, fromLevelOne, sampler.words, levelOneCoordinates));
+            if (driverSamplesUnnormalizedAboveMipZero) Check(LevelZero, sampler, {1u}, "3-level view starting at mip 1", levelOneCoordinates, Run(*device, LevelZero, fromLevelOne, sampler.words, levelOneCoordinates));
         }
-        ExpectFailure(*device, Plain, TextureDescriptor(MultiLevel.data(), 2u, 2u), Samplers[0].words, "single-level", "a 3-level view read by a selected LOD");
-        ExpectFailure(*device, Plain, chain, Samplers[0].words, "single-level", "a 4-level view read by image_sample_l and image_sample");
+        Check(Plain, Samplers[0], {0u, 2u, 0u}, "3-level view read by a selected LOD", coordinates, Run(*device, Plain, TextureDescriptor(MultiLevel.data(), 2u, StorageLevels - 1u), Samplers[0].words, coordinates));
+        Check(Plain, Samplers[0], {0u, 3u, 0u}, "4-level view read by image_sample_l and image_sample", coordinates, Run(*device, Plain, chain, Samplers[0].words, coordinates));
+        Check(Offsets, Samplers[0], {0u, 3u, 0u}, "4-level view read with texel offsets", offsetCoordinates, Run(*device, Offsets, chain, Samplers[0].words, offsetCoordinates));
         ExpectFailure(*device, Plain, fromLevelOne, Samplers[0].words, "single-level", "a view starting at mip 1 read by image_sample_l and image_sample");
-        ExpectFailure(*device, Offsets, chain, Samplers[0].words, "single-level", "a 4-level view read with texel offsets");
         ExpectFailure(*device, Gradient, chain, Samplers[0].words, "single-level", "a 4-level view read by image_sample_d");
+        ExpectFailure(*device, Plain, chain, Samplers[2].words, "single-level", "a 4-level view through an S# with linear mip filtering");
+        Check(Plain, Samplers[4], {0u, 0u, 0u}, "4-level view through an S# without mip filtering", coordinates, Run(*device, Plain, chain, Samplers[4].words, coordinates));
+        ExpectFailure(*device, Plain, chain, Samplers[5].words, "single-level", "a 4-level view through a mirrored S#");
+        Check(Plain, {"bilinear wrap on X, clamp-to-last-texel on Y, point mips", {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, true, false, true}, {0u, 3u, 0u}, "4-level view through an S# with wrap addressing on X", coordinates, Run(*device, Plain, chain, {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, coordinates));
+        ExpectFailure(*device, Plain, chain, {0x00008092u, 0x00fff000u, 0x05500180u, 0u}, "single-level", "a 4-level view through an S# with a LOD bias");
         ExpectFailure(*device, LevelZero, chain, Samplers[2].words, "single-level", "a 4-level view through an S# with a minimum LOD and a LOD bias");
-        const auto magFilterReference = Run(*device, Plain, single, {0x00008092u, 0x00fff000u, 0x05500000u, 0u}, coordinates);
+        const auto magFilterReference = Run(*device, Plain, single, {0x00008092u, 0x00fff000u, 0x01500000u, 0u}, coordinates);
         const auto unequalFilterSamples = Run(*device, Plain, single, {0x00008092u, 0x00fff000u, 0x05100000u, 0u}, coordinates);
         Require(unequalFilterSamples == magFilterReference, "unnormalized sampler with unequal filters does not sample with its magnification filter");
-        const auto clampModeZeroSamples = Run(*device, Plain, single, {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, coordinates);
+        const auto clampModeZeroSamples = Run(*device, Plain, single, {0x00008090u, 0x00fff000u, 0x01500000u, 0u}, coordinates);
         Require(clampModeZeroSamples == magFilterReference, "unnormalized sampler with clamp mode 0 does not sample with clamp mode 2");
         for (const std::size_t index : {std::size_t{0}, std::size_t{1}, std::size_t{4}}) {
             auto truncated = Samplers[index].words;
             truncated[0] |= 1u << 27u;
             const auto truncatedSamples = Run(*device, Plain, single, truncated, coordinates);
-            Check(Plain, Samplers[index], 0u, "1-level image through an S# with TRUNC_COORD", coordinates, truncatedSamples);
+            Check(Plain, Samplers[index], {0u}, "1-level image through an S# with TRUNC_COORD", coordinates, truncatedSamples);
             Require(truncatedSamples == Run(*device, Plain, single, Samplers[index].words, coordinates), std::string(Samplers[index].name) + ": TRUNC_COORD changed the samples");
         }
         const auto constantView = [&](std::uint32_t type, std::uint32_t format, std::uint32_t swizzle) {

@@ -54,7 +54,7 @@ float toSignedLodBias(std::uint32_t raw) {
 
 }
 
-GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven, bool forceDegammaPaired, bool integerBorder) {
+GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven, bool forceDegammaPaired, bool integerBorder, bool scaledUnnormalized) {
     Require(words.size() == 4, "guest sampler descriptor must contain 4 dwords");
 
     const auto clampX = (words[0] >> 0u) & 0x7u;
@@ -88,7 +88,7 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
 
     const auto borderColorType = (words[3] >> 30u) & 0x3u;
 
-    Require(!forceUnormCoords || unnormalizedProven, "guest sampler descriptor uses unnormalized coordinates which are not implemented");
+    Require(!forceUnormCoords || unnormalizedProven || scaledUnnormalized, "guest sampler descriptor uses unnormalized coordinates which are not implemented");
     if (forceUnormCoords) {
         Require(!isAnisoFilter(xyMagFilter) && !isAnisoFilter(xyMinFilter), "guest sampler descriptor uses unnormalized coordinates with anisotropic filtering, which is not implemented");
         Require(clampX <= 3u || clampX == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampX) + " on X; only wrap, mirror, clamp-to-last-texel, mirror-once and clamp-to-border are implemented");
@@ -158,7 +158,7 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     result.forceDegamma = forceSrgb;
     result.disableDegamma = disableDegamma;
     result.nonSeamlessCube = disableCubeWrap;
-    if (forceUnormCoords) {
+    if (forceUnormCoords && !scaledUnnormalized) {
         result.unnormalizedCoordinates = true;
         result.minFilter = result.magFilter;
         result.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
@@ -169,6 +169,9 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
         result.lodBias = 0.0f;
         result.anisotropyEnable = false;
         result.maxAnisotropy = 1.0f;
+    } else if (forceUnormCoords) {
+        result.addressModeU = clampX == 6u ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        result.addressModeV = clampY == 6u ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     }
     return result;
 }
