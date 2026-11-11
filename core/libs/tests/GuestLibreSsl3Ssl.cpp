@@ -267,6 +267,21 @@ void CheckVersion(std::int32_t type, std::vector<unsigned char> bytes, std::int6
     Require(result.value == value && result.error == error && result.following == 0, message, location);
 }
 
+void CheckTlsMethod() {
+    const auto* method = TLS_method_nid_postfix();
+    Require(method != nullptr, "TLS method");
+    Require(method->dtls == 0 && method->server == 1, "TLS method role");
+    Require(method->version == 0x0304, "TLS method version");
+    Require(method->minTlsVersion == 0x0301 && method->maxTlsVersion == 0x0304, "TLS method range");
+    Require(TLS_method_nid_postfix() == method, "TLS method is shared");
+    Require(TLS_server_method_nid_postfix() == method, "TLS server method is the TLS method");
+    const Versions full{0x0301, 0x0304, 0, 0};
+    CheckBound(SSL_CTX_set_min_proto_version_nid_postfix, *method, full, 0x0303, 1, {0x0303, 0x0304, 0x0303, 0},
+               "TLS method minimum");
+    CheckBound(SSL_CTX_set_max_proto_version_nid_postfix, *method, full, 0x0303, 1, {0x0301, 0x0303, 0, 0x0303},
+               "TLS method maximum");
+}
+
 void CheckX509Version() {
     const auto absent = ReadVersion(nullptr);
     Require(absent.value == 0 && absent.error == 0, "absent version");
@@ -315,6 +330,7 @@ int main() {
     CheckClientRandom();
     CheckContextTimeout();
     CheckRetain<LibreSsl3X509>(X509_up_ref_nid_postfix, 28);
+    CheckTlsMethod();
     CheckX509Version();
     return 0;
 }
