@@ -25,7 +25,7 @@ TEST_RESULTS = {"passed", "failed", "partial"}
 
 
 def relative_path(name):
-    if not isinstance(name, str) or not name or "\\" in name:
+    if not isinstance(name, str) or not name or "\\" in name or "\x00" in name:
         raise ValueError(f"invalid relative path: {name!r}")
     path = PurePosixPath(name)
     if path.is_absolute() or PureWindowsPath(name).drive or any(part in (".", "..") for part in name.split("/")):
@@ -244,7 +244,7 @@ def main(argv=None):
             label = f"Catalog entry {number} ({entry.get('patch')!r})"
             try:
                 patch, targets, catalog_metadata = validate_entry(catalog, entry)
-            except (OSError, ValueError, tomllib.TOMLDecodeError) as error:
+            except (OSError, ValueError, RecursionError, tomllib.TOMLDecodeError) as error:
                 print(f"{label}: rejected: {error}")
                 continue
             errors = []
@@ -330,7 +330,7 @@ def main(argv=None):
             return 2
         print(f"{prefix}: no catalog entry passed all checks.")
         return 1
-    except (OSError, ValueError, json.JSONDecodeError, tomllib.TOMLDecodeError) as error:
+    except (OSError, ValueError, RecursionError, json.JSONDecodeError, tomllib.TOMLDecodeError) as error:
         print(f"Patch advisor: {error}", file=sys.stderr)
         return 2
 
