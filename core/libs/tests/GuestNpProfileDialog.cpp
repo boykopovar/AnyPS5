@@ -172,6 +172,12 @@ int main() {
     RequireThrows([&] { sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(wrong)); });
     MakeParam(wrong, sizeof(wrong), kParamASize, 5, kParamAUserData, &second);
     RequireThrows([&] { sceNpProfileDialogOpenA(reinterpret_cast<const SceNpProfileDialogParamA*>(wrong)); });
+    alignas(8) std::uint8_t shortBuffer[56];
+    std::memset(shortBuffer, 0, sizeof(shortBuffer));
+    std::uint64_t smallSize = sizeof(shortBuffer);
+    std::memcpy(shortBuffer + 48, &smallSize, sizeof(smallSize));
+    RequireThrows([&] { sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(shortBuffer)); });
+    RequireThrows([&] { sceNpProfileDialogOpenA(reinterpret_cast<const SceNpProfileDialogParamA*>(shortBuffer)); });
     Require(sceNpProfileDialogGetStatus() == kStatusInitialized);
     Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == kErrNotFinished);
 
