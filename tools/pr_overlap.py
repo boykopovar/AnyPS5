@@ -1,4 +1,5 @@
 import argparse
+import codecs
 import hashlib
 import json
 import os
@@ -257,12 +258,25 @@ def exports(diff, prefix="+"):
 
 def changed_source(diff, prefix):
     files, current, path = [], [], None
-    for line in diff.splitlines():
+    in_hunk = False
+    for line in diff.split("\n"):
+        line = line.removesuffix("\r")
         if line.startswith("diff --git "):
             if current and path:
                 files.append((path, "\n".join(current)))
             path = line.split(" b/", 1)[1] if " b/" in line else None
             current = []
+            in_hunk = False
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif not in_hunk and line.startswith("--- " if prefix == "-" else "+++ "):
+            path = line[4:]
+            if path.startswith('"') and path.endswith('"'):
+                path = codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", errors="replace")
+            if path == "/dev/null":
+                path = None
+            elif path.startswith(("a/", "b/")):
+                path = path[2:]
         elif line.startswith(prefix) and not line.startswith(prefix * 3):
             current.append(line[1:])
     if current and path:
