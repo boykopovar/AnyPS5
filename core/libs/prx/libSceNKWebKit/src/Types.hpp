@@ -343,4 +343,22 @@ public:
     int height = 0;
 };
 
+class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {
+public:
+    NavigationAction() = default;
+    explicit NavigationAction(bool shouldPerformDownload) : shouldPerformDownload_(shouldPerformDownload) {}
+    bool shouldPerformDownload() const noexcept { return shouldPerformDownload_; }
+private:
+    bool shouldPerformDownload_ = false;
+};
+
+class NavigationResponse final : public ObjectOf<ObjectType::NavigationResponse> {
+public:
+    NavigationResponse() = default;
+    explicit NavigationResponse(bool canShowMIMEType) : canShowMIMEType_(canShowMIMEType) {}
+    bool canShowMIMEType() const noexcept { return canShowMIMEType_; }
+private:
+    bool canShowMIMEType_ = true;
+};
+
 }  // namespace NKWebKit
