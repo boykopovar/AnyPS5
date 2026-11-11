@@ -147,7 +147,7 @@ IrValue& TranslationContext::scaleF64Result(std::uint32_t omod, IrValue& value) 
         scaledLow = &ir.Select(inRange, low, ir.Constant(0u));
     }
     IrValue& denormal = ir.ULessThan(magnitude, ir.Constant(0x00100000u));
-    scaledHigh = &ir.Select(denormal, sign, *scaledHigh);
+    scaledHigh = &ir.Select(denormal, ir.Constant(0u), *scaledHigh);
     scaledLow = &ir.Select(denormal, ir.Constant(0u), *scaledLow);
     IrValue& special = ir.UGreaterThan(magnitude, ir.Constant(0x7fefffffu));
     scaledHigh = &ir.Select(special, high, *scaledHigh);

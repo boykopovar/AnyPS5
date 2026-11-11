@@ -461,7 +461,7 @@ IrF32 TranslationContext::scaleF16Result(std::uint32_t omod, IrF32 value) {
         const std::uint32_t exponentStep = omod == 1u ? 0x00800000u : 0x01000000u;
         result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x47800000u - exponentStep)), ir.IAdd(bits, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x47800000u)));
     }
-    result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x38800000u)), sign, *result);
+    result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x38800000u)), ir.Constant(0u), *result);
     result = &ir.Select(ir.UGreaterThan(magnitude, ir.Constant(0x7f7fffffu)), bits, *result);
     return IrF32(ir.BitCastF32(*result));
 }
@@ -477,7 +477,7 @@ IrU32 TranslationContext::scaleF16Bits(std::uint32_t omod, IrU32 bits) {
         const std::uint32_t exponentStep = omod == 1u ? 0x0400u : 0x0800u;
         result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x7c00u - exponentStep)), ir.IAdd(raw, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x7c00u)));
     }
-    result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x0400u)), sign, *result);
+    result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x0400u)), ir.Constant(0u), *result);
     result = &ir.Select(ir.UGreaterThan(magnitude, ir.Constant(0x7bffu)), raw, *result);
     return IrU32(*result);
 }
