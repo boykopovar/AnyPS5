@@ -770,6 +770,7 @@ public:
         for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
             parentKeysRemaining = ImageTableAbi::MaxParentKeys;
             nestedKeysRemaining = ImageTableAbi::MaxNestedKeys;
+            parentScans.clear();
             if (attempt != 0u) {
                 columns.clear();
                 pages.clear();
@@ -1109,8 +1110,23 @@ private:
                 if (column.buffer) records.readRanges.emplace_back(records.base, records.size);
             }
         }
-        ReadColumn(column, records, column.buffer ? parentKeysRemaining : ImageTableAbi::MaxKeys);
-        if (column.buffer) parentKeysRemaining -= records.keys;
+        if (!column.buffer) {
+            ReadColumn(column, records, ImageTableAbi::MaxKeys);
+            return;
+        }
+        auto scan = column;
+        scan.indirectOffset = 0u;
+        scan.indirectImmediate = 0u;
+        const auto scanned = std::ranges::find_if(parentScans, [&](const ParentScan& known) {
+            return known.base == records.base && known.size == records.size && known.column == scan && known.column.maxKey == scan.maxKey && known.column.unkeyed == scan.unkeyed && known.column.keyDomains == scan.keyDomains;
+        });
+        if (scanned != parentScans.end()) {
+            ReadColumn(column, records, scanned->keys);
+            return;
+        }
+        ReadColumn(column, records, parentKeysRemaining);
+        parentKeysRemaining -= records.keys;
+        parentScans.push_back({std::move(scan), records.base, records.size, records.keys});
     }
 
     void ReadColumn(const TableColumn& column, ColumnRecords& records, std::uint32_t limit) {
@@ -1514,6 +1530,13 @@ private:
         }
     }
 
+    struct ParentScan {
+        TableColumn column;
+        std::uint64_t base = 0;
+        std::uint64_t size = 0;
+        std::uint32_t keys = 0;
+    };
+
     const IrResourcePlan& plan;
     const SrtRuntime& runtime;
     SrtWalker& walker;
@@ -1521,6 +1544,7 @@ private:
     ImageTableSnapshot& tables;
     std::uint32_t parentKeysRemaining = ImageTableAbi::MaxParentKeys;
     std::uint32_t nestedKeysRemaining = ImageTableAbi::MaxNestedKeys;
+    std::vector<ParentScan> parentScans;
     std::map<std::uint32_t, ColumnRecords> columns;
     HashScratchIndex wordsIndex{threadScratch<HashSlot, WordsIndexTag>()};
     std::unordered_map<std::uint64_t, bool> pages;
