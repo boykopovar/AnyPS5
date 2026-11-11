@@ -31,7 +31,7 @@ function(add_test_executable target)
     endif()
     if(WIN32 AND NOT CMAKE_VERSION VERSION_LESS 3.21 AND NOT ATE_NO_RUNTIME_DLL_STAGING)
         add_custom_command(TARGET ${target} POST_BUILD
-                COMMAND "${CMAKE_COMMAND}" -E copy_if_different $<TARGET_RUNTIME_DLLS:${target}> "$<TARGET_FILE:${target}>" "$<TARGET_FILE_DIR:${target}>/"
+                COMMAND "${CMAKE_COMMAND}" "-DDEST_DIR=$<TARGET_FILE_DIR:${target}>" -P "${CMAKE_SOURCE_DIR}/cmake/CopyRuntimeFiles.cmake" $<TARGET_RUNTIME_DLLS:${target}> "$<TARGET_FILE:${target}>"
                 COMMAND_EXPAND_LISTS
                 VERBATIM
         )
@@ -109,6 +109,15 @@ if(NOT ANYPS5_CXX_LINKS_STANDARD_LIBRARY)
     message(FATAL_ERROR "The C++ compiler ${CMAKE_CXX_COMPILER} cannot link a program that uses the C++ standard library. "
         "Set CMAKE_CXX_COMPILER to the C++ driver (g++ or clang++, not gcc or clang) in a new build directory. "
         "Supported toolchains are listed in docs/dev/BUILD.md.")
+endif()
+
+if(MINGW)
+    check_cxx_source_compiles("#include <memory>\n#if defined(__GLIBCXX__) && !defined(_GLIBCXX_ATOMIC_WORD_BUILTINS) && !defined(_GLIBCXX_ATOMIC_BUILTINS)\nstatic_assert(__gnu_cxx::__default_lock_policy != __gnu_cxx::_S_atomic);\n#endif\nint main() { return 0; }" ANYPS5_CXX_HAS_COMPATIBLE_SHARED_PTR_ATOMICS)
+    if(NOT ANYPS5_CXX_HAS_COMPATIBLE_SHARED_PTR_ATOMICS)
+        message(FATAL_ERROR "The MinGW C++ standard library selected by ${CMAKE_CXX_COMPILER} uses incompatible shared_ptr reference-count operations (GCC PR125312). "
+            "Select a corrected MinGW toolchain and configure in a new build directory. "
+            "Supported toolchains are listed in docs/dev/BUILD.md.")
+    endif()
 endif()
 
 if(ANYPS5_ENABLE_ASAN AND ANYPS5_ENABLE_TSAN)
@@ -264,6 +273,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_ready.py)
         add_test(NAME progress_history COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py ProgressHistoryTests)
+        add_test(NAME progress_history_csv COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryCsvTests)
+        set_tests_properties(progress_history_csv PROPERTIES TIMEOUT 20)
         add_test(NAME progress_history_output COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryReportOutputTests)
         set_tests_properties(progress_history_output PROPERTIES TIMEOUT 20)
@@ -281,6 +293,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_encoding.py)
         add_test(NAME progress_render_sliver COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_render_sliver.py)
+        add_test(NAME tools_progress_diff_json COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_diff_json.py)
+        set_tests_properties(tools_progress_diff_json PROPERTIES TIMEOUT 20)
         add_test(NAME progress_wrappers COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_wrappers.py)
         add_test(NAME progress_read_encoding COMMAND ${Python3_EXECUTABLE}
@@ -299,6 +314,9 @@ if(BUILD_TESTING)
             add_test(NAME validate_patch_catalog COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_validate_patch_catalog.py)
         endif()
+        add_test(NAME annotation_symbols_ghidra COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotation_symbols_ghidra.py)
+        set_tests_properties(annotation_symbols_ghidra PROPERTIES TIMEOUT 20)
         if(NOT APPLE)
             add_test(NAME annotate_module COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotate_module.py)
@@ -417,6 +435,8 @@ if(BUILD_TESTING)
         set_tests_properties(pr_intake_reopen PROPERTIES TIMEOUT 60)
         add_test(NAME tools_pe_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_pe_symbol_inventory.py)
         set_tests_properties(tools_pe_inventory PROPERTIES TIMEOUT 20)
+        add_test(NAME rebase_verify COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rebase_verify.py)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py)
         add_test(NAME relinker_seed_manifest COMMAND ${Python3_EXECUTABLE}
@@ -563,6 +583,9 @@ if(BUILD_TESTING)
         add_test(NAME web_library_assets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_web.py)
         set_tests_properties(web_library_assets PROPERTIES TIMEOUT 20)
+        add_test(NAME tools_pad_preview COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_preview.py)
+        set_tests_properties(tools_pad_preview PROPERTIES TIMEOUT 20)
         add_test(NAME pad_input COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_input.py)
         set_tests_properties(pad_input PROPERTIES TIMEOUT 20)
@@ -635,6 +658,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_agent_files.py)
         add_test(NAME conventions_alignment COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_alignment.py)
+        add_test(NAME tools_intervals_complete COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_intervals_complete.py)
+        set_tests_properties(tools_intervals_complete PROPERTIES TIMEOUT 20)
         add_test(NAME trace_intervals_csv COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_intervals_csv.py)
         set_tests_properties(trace_intervals_csv PROPERTIES TIMEOUT 20)
@@ -822,6 +848,7 @@ set_target_properties(usb-1.0 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 include(cmake/ZArchive.cmake)
 include(cmake/Opus.cmake)
 include(cmake/Sqlite.cmake)
+include(cmake/Icu.cmake)
 if(WIN32 OR APPLE OR (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANYPS5_ENABLE_ASAN AND NOT ANYPS5_ENABLE_TSAN))
     set(MI_BUILD_SHARED ON CACHE BOOL "" FORCE)
     set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)

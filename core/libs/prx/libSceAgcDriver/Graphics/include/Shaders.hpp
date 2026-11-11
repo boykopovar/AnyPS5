@@ -108,6 +108,10 @@ inline const std::vector<ShaderRecompiler::VertexAttribute>& DrawVertexAttribute
     return shader.heap != nullptr && !shader.heap->vertexAttributes.empty() ? shader.heap->vertexAttributes : shader.program->vertexAttributes;
 }
 
+inline std::uint32_t KeyedPushOffset(const CompiledShader& shader) {
+    return shader.program->pushConstants.empty() ? 0u : shader.pushConstantOffset;
+}
+
 inline VkShaderStageFlagBits VulkanStage(ShaderRecompiler::ShaderStage stage) {
     switch (stage) {
         case ShaderRecompiler::ShaderStage::Vertex:
