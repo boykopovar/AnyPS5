@@ -1120,11 +1120,11 @@ static void CheckConnectTimeoutExpiry() {
     std::vector<int> queued;
     int pending = -1;
     int result = 0;
-    bool threw = false;
+    int observed = 0;
     auto waited = std::chrono::steady_clock::duration::zero();
     const auto report = [&](const char* problem) {
-        std::fprintf(stderr, "connect timeout expiry: %s after %zu completed connects (last result 0x%x, threw %d, %lld ms)\n", problem,
-            queued.size(), static_cast<unsigned>(result), threw ? 1 : 0,
+        std::fprintf(stderr, "connect timeout expiry: %s after %zu completed connects (last result 0x%x, %lld ms)\n", problem,
+            queued.size(), static_cast<unsigned>(result),
             static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(waited).count()));
     };
     while (pending < 0) {
@@ -1133,20 +1133,17 @@ static void CheckConnectTimeoutExpiry() {
         const int client = sceNetSocket("connect-expiry-client", 2, 1, 6);
         Require(client >= 0 && sceNetSetsockopt(client, 0xffff, 0x1109, &timeout, sizeof(timeout)) == 0);
         const auto start = std::chrono::steady_clock::now();
-        auto attempt = std::async(std::launch::async, [client, &address] {
-            return sceNetConnect(client, address.data(), address.size());
+        auto attempt = std::async(std::launch::async, [client, &address, &observed] {
+            const int connected = sceNetConnect(client, address.data(), address.size());
+            observed = *sceNetErrnoLoc();
+            return connected;
         });
         const bool returned = attempt.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
         waited = std::chrono::steady_clock::now() - start;
         if (!returned) report("sceNetConnect did not return");
         Require(returned);
-        threw = false;
-        try {
-            result = attempt.get();
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        if (threw || result != 0) {
+        result = attempt.get();
+        if (result != 0) {
             pending = client;
         } else {
             queued.push_back(client);
@@ -1154,6 +1151,7 @@ static void CheckConnectTimeoutExpiry() {
     }
     if (waited < std::chrono::milliseconds(80)) report("the pending connect returned before its timeout");
     Require(waited >= std::chrono::milliseconds(80));
+    Require(result == static_cast<int>(0x8041013c) && observed == 60);
     int value = -1;
     std::uint32_t length = sizeof(value);
     Require(sceNetGetsockopt(pending, 0xffff, 0x1200, &value, &length) == 0 && value == 0);
