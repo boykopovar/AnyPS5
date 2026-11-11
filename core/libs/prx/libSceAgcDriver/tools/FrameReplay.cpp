@@ -947,6 +947,7 @@ struct Replay {
                 std::uint32_t header = 0;
                 if (at > first) std::memcpy(&header, bytes.data() + at - 4, sizeof(header));
                 const bool waiting = std::find(parked.begin(), parked.end(), chunk->address + at) != parked.end();
+                if (std::any_of(held.begin(), held.end(), [&](const auto& wait) { return chunk->address + at < wait.address + wait.bytes && wait.address < chunk->address + at + sizeof(std::uint32_t); })) continue;
                 if (at > first && !waiting && ((header >> 30u) != 3u || ((header >> 8u) & 0xffu) != 0x59u)) continue;
                 std::uint32_t value = 0;
                 std::memcpy(&value, bytes.data() + at, sizeof(value));
