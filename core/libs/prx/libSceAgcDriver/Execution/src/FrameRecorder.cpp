@@ -494,8 +494,11 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
             offset += bytes;
         }
     }
-    std::vector<std::uint64_t> parked;
-    for (const auto& wait : driver.AwaitedWaits()) parked.push_back(wait.address);
+    std::vector<std::array<std::uint64_t, 4>> parked;
+    for (const auto& wait : driver.AwaitedWaits()) {
+        if (wait.bytes == 0) parked.push_back({wait.address, 0, 0, 0});
+        else parked.push_back({wait.address, wait.reference, wait.mask, wait.function | (std::uint64_t{wait.bytes} << 32u)});
+    }
     std::ranges::sort(parked);
     const auto group = deltaGroups + 1;
     bool any = false;
@@ -569,7 +572,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
     call.accepted = accepted;
     call.completed = completed;
     call.values = {group, parked.size()};
-    call.values.insert(call.values.end(), parked.begin(), parked.end());
+    for (const auto& wait : parked) call.values.insert(call.values.end(), wait.begin(), wait.end());
     writer->WriteCall(call);
 }
 
