@@ -1557,6 +1557,7 @@ int APS5_VABI scePthreadGetthreadid(void) {
 
 int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
     if (!thread || !name) return SCE_KERNEL_ERROR_EINVAL;
+    if (!LockRegisteredGuestThread(thread)) return SCE_KERNEL_ERROR_ESRCH;
     std::string value;
     const int copied = CopyGuestString_nid_no_patch(name, 32, value);
     if (copied == 14) return SCE_KERNEL_ERROR_EFAULT;

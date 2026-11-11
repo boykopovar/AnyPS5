@@ -62,6 +62,11 @@ int main() {
     Require(sceKernelGetThreadName(workerId.load(), name) == 0);
     Require(name[0] == '\0' && static_cast<unsigned char>(name[1]) == 0xa5);
 
+    Pthread invalid = reinterpret_cast<Pthread>(0x12345);
+    for (const char* bad : {"ok", "abcdefghijklmnopqrstuvwxyz0123456789", reinterpret_cast<const char*>(0x1000)}) {
+        Require(scePthreadRename(invalid, bad) == SceEsrch);
+    }
+
     Require(sceKernelGetThreadName(workerId.load(), nullptr) == SceEfault);
     Require(sceKernelGetThreadName(workerId.load(), reinterpret_cast<char*>(1)) == SceEfault);
     Require(sceKernelGetThreadName(99999999, name) == SceEsrch);
