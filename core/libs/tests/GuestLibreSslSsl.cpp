@@ -1,13 +1,17 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
 
@@ -65,6 +69,28 @@ static void TestGetSslCtx() {
     ssl.ctx = &context;
     ssl.session = &session;
     Require(SSL_get_SSL_CTX_nid_postfix(Ssl(&ssl)) == &context);
+}
+
+static void TestGet1Session() {
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(1, 2, 3);
+    LibreSslPutError_nid_no_patch(4, 5, 6);
+    constexpr std::uint64_t firstError = (std::uint64_t{1} << 24) | (std::uint64_t{2} << 12) | 3;
+    constexpr std::uint64_t secondError = (std::uint64_t{4} << 24) | (std::uint64_t{5} << 12) | 6;
+    TestSsl ssl {};
+    std::array<unsigned char, sizeof(TestSsl)> before {};
+    std::memcpy(before.data(), &ssl, sizeof(ssl));
+    RequireThrows([] { SSL_get1_session_nid_postfix(nullptr); });
+    Require(std::memcmp(&ssl, before.data(), sizeof(ssl)) == 0);
+    Require(ERR_peek_error_nid_postfix() == firstError);
+    Require(LibreSslPeekLastError_nid_no_patch() == secondError);
+    Require(SSL_get1_session_nid_postfix(reinterpret_cast<LibreSslSsl*>(&ssl)) == nullptr);
+    Require(std::memcmp(&ssl, before.data(), sizeof(ssl)) == 0);
+    Require(ERR_peek_error_nid_postfix() == firstError);
+    Require(LibreSslPeekLastError_nid_no_patch() == secondError);
+    Require(ERR_get_error_nid_postfix() == firstError);
+    Require(ERR_get_error_nid_postfix() == secondError);
+    Require(ERR_get_error_nid_postfix() == 0);
 }
 
 static void TestGetRbio() {
@@ -218,6 +244,7 @@ static void TestSetExDataPrefilledStack() {
 int main() {
     void* heap[10] {};
     ApplicationHeapRegister_nid_no_patch(heap);
+    TestGet1Session();
     TestGetSslCtx();
     TestGetRbio();
     TestGetWbio();
