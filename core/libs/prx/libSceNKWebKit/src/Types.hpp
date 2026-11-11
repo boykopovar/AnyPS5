@@ -61,6 +61,24 @@ public:
     std::vector<std::uint8_t> bytes;
 };
 
+enum class SerializedScriptValueKind {
+    Json,
+    Undefined,
+    NaN,
+    PositiveInfinity,
+    NegativeInfinity,
+};
+
+class SerializedScriptValue final : public ObjectOf<ObjectType::SerializedScriptValue> {
+public:
+    std::string data;
+    SerializedScriptValueKind kind = SerializedScriptValueKind::Json;
+
+    SerializedScriptValue() = default;
+    SerializedScriptValue(std::string str, SerializedScriptValueKind k = SerializedScriptValueKind::Json)
+        : data(std::move(str)), kind(k) {}
+};
+
 class SessionState final : public ObjectOf<ObjectType::SessionState> {
 public:
     explicit SessionState(std::vector<std::uint8_t> data) : data(std::move(data)) {}
@@ -154,6 +172,20 @@ public:
         static auto world = Make<BundleScriptWorld>();
         return world.Get();
     }
+};
+
+class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
+public:
+};
+
+class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
+public:
+    BundleDOMWindowExtension() = default;
+    BundleDOMWindowExtension(Retained<BundleFrame> frame, Retained<BundleScriptWorld> scriptWorld)
+        : frame(std::move(frame)), scriptWorld(std::move(scriptWorld)) {}
+
+    Retained<BundleFrame> frame;
+    Retained<BundleScriptWorld> scriptWorld;
 };
 
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
