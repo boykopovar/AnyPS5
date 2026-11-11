@@ -5928,7 +5928,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     const auto* groupLimit = state->properties.limits.maxComputeWorkGroupCount;
     const bool overlapCapable = overlapQueue != 0 && Graphics::Recorder::DispatchOverlapEnabled() && arguments == 0 && argumentImport == nullptr && record.threadGroup == std::array<std::uint32_t, 3>{} && record.shader->program->workgroupMemoryDwords == 0 && state->checkpointMarker == nullptr && state->bufferMarker == nullptr && record.x <= groupLimit[0] && record.y <= groupLimit[1] && record.z <= groupLimit[2] && !resources.HasHostGpuCopies();
     std::vector<Graphics::Recorder::RunAccess> runAccesses;
-    if (overlapCapable) resources.RunAccesses(runAccesses);
+    if (overlapCapable) resources.RunAccesses(runAccesses, record.dataRefresh != RecordedDispatch::DataRefresh::None);
     VkAccessFlags covered = 0;
     bool overlapped = false;
     const std::array<const void*, 2> runOwners{record.resources.get(), resources.MemoryOwner()};

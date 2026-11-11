@@ -1970,7 +1970,7 @@ void Recorder::flushDeferredDispatch() {
 bool Recorder::runConflict(std::span<const RunAccess> accesses) const {
     for (const auto& access : accesses) {
         for (const auto& member : open->runAccess) {
-            if (((access[2] ^ member[2]) & RunAccessImage) != 0) continue;
+            if (((access[2] ^ member[2]) & (RunAccessImage | RunAccessBuffer)) != 0) continue;
             if (!(access[0] < member[1] && member[0] < access[1])) continue;
             if (((access[2] | member[2]) & RunAccessWritten) != 0) return true;
         }

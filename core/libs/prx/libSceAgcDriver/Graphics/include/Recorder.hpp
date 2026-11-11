@@ -168,7 +168,7 @@ public:
     static bool DispatchOverlapEnabled();
     static void SetDispatchOrder(std::uint32_t queueKey, bool unordered);
     static std::uint32_t TakeDispatchOrder(bool& unordered);
-    static constexpr std::uint64_t RunAccessWritten = 1, RunAccessImage = 2;
+    static constexpr std::uint64_t RunAccessWritten = 1, RunAccessImage = 2, RunAccessBuffer = 4;
     using RunAccess = std::array<std::uint64_t, 3>;
     static std::uint32_t PeekUnorderedDispatch();
     VkCommandBuffer OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped);
