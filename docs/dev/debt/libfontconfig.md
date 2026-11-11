@@ -16,10 +16,11 @@
 - [Pattern equality](../../../core/libs/prx/libfontconfig/Objects.cpp) follows Fontconfig 2.15.0's distinct empty patterns comparing unequal and strings comparing with Unicode case folding, including the signed 16-bit case-table offsets: a fold whose narrowed offset underflows terminates the comparison, as in `fc-case.py` and `FcStrCaseWalkerLong`. The console version's equality rules are unverified.
 - [Faulting arguments](../../../core/libs/prx/libfontconfig/Objects.cpp) throw through `NotImplemented_nid_no_patch` for unsupported null arguments. `FcPatternReference(nullptr)` throws and `FcPatternDestroy(nullptr)` does nothing as host-safety choices; the firmware 13.42 disassembly in the review above dereferences both at `0x9f0` and `0x7e0` respectively. Native pointer faults are not reproduced; inaccessible non-null pointers and stale handles are not validated.
 - [Font sets and object sets](../../../core/libs/prx/libfontconfig/Sets.cpp) are based on disassembly of firmware 13.42 `libfontconfig.sprx` (SHA-256 `74d7414445f8687c1d22a92fa3c994d2e5fa304e6699dc84dcc5459af7da8472`), not the stock desktop Fontconfig layout. Font-set capacity is stored in bytes, grows by sixteen pointers, and stops at 1024 entries; each insertion duplicates the caller's pattern. Object sets allocate their pointer arrays inline and preserve the original argument order with duplicated names. Host safety returns on null destroy and null add, where the firmware accesses pointers without such checks. Console runtime behavior beyond disassembly is not verified.
+- [FcDefaultSubstitute](../../../core/libs/prx/libfontconfig/Export.cpp) (NID `sqEJZ2yMVNw`) follows the public Fontconfig 2.15.0 [fcdefault.c](https://gitlab.freedesktop.org/fontconfig/fontconfig/-/blob/2.15.0/src/fcdefault.c), not console evidence; console behavior is unverified. Range-valued sizes are not averaged, because patterns cannot hold `FcTypeRange` values. With no PS5 locale environment, an absent `namelang` becomes `en`, as 2.15.0 does when `FC_LANG`, `LC_ALL`, `LC_CTYPE` and `LANG` are unset, and the `en-us` added to `familylang`, `stylelang` and `fullnamelang` has no weak binding. `prgname` and `desktop` are never added, as their console sources are unknown. An integer `pixelsize` is read as a double, and a null pattern throws.
 
 ### Callable exports
 
-- [Remaining callable exports](../../../core/libs/prx/libfontconfig/Export.cpp) - 16 of the 53 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libfontconfig.c) and the [selected export metadata](https://gist.github.com/kyon-eth/7c1e54e6851733f72dbb507fdfbf35f4/206d5ec1b74f677f61a1eda755b490537209a8e1) from two version-labelled images (SHA-256 `3694ba82b2fbff0d5d789f91938906ebc8ee45262aaaba2b333d490f7e0c24ab`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Remaining callable exports](../../../core/libs/prx/libfontconfig/Export.cpp) - 15 of the 53 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libfontconfig.c) and the [selected export metadata](https://gist.github.com/kyon-eth/7c1e54e6851733f72dbb507fdfbf35f4/206d5ec1b74f677f61a1eda755b490537209a8e1) from two version-labelled images (SHA-256 `3694ba82b2fbff0d5d789f91938906ebc8ee45262aaaba2b333d490f7e0c24ab`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
 
 | Name | NID |
 | --- | --- |
@@ -35,7 +36,6 @@
 | `FcPatternGetCharSet` | `NKrjlO4HBhg` |
 | `FcFreeTypeCharIndex` | `l240XTbw2vk` |
 | `FcPatternAddCharSet` | `paHcj4DoPQ4` |
-| `FcDefaultSubstitute` | `sqEJZ2yMVNw` |
 | `FcPatternAddLangSet` | `vqX-PYS3MPc` |
 | `FcPatternGetLangSet` | `x55q-bC-i+8` |
 | `FcPatternFormat` | `zqe0Dw9BCpc` |

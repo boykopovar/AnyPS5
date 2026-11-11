@@ -222,6 +222,111 @@ static void Equality() {
     FcPatternDestroy(second);
 }
 
+static int Count(const FcPattern* pattern, const char* object) {
+    FcValue value{};
+    int count = 0;
+    while (FcPatternGet(pattern, object, count, &value) == FcResultMatch) ++count;
+    return count;
+}
+
+static bool HasInteger(const FcPattern* pattern, const char* object, int expected) {
+    int value = 0;
+    return Count(pattern, object) == 1 && FcPatternGetInteger(pattern, object, 0, &value) == FcResultMatch
+        && value == expected;
+}
+
+static bool HasBool(const FcPattern* pattern, const char* object, FcBool expected) {
+    FcBool value = 2;
+    return Count(pattern, object) == 1 && FcPatternGetBool(pattern, object, 0, &value) == FcResultMatch
+        && value == expected;
+}
+
+static bool HasDouble(const FcPattern* pattern, const char* object, double expected) {
+    FcValue value{};
+    return Count(pattern, object) == 1 && FcPatternGet(pattern, object, 0, &value) == FcResultMatch
+        && value.type == FcTypeDouble && value.u.d == expected;
+}
+
+static bool HasString(const FcPattern* pattern, const char* object, int id, const char* expected) {
+    FcChar8* value = nullptr;
+    return FcPatternGetString(pattern, object, id, &value) == FcResultMatch
+        && std::strcmp(reinterpret_cast<const char*>(value), expected) == 0;
+}
+
+static void DefaultSubstitute() {
+    auto* pattern = FcPatternCreate();
+    CHECK(pattern);
+    FcDefaultSubstitute(pattern);
+    CHECK(HasInteger(pattern, "weight", 80));
+    CHECK(HasInteger(pattern, "slant", 0));
+    CHECK(HasInteger(pattern, "width", 100));
+    CHECK(HasBool(pattern, "hinting", 1));
+    CHECK(HasBool(pattern, "verticallayout", 0));
+    CHECK(HasBool(pattern, "autohint", 0));
+    CHECK(HasBool(pattern, "globaladvance", 1));
+    CHECK(HasBool(pattern, "embeddedbitmap", 1));
+    CHECK(HasBool(pattern, "decorative", 0));
+    CHECK(HasBool(pattern, "symbol", 0));
+    CHECK(HasBool(pattern, "variable", 0));
+    CHECK(HasDouble(pattern, "size", 12.0));
+    CHECK(HasDouble(pattern, "scale", 1.0));
+    CHECK(HasDouble(pattern, "dpi", 75.0));
+    CHECK(HasDouble(pattern, "pixelsize", 12.0 * 1.0 * (75.0 / 72.0)));
+    CHECK(HasInteger(pattern, "fontversion", 0x7fffffff));
+    CHECK(HasInteger(pattern, "hintstyle", 3));
+    CHECK(Count(pattern, "namelang") == 1 && HasString(pattern, "namelang", 0, "en"));
+    for (const char* object : {"familylang", "stylelang", "fullnamelang"}) {
+        CHECK(Count(pattern, object) == 2);
+        CHECK(HasString(pattern, object, 0, "en") && HasString(pattern, object, 1, "en-us"));
+    }
+    CHECK(HasInteger(pattern, "order", 0));
+    CHECK(Count(pattern, "prgname") == 0);
+    CHECK(Count(pattern, "desktop") == 0);
+    auto* again = FcPatternDuplicate(pattern);
+    CHECK(again);
+    FcDefaultSubstitute(again);
+    CHECK(FcPatternEqual(pattern, again));
+    FcPatternDestroy(again);
+    FcPatternDestroy(pattern);
+
+    pattern = FcPatternCreate();
+    CHECK(pattern);
+    CHECK(FcPatternAddInteger(pattern, "weight", 200));
+    CHECK(FcPatternAddBool(pattern, "hinting", 0));
+    CHECK(FcPatternAddInteger(pattern, "size", 20));
+    CHECK(FcPatternAddDouble(pattern, "scale", 2.0));
+    CHECK(FcPatternAddDouble(pattern, "dpi", 144.0));
+    CHECK(FcPatternAddString(pattern, "namelang", Text("ja")));
+    CHECK(FcPatternAddString(pattern, "stylelang", Text("de")));
+    CHECK(FcPatternAddBool(pattern, "variable", 1));
+    CHECK(FcPatternAddInteger(pattern, "order", 7));
+    FcDefaultSubstitute(pattern);
+    CHECK(HasBool(pattern, "variable", 1));
+    CHECK(HasInteger(pattern, "order", 7));
+    CHECK(HasInteger(pattern, "weight", 200));
+    CHECK(HasBool(pattern, "hinting", 0));
+    CHECK(HasDouble(pattern, "size", 20.0));
+    CHECK(HasDouble(pattern, "scale", 2.0));
+    CHECK(HasDouble(pattern, "dpi", 144.0));
+    CHECK(HasDouble(pattern, "pixelsize", 80.0));
+    CHECK(Count(pattern, "familylang") == 2);
+    CHECK(HasString(pattern, "familylang", 0, "ja") && HasString(pattern, "familylang", 1, "en-us"));
+    CHECK(Count(pattern, "stylelang") == 1 && HasString(pattern, "stylelang", 0, "de"));
+    FcPatternDestroy(pattern);
+
+    pattern = FcPatternCreate();
+    CHECK(pattern);
+    CHECK(FcPatternAddDouble(pattern, "size", 50.0));
+    CHECK(FcPatternAddDouble(pattern, "pixelsize", 30.0));
+    CHECK(FcPatternAddDouble(pattern, "dpi", 96.0));
+    FcDefaultSubstitute(pattern);
+    CHECK(HasDouble(pattern, "pixelsize", 30.0));
+    CHECK(HasDouble(pattern, "size", 30.0 / 96.0 * 72.0 / 1.0));
+    CHECK(HasDouble(pattern, "dpi", 96.0));
+    CHECK(Count(pattern, "scale") == 0);
+    FcPatternDestroy(pattern);
+}
+
 static void FontSets() {
     auto* pattern = FcPatternCreate();
     auto* set = FcFontSetCreate();
@@ -251,4 +356,5 @@ int main() {
     IntegerGetters();
     Equality();
     FontSets();
+    DefaultSubstitute();
 }

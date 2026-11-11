@@ -43,7 +43,7 @@ void APS5_VABI FcPatternDestroy(FcPattern* pattern);
 int APS5_VABI FcCharSetAddChar(FcCharSet* set, uint32_t character);
 void APS5_VABI FcMatrixMultiply(FcMatrix* result, const FcMatrix* first, const FcMatrix* second);
 int APS5_VABI FcPatternAddCharSet();
-int APS5_VABI FcDefaultSubstitute();
+void APS5_VABI FcDefaultSubstitute(FcPattern* pattern);
 int APS5_VABI FcPatternAddLangSet();
 int APS5_VABI FcPatternGetLangSet();
 FcPattern* APS5_VABI FcPatternCreate();

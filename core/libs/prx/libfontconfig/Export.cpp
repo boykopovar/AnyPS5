@@ -8,6 +8,8 @@
 #include <bit>
 #include <map>
 #include <new>
+#include <string>
+#include <utility>
 
 static bool IsSubset(const FcCharSet& subset, const FcCharSet& superset) {
     for (const auto& [number, leaf] : subset.leaves) {
@@ -139,8 +141,54 @@ int APS5_VABI FcPatternAddCharSet() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcDefaultSubstitute() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI FcDefaultSubstitute(FcPattern* pattern) {
+    if (!pattern) NotImplemented_nid_no_patch(__func__);
+    FcValue value{};
+    const auto absent = [&](const char* object) {
+        return FcPatternGet(pattern, object, 0, &value) == FcResultNoMatch;
+    };
+    const auto number = [&](const char* object, double fallback) {
+        if (FcPatternGet(pattern, object, 0, &value) != FcResultMatch) return fallback;
+        if (value.type == FcTypeInteger) return static_cast<double>(value.u.i);
+        if (value.type == FcTypeDouble) return value.u.d;
+        return fallback;
+    };
+    if (absent("weight")) FcPatternAddInteger(pattern, "weight", 80);
+    if (absent("slant")) FcPatternAddInteger(pattern, "slant", 0);
+    if (absent("width")) FcPatternAddInteger(pattern, "width", 100);
+    static constexpr std::array<std::pair<const char*, FcBool>, 8> booleans{{
+        {"hinting", 1}, {"verticallayout", 0}, {"autohint", 0}, {"globaladvance", 1},
+        {"embeddedbitmap", 1}, {"decorative", 0}, {"symbol", 0}, {"variable", 0},
+    }};
+    for (const auto& [object, fallback] : booleans)
+        if (absent(object)) FcPatternAddBool(pattern, object, fallback);
+    double size = number("size", 12.0);
+    const double scale = number("scale", 1.0);
+    const double dpi = number("dpi", 75.0);
+    if (FcPatternGet(pattern, "pixelsize", 0, &value) != FcResultMatch) {
+        FcPatternDel(pattern, "scale");
+        FcPatternAddDouble(pattern, "scale", scale);
+        FcPatternDel(pattern, "dpi");
+        FcPatternAddDouble(pattern, "dpi", dpi);
+        FcPatternAddDouble(pattern, "pixelsize", size * scale * (dpi / 72.0));
+    } else {
+        size = number("pixelsize", 0.0) / dpi * 72.0 / scale;
+    }
+    FcPatternDel(pattern, "size");
+    FcPatternAddDouble(pattern, "size", size);
+    if (absent("fontversion")) FcPatternAddInteger(pattern, "fontversion", 0x7fffffff);
+    if (absent("hintstyle")) FcPatternAddInteger(pattern, "hintstyle", 3);
+    if (absent("namelang")) FcPatternAddString(pattern, "namelang", reinterpret_cast<const FcChar8*>("en"));
+    FcChar8* found = nullptr;
+    if (FcPatternGetString(pattern, "namelang", 0, &found) == FcResultMatch) {
+        const std::string namelang(reinterpret_cast<const char*>(found));
+        for (const char* object : {"familylang", "stylelang", "fullnamelang"}) {
+            if (!absent(object)) continue;
+            FcPatternAddString(pattern, object, reinterpret_cast<const FcChar8*>(namelang.c_str()));
+            FcPatternAddString(pattern, object, reinterpret_cast<const FcChar8*>("en-us"));
+        }
+    }
+    if (absent("order")) FcPatternAddInteger(pattern, "order", 0);
 }
 
 int APS5_VABI FcPatternAddLangSet() {
