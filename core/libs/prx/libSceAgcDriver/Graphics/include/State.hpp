@@ -117,6 +117,8 @@ struct DepthTarget {
     std::uint32_t htileVrsEncoding = 0;
     bool htileDepthOnly = false;
     bool gcn = false;
+    bool depthPartiallyResident = false;
+    bool stencilPartiallyResident = false;
 };
 
 struct State {

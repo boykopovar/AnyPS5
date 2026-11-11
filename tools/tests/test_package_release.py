@@ -49,8 +49,8 @@ class PublicHeaderPackageTests(unittest.TestCase):
         (self.libs / "Common.hpp").write_text('struct Common {};\n', encoding="utf-8")
         self.umbrella.with_name("Private.hpp").write_text('#include <vendor.h>\n', encoding="utf-8")
 
-    def test_recursive_headers_keep_paths_and_bytes_without_private_files(self):
-        expected = {"include/anyps5/" + path.relative_to(self.libs).as_posix(): path.read_bytes() for path in (self.umbrella, self.api, self.umbrella.with_name("Windows.hpp"), self.libs / "Common.hpp")}
+    def assert_archive_bytes(self, headers):
+        expected = {"include/anyps5/" + path.relative_to(self.libs).as_posix(): path.read_bytes() for path in headers}
         expected["LICENSE"] = (self.source / "LICENSE").read_bytes()
         package_headers.package(self.source, self.output, "v1")
         with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
@@ -58,6 +58,24 @@ class PublicHeaderPackageTests(unittest.TestCase):
             self.assertEqual(len(archive.namelist()), len(expected))
         with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
             self.assertEqual({name: archive.extractfile(name).read() for name in archive.getnames()}, expected)
+
+    def test_recursive_headers_keep_paths_and_bytes_without_private_files(self):
+        self.assert_archive_bytes((self.umbrella, self.api, self.umbrella.with_name("Windows.hpp"), self.libs / "Common.hpp"))
+
+    def test_bom_prefixed_umbrella_and_nested_header_keep_dependencies_and_original_bytes(self):
+        nested = self.umbrella.with_name("Nested.hpp")
+        nested_dep = self.umbrella.with_name("NestedDep.hpp")
+        nested.write_text('#include "NestedDep.hpp"\n', encoding="utf-8")
+        nested_dep.write_text('struct NestedDep {};\n', encoding="utf-8")
+        self.api.write_text('#include "Nested.hpp"\n', encoding="utf-8")
+        for header in (self.umbrella, nested):
+            with self.subTest(bom_header=header.name):
+                original = header.read_bytes()
+                header.write_bytes(b"\xef\xbb\xbf" + original)
+                try:
+                    self.assert_archive_bytes((self.umbrella, self.api, nested, nested_dep, self.libs / "Common.hpp"))
+                finally:
+                    header.write_bytes(original)
 
     def test_forbidden_or_missing_dependencies_preserve_existing_archives(self):
         self.output.mkdir()
@@ -70,6 +88,18 @@ class PublicHeaderPackageTests(unittest.TestCase):
                     package_headers.package(self.source, self.output, "v1")
                 self.assertEqual(list(self.output.iterdir()), [previous])
                 self.assertEqual(previous.read_bytes(), b"previous")
+
+    def test_bom_prefixed_rejected_directives_preserve_existing_archives(self):
+        self.output.mkdir()
+        previous = {name: self.output / name for name in ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")}
+        for path in previous.values():
+            path.write_bytes(b"previous " + path.name.encode("ascii"))
+        for directive in ('#include "Missing.hpp"', '#include <vendor.h>', '#include "../../../3rdparty/vendor.hpp"', '#include MACRO_HEADER', '#include_next <vendor.h>'):
+            with self.subTest(directive=directive):
+                self.api.write_bytes(b"\xef\xbb\xbf" + (directive + "\n").encode("utf-8"))
+                with self.assertRaises(RuntimeError):
+                    package_headers.package(self.source, self.output, "v1")
+                self.assertEqual({path.name: path.read_bytes() for path in self.output.iterdir()}, {name: b"previous " + name.encode("ascii") for name in previous})
 
     def test_ambiguous_quoted_include_is_rejected(self):
         (self.libs / "Api.hpp").write_text("", encoding="utf-8")
@@ -120,6 +150,107 @@ class PublicHeaderPackageTests(unittest.TestCase):
         with patch.object(package_release, "ROOT", self.source):
             self.assertEqual(package_release.main(["--platform", "headers", "--version", "v1", "--output", str(self.output)]), 0)
         self.assertTrue((self.output / "prx-headers-v1.zip").is_file())
+
+    def test_archive_promotion_failure_restores_the_pair(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        original_replace = Path.replace
+
+        def replace(source, target):
+            if source.name == names[1] and source.parent.name.startswith(".headers-"):
+                raise OSError("second promotion failed")
+            return original_replace(source, target)
+
+        for existing in (False, True):
+            with self.subTest(existing=existing), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                output.mkdir()
+                previous = {}
+                if existing:
+                    for name in names:
+                        data = ("previous " + name).encode()
+                        (output / name).write_bytes(data)
+                        previous[name] = data
+                with patch.object(Path, "replace", replace), self.assertRaisesRegex(OSError, "second promotion failed"):
+                    package_headers.package(self.source, output, "v1")
+                for name in names:
+                    path = output / name
+                    if existing:
+                        self.assertEqual(path.read_bytes(), previous[name])
+                    else:
+                        self.assertFalse(path.exists())
+                self.assertEqual({path.name for path in output.iterdir()}, set(names) if existing else set())
+
+    def test_archive_restore_failure_preserves_unrestored_backup(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        original_replace = Path.replace
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            output.mkdir()
+            previous = {}
+            for name in names:
+                data = ("previous " + name).encode()
+                (output / name).write_bytes(data)
+                previous[name] = data
+
+            def replace(source, target):
+                if (
+                    source.name == names[1]
+                    and source.parent.name.startswith(".headers-")
+                    and source.parent.name != "previous"
+                ):
+                    raise OSError("second promotion failed")
+                if source.name == names[1] and source.parent.name == "previous":
+                    raise PermissionError("tar restore failed")
+                return original_replace(source, target)
+
+            with patch.object(Path, "replace", replace), self.assertRaisesRegex(
+                RuntimeError, "second promotion failed.*unrestored backups .* retained"
+            ) as raised:
+                package_headers.package(self.source, output, "v1")
+
+            self.assertIsInstance(raised.exception.__cause__, PermissionError)
+            self.assertRegex(str(raised.exception.__cause__), "tar restore failed")
+            self.assertIn(names[1], str(raised.exception))
+            self.assertEqual((output / names[0]).read_bytes(), previous[names[0]])
+            self.assertFalse((output / names[1]).exists())
+            recovery = [path for path in output.glob(".headers-*/previous") if path.is_dir()]
+            self.assertEqual(len(recovery), 1)
+            self.assertEqual((recovery[0] / names[1]).read_bytes(), previous[names[1]])
+            self.assertIn(str(recovery[0]), str(raised.exception))
+
+    def test_archive_removal_failure_reports_leftover_and_retains_staging(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        original_replace = Path.replace
+        original_unlink = Path.unlink
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            output.mkdir()
+
+            def replace(source, target):
+                if source.name == names[1] and source.parent.name.startswith(".headers-"):
+                    raise OSError("second promotion failed")
+                return original_replace(source, target)
+
+            def unlink(path, missing_ok=False):
+                if path == output / names[0]:
+                    raise PermissionError("promoted zip is locked")
+                return original_unlink(path, missing_ok=missing_ok)
+
+            with patch.object(Path, "replace", replace), patch.object(Path, "unlink", unlink), self.assertRaisesRegex(
+                RuntimeError, "second promotion failed.*promoted archives could not be removed.*remaining staged archives retained"
+            ) as raised:
+                package_headers.package(self.source, output, "v1")
+
+            self.assertIsInstance(raised.exception.__cause__, PermissionError)
+            self.assertIn(str(output / names[0]), str(raised.exception))
+            self.assertTrue((output / names[0]).is_file())
+            self.assertFalse((output / names[1]).exists())
+            staging = [path for path in output.glob(".headers-*") if path.is_dir()]
+            self.assertEqual(len(staging), 1)
+            self.assertTrue((staging[0] / names[1]).is_file())
+            self.assertIn(str(staging[0]), str(raised.exception))
 
 
 class FontconfigLicenseInstallTests(unittest.TestCase):

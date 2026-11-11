@@ -1126,6 +1126,68 @@ static void TestEvpCleanup() {
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
 }
 
+constexpr std::uint64_t WrapFlagsValue = 0x111037;
+
+static void RequireWrapDescriptor(const Cipher* cipher, int nid, int keyLength) {
+    Require(cipher != nullptr && cipher->nid == nid && cipher->blockSize == 8 && cipher->keyLength == keyLength);
+    Require(cipher->ivLength == 8 && cipher->flags == WrapFlagsValue && cipher->contextSize == 264);
+    Require(cipher->init != nullptr && cipher->doCipher != nullptr && cipher->applicationData == nullptr);
+    Require(cipher->setAsn1Parameters == nullptr && cipher->getAsn1Parameters == nullptr);
+}
+
+static void RequireWrapVector(const Cipher* cipher, const Bytes& kek, const Bytes& key, const Bytes& wrapped) {
+    unsigned char context[ContextBytes] {};
+    unsigned char out[64] {};
+    int written = -1;
+    const int keySize = static_cast<int>(key.size());
+    const int wrappedSize = static_cast<int>(wrapped.size());
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, nullptr, nullptr) == 0);
+    SetFlags(context, 1);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, kek.data(), nullptr) == 1);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, key.data(), keySize) == 1 && written == wrappedSize);
+    Require(Bytes(out, out + wrappedSize) == wrapped);
+    Require(EVP_EncryptFinal_ex_nid_postfix(Context(context), out, &written) == 1 && written == 0);
+    Require(EVP_DecryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, kek.data(), nullptr) == 1);
+    Require(EVP_DecryptUpdate_nid_postfix(Context(context), out, &written, wrapped.data(), wrappedSize) == 1 && written == keySize);
+    Require(Bytes(out, out + keySize) == key);
+    Require(EVP_DecryptFinal_ex_nid_postfix(Context(context), out, &written) == 1 && written == 0);
+    auto tampered = wrapped;
+    tampered[wrapped.size() - 1] ^= 0x01;
+    Require(EVP_DecryptUpdate_nid_postfix(Context(context), out, &written, tampered.data(), wrappedSize) == 0 && written == 0);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, kek.data(), nullptr) == 1);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), nullptr, &written, key.data(), keySize) == 1 && written == wrappedSize);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, key.data(), 7) == 0);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, nullptr, Hex("a6a6a6a6a6a6a6a6").data()) == 1);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, key.data(), keySize) == 1 && written == wrappedSize);
+    Require(Bytes(out, out + wrappedSize) == wrapped);
+    Require(EVP_DecryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, kek.data(), Hex("0001020304050607").data()) == 1);
+    Require(EVP_DecryptUpdate_nid_postfix(Context(context), out, &written, wrapped.data(), wrappedSize) == 0 && written == 0);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+}
+
+static void TestAesWrap128() {
+    const auto* cipher = reinterpret_cast<const Cipher*>(EVP_aes_128_wrap_nid_postfix());
+    RequireWrapDescriptor(cipher, 788, 16);
+    RequireWrapVector(cipher, Hex("000102030405060708090a0b0c0d0e0f"), Hex("00112233445566778899aabbccddeeff"),
+        Hex("1fa68b0a8112b447aef34bd8fb5a7b829d3e862371d2cfe5"));
+}
+
+static void TestAesWrap192() {
+    const auto* cipher = reinterpret_cast<const Cipher*>(EVP_aes_192_wrap_nid_postfix());
+    RequireWrapDescriptor(cipher, 789, 24);
+    RequireWrapVector(cipher, Hex("000102030405060708090a0b0c0d0e0f1011121314151617"), Hex("00112233445566778899aabbccddeeff"),
+        Hex("96778b25ae6ca435f92b5b97c050aed2468ab8a17ad84e5d"));
+}
+
+static void TestAesWrap256() {
+    const auto* cipher = reinterpret_cast<const Cipher*>(EVP_aes_256_wrap_nid_postfix());
+    RequireWrapDescriptor(cipher, 790, 32);
+    const auto kek = Hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    RequireWrapVector(cipher, kek, Hex("00112233445566778899aabbccddeeff"), Hex("64e8c3f9ce0f5ba263e9777905818a2a93c8191e7d6e8ae7"));
+    RequireWrapVector(cipher, kek, Hex("00112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f"),
+        Hex("28c9f404c4b810f4cbccb35cfb87f8263f5786e2d80ed326cbc7f0e71a99f43bfb988b9b7a02dd21"));
+}
+
 int main() {
     InitializeHeap();
     TestInit();
@@ -1148,6 +1210,9 @@ int main() {
     TestAesGcmVectors();
     TestAesGcmControl();
     TestAesGcmTls();
+    TestAesWrap128();
+    TestAesWrap192();
+    TestAesWrap256();
     TestEvpCleanup();
     return 0;
 }
