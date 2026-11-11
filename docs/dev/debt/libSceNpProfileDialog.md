@@ -13,3 +13,4 @@
 ### Functional
 
 - [sceNpProfileDialogInitialize](../../../core/libs/prx/libSceNpProfileDialog/Export.cpp) (libSceNpProfileDialog) - never returns shadPS4's `NOT_SYSTEM_INITIALIZED` (`sceCommonDialogInitialize` not called) or `BUSY` (another common dialog in use): libSceCommonDialog shares neither state here.
+- [sceNpProfileDialogOpen, sceNpProfileDialogOpenA](../../../core/libs/prx/libSceNpProfileDialog/Export.cpp) (libSceNpProfileDialog) - an unreadable `param` returns `COMMON_DIALOG_ERROR_ARG_NULL` as a host-safety fallback; console behavior for unreadable guest memory is unmeasured.
