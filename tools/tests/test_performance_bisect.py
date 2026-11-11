@@ -63,3 +63,30 @@ class RecipeTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         performance_bisect.load_recipe(path)
 
+
+class SummaryValidationTests(unittest.TestCase):
+    def test_sample_requires_clean_expected_commit_and_rendering_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.json"
+            summary = {"build": {"commit": GOOD[:7], "dirty": False}, "machine": IDENTITY,
+                       "titles": {"PPSA00000": {"name": "Example", "version": "01.00",
+                                                   "runs": [{"outcome": "rendering", "fps": 60}]}}}
+            path.write_text(json.dumps(summary), encoding="utf-8")
+            self.assertEqual(performance_bisect.sample_summary(path, "PPSA00000", GOOD)["fps"], 60)
+            summary["build"]["dirty"] = True
+            path.write_text(json.dumps(summary), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "not the requested clean commit"):
+                performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
+    def test_sample_rejects_non_rendering_and_non_finite_fps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.json"
+            summary = {"build": {"commit": GOOD[:7], "dirty": False}, "machine": IDENTITY,
+                       "titles": {"PPSA00000": {"name": "Example", "version": "01.00",
+                                                   "runs": [{"outcome": "stalled", "fps": 60}]}}}
+            for outcome, fps in (("stalled", 60), ("rendering", math.inf), ("rendering", 0)):
+                summary["titles"]["PPSA00000"]["runs"] = [{"outcome": outcome, "fps": fps}]
+                path.write_text(json.dumps(summary), encoding="utf-8")
+                with self.subTest(outcome=outcome, fps=fps), self.assertRaisesRegex(ValueError, "did not render"):
+                    performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
