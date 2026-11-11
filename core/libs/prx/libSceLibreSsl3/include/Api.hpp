@@ -177,7 +177,7 @@ extern "C" {
 void APS5_VABI ASN1_INTEGER_free_nid_postfix(Asn1String* integer);
 void APS5_VABI ASN1_OBJECT_free_nid_postfix(Asn1Object_nid_no_patch* object);
 const unsigned char* APS5_VABI ASN1_STRING_get0_data_nid_postfix(const Asn1String* string);
-int APS5_VABI BIO_up_ref_nid_postfix(LibreSsl3Bio* bio);
+int APS5_VABI BIO_up_ref_nid_postfix(LibreSsl::Bio* bio);
 int APS5_VABI AES_wrap_key_nid_postfix(AesKey* key, const unsigned char* iv, unsigned char* out, const unsigned char* in, std::uint32_t inlen);
 void APS5_VABI ASN1_TYPE_free_nid_postfix(Asn1Type* value);
 LibreSsl3EcdsaSig* APS5_VABI ECDSA_SIG_new_nid_postfix(void);
