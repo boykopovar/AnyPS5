@@ -272,5 +272,15 @@ if command == 'inspect':
             self.assertIn("filter failed", stderr.getvalue())
             self.assertFalse(output.exists())
 
+    def test_cli_creates_missing_output_parent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "new-parent" / "result"
+            arguments, _, _, _ = self.empty_cli(root, output=output)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                result = frame_capture_minimize.main(arguments)
+            self.assertEqual(result, 0)
+            self.assertTrue(output.is_dir())
+
 if __name__ == "__main__":
     unittest.main()
