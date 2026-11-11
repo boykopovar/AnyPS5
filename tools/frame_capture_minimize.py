@@ -34,6 +34,8 @@ class Minimizer:
             description = json.loads(result.stdout)
         except json.JSONDecodeError as error:
             raise RuntimeError(f"capture filter returned invalid inspection JSON: {error}") from error
+        if not isinstance(description, dict):
+            raise RuntimeError("capture inspection must be a JSON object")
         if not isinstance(description.get("calls"), list) or not isinstance(description.get("chunks"), list):
             raise RuntimeError("capture inspection is missing calls or chunks")
         return description
