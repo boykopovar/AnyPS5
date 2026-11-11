@@ -288,6 +288,18 @@ void testNormalizedSourceAlias(const std::filesystem::path& root) {
     checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, root / "other" / ".." / "source", plan); }, "filtering accepted a normalized source path alias");
 }
 
+
+void testRangeMetadata(const std::filesystem::path& root) {
+    const auto source = root / "source";
+    const auto output = root / "range-copy";
+    writeCapture(source);
+    AgcDriverTools::FrameCaptureFilterPlan plan;
+    AgcDriverTools::FilterFrameCapture(source, output, plan);
+    const AgcDriver::FrameCaptureReader original(source); const AgcDriver::FrameCaptureReader filtered(output);
+    const auto& before = original.Chunks().front(); const auto& after = filtered.Chunks().front();
+    check(after.address == before.address && after.bytes == before.bytes && after.rangeKind == before.rangeKind && after.protection == before.protection && after.access == before.access, "filtering changed range metadata");
+}
+
 }
 
 int main() {
@@ -310,6 +322,7 @@ int main() {
     testMissingPlanFile(root);
     testTruncatedCapture(root);
     testNormalizedAlias(root);
+    testRangeMetadata(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
