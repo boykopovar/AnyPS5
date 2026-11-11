@@ -1,4 +1,5 @@
 #include "prx/libSceNpScoreRanking/include/Api.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -137,8 +138,19 @@ int GetFriendsRanking(int reqId, int includeSelf, void* rankArray, std::uint64_t
     if (includeSelf == 0) {
         if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     } else if (option) {
-        if (option->size != FRIEND_RANKING_OPTION_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-        if (option->startSerialRank) startSerialRank = *option->startSerialRank;
+        NpScoreFriendRankingOption localOption{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
+        errno = savedErrno;
+        if (!copied || localOption.size != FRIEND_RANKING_OPTION_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        if (localOption.startSerialRank) {
+            std::uint32_t rank = 0;
+            const int savedRankErrno = errno;
+            const bool copiedRank = GuestCopyIn_nid_no_patch(&rank, localOption.startSerialRank, sizeof(rank));
+            errno = savedRankErrno;
+            if (!copiedRank) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+            startSerialRank = rank;
+        }
     }
     if (arrayNum > MAX_RANGE_PER_REQUEST) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (startSerialRank == 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;

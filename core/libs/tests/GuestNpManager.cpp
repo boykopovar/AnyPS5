@@ -5,10 +5,12 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -1034,6 +1036,37 @@ void CheckEmptyDestructors() {
     libSceNpManagerUnknown_z8eiw8_plus_UfEo_nid_no_patch();
 }
 
+void CheckUnknownFieldComparisons() {
+    struct Object {
+        std::uint64_t first;
+        std::uint64_t second;
+    };
+    Object left{0, 0};
+    Object right{0, 0};
+    const std::int32_t values[] = {0, 1, -1, 0x7fffffff, static_cast<std::int32_t>(0x80000000)};
+    for (const std::int32_t a : values) {
+        for (const std::int32_t b : values) {
+            std::memcpy(reinterpret_cast<std::byte*>(&left) + 8, &a, sizeof(a));
+            std::memcpy(reinterpret_cast<std::byte*>(&right) + 8, &b, sizeof(b));
+            Require(libSceNpManagerUnknown_Gv4cB8leZaU_nid_no_patch(&left, b) == (a == b), "Gv4cB8leZaU compares +8 with the value");
+            Require(libSceNpManagerUnknown_j6YmS_minus_P2zAA_nid_no_patch(&left, &right) == (a == b), "j6YmS-P2zAA compares +8 with +8");
+            std::int32_t plain = a;
+            Require(libSceNpManagerUnknown_b1nDsAsD4Fo_nid_no_patch(&plain, &right) == (a == b), "b1nDsAsD4Fo compares +0 with +8");
+            Require(libSceNpManagerUnknown_BQA2KNZr2H0_nid_no_patch(&plain, &right) == (a != b), "BQA2KNZr2H0 compares +0 with +8");
+        }
+    }
+    std::memset(&left, 0xa5, sizeof(left));
+    std::memset(&right, 0xa5, sizeof(right));
+    std::int32_t plain = 7;
+    const std::int32_t seven = 7;
+    std::memcpy(reinterpret_cast<std::byte*>(&right) + 8, &seven, sizeof(seven));
+    Require(libSceNpManagerUnknown_b1nDsAsD4Fo_nid_no_patch(&plain, &right), "b1nDsAsD4Fo reads only 32 bits at +8");
+    for (const std::uint64_t value : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{0x0123456789abcdefULL}, ~std::uint64_t{0}}) {
+        left.second = value;
+        Require(libSceNpManagerUnknown__minus_OrDVMqLIG4_nid_no_patch(&left) == value, "-OrDVMqLIG4 returns the 64 bits at +8");
+    }
+}
+
 int main() {
     CheckNpOfflineGetters();
     CheckAsmLifecycle();
@@ -1062,6 +1095,7 @@ int main() {
     CheckManagerIntUserLookups();
     CheckManagerIntAuthorization();
     CheckPlusAndContentRestriction();
+    CheckUnknownFieldComparisons();
     NpId npId{};
     std::memset(&npId, 0x5a, sizeof(npId));
     NpId untouched{};
