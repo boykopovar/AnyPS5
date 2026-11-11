@@ -368,6 +368,29 @@ static void CheckFmalDirectedZero() {
     }
 }
 
+static void CheckFmalFarApartDirected() {
+    struct Case {
+        int mode;
+        long double y, z, expected;
+    };
+    const long double one = Extended(0x3fff, 0x8000000000000000ull), above = Extended(0x3fff, 0x8000000000000001ull), below = Extended(0x3ffe, 0xffffffffffffffffull);
+    const long double aboveNegative = Extended(0xbfff, 0x8000000000000001ull), belowNegative = Extended(0xbffe, 0xffffffffffffffffull);
+    const long double tiny = 0x1p-200L;
+    const Case cases[] = {
+    {FE_TONEAREST, tiny, one, one}, {FE_TONEAREST, -tiny, -one, -one},
+    {FE_TOWARDZERO, tiny, one, one}, {FE_TOWARDZERO, tiny, -one, belowNegative}, {FE_TOWARDZERO, -tiny, one, below}, {FE_TOWARDZERO, -tiny, -one, -one},
+    {FE_DOWNWARD, tiny, one, one}, {FE_DOWNWARD, tiny, -one, -one}, {FE_DOWNWARD, -tiny, one, below}, {FE_DOWNWARD, -tiny, -one, aboveNegative},
+    {FE_UPWARD, tiny, one, above}, {FE_UPWARD, tiny, -one, belowNegative}, {FE_UPWARD, -tiny, one, one}, {FE_UPWARD, -tiny, -one, -one},
+    };
+    const int saved = std::fegetround();
+    for (const auto& item : cases) {
+        Require(std::fesetround(item.mode) == 0);
+        const long double result = fmal_nid_postfix(1.0L, item.y, item.z);
+        std::fesetround(saved);
+        Require(SameBits(result, item.expected));
+    }
+}
+
 int main() {
     CheckRoundingAndScaling();
     CheckLogblLroundl();
@@ -382,5 +405,6 @@ int main() {
     CheckFmalSpecials();
     CheckFmalExactResults();
     CheckFmalDirectedZero();
+    CheckFmalFarApartDirected();
     return 0;
 }

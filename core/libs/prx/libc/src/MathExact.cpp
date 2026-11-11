@@ -478,7 +478,7 @@ long double FmaFarApart(long double x, long double y, long double z, int roundin
     case FE_TONEAREST:
         return z;
     case FE_TOWARDZERO:
-        return productPositive != (z > 0.0L) ? z : std::nextafter(z, 0.0L);
+        return productPositive == (z > 0.0L) ? z : std::nextafter(z, 0.0L);
     case FE_DOWNWARD:
         return productPositive ? z : std::nextafter(z, -Infinity);
     default:
