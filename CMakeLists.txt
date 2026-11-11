@@ -297,6 +297,9 @@ if(BUILD_TESTING)
             add_test(NAME validate_patch_catalog COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_validate_patch_catalog.py)
         endif()
+        add_test(NAME annotation_symbols_ghidra COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotation_symbols_ghidra.py)
+        set_tests_properties(annotation_symbols_ghidra PROPERTIES TIMEOUT 20)
         if(NOT APPLE)
             add_test(NAME annotate_module COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotate_module.py)
