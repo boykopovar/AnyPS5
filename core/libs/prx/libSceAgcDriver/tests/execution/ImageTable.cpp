@@ -60,6 +60,8 @@ alignas(256) std::array<float, Width * Height> OtherFloatTexels{};
 alignas(256) std::array<std::uint32_t, Width * Height> UintTexels{};
 alignas(256) std::array<std::uint64_t, Width * Height> Uint64Texels{};
 alignas(256) std::array<std::int32_t, Width * Height> SintTexels{};
+constexpr std::uint32_t StoreHalfPitch = 256u / sizeof(std::uint16_t);
+alignas(256) std::array<std::uint16_t, StoreHalfPitch * Height> StoreHalfTexels{};
 alignas(4096) std::array<std::uint32_t, 49152> DepthStorage{};
 alignas(256) std::array<std::uint32_t, Records * Stride / 4> Table{};
 alignas(256) std::array<std::uint32_t, 64> Keys{};
@@ -199,6 +201,12 @@ alignas(256) constexpr std::array<std::uint32_t, 17> ReadDirect256Code{
 alignas(256) constexpr std::array<std::uint32_t, 15> StoreTableCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
     0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0xf0208f08u, 0x00090401u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 17> StoreHalfTableCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
+    0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040202u, 0x7e0802ffu, 0x00003e00u, 0xf0202108u, 0x80080401u,
+    0xbf810000u,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 16> StoreLaneTableCode{
@@ -1165,6 +1173,45 @@ void RunStoreTests(AgcDriver::VulkanDevice& device) {
     Require(untouched(), "image table store: a store through a null entry reached an image:\n" + null.log);
 }
 
+void RunStoreUintViewTests(AgcDriver::VulkanDevice& device) {
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    } registeredHalf(StoreHalfTexels.data(), sizeof(StoreHalfTexels)), registeredSint(SintTexels.data(), sizeof(SintTexels));
+    const auto storeHalf = [&](std::uint32_t format, const auto& code, std::uint32_t value, const std::string& what) {
+        StoreHalfTexels.fill(0x3555u);
+        auto image = Image(StoreHalfTexels.data(), format);
+        image[3] = (image[3] & ~0xfffu) | 0x24cu;
+        SetWideRecord(0u, image);
+        Keys = {};
+        Keys[0] = 0u;
+        const auto outcome = Run(device, code, 1, Lanes, 64);
+        AgcDriver::Graphics::StorageTexture::FlushAllPending("image table uint view test");
+        device.WaitIdle();
+        Require(!Faulted(outcome), what + " faulted:\n" + outcome.log);
+        for (std::uint32_t index = 0; index < StoreHalfTexels.size(); ++index) {
+            const auto row = index / StoreHalfPitch;
+            const auto column = index % StoreHalfPitch;
+            Require(StoreHalfTexels[index] == (row == 0u && column < Width ? value : 0x3555u), what + " wrote the wrong texel or padding " + std::to_string(index));
+        }
+    };
+    storeHalf(13u, StoreHalfTableCode, 0x3e00u, "image table store: written-only R16_FLOAT descriptor");
+    auto uintCode = StoreHalfTableCode;
+    uintCode[13] = 0x89abcdefu;
+    uintCode[15] &= 0x7fffffffu;
+    storeHalf(12u, uintCode, 0x8000u, "image table store: R16_SINT descriptor stored as raw uint");
+    SintTexels.fill(0x12345678);
+    SetWideRecord(0u, Image(SintTexels.data(), Format32SInt));
+    Keys = {};
+    const auto sint = Run(device, uintCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table uint view test");
+    device.WaitIdle();
+    Require(!Faulted(sint), "image table store: R32_SINT descriptor stored as raw uint faulted:\n" + sint.log);
+    for (std::uint32_t index = 0; index < SintTexels.size(); ++index) Require(SintTexels[index] == (index < Width ? static_cast<std::int32_t>(0x89abcdefu) : 0x12345678), "image table store: R32_SINT descriptor wrote the wrong texel " + std::to_string(index));
+    SetClassRecords();
+}
+
 void RunAtomicTests(AgcDriver::VulkanDevice& device) {
     struct Registration {
         void* data;
@@ -1916,6 +1963,7 @@ int main(int argc, char** argv) {
         RunSelectedRecordTests(*device);
         RunModeTests(*device);
         RunStoreTests(*device);
+        RunStoreUintViewTests(*device);
         RunAtomicTests(*device);
         RunAtomic64Tests(*device);
         RunSelectedStoreTests(*device);
