@@ -345,5 +345,11 @@ void APS5_VABI WKContextDisableProcessTermination(const void* contextRef);
 void APS5_VABI WKContextEnableProcessTermination(const void* contextRef);
 void APS5_VABI WKContextAddVisitedLink(const void* contextRef, const void* visitedURLRef);
 void APS5_VABI WKContextClearVisitedLinks(const void* contextRef);
+void APS5_VABI WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsCachePartitioned(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsEmptyDocument(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsSecure(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextSetDomainRelaxationForbiddenForURLScheme(const void* contextRef, const void* urlSchemeRef);
 
 }

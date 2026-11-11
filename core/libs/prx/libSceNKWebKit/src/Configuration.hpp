@@ -60,6 +60,12 @@ public:
     bool accessibilityEnabled = false;
     bool processTerminationEnabled = true;
     std::vector<std::string> visitedLinks;
+    std::vector<std::string> emptyDocumentURLSchemes;
+    std::vector<std::string> secureURLSchemes;
+    std::vector<std::string> bypassingContentSecurityPolicyURLSchemes;
+    std::vector<std::string> cachePartitionedURLSchemes;
+    std::vector<std::string> canDisplayOnlyIfCanRequestURLSchemes;
+    std::vector<std::string> domainRelaxationForbiddenURLSchemes;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
