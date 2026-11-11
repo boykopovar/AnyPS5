@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostErrno.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cstddef>
@@ -95,9 +96,14 @@ int APS5_VABI fgetc_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
-    if (!stream->SwitchToReading()) return -1;
+    const int previousError = errno;
+    errno = 0;
+    if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return -1; }
     const int result = std::fgetc(native);
+    const int nativeError = errno;
     stream->SyncStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result == -1);
     return result;
 }
@@ -157,13 +163,18 @@ int APS5_VABI getc_unlocked_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
-    if (!stream->SwitchToReadingUnlocked()) return -1;
+    const int previousError = errno;
+    errno = 0;
+    if (!stream->SwitchToReadingUnlocked()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return -1; }
 #ifdef _WIN32
     const int result = _fgetc_nolock(native);
 #else
     const int result = getc_unlocked(native);
 #endif
+    const int nativeError = errno;
     stream->SyncUnlockedStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result == -1);
     return result;
 }
@@ -202,8 +213,12 @@ int APS5_VABI fputc_nid_postfix(int value, FileStream* stream) {
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!stream->SwitchToWriting()) return -1;
+    const int previousError = errno;
+    errno = 0;
     const int result = std::fputc(value, native);
+    const int nativeError = errno;
     stream->SyncStatus();
+    errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
 }
 int APS5_VABI putc_nid_postfix(int value, FileStream* stream) { return fputc_nid_postfix(value, stream); }
@@ -211,13 +226,17 @@ int APS5_VABI putc_unlocked_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     if (!stream->SwitchToWritingUnlocked()) return -1;
+    const int previousError = errno;
+    errno = 0;
 #ifdef _WIN32
     const int result = _fputc_nolock(value, native);
 #else
     const int result = putc_unlocked(value, native);
 #endif
+    const int nativeError = errno;
     stream->SyncUnlockedStatus();
     stream->Orientation(-1);
+    errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
 }
 int APS5_VABI __swbuf_nid_postfix(int value, FileStream* stream) { return fputc_nid_postfix(value, stream); }
@@ -238,9 +257,14 @@ char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return nullptr; }
     if (stream) stream->Orientation(-1);
     auto* native = GetNativeStream(stream);
-    if (!stream->SwitchToReading()) return nullptr;
+    const int previousError = errno;
+    errno = 0;
+    if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return nullptr; }
     auto* result = std::fgets(buffer, size, native);
+    const int nativeError = errno;
     stream->SyncStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result == nullptr);
     return result;
 }

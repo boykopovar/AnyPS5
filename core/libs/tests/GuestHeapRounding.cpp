@@ -135,11 +135,8 @@ int runReallocOverflow() {
         std::fprintf(stderr, "realloc checks failed: rejected=%d preserved=%d replacement=%d distinct=%d followUpThrew=%d\n",
                      rejectedWithExpectedError, originalPreserved, replacement != nullptr, replacement != original, followUpAllocationThrew);
     }
-    if (result == 0) {
-        free_nid_postfix(replacement);
-        free_nid_postfix(original);
-
-    }
+    if (replacement != original) free_nid_postfix(replacement);
+    free_nid_postfix(original);
     return static_cast<int>(result);
 }
 
