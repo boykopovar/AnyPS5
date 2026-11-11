@@ -43,7 +43,14 @@ def images():
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Write relinker test fixtures as relinker_conversion_fuzzer seeds")
     parser.add_argument("output", type=Path)
+    parser.add_argument("--all-configurations", action="store_true", help="cover every distinct fuzzer selector configuration")
     arguments = parser.parse_args(argv)
+    selectors = SELECTORS
+    if arguments.all_configurations:
+        configurations = {}
+        for selector in range(256):
+            configurations.setdefault((selector % 3, bool(selector & 4), (selector >> 3) % 3), selector)
+        selectors = tuple(configurations.values())
     if arguments.output.is_file():
         parser.error(f"{arguments.output} is an existing file, not a directory")
     try:
@@ -53,7 +60,7 @@ def main(argv=None):
     count = 0
     try:
         for name, data in images():
-            for selector in SELECTORS:
+            for selector in selectors:
                 (arguments.output / f"{name}-{selector}").write_bytes(bytes([selector]) + data)
                 count += 1
     except OSError as error:

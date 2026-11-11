@@ -286,6 +286,12 @@ void ResidentTests(AgcDriver::VulkanDevice& device) {
     Require(again.rebuilds == steady.rebuilds && again.heapBytes == steady.heapBytes, "resident heap mirror: an unchanged dispatch rebuilt or grew the heap mirrors");
     CheckReads(output, "unchanged dispatch", true);
     CheckStores(written, "unchanged dispatch");
+    const auto settled = AgcDriver::Graphics::MirrorCounters();
+    AgcDriver::GuestMemory::MarkWritten(read.Address() + 8, 16);
+    Dispatch(device, read, written, output);
+    Require(AgcDriver::Graphics::MirrorCounters().blocksCopied == settled.blocksCopied, "resident heap mirror: a block stamped without a byte change was copied into its mirror again");
+    CheckReads(output, "a stamped block that did not change", true);
+    CheckStores(written, "a stamped block that did not change");
 }
 
 void StagingChunkTests(AgcDriver::VulkanDevice& device) {
@@ -305,6 +311,19 @@ void StagingChunkTests(AgcDriver::VulkanDevice& device) {
     for (std::uint32_t thread = 0; thread < Threads; ++thread) {
         Require(output.Data()[thread] == Pattern(thread), "resident heap mirror: an upload split into staging chunks: thread " + std::to_string(thread) + " read " + Hex(output.Data()[thread]) + " at heap offset " + Hex(First + thread * ThreadStride) + ", expected " + Hex(Pattern(thread)));
     }
+}
+
+void StorageImageZeroStoreTests(AgcDriver::VulkanDevice& device) {
+    GuestHeap heap(true);
+    GuestHeap written(true);
+    const OutputBlock output;
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    Dispatch(device, heap, written, output);
+    StoreImage(device, heap.Address() + UnreadBlock);
+    heap.Store(UnreadBlock, 0u);
+    std::uint32_t texel = 1u;
+    AgcDriver::GuestMemory::Read(heap.Address() + UnreadBlock, std::as_writable_bytes(std::span(&texel, 1)));
+    Require(texel == 0u, "resident heap mirror: a CPU store of zero after an image store into a never-written block read " + Hex(texel));
 }
 
 void StorageImageTests(AgcDriver::VulkanDevice& device) {
@@ -599,6 +618,7 @@ int main() {
         CopiedTests(*device);
         BudgetEvictionTests(*device, sparse);
         StorageImageTests(*device);
+        StorageImageZeroStoreTests(*device);
         for (const bool copied : {false, true}) {
             if (!copied && !sparse) continue;
             for (const bool readFirst : {false, true}) PartialImportTests(*device, copied, readFirst);
