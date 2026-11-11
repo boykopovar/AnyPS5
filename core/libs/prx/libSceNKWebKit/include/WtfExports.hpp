@@ -149,6 +149,7 @@ void APS5_VABI _ZN3WTF25fastMallocDumpMallocStatsEv();
 bool APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_(const NKWebKit::WtfAbi::URL* a, const NKWebKit::WtfAbi::URL* b);
 void APS5_VABI _ZN3WTF27releaseFastMallocFreeMemoryEv();
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF28displayNameForLanguageLocaleERKNS_6StringE(const NKWebKit::WtfAbi::String* localeName);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE(const NKWebKit::WtfAbi::String& input);
 void APS5_VABI _ZN3WTF28removeLanguageChangeObserverEPv(void* context);
 void APS5_VABI _ZN3WTF29cryptographicallyRandomValuesEPvm(void* buffer, std::size_t length);
 bool APS5_VABI _ZN3WTF29equalIgnoringASCIICaseNonNullEPKNS_10StringImplES2_(const NKWebKit::WtfAbi::StringImpl* a, const NKWebKit::WtfAbi::StringImpl* b);
