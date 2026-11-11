@@ -22,7 +22,6 @@ std::uint32_t* APS5_VABI sceAgcDcbAcquireMem(CommandBuffer* buf, std::uint8_t en
     if (!wholeAddressSpace) sizeBytes = (sizeBytes + (requested - address) + 0xffu) & ~0xffull;
     wholeAddressSpace = wholeAddressSpace || sizeBytes >= (1ull << 40u);
     if (wholeAddressSpace) address = 0;
-    // The console saturates the poll word at 0xffff for longer polls instead of refusing them.
     const auto pollWord = std::min<std::uint32_t>(pollCycles >> 4u, 0xffffu);
     return Agc::Command::Emit(buf, 0x58u, {(static_cast<std::uint32_t>(engine) << 31u) | cbDbOp, wholeAddressSpace ? 0u : static_cast<std::uint32_t>(sizeBytes >> 8u), 0, static_cast<std::uint32_t>(address >> 8u), 0, pollWord, gcrControl | ((gcrControl & 0x4000u) << 1u)}, __func__);
 }
