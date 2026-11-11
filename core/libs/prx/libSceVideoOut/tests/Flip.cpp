@@ -430,7 +430,11 @@ void testUnregisteredBuffer() {
     VideoOutBuffers buffer{storage.data(), nullptr, {nullptr, nullptr}};
     VideoOutBufferAttribute2 attribute{};
     sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 64, 64, 0, 0, 0);
+    check(sceVideoOutRegisterBuffers2(-1, 0, 0, &buffer, 1, &attribute, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "registration on an invalid handle was accepted");
     check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffer registration failed");
+    check(sceVideoOutUnregisterBuffers(-1, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "unregistration on an invalid handle was accepted");
+    check(sceVideoOutUnregisterBuffers(handle, -1) == VIDEO_OUT_ERROR_INVALID_VALUE, "a negative set was unregistered");
+    check(sceVideoOutUnregisterBuffers(handle, 1) == VIDEO_OUT_ERROR_INVALID_VALUE, "an unused set was unregistered");
     check(sceVideoOutUnregisterBuffers(handle, 0) == 0, "buffer unregistration failed");
     std::array<uint32_t, 6> flip{0xc004105c, static_cast<uint32_t>(handle), 0, 1, 7, 0};
     Packet flipPacket{flip.data(), 6, 0, {}};
