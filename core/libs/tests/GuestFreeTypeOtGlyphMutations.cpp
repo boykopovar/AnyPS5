@@ -187,9 +187,17 @@ void BitmapConversion(const Exports& ot, FT_Bool destroy) {
     const FT_Glyph oldNative = native;
     const GuestVector origin{17, -9};
     const FT_Vector nativeOrigin{17, -9};
-    Require(ot.toBitmap(&guest, FT_RENDER_MODE_NORMAL, &origin, destroy) ==
-                FT_Glyph_To_Bitmap(&native, FT_RENDER_MODE_NORMAL, &nativeOrigin, destroy),
-            "bitmap conversion error matches FreeType");
+    try {
+        Require(ot.toBitmap(&guest, FT_RENDER_MODE_NORMAL, &origin, destroy) ==
+                    FT_Glyph_To_Bitmap(&native, FT_RENDER_MODE_NORMAL, &nativeOrigin, destroy),
+                "bitmap conversion error matches FreeType");
+    } catch (...) {
+        if (!destroy && guest != oldGuest) ot.doneGlyph(const_cast<GuestGlyphRec*>(oldGuest));
+        if (guest) ot.doneGlyph(guest);
+        if (!destroy && native != oldNative) FT_Done_Glyph(oldNative);
+        if (native) FT_Done_Glyph(native);
+        throw;
+    }
     Matches(guest, native, fixture.library, true);
     if (!destroy) {
         Matches(oldGuest, oldNative, fixture.library, false);
@@ -313,7 +321,7 @@ void InvalidHandles(const Exports& ot) {
     try {
         ot.transform(&foreign, nullptr, nullptr);
     } catch (const std::runtime_error& error) {
-        threw = std::string(error.what()).find("FT_Glyph_Transform") != std::string::npos;
+        threw = std::string(error.what()).find("sceFreeTypeOtGlyphTransform_nid_no_patch") != std::string::npos;
     }
     Require(threw, "foreign glyph handle is not accepted");
 }
