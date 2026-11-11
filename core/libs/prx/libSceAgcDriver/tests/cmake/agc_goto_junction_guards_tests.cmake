@@ -1,0 +1,8 @@
+add_test_executable(agc_goto_junction_guards_tests EXCLUDE_FROM_ALL tests/GotoJunctionGuards.cpp)
+target_link_libraries(agc_goto_junction_guards_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_goto_junction_guards_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_goto_junction_guards_tests)
+
+if(BUILD_TESTING)
+    agc_add_default_test(agc_goto_junction_guards_tests)
+endif()

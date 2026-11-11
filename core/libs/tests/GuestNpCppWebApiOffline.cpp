@@ -268,6 +268,66 @@ static void TestUserProfileParameterLifecycles() {
         });
 }
 
+template <typename TInitialize>
+static int InitializeSessionWithBody(TInitialize initialize, void* parameter, const std::uint64_t* context, bool present) {
+    if (present) return initialize(parameter, context, "session", &body);
+    Require(initialize(parameter, context, "session", &missingBody) == ParameterBodyMissing, "initialize accepted a missing request body");
+    return initialize(parameter, context, nullptr, &body);
+}
+
+static void TestPlayerSessionParameterLifecycles() {
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessionsC1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessionsD1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessions9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessions10initializeEPNS1_6Common10LibContextEPKc(parameter, context, present ? "session" : nullptr);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitationsC1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitationsD1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitations9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return InitializeSessionWithBody(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitations10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_49PostPlayerSessionsSessionIdInvitationsRequestBodyEEE, parameter, context, present);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionPropertiesC1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionPropertiesD1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionProperties9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return InitializeSessionWithBody(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionProperties10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_39PatchPlayerSessionsSessionIdRequestBodyEEE, parameter, context, present);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeaderC1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeaderD1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeader9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return InitializeSessionWithBody(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeader10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_43PutPlayerSessionsSessionIdLeaderRequestBodyEEE, parameter, context, present);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsersC1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsersD1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsers9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return InitializeSessionWithBody(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsers10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_60PostPlayerSessionsSessionIdJoinableSpecifiedUsersRequestBodyEEE, parameter, context, present);
+        });
+}
+
 static void TestIteratorDestructors() {
     unsigned char iterator[0x20];
     std::memset(iterator, 0x5a, sizeof(iterator));
@@ -326,11 +386,52 @@ static void TestVectorSizeAndElements() {
     for (const auto element : elements) Require(Throws([&] { element(&foreign, 0); }), "indexing a foreign body did not throw");
 }
 
+static void TestLeaderboardEntryAccessors() {
+    alignas(16) unsigned char objects[3][0xd0];
+    std::memset(objects, 0xa5, sizeof(objects));
+    constexpr std::uint32_t values[] = {0, 1, 0x80000000u, 0xffffffffu, 0x12345678u};
+    for (const auto value : values) {
+        for (unsigned int flags = 0; flags < 8; ++flags) {
+            for (unsigned int index = 0; index < 3; ++index) {
+                auto* object = objects[index] + 0x10;
+                const auto highest = value ^ (index * 0x13579bdu);
+                const auto serial = ~highest;
+                const auto highestSerial = highest ^ 0xa55a5aa5u;
+                const auto pcBits = value ^ (index * 0x2468ace1u);
+                std::int32_t pcId;
+                std::memcpy(&pcId, &pcBits, sizeof(pcId));
+                std::memcpy(object + 0x80, &pcId, sizeof(pcId));
+                object[0x38] = (flags >> 2) & 1;
+                std::memcpy(object + 0x3c, &highest, sizeof(highest));
+                std::memcpy(object + 0x40, &highestSerial, sizeof(highestSerial));
+                std::memcpy(object + 0x98, &serial, sizeof(serial));
+                object[0x68] = flags & 1;
+                object[0xb8] = (flags >> 1) & 1;
+                unsigned char before[sizeof(objects)];
+                std::memcpy(before, objects, sizeof(before));
+                Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry12commentIsSetEv(object) == ((flags & 4) != 0), "comment presence does not read its own flag");
+                Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry7getPcIdEv(object) == pcId, "PcId does not read its stored signed field");
+                Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry14getHighestRankEv(object) == highest, "highest rank does not read the entry field");
+                Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry13getSerialRankEv(object) == serial, "serial rank does not read the entry field");
+                Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry20getHighestSerialRankEv(object) == highestSerial, "highest serial rank does not read the entry field");
+                Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry13objectIdIsSetEv(object) == ((flags & 1) != 0), "object ID presence does not read its own flag");
+                Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry14smallDataIsSetEv(object) == ((flags & 2) != 0), "small data presence does not read its own flag");
+                Require(static_cast<const void*>(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry10getCommentEv(object)) == object + 0x18, "comment getter did not return its embedded object reference");
+                Require(static_cast<const void*>(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry11getObjectIdEv(object)) == object + 0x48, "object ID getter did not return its embedded object reference");
+                Require(static_cast<const void*>(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry12getSmallDataEv(object)) == object + 0xa0, "small data getter did not return its embedded object reference");
+                Require(std::memcmp(before, objects, sizeof(objects)) == 0, "entry accessors modified the object or adjacent storage");
+            }
+        }
+    }
+}
+
 int main() {
+    TestLeaderboardEntryAccessors();
     TestParameterLifecycles();
     TestSessionManagerParameterLifecycles();
     TestLeaderboardsParameterLifecycles();
     TestUserProfileParameterLifecycles();
+    TestPlayerSessionParameterLifecycles();
     TestIteratorDestructors();
     TestVectorSizeAndElements();
     std::puts("NpCppWebApi offline tests passed");

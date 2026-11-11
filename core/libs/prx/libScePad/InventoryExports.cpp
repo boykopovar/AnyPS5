@@ -1,3 +1,4 @@
+#include "prx/libScePad/include/LaterExports.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
@@ -68,5 +69,48 @@ int APS5_VABI libScePadUnknown_ybhL4IoyGZA_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("ybhL4IoyGZA", libScePadUnknown_ybhL4IoyGZA_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI scePadIsInitialUserHandle() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI libScePadUnknown_710T88tQmn4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("710T88tQmn4", libScePadUnknown_710T88tQmn4_nid_no_patch);
+
+int APS5_VABI libScePadUnknown_FlTOSPI5cnk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("FlTOSPI5cnk", libScePadUnknown_FlTOSPI5cnk_nid_no_patch);
+
+int APS5_VABI libScePadUnknown_WH0f85fU998_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("WH0f85fU998", libScePadUnknown_WH0f85fU998_nid_no_patch);
+
+int APS5_VABI libScePadUnknown_oARLr0ca9N8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("oARLr0ca9N8", libScePadUnknown_oARLr0ca9N8_nid_no_patch);
+
+int APS5_VABI libScePadUnknown_ovL0DogAAww_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ovL0DogAAww", libScePadUnknown_ovL0DogAAww_nid_no_patch);
+
+int APS5_VABI libScePadUnknown_s7DjmajUf0I_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("s7DjmajUf0I", libScePadUnknown_s7DjmajUf0I_nid_no_patch);
+
+int APS5_VABI libScePadUnknown_vtIU85W8xpY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("vtIU85W8xpY", libScePadUnknown_vtIU85W8xpY_nid_no_patch);
 
 }
