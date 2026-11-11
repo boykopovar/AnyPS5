@@ -1,6 +1,7 @@
 #include "prx/libScePlayGo/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
@@ -217,6 +218,9 @@ static int CheckNoPlayGoFile(const char* root) {
     Require(scePlayGoRequestOptionalChunk(handle + 1, 0, &request) == badHandle);
     Require(scePlayGoRequestOptionalChunk(handle + 1, 3, nullptr) == badHandle);
     Require(scePlayGoRequestOptionalChunk(handle, 0, nullptr) == badPointer);
+    errno = 71;
+    Require(scePlayGoRequestOptionalChunk(handle, 0, reinterpret_cast<const PlayGoOptionalChunk*>(0x10)) == badPointer);
+    Require(errno == 71);
     Require(scePlayGoRequestOptionalChunk(handle, 3, nullptr) == badPointer);
     Require(scePlayGoRequestOptionalChunk(handle, 3, &request) == badOptionalType);
     Require(scePlayGoRequestOptionalChunk(handle, 0xFFFFFFFF, &request) == badOptionalType);
