@@ -30,6 +30,7 @@
 #endif
 #include "CacheKey.hpp"
 #include "CompiledVariant.hpp"
+#include "ResultMemoGate.hpp"
 #include "BdaAbi.hpp"
 #include "ImageTableAbi.hpp"
 #include "ShaderDiskCache.hpp"
@@ -707,6 +708,44 @@ void verifyLayoutPair() {
     const auto taken = std::move(program).TakeCompiledInfo();
     require(taken.userDataBase == 2u && taken.scratchDwords == 64u, "layout pair: the compute fixture did not set a user-data base and scratch");
     require(copied.stage == taken.stage && copied.shaderHash == taken.shaderHash && copied.waveSize == taken.waveSize && copied.userDataBase == taken.userDataBase && copied.userDataCount == taken.userDataCount && copied.scratchDwords == taken.scratchDwords && copied.paramExportMask == taken.paramExportMask && copied.info == taken.info && copied.bindings == taken.bindings, "layout pair: the copied compiled information differs from the moved one");
+}
+
+void verifyResultMemoGate() {
+    using ShaderRecompiler::ResultMemoGate;
+    ResultMemoGate low;
+    for (std::uint32_t i = 0; i + 1 < ResultMemoGate::Window; ++i) {
+        require(low.Use(), "result memo gate: a lookup inside the first window bypassed the memo");
+        low.Record(i < 63u);
+    }
+    require(low.Use() && !low.Bypassing(), "result memo gate: the memo was bypassed before a full window");
+    low.Record(false);
+    require(low.Bypassing(), "result memo gate: a window with 63 hits in 256 lookups kept the memo");
+    for (std::uint32_t i = 0; i < ResultMemoGate::BypassCalls; ++i) {
+        low.Record(false);
+        require(!low.Use(), "result memo gate: the bypass ended before its countdown");
+    }
+    require(!low.Bypassing(), "result memo gate: the bypass outlasted its countdown");
+    for (std::uint32_t i = 0; i + 1 < ResultMemoGate::Window; ++i) {
+        require(low.Use(), "result memo gate: the memo did not come back after the countdown");
+        low.Record(false);
+    }
+    require(!low.Bypassing(), "result memo gate: lookups recorded during the bypass counted toward the next window");
+    low.Record(false);
+    require(low.Bypassing() && !low.Use(), "result memo gate: a window without hits after the countdown kept the memo");
+
+    ResultMemoGate quarter;
+    for (std::uint32_t i = 0; i < 4u * ResultMemoGate::Window; ++i) {
+        require(quarter.Use(), "result memo gate: a window with a quarter of hits bypassed the memo");
+        quarter.Record(i % 4u == 0u);
+    }
+    require(!quarter.Bypassing(), "result memo gate: a quarter of hits started a bypass");
+
+    ResultMemoGate high;
+    for (std::uint32_t i = 0; i < 4u * ResultMemoGate::Window; ++i) {
+        require(high.Use(), "result memo gate: a window of hits bypassed the memo");
+        high.Record(i % 8u != 0u);
+    }
+    require(!high.Bypassing(), "result memo gate: a high hit rate started a bypass");
 }
 
 void verifyRegisterSources() {
@@ -12083,6 +12122,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         require(argc == 1, "unknown shader memory test arguments");
+        verifyResultMemoGate();
         verifyRegisterSources();
         verifyEvaluatedValues();
         verifyFrontendPair();

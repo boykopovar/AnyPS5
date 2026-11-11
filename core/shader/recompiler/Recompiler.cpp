@@ -11,6 +11,7 @@
 #include <cstdio>
 #include "CacheKey.hpp"
 #include "CompiledVariant.hpp"
+#include "ResultMemoGate.hpp"
 #include "VertexInputSpecialization.hpp"
 #include "FragmentOutputSpecialization.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
@@ -444,6 +445,7 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::vector<EmissionFailure> emissionFailures;
     std::unique_ptr<ResultMemoTable> memo;
     std::unique_ptr<ResultMemoTable> maskedMemo;
+    ResultMemoGate memoGate;
 };
 
 namespace {
@@ -1618,7 +1620,7 @@ ResultMemoEntry* memoSet(const std::unique_ptr<ResultMemoTable>& table, std::uin
 }
 
 struct ResultMemoCounters {
-    std::atomic<std::uint64_t> hits{0}, patched{0}, misses{0}, evictions{0}, trimmed{0}, populateNanoseconds{0}, patchNanoseconds{0}, mismatches{0};
+    std::atomic<std::uint64_t> hits{0}, patched{0}, misses{0}, bypassed{0}, evictions{0}, trimmed{0}, populateNanoseconds{0}, patchNanoseconds{0}, mismatches{0};
     std::atomic<std::int64_t> lastReport{0};
     std::atomic<std::uint64_t> clock{0}, heldBytes{0}, heldEntries{0};
 };
@@ -1815,8 +1817,9 @@ void reportResultMemo() {
     const auto populate = counters.populateNanoseconds.exchange(0, std::memory_order_relaxed);
     const auto patching = counters.patchNanoseconds.exchange(0, std::memory_order_relaxed);
     const auto mismatches = counters.mismatches.exchange(0, std::memory_order_relaxed);
+    const auto bypassed = counters.bypassed.exchange(0, std::memory_order_relaxed);
     const auto total = static_cast<double>(hits + patched + misses);
-    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu patched, %llu misses (%.1f%% hits, %.1f%% patched), Populate %.1f us per miss / %.1f ms in total, patch %.1f us each / %.1f ms in total, %llu evictions, %llu patch mismatches, %llu trimmed; %llu results held, %.1f MiB\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(patched), static_cast<unsigned long long>(misses), total != 0.0 ? 100.0 * static_cast<double>(hits) / total : 0.0, total != 0.0 ? 100.0 * static_cast<double>(patched) / total : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, patched != 0 ? static_cast<double>(patching) / 1000.0 / static_cast<double>(patched) : 0.0, static_cast<double>(patching) / 1e6, static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(mismatches), static_cast<unsigned long long>(trimmed), static_cast<unsigned long long>(counters.heldEntries.load(std::memory_order_relaxed)), static_cast<double>(counters.heldBytes.load(std::memory_order_relaxed)) / 1048576.0);
+    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu patched, %llu misses (%.1f%% hits, %.1f%% patched), Populate %.1f us per miss / %.1f ms in total, patch %.1f us each / %.1f ms in total, %llu evictions, %llu patch mismatches, %llu trimmed, %llu bypassed; %llu results held, %.1f MiB\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(patched), static_cast<unsigned long long>(misses), total != 0.0 ? 100.0 * static_cast<double>(hits) / total : 0.0, total != 0.0 ? 100.0 * static_cast<double>(patched) / total : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, patched != 0 ? static_cast<double>(patching) / 1000.0 / static_cast<double>(patched) : 0.0, static_cast<double>(patching) / 1e6, static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(mismatches), static_cast<unsigned long long>(trimmed), static_cast<unsigned long long>(bypassed), static_cast<unsigned long long>(counters.heldEntries.load(std::memory_order_relaxed)), static_cast<double>(counters.heldBytes.load(std::memory_order_relaxed)) / 1048576.0);
 }
 
 // Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
@@ -1969,9 +1972,16 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto variantId = variant->artifact.variantId;
     const auto substitutes = bufferSubstitutesEnabled() && variant->substitutes != nullptr ? variant->substitutes->Slots() : std::vector<BufferSubstitute>{};
+    auto& counters = resultMemoCounters();
+    if (!source.memoGate.Use()) {
+        auto direct = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot, false, nullptr, &substitutes));
+        direct->cacheHit = cacheHit;
+        counters.bypassed.fetch_add(1, std::memory_order_relaxed);
+        reportResultMemo();
+        return direct;
+    }
     const auto hash = snapshotHash(request, snapshot, false, substitutes);
     const auto index = (variantId * 0x9e3779b97f4a7c15ull) ^ hash;
-    auto& counters = resultMemoCounters();
     {
         std::lock_guard lock(source.mutex);
         if (auto* set = memoSet(source.memo, index)) {
@@ -1980,6 +1990,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
                 if (entry.result == nullptr || entry.variantId != variantId || entry.hash != hash) continue;
                 entry.used = nextMemoUse();
                 counters.hits.fetch_add(1, std::memory_order_relaxed);
+                source.memoGate.Record(true);
                 if (memoHit != nullptr) *memoHit = true;
                 reportResultMemo();
                 return entry.result;
@@ -2004,6 +2015,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
             }
         }
     }
+    source.memoGate.Record(donor != nullptr);
     const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::shared_ptr<RecompileResult> result;
     std::shared_ptr<MemoPatch> patch;
