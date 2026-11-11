@@ -190,6 +190,14 @@ void PutSslError(int reason) {
 
 extern "C" {
 
+int APS5_VABI SSL_CTX_use_certificate_nid_postfix(LibreSslCtx* ctx, void* certificate) {
+    if (certificate == nullptr) {
+        PutSslError(67);
+        return 0;
+    }
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(LibreSslCtx* ctx) {
     return Context(ctx, __func__).verifyMode;
 }
@@ -202,6 +210,12 @@ void APS5_VABI SSL_CTX_set_cert_store_nid_postfix(LibreSslCtx* ctx, LibreSslX509
     LibreSslCtx& context = Context(ctx, __func__);
     X509_STORE_free_nid_postfix(static_cast<LibreSslX509Store*>(context.certStore));
     context.certStore = store;
+}
+
+int APS5_VABI SSL_CTX_load_verify_locations_nid_postfix(LibreSslCtx* ctx, const char* file, const char* path) {
+    Context(ctx, __func__);
+    if (file || path) NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 void APS5_VABI SSL_CTX_set_quiet_shutdown_nid_postfix(LibreSslCtx* ctx, int mode) {
