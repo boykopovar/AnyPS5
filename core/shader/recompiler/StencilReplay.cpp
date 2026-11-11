@@ -92,6 +92,32 @@ const IrValue* Other(const IrValue* value, std::uint32_t immediate) {
     return nullptr;
 }
 
+class WaveUniformValues {
+public:
+    explicit WaveUniformValues(const IrProgram& program) : program(program) {}
+
+    bool Uniform(const IrValue* value, unsigned depth = 0) {
+        if (depth > 128u) return false;
+        value = value->Resolve();
+        if (value->HasImmediate()) return true;
+        if (const auto found = values.find(value); found != values.end()) return found->second == 2u;
+        values[value] = 1u;
+        const auto opcode = value->Opcode();
+        bool accepted = opcode == IrOpcode::GetUserData || opcode == IrOpcode::GetShaderBase || opcode == IrOpcode::GetSrtResource;
+        const bool rawRead = (opcode == IrOpcode::ReadConstBuffer || opcode == IrOpcode::LoadAddressU32) && Detail::IsRawRead(program.Resources(), *value);
+        const bool transfer = rawRead || Detail::IsRuntimeUniformOp(opcode) || Detail::IsDescriptorHandle(opcode) || opcode == IrOpcode::ReadConst || opcode == IrOpcode::FPOrdLessThan32 || opcode == IrOpcode::FPOrdGreaterThan32 || opcode == IrOpcode::FPRecip32 || opcode == IrOpcode::FPRecipIFlag32;
+        if (!accepted && transfer && !value->MayHaveSideEffects() && value->ArgumentCount() != 0u) {
+            accepted = std::all_of(value->Arguments().begin(), value->Arguments().end(), [&](const IrValue* argument) { return Uniform(argument, depth + 1u); });
+        }
+        values[value] = accepted ? 2u : 3u;
+        return accepted;
+    }
+
+private:
+    const IrProgram& program;
+    std::unordered_map<const IrValue*, unsigned> values;
+};
+
 class MaskReplaySafety {
 public:
     explicit MaskReplaySafety(const IrProgram& program) : program(program), waveSize(program.WaveSize()) {}
@@ -408,19 +434,8 @@ private:
         return accepted;
     }
 
-    bool uniform(const IrValue* value, unsigned depth = 0) {
-        if (depth > 128u) return false;
-        value = value->Resolve();
-        if (value->HasImmediate()) return true;
-        if (const auto found = uniformValues.find(value); found != uniformValues.end()) return found->second == 2u;
-        uniformValues[value] = 1u;
-        bool accepted = value->Opcode() == IrOpcode::GetUserData || value->Opcode() == IrOpcode::GetShaderBase || value->Opcode() == IrOpcode::GetSrtResource;
-        const bool transfer = Detail::IsRuntimeUniformOp(value->Opcode()) || value->Opcode() == IrOpcode::ReadConst || value->Opcode() == IrOpcode::FPOrdLessThan32 || value->Opcode() == IrOpcode::FPOrdGreaterThan32;
-        if (!accepted && transfer && !value->MayHaveSideEffects() && value->ArgumentCount() != 0u) {
-            accepted = std::all_of(value->Arguments().begin(), value->Arguments().end(), [&](const IrValue* argument) { return uniform(argument, depth + 1u); });
-        }
-        uniformValues[value] = accepted ? 2u : 3u;
-        return accepted;
+    bool uniform(const IrValue* value) {
+        return waveUniform.Uniform(value);
     }
 
     bool paths() {
@@ -743,7 +758,7 @@ private:
     std::map<std::pair<std::uint32_t, std::uint32_t>, HelperMask> helperMasks;
     std::unordered_map<const IrValue*, std::optional<std::uint32_t>> helperValues;
     std::unordered_map<const IrValue*, unsigned> stableValues;
-    std::unordered_map<const IrValue*, unsigned> uniformValues;
+    WaveUniformValues waveUniform{program};
     std::map<std::uint32_t, std::size_t> indices;
     std::map<const IrBlock*, std::size_t> blockIndices;
     std::vector<std::vector<const IrBlock*>> allPaths;
@@ -948,6 +963,7 @@ bool StencilReplaySafe(const IrProgram& program) {
     if (program.Info().usesFaultBuffer && !FaultControlFlowAcyclic(program)) return false;
     for (const auto& input : program.Info().inputs) if (input.kind == StageInputKind::PrimitiveId) return false;
     bool masks = false;
+    WaveUniformValues uniform(program);
     for (const auto& info : program.Metadata().blockInfo) {
         if (info.terminator.loopHeader) return false;
         if (info.terminator.kind != TerminatorKind::ConditionalBranch) continue;
@@ -959,7 +975,7 @@ bool StencilReplaySafe(const IrProgram& program) {
             const auto opcode = instruction->Opcode();
             if (opcode == IrOpcode::Loop || opcode == IrOpcode::LoopMerge || opcode == IrOpcode::ImageBvhIntersectRay || BufferAccessOf(opcode) == BufferAccess::Atomic || AddressOpcodeInfoOf(opcode).access == AddressAccess::Write || AddressOpcodeInfoOf(opcode).access == AddressAccess::Atomic || SharedAccessOf(opcode) != SharedAccess::None || ImageOpcodeInfoOf(opcode).access == ImageAccess::Write || ImageOpcodeInfoOf(opcode).access == ImageAccess::Atomic) return false;
             if (opcode == IrOpcode::UndefU1 || opcode == IrOpcode::UndefU8 || opcode == IrOpcode::UndefU16 || opcode == IrOpcode::UndefU32 || opcode == IrOpcode::UndefU64) return false;
-            if (opcode == IrOpcode::ShaderClock || opcode == IrOpcode::RealtimeClock || opcode == IrOpcode::ReadFirstLane || opcode == IrOpcode::ReadLane || opcode == IrOpcode::WriteLane || opcode == IrOpcode::DppMoveU32 || opcode == IrOpcode::DppUpdateU32 || opcode == IrOpcode::Permlane16U32 || opcode == IrOpcode::PermuteU32 || opcode == IrOpcode::BpermuteU32 || opcode == IrOpcode::HalfSwapU32 || opcode == IrOpcode::SwizzleU32) return false;
+            if (opcode == IrOpcode::ShaderClock || opcode == IrOpcode::RealtimeClock || (opcode == IrOpcode::ReadFirstLane && (instruction->ArgumentCount() == 0u || !uniform.Uniform(instruction->Argument(0)))) || opcode == IrOpcode::ReadLane || opcode == IrOpcode::WriteLane || opcode == IrOpcode::DppMoveU32 || opcode == IrOpcode::DppUpdateU32 || opcode == IrOpcode::Permlane16U32 || opcode == IrOpcode::PermuteU32 || opcode == IrOpcode::BpermuteU32 || opcode == IrOpcode::HalfSwapU32 || opcode == IrOpcode::SwizzleU32) return false;
             masks = masks || opcode == IrOpcode::Ballot || opcode == IrOpcode::LaneId || opcode == IrOpcode::WqmU64;
             if (!instruction->MayHaveSideEffects()) continue;
             switch (opcode) {
