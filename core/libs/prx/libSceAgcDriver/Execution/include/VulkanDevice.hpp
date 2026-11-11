@@ -229,7 +229,7 @@ public:
     };
     static ComputePipelineCreation ComputePipelineCounts();
     struct DispatchMoveCount {
-        std::uint64_t checked, exact, moved, refused, filtered, rebuilt, kept, served;
+        std::uint64_t checked, exact, moved, refused, filtered, rebuilt, kept, served, inPlace;
     };
     static DispatchMoveCount DispatchMoveCounts();
     void ResolveMemory(std::uint64_t address, std::size_t bytes, bool writable);

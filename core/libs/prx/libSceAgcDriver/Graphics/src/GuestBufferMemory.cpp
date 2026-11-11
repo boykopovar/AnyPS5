@@ -7599,6 +7599,27 @@ std::uint64_t HostImportSerial(const Context& context, std::uint64_t address, st
     return entry.serial;
 }
 
+bool HostImportView(const Context& context, std::uint64_t address, std::size_t bytes, VkDescriptorBufferInfo& view, std::uint64_t& serial) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    auto found = state.imports.upper_bound(address);
+    if (found == state.imports.begin()) return false;
+    --found;
+    auto& entry = found->second;
+    if (entry.buffer == VK_NULL_HANDLE || address < entry.base || address + bytes > entry.base + entry.bytes) return false;
+    const auto offset = address - (entry.base - entry.lead);
+    const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
+    if (offset % alignment != 0) return false;
+    if (entry.serial == 0) {
+        static std::uint64_t serials = 0;
+        entry.serial = ++serials;
+    }
+    serial = entry.serial;
+    view = {entry.buffer, static_cast<VkDeviceSize>(offset), static_cast<VkDeviceSize>(bytes)};
+    return true;
+}
+
 bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof) {
     if (proof.device == VK_NULL_HANDLE || proof.device != context.device) return false;
     auto& state = Imports();
