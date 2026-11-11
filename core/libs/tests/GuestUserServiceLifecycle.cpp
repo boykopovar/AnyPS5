@@ -10,6 +10,8 @@
 #include <thread>
 #include <barrier>
 #include <source_location>
+#include <cerrno>
+#include <stdexcept>
 #include "prx/libSceUserService/Export.cpp"
 
 namespace {
@@ -228,10 +230,22 @@ void RequireNotInitialized() {
 }
 
 void RequireLoginOnce() {
+    const auto calls = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        sceUserServiceGetEvent(reinterpret_cast<SceUserServiceEvent*>(0x10));
+    } catch (const std::runtime_error& error) {
+        threw = std::strcmp(error.what(), "sceUserServiceGetEvent not implemented") == 0;
+    }
+    Require(threw);
+    Require(NotImplementedCalls_nid_no_patch() == calls + 1);
     SceUserServiceEvent event{};
+    errno = EDOM;
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(errno == EDOM);
     Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID);
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+    Require(sceUserServiceGetEvent(reinterpret_cast<SceUserServiceEvent*>(0x10)) == USER_SERVICE_ERROR_NO_EVENT);
 }
 
 int InitializeWithPriority(int priority) {

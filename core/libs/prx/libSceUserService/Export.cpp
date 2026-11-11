@@ -5,6 +5,7 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
@@ -366,9 +367,14 @@ int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event) {
   return USER_SERVICE_ERROR_NO_EVENT;
  }
  const auto item = eventQueue.front();
+ const SceUserServiceEvent output{item.eventType, item.userId};
+ const int savedError = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(event, &output, sizeof(output));
+ errno = savedError;
+ if (!copied) {
+  NotImplemented_nid_no_patch(__func__);
+ }
  eventQueue.pop_front();
- event->event_type = item.eventType;
- event->user_id = item.userId;
  return USER_SERVICE_OK;
 }
 
