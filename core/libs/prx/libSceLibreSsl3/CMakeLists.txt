@@ -41,6 +41,7 @@ target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/LibTls.cp
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/DigestNames.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Objects.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Accessors.cpp)
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Hkdf.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/EcdsaSig.cpp)
 
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1Values.cpp)
@@ -112,6 +113,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl3_x509_accessors PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_libressl3_x509_accessors PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+
+    add_test_executable(guest_libressl3_hkdf_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Hkdf.cpp)
+    target_include_directories(guest_libressl3_hkdf_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_hkdf_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_hkdf_tests)
+    add_test(NAME guest_libressl3_hkdf COMMAND guest_libressl3_hkdf_tests)
+    set_tests_properties(guest_libressl3_hkdf PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_hkdf PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
 
