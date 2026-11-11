@@ -23,7 +23,9 @@ namespace TimedWait {
 
 namespace {
 
-constexpr std::uint64_t YIELD_BELOW_NANOS = 50000ULL;
+constexpr std::uint64_t SHORT_SLEEP_NANOS = 50000ULL;
+constexpr std::uint64_t SHORT_SLEEP_SPIN_RUN_NANOS = 1000000ULL;
+constexpr unsigned SHORT_SLEEP_PAUSES_PER_CLOCK_READ = 8;
 constexpr std::uint64_t LEAD_NANOS = 20000ULL;
 
 std::mutex& ChangeSleepersMutex() {
@@ -135,10 +137,6 @@ DWORD WholeMilliseconds(std::uint64_t nanos) {
 }
 
 void SleepNanosCoarse(std::uint64_t nanos) {
-    if (nanos < YIELD_BELOW_NANOS) {
-        SwitchToThread();
-        return;
-    }
     const HANDLE timer = ThreadTimer(0);
     if (TimerWait(timer, nanos)) return;
     AlertableSleep(static_cast<DWORD>((nanos + 999999ULL) / 1000000ULL));
@@ -159,6 +157,8 @@ struct Waiter {
     Waiter* nested = nullptr;
     const void* key = nullptr;
     HANDLE wake = nullptr;
+    std::uint64_t shortSleepRunStartNanos = 0;
+    std::uint64_t shortSleepEndNanos = 0;
     bool queued = false;
     bool busy = false;
 
@@ -223,6 +223,26 @@ HANDLE ThreadTimer(unsigned kind) {
     auto& timer = ThisThreadWaiter()->sleepTimers[kind];
     if (!timer) timer = CreateHighResolutionTimer();
     return timer;
+}
+
+void SleepShort(std::uint64_t nanos) {
+    Waiter* waiter = ThisThreadWaiter();
+    std::uint64_t now = NowNanos();
+    const std::uint64_t deadlineNanos = now + nanos;
+    if (now - waiter->shortSleepEndNanos >= nanos) waiter->shortSleepRunStartNanos = now;
+    if (now - waiter->shortSleepRunStartNanos >= SHORT_SLEEP_SPIN_RUN_NANOS) {
+        if (!TimerWait(ThreadTimer(0), nanos)) AlertableSleep(1);
+        now = NowNanos();
+    }
+    {
+        DeliveryDeferral deferral;
+        while (now < deadlineNanos) {
+            for (unsigned pause = 0; pause < SHORT_SLEEP_PAUSES_PER_CLOCK_READ; ++pause) YieldProcessor();
+            now = NowNanos();
+        }
+    }
+    DrainApcs();
+    waiter->shortSleepEndNanos = NowNanos();
 }
 
 Waiter* AcquireWaiter() {
@@ -606,7 +626,7 @@ void SleepUntil(std::uint64_t deadlineNanos) {
 bool SleepNanosUnlessChanged(std::uint64_t nanos, const std::atomic<std::uint64_t>& counter, std::uint64_t observed) {
     const std::uint64_t deadlineNanos = NowNanos() + nanos;
 #ifdef _WIN32
-    if (Coarse() || nanos < YIELD_BELOW_NANOS) {
+    if (Coarse() || nanos < SHORT_SLEEP_NANOS) {
         SleepNanos(nanos);
         return false;
     }
@@ -680,12 +700,12 @@ void WakeChangeSleepers() {
 void SleepNanos(std::uint64_t nanos) {
     if (nanos == 0) return;
 #ifdef _WIN32
-    if (Coarse()) {
-        SleepNanosCoarse(nanos);
+    if (nanos < SHORT_SLEEP_NANOS) {
+        SleepShort(nanos);
         return;
     }
-    if (nanos < YIELD_BELOW_NANOS) {
-        SwitchToThread();
+    if (Coarse()) {
+        SleepNanosCoarse(nanos);
         return;
     }
     SleepUntil(NowNanos() + nanos);
