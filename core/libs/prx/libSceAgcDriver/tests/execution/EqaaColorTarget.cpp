@@ -310,6 +310,19 @@ int main() {
             Require(!GuardRefusal(keptFmask.Address(), 256u).empty(), "the FMASK of an EQAA target drawn for the color removal is not guarded");
         }
         Require(GuardRefusal(keptFmask.Address(), 256u).empty(), "removing only the color allocation of an EQAA target left its FMASK guarded");
+
+        Block fillColor(static_cast<std::size_t>(MsaaBytes));
+        Block fillFmask(BlockBytes);
+        Draw(*device, DecodeTarget(fillColor, &fillFmask, CompressedUnorm8x4Info, EqaaAttrib), Lower, red);
+        device->WaitIdle();
+        Require(GuardRefusal(fillFmask.Address(), 256u).find("the FMASK of EQAA color target") != std::string::npos, "the FMASK of a freshly drawn EQAA target is not guarded");
+        AgcDriver::Graphics::RetireMultisampleColorTargetsOnFmaskWrite(fillFmask.Address(), 1u);
+        Require(!GuardRefusal(fillFmask.Address(), 256u).empty(), "a write over part of an EQAA target's FMASK retired it");
+        AgcDriver::Graphics::RetireMultisampleColorTargetsOnFmaskWrite(fillColor.Address(), static_cast<std::size_t>(MsaaBytes));
+        Require(!GuardRefusal(fillFmask.Address(), 256u).empty(), "a write over only an EQAA target's color retired its FMASK guard");
+        AgcDriver::Graphics::RetireMultisampleColorTargetsOnFmaskWrite(fillFmask.Address(), static_cast<std::size_t>(BlockBytes));
+        Require(GuardRefusal(fillFmask.Address(), 256u).empty(), "a write over the whole FMASK of an EQAA target did not retire it");
+        Require(GuardRefusal(fillColor.Address(), static_cast<std::size_t>(EqaaBytes)).empty(), "a write over the whole FMASK of an EQAA target left its color plane guarded");
         std::printf("EQAA color target tests passed: 4-sample 2-fragment draws resolve like 4x MSAA (%zu bytes), %td quarter-coverage channels, FMASK guarded at the base of the last draw, either plane's removal retires both\n", eqaaTexels.size(), quarter);
         return 0;
     } catch (const std::exception& error) {
