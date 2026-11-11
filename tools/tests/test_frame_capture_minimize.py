@@ -306,5 +306,18 @@ if command == 'inspect':
             self.assertIn("final capture failed confirmation", stderr.getvalue())
             self.assertFalse(output.exists())
 
+    def test_replay_arg_expands_trial_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            replay = root / "replay.py"
+            replay.write_text("import pathlib, sys\npathlib.Path(sys.argv[2], 'received').touch()\nprint('failure')\n", encoding="utf-8")
+            workdir = root / "run"
+            workdir.mkdir()
+            args = SimpleNamespace(replay=replay, replay_arg=["{trial_dir}"], replay_timeout=2, expect_exit_code=0)
+            minimizer = frame_capture_minimize.Minimizer(args, re.compile("failure"))
+            matched, _ = minimizer.replay_once(root / "capture", workdir)
+            self.assertTrue(matched)
+            self.assertTrue((workdir / "received").exists())
+
 if __name__ == "__main__":
     unittest.main()
