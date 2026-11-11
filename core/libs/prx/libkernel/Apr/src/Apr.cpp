@@ -149,6 +149,8 @@ AprFile _file(std::uint32_t id) {
 
 constexpr std::uint32_t INVALID_FILE_ID = 0xFFFFFFFFu;
 constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
+constexpr int SCE_KERNEL_ERROR_EIO = static_cast<int>(0x80020005);
+constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000E);
 
 int _resolveForEach(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, int* results) {
     if (!paths || !ids) return _fail(GUEST_EINVAL);
@@ -166,16 +168,31 @@ int _resolveForEach(const char* prefix, const char** paths, uint32_t count, uint
     return static_cast<int>(resolvedCount);
 }
 
-void _readFile(const Apr::ReadFileCommand& command) {
-    const auto file = _file(command.fileId);
+std::optional<AprFile> _findFile(std::uint32_t id) {
+    std::lock_guard lock(g_filesLock);
+    if (id >= g_files.size()) return std::nullopt;
+    return g_files[id];
+}
+
+int _readFile(const Apr::ReadFileCommand& command) {
     static const bool trace = std::getenv("APS5_TRACE_APR") != nullptr;
+    const auto found = _findFile(command.fileId);
+    const auto failed = [&](int status, const char* why) {
+        if (trace) std::fprintf(stderr, "[apr] read of file %u failed: %s (0x%x)\n", command.fileId, why, static_cast<unsigned>(status));
+        return status;
+    };
+    if (!found) return failed(SCE_KERNEL_ERROR_ENOENT, "unknown file id");
+    const auto& file = *found;
     if (trace) std::fprintf(stderr, "[apr] read %s offset=0x%llx size=0x%llx -> 0x%llx\n", file.path.string().c_str(), static_cast<unsigned long long>(command.offset), static_cast<unsigned long long>(command.size), static_cast<unsigned long long>(command.destination));
     const auto hostPath = _hostPath(file.path);
     std::ifstream stream(hostPath, std::ios::binary);
-    if (!stream) throw std::runtime_error("APR: cannot open " + file.path.string());
+    if (!stream) {
+        std::error_code missing;
+        return failed(std::filesystem::exists(hostPath, missing) ? SCE_KERNEL_ERROR_EIO : SCE_KERNEL_ERROR_ENOENT, "cannot open the file");
+    }
     stream.seekg(static_cast<std::streamoff>(command.offset));
     const GuestArena::HostWrite destination(reinterpret_cast<void*>(command.destination), command.size);
-    if (!destination.Open()) throw std::runtime_error("APR: the read destination of " + file.path.string() + " is not writable guest memory");
+    if (!destination.Open()) return failed(SCE_KERNEL_ERROR_EFAULT, "the destination is not writable guest memory");
 #ifdef _WIN32
     std::vector<char> staging(static_cast<std::size_t>(std::min<std::uint64_t>(command.size, 64u * 1024u)));
     std::uint64_t read = 0;
@@ -185,16 +202,21 @@ void _readFile(const Apr::ReadFileCommand& command) {
         const auto obtained = static_cast<std::uint64_t>(stream.gcount());
         if (obtained != 0) std::memcpy(reinterpret_cast<char*>(command.destination) + read, staging.data(), static_cast<std::size_t>(obtained));
         read += obtained;
-        if (stream.bad()) throw std::runtime_error("APR: read failed for " + file.path.string());
+        if (stream.bad()) return failed(SCE_KERNEL_ERROR_EIO, "the host read failed");
         if (obtained != static_cast<std::uint64_t>(wanted)) break;
     }
 #else
     stream.read(reinterpret_cast<char*>(command.destination), static_cast<std::streamsize>(command.size));
-    if (stream.bad()) throw std::runtime_error("APR: read failed for " + file.path.string());
+    if (stream.bad()) return failed(SCE_KERNEL_ERROR_EIO, "the host read failed");
     const auto read = static_cast<std::uint64_t>(stream.gcount());
 #endif
-    if (read != command.size && (!stream.eof() || command.offset + read < std::filesystem::file_size(hostPath))) throw std::runtime_error("APR: read of " + file.path.string() + " at offset " + std::to_string(command.offset) + " returned " + std::to_string(read) + " of " + std::to_string(command.size) + " bytes");
-    if (read != command.size) std::memset(reinterpret_cast<char*>(command.destination) + read, 0, static_cast<std::size_t>(command.size - read));
+    if (read != command.size) {
+        std::error_code sizeError;
+        const auto fileSize = std::filesystem::file_size(hostPath, sizeError);
+        if (!stream.eof() || sizeError || command.offset + read < fileSize) return failed(SCE_KERNEL_ERROR_EIO, "the read came back short before the end of the file");
+        std::memset(reinterpret_cast<char*>(command.destination) + read, 0, static_cast<std::size_t>(command.size - read));
+    }
+    return 0;
 }
 
 std::string _addressText(std::uint64_t address) {
@@ -580,23 +602,24 @@ struct ReadCursor {
     std::uint64_t nextOffset = 0;
 };
 
-void _readResolved(Apr::Opcode opcode, Apr::ReadFileCommand command, ReadCursor& read) {
+void _readResolved(Apr::Opcode opcode, Apr::ReadFileCommand command, ReadCursor& read, int& status) {
     if (opcode != Apr::Opcode::ReadFile) {
         if (!read.valid) throw std::runtime_error("APR: gather or scatter read without a preceding read");
         command.fileId = read.fileId;
         if (opcode == Apr::Opcode::ReadFileGather) command.destination = read.nextDestination;
         if (opcode == Apr::Opcode::ReadFileScatter) command.offset = read.nextOffset;
     }
-    _readFile(command);
+    if (const int failure = _readFile(command); failure != 0 && status == 0) status = failure;
     read = {true, command.fileId, command.destination + command.size, command.offset + command.size};
 }
 
 struct Deferred {
     std::uint32_t cursor = 0;
     ReadCursor read;
+    int status = 0;
 };
 
-std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::uint32_t start = 0, ReadCursor read = {}, bool defer = false) {
+std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, int& status, std::uint32_t start = 0, ReadCursor read = {}, bool defer = false) {
     std::uint32_t cursor = start;
     while (cursor < buffer.offset) {
         if (buffer.offset - cursor < Apr::NopHeaderBytes) throw std::runtime_error("APR: truncated command buffer");
@@ -617,7 +640,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
             std::memcpy(&command, buffer.base + cursor, sizeof(command));
             const auto offset = static_cast<std::uint64_t>(command.opcodeAndOffsetHigh >> 8u) << 32u | command.offsetLow;
             if (offset >= 0x10000000000ull) throw std::runtime_error("APR: malformed compact gather offset");
-            _readResolved(Apr::Opcode::ReadFileGather, Apr::ReadFileCommand{{}, 0, 0, 0, static_cast<std::uint64_t>(command.sizeMinusOne) + 1u, offset}, read);
+            _readResolved(Apr::Opcode::ReadFileGather, Apr::ReadFileCommand{{}, 0, 0, 0, static_cast<std::uint64_t>(command.sizeMinusOne) + 1u, offset}, read, status);
             cursor += sizeof(command);
             continue;
         }
@@ -631,7 +654,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
         case Apr::Opcode::ReadFileGather:
         case Apr::Opcode::ReadFileScatter:
         case Apr::Opcode::ReadFileGatherScatter:
-            _readResolved(header.opcode, _read<Apr::ReadFileCommand>(buffer, cursor), read);
+            _readResolved(header.opcode, _read<Apr::ReadFileCommand>(buffer, cursor), read, status);
             break;
         case Apr::Opcode::ResetGatherScatterState:
             read = {};
@@ -685,7 +708,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
                 return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).load(std::memory_order_acquire);
             };
             const std::uint64_t reference = (command.reference & command.mask) << unused;
-            if (defer && !_waitSatisfied(command.compare, (current() & command.mask) << unused, reference)) return Deferred{cursor, read};
+            if (defer && !_waitSatisfied(command.compare, (current() & command.mask) << unused, reference)) return Deferred{cursor, read, status};
             while (!_waitSatisfied(command.compare, (current() & command.mask) << unused, reference)) PreciseSleepUs(50);
             break;
         }
@@ -757,19 +780,26 @@ struct AprCompletion {
     std::mutex mutex;
     std::condition_variable done;
     std::set<std::uint32_t> outstanding;
+    std::map<std::uint32_t, int> failures;
     std::uint32_t issued = 0;
 };
+
+constexpr std::size_t MaxRecordedFailures = 4096;
 
 AprCompletion& _completion(bool amm) {
     static AprCompletion* const completions[2] = {new AprCompletion(), new AprCompletion()};
     return *completions[amm ? 1 : 0];
 }
 
-void _complete(bool amm, std::uint32_t id) {
+void _complete(bool amm, std::uint32_t id, int status) {
     auto& completion = _completion(amm);
     {
         std::lock_guard lock(completion.mutex);
         completion.outstanding.erase(id);
+        if (status != 0) {
+            completion.failures[id] = status;
+            while (completion.failures.size() > MaxRecordedFailures) completion.failures.erase(completion.failures.begin());
+        }
     }
     completion.done.notify_all();
 }
@@ -786,9 +816,10 @@ AprQueue* _startQueue(bool amm) {
                 created->pending.pop_front();
                 created->running = true;
             }
+            int status = work.resume.status;
             try {
                 const auto bytes = static_cast<std::uint32_t>(work.commands.size());
-                _execute(Apr::CommandBufferObject{Apr::BufferType::Generic, 0, bytes, 0, bytes, work.commands.data()}, work.resume.cursor, work.resume.read);
+                _execute(Apr::CommandBufferObject{Apr::BufferType::Generic, 0, bytes, 0, bytes, work.commands.data()}, status, work.resume.cursor, work.resume.read);
             } catch (const std::exception& error) {
                 std::fprintf(stderr, "APR: %s\n", error.what());
                 std::fflush(stderr);
@@ -798,7 +829,7 @@ AprQueue* _startQueue(bool amm) {
                 std::lock_guard lock(created->mutex);
                 created->running = false;
             }
-            _complete(amm, work.id);
+            _complete(amm, work.id, status);
         }
     }).detach();
     return created;
@@ -843,18 +874,25 @@ std::uint32_t _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm, s
         enqueue({});
         return id;
     }
-    if (const auto deferred = _execute(Apr::CommandBufferObject{Apr::BufferType::Generic, 0, bytes, 0, bytes, const_cast<std::uint8_t*>(base)}, 0, {}, true)) {
+    int status = 0;
+    if (const auto deferred = _execute(Apr::CommandBufferObject{Apr::BufferType::Generic, 0, bytes, 0, bytes, const_cast<std::uint8_t*>(base)}, status, 0, {}, true)) {
         enqueue(*deferred);
         return id;
     }
-    _complete(amm, id);
+    _complete(amm, id, status);
     return id;
 }
 
-void _waitSubmitted(std::uint32_t id, bool amm) {
+int _submissionStatus(std::uint32_t id, bool amm, bool wait) {
     auto& completion = _completion(amm);
     std::unique_lock lock(completion.mutex);
-    completion.done.wait(lock, [&] { return id > completion.issued || !completion.outstanding.contains(id); });
+    if (wait) completion.done.wait(lock, [&] { return id > completion.issued || !completion.outstanding.contains(id); });
+    const auto failure = completion.failures.find(id);
+    return failure == completion.failures.end() ? 0 : failure->second;
+}
+
+void _waitSubmitted(std::uint32_t id, bool amm) {
+    _submissionStatus(id, amm, true);
 }
 
 std::uint32_t AmmSubmit_nid_no_patch(void* base, std::uint32_t bytes) {
@@ -952,30 +990,35 @@ int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* bu
     return 0;
 }
 
-int APS5_VABI sceKernelAprSubmitCommandBufferAndGetId(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id) {
+int _submitWithId(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id, std::uint32_t& submitted) {
     if (!id) return _fail(GUEST_EINVAL);
     if (!buffer) return _fail(GUEST_EINVAL);
     Apr::CommandBufferObject object{};
     if (!GuestCopyIn_nid_no_patch(&object, buffer, sizeof(object))) return _fail(GUEST_EFAULT);
     const auto commands = _guestCommands(object);
     if (!commands) return _fail(GUEST_EFAULT);
-    const std::uint32_t submitted = _submit(commands->data(), static_cast<std::uint32_t>(commands->size()), false, priority);
+    submitted = _submit(commands->data(), static_cast<std::uint32_t>(commands->size()), false, priority);
     if (!GuestCopyOut_nid_no_patch(id, &submitted, sizeof(submitted))) return _fail(GUEST_EFAULT);
     return 0;
 }
 
+int APS5_VABI sceKernelAprSubmitCommandBufferAndGetId(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id) {
+    std::uint32_t submitted = 0;
+    return _submitWithId(buffer, priority, id, submitted);
+}
+
 int APS5_VABI sceKernelAprSubmitCommandBufferAndGetResult(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* result, uint32_t* id) {
     if (!result) return _fail(GUEST_EINVAL);
-    const int submitted = sceKernelAprSubmitCommandBufferAndGetId(buffer, priority, id);
+    std::uint32_t submission = 0;
+    const int submitted = _submitWithId(buffer, priority, id, submission);
     if (submitted != 0) return submitted;
-    const std::uint32_t succeeded = 0;
-    if (!GuestCopyOut_nid_no_patch(result, &succeeded, sizeof(succeeded))) return _fail(GUEST_EFAULT);
+    const auto status = static_cast<std::uint32_t>(_submissionStatus(submission, false, false));
+    if (!GuestCopyOut_nid_no_patch(result, &status, sizeof(status))) return _fail(GUEST_EFAULT);
     return 0;
 }
 
 int APS5_VABI sceKernelAprWaitCommandBuffer(uint32_t id) {
-    _waitSubmitted(id, false);
-    return 0;
+    return _submissionStatus(id, false, true);
 }
 
 int APS5_VABI sceKernelAprResolveFilepathsToIdsForEach(const char** paths, uint32_t count, uint32_t* ids, int* results) {
