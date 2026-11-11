@@ -31,7 +31,7 @@ function(add_test_executable target)
     endif()
     if(WIN32 AND NOT CMAKE_VERSION VERSION_LESS 3.21 AND NOT ATE_NO_RUNTIME_DLL_STAGING)
         add_custom_command(TARGET ${target} POST_BUILD
-                COMMAND "${CMAKE_COMMAND}" -E copy_if_different $<TARGET_RUNTIME_DLLS:${target}> "$<TARGET_FILE:${target}>" "$<TARGET_FILE_DIR:${target}>/"
+                COMMAND "${CMAKE_COMMAND}" "-DDEST_DIR=$<TARGET_FILE_DIR:${target}>" -P "${CMAKE_SOURCE_DIR}/cmake/CopyRuntimeFiles.cmake" $<TARGET_RUNTIME_DLLS:${target}> "$<TARGET_FILE:${target}>"
                 COMMAND_EXPAND_LISTS
                 VERBATIM
         )
