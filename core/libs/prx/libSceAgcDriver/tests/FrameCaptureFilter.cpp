@@ -244,6 +244,13 @@ void testMissingPlanIndex(const std::filesystem::path& root) {
     checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted a missing index");
 }
 
+
+void testNegativePlanIndex(const std::filesystem::path& root) {
+    const auto path = root / "negative-index.plan";
+    { std::ofstream output(path); output << "aps5-frame-filter 1\ncall -1\n"; }
+    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted a negative index");
+}
+
 }
 
 int main() {
@@ -260,6 +267,7 @@ int main() {
     testDuplicateCall(root);
     testDuplicateChunk(root);
     testMissingPlanIndex(root);
+    testNegativePlanIndex(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
