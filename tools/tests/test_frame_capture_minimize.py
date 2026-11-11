@@ -197,6 +197,16 @@ if command == 'inspect':
         with self.assertRaisesRegex(RuntimeError, "duplicate index 3"):
             frame_capture_minimize.Minimizer.validate_entries([{"index": 3, "kind": "submit"}, {"index": 3, "kind": "flip"}], "calls")
 
+    def test_inspection_memory_entries_require_valid_groups(self):
+        for entry in ({"index": 0, "kind": "memory"}, {"index": 0, "kind": "memory", "memory_group": -1}, {"index": 0, "kind": "memory", "memory_group": True}):
+            with self.subTest(entry=entry), self.assertRaisesRegex(RuntimeError, "invalid memory group"):
+                frame_capture_minimize.Minimizer.validate_entries([entry], "calls")
+
+    def test_inspection_chunks_require_valid_groups(self):
+        for entry in ({"index": 0, "kind": "delta"}, {"index": 0, "kind": "range", "group": -1}, {"index": 0, "kind": "snapshot", "group": True}):
+            with self.subTest(entry=entry), self.assertRaisesRegex(RuntimeError, "invalid group"):
+                frame_capture_minimize.Minimizer.validate_entries([entry], "chunks")
+
     def test_inspection_requires_calls_list(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

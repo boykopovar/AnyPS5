@@ -38,8 +38,17 @@ class Minimizer:
             if index in indexes:
                 raise RuntimeError(f"capture inspection {label} contains duplicate index {index}")
             indexes.add(index)
-            if not isinstance(entry.get("kind"), str):
+            kind = entry.get("kind")
+            if not isinstance(kind, str):
                 raise RuntimeError(f"capture inspection {label}[{position}] is missing a kind")
+            if label == "calls" and kind == "memory":
+                group = entry.get("memory_group")
+                if isinstance(group, bool) or not isinstance(group, int) or group < 0:
+                    raise RuntimeError(f"capture inspection calls[{position}] has an invalid memory group")
+            if label == "chunks":
+                group = entry.get("group")
+                if isinstance(group, bool) or not isinstance(group, int) or group < 0:
+                    raise RuntimeError(f"capture inspection chunks[{position}] has an invalid group")
 
     def inspect(self):
         result = subprocess.run([*self.command(self.filter), "inspect", str(self.capture)], capture_output=True, text=True, encoding="utf-8", errors="replace")
