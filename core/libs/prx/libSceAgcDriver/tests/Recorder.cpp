@@ -6809,6 +6809,234 @@ bool untrackedReproofTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+bool untrackedLargeReproofTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    context.nullDescriptors = device.NullDescriptors();
+    if (!context.nullDescriptors) {
+        std::cout << "null descriptors unavailable: large untracked snapshot reproofs not tested\n";
+        return false;
+    }
+    constexpr std::uint32_t side = 512;
+    constexpr std::size_t bytes = std::size_t{side} * side * 4u;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the large untracked block");
+    auto* watched = static_cast<std::uint8_t*>(AllocateWatched(2 * bytes, 65536));
+    if (watched == nullptr) {
+        std::cout << "write watch unavailable: large untracked snapshot reproofs not tested\n";
+        return false;
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+        mutation.Add(watched, 2 * bytes, true, true, true);
+    }
+    struct Unregister {
+        void* block;
+        std::uint8_t* watched;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+                mutation.Remove(watched);
+            }
+            ReleaseWatched(watched, 2 * bytes);
+        }
+    } unregister{block, watched};
+    std::memset(block, 0x40, bytes);
+    std::memset(watched, 0x40, 2 * bytes);
+    const auto untracked = reinterpret_cast<std::uint64_t>(block);
+    const auto tracked = reinterpret_cast<std::uint64_t>(watched);
+    const auto hinted = tracked + bytes;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+#ifdef _WIN32
+    AgcDriver::GuestMemory::Unwatch(hinted, bytes);
+    const bool hints = true;
+#else
+    const bool hints = false;
+#endif
+    if (AgcDriver::GuestMemory::Watched(untracked, bytes) || AgcDriver::GuestMemory::UntrackedHint(untracked, bytes) != 0 || !AgcDriver::GuestMemory::Watched(tracked, bytes) || (hints && (AgcDriver::GuestMemory::Watched(hinted, bytes) || AgcDriver::GuestMemory::UntrackedHint(hinted, bytes) == 0))) {
+        std::cout << "the blocks are not one untracked, one tracked and one hinted surface: large untracked snapshot reproofs not tested\n";
+        return false;
+    }
+    TextureDetiler detiler(context);
+    auto imageContext = context;
+    imageContext.detiler = &detiler;
+    TextureCache textureCache(imageContext);
+    imageContext.textureCache = &textureCache;
+    struct Clear {
+        const Context& context;
+        Recorder& recorder;
+        ~Clear() { recorder.Sync(); ClearCachedTextures(context.device); }
+    } clear{context, recorder};
+    const auto program = [](std::uint64_t address) {
+        ShaderRecompiler::RecompileResult result;
+        ShaderRecompiler::DescriptorBinding binding;
+        binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+        binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+        binding.descriptorSet = 0;
+        binding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        binding.count = 1;
+        binding.imageSamplers = {0};
+        binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+        binding.guestDescriptor = {static_cast<std::uint32_t>(address >> 8), static_cast<std::uint32_t>(address >> 40) | (56u << 20) | (((side - 1u) & 3u) << 30), ((side - 1u) >> 2) | ((side - 1u) << 14), 0x91b00fac, 0, 0, 0, 0};
+        Require(DescribeSurface(DecodeTextureResource(binding.guestDescriptor)).guestBytes == bytes, "the large surface descriptor does not describe 1 MiB");
+        result.bindings.push_back(binding);
+        return result;
+    };
+    const auto untrackedProgram = program(untracked);
+    const auto trackedProgram = program(tracked);
+    const auto hintedProgram = program(hinted);
+    const CompiledShader untrackedCompute{ShaderRecompiler::ShaderStage::Compute, &untrackedProgram, 0};
+    const CompiledShader trackedCompute{ShaderRecompiler::ShaderStage::Compute, &trackedProgram, 0};
+    const CompiledShader hintedCompute{ShaderRecompiler::ShaderStage::Compute, &hintedProgram, 0};
+    const bool enabled = std::getenv("APS5_NO_UNTRACKED_REPROOF") == nullptr;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto untrackedResources = std::make_shared<ShaderResources>(imageContext, untrackedCompute);
+    auto trackedResources = std::make_shared<ShaderResources>(imageContext, trackedCompute);
+    auto hintedResources = hints ? std::make_shared<ShaderResources>(imageContext, hintedCompute) : nullptr;
+    recorder.Sync();
+    const auto untrackedTextures = untrackedResources->SampledTextures();
+    Require(untrackedTextures.size() == 1 && trackedResources->SampledTextures().size() == 1 && (!hints || hintedResources->SampledTextures().size() == 1), "a template over a large surface did not hold one sampled texture");
+    Require(StorageTexture::FindLive(untracked, bytes) == nullptr && StorageTexture::FindLive(tracked, bytes) == nullptr && StorageTexture::FindLive(hinted, bytes) == nullptr, "a large surface is viewed through a storage image instead of a snapshot");
+    AgcDriver::GuestMemory::MarkWritten(untracked + 0x200, 4);
+    AgcDriver::GuestMemory::MarkWritten(tracked + 0x200, 4);
+    if (hints) AgcDriver::GuestMemory::MarkWritten(hinted + 0x200, 4);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    ShaderResources::ProofReport report;
+    const auto counts = [] { return ShaderResources::UntrackedReproofCounts(); };
+    auto before = counts();
+    const bool untrackedProved = untrackedResources->Revalidate(std::span(&untrackedCompute, 1), &report);
+    Require(untrackedProved && (report.path == ShaderResources::ProofPath::Fast) == enabled, enabled ? "a template over a large untracked surface whose stamp moved left the fast proof: its snapshot was not kept for the compare" : "a template over a large untracked surface failed the full walk's compare or kept its fast proof with reproofs disabled");
+    Require(counts().compared - before.compared == (enabled ? 1u : 0u), enabled ? "the proof of a large untracked surface whose stamp moved did not compare its snapshot exactly once" : "a proof compared an untracked snapshot with reproofs disabled");
+    Require(untrackedResources->SampledTextures() == untrackedTextures, "the proof of a large untracked surface after a driver store of the bytes already there replaced its texture");
+    Require(!trackedResources->Revalidate(std::span(&trackedCompute, 1), &report), "a template over a large tracked surface survived a driver store of the bytes already there: its snapshot was kept for a compare");
+    if (hints) {
+        before = counts();
+        Require(!hintedResources->Revalidate(std::span(&hintedCompute, 1), &report), "a template over a large hinted surface survived a driver store of the bytes already there: its snapshot was kept for a compare");
+        Require(counts().compared == before.compared, "the proof of a large hinted surface compared a snapshot it does not keep");
+    }
+    untrackedResources.reset();
+    trackedResources.reset();
+    hintedResources.reset();
+    std::cout << "large untracked snapshot reproofs" << (enabled ? "" : " (disabled)") << (hints ? "" : ", hinted surface not covered without write-watch hints") << ": ok\n";
+    return true;
+}
+
+std::atomic<std::uint64_t> indexedBegin{0};
+std::atomic<std::uint64_t> indexedEnd{0};
+std::atomic<std::uint32_t> indexedReads{0};
+void (*indexedNext)(std::uint64_t, std::size_t) = nullptr;
+
+void countIndexedReads(std::uint64_t address, std::size_t bytes) {
+    if (address < indexedEnd.load() && address + bytes > indexedBegin.load()) indexedReads.fetch_add(1);
+    if (indexedNext != nullptr) indexedNext(address, bytes);
+}
+
+bool untrackedIndexTests(const Device& device, Recorder& recorder) {
+    if (!AgcDriver::GuestMemory::WriteIndexEnabled()) {
+        std::cout << "the write index is off: untracked snapshots under the write index not tested\n";
+        return false;
+    }
+    auto context = device.GetContext();
+    context.nullDescriptors = device.NullDescriptors();
+    if (!context.nullDescriptors) {
+        std::cout << "null descriptors unavailable: untracked snapshots under the write index not tested\n";
+        return false;
+    }
+    constexpr std::size_t bytes = 2 * 65536;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the untracked index block");
+    std::memset(block, 0x40, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        void* block;
+        ~Unregister() {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(block);
+        }
+    } unregister{block};
+    if (AgcDriver::GuestMemory::Watched(address, bytes) || AgcDriver::GuestMemory::UntrackedHint(address, bytes) != 0) {
+        std::cout << "the block is write-watched or hinted: untracked snapshots under the write index not tested\n";
+        return false;
+    }
+    TextureDetiler detiler(context);
+    auto imageContext = context;
+    imageContext.detiler = &detiler;
+    TextureCache textureCache(imageContext);
+    imageContext.textureCache = &textureCache;
+    struct Clear {
+        const Context& context;
+        Recorder& recorder;
+        ~Clear() { recorder.Sync(); ClearCachedTextures(context.device); }
+    } clear{context, recorder};
+    ShaderRecompiler::RecompileResult imageProgram;
+    ShaderRecompiler::DescriptorBinding imageBinding;
+    imageBinding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+    imageBinding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    imageBinding.descriptorSet = 0;
+    imageBinding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+    imageBinding.count = 1;
+    imageBinding.imageSamplers = {0};
+    imageBinding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    imageBinding.guestDescriptor = {static_cast<std::uint32_t>(address >> 8), static_cast<std::uint32_t>(address >> 40) | (56u << 20) | (3u << 30), 15u | (63u << 14), 0x91b00fac, 0, 0, 0, 0};
+    imageProgram.bindings.push_back(imageBinding);
+    const CompiledShader imageCompute{ShaderRecompiler::ShaderStage::Compute, &imageProgram, 0};
+    struct Hook {
+        Hook() {
+            indexedNext = AgcDriver::GuestMemory::CurrentFlushHook();
+            AgcDriver::GuestMemory::SetFlushHook(&countIndexedReads);
+        }
+        ~Hook() {
+            AgcDriver::GuestMemory::SetFlushHook(indexedNext);
+            indexedNext = nullptr;
+        }
+    } hook;
+    indexedBegin = address;
+    indexedEnd = address + bytes;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto resources = std::make_shared<ShaderResources>(imageContext, imageCompute);
+    recorder.Sync();
+    ShaderResources::ProofReport report;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(resources->Revalidate(std::span(&imageCompute, 1), &report), "a template over unchanged untracked memory did not revalidate before the write index held it");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto outcomes = WriteIndexOutcomesCounted();
+    auto reproofs = ShaderResources::UntrackedReproofCounts();
+    indexedReads = 0;
+    Require(resources->Revalidate(std::span(&imageCompute, 1), &report) && report.path == ShaderResources::ProofPath::Fast, "a template over unchanged untracked memory did not prove fast in a new collect epoch under the write index");
+    auto indexed = WriteIndexOutcomesCounted();
+    Require(indexed.accepted - outcomes.accepted == 1u && indexed.fallback == outcomes.fallback, "the write index did not accept a template that holds an untracked snapshot");
+    Require(indexed.compared - outcomes.compared == 1u && indexedReads.load() != 0, "the write index accepted a template over untracked memory without comparing its snapshot in a new collect epoch");
+    Require(ShaderResources::UntrackedReproofCounts().compared == reproofs.compared, "the fast proof compared an untracked snapshot although the write index accepted its template");
+    outcomes = WriteIndexOutcomesCounted();
+    reproofs = ShaderResources::UntrackedReproofCounts();
+    indexedReads = 0;
+    Require(resources->Revalidate(std::span(&imageCompute, 1), &report) && report.path == ShaderResources::ProofPath::Fast, "a second proof in the collect epoch was not fast under the write index");
+    indexed = WriteIndexOutcomesCounted();
+    Require(indexed.accepted - outcomes.accepted == 1u, "the write index did not accept the second proof in the collect epoch");
+    Require(indexedReads.load() == 0 && ShaderResources::UntrackedReproofCounts().stamped - reproofs.stamped == 1u, "the write index did not take the untracked snapshot by its collect epoch's stamp on the second proof");
+    const auto stale = resources->SampledTextures();
+    std::memset(block, 0x41, 4096);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const bool proved = resources->Revalidate(std::span(&imageCompute, 1), &report);
+    Require(!(proved && resources->SampledTextures() == stale), "the write index accepted a template whose untracked snapshot a CPU store changed, with the stale snapshot");
+    resources.reset();
+    std::cout << "untracked snapshots under the write index: ok\n";
+    return true;
+}
+
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -16264,6 +16492,12 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--untracked-reproof-only") {
             return untrackedReproofTests(device, recorder) ? 0 : 77;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--untracked-large-reproof-only") {
+            return untrackedLargeReproofTests(device, recorder) ? 0 : 77;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--untracked-index-only") {
+            return untrackedIndexTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--untracked-forget-only") {
             return untrackedForgetTests(device, recorder) ? 0 : 77;
