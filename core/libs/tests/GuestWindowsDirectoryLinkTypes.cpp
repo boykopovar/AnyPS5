@@ -3,6 +3,7 @@
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include <windows.h>
 #include <winioctl.h>
 #include <array>
@@ -137,6 +138,113 @@ static std::map<std::string, std::uint8_t> Types(const char* path) {
     return entries;
 }
 
+static std::filesystem::path Extended(const std::filesystem::path& path) {
+    return std::filesystem::path(L"\\\\?\\" + std::filesystem::absolute(path).lexically_normal().make_preferred().native());
+}
+
+static void CreateDirectories(const std::filesystem::path& base, const std::filesystem::path& deep) {
+    auto directory = base;
+    Require(CreateDirectoryW(Extended(base).c_str(), nullptr) != 0);
+    for (const auto& component : deep.lexically_relative(base)) {
+        directory /= component;
+        Require(CreateDirectoryW(Extended(directory).c_str(), nullptr) != 0);
+    }
+}
+
+static void RemoveDirectories(const std::filesystem::path& base, const std::filesystem::path& deep) {
+    for (auto path = deep;; path = path.parent_path()) {
+        Require(RemoveDirectoryW(Extended(path).c_str()) != 0);
+        if (path == base) break;
+    }
+}
+
+static void LongJunction(const std::filesystem::path& link, const std::filesystem::path& target) {
+    Require(CreateDirectoryW(Extended(link).c_str(), nullptr) != 0);
+    const auto printName = std::filesystem::absolute(target).make_preferred().wstring();
+    const auto substituteName = L"\\??\\" + printName;
+    struct MountPoint {
+        ULONG tag;
+        USHORT dataLength;
+        USHORT reserved;
+        USHORT substituteOffset;
+        USHORT substituteLength;
+        USHORT printOffset;
+        USHORT printLength;
+        wchar_t names[2048];
+    } data{};
+    Require(substituteName.size() + printName.size() + 2 <= std::size(data.names));
+    data.tag = IO_REPARSE_TAG_MOUNT_POINT;
+    data.substituteLength = static_cast<USHORT>(substituteName.size() * sizeof(wchar_t));
+    data.printOffset = static_cast<USHORT>((substituteName.size() + 1) * sizeof(wchar_t));
+    data.printLength = static_cast<USHORT>(printName.size() * sizeof(wchar_t));
+    data.dataLength = static_cast<USHORT>(8 + data.printOffset + data.printLength + sizeof(wchar_t));
+    std::memcpy(data.names, substituteName.c_str(), data.substituteLength + sizeof(wchar_t));
+    std::memcpy(reinterpret_cast<char*>(data.names) + data.printOffset, printName.c_str(), data.printLength + sizeof(wchar_t));
+    const auto handle = CreateFileW(Extended(link).c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    Require(handle != INVALID_HANDLE_VALUE);
+    DWORD returned = 0;
+    const auto result = DeviceIoControl(handle, FSCTL_SET_REPARSE_POINT, &data, 8 + data.dataLength, nullptr, 0, &returned, nullptr);
+    Require(CloseHandle(handle) != 0);
+    Require(result != 0);
+}
+
+static void LongApp0Root(const std::filesystem::path& parent) {
+    const auto base = parent / ("anyps5-long-app0-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    auto deep = base;
+    while (deep.native().size() < MAX_PATH + 16) deep /= std::wstring(40, L'a');
+    CreateDirectories(base, deep);
+    const auto external = base / "external";
+    Require(CreateDirectoryW(Extended(external).c_str(), nullptr) != 0);
+    Require(CreateDirectoryW(Extended(deep / "real").c_str(), nullptr) != 0);
+    LongJunction(deep / "packed", external);
+    AddPathAlias_nid_no_patch("/app0", deep.string().c_str());
+    Require(ResolveDiskPath_nid_no_patch("/app0").native().size() >= MAX_PATH);
+    const auto app0 = Types("/app0");
+    RemovePathAlias_nid_no_patch("/app0");
+    Require(app0.size() == 4 && app0.at("real") == 4);
+    if (app0.at("packed") != 4) std::fprintf(stderr, "packed under a long /app0 root: getdents type %u, expected 4\n", app0.at("packed"));
+    Require(app0.at("packed") == 4);
+    Require(RemoveDirectoryW(Extended(deep / "packed").c_str()) != 0);
+    Require(RemoveDirectoryW(Extended(deep / "real").c_str()) != 0);
+    Require(RemoveDirectoryW(Extended(external).c_str()) != 0);
+    RemoveDirectories(base, deep);
+}
+
+static void LongNoFollow(const std::filesystem::path& parent) {
+    const auto base = parent / ("anyps5-long-nofollow-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    auto deep = base;
+    while (deep.native().size() < MAX_PATH + 16) deep /= std::wstring(40, L'a');
+    CreateDirectories(base, deep);
+    const auto external = base / "external";
+    Require(CreateDirectoryW(Extended(external).c_str(), nullptr) != 0);
+    LongJunction(deep / "packed", external);
+    const auto link = (deep / "packed").string();
+    Require(link.size() >= MAX_PATH);
+    Require(sceKernelOpen(link.c_str(), SCE_KERNEL_O_NOFOLLOW, 0) == static_cast<int>(0x8002001Fu));
+    Require(RemoveDirectoryW(Extended(deep / "packed").c_str()) != 0);
+    Require(RemoveDirectoryW(Extended(external).c_str()) != 0);
+    RemoveDirectories(base, deep);
+}
+
+static void SearchPatternAtMaxPath(const std::filesystem::path& parent) {
+    const auto base = parent / ("anyps5-max-path-listing-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    auto deep = base;
+    while (MAX_PATH - 1 - deep.native().size() > 42) deep /= std::wstring(40, L'b');
+    deep /= std::wstring(MAX_PATH - 2 - deep.native().size(), L'c');
+    Require(deep.native().size() == MAX_PATH - 1);
+    CreateDirectories(base, deep);
+    const auto file = deep / "payload";
+    const auto handle = CreateFileW(Extended(file).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Require(handle != INVALID_HANDLE_VALUE && CloseHandle(handle) != 0);
+    AddPathAlias_nid_no_patch("/max-path-listing", deep.string().c_str());
+    const auto listed = Types("/max-path-listing");
+    RemovePathAlias_nid_no_patch("/max-path-listing");
+    Require(listed.size() == 3 && listed.at(".") == 4 && listed.at("..") == 4 && listed.at("payload") == 8);
+    Require(DeleteFileW(Extended(file).c_str()) != 0);
+    RemoveDirectories(base, deep);
+}
+
 int main() {
     const auto previous = std::filesystem::current_path();
     const auto root = previous / ("anyps5-app0-links-" +
@@ -193,5 +301,8 @@ int main() {
     std::filesystem::current_path(previous);
     Require(root.parent_path() == previous && root.filename().string().starts_with("anyps5-app0-links-"));
     std::filesystem::remove_all(root);
+    LongApp0Root(previous);
+    LongNoFollow(previous);
+    SearchPatternAtMaxPath(previous);
     std::puts("Windows directory link type tests passed");
 }

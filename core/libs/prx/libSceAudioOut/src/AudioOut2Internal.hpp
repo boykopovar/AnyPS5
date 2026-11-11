@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <stop_token>
 #include <utility>
 #include <vector>
@@ -17,6 +18,7 @@
 #include "SDL.h"
 #include "SceTypes.hpp"
 #include "AudioOut2PadMix.hpp"
+#include "prx/libSceAudioOut/include/HostGain.hpp"
 
 // Shared by the AudioOut2 context and port files.
 //
@@ -28,6 +30,7 @@ bool AudioOut2TraceEnabled();
 double AudioOut2TraceSeconds();
 bool AudioOut2IsInitialized_nid_no_patch();
 void AudioOut2MarkInitialized_nid_no_patch();
+bool AudioOut2TryInitialize_nid_no_patch();
 
 #define AUDIOOUT2_TRACE(...) \
     do { \
@@ -97,6 +100,7 @@ struct AudioOut2Context {
     std::uint32_t queued = 0;
     std::chrono::steady_clock::time_point playHead;
     SDL_AudioDeviceID device = 0;
+    HostGainRamp hostGain{AUDIO_OUT2_SAMPLE_RATE / 100};
     // Stereo float mix of the ports for one grain.
     std::vector<float> mix;
     // Mixed stereo frames the device has not played yet; it plays silence until the cushion is mixed.
@@ -108,6 +112,7 @@ struct AudioOut2Context {
     std::deque<AudioOut2Grain> pendingGrains;
     std::deque<std::chrono::steady_clock::time_point> pendingSince;
     SDL_AudioDeviceID padDevice = 0;
+    float padSpeakerFallbackGain = 1.0f;
     std::chrono::steady_clock::time_point nextPadProbe;
     AudioOut2PadLayout padLayout;
     std::vector<float> padMix;
@@ -128,7 +133,11 @@ struct AudioOut2Context {
     std::chrono::steady_clock::time_point summaryStart;
     bool deviceBacked = false;
     std::atomic<std::uint32_t> publishedQueueLevel{0};
+    std::optional<std::chrono::steady_clock::time_point> clockForTest;
 };
+
+AudioOut2Context* AudioOut2FindContext(AudioOut2ContextHandle ctx);
+void AudioOut2DestroyAllContexts();
 
 // Mixes every port of the context that carries PCM data into out (stereo float, frames frames), summing
 // onto the zeroed buffer. Returns the number of ports mixed.

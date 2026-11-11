@@ -1,4 +1,5 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/include/InventoryExports.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -86,7 +87,7 @@ static void AccumulatePadPort(const AudioOut2Port& port, const void* data, Audio
     }
 }
 
-static void AccumulatePort(const AudioOut2Port& port, const void* data, float* out, std::uint32_t frames, const float* volume) {
+static void AccumulatePort(const AudioOut2Port& port, const void* data, float* out, std::uint32_t frames, const float* volume, float gain) {
     const auto& fold = *port.fold;
     float in[AUDIO_OUT2_PORT_CHANNELS_MAX];
     for (std::uint32_t frame = 0; frame < frames; frame++) {
@@ -98,8 +99,8 @@ static void AccumulatePort(const AudioOut2Port& port, const void* data, float* o
             if (fold.left[c] != 0.0f) left += sample * fold.left[c];
             if (fold.right[c] != 0.0f) right += sample * fold.right[c];
         }
-        out[frame * AUDIO_OUT2_OUTPUT_CHANNELS] += left;
-        out[frame * AUDIO_OUT2_OUTPUT_CHANNELS + 1] += right;
+        out[frame * AUDIO_OUT2_OUTPUT_CHANNELS] += left * gain;
+        out[frame * AUDIO_OUT2_OUTPUT_CHANNELS + 1] += right * gain;
     }
 }
 
@@ -116,7 +117,7 @@ AudioOut2Grain AudioOut2CaptureGrain(const AudioOut2Context& context, bool snaps
             queued = std::move(port.queuedData.front());
             port.queuedData.pop_front();
             data = queued.data;
-            setPcm = queued.reused ? &queued.pcm : nullptr;
+            setPcm = queued.reused || snapshot ? &queued.pcm : nullptr;
         }
         if (data != nullptr) {
             AudioOut2CapturedPort captured{index, port.generation, data};
@@ -146,7 +147,8 @@ std::uint32_t AudioOut2MixPorts(const AudioOut2Context& context, const AudioOut2
         if (!port.used || port.generation != generation || port.context != &context || port.channels == 0) continue;
         const auto route = AudioOut2RouteForPort(port.type, port.channels);
         const float* volume = captured.pcm.empty() ? port.volume : captured.volume.data();
-        if (route == AudioOut2Route::Main || (context.padDevice == 0 && route == AudioOut2Route::PadSpeaker)) AccumulatePort(port, data, out, frames, volume);
+        if (route == AudioOut2Route::Main) AccumulatePort(port, data, out, frames, volume, 1.0f);
+        else if (context.padDevice == 0 && route == AudioOut2Route::PadSpeaker) AccumulatePort(port, data, out, frames, volume, context.padSpeakerFallbackGain);
         else if (padOut != nullptr) AccumulatePadPort(port, data, route, padOut, frames, volume);
         mixed++;
     }
@@ -208,7 +210,8 @@ extern "C" {
 
 int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2PortParam* params, AudioOut2PortHandle* port) try {
     const AudioOutCall call;
-    if (!ctx) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    auto* context = AudioOut2FindContext(ctx);
+    if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!params || !port) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     const auto channels = (params->data_format >> FORMAT_CHANNELS_SHIFT) & FORMAT_CHANNELS_MASK;
     const auto sampleType = params->data_format & FORMAT_TYPE_MASK;
@@ -231,7 +234,7 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     entry = AudioOut2Port{};
     entry.used = true;
     entry.generation = ++g_portGeneration;
-    entry.context = reinterpret_cast<AudioOut2Context*>(ctx);
+    entry.context = context;
     entry.type = params->port_type;
     entry.dataFormat = params->data_format;
     entry.samplingFreq = params->sampling_freq;
@@ -250,6 +253,10 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceAudioOut2PortCreateEx(AudioOut2ContextHandle ctx, const AudioOut2PortParam* params, AudioOut2PortHandle* port) {
+    return sceAudioOut2PortCreate(ctx, params, port);
 }
 
 int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle port) try {
@@ -294,12 +301,12 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
             std::memcpy(&entry->data, attribute.value, sizeof(entry->data));
             MarkBufferReused(*entry);
             AudioOut2QueuedData queued{entry->data, CopyGrain(*entry)};
-            entry->repeatedData = entry->data != nullptr && (entry->lastBuffer == nullptr || entry->lastBuffer == entry->data) ? entry->data : nullptr;
+            entry->repeatedData = entry->data != nullptr && entry->lastBuffer == nullptr ? entry->data : nullptr;
             entry->repeatedPcm = queued.pcm;
             entry->repeatedReused = false;
             entry->queuedData.push_back(std::move(queued));
             if (entry->queuedData.size() > QUEUED_DATA_MAX) entry->queuedData.pop_front();
-            if (entry->data != nullptr) entry->lastBuffer = entry->data;
+            entry->lastBuffer = entry->data;
             entry->dataSets++;
             verdict = "pcm data pointer";
         } else if (attribute.attribute_id == ATTRIBUTE_VOLUME && entry->channels != 0 && attribute.value_size == entry->channels * sizeof(float)) {
@@ -308,6 +315,28 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
         }
         const auto traces = entry->attributeTraces++;
         if (traces < ATTRIBUTE_TRACE_FULL || traces % ATTRIBUTE_TRACE_EVERY == 0) TraceAttribute(port, *entry, attribute, verdict);
+    }
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceAudioOut2LoPortGetAttributes(AudioOut2PortHandle port, AudioOut2Attribute* attributes, uint32_t num) try {
+    constexpr int ErrorInvalidParam = static_cast<int>(0x80268001);
+    const AudioOutCall call;
+    std::lock_guard lock(g_portsLock);
+    auto* entry = FromHandle(port);
+    if (!entry) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    if (!attributes && num != 0) return ErrorInvalidParam;
+    for (uint32_t index = 0; index < num; index++) {
+        const auto& attribute = attributes[index];
+        if (attribute.attribute_id == ATTRIBUTE_VOLUME && attribute.value != nullptr) {
+            std::memcpy(const_cast<void*>(attribute.value), entry->volume, entry->channels * sizeof(float));
+        } else if (attribute.attribute_id == 9 || attribute.attribute_id == 0xa || attribute.attribute_id == 0x21) {
+            NotImplemented_nid_no_patch(__func__);
+        } else {
+            return ErrorInvalidParam;
+        }
     }
     return 0;
 } catch (const ProcessShutdown&) {

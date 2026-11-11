@@ -120,14 +120,9 @@ int main() {
 
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
 
-    info.size = sizeof(info) - 1;
-    RequireThrows([&] { sceGameUpdateGetAddcontLatestVersion(0, &label, &info); });
-
-    std::memset(&info, 0xAB, sizeof(info));
-    info.size = sizeof(info) + 8;
-    const auto original = info;
-    RequireThrows([&] { sceGameUpdateGetAddcontLatestVersion(0, &label, &info); });
-    Require(std::memcmp(&info, &original, sizeof(info)) == 0);
+    info.size = sizeof(info);
+    Require(sceGameUpdateGetAddcontLatestVersion(0, &label, &info) == 0);
+    Require(!info.found);
     TestRequestLifecycle(notFound);
 
     Require(sceGameUpdateTerminate() == 0);

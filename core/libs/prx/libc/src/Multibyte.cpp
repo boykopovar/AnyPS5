@@ -155,6 +155,14 @@ std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value
     return EncodeUtf8(destination, value);
 }
 
+std::size_t APS5_VABI _Mbrtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state) {
+    return mbrtowc_nid_postfix(destination, source, count, state);
+}
+
+std::size_t APS5_VABI _Wcrtomb_nid_postfix(char* destination, std::uint16_t value, void* state) {
+    return wcrtomb_nid_postfix(destination, value, state);
+}
+
 int APS5_VABI mblen_nid_postfix(const char* source, std::size_t count) {
     unsigned char state[StateSize]{};
     return ToInt(LocaleToWide(nullptr, source, count, state));
@@ -290,21 +298,25 @@ std::size_t APS5_VABI wcsrtombs_nid_postfix(char* destination, const std::uint16
 
 static int WideToLocaleChecked(
     std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t** source, std::size_t limit,
-    void* state, bool stopAtLimit
+    void* state, bool stopAtLimit, const char* badArgument, const char* bufferTooSmall
 ) {
     constexpr int GuestEinval = 22;
     constexpr int GuestErange = 34;
     constexpr int GuestEilseq = 86;
     constexpr auto Failed = static_cast<std::size_t>(-1);
-    if (!result || !source || !state || !*source || (destination && (static_cast<std::int64_t>(capacity) <= 0
-            || static_cast<std::int64_t>(limit) < 0))) {
-        if (destination && static_cast<std::int64_t>(capacity) > 0) destination[0] = '\0';
+    constexpr std::size_t RsizeMax = SIZE_MAX >> 3;
+    const auto violation = [](const char* message, int error) {
+        SonyInvokeConstraintHandler(message, nullptr, error);
+        return error;
+    };
+    if (!result || !source || !state || !*source || (destination && (capacity == 0 || capacity > RsizeMax || limit > RsizeMax))) {
+        if (destination && capacity != 0 && capacity <= RsizeMax) destination[0] = '\0';
         if (result) *result = Failed;
-        return GuestEinval;
+        return violation(badArgument, GuestEinval);
     }
     if (!destination && capacity) {
         *result = Failed;
-        return GuestEinval;
+        return violation(badArgument, GuestEinval);
     }
     const auto* wide = *source;
     char bytes[MB_LEN_MAX];
@@ -336,7 +348,7 @@ static int WideToLocaleChecked(
             *source = wide;
             destination[0] = '\0';
             *result = Failed;
-            return GuestErange;
+            return violation(bufferTooSmall, GuestErange);
         }
         std::memcpy(destination + written, bytes, length);
         written += length;
@@ -351,7 +363,7 @@ static int WideToLocaleChecked(
             *source = wide;
             destination[0] = '\0';
             *result = Failed;
-            return GuestErange;
+            return violation(bufferTooSmall, GuestErange);
         }
         limit -= length;
     }
@@ -365,14 +377,14 @@ int APS5_VABI wcsrtombs_s_nid_postfix(
     std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t** source, std::size_t limit,
     void* state
 ) {
-    return WideToLocaleChecked(result, destination, capacity, source, limit, state, false);
+    return WideToLocaleChecked(result, destination, capacity, source, limit, state, false, "wcsrtombs_s: bad argument", "wcstombs_s: buffer too small");
 }
 
 int APS5_VABI wcstombs_s_nid_postfix(
     std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t* source, std::size_t limit
 ) {
     std::array<std::uint64_t, 16> state{};
-    return WideToLocaleChecked(result, destination, capacity, &source, limit, state.data(), limit < capacity);
+    return WideToLocaleChecked(result, destination, capacity, &source, limit, state.data(), limit < capacity, "wcstombs_s: bad argument", "wcstombs_s: buffer overflow");
 }
 
 std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t* destination, const char** source, std::size_t capacity, void* state) {

@@ -1,9 +1,14 @@
+import os
+import subprocess
 from pathlib import Path
 import contextlib
+import html
 import io
+import json
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sanitizer_report
@@ -63,6 +68,22 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("4 tests: 0 passed, 2 skipped, 2 failed.", stdout)
 
+    def test_a_test_listed_twice_is_rejected(self):
+        summary = self.write("", "summary.md")
+        for cases in ((case("fiber", "fail", "<failure/>"), case("fiber")),
+                      (case("fiber"), case("fiber", "fail", "<failure/>")),
+                      (case("fiber"), case("fiber"))):
+            with self.subTest(cases=cases):
+                code, stdout, stderr = self.run_main(self.write(suite(*cases)), "--summary", summary)
+                self.assertEqual(code, 2)
+                self.assertEqual(stdout, "")
+                self.assertIn("testcase fiber is listed more than once", stderr)
+        nested = ('<testsuites><testsuite name="a">' + case("fiber", "fail", "<failure/>")
+                  + '</testsuite><testsuite name="b">' + case("fiber") + "</testsuite></testsuites>")
+        code, _, _ = self.run_main(self.write(nested))
+        self.assertEqual(code, 2)
+        self.assertEqual(summary.read_text(encoding="utf-8"), "")
+
     def test_summary_counts_and_sorts_the_failed_tests(self):
         text, failing = sanitizer_report.summarize("ASan", {"b": "failed", "a": "failed", "c": "passed", "d": "skipped"})
         self.assertTrue(failing)
@@ -115,6 +136,27 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertIn(summary.name, stderr)
         self.assertTrue(stderr.startswith("sanitizer_report: "))
         self.assertNotIn("Traceback", stderr)
+
+    def test_summary_symlink_loop_resolution_failure_exits_with_2(self):
+        junit = self.write(suite(case("passes")), "report.xml")
+        summary = Path(self.directory.name) / "summary_mock.md"
+        with unittest.mock.patch.object(Path, "resolve", side_effect=RuntimeError("Symlink loop from 'summary_mock.md'")):
+            code, stdout, stderr = self.run_main(junit, "--summary", summary)
+            self.assertEqual(code, 2)
+            self.assertEqual(stdout, "")
+            self.assertTrue(stderr.startswith("sanitizer_report: "))
+
+        loop_a = Path(self.directory.name) / "loop_a.md"
+        loop_b = Path(self.directory.name) / "loop_b.md"
+        try:
+            loop_a.symlink_to(loop_b)
+            loop_b.symlink_to(loop_a)
+        except OSError:
+            return
+        code, stdout, stderr = self.run_main(junit, "--summary", loop_a)
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertTrue(stderr.startswith("sanitizer_report: "))
 
     def write_known(self, *lines):
         return self.write("\n".join(lines) + "\n", "known.txt")
@@ -227,6 +269,65 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertIn("| Failed test |\n| - |\n| `plain` |\n", stdout)
 
 
+    def test_names_remain_literal_in_every_summary_table(self):
+        names = ("one|two", "`fence`", "line\nnext\rreturn", "carriage\rreturn", "\\|<script>&中文*_")
+        for name in names:
+            for details, known, outcome in (({}, {}, "failed"), ({name: "report"}, {}, "failed"),
+                                            ({}, {name: "reason"}, "failed"), ({}, {name: "reason"}, "passed"),
+                                            ({}, {name: "reason"}, None)):
+                with self.subTest(name=name, outcome=outcome, details=bool(details)):
+                    found = {name: outcome} if outcome else {"ordinary": "passed"}
+                    text, failing = sanitizer_report.summarize("ASan", found, known, details)
+                    rows = [line for line in text.splitlines() if line.startswith("| <code>")]
+                    self.assertEqual(len(rows), 1)
+                    self.assertEqual(rows[0].count("|"), 3 if known and outcome or details else 2)
+                    encoded = rows[0].split("<code>", 1)[1].split("</code>", 1)[0]
+                    self.assertEqual(html.unescape(encoded), name.replace("\r", r"\r").replace("\n", r"\n"))
+                    self.assertRegex(encoded, r"\A(?:[^\W_]| |&#\d+;)*\Z")
+                    self.assertEqual(failing, outcome == "failed" and not known)
+
+    def test_cli_json_keeps_original_names_and_appends_literal_markdown(self):
+        names = ("one|two", "`fence`", "line\nnext\rreturn", "carriage\rreturn", "\\|<script>&中文*_")
+        path = self.write(suite(*(case(html.escape(name, quote=True).replace("\r", "&#13;").replace("\n", "&#10;"),
+                                      "disabled", '<skipped/><failure/><system-out>ERROR: AddressSanitizer: bad access</system-out>')
+                                  for name in names)))
+        before = path.read_bytes()
+        summary = self.write("existing\n", "summary.md")
+        completed = subprocess.run([sys.executable, str(Path(sanitizer_report.__file__)), str(path),
+                                    "--json", "--summary", str(summary)],
+                                   capture_output=True, encoding="utf-8", timeout=15)
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+        data = json.loads(completed.stdout)
+        self.assertTrue(data["unexpected_failure"])
+        self.assertEqual([test["name"] for test in data["tests"]], sorted(names))
+        self.assertEqual([(test["outcome"], test["unexpected"], test["report"]) for test in data["tests"]],
+                         [("failed", True, "ERROR: AddressSanitizer: bad access")] * len(names))
+        markdown = summary.read_text(encoding="utf-8")
+        self.assertTrue(markdown.startswith("existing\n"))
+        self.assertIn("5 tests: 0 passed, 0 skipped, 5 failed.", markdown)
+        rows = [line for line in markdown.splitlines() if line.startswith("| <code>")]
+        self.assertEqual(len(rows), len(names))
+        for row, name in zip(rows, sorted(names)):
+            self.assertEqual(row.count("|"), 3)
+            encoded = row.split("<code>", 1)[1].split("</code>", 1)[0]
+            self.assertEqual(html.unescape(encoded), name.replace("\r", r"\r").replace("\n", r"\n"))
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_explicit_failures_override_skipped_and_disabled_statuses(self):
+        for status in ("run", "notrun", "disabled", None):
+            for failure in ("failure", "error"):
+                for skip in ("", '<skipped/>', '<skipped message="SKIP_RETURN_CODE=77"/>'):
+                    with self.subTest(status=status, failure=failure, skip=skip):
+                        path = self.write(suite(case("contradiction", status, skip + f"<{failure}/>")))
+                        self.assertEqual(sanitizer_report.results(path), {"contradiction": "failed"})
+                        self.assertEqual(self.run_main(path)[0], 1)
+                        known = self.write_known("contradiction address tracked issue")
+                        code, stdout, _ = self.run_main(path, "--known", known, "--sanitizer", "address")
+                        self.assertEqual(code, 0)
+                        self.assertIn("1 failed (1 known)", stdout)
+
+
 
 class RepositoryKnownFailuresTests(unittest.TestCase):
     def test_every_entry_parses(self):
@@ -235,6 +336,65 @@ class RepositoryKnownFailuresTests(unittest.TestCase):
     def test_entries_stay_sorted_by_test_name(self):
         names = [line.split(None, 1)[0] for line in KNOWN_FAILURES.read_text(encoding="utf-8").splitlines() if line.strip()]
         self.assertEqual(names, sorted(names))
+
+
+
+class SummaryInputAliasTests(unittest.TestCase):
+    def check_aliases(self, kind):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for target in ("junit", "known"):
+                with self.subTest(target=target):
+                    source = root / "input.xml"
+                    known = root / "known.txt"
+                    source.write_text(suite(case("unit")), encoding="utf-8")
+                    known.write_text("unit address a known failure\n", encoding="utf-8")
+                    original = {path: path.read_bytes() for path in (source, known)}
+                    selected = source if target == "junit" else known
+                    alias = root / "summary"
+                    if kind == "direct":
+                        alias = selected
+                    elif kind == "hardlink":
+                        os.link(selected, alias)
+                    else:
+                        try:
+                            alias.symlink_to(selected)
+                        except OSError as error:
+                            if getattr(error, "winerror", None) == 1314:
+                                self.skipTest("needs symbolic-link creation privilege")
+                            raise
+                    completed = subprocess.run([sys.executable, str(Path(sanitizer_report.__file__)), str(source),
+                                                "--known", str(known), "--sanitizer", "address", "--summary", str(alias)],
+                                               capture_output=True)
+                    self.assertEqual(completed.returncode, 2, completed.stderr)
+                    self.assertEqual(completed.stdout, b"")
+                    self.assertIn(b"summary output must differ from input", completed.stderr)
+                    self.assertNotIn(b"Traceback", completed.stderr)
+                    self.assertEqual({path: path.read_bytes() for path in original}, original)
+                    if kind != "direct":
+                        alias.unlink()
+
+    def test_direct_input_aliases_are_rejected(self):
+        self.check_aliases("direct")
+
+    def test_hardlink_input_aliases_are_rejected(self):
+        self.check_aliases("hardlink")
+
+    def test_symlink_input_aliases_are_rejected(self):
+        self.check_aliases("symlink")
+
+    def test_separate_summary_still_appends(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "input.xml"
+            source.write_text(suite(case("unit")), encoding="utf-8")
+            output = root / "summary"
+            output.write_bytes(b"existing\n")
+            completed = subprocess.run([sys.executable, str(Path(sanitizer_report.__file__)), str(source), "--summary", str(output)], capture_output=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(output.read_bytes(), b"existing\n" + completed.stdout)
+            self.assertEqual(source.read_text(), suite(case("unit")))
+
 
 
 if __name__ == "__main__":
