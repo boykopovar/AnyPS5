@@ -57,6 +57,48 @@ class OpenPrProgressTests(unittest.TestCase):
         self.git("update-ref", ref, head)
         return {"sha": head, "ref": ref, "depends": set()}
 
+    def test_open_prs_for_distinct_functions_are_combined(self):
+        first = self.branch(1, {"first": "1"})
+        second = self.branch(2, {"second": "2"})
+        baseline = progress_prs.measure(self.root, self.base)
+        combined, included, excluded = progress_prs.integrate_pull_requests(
+            self.root, {1: first, 2: second}, self.base, "boykopovar/AnyPS5")
+        potential = progress_prs.measure(self.root, combined)
+        self.assertEqual(included, {1, 2})
+        self.assertEqual(excluded, {})
+        self.assertEqual((baseline["done"], baseline["total"]), (0, 2))
+        self.assertEqual((potential["done"], potential["total"]), (2, 2))
+
+    def test_no_open_prs_matches_current_progress(self):
+        baseline = progress_prs.measure(self.root, self.base)
+        combined, included, excluded = progress_prs.integrate_pull_requests(
+            self.root, {}, self.base, "boykopovar/AnyPS5")
+        self.assertEqual(combined, self.base)
+        self.assertEqual(included, set())
+        self.assertEqual(excluded, {})
+        self.assertEqual(progress_prs.measure(self.root, combined), baseline)
+
+    def test_identical_implementation_is_only_counted_once(self):
+        first = self.branch(1, {"first": "1"})
+        second = self.branch(2, {"first": "1"})
+        combined, included, excluded = progress_prs.integrate_pull_requests(
+            self.root, {1: first, 2: second}, self.base, "boykopovar/AnyPS5")
+        self.assertEqual(included, {1, 2})
+        self.assertEqual(excluded, {})
+        self.assertEqual(progress_prs.measure(self.root, combined)["done"], 1)
+
+    def test_conflict_excludes_dependents_but_keeps_independent_prs(self):
+        first = self.branch(1, {"first": "1"})
+        second = self.branch(2, {"first": "2"})
+        third = self.branch(3, {"second": "3"}, parent=second["sha"])
+        third["depends"] = {2}
+        fourth = self.branch(4, {"second": "4"})
+        combined, included, excluded = progress_prs.integrate_pull_requests(
+            self.root, {1: first, 2: second, 3: third, 4: fourth}, self.base, "boykopovar/AnyPS5")
+        self.assertEqual(included, {1, 4})
+        self.assertEqual(excluded, {2: "conflict", 3: "dependency_excluded"})
+        self.assertEqual(progress_prs.measure(self.root, combined)["done"], 2)
+
     def test_unresolved_and_cyclic_dependencies_are_excluded(self):
         first = self.branch(1, {"first": "1"})
         second = self.branch(2, {"second": "2"})

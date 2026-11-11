@@ -89,3 +89,47 @@ def dependency_order(pull_requests, root, base_sha, repo):
         pending.remove(number)
         order.append(number)
     return order, excluded
+
+def make_commit(root, tree, current, head):
+    result = git(root, "-c", "user.name=open-pr-progress", "-c", "user.email=open-pr-progress@invalid", "commit-tree",
+                 tree, "-p", current, "-p", head, "-m", "open PR progress estimate")
+    return result.stdout.strip()
+
+def integrate_pull_requests(root, pull_requests, base_sha, repo):
+    order, excluded = dependency_order(pull_requests, root, base_sha, repo)
+    current = base_sha
+    included = set()
+    for number in order:
+        pr = pull_requests[number]
+        if dependencies_blocked(pr, excluded):
+            excluded[number] = "dependency_excluded"
+            continue
+        result = git(root, "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only",
+                     "--no-messages", "-z", current, pr["ref"], check=False)
+        lines = result.stdout.rstrip("\0").split("\0")
+        if result.returncode not in (0, 1) or not lines or not lines[0]:
+            raise RuntimeError(f"could not integrate pull request #{number}: {result.stderr.strip()}")
+        if result.returncode:
+            excluded[number] = "conflict"
+            continue
+        current = make_commit(root, lines[0], current, pr["ref"])
+        included.add(number)
+    return current, included, excluded
+
+def dependencies_blocked(pr, excluded):
+    return bool(pr["depends"] & excluded.keys())
+
+def measure(root, commit):
+    progress_path = ROOT / "tools" / "progress.py"
+    spec = importlib.util.spec_from_file_location("anyps5_progress", progress_path)
+    progress = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(progress)
+    with tempfile.TemporaryDirectory(prefix="anyps5-open-pr-progress-") as directory:
+        tree = Path(directory) / "tree"
+        git(root, "worktree", "add", "--detach", str(tree), commit)
+        try:
+            progress.PRX = tree / "core" / "libs" / "prx"
+            libraries = progress.collect_libraries()
+        finally:
+            git(root, "worktree", "remove", "--force", str(tree), check=False)
+    return {key: libraries[key] for key in ("done", "total", "percent")}
