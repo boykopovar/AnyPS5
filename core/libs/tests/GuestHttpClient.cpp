@@ -332,12 +332,17 @@ void CheckCancellation(const std::string& base) {
 
 int main(int argc, char** argv) {
     try {
-        Check(argc == 2, "missing server URL");
+        Check(argc == 2 || (argc == 3 && std::string(argv[2]) == "--transformed"), "invalid server arguments");
         std::filesystem::create_directories("app0");
         Write("payload.bin", 100000);
         Write("alternate.bin", 777, true);
         Write("empty.bin", 0);
         const std::string base = argv[1];
+        if (argc == 3) {
+            CheckRepresentations(base + "/transformed");
+            std::puts("HTTP 203 representation tests passed");
+            return 0;
+        }
         CheckInputValidation(base);
         CheckBodies(base);
         CheckEmpty(base);

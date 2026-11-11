@@ -405,6 +405,7 @@ struct HttpClientState : Aps5HttpClient {
                 if (status < 100 || status >= 200) break;
                 if (status == 101) throw HttpFailure("HTTP upgrade is not a media file");
             }
+            if (status == 203) status = 200;
             if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
                 if (!headers.contains("location")) throw HttpFailure("HTTP redirect has no location");
                 if (initialized) throw HttpFailure("HTTP source redirected after opening");
