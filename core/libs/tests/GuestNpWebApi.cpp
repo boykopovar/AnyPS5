@@ -27,8 +27,13 @@ constexpr int HandleNotFound = static_cast<int>(0x8055290Du);
 constexpr int ServicePushEventFilterNotFound = static_cast<int>(0x8055290Eu);
 constexpr int ServicePushEventCallbackNotFound = static_cast<int>(0x8055290Fu);
 constexpr int SignedInUserNotFound = static_cast<int>(0x80552910u);
+constexpr int ExtdPushEventFilterNotFound = static_cast<int>(0x8055291Cu);
+constexpr int ExtdPushEventCallbackNotFound = static_cast<int>(0x8055291Du);
+constexpr int NpUserNotFound = static_cast<int>(0x80960105u);
+constexpr int InitialUser = 0x10000000;
 constexpr int HttpInvalidId = static_cast<int>(0x80431100u);
 constexpr int HttpInvalidResponse = static_cast<int>(0x80432060u);
+constexpr int NpInvalidArgument = static_cast<int>(0x80550003u);
 
 constexpr int MethodGet = 0;
 constexpr int MethodPost = 1;
@@ -97,6 +102,24 @@ void TestLibraryContexts() {
     Require(sceNpWebApiTerminate(context) == LibContextNotFound, "library context terminated twice");
     Require(sceNpWebApiCreateHandle(context) == LibContextNotFound, "handle of a terminated context");
     Require(sceNpWebApiTerminate(other) == 0, "terminate the second library context");
+}
+
+void TestIntServicePushEventFilter() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int other = sceNpWebApiInitialize(1, 0x10000);
+    Require(context > 0 && other > 0, "library contexts for int service filter");
+    const int handle = sceNpWebApiCreateHandle(context);
+    Require(handle > 0, "handle for int service filter");
+
+    Require(sceNpWebApiIntCreateServicePushEventFilter(context, handle, "service", 0, nullptr, 1) == InvalidArgument, "int service filter without filter parameter");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(context, handle, "service", 0, filterParam, 0) == InvalidArgument, "int service filter with count 0");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(0x7fff + 1, handle, "service", 0, filterParam, 1) == LibContextNotFound, "int service filter of an unknown context");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(other, handle, "service", 0, filterParam, 1) == HandleNotFound, "int service filter with another context's handle");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(context, handle, "service", 0xffffffffu, filterParam, 1) == SignedInUserNotFound, "int service filter with invalid service label");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(context, handle, "service", 0, filterParam, 1) == SignedInUserNotFound, "int service filter without signed-in user");
+
+    Require(sceNpWebApiDeleteHandle(context, handle) == 0, "delete the handle for int service filter");
+    Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the int service filter library contexts");
 }
 
 void TestUserContexts() {
@@ -262,7 +285,56 @@ void TestPushEventCallbacks() {
     Require(sceNpWebApiRegisterServicePushEventCallback(user, filter, PushEventCallback(), &argument) == ServicePushEventFilterNotFound, "a push event filter is not a service filter");
     Require(sceNpWebApiUnregisterServicePushEventCallback(user, 1) == ServicePushEventCallbackNotFound, "no service callback exists");
 
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user, filter, nullptr, &argument) == InvalidArgument, "extended push event callback without a function");
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user + 1, filter, nullptr, &argument) == InvalidArgument, "the function is checked before the user context for extended callbacks");
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user + 1, filter, PushEventCallback(), &argument) == UserContextNotFound, "extended push event callback of an unknown user context");
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user, 1, PushEventCallback(), &argument) == ExtdPushEventFilterNotFound, "extended push event filter does not exist");
+
+    Require(sceNpWebApiIntRegisterServicePushEventCallback(user, 1, nullptr, &argument) == InvalidArgument, "int service callback without a function");
+    Require(sceNpWebApiIntRegisterServicePushEventCallback(user + 1, 1, PushEventCallback(), &argument) == UserContextNotFound, "int service callback of an unknown user context");
+    Require(sceNpWebApiIntRegisterServicePushEventCallback(user, filter, PushEventCallback(), &argument) == ServicePushEventFilterNotFound, "int service callback with a push event filter");
+
+    Require(sceNpWebApiIntRegisterServicePushEventCallbackA(user, 1, nullptr, &argument) == InvalidArgument, "int service callback A without a function");
+    Require(sceNpWebApiIntRegisterServicePushEventCallbackA(user + 1, 1, PushEventCallback(), &argument) == UserContextNotFound, "int service callback A of an unknown user context");
+    Require(sceNpWebApiIntRegisterServicePushEventCallbackA(user, filter, PushEventCallback(), &argument) == ServicePushEventFilterNotFound, "int service callback A with a push event filter");
+
     Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the callback library contexts");
+}
+
+void TestConsoleMeasuredExports() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    Require(context > 0, "library context for the console-measured exports");
+    NpWebApiMemoryPoolStats stats{1, 1, 1};
+    Require(sceNpWebApiGetMemoryPoolStats(context, &stats) == 0 && stats.poolSize == 0x10000 && stats.maxInuseSize == 0 && stats.currentInuseSize == 0, "memory pool stats of a fresh context");
+    Require(sceNpWebApiGetMemoryPoolStats(0x7fff + 1, &stats) == LibContextNotFound, "memory pool stats of an unknown context");
+    Require(sceNpWebApiGetMemoryPoolStats(context, nullptr) == InvalidArgument, "memory pool stats without a buffer");
+
+    Require(sceNpWebApiCreateContextA(context, -1) == InvalidArgument, "user context for a negative user");
+    Require(sceNpWebApiCreateContextA(0x7fff + 1, InitialUser) == InvalidLibContextId, "user context of an unknown library context by user id");
+    Require(sceNpWebApiCreateContextA(context, 0) == NpUserNotFound, "user context for a user that is not logged in");
+    const int user = sceNpWebApiCreateContextA(context, InitialUser);
+    Require(user > 0 && (user >> 16) == context && (user & 0xffff) != 0, "user context by user id holds its library context");
+    Require(sceNpWebApiCreateContextA(context, InitialUser) == UserContextAlreadyExist, "second user context for the same user id");
+    Require(sceNpWebApiCreateContext(context, onlineId) == UserContextAlreadyExist, "the online id variant shares the user context");
+
+    const int handle = sceNpWebApiCreateHandle(context);
+    Require(handle > 0, "handle for the extended filters");
+    Require(sceNpWebApiCreateExtdPushEventFilter(context, handle, "service", 0, filterParam, 0) == InvalidArgument, "extended filter with no parameters");
+    Require(sceNpWebApiCreateExtdPushEventFilter(context, -1, "service", 0, filterParam, 1) == HandleNotFound, "extended filter with an unknown handle");
+    Require(sceNpWebApiCreateExtdPushEventFilter(0x7fff + 1, handle, "service", 0, filterParam, 1) == LibContextNotFound, "extended filter of an unknown context");
+    Require(sceNpWebApiCreateExtdPushEventFilter(context, handle, "service", 0, filterParam, 1) == SignedInUserNotFound, "extended filter without a signed-in user");
+    int argument = 0;
+    Require(sceNpWebApiRegisterExtdPushEventCallbackA(user, 1, PushEventCallback(), &argument) == ExtdPushEventFilterNotFound, "extended callback on a filter that does not exist");
+    Require(sceNpWebApiRegisterExtdPushEventCallbackA(-1, 1, PushEventCallback(), &argument) == LibContextNotFound, "extended callback through an unknown user context");
+    Require(sceNpWebApiUnregisterExtdPushEventCallback(user, 1) == ExtdPushEventCallbackNotFound, "unregister an extended callback that does not exist");
+    Require(sceNpWebApiDeleteExtdPushEventFilter(context, 1) == ExtdPushEventFilterNotFound, "delete an extended filter that does not exist");
+    Require(sceNpWebApiDeleteExtdPushEventFilter(0x7fff + 1, 1) == LibContextNotFound, "delete an extended filter of an unknown context");
+
+    Require(sceNpWebApiDeleteContext(user) == 0, "delete the user context made by user id");
+    Require(sceNpWebApiDeleteContext(user) == UserContextNotFound, "user context made by user id deleted twice");
+    Require(sceNpWebApiRegisterExtdPushEventCallbackA(user, 1, PushEventCallback(), &argument) == UserContextNotFound, "extended callback through a deleted user context");
+    Require(sceNpWebApiDeleteHandle(context, handle) == 0, "delete the handle of the extended filters");
+    Require(sceNpWebApiTerminate(context) == 0, "terminate the console-measured library context");
 }
 
 void TestOlderSdks() {
@@ -295,6 +367,16 @@ void TestOlderSdks() {
     Require(sceNpWebApiUnregisterPushEventCallback(user, unchecked) == 0, "unregister the push event callback without a function");
     Require(sceNpWebApiRegisterServicePushEventCallback(user + 1, 1, nullptr, &argument) == UserContextNotFound, "the user context is checked before the service callback function before SDK 1.00");
     Require(sceNpWebApiRegisterServicePushEventCallback(user, 1, nullptr, &argument) == InvalidArgument, "service callback without a function before SDK 1.00");
+    Require(sceNpWebApiIntRegisterServicePushEventCallback(user + 1, 1, nullptr, &argument) == InvalidArgument, "the int service callback function is checked before the user context before SDK 1.00");
+    Require(sceNpWebApiIntRegisterServicePushEventCallbackA(user + 1, 1, nullptr, &argument) == InvalidArgument, "the int service callback A function is checked before the user context before SDK 1.00");
+    Require(sceNpWebApiIntRegisterServicePushEventCallback(user, 1, nullptr, &argument) == InvalidArgument, "int service callback without a function before SDK 1.00");
+    Require(sceNpWebApiIntRegisterServicePushEventCallbackA(user, 1, nullptr, &argument) == InvalidArgument, "int service callback A without a function before SDK 1.00");
+    const int intOld = sceNpWebApiIntRegisterServicePushEventCallback(user, 1, PushEventCallback(), &argument);
+    Require(intOld > 0, "int service callback before SDK 1.00");
+    Require(sceNpWebApiUnregisterServicePushEventCallback(user, intOld) == 0, "unregister the int service callback before SDK 1.00");
+    const int intOldA = sceNpWebApiIntRegisterServicePushEventCallbackA(user, 1, PushEventCallback(), &argument);
+    Require(intOldA > 0 && intOldA != intOld, "int service callback A before SDK 1.00");
+    Require(sceNpWebApiUnregisterServicePushEventCallback(user, intOldA) == 0, "unregister the int service callback A before SDK 1.00");
 
     SetSdkVersion(0x04508001);
     Require(sceNpWebApiTerminate(context) == 0, "terminate the older SDK library context");
@@ -546,21 +628,78 @@ void TestMultipartParts() {
     Require(sceNpWebApiTerminate(context) == 0, "terminate multipart parts library context");
 }
 
+void TestUtilityParseNpId() {
+    NpId npId{};
+    Require(sceNpWebApiUtilityParseNpId(nullptr, &npId) == NpInvalidArgument, "null jsonNpId");
+    Require(sceNpWebApiUtilityParseNpId(nullptr, nullptr) == NpInvalidArgument, "null jsonNpId and null npId");
+    Require(sceNpWebApiUtilityParseNpId("cGxheWVy", nullptr) == 0, "null npId with valid jsonNpId");
+
+    std::memset(&npId, 0xCC, sizeof(npId));
+    Require(sceNpWebApiUtilityParseNpId("cGxheWVyQHNlZzEvc2VnMi5zZWcz", &npId) == 0, "parse serialized npId");
+    Require(std::strcmp(npId.handle.data, "player") == 0, "handle matches string before at");
+    Require(std::memcmp(npId.opt, "seg1seg2", 8) == 0, "opt concatenates segments");
+    Require(npId.reserved[0] == 0x01, "reserved 0 is 1");
+    for (std::size_t i = 1; i < sizeof(npId.reserved); ++i) {
+        Require(npId.reserved[i] == 0, "reserved bytes zeroed");
+    }
+
+    std::memset(&npId, 0xCC, sizeof(npId));
+    Require(sceNpWebApiUtilityParseNpId("dXNlcjEyMw==", &npId) == 0, "parse serialized npId without at");
+    Require(std::strcmp(npId.handle.data, "user123") == 0, "handle without at");
+    for (std::size_t i = 0; i < sizeof(npId.opt); ++i) {
+        Require(npId.opt[i] == 0, "opt zeroed without at");
+    }
+    Require(npId.reserved[0] == 0x01, "reserved 0 is 1 without at");
+
+    std::memset(&npId, 0xCC, sizeof(npId));
+    Require(sceNpWebApiUtilityParseNpId("MDEyMzQ1Njc4OWFiY2RlZkVYVFJBQDEyLzM0", &npId) == 0, "parse long handle");
+    Require(std::memcmp(npId.handle.data, "0123456789abcdef", 16) == 0, "handle truncated to 16");
+    Require(npId.handle.data[16] == '\0', "handle null terminated");
+    Require(std::memcmp(npId.opt, "1234\0\0\0\0", 8) == 0, "opt with separators removed");
+    Require(npId.reserved[0] == 0x01, "reserved 0 is 1 for long handle");
+
+    std::memset(&npId, 0xCC, sizeof(npId));
+    Require(sceNpWebApiUtilityParseNpId("dXNlckBhL2IuYy9kLmU=", &npId) == 0, "filter slashes and dots");
+    Require(std::strcmp(npId.handle.data, "user") == 0, "handle is user");
+    Require(std::memcmp(npId.opt, "abcde\0\0\0", 8) == 0, "opt filters separators");
+    Require(npId.reserved[0] == 0x01, "reserved 0 is 1");
+}
+
+void TestIntCreateCtxIndExtdPushEventFilter() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int other = sceNpWebApiInitialize(1, 0x10000);
+    const int handle = sceNpWebApiCreateHandle(context);
+    Require(context > 0 && other > 0 && handle > 0, "library contexts and handle for extended push event filter");
+    unsigned char filterParam[64] = {};
+
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(context, handle, nullptr, 1) == InvalidArgument, "extended push event filter without its parameter");
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(context, handle, filterParam, 0) == InvalidArgument, "extended push event filter with no parameters");
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(0x7fff + 1, handle, nullptr, 1) == InvalidArgument, "the argument is checked before the library context");
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(0x7fff + 1, handle, filterParam, 1) == LibContextNotFound, "extended push event filter of an unknown context");
+    Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(other, handle, filterParam, 1) == HandleNotFound, "extended push event filter with another context's handle");
+
+    Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the extended push event filter library contexts");
+}
+
 }
 
 int main() {
     InstallProcessParameters();
     SetSdkVersion(0x04508001);
     TestLibraryContexts();
+    TestIntServicePushEventFilter();
     TestUserContexts();
     TestRequests();
     TestResponses();
     TestPushEventCallbacks();
+    TestConsoleMeasuredExports();
     TestOlderSdks();
     TestHandleOperations();
     TestRequestOptions();
     TestMultipartRequests();
     TestRequestTimeouts();
     TestMultipartParts();
+    TestUtilityParseNpId();
+    TestIntCreateCtxIndExtdPushEventFilter();
     return 0;
 }

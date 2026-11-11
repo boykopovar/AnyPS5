@@ -193,7 +193,10 @@ int APS5_VABI sceHttpCreateEpoll(int http_ctx_id, HttpEpollHandle* eh) {
     auto epoll = std::make_shared<HttpEpoll>();
     const auto handle = epoll.get();
     g_epolls.emplace(handle, std::move(epoll));
-    *eh = handle;
+    if (!GuestCopyOut_nid_no_patch(eh, &handle, sizeof(handle))) {
+        g_epolls.erase(handle);
+        return ERROR_INVALID_VALUE;
+    }
     return 0;
 }
 
@@ -842,7 +845,12 @@ int APS5_VABI sceHttpGetRegisteredCtxIds(int contextId, int* netPoolId, int* ssl
 }
 
 int APS5_VABI sceHttpGetConnectionStat(std::int32_t connectionId, HttpConnectionStat* stat) {
-    NotImplemented_nid_no_patch(__func__);
+    static_assert(sizeof(HttpConnectionStat) == 16);
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    if (!stat) return ERROR_INVALID_VALUE;
+    const auto options = FindHttpOptions(connectionId);
+    if (!options) return ERROR_INVALID_ID;
+    *stat = {};
     return 0;
 }
 
@@ -852,8 +860,8 @@ int APS5_VABI sceHttpAddQuery(int id, const char* query) {
 }
 
 int APS5_VABI sceHttpSetDelayBuildRequestEnabled(int id, int enabled) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    return SetHttpOption(id, &HttpOptions::delayBuildRequest, enabled != 0) ? 0 : ERROR_INVALID_ID;
 }
 
 }
