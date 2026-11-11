@@ -1,6 +1,7 @@
 #include "prx/libSceConvertKeycode/include/Api.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -2438,17 +2439,24 @@ int APS5_VABI sceConvertKeycodeGetImeKeyboardType(int32_t userId, uint32_t* type
     return ImeKeyboardType::Resolve(userId, type, CompiledSdkVersion(), ps4Client, sceUserServiceGetKeyboardType, sceUserServiceGetJapaneseInputType, sceUserServiceGetTraditionalChineseInputType);
 }
 int APS5_VABI sceConvertKeycodeGetVirtualKeycode(std::uint16_t keycode, std::uint32_t keyboardType, std::uint16_t* virtualKeycode) {
+    const int savedErrno = errno;
     if (virtualKeycode == nullptr) return kErrInvalidAddress;
     if (keyboardType == 0 || keyboardType > VirtualKeys.size()) return kErrInvalidKeyboardType;
     const std::uint32_t sdkVersion = CompiledSdkVersion();
     const bool ps4Client = Ps4ClientOnce();
-    if (!KeyboardTypeAvailable(keyboardType, sdkVersion, ps4Client)) return kErrInvalidKeyboardType;
+    if (!KeyboardTypeAvailable(keyboardType, sdkVersion, ps4Client)) {
+        errno = savedErrno;
+        return kErrInvalidKeyboardType;
+    }
     auto value = keycode < BaseVirtualKeys.size() ? VirtualKeys[keyboardType - 1][keycode] : 255;
     if ((keyboardType == 2 || keyboardType == 3 || keyboardType == 12) && sdkVersion < (ps4Client ? 0x09000000u : 0x04000000u)) {
         if (value == 89) value = 90;
         else if (value == 90) value = 89;
     }
-    *virtualKeycode = static_cast<std::uint16_t>(value);
+    const auto val = static_cast<std::uint16_t>(value);
+    const bool copied = GuestCopyOut_nid_no_patch(virtualKeycode, &val, sizeof(val));
+    errno = savedErrno;
+    if (!copied) return kErrInvalidAddress;
     return 0;
 }
 
@@ -2461,10 +2469,17 @@ int APS5_VABI sceConvertKeycodeGetCharacterFromKeyboardData(const KeyboardData* 
 }
 
 int APS5_VABI sceConvertKeycodeGetCharacter(std::uint16_t keycode, std::uint32_t state, std::uint32_t type, char16_t* character) {
+    const int savedErrno = errno;
     if (character == nullptr) return kErrInvalidAddress;
     if (type == 0 || type > 39) return kErrInvalidKeyboardType;
-    if (!KeyboardTypeAvailable(type, CompiledSdkVersion(), Ps4ClientOnce())) return kErrInvalidKeyboardType;
-    *character = ConvertCharacter(keycode, state, type);
+    if (!KeyboardTypeAvailable(type, CompiledSdkVersion(), Ps4ClientOnce())) {
+        errno = savedErrno;
+        return kErrInvalidKeyboardType;
+    }
+    const char16_t ch = ConvertCharacter(keycode, state, type);
+    const bool copied = GuestCopyOut_nid_no_patch(character, &ch, sizeof(ch));
+    errno = savedErrno;
+    if (!copied) return kErrInvalidAddress;
     return 0;
 }
 
