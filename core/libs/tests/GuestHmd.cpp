@@ -1,6 +1,7 @@
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceHmd/Hmd.hpp"
 #include "prx/libSceHmd/include/Api.hpp"
+#include "prx/libSceHmd/include/InventoryExports.hpp"
 
 #include <array>
 #include <cstddef>
@@ -48,6 +49,13 @@ void CheckDisconnected() {
     Require(!sceHmdInternalIsMiniAppVr2d(), "mini app reported in VR2D without a headset");
     Require(!sceHmdInternalIsCommonDlgVr2d(), "common dialog reported in VR2D without a headset");
     Require(!sceHmdInternalIsCommonDlgMiniAppVr2d(), "common dialog mini app reported in VR2D without a headset");
+}
+
+void CheckUnnamedConstants() {
+    Require(libSceHmdUnknown_miduc55U7q8_nid_no_patch() == 0, "miduc55U7q8 result");
+    Require(libSceHmdUnknown_nlAZlOKJy_plus_c_nid_no_patch() == 0, "nlAZlOKJy+c result");
+    Require(libSceHmdUnknown_rczCXLh2_minus_b4_nid_no_patch() == 0, "rczCXLh2-b4 result");
+    Require(libSceHmdUnknown_smQw6nT8PcA_nid_no_patch() == Hmd::ParameterInvalid, "smQw6nT8PcA result");
 }
 
 void CheckBufferQueries() {
@@ -174,6 +182,7 @@ int main() {
     InstallProcessParameters();
     CheckDisconnected();
     CheckBufferQueries();
+    CheckUnnamedConstants();
     Require(sceHmdTerminate() == Hmd::NotInitialized, "terminate before initialize");
     Require(sceHmdOpen(1, 0, 0, nullptr) == Hmd::NotInitialized, "open before initialize");
     Require(sceHmdClose(0) == Hmd::NotInitialized, "close before initialize");
