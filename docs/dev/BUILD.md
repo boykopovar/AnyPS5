@@ -39,7 +39,7 @@ git submodule update --init --recursive
 
 ## Selective test builds
 
-[`tools/select_tests.py`](../../tools/select_tests.py) selects the tests whose build inputs a change touches, so a pull request can build and run only those tests. Configure a full build with `-DBUILD_TESTING=ON`, then:
+[`tools/select_tests.py`](../../tools/select_tests.py) selects the tests whose build inputs a change touches, so a pull request can build and run only those tests. Configure and build a full tree with `-DBUILD_TESTING=ON` (`dump` needs the header dependencies that only exist once the objects are built), then:
 
 ```sh
 git diff --name-only origin/main...HEAD > changed.txt
@@ -49,7 +49,7 @@ ninja -C build -f select.ninja selected
 python3 tools/select_tests.py ctest build --output-on-failure
 ```
 
-`dump` reads the configured build. `select` writes `select.ninja` and `select.tests` into the build directory; `ninja -f select.ninja selected` builds only the selected targets, and the `ctest` subcommand runs only the selected tests. A change to `CMakeLists.txt`, `core/CMakeLists.txt`, `core/libs/CMakeLists.txt`, `3rdparty/`, `cmake/`, `.gitmodules`, the build workflow or `tools/select_tests.py` selects the full run. The `select=true` CI build uses the same selection.
+`dump` reads the header dependencies recorded by a built tree, so build before dumping. `select` writes `select.ninja` and `select.tests` into the build directory; `ninja -f select.ninja selected` builds only the selected targets (when the change selects the full run, or the graph file is missing, `select` removes `select.ninja` and writes none, so run `cmake --build build` instead, as CI does), and the `ctest` subcommand runs only the selected tests. A change to `CMakeLists.txt`, `core/CMakeLists.txt`, `core/libs/CMakeLists.txt`, `3rdparty/`, `cmake/`, `.gitmodules`, the build workflow or `tools/select_tests.py` selects the full run. The `select=true` CI build uses the same selection.
 
 ## Requirements
 
