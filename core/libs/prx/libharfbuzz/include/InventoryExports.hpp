@@ -20,7 +20,7 @@ void APS5_VABI hb_buffer_reset_nid_postfix(hb_buffer_t* buffer);
 void APS5_VABI hb_buffer_set_direction_nid_postfix(hb_buffer_t* buffer, std::uint32_t direction);
 void APS5_VABI hb_buffer_set_script_nid_postfix(hb_buffer_t* buffer, std::uint32_t script);
 int APS5_VABI hb_ft_face_create_cached_nid_postfix();
-int APS5_VABI hb_icu_script_to_script_nid_postfix();
+std::uint32_t APS5_VABI hb_icu_script_to_script_nid_postfix(std::int32_t scriptCode);
 std::uint32_t APS5_VABI hb_ot_tag_to_script_nid_postfix(std::uint32_t tag);
 int APS5_VABI hb_shape_nid_postfix();
 
