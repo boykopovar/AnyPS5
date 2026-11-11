@@ -13,7 +13,8 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
-    add_test_executable(guest_libressl_bio_patched_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslBio.cpp)
+    add_test_executable(guest_libressl_bio_patched_tests NO_RUNTIME_DLL_STAGING
+        ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslBio.cpp)
     target_include_directories(guest_libressl_bio_patched_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_compile_definitions(guest_libressl_bio_patched_tests PRIVATE ANYPS5_BIO_DYNAMIC)
     target_link_libraries(guest_libressl_bio_patched_tests PRIVATE ${CMAKE_DL_LIBS})
