@@ -230,7 +230,10 @@ void CopyRunningTitleId(const std::string& caller, bool running, char* destinati
     if (destination == nullptr) throw std::runtime_error(caller + ": null title ID buffer");
     const std::string titleId = RunningTitleId();
     if (titleId.size() >= TitleIdBufferSize) throw std::runtime_error(caller + ": title ID that does not fit 10 bytes");
-    std::memcpy(destination, titleId.c_str(), titleId.size() + 1);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, titleId.c_str(), titleId.size() + 1);
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error(caller + ": unwritable title ID buffer");
 }
 
 bool WellFormedTitleId(const char* titleId) {
