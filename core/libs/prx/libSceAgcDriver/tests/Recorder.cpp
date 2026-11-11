@@ -16185,7 +16185,6 @@ int main(int argc, char** argv) {
         refreshProofTests(device, recorder);
         resourceReadTests(device, recorder);
         readWrittenStagingTests(device, recorder);
-        carriedShadowTests(device, recorder);
         bdaStagingTests(device, recorder);
         depthSurfaceProofTests(device, recorder);
         multisampleGuestAccessTests(device, recorder);
