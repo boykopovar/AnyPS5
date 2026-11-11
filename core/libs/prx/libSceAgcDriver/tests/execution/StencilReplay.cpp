@@ -251,6 +251,29 @@ int main() {
         Draw(*device, waveBranch, exported, equal(91u));
         Check(all, "a wave branch on a lane predicate sees every lane of the original draw");
         Require(LastReplayStored == storeDevice, "a shader that needs the lane guarantee did not get the replay store");
+        alignas(256) constexpr std::array<std::array<float, 4>, 4> stripVertices{{
+            {-1.0f, -1.0f, 0.5f, 1.0f}, {1.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 1.0f, 0.5f, 1.0f}, {1.0f, 1.0f, 0.5f, 1.0f},
+        }};
+        Draw(*device, PlainPixelCode, plain, replace(0u));
+        Draw(*device, alternating, exported, replace(), 4u, 1u, false, [](AgcDriver::Graphics::State& state) { state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; }, {}, stripVertices);
+        Draw(*device, PlainPixelCode, plain, equal(255u));
+        Check(even, "a replayed triangle strip draws both of its triangles");
+        std::array<bool, 4> culled{};
+        const bool dynamicFace = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device).graphicsPipelineLibrary;
+        for (std::uint32_t variant = 0; variant < (dynamicFace ? 4u : 0u); ++variant) {
+            Draw(*device, PlainPixelCode, plain, replace(0u));
+            Draw(*device, alternating, exported, replace(), 4u, 1u, false, [variant](AgcDriver::Graphics::State& state) {
+                state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+                state.cullMode = (variant & 1u) != 0u ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT;
+                state.frontFace = (variant & 2u) != 0u ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
+            }, {}, stripVertices);
+            Draw(*device, PlainPixelCode, plain, equal(255u));
+            std::uint32_t count = 0;
+            for (std::uint32_t y = 0; y < Height; ++y) for (std::uint32_t x = 0; x < Width; ++x) if (Pixels[(y * Width + x) * 4u] == std::byte{255}) ++count;
+            culled[variant] = count == 0u;
+            if (!culled[variant]) Check(even, "a replayed culled triangle strip draws both of its triangles or none");
+        }
+        Require(!dynamicFace || (culled[0] != culled[1] && culled[0] != culled[2] && culled[1] != culled[3]), "culling a replayed triangle strip does not follow the face state");
         Draw(*device, PlainPixelCode, plain, replace(0u));
         Draw(*device, ordered, exported, replace(), 6u);
         Draw(*device, PlainPixelCode, plain, equal(0u));
@@ -334,10 +357,16 @@ int main() {
             state.depthCompare = VK_COMPARE_OP_LESS;
         }, {}, midDepth);
         Check(all, "simultaneous depth and stencil exports preserve shader depth replacement");
-        for (const bool restart : {false, true}) {
+        for (const int unsafe : {0, 1, 2}) {
+            if (unsafe == 1 && dynamicFace) continue;
             bool refused = false;
             try {
-                Draw(*device, alternating, exported, replace(), 3u, 1u, false, [&](AgcDriver::Graphics::State& state) { if (restart) state.primitiveRestart = true; else state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; });
+                Draw(*device, alternating, exported, replace(), 3u, 1u, false, [&](AgcDriver::Graphics::State& state) {
+                    if (unsafe == 0) state.primitiveRestart = true;
+                    else state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+                    if (unsafe == 1) state.cullMode = VK_CULL_MODE_BACK_BIT;
+                    if (unsafe == 2) state.stencilBack.passOp = VK_STENCIL_OP_INCREMENT_AND_CLAMP;
+                });
             } catch (const std::exception& error) {
                 refused = std::string(error.what()).find("direct triangle lists") != std::string::npos;
             }

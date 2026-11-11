@@ -2772,6 +2772,18 @@ void patchDepthRemapPush(std::array<std::byte, PipelinePushConstantBytes>& block
     std::memcpy(block.data() + ShaderRecompiler::DepthRemapPushOffsetBytes, words.data(), sizeof(words));
 }
 
+VkFrontFace FlippedFrontFace(VkFrontFace face) {
+    return face == VK_FRONT_FACE_CLOCKWISE ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+}
+
+bool StencilReplayStrip(const Context& context, const State& state, std::span<const CompiledShader> shaders) {
+    const auto same = [](const VkStencilOpState& left, const VkStencilOpState& right) {
+        return left.failOp == right.failOp && left.passOp == right.passOp && left.depthFailOp == right.depthFailOp && left.compareOp == right.compareOp && left.compareMask == right.compareMask && left.writeMask == right.writeMask && left.reference == right.reference;
+    };
+    return state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && (state.cullMode == VK_CULL_MODE_NONE || context.graphicsPipelineLibrary) && same(state.stencilFront, state.stencilBack) &&
+        std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && std::ranges::none_of(shader.program->fragmentParameters, [](const ShaderRecompiler::FragmentParameter& parameter) { return parameter.flat || parameter.perVertex || parameter.flatP10 || parameter.flatP20 || parameter.vertexOrder; }); });
+}
+
 void recordStencilReplay(const Context& context, CommandState& recording, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0) {
     const auto commands = recording.Commands();
     State selected = state;
@@ -2785,10 +2797,12 @@ void recordStencilReplay(const Context& context, CommandState& recording, const 
     Require(fragment != shaders.end(), "stencil replay fragment stage is missing");
     const auto referenceOffset = fragment->pushConstantOffset + fragment->program->stencilReferenceDword * sizeof(std::uint32_t);
     Require(referenceOffset <= block.size() - sizeof(std::uint32_t), "stencil replay reference exceeds the push block");
-    const auto run = [&](const Pm4::DrawParameters& piece, std::optional<std::uint32_t> firstIndex) {
+    const bool faceDynamic = state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && state.cullMode != VK_CULL_MODE_NONE;
+    const auto run = [&](const Pm4::DrawParameters& piece, std::optional<std::uint32_t> firstIndex, bool reversed) {
         std::uint32_t unusedSubdraw = 0;
         for (const auto& [reference, pipeline] : replay) {
             selected.stencilReplayReference = reference;
+            if (faceDynamic) recording.SetFrontFace(context, reversed ? FlippedFrontFace(state.frontFace) : state.frontFace);
             selected.stencilFront.reference = reference;
             selected.stencilBack.reference = reference;
             recording.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, reference);
@@ -2798,18 +2812,21 @@ void recordStencilReplay(const Context& context, CommandState& recording, const 
         }
     };
     if (replay.size() == 1u) {
-        run(draw, std::nullopt);
+        run(draw, std::nullopt, false);
         return;
     }
     const auto indexCount = draw.indexed ? inputs.indexCount.value_or(draw.indexCount) : draw.indexCount;
+    const bool strip = state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    const std::uint32_t triangles = strip ? (indexCount >= 3u ? indexCount - 2u : 0u) : indexCount / 3u;
     for (std::uint32_t instance = 0; instance < draw.instanceCount; ++instance) {
-        for (std::uint32_t first = 0; first < indexCount - indexCount % 3u; first += 3u) {
+        for (std::uint32_t triangle = 0; triangle < triangles; ++triangle) {
+            const std::uint32_t first = strip ? triangle : triangle * 3u;
             auto piece = draw;
             piece.instanceCount = 1u;
             piece.firstInstance = draw.firstInstance + instance;
             piece.indexCount = 3u;
             if (!draw.indexed) piece.firstVertex += first;
-            run(piece, draw.indexed ? first : 0u);
+            run(piece, draw.indexed ? first : 0u, strip && (triangle & 1u) != 0u);
         }
     }
 }
@@ -3895,7 +3912,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         }
     }
     if (!stencilReferences.empty()) {
-        Require(!draw.indirect && !state.primitiveRestart && !state.rectList && !state.quadList && !state.stages.mesh && !state.stages.tessellation && state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, "stencil replay supports direct triangle lists without restart, mesh or tessellation");
+        Require(!draw.indirect && !state.primitiveRestart && !state.rectList && !state.quadList && !state.stages.mesh && !state.stages.tessellation && (state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || StencilReplayStrip(context, state, shaders)), "stencil replay supports direct triangle lists, and triangle strips whose triangles share one face state and have no flat parameters, without restart, mesh or tessellation");
         Require(!state.depthBiasPerFace && !ShadersWriteMemory(shaders), "stencil replay refuses face splits and shader memory writes");
         Require(std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->stencilReplaySafe && (shader.stage == ShaderRecompiler::ShaderStage::Vertex || shader.stage == ShaderRecompiler::ShaderStage::Fragment); }), "stencil replay refuses stages with side effects, clocks, subgroup dependencies or primitive ID inputs");
         if (stencilReferences.size() == 256u) {
