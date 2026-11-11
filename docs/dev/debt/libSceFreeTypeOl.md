@@ -6,7 +6,7 @@ The PS5 3.20 export inventory and verified NID-name database identify 92 exports
 
 Implemented wrappers are in [ModuleWrappers.cpp](../../../core/libs/prx/libSceFreeTypeOl/ModuleWrappers.cpp); the remaining NID aliases are in [Export.cpp](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp).
 
-Forty-six exports now forward to the bundled FreeType implementation: built-in add/remove helpers for the 18 available module classes, seven module support helpers, allocator/free, and glyph-slot destruction. Library handles are translated through `GuestLibrary::host`, and glyph-slot destruction operates on the native slot owned by the corresponding `GuestFace`. Focused guest-bridge coverage is in `GuestFreeTypeOlModules.cpp`.
+Fifty-four exports now forward to the bundled FreeType implementation: built-in add/remove helpers for the 18 available module classes, fifteen module and format support helpers, allocator/free, and glyph-slot destruction. Library handles are translated through `GuestLibrary::host`, and glyph-slot destruction operates on the native slot owned by the corresponding `GuestFace`. Focused guest-bridge coverage is in `GuestFreeTypeOlModules.cpp`.
 
 ### Signature and layout provenance
 
@@ -20,16 +20,20 @@ The FreeType guest bridge owns its guest faces in `GuestLibrary::faces`. Native 
 
 `sceFreeTypeOlDoneGlyphSlot` destroys the face's native glyph slot, leaving the guest `face->glyph` pointer null and not replacing the slot. A later glyph load on that face is not expected to work normally and may return an error; a subsequent load has not been independently tested here. Whether the PS5 implementation allows recreation after explicit slot destruction is unmeasured.
 
+### Format support helpers and Sony support-mask state
+
+Format support helpers forward directly to the corresponding FreeType outline drivers: OpenType registers both CFF and TrueType drivers matching libSceFontFt format expectations, TrueType GX registers TrueType and GX validation, and the single-format helpers register their respective drivers. Cross-library inspection of libSceFontFt (`FontFt::SupportFormats`) confirms that format availability is verified directly through `FT_Get_Module` on the library instance; no separate guest-observable mask state is exposed or queried by callers.
+
 ### System dependencies
 
-With `ANYPS5_USE_SYSTEM_DEPS=ON`, the `freetype` CMake target is an `INTERFACE` wrapper around the installed library. Bundled GX/OpenType validation C sources, private FreeType headers and module-class objects are not present. In this mode the 46 module-wrapper NIDs compile as explicit throwing stubs and the other 46 remain unchanged, preserving all 92 export aliases without calling unavailable internals. The bundled-only module regression test is omitted; the existing outline-border tests remain registered. The 46-export implementation is built only with bundled FreeType.
+With `ANYPS5_USE_SYSTEM_DEPS=ON`, the `freetype` CMake target is an `INTERFACE` wrapper around the installed library. Bundled GX/OpenType validation C sources, private FreeType headers and module-class objects are not present. In this mode the 54 module-wrapper NIDs compile as explicit throwing stubs and the other 38 remain unchanged, preserving all 92 export aliases without calling unavailable internals. The bundled-only module regression test is omitted; the existing outline-border tests remain registered. The 54-export implementation is built only with bundled FreeType.
 
-The remaining 46 exports deliberately retain `NotImplemented_nid_no_patch` because they require unavailable Sony-specific modules/state or a guest/native bridge that is not yet implemented:
+The remaining 38 exports deliberately retain `NotImplemented_nid_no_patch` because they require unavailable Sony-specific modules/state or a guest/native bridge that is not yet implemented:
 
 - [Module class exports](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp) (18), the generic `FT_Add_Module` / `FtaAddModule` wrappers (2), and `FT_Get_Module_Interface` (1): host `FT_Module_Class` fields differ from the 64-bit guest ABI on some platforms; native FreeType callback and interface pointers are not guest-callable trampolines. A guest module-class layout and callback bridge are required before safe implementation. Their NIDs retain their original labels in `Export.cpp`.
 - Raster5 add/export/remove/support (`wbyY8kfNfaI`, `6zDeyzjWz-8`, `SKUldaN3e2A`, `Tzm-z36UYKg`): the Sony Raster5 module is absent from the bundled FreeType sources. See its [unimplemented exports](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp).
 - Smooth LCD and LCD vertical add/export/remove/support (`NLA7bmDS1jc`, `xcJCXHqBrjE`, `+bRRhPeBqZI`, `q7kTOFaQrW4`, `xtb9fOR6ilA`, `6z2P2V2XCiI`, `M94SjXo-UVA`, `Ns9a-LjOcDw`): Sony exports distinct renderer descriptors; the bundled library has one smooth renderer, so aliasing these descriptors would give incorrect add/remove behavior. See its [unimplemented exports](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp).
-- Composite format/module configuration (`JuzrPZClLew`, `sylevnx-fqk`, `0RSuGozMl9o`, `J3HnvW8FJV8`, `YpxR8CqGMIM`, `83qtpn8+XnA`, `g2p7fkJpuC0`, `xqjAbn8VNGo`, `oM0zMNCfXKM`): these routines combine module registration with Sony-specific support-mask state. Implementing registration alone would omit observable state updates. See its [unimplemented exports](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp).
+- Bulk module configuration (`oM0zMNCfXKM`): this routine bulk-registers the standard module suite (`sceFreeTypeOlFtaSupportModules`). See its [unimplemented exports](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp).
 - [`FT_Attach_Stream`, `FT_CMap_New`, and `FT_CMap_Done`](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp) (`ZqvTX8u1bEc`, `wLqQQWyOdpc`, `h0n4Fb9j2R8`): direct native calls bypass the existing guest face/charmap layout, stream/callback ABI, and lifecycle ownership. These require a dedicated guest bridge before implementation.
 - `FT_Done_Memory` (`UTumVjeIQtg`): the export has no parameter and operates on a Sony-owned global memory manager; the host FreeType library exposes a separate manager for each library. See its [unimplemented export](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp).
 

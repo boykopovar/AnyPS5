@@ -47,6 +47,14 @@ FREETYPEOL_STUB("4to3tThESn0", sceFreeTypeOlFtaSupportFormatBdf)
 FREETYPEOL_STUB("2D3H+1nhwqQ", sceFreeTypeOlFtaSupportFormatPcf)
 FREETYPEOL_STUB("upeKra1FaQk", sceFreeTypeOlFtaSupportFormatPfr)
 FREETYPEOL_STUB("Yu7mmGCjSYM", sceFreeTypeOlFtaSupportFormatWinFonts)
+FREETYPEOL_STUB("JuzrPZClLew", sceFreeTypeOlFtaSupportFormatCid)
+FREETYPEOL_STUB("sylevnx-fqk", sceFreeTypeOlFtaSupportFormatOpenType)
+FREETYPEOL_STUB("0RSuGozMl9o", sceFreeTypeOlFtaSupportFormatOpenTypeOtf)
+FREETYPEOL_STUB("J3HnvW8FJV8", sceFreeTypeOlFtaSupportFormatOpenTypeTtf)
+FREETYPEOL_STUB("YpxR8CqGMIM", sceFreeTypeOlFtaSupportFormatTrueType)
+FREETYPEOL_STUB("83qtpn8+XnA", sceFreeTypeOlFtaSupportFormatTrueTypeGx)
+FREETYPEOL_STUB("g2p7fkJpuC0", sceFreeTypeOlFtaSupportFormatType1)
+FREETYPEOL_STUB("xqjAbn8VNGo", sceFreeTypeOlFtaSupportFormatType42)
 FREETYPEOL_STUB("SDPzjFN7y4E", sceFreeTypeOlFtaSupportHinterAutoFitter)
 FREETYPEOL_STUB("3dTNNBoujn0", sceFreeTypeOlFtaSupportRendererRaster1)
 FREETYPEOL_STUB("b7S96aD8dkE", sceFreeTypeOlFtaSupportRendererSmooth)
@@ -360,6 +368,50 @@ int APS5_VABI sceFreeTypeOlFtaSupportFormatWinFonts_nid_postfix(void* library) {
     return SupportModule(library, ModuleClass(winfnt_driver_class));
 }
 APS5_EXPORT("Yu7mmGCjSYM", sceFreeTypeOlFtaSupportFormatWinFonts_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatCid_nid_postfix(void* library) {
+    return SupportModule(library, ModuleClass(t1cid_driver_class));
+}
+APS5_EXPORT("JuzrPZClLew", sceFreeTypeOlFtaSupportFormatCid_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatOpenType_nid_postfix(void* library) {
+    const int error = SupportModule(library, ModuleClass(cff_driver_class));
+    if (error != 0) return error;
+    return SupportModule(library, ModuleClass(tt_driver_class));
+}
+APS5_EXPORT("sylevnx-fqk", sceFreeTypeOlFtaSupportFormatOpenType_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatOpenTypeOtf_nid_postfix(void* library) {
+    return SupportModule(library, ModuleClass(cff_driver_class));
+}
+APS5_EXPORT("0RSuGozMl9o", sceFreeTypeOlFtaSupportFormatOpenTypeOtf_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatOpenTypeTtf_nid_postfix(void* library) {
+    return SupportModule(library, ModuleClass(tt_driver_class));
+}
+APS5_EXPORT("J3HnvW8FJV8", sceFreeTypeOlFtaSupportFormatOpenTypeTtf_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatTrueType_nid_postfix(void* library) {
+    return SupportModule(library, ModuleClass(tt_driver_class));
+}
+APS5_EXPORT("YpxR8CqGMIM", sceFreeTypeOlFtaSupportFormatTrueType_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatTrueTypeGx_nid_postfix(void* library) {
+    const int error = SupportModule(library, ModuleClass(tt_driver_class));
+    if (error != 0) return error;
+    return SupportModule(library, ModuleClass(gxv_module_class));
+}
+APS5_EXPORT("83qtpn8+XnA", sceFreeTypeOlFtaSupportFormatTrueTypeGx_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatType1_nid_postfix(void* library) {
+    return SupportModule(library, ModuleClass(t1_driver_class));
+}
+APS5_EXPORT("g2p7fkJpuC0", sceFreeTypeOlFtaSupportFormatType1_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportFormatType42_nid_postfix(void* library) {
+    return SupportModule(library, ModuleClass(t42_driver_class));
+}
+APS5_EXPORT("xqjAbn8VNGo", sceFreeTypeOlFtaSupportFormatType42_nid_postfix);
 
 int APS5_VABI sceFreeTypeOlFtaSupportHinterAutoFitter_nid_postfix(void* library) {
     return SupportModule(library, ModuleClass(autofit_module_class));
