@@ -214,6 +214,7 @@
 
 ### Functional
 
+- [sceAudioOut2ContextQueryMemory](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) - returns 61196 + 2912 * max_ports and 0x80268001 for a null size pointer; max_ports has no range check, a null parameter set keeps 0x80260502, which was not measured, and the context buffer a title passes is not used. Measured on a PS5 (firmware 11.60, payload process; a title process may differ): max_ports 1, 8 and 16 give 64108, 84492 and 107788, queue depth 3 and 8 and grain counts 1024 and 2048 change nothing, a null size gives 0x80268001. Not measured: max_ports 0 and above 16 (large values included), other parameter values, a null parameter set.
 - [AudioOut2 grain cap](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) - `sceAudioOut2ContextCreate` refuses a grain count above 12000 frames (`MAX_GRAIN`). The cap is derived from the host push queue (`MAX_QUEUED_MS`), not from the console; the console's maximum grain and the error it returns are unverified, so whether the console accepts a larger count is unknown.
 
 - [AudioOut2 main output](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) - a context's main host device is opened once at sceAudioOut2ContextCreate and is not reopened when SDL reports it stopped, so its audio stays silent for the rest of the context's life; only the controller sound card of a context is probed again. The console's behaviour when its output disappears is not measured
