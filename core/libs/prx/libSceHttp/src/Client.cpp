@@ -412,7 +412,8 @@ struct HttpClientState : Aps5HttpClient {
                     const auto [name, value] = Field(field);
                     if (name != "content-range" && name != "content-length" && name != "content-encoding" && name != "transfer-encoding" && name != "location" && name != "etag" && name != "last-modified" && name != "date") continue;
                     const auto [found, inserted] = headers.emplace(name, value);
-                    if (!inserted && found->second != value) throw HttpFailure("conflicting HTTP headers");
+                    if (!inserted && found->second != value &&
+                        (name != "content-length" || ContentLength(found->second) != ContentLength(value))) throw HttpFailure("conflicting HTTP headers");
                 }
                 if (status < 100 || status >= 200) break;
                 if (status == 101) throw HttpFailure("HTTP upgrade is not a media file");
