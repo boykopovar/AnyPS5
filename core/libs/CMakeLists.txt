@@ -350,6 +350,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_sys_sdk_version PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
+    add_test_executable(guest_kernel_sysconf_sysctl_bounds_tests tests/GuestKernelSysconfSysctlBounds.cpp)
+    target_include_directories(guest_kernel_sysconf_sysctl_bounds_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sysconf_sysctl_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_sysconf_sysctl_bounds_tests)
+    add_test(NAME guest_kernel_sysconf_sysctl_bounds COMMAND guest_kernel_sysconf_sysctl_bounds_tests)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sysconf_sysctl_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
 
     add_test_executable(guest_kernel_sys_app_category_tests tests/GuestKernelSysAppCategory.cpp)
     target_include_directories(guest_kernel_sys_app_category_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
