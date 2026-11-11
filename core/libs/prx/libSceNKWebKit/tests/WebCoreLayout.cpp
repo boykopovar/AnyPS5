@@ -77,7 +77,6 @@ static void TestGridPosition() {
     _ZN7WebCore12GridPosition19setExplicitPositionEiRKN3WTF6StringE(&grid, 5000000, other);
     Require(grid.m_integerPosition == 1000000);
 
-    Require(Throws([&] { _ZNK7WebCore12GridPosition15integerPositionEv(nullptr); }));
     Require(Throws([&] { _ZN7WebCore12GridPosition15setSpanPositionEiRKN3WTF6StringE(nullptr, 1, other); }));
 }
 

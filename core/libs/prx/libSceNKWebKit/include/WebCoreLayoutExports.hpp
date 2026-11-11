@@ -48,7 +48,5 @@ void APS5_VABI _ZN7WebCore12GridPosition24setMaxPositionForTestingEj(unsigned ma
 WebCore::LayoutUnit APS5_VABI _ZN7WebCore14valueForLengthERKNS_6LengthENS_10LayoutUnitE(const WebCore::Length& length, WebCore::LayoutUnit maximumValue);
 float APS5_VABI _ZN7WebCore19floatValueForLengthERKNS_6LengthEf(const WebCore::Length& length, float maximumValue);
 WebCore::FloatRect APS5_VABI _ZN7WebCore19unitedBoundingBoxesERKN3WTF6VectorINS_9FloatQuadELm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE(const WebCore::FloatQuadVector& quads);
-int APS5_VABI _ZNK7WebCore12GridPosition12spanPositionEv(const WebCore::GridPosition* self);
-int APS5_VABI _ZNK7WebCore12GridPosition15integerPositionEv(const WebCore::GridPosition* self);
 
 }

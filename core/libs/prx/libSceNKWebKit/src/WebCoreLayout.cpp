@@ -91,14 +91,6 @@ void APS5_VABI _ZN7WebCore12GridPosition24setMaxPositionForTestingEj(unsigned ma
     g_maxPositionForTesting = static_cast<int>(maxPosition);
 }
 
-int APS5_VABI _ZNK7WebCore12GridPosition15integerPositionEv(const WebCore::GridPosition* self) {
-    return Checked(self).m_integerPosition;
-}
-
-int APS5_VABI _ZNK7WebCore12GridPosition12spanPositionEv(const WebCore::GridPosition* self) {
-    return Checked(self).m_integerPosition;
-}
-
 float APS5_VABI _ZN7WebCore19floatValueForLengthERKNS_6LengthEf(const WebCore::Length& length, float maximumValue) {
     switch (length.m_type) {
     case WebCore::LengthType::Fixed:
