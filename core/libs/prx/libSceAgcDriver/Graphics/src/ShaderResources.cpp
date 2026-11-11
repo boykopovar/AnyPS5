@@ -2419,10 +2419,11 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                         const bool atomic = element < binding.bufferAtomic.size() && binding.bufferAtomic[element];
                         const bool read = element < binding.bufferRead.size() && binding.bufferRead[element];
                         const std::uint32_t extent = element < binding.bufferExtent.size() ? binding.bufferExtent[element] : 0u;
-                        const auto index = addGuestBuffer(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4, 4), target, indexAddress, indexBytes, written, atomic, read, extent);
+                        const bool atomicOnly = element < binding.bufferAtomicOnly.size() && binding.bufferAtomicOnly[element];
+                        const auto index = addGuestBuffer(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4, 4), target, indexAddress, indexBytes, written, atomic, read, extent, atomicOnly);
                         const bool classified = element < binding.bufferWritten.size() && element < binding.bufferRead.size() && element < binding.bufferAtomic.size();
                         allocations[index].writeOnly = classified && allocations[index].guest && allocations[index].written && binding.bufferWritten[element] && !read && !atomic;
-                        allocations[index].atomicOnly = allocations[index].guest && allocations[index].written && element < binding.bufferAtomicOnly.size() && binding.bufferAtomicOnly[element];
+                        allocations[index].atomicOnly = allocations[index].guest && allocations[index].written && atomicOnly;
                         const auto& push = shader.program->pushConstants;
                         const auto pushDataBytes = shader.program->stencilReferences.empty() ? push.size() : shader.program->stencilReferenceDword * sizeof(std::uint32_t);
                         if (pushDataBytes != 0u) {
@@ -5351,7 +5352,7 @@ std::uint64_t ShaderResources::BytesUpToTarget(std::uint64_t address, std::uint6
     return target->MemoryAddress() - address;
 }
 
-std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read, std::uint32_t extent) {
+std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read, std::uint32_t extent, bool atomicOnly) {
     Require(words.size() == 4, "buffer descriptor must contain four DWORDs");
     const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1] & ~0x40000000u, words[2], words[3]}};
     Require(descriptor.Type() == 0u, "buffer descriptor uses an unsupported type");
@@ -5373,7 +5374,8 @@ std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words
     const std::uint64_t recordBytes = descriptor.Stride() != 0 ? descriptor.Stride() : extent;
     constexpr std::uint64_t WidestBufferStoreBytes = 16;
     const bool swept = (read || (context.discreteGpu && descriptor.Stride() > WidestBufferStoreBytes)) && dispatchThreads != 0 && recordBytes != 0 && dispatchThreads * recordBytes * 2u >= byteSize;
-    if (written) guestMemory.AddWritable(address, size, atomic, swept);
+    static const bool drawAtomicStaging = std::getenv("APS5_DRAW_ATOMIC_STAGING") != nullptr;
+    if (written) guestMemory.AddWritable(address, size, atomic, swept, drawBuild && atomicOnly && !allWritten && !drawAtomicStaging);
     else {
         guestMemory.AddReadable(address, size);
         ++readOnlyBuffers;
