@@ -393,12 +393,12 @@ int main(int argc, char** argv) {
         CheckBodies(base);
         CheckEmpty(base);
         CheckRedirects(base);
+        CheckChunkExtensions(base);
         CheckCacheAndReopen(base);
         CheckFailures(base);
         CheckRepresentations(base);
         CheckCancellation(base);
         CheckRangeUnits(base);
-        CheckChunkExtensions(base);
         std::puts("Reusable HTTP client body, framing, range, cache, reopen, isolation and cancellation tests passed");
         return 0;
     } catch (const std::exception& error) {
