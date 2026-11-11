@@ -8,11 +8,33 @@ project(Relinker CXX)
 set(ANYPS5_TEST_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 
 function(add_test_executable target)
-    add_executable(${target} ${ARGN})
-    set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
+    cmake_parse_arguments(ATE "NO_RUNTIME_DLL_STAGING" "" "" ${ARGN})
+    add_executable(${target} ${ATE_UNPARSED_ARGUMENTS})
+    if(ATE_NO_RUNTIME_DLL_STAGING)
+        set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}/nostage>")
+    else()
+        set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
+    endif()
     if(MINGW)
         target_sources(${target} PRIVATE $<TARGET_OBJECTS:anyps5_windows_test_exit>)
         target_link_options(${target} PRIVATE LINKER:--wrap=main)
+        if(ATE_NO_RUNTIME_DLL_STAGING)
+            get_filename_component(_nostage_compiler_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            foreach(runtime libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
+                if(EXISTS "${_nostage_compiler_dir}/${runtime}")
+                    add_custom_command(TARGET ${target} POST_BUILD
+                        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_nostage_compiler_dir}/${runtime}" "$<TARGET_FILE_DIR:${target}>/"
+                        VERBATIM)
+                endif()
+            endforeach()
+        endif()
+    endif()
+    if(WIN32 AND NOT CMAKE_VERSION VERSION_LESS 3.21 AND NOT ATE_NO_RUNTIME_DLL_STAGING)
+        add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" "-DDEST_DIR=$<TARGET_FILE_DIR:${target}>" -P "${CMAKE_SOURCE_DIR}/cmake/CopyRuntimeFiles.cmake" $<TARGET_RUNTIME_DLLS:${target}> "$<TARGET_FILE:${target}>"
+                COMMAND_EXPAND_LISTS
+                VERBATIM
+        )
     endif()
 endfunction()
 
@@ -92,6 +114,10 @@ endif()
 if(ANYPS5_ENABLE_ASAN AND ANYPS5_ENABLE_TSAN)
     message(FATAL_ERROR "ANYPS5_ENABLE_ASAN and ANYPS5_ENABLE_TSAN cannot be combined")
 endif()
+option(ANYPS5_BUILD_FUZZERS "Build the relinker libFuzzer targets with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+if(ANYPS5_BUILD_FUZZERS AND ANYPS5_ENABLE_TSAN)
+    message(FATAL_ERROR "ANYPS5_BUILD_FUZZERS already selects AddressSanitizer and UndefinedBehaviorSanitizer; do not combine it with ANYPS5_ENABLE_TSAN")
+endif()
 if(ANYPS5_ENABLE_TSAN)
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
         message(FATAL_ERROR "ANYPS5_ENABLE_TSAN is supported only on Linux")
@@ -101,7 +127,6 @@ if(ANYPS5_ENABLE_TSAN)
     endif()
 endif()
 
-option(ANYPS5_BUILD_FUZZERS "Build the relinker libFuzzer targets with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 if(ANYPS5_BUILD_FUZZERS)
     if(NOT ANYPS5_RELINKER_ONLY)
         message(FATAL_ERROR "ANYPS5_BUILD_FUZZERS requires ANYPS5_RELINKER_ONLY")
@@ -231,6 +256,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_ready.py)
         add_test(NAME progress_history COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py ProgressHistoryTests)
+        add_test(NAME progress_history_csv COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryCsvTests)
+        set_tests_properties(progress_history_csv PROPERTIES TIMEOUT 20)
         add_test(NAME progress_history_output COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryReportOutputTests)
         set_tests_properties(progress_history_output PROPERTIES TIMEOUT 20)
@@ -248,6 +276,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_encoding.py)
         add_test(NAME progress_render_sliver COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_render_sliver.py)
+        add_test(NAME tools_progress_diff_json COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_diff_json.py)
+        set_tests_properties(tools_progress_diff_json PROPERTIES TIMEOUT 20)
         add_test(NAME progress_wrappers COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_wrappers.py)
         add_test(NAME progress_read_encoding COMMAND ${Python3_EXECUTABLE}
@@ -384,6 +415,8 @@ if(BUILD_TESTING)
         set_tests_properties(pr_intake_reopen PROPERTIES TIMEOUT 60)
         add_test(NAME tools_pe_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_pe_symbol_inventory.py)
         set_tests_properties(tools_pe_inventory PROPERTIES TIMEOUT 20)
+        add_test(NAME rebase_verify COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rebase_verify.py)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py)
         add_test(NAME relinker_seed_manifest COMMAND ${Python3_EXECUTABLE}
@@ -458,8 +491,26 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py CommandTests)
         add_test(NAME stubgen COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
-        add_test(NAME debt_split COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py)
+        set(debt_split_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${debt_split_source}")
+        file(STRINGS "${debt_split_source}" debt_split_cases REGEX "^class [A-Za-z0-9_]*Tests\\(|^    def test_")
+        set(debt_split_class "")
+        set(debt_split_first TRUE)
+        foreach(test_case IN LISTS debt_split_cases)
+            if(test_case MATCHES "^class ([A-Za-z0-9_]+)")
+                set(debt_split_class "${CMAKE_MATCH_1}")
+            elseif(test_case MATCHES "^    def (test_[A-Za-z0-9_]+)")
+                if(debt_split_first)
+                    set(debt_split_name debt_split)
+                    set(debt_split_first FALSE)
+                else()
+                    set(debt_split_name debt_split_${debt_split_class}_${CMAKE_MATCH_1})
+                endif()
+                add_test(NAME ${debt_split_name} COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py "${debt_split_class}.${CMAKE_MATCH_1}")
+                set_tests_properties(${debt_split_name} PROPERTIES TIMEOUT 20)
+            endif()
+        endforeach()
         add_test(NAME debt_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_report.py)
         add_test(NAME agc_test_split COMMAND ${Python3_EXECUTABLE}
@@ -512,6 +563,9 @@ if(BUILD_TESTING)
         add_test(NAME web_library_assets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_web.py)
         set_tests_properties(web_library_assets PROPERTIES TIMEOUT 20)
+        add_test(NAME tools_pad_preview COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_preview.py)
+        set_tests_properties(tools_pad_preview PROPERTIES TIMEOUT 20)
         add_test(NAME pad_input COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_input.py)
         set_tests_properties(pad_input PROPERTIES TIMEOUT 20)
@@ -533,7 +587,7 @@ if(BUILD_TESTING)
                         string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${line}")
                         add_test(NAME check_compile_${check_compile_class}_${test_case} COMMAND ${Python3_EXECUTABLE}
                             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py ${check_compile_class}.${test_case})
-                        set_tests_properties(check_compile_${check_compile_class}_${test_case} PROPERTIES TIMEOUT 30)
+                        set_tests_properties(check_compile_${check_compile_class}_${test_case} PROPERTIES TIMEOUT 60)
                     endif()
                 endforeach()
             endif()
@@ -584,6 +638,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_agent_files.py)
         add_test(NAME conventions_alignment COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_alignment.py)
+        add_test(NAME tools_intervals_complete COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_intervals_complete.py)
+        set_tests_properties(tools_intervals_complete PROPERTIES TIMEOUT 20)
         add_test(NAME trace_intervals_csv COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_intervals_csv.py)
         set_tests_properties(trace_intervals_csv PROPERTIES TIMEOUT 20)
@@ -631,6 +688,7 @@ if(BUILD_TESTING)
         set_tests_properties(tools_headers_manifest PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_pr_template COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_pr_template.py)
+        set_tests_properties(conventions_pr_template PROPERTIES TIMEOUT 60)
         add_test(NAME check_compile_preprocessor COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_preprocessor.py)
         set_tests_properties(check_compile_preprocessor PROPERTIES TIMEOUT 20)
@@ -649,6 +707,8 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME tools_seed_check COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_check_configure_seed.py)
         set_tests_properties(tools_seed_check PROPERTIES TIMEOUT 20)
+        add_test(NAME tools_cmake_fuzzer_sanitizers COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_cmake_fuzzer_sanitizers.py)
+        set_tests_properties(tools_cmake_fuzzer_sanitizers PROPERTIES TIMEOUT 120)
         add_test(NAME performance_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_compare.py)
         set_tests_properties(performance_compare PROPERTIES TIMEOUT 20)
@@ -657,6 +717,7 @@ if(BUILD_TESTING)
         set_tests_properties(title_run PROPERTIES TIMEOUT 60)
         add_test(NAME relinker_fuzz_seeds COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_seeds.py)
+        set_tests_properties(relinker_fuzz_seeds PROPERTIES TIMEOUT 20)
         if(WIN32)
             get_property(windows_tooling_after DIRECTORY PROPERTY TESTS)
             list(REMOVE_ITEM windows_tooling_after ${windows_tooling_before})
@@ -767,6 +828,7 @@ set_target_properties(usb-1.0 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 include(cmake/ZArchive.cmake)
 include(cmake/Opus.cmake)
 include(cmake/Sqlite.cmake)
+include(cmake/Icu.cmake)
 if(WIN32 OR APPLE OR (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANYPS5_ENABLE_ASAN AND NOT ANYPS5_ENABLE_TSAN))
     set(MI_BUILD_SHARED ON CACHE BOOL "" FORCE)
     set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)

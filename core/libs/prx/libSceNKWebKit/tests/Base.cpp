@@ -5,9 +5,13 @@
 #include "prx/libSceNKWebKit/src/BackForwardList.hpp"
 #include "prx/libSceNKWebKit/src/ProtectionSpace.hpp"
 #include "prx/libSceNKWebKit/src/FrameHandle.hpp"
+#include "prx/libSceNKWebKit/src/OpenPanelParameters.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <algorithm>
 #include <cassert>
+#include <chrono>
+#include <cmath>
+#include <thread>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -57,6 +61,9 @@ static void TestTypeIDs() {
     Require(WKAXObjectGetTypeID() == 132);
     WKRenderLayerGetTypeID();
     WKRenderObjectGetTypeID();
+    Require(WKSessionStateGetTypeID() == 19);
+    Require(WKSerializedScriptValueGetTypeID() == 20);
+    Require(WKContextGetTypeID() == 85);
 }
 
 static void TestRetainRelease() {
@@ -1118,6 +1125,43 @@ static void TestBundleScriptWorld() {
     Require(threw);
 }
 
+static void TestBundleDOMWindowExtension() {
+    Require(WKBundleDOMWindowExtensionGetTypeID() == 118);
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    auto world = NKWebKit::Make<NKWebKit::BundleScriptWorld>();
+    world->name = NKWebKit::String::FromUtf8("CustomExtensionWorld");
+
+    auto* ext = WKBundleDOMWindowExtensionCreate(frame.Get(), world.Get());
+    Require(ext != nullptr);
+    Require(WKGetTypeID(ext) == WKBundleDOMWindowExtensionGetTypeID());
+    Require(WKBundleDOMWindowExtensionGetFrame(ext) == frame.Get());
+    Require(WKBundleDOMWindowExtensionGetScriptWorld(ext) == world.Get());
+    WKRelease(ext);
+
+    auto* emptyExt = WKBundleDOMWindowExtensionCreate(nullptr, nullptr);
+    Require(emptyExt != nullptr);
+    Require(WKGetTypeID(emptyExt) == WKBundleDOMWindowExtensionGetTypeID());
+    Require(WKBundleDOMWindowExtensionGetFrame(emptyExt) == nullptr);
+    Require(WKBundleDOMWindowExtensionGetScriptWorld(emptyExt) == nullptr);
+    WKRelease(emptyExt);
+
+    bool threw = false;
+    try {
+        WKBundleDOMWindowExtensionGetFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleDOMWindowExtensionGetScriptWorld(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultGetTypeID() == 120);
     auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
@@ -1212,6 +1256,18 @@ static void TestDownload() {
     bool threw = false;
     try {
         WKDownloadGetWasUserInitiated(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    Require(!download->isCancelled);
+    WKDownloadCancel(ref);
+    Require(download->isCancelled);
+
+    threw = false;
+    try {
+        WKDownloadCancel(nullptr);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -1567,6 +1623,137 @@ static void TestFrameHandle() {
     Require(threw);
 }
 
+template<typename Function>
+static bool ThrowsOpenPanel(Function function, const void* ref) {
+    try {
+        function(ref);
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+template<typename Function>
+static bool ThrowsOpenPanelCopy(Function function, const void* ref) {
+    try {
+        function(ref);
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+static void TestOpenPanelParameters() {
+    using Strings = std::vector<NKWebKit::Retained<NKWebKit::String>>;
+    auto* parameters = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::OpenPanelParameters>(
+        true, true,
+        Strings{NKWebKit::String::FromUtf8("image/png"), NKWebKit::String::FromUtf8("text/*")},
+        Strings{NKWebKit::String::FromUtf8(".txt")},
+        Strings{NKWebKit::String::FromUtf8("/tmp/a.txt"), NKWebKit::String::FromUtf8("/tmp/b.txt"), NKWebKit::String::FromUtf8("/tmp/c.txt")}));
+    Require(WKGetTypeID(parameters) == WKOpenPanelParametersGetTypeID());
+    Require(WKOpenPanelParametersGetAllowsDirectories(parameters));
+    Require(WKOpenPanelParametersGetAllowsMultipleFiles(parameters));
+
+    auto* mimeTypes = WKOpenPanelParametersCopyAcceptedMIMETypes(parameters);
+    Require(WKGetTypeID(mimeTypes) == WKArrayGetTypeID());
+    Require(WKArrayGetSize(mimeTypes) == 2);
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 0), "image/png"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 1), "text/*"));
+    WKRelease(mimeTypes);
+
+    auto* extensions = WKOpenPanelParametersCopyAcceptedFileExtensions(parameters);
+    Require(WKArrayGetSize(extensions) == 1);
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(extensions, 0), ".txt"));
+    WKRelease(extensions);
+
+    auto* selected = WKOpenPanelParametersCopySelectedFileNames(parameters);
+    Require(WKArrayGetSize(selected) == 3);
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(selected, 2), "/tmp/c.txt"));
+    WKRelease(selected);
+    WKRelease(parameters);
+
+    auto* empty = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::OpenPanelParameters>());
+    Require(!WKOpenPanelParametersGetAllowsDirectories(empty));
+    Require(!WKOpenPanelParametersGetAllowsMultipleFiles(empty));
+    auto* none = WKOpenPanelParametersCopyAcceptedMIMETypes(empty);
+    Require(WKArrayGetSize(none) == 0);
+    WKRelease(none);
+    none = WKOpenPanelParametersCopyAcceptedFileExtensions(empty);
+    Require(WKArrayGetSize(none) == 0);
+    WKRelease(none);
+    none = WKOpenPanelParametersCopySelectedFileNames(empty);
+    Require(WKArrayGetSize(none) == 0);
+    WKRelease(none);
+    WKRelease(empty);
+
+    auto* withNull = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::OpenPanelParameters>(false, false, Strings{nullptr}, Strings{}, Strings{}));
+    auto* nullTypes = WKOpenPanelParametersCopyAcceptedMIMETypes(withNull);
+    Require(WKArrayGetSize(nullTypes) == 1);
+    Require(WKStringIsEmpty(WKArrayGetItemAtIndex(nullTypes, 0)));
+    WKRelease(nullTypes);
+    WKRelease(withNull);
+
+    auto* notParameters = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not parameters"));
+    Require(ThrowsOpenPanel(WKOpenPanelParametersGetAllowsDirectories, notParameters));
+    Require(ThrowsOpenPanel(WKOpenPanelParametersGetAllowsMultipleFiles, nullptr));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAcceptedMIMETypes, notParameters));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAcceptedFileExtensions, nullptr));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopySelectedFileNames, nullptr));
+    WKRelease(notParameters);
+}
+
+static void TestNotification() {
+    Require(WKNotificationGetTypeID() == 76);
+
+    auto notif = NKWebKit::Make<NKWebKit::Notification>();
+    notif->title = u"Alert";
+    notif->body = u"Something happened";
+    notif->iconURL = u"https://example.com/icon.png";
+    notif->tag = u"tag1";
+    notif->lang = u"en-US";
+    notif->dir = u"ltr";
+    notif->notificationID = 42;
+
+    const void* ref = NKWebKit::ToRef(notif);
+
+    auto* title = WKNotificationCopyTitle(ref);
+    Require(WKStringIsEqualToUTF8CString(title, "Alert"));
+    WKRelease(title);
+
+    auto* body = WKNotificationCopyBody(ref);
+    Require(WKStringIsEqualToUTF8CString(body, "Something happened"));
+    WKRelease(body);
+
+    auto* icon = WKNotificationCopyIconURL(ref);
+    Require(WKGetTypeID(icon) == 21);
+    Require(WKStringIsEqualToUTF8CString(icon, "https://example.com/icon.png"));
+    WKRelease(icon);
+
+    auto* tag = WKNotificationCopyTag(ref);
+    Require(WKStringIsEqualToUTF8CString(tag, "tag1"));
+    WKRelease(tag);
+
+    auto* lang = WKNotificationCopyLang(ref);
+    Require(WKStringIsEqualToUTF8CString(lang, "en-US"));
+    WKRelease(lang);
+
+    auto* dir = WKNotificationCopyDir(ref);
+    Require(WKStringIsEqualToUTF8CString(dir, "ltr"));
+    WKRelease(dir);
+
+    Require(WKNotificationGetID(ref) == 42);
+
+    bool threw = false;
+    try {
+        WKNotificationCopyTitle(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    WKRelease(ref);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -1578,6 +1765,30 @@ static void TestCertificateInfo() {
 
 static void TestEmptyFrameLoaderClient() {
     _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
+}
+
+static void TestSessionState() {
+    Require(WKSessionStateCreateFromData(nullptr) == nullptr);
+    Require(WKSessionStateCopyData(nullptr) == nullptr);
+
+    const unsigned char raw[] = { 0x12, 0x34, 0x56, 0x78 };
+    auto* d = WKDataCreate(raw, sizeof(raw));
+    auto* sessionState = WKSessionStateCreateFromData(d);
+    Require(sessionState != nullptr);
+    Require(WKGetTypeID(sessionState) == WKSessionStateGetTypeID());
+
+    auto* copiedData = WKSessionStateCopyData(sessionState);
+    Require(copiedData != nullptr);
+    Require(WKGetTypeID(copiedData) == WKDataGetTypeID());
+    Require(WKDataGetSize(copiedData) == sizeof(raw));
+    Require(std::memcmp(WKDataGetBytes(copiedData), raw, sizeof(raw)) == 0);
+
+    WKRetain(sessionState);
+    WKRelease(sessionState);
+
+    WKRelease(copiedData);
+    WKRelease(sessionState);
+    WKRelease(d);
 }
 
 static void TestInspector() {
@@ -1653,6 +1864,216 @@ static void TestInspector() {
     }
     Require(threw);
 }
+static void TestFrame() {
+    Require(WKFrameGetTypeID() == 55);
+
+    auto frame = NKWebKit::Make<NKWebKit::Frame>();
+    const void* ref = frame.Get();
+
+    Require(!WKFrameCanProvideSource(ref));
+    Require(!WKFrameIsDisplayingMarkupDocument(ref));
+    Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(!WKFrameIsMainFrame(ref));
+
+    frame->isDisplayingMarkupDocument = true;
+    Require(WKFrameCanProvideSource(ref));
+    Require(WKFrameIsDisplayingMarkupDocument(ref));
+    Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(!WKFrameIsMainFrame(ref));
+
+    frame->isDisplayingMarkupDocument = false;
+    frame->isDisplayingStandaloneImageDocument = true;
+    Require(!WKFrameCanProvideSource(ref));
+    Require(!WKFrameIsDisplayingMarkupDocument(ref));
+    Require(WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(!WKFrameIsMainFrame(ref));
+
+    frame->isDisplayingStandaloneImageDocument = false;
+    frame->isMainFrame = true;
+    Require(!WKFrameCanProvideSource(ref));
+    Require(!WKFrameIsDisplayingMarkupDocument(ref));
+    Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(WKFrameIsMainFrame(ref));
+
+    bool caught = false;
+    try {
+        WKFrameIsMainFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        caught = true;
+    }
+    Require(caught);
+}
+
+static int s_runLoopCallCount = 0;
+static void* s_runLoopReceivedContext = nullptr;
+
+static void APS5_VABI RunLoopCallback1(void* ctx) {
+    s_runLoopCallCount++;
+    s_runLoopReceivedContext = ctx;
+    WKRunLoopStopMain();
+}
+
+static void APS5_VABI RunLoopCallback2(void* ctx) {
+    auto* count = static_cast<int*>(ctx);
+    (*count) += 10;
+    WKRunLoopStopMain();
+}
+
+static void TestRunLoop() {
+    WKRunLoopInitializeMain();
+    WKRunLoopStopMain();
+    WKRunLoopRunMain();
+
+    WKRunLoopInitializeMain();
+    s_runLoopCallCount = 0;
+    s_runLoopReceivedContext = nullptr;
+
+    WKRunLoopCallOnMainThread(nullptr, nullptr);
+
+    int testContext = 42;
+    WKRunLoopCallOnMainThread(RunLoopCallback1, &testContext);
+
+    WKRunLoopRunMain();
+
+    Require(s_runLoopCallCount == 1);
+    Require(s_runLoopReceivedContext == &testContext);
+
+    WKRunLoopInitializeMain();
+
+    std::thread backgroundThread([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        WKRunLoopCallOnMainThread(RunLoopCallback2, &s_runLoopCallCount);
+    });
+
+    WKRunLoopRunMain();
+    backgroundThread.join();
+
+    Require(s_runLoopCallCount == 11);
+}
+
+static void TestContext() {
+    Require(WKContextGetTypeID() == 85);
+
+    const auto* context = WKContextCreate();
+    Require(WKGetTypeID(context) == WKContextGetTypeID());
+    Require(!WKContextGetUsesSingleWebProcess(context));
+    WKContextSetUsesSingleWebProcess(context, true);
+    Require(WKContextGetUsesSingleWebProcess(context));
+    WKRelease(context);
+
+    const auto* config = WKContextConfigurationCreate();
+    const auto* contextFromConfig = WKContextCreateWithConfiguration(config);
+    Require(WKGetTypeID(contextFromConfig) == WKContextGetTypeID());
+    Require(!WKContextGetUsesSingleWebProcess(contextFromConfig));
+    WKRelease(contextFromConfig);
+    WKRelease(config);
+
+    const auto* nullContext = WKContextCreateWithConfiguration(nullptr);
+    Require(WKGetTypeID(nullContext) == WKContextGetTypeID());
+    WKRelease(nullContext);
+
+    auto* pathStr = WKStringCreateWithUTF8CString("/app0/bundle.js");
+    const auto* contextFromPath = WKContextCreateWithInjectedBundlePath(pathStr);
+    Require(WKGetTypeID(contextFromPath) == WKContextGetTypeID());
+    WKRelease(contextFromPath);
+    WKRelease(pathStr);
+}
+
+static void TestSerializedScriptValue() {
+    Require(WKSerializedScriptValueGetTypeID() == 20);
+    Require(WKSerializedScriptValueCreate(nullptr, nullptr, nullptr) == nullptr);
+    Require(WKSerializedScriptValueDeserialize(nullptr, nullptr, nullptr) == nullptr);
+
+    auto* ctx = JSGlobalContextCreate(nullptr);
+    Require(ctx != nullptr);
+    Require(WKSerializedScriptValueCreate(ctx, nullptr, nullptr) == nullptr);
+
+    auto* numVal = JSValueMakeNumber(ctx, 42.0);
+    auto* serNum = WKSerializedScriptValueCreate(ctx, numVal, nullptr);
+    Require(serNum != nullptr);
+    Require(WKGetTypeID(serNum) == WKSerializedScriptValueGetTypeID());
+    Require(WKSerializedScriptValueDeserialize(serNum, nullptr, nullptr) == nullptr);
+    auto* deNum = WKSerializedScriptValueDeserialize(serNum, ctx, nullptr);
+    Require(deNum != nullptr);
+    Require(JSValueIsNumber(ctx, deNum));
+    Require(JSValueToNumber(ctx, deNum, nullptr) == 42.0);
+
+    auto* retained = WKRetain(serNum);
+    Require(retained == serNum);
+    WKRelease(retained);
+    WKRelease(serNum);
+
+    auto* nanVal = JSValueMakeNumber(ctx, std::numeric_limits<double>::quiet_NaN());
+    auto* serNan = WKSerializedScriptValueCreate(ctx, nanVal, nullptr);
+    Require(serNan != nullptr);
+    auto* deNan = WKSerializedScriptValueDeserialize(serNan, ctx, nullptr);
+    Require(deNan != nullptr && JSValueIsNumber(ctx, deNan) && std::isnan(JSValueToNumber(ctx, deNan, nullptr)));
+    WKRelease(serNan);
+
+    auto* infVal = JSValueMakeNumber(ctx, std::numeric_limits<double>::infinity());
+    auto* serInf = WKSerializedScriptValueCreate(ctx, infVal, nullptr);
+    Require(serInf != nullptr);
+    auto* deInf = WKSerializedScriptValueDeserialize(serInf, ctx, nullptr);
+    Require(deInf != nullptr && JSValueIsNumber(ctx, deInf) && std::isinf(JSValueToNumber(ctx, deInf, nullptr)) && JSValueToNumber(ctx, deInf, nullptr) > 0);
+    WKRelease(serInf);
+
+    auto* negInfVal = JSValueMakeNumber(ctx, -std::numeric_limits<double>::infinity());
+    auto* serNegInf = WKSerializedScriptValueCreate(ctx, negInfVal, nullptr);
+    Require(serNegInf != nullptr);
+    auto* deNegInf = WKSerializedScriptValueDeserialize(serNegInf, ctx, nullptr);
+    Require(deNegInf != nullptr && JSValueIsNumber(ctx, deNegInf) && std::isinf(JSValueToNumber(ctx, deNegInf, nullptr)) && JSValueToNumber(ctx, deNegInf, nullptr) < 0);
+    WKRelease(serNegInf);
+
+    auto* boolVal = JSValueMakeBoolean(ctx, true);
+    auto* serBool = WKSerializedScriptValueCreate(ctx, boolVal, nullptr);
+    Require(serBool != nullptr);
+    auto* deBool = WKSerializedScriptValueDeserialize(serBool, ctx, nullptr);
+    Require(deBool != nullptr && JSValueIsBoolean(ctx, deBool) && JSValueToBoolean(ctx, deBool));
+    WKRelease(serBool);
+
+    auto* nullVal = JSValueMakeNull(ctx);
+    auto* serNull = WKSerializedScriptValueCreate(ctx, nullVal, nullptr);
+    Require(serNull != nullptr);
+    auto* deNull = WKSerializedScriptValueDeserialize(serNull, ctx, nullptr);
+    Require(deNull != nullptr && JSValueIsNull(ctx, deNull));
+    WKRelease(serNull);
+
+    auto* undefVal = JSValueMakeUndefined(ctx);
+    auto* serUndef = WKSerializedScriptValueCreate(ctx, undefVal, nullptr);
+    Require(serUndef != nullptr);
+    auto* deUndef = WKSerializedScriptValueDeserialize(serUndef, ctx, nullptr);
+    Require(deUndef != nullptr && JSValueIsUndefined(ctx, deUndef));
+    WKRelease(serUndef);
+
+    auto* jsJsonStr = JSStringCreateWithUTF8CString_nid_postfix("\"hello AnyPS5\"");
+    Require(jsJsonStr != nullptr);
+    auto* strVal = JSValueMakeFromJSONString(ctx, jsJsonStr);
+    JSStringRelease_nid_postfix(jsJsonStr);
+    Require(strVal != nullptr);
+    auto* serStr = WKSerializedScriptValueCreate(ctx, strVal, nullptr);
+    Require(serStr != nullptr);
+
+    auto* otherCtx = JSGlobalContextCreate(nullptr);
+    Require(otherCtx != nullptr);
+    auto* deStrOther = WKSerializedScriptValueDeserialize(serStr, otherCtx, nullptr);
+    Require(deStrOther != nullptr && JSValueIsString(otherCtx, deStrOther));
+    auto* outStr = JSValueToStringCopy(otherCtx, deStrOther, nullptr);
+    Require(outStr != nullptr && JSStringIsEqualToUTF8CString(outStr, "hello AnyPS5"));
+    JSStringRelease_nid_postfix(outStr);
+    JSGlobalContextRelease(otherCtx);
+
+    WKRelease(serStr);
+
+    NKWebKit::JSValueRef exc = nullptr;
+    auto* badSer = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::SerializedScriptValue>("invalid json {{{", NKWebKit::SerializedScriptValueKind::Json));
+    auto* deBad = WKSerializedScriptValueDeserialize(badSer, ctx, &exc);
+    Require(deBad == nullptr);
+    Require(exc != nullptr);
+    WKRelease(badSer);
+
+    JSGlobalContextRelease(ctx);
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -1670,6 +2091,7 @@ int main() {
     TestHitTestResult();
     TestBackForwardList();
     TestBundleScriptWorld();
+    TestBundleDOMWindowExtension();
     TestBundleHitTestResult();
     TestDownload();
     TestAXObject();
@@ -1678,10 +2100,16 @@ int main() {
     TestProtectionSpace();
     TestPermissionRequests();
     TestFrameHandle();
+    TestOpenPanelParameters();
+    TestNotification();
     TestCertificateInfo();
-TestEmptyFrameLoaderClient();
-
-TestInspector();
+    TestEmptyFrameLoaderClient();
+    TestInspector();
+    TestContext();
+    TestSessionState();
+    TestSerializedScriptValue();
+    TestRunLoop();
+    TestFrame();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }
