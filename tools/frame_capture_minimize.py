@@ -28,12 +28,16 @@ class Minimizer:
 
     @staticmethod
     def validate_entries(entries, label):
+        indexes = set()
         for position, entry in enumerate(entries):
             if not isinstance(entry, dict):
                 raise RuntimeError(f"capture inspection {label}[{position}] must be an object")
             index = entry.get("index")
             if isinstance(index, bool) or not isinstance(index, int) or index < 0:
                 raise RuntimeError(f"capture inspection {label}[{position}] has an invalid index")
+            if index in indexes:
+                raise RuntimeError(f"capture inspection {label} contains duplicate index {index}")
+            indexes.add(index)
             if not isinstance(entry.get("kind"), str):
                 raise RuntimeError(f"capture inspection {label}[{position}] is missing a kind")
 

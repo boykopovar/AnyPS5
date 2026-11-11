@@ -193,6 +193,10 @@ if command == 'inspect':
     def test_inspection_entries_accept_nonnegative_integer_indexes(self):
         frame_capture_minimize.Minimizer.validate_entries([{"index": 0, "kind": "submit"}], "calls")
 
+    def test_inspection_entries_reject_duplicate_indexes(self):
+        with self.assertRaisesRegex(RuntimeError, "duplicate index 3"):
+            frame_capture_minimize.Minimizer.validate_entries([{"index": 3, "kind": "submit"}, {"index": 3, "kind": "flip"}], "calls")
+
     def test_inspection_requires_calls_list(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
