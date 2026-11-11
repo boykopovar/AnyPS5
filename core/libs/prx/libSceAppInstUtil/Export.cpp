@@ -3,17 +3,27 @@
 #include "prx/libSceAppInstUtil/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
+#include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+
+static std::mutex g_serviceMutex;
+static int g_serviceReferences = 0;
+static constexpr int ErrorNullArgument = static_cast<int>(0x80A30003);
+static constexpr int ErrorNotInitialized = static_cast<int>(0x80A31000);
 
 extern "C" {
 
 int APS5_VABI sceAppInstUtilInitialize(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_serviceMutex);
+    ++g_serviceReferences;
     return 0;
 }
 int APS5_VABI sceAppInstUtilTerminate(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_serviceMutex);
+    --g_serviceReferences;
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppInstallAll(void* reserved) {
@@ -33,7 +43,10 @@ int APS5_VABI sceAppInstUtilAppIsInUpdating(const char* titleId, bool* updating)
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppExists(const char* titleId, int32_t* exists) {
-    NotImplemented_nid_no_patch(__func__);
+    if (titleId == nullptr || exists == nullptr) return ErrorNullArgument;
+    std::lock_guard lock(g_serviceMutex);
+    if (g_serviceReferences <= 0) return ErrorNotInitialized;
+    *exists = std::strcmp(titleId, GetAppTitleId_nid_postfix().value) == 0 ? 1 : 0;
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppGetSize(const char* titleId, std::uint64_t* size) {
@@ -44,11 +57,13 @@ int APS5_VABI sceAppInstUtilAppInstallPkg(const char* packagePath, std::uint64_t
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceAppInstUtilAppPrepareOverwritePkg() {
+int APS5_VABI sceAppInstUtilAppPrepareOverwritePkg(const char* pkgPath) {
+    (void)pkgPath;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceAppInstUtilAppRecoverApp() {
+int APS5_VABI sceAppInstUtilAppRecoverApp(const char* titleId) {
+    (void)titleId;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -64,7 +79,8 @@ int APS5_VABI sceAppInstUtilAppUnInstallPat(const char* titleId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceAppInstUtilAppUnInstallTheme() {
+int APS5_VABI sceAppInstUtilAppUnInstallTheme(const char* contentId) {
+    (void)contentId;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -24,7 +24,8 @@ def images():
     for path in sorted(TESTS.glob("test_*.py")):
         try:
             module = importlib.import_module(path.stem)
-        except Exception:
+        except Exception as error:
+            print(f"warning: no seeds from {path.name}: it cannot be imported: {error}", file=sys.stderr)
             continue
         for name in BUILDERS:
             function = getattr(module, name, None)
@@ -32,24 +33,41 @@ def images():
                 continue
             try:
                 data = function()
-            except Exception:
+            except Exception as error:
+                print(f"warning: no seed from {path.stem}.{name}: {error}", file=sys.stderr)
                 continue
             if isinstance(data, (bytes, bytearray)) and len(data) >= 64:
                 yield f"{path.stem}-{name}", bytes(data)
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Write relinker test fixtures as relinker_conversion_fuzzer seeds")
     parser.add_argument("output", type=Path)
-    arguments = parser.parse_args()
-    arguments.output.mkdir(parents=True, exist_ok=True)
+    parser.add_argument("--all-configurations", action="store_true", help="cover every distinct fuzzer selector configuration")
+    arguments = parser.parse_args(argv)
+    selectors = SELECTORS
+    if arguments.all_configurations:
+        configurations = {}
+        for selector in range(256):
+            configurations.setdefault((selector % 3, bool(selector & 4), (selector >> 3) % 3), selector)
+        selectors = tuple(configurations.values())
+    if arguments.output.is_file():
+        parser.error(f"{arguments.output} is an existing file, not a directory")
+    try:
+        arguments.output.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        parser.error(str(error))
     count = 0
-    for name, data in images():
-        for selector in SELECTORS:
-            (arguments.output / f"{name}-{selector}").write_bytes(bytes([selector]) + data)
-            count += 1
+    try:
+        for name, data in images():
+            for selector in selectors:
+                (arguments.output / f"{name}-{selector}").write_bytes(bytes([selector]) + data)
+                count += 1
+    except OSError as error:
+        parser.error(str(error))
     print(f"{count} seeds written to {arguments.output}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -11,6 +11,6 @@ if(BUILD_TESTING)
     add_test(NAME guest_player_selection_dialog COMMAND guest_player_selection_dialog_tests)
     if(WIN32)
         set_tests_properties(guest_player_selection_dialog PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayerSelectionDialog>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayerSelectionDialog>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
     endif()
 endif()
