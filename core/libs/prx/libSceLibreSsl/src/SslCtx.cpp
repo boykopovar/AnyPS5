@@ -190,6 +190,14 @@ void PutSslError(int reason) {
 
 extern "C" {
 
+int APS5_VABI SSL_CTX_use_certificate_nid_postfix(LibreSslCtx* ctx, void* certificate) {
+    if (certificate == nullptr) {
+        PutSslError(67);
+        return 0;
+    }
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(LibreSslCtx* ctx) {
     return Context(ctx, __func__).verifyMode;
 }
