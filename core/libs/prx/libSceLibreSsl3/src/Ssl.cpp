@@ -123,4 +123,10 @@ std::size_t APS5_VABI SSL_get_client_random_nid_postfix(const LibreSsl3Ssl* ssl,
     return length;
 }
 
+void APS5_VABI SSL_CTX_set_keylog_callback_nid_postfix(LibreSsl3SslCtx* context, LibreSsl3KeylogCallback callback) {
+    if (!context)
+        throw std::invalid_argument("SSL_CTX_set_keylog_callback requires a context");
+    context->keylogCallback = reinterpret_cast<void*>(callback);
+}
+
 }
