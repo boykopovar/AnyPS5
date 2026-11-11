@@ -64,6 +64,32 @@ bool UndefinedProtection(int prot) {
     return (prot & ~0x3F7) != 0;
 }
 
+bool RefusedFlexibleFlag(int flags) {
+    switch (flags) {
+        case 0x1:
+        case 0x2:
+        case 0x4:
+        case 0x8:
+        case 0x20:
+        case 0x40:
+        case 0x100:
+        case 0x200:
+        case 0x400:
+        case 0x800:
+        case 0x1000:
+        case 0x2000:
+        case 0x4000:
+        case 0x10000:
+        case 0x20000:
+        case 0x40000:
+        case 0x80000:
+        case 0x100000:
+            return true;
+        default:
+            return false;
+    }
+}
+
 constexpr int PRT_APERTURE_COUNT = 3;
 
 struct PrtAperture {
@@ -312,7 +338,7 @@ int APS5_VABI sceKernelMapDirectMemory2(void** addr, size_t len, int type, int p
 }
 
 int APS5_VABI sceKernelMapFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags) {
- if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
+ if (UndefinedProtection(prot) || RefusedFlexibleFlag(flags)) return SCE_KERNEL_ERROR_EINVAL;
  constexpr int IgnoredHeapFlag = 0x8000;
  return _mapFlexible(addr_in_out, len, prot, flags & ~IgnoredHeapFlag);
 }
@@ -326,7 +352,7 @@ int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, i
 }
 
 int32_t APS5_VABI sceKernelMapNamedFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
- if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
+ if (UndefinedProtection(prot) || flags == 0x8000) return SCE_KERNEL_ERROR_EINVAL;
  const int result = _mapFlexible(addr_in_out, len, prot, flags);
  if (result == 0 && name) sceKernelSetVirtualRangeName(*addr_in_out, len, name);
  return result;
