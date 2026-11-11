@@ -703,6 +703,11 @@ short closed_stream_events(const Sock& socket, short native, short requested) {
     native = static_cast<short>(native | (requested & POLLRDNORM));
     return socket.sending_shut ? native : static_cast<short>(native & ~POLLHUP);
 }
+#elif defined(__APPLE__)
+short closed_stream_events(const Sock& socket, short native, short requested) {
+    if (socket.type != NET_SOCK_STREAM || (native & (POLLHUP | POLLERR)) != POLLHUP || socket.sending_shut) return native;
+    return static_cast<short>((native & ~POLLHUP) | (requested & POLLOUT));
+}
 #endif
 
 std::int64_t message_length(const NetMsghdr* message) {
@@ -2676,6 +2681,11 @@ int APS5_VABI sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int
                 descriptors[index].revents = closed_stream_events(watches[index].socket, descriptors[index].revents, descriptors[index].events);
 #else
         const int ready_count = ::poll(descriptors.data(), descriptors.size(), wait_ms);
+#ifdef __APPLE__
+        for (std::size_t index = 0; index < descriptors.size(); ++index)
+            if (!watches[index].kernelOwner)
+                descriptors[index].revents = closed_stream_events(watches[index].socket, descriptors[index].revents, descriptors[index].events);
+#endif
 #endif
         if (ready_count < 0) return fail(native_error());
         {

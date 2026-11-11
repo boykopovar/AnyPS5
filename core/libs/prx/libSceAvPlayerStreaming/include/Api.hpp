@@ -7,7 +7,7 @@ extern "C" {
 int APS5_VABI MvpHttpAbort_nid_postfix(void);
 int APS5_VABI MvpHttpDeInit_nid_postfix(void);
 int APS5_VABI MvpHttpGet_nid_postfix(void);
-int APS5_VABI MvpHttpGetLastError_nid_postfix(void);
+int APS5_VABI MvpHttpGetLastError_nid_postfix(const void* context);
 int APS5_VABI MvpHttpHead_nid_postfix(void);
 int APS5_VABI MvpHttpHeadCleanup_nid_postfix(void);
 int APS5_VABI MvpHttpInit_nid_postfix(void);
