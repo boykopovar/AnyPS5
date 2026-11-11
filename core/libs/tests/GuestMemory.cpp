@@ -927,10 +927,21 @@ static void CheckReleaseDirectMemoryClearsMappings() {
     }
 }
 
+static void CheckReleaseDirectMemoryZeroLength() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, 0) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseDirectMemory(phys + 1, page) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
+}
+
 static void CheckReleaseDirectMemoryRejectsInvalidRanges() {
     constexpr std::size_t page = 0x4000;
     Require(sceKernelReleaseDirectMemory(-1, page) == SCE_KERNEL_ERROR_EINVAL);
-    Require(sceKernelReleaseDirectMemory(0, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseDirectMemory(0, 0) == 0);
     Require(sceKernelReleaseDirectMemory(0, 1) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelReleaseDirectMemory(0, page - 1) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelReleaseDirectMemory(1, page) == SCE_KERNEL_ERROR_EINVAL);
@@ -4369,6 +4380,7 @@ int main(int argc, char** argv) {
     CheckAllocateDirectMemoryRejectsInvalidArguments();
     CheckReleaseDirectMemoryClearsMappings();
     CheckReleaseDirectMemoryRejectsInvalidRanges();
+    CheckReleaseDirectMemoryZeroLength();
     CheckFixedMappingReplacesPartialOverlap();
     CheckFixedDirectMapRejectsAlignmentBeforeReplacing();
     CheckFixedMappingOverHoleInsideAllocation();
