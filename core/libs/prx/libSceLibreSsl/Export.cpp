@@ -189,9 +189,13 @@ int APS5_VABI OCSP_basic_verify_nid_postfix(LibreSslOcspBasicResponse* response,
     return 0;
 }
 
-int APS5_VABI OCSP_response_get1_basic_nid_postfix(void) {
+void* APS5_VABI OCSP_response_get1_basic_nid_postfix(LibreSslOcspResponse* response) {
+    if (!response) throw std::invalid_argument(std::string(__func__) + ": null response");
+    if (!response->responseBytes) {
+        LibreSslPutError_nid_no_patch(39, 0xfff, 108);
+        return nullptr;
+    }
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 void APS5_VABI OPENSSL_add_all_algorithms_noconf_nid_postfix(void) {}

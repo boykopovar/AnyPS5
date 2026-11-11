@@ -1,9 +1,13 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
 
@@ -70,6 +74,26 @@ static void TestBasicResponseFree() {
     Require(ERR_peek_error_nid_postfix() == error);
 }
 
+static void TestGet1Basic() {
+    ERR_clear_error_nid_postfix();
+    RequireThrows([] { OCSP_response_get1_basic_nid_postfix(nullptr); });
+    Require(ERR_peek_error_nid_postfix() == 0);
+
+    LibreSslOcspResponse response {};
+    std::array<unsigned char, sizeof(response)> before {};
+    std::memcpy(before.data(), &response, sizeof(response));
+    LibreSslPutError_nid_no_patch(5, 6, 7);
+    constexpr std::uint64_t sentinelBeforeError = (std::uint64_t{5} << 24) | (std::uint64_t{6} << 12) | 7;
+    Require(OCSP_response_get1_basic_nid_postfix(&response) == nullptr);
+    Require(std::memcmp(before.data(), &response, sizeof(response)) == 0);
+    constexpr std::uint64_t noResponseData = (std::uint64_t{39} << 24) | (std::uint64_t{0xfff} << 12) | 108;
+    Require(ERR_peek_error_nid_postfix() == sentinelBeforeError);
+    Require(LibreSslPeekLastError_nid_no_patch() == noResponseData);
+    Require(ERR_get_error_nid_postfix() == sentinelBeforeError);
+    Require(ERR_get_error_nid_postfix() == noResponseData);
+    Require(ERR_get_error_nid_postfix() == 0);
+}
+
 static void TestSingleStatus() {
     Asn1String revoked {}, thisUpdate {}, nextUpdate {}, other {};
     unsigned char keyCompromise[] {1};
@@ -124,6 +148,7 @@ static void TestSingleStatus() {
 }
 
 int main() {
+    TestGet1Basic();
     TestResponseStatus();
     TestBasicResponseFree();
     TestSingleStatus();
