@@ -1923,6 +1923,7 @@ bool supportsNativeVop3SourceModifiers(RdnaOpcode opcode) {
         case RdnaOpcode::VMulF16:
         case RdnaOpcode::VMinF16:
         case RdnaOpcode::VMaxF16:
+        case RdnaOpcode::VFmacF16:
         case RdnaOpcode::VMacF32:
         case RdnaOpcode::VMadF32:
         case RdnaOpcode::VMadLegacyF32:
@@ -1976,6 +1977,7 @@ bool supportsNativeVop3ResultModifiers(RdnaOpcode opcode) {
         case RdnaOpcode::VMulF16:
         case RdnaOpcode::VMinF16:
         case RdnaOpcode::VMaxF16:
+        case RdnaOpcode::VFmacF16:
         case RdnaOpcode::VLdexpF16:
         case RdnaOpcode::VFrexpMantF16:
         case RdnaOpcode::VCvtNormI16F16:
@@ -2015,7 +2017,7 @@ bool supportsNativeVop3Clamp(RdnaOpcode opcode) {
 }
 
 bool readsVop2Accumulator(RdnaOpcode opcode) {
-    return opcode == RdnaOpcode::VMacF32 || opcode == RdnaOpcode::VMacLegacyF32;
+    return opcode == RdnaOpcode::VMacF32 || opcode == RdnaOpcode::VMacLegacyF32 || opcode == RdnaOpcode::VFmacF16;
 }
 
 void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bool permlane, bool carryInOut, bool scalarDst, std::uint32_t abs, std::uint32_t opSel, std::uint32_t clamp, std::uint32_t omod, std::uint32_t neg) {
@@ -2095,7 +2097,7 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
     const bool clampModifier = supportsNativeVop3Clamp(opcode);
     const bool ignoresOutputModifiers = opcode == RdnaOpcode::VCvtI16F16;
     if (sourceModifiers) {
-        const bool unmeasuredAccumulatorModifiers = ((abs | neg) & 0x4u) != 0u && readsVop2Accumulator(opcode) && encodedOpcode != 0x12bu;
+        const bool unmeasuredAccumulatorModifiers = ((abs | neg) & 0x4u) != 0u && readsVop2Accumulator(opcode) && encodedOpcode != 0x12bu && encodedOpcode != 0x136u;
         if (opSel != 0u || (omod != 0u && !resultModifiers && !ignoresOutputModifiers) || (clamp != 0u && !clampModifier && !ignoresOutputModifiers) || unmeasuredAccumulatorModifiers) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
         }
