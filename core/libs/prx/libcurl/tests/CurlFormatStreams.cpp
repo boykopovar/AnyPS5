@@ -46,7 +46,7 @@ static std::string ReadAll(const std::string& path) {
 }
 
 static void TestFileStreams() {
-    const auto path = (std::filesystem::temp_directory_path() / "anyps5_curl_format_streams.txt").string();
+    const std::string path = "curl_format_streams.tmp";
     auto* stream = fopen_nid_postfix(path.c_str(), "w");
     Require(stream != nullptr);
     Require(curl_mfprintf_nid_postfix(reinterpret_cast<std::FILE*>(stream), "%s %d|%-4s|%2$d;", "one", 1, "x") == 13);
@@ -65,7 +65,7 @@ static void TestFileStreams() {
 }
 
 static void TestStandardOutput() {
-    const auto path = (std::filesystem::temp_directory_path() / "anyps5_curl_format_stdout.txt").string();
+    const std::string path = "curl_format_stdout.tmp";
     Require(freopen_nid_postfix(path.c_str(), "w", &_Stdout_nid_postfix) == &_Stdout_nid_postfix);
     Require(curl_mprintf_nid_postfix("%s=%03d;", "mprintf", 7) == 12);
     Require(FormatStandardOutput("%c%c", 'o', 'k') == 2);
