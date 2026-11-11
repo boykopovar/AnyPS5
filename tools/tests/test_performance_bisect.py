@@ -112,3 +112,30 @@ class MeasurementStabilityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "identity changed"):
             performance_bisect.require_same_identity({"identity": IDENTITY}, {"identity": dict(IDENTITY, driver="Other")})
 
+class GitHistoryTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.repo = Path(self.directory.name) / "repo"
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "config", "user.name", "Test"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "config", "user.email", "test@example.invalid"], check=True)
+        self.commit("zero")
+        self.good = performance_bisect.git(self.repo, "rev-parse", "HEAD")
+        self.commits = [self.commit(f"step-{index}") for index in range(1, 8)]
+
+    def commit(self, text):
+        (self.repo / "state").write_text(text, encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "state"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", f"test: {text}"], check=True)
+        return performance_bisect.git(self.repo, "rev-parse", "HEAD")
+
+    def test_resolves_first_parent_range_and_checks_ancestry(self):
+        good, bad, commits = performance_bisect.first_parent_commits(self.repo, self.good, self.commits[-1])
+        self.assertEqual(good, self.good)
+        self.assertEqual(bad, self.commits[-1])
+        self.assertEqual(commits, self.commits)
+        with self.assertRaisesRegex(ValueError, "ancestor"):
+            performance_bisect.first_parent_commits(self.repo, self.commits[-1], self.good)
+
