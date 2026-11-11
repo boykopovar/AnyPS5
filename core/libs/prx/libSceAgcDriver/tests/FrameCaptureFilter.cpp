@@ -209,6 +209,13 @@ void testAllMemoryGroupCallsRemoved(const std::filesystem::path& root) {
     check(filtered.Calls().empty() && filtered.Chunks().empty(), "removing every call in a memory group retained its deltas");
 }
 
+
+void testMalformedPlanHeader(const std::filesystem::path& root) {
+    const auto path = root / "bad-header.plan";
+    { std::ofstream output(path); output << "aps5-frame-filter 2\n"; }
+    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted an unsupported version");
+}
+
 }
 
 int main() {
@@ -220,6 +227,7 @@ int main() {
     testReferenceChunk(root);
     testSharedGroup(root);
     testAllGroupCallsRemoved(root);
+    testMalformedHeader(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
