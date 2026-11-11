@@ -87,6 +87,7 @@ if(BUILD_TESTING)
         set_tests_properties(guest_freetype_ot_glyph_mutation PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
         set_tests_properties(guest_freetype_ot_glyph_mutation_patched PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>"
             "PATH=path_list_prepend:${PATCHED_DIR}")
     endif()
 endif()
