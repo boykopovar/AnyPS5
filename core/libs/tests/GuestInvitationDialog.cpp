@@ -5,6 +5,7 @@
 #include "prx/libSceCommonDialog/include/DialogUse.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -132,6 +133,9 @@ void TestCanceled() {
 
     result = InvitationDialogResult{};
     Require(sceInvitationDialogGetResult(&result) == 0 && result.recipients == nullptr, "result without a recipient list");
+    errno = 71;
+    Require(sceInvitationDialogGetResult(reinterpret_cast<InvitationDialogResult*>(0x10)) == ArgNull, "unwritable result pointer");
+    Require(errno == 71, "errno preserved");
 
     const InvitationDialogParam receive = MakeParam(ModeRecv, &second);
     Require(sceInvitationDialogOpen(&receive) == 0, "open again to receive");
@@ -150,22 +154,11 @@ void TestCanceled() {
     Require(sceInvitationDialogTerminate() == 0, "terminate again");
 }
 
-template <typename TCall>
-void RequireNotImplemented(TCall call, const char* message) {
-    bool threw = false;
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        threw = std::string(error.what()).find("not implemented") != std::string::npos;
-    }
-    Require(threw, message);
-}
-
 void TestStatusAndPending() {
     int callbackArg = 0;
     Require(sceInvitationDialogGetStatus_nid_postfix() == StatusNone, "get status before initialization");
-    RequireNotImplemented([] { sceInvitationDialogOpenA_nid_postfix(); }, "openA is not implemented");
-    RequireNotImplemented([] { sceInvitationDialogGetResultA_nid_postfix(); }, "getResultA is not implemented");
+    Require(sceInvitationDialogOpenA_nid_postfix() == NotInitialized, "openA before initialization");
+    Require(sceInvitationDialogGetResultA_nid_postfix() == NotInitialized, "getResultA before initialization");
     Require(sceInvitationDialogInitialize() == 0, "initialize for status check");
     Require(sceInvitationDialogGetStatus_nid_postfix() == StatusInitialized, "status after initialize");
     const InvitationDialogParam send = MakeParam(ModeSend, &callbackArg);
@@ -173,6 +166,8 @@ void TestStatusAndPending() {
     Require(sceInvitationDialogGetStatus_nid_postfix() == StatusFinished, "status after open");
     Require(sceInvitationDialogTerminate() == 0, "terminate after status check");
     Require(sceInvitationDialogGetStatus_nid_postfix() == StatusNone, "status after terminate");
+    Require(sceInvitationDialogOpenA_nid_postfix() == NotInitialized, "openA after termination");
+    Require(sceInvitationDialogGetResultA_nid_postfix() == NotInitialized, "getResultA after termination");
 }
 
 

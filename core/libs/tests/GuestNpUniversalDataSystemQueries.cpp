@@ -35,6 +35,11 @@ static bool Zeroed(const Stat& stat) {
 int main() {
     CHECK(RejectsArgument([] { sceNpUniversalDataSystemInitialize(nullptr); }));
     const NpUniversalDataSystemInitParam init{sizeof(NpUniversalDataSystemInitParam), 0x10000};
+    NpUniversalDataSystemInitParam invalidSizeInit = init;
+    invalidSizeInit.size = sizeof(NpUniversalDataSystemInitParam) - 1;
+    CHECK(RejectsArgument([invalidSizeInit] { sceNpUniversalDataSystemInitialize(&invalidSizeInit); }));
+    invalidSizeInit.size = sizeof(NpUniversalDataSystemInitParam) + 8;
+    CHECK(RejectsArgument([invalidSizeInit] { sceNpUniversalDataSystemInitialize(&invalidSizeInit); }));
     CHECK(sceNpUniversalDataSystemInitialize(&init) == 0);
 
     NpUniversalDataSystemMemoryStat memory;
@@ -64,6 +69,12 @@ int main() {
     char tiny[2] = {'x', 'x'};
     CHECK(sceNpUniversalDataSystemEventToString(event, tiny, sizeof(tiny), nullptr) == 0 && tiny[0] == '{' && tiny[1] == '\0');
     CHECK(sceNpUniversalDataSystemDestroyEvent(event) == 0);
+
+    int udsHandle = -1;
+    CHECK(sceNpUniversalDataSystemCreateHandle(&udsHandle) == 0 && udsHandle != -1);
+    CHECK(sceNpUniversalDataSystemDestroyHandle(udsHandle) == 0);
+    CHECK(sceNpUniversalDataSystemAbortHandle(udsHandle) == 0);
+
     std::puts("UDS query tests passed");
     return 0;
 }

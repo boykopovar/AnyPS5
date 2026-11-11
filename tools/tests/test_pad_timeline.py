@@ -31,6 +31,24 @@ class TimelineTests(unittest.TestCase):
         self.document["events"][0]["buttons"] = ["cross", "touch-left", "touch-right"]
         self.assertIn("200 100 6307840", pad_timeline.compile_timeline(self.document, 1))
 
+    def test_sticks_are_written_after_the_buttons(self):
+        self.document["events"][0]["left_stick"] = [255, 0]
+        self.document["events"][1]["right_stick"] = [10, 245]
+        text = pad_timeline.compile_timeline(self.document, 7)
+        self.assertEqual(text, "APS5_PAD_TIMELINE 1 7 2\n200 100 18432 255 0 128 128\n500 200 64 128 128 10 245\n")
+
+    def test_stick_positions_are_validated(self):
+        for position in [None, [], [128], [128, 128, 128], [256, 128], [-1, 128], [True, 128], [128.0, 128], "128,128"]:
+            with self.subTest(position=position):
+                self.document["events"][0]["left_stick"] = position
+                with self.assertRaises(ValueError):
+                    pad_timeline.compile_timeline(self.document, 1)
+
+    def test_unknown_event_fields_are_rejected(self):
+        self.document["events"][0]["stick"] = [128, 128]
+        with self.assertRaises(ValueError):
+            pad_timeline.compile_timeline(self.document, 1)
+
     def test_empty_buttons_release(self):
         self.document["events"][0]["buttons"] = []
         self.assertIn("200 100 0", pad_timeline.compile_timeline(self.document, 1))
@@ -173,6 +191,34 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(self.run_cli(timeline, linked).returncode, 2)
             self.assertEqual(timeline.read_text(encoding="utf-8"), original)
 
+    def test_invalid_existing_timeline_can_be_replaced_after_sequence_exhaustion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            for body in ["", "0 100 16384\n", "0 100 16384\n99 100 64\n",
+                         "0 100 16384\n100 100 64\nextra\n"]:
+                with self.subTest(body=body):
+                    output.write_text(f"APS5_PAD_TIMELINE 1 {2**64 - 1} 2\n{body}", encoding="utf-8")
+                    with mock.patch.object(sys, "argv", ["pad_timeline.py", str(timeline), str(output)]), \
+                            mock.patch.object(pad_input.time, "monotonic_ns", return_value=1), \
+                            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        pad_timeline.main()
+                    self.assertEqual(output.read_text(encoding="utf-8"),
+                                     "APS5_PAD_TIMELINE 1 1 2\n200 100 18432\n500 200 64\n")
+
+    def test_valid_existing_timeline_sequence_exhaustion_preserves_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            original = pad_timeline.compile_timeline(self.document, 2**64 - 1)
+            output.write_text(original, encoding="utf-8")
+            result = self.run_cli(timeline, output)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("sequence is exhausted", result.stderr)
+            self.assertEqual(output.read_text(encoding="utf-8"), original)
+
     def test_symbolic_link_loops_are_usage_errors(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -246,6 +292,32 @@ class TimelineTests(unittest.TestCase):
                     pad_timeline.main()
             self.assertEqual(error.exception.code, 2)
             self.assertEqual(output.read_text(encoding="utf-8"), exhausted)
+
+    def test_timeline_accepts_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text("\ufeff" + json.dumps(self.document), encoding="utf-8")
+            self.assertEqual(self.run_cli(timeline, output).returncode, 0)
+            self.assertTrue(output.read_text(encoding="utf-8").startswith("APS5_PAD_TIMELINE 1 "))
+            self.assertIn("200 100 18432\n", output.read_text(encoding="utf-8"))
+
+    def test_unencodable_command_path_still_reports_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command\udcff"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            try:
+                output.touch()
+                output.unlink()
+            except (OSError, UnicodeError):
+                self.skipTest("the file system cannot name a file with a lone surrogate")
+            env = dict(os.environ, PYTHONIOENCODING="utf-8:backslashreplace")
+            result = subprocess.run([sys.executable, str(Path(pad_timeline.__file__)), str(timeline), str(output)],
+                                    capture_output=True, text=True, timeout=5, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(output.read_text(encoding="utf-8").startswith("APS5_PAD_TIMELINE 1 "))
+            self.assertIn("\\udcff", result.stdout)
 
 
 if __name__ == "__main__":
