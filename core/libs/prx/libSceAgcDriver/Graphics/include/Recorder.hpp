@@ -638,9 +638,21 @@ private:
         bool overwritten = false;
         const Batch* batch = nullptr;
     };
+    class BatchCommands {
+    public:
+        enum class Use : std::uint8_t { Compare, Lifetime, Handoff, Interposed, Quiesced };
+        VkCommandBuffer Get(Use) const { return handle; }
+        VkCommandBuffer* Slot(Use) { return &handle; }
+        bool Same(VkCommandBuffer other) const { return handle == other; }
+        bool Empty() const { return handle == VK_NULL_HANDLE; }
+        void Clear() { handle = VK_NULL_HANDLE; }
+
+    private:
+        VkCommandBuffer handle = VK_NULL_HANDLE;
+    };
     struct Batch {
         CommandEncoder::Recording recording;
-        VkCommandBuffer commands = VK_NULL_HANDLE;
+        BatchCommands commands;
         VkCommandPool pool = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
@@ -961,7 +973,7 @@ private:
     }
     VkCommandBuffer live() {
         quiesce();
-        return open->commands;
+        return open->commands.Get(BatchCommands::Use::Quiesced);
     }
     std::vector<std::shared_ptr<void>> holdKept;
     std::uint64_t holdKeptSerial = 0;
