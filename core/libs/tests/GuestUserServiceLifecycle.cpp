@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <atomic>
@@ -275,6 +276,9 @@ void TestInitialUserLogout() {
 }
 
 void TestThreadPriority() {
+    errno = 71;
+    Require(sceUserServiceInitialize(reinterpret_cast<const UserServiceInitParam*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     for (int priority : {0, 0xFF, 0x300, -1}) {
         Require(InitializeWithPriority(priority) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
         Require(sceUserServiceInitialize2(priority, 1) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
