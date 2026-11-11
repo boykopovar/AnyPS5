@@ -13,6 +13,7 @@ namespace ShaderRecompiler {
 [[nodiscard]] bool LayerReplaySafe(const IrProgram& program);
 [[nodiscard]] bool StencilReplayLanesFixed(std::span<const std::uint32_t> capabilities);
 [[nodiscard]] bool StencilReplaySafe(const IrProgram& program, bool lanesFixed = false);
+[[nodiscard]] bool StencilReplayNeedsStore(const IrProgram& program, std::span<const std::uint32_t> capabilities);
 [[nodiscard]] bool StencilReferenceDefinedForKeptInvocations(const IrProgram& program);
 
 }

@@ -459,7 +459,7 @@ void DefineOutputs(SpirvEmitterState& state) {
                 const auto values = StencilReferenceValues(state.program, PixelInfo(state).psStencilOperationValueExport ? 8u : 0u);
                 if (values.empty()) throw std::runtime_error("stencil reference export emulation found no stencil export");
                 if (!StencilReferenceDefinedForKeptInvocations(state.program)) throw std::runtime_error("stencil reference export emulation requires a stencil export on every kept path");
-                const bool lanesFixed = StencilReplayLanesFixed(state.supportedCapabilities);
+                const bool lanesFixed = StencilReplayNeedsStore(state.program, state.supportedCapabilities);
                 if (PixelInfo(state).psEarlyZ || PixelInfo(state).psOrderedPixelShader || !StencilReplaySafe(state.program, lanesFixed)) throw std::runtime_error("stencil reference export emulation requires a replay-safe pixel shader with late tests");
                 state.stencilReplay = true;
                 state.stencilReplayLateStore = lanesFixed;

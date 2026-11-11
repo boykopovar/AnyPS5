@@ -949,6 +949,10 @@ bool StencilReplayLanesFixed(std::span<const std::uint32_t> capabilities) {
     return has(spv::CapabilityPhysicalStorageBufferAddresses) && has(spv::CapabilityInt64);
 }
 
+bool StencilReplayNeedsStore(const IrProgram& program, std::span<const std::uint32_t> capabilities) {
+    return StencilReplayLanesFixed(capabilities) && !StencilReplaySafe(program, false);
+}
+
 bool StencilReplaySafe(const IrProgram& program, bool lanesFixed) {
     if (program.Info().sharedMemoryBytes != 0u || program.Info().bdaWrites || (program.Info().usesFaultBuffer && program.Resources().guardedSrtSlots.empty())) return false;
     if (program.Info().usesFaultBuffer && !FaultControlFlowAcyclic(program)) return false;
