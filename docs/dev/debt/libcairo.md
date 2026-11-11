@@ -24,9 +24,11 @@
 
 - [Path data in Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) implements eleven path lifecycle and current-point exports with Cairo 24.8 device-coordinate quantization, target device scale, forward-collinear line canonicalization, move/line/cubic/close elements, deep-copied public cairo_path_t arrays, and guest ABI ownership. Append converts user paths through the current CTM and target device scale, while save/restore preserves the independent path. Rendering and path extents are not yet implemented; arc/rectangle constructors remain pending.
 
+- [Arcs](../../../core/libs/prx/libcairo/Arc.cpp) port Cairo 1.18.0 `cairo-arc.c`: angles are normalized as `cairo_arc` and `cairo_arc_negative` do, arcs over pi are split, the segment count comes from the CTM major axis at the default 0.1 tolerance, since the catalogue has no `cairo_set_tolerance`, and a radius of zero or less adds the centre twice. `cairo_curve_to` now drops a preceding degenerate line as `_cairo_path_fixed_curve_to` does, which the start of an arc produces. Rotated and non-dyadic scaled CTMs can differ from Cairo in the last bits, and the PS5 library revision is unmeasured.
+
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 89 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
+- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 72 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
 
 | Name | NID |
 | --- | --- |
@@ -35,7 +37,6 @@
 | `cairo_set_font_options` | `-aqFIBn0h78` |
 | `cairo_font_face_set_user_data` | `1GGpdjyZslI` |
 | `cairo_stroke_extents` | `1K5ly63m6fo` |
-| `cairo_arc_negative` | `2w5H3b3yPqw` |
 | `cairo_image_surface_create_from_png_stream` | `4dvdsqyLM8c` |
 | `cairo_ft_scaled_font_lock_face` | `4gDTaBZH8lo` |
 | `cairo_glyph_path` | `54HrgUIQHOk` |
@@ -67,7 +68,6 @@
 | `cairo_mesh_pattern_set_corner_color_rgba` | `P+Hm5enx01Y` |
 | `cairo_clip` | `PkGZZi1G2Gw` |
 | `cairo_pattern_create_for_surface` | `Q6xyruheFCE` |
-| `cairo_arc` | `R0TePTSHd2k` |
 | `cairo_stroke_preserve` | `RzM4ZhlKzPg` |
 | `cairo_path_extents` | `S6ieIssLpCA` |
 | `cairo_ft_scaled_font_unlock_face` | `SJMLSxaYvWU` |

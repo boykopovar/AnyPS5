@@ -6,6 +6,8 @@
 
 struct CairoContext;
 
+int CairoContextStatus(CairoContext* context);
+
 extern "C" {
 CairoContext* APS5_VABI cairo_create(CairoSurface* target);
 CairoContext* APS5_VABI cairo_reference(CairoContext* context);
