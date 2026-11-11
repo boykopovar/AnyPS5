@@ -114,4 +114,9 @@ std::size_t APS5_VABI SSL_get_client_random_nid_postfix(const LibreSsl3Ssl* ssl,
     return length;
 }
 
+int APS5_VABI SSL_is_quic_nid_postfix(const LibreSsl3Ssl* ssl) {
+    if (!ssl) return 0;
+    return ssl->quicMethod != nullptr ? 1 : 0;
+}
+
 }
