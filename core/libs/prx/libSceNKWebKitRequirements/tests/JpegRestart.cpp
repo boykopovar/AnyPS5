@@ -86,7 +86,7 @@ int32_t APS5_VABI GuestRecover(NKWebKit::GuestDecompressPtr info, int32_t desire
 }
 
 void NativeOutput(j_common_ptr) {}
-void APS5_VABI GuestOutput(NKWebKit::GuestCommonPtr) {}
+void APS5_VABI GuestRestartOutput(NKWebKit::GuestCommonPtr) {}
 void APS5_VABI GuestSource(NKWebKit::GuestDecompressPtr) {}
 int32_t APS5_VABI GuestFill(NKWebKit::GuestDecompressPtr) { return 0; }
 
@@ -125,7 +125,7 @@ Result Guest(const std::vector<unsigned char>& data, Recovery recovery) {
     NKWebKit::GuestJpegDecompress info{};
     NKWebKit::GuestJpegErrorMgr error{};
     info.err = jpeg_std_error_nid_postfix(&error);
-    error.output_message = GuestOutput;
+    error.output_message = GuestRestartOutput;
     jpeg_CreateDecompress_nid_postfix(&info, 62, sizeof(info));
     info.client_data = &result;
     NKWebKit::GuestJpegSourceMgr source{};
