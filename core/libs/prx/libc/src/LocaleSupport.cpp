@@ -807,7 +807,7 @@ extern "C" GuestLocale::OutputIterator LibcNumPutPointer_nid_no_patch(GuestLocal
 }
 
 extern "C" GuestLocale::OutputIterator LibcNumPutWideBool_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, bool value) {
-    if ((stream->flags & IosBoolAlpha) == 0) return PutWideFormattedInteger(out, stream, fill, "l", 'd', value ? 1 : 0);
+    if ((stream->flags & IosBoolAlpha) == 0) return PutWideFormattedInteger(out, stream, fill, "l", 'd', static_cast<long>(value ? 1 : 0));
     const GuestLocale::Facet* punct = StreamWideNumpunct(stream);
     return PutWideField(out, stream, fill, TakeWideName(value ? WidePunctuation(punct).truename : WidePunctuation(punct).falsename, punct), 0);
 }
