@@ -157,6 +157,9 @@ void Driver::run(std::uint32_t id) noexcept {
     char role[32];
     std::snprintf(role, sizeof role, "queue worker 0x%x", id);
     PinWorkerThread(role);
+    char threadName[16];
+    std::snprintf(threadName, sizeof threadName, "qworker 0x%x", id);
+    NameDriverThread(threadName);
 
     GuestMemory::TagGpuLockThread(id);
     StartWorkerSampler(id);

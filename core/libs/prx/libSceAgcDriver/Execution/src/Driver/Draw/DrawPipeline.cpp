@@ -205,6 +205,7 @@ void DrawFinisher::Enqueue(Job job, Pending held) {
 }
 
 void DrawFinisher::run() {
+    NameDriverThread("draw-finish");
     PerformanceTrace::BindThread("draw finisher");
     ReserveFinisherCore();
     for (;;) {
@@ -433,6 +434,7 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
 
 
 void DrawPipeline::run() {
+    NameDriverThread("draw-commit");
     PerformanceTrace::BindThread("draw committer");
     ReserveCommitterCore();
     StartCommitterSampler();
