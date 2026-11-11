@@ -136,6 +136,7 @@ IrValue* TranslationContext::makeImageAddress(const RdnaInstruction& inst, const
     const RdnaOperand plainBase = plainOperand(base);
     for (std::uint32_t index = 0; index < count; ++index) {
         if (index != 0u && index - 1u < nsaComponents) {
+            vectorsRead.set(inst.imageNsaVectorRegisters[index - 1u] & 0xffu);
             components[index] = &ir.GetVectorReg(static_cast<VectorReg>(inst.imageNsaVectorRegisters[index - 1u]));
         } else {
             components[index] = &readRawU32(offsetOperand(plainBase, index)).Value();

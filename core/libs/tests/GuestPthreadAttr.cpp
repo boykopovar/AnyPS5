@@ -2,12 +2,19 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <future>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static constexpr int SCE_OK = 0;
 static constexpr int EXPLICIT_SCHED = 0;
@@ -22,6 +29,7 @@ static constexpr KernelCpumask UPDATED_AFFINITY = 0x1000;
 static constexpr std::size_t STACK_SIZE = 2u << 20;
 static constexpr std::size_t MIN_STACK_SIZE = 16384;
 static constexpr int GUEST_ESRCH = 3;
+static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_ENOTSUP = 45;
 static constexpr int DETACH_DETACHED = 1;
@@ -53,15 +61,45 @@ static ReportedAttributes Query(Pthread thread) {
 
 static void CheckStackSizeLimit() {
     PthreadAttr attr = nullptr;
+    PthreadAttr unset = nullptr;
+    Require(scePthreadAttrSetstacksize(nullptr, MIN_STACK_SIZE) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetstacksize(&unset, MIN_STACK_SIZE) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadAttrInit(&attr) == SCE_OK);
     std::size_t stackSize = 0;
     Require(scePthreadAttrSetstacksize(&attr, MIN_STACK_SIZE) == SCE_OK);
     Require(scePthreadAttrGetstacksize(&attr, &stackSize) == SCE_OK && stackSize == MIN_STACK_SIZE);
-    Require(scePthreadAttrSetstacksize(&attr, MIN_STACK_SIZE - 1) == SCE_KERNEL_ERROR_EINVAL);
-    Require(scePthreadAttrSetstacksize(&attr, 0) == SCE_KERNEL_ERROR_EINVAL);
+    for (const std::size_t rejected : std::array<std::size_t, 6>{0, 1, 512, 4096, 8192, MIN_STACK_SIZE - 1}) {
+        Require(scePthreadAttrSetstacksize(&attr, rejected) == SCE_KERNEL_ERROR_EINVAL);
+        Require(scePthreadAttrGetstacksize(&attr, &stackSize) == SCE_OK && stackSize == MIN_STACK_SIZE);
+    }
     Require(pthread_attr_setstacksize_nid_postfix(&attr, MIN_STACK_SIZE - 1) == GUEST_EINVAL);
     Require(scePthreadAttrGetstacksize(&attr, &stackSize) == SCE_OK && stackSize == MIN_STACK_SIZE);
     Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+    Require(scePthreadAttrSetstacksize(&attr, MIN_STACK_SIZE) == SCE_KERNEL_ERROR_EINVAL);
+}
+
+static void CheckGuardSize() {
+    PthreadAttr attr = nullptr;
+    std::size_t guardSize = 0;
+    PthreadAttr unset = nullptr;
+    Require(scePthreadAttrGetguardsize(nullptr, &guardSize) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrGetguardsize(&unset, &guardSize) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetguardsize(nullptr, 4096) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetguardsize(&unset, 4096) == SCE_KERNEL_ERROR_EINVAL);
+
+    Require(scePthreadAttrInit(&attr) == SCE_OK);
+    Require(scePthreadAttrGetguardsize(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrGetguardsize(&attr, &guardSize) == SCE_OK && guardSize == 4096);
+
+    for (const std::size_t size : std::array<std::size_t, 5>{0, 4096, 8192, 16384, 65536}) {
+        Require(scePthreadAttrSetguardsize(&attr, size) == SCE_OK);
+        guardSize = 0;
+        Require(scePthreadAttrGetguardsize(&attr, &guardSize) == SCE_OK && guardSize == size);
+    }
+
+    Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+    Require(scePthreadAttrGetguardsize(&attr, &guardSize) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetguardsize(&attr, 4096) == SCE_KERNEL_ERROR_EINVAL);
 }
 
 static void CheckSoloSched() {
@@ -126,6 +164,34 @@ static void CheckSchedArguments() {
     Require(scePthreadAttrDestroy(&attr) == SCE_OK);
 }
 
+static void CheckSchedPolicyAndStackGetters() {
+    PthreadAttr unset = nullptr;
+    PthreadAttr destroyed = nullptr;
+    PthreadAttr live = nullptr;
+    Require(scePthreadAttrInit(&destroyed) == SCE_OK);
+    Require(scePthreadAttrDestroy(&destroyed) == SCE_OK);
+    Require(scePthreadAttrInit(&live) == SCE_OK);
+    for (PthreadAttr* invalid : {static_cast<PthreadAttr*>(nullptr), &unset, &destroyed}) {
+        int policy = -1;
+        KernelSchedParam param{-1};
+        void* address = &policy;
+        std::size_t size = 7;
+        Require(pthread_attr_getschedpolicy_nid_postfix(invalid, &policy) == GUEST_EINVAL && policy == -1);
+        Require(pthread_attr_getschedparam_nid_postfix(invalid, &param) == GUEST_EINVAL && param.sched_priority == -1);
+        Require(pthread_attr_getstacksize_nid_postfix(invalid, &size) == GUEST_EINVAL && size == 7);
+        Require(pthread_attr_getstackaddr_nid_postfix(invalid, &address) == GUEST_EINVAL && address == &policy);
+        Require(pthread_attr_getstack_nid_postfix(invalid, &address, &size) == GUEST_EINVAL && address == &policy && size == 7);
+    }
+    int policy = -1;
+    void* address = &policy;
+    std::size_t size = 7;
+    Require(pthread_attr_getschedpolicy_nid_postfix(&live, nullptr) == GUEST_EINVAL);
+    Require(pthread_attr_getstackaddr_nid_postfix(&live, nullptr) == GUEST_EINVAL);
+    Require(pthread_attr_getstack_nid_postfix(&live, nullptr, &size) == GUEST_EINVAL && size == 7);
+    Require(pthread_attr_getstack_nid_postfix(&live, &address, nullptr) == GUEST_EINVAL && address == &policy);
+    Require(scePthreadAttrDestroy(&live) == SCE_OK);
+}
+
 static void* APS5_VABI Worker(void* arg) {
     static_cast<std::future<void>*>(arg)->get();
     return nullptr;
@@ -134,18 +200,27 @@ static void* APS5_VABI Worker(void* arg) {
 static void CheckSchedulingAttributes() {
     int inherit = -1;
     int scope = -1;
+    PthreadAttr unset = nullptr;
     Require(pthread_attr_getinheritsched_nid_postfix(nullptr, &inherit) == GUEST_EINVAL);
     Require(pthread_attr_setinheritsched_nid_postfix(nullptr, EXPLICIT_SCHED) == GUEST_EINVAL);
     Require(pthread_attr_getscope_nid_postfix(nullptr, &scope) == GUEST_EINVAL);
     Require(pthread_attr_setscope_nid_postfix(nullptr, SCOPE_SYSTEM) == GUEST_EINVAL);
+    Require(scePthreadAttrGetinheritsched(nullptr, &inherit) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrGetinheritsched(&unset, &inherit) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetinheritsched(nullptr, EXPLICIT_SCHED) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetinheritsched(&unset, EXPLICIT_SCHED) == SCE_KERNEL_ERROR_EINVAL);
 
     PthreadAttr attr = nullptr;
     Require(pthread_attr_getinheritsched_nid_postfix(&attr, &inherit) == GUEST_EINVAL);
     Require(pthread_attr_setinheritsched_nid_postfix(&attr, EXPLICIT_SCHED) == GUEST_EINVAL);
     Require(pthread_attr_getscope_nid_postfix(&attr, &scope) == GUEST_EINVAL);
     Require(pthread_attr_setscope_nid_postfix(&attr, SCOPE_SYSTEM) == GUEST_EINVAL);
+    Require(scePthreadAttrGetinheritsched(&attr, &inherit) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetinheritsched(&attr, EXPLICIT_SCHED) == SCE_KERNEL_ERROR_EINVAL);
 
     Require(scePthreadAttrInit(&attr) == SCE_OK);
+    Require(scePthreadAttrGetinheritsched(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrGetinheritsched(&attr, &inherit) == SCE_OK && inherit == INHERIT_SCHED);
     Require(pthread_attr_getinheritsched_nid_postfix(&attr, &inherit) == 0 && inherit == INHERIT_SCHED);
     Require(pthread_attr_setinheritsched_nid_postfix(&attr, 1) == GUEST_ENOTSUP);
     Require(pthread_attr_setinheritsched_nid_postfix(&attr, -1) == GUEST_ENOTSUP);
@@ -153,6 +228,19 @@ static void CheckSchedulingAttributes() {
     Require(pthread_attr_getinheritsched_nid_postfix(&attr, &inherit) == 0 && inherit == EXPLICIT_SCHED);
     Require(pthread_attr_setinheritsched_nid_postfix(&attr, INHERIT_SCHED) == 0);
     Require(pthread_attr_getinheritsched_nid_postfix(&attr, &inherit) == 0 && inherit == INHERIT_SCHED);
+
+    Require(scePthreadAttrSetinheritsched(&attr, EXPLICIT_SCHED) == SCE_OK);
+    inherit = -1;
+    Require(scePthreadAttrGetinheritsched(&attr, &inherit) == SCE_OK && inherit == EXPLICIT_SCHED);
+    Require(scePthreadAttrSetinheritsched(&attr, INHERIT_SCHED) == SCE_OK);
+    inherit = -1;
+    Require(scePthreadAttrGetinheritsched(&attr, &inherit) == SCE_OK && inherit == INHERIT_SCHED);
+
+    for (const int rejected : {-1, 1, 2, 3, 5, 8, 16, 100}) {
+        Require(scePthreadAttrSetinheritsched(&attr, rejected) == SCE_KERNEL_ERROR_EOPNOTSUPP);
+        inherit = -1;
+        Require(scePthreadAttrGetinheritsched(&attr, &inherit) == SCE_OK && inherit == INHERIT_SCHED);
+    }
 
     Require(pthread_attr_getscope_nid_postfix(&attr, &scope) == 0 && scope == SCOPE_SYSTEM);
     Require(pthread_attr_setscope_nid_postfix(&attr, 1) == GUEST_EINVAL);
@@ -172,6 +260,8 @@ static void CheckSchedulingAttributes() {
     Require(pthread_attr_setinheritsched_nid_postfix(&attr, EXPLICIT_SCHED) == GUEST_EINVAL);
     Require(pthread_attr_getscope_nid_postfix(&attr, &scope) == GUEST_EINVAL);
     Require(pthread_attr_setscope_nid_postfix(&attr, SCOPE_SYSTEM) == GUEST_EINVAL);
+    Require(scePthreadAttrGetinheritsched(&attr, &inherit) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetinheritsched(&attr, EXPLICIT_SCHED) == SCE_KERNEL_ERROR_EINVAL);
 }
 
 static void CheckThreadScope() {
@@ -317,6 +407,18 @@ static void CheckEndedThreads() {
         CheckPosixQuery(detached, GUEST_ESRCH);
     }
     Require(scePthreadAttrDestroy(&detachedAttr) == SCE_OK);
+
+    Pthread adopted = nullptr;
+    std::int64_t adoptedId = 0;
+    std::thread([&adopted, &adoptedId] {
+        adopted = scePthreadSelf();
+        adoptedId = pthread_getthreadid_np_nid_postfix();
+    }).join();
+    Require(adopted != nullptr && ReportedEnded(adopted));
+    CheckPosixQuery(adopted, GUEST_ESRCH);
+    KernelCpumask adoptedMask = 0;
+    *__error_nid_postfix() = 0;
+    Require(cpuset_getaffinity_nid_postfix(3, 1, adoptedId, sizeof(adoptedMask), &adoptedMask) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
 }
 
 static void CheckGetprioOfTheCallingThread() {
@@ -334,14 +436,107 @@ static void CheckGetprioOfTheCallingThread() {
     Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == original);
 }
 
+static void CheckSetStackSizeOnUnsetAttributes() {
+    PthreadAttr unset = nullptr;
+    PthreadAttr destroyed = nullptr;
+    Require(scePthreadAttrInit(&destroyed) == SCE_OK);
+    Require(scePthreadAttrDestroy(&destroyed) == SCE_OK);
+    Require(pthread_attr_setstacksize_nid_postfix(nullptr, STACK_SIZE) == GUEST_EINVAL);
+    Require(pthread_attr_setstacksize_nid_postfix(&unset, STACK_SIZE) == GUEST_EINVAL);
+    Require(pthread_attr_setstacksize_nid_postfix(&destroyed, STACK_SIZE) == GUEST_EINVAL);
+}
+
+class GuardPage {
+public:
+    GuardPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        page = static_cast<std::size_t>(size);
+        memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+        Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardPage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 2 * page);
+#endif
+    }
+
+    GuardPage(const GuardPage&) = delete;
+    GuardPage& operator=(const GuardPage&) = delete;
+
+    void* Unreadable() const { return memory + page; }
+
+private:
+    char* memory = nullptr;
+    std::size_t page = 0;
+};
+
+static void CheckBadPointers() {
+    GuardPage guard;
+    void* const bad[] = {reinterpret_cast<void*>(0x10), guard.Unreadable()};
+    for (void* pointer : bad) {
+        auto* attrs = static_cast<PthreadAttr*>(pointer);
+        auto* ints = static_cast<int*>(pointer);
+        auto* sizes = static_cast<std::size_t*>(pointer);
+        auto* params = static_cast<KernelSchedParam*>(pointer);
+        int value = -1;
+        std::size_t size = 1;
+        KernelSchedParam param{};
+        Require(pthread_attr_getdetachstate_nid_postfix(attrs, &value) == GUEST_EFAULT && value == -1);
+        Require(pthread_attr_getguardsize_nid_postfix(attrs, &size) == GUEST_EFAULT && size == 1);
+        Require(pthread_attr_getinheritsched_nid_postfix(attrs, &value) == GUEST_EFAULT && value == -1);
+        Require(pthread_attr_getschedparam_nid_postfix(attrs, &param) == GUEST_EFAULT);
+        Require(pthread_attr_getschedpolicy_nid_postfix(attrs, &value) == GUEST_EFAULT && value == -1);
+        Require(pthread_attr_getscope_nid_postfix(attrs, &value) == GUEST_EFAULT && value == -1);
+        Require(pthread_attr_getstacksize_nid_postfix(attrs, &size) == GUEST_EFAULT && size == 1);
+        Require(pthread_attr_setdetachstate_nid_postfix(attrs, 0) == GUEST_EFAULT);
+        Require(pthread_attr_setguardsize_nid_postfix(attrs, 0) == GUEST_EFAULT);
+        Require(pthread_attr_setinheritsched_nid_postfix(attrs, EXPLICIT_SCHED) == GUEST_EFAULT);
+        Require(pthread_attr_setschedparam_nid_postfix(attrs, &param) == GUEST_EFAULT);
+        Require(pthread_attr_setschedpolicy_nid_postfix(attrs, 1) == GUEST_EFAULT);
+        Require(pthread_attr_setscope_nid_postfix(attrs, SCOPE_SYSTEM) == GUEST_EFAULT);
+        Require(pthread_attr_setstacksize_nid_postfix(attrs, STACK_SIZE) == GUEST_EFAULT);
+
+        PthreadAttr attr = nullptr;
+        Require(pthread_attr_init_nid_postfix(&attr) == 0);
+        Require(pthread_attr_getdetachstate_nid_postfix(&attr, ints) == GUEST_EFAULT);
+        Require(pthread_attr_getguardsize_nid_postfix(&attr, sizes) == GUEST_EFAULT);
+        Require(pthread_attr_getinheritsched_nid_postfix(&attr, ints) == GUEST_EFAULT);
+        Require(pthread_attr_getschedparam_nid_postfix(&attr, params) == GUEST_EFAULT);
+        Require(pthread_attr_getschedpolicy_nid_postfix(&attr, ints) == GUEST_EFAULT);
+        Require(pthread_attr_getscope_nid_postfix(&attr, ints) == GUEST_EFAULT);
+        Require(pthread_attr_getstacksize_nid_postfix(&attr, sizes) == GUEST_EFAULT);
+        Require(pthread_attr_setschedparam_nid_postfix(&attr, params) == GUEST_EFAULT);
+        Require(pthread_attr_destroy_nid_postfix(&attr) == 0);
+    }
+}
+
 int main() {
+    CheckBadPointers();
     CheckGetprioOfTheCallingThread();
     CheckStackSizeLimit();
+    CheckGuardSize();
     CheckSoloSched();
     CheckSchedArguments();
     CheckSchedulingAttributes();
+    CheckSchedPolicyAndStackGetters();
     CheckThreadScope();
     CheckEndedThreads();
+    CheckSetStackSizeOnUnsetAttributes();
     PthreadAttr attr = nullptr;
     Require(scePthreadAttrInit(&attr) == SCE_OK);
     Require(scePthreadAttrSetinheritsched(&attr, EXPLICIT_SCHED) == SCE_OK);

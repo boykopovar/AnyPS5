@@ -178,7 +178,10 @@ class FixtureTests(ReportTests):
                 data = file.read_bytes()
                 self.assertLess(len(data), MAX_BYTES)
                 self.assertEqual(self.errors(json.loads(data.decode("utf-8"))), [])
-                self.assertEqual(data.decode("utf-8"), json.dumps(json.loads(data), indent=2, ensure_ascii=False) + "\n")
+                self.assertEqual(
+                    data.decode("utf-8").replace("\r\n", "\n"),
+                    json.dumps(json.loads(data), indent=2, ensure_ascii=False) + "\n",
+                )
 
     def test_the_generated_truncated_document_validates_and_fits_the_size_limit(self):
         document = DOCUMENTS["truncated"]

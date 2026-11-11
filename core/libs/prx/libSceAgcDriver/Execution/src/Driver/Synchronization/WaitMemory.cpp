@@ -13,7 +13,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-#include <immintrin.h>
+#include "prx/libc/include/PreciseWait.hpp"
 #include <algorithm>
 #include <tuple>
 #include <vector>
@@ -124,8 +124,6 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     const auto alignMask = awaitedBytes == 8 ? ~7ull : ~3ull;
     const std::uint64_t awaited = (packet[2] & static_cast<std::uint32_t>(alignMask)) | (static_cast<std::uint64_t>(packet[3]) << 32u);
     static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
-    if (traceGpu) std::fprintf(stderr, "[gpu] %.1f queue 0x%x waits 0x%llx == 0x%x (now 0x%x)\n", TraceMs(), queue, static_cast<unsigned long long>(awaited), packet[4],
-                               *reinterpret_cast<const volatile std::uint32_t*>(awaited));
     struct WaitTrace {
         bool enabled; std::uint32_t queue; std::uint64_t address; std::chrono::steady_clock::time_point begin;
         ~WaitTrace() {
@@ -155,6 +153,8 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         return !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer) && writer == queue;
     };
     GuestMemory::CheckRange(reinterpret_cast<const void*>(awaited), awaitedBytes, awaitedBytes);
+    if (traceGpu) std::fprintf(stderr, "[gpu] %.1f queue 0x%x waits 0x%llx == 0x%x (now 0x%x)\n", TraceMs(), queue, static_cast<unsigned long long>(awaited), packet[4],
+                               *reinterpret_cast<const volatile std::uint32_t*>(awaited));
     if (memorySatisfied()) {
         ++outcomes.atEntry;
         if (storedByOwnLabel()) epochPoint.bump = false;
@@ -356,6 +356,8 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     bool spinning = pauseSpin;
     std::uint32_t polls = 0;
     StallWatch stall(queue);
+    std::uint64_t producerToken = 0;
+    auto lastProducerScan = std::chrono::steady_clock::now() - std::chrono::milliseconds(100);
     while (!memorySatisfied()) {
         if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
             if (writer != queue) notePendingWait(packet, queue, received);
@@ -364,7 +366,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         }
         ++polls;
         if (spinning) {
-            _mm_pause();
+            PreciseSpinPause();
             if ((polls & 63u) != 0) continue;
             if (std::chrono::steady_clock::now() - spinStart > spinLimit) spinning = false;
         } else if (pauseSpin || polls >= 4000) {
@@ -386,6 +388,13 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             lastDone = done;
             start = std::chrono::steady_clock::now();
             stall.Progressed();
+        } else if (const auto now = std::chrono::steady_clock::now(); now - lastProducerScan >= std::chrono::milliseconds(100)) {
+            lastProducerScan = now;
+            if (std::uint64_t token = 0; findWaitProducer(awaited, awaitedBytes, token) && token != producerToken) {
+                producerToken = token;
+                start = now;
+                stall.Progressed();
+            }
         }
         stall.Check(((packet[0] >> 8u) & 0xffu) == 0x93u ? "WAIT_REG_MEM_64 at" : "WAIT_REG_MEM at", awaited);
 
@@ -407,9 +416,12 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             std::fprintf(stderr, "[gpu] queue 0x%x WAIT_REG_MEM%s%s at 0x%llx timed out after %dms (function %u ref 0x%llx mask 0x%llx value 0x%llx)\n", queue, wide ? "_64" : "", requireMemory ? " (landing)" : "",
                          static_cast<unsigned long long>(awaited), waitTimeoutMs(), packet[1] & 7u, static_cast<unsigned long long>(reference), static_cast<unsigned long long>(mask), static_cast<unsigned long long>(current));
             const auto address = awaited;
-            for (const auto& record : writeHistory()) {
-                if (record.length != 0 && record.target <= address && address < record.target + std::max<std::uint64_t>(record.length, 4))
-                    std::fprintf(stderr, "[gpu]   earlier write by queue 0x%x opcode 0x%x at 0x%llx+0x%llx\n", record.queue, record.opcode, static_cast<unsigned long long>(record.target), static_cast<unsigned long long>(record.length));
+            {
+                std::lock_guard historyLock(writeHistoryMutex());
+                for (const auto& record : writeHistory()) {
+                    if (record.length != 0 && record.target <= address && address < record.target + std::max<std::uint64_t>(record.length, 4))
+                        std::fprintf(stderr, "[gpu]   earlier write by queue 0x%x opcode 0x%x at 0x%llx+0x%llx\n", record.queue, record.opcode, static_cast<unsigned long long>(record.target), static_cast<unsigned long long>(record.length));
+                }
             }
 
             if (const auto reportDevice = device.Load(); reportDevice != nullptr) {
