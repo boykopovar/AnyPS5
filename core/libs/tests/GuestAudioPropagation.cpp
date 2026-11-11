@@ -1,4 +1,5 @@
 #include "prx/libSceAudioPropagation/include/Api.hpp"
+#include <cerrno>
 #include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 
 #include <atomic>
@@ -179,6 +180,13 @@ int main() {
     Require(memory.size_gpu_mem == 0 && memory.p_cpu_mem == nullptr && memory.p_gpu_mem == nullptr, "query wrote more than the sizes");
     Require(sceAudioPropagationSystemQueryMemory(nullptr, &memory) == AudioPropagation::ErrorNullPointer, "null options");
     Require(sceAudioPropagationSystemQueryMemory(&options, nullptr) == AudioPropagation::ErrorNullPointer, "null memory");
+    errno = 71;
+    Require(sceAudioPropagationSystemQueryMemory(&options, reinterpret_cast<AudioPropagationSystemMemory*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable memory");
+    Require(errno == 71, "errno preserved");
+    auto badOptionsMemory = Memory();
+    errno = 71;
+    Require(sceAudioPropagationSystemQueryMemory(reinterpret_cast<const AudioPropagation::SystemOptions*>(0x10), &badOptionsMemory) == AudioPropagation::ErrorNullPointer, "unreadable options");
+    Require(errno == 71, "errno preserved for unreadable options");
     auto wrong = Memory();
     wrong.desc.size = 0x28;
     Require(sceAudioPropagationSystemQueryMemory(&options, &wrong) == static_cast<std::int32_t>(0x8A700007), "wrong descriptor size");
