@@ -90,3 +90,25 @@ class SummaryValidationTests(unittest.TestCase):
                 with self.subTest(outcome=outcome, fps=fps), self.assertRaisesRegex(ValueError, "did not render"):
                     performance_bisect.sample_summary(path, "PPSA00000", GOOD)
 
+
+class MeasurementStabilityTests(unittest.TestCase):
+    def test_summarizes_repeated_fps_with_median(self):
+        samples = [{"fps": value, "identity": IDENTITY} for value in (60.0, 61.0, 59.0)]
+        result = performance_bisect.summarize(samples, 5)
+        self.assertEqual(result["median_fps"], 60.0)
+        self.assertAlmostEqual(result["spread_pct"], 200 / 60)
+
+    def test_rejects_noisy_samples_and_identity_drift(self):
+        for samples, limit in (([], 5), ([{"fps": value, "identity": IDENTITY} for value in (50, 60, 70)], 5),
+                               ([{"fps": 60, "identity": IDENTITY}, {"fps": 60, "identity": dict(IDENTITY, gpu="Other")}], 5)):
+            with self.subTest(samples=samples), self.assertRaises(ValueError):
+                performance_bisect.summarize(samples, limit)
+
+    def test_regression_requires_the_declared_slowdown_threshold(self):
+        self.assertFalse(performance_bisect.is_regression(58, 60, 5))
+        self.assertTrue(performance_bisect.is_regression(57, 60, 5))
+
+    def test_candidate_identity_must_match_baseline(self):
+        with self.assertRaisesRegex(ValueError, "identity changed"):
+            performance_bisect.require_same_identity({"identity": IDENTITY}, {"identity": dict(IDENTITY, driver="Other")})
+
