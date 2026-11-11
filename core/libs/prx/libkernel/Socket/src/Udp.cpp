@@ -65,6 +65,10 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef __APPLE__
+#include <sys/event.h>
+#include <sys/param.h>
+#endif
 
 namespace {
 #ifdef _WIN32
@@ -426,6 +430,22 @@ int Disconnect(Socket& socket) {
     socket.localAddressCleared = true;
     return 0;
 }
+#ifdef _WIN32
+void LoopbackForUnspecifiedInet(sockaddr_storage& native) {
+    if (native.ss_family == AF_INET) {
+        auto& inet = reinterpret_cast<sockaddr_in&>(native);
+        if (inet.sin_addr.s_addr == htonl(INADDR_ANY)) inet.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        return;
+    }
+    if (native.ss_family != AF_INET6) return;
+    auto& address = reinterpret_cast<sockaddr_in6&>(native).sin6_addr;
+    auto* bytes = address.s6_addr;
+    if (IN6_IS_ADDR_V4MAPPED(&address) && (bytes[12] | bytes[13] | bytes[14] | bytes[15]) == 0) {
+        bytes[12] = 127;
+        bytes[15] = 1;
+    }
+}
+#endif
 bool ZeroPortConnect(Socket& socket, const void* address, std::uint32_t length) {
     if (!address || (socket.type != 1 && socket.type != 2) || (socket.family != 2 && socket.family != 28)) return false;
     const auto* bytes = static_cast<const unsigned char*>(address);
@@ -1266,6 +1286,35 @@ bool GuestSockets::PipeWriteState(int descriptor, std::int64_t* data, bool* eof,
     *eof = (entry.revents & POLLERR) != 0;
     *writable = (entry.revents & POLLOUT) != 0;
     *data = *eof ? 0 : std::max<std::int64_t>(0, capacity - queued);
+#elif defined(__APPLE__)
+    if (!IsPipe(descriptor, 0) || (::fcntl(descriptor, F_GETFL) & O_ACCMODE) == O_RDONLY) return false;
+    char path[MAXPATHLEN];
+    if (::fcntl(descriptor, F_GETPATH, path) >= 0) NotImplemented_nid_no_patch(__func__);
+    if (errno != EBADF)
+        throw std::runtime_error("kevent: identifying pipe descriptor " + std::to_string(descriptor) + " failed, host errno " + std::to_string(errno));
+    const int queue = ::kqueue();
+    if (queue < 0)
+        throw std::runtime_error("kevent: querying pipe descriptor " + std::to_string(descriptor) + " failed, host errno " + std::to_string(errno));
+    struct Queue {
+        int descriptor;
+        ~Queue() { ::close(descriptor); }
+    } query{queue};
+    if (::fcntl(queue, F_SETFD, FD_CLOEXEC) < 0)
+        throw std::runtime_error("kevent: querying pipe descriptor " + std::to_string(descriptor) + " failed, host errno " + std::to_string(errno));
+    struct kevent interest{}, ready{};
+    EV_SET(&interest, static_cast<std::uintptr_t>(descriptor), EVFILT_WRITE, EV_ADD, 0, 0, nullptr);
+    const timespec timeout{};
+    int count;
+    do {
+        count = ::kevent(queue, &interest, 1, &ready, 1, &timeout);
+    } while (count < 0 && errno == EINTR);
+    if (count < 0 || (count > 0 && (ready.flags & EV_ERROR))) {
+        const int error = count < 0 ? errno : static_cast<int>(ready.data);
+        throw std::runtime_error("kevent: querying pipe descriptor " + std::to_string(descriptor) + " failed, host errno " + std::to_string(error));
+    }
+    *eof = count > 0 && (ready.flags & EV_EOF) != 0;
+    *writable = count > 0 && !*eof;
+    *data = *writable ? ready.data : 0;
 #else
     if (!IsPipe(descriptor, 0) || (::fcntl(descriptor, F_GETFL) & O_ACCMODE) == O_RDONLY) return false;
     NotImplemented_nid_no_patch("kevent: EVFILT_WRITE on a pipe on macOS");
@@ -1634,14 +1683,13 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     if (!Address(socket->family, address, mapped ? 28 : length, native, size)) return -1;
     if (native.ss_family == AF_INET6 && IN6_IS_ADDR_UNSPECIFIED(&reinterpret_cast<sockaddr_in6&>(native).sin6_addr))
         reinterpret_cast<sockaddr_in6&>(native).sin6_addr = in6addr_loopback;
-#ifdef _WIN32
-    if (socket->type == 1) RefuseClosedLoopbackAtOnce_nid_no_patch(socket->value, reinterpret_cast<const sockaddr*>(&native));
-#endif
     if (socket->type == 1 && Multicast(native) && !PeerConnected(*socket)) return Fail(47);
     if (ZeroPortConnect(*socket, address, length)) return -1;
 #ifdef _WIN32
+    LoopbackForUnspecifiedInet(native);
     if (socket->type == 1) {
         if (const int failure = ConnectFailure(*socket)) return Fail(failure);
+        RefuseClosedLoopbackAtOnce_nid_no_patch(socket->value, reinterpret_cast<const sockaddr*>(&native));
     }
 #endif
     std::unique_lock lock(socket->modeMutex);
@@ -1663,18 +1711,37 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     if (socket->type == 2) socket->localAddressCleared = false;
     return 0;
 }
+#ifdef _WIN32
+bool BindUnboundStream(Socket& socket) {
+    if (socket.family != 2 && socket.family != 28) return false;
+    sockaddr_storage name{};
+    socklen_t size = sizeof(name);
+    if (::getsockname(socket.value, reinterpret_cast<sockaddr*>(&name), &size) == 0 || ::WSAGetLastError() != WSAEINVAL) return false;
+    sockaddr_storage wildcard{};
+    wildcard.ss_family = socket.family == 2 ? AF_INET : AF_INET6;
+    const socklen_t wildcardSize = socket.family == 2 ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
+    return ::bind(socket.value, reinterpret_cast<sockaddr*>(&wildcard), wildcardSize) == 0;
+}
+#endif
 int APS5_VABI listen_nid_postfix(int descriptor, int backlog) {
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (socket->type != 1) return Fail(45);
     if (::listen(socket->value, backlog) == 0) return 0;
-    const int error = NativeError();
+    int error = NativeError();
+#ifdef _WIN32
+    if (error == 22 && BindUnboundStream(*socket)) {
+        if (::listen(socket->value, backlog) == 0) return 0;
+        error = NativeError();
+    }
+#endif
     return Fail(error == 56 ? 22 : error);
 }
 int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    if (address && !length) return Fail(14);
     const auto listener = Lookup(descriptor);
     if (!listener) return -1;
-    if (listener->type != 1 || (address && !length)) return Fail(22);
+    if (listener->type != 1) return Fail(22);
     sockaddr_storage peer{};
     socklen_t size = sizeof(peer);
     const auto native = ::accept(listener->value, address ? reinterpret_cast<sockaddr*>(&peer) : nullptr,
@@ -1966,6 +2033,7 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
         if (const auto answered = ZeroPortSend(*socket, native, length); answered != NotAnswered)
             return socket->type == 2 && SourceFaults(buffer, length) ? Fail(14) : answered;
 #ifdef _WIN32
+        LoopbackForUnspecifiedInet(native);
         if (SourceFaults(buffer, length)) return Fail(14);
 #endif
         result = static_cast<int>(::sendto(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags),
@@ -2228,9 +2296,12 @@ static bool GuestPagesAllow(std::uintptr_t start, std::size_t bytes, DWORD allow
     return GuestPrefix(reinterpret_cast<const void*>(start), bytes, allowed) == bytes;
 }
 #elif defined(__linux__)
-static bool Transferred(ssize_t copied, std::size_t bytes, const char* call) {
+static bool Transferred(ssize_t copied, std::size_t bytes, const char* call, int saved) {
     if (copied >= 0) return static_cast<std::size_t>(copied) == bytes;
-    if (errno == EFAULT) return false;
+    if (errno == EFAULT) {
+        errno = saved;
+        return false;
+    }
     throw std::runtime_error(std::string("recvmsg: ") + call + " failed with errno " + std::to_string(errno));
 }
 #endif
@@ -2250,7 +2321,8 @@ static bool ReadGuest(void* destination, const void* source, std::size_t bytes) 
 #elif defined(__linux__)
     iovec local{destination, bytes};
     iovec remote{const_cast<void*>(source), bytes};
-    return Transferred(::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0), bytes, "process_vm_readv");
+    const int saved = errno;
+    return Transferred(::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0), bytes, "process_vm_readv", saved);
 #elif defined(__APPLE__)
     mach_vm_size_t copied = 0;
     return ::mach_vm_read_overwrite(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(source), bytes,
@@ -2273,7 +2345,8 @@ static bool WriteGuest(void* destination, const void* source, std::size_t bytes)
 #elif defined(__linux__)
     iovec local{const_cast<void*>(source), bytes};
     iovec remote{destination, bytes};
-    return Transferred(::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0), bytes, "process_vm_writev");
+    const int saved = errno;
+    return Transferred(::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0), bytes, "process_vm_writev", saved);
 #elif defined(__APPLE__)
     return ::mach_vm_write(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(destination),
         reinterpret_cast<vm_offset_t>(source), static_cast<mach_msg_type_number_t>(bytes)) == KERN_SUCCESS;

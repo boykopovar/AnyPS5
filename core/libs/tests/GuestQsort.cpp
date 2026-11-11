@@ -426,6 +426,61 @@ bool CheckMergesortUnalignedElements() {
     return correct;
 }
 
+std::vector<int> adversaryValues;
+int adversaryGas = 0;
+int adversarySolid = 0;
+int adversaryCandidate = 0;
+std::size_t adversaryComparisons = 0;
+
+int APS5_VABI CompareAdversary(const void* left, const void* right) {
+    ++adversaryComparisons;
+    const int first = *static_cast<const int*>(left);
+    const int second = *static_cast<const int*>(right);
+    if (adversaryValues[first] == adversaryGas && adversaryValues[second] == adversaryGas)
+        adversaryValues[first == adversaryCandidate ? first : second] = adversarySolid++;
+    if (adversaryValues[first] == adversaryGas) adversaryCandidate = first;
+    else if (adversaryValues[second] == adversaryGas) adversaryCandidate = second;
+    return (adversaryValues[first] > adversaryValues[second]) - (adversaryValues[first] < adversaryValues[second]);
+}
+
+int APS5_VABI CompareAdversaryS(const void* left, const void* right, void*) {
+    return CompareAdversary(left, right);
+}
+
+bool ExpectAdversaryFallsBackToHeapSort(bool withContext) {
+    constexpr int Count = 4096;
+    constexpr std::size_t Budget = 6 * Count * 12;
+    std::vector<int> elements(Count);
+    for (int index = 0; index < Count; ++index) elements[index] = index;
+    adversaryValues.assign(Count, Count);
+    adversaryGas = Count;
+    adversarySolid = 0;
+    adversaryCandidate = 0;
+    adversaryComparisons = 0;
+    if (withContext) {
+        if (qsort_s_nid_postfix(elements.data(), elements.size(), sizeof(int), CompareAdversaryS, nullptr) != 0) return false;
+    } else qsort_nid_postfix(elements.data(), elements.size(), sizeof(int), CompareAdversary);
+    const char* const name = withContext ? "qsort_s" : "qsort";
+    std::vector<bool> seen(Count);
+    for (int index = 0; index < Count; ++index) {
+        const int element = elements[index];
+        if (element < 0 || element >= Count || seen[element]) {
+            std::fprintf(stderr, "%s of an adversarial input lost or duplicated element %d\n", name, element);
+            return false;
+        }
+        seen[element] = true;
+        if (index > 0 && adversaryValues[elements[index - 1]] > adversaryValues[element]) {
+            std::fprintf(stderr, "%s of an adversarial input is not sorted at %d\n", name, index);
+            return false;
+        }
+    }
+    if (adversaryComparisons > Budget) {
+        std::fprintf(stderr, "%s of %d adversarial elements made %zu comparisons, more than %zu: no heap sort fallback\n", name, Count, adversaryComparisons, Budget);
+        return false;
+    }
+    return true;
+}
+
 std::uintptr_t heapsortBase = 0;
 std::uintptr_t heapsortLimit = 0;
 std::size_t heapsortStride = 0;
@@ -547,6 +602,8 @@ int main() {
     std::vector<int> manyKeys;
     for (int index = 0; index < 1000; ++index) manyKeys.push_back((index * 37 + 11) % 7);
     correct &= ExpectOrderHash("nested partitions", manyKeys, 0xefee58d9u);
+    correct &= ExpectAdversaryFallsBackToHeapSort(false);
+    correct &= ExpectAdversaryFallsBackToHeapSort(true);
     correct &= ExpectConsoleEdges();
     correct &= ExpectShortArraysUntouched();
     for (const std::size_t size : {1, 3, 8, 24})

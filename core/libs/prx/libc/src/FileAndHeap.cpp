@@ -750,8 +750,12 @@ size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t coun
     if (bytes > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(buffer)) throw std::overflow_error("fwrite: buffer address overflow");
     if (!stream->SwitchToWriting()) return 0;
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buffer, bytes);
+    const int previousError = errno;
+    errno = 0;
     const auto result = std::fwrite(buffer, size, count, handle);
+    const int nativeError = errno;
     stream->SyncStatus();
+    errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
 }
 
@@ -880,8 +884,12 @@ int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (*str != '\0' && !stream->SwitchToWriting()) return -1;
+    const int previousError = errno;
+    errno = 0;
     const int result = std::fputs(str, native);
+    const int nativeError = errno;
     stream->SyncStatus();
+    errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
 }
 
@@ -894,13 +902,30 @@ int APS5_VABI fflush_nid_postfix(FileStream* stream) {
 #elif defined(__APPLE__)
     if (native && !(native->_flags & __SWR)) return 0;
 #endif
+    const int previousError = errno;
+    errno = 0;
     const int result = std::fflush(native);
+    const int nativeError = errno;
     if (stream) stream->SyncStatus();
+    errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
 }
 
 int APS5_VABI malloc_stats_fast_nid_postfix(void* stats) {
     return ApplicationHeapStatsFast_nid_no_patch(stats);
+}
+
+void APS5_VABI malloc_initialize_nid_postfix() {
+    ApplicationHeapEnsureInitialized_nid_no_patch();
+}
+
+void APS5_VABI malloc_finalize_nid_postfix() {
+    ApplicationHeapFinalize_nid_no_patch();
+}
+
+int APS5_VABI _malloc_fini_nid_postfix() {
+    malloc_finalize_nid_postfix();
+    return 0;
 }
 
 size_t APS5_VABI malloc_usable_size_nid_postfix(void* pointer) {
@@ -909,6 +934,10 @@ size_t APS5_VABI malloc_usable_size_nid_postfix(void* pointer) {
 
 void* APS5_VABI malloc_nid_postfix(size_t size) {
     return heapAllocation(size, [size] { return ApplicationHeapAllocate_nid_no_patch(size); });
+}
+
+void APS5_VABI __std_free_crt_nid_postfix(void* ptr) {
+    free_nid_postfix(ptr);
 }
 
 void APS5_VABI free_nid_postfix(void* ptr) {
@@ -1023,7 +1052,10 @@ void* APS5_VABI reallocalign_nid_postfix(void* ptr, size_t size, size_t alignmen
 void* APS5_VABI calloc_nid_postfix(size_t count, size_t size) {
     const auto allocate = [count, size] { return ApplicationHeapCalloc_nid_no_patch(count, size); };
     if (!ApplicationHeapDefault_nid_no_patch()) return allocationOrNull(allocate);
-    if (size != 0 && count > std::numeric_limits<size_t>::max() / size) return nullptr;
+    if (size != 0 && count > std::numeric_limits<size_t>::max() / size) {
+        errno = 12;
+        return nullptr;
+    }
     return defaultHeapAllocation(count * size, 0, allocate);
 }
 
