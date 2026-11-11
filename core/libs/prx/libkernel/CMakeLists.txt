@@ -24,6 +24,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Ksem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Semaphore.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/SyncOnAddress.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/AtomicWaitForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/DirectMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Jit.cpp
@@ -420,6 +421,9 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         add_test(NAME guest_deferred_module_sweep COMMAND guest_deferred_module_tests $<TARGET_FILE:guest_deferred_sweep_fixture> sweep $<TARGET_FILE:guest_deferred_module_fixture>)
         set_tests_properties(guest_deferred_module_sweep PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        add_test(NAME guest_deferred_module_sweep_no_arguments COMMAND guest_deferred_module_tests $<TARGET_FILE:guest_deferred_sweep_fixture> sweep-no-arguments $<TARGET_FILE:guest_deferred_module_fixture>)
+        set_tests_properties(guest_deferred_module_sweep_no_arguments PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         foreach(mode IN ITEMS dependency dependency-nested)
             add_test(NAME guest_deferred_module_${mode} COMMAND guest_deferred_module_tests $<TARGET_FILE:guest_deferred_dependent_fixture> ${mode} $<TARGET_FILE:guest_deferred_module_fixture>)

@@ -410,11 +410,14 @@ std::int32_t APS5_VABI sceUsbStorageGetDeviceList(std::uint32_t* devices, std::i
     return 0;
 }
 
-int APS5_VABI sceUsbStorageGetMountPointOfShellCore(uint32_t device, char* mountPoint) {
+std::int32_t APS5_VABI sceUsbStorageGetMountPointOfShellCore(std::uint32_t device, char* mountPoint) {
+    if (mountPoint == nullptr) {
+        return UsbStorage::InvalidArgument;
+    }
     auto& service = State();
     std::lock_guard lock(service.mutex);
-    if (Find(service, device) == nullptr || mountPoint == nullptr) {
-        NotImplemented_nid_no_patch(__func__);
+    if (Find(service, device) == nullptr) {
+        return UsbStorage::DeviceNotFound;
     }
     WriteMountPoint(mountPoint, MountPoint(device));
     return 0;
