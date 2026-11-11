@@ -141,7 +141,7 @@ APS5_EXPORT("BBRhYfYBDgU", sceFreeTypeOtGlyphStrokeBorder_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtGlyphToBitmap_nid_no_patch(FreeType::GuestGlyphRec** glyph, std::int32_t renderMode, const FreeType::GuestVector* origin,
                                                        std::uint8_t destroy) {
-    return FreeType::FreeTypeGlyphMutationToBitmapHost_nid_no_patch(glyph, renderMode, origin, __func__);
+    return FreeType::FreeTypeGlyphMutationToBitmapHost_nid_no_patch(glyph, renderMode, origin, destroy, __func__);
 }
 APS5_EXPORT("c1nbr8oSWlg", sceFreeTypeOtGlyphToBitmap_nid_no_patch);
 
