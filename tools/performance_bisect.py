@@ -273,3 +273,23 @@ def bisect(repo, good, bad, recipe, output_dir, temp_dir=None):
             return report
         finally:
             git(repo, "worktree", "remove", "--force", str(worktree))
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        description="Find the first first-parent commit with a repeatable title FPS regression.",
+        epilog=("Recipe JSON fields: title_id, games (extracted game directories), and build_commands "
+                "(argument arrays; placeholders are {worktree}, {build_dir}, {result_dir}, {commit}). "
+                "Optional fields: build_dir, seconds (>=20), repetitions (>=3), regression_pct, "
+                "max_spread_pct, titles, and content. Commands run without a shell in an isolated worktree. "
+                "The same title, machine identity, and content version are required throughout; "
+                "high sample spread aborts instead of guessing. The result assumes one monotonic regression "
+                "on the first-parent history."),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--repo", type=Path, default=Path.cwd(), help="Git repository to bisect")
+    parser.add_argument("--good", required=True, help="known-good commit")
+    parser.add_argument("--bad", required=True, help="known-bad commit")
+    parser.add_argument("--recipe", required=True, type=Path, help="JSON build and title-run recipe")
+    parser.add_argument("--output", type=Path, help="write the measured bracket as JSON")
+    parser.add_argument("--temp-dir", type=Path, help="existing directory with enough space for a build worktree")
+    return parser

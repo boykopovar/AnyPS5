@@ -310,3 +310,12 @@ class EndToEndBisectTests(GitHistoryTests):
                 self.assertRaisesRegex(ValueError, "bad endpoint"):
             performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, None)
 
+
+
+class CliParserTests(unittest.TestCase):
+    def test_help_explains_recipe_safety_and_bisect_assumptions(self):
+        help_text = performance_bisect.build_parser().format_help()
+        self.assertIn("--good", help_text)
+        self.assertIn("without a shell", help_text)
+        self.assertIn("monotonic regression", help_text)
+        self.assertIn("max_spread_pct", help_text)
