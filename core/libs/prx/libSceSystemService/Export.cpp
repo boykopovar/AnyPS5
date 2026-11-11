@@ -9,6 +9,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <ctime>
+#include <atomic>
 #include <filesystem>
 #include <mutex>
 #include <stdexcept>
@@ -32,13 +33,27 @@
 #include "prx/libc/include/HostExecutable.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
-#include "prx/libkernel/System/include/InstanceLockHost.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libSceSystemService/HostUrlBackends.hpp"
 #include "prx/libSceSystemService/DateTimeLocale.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 
 namespace {
+
+HostBrowserLauncher g_defaultUrlLauncher;
+HostMessageBoxConfirmation g_defaultUrlConfirmation;
+std::atomic<IUrlLauncher*> g_urlLauncher{&g_defaultUrlLauncher};
+std::atomic<IUrlConfirmation*> g_urlConfirmation{&g_defaultUrlConfirmation};
+SteadyUrlClock g_steadyUrlClock;
+OpenUrlGate g_urlGate(g_steadyUrlClock);
+
+int OpenWebBrowserUrl(const char* uri) {
+    const OpenUrlMode mode = OpenUrlModeFromEnvironment("sceSystemServiceLaunchWebBrowser");
+    if (mode == OpenUrlMode::Never) return SCE_KERNEL_ERROR_EOPNOTSUPP;
+    const OpenUrlGateOutcome outcome = g_urlGate.Run(mode, uri, *g_urlLauncher.load(), *g_urlConfirmation.load());
+    return outcome == OpenUrlGateOutcome::Launched ? SYSTEM_SERVICE_OK : SCE_KERNEL_ERROR_EOPNOTSUPP;
+}
 
 struct MeasuredParameter {
     int id;
@@ -145,7 +160,6 @@ HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
 
 void StartHostExecutable(HostLaunch& launch) {
     LogFileRelease_nid_no_patch();
-    ReleaseHostInstanceLock_nid_no_patch();
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
@@ -560,7 +574,13 @@ int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri) {
     while (length < 6016 && uri[length] != 0) ++length;
     if (length > 6015) return static_cast<int>(0x80a10007);
     if (std::strncmp(uri, "http:", 5) != 0 && std::strncmp(uri, "https:", 6) != 0 && std::strncmp(uri, "psno:", 5) != 0) return static_cast<int>(0x80a10008);
-    return SCE_KERNEL_ERROR_EOPNOTSUPP;
+    return OpenWebBrowserUrl(uri);
+}
+
+extern "C" void SystemServiceSetUrlHandlers_nid_no_patch(IUrlLauncher* launcher, IUrlConfirmation* confirmation, IUrlClock* clock) {
+    g_urlLauncher = launcher != nullptr ? launcher : &g_defaultUrlLauncher;
+    g_urlConfirmation = confirmation != nullptr ? confirmation : &g_defaultUrlConfirmation;
+    g_urlGate.Reset(clock != nullptr ? *clock : static_cast<IUrlClock&>(g_steadyUrlClock));
 }
 
 int APS5_VABI sceSystemServiceLaunchApp(const char* titleId, const char* const* arguments, const void* param) {
@@ -702,9 +722,10 @@ int APS5_VABI sceSystemServiceLaunchSystemDeeplink(void) {
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void* param) {
+    if (param == nullptr) return;
+    const std::uint32_t fields[2] = {0, 0xffffffff};
+    std::memcpy(param, fields, sizeof(fields));
 }
 
 int APS5_VABI sceSystemStateMgrTickVideoPlayback(void) {
@@ -992,8 +1013,9 @@ int APS5_VABI sceShellCoreUtilRemoveCffConfigFile(void) {
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(std::uint32_t* count) {
+    if (count == nullptr) return static_cast<int>(0x80e30005);
+    *count = 50;
     return 0;
 }
 

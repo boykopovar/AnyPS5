@@ -63,6 +63,16 @@ void CheckClosed() {
     Require(sceCameraGetDeviceConfig(1, &config) == ErrorNotOpen, "getting device config before any open must report NOT_OPEN");
     Require(sceCameraGetDeviceConfig(0, &config) == ErrorParam, "getting device config with handle 0 must be rejected");
     Require(sceCameraGetDeviceConfig(1, nullptr) == ErrorParam, "getting device config with null pointer must be rejected");
+    CameraAttribute attribute{};
+    attribute.sizeThis = sizeof(CameraAttribute);
+    attribute.channel = 1;
+    Require(sceCameraGetAttribute(1, &attribute) == ErrorNotOpen, "reading attributes before any open must report NOT_OPEN");
+    std::uint32_t enable = 7;
+    Require(sceCameraGetAutoExposureGain(1, 1, &enable, nullptr) == ErrorNotOpen, "reading auto exposure before any open must report NOT_OPEN");
+    Require(sceCameraGetAutoExposureGain(0, 1, &enable, nullptr) == ErrorParam, "reading auto exposure with handle 0 must be rejected");
+    Require(sceCameraGetAutoExposureGain(1, 3, &enable, nullptr) == ErrorParam, "reading auto exposure of both channels at once must be rejected");
+    Require(sceCameraGetAutoExposureGain(1, 1, nullptr, nullptr) == ErrorParam, "reading auto exposure without an output must be rejected");
+    Require(enable == 7, "a refused auto exposure read must leave the output alone");
 }
 
 void CheckOpen() {
@@ -83,6 +93,10 @@ void CheckStart() {
     Require(sceCameraStart(1, &start) == ErrorFormatUnknown, "two empty format levels must be rejected");
     start = Start(0x10, 1);
     Require(sceCameraStart(1, &start) == ErrorFormatUnknown, "a format level above 0xF must be rejected");
+    start = Start(0xF, 0);
+    Require(sceCameraStart(1, &start) == ErrorNotConnected, "format level 0xF must be accepted on the first level");
+    start = Start(0, 0xF);
+    Require(sceCameraStart(1, &start) == ErrorNotConnected, "format level 0xF must be accepted on the second level");
     start = Start(1, 0);
     Require(sceCameraStart(1, &start) == ErrorNotConnected, "starting without a device must report NOT_CONNECTED");
     Require(sceCameraStartByHandle(0, &start) == ErrorParam, "starting by handle 0 must be rejected");

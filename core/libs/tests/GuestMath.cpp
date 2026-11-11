@@ -1596,6 +1596,37 @@ static void CheckExpm1ScalingRounding() {
     }
     _mm_setcsr(savedCsr);
 }
+static void CheckTanhSaturationEnvironment() {
+    const RestoreFloatingPointState saved;
+    const unsigned savedCsr = _mm_getcsr();
+    const std::uint64_t inputs[] = {0x4036000000000000ull, 0x4036000000000001ull, 0x403c000000000000ull, 0x7fefffffffffffffull, 0x7ff0000000000000ull};
+    const int rounding[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+    double (APS5_VABI * volatile call)(double) = tanh_nid_postfix;
+    for (unsigned mode = 0; mode != 4; ++mode) {
+        for (unsigned denorm = 0; denorm != 4; ++denorm) {
+            const unsigned control = 0x1f80u | (mode << 13u) | ((denorm & 1u) ? 0x40u : 0u) | ((denorm & 2u) ? 0x8000u : 0u);
+            for (unsigned sticky : {0u, 5u, 32u}) {
+                for (std::uint64_t sign : {0ull, 0x8000000000000000ull}) {
+                    for (std::uint64_t magnitude : inputs) {
+                        Require(std::fesetenv(FE_DFL_ENV) == 0 && std::fesetround(rounding[mode]) == 0);
+                        errno = 1234;
+                        _mm_setcsr(control | sticky);
+                        const auto result = std::bit_cast<std::uint64_t>(call(std::bit_cast<double>(magnitude | sign)));
+                        const unsigned csr = _mm_getcsr();
+                        const int flags = std::fetestexcept(FE_ALL_EXCEPT);
+                        const int error = errno;
+                        const int expectedFlags = ((sticky & 1u) ? FE_INVALID : 0) | ((sticky & 4u) ? FE_DIVBYZERO : 0) | ((sticky & 32u) ? FE_INEXACT : 0);
+                        if (result != (0x3ff0000000000000ull | sign) || csr != (control | sticky) || flags != expectedFlags || error != 1234) {
+                            std::fprintf(stderr, "tanh saturation: input=%016llx mode=%u denorm=%u sticky=%u bits=%016llx csr=%x flags=%x errno=%d\n", static_cast<unsigned long long>(magnitude | sign), mode, denorm, sticky, static_cast<unsigned long long>(result), csr, flags, error);
+                            Require(false);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    _mm_setcsr(savedCsr);
+}
 static void CheckAtanhDomainEnvironment() {
     const RestoreFloatingPointState saved;
     const unsigned savedCsr = _mm_getcsr();
@@ -3542,6 +3573,90 @@ static void CheckFdimFlags() {
     Require(std::bit_cast<std::uint32_t>(fdimf_nid_postfix(-3e38f, 3e38f)) == 0 && std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
 }
 
+static void CheckExpm1OverflowEnvironment() {
+    const RestoreFloatingPointState saved;
+    const unsigned savedCsr = _mm_getcsr();
+    const std::uint64_t inputs[] = {0x40862e42fefa39f0ull, 0x40862e42fefa39f1ull, 0x408f400000000000ull, 0x7fefffffffffffffull, 0x7ff0000000000000ull};
+    const int rounding[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+    double (APS5_VABI * volatile call)(double) = expm1_nid_postfix;
+    for (unsigned mode = 0; mode != 4; ++mode) {
+        for (unsigned denorm = 0; denorm != 4; ++denorm) {
+            const unsigned control = 0x1f80u | (mode << 13u) | ((denorm & 1u) ? 0x40u : 0u) | ((denorm & 2u) ? 0x8000u : 0u);
+            for (unsigned sticky : {0u, 5u, 32u}) {
+                for (std::uint64_t input : inputs) {
+                    Require(std::fesetenv(FE_DFL_ENV) == 0 && std::fesetround(rounding[mode]) == 0);
+                    const int seedFlags = ((sticky & 1u) ? FE_INVALID : 0) | ((sticky & 4u) ? FE_DIVBYZERO : 0) | ((sticky & 32u) ? FE_INEXACT : 0);
+                    Require(std::feraiseexcept(seedFlags) == 0);
+                    _mm_setcsr(control | sticky);
+                    GuestFloatingPointEnvironment before;
+                    Require(fegetenv_nid_postfix(&before) == 0);
+                    errno = 1234;
+                    const auto result = std::bit_cast<std::uint64_t>(call(std::bit_cast<double>(input)));
+                    const int error = errno;
+                    GuestFloatingPointEnvironment after;
+                    Require(fegetenv_nid_postfix(&after) == 0);
+                    const unsigned raised = input == 0x7ff0000000000000ull ? 0u : 0x28u;
+                    const int expectedError = raised == 0 ? 1234 : ERANGE;
+                    if (result != 0x7ff0000000000000ull || after.mxcsr != (control | sticky | raised) || (after.status & 0x3fu) != ((before.status & 0x3fu) | raised) || after.control != before.control || error != expectedError) {
+                        std::fprintf(stderr, "expm1 overflow: input=%016llx mode=%u denorm=%u sticky=%u bits=%016llx csr=%x x87=%x errno=%d\n", static_cast<unsigned long long>(input), mode, denorm, sticky, static_cast<unsigned long long>(result), after.mxcsr, after.status, error);
+                        Require(false);
+                    }
+                }
+            }
+        }
+    }
+    _mm_setcsr(savedCsr);
+}
+
+static void CheckLog1pDomainEnvironment() {
+    const RestoreFloatingPointState saved;
+    const unsigned savedCsr = _mm_getcsr();
+    const struct {
+        std::uint64_t input;
+        std::uint64_t result;
+        unsigned sseRaised;
+        unsigned x87Raised;
+        bool domain;
+    } cases[] = {
+        {0xbff0000000000000ull, 0xfff0000000000000ull, 0, 0, false},
+        {0xbff0000000000001ull, 0xfff8000000000000ull, 1, 1, true},
+        {0xc000000000000000ull, 0xfff8000000000000ull, 1, 1, true},
+        {0xffefffffffffffffull, 0xfff8000000000000ull, 1, 1, true},
+        {0xfff0000000000000ull, 0xfff8000000000000ull, 1, 1, true},
+        {0xfff8000000000001ull, 0xfff8000000000001ull, 1, 1, true},
+        {0xfff0000000000001ull, 0xfff8000000000001ull, 1, 1, true},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0, 0, false},
+        {0x7ff0000000000001ull, 0x7ff8000000000001ull, 1, 0, false},
+    };
+    const int rounding[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+    double (APS5_VABI * volatile call)(double) = log1p_nid_postfix;
+    for (unsigned mode = 0; mode != 4; ++mode) {
+        for (unsigned denorm = 0; denorm != 4; ++denorm) {
+            const unsigned control = 0x1f80u | (mode << 13u) | ((denorm & 1u) ? 0x40u : 0u) | ((denorm & 2u) ? 0x8000u : 0u);
+            for (unsigned sticky : {0u, 5u, 32u}) {
+                for (const auto& item : cases) {
+                    Require(std::fesetenv(FE_DFL_ENV) == 0 && std::fesetround(rounding[mode]) == 0);
+                    const int seedFlags = ((sticky & 1u) ? FE_INVALID : 0) | ((sticky & 4u) ? FE_DIVBYZERO : 0) | ((sticky & 32u) ? FE_INEXACT : 0);
+                    Require(std::feraiseexcept(seedFlags) == 0);
+                    _mm_setcsr(control | sticky);
+                    GuestFloatingPointEnvironment before;
+                    Require(fegetenv_nid_postfix(&before) == 0);
+                    errno = 1234;
+                    const auto result = std::bit_cast<std::uint64_t>(call(std::bit_cast<double>(item.input)));
+                    const int error = errno;
+                    GuestFloatingPointEnvironment after;
+                    Require(fegetenv_nid_postfix(&after) == 0);
+                    if (result != item.result || after.mxcsr != (control | sticky | item.sseRaised) || (after.status & 0x3fu) != ((before.status & 0x3fu) | item.x87Raised) || after.control != before.control || error != (item.domain ? EDOM : 1234)) {
+                        std::fprintf(stderr, "log1p domain: input=%016llx mode=%u denorm=%u sticky=%u bits=%016llx csr=%x x87=%x errno=%d\n", static_cast<unsigned long long>(item.input), mode, denorm, sticky, static_cast<unsigned long long>(result), after.mxcsr, after.status, error);
+                        Require(false);
+                    }
+                }
+            }
+        }
+    }
+    _mm_setcsr(savedCsr);
+}
+
 int main() {
     CheckFdimFlags();
     CheckRemainderConsoleBits();
@@ -3601,12 +3716,22 @@ int main() {
     Require(rand_r_nid_postfix(&randomState) == 2147466840 && randomState == 2147466840u);
     randomState = 0xffffffffu;
     Require(rand_r_nid_postfix(&randomState) == 2147466840 && randomState == 2147466840u);
+    randomState = 0x3039u;
+    Require(rand_r_nid_postfix(&randomState) == 0xc5dee2f && rand_r_nid_postfix(&randomState) == 0x6ac05600);
+    randomState = 0x80000000u;
+    Require(rand_r_nid_postfix(&randomState) == 0x7fffbe58 && rand_r_nid_postfix(&randomState) == 0x6f29c50e);
     srand_nid_postfix(1);
     Require(rand_nid_postfix() == 408024109 && rand_nid_postfix() == 11635919 && rand_nid_postfix() == 196474438);
     srand_nid_postfix(0);
     Require(rand_nid_postfix() == 0 && rand_nid_postfix() == 408024109);
     srand_nid_postfix(0xffffffffu);
     Require(rand_nid_postfix() == 876841727 && rand_nid_postfix() == 830605684);
+    srand_nid_postfix(0x2au);
+    Require(rand_nid_postfix() == 0x3d720f6e && rand_nid_postfix() == 0x3800fec1 && rand_nid_postfix() == 0xf6ada53);
+    srand_nid_postfix(0x7fffffffu);
+    Require(rand_nid_postfix() == 0xdf8cb69 && rand_nid_postfix() == 0x30ba327f && rand_nid_postfix() == 0x2ebfb7d2);
+    srand_nid_postfix(0x80000000u);
+    Require(rand_nid_postfix() == 0x264abf96 && rand_nid_postfix() == 0x1919cb21 && rand_nid_postfix() == 0x39c42149);
     for (int step = 0; step < 1000; ++step) Require(static_cast<unsigned int>(rand_nid_postfix()) <= 0x3fffffffu);
     bool threw = false;
     try { rand_r_nid_postfix(nullptr); } catch (...) { threw = true; }
@@ -3749,6 +3874,7 @@ int main() {
     CheckNextafterEnvironment(nextafterf_nid_postfix, 0x80000000u, 0x3f800000u, 0x00800000u, 0x7f7fffffu, 0x7f800000u);
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});
     CheckExpm1ScalingRounding();
+    CheckTanhSaturationEnvironment();
     CheckFmodConsoleBits();
     CheckFmodEdgeFlags();
     CheckHypotfConsoleBits();
@@ -3756,6 +3882,8 @@ int main() {
     CheckAtanhConsoleBits();
     CheckAtanhDomainEnvironment();
     CheckAtanhEdgeFlags();
+    CheckExpm1OverflowEnvironment();
+    CheckLog1pDomainEnvironment();
     CheckHypotConsoleBits();
     CheckPowConsoleBits();
     CheckExpConsoleBits();

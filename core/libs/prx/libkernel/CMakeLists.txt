@@ -24,6 +24,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Ksem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Semaphore.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/SyncOnAddress.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/AtomicWaitForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/DirectMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Jit.cpp
@@ -76,8 +77,6 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformanceProcess.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformanceStartup.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/MimallocRestart.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/InstanceLock.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/InstanceLockStartup.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/SystemConfiguration.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Login.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Getlogin.cpp
@@ -106,14 +105,10 @@ endif()
 
 target_include_directories(libkernel PRIVATE ${LIBS_INCLUDE_DIR})
 target_include_directories(libkernel PRIVATE ${LIBS_INCLUDE_DIR}/nid/include)
-if(NOT WIN32)
-    target_sources(libkernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/System/src/InstanceLockPosix.cpp)
-endif()
 target_link_libraries(libkernel PRIVATE ${CMAKE_DL_LIBS})
 target_link_libraries(libkernel PRIVATE libc)
 if(WIN32)
     target_sources(libkernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/File/src/TrustedRoots.cpp)
-    target_sources(libkernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/System/src/InstanceLockWindows.cpp)
     target_link_libraries(libkernel PRIVATE ws2_32 shell32 advapi32 crypt32 wbemuuid ole32 oleaut32)
     target_link_libraries(libkernel PRIVATE iphlpapi)
     target_compile_definitions(libkernel PRIVATE _WIN32_WINNT=0x0602)
@@ -140,6 +135,21 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_direct_memory_for_app PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_kernel_resident_fmem_export_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestKernelResidentFmemExport.cpp)
+    target_include_directories(guest_kernel_resident_fmem_export_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_resident_fmem_export_tests PRIVATE ${CMAKE_DL_LIBS})
+    configure_host_test_executable(guest_kernel_resident_fmem_export_tests)
+    add_custom_target(guest_kernel_resident_fmem_export_libraries DEPENDS libkernel ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+    add_dependencies(guest_kernel_resident_fmem_export_tests guest_kernel_resident_fmem_export_libraries)
+    add_test(NAME guest_kernel_resident_fmem_export COMMAND guest_kernel_resident_fmem_export_tests ${UNPATCHED_DIR} unpatched)
+    add_test(NAME guest_kernel_resident_fmem_export_patched COMMAND guest_kernel_resident_fmem_export_tests ${PATCHED_DIR} patched)
+    set_tests_properties(guest_kernel_resident_fmem_export guest_kernel_resident_fmem_export_patched PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_resident_fmem_export PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${UNPATCHED_DIR}")
+        set_tests_properties(guest_kernel_resident_fmem_export_patched PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${PATCHED_DIR}")
     endif()
     add_test_executable(guest_apr_read_tests ${LIBS_INCLUDE_DIR}/tests/GuestAprRead.cpp)
     target_include_directories(guest_apr_read_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -559,7 +569,7 @@ if(BUILD_TESTING)
         set_tests_properties(guest_truncate_race PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_termios_speed_tests ${LIBS_INCLUDE_DIR}/tests/GuestTermiosSpeed.cpp)
+    add_test_executable(guest_termios_speed_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestTermiosSpeed.cpp)
     target_include_directories(guest_termios_speed_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_termios_speed_tests PRIVATE libkernel libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_termios_speed_tests)
@@ -1486,11 +1496,14 @@ if(BUILD_TESTING)
     target_include_directories(guest_exception_fault_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_exception_fault_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_exception_fault_tests)
-    add_test(NAME guest_exception_fault COMMAND guest_exception_fault_tests)
-    set_tests_properties(guest_exception_fault PROPERTIES TIMEOUT 30)
-    if(WIN32)
-        set_tests_properties(guest_exception_fault PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    if(NOT APPLE)
+        add_test(NAME guest_exception_fault COMMAND guest_exception_fault_tests)
+        set_tests_properties(guest_exception_fault PROPERTIES TIMEOUT 30)
+        add_asan_test_options(guest_exception_fault handle_segv=0)
+        if(WIN32)
+            set_tests_properties(guest_exception_fault PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
     endif()
     add_test_executable(guest_raise_exception_tests ${LIBS_INCLUDE_DIR}/tests/GuestRaiseException.cpp)
     target_include_directories(guest_raise_exception_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -1856,59 +1869,6 @@ if(BUILD_TESTING)
         set_tests_properties(host_cpu PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(instance_lock_tests ${LIBS_INCLUDE_DIR}/tests/InstanceLock.cpp)
-    target_include_directories(instance_lock_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(instance_lock_tests PRIVATE libkernel libc)
-    configure_windows_unwind(instance_lock_tests)
-    add_test(NAME instance_lock COMMAND instance_lock_tests)
-    if(WIN32)
-        set_tests_properties(instance_lock PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(instance_lock_host_tests ${LIBS_INCLUDE_DIR}/tests/InstanceLockHost.cpp)
-    target_include_directories(instance_lock_host_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(instance_lock_host_tests PRIVATE libkernel libc)
-    configure_windows_unwind(instance_lock_host_tests)
-    add_test(NAME instance_lock_host COMMAND instance_lock_host_tests)
-    if(WIN32)
-        set_tests_properties(instance_lock_host PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(instance_lock_startup_tests ${LIBS_INCLUDE_DIR}/tests/InstanceLockStartup.cpp)
-    target_include_directories(instance_lock_startup_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(instance_lock_startup_tests PRIVATE libkernel libc)
-    configure_windows_unwind(instance_lock_startup_tests)
-    set(instanceLockTitle "{\"titleId\":\"PPSA00000\",\"localizedParameters\":{\"en-US\":{\"titleName\":\"Example\"}}}")
-    set(instanceLockCases held:on:title:held unset:unset:title:nothing off:off:title:nothing notitle:on:none:nothing)
-    if(NOT WIN32)
-        list(APPEND instanceLockCases second:on:title:second invalid:unset:none:invalid unreadable:unset:untitled:unreadable)
-    endif()
-    foreach(instanceLockCase IN LISTS instanceLockCases)
-        string(REPLACE ":" ";" instanceLockCase ${instanceLockCase})
-        list(GET instanceLockCase 0 instanceLockName)
-        list(GET instanceLockCase 1 instanceLockValue)
-        list(GET instanceLockCase 2 instanceLockFixture)
-        list(GET instanceLockCase 3 instanceLockMode)
-        set(instanceLockRun ${CMAKE_CURRENT_BINARY_DIR}/instance_lock_startup_${instanceLockName})
-        file(REMOVE_RECURSE ${instanceLockRun})
-        file(MAKE_DIRECTORY ${instanceLockRun})
-        if(instanceLockFixture STREQUAL "title")
-            file(WRITE ${instanceLockRun}/app0/sce_sys/param.json "${instanceLockTitle}")
-        elseif(instanceLockFixture STREQUAL "untitled")
-            file(WRITE ${instanceLockRun}/app0/sce_sys/param.json "{\"downloadDataSize\":0}")
-        endif()
-        add_test(NAME instance_lock_startup_${instanceLockName} COMMAND instance_lock_startup_tests ${instanceLockMode}
-            WORKING_DIRECTORY ${instanceLockRun})
-        if(instanceLockValue STREQUAL "unset")
-            set_tests_properties(instance_lock_startup_${instanceLockName} PROPERTIES ENVIRONMENT_MODIFICATION "ANYPS5_INSTANCE_LOCK=unset:")
-        else()
-            set_tests_properties(instance_lock_startup_${instanceLockName} PROPERTIES ENVIRONMENT "ANYPS5_INSTANCE_LOCK=${instanceLockValue}")
-        endif()
-        if(WIN32)
-            set_tests_properties(instance_lock_startup_${instanceLockName} PROPERTIES ENVIRONMENT_MODIFICATION
-                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-        endif()
-    endforeach()
     add_test_executable(guest_system_configuration_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemConfiguration.cpp)
     target_include_directories(guest_system_configuration_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_system_configuration_tests PRIVATE libkernel libc)
@@ -2543,6 +2503,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_pipe_fault PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_kernel_pipe2_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelPipe2.cpp)
+    target_include_directories(guest_kernel_pipe2_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_pipe2_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_pipe2_tests)
+    add_test(NAME guest_kernel_pipe2 COMMAND guest_kernel_pipe2_tests)
+    set_tests_properties(guest_kernel_pipe2 PROPERTIES TIMEOUT 15)
+    if(WIN32)
+        set_tests_properties(guest_kernel_pipe2 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_rename_dot_tests ${LIBS_INCLUDE_DIR}/tests/GuestRenameDot.cpp)
     target_include_directories(guest_rename_dot_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_rename_dot_tests PRIVATE libkernel libc)
@@ -2737,7 +2707,7 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
-    add_test_executable(guest_timed_join_tests ${LIBS_INCLUDE_DIR}/tests/GuestTimedJoin.cpp)
+    add_test_executable(guest_timed_join_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestTimedJoin.cpp)
     target_include_directories(guest_timed_join_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_timed_join_tests PRIVATE libkernel libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_timed_join_tests)
@@ -2745,7 +2715,7 @@ if(BUILD_TESTING)
         foreach(joinProvider IN ITEMS libkernel_sys libkernel_web)
             add_test(NAME guest_timed_join_import_${joinProvider} COMMAND ${Python3_EXECUTABLE}
                 ${LIBS_INCLUDE_DIR}/tests/test_windows_timed_join_imports.py $<TARGET_FILE:relinker> ${PATCHED_DIR}
-                ${joinProvider}.prx $<TARGET_FILE_DIR:guest_timed_join_tests>)
+                ${joinProvider}.prx $<TARGET_FILE:guest_timed_join_tests>)
             set_tests_properties(guest_timed_join_import_${joinProvider} PROPERTIES TIMEOUT 25
                 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_timed_join_tests>")
         endforeach()

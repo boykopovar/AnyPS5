@@ -6,10 +6,6 @@
 
 extern "C" {
 
-int APS5_VABI _ZN3sce2np10NpOnlineIdD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 void APS5_VABI _ZN3sce2np10NpOnlineIdD1Ev(void* self) {
     (void)self;
 }
@@ -56,19 +52,11 @@ int APS5_VABI _ZN3sce2np12NpHttpClientD2Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI _ZN3sce2np12NpTitleTokenD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 void APS5_VABI _ZN3sce2np12NpTitleTokenD1Ev(void* self) {
     (void)self;
 }
 void APS5_VABI _ZN3sce2np12NpTitleTokenD2Ev(void* self) {
     (void)self;
-}
-int APS5_VABI _ZN3sce2np13NpAccessTokenD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 void APS5_VABI _ZN3sce2np13NpAccessTokenD1Ev(void* self) {
     (void)self;
@@ -120,41 +108,17 @@ int APS5_VABI _ZN3sce2np3ipc14service_client14PollEventQueueEiPvm(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI _ZN3sce2np4NpIdD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 void APS5_VABI _ZN3sce2np4NpIdD1Ev(void* self) {
     (void)self;
 }
 void APS5_VABI _ZN3sce2np4NpIdD2Ev(void* self) {
     (void)self;
 }
-int APS5_VABI _ZN3sce2np4UserD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 void APS5_VABI _ZN3sce2np4UserD1Ev(void* self) {
     (void)self;
 }
 void APS5_VABI _ZN3sce2np4UserD2Ev(void* self) {
     (void)self;
-}
-int APS5_VABI _ZN3sce2np8NpTicket5ClearEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np8NpTicketD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np8NpTicketD1Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np8NpTicketD2Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 int APS5_VABI _ZThn16_N3sce2np11NpHttpTransD0Ev(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -228,10 +192,7 @@ int APS5_VABI _sceNpManagerReallocImpl(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetOnlineIdByAccountId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+
 int APS5_VABI sceNpManagerIntLoginGetAccessTokenViaImplicitFlow(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -352,18 +313,6 @@ int APS5_VABI sceNpPush2DeleteUserContext(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpPush2Init(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPush2IsInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPush2OptionalCheckCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI sceNpPush2RegisterDataType(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -380,19 +329,7 @@ int APS5_VABI sceNpPush2SendPushStatisticsDataSystemTelemetry(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpPush2SetGlobalMutex(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI sceNpPush2SetNpCommunicationId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPush2Term(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPush2TriggerEmptyUserEvent(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -416,14 +353,6 @@ int APS5_VABI sceNpPush2WaitCallback(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpPushCheckCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPushInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI sceNpPushIntBeginInactive(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -433,10 +362,6 @@ int APS5_VABI sceNpPushIntEndInactive(void) {
     return 0;
 }
 int APS5_VABI sceNpPushIntGetBindUserState(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPushIntGetConnectionState(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -469,10 +394,6 @@ int APS5_VABI sceNpPushStopNotification(void) {
     return 0;
 }
 int APS5_VABI sceNpPushStopNotificationA(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPushTerm(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
