@@ -15,7 +15,6 @@ int APS5_VABI _ZNSt6locale6globalERKS__nid_postfix();
 int APS5_VABI _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1EPKcm_nid_postfix();
 int APS5_VABI _ZNSt8messagesIcEC2Em_nid_postfix();
 int APS5_VABI _ZNSt7collateIcEC1Em_nid_postfix();
-int APS5_VABI signalcontext_nid_postfix();
 int APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEED2Ev_nid_postfix();
 int APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC1ERKSt8_Locinfom_nid_postfix();
 int APS5_VABI _ZTv0_n24_NSiD0Ev_nid_postfix();
