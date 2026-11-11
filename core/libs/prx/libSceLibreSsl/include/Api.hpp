@@ -834,7 +834,7 @@ int APS5_VABI SSL_CTX_set_session_id_context_nid_postfix(LibreSslCtx* ctx, const
 void APS5_VABI SSL_CTX_set_verify_nid_postfix(LibreSslCtx* ctx, int mode, void* callback);
 int APS5_VABI SSL_CTX_use_PrivateKey_nid_postfix(LibreSslCtx* ctx, void* pkey);
 int APS5_VABI SSL_CTX_use_PrivateKey_ASN1_nid_postfix(void);
-int APS5_VABI SSL_CTX_use_PrivateKey_file_nid_postfix(void);
+int APS5_VABI SSL_CTX_use_PrivateKey_file_nid_postfix(LibreSslCtx* ctx, const char* file, int type);
 int APS5_VABI SSL_CTX_use_certificate_nid_postfix(void);
 int APS5_VABI SSL_CTX_use_certificate_ASN1_nid_postfix(void);
 int APS5_VABI SSL_CTX_use_certificate_chain_file_nid_postfix(void);
