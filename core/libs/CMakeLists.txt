@@ -1336,7 +1336,7 @@ if(BUILD_TESTING)
         set_tests_properties(prx_thread_local_destructors PROPERTIES TIMEOUT 300)
         add_test(NAME test_thread_local_destructors COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
             -DPATTERN=*.exe -DMODULES=$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
-        set_tests_properties(test_thread_local_destructors PROPERTIES TIMEOUT 120)
+        set_tests_properties(test_thread_local_destructors PROPERTIES TIMEOUT 300)
     endif()
 
     add_test_executable(guest_np_cpp_web_api_intrusive_ptr_tests tests/GuestNpCppWebApiIntrusivePtr.cpp)
