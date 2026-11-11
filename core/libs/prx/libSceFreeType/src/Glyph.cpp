@@ -63,7 +63,7 @@ struct Glyph {
         native.flags = guest.flags;
     }
 
-    void Publish(const char* function) {
+    void Publish(const char* function, const GuestOutline* source = nullptr) {
         *Root() = {library, host->clazz, static_cast<std::uint32_t>(host->format), {host->advance.x, host->advance.y}};
         if (isBitmap) {
             const auto* native = reinterpret_cast<FT_BitmapGlyph>(host.get());
@@ -76,7 +76,8 @@ struct Glyph {
             points.resize(native.n_points);
             if (native.n_points && !native.points) NotImplemented_nid_no_patch(function);
             for (std::size_t index = 0; index < points.size(); ++index) {
-                points[index] = {static_cast<std::int64_t>(native.points[index].x), static_cast<std::int64_t>(native.points[index].y)};
+                points[index] = source ? source->points[index]
+                                       : GuestVector{static_cast<std::int64_t>(native.points[index].x), static_cast<std::int64_t>(native.points[index].y)};
             }
             outline.outline = {Count<std::uint16_t>(native.n_contours, function), Count<std::uint16_t>(native.n_points, function),
                                points.empty() ? nullptr : points.data(), reinterpret_cast<unsigned char*>(native.tags),
@@ -112,7 +113,7 @@ struct Outline {
         if (outline.n_points && !outline.points) NotImplemented_nid_no_patch(function);
         points.resize(outline.n_points);
         for (std::size_t index = 0; index < points.size(); ++index) {
-            points[index] = {Count<FT_Pos>(outline.points[index].x, function), Count<FT_Pos>(outline.points[index].y, function)};
+            points[index] = {static_cast<FT_Pos>(outline.points[index].x), static_cast<FT_Pos>(outline.points[index].y)};
         }
         native.points = points.empty() ? nullptr : points.data();
     }
@@ -221,7 +222,7 @@ int APS5_VABI FT_Get_Glyph_nid_postfix(GuestGlyphSlotRec* slot, GuestGlyphRec** 
         return error;
     }
     owner.host.reset(result);
-    owner.Publish(__func__);
+    owner.Publish(__func__, native.format == FT_GLYPH_FORMAT_OUTLINE ? &slot->outline : nullptr);
     *target = address;
     return 0;
 }
@@ -253,7 +254,7 @@ int APS5_VABI FT_Glyph_Copy_nid_postfix(GuestGlyphRec* source, GuestGlyphRec** t
         return error;
     }
     copy.host.reset(result);
-    copy.Publish(__func__);
+    copy.Publish(__func__, original.isBitmap ? nullptr : &original.outline.outline);
     address->advance = advance;
     *target = address;
     return 0;
