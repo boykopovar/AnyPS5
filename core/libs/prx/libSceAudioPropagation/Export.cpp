@@ -592,6 +592,8 @@ int APS5_VABI sceAudioPropagationResetAttributes(Attribute* attributes, std::uin
         } else if (attribute.id <= 7) {
             constexpr std::array<std::size_t, 8> sizes{16, 16, 16, 16, 24, 8, 16, 8};
             if (attribute.valueSize != sizes[attribute.id]) return ErrorInvalidArgument;
+        } else if (attribute.id == 10) {
+            NotImplemented_nid_no_patch(__func__);
         } else if (attribute.id != 0x10000 || attribute.valueSize != 16) {
             return ErrorInvalidArgument;
         }

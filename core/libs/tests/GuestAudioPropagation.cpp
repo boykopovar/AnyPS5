@@ -349,6 +349,8 @@ int main() {
     Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidHandle, "reset accepted a non-room second handle");
     resets[0].id = 8;
     Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidArgument, "reset accepted an unknown attribute");
+    resets[0].id = 10;
+    RequireThrows<std::runtime_error>([&] { sceAudioPropagationResetAttributes(resets, 1); }, "attribute 10 returned while its contract is unresolved");
 
     std::uint32_t count = 7;
     Require(sceAudioPropagationSourceGetAudioPathCount(source, &count) == 0 && count == AudioPropagation::MaxPaths, "source path pool size");
