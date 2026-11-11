@@ -492,7 +492,8 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
 }
 
 int APS5_VABI sceAudioOut2ContextQueryMemory(const AudioOut2ContextParam* params, size_t* memory_size) {
-    if (!params || !memory_size) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    if (!params) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    if (!memory_size) return static_cast<int>(0x80268001);
     *memory_size = CONTEXT_MEMORY;
     return 0;
 }
