@@ -16,6 +16,7 @@ public:
     std::uint64_t GetImageBase() const;
     void WritePointer(std::uint64_t address, std::uint64_t value);
     void RequireWritable(std::uint64_t address, std::uint64_t size) const;
+    std::vector<Domain::RvaRange> GetRelroRanges(const std::vector<Domain::ProgramHeader>& headers) const;
     std::vector<PeSection> BuildSections() const;
 
 private:
