@@ -91,3 +91,13 @@
 [submodule "3rdparty/curl"]
 	path = 3rdparty/curl
 	url = https://github.com/curl/curl.git
+[submodule "3rdparty/libxml2"]
+	path = 3rdparty/libxml2
+	url = https://github.com/GNOME/libxml2.git
+[submodule "3rdparty/libpsl"]
+	path = 3rdparty/libpsl
+	url = https://github.com/rockdaboot/libpsl.git
+[submodule "3rdparty/icu"]
+	path = 3rdparty/icu
+	url = https://github.com/unicode-org/icu.git
+	shallow = true
