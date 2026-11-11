@@ -48,10 +48,6 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
             constant = x + offset;
         } else if (conflict) fail(Path::FetchUnknown);
         else if (k < 0) {
-            // The program never reads the register the packet names, so the record's dword never
-            // reaches the fetch. The draw starts at the packet's fixed offset, exactly as on the
-            // CPU path (which patches a register no program reads): write that constant into the
-            // records and keep the draw on the GPU instead of expanding it record by record.
             static const bool gpuUnfolded = std::getenv("APS5_NO_GPU_UNFOLDED_INDIRECT") == nullptr;
             if (!gpuUnfolded) fail(Path::NotFolded);
             rule = Rule::Constant;
@@ -63,9 +59,6 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
     dimension(result.vertexOffsetSgpr, indirect.baseVertexSgpr, result.vertexOffsetShared, result.vertexOffsetConflict, drawParameters.indexed ? 0u : indirect.indxOffset, indirect.vertexRule, indirect.vertexConstant);
     dimension(result.instanceOffsetSgpr, indirect.startInstanceSgpr, result.instanceOffsetShared, result.instanceOffsetConflict, 0u, indirect.instanceRule, indirect.instanceConstant);
     if (!support.firstInstance && (indirect.instanceRule == Rule::InPlace || indirect.instanceConstant != 0)) fail(Path::FeatureGap);
-    // A Constant dimension is rewritten record by record (vkCmdUpdateBuffer); a 1024-record scratch
-    // stays at most 20 KiB, so the GPU path covers the real multi-draw counts. Anything larger keeps
-    // the CPU path.
     if ((indirect.vertexRule == Rule::Constant || indirect.instanceRule == Rule::Constant) && indirect.count > 1024) fail(Path::FeatureGap);
 
     static const std::uint64_t vertexCap = [] { const char* text = std::getenv("APS5_INDIRECT_VERTEX_MIB"); return (text ? std::strtoull(text, nullptr, 10) : 64ull) << 20u; }();
