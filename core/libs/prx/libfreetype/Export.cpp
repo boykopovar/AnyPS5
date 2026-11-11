@@ -5,11 +5,6 @@
 
 extern "C" {
 
-int APS5_VABI libfreetypeGetVarAxisFlags_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("+sDVkl3aAR8", libfreetypeGetVarAxisFlags_nid_no_patch);
-
 int APS5_VABI libfreetypeSetDefaultProperties_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -39,11 +34,6 @@ int APS5_VABI freetypeLegacyStreamOpenBzip2_nid_no_patch() {
 }
 APS5_EXPORT("JuHk-xDmRmI", freetypeLegacyStreamOpenBzip2_nid_no_patch);
 
-
-int APS5_VABI freetypeLegacyLibrarySetLcdGeometry_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("Xxtq+Qr5lzI", freetypeLegacyLibrarySetLcdGeometry_nid_no_patch);
 
 int APS5_VABI freetypeLegacyErrorString_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
