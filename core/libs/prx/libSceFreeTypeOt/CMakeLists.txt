@@ -6,6 +6,8 @@ include("${CMAKE_CURRENT_LIST_DIR}/Stream.cmake")
 target_link_libraries(libSceFreeTypeOt PRIVATE freetype)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libSceFreeTypeOt PRIVATE LINKER:--exclude-libs,ALL)
+elseif(APPLE)
+    target_link_options(libSceFreeTypeOt PRIVATE "LINKER:-exported_symbol,*_nid_*")
 endif()
 configure_windows_unwind(libSceFreeTypeOt)
 
