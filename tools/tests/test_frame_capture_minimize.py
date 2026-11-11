@@ -215,5 +215,14 @@ if command == 'inspect':
             self.assertIn("baseline did not reproduce", stderr.getvalue())
             self.assertFalse(output.exists())
 
+    def test_baseline_matches_stderr(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arguments, _, _, output = self.empty_cli(root, replay_source="import sys\nprint('failure', file=sys.stderr)\nraise SystemExit(7)\n")
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                result = frame_capture_minimize.main(arguments)
+            self.assertEqual(result, 0)
+            self.assertTrue(output.is_dir())
+
 if __name__ == "__main__":
     unittest.main()
