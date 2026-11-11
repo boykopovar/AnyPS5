@@ -54,9 +54,16 @@ std::int32_t APS5_VABI sceDeviceServiceQueryDeviceInfo_(std::int32_t deviceClass
     case 0x9001:
         if (filter != nullptr) return invalidArgument;
         break;
-    case 0x8001:
-        if (filter == nullptr || filter->minimumUsage > filter->maximumUsage) return invalidArgument;
+    case 0x8001: {
+        DeviceServiceUsageFilter local{};
+        const int savedErrno = errno;
+        if (filter == nullptr || !GuestCopyIn_nid_no_patch(&local, filter, sizeof(local))) {
+            errno = savedErrno;
+            return invalidArgument;
+        }
+        if (local.minimumUsage > local.maximumUsage) return invalidArgument;
         break;
+    }
     default:
         return invalidArgument;
     }

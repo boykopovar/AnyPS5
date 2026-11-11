@@ -111,6 +111,7 @@ int main() {
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, &filter, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "unexpected HID filter accepted");
     filter.minimumUsage = 4;
     Require(sceDeviceServiceQueryDeviceInfo_(0x8001, &filter, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "reversed HID usage range accepted");
+    Require(sceDeviceServiceQueryDeviceInfo_(0x8001, reinterpret_cast<const DeviceServiceUsageFilter*>(0x1), 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "unmapped filter address accepted");
     Require(sceDeviceServiceGetGeneration() == 0, "the generation advanced without a device change");
     Require(sceDeviceServiceTerminate() == 0, "termination failed");
     std::puts("DeviceService tests passed");
