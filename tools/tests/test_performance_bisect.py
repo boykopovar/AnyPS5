@@ -393,3 +393,21 @@ class BuildPathSafetyTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "contains tracked source"):
                 performance_bisect.reset_build_dir(repo, repo / "build")
             self.assertEqual(tracked.read_text(encoding="utf-8"), "tracked source")
+
+
+class BuildSymlinkSafetyTests(unittest.TestCase):
+    def test_refuses_to_follow_a_build_directory_symlink_outside_the_worktree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            external = root / "external"
+            external.mkdir()
+            marker = external / "keep.txt"
+            marker.write_text("outside data", encoding="utf-8")
+            (repo / "build").symlink_to(external, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "resolves outside the worktree"):
+                performance_bisect.reset_build_dir(repo, repo / "build")
+            self.assertEqual(marker.read_text(encoding="utf-8"), "outside data")
+            self.assertTrue((repo / "build").is_symlink())
