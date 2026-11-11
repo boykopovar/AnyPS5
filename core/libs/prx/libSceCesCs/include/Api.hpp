@@ -234,9 +234,9 @@ int APS5_VABI sceCesMbcsUcsSetMbcsReplacementCharUCode(void* context, uint32_t u
 const uint8_t* APS5_VABI sceCesRefersUcsProfileAscii(void);
 const uint8_t* APS5_VABI sceCesRefersUcsProfileAsciiWithKatakana(void);
 const uint8_t* APS5_VABI sceCesRefersUcsProfileBs4730(void);
-int APS5_VABI sceCesRefersUcsProfileCp1253(void);
-int APS5_VABI sceCesRefersUcsProfileCp1255(void);
-int APS5_VABI sceCesRefersUcsProfileCp1257(void);
+const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1253(void);
+const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1255(void);
+const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1257(void);
 const uint8_t* APS5_VABI sceCesRefersUcsProfileCp857(void);
 const uint8_t* APS5_VABI sceCesRefersUcsProfileCp869(void);
 const uint8_t* APS5_VABI sceCesRefersUcsProfileCp874(void);

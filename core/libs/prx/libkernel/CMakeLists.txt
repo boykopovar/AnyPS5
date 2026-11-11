@@ -24,6 +24,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Ksem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Semaphore.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/SyncOnAddress.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/AtomicWaitForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/DirectMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Jit.cpp
@@ -69,6 +70,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Sanitizer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Rtld.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Process.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Cpuset.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Sandbox.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostCpu.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformance.cpp
@@ -114,6 +116,8 @@ endif()
 configure_windows_unwind(libkernel)
 
 if(BUILD_TESTING)
+    set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Ksem.cpp
+            APPEND PROPERTY COMPILE_DEFINITIONS ANYPS5_KSEM_TESTING)
     add_test_executable(kernel_error_tests ${LIBS_INCLUDE_DIR}/tests/KernelError.cpp)
     target_include_directories(kernel_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(kernel_error_tests PRIVATE libkernel libc)
@@ -132,13 +136,28 @@ if(BUILD_TESTING)
         set_tests_properties(guest_direct_memory_for_app PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_kernel_resident_fmem_export_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestKernelResidentFmemExport.cpp)
+    target_include_directories(guest_kernel_resident_fmem_export_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_resident_fmem_export_tests PRIVATE ${CMAKE_DL_LIBS})
+    configure_host_test_executable(guest_kernel_resident_fmem_export_tests)
+    add_custom_target(guest_kernel_resident_fmem_export_libraries DEPENDS libkernel ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+    add_dependencies(guest_kernel_resident_fmem_export_tests guest_kernel_resident_fmem_export_libraries)
+    add_test(NAME guest_kernel_resident_fmem_export COMMAND guest_kernel_resident_fmem_export_tests ${UNPATCHED_DIR} unpatched)
+    add_test(NAME guest_kernel_resident_fmem_export_patched COMMAND guest_kernel_resident_fmem_export_tests ${PATCHED_DIR} patched)
+    set_tests_properties(guest_kernel_resident_fmem_export guest_kernel_resident_fmem_export_patched PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_resident_fmem_export PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${UNPATCHED_DIR}")
+        set_tests_properties(guest_kernel_resident_fmem_export_patched PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${PATCHED_DIR}")
+    endif()
     add_test_executable(guest_apr_read_tests ${LIBS_INCLUDE_DIR}/tests/GuestAprRead.cpp)
     target_include_directories(guest_apr_read_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_apr_read_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_apr_read_tests)
     set(aprReadCases host direct eof errors streams priorities)
     if(WIN32)
-        list(APPEND aprReadCases fault stack)
+        list(APPEND aprReadCases fault stack longeof)
     endif()
     list(APPEND aprReadCases queries)
     foreach(aprReadCase IN LISTS aprReadCases)
@@ -403,6 +422,9 @@ if(BUILD_TESTING)
         add_test(NAME guest_deferred_module_sweep COMMAND guest_deferred_module_tests $<TARGET_FILE:guest_deferred_sweep_fixture> sweep $<TARGET_FILE:guest_deferred_module_fixture>)
         set_tests_properties(guest_deferred_module_sweep PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        add_test(NAME guest_deferred_module_sweep_no_arguments COMMAND guest_deferred_module_tests $<TARGET_FILE:guest_deferred_sweep_fixture> sweep-no-arguments $<TARGET_FILE:guest_deferred_module_fixture>)
+        set_tests_properties(guest_deferred_module_sweep_no_arguments PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         foreach(mode IN ITEMS dependency dependency-nested)
             add_test(NAME guest_deferred_module_${mode} COMMAND guest_deferred_module_tests $<TARGET_FILE:guest_deferred_dependent_fixture> ${mode} $<TARGET_FILE:guest_deferred_module_fixture>)
             set_tests_properties(guest_deferred_module_${mode} PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
@@ -550,7 +572,7 @@ if(BUILD_TESTING)
         set_tests_properties(guest_truncate_race PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_termios_speed_tests ${LIBS_INCLUDE_DIR}/tests/GuestTermiosSpeed.cpp)
+    add_test_executable(guest_termios_speed_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestTermiosSpeed.cpp)
     target_include_directories(guest_termios_speed_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_termios_speed_tests PRIVATE libkernel libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_termios_speed_tests)
@@ -980,6 +1002,14 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_pthread_stack PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(guest_thread_stack_guard_tests ${LIBS_INCLUDE_DIR}/tests/GuestThreadStackGuard.cpp)
+        target_include_directories(guest_thread_stack_guard_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_thread_stack_guard_tests PRIVATE libkernel libc)
+        add_test(NAME guest_thread_stack_guard COMMAND guest_thread_stack_guard_tests)
+        set_tests_properties(guest_thread_stack_guard PROPERTIES TIMEOUT 20)
+        add_asan_test_options(guest_thread_stack_guard detect_stack_use_after_return=0)
     endif()
     add_test_executable(guest_cond_timedwait_tests ${LIBS_INCLUDE_DIR}/tests/GuestCondTimedwait.cpp)
     target_include_directories(guest_cond_timedwait_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -1469,11 +1499,14 @@ if(BUILD_TESTING)
     target_include_directories(guest_exception_fault_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_exception_fault_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_exception_fault_tests)
-    add_test(NAME guest_exception_fault COMMAND guest_exception_fault_tests)
-    set_tests_properties(guest_exception_fault PROPERTIES TIMEOUT 30)
-    if(WIN32)
-        set_tests_properties(guest_exception_fault PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    if(NOT APPLE)
+        add_test(NAME guest_exception_fault COMMAND guest_exception_fault_tests)
+        set_tests_properties(guest_exception_fault PROPERTIES TIMEOUT 30)
+        add_asan_test_options(guest_exception_fault handle_segv=0)
+        if(WIN32)
+            set_tests_properties(guest_exception_fault PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
     endif()
     add_test_executable(guest_raise_exception_tests ${LIBS_INCLUDE_DIR}/tests/GuestRaiseException.cpp)
     target_include_directories(guest_raise_exception_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -1636,6 +1669,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_sched_priority PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_sched_priority PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_process_abi_type_tests ${LIBS_INCLUDE_DIR}/tests/GuestProcessAbiType.cpp)
+    target_include_directories(guest_process_abi_type_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_process_abi_type_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_process_abi_type_tests)
+    add_test(NAME guest_process_abi_type COMMAND guest_process_abi_type_tests)
+    set_tests_properties(guest_process_abi_type PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_process_abi_type PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_rtprio_thread_tests ${LIBS_INCLUDE_DIR}/tests/GuestRtprioThread.cpp)
@@ -1901,6 +1944,7 @@ if(BUILD_TESTING)
     add_test(NAME guest_socket_options COMMAND guest_socket_options_tests)
     add_test(NAME guest_socket_options_multicast COMMAND guest_socket_options_tests multicast)
     set_tests_properties(guest_socket_options guest_socket_options_multicast PROPERTIES TIMEOUT 30)
+    set_tests_properties(guest_socket_options_multicast PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
         set_tests_properties(guest_socket_options guest_socket_options_multicast PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
@@ -2009,6 +2053,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_tcp PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_tcp PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_socket_send_before_connect_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketSendBeforeConnect.cpp)
+    target_include_directories(guest_socket_send_before_connect_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_socket_send_before_connect_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_socket_send_before_connect_tests)
+    add_test(NAME guest_socket_send_before_connect COMMAND guest_socket_send_before_connect_tests)
+    set_tests_properties(guest_socket_send_before_connect PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_socket_send_before_connect PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_socket_port_zero_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketPortZero.cpp)
@@ -2183,7 +2237,7 @@ if(BUILD_TESTING)
     add_test(NAME guest_mmap_fixed_anonymous COMMAND guest_memory_tests fixed-anonymous)
     if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test(NAME guest_mmap_executable COMMAND guest_memory_tests executable-mappings)
-        set_tests_properties(guest_mmap_executable PROPERTIES TIMEOUT 20)
+        set_tests_properties(guest_mmap_executable PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
     endif()
     if(WIN32)
         set_tests_properties(guest_memory guest_mmap_fixed_anonymous guest_mmap_executable PROPERTIES ENVIRONMENT_MODIFICATION
@@ -2452,6 +2506,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_pipe_fault PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_kernel_pipe2_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelPipe2.cpp)
+    target_include_directories(guest_kernel_pipe2_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_pipe2_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_pipe2_tests)
+    add_test(NAME guest_kernel_pipe2 COMMAND guest_kernel_pipe2_tests)
+    set_tests_properties(guest_kernel_pipe2 PROPERTIES TIMEOUT 15)
+    if(WIN32)
+        set_tests_properties(guest_kernel_pipe2 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_rename_dot_tests ${LIBS_INCLUDE_DIR}/tests/GuestRenameDot.cpp)
     target_include_directories(guest_rename_dot_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_rename_dot_tests PRIVATE libkernel libc)
@@ -2646,7 +2710,7 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
-    add_test_executable(guest_timed_join_tests ${LIBS_INCLUDE_DIR}/tests/GuestTimedJoin.cpp)
+    add_test_executable(guest_timed_join_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestTimedJoin.cpp)
     target_include_directories(guest_timed_join_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_timed_join_tests PRIVATE libkernel libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_timed_join_tests)
@@ -2654,7 +2718,7 @@ if(BUILD_TESTING)
         foreach(joinProvider IN ITEMS libkernel_sys libkernel_web)
             add_test(NAME guest_timed_join_import_${joinProvider} COMMAND ${Python3_EXECUTABLE}
                 ${LIBS_INCLUDE_DIR}/tests/test_windows_timed_join_imports.py $<TARGET_FILE:relinker> ${PATCHED_DIR}
-                ${joinProvider}.prx $<TARGET_FILE_DIR:guest_timed_join_tests>)
+                ${joinProvider}.prx $<TARGET_FILE:guest_timed_join_tests>)
             set_tests_properties(guest_timed_join_import_${joinProvider} PROPERTIES TIMEOUT 25
                 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_timed_join_tests>")
         endforeach()

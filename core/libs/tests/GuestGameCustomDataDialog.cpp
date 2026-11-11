@@ -1,6 +1,7 @@
 #include "prx/libSceGameCustomDataDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
+#include <cerrno>
 #include <cstdlib>
 
 namespace {
@@ -48,6 +49,9 @@ int main() {
 
     Require(sceGameCustomDataDialogGetResultA(nullptr) == kErrArgNull);
     Require(sceGameCustomDataDialogGetResultA(result) == 0);
+    errno = 71;
+    Require(sceGameCustomDataDialogGetResultA(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == -1);
 
