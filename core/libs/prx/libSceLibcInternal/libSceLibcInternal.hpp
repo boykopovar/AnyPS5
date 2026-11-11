@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libSceLibcInternal/CtypeCase.hpp"
 
 #include "prx/libSceLibcInternal/include/AtomicWaitDeadline.hpp"
 #include "prx/libSceLibcInternal/include/PendingExports.hpp"
