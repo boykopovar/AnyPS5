@@ -450,6 +450,29 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         self.assertEqual(snapshot(package), before)
         self.assertEqual((self.out / "work" / TITLE / "input/nested/tools/extra.bin").read_bytes(), original.read_bytes())
 
+    def test_safe_module_directories_survive_preflight_and_cleanup(self):
+        package = self.package(self.root / "games" / TITLE)
+        self.fake_relinker()
+        work = self.stale_work()
+        module = package / "Media/Modules/plugin.sprx"
+        module.parent.mkdir(parents=True)
+        module.write_bytes(b"\x7fELF" + bytes(range(60)))
+        (module.parent / "readme.txt").write_text("not a module", encoding="utf-8")
+        (package / "Media/Empty").mkdir()
+        os.link(package / "eboot.bin", package / "alias.bin")
+        self.titles.write_text(json.dumps({TITLE: {"relink": ["--module-dir", ".", "--module-dir", "Media/Modules", "--module-dir", "Media/Empty"]}}), encoding="utf-8")
+        inputs = [(path, snapshot(path)) for path in (package, self.build, self.titles)]
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for path, before in inputs:
+            self.assertEqual(snapshot(path), before)
+        self.assertFalse((work / "previous-run.bin").exists())
+        self.assertEqual((work / "input/Media/Modules/plugin.sprx").read_bytes(), module.read_bytes())
+        self.assertTrue((work / "input/Media/Empty").is_dir())
+        self.assertTrue((work / "input/eboot.elf").is_file())
+        self.assertFalse((work / "input/alias.bin").exists())
+        self.assertFalse((work / "input/Media/Modules/readme.txt").exists())
+
     def test_cleanup_failure_does_not_write_through_stale_log_alias(self):
         self.package(self.root / "games" / TITLE)
         work = self.stale_work()
