@@ -553,8 +553,8 @@ int APS5_VABI unmount_nid_postfix(void);
 int APS5_VABI utrace_nid_postfix(const void* address, std::size_t length);
 int APS5_VABI uuidgen_nid_postfix(GuestUuid* store, int count);
 int APS5_VABI vfork_nid_postfix(void);
-int APS5_VABI wait3_nid_postfix(void);
-int APS5_VABI wait4_nid_postfix(void);
+int APS5_VABI wait3_nid_postfix(int* status, int options, void* usage);
+int APS5_VABI wait4_nid_postfix(int pid, int* status, int options, void* usage);
 
 int APS5_VABI _openat_nid_postfix(int fd, const char* path, int flags, ...);
 int APS5_VABI __getcwd_nid_postfix(char* buffer, std::size_t size);

@@ -4,6 +4,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 ### Unknown function info
 
+- [WTF whitespace simplification](../../../core/libs/prx/libSceNKWebKit/src/WtfWhitespace.cpp) has no console ABI or behavior verification. Predicate traversal, implementation reuse and character width follow [StringImpl.cpp lines 749–789](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringImpl.cpp#L749-L789) and the null-string result follows [WTFString.cpp lines 162–166](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/WTFString.cpp#L162-L166). Null objects, null accessed storage and null callbacks for nonempty strings throw instead of invalid memory access. Closes when: compared with a console module.
+
 - [WebKit API objects](../../../core/libs/prx/libSceNKWebKit/src/Object.hpp) (libSceNKWebKit) - `WK*` objects are host objects numbered with `API::Object::Type` as [APIObject.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/APIObject.h) builds for PlayStation, with ApplicationManifest, InspectorExtension, WebExtension and WebAuthn types off and PopupMenuItem and AccessibilityObject on per [OptionsPlayStation.cmake](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/cmake/OptionsPlayStation.cmake); the console module version, its type numbers and its object layouts are unverified, so these objects cannot be passed to a console WebKit module. A null or wrong-type reference throws where WebKit dereferences it.
 - [WTF and WebCore value layouts](../../../core/libs/prx/libSceNKWebKit/src/WtfStringAbi.hpp) (libSceNKWebKit) - `WTF::String`, `StringImpl`, `StringView`, `CString`, `URL` and the WebCore geometry, transform and `Color` layouts follow the release 64-bit headers at the [pinned source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringImpl.h) and are pinned with `static_assert`; they are tested on Windows, not against console binaries. `StringImpl::destroy`, atom and symbol strings and external buffers still throw, so a string whose last reference guest code drops terminates. `Expected<unsigned, HTMLIntegerParsingError>` follows the pinned `Expected.h`; its console ABI is unverified. The `MappedFileData` pointer-and-unsigned layout follows the pinned source, not a measured console object.
 - [WebCore viewport resolution](../../../core/libs/prx/libSceNKWebKit/src/WebCoreViewport.cpp) (libSceNKWebKit) - follows [ViewportArguments.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/dom/ViewportArguments.cpp#L47-L291) and its header (56-byte `ViewportArguments`, 36-byte `ViewportAttributes`, pinned with `static_assert`); tested on Windows, not against a console module or caller. Upstream resolves device keywords with `int(value)`, undefined for NaN, infinities and values beyond `int`; here those pass through unresolved and finite values truncate as upstream. Upstream leaves the returned `ViewportAttributes` uninitialised ([line 192](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/dom/ViewportArguments.cpp#L192)); here it is zero-initialised.
@@ -34,8 +36,13 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [WebCore::Process identifier](../../../core/libs/prx/libSceNKWebKit/src/WebCoreProcess.cpp) (libSceNKWebKit) - the generation-protection check is not modelled: in firmware 13.42 `identifier()` (`0x207100`) crashes before generating when the byte at `0x3369ef8` is 1, and no store to that byte by address was found in the module's code, so what sets it is unknown. The object-identifier counter it draws from is shared in the module with the `HistoryItem` constructors, seven other exports and internal code, none of which is implemented, so identifiers are unique only among implemented callers. The rest follows `system_ex/common_ex/lib/libSceNKWebKit.sprx` 13.42 (SHA-256 `e63acdc164592330a287cf6914c265336b27a357098a449c1609f8f82e104409`; `setIdentifier` at `0x2e3bb0`), read from disassembly, not run. Closes when: measured on a console.
 
+- [WebCore content-type validation](../../../core/libs/prx/libSceNKWebKit/src/ContentTypeValidation.cpp) - console ABI and execution remain unverified. The one-pointer String, 32-bit Mode (Rfc2045 = 0, MimeSniff = 1) and boolean result follow the pinned [ParsedContentType.cpp and paired header](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ParsedContentType.cpp). Validation preserves the source parser's token, whitespace and quoted-string cursor rules, including RFC acceptance of trailing subtype text and its extra advance after a closing quote. Null String is invalid; null accessed character storage throws. Parameter storage is omitted because it does not affect create success. Closes when: compared with a console module.
+
+- [WTF URL escaping](../../../core/libs/prx/libSceNKWebKit/src/WtfUrlEscape.cpp) has no console ABI or behavior verification. `encodeWithURLEscapeSequences` follows [URL.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URL.cpp#L553) and the user-info encode set in URLParser.cpp at the same revision. Lenient UTF-8 conversion follows StringImpl.cpp: interior unpaired surrogates and lone low surrogates become U+FFFD; a trailing unpaired high surrogate retains its three-byte encoding. Unchanged strings share StringImpl through the existing copy helper; encoded strings use the existing guest allocator. Null accessed storage and overflowing output lengths throw. Closes when: compared with a console module.
+
 ### Functional
 - [WebCore::serializationForHTML(Color)](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColorSerialization.cpp) (libSceNKWebKit) - out-of-line colors and color-function serialization throw through `NotImplemented_nid_no_patch`. The `Color` bits are decoded with the pinned 11.x packing ([Color.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/Color.h): RGBA in the low 32 bits, flags from bit 48), as `WebCoreColor.cpp` does, but the console's `serializationFor*` exports match the older WebKit c55364d53f97 header, whose packing differs, so the console layout is unverified. Inline colors, including the invalid value 0, follow [ColorSerialization.cpp:595-620](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/ColorSerialization.cpp#L595-L620): lowercase hex when opaque, CSS `rgba()` otherwise.
+- [WKSerializedScriptValue](../../../core/libs/prx/libSceNKWebKit/src/SerializedScriptValue.cpp) (libSceNKWebKit) - `WKSerializedScriptValueCreate` and `WKSerializedScriptValueDeserialize` serialize and deserialize JavaScript values via JSON representation (`JSValueCreateJSONString` and `JSValueMakeFromJSONString`) rather than WebKit's full structured clone algorithm; non-serializable objects (such as functions, symbols and circular structures) fail serialization and report errors through the exception pointer on create, deserialization failures set exception to an Error object if provided, and `undefined`, `NaN`, `+Infinity` and `-Infinity` are preserved through explicit markers.
 - [WKRunLoop main run loop dispatch](../../../core/libs/prx/libSceNKWebKit/src/RunLoop.cpp) (libSceNKWebKit) - `WKRunLoopInitializeMain`, `WKRunLoopRunMain`, `WKRunLoopStopMain` and `WKRunLoopCallOnMainThread` run main-thread callbacks via a dedicated FIFO queue and WakeUp-driven pump; nesting loops and non-main run loop targets are unmodelled, tasks still queued when the loop stops are dropped silently at the next InitializeMain, and console execution is unverified.
 - [RFC 2822 date formatting](../../../core/libs/prx/libSceNKWebKit/DateParsing.cpp) (libSceNKWebKit) - `WTF::makeRFC2822DateString` follows [DateMath.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/DateMath.cpp#L1033-L1051) at commit `80f77e94c63ee7202eec3d4b5b1a021dd89011ba`. The output formats using a local stack buffer and constructs a `WTF::String` via `String::fromUTF8`. Out-of-range parameters (`dayOfWeek > 6`, `day == 0 || day > 31`, `month > 11`, `hours > 23`, `minutes > 59`, `seconds > 59`, or `|utcOffset| > 5999`) throw `std::invalid_argument` to prevent array bounds violations and enforce the two-digit hour boundary (`number < 100`) of `appendTwoDigitNumber`. Runtime behavior on PS5 hardware has not been measured.
 - [WTF ICU version queries](../../../core/libs/prx/libSceNKWebKit/src/WtfPrimitives.cpp) (libSceNKWebKit) - `WTF::ICU::majorVersion` and `WTF::ICU::minorVersion` follow [ICUHelpers.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/unicode/icu/ICUHelpers.cpp) at commit `80f77e94c63ee7202eec3d4b5b1a021dd89011ba`. Both functions query the underlying ICU version via `u_getVersion_nid_postfix` with `std::call_once` synchronization and return version components `[0]` and `[1]`. Runtime version values reflect `libSceIcu`'s reported ICU 78.1 release and have not been measured against console hardware traces.
@@ -53,6 +60,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [User media permission requests](../../../core/libs/prx/libSceNKWebKit/src/UserMediaPermissionRequest.cpp) (libSceNKWebKit) - `WKUserMediaPermissionRequestAllow` and `WKUserMediaPermissionRequestDeny` record user media permission decisions in host memory; UI prompt interaction is unmodeled.
 - [Frame state queries](../../../core/libs/prx/libSceNKWebKit/src/Frame.cpp) (libSceNKWebKit) - WKFrameCanProvideSource, WKFrameIsDisplayingMarkupDocument, WKFrameIsDisplayingStandaloneImageDocument and WKFrameIsMainFrame query state from host WKFrame instances following [WebFrameProxy.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/WebFrameProxy.cpp#L189-L192) where canProvideSource returns isDisplayingMarkupDocument(). Upstream isMainFrame and markup/image queries derive from the page's main frame and MIME types; currently these flags are only set in test instances. Null or mismatched pointers throw.
 - [Page navigation queries](../../../core/libs/prx/libSceNKWebKit/src/PageNavigation.cpp) (libSceNKWebKit) - `WKPageCanGoBack` and `WKPageCanGoForward` return false for every page until page navigation is implemented; no export creates or navigates a page yet.
+- [WKImage size handling](../../../core/libs/prx/libSceNKWebKit/src/Image.cpp) (libSceNKWebKit) - `WKImageCreate` stores truncated integer dimensions matching `toIntSize` in `WKSharedAPICast.h` / `WebImage::create` without allocating pixel backing; `options` is ignored, `WKImageCreateCairoSurface` and `WKImageCreateFromCairoSurface` still throw, and device behavior for zero or failed allocations is unverified.
 - [WTF main thread and run loop identification](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - `initializeMainThread`, `isMainThread`, `isMainRunLoop` and `isMainThreadOrGCThread` identify the initialising thread as the WebKit main thread and query whether the current thread is the main thread; garbage-collection worker threads are unmodelled and console execution is unverified.
 
 - [User content URL pattern matching](../../../core/libs/prx/libSceNKWebKit/src/UserContentURLPattern.cpp) (libSceNKWebKit) - URL canonicalization, port matching, non-standard schemes and console execution remain unverified against the device. Host matching follows the pinned [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/UserContentURLPattern.cpp).
@@ -115,7 +123,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
 - [WebCore text dumps](../../../core/libs/prx/libSceNKWebKit/src/WebCoreDump.cpp) (libSceNKWebKit) - the `operator<<(TextStream&, ...)` overloads for geometry, transforms, `ScrollAlignment` and scrolling and graphics enums follow the pinned [`FloatPoint.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatPoint.cpp), [`GraphicsTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/GraphicsTypes.cpp) and [`ScrollTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/ScrollTypes.cpp); expectations are hand-derived and not checked against console binaries. They rely on the `TextStream` exports and layout of the WTF text change. `XYZ_D65` prints `XYZ-D50`, as in that source; a `CompositeOperator` or `BlendMode` outside its name table throws.
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6045 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5994 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -148,9 +156,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleClearHistoryForTesting` | `4XbhuyqB6pA` |
 | `WKBundleClearResourceLoadStatistics` | `zm7AblpGSLk` |
 | `WKBundleCreateWKDataFromUInt8Array` | `IOaozfGUAFI` |
-| `WKBundleDOMWindowExtensionCreate` | `fI5-EhJqxeA` |
-| `WKBundleDOMWindowExtensionGetFrame` | `VN5TX+cUFf4` |
-| `WKBundleDOMWindowExtensionGetScriptWorld` | `CFtAcs7A434` |
 | `WKBundleFrameAllowsFollowingLink` | `pmZi4yM8pxM` |
 | `WKBundleFrameCallShouldCloseOnWebView` | `N+icA-jvTHs` |
 | `WKBundleFrameClearOpener` | `5XkPh73uOas` |
@@ -418,10 +423,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKHTTPCookieStoreDeleteAllCookies` | `mVoWS3zTfxs` |
 | `WKHTTPCookieStoreSetCookieForHostname` | `bXKJvpaEKpk` |
 | `WKHTTPCookieStoreSetHTTPCookieAcceptPolicy` | `AP4g3QKWeFg` |
-| `WKImageCreate` | `AxkrIoArfIs` |
 | `WKImageCreateCairoSurface` | `1QfyjHj40es` |
 | `WKImageCreateFromCairoSurface` | `jJePHioTWw0` |
-| `WKImageGetSize` | `NfSMc-E4OA0` |
 | `WKImeEventGetInputLanguage` | `YZP9-KrWVgc` |
 | `WKImeEventMake` | `E5qbM3aFc2s` |
 | `WKImeEventRelease` | `7Oc5AygU+9Q` |
@@ -657,8 +660,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKSecurityOriginCreateFromDatabaseIdentifier` | `50a9aq8a5AQ` |
 | `WKSecurityOriginCreateFromString` | `SfMLraLeAvo` |
 | `WKSendDisplayConfigurationChangedMessageForTesting` | `CQsllLq8d7I` |
-| `WKSerializedScriptValueCreate` | `10fsdhg9448` |
-| `WKSerializedScriptValueDeserialize` | `GzcqLy9vAYY` |
 | `WKTextCheckerSetTestingMode` | `uhbwdrVWKnk` |
 | `WKURLRequestCopyFirstPartyForCookies` | `l0Hmd0lFea8` |
 | `WKURLRequestCopyHTTPMethod` | `SxWVkTIB01Y` |
@@ -1569,7 +1570,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF24currentTextBreakLocaleIDEv` | `xr2263Do-NU` |
 | `_ZN3WTF25activateSignalHandlersForENS_6SignalE` | `Pyu7Zyt6XUE` |
 | `_ZN3WTF26getAndResetAccumulatedLogsEv` | `bD3nxh6Om44` |
-| `_ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE` | `3DqiPW3mayI` |
 | `_ZN3WTF30numCodeUnitsInGraphemeClustersENS_10StringViewEj` | `3PZOiy2oZ9w` |
 | `_ZN3WTF31NonSharedCharacterBreakIteratorC1ENS_10StringViewE` | `Ug-4pREiQoY` |
 | `_ZN3WTF31NonSharedCharacterBreakIteratorC2ENS_10StringViewE` | `I5vyOoVvcEw` |
@@ -2964,7 +2964,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore18documentTypeStringERKNS_8DocumentE` | `oXgkWQRuOzU` |
 | `_ZN7WebCore18isEditablePositionERKNS_8PositionENS_12EditableTypeE` | `XoqhvWYzuvU` |
 | `_ZN7WebCore18isStartOfParagraphERKNS_15VisiblePositionENS_27EditingBoundaryCrossingRuleE` | `Q0Ockqsjzp0` |
-| `_ZN7WebCore18isValidContentTypeERKN3WTF6StringENS_4ModeE` | `ewE3P6Jh1n4` |
 | `_ZN7WebCore18platformStrategiesEv` | `tBw4xNkm5xY` |
 | `_ZN7WebCore18pluginScriptObjectEPN3JSC14JSGlobalObjectEPNS_13JSHTMLElementE` | `RbuBuPUm5-0` |
 | `_ZN7WebCore18pluginTooSmallTextEv` | `ryA0BvjZKrY` |
@@ -4517,8 +4516,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector21CSSFrontendDispatcher17styleSheetChangedERKN3WTF6StringE` | `ki3Vuu7oPhg` |
 | `_ZN9Inspector21CSSFrontendDispatcher17styleSheetRemovedERKN3WTF6StringE` | `OxDS41BqXws` |
 | `_ZN9Inspector21CSSFrontendDispatcher23mediaQueryResultChangedEv` | `PQ3n7JgVcUw` |
-| `_ZN9Inspector21CSSFrontendDispatchernaEmPv` | `QABMTc77l10` |
-| `_ZN9Inspector21CSSFrontendDispatchernwEmPv` | `VXzAXY+RUM4` |
 | `_ZN9Inspector21DOMFrontendDispatcher15documentUpdatedEv` | `jwsSD7ZhRvw` |
 | `_ZN9Inspector21DOMFrontendDispatcher16attributeRemovedEiRKN3WTF6StringE` | `xzkqkH5qWbc` |
 | `_ZN9Inspector21DOMFrontendDispatcher16childNodeRemovedEii` | `v+mo-+xOSx8` |
@@ -4532,8 +4529,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector21DOMFrontendDispatcher25customElementStateChangedEiNS_8Protocol3DOM18CustomElementStateE` | `GYqyvAJtRdw` |
 | `_ZN9Inspector21DOMFrontendDispatcher34powerEfficientPlaybackStateChangedEidb` | `B-fuSvib9CA` |
 | `_ZN9Inspector21DOMFrontendDispatcher7inspectEi` | `JcUZCNbdFGA` |
-| `_ZN9Inspector21DOMFrontendDispatchernaEmPv` | `kihUpacjs+I` |
-| `_ZN9Inspector21DOMFrontendDispatchernwEmPv` | `CgBCrLvqRUQ` |
 | `_ZN9Inspector21HeapBackendDispatcherC1ERNS_17BackendDispatcherEPNS_28HeapBackendDispatcherHandlerE` | `zd3EU-HBSf8` |
 | `_ZN9Inspector21HeapBackendDispatcherC2ERNS_17BackendDispatcherEPNS_28HeapBackendDispatcherHandlerE` | `vfjcDZZ8eBY` |
 | `_ZN9Inspector21InjectedScriptManager10disconnectEv` | `uK-XPIiI+jQ` |
@@ -4587,8 +4582,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector22ContentSearchUtilities29countRegularExpressionMatchesERKN3JSC4Yarr17RegularExpressionERKN3WTF6StringE` | `jmHSpqaEYMI` |
 | `_ZN9Inspector22ContentSearchUtilities38createRegularExpressionForSearchStringERKN3WTF6StringEbNS0_16SearchStringTypeE` | `UlQSBk8DDBg` |
 | `_ZN9Inspector22HeapFrontendDispatcher16trackingCompleteEdRKN3WTF6StringE` | `kD4ppqGHUsI` |
-| `_ZN9Inspector22HeapFrontendDispatchernaEmPv` | `Bea-ElS5IZA` |
-| `_ZN9Inspector22HeapFrontendDispatchernwEmPv` | `s8GYJeFHkAM` |
 | `_ZN9Inspector22InspectorDebuggerAgent11addListenerERNS0_8ListenerE` | `gVyCSJTFRbY` |
 | `_ZN9Inspector22InspectorDebuggerAgent11didContinueEv` | `O6bxDsGmlvg` |
 | `_ZN9Inspector22InspectorDebuggerAgent12assertPausedERN3WTF6StringE` | `Hkm3Dfu-aW4` |
@@ -4623,8 +4616,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector22PageFrontendDispatcher19frameStoppedLoadingERKN3WTF6StringE` | `SNxP9g4ifrE` |
 | `_ZN9Inspector22PageFrontendDispatcher20domContentEventFiredEd` | `hk2Vi4aJODY` |
 | `_ZN9Inspector22PageFrontendDispatcher24frameScheduledNavigationERKN3WTF6StringEd` | `e50w9CgqAVM` |
-| `_ZN9Inspector22PageFrontendDispatchernaEmPv` | `u3NmAGMYF2E` |
-| `_ZN9Inspector22PageFrontendDispatchernwEmPv` | `n2jDNez3pz8` |
 | `_ZN9Inspector22RemoteAutomationTarget11setIsPairedEb` | `VyeMG5If2f8` |
 | `_ZN9Inspector22RemoteAutomationTargetC2Ev` | `R1UArToVtOY` |
 | `_ZN9Inspector22RemoteAutomationTargetD0Ev` | `ewpJla+Xdkk` |
@@ -4655,8 +4646,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector24CanvasFrontendDispatcher16recordingStartedERKN3WTF6StringENS_8Protocol9Recording9InitiatorE` | `16iE1U5SFuk` |
 | `_ZN9Inspector24CanvasFrontendDispatcher18clientNodesChangedERKN3WTF6StringE` | `6Ah3qEzF5fg` |
 | `_ZN9Inspector24CanvasFrontendDispatcher19canvasMemoryChangedERKN3WTF6StringEd` | `XrTJtDbKnHg` |
-| `_ZN9Inspector24CanvasFrontendDispatchernaEmPv` | `9uLllMP6nhU` |
-| `_ZN9Inspector24CanvasFrontendDispatchernwEmPv` | `GpDR4arH8lM` |
 | `_ZN9Inspector24ConsoleBackendDispatcher6createERNS_17BackendDispatcherEPNS_31ConsoleBackendDispatcherHandlerE` | `lJ3w1fkalI0` |
 | `_ZN9Inspector24ConsoleBackendDispatcherC1ERNS_17BackendDispatcherEPNS_31ConsoleBackendDispatcherHandlerE` | `XFzf4GhJqa0` |
 | `_ZN9Inspector24ConsoleBackendDispatcherC2ERNS_17BackendDispatcherEPNS_31ConsoleBackendDispatcherHandlerE` | `wSISvG5+77c` |
@@ -4679,17 +4668,9 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector24TargetFrontendDispatcher15targetDestroyedERKN3WTF6StringE` | `eVUG1wzRuAA` |
 | `_ZN9Inspector24TargetFrontendDispatcher25dispatchMessageFromTargetERKN3WTF6StringES4_` | `E6XSG7zCNk8` |
 | `_ZN9Inspector24TargetFrontendDispatcher26didCommitProvisionalTargetERKN3WTF6StringES4_` | `NWZbcznrH4E` |
-| `_ZN9Inspector24TargetFrontendDispatchernaEmPv` | `4rIiwRN5juk` |
-| `_ZN9Inspector24TargetFrontendDispatchernwEmPv` | `LrVLyMhdlF4` |
 | `_ZN9Inspector24WorkerFrontendDispatcher13workerCreatedERKN3WTF6StringES4_S4_` | `Nk-XIvILlUQ` |
 | `_ZN9Inspector24WorkerFrontendDispatcher16workerTerminatedERKN3WTF6StringE` | `apl6KD3oTLg` |
 | `_ZN9Inspector24WorkerFrontendDispatcher25dispatchMessageFromWorkerERKN3WTF6StringES4_` | `4Mbb6GJcxos` |
-| `_ZN9Inspector24WorkerFrontendDispatchernaEmPv` | `5I8V274Iw9Y` |
-| `_ZN9Inspector24WorkerFrontendDispatchernwEmPv` | `X3xFNY5k+MQ` |
-| `_ZN9Inspector25BrowserFrontendDispatchernaEmPv` | `BQyTr76CMQc` |
-| `_ZN9Inspector25BrowserFrontendDispatchernwEmPv` | `8p8NfEvYtak` |
-| `_ZN9Inspector25ConsoleFrontendDispatchernaEmPv` | `XjmU-UvchPg` |
-| `_ZN9Inspector25ConsoleFrontendDispatchernwEmPv` | `zvvWMJWZYmk` |
 | `_ZN9Inspector25DatabaseBackendDispatcher6createERNS_17BackendDispatcherEPNS_32DatabaseBackendDispatcherHandlerE` | `o34cne4Sze8` |
 | `_ZN9Inspector25DatabaseBackendDispatcherC1ERNS_17BackendDispatcherEPNS_32DatabaseBackendDispatcherHandlerE` | `t4zuLZWFIwE` |
 | `_ZN9Inspector25DatabaseBackendDispatcherC2ERNS_17BackendDispatcherEPNS_32DatabaseBackendDispatcherHandlerE` | `bQh0h2PF49M` |
@@ -4702,10 +4683,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector25NetworkFrontendDispatcher15webSocketClosedERKN3WTF6StringEd` | `NgTYaNYsSsk` |
 | `_ZN9Inspector25NetworkFrontendDispatcher16webSocketCreatedERKN3WTF6StringES4_` | `X9OuYB-jm2A` |
 | `_ZN9Inspector25NetworkFrontendDispatcher19webSocketFrameErrorERKN3WTF6StringEdS4_` | `RZsx7hJC89c` |
-| `_ZN9Inspector25NetworkFrontendDispatchernaEmPv` | `SJZPlWOFp24` |
-| `_ZN9Inspector25NetworkFrontendDispatchernwEmPv` | `a39DFeFUxK0` |
-| `_ZN9Inspector25RuntimeFrontendDispatchernaEmPv` | `LCPCX6fHPQY` |
-| `_ZN9Inspector25RuntimeFrontendDispatchernwEmPv` | `JbWUV6K+82c` |
 | `_ZN9Inspector25TimelineBackendDispatcher6createERNS_17BackendDispatcherEPNS_32TimelineBackendDispatcherHandlerE` | `aY2-NdiJ7es` |
 | `_ZN9Inspector25TimelineBackendDispatcherC1ERNS_17BackendDispatcherEPNS_32TimelineBackendDispatcherHandlerE` | `3u2GoRYVhr8` |
 | `_ZN9Inspector25TimelineBackendDispatcherC2ERNS_17BackendDispatcherEPNS_32TimelineBackendDispatcherHandlerE` | `aMhqQdD0-Ho` |
@@ -4714,14 +4691,10 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector26AnimationBackendDispatcherC1ERNS_17BackendDispatcherEPNS_33AnimationBackendDispatcherHandlerE` | `kmZFGloXNak` |
 | `_ZN9Inspector26AnimationBackendDispatcherC2ERNS_17BackendDispatcherEPNS_33AnimationBackendDispatcherHandlerE` | `QXoN8WJ6Elc` |
 | `_ZN9Inspector26AnimationBackendDispatcherD0Ev` | `pQ+OGYuSoTM` |
-| `_ZN9Inspector26DatabaseFrontendDispatchernaEmPv` | `crUhCyhBS3k` |
-| `_ZN9Inspector26DatabaseFrontendDispatchernwEmPv` | `vtxQvXlNvHk` |
 | `_ZN9Inspector26DebuggerFrontendDispatcher19globalObjectClearedEv` | `To0+90ONW9w` |
 | `_ZN9Inspector26DebuggerFrontendDispatcher19scriptFailedToParseERKN3WTF6StringES4_iiS4_` | `a-YNP4O13AU` |
 | `_ZN9Inspector26DebuggerFrontendDispatcher25playBreakpointActionSoundEi` | `nz2Vn7gXKYE` |
 | `_ZN9Inspector26DebuggerFrontendDispatcher7resumedEv` | `CNQLeYqffyw` |
-| `_ZN9Inspector26DebuggerFrontendDispatchernaEmPv` | `bM5szLq16Ds` |
-| `_ZN9Inspector26DebuggerFrontendDispatchernwEmPv` | `7lO9jFyTA4A` |
 | `_ZN9Inspector26InspectorBackendDispatcher6createERNS_17BackendDispatcherEPNS_33InspectorBackendDispatcherHandlerE` | `4mDB1uYisIk` |
 | `_ZN9Inspector26InspectorBackendDispatcherC1ERNS_17BackendDispatcherEPNS_33InspectorBackendDispatcherHandlerE` | `HngShRrV5kE` |
 | `_ZN9Inspector26InspectorBackendDispatcherC2ERNS_17BackendDispatcherEPNS_33InspectorBackendDispatcherHandlerE` | `iA-vC0yvhuU` |
@@ -4732,14 +4705,10 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector26TimelineFrontendDispatcher16recordingStartedEd` | `zptosxCqOgw` |
 | `_ZN9Inspector26TimelineFrontendDispatcher16recordingStoppedEd` | `MzZ1vXfWlaY` |
 | `_ZN9Inspector26TimelineFrontendDispatcher18autoCaptureStartedEv` | `gSjDXUEB5Uk` |
-| `_ZN9Inspector26TimelineFrontendDispatchernaEmPv` | `NcCsEd0v9bM` |
-| `_ZN9Inspector26TimelineFrontendDispatchernwEmPv` | `M7nvMGJySqk` |
 | `_ZN9Inspector27AnimationFrontendDispatcher13targetChangedERKN3WTF6StringE` | `hd9m4Ozb-zU` |
 | `_ZN9Inspector27AnimationFrontendDispatcher13trackingStartEd` | `bb5o-YHu8vM` |
 | `_ZN9Inspector27AnimationFrontendDispatcher16trackingCompleteEd` | `RZHQT5QnVPQ` |
 | `_ZN9Inspector27AnimationFrontendDispatcher18animationDestroyedERKN3WTF6StringE` | `bMlLM2uzdB8` |
-| `_ZN9Inspector27AnimationFrontendDispatchernaEmPv` | `cj7hx7O-vF4` |
-| `_ZN9Inspector27AnimationFrontendDispatchernwEmPv` | `KaUFjN7Vu+s` |
 | `_ZN9Inspector27CSSBackendDispatcherHandlerC2ERKS0_` | `EgHudGJawMs` |
 | `_ZN9Inspector27CSSBackendDispatcherHandlerC2Ev` | `CEQjJzzBB+M` |
 | `_ZN9Inspector27CSSBackendDispatcherHandlerD0Ev` | `k801tcAVuJg` |
@@ -4751,11 +4720,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector27DOMStorageBackendDispatcherC2ERNS_17BackendDispatcherEPNS_34DOMStorageBackendDispatcherHandlerE` | `KP5mNSzvl9M` |
 | `_ZN9Inspector27DOMStorageBackendDispatcherD0Ev` | `xcuJj4t8vWQ` |
 | `_ZN9Inspector27InspectorFrontendDispatcher25evaluateForTestInFrontendERKN3WTF6StringE` | `jALEBkxiGfU` |
-| `_ZN9Inspector27InspectorFrontendDispatchernaEmPv` | `up4R3KfldIo` |
-| `_ZN9Inspector27InspectorFrontendDispatchernwEmPv` | `EPdBkepv-2k` |
 | `_ZN9Inspector27LayerTreeFrontendDispatcher18layerTreeDidChangeEv` | `eS6QfGn5eCY` |
-| `_ZN9Inspector27LayerTreeFrontendDispatchernaEmPv` | `QOQ5LTPxvK4` |
-| `_ZN9Inspector27LayerTreeFrontendDispatchernwEmPv` | `zmtI0YFu-VU` |
 | `_ZN9Inspector27PerGlobalObjectWrapperWorld10addWrapperEPN3JSC14JSGlobalObjectEPNS1_8JSObjectE` | `GXnv8GxjAYw` |
 | `_ZN9Inspector27PerGlobalObjectWrapperWorld10getWrapperEPN3JSC14JSGlobalObjectE` | `RVTSv7erUVw` |
 | `_ZN9Inspector27PerGlobalObjectWrapperWorld16clearAllWrappersEv` | `aTRth+22E8I` |
@@ -4769,8 +4734,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector28DOMDebuggerBackendDispatcher6createERNS_17BackendDispatcherEPNS_35DOMDebuggerBackendDispatcherHandlerE` | `sFGaQpsGDc4` |
 | `_ZN9Inspector28DOMDebuggerBackendDispatcherC1ERNS_17BackendDispatcherEPNS_35DOMDebuggerBackendDispatcherHandlerE` | `n169H+q43G0` |
 | `_ZN9Inspector28DOMDebuggerBackendDispatcherC2ERNS_17BackendDispatcherEPNS_35DOMDebuggerBackendDispatcherHandlerE` | `a-1bf8VqyHk` |
-| `_ZN9Inspector28DOMStorageFrontendDispatchernaEmPv` | `sBxCIRS9NKs` |
-| `_ZN9Inspector28DOMStorageFrontendDispatchernwEmPv` | `ZRga3V8LApU` |
 | `_ZN9Inspector28HeapBackendDispatcherHandlerC2ERKS0_` | `IDYAnLE0+kM` |
 | `_ZN9Inspector28HeapBackendDispatcherHandlerC2Ev` | `tai-HSaPBZU` |
 | `_ZN9Inspector28HeapBackendDispatcherHandlerD0Ev` | `k4HfprWhc0Q` |
@@ -4832,8 +4795,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector32DebuggerBackendDispatcherHandlerC2Ev` | `tGIL+vkTlJA` |
 | `_ZN9Inspector32DebuggerBackendDispatcherHandlerD0Ev` | `TI5ES3rnuTI` |
 | `_ZN9Inspector32ScriptProfilerFrontendDispatcher13trackingStartEd` | `wf6EuM9IZW0` |
-| `_ZN9Inspector32ScriptProfilerFrontendDispatchernaEmPv` | `eIWOmJNeKUs` |
-| `_ZN9Inspector32ScriptProfilerFrontendDispatchernwEmPv` | `lcKHRKrE2sY` |
 | `_ZN9Inspector32TimelineBackendDispatcherHandlerC2ERKS0_` | `kFw-B-SsQUM` |
 | `_ZN9Inspector33AnimationBackendDispatcherHandlerC2ERKS0_` | `ueohGT35aPU` |
 | `_ZN9Inspector33AnimationBackendDispatcherHandlerC2Ev` | `Az0wDZ2JLeY` |
@@ -4850,8 +4811,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector33LayerTreeBackendDispatcherHandlerD0Ev` | `ClO-QNFpK2k` |
 | `_ZN9Inspector34ApplicationCacheFrontendDispatcher19networkStateUpdatedEb` | `hMmahzTAYpo` |
 | `_ZN9Inspector34ApplicationCacheFrontendDispatcher29applicationCacheStatusUpdatedERKN3WTF6StringES4_i` | `WuHl28C+7k0` |
-| `_ZN9Inspector34ApplicationCacheFrontendDispatchernaEmPv` | `eaUO-kQF49o` |
-| `_ZN9Inspector34ApplicationCacheFrontendDispatchernwEmPv` | `NnRO7tgv4Ok` |
 | `_ZN9Inspector34DOMStorageBackendDispatcherHandlerC2ERKS0_` | `ti05wqo4hwA` |
 | `_ZN9Inspector34DOMStorageBackendDispatcherHandlerC2Ev` | `8Y6RLatuTeM` |
 | `_ZN9Inspector34DOMStorageBackendDispatcherHandlerD0Ev` | `kfT6hC5SF+g` |
@@ -4966,7 +4925,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE` | `Ea+86Wd8S-g` |
 | `_ZNK3WTF3URL21truncatedForUseAsBaseEv` | `uekVJTVqBGc` |
 | `_ZNK3WTF3URL4dumpERNS_11PrintStreamE` | `ITwB6pPwmRc` |
-| `_ZNK3WTF6String18simplifyWhiteSpaceEPFbDsE` | `xuaSjMP7VYc` |
 | `_ZNK3WTF6String28convertToLowercaseWithLocaleERKNS_10AtomStringE` | `oxQpdsUY-cg` |
 | `_ZNK3WTF6String28convertToUppercaseWithLocaleERKNS_10AtomStringE` | `7IN+T9v1oAg` |
 | `_ZNK3WTF6String31convertToLowercaseWithoutLocaleEv` | `vQwAX-xV-Dg` |
@@ -6186,7 +6144,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WTF StringBuilder](../../../core/libs/prx/libSceNKWebKit/src/StringBuilder.cpp) (libSceNKWebKit) - throws where WebKit crashes: an overflow of a builder that crashes on overflow, a length sum above `UINT32_MAX`, `toString` after an overflow, and null characters with a nonzero length. It also throws where a debug assertion guards memory WebKit would corrupt: `reserveCapacity` on an empty 16-bit builder without a buffer, and [`appendQuotedJSONString`](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/StringBuilderJSON.cpp#L127-L128) of a 16-bit string into an 8-bit builder that holds an adopted string and no buffer. A capacity above the tree's `StringImpl` limit records an overflow, as a failed allocation does. Growing or shrinking a buffer with one reference copies it instead of calling `fastRealloc`, so its address always changes.
 - [WTF TextStream pointers](../../../core/libs/prx/libSceNKWebKit/src/TextStream.cpp) (libSceNKWebKit) - `operator<<(const void*)` formats the pointer as the tree's libc formats `%p` ([`snprintf`](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/TextStream.cpp#L114-L119) in WebKit); the console libc's output is unverified.
 - [WKBundleHitTestResult property getters](../../../core/libs/prx/libSceNKWebKit/src/BundleHitTestResult.cpp) (libSceNKWebKit) - hit test results are test-driven until injected bundle hit testing produces them.
-- [WKDownload property queries](../../../core/libs/prx/libSceNKWebKit/src/Download.cpp) (libSceNKWebKit) - download properties reflect host state until downloads are connected to network transfers.
+- [WKBundleDOMWindowExtension creation and property accessors](../../../core/libs/prx/libSceNKWebKit/src/BundleDOMWindowExtension.cpp) (libSceNKWebKit) - DOM window extensions follow WebKit's Injected Bundle C API, retaining the frame and script world references; DOM window execution is test-driven.
+- [WKDownload property queries and cancellation](../../../core/libs/prx/libSceNKWebKit/src/Download.cpp) (libSceNKWebKit) - download properties and cancellation reflect host state until downloads are connected to network transfers.
 - [WKAXObject property getters](../../../core/libs/prx/libSceNKWebKit/src/AccessibilityObject.cpp) (libSceNKWebKit) - accessibility objects are test-driven until accessibility tree queries produce them.
 - [WKPopupMenuItem property queries](../../../core/libs/prx/libSceNKWebKit/src/PopupMenuItem.cpp) (libSceNKWebKit) - state fields are test-driven until a real popup menu source is connected.
 - [WKOpenPanelResultListener functions](../../../core/libs/prx/libSceNKWebKit/src/OpenPanelResultListener.cpp) (libSceNKWebKit) - nothing in the library creates a WKOpenPanelResultListener (no UI client requests open panels); stored results are not consumed by a file picker dialog; upstream invalidates the listener after the first call, and a null file array is treated as empty.

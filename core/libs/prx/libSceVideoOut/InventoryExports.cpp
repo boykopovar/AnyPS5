@@ -2,13 +2,16 @@
 #include "prx/libSceVideoOut/include/LegacyExports.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVideoOut/include/InventoryExports.hpp"
+#include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstdint>
 #include <cstring>
+#include <limits>
 
 namespace {
 constexpr int VideoOutErrorCurveSamplePoints = static_cast<int>(0x8029001Cu);
 constexpr int VideoOutErrorLatestEopHandle = static_cast<int>(0x802900FFu);
+constexpr int VideoOutErrorNoDevice = static_cast<int>(0x80290018u);
 
 std::uint32_t ModeFlags(const void* mode) {
     std::uint32_t flags;
@@ -191,7 +194,11 @@ int APS5_VABI sceVideoOutGetCoredumpOutputMode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutGetCurrentOutputMode_() {
+int APS5_VABI sceVideoOutGetCurrentOutputMode_(std::uint64_t bus, void* mode) {
+    if (mode == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
+    if (bus <= static_cast<std::uint64_t>(std::numeric_limits<int>::max()) && VideoOutDriver::Get().IsOpen(static_cast<int>(bus))) {
+        return VideoOutErrorNoDevice;
+    }
     NotImplemented_nid_no_patch(__func__);
 }
 
