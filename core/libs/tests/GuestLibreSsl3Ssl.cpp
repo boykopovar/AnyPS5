@@ -10,7 +10,9 @@
 #include <cstring>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -76,6 +78,34 @@ void CheckRetain(TRetain retain, std::size_t referenceOffset) {
     const std::int32_t finalCount = 4001;
     std::memcpy(expected.data() + offset, &finalCount, sizeof(finalCount));
     Require(Same(guarded, expected), "concurrent count or adjacent bytes changed");
+}
+
+void CheckVersionName() {
+    const std::array<std::pair<std::int32_t, const char*>, 10> cases = {{{0x0301, "TLSv1"},
+                                                                         {0x0302, "TLSv1.1"},
+                                                                         {0x0303, "TLSv1.2"},
+                                                                         {0x0304, "TLSv1.3"},
+                                                                         {0xFEFF, "DTLSv1"},
+                                                                         {0xFEFD, "DTLSv1.2"},
+                                                                         {0x0300, "unknown"},
+                                                                         {0x0305, "unknown"},
+                                                                         {0xFEFE, "unknown"},
+                                                                         {0, "unknown"}}};
+    for (const auto& [version, name] : cases) {
+        Guarded<LibreSsl3Ssl> guarded;
+        std::memset(&guarded, 0x5A, sizeof(guarded));
+        guarded.object.version = version;
+        const auto expected = Bytes(guarded);
+        Require(std::strcmp(SSL_get_version_nid_postfix(&guarded.object), name) == 0, "version name");
+        Require(Same(guarded, expected), "version name changed the connection");
+    }
+    bool threw = false;
+    try {
+        SSL_get_version_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null connection");
 }
 
 struct Versions {
@@ -164,6 +194,25 @@ void CheckVersionBounds() {
     const LibreSsl3SslMethod dtlsTls13{1, 0, 0, 0x0304, 0x0304};
     CheckBound(setMin, dtlsTls13, {0x0304, 0x0304, 0, 0}, 0xFEFF, 0, {0x0304, 0x0304, 0, 0},
                "clamped minimum without a DTLS form");
+}
+
+void CheckContextTimeout() {
+    Guarded<LibreSsl3SslCtx> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    guarded.object.sessionTimeout = 7200;
+    auto expected = Bytes(guarded);
+    Require(SSL_CTX_set_timeout_nid_postfix(&guarded.object, 7200) == 7200, "same timeout");
+    Require(Same(guarded, expected), "same timeout changed the context");
+    Require(SSL_CTX_set_timeout_nid_postfix(&guarded.object, 300) == 7200, "previous timeout");
+    Require(guarded.object.sessionTimeout == 300, "new timeout");
+    guarded.object.sessionTimeout = 7200;
+    Require(Same(guarded, expected), "timeout changed another field");
+    const auto large = std::numeric_limits<std::int64_t>::max();
+    Require(SSL_CTX_set_timeout_nid_postfix(&guarded.object, large) == 7200, "timeout before the 64-bit value");
+    Require(SSL_CTX_set_timeout_nid_postfix(&guarded.object, -1) == large, "64-bit timeout");
+    Require(SSL_CTX_set_timeout_nid_postfix(&guarded.object, 0) == -1, "negative timeout");
+    Require(SSL_CTX_set_timeout_nid_postfix(&guarded.object, 0) == 0, "zero timeout");
+    Require(SSL_CTX_set_timeout_nid_postfix(nullptr, 300) == 0, "null context");
 }
 
 void CheckClientRandom() {
@@ -261,8 +310,10 @@ void CheckX509Version() {
 int main() {
     CheckRetain<LibreSsl3Ssl>(SSL_up_ref_nid_postfix, 176);
     CheckRetain<LibreSsl3SslSession>(SSL_SESSION_up_ref_nid_postfix, 184);
+    CheckVersionName();
     CheckVersionBounds();
     CheckClientRandom();
+    CheckContextTimeout();
     CheckRetain<LibreSsl3X509>(X509_up_ref_nid_postfix, 28);
     CheckX509Version();
     return 0;

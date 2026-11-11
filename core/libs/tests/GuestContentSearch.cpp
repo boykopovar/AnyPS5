@@ -110,6 +110,7 @@ int main() {
     updateId = -1;
 
     Require(sceContentSearchGetContentLastUpdateId(nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchGetContentLastUpdateId(reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
     Require(sceContentSearchGetApplicationLastUpdateId(nullptr) == ErrorInvalidArgument);
     Require(sceContentSearchGetMyApplicationIndex(nullptr) == ErrorInvalidArgument);
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, nullptr, &updateId) == ErrorInvalidArgument);
@@ -117,10 +118,22 @@ int main() {
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 0, &count, &updateId) == ErrorInvalidArgument);
     Require(sceContentSearchGetNumOfApplication(&columnSet, 0, &orderBy, 1, &count, &updateId) == ErrorInvalidArgument);
     Require(sceContentSearchGetNumOfContent(&columnSet, 1, nullptr, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetNumOfContent(&columnSet, 1, reinterpret_cast<std::int64_t*>(0x10), &updateId) == ErrorInvalidArgument);
+    count = -1;
     Require(sceContentSearchGetNumOfContent(&columnSet, 1, &count, nullptr) == ErrorInvalidArgument);
+    Require(count == -1);
+    Require(sceContentSearchGetNumOfContent(&columnSet, 1, &count, reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(count == 0);
     Require(sceContentSearchGetTotalContentSize(nullptr, 1, &size, &updateId) == ErrorInvalidArgument);
     Require(sceContentSearchGetTotalContentSize(nullptr, 0, nullptr, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetTotalContentSize(nullptr, 0, reinterpret_cast<std::int64_t*>(0x10), &updateId) == ErrorInvalidArgument);
+    size = -1;
     Require(sceContentSearchGetTotalContentSize(nullptr, 0, &size, nullptr) == ErrorInvalidArgument);
+    Require(size == -1);
+    Require(sceContentSearchGetTotalContentSize(nullptr, 0, &size, reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(size == 0);
+    count = -1;
+    size = -1;
     std::int32_t metadataType = 0, fieldSize = 0;
     Require(sceContentSearchGetMetadataFieldInfo(1, nullptr, nullptr, nullptr) == ErrorInvalidArgument);
     Require(sceContentSearchGetMetadataFieldInfo(1, "field", nullptr, &fieldSize) == ErrorInvalidArgument);

@@ -1,5 +1,6 @@
 #include "prx/libSceVrSetupDialog/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -52,7 +53,11 @@ int APS5_VABI sceVrSetupDialogGetResult(std::int32_t* result) {
     if (result == nullptr) return VR_SETUP_DIALOG_ERROR_INVALID_ARGUMENT;
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return VR_SETUP_DIALOG_ERROR_NOT_INITIALIZED;
-    *result = COMMON_DIALOG_RESULT_USER_CANCELED;
+    const std::int32_t canceled = COMMON_DIALOG_RESULT_USER_CANCELED;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &canceled, sizeof(canceled));
+    errno = savedErrno;
+    if (!copied) return VR_SETUP_DIALOG_ERROR_INVALID_ARGUMENT;
     if (status != COMMON_DIALOG_STATUS_FINISHED) return VR_SETUP_DIALOG_ERROR_BUSY;
     return 0;
 }

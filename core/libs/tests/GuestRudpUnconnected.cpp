@@ -19,6 +19,7 @@ constexpr int NotInitialized = static_cast<int>(0x80770001u);
 constexpr int InvalidContext = static_cast<int>(0x80770003u);
 constexpr int InvalidArgument = static_cast<int>(0x80770004u);
 constexpr int NotAcceptable = static_cast<int>(0x80770011u);
+constexpr int NotBound = static_cast<int>(0x80770013u);
 
 using FlushFn = int (APS5_VABI*)(int);
 using BufferStatusFn = int (APS5_VABI*)(int, void*, std::size_t);
@@ -67,6 +68,21 @@ bool BufferStatusIs(BufferStatusFn bufferStatus, int context, std::size_t size, 
     return true;
 }
 
+bool LocalInfoUntouched(int context, int expected) {
+    int socketId = 0x5a5a;
+    std::uint16_t vport = 0x5a5a;
+    std::uint8_t muxMode = 0x5a;
+    std::array<std::uint8_t, 0x20> address;
+    address.fill(0x5a);
+    std::uint32_t addressLen = 0x20;
+    if (sceRudpGetLocalInfo(context, &socketId, address.data(), &addressLen, &vport, &muxMode) != expected) return false;
+    for (const auto byte : address) {
+        if (byte != 0x5a) return false;
+    }
+    return socketId == 0x5a5a && vport == 0x5a5a && muxMode == 0x5a && addressLen == 0x20 &&
+           sceRudpGetLocalInfo(context, nullptr, nullptr, nullptr, nullptr, nullptr) == expected;
+}
+
 }
 
 int main() {
@@ -77,10 +93,12 @@ int main() {
     Require(flush(0) == NotInitialized && flush(-1) == NotInitialized, "a flush before sceRudpInit did not return NOT_INITIALIZED");
     Require(RemoteInfoUntouched(0, NotInitialized), "remote info before sceRudpInit did not return NOT_INITIALIZED");
     Require(BufferStatusIs(bufferStatus, 0, 16, NotInitialized, 0x5a) && bufferStatus(-1, nullptr, 0) == NotInitialized, "a buffer status before sceRudpInit did not return NOT_INITIALIZED");
+    Require(LocalInfoUntouched(0, NotInitialized) && LocalInfoUntouched(-1, NotInitialized), "local info before sceRudpInit did not return NOT_INITIALIZED");
 
     Require(sceRudpInit_nid_postfix(pool.data(), static_cast<int>(pool.size())) == 0, "sceRudpInit failed");
     Require(flush(-1) == InvalidArgument && flush(0) == InvalidContext && flush(12345) == InvalidContext, "a flush without a context was not refused in order");
     Require(RemoteInfoUntouched(-1, InvalidArgument) && RemoteInfoUntouched(12345, InvalidContext), "remote info without a context was not refused in order");
+    Require(LocalInfoUntouched(-1, InvalidArgument) && LocalInfoUntouched(12345, InvalidContext), "local info without a context was not refused in order");
     Require(BufferStatusIs(bufferStatus, -1, 16, InvalidArgument, 0x5a) && BufferStatusIs(bufferStatus, 12345, 16, InvalidContext, 0x5a), "a buffer status without a context was not refused in order");
     Require(bufferStatus(12345, nullptr, 16) == InvalidArgument && BufferStatusIs(bufferStatus, 12345, 0, InvalidArgument, 0x5a) && BufferStatusIs(bufferStatus, 12345, 17, InvalidArgument, 0x5a), "the buffer status arguments were not checked before the context");
     Require(BufferStatusIs(bufferStatus, 12345, static_cast<std::size_t>(0x100000010ull), InvalidArgument, 0x5a), "a buffer status size above 32 bits was cut");
@@ -89,15 +107,37 @@ int main() {
     Require(sceRudpCreateContext(Handler, nullptr, &context) == 0 && context >= 0, "sceRudpCreateContext failed");
     Require(flush(context) == NotAcceptable, "a flush on an unconnected context did not return NOT_ACCEPTABLE");
     Require(RemoteInfoUntouched(context, NotAcceptable), "remote info on an unconnected context did not return NOT_ACCEPTABLE");
+    Require(LocalInfoUntouched(context, NotBound), "an unbound context was accepted by local info");
     for (std::size_t size = 1; size <= 16; ++size) {
         Require(BufferStatusIs(bufferStatus, context, size, 0, 0), "the buffer status was not size zero bytes");
     }
     Require(BufferStatusIs(bufferStatus, context, 17, InvalidArgument, 0x5a), "a buffer status of 17 bytes was taken");
 
+    Require(sceRudpBind(context, 10, 0x1234, 1) == 0, "sceRudpBind failed");
+    int socketId = -1;
+    std::uint16_t vport = 0;
+    std::uint8_t muxMode = 0;
+    Require(sceRudpGetLocalInfo(context, nullptr, nullptr, nullptr, nullptr, nullptr) == 0, "a null local info query on a bound context failed");
+    Require(sceRudpGetLocalInfo(context, &socketId, nullptr, nullptr, &vport, &muxMode) == 0, "a local info query without address failed");
+    Require(socketId == 10 && vport == 0x1234 && muxMode == 1, "local info returned incorrect socket, vport, or muxMode");
+
+    std::array<std::uint8_t, 0x20> addr;
+    addr.fill(0x5a);
+    Require(sceRudpGetLocalInfo(context, nullptr, addr.data(), nullptr, nullptr, nullptr) == 0, "a local info query with addr and null len failed");
+    for (const auto byte : addr) {
+        Require(byte == 0x5a, "local info modified addr when addrLen was null");
+    }
+
+    std::uint32_t addrLen = 0;
+    Require(sceRudpGetLocalInfo(context, nullptr, addr.data(), &addrLen, nullptr, nullptr) == 0, "a local info query with zero addrLen failed");
+    for (const auto byte : addr) {
+        Require(byte == 0x5a, "local info modified addr when addrLen was zero");
+    }
+
     Require(sceRudpTerminate(context) == 0, "sceRudpTerminate failed");
-    Require(flush(context) == InvalidContext && RemoteInfoUntouched(context, InvalidContext) && BufferStatusIs(bufferStatus, context, 16, InvalidContext, 0x5a), "a terminated context was taken");
+    Require(flush(context) == InvalidContext && RemoteInfoUntouched(context, InvalidContext) && BufferStatusIs(bufferStatus, context, 16, InvalidContext, 0x5a) && LocalInfoUntouched(context, InvalidContext), "a terminated context was taken");
     Require(sceRudpEnd() == 0, "sceRudpEnd failed");
-    Require(flush(context) == NotInitialized && RemoteInfoUntouched(context, NotInitialized) && BufferStatusIs(bufferStatus, context, 16, NotInitialized, 0x5a), "a call after sceRudpEnd did not return NOT_INITIALIZED");
+    Require(flush(context) == NotInitialized && RemoteInfoUntouched(context, NotInitialized) && BufferStatusIs(bufferStatus, context, 16, NotInitialized, 0x5a) && LocalInfoUntouched(context, NotInitialized), "a call after sceRudpEnd did not return NOT_INITIALIZED");
 
     std::puts("Rudp unconnected tests passed");
     return 0;

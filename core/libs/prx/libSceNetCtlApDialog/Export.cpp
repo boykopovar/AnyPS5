@@ -1,4 +1,5 @@
 #include "prx/libSceNetCtlApDialog/include/Api.hpp"
+#include <cerrno>
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
@@ -68,9 +69,17 @@ int APS5_VABI sceNetCtlApDialogGetResult(NetCtlApDialogResult* result) {
  if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
  const int status = g_status.load();
  if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
- if (!std::all_of(std::begin(result->reserved), std::end(result->reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ NetCtlApDialogResult inResult{};
+ const int savedErrno = errno;
+ const bool read = GuestCopyIn_nid_no_patch(&inResult, result, sizeof(inResult));
+ errno = savedErrno;
+ if (!read) return COMMON_DIALOG_ERROR_ARG_NULL;
+ if (!std::all_of(std::begin(inResult.reserved), std::end(inResult.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
- result->result = COMMON_DIALOG_RESULT_USER_CANCELED;
+ const std::int32_t cancelResult = COMMON_DIALOG_RESULT_USER_CANCELED;
+ const bool copied = GuestCopyOut_nid_no_patch(&result->result, &cancelResult, sizeof(cancelResult));
+ errno = savedErrno;
+ if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
  return COMMON_DIALOG_RESULT_USER_CANCELED;
 }
 

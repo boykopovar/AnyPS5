@@ -150,17 +150,21 @@ std::string WithoutTrailingDot(const char* name) {
     return std::string(view);
 }
 
+struct MeasuredAbsentName {
+    const char* name;
+    int mib[3];
+    std::uint32_t length;
+};
+
+constexpr MeasuredAbsentName MeasuredAbsentNames[] = {
+    {"kern.sched.name", {1, 2147483182, 2147483181}, 3},
+    {"kern.smp.maxcpus", {1, 2147482816, 2147482814}, 3},
+    {"kern.stackprot", {1, 2147483151}, 2},
+    {"kern.timecounter.hardware", {1, 2147482838, 2147482834}, 3},
+};
+
 bool IsMeasuredAbsentMib(const int* name, std::uint32_t nameLength) {
-    static constexpr struct {
-        int mib[3];
-        std::uint32_t length;
-    } absent[] = {
-        {{1, 2147482816, 2147482814}, 3},
-        {{1, 2147483151}, 2},
-        {{1, 2147483182, 2147483181}, 3},
-        {{1, 2147482838, 2147482834}, 3},
-    };
-    for (const auto& entry : absent) {
+    for (const auto& entry : MeasuredAbsentNames) {
         if (nameLength == entry.length && std::memcmp(name, entry.mib, entry.length * sizeof(int)) == 0) return true;
     }
     return false;
@@ -840,6 +844,9 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
     };
     if (const int node = TopLevelNode(trimmed); node >= 0) return copyMib(&node, 1);
     for (const auto& entry : known) {
+        if (std::strcmp(name, entry.name) == 0) return copyMib(entry.mib, entry.length);
+    }
+    for (const auto& entry : MeasuredAbsentNames) {
         if (std::strcmp(name, entry.name) == 0) return copyMib(entry.mib, entry.length);
     }
     for (const auto& entry : SystemStrings) {
