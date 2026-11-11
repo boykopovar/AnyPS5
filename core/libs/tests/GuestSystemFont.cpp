@@ -228,9 +228,10 @@ static void CheckFrameDpi(FontHandle font, FontRenderer renderer) {
     Require(sceFontSetResolutionDpi(font, 96, 144) == SCE_FONT_OK);
     Require(sceFontBindRenderer(font, renderer) == SCE_FONT_OK);
     Require(sceFontSetupRenderScalePoint(font, 12.0f, 10.0f) == SCE_FONT_OK);
-    const auto render = [&](FontStyleFrame* frame) {
+    const auto render = [&](FontStyleFrame* frame, bool positioned = false) {
         return RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) {
             if (frame) Require(sceFontRenderSurfaceSetStyleFrame(surface, frame) == SCE_FONT_OK);
+            if (positioned) return sceFontRenderCharGlyphImage(font, 'A', surface, 10.0f, 20.0f, metrics, result);
             return sceFontRenderCharGlyphImageHorizontal(font, 'A', surface, 10.0f, 100.0f, metrics, result);
         });
     };
@@ -238,13 +239,24 @@ static void CheckFrameDpi(FontHandle font, FontRenderer renderer) {
     Require(sceFontStyleFrameInit(&matching) == SCE_FONT_OK);
     Require(sceFontStyleFrameSetResolutionDpi(&matching, 96, 144) == SCE_FONT_OK);
     Require(SameImage(render(nullptr), render(&matching)));
+    Require(SameImage(render(nullptr, true), render(&matching, true)));
     for (const auto& [horizontal, vertical] : {std::pair{96u, 144u}, std::pair{144u, 96u}, std::pair{192u, 288u}, std::pair{72u, 72u}}) {
         FontStyleFrame frame{};
         Require(sceFontStyleFrameInit(&frame) == SCE_FONT_OK);
         Require(sceFontStyleFrameSetResolutionDpi(&frame, horizontal, vertical) == SCE_FONT_OK);
         const auto inherited = render(&frame);
+        const auto inheritedPositioned = render(&frame, true);
         Require(sceFontStyleFrameSetScalePoint(&frame, 12.0f, 10.0f) == SCE_FONT_OK);
         Require(SameImage(inherited, render(&frame)));
+        const auto explicitPositioned = render(&frame, true);
+        if (!SameImage(inheritedPositioned, explicitPositioned)) {
+            std::fprintf(stderr, "DPI %u/%u positioned rectangles: inherited %u,%u %u,%u explicit %u,%u %u,%u\n",
+                horizontal, vertical, inheritedPositioned.result.UpdateRect.x, inheritedPositioned.result.UpdateRect.y,
+                inheritedPositioned.result.UpdateRect.w, inheritedPositioned.result.UpdateRect.h,
+                explicitPositioned.result.UpdateRect.x, explicitPositioned.result.UpdateRect.y,
+                explicitPositioned.result.UpdateRect.w, explicitPositioned.result.UpdateRect.h);
+        }
+        Require(SameImage(inheritedPositioned, explicitPositioned));
     }
     Require(sceFontSetupRenderScalePixel(font, 16.0f, 20.0f) == SCE_FONT_OK);
     Require(sceFontStyleFrameSetResolutionDpi(&matching, 192, 288) == SCE_FONT_OK);

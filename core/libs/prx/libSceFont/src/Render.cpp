@@ -34,24 +34,31 @@ RenderSurfaceSystemUse* SurfaceSystemUse(FontRenderSurface* surface) {
     return reinterpret_cast<RenderSurfaceSystemUse*>(surface->reserved_q);
 }
 
-bool SurfaceScaleFrame(FontRenderSurface* surface, StyleStateBlock& state, int& rc) {
+bool SurfaceScaleFrame(FontRenderSurface* surface, const StyleStateBlock& base, StyleStateBlock& state, int& rc) {
     if (!surface || (surface->styleFlag & 0x1) == 0) return false;
     const FontStyleFrame* frame = SurfaceSystemUse(surface)->styleframe;
-    if (!frame || (frame->flags1 & STYLE_FRAME_FLAG_SCALE) == 0) return false;
+    if (!frame) return false;
+    StyleStateBlock frameScale{};
+    if ((frame->flags1 & STYLE_FRAME_FLAG_SCALE) != 0) {
+        frameScale.dpi_x = frame->hDpi;
+        frameScale.dpi_y = frame->vDpi;
+        frameScale.scale_unit = frame->scaleUnit;
+        frameScale.scale_w = frame->scalePixelW;
+        frameScale.scale_h = frame->scalePixelH;
+    } else {
+        if (base.scale_unit == 0) return false;
+        StyleStateBlock combined{};
+        frameScale = *ApplyStyleFrame(&base, frame, combined);
+        if (frameScale.dpi_x == base.dpi_x && frameScale.dpi_y == base.dpi_y) return false;
+    }
     state = {};
-    state.dpi_x = frame->hDpi;
-    state.dpi_y = frame->vDpi;
+    state.dpi_x = frameScale.dpi_x;
+    state.dpi_y = frameScale.dpi_y;
     if ((frame->flags1 & STYLE_FRAME_FLAG_SLANT) != 0) state.slant_ratio = frame->slantRatio;
     if ((frame->flags1 & STYLE_FRAME_FLAG_WEIGHT) != 0) {
         state.effect_weight_x = frame->effectWeightX;
         state.effect_weight_y = frame->effectWeightY;
     }
-    StyleStateBlock frameScale{};
-    frameScale.dpi_x = frame->hDpi;
-    frameScale.dpi_y = frame->vDpi;
-    frameScale.scale_unit = frame->scaleUnit;
-    frameScale.scale_w = frame->scalePixelW;
-    frameScale.scale_h = frame->scalePixelH;
     rc = StyleStateGetScalePixel(&frameScale, &state.scale_w, &state.scale_h);
     return true;
 }
@@ -334,7 +341,7 @@ int APS5_VABI sceFontRenderCharGlyphImage(FontHandle fontHandle, std::uint32_t c
     float yUsed = y;
     if (horizontal) {
         float baseline = 0.0f;
-        if (!SurfaceScaleFrame(surface, frameState, preRc)) {
+        if (!SurfaceScaleFrame(surface, font->cached_style.state, frameState, preRc)) {
             preRc = CachedBaseline(fontHandle, font, baseline);
         } else {
             std::uint8_t layout[HORIZONTAL_LAYOUT_SIZE] = {};
@@ -348,7 +355,7 @@ int APS5_VABI sceFontRenderCharGlyphImage(FontHandle fontHandle, std::uint32_t c
         CachedStyleSetDirectionWord(font->cached_style, 1);
     } else {
         float offset = 0.0f;
-        if (!SurfaceScaleFrame(surface, frameState, preRc)) {
+        if (!SurfaceScaleFrame(surface, font->cached_style.state, frameState, preRc)) {
             preRc = CachedColumnOffset(fontHandle, font, offset);
         } else {
             std::uint8_t layout[VERTICAL_LAYOUT_SIZE] = {};
