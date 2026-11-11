@@ -305,6 +305,16 @@ void CheckX509Version() {
     CheckVersion(0x102, {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}, -1, TooSmall, "negative value below the minimum");
 }
 
+void CheckIsQuic() {
+    Require(SSL_is_quic_nid_postfix(nullptr) == 0, "null ssl is not quic");
+    LibreSsl3Ssl ssl{};
+    ssl.quicMethod = nullptr;
+    Require(SSL_is_quic_nid_postfix(&ssl) == 0, "ssl without quicMethod is not quic");
+    int dummyQuicMethod = 42;
+    ssl.quicMethod = &dummyQuicMethod;
+    Require(SSL_is_quic_nid_postfix(&ssl) == 1, "ssl with quicMethod is quic");
+}
+
 } // namespace
 
 int main() {
@@ -314,6 +324,7 @@ int main() {
     CheckVersionBounds();
     CheckClientRandom();
     CheckContextTimeout();
+    CheckIsQuic();
     CheckRetain<LibreSsl3X509>(X509_up_ref_nid_postfix, 28);
     CheckX509Version();
     return 0;
