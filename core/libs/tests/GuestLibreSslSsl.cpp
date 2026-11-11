@@ -1,8 +1,10 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -111,6 +113,21 @@ static void TestVerifyResult() {
     Require(SSL_get_verify_result_nid_postfix(Ssl(&ssl)) == -1);
 }
 
+static void TestGetPeerCertificateNullPaths() {
+    LibreSslPutError_nid_no_patch(1, 2, 3);
+    LibreSslPutError_nid_no_patch(4, 5, 6);
+    TestSsl ssl {};
+    unsigned char before[sizeof(ssl)];
+    std::memcpy(before, &ssl, sizeof(ssl));
+    Require(SSL_get_peer_certificate_nid_postfix(nullptr) == nullptr);
+    Require(SSL_get_peer_certificate_nid_postfix(Ssl(&ssl)) == nullptr);
+    Require(std::memcmp(&ssl, before, sizeof(ssl)) == 0);
+    Require(ERR_peek_error_nid_postfix() == ((std::uint64_t{1} << 24) | (std::uint64_t{2} << 12) | 3));
+    Require(ERR_get_error_nid_postfix() == ((std::uint64_t{1} << 24) | (std::uint64_t{2} << 12) | 3));
+    Require(ERR_get_error_nid_postfix() == ((std::uint64_t{4} << 24) | (std::uint64_t{5} << 12) | 6));
+    Require(ERR_get_error_nid_postfix() == 0);
+}
+
 static void TestGetShutdown() {
     TestSslInternal internal {};
     TestSsl ssl {};
@@ -206,6 +223,7 @@ int main() {
     TestGetWbio();
     TestVersion();
     TestVerifyResult();
+    TestGetPeerCertificateNullPaths();
     TestGetShutdown();
     TestWant();
     TestSetExData();
