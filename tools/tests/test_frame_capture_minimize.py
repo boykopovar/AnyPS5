@@ -237,5 +237,11 @@ if command == 'inspect':
             self.assertFalse(matched)
             self.assertIn("timed out", detail)
 
+    def test_write_plan_sorts_indexes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "plan"
+            frame_capture_minimize.Minimizer.write_plan(path, {8, 2}, {9, 1})
+            self.assertEqual(path.read_text(encoding="ascii"), "aps5-frame-filter 1\ncall 2\ncall 8\nchunk 1\nchunk 9\n")
+
 if __name__ == "__main__":
     unittest.main()
