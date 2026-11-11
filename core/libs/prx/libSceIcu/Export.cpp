@@ -119,22 +119,6 @@ int APS5_VABI u_releaseDefaultConverter_nid_postfix() {
 }
 
 
-int APS5_VABI u_tolower() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI u_totitle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI u_toupper() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ublock_getCode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ubrk_close() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -271,15 +255,7 @@ int APS5_VABI uloc_addLikelySubtags() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uloc_canonicalize() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uloc_countAvailable() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_forLanguageTag() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -287,31 +263,11 @@ int APS5_VABI uloc_getAvailable() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uloc_getBaseName() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uloc_getCharacterOrientation() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uloc_getCountry() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uloc_getDefault() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_getKeywordValue() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_getLanguage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_getScript() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -331,35 +287,11 @@ int APS5_VABI uloc_toUnicodeLocaleType() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI unorm2_composePair() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unorm2_getNFCInstance() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unorm2_getNFDInstance() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI unorm2_getNFKCInstance() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI unorm2_getNFKDInstance() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unorm2_getRawDecomposition() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unorm2_isNormalized() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unorm2_normalize() {
     NotImplemented_nid_no_patch(__func__);
 }
 
