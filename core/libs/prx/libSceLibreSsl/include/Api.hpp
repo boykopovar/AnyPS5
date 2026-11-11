@@ -5,6 +5,8 @@
 #include "Bio.hpp"
 #include "Cmac.hpp"
 
+#include "prx/libc/include/FileStream.hpp"
+
 struct Asn1String {
     std::int32_t length;
     std::int32_t type;
@@ -952,7 +954,7 @@ int APS5_VABI X509_verify_cert_nid_postfix(void);
 const char* APS5_VABI X509_verify_cert_error_string_nid_postfix(std::int64_t error);
 int APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(void);
 void* APS5_VABI d2i_PKCS12_bio_nid_postfix(LibreSsl::Bio* bio, void** output);
-int APS5_VABI d2i_PKCS12_fp_nid_postfix(void);
+void* APS5_VABI d2i_PKCS12_fp_nid_postfix(FileStream* stream, void** output);
 LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, long length);
 int APS5_VABI d2i_X509_nid_postfix(void);
 int APS5_VABI i2a_ASN1_OBJECT_nid_postfix(LibreSsl::Bio* bio, const LibreSslAsn1Object* object);
