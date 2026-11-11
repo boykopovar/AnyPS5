@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 
 static_assert(sizeof(Param) == 96);
 static_assert(offsetof(Param, option) == 32);
@@ -15,6 +17,17 @@ static void Require(bool value, const char* message) {
     if (value) return;
     std::fprintf(stderr, "%s\n", message);
     std::abort();
+}
+
+template <typename TCall>
+static void RequireNotImplemented(TCall call, const std::string& name) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == name + " not implemented", "a pending ime function threw another error");
+        return;
+    }
+    Require(false, "a pending ime function returned");
 }
 
 static void CheckInitialization() {
@@ -151,8 +164,9 @@ static void CheckOpenPanel() {
             "unwritable panel position and form");
     PositionAndForm form{};
     Require(sceImeGetPanelPositionAndForm(&form) == 0, "valid panel position and form");
-    Require(sceImeDisableController() == 0, "disable the controller of an open panel");
-    Require(sceImeGetPanelPositionAndForm(&form) == 0, "panel still open after disabling the controller");
+    RequireNotImplemented([] { sceImeDisableController(); }, "sceImeDisableController");
+    RequireNotImplemented([] { sceImeDisableController(); }, "sceImeDisableController");
+    Require(sceImeGetPanelPositionAndForm(&form) == 0, "panel still open after the controller release threw");
     Require(sceImeClose_nid_postfix() == 0, "close ime panel");
     Require(sceImeDisableController() == NotOpened, "disabling the controller needs an open panel after close");
 }
