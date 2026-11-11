@@ -265,3 +265,19 @@ class BisectSearchTests(unittest.TestCase):
         self.assertEqual(previous_good, commits[3])
         self.assertLessEqual(measured.call_count, 4)
         self.assertIn(previous_good, samples)
+
+
+class BisectReportTests(unittest.TestCase):
+    def test_report_documents_assumption_and_orders_measured_commits(self):
+        good, first_bad, previous_good, bad = "good", "bad-2", "bad-1", "bad-3"
+        commits = ["bad-1", "bad-2", "bad-3"]
+        values = {commit: {"median_fps": fps, "identity": IDENTITY}
+                  for commit, fps in ((good, 60.0), (previous_good, 59.0),
+                                      (first_bad, 54.0), (bad, 53.0))}
+        report = performance_bisect.make_report(
+            good, bad, commits, first_bad, previous_good, values,
+            {"regression_pct": 5.0, "max_spread_pct": 3.0})
+        self.assertEqual(report["method"], "binary search over first-parent commits")
+        self.assertIn("monotonic", report["assumption"])
+        self.assertEqual([row["commit"] for row in report["measurements"]], commits)
+        self.assertEqual(report["first_bad"]["median_fps"], 54.0)

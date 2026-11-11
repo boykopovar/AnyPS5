@@ -231,3 +231,21 @@ def find_first_bad_commit(repo, worktree, results, recipe, good_sha, baseline, b
         measurements[previous_good] = measure_commit(repo, worktree, results, recipe, previous_good)
         require_same_identity(baseline, measurements[previous_good])
     return first_bad, previous_good, measurements
+
+
+def make_report(good_sha, bad_sha, commits, first_bad, previous_good, measurements, recipe):
+    return {
+        "method": "binary search over first-parent commits",
+        "assumption": "the regression is monotonic between the supplied good and bad commits",
+        "metric": "median FPS across repeated title runs; lower is slower",
+        "regression_pct": recipe["regression_pct"],
+        "max_spread_pct": recipe["max_spread_pct"],
+        "good": {"commit": good_sha, **measurements[good_sha]},
+        "first_bad": {"commit": first_bad, **measurements[first_bad]},
+        "previous_good": {"commit": previous_good, **measurements[previous_good]},
+        "bad": {"commit": bad_sha, **measurements[bad_sha]},
+        "commits_between": len(commits),
+        "tested_commits": len(measurements),
+        "measurements": [{"commit": commit, **measurements[commit]}
+                         for commit in commits if commit in measurements],
+    }
