@@ -379,7 +379,8 @@ int AddTimerKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16
     }
     const std::uint64_t now = KernelEqueuePrivate::MonotonicNs();
     KernelEqueueEvent event{};
-    event.deadlineNs = *periodNs <= std::numeric_limits<std::uint64_t>::max() - now ? now + *periodNs : std::numeric_limits<std::uint64_t>::max();
+    const bool periodOverflows = *periodNs == std::numeric_limits<std::uint64_t>::max();
+    event.deadlineNs = periodOverflows && (flags & EV_ONESHOT) != 0 ? now : *periodNs <= std::numeric_limits<std::uint64_t>::max() - now ? now + *periodNs : std::numeric_limits<std::uint64_t>::max();
     event.intervalNs = (flags & EV_ONESHOT) != 0 ? 0 : *periodNs;
     event.event = change;
     event.event.flags = static_cast<std::uint16_t>(flags | EV_CLEAR);
@@ -476,9 +477,10 @@ int ModifyTimerKnote(const KernelEqueueRef& queue, KernelEvent& change) {
     }
     bool oneShot = false;
     bool overflow = false;
-    const int error = GuestErrno(queue->EditEvent(change.ident, change.filter, [&change, &oneShot, &overflow, periodNs](KernelEqueueEvent& event) {
+    const bool oneShotChange = (change.flags & EV_ONESHOT) != 0;
+    const int error = GuestErrno(queue->EditEvent(change.ident, change.filter, [&change, &oneShot, &overflow, oneShotChange, periodNs](KernelEqueueEvent& event) {
         if (event.intervalNs == 0) {
-            oneShot = true;
+            oneShot = !oneShotChange;
             return;
         }
         if (!event.enabled) {
