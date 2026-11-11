@@ -1863,7 +1863,6 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
         }
         if (lock.owns_lock()) {
             if (auto* recorder = Recorder::Active(); freed < bytes && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread() && recorder->Recording()) {
-                charged = 0;
                 for (const auto& [texture, size] : heldBytes) {
                     const auto before = recorder->OpenKeptBytes();
                     recorder->KeepBytes(texture, static_cast<std::size_t>(size));

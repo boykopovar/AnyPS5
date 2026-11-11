@@ -934,12 +934,14 @@ void batchHeldReleaseTests(Context context) {
     SharedResourceCache().Clear();
     Block block(context);
     std::weak_ptr<Texture> texture;
+    std::weak_ptr<ShaderResources> build;
     {
         Recorder recorder(context);
         recorder.Activate();
         recorder.Commands();
         auto kept = ImageResources(context, block, 0, 1, true);
         texture = kept->SampledTextures().front();
+        build = kept;
         const auto bytes = static_cast<std::size_t>(texture.lock()->AllocationBytes());
         Require(bytes != 0, "the batch fixture's sampled texture owns no memory");
         recorder.Keep(std::move(kept));
@@ -950,6 +952,10 @@ void batchHeldReleaseTests(Context context) {
         ReleaseTextureCaches(~std::uint64_t{0});
         Require(recorder.OpenKeptBytes() >= before + bytes && recorder.OpenKeptBytes() < before + 2 * bytes, "a second release charged the same held texture to the open batch twice");
         recorder.Sync();
+        recorder.FlushDeferredReleases();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!build.expired() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        Require(build.expired(), "the completed batch did not release the build it kept");
         ReleaseTextureCaches(~std::uint64_t{0});
         Require(texture.expired(), "a release after the batch holding a sampled texture completed did not free it");
     }
