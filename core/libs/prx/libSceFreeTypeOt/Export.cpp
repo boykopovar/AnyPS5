@@ -428,6 +428,30 @@ std::uint32_t APS5_VABI ft_highpow2_nid_postfix(std::uint32_t value) {
     return std::bit_floor(value);
 }
 
+std::int64_t APS5_VABI FT_MulDiv_nid_postfix(std::int64_t a, std::int64_t b, std::int64_t c) {
+    return CheckedMulDiv(a, b, c, true, __func__);
+}
+
+std::int64_t APS5_VABI FT_MulFix_nid_postfix(std::int64_t a, std::int64_t b) {
+    return CheckedMulDiv(a, b, 0x10000, true, __func__);
+}
+
+std::int64_t APS5_VABI FT_DivFix_nid_postfix(std::int64_t a, std::int64_t b) {
+    return CheckedMulDiv(a, 0x10000, b, true, __func__);
+}
+
+std::int64_t APS5_VABI FT_RoundFix_nid_postfix(std::int64_t a) {
+    return (a + 0x8000 - (a < 0)) & ~0xFFFF;
+}
+
+std::int64_t APS5_VABI FT_CeilFix_nid_postfix(std::int64_t a) {
+    return (a + 0xFFFF) & ~0xFFFF;
+}
+
+std::int64_t APS5_VABI FT_FloorFix_nid_postfix(std::int64_t a) {
+    return a & ~0xFFFF;
+}
+
 int APS5_VABI sceFreeTypeOtUnknown_uSNqxrARpEQ_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

@@ -166,6 +166,74 @@ void CheckHighPow2() {
     Require(ft_highpow2_nid_postfix(0x80000001u) == 0x80000000u && ft_highpow2_nid_postfix(0xFFFFFFFFu) == 0x80000000u, "ft_highpow2 keeps bit 31");
 }
 
+void CheckMulDiv() {
+    Require(FT_MulDiv_nid_postfix(7, 3, 2) == 11, "FT_MulDiv rounds half away from zero");
+    Require(FT_MulDiv_nid_postfix(-7, 3, 2) == -11, "FT_MulDiv rounds a negative quotient away from zero");
+    Require(FT_MulDiv_nid_postfix(7, -3, -2) == 11, "FT_MulDiv multiplies the operand signs");
+    Require(FT_MulDiv_nid_postfix(7, 3, -2) == -11, "FT_MulDiv takes the divisor sign");
+    Require(FT_MulDiv_nid_postfix(0, 3, 5) == 0, "FT_MulDiv of a zero factor is 0");
+    Require(FT_MulDiv_nid_postfix(5, 7, 7) == 5, "FT_MulDiv with b equal to c returns a");
+    Require(FT_MulDiv_nid_postfix(5, 3, 0) == 0x7FFFFFFF, "FT_MulDiv saturates a zero divisor");
+    Require(FT_MulDiv_nid_postfix(-5, 3, 0) == -0x7FFFFFFF, "FT_MulDiv keeps the factor sign for a zero divisor");
+    Require(FT_MulDiv_nid_postfix(7, 3, 2) == FT_MulDiv_No_Round_nid_postfix(7, 3, 2) + 1, "FT_MulDiv rounds where FT_MulDiv_No_Round truncates");
+    Require(FT_MulDiv_nid_postfix(6, 3, 2) == FT_MulDiv_No_Round_nid_postfix(6, 3, 2), "FT_MulDiv matches FT_MulDiv_No_Round on an exact quotient");
+}
+
+void CheckMulFix() {
+    Require(FT_MulFix_nid_postfix(0x10000, 0x10000) == 0x10000, "FT_MulFix of one times one is one");
+    Require(FT_MulFix_nid_postfix(-0x10000, 0x10000) == -0x10000, "FT_MulFix keeps the factor sign");
+    Require(FT_MulFix_nid_postfix(0x10000, -0x10000) == -0x10000, "FT_MulFix keeps the multiplier sign");
+    Require(FT_MulFix_nid_postfix(-0x10000, -0x10000) == 0x10000, "FT_MulFix multiplies two negative factors");
+    Require(FT_MulFix_nid_postfix(0x18000, 0x10000) == 0x18000, "FT_MulFix by one keeps the value");
+    Require(FT_MulFix_nid_postfix(0x10000, 1) == 1, "FT_MulFix of the smallest positive unit is exact");
+    Require(FT_MulFix_nid_postfix(3, 3) == 0, "FT_MulFix truncates a sub-unit product to zero");
+    Require(FT_MulFix_nid_postfix(0x8000, 0x10000) == 0x8000, "FT_MulFix keeps one half");
+    Require(FT_MulFix_nid_postfix(0x7FFF, 0x10000) == 0x7FFF, "FT_MulFix keeps just below one half");
+}
+
+void CheckDivFix() {
+    Require(FT_DivFix_nid_postfix(0x10000, 0x10000) == 0x10000, "FT_DivFix of one by one is one");
+    Require(FT_DivFix_nid_postfix(-0x10000, 0x10000) == -0x10000, "FT_DivFix keeps the dividend sign");
+    Require(FT_DivFix_nid_postfix(0x10000, -0x10000) == -0x10000, "FT_DivFix takes the divisor sign");
+    Require(FT_DivFix_nid_postfix(-0x10000, -0x10000) == 0x10000, "FT_DivFix divides two negative operands");
+    Require(FT_DivFix_nid_postfix(0x18000, 0x10000) == 0x18000, "FT_DivFix by one keeps the value");
+    Require(FT_DivFix_nid_postfix(0x10000, 0x20000) == 0x8000, "FT_DivFix of one by two is one half");
+    Require(FT_DivFix_nid_postfix(0x10000, 2) == 0x80000000, "FT_DivFix scales by 0x10000 over the divisor");
+    Require(FT_DivFix_nid_postfix(1, 2) == 0x8000, "FT_DivFix of one half unit is exact");
+}
+
+void CheckRoundFix() {
+    Require(FT_RoundFix_nid_postfix(0x18000) == 0x20000, "FT_RoundFix rounds one and a half up");
+    Require(FT_RoundFix_nid_postfix(-0x18000) == -0x20000, "FT_RoundFix rounds negative one and a half away from zero");
+    Require(FT_RoundFix_nid_postfix(0x17FFF) == 0x10000, "FT_RoundFix rounds just below one and a half down");
+    Require(FT_RoundFix_nid_postfix(-0x17FFF) == -0x10000, "FT_RoundFix rounds negative just below one and a half toward zero");
+    Require(FT_RoundFix_nid_postfix(0x20000) == 0x20000, "FT_RoundFix keeps an exact integer");
+    Require(FT_RoundFix_nid_postfix(-0x20000) == -0x20000, "FT_RoundFix keeps a negative exact integer");
+    Require(FT_RoundFix_nid_postfix(0) == 0, "FT_RoundFix of zero is zero");
+    Require(FT_RoundFix_nid_postfix(1) == 0, "FT_RoundFix of the smallest unit is zero");
+    Require(FT_RoundFix_nid_postfix(-1) == 0, "FT_RoundFix of the smallest negative unit is zero");
+}
+
+void CheckCeilFix() {
+    Require(FT_CeilFix_nid_postfix(0x18000) == 0x20000, "FT_CeilFix rounds one and a half up");
+    Require(FT_CeilFix_nid_postfix(-0x18000) == -0x10000, "FT_CeilFix rounds negative one and a half toward zero");
+    Require(FT_CeilFix_nid_postfix(0x20000) == 0x20000, "FT_CeilFix keeps an exact integer");
+    Require(FT_CeilFix_nid_postfix(-0x20000) == -0x20000, "FT_CeilFix keeps a negative exact integer");
+    Require(FT_CeilFix_nid_postfix(0) == 0, "FT_CeilFix of zero is zero");
+    Require(FT_CeilFix_nid_postfix(1) == 0x10000, "FT_CeilFix of the smallest unit is one");
+    Require(FT_CeilFix_nid_postfix(-1) == 0, "FT_CeilFix of the smallest negative unit is zero");
+}
+
+void CheckFloorFix() {
+    Require(FT_FloorFix_nid_postfix(0x18000) == 0x10000, "FT_FloorFix truncates one and a half down");
+    Require(FT_FloorFix_nid_postfix(-0x18000) == -0x20000, "FT_FloorFix rounds negative one and a half away from zero");
+    Require(FT_FloorFix_nid_postfix(0x20000) == 0x20000, "FT_FloorFix keeps an exact integer");
+    Require(FT_FloorFix_nid_postfix(-0x20000) == -0x20000, "FT_FloorFix keeps a negative exact integer");
+    Require(FT_FloorFix_nid_postfix(0) == 0, "FT_FloorFix of zero is zero");
+    Require(FT_FloorFix_nid_postfix(0xFFFF) == 0, "FT_FloorFix of just below one is zero");
+    Require(FT_FloorFix_nid_postfix(-1) == -0x10000, "FT_FloorFix of the smallest negative unit is negative one");
+}
+
 }  // namespace
 
 int main() {
@@ -194,6 +262,12 @@ int main() {
     Require(ft_corner_is_flat_nid_postfix(INT64_MAX, 1, 1, INT64_MAX) == 0, "full-range near-perpendicular vectors are not flat");
 
     CheckMulDivNoRound();
+    CheckMulDiv();
+    CheckMulFix();
+    CheckDivFix();
+    CheckRoundFix();
+    CheckCeilFix();
+    CheckFloorFix();
     CheckMatrixMultiplyScaled();
     CheckVectorTransformScaled();
     CheckSqrtFixed();
