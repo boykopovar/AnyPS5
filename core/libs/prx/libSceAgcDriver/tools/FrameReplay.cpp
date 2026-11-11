@@ -629,7 +629,6 @@ struct Replay {
                 staged.push_back({wait.address, {bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.begin() + static_cast<std::ptrdiff_t>(offset + wait.bytes)}});
                 std::memcpy(bytes.data() + offset, target + offset, wait.bytes);
             }
-            AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, static_cast<std::size_t>(chunk->bytes));
             std::memcpy(target, bytes.data(), bytes.size());
             deltaBytes += chunk->bytes;
         }
