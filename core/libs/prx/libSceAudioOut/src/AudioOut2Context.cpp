@@ -26,7 +26,8 @@
 
 using Clock = std::chrono::steady_clock;
 
-static constexpr std::size_t CONTEXT_MEMORY = 0x10000;
+static constexpr std::size_t CONTEXT_MEMORY_BASE = 61196;
+static constexpr std::size_t CONTEXT_MEMORY_PER_PORT = 2912;
 static constexpr std::uint32_t DEFAULT_MAX_PORTS = 8;
 // Pushes, polls and advances traced individually before the trace falls back to the per-second summary.
 static constexpr std::uint64_t CALL_TRACE_FULL = 16;
@@ -494,7 +495,7 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
 int APS5_VABI sceAudioOut2ContextQueryMemory(const AudioOut2ContextParam* params, size_t* memory_size) {
     if (!params) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     if (!memory_size) return static_cast<int>(0x80268001);
-    *memory_size = CONTEXT_MEMORY;
+    *memory_size = CONTEXT_MEMORY_BASE + CONTEXT_MEMORY_PER_PORT * params->max_ports;
     return 0;
 }
 
