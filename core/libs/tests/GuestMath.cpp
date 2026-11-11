@@ -3200,6 +3200,10 @@ static void CheckLongDoublePower() {
     Require(ExtendedBits(powl_nid_postfix(10.0L, -5000.5L), 0, 0));
     Require(ExtendedBits(powl_nid_postfix(2.0L, -20000.0L), 0, 0));
     Require(ExtendedBits(powl_nid_postfix(2.0L, -16440.5L), 0x17, 0));
+    Require(ExtendedBits(powl_nid_postfix(LDBL_MAX, 0.5L), 0x8000000000000000ull, 0x7fff));
+    Require(ExtendedBits(powl_nid_postfix(LDBL_MAX, -1.0L), 0, 0));
+    Require(ExtendedBits(powl_nid_postfix(-LDBL_MAX, 0.5L), 0x8000000000000000ull, 0x7fff));
+    Require(ExtendedBits(powl_nid_postfix(-LDBL_MAX, -1.0L), 0, 0x8000));
     struct Case {
         long double x;
         long double y;
