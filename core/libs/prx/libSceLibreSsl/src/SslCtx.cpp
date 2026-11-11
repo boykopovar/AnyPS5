@@ -1,5 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -31,6 +33,7 @@ static_assert(offsetof(LibreSslCtxInternal, tlsextTicketKeyCb) == 144);
 static_assert(offsetof(LibreSslCtxInternal, tlsextStatusCb) == 152);
 static_assert(offsetof(LibreSslCtxInternal, tlsextStatusArg) == 160);
 static_assert(offsetof(LibreSslCtxInternal, sessionCacheSize) == 176);
+static_assert(offsetof(LibreSslCtxInternal, cert) == 264);
 static_assert(offsetof(LibreSslCtxInternal, sessionCacheMode) == 200);
 static_assert(offsetof(LibreSslCtxInternal, sessConnect) == 204);
 static_assert(offsetof(LibreSslCtxInternal, sessConnectRenegotiate) == 208);
@@ -43,6 +46,9 @@ static_assert(offsetof(LibreSslCtxInternal, sessTimeout) == 232);
 static_assert(offsetof(LibreSslCtxInternal, sessCacheFull) == 236);
 static_assert(offsetof(LibreSslCtxInternal, sessHit) == 240);
 static_assert(offsetof(LibreSslCtxInternal, sessCbHit) == 244);
+static_assert(offsetof(LibreSslCtxInternal, exData) == 248);
+static_assert(sizeof(LibreSslExData) == sizeof(void*));
+static_assert(offsetof(LibreSslExData, stack) == 0);
 static_assert(offsetof(LibreSslCtxInternal, maxCertList) == 280);
 static_assert(offsetof(LibreSslCtxInternal, readAhead) == 288);
 static_assert(offsetof(LibreSslCtxInternal, maxSendFragment) == 296);
@@ -108,6 +114,7 @@ constexpr int ErrFunctionNone = 0xfff;
 constexpr int ShouldNotHaveBeenCalled = 66;
 constexpr int SessionIdContextTooLong = 273;
 constexpr int InvalidTicketKeysLength = 325;
+constexpr int NoCertificateAssigned = 177;
 constexpr std::int64_t TicketKeysLength = 48;
 constexpr std::int64_t MinSendFragment = 512;
 constexpr std::int64_t MaxPlainLength = 16384;
@@ -127,6 +134,54 @@ LibreSslCtxInternal& Internal(LibreSslCtx* ctx, const char* function) {
     NotImplemented_nid_no_patch((std::string(function) + " command " + std::to_string(cmd)).c_str());
 }
 
+int SetCtxExData_nid_no_patch(LibreSslCtxInternal& internal, int index, void* value) {
+    constexpr int InitialCapacity = 4;
+    constexpr int CryptoLibrary = 15;
+    constexpr int AnyFunction = 0xfff;
+    constexpr int MallocFailure = 65;
+    auto* stack = static_cast<LibreSslStack*>(internal.exData);
+    if (!stack) {
+        stack = static_cast<LibreSslStack*>(malloc_nid_postfix(sizeof(LibreSslStack)));
+        if (!stack) {
+            LibreSslPutError_nid_no_patch(CryptoLibrary, AnyFunction, MallocFailure);
+            return 0;
+        }
+        stack->num = 0;
+        stack->sorted = 0;
+        stack->numAlloc = InitialCapacity;
+        stack->comp = nullptr;
+        stack->data = static_cast<char**>(malloc_nid_postfix(InitialCapacity * sizeof(char*)));
+        if (!stack->data) {
+            free_nid_postfix(stack);
+            LibreSslPutError_nid_no_patch(CryptoLibrary, AnyFunction, MallocFailure);
+            return 0;
+        }
+        std::memset(stack->data, 0, InitialCapacity * sizeof(char*));
+        internal.exData = stack;
+    } else if (stack->num < 0 || stack->numAlloc <= 0 || stack->num >= stack->numAlloc || !stack->data) {
+        NotImplemented_nid_no_patch("SSL_CTX_set_ex_data: malformed ex-data stack");
+    }
+
+    int count = stack->num;
+    while (count <= index) {
+        if (stack->numAlloc <= stack->num + 1) {
+            if (stack->numAlloc > INT_MAX / 2) NotImplemented_nid_no_patch("SSL_CTX_set_ex_data: unrepresentable stack capacity");
+            auto** data = static_cast<char**>(reallocarray_nid_postfix(stack->data, static_cast<std::size_t>(stack->numAlloc), 2 * sizeof(char*)));
+            if (!data) {
+                LibreSslPutError_nid_no_patch(CryptoLibrary, AnyFunction, MallocFailure);
+                return 0;
+            }
+            stack->data = data;
+            stack->numAlloc *= 2;
+        }
+        stack->data[stack->num++] = nullptr;
+        stack->sorted = 0;
+        ++count;
+    }
+    if (index >= 0) stack->data[index] = static_cast<char*>(value);
+    return 1;
+}
+
 void PutSslError(int reason) {
     LibreSslPutError_nid_no_patch(ErrLibSsl, ErrFunctionNone, reason);
 }
@@ -143,6 +198,12 @@ void* APS5_VABI SSL_CTX_get_cert_store_nid_postfix(LibreSslCtx* ctx) {
     return Context(ctx, __func__).certStore;
 }
 
+void APS5_VABI SSL_CTX_set_cert_store_nid_postfix(LibreSslCtx* ctx, LibreSslX509Store* store) {
+    LibreSslCtx& context = Context(ctx, __func__);
+    X509_STORE_free_nid_postfix(static_cast<LibreSslX509Store*>(context.certStore));
+    context.certStore = store;
+}
+
 void APS5_VABI SSL_CTX_set_quiet_shutdown_nid_postfix(LibreSslCtx* ctx, int mode) {
     LibreSslCtx& context = Context(ctx, __func__);
     if (!context.internal) throw std::invalid_argument(std::string(__func__) + ": null internal state");
@@ -155,6 +216,10 @@ void APS5_VABI SSL_CTX_set_default_passwd_cb_nid_postfix(LibreSslCtx* ctx, void*
 
 void APS5_VABI SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(LibreSslCtx* ctx, void* userdata) {
     Context(ctx, __func__).defaultPasswdCallbackUserdata = userdata;
+}
+
+int APS5_VABI SSL_CTX_set_ex_data_nid_postfix(LibreSslCtx* ctx, int index, void* value) {
+    return SetCtxExData_nid_no_patch(Internal(ctx, __func__), index, value);
 }
 
 std::int64_t APS5_VABI SSL_CTX_ctrl_nid_postfix(LibreSslCtx* ctx, int cmd, std::int64_t larg, void* parg) {
@@ -247,6 +312,19 @@ std::int64_t APS5_VABI SSL_CTX_callback_ctrl_nid_postfix(LibreSslCtx* ctx, int c
     case SetTlsextTicketKeyCb: internal.tlsextTicketKeyCb = callback; return 1;
     default: return 0;
     }
+}
+
+int APS5_VABI SSL_CTX_check_private_key_nid_postfix(const LibreSslCtx* ctx) {
+    if (!ctx) {
+        PutSslError(NoCertificateAssigned);
+        return 0;
+    }
+    if (!ctx->internal) throw std::invalid_argument(std::string(__func__) + ": null internal state");
+    if (!ctx->internal->cert) {
+        PutSslError(NoCertificateAssigned);
+        return 0;
+    }
+    NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI SSL_CTX_set_msg_callback_nid_postfix(LibreSslCtx* ctx, void* callback) {

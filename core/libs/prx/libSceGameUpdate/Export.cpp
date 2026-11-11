@@ -1,4 +1,5 @@
 #include "prx/libSceGameUpdate/include/Api.hpp"
+#include <cerrno>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -89,28 +90,42 @@ int APS5_VABI sceGameUpdateAbortRequest(int requestId) {
 }
 
 int APS5_VABI sceGameUpdateCheck(int requestId, const GameUpdateCheckParam* param, GameUpdateCheckResult* result) {
+    const int savedErrno = errno;
     if (requestId <= 0) {
         return SCE_GAME_UPDATE_ERROR_REQUEST_NOT_FOUND;
     }
     if (param == nullptr || result == nullptr) {
         return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
     }
-    if (param->size != sizeof(GameUpdateCheckParam) || result->size != sizeof(GameUpdateCheckResult)) {
+    GameUpdateCheckResult localResult{};
+    const bool copiedIn = GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult));
+    if (!copiedIn) {
+        errno = savedErrno;
+        return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
+    }
+    if (param->size != sizeof(GameUpdateCheckParam) || localResult.size != sizeof(GameUpdateCheckResult)) {
+        errno = savedErrno;
         return SCE_GAME_UPDATE_ERROR_INVALID_SIZE;
     }
     if (param->option != 0 || hasNonZeroReserved(param)) {
+        errno = savedErrno;
         return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
     }
     std::lock_guard lock(stateMutex);
     Request* request = nullptr;
     if (int error = checkRequestId(requestId, &request); error != 0) {
+        errno = savedErrno;
         return error;
     }
     if (request->aborted) {
+        errno = savedErrno;
         return SCE_GAME_UPDATE_ERROR_ABORTED;
     }
-    result->found = false;
-    result->addcont_found = false;
+    localResult.found = false;
+    localResult.addcont_found = false;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
+    errno = savedErrno;
+    if (!copied) return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
