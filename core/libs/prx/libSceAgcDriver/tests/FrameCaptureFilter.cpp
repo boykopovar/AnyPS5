@@ -182,6 +182,20 @@ void testReferenceChunk(const std::filesystem::path& root) {
     check(filtered.Read(filtered.Chunks()[0]) == reference, "filtering changed reference bytes");
 }
 
+
+void testSharedMemoryGroup(const std::filesystem::path& root) {
+    const auto source = root / "shared-source";
+    const auto output = root / "shared-output";
+    AgcDriver::FrameCaptureWriter writer(source);
+    AgcDriver::FrameCall first; first.kind = AgcDriver::FrameCallKind::Memory; first.values = {7, 0}; writer.WriteCall(first);
+    AgcDriver::FrameCall second; second.kind = AgcDriver::FrameCallKind::Memory; second.values = {7, 1}; writer.WriteCall(second);
+    const std::vector<std::byte> bytes(8, std::byte{0x42}); writer.WriteDelta(7, 1, 0x30000, bytes); writer.Finish("{}\n");
+    AgcDriverTools::FrameCaptureFilterPlan plan; plan.calls.insert(0);
+    AgcDriverTools::FilterFrameCapture(source, output, plan);
+    const AgcDriver::FrameCaptureReader filtered(output);
+    check(filtered.Calls().size() == 1 && filtered.Chunks().size() == 1 && filtered.Chunks()[0].kind == AgcDriver::FrameMemoryKind::Delta, "removing one call discarded a shared memory group");
+}
+
 }
 
 int main() {
@@ -191,6 +205,7 @@ int main() {
     testParentDestination(root);
     testEmptyPlan(root);
     testReferenceChunk(root);
+    testSharedGroup(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
