@@ -31,7 +31,7 @@ function(add_test_executable target)
     endif()
     if(WIN32 AND NOT CMAKE_VERSION VERSION_LESS 3.21 AND NOT ATE_NO_RUNTIME_DLL_STAGING)
         add_custom_command(TARGET ${target} POST_BUILD
-                COMMAND "${CMAKE_COMMAND}" -E copy_if_different $<TARGET_RUNTIME_DLLS:${target}> "$<TARGET_FILE:${target}>" "$<TARGET_FILE_DIR:${target}>/"
+                COMMAND "${CMAKE_COMMAND}" "-DDEST_DIR=$<TARGET_FILE_DIR:${target}>" -P "${CMAKE_SOURCE_DIR}/cmake/CopyRuntimeFiles.cmake" $<TARGET_RUNTIME_DLLS:${target}> "$<TARGET_FILE:${target}>"
                 COMMAND_EXPAND_LISTS
                 VERBATIM
         )
@@ -114,6 +114,10 @@ endif()
 if(ANYPS5_ENABLE_ASAN AND ANYPS5_ENABLE_TSAN)
     message(FATAL_ERROR "ANYPS5_ENABLE_ASAN and ANYPS5_ENABLE_TSAN cannot be combined")
 endif()
+option(ANYPS5_BUILD_FUZZERS "Build the relinker libFuzzer targets with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+if(ANYPS5_BUILD_FUZZERS AND ANYPS5_ENABLE_TSAN)
+    message(FATAL_ERROR "ANYPS5_BUILD_FUZZERS already selects AddressSanitizer and UndefinedBehaviorSanitizer; do not combine it with ANYPS5_ENABLE_TSAN")
+endif()
 if(ANYPS5_ENABLE_TSAN)
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
         message(FATAL_ERROR "ANYPS5_ENABLE_TSAN is supported only on Linux")
@@ -123,7 +127,6 @@ if(ANYPS5_ENABLE_TSAN)
     endif()
 endif()
 
-option(ANYPS5_BUILD_FUZZERS "Build the relinker libFuzzer targets with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 if(ANYPS5_BUILD_FUZZERS)
     if(NOT ANYPS5_RELINKER_ONLY)
         message(FATAL_ERROR "ANYPS5_BUILD_FUZZERS requires ANYPS5_RELINKER_ONLY")
@@ -253,6 +256,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_ready.py)
         add_test(NAME progress_history COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py ProgressHistoryTests)
+        add_test(NAME progress_history_csv COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryCsvTests)
+        set_tests_properties(progress_history_csv PROPERTIES TIMEOUT 20)
         add_test(NAME progress_history_output COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryReportOutputTests)
         set_tests_properties(progress_history_output PROPERTIES TIMEOUT 20)
@@ -671,6 +677,7 @@ if(BUILD_TESTING)
         set_tests_properties(tools_headers_manifest PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_pr_template COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_pr_template.py)
+        set_tests_properties(conventions_pr_template PROPERTIES TIMEOUT 60)
         add_test(NAME check_compile_preprocessor COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_preprocessor.py)
         set_tests_properties(check_compile_preprocessor PROPERTIES TIMEOUT 20)
@@ -689,6 +696,8 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME tools_seed_check COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_check_configure_seed.py)
         set_tests_properties(tools_seed_check PROPERTIES TIMEOUT 20)
+        add_test(NAME tools_cmake_fuzzer_sanitizers COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_cmake_fuzzer_sanitizers.py)
+        set_tests_properties(tools_cmake_fuzzer_sanitizers PROPERTIES TIMEOUT 120)
         add_test(NAME performance_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_compare.py)
         set_tests_properties(performance_compare PROPERTIES TIMEOUT 20)
@@ -697,6 +706,7 @@ if(BUILD_TESTING)
         set_tests_properties(title_run PROPERTIES TIMEOUT 60)
         add_test(NAME relinker_fuzz_seeds COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_seeds.py)
+        set_tests_properties(relinker_fuzz_seeds PROPERTIES TIMEOUT 20)
         if(WIN32)
             get_property(windows_tooling_after DIRECTORY PROPERTY TESTS)
             list(REMOVE_ITEM windows_tooling_after ${windows_tooling_before})

@@ -4,6 +4,8 @@ target_link_libraries(libfreetype PRIVATE freetype libSceFreeType)
 configure_windows_unwind(libfreetype)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libfreetype PRIVATE LINKER:--exclude-libs,ALL)
+elseif(APPLE)
+    target_link_options(libfreetype PRIVATE "LINKER:-exported_symbol,*_nid_*")
 endif()
 
 if(BUILD_TESTING)
