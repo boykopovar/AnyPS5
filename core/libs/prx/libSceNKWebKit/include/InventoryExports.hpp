@@ -3012,7 +3012,6 @@ int APS5_VABI _ZN7WebCore18composedTreeAsTextERNS_13ContainerNodeENS_22ComposedT
 int APS5_VABI _ZN7WebCore18documentTypeStringERKNS_8DocumentE();
 int APS5_VABI _ZN7WebCore18isEditablePositionERKNS_8PositionENS_12EditableTypeE();
 int APS5_VABI _ZN7WebCore18isStartOfParagraphERKNS_15VisiblePositionENS_27EditingBoundaryCrossingRuleE();
-int APS5_VABI _ZN7WebCore18isValidContentTypeERKN3WTF6StringENS_4ModeE();
 int APS5_VABI _ZN7WebCore18platformStrategiesEv();
 int APS5_VABI _ZN7WebCore18pluginScriptObjectEPN3JSC14JSGlobalObjectEPNS_13JSHTMLElementE();
 int APS5_VABI _ZN7WebCore18pluginTooSmallTextEv();
