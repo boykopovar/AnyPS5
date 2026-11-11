@@ -1,4 +1,5 @@
 #include "prx/libSceGameLiveStreaming/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -11,6 +12,8 @@
 
 static std::mutex g_mutex;
 static bool g_initialized = false;
+static void* g_callback = nullptr;
+static void* g_callbackUserData = nullptr;
 static constexpr int ErrorInvalidArgument = static_cast<int>(0x80A00002);
 static constexpr int ErrorAlreadyInitialized = static_cast<int>(0x80A00003);
 static constexpr int ErrorNotInitialized = static_cast<int>(0x80A00004);
@@ -139,7 +142,11 @@ int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessagesCount(int type, std::
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     if (count == nullptr || !ValidFeedbackType(type)) return ErrorInvalidArgument;
-    *count = 0;
+    const std::uint32_t zero = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(count, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidArgument;
     return 0;
 }
 
@@ -147,7 +154,11 @@ int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessages(int type, size_t cap
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     if (messages == nullptr || acquired == nullptr || !ValidFeedbackType(type)) return ErrorInvalidArgument;
-    *acquired = 0;
+    const size_t zero = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(acquired, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidArgument;
     return 0;
 }
 
@@ -251,13 +262,19 @@ int APS5_VABI sceGameLiveStreamingStopGenerateStandbyScreenResource(void) {
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingRegisterCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGameLiveStreamingRegisterCallback(void* callback, void* userData) {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return ErrorNotInitialized;
+    g_callback = callback;
+    g_callbackUserData = userData;
     return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingUnregisterCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return ErrorNotInitialized;
+    g_callback = nullptr;
+    g_callbackUserData = nullptr;
     return 0;
 }
 
