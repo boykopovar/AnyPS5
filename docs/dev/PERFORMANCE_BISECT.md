@@ -51,3 +51,9 @@ python3 tools/performance_bisect.py \
 The known-good revision must be an ancestor of the known-bad revision. The tool creates an isolated temporary Git worktree, builds and samples the endpoints, then uses binary search on first-parent commits. It builds each tested revision from a clean build directory and removes the temporary worktree and measurements when finished. Use `--temp-dir` to select an existing disk location with enough room for a worktree and a full build.
 
 Each tested revision runs `title_run.py` repeatedly with one measured run per invocation. The median FPS is compared with the good endpoint. A search stops instead of guessing if the bad endpoint is not slow enough, a run fails to render, the machine/title/content identity changes, or sample spread exceeds `max_spread_pct`.
+
+## Read the report
+
+The command prints the first measured regression and its previous good commit. The optional JSON report records those commits, the supplied endpoints, the percentage threshold, the sample spread limit, the first-parent method, its monotonicity assumption, and every commit actually measured. `tested_commits` can be much smaller than `commits_between` because the search is logarithmic; it is not a claim that every commit was benchmarked.
+
+The output path must not already exist. Reports are written atomically so a failed write does not leave a partial JSON file. Keep the report with the recipe and the machine setup details when sharing or comparing results.
