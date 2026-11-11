@@ -1332,6 +1332,133 @@ int main() {
     passed &= run("an optional wave body cannot change helper coordinates for later implicit samples", [&] { return !optionalPixelBody(true); });
     passed &= run("an optional wave body cannot change helper coordinates for LOD queries", [&] { return !optionalPixelBody(true, IrOpcode::ImageQueryLod); });
 
+    enum class TailMismatch { Matching, ExportValue, ExportGuard, PcRange, DegeneratePc, Discard };
+    const auto optionalCopiedTail = [&](TailMismatch mismatch) {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& entry = *b.block;
+        auto& predicate = pixelPredicate(b);
+        auto& condition = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate});
+        auto& guard = predicate;
+        auto& value = b.emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&b.constant(1u), &b.constant(2u), &b.constant(3u), &b.constant(4u)});
+        auto& body = b.newBlock();
+        auto& merge = b.newBlock();
+        entry.AddBranch(&body);
+        entry.AddBranch(&merge);
+        auto& entryInfo = b.program.Metadata().blockInfo[0u];
+        entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        entryInfo.terminator.condition = BranchCondition::ExecZero;
+        entryInfo.terminator.trueBlock = merge.Id();
+        entryInfo.terminator.falseBlock = body.Id();
+        entryInfo.condition = &condition;
+        auto& bodyInfo = b.program.Metadata().blockInfo[1u];
+        bodyInfo.startPc = 0x100u;
+        bodyInfo.endPc = mismatch == TailMismatch::PcRange ? 0x210u : 0x108u;
+        auto& mergeInfo = b.program.Metadata().blockInfo[2u];
+        if (mismatch != TailMismatch::DegeneratePc) {
+            mergeInfo.startPc = 0x100u;
+            mergeInfo.endPc = 0x108u;
+        }
+        ExportInfo info{};
+        info.kind = ExportTargetKind::Mrt;
+        info.en = 15u;
+        info.vm = true;
+        const auto exportBits = [&] {
+            ExportFlags flags{static_cast<std::uint32_t>(b.program.Metadata().exportInfo.size())};
+            b.program.Metadata().exportInfo.push_back(info);
+            std::uint64_t bits = 0;
+            std::memcpy(&bits, &flags, sizeof(flags));
+            return bits;
+        };
+        b.block = &body;
+        if (mismatch == TailMismatch::Discard) {
+            b.emit(IrOpcode::Discard, IrType::Void, {});
+        } else {
+            auto& bodyValue = mismatch == TailMismatch::ExportValue ? b.emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&b.constant(9u), &b.constant(2u), &b.constant(3u), &b.constant(4u)}) : value;
+            auto& bodyGuard = mismatch == TailMismatch::ExportGuard ? b.emit(IrOpcode::LogicalNot, IrType::Bool, {&guard}) : guard;
+            b.emit(IrOpcode::SetAttribute, IrType::Void, {&bodyValue, &bodyGuard}, exportBits());
+        }
+        b.block = &merge;
+        b.emit(IrOpcode::SetAttribute, IrType::Void, {&value, &guard}, exportBits());
+        return StencilReplaySafe(b.program);
+    };
+
+    passed &= run("an optional wave body may leave through a copy of the skip target's export tail with the same pc range", [&] { return optionalCopiedTail(TailMismatch::Matching); });
+    passed &= run("an optional wave body cannot leave through a copied export tail whose value differs on active lanes", [&] { return !optionalCopiedTail(TailMismatch::ExportValue); });
+    passed &= run("an optional wave body cannot leave through a copied export tail whose guard differs on active lanes", [&] { return !optionalCopiedTail(TailMismatch::ExportGuard); });
+    passed &= run("an optional wave body cannot pair a copied tail whose pc range differs from the skip target's", [&] { return !optionalCopiedTail(TailMismatch::PcRange); });
+    passed &= run("an optional wave body cannot pair a copied tail with a degenerate zero pc range", [&] { return !optionalCopiedTail(TailMismatch::DegeneratePc); });
+    passed &= run("an optional wave body cannot pair a copied tail that discards instead of exporting", [&] { return !optionalCopiedTail(TailMismatch::Discard); });
+
+    const auto optionalNestedCopiedTail = [&](bool matchingPolarity) {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& entry = *b.block;
+        auto& predicate = pixelPredicate(b);
+        auto& condition = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate});
+        auto& anyLeft = b.truth();
+        auto& value = b.emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&b.constant(1u), &b.constant(2u), &b.constant(3u), &b.constant(4u)});
+        auto& nullValue = b.emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&b.constant(0u), &b.constant(0u), &b.constant(0u), &b.constant(0u)});
+        auto& nullGuard = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate});
+        auto& bodyHead = b.newBlock();
+        auto& bodyExport = b.newBlock();
+        auto& bodyNull = b.newBlock();
+        auto& skipHead = b.newBlock();
+        auto& skipExport = b.newBlock();
+        auto& skipNull = b.newBlock();
+        entry.AddBranch(&bodyHead);
+        entry.AddBranch(&skipHead);
+        bodyHead.AddBranch(matchingPolarity ? &bodyExport : &bodyNull);
+        bodyHead.AddBranch(matchingPolarity ? &bodyNull : &bodyExport);
+        skipHead.AddBranch(&skipExport);
+        skipHead.AddBranch(&skipNull);
+        auto& entryInfo = b.program.Metadata().blockInfo[0u];
+        entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        entryInfo.terminator.condition = BranchCondition::ExecZero;
+        entryInfo.terminator.trueBlock = skipHead.Id();
+        entryInfo.terminator.falseBlock = bodyHead.Id();
+        entryInfo.condition = &condition;
+        auto& bodyHeadInfo = b.program.Metadata().blockInfo[1u];
+        bodyHeadInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        bodyHeadInfo.terminator.condition = BranchCondition::SccZero;
+        bodyHeadInfo.terminator.trueBlock = (matchingPolarity ? bodyExport : bodyNull).Id();
+        bodyHeadInfo.terminator.falseBlock = (matchingPolarity ? bodyNull : bodyExport).Id();
+        bodyHeadInfo.condition = &anyLeft;
+        bodyHeadInfo.startPc = 0x200u;
+        bodyHeadInfo.endPc = 0x208u;
+        auto& skipHeadInfo = b.program.Metadata().blockInfo[4u];
+        skipHeadInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        skipHeadInfo.terminator.condition = BranchCondition::SccZero;
+        skipHeadInfo.terminator.trueBlock = skipExport.Id();
+        skipHeadInfo.terminator.falseBlock = skipNull.Id();
+        skipHeadInfo.condition = &anyLeft;
+        skipHeadInfo.startPc = 0x200u;
+        skipHeadInfo.endPc = 0x208u;
+        ExportInfo info{};
+        info.kind = ExportTargetKind::Mrt;
+        info.en = 15u;
+        info.vm = true;
+        const auto exportBits = [&] {
+            ExportFlags flags{static_cast<std::uint32_t>(b.program.Metadata().exportInfo.size())};
+            b.program.Metadata().exportInfo.push_back(info);
+            std::uint64_t bits = 0;
+            std::memcpy(&bits, &flags, sizeof(flags));
+            return bits;
+        };
+        b.block = &bodyExport;
+        b.emit(IrOpcode::SetAttribute, IrType::Void, {&value, &predicate}, exportBits());
+        b.block = &bodyNull;
+        b.emit(IrOpcode::SetAttribute, IrType::Void, {&nullValue, &nullGuard}, exportBits());
+        b.block = &skipExport;
+        b.emit(IrOpcode::SetAttribute, IrType::Void, {&value, &predicate}, exportBits());
+        b.block = &skipNull;
+        b.emit(IrOpcode::SetAttribute, IrType::Void, {&nullValue, &nullGuard}, exportBits());
+        return StencilReplaySafe(b.program);
+    };
+
+    passed &= run("an optional wave body may leave through a nested copy of the skip target's any-lane-left tail", [&] { return optionalNestedCopiedTail(true); });
+    passed &= run("an optional wave body cannot pair a nested tail whose any-lane-left branch swaps export and null export polarity", [&] { return !optionalNestedCopiedTail(false); });
+
     const auto optionalHelperFreeBallot = [&](bool helperLive) {
         Builder b;
         b.program.Resources().stage = IrShaderStage::Pixel;
