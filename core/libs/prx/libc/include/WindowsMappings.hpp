@@ -931,13 +931,13 @@ private:
         return std::all_of(bytes.begin(), bytes.end(), [](std::uint64_t word) { return word == 0; });
     }
 
-    UINT watchWrites(DWORD flags, void* address, std::size_t bytes, void** pages, ULONG_PTR* count, DWORD* granularity) {
+    UINT watchWrites(DWORD flags, void* address, std::size_t bytes, void** pages, ULONG_PTR* count, DWORD* granularity, bool dropZero = false) {
         const auto capacity = *count;
         const auto result = GetWriteWatch(flags, address, bytes, pages, count, granularity);
         if (result != 0 || zeroPages.empty()) return result;
         const auto first = reinterpret_cast<std::uintptr_t>(address) & ~std::uintptr_t{4095};
         const auto last = (reinterpret_cast<std::uintptr_t>(address) + bytes + 4095) & ~std::uintptr_t{4095};
-        const bool complete = *count < capacity || capacity >= (last - first) / 4096;
+        const bool complete = dropZero && (*count < capacity || capacity >= (last - first) / 4096);
         ULONG_PTR kept = 0;
         for (ULONG_PTR index = 0; index < *count; ++index) {
             const auto page = reinterpret_cast<std::uintptr_t>(pages[index]) & ~std::uintptr_t{4095};
@@ -956,7 +956,7 @@ private:
         std::vector<void*> written((end - start) / 4096);
         ULONG_PTR reported = written.size();
         DWORD granularity = 0;
-        if (watchWrites(0, reinterpret_cast<void*>(start), end - start, written.data(), &reported, &granularity) != 0 || reported == written.size()) forgetZero(start, end);
+        if (watchWrites(0, reinterpret_cast<void*>(start), end - start, written.data(), &reported, &granularity, true) != 0 || reported == written.size()) forgetZero(start, end);
     }
 
     bool resetWrites(std::uintptr_t start, std::uintptr_t end) {
@@ -964,7 +964,7 @@ private:
         std::vector<void*> written(((end + 4095) & ~std::uintptr_t{4095}) / 4096 - (start & ~std::uintptr_t{4095}) / 4096);
         ULONG_PTR reported = written.size();
         DWORD granularity = 0;
-        if (watchWrites(WRITE_WATCH_FLAG_RESET, reinterpret_cast<void*>(start), end - start, written.data(), &reported, &granularity) != 0) {
+        if (watchWrites(WRITE_WATCH_FLAG_RESET, reinterpret_cast<void*>(start), end - start, written.data(), &reported, &granularity, true) != 0) {
             forgetZero(start, end);
             return false;
         }

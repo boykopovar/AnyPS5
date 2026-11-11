@@ -4,6 +4,7 @@
 
 - [sceNpGameIntentVshInitialize, sceNpGameIntentVshTerminate](../../../core/libs/prx/libSceNpGameIntent/Export.cpp) (libSceNpGameIntent) - VSH initialization and termination return 0 without performing shell operations, matching `sceNpGameIntentInitialize` and `sceNpGameIntentTerminate`
 - [sceNpAppLauncherInitialize, sceNpAppLauncherTerminate](../../../core/libs/prx/libSceNpGameIntent/Export.cpp) (libSceNpGameIntent) - app-launcher lifecycle returns success without performing launch work; `sceNpAppLauncherInitialize` accepts its init parameter without validation, following the silent-stub precedent of `sceNpGameIntentInitialize` — a title calls it early in boot, and returning success lets it continue; an atomic flag tracks initialized state so `sceNpAppLauncherLaunchApp` can reject calls made outside the lifecycle
+- [sceNpGameIntentInitialize](../../../core/libs/prx/libSceNpGameIntent/Export.cpp) (libSceNpGameIntent) - a non-null parameter is not read and returns 0. A null one returns `0x80553804`, as [obSCEne measured on a PS5 with system software 12.40](https://github.com/project-oops/obSCEne/blob/de5efc406319ade18df00654025494804405a7fb/reports/hardware/report-20261018-gt-census.log#L820-L823) on a library that was never initialized; that this leaves the library uninitialized is assumed.
 
 ### Unknown function info
 
