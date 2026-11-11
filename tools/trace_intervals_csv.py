@@ -33,9 +33,13 @@ def main(argv=None):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace", newline="")
     parser = argparse.ArgumentParser(description="Export trace interval summaries as CSV")
     parser.add_argument("summary", type=Path)
+    parser.add_argument("--require-complete", action="store_true", help="require nonempty intervals without dropped events or changing capture identity")
     args = parser.parse_args(argv)
     try:
-        text = render(trace_digest.digest_intervals(trace_digest.load_intervals(args.summary)))
+        result = trace_digest.digest_intervals(trace_digest.load_intervals(args.summary))
+        if args.require_complete and (not result["intervals"] or result["identity_changed_at"] or any(row["trace_dropped"] for row in result["intervals"])):
+            raise ValueError("capture is empty, has dropped events or changing identity")
+        text = render(result)
     except (EOFError, OSError, ValueError, KeyError, TypeError, RecursionError) as error:
         parser.error(str(error))
     sys.stdout.write(text)

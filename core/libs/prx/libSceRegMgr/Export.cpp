@@ -74,11 +74,13 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
         if (it != entries_.end() && it->second.type != TypeInt) return SCE_REG_MGR_ERROR_INVALID_TYPE;
+        const bool changed = it == entries_.end() || it->second.intVal != value;
         RegEntry& entry = entries_[key];
         entry.type = TypeInt;
         entry.intVal = value;
         entry.strVal.clear();
         entry.binVal.clear();
+        if (changed) changed_[key] = 0xff;
         return 0;
     }
 
@@ -89,11 +91,14 @@ public:
         if (it != entries_.end() && it->second.type != TypeStr) return SCE_REG_MGR_ERROR_INVALID_TYPE;
         size_t stringLength = 0;
         while (stringLength < length && value[stringLength] != '\0') ++stringLength;
+        const bool changed = it == entries_.end() || it->second.strVal.size() != stringLength ||
+                             it->second.strVal.compare(0, stringLength, value, stringLength) != 0;
         RegEntry& entry = entries_[key];
         entry.type = TypeStr;
         entry.intVal = 0;
         entry.strVal.assign(value, stringLength);
         entry.binVal.clear();
+        if (changed) changed_[key] = 0xff;
         return 0;
     }
 
@@ -103,17 +108,40 @@ public:
         auto it = entries_.find(key);
         if (it != entries_.end() && it->second.type != TypeBin) return SCE_REG_MGR_ERROR_INVALID_TYPE;
         const auto* bytes = static_cast<const std::uint8_t*>(value);
+        const bool changed = it == entries_.end() || it->second.binVal.size() != size ||
+                             std::memcmp(it->second.binVal.data(), bytes, size) != 0;
         RegEntry& entry = entries_[key];
         entry.type = TypeBin;
         entry.intVal = 0;
         entry.strVal.clear();
         entry.binVal.assign(bytes, bytes + size);
+        if (changed) changed_[key] = 0xff;
         return 0;
+    }
+
+    int resetVal(uint32_t key) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (entries_.erase(key) != 0) changed_[key] = 0xff;
+        return 0;
+    }
+
+    int isChange(uint32_t key, uint32_t consumer) {
+        const uint32_t index = consumer - 0x0d010001u;
+        const bool known = (index < 32u && (((0x8000808bu >> index) & 1u) != 0u)) || consumer == 0x0d890080u;
+        if (!known) return 0;
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = changed_.find(key);
+        if (it == changed_.end()) return 0;
+        const auto mask = static_cast<uint8_t>(consumer);
+        const bool changed = (it->second & mask) != 0;
+        it->second &= static_cast<uint8_t>(~mask);
+        return changed ? 1 : 0;
     }
 
 private:
     std::mutex mutex_;
     std::unordered_map<int64_t, RegEntry> entries_;
+    std::unordered_map<int64_t, uint8_t> changed_;
 };
 
 RegistryStore gStore;
@@ -164,9 +192,10 @@ int APS5_VABI sceRegMgrGetBinInitVal(void) {
     return 0;
 }
 
-int APS5_VABI sceRegMgrGetIntInitVal(void) {
+int APS5_VABI sceRegMgrGetIntInitVal(std::uint32_t optionId, std::int32_t* outInt) {
+    (void)optionId;
+    (void)outInt;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceRegMgrGetStrInitVal(void) {
@@ -179,9 +208,8 @@ int APS5_VABI sceRegMgrGetVersion(void) {
     return 0;
 }
 
-int APS5_VABI sceRegMgrIsChange(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceRegMgrIsChange(std::uint32_t optionId, std::uint32_t consumer) {
+    return gStore.isChange(optionId, consumer);
 }
 
 int APS5_VABI sceRegMgrEvtGetCnt(void) {
@@ -194,9 +222,9 @@ int APS5_VABI sceRegMgrEvtGetRegId(void) {
     return 0;
 }
 
-int APS5_VABI sceRegMgrResetVal(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceRegMgrResetVal(std::int32_t optionId, std::int32_t unk) {
+    (void)unk;
+    return gStore.resetVal(static_cast<std::uint32_t>(optionId));
 }
 
 int APS5_VABI sceRegMgrSetInitLevel(void) {
