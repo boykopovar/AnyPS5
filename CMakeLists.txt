@@ -425,6 +425,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_select_tests.py)
         add_test(NAME relinker_test_step COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_test_step.py)
+        set_tests_properties(conventions_doc_links conventions_unknown_nids conventions_debt_length conventions_debt_labels
+            PROPERTIES TIMEOUT 20)
+        set_tests_properties(test_registration test_script_registration PROPERTIES TIMEOUT 30)
+        set_tests_properties(unbuilt_exports build_eligibility check_skips sanitizer_report relinker_fuzz_fixture_warnings
+            select_tests relinker_test_step PROPERTIES TIMEOUT 20)
         add_test(NAME tools_self_inspect COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_inspect_self.py)
         set_tests_properties(tools_self_inspect PROPERTIES TIMEOUT 20)
         add_test(NAME check_main_sync COMMAND ${Python3_EXECUTABLE}
@@ -713,7 +718,8 @@ if(BUILD_TESTING)
             function(raise_windows_tooling_test_timeouts)
                 foreach(windows_tooling_test IN LISTS ARGN)
                     get_test_property(${windows_tooling_test} TIMEOUT windows_tooling_timeout)
-                    if(windows_tooling_timeout MATCHES "^[0-9.]+$" AND windows_tooling_timeout LESS 120)
+                    if(windows_tooling_timeout STREQUAL "windows_tooling_timeout-NOTFOUND"
+                        OR (windows_tooling_timeout MATCHES "^[0-9.]+$" AND windows_tooling_timeout LESS 120))
                         set_tests_properties(${windows_tooling_test} PROPERTIES TIMEOUT 120)
                     endif()
                 endforeach()
