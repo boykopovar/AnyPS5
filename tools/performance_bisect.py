@@ -153,3 +153,20 @@ def run_build_commands(worktree, recipe, commit, results_dir):
             details = (result.stdout + result.stderr)[-8000:]
             raise RuntimeError(f"build command failed ({result.returncode}): {expanded!r}\n{details}")
     return build_dir
+
+
+def run_sample(worktree, build_dir, result_dir, recipe, commit):
+    result_dir.mkdir(parents=True)
+    command = [sys.executable, str(TOOLS_DIR / "title_run.py"), recipe["title_id"]]
+    for game_dir in recipe["games"]:
+        command.extend(("--games", game_dir))
+    command.extend(("--build", str(build_dir), "--out", str(result_dir), "--runs", "1", "--seconds", str(recipe["seconds"]), "--titles", recipe["titles"]))
+    if recipe["content"] is not None:
+        command.extend(("--content", recipe["content"]))
+    result = subprocess.run(command, cwd=worktree, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if result.returncode:
+        raise RuntimeError(f"title run failed for {commit}: {(result.stdout + result.stderr)[-8000:]}")
+    summaries = list(result_dir.glob("*/summary.json"))
+    if len(summaries) != 1:
+        raise RuntimeError(f"title run for {commit} produced {len(summaries)} summary files; expected exactly one")
+    return sample_summary(summaries[0], recipe["title_id"], commit)
