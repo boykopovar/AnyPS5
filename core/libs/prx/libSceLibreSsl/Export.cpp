@@ -164,8 +164,32 @@ int APS5_VABI OCSP_basic_add1_cert_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI OCSP_basic_verify_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI OCSP_basic_verify_nid_postfix(LibreSslOcspBasicResponse* response, LibreSslStack* certificates, LibreSslX509Store* store, std::uint64_t flags) {
+    constexpr int responderIdName = 0;
+    constexpr int sha1DigestLength = 20;
+    constexpr std::uint64_t noIntern = 0x2;
+    static_cast<void>(store);
+    if (!response) NotImplemented_nid_no_patch(__func__);
+    const auto* const responseData = response->tbsResponseData;
+    if (!responseData) NotImplemented_nid_no_patch(__func__);
+    const auto* const responderId = responseData->responderId;
+    if (!responderId) NotImplemented_nid_no_patch(__func__);
+
+    const auto findKnownMissing = [responderId](const LibreSslStack* stack) {
+        if (responderId->type == responderIdName) {
+            static_cast<void>(responderId->value.byName);
+        } else {
+            const auto* const keyHash = responderId->value.byKey;
+            if (!keyHash) return false;
+            if (keyHash->length != sha1DigestLength) return true;
+            static_cast<void>(keyHash->data);
+        }
+        return !stack || stack->num <= 0;
+    };
+
+    if (!findKnownMissing(certificates)) NotImplemented_nid_no_patch(__func__);
+    if ((flags & noIntern) == 0 && !findKnownMissing(response->certs)) NotImplemented_nid_no_patch(__func__);
+    LibreSslPutError_nid_no_patch(39, 0xfff, 118);
     return 0;
 }
 
