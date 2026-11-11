@@ -5,6 +5,8 @@
 #include "Bio.hpp"
 #include "Cmac.hpp"
 
+#include "prx/libc/include/FileStream.hpp"
+
 struct Asn1String {
     std::int32_t length;
     std::int32_t type;
@@ -745,6 +747,9 @@ const LibreSslCipher* APS5_VABI EVP_aes_256_cbc_nid_postfix();
 const LibreSslEvpCipher* APS5_VABI EVP_aes_256_cfb8_nid_postfix(void);
 const LibreSslEvpCipher* APS5_VABI EVP_aes_256_ctr_nid_postfix(void);
 const LibreSslEvpCipher* APS5_VABI EVP_aes_256_gcm_nid_postfix(void);
+const LibreSslEvpCipher* APS5_VABI EVP_aes_128_wrap_nid_postfix(void);
+const LibreSslEvpCipher* APS5_VABI EVP_aes_192_wrap_nid_postfix(void);
+const LibreSslEvpCipher* APS5_VABI EVP_aes_256_wrap_nid_postfix(void);
 void APS5_VABI EVP_cleanup_nid_postfix(void);
 const EvpMd* APS5_VABI EVP_md5_nid_postfix(void);
 const EvpMd* APS5_VABI EVP_sha256_nid_postfix(void);
@@ -789,7 +794,7 @@ int APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(void);
 int APS5_VABI PEM_write_bio_X509_nid_postfix(void);
 void APS5_VABI PKCS12_PBE_add_nid_postfix(void);
 void APS5_VABI PKCS12_free_nid_postfix(void* pkcs12);
-int APS5_VABI PKCS12_parse_nid_postfix(void);
+int APS5_VABI PKCS12_parse_nid_postfix(void* p12, const char* pass, void** pkey, void** cert, void** ca);
 int APS5_VABI RSA_flags_nid_postfix(const LibreSslRsa* rsa);
 void APS5_VABI RSA_free_nid_postfix(LibreSslRsa* rsa);
 int APS5_VABI RSA_generate_key_ex_nid_postfix(void);
@@ -949,7 +954,7 @@ int APS5_VABI X509_verify_cert_nid_postfix(void);
 const char* APS5_VABI X509_verify_cert_error_string_nid_postfix(std::int64_t error);
 int APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(void);
 void* APS5_VABI d2i_PKCS12_bio_nid_postfix(LibreSsl::Bio* bio, void** output);
-int APS5_VABI d2i_PKCS12_fp_nid_postfix(void);
+void* APS5_VABI d2i_PKCS12_fp_nid_postfix(FileStream* stream, void** output);
 LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, long length);
 int APS5_VABI d2i_X509_nid_postfix(void);
 int APS5_VABI i2a_ASN1_OBJECT_nid_postfix(LibreSsl::Bio* bio, const LibreSslAsn1Object* object);

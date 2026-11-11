@@ -4,6 +4,7 @@
 #include "prx/libSceHmd2/Hmd2.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 
+#include <cerrno>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -92,6 +93,9 @@ void TestBeforeInitialize() {
     Hmd2::FieldOfView fieldOfView{};
     Require(sceHmd2GetFieldOfViewWithoutHandle(&fieldOfView) == Hmd2::NotInitialized, "field of view before initialization");
     Require(sceHmd2GetFieldOfView(0, &fieldOfView) == Hmd2::InvalidHandle, "field of view of handle 0 before initialization");
+    errno = 0;
+    Require(sceHmd2GetDeviceInformation(reinterpret_cast<Hmd2::DeviceInformation*>(0x10)) == Hmd2::ParameterNull, "unwritable device info rejects");
+    Require(errno == 0, "preserves errno");
     Require(sceHmd2GetDeviceInformationByHandle(0, &info) == Hmd2::NotInitialized, "device information of handle 0 before initialization");
     Require(sceHmd2Open(USER_SERVICE_INITIAL_USER_ID, 0, 0, nullptr) == Hmd2::NotInitialized, "open before initialization");
     Require(sceHmd2Close(0) == Hmd2::NotInitialized, "close before initialization");
