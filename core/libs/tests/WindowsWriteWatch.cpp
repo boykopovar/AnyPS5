@@ -1086,8 +1086,15 @@ void CheckArmedPrivateBlocks() {
     Require(RegionAt(memory).Protect == PAGE_READWRITE, "a private block that keeps faulting was armed again");
     arm();
     Require(RegionAt(memory + Block).Protect == PAGE_READONLY, "a clean private block was not armed again");
-    mappings.SetProtection(address + Block, Block, PAGE_READWRITE);
+    mappings.SetProtection(address + Block + 4 * Small, 4 * Small, PAGE_READWRITE);
+    Require(RegionAt(memory + Block).Protect == PAGE_READWRITE && RegionAt(memory + Block + 12 * Small).Protect == PAGE_READWRITE, "a protection change inside an armed private block left the rest of it read-only");
     DWORD previous = 0;
+    Require(VirtualProtect(memory + Block + 4 * Small, 4 * Small, PAGE_READWRITE, &previous) != 0, "cannot change the protection inside an armed private block");
+    memory[Block + 12 * Small] = 4;
+    Require(collect().contains(Block / Small + 12), "a write beside a protection change inside an armed private block was not reported");
+    arm();
+    Require(RegionAt(memory + Block).Protect == PAGE_READONLY, "a private block was not armed again after a partial protection change");
+    mappings.SetProtection(address + Block, Block, PAGE_READWRITE);
     Require(VirtualProtect(memory + Block, Block, PAGE_READWRITE, &previous) != 0, "cannot change the protection of an armed private block");
     memory[Block + Small] = 3;
     Require(collect().contains(Block / Small + 1), "a write after a protection change was not reported");

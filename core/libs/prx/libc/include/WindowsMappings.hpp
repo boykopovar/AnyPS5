@@ -245,6 +245,7 @@ public:
     void SetProtection(std::uintptr_t address, std::size_t bytes, DWORD protection) {
         std::lock_guard lock(mutex);
         disown(address, address + bytes);
+        reopenPartialArmed(address, address + bytes);
         forgetArmed(address, address + bytes);
         collectableRanges.clear();
         for (auto it = views.lower_bound(address); it != views.end() && it->first < address + bytes; ++it) {
@@ -889,6 +890,15 @@ private:
                 if (page < end && page + 4096 > first) ownedPending[block] |= static_cast<std::uint16_t>(std::uint16_t{1} << bit);
             }
             openArmedBlock(block, found->second);
+        }
+    }
+
+    void reopenPartialArmed(std::uintptr_t first, std::uintptr_t end) {
+        if (armedPrivate.empty() || end <= first) return;
+        for (const auto block : {first & ~(ownedBlockBytes - 1), (end - 1) & ~(ownedBlockBytes - 1)}) {
+            if (block >= first && block + ownedBlockBytes <= end) continue;
+            const auto found = armedPrivate.find(block);
+            if (found != armedPrivate.end() && found->second.armed != 0) openArmedBlock(block, found->second);
         }
     }
 
