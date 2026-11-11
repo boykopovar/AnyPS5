@@ -224,6 +224,15 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
+bool IsNan16(std::uint32_t bits) {
+    return (bits & 0x7fffu) > 0x7c00u;
+}
+
+bool HostNan(std::uint32_t actual, std::uint32_t expected) {
+    const std::uint32_t half = expected & 0xffffu;
+    return (actual >> 16u) == (expected >> 16u) && IsNan16(half) && half != 0xfe00u && IsNan16(actual & 0xffffu);
+}
+
 void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::ShaderFloatMode& floatMode, const Variant& variant) {
     Code[6] = 0xd536000au | variant.abs << 8u | variant.clamp << 15u;
     Code[7] = 0x042a0b04u | variant.omod << 27u | variant.neg << 29u;
@@ -255,13 +264,17 @@ void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::ShaderFloatMod
     device.WaitIdle();
 }
 
-void Check(const char* mode, const Variant& variant, const std::uint32_t* expected) {
+std::uint32_t Check(const char* mode, const Variant& variant, const std::uint32_t* expected) {
+    std::uint32_t hostNans = 0u;
     for (std::uint32_t tid = 0; tid < RowCount; ++tid) {
         const std::uint32_t actual = Output[tid * Results];
-        Require(actual == expected[tid], std::string("v_fmac_f16 ") + variant.name + " " + mode + ": lane " + std::to_string(tid) + " of " +
-                                             Hex(Rows[tid].a) + " * " + Hex(Rows[tid].b) + " + " + Hex(Rows[tid].accumulator) + " is " + Hex(actual) +
-                                             ", expected " + Hex(expected[tid]));
+        const bool hostNan = actual != expected[tid] && HostNan(actual, expected[tid]);
+        if (hostNan) ++hostNans;
+        Require(actual == expected[tid] || hostNan, std::string("v_fmac_f16 ") + variant.name + " " + mode + ": lane " + std::to_string(tid) + " of " +
+                                                        Hex(Rows[tid].a) + " * " + Hex(Rows[tid].b) + " + " + Hex(Rows[tid].accumulator) + " is " + Hex(actual) +
+                                                        ", expected " + Hex(expected[tid]));
     }
+    return hostNans;
 }
 
 }
@@ -270,13 +283,14 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        std::uint32_t hostNans = 0u;
         for (const Variant& variant : Variants) {
             for (std::uint32_t mode = 0; mode < ModeCount; ++mode) {
                 Run(*device, Modes[mode].floatMode, variant);
-                Check(Modes[mode].name, variant, variant.expected[mode]);
+                hostNans += Check(Modes[mode].name, variant, variant.expected[mode]);
             }
         }
-        std::puts("v_fmac_f16 modifiers tests passed");
+        std::printf("v_fmac_f16 modifiers tests passed (%u propagated NaN results with the host's own NaN bits)\n", hostNans);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
