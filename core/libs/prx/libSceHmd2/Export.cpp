@@ -10,6 +10,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstring>
 #include <mutex>
@@ -99,16 +100,25 @@ std::uint32_t CompiledSdkVersion() {
 }
 
 std::int32_t GetDeviceInformation(Hmd2::DeviceInformation* info) {
+    const int savedErrno = errno;
     if (!info) return Hmd2::ParameterNull;
-    *info = {};
-    if (!initialized) return Hmd2::NotInitialized;
-    info->status = Hmd2::DeviceStatus::NotDetected;
-    if (CompiledSdkVersion() < Hmd2::UserIdSdkVersion) info->userId = -1;
-    info->panelWidth = 4000;
-    info->panelHeight = 2040;
-    info->latency90Hz = 5555;
-    info->latency120Hz = 4160;
-    info->virtualImageDistance = 2.0f;
+    Hmd2::DeviceInformation localInfo{};
+    if (!initialized) {
+        const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+        errno = savedErrno;
+        if (!copied) return Hmd2::ParameterNull;
+        return Hmd2::NotInitialized;
+    }
+    localInfo.status = Hmd2::DeviceStatus::NotDetected;
+    if (CompiledSdkVersion() < Hmd2::UserIdSdkVersion) localInfo.userId = -1;
+    localInfo.panelWidth = 4000;
+    localInfo.panelHeight = 2040;
+    localInfo.latency90Hz = 5555;
+    localInfo.latency120Hz = 4160;
+    localInfo.virtualImageDistance = 2.0f;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return Hmd2::ParameterNull;
     return 0;
 }
 
@@ -145,7 +155,10 @@ std::int32_t APS5_VABI sceHmd2GetFieldOfView(std::int32_t handle, Hmd2::FieldOfV
     if (!fieldOfView) return Hmd2::ParameterNull;
     if (handle == 0 || handle != openHandle) return Hmd2::InvalidHandle;
     if (!initialized) return Hmd2::NotInitialized;
-    *fieldOfView = DefaultFieldOfView;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(fieldOfView, &DefaultFieldOfView, sizeof(DefaultFieldOfView));
+    errno = savedErrno;
+    if (!copied) return Hmd2::ParameterNull;
     return 0;
 }
 
@@ -215,7 +228,10 @@ std::int32_t APS5_VABI sceHmd2GetFieldOfViewWithoutHandle(Hmd2::FieldOfView* fie
     std::lock_guard lock(stateMutex);
     if (!fieldOfView) return Hmd2::ParameterNull;
     if (!initialized) return Hmd2::NotInitialized;
-    *fieldOfView = DefaultFieldOfView;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(fieldOfView, &DefaultFieldOfView, sizeof(DefaultFieldOfView));
+    errno = savedErrno;
+    if (!copied) return Hmd2::ParameterNull;
     return 0;
 }
 

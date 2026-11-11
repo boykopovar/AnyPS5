@@ -60,8 +60,9 @@ std::uint8_t* WriteBlock(NpRingBuf& ringBuf, std::size_t& blockSize) {
 }
 
 void CommitWrite(NpRingBuf& ringBuf, std::size_t size) {
+    Require(size <= static_cast<std::size_t>(End(ringBuf) - ringBuf.writePointer),
+        "sce::np::RingBuf::CheckinForWrite: the write passes the end of the buffer");
     ringBuf.writePointer += size;
-    Require(ringBuf.writePointer <= End(ringBuf), "sce::np::RingBuf::CheckinForWrite: the write passes the end of the buffer");
     if (ringBuf.writePointer == End(ringBuf)) ringBuf.writePointer = ringBuf.buf;
     ringBuf.size += size;
 }
@@ -203,7 +204,7 @@ int APS5_VABI _ZN3sce2np7RingBuf4ReadEPvm(NpRingBuf* self, void* data, std::size
 int APS5_VABI _ZN3sce2np7RingBuf4PeekEmPvm(NpRingBuf* self, std::size_t offset, void* data, std::size_t size) {
     Require(data != nullptr, "sce::np::RingBuf::Peek: null buffer");
     Require(size != 0, "sce::np::RingBuf::Peek: empty read");
-    if (offset + size > self->size || offset >= self->size) return NP_RING_BUF_ERROR_NO_SPACE;
+    if (offset >= self->size || size > self->size - offset) return NP_RING_BUF_ERROR_NO_SPACE;
     auto* out = static_cast<std::uint8_t*>(data);
     const std::uint8_t* source = self->readPointer + offset;
     if (source < End(*self)) {
@@ -268,6 +269,7 @@ void APS5_VABI _ZN3sce2np13RingBufMemory7DestroyEv(NpRingBufMemory* self) {
 
 int APS5_VABI _ZN3sce2np13RingBufMemory6ExpandEm(NpRingBufMemory* self, std::size_t extraSize) {
     NpRingBuf& ringBuf = self->ringBuf;
+    Require(extraSize <= SIZE_MAX - ringBuf.bufSize, "sce::np::RingBufMemory::Expand: the new size overflows");
     auto* buf = static_cast<std::uint8_t*>(self->allocator->allocator.reallocate(ringBuf.buf, ringBuf.bufSize + extraSize,
         self->allocator->allocator.context));
     if (buf == nullptr) return NP_RING_BUF_ERROR_OUT_OF_MEMORY;
