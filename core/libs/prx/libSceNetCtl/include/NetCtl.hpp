@@ -2,7 +2,7 @@
 
 #include "SceTypes.hpp"
 
-union NetCtlInfoV6;
+union NetCtlInfoV6 { std::uint8_t opaque[256]; };
 struct NetCtlConnectionConfiguration;
 struct NetCtlScanOptions;
 struct NetCtlScanBssidList;

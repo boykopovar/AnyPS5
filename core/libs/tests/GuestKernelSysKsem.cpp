@@ -1,6 +1,8 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Semaphore/include/Ksem.hpp"
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -8,6 +10,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <string>
@@ -43,6 +46,20 @@ int Value(std::intptr_t id) {
     int value = -1;
     Require(ksem_getvalue_nid_postfix(id, &value) == 0);
     return value;
+}
+
+template <typename TFinished>
+void WaitForRegisteredWaiters(std::intptr_t id, unsigned expected, TFinished finished) {
+    const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    for (;;) {
+        Require(!finished());
+        if (KsemWaiterCountForTests_nid_no_patch(id) == expected) {
+            Require(!finished());
+            return;
+        }
+        Require(std::chrono::steady_clock::now() < limit);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
 }
 
 void Counting() {
@@ -91,6 +108,55 @@ void Blocking() {
     Require(ksem_post_nid_postfix(id) == 0);
     waiter.join();
     Require(result == 0 && Value(id) == 0);
+    Require(ksem_destroy_nid_postfix(id) == 0);
+}
+
+void AbsoluteTimeouts() {
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 0) == 0);
+    for (const auto seconds : {std::int64_t{0}, std::numeric_limits<std::int64_t>::min()}) {
+        const KernelTimespec expired{seconds, 0};
+        Require(ksem_timedwait_nid_postfix(id, &expired) == -1 && Error() == Etimedout);
+        Require(ksem_post_nid_postfix(id) == 0);
+        Require(ksem_timedwait_nid_postfix(id, &expired) == 0 && Value(id) == 0);
+    }
+    const KernelTimespec future{std::numeric_limits<std::int64_t>::max(), 999999999};
+    std::atomic<bool> completed{false};
+    int result = -2;
+    std::thread waiter([&] {
+        result = ksem_timedwait_nid_postfix(id, &future);
+        completed.store(true, std::memory_order_release);
+    });
+    WaitForRegisteredWaiters(id, 1, [&] { return completed.load(std::memory_order_acquire); });
+    Require(ksem_post_nid_postfix(id) == 0);
+    waiter.join();
+    Require(result == 0 && Value(id) == 0);
+    Require(ksem_destroy_nid_postfix(id) == 0);
+}
+
+void TimedWakeup() {
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 0) == 0);
+    const auto start = std::chrono::steady_clock::now();
+    const auto deadline = FromNow(std::chrono::seconds(5));
+    std::atomic<unsigned> completed{0};
+    std::array<int, 2> results{};
+    std::array<int, 2> errors{};
+    std::array<std::thread, 2> waiters;
+    for (std::size_t index = 0; index < waiters.size(); ++index) {
+        waiters[index] = std::thread([&, index] {
+            results[index] = ksem_timedwait_nid_postfix(id, &deadline);
+            errors[index] = Error();
+            completed.fetch_add(1, std::memory_order_release);
+        });
+    }
+    WaitForRegisteredWaiters(id, 2, [&] { return completed.load(std::memory_order_acquire) != 0; });
+    Require(ksem_post_nid_postfix(id) == 0);
+    for (auto& waiter : waiters) waiter.join();
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(4950));
+    Require((results[0] == 0 && results[1] == -1 && errors[1] == Etimedout) ||
+            (results[1] == 0 && results[0] == -1 && errors[0] == Etimedout));
+    Require(Value(id) == 0);
     Require(ksem_destroy_nid_postfix(id) == 0);
 }
 
@@ -159,6 +225,8 @@ void Limit() {
 int main() {
     Counting();
     Timed();
+    AbsoluteTimeouts();
+    TimedWakeup();
     Blocking();
     Identifiers();
     Duplicates();
