@@ -248,6 +248,7 @@ std::int64_t APS5_VABI aio_return_nid_postfix(GuestAiocb* aiocb) {
 
 int APS5_VABI aio_suspend_nid_postfix(const GuestAiocb* const* list, int count, const KernelTimespec* timeout) {
     if (count < 0 || count > static_cast<int>(QueuePerProcess)) return Fail(GuestEinval);
+    if (count > 0 && list == nullptr) return Fail(GuestEfault);
     std::optional<std::uint64_t> deadline;
     if (timeout != nullptr) {
         const auto wait = WaitTime(*timeout);

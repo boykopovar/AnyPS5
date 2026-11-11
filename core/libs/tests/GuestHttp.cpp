@@ -1,6 +1,7 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
+#include <cerrno>
 #include <array>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
@@ -735,6 +736,9 @@ int main(int argc, char** argv) {
     Require(Throws([] { sceHttpGetMemoryPoolStats(INT32_MAX, nullptr); }));
     Require(sceHttpCreateEpoll(-1, &epoll) == invalidId);
     Require(sceHttpCreateEpoll(context, nullptr) == invalidValue);
+    errno = 71;
+    Require(sceHttpCreateEpoll(context, reinterpret_cast<HttpEpollHandle*>(0x10)) == invalidValue);
+    Require(errno == 71);
     Require(sceHttpCreateEpoll(context, &epoll) == 0 && epoll != nullptr);
     Require(sceHttpWaitRequest(epoll, events, 2, 0) == 0);
     Require(sceHttpWaitRequest(epoll, events, 2, 1000) == 0);
