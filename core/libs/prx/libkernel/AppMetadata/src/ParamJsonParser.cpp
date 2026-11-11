@@ -329,6 +329,16 @@ ParsedParamJson parseParamJson(const std::filesystem::path& paramJsonPath) {
     result.title = title;
     result.titleId = titleId;
     if (const JsonValue* contentVersion = findObjectMember(root, "contentVersion"); contentVersion != nullptr && contentVersion->type == JsonType::String) result.contentVersion = contentVersion->stringValue;
+    if (const JsonValue* categoryType = findObjectMember(root, "applicationCategoryType")) {
+        const auto& number = categoryType->numberText;
+        if (categoryType->type != JsonType::Number || number.find_first_of("-.eE") != std::string::npos)
+            throw std::runtime_error("param.json applicationCategoryType is not an unsigned integer");
+        std::uint32_t value = 0;
+        const auto parsed = std::from_chars(number.data(), number.data() + number.size(), value);
+        if (parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size())
+            throw std::runtime_error("param.json applicationCategoryType exceeds uint32 range");
+        result.applicationCategoryType = value;
+    }
     if (const JsonValue* attribute = findObjectMember(root, "attribute3")) {
         const auto& number = attribute->numberText;
         if (attribute->type != JsonType::Number || number.find_first_of("-.eE") != std::string::npos) throw std::runtime_error("param.json attribute3 is not an unsigned integer");
