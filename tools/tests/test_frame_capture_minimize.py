@@ -327,5 +327,13 @@ if command == 'inspect':
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 frame_capture_minimize.parse_args(arguments)
 
+    def test_zero_replay_timeout_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arguments, _, _, _ = self.empty_cli(root)
+            arguments.extend(["--replay-timeout", "0"])
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                frame_capture_minimize.parse_args(arguments)
+
 if __name__ == "__main__":
     unittest.main()
