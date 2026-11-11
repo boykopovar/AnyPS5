@@ -39,8 +39,7 @@ int APS5_VABI libSceNpManagerUnknown_3ikctjJYPtk_nid_no_patch() {
 
 APS5_EXPORT("3ikctjJYPtk", libSceNpManagerUnknown_3ikctjJYPtk_nid_no_patch);
 
-int APS5_VABI libSceNpManagerUnknown_3sU9cWXBN98_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceNpManagerUnknown_3sU9cWXBN98_nid_no_patch() {
 }
 
 APS5_EXPORT("3sU9cWXBN98", libSceNpManagerUnknown_3sU9cWXBN98_nid_no_patch);
@@ -81,8 +80,7 @@ int APS5_VABI libSceNpManagerUnknown_6ijl2h7IowA_nid_no_patch() {
 
 APS5_EXPORT("6ijl2h7IowA", libSceNpManagerUnknown_6ijl2h7IowA_nid_no_patch);
 
-int APS5_VABI libSceNpManagerUnknown_7d3y0wXbeGY_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceNpManagerUnknown_7d3y0wXbeGY_nid_no_patch() {
 }
 
 APS5_EXPORT("7d3y0wXbeGY", libSceNpManagerUnknown_7d3y0wXbeGY_nid_no_patch);
@@ -633,8 +631,7 @@ int APS5_VABI libSceNpManagerUnknown_uqHeyEjZlpA_nid_no_patch() {
 
 APS5_EXPORT("uqHeyEjZlpA", libSceNpManagerUnknown_uqHeyEjZlpA_nid_no_patch);
 
-int APS5_VABI libSceNpManagerUnknown_vWxlv7_minus_lH78_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceNpManagerUnknown_vWxlv7_minus_lH78_nid_no_patch() {
 }
 
 APS5_EXPORT("vWxlv7-lH78", libSceNpManagerUnknown_vWxlv7_minus_lH78_nid_no_patch);
@@ -681,8 +678,7 @@ int APS5_VABI libSceNpManagerUnknown_y2cDXtZoz2s_nid_no_patch() {
 
 APS5_EXPORT("y2cDXtZoz2s", libSceNpManagerUnknown_y2cDXtZoz2s_nid_no_patch);
 
-int APS5_VABI libSceNpManagerUnknown_z8eiw8_plus_UfEo_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceNpManagerUnknown_z8eiw8_plus_UfEo_nid_no_patch() {
 }
 
 APS5_EXPORT("z8eiw8+UfEo", libSceNpManagerUnknown_z8eiw8_plus_UfEo_nid_no_patch);
@@ -798,10 +794,6 @@ int APS5_VABI sceNpPushSetNpCommunicationId() {
 }
 
 int APS5_VABI sceNpPushUnsetNpCommunicationId() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceNpRegisterGamePresenceCallbackA() {
     NotImplemented_nid_no_patch(__func__);
 }
 

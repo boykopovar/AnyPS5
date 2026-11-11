@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -770,7 +771,14 @@ int AddVnodeEvent(const KernelEqueueRef& queue, int descriptor, std::uint32_t ff
         CloseHostWatch(host);
         return result == EQUEUE_OK ? 0 : result & 0xffff;
     }
-    std::thread(RunHostWatch, watch, std::move(host)).detach();
+    std::thread([watch, host = std::move(host)]() mutable {
+        try {
+            RunHostWatch(watch, std::move(host));
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "%s\n", error.what());
+            std::fflush(stderr);
+        }
+    }).detach();
     return 0;
 }
 

@@ -191,6 +191,7 @@ class DebtSplitTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
         self.git("init", "-q", "-b", "main")
+        self.git("config", "core.safecrlf", "false")
         self.write(INDEX, ORIGINAL)
 
     def tearDown(self):

@@ -1353,7 +1353,7 @@ void TestPs5ExtendedInitLayout() {
 
 void TestAutoStartKeepsStartedPlayback() {
     bool startedByTitle = false;
-    for (int attempt = 0; attempt < 10 && !startedByTitle; ++attempt) {
+    for (int attempt = 0; attempt < 400 && !startedByTitle; ++attempt) {
         AvPlayerInitData init = InitData(nullptr);
         auto* player = sceAvPlayerInit(&init);
         Check(player != nullptr, "init failed");

@@ -29,7 +29,7 @@ void writeGotStub(std::vector<PeSection>& sections, const std::uint32_t targetRv
 
 }
 
-WindowsPePatcher::WindowsPePatcher(const bool windowsGui, std::optional<std::vector<std::uint8_t>> icon, std::filesystem::path iconName, std::function<void(std::uint64_t, std::uint64_t)> progress, const std::optional<std::uint64_t> fixedBase, const bool traceImports, std::function<void(std::string_view)> message, std::string outputName) : progress(std::move(progress)), windowsGui(windowsGui), icon(std::move(icon)), iconName(std::move(iconName)), fixedBase(fixedBase), traceImports(traceImports), message(std::move(message)), outputName(std::move(outputName)) {
+WindowsPePatcher::WindowsPePatcher(const bool windowsGui, std::optional<std::vector<std::uint8_t>> icon, std::filesystem::path iconName, std::function<void(std::uint64_t, std::uint64_t)> progress, const std::optional<std::uint64_t> fixedBase, const bool traceImports, std::function<void(std::string_view)> message, std::string outputName, const bool functionSymbolRoots) : progress(std::move(progress)), windowsGui(windowsGui), icon(std::move(icon)), iconName(std::move(iconName)), fixedBase(fixedBase), traceImports(traceImports), functionSymbolRoots(functionSymbolRoots), message(std::move(message)), outputName(std::move(outputName)) {
     if (fixedBase && (*fixedBase < 0x20000 || *fixedBase > 0x7fffffff0000 || (*fixedBase & 0xffff) != 0))
         throw Domain::RelinkerException("Invalid fixed Windows guest image base");
 }
@@ -81,8 +81,8 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
     std::uint32_t tlsIndex = 0;
-    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, &tlsIndex, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message);
-    directories[0] = WindowsExportBuilder().BuildExecutable(dynamicSection, image, originalHeaders, tlsIndex, relocations.BaseRelocations, outputName, sections, nextRva);
+    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, &tlsIndex, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message, functionSymbolRoots);
+    directories[0] = WindowsExportBuilder().BuildExecutable(dynamicSection, image, originalHeaders, tlsIndex, relocations.BaseRelocations, outputName, sections, nextRva, functionSymbolRoots);
     report(8000);
     WindowsTrampolineBuilder().Build(trampolines, image, sections, nextRva);
     const WindowsImportBuilder importBuilder;
