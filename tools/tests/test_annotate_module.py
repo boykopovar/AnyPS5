@@ -402,6 +402,48 @@ class AnnotateModuleTests(unittest.TestCase):
                     self.assertNotIn("; GOT ", self.read(".asm"))
                     self.assertNotIn("; -> ", self.read(".asm"))
 
+    def test_lea_destination_width_controls_import_address(self):
+        address = 0x100001000
+        symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 0, 0x12, 0)]
+        for segment in (b"", b"\x64", b"\x65"):
+            for address_prefix in (b"", b"\x67"):
+                with self.subTest(segment=segment, address_prefix=address_prefix):
+                    code, expected = b"", {}
+                    for opcode in (0x8D, 0x8B):
+                        for width in (16, 32, 64):
+                            for register in range(16):
+                                rex = (0x48 if width == 64 else 0x40) | (4 if register >= 8 else 0)
+                                prefix = segment + (b"\x66" if width == 16 else b"") + address_prefix
+                                if rex != 0x40:
+                                    prefix += bytes([rex])
+                                encoded = prefix + bytes([opcode, 5 | ((register & 7) << 3)])
+                                location = address + len(code)
+                                next_address = location + len(encoded) + 4
+                                code += encoded + struct.pack("<I", (SLOT - next_address) & 0xFFFFFFFF)
+                                if opcode == 0x8D:
+                                    name = None if width == 16 else IMPORT_NAME if width == 32 or address_prefix else SECOND_IMPORT_NAME
+                                else:
+                                    name = None if segment else IMPORT_NAME if address_prefix else SECOND_IMPORT_NAME
+                                expected[location] = (opcode, width, register, name)
+                    module = bytearray(build_module(code=code + b"\xc3", symbols=symbols,
+                                                   relocations=((SLOT, 1), (0x100000000 + SLOT, 3))))
+                    struct.pack_into("<Q", module, 64 + 16, address)
+                    self.annotate(bytes(module))
+                    observed = set()
+                    for line in self.read(".asm").splitlines():
+                        match = annotate_module.LINE_ADDRESS.match(line)
+                        location = int(match.group(1), 16) if match else None
+                        if location not in expected:
+                            continue
+                        observed.add(location)
+                        opcode, width, register, name = expected[location]
+                        with self.subTest(opcode=opcode, width=width, register=register):
+                            if name is None:
+                                self.assertNotIn("; GOT ", line)
+                            else:
+                                self.assertTrue(line.endswith("; GOT " + name), line)
+                    self.assertEqual(observed, set(expected))
+
     def test_lea_ignores_segment_base_when_naming_import_addresses(self):
         address = 0x100001000
         for segment in (b"", b"\x64", b"\x65"):
