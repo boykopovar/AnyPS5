@@ -132,3 +132,24 @@ def first_parent_commits(repo, good, bad):
     if not commits or commits[-1] != bad_sha:
         raise ValueError("the bad commit must follow the good commit on the first-parent history")
     return good_sha, bad_sha, commits
+
+
+def format_command(command, values):
+    result = []
+    for argument in command:
+        for name in PLACEHOLDERS:
+            argument = argument.replace("{" + name + "}", str(values[name]))
+        result.append(argument)
+    return result
+
+
+def run_build_commands(worktree, recipe, commit, results_dir):
+    build_dir = worktree / recipe["build_dir"]
+    values = {"worktree": worktree, "build_dir": build_dir, "result_dir": results_dir, "commit": commit}
+    for command in recipe["build_commands"]:
+        expanded = format_command(command, values)
+        result = subprocess.run(expanded, cwd=worktree, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if result.returncode:
+            details = (result.stdout + result.stderr)[-8000:]
+            raise RuntimeError(f"build command failed ({result.returncode}): {expanded!r}\n{details}")
+    return build_dir
