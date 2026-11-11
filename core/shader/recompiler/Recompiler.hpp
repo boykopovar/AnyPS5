@@ -1057,6 +1057,12 @@ void SetDebugProbeActive(bool active);
 [[nodiscard]] bool RayTracingStrict();
 [[nodiscard]] bool RayTracingMiss();
 [[nodiscard]] bool ExactF32Arithmetic();
+struct NanSpeculationConfig {
+    bool enabled = false;
+    std::uint32_t minimumVectorInstructions = 32u;
+    std::uint32_t maximumVectorInstructions = 256u;
+};
+[[nodiscard]] const NanSpeculationConfig& NanSpeculation();
 
 struct RectListShaders {
     RecompileResult control;

@@ -1,5 +1,6 @@
 #include "Translation/TranslationContext.hpp"
 #include "Recompiler.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
@@ -100,6 +101,25 @@ bool RayTracingMiss() {
         return text != nullptr && std::strcmp(text, "miss") == 0;
     }();
     return miss;
+}
+
+const NanSpeculationConfig& NanSpeculation() {
+    static const NanSpeculationConfig config = [] {
+        NanSpeculationConfig result;
+        const char* enabled = std::getenv("APS5_NAN_SPECULATION");
+        result.enabled = enabled != nullptr && *enabled != '\0' && std::strcmp(enabled, "0") != 0;
+        const auto number = [](const char* name, std::uint32_t fallback) {
+            const char* text = std::getenv(name);
+            if (text == nullptr || *text == '\0') return fallback;
+            char* end = nullptr;
+            const auto value = std::strtoul(text, &end, 10);
+            return end != text && *end == '\0' && value > 0u && value <= 4096u ? static_cast<std::uint32_t>(value) : fallback;
+        };
+        result.minimumVectorInstructions = number("APS5_NAN_SPECULATION_MIN", result.minimumVectorInstructions);
+        result.maximumVectorInstructions = std::max(result.minimumVectorInstructions, number("APS5_NAN_SPECULATION_MAX", result.maximumVectorInstructions));
+        return result;
+    }();
+    return config;
 }
 
 bool ExactF32Arithmetic() {
