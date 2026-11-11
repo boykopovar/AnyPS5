@@ -578,6 +578,9 @@ int APS5_VABI sceAudioOutSetVolume(int handle, std::uint32_t flag, int* vol) {
     if (port == nullptr) {
         return -2144993277;
     }
+    if ((flag & 0xffu) == 0) {
+        return -2144993261;
+    }
     const bool isStd = formatIsStd(port->format);
     const auto sourceIndex = [isStd](int i) {
         if (!isStd) return i;
