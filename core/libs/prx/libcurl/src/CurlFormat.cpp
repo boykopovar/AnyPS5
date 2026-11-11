@@ -1,3 +1,39 @@
+/***************************************************************************
+ *                                  _   _ ____  _
+ *  Project                     ___| | | |  _ \| |
+ *                             / __| | | | |_) | |
+ *                            | (__| |_| |  _ <| |___
+ *                             \___|\___/|_| \_\_____|
+ *
+ * Copyright (C) 1999 - 2021, Daniel Stenberg, <daniel@haxx.se>, et al.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution. The terms
+ * are also available at https://curl.se/docs/copyright.html.
+ *
+ * You may opt to use, copy, modify, merge, publish, distribute and/or sell
+ * copies of the Software, and permit persons to whom the Software is
+ * furnished to do so, under the terms of the COPYING file.
+ *
+ * This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
+ * KIND, either express or implied.
+ *
+ *
+ * Purpose:
+ *  A merge of Bjorn Reese's format() function and Daniel's dsprintf()
+ *  1.0. A full blooded printf() clone with full support for <num>$
+ *  everywhere (parameters, widths and precisions) including variabled
+ *  sized parameters (like doubles, long longs, long doubles and even
+ *  void * in 64-bit architectures).
+ *
+ * Current restrictions:
+ * - Max 128 parameters
+ * - No 'long double' support.
+ *
+ * If you ever want truly portable and good *printf() clones, the project that
+ * took on from here is named 'Trio' and you find more details on the trio web
+ * page at https://daniel.haxx.se/projects/trio/
+ */
 #include "prx/libcurl/src/CurlFormat.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
