@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -61,6 +62,16 @@ static void TestResponseStatus() {
     Require(Status(&value) == -1);
     Require(Status(nullptr) == 0);
     RequireThrows([] { OCSP_response_status_nid_postfix(nullptr); });
+}
+
+static void TestBasicResponseFree() {
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(1, 2, 3);
+    const auto error = ERR_peek_error_nid_postfix();
+    OCSP_BASICRESP_free_nid_postfix(nullptr);
+    Require(ERR_peek_error_nid_postfix() == error);
+    RequireThrows([] { OCSP_BASICRESP_free_nid_postfix(reinterpret_cast<void*>(std::uintptr_t{1})); });
+    Require(ERR_peek_error_nid_postfix() == error);
 }
 
 static void TestGet1Basic() {
@@ -139,6 +150,7 @@ static void TestSingleStatus() {
 int main() {
     TestGet1Basic();
     TestResponseStatus();
+    TestBasicResponseFree();
     TestSingleStatus();
     std::puts("libSceLibreSsl OCSP response tests passed");
 }
