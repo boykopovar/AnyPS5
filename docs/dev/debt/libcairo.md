@@ -24,16 +24,17 @@
 
 - [Path data in Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) implements eleven path lifecycle and current-point exports with Cairo 24.8 device-coordinate quantization, target device scale, forward-collinear line canonicalization, move/line/cubic/close elements, deep-copied public cairo_path_t arrays, and guest ABI ownership. Append converts user paths through the current CTM and target device scale, while save/restore preserves the independent path. Rendering and path extents are not yet implemented; arc/rectangle constructors remain pending.
 
+- [FreeType font faces](../../../core/libs/prx/libcairo/FontFace.cpp) follow Cairo 1.18.0 for lifetime only: `cairo_ft_font_face_create_for_ft_face` returns the cached face for the same guest `FT_Face`, `face_index` and load flags with one more reference, the face does not reference the `FT_Face`, and user data is released in reverse order after the face leaves the cache. Cairo's "zombie" face, kept while a scaled font still holds the unscaled font, is not modelled because scaled fonts throw. A null face or font face throws because Cairo dereferences it, and setting user data from a font-face finalizer throws because Cairo modifies the array it is finalizing. The PS5 prototypes are unverified.
+
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 89 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
+- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 69 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
 
 | Name | NID |
 | --- | --- |
 | `cairo_scaled_font_get_font_face` | `+BL3-h8zGDo` |
 | `cairo_paint` | `+PEo5Z7DOlY` |
 | `cairo_set_font_options` | `-aqFIBn0h78` |
-| `cairo_font_face_set_user_data` | `1GGpdjyZslI` |
 | `cairo_stroke_extents` | `1K5ly63m6fo` |
 | `cairo_arc_negative` | `2w5H3b3yPqw` |
 | `cairo_image_surface_create_from_png_stream` | `4dvdsqyLM8c` |
@@ -57,7 +58,6 @@
 | `cairo_mesh_pattern_curve_to` | `H9bwCsWw7LA` |
 | `cairo_scaled_font_get_font_matrix` | `HKjYBSCx3mY` |
 | `cairo_mesh_pattern_line_to` | `HTB1uUwgSVQ` |
-| `cairo_font_face_destroy` | `IgBFcd4cF28` |
 | `cairo_scaled_font_text_extents` | `Jk9paxbMQsk` |
 | `cairo_pattern_create_linear` | `K62jNcRGQdY` |
 | `cairo_clip_extents` | `LJNqwiDWTm0` |
@@ -78,13 +78,11 @@
 | `cairo_scaled_font_status` | `a5WkqZXnG2w` |
 | `cairo_in_fill` | `akimK5gpdho` |
 | `cairo_set_source` | `bU0QXekwNes` |
-| `cairo_font_face_get_user_data` | `bXupa3+NYIs` |
 | `cairo_pattern_create_mesh` | `bz5MfOeWZw4` |
 | `cairo_stroke` | `cdr2T4SoIyU` |
 | `cairo_set_operator` | `dc4bb-f5YEE` |
 | `cairo_fill_preserve` | `dewyjTlk+u8` |
 | `cairo_fill_extents` | `dkoQNd4kBlQ` |
-| `cairo_ft_font_face_create_for_ft_face` | `dqEhIWRTjuo` |
 | `cairo_pattern_destroy` | `eZpt6dzI9oo` |
 | `cairo_pattern_set_matrix` | `fDNhBmmwSNs` |
 | `cairo_pattern_set_filter` | `gsqESe70WD0` |
@@ -93,7 +91,6 @@
 | `cairo_glyph_free` | `lAEbTbSUTTo` |
 | `cairo_select_font_face` | `ldk9m5h+-no` |
 | `cairo_scaled_font_reference` | `mb4bdMeFRs8` |
-| `cairo_font_face_reference` | `nqmUW6Z8xLE` |
 | `cairo_scaled_font_text_to_glyphs` | `ojbXRC0CmUo` |
 | `cairo_scaled_font_glyph_extents` | `oy7NcAkex1I` |
 | `cairo_show_text` | `psdqLsaPnkk` |
