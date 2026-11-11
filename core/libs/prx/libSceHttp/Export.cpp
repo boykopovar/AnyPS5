@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <limits>
 #include <map>
 #include <memory>
@@ -105,6 +106,7 @@ struct HttpEpoll {
     HostCondition wake;
     bool aborted = false;
     bool destroyed = false;
+    std::deque<HttpNBEvent> events;
 };
 
 static std::mutex g_stateMutex;
@@ -112,6 +114,7 @@ static std::unordered_set<int> g_contexts;
 static std::unordered_map<int, uint64_t> g_contextPoolSizes;
 static std::unordered_map<int, std::pair<int, int>> g_contextRegisteredIds;
 static std::unordered_map<HttpEpollHandle, std::shared_ptr<HttpEpoll>> g_epolls;
+static std::unordered_map<int, int> g_requestLastErrno;
 
 static std::shared_ptr<HttpEpoll> FindEpoll(HttpEpollHandle eh) {
     const auto it = g_epolls.find(eh);
@@ -230,9 +233,22 @@ int APS5_VABI sceHttpDeleteConnection(int conn_id) {
 }
 
 int APS5_VABI sceHttpDeleteRequest(int req_id) {
+    const auto options = FindHttpOptions(req_id);
     RemoveHttpObject(req_id);
-    std::lock_guard lock(g_statusMutex);
-    g_statusCallbacks.erase(req_id);
+    {
+        std::lock_guard lock(g_statusMutex);
+        g_statusCallbacks.erase(req_id);
+    }
+    std::shared_ptr<HttpEpoll> epoll;
+    {
+        std::lock_guard lock(g_stateMutex);
+        g_requestLastErrno.erase(req_id);
+        if (options && options->epoll) epoll = FindEpoll(options->epoll);
+    }
+    if (epoll) {
+        std::lock_guard lock(epoll->mutex);
+        std::erase_if(epoll->events, [req_id](const HttpNBEvent& event) { return event.id == req_id; });
+    }
     return 0;
 }
 
@@ -300,9 +316,23 @@ int APS5_VABI sceHttpsDisableOption(int id, uint32_t ssl_flags) {
 }
 
 int APS5_VABI sceHttpSendRequest(int request_id, const void* post_data, size_t size) {
-    (void)request_id;
     (void)post_data;
     (void)size;
+    const auto options = FindHttpOptions(request_id);
+    if (!options) return ERROR_NETWORK;
+    std::shared_ptr<HttpEpoll> epoll;
+    {
+        std::lock_guard lock(g_stateMutex);
+        g_requestLastErrno[request_id] = HTTP_NET_ENETUNREACH;
+        if (options->nonblock && options->epoll) epoll = FindEpoll(options->epoll);
+    }
+    if (epoll) {
+        std::lock_guard lock(epoll->mutex);
+        if (!epoll->destroyed) {
+            epoll->events.push_back({HTTP_NB_EVENT_SOCK_ERR | HTTP_NB_EVENT_HUP, static_cast<std::uint32_t>(HTTP_NET_ENETUNREACH), request_id, options->epollArgument});
+            epoll->wake.NotifyAll();
+        }
+    }
     return ERROR_NETWORK;
 }
 
@@ -416,6 +446,7 @@ int APS5_VABI sceHttpTerm_nid_postfix(int http_ctx_id) {
         if (g_contexts.erase(http_ctx_id) == 0) return ERROR_INVALID_ID;
         RemoveHttpContext(http_ctx_id);
         if (!g_contexts.empty()) return 0;
+        g_requestLastErrno.clear();
         epolls.swap(g_epolls);
     }
     for (const auto& entry : epolls) MarkDestroyed(*entry.second);
@@ -437,14 +468,20 @@ int APS5_VABI sceHttpWaitRequest(HttpEpollHandle eh, HttpNBEvent* nbev, int maxe
         if (!epoll) return ERROR_INVALID_ID;
     }
     std::unique_lock lock(epoll->mutex);
-    const auto woken = [&] { return epoll->aborted || epoll->destroyed; };
+    const auto woken = [&] { return epoll->aborted || epoll->destroyed || !epoll->events.empty(); };
     if (timeout < 0) {
         while (!woken()) epoll->wake.Wait(lock);
     } else {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(timeout);
         while (!woken() && std::chrono::steady_clock::now() < deadline) epoll->wake.WaitUntil(lock, deadline);
     }
-    return epoll->aborted ? ERROR_ABORTED : 0;
+    if (epoll->aborted) return ERROR_ABORTED;
+    int delivered = 0;
+    while (delivered < maxevents && !epoll->events.empty()) {
+        nbev[delivered++] = epoll->events.front();
+        epoll->events.pop_front();
+    }
+    return delivered;
 }
 
 int APS5_VABI sceHttpCreateRequestWithURL(int conn_id, int method, const char* url, uint64_t content_length) {
@@ -587,11 +624,12 @@ int APS5_VABI sceHttpsUnloadCert(int http_ctx_id) {
 }
 
 int APS5_VABI sceHttpGetLastErrno(int request_id, int* errno_out) {
-    (void)request_id;
     if (errno_out == nullptr) {
         return ERROR_INVALID_VALUE;
     }
-    *errno_out = 0;
+    std::lock_guard lock(g_stateMutex);
+    const auto recorded = g_requestLastErrno.find(request_id);
+    *errno_out = recorded == g_requestLastErrno.end() ? 0 : recorded->second;
     return 0;
 }
 

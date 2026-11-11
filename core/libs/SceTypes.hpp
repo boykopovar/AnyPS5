@@ -1457,7 +1457,13 @@ using HttpRedirectCallback = int (APS5_VABI*)(int, std::int32_t, std::int32_t*, 
 using HttpCookieRecvCallback = int (APS5_VABI*)(int, const char*, const char*, std::uint64_t, void*);
 using HttpAuthInfoCallback = int (APS5_VABI*)(int, int, const char*, char*, char*, int, std::uint8_t**, std::uint64_t*, int*, void*);
 
-struct HttpNBEvent { std::uint8_t opaque[64]; };
+struct HttpNBEvent {
+    std::uint32_t events;
+    std::uint32_t eventDetail;
+    std::int32_t id;
+    void* userArg;
+};
+static_assert(sizeof(HttpNBEvent) == 24);
 
 struct SceHttpUriElement {
     int opaque = 0;

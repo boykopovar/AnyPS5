@@ -1,11 +1,13 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
 #include <stdexcept>
+#include <thread>
 
 namespace {
 
@@ -13,6 +15,8 @@ constexpr int BeforeInit = static_cast<int>(0x80431001u);
 constexpr int InvalidId = static_cast<int>(0x80431100u);
 constexpr int InvalidValue = static_cast<int>(0x804311FEu);
 constexpr int UnknownId = 0x7fff0000;
+constexpr int Network = static_cast<int>(0x80431063u);
+constexpr int NetworkUnreachable = 51;
 
 void Require(bool value, const char* what) {
     if (value) return;
@@ -143,6 +147,63 @@ void CheckEpoll(int context) {
     Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
 }
 
+int LastErrno(int request) {
+    int value = -1;
+    Require(sceHttpGetLastErrno(request, &value) == 0, "sceHttpGetLastErrno failed");
+    return value;
+}
+
+void CheckSendFailureIsObservable(int context) {
+    HttpEpollHandle epoll = nullptr;
+    Require(sceHttpCreateEpoll(context, &epoll) == 0, "sceHttpCreateEpoll failed");
+    const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
+    const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
+    int marker = 0;
+    HttpNBEvent events[2]{};
+
+    const int blocking = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
+    Require(LastErrno(blocking) == 0, "a request that was never sent has an errno");
+    Require(sceHttpSetEpoll(blocking, epoll, &marker) == 0, "sceHttpSetEpoll failed");
+    Require(sceHttpSendRequest(blocking, nullptr, 0) == Network, "a blocking send did not fail with the network error");
+    Require(LastErrno(blocking) == NetworkUnreachable, "a failed send did not record its errno");
+    Require(sceHttpWaitRequest(epoll, events, 2, 0) == 0, "a blocking request queued an epoll event");
+
+    const int unbound = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/b", 0);
+    Require(sceHttpSetNonblock(unbound, 1) == 0 && sceHttpSendRequest(unbound, nullptr, 0) == Network, "a nonblocking send without an epoll did not fail");
+    Require(LastErrno(unbound) == NetworkUnreachable, "a nonblocking send without an epoll did not record its errno");
+    Require(sceHttpWaitRequest(epoll, events, 2, 0) == 0, "an unbound request queued an epoll event");
+
+    const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/c", 0);
+    Require(sceHttpSetNonblock(request, 1) == 0 && sceHttpSetEpoll(request, epoll, &marker) == 0, "binding a nonblocking request failed");
+    Require(sceHttpSendRequest(request, nullptr, 0) == Network, "a nonblocking send did not fail with the network error");
+    Require(LastErrno(request) == NetworkUnreachable, "a nonblocking send did not record its errno");
+    Require(sceHttpWaitRequest(epoll, events, 2, 0) == 1, "a failed nonblocking send queued no epoll event");
+    Require(events[0].events == (HTTP_NB_EVENT_SOCK_ERR | HTTP_NB_EVENT_HUP) && events[0].eventDetail == NetworkUnreachable, "the epoll event does not describe the failure");
+    Require(events[0].id == request && events[0].userArg == &marker, "the epoll event does not name the request and its user argument");
+    Require(sceHttpWaitRequest(epoll, events, 2, 0) == 0, "an epoll event was delivered twice");
+
+    Require(sceHttpSendRequest(request, nullptr, 0) == Network && sceHttpSendRequest(request, nullptr, 0) == Network, "a repeated send did not fail");
+    Require(sceHttpWaitRequest(epoll, events, 1, 0) == 1 && sceHttpWaitRequest(epoll, events, 2, 0) == 1 && sceHttpWaitRequest(epoll, events, 2, 0) == 0, "maxevents did not bound the events delivered");
+
+    int woken = -1;
+    HttpNBEvent waited{};
+    std::thread waiter([&] { woken = sceHttpWaitRequest(epoll, &waited, 1, -1); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(woken == -1, "a wait returned before any event");
+    Require(sceHttpSendRequest(request, nullptr, 0) == Network, "send failed while a wait was blocked");
+    waiter.join();
+    Require(woken == 1 && waited.id == request, "a blocked wait was not woken by the failed send");
+
+    Require(sceHttpSendRequest(request, nullptr, 0) == Network, "send failed before the request was deleted");
+    Require(sceHttpDeleteRequest(request) == 0 && LastErrno(request) == 0, "deleting a request kept its errno");
+    Require(sceHttpWaitRequest(epoll, events, 2, 0) == 0, "deleting a request kept its epoll event");
+
+    Require(sceHttpSendRequest(UnknownId, nullptr, 0) == Network && LastErrno(UnknownId) == 0, "an unknown request recorded an errno");
+    Require(sceHttpDestroyEpoll(context, epoll) == 0, "sceHttpDestroyEpoll failed");
+    Require(sceHttpDeleteRequest(blocking) == 0 && sceHttpDeleteRequest(unbound) == 0, "delete failed");
+    Require(sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+}
+
 void CheckTermEndsOptions() {
     const int context = sceHttpInit_nid_postfix(1, 1, 0x10000);
     const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
@@ -231,6 +292,7 @@ int main() {
     CheckNonblock(context);
     CheckAcceptEncodingGzip(context);
     CheckEpoll(context);
+    CheckSendFailureIsObservable(context);
     CheckUnobservedOptions(context);
     Require(sceHttpTerm_nid_postfix(context) == 0, "sceHttpTerm failed");
     Require(sceHttpSetDefaultAcceptEncodingGZIPEnabled(context, 1) == BeforeInit, "a gzip default was taken before sceHttpInit");

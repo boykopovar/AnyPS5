@@ -2,6 +2,10 @@
 
 #include "SceTypes.hpp"
 
+inline constexpr std::uint32_t HTTP_NB_EVENT_SOCK_ERR = 0x00000008;
+inline constexpr std::uint32_t HTTP_NB_EVENT_HUP = 0x00000010;
+inline constexpr int HTTP_NET_ENETUNREACH = 51;
+
 struct HttpConnectionStat;
 struct HttpRequestStat;
 
