@@ -154,6 +154,12 @@ class CommandTests(unittest.TestCase):
             root = Path(directory)
             source = root / "source"
             source.mkdir()
+            subprocess.run(["git", "init", "-q", str(source)], check=True)
+            subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
+            subprocess.run(["git", "-C", str(source), "config", "user.email", "test@example.invalid"], check=True)
+            (source / "source.cpp").write_text("source", encoding="utf-8")
+            subprocess.run(["git", "-C", str(source), "add", "source.cpp"], check=True)
+            subprocess.run(["git", "-C", str(source), "commit", "-qm", "test: source"], check=True)
             build_dir = root / "source" / "build"
             recipe = {"build_dir": "build", "build_commands": [[sys.executable, "-c",
                        "from pathlib import Path; Path(r'{build_dir}').mkdir(parents=True)"]]}
@@ -342,3 +348,26 @@ class CliExecutionTests(unittest.TestCase):
                                      "--temp-dir", "/path/that/does/not/exist"])
         self.assertEqual(error.exception.code, 2)
         self.assertIn("--temp-dir must name an existing directory", stderr.getvalue())
+
+
+class CleanBuildTests(unittest.TestCase):
+    def test_removes_stale_build_outputs_before_configuring_a_revision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.name", "Test"], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.email", "test@example.invalid"], check=True)
+            (repo / "source.cpp").write_text("source", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "source.cpp"], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "test: source"], check=True)
+            stale = repo / "build" / "stale.txt"
+            stale.parent.mkdir()
+            stale.write_text("previous commit", encoding="utf-8")
+            command = [sys.executable, "-c", "from pathlib import Path; p=Path(r'{build_dir}'); assert not (p/'stale.txt').exists(); p.mkdir()"]
+            result = performance_bisect.run_build_commands(
+                repo, {"build_dir": "build", "build_commands": [command]}, GOOD, root / "results")
+            self.assertEqual(result, repo / "build")
+            self.assertFalse(stale.exists())
+            self.assertTrue(result.is_dir())
