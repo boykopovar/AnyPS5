@@ -66,6 +66,7 @@ constexpr std::uint32_t Clear = 0x11223344u;
 constexpr std::uint32_t Drawn = 0xffffffffu;
 constexpr VkRect2D Left{{0, 0}, {LeftWidth, Height}};
 constexpr VkRect2D Right{{Width - LeftWidth, 0}, {LeftWidth, Height}};
+constexpr VkRect2D Whole{{0, 0}, {Width, Height}};
 constexpr std::size_t PlaneBytes = 65536;
 constexpr std::size_t HtileBytes = ((Width + 1023u) / 1024u) * ((Height + 511u) / 512u) * 32768u;
 
@@ -553,7 +554,9 @@ void resolveBetween(AgcDriver::VulkanDevice& device) {
     multisampled.coverageSamples = 4;
     const auto color = colorTarget();
     reset(device, color);
-    draw(device, multisampled, {.scissor = Right});
+    // Draw the whole multisampled target: with a scissor starting at x = 48, llvmpipe leaves two of the four
+    // samples of texel 47 drawn, and the scissor edge is not what this test is about.
+    draw(device, multisampled, {.scissor = Whole});
     {
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
         device.WaitIdle();
@@ -569,7 +572,7 @@ void resolveBetween(AgcDriver::VulkanDevice& device) {
     std::cout << "resolve moved [" << fields << "]\n";
     if (fields.empty()) mustRepeat(device, color, "a draw after a resolve into its own image did not repeat");
     else mustLookUp(device, color, {}, "a draw after a resolve repeated its targets");
-    expect(device, color, [](std::uint32_t x) { return x < LeftWidth || x >= Width - LeftWidth ? Drawn : 0u; }, "a resolve between identical draws");
+    expect(device, color, [](std::uint32_t) { return Drawn; }, "a resolve between identical draws");
 }
 
 void committerMoved(AgcDriver::VulkanDevice& device) {
@@ -700,7 +703,11 @@ void cmaskClearRecorded(AgcDriver::VulkanDevice& device) {
         draw(device, color);
         repeated = lookups() == before;
     }
-    Require(!LookupOutcomes::Profiled() || memoResolves() || repeated, "no draw repeated its targets over a recorded CMASK clear");
+    // A CMASK the write watch does not cover (no userfaultfd write protection on this host) cannot be proved
+    // unwritten, so no draw may repeat over it.
+    const bool watched = GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(color.cmaskAddress, color.cmaskBytes);
+    std::cout << "the CMASK is " << (watched ? "" : "not ") << "covered by the write watch; a draw " << (repeated ? "repeated" : "did not repeat") << "\n";
+    Require(!LookupOutcomes::Profiled() || memoResolves() || repeated || !watched, "no draw repeated its targets over a recorded CMASK clear");
     expect(device, color, [](std::uint32_t x) { return leftOver(x, Clear); }, "repeated draws over a recorded CMASK clear");
 }
 
@@ -792,7 +799,7 @@ void cmaskPaddingBesideExpandedTiles(AgcDriver::VulkanDevice& device) {
         draw(device, color);
         repeated = lookups() == before;
     }
-    Require(!LookupOutcomes::Profiled() || memoResolves() || repeated, "no draw over expanded tiles with zero padding repeated its targets");
+    Require(!LookupOutcomes::Profiled() || memoResolves() || repeated || !GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(color.cmaskAddress, color.cmaskBytes), "no draw over expanded tiles with zero padding repeated its targets");
     expect(device, color, [](std::uint32_t x) { return leftOver(x, Old); }, "draws over expanded tiles with zero padding");
 }
 
