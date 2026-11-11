@@ -2,22 +2,10 @@
 
 #include <charconv>
 #include <cstdint>
-#include <stdexcept>
+#include <optional>
 #include <string_view>
 
 namespace {
-
-class HttpFailure : public std::runtime_error {
-public:
-    explicit HttpFailure(const char* message) : std::runtime_error(message) {}
-};
-
-std::uint64_t Number(std::string_view text, int base = 10) {
-    std::uint64_t number = 0;
-    const auto result = std::from_chars(text.data(), text.data() + text.size(), number, base);
-    if (text.empty() || result.ec != std::errc{} || result.ptr != text.data() + text.size()) throw HttpFailure("invalid HTTP size");
-    return number;
-}
 
 bool IsToken(unsigned char byte) {
     constexpr std::string_view punctuation = "!#$%&'*+-.^_`|~";
@@ -25,9 +13,13 @@ bool IsToken(unsigned char byte) {
         (byte >= '0' && byte <= '9') || punctuation.find(byte) != std::string_view::npos;
 }
 
-std::uint64_t ChunkSize(std::string_view text) {
+std::optional<std::uint64_t> ChunkSize(std::string_view text) {
     auto index = text.find_first_of("; \t");
-    const auto count = Number(text.substr(0, index), 16);
+    const auto digits = text.substr(0, index);
+    if (digits.empty()) return {};
+    std::uint64_t count = 0;
+    const auto result = std::from_chars(digits.data(), digits.data() + digits.size(), count, 16);
+    if (result.ec != std::errc{} || result.ptr != digits.data() + digits.size()) return {};
     if (index == std::string_view::npos) return count;
     const auto whitespace = [&] {
         while (index < text.size() && (text[index] == ' ' || text[index] == '\t')) ++index;
@@ -35,13 +27,13 @@ std::uint64_t ChunkSize(std::string_view text) {
     const auto token = [&] {
         const auto start = index;
         while (index < text.size() && IsToken(static_cast<unsigned char>(text[index]))) ++index;
-        if (index == start) throw HttpFailure("invalid HTTP chunk extension token");
+        return index != start;
     };
     while (index < text.size()) {
         whitespace();
-        if (index == text.size() || text[index++] != ';') throw HttpFailure("invalid HTTP chunk extension separator");
+        if (index == text.size() || text[index++] != ';') return {};
         whitespace();
-        token();
+        if (!token()) return {};
         const auto nameEnd = index;
         whitespace();
         if (index == text.size() || text[index] != '=') {
@@ -50,9 +42,9 @@ std::uint64_t ChunkSize(std::string_view text) {
         }
         ++index;
         whitespace();
-        if (index == text.size()) throw HttpFailure("missing HTTP chunk extension value");
+        if (index == text.size()) return {};
         if (text[index] != '"') {
-            token();
+            if (!token()) return {};
             continue;
         }
         ++index;
@@ -64,12 +56,12 @@ std::uint64_t ChunkSize(std::string_view text) {
                 break;
             }
             if (byte == '\\') {
-                if (index == text.size()) throw HttpFailure("truncated HTTP chunk extension escape");
+                if (index == text.size()) return {};
                 byte = static_cast<unsigned char>(text[index++]);
             }
-            if ((byte < 0x20 && byte != '\t') || byte == 0x7f) throw HttpFailure("invalid HTTP chunk extension quoted byte");
+            if ((byte < 0x20 && byte != '\t') || byte == 0x7f) return {};
         }
-        if (!closed) throw HttpFailure("unclosed HTTP chunk extension quote");
+        if (!closed) return {};
     }
     return count;
 }

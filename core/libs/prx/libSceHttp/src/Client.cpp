@@ -35,6 +35,11 @@
 
 namespace {
 
+class HttpFailure : public std::runtime_error {
+public:
+    explicit HttpFailure(const char* message) : std::runtime_error(message) {}
+};
+
 std::string Lower(std::string text) {
     for (char& byte : text) if (byte >= 'A' && byte <= 'Z') byte += 'a' - 'A';
     return text;
@@ -44,6 +49,13 @@ std::string_view Trim(std::string_view text) {
     while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
     while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
     return text;
+}
+
+std::uint64_t Number(std::string_view text, int base = 10) {
+    std::uint64_t number = 0;
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), number, base);
+    if (text.empty() || result.ec != std::errc{} || result.ptr != text.data() + text.size()) throw HttpFailure("invalid HTTP size");
+    return number;
 }
 
 std::optional<std::chrono::sys_seconds> HttpDate(const std::string& text) {
@@ -416,7 +428,9 @@ struct HttpClientState : Aps5HttpClient {
                 if (Lower(headers.at("transfer-encoding")) != "chunked") NotImplemented_nid_no_patch("HTTP client HTTP transfer coding");
                 for (;;) {
                     const auto chunk = connection.Line();
-                    const auto count = ChunkSize(chunk);
+                    const auto parsedSize = ChunkSize(chunk);
+                    if (!parsedSize) throw HttpFailure("invalid HTTP chunk size or extensions");
+                    const auto count = *parsedSize;
                     if (count == 0) {
                         for (;;) {
                             const auto field = connection.Line();

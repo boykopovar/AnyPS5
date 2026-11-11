@@ -25,18 +25,12 @@ int main() {
     std::size_t refused = 0;
     for (std::size_t prefix = 0; prefix < prefixes.size(); ++prefix) {
         for (std::size_t suffix = 0; suffix < valid.size(); ++suffix) {
-            try {
-                if (ChunkSize(std::string(prefixes[prefix]) + std::string(valid[suffix])) == sizes[prefix]) ++accepted;
-                else std::fprintf(stderr, "Wrong chunk size: prefix %zu suffix %zu\n", prefix, suffix);
-            } catch (const HttpFailure&) {
-                std::fprintf(stderr, "Valid chunk extension refused: prefix %zu suffix %zu\n", prefix, suffix);
-            }
+            if (ChunkSize(std::string(prefixes[prefix]) + std::string(valid[suffix])) == sizes[prefix]) ++accepted;
+            else std::fprintf(stderr, "Valid chunk line failed: prefix %zu suffix %zu\n", prefix, suffix);
         }
         for (std::size_t suffix = 0; suffix < invalid.size(); ++suffix) {
-            try {
-                ChunkSize(std::string(prefixes[prefix]) + std::string(invalid[suffix]));
-                std::fprintf(stderr, "Malformed chunk extension accepted: prefix %zu suffix %zu\n", prefix, suffix);
-            } catch (const HttpFailure&) { ++refused; }
+            if (!ChunkSize(std::string(prefixes[prefix]) + std::string(invalid[suffix]))) ++refused;
+            else std::fprintf(stderr, "Malformed chunk extension accepted: prefix %zu suffix %zu\n", prefix, suffix);
         }
     }
     constexpr std::array invalidSizes{
@@ -45,12 +39,9 @@ int main() {
     };
     std::size_t badSizes = 0;
     for (const auto text : invalidSizes) {
-        try { ChunkSize(text); }
-        catch (const HttpFailure&) { ++badSizes; }
+        if (!ChunkSize(text)) ++badSizes;
     }
-    bool maximum = false;
-    try { maximum = ChunkSize("FfFfFfFfFfFfFfFf;flag") == UINT64_MAX; }
-    catch (const HttpFailure&) {}
+    const bool maximum = ChunkSize("FfFfFfFfFfFfFfFf;flag") == UINT64_MAX;
     std::printf("Chunk extensions: valid %zu/48, malformed refused %zu/75, invalid sizes refused %zu/12, maximum %d/1\n",
         accepted, refused, badSizes, maximum);
     return accepted == 48 && refused == 75 && badSizes == 12 && maximum ? 0 : 1;
