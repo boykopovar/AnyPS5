@@ -231,7 +231,7 @@ if command == 'inspect':
             replay.write_text("import time\ntime.sleep(1)\n", encoding="utf-8")
             workdir = root / "run"
             workdir.mkdir()
-            args = SimpleNamespace(replay=replay, replay_arg=[], replay_timeout=0.01, expect_exit_code=0)
+            args = SimpleNamespace(filter="filter", replay=replay, capture=root / "capture", output=root / "output", replay_arg=[], replay_timeout=0.01, expect_exit_code=0)
             minimizer = frame_capture_minimize.Minimizer(args, re.compile("failure"))
             matched, detail = minimizer.replay_once(root / "capture", workdir)
             self.assertFalse(matched)
@@ -313,7 +313,7 @@ if command == 'inspect':
             replay.write_text("import pathlib, sys\npathlib.Path(sys.argv[2], 'received').touch()\nprint('failure')\n", encoding="utf-8")
             workdir = root / "run"
             workdir.mkdir()
-            args = SimpleNamespace(replay=replay, replay_arg=["{trial_dir}"], replay_timeout=2, expect_exit_code=0)
+            args = SimpleNamespace(filter="filter", replay=replay, capture=root / "capture", output=root / "output", replay_arg=["{trial_dir}"], replay_timeout=2, expect_exit_code=0)
             minimizer = frame_capture_minimize.Minimizer(args, re.compile("failure"))
             matched, _ = minimizer.replay_once(root / "capture", workdir)
             self.assertTrue(matched)
