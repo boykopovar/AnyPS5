@@ -739,21 +739,23 @@ def require_distinct_reports(output):
                 raise ValueError(f"{paths[index].name} and {paths[other].name} in {output} are the same file")
 
 
-def site_data(libraries, shaders, shader_source):
+def site_data(libraries, shaders, shader_source, open_pr_progress=None):
     data = {"libraries": libraries, "shaders": shaders}
     if shader_source:
         data["shader_source"] = {key: value for key, value in shader_source.items() if key != "untranslated"}
+    if open_pr_progress:
+        data["open_pr_progress"] = open_pr_progress
     return data
 
 
-def write_site(output, libraries, shaders, shader_source=None):
+def write_site(output, libraries, shaders, shader_source=None, open_pr_progress=None):
     output.mkdir(parents=True, exist_ok=True)
     require_distinct_reports(output)
-    (output / "progress.json").write_text(json.dumps(site_data(libraries, shaders, shader_source), indent=2), encoding="utf-8")
+    (output / "progress.json").write_text(json.dumps(site_data(libraries, shaders, shader_source, open_pr_progress), indent=2), encoding="utf-8")
     (output / "badge-libraries.svg").write_text(badge("libraries*", libraries), encoding="utf-8")
     (output / "badge-shaders.svg").write_text(shader_source_badge(shader_source) if shader_source else badge("shaders", shaders), encoding="utf-8")
     (output / "progress.svg").write_text(render(libraries, shaders, shader_source), encoding="utf-8")
-    (output / "progress.html").write_text(summary(libraries, shaders, shader_source), encoding="utf-8")
+    (output / "progress.html").write_text(summary(libraries, shaders, shader_source, open_pr_progress), encoding="utf-8")
 
 
 def validate_snapshot(snapshot):

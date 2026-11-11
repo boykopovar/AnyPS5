@@ -18,13 +18,14 @@ class OpenPrProgressPageTests(unittest.TestCase):
                                 open_pr_progress=estimate)
         self.assertIn("combined open PR estimate: <strong>40.0% (4/10)</strong>", html)
         self.assertIn("6 of 8 open PRs included; 2 excluded (2 conflict)", html)
+        data = progress.site_data({"percent": 0, "groups": []}, {"percent": 0, "groups": []}, None, estimate)
+        self.assertEqual(data["open_pr_progress"], estimate)
 
     def test_unavailable_estimate_does_not_change_current_progress(self):
         estimate = {"available": False, "generated_at": "2026-11-10T00:00:00Z", "reason": "API unavailable"}
         html = progress.open_pr_progress_section(estimate)[1]
         self.assertIn("Estimate unavailable", html)
         self.assertIn("current progress above is unchanged", html)
-
 
 if __name__ == "__main__":
     unittest.main()
