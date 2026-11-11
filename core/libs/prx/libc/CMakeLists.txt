@@ -156,6 +156,8 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/J0f.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/J1f.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Random.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedMultiprecision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatBuiltins.cpp
@@ -2336,6 +2338,18 @@ if(NOT WIN32)
         set_target_properties(guest_allocations_oom_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
         add_test(NAME guest_allocations_oom COMMAND guest_allocations_oom_tests)
         set_tests_properties(guest_allocations_oom PROPERTIES TIMEOUT 60)
+    endif()
+endif()
+
+add_test_executable(guest_sce_v2_facet_ids_tests EXCLUDE_FROM_ALL ${LIBS_INCLUDE_DIR}/tests/GuestSceV2FacetIds.cpp)
+target_include_directories(guest_sce_v2_facet_ids_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_sce_v2_facet_ids_tests PRIVATE libc)
+configure_windows_unwind(guest_sce_v2_facet_ids_tests)
+if(BUILD_TESTING)
+    set_target_properties(guest_sce_v2_facet_ids_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    add_test(NAME guest_sce_v2_facet_ids COMMAND guest_sce_v2_facet_ids_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_facet_ids PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
 

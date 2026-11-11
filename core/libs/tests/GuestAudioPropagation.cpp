@@ -302,6 +302,64 @@ int main() {
     Require(sceAudioPropagationSourceCreate(system, &source) == 0, "source create failed");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceCreate(system, nullptr); }, "source without output");
     Require(sceAudioPropagationSourceSetAttributes(source, portalAttributes, 3) == 0, "source attributes failed");
+
+    AudioPropagation::Attribute resets[13]{};
+    Require(sceAudioPropagationResetAttributes(nullptr, 1) == AudioPropagation::ErrorNullPointer, "reset on a null array");
+    Require(sceAudioPropagationResetAttributes(resets, 0) == AudioPropagation::ErrorInvalidArgument, "reset of zero attributes");
+    std::uint32_t resetValues[13][6]{};
+    std::memset(resetValues, 0xff, sizeof(resetValues));
+    constexpr std::uint32_t resetIds[13]{0, 1, 2, 3, 4, 5, 6, 7, 0x10001, 0x10002, 0x10003, 0x10004, 0x20000};
+    constexpr std::size_t resetSizes[13]{16, 16, 16, 16, 24, 8, 16, 8, 16, 16, 16, 16, 8};
+    for (int index = 0; index < 12; ++index) {
+        resets[index].id = resetIds[index];
+        resets[index].value = resetValues[index];
+        resets[index].valueSize = resetSizes[index];
+    }
+    resetValues[8][0] = static_cast<std::uint32_t>(rooms[0]);
+    resetValues[8][1] = static_cast<std::uint32_t>(rooms[0] >> 32);
+    resetValues[8][2] = static_cast<std::uint32_t>(rooms[1]);
+    resetValues[8][3] = static_cast<std::uint32_t>(rooms[1] >> 32);
+    Require(sceAudioPropagationResetAttributes(resets, 12) == 0, "reset of all writable attributes");
+    constexpr std::size_t resetWritten[12]{12, 12, 16, 16, 16, 4, 8, 8, 16, 12, 12, 12};
+    constexpr std::uint32_t resetExpected[][6]{{0, 0, 0}, {0, 0, 0x3f800000}, {3, 0x42c80000, 0x3f800000, 0x3f800000}, {0x3f800000, 0x41f00000, 0x3f333333, 0x43870000}, {0, 0, 0, 0}, {0}, {0, 0}, {0, 0}, {0, 0, 0, 0}, {0x3f000000, 0x3f000000, 0x3f000000}, {0, 0, 0x3f800000}, {0, 0x3f800000, 0}};
+    for (int index = 0; index < 12; ++index) {
+        for (std::size_t field = 0; field < resetWritten[index] / 4; ++field) Require(resetValues[index][field] == resetExpected[index][field], "reset attribute default mismatch");
+        Require(resetValues[index][resetWritten[index] / 4] == 0xffffffff, "reset wrote past its fill pattern");
+    }
+    resets[0].valueSize = 8;
+    Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidArgument, "reset accepted a wrong size");
+    resets[0].valueSize = 16;
+    resets[0].value = nullptr;
+    Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorNullPointer, "reset accepted a null value");
+    resets[0].value = resetValues[0];
+    resets[0].id = 0x10000;
+    Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidArgument, "reset wrote to a validate-only attribute");
+    resets[0].id = 0x20000;
+    resets[0].valueSize = 8;
+    resetValues[0][0] = static_cast<std::uint32_t>(rooms[0]);
+    resetValues[0][1] = static_cast<std::uint32_t>(rooms[0] >> 32);
+    Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidArgument, "reset wrote to a handle attribute");
+    resetValues[0][0] = static_cast<std::uint32_t>(source);
+    resetValues[0][1] = static_cast<std::uint32_t>(source >> 32);
+    Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidHandle, "reset accepted a non-room handle");
+    resetValues[0][0] = 0;
+    resetValues[0][1] = 0;
+    Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidArgument, "reset rejected a null 0x20000 handle");
+    resets[0].id = 0x10001;
+    resets[0].valueSize = 16;
+    resetValues[0][0] = static_cast<std::uint32_t>(rooms[0]);
+    resetValues[0][1] = static_cast<std::uint32_t>(rooms[0] >> 32);
+    resetValues[0][2] = 0;
+    resetValues[0][3] = 0;
+    Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidHandle, "reset accepted a null second room handle");
+    resetValues[0][2] = static_cast<std::uint32_t>(source);
+    resetValues[0][3] = static_cast<std::uint32_t>(source >> 32);
+    Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidHandle, "reset accepted a non-room second handle");
+    resets[0].id = 8;
+    Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidArgument, "reset accepted an unknown attribute");
+    resets[0].id = 10;
+    RequireThrows<std::runtime_error>([&] { sceAudioPropagationResetAttributes(resets, 1); }, "attribute 10 returned while its contract is unresolved");
+
     std::uint32_t count = 7;
     Require(sceAudioPropagationSourceGetAudioPathCount(source, &count) == 0 && count == AudioPropagation::MaxPaths, "source path pool size");
     AudioPropagationHandle path = 0;

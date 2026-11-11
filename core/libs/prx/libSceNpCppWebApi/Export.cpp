@@ -6455,6 +6455,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matche
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE7reserveEi() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -7588,6 +7589,11 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_1
     return 0;
 }
 
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_15ProfanityFilter2V223FilterProfanityResponseEEENS4_INS2_18ResponseHeaderBaseEEEEC1ERKSB_(void* self) {
+    (void)self;
+    return 0;
+}
+
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv(const void* self) {
 
     (void)self;
@@ -8180,6 +8186,27 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14S
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V122PlayerSessionSpectatorEEEEneERKS9_(const void* self, const void* other) {
     return HostIteratorNotEqual(self, other);
 }
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_15ProfanityFilter2V223FilterProfanityResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() {
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6BinaryEEC1ERKS5_(IntrusivePtr* self, const IntrusivePtr* source) {
+    CopyIntrusivePtr(self, source, ReferenceCountOffset);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6BinaryEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, ReferenceCountOffset, __func__);
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEcvbEv(const IntrusivePtr* self) {
+    return self->object != nullptr;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEdeEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEcvbEv(const IntrusivePtr* self) {
     return self->object != nullptr;
