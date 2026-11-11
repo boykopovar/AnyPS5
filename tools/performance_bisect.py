@@ -114,3 +114,21 @@ def require_same_identity(baseline, measured):
     if baseline["identity"] != measured["identity"]:
         raise ValueError("machine, title, or content identity changed during the bisect")
 
+
+def git(repo, *args):
+    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or f"git {' '.join(args)} failed")
+    return result.stdout.strip()
+
+
+def first_parent_commits(repo, good, bad):
+    good_sha = git(repo, "rev-parse", "--verify", f"{good}^{{commit}}")
+    bad_sha = git(repo, "rev-parse", "--verify", f"{bad}^{{commit}}")
+    result = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", good_sha, bad_sha], capture_output=True)
+    if result.returncode:
+        raise ValueError("good commit must be an ancestor of bad commit")
+    commits = git(repo, "rev-list", "--first-parent", "--reverse", f"{good_sha}..{bad_sha}").splitlines()
+    if not commits or commits[-1] != bad_sha:
+        raise ValueError("the bad commit must follow the good commit on the first-parent history")
+    return good_sha, bad_sha, commits
