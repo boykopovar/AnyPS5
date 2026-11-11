@@ -184,6 +184,9 @@ static void CheckPageTableStats() {
 
 static void CheckInternalMemoryAvailableSize() {
     Require(sceKernelInternalMemoryGetAvailableSize(nullptr) == -1);
+    std::size_t size = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceKernelInternalMemoryGetAvailableSize(&size) == -2);
+    Require(size == 0x5a5a5a5a5a5a5a5aull);
 }
 
 static void CheckNamedAndHintedMappings() {
