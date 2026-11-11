@@ -233,7 +233,7 @@ def write_report(path, report):
                                          prefix=output.name + ".", suffix=".tmp", delete=False) as file:
             temporary = Path(file.name)
             file.write(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
-        temporary.replace(output)
+        os.link(temporary, output)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

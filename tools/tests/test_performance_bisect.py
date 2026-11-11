@@ -490,3 +490,20 @@ class BisectCleanupTests(GitHistoryTests):
             performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, None)
         worktrees = performance_bisect.git(self.repo, "worktree", "list")
         self.assertEqual(worktrees.count("source"), 0)
+
+
+class AtomicReportRaceTests(unittest.TestCase):
+    def test_does_not_overwrite_a_report_created_during_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            link = performance_bisect.os.link
+
+            def create_racing_report(source, destination):
+                Path(destination).write_text("owner report", encoding="utf-8")
+                return link(source, destination)
+
+            with patch.object(performance_bisect.os, "link", side_effect=create_racing_report), \
+                    self.assertRaises(FileExistsError):
+                performance_bisect.write_report(path, {"result": "bisect report"})
+            self.assertEqual(path.read_text(encoding="utf-8"), "owner report")
+            self.assertEqual(list(Path(directory).iterdir()), [path])
