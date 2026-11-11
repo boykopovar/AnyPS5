@@ -399,7 +399,6 @@ int APS5_VABI WKNotificationManagerProviderDidCloseNotifications();
 int APS5_VABI WKNotificationManagerProviderDidRemoveNotificationPolicies();
 int APS5_VABI WKNotificationManagerProviderDidShowNotification();
 int APS5_VABI WKNotificationManagerSetProvider();
-int APS5_VABI WKOpenPanelParametersCopyAllowedMIMETypes();
 int APS5_VABI WKOpenPanelParametersCopyCapture();
 int APS5_VABI WKOpenPanelParametersGetMediaCaptureType();
 int APS5_VABI WKPageAreScrollbarAnimationsSuppressed();

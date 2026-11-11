@@ -1647,8 +1647,8 @@ static void TestOpenPanelParameters() {
     using Strings = std::vector<NKWebKit::Retained<NKWebKit::String>>;
     auto* parameters = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::OpenPanelParameters>(
         true, true,
-        Strings{NKWebKit::String::FromUtf8("image/png"), NKWebKit::String::FromUtf8("text/*")},
-        Strings{NKWebKit::String::FromUtf8(".txt")},
+        Strings{NKWebKit::String::FromUtf8("Image/PNG"), NKWebKit::String::FromUtf8("image/png"), NKWebKit::String::FromUtf8("TEXT/*")},
+        Strings{NKWebKit::String::FromUtf8(".txt"), NKWebKit::String::FromUtf8("PNG"), NKWebKit::String::FromUtf8(".unknown")},
         Strings{NKWebKit::String::FromUtf8("/tmp/a.txt"), NKWebKit::String::FromUtf8("/tmp/b.txt"), NKWebKit::String::FromUtf8("/tmp/c.txt")}));
     Require(WKGetTypeID(parameters) == WKOpenPanelParametersGetTypeID());
     Require(WKOpenPanelParametersGetAllowsDirectories(parameters));
@@ -1656,14 +1656,25 @@ static void TestOpenPanelParameters() {
 
     auto* mimeTypes = WKOpenPanelParametersCopyAcceptedMIMETypes(parameters);
     Require(WKGetTypeID(mimeTypes) == WKArrayGetTypeID());
-    Require(WKArrayGetSize(mimeTypes) == 2);
-    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 0), "image/png"));
-    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 1), "text/*"));
+    Require(WKArrayGetSize(mimeTypes) == 3);
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 0), "Image/PNG"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 1), "image/png"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 2), "TEXT/*"));
     WKRelease(mimeTypes);
 
+    auto* allowedMime = WKOpenPanelParametersCopyAllowedMIMETypes(parameters);
+    Require(WKGetTypeID(allowedMime) == WKArrayGetTypeID());
+    Require(WKArrayGetSize(allowedMime) == 3);
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(allowedMime, 0), "image/png"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(allowedMime, 1), "text/*"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(allowedMime, 2), "text/plain"));
+    WKRelease(allowedMime);
+
     auto* extensions = WKOpenPanelParametersCopyAcceptedFileExtensions(parameters);
-    Require(WKArrayGetSize(extensions) == 1);
+    Require(WKArrayGetSize(extensions) == 3);
     Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(extensions, 0), ".txt"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(extensions, 1), "PNG"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(extensions, 2), ".unknown"));
     WKRelease(extensions);
 
     auto* selected = WKOpenPanelParametersCopySelectedFileNames(parameters);
@@ -1676,6 +1687,9 @@ static void TestOpenPanelParameters() {
     Require(!WKOpenPanelParametersGetAllowsDirectories(empty));
     Require(!WKOpenPanelParametersGetAllowsMultipleFiles(empty));
     auto* none = WKOpenPanelParametersCopyAcceptedMIMETypes(empty);
+    Require(WKArrayGetSize(none) == 0);
+    WKRelease(none);
+    none = WKOpenPanelParametersCopyAllowedMIMETypes(empty);
     Require(WKArrayGetSize(none) == 0);
     WKRelease(none);
     none = WKOpenPanelParametersCopyAcceptedFileExtensions(empty);
@@ -1697,6 +1711,8 @@ static void TestOpenPanelParameters() {
     Require(ThrowsOpenPanel(WKOpenPanelParametersGetAllowsDirectories, notParameters));
     Require(ThrowsOpenPanel(WKOpenPanelParametersGetAllowsMultipleFiles, nullptr));
     Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAcceptedMIMETypes, notParameters));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAllowedMIMETypes, notParameters));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAllowedMIMETypes, nullptr));
     Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAcceptedFileExtensions, nullptr));
     Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopySelectedFileNames, nullptr));
     WKRelease(notParameters);
