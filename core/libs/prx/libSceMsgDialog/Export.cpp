@@ -143,4 +143,4 @@ int APS5_VABI sceMsgDialogProgressBarSetValue(int target, std::uint32_t rate) {
 }
 }
 
-#include "prx/libSceMsgDialog.native/Result.cpp"
+#include "../libSceMsgDialog.native/Result.cpp"

@@ -116,4 +116,4 @@ int APS5_VABI sceMsgDialogGetStatus(void) {
 
 }
 
-#include "prx/libSceMsgDialog.native/Result.cpp"
+#include "Result.cpp"
