@@ -157,8 +157,5 @@ int APS5_VABI FcDefaultSubstitute() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcPatternFormat() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 }

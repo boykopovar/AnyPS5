@@ -52,6 +52,5 @@ int APS5_VABI FcDefaultSubstitute();
 FcBool APS5_VABI FcPatternAddLangSet(FcPattern* pattern, const char* object, const FcLangSet* value);
 FcResult APS5_VABI FcPatternGetLangSet(const FcPattern* pattern, const char* object, int id, FcLangSet** value);
 FcPattern* APS5_VABI FcPatternCreate();
-int APS5_VABI FcPatternFormat();
 
 }
