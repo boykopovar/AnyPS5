@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <climits>
 #include <cstddef>
@@ -71,6 +72,34 @@ static void TestGetCertStore() {
     ctx.certStore = &store;
     ctx.sessionTimeout = -1;
     Require(SSL_CTX_get_cert_store_nid_postfix(Context(&ctx)) == &store);
+}
+
+static void TestSetCertStore() {
+    TestCtx ctx {};
+    RequireThrows([] { SSL_CTX_set_cert_store_nid_postfix(nullptr, nullptr); });
+    auto* oldStore = X509_STORE_new_nid_postfix();
+    auto* store = X509_STORE_new_nid_postfix();
+    Require(oldStore != nullptr && store != nullptr);
+    oldStore->references = 2;
+    store->references = 2;
+    ctx.certStore = oldStore;
+    ctx.cipherList = reinterpret_cast<void*>(std::uintptr_t{0x1234});
+    SSL_CTX_set_cert_store_nid_postfix(Context(&ctx), store);
+    Require(ctx.certStore == store && ctx.cipherList == reinterpret_cast<void*>(std::uintptr_t{0x1234}));
+    Require(oldStore->references == 1 && store->references == 2);
+    X509_STORE_free_nid_postfix(oldStore);
+    SSL_CTX_set_cert_store_nid_postfix(Context(&ctx), nullptr);
+    Require(ctx.certStore == nullptr && store->references == 1);
+    X509_STORE_free_nid_postfix(store);
+
+    auto* clearedStore = X509_STORE_new_nid_postfix();
+    Require(clearedStore != nullptr);
+    clearedStore->references = 2;
+    ctx.certStore = clearedStore;
+    SSL_CTX_set_cert_store_nid_postfix(Context(&ctx), nullptr);
+    Require(ctx.certStore == nullptr && clearedStore->references == 1);
+    X509_STORE_free_nid_postfix(clearedStore);
+
 }
 
 static void TestSetQuietShutdown() {
@@ -173,6 +202,7 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(heap);
     TestGetVerifyMode();
     TestGetCertStore();
+    TestSetCertStore();
     TestSetQuietShutdown();
     TestSetPasswordCallback();
     TestSetPasswordUserdata();
