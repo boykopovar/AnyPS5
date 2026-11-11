@@ -445,8 +445,16 @@ int APS5_VABI sceAcm_IFFT(AcmBatchInfo* batch, std::int32_t transformSize, std::
     return EncodeTransforms(batch, true, transformSize, transformCount, inputFormat, inputs, outputFormat, outputs, flags);
 }
 
-int APS5_VABI sceAcmBatchJobNotification() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAcmBatchJobNotification(AcmBatchInfo* batch, std::uint32_t value, void* notification) {
+    if (value == 0 || !batch || !notification) return SCE_ACM_ERROR_BAD_POINTER;
+    if (reinterpret_cast<std::uintptr_t>(notification) & 0x7f) return SCE_ACM_ERROR_ALIGNMENT;
+    const std::uint64_t offset = batch->offset;
+    const std::uint64_t end = offset + 0x10;
+    if (end > batch->buffer_size) return SCE_ACM_ERROR_BATCH_FULL;
+    std::memset(notification, 0, 0x80);
+    const std::uint64_t words[2] = {0xeu | (static_cast<std::uint64_t>(static_cast<std::uint8_t>(value)) << 24), reinterpret_cast<std::uintptr_t>(notification)};
+    std::memcpy(static_cast<std::byte*>(batch->buffer) + offset, words, sizeof(words));
+    batch->offset = end;
     return 0;
 }
 
