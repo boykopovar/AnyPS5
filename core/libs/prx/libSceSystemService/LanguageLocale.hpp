@@ -154,6 +154,7 @@ inline constexpr Row ChineseRows[] = {
     {"zh", "", "HK", ChineseTraditional},
     {"zh", "", "MO", ChineseTraditional},
     {"cmn", "", "", ChineseSimplified},
+    {"cmn", "Hans", "", ChineseSimplified},
     {"cmn", "Hant", "", ChineseTraditional},
     {"cmn", "", "TW", ChineseTraditional},
     {"yue", "", "", ChineseTraditional},
@@ -217,6 +218,11 @@ inline bool ParseTag(std::string_view text, Tag& tag) {
         } else if (!tail) {
             if (subtag.size() == 1) {
                 tail = true;
+            } else if (index == 1 && subtag.size() == 3 && Detail::AllOf(subtag, Detail::IsAlpha)) {
+                if (parsed.language == "zh" && (Detail::EqualsIgnoringCase(subtag, "cmn") || Detail::EqualsIgnoringCase(subtag, "yue"))) {
+                    parsed.language.clear();
+                    for (char c : subtag) parsed.language += Detail::Lower(c);
+                }
             } else if (!seenScript && !seenRegion && subtag.size() == 4 && Detail::AllOf(subtag, Detail::IsAlpha)) {
                 seenScript = true;
                 parsed.script += Detail::Upper(subtag[0]);

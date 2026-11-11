@@ -31,6 +31,13 @@ void RequireBcp47Parsing() {
         {"es-419", "es", "", "419"},
         {"zh-Hant-TW", "zh", "Hant", "TW"},
         {"zh-hans-cn", "zh", "Hans", "CN"},
+        {"zh-cmn-Hant-TW", "cmn", "Hant", "TW"},
+        {"ZH-YUE-hans-cn", "yue", "Hans", "CN"},
+        {"ar-aao-DZ", "ar", "", "DZ"},
+        {"zh-gan-Hant-TW", "zh", "Hant", "TW"},
+        {"no-bok", "no", "", ""},
+        {"no-nyn", "no", "", ""},
+        {"en-yue-US", "en", "", "US"},
         {"ZH-HANT", "zh", "Hant", ""},
         {"sr-Latn-RS", "sr", "Latn", "RS"},
         {"fil", "fil", "", ""},
@@ -168,7 +175,11 @@ void RequireChineseRows() {
         {"zh-HK", ChineseTraditional}, {"zh_HK.UTF-8", ChineseTraditional}, {"zh-MO", ChineseTraditional}, {"zh-Hant-HK", ChineseTraditional}, {"zh-Hant-MO", ChineseTraditional},
         {"zh-Hans-TW", ChineseSimplified}, {"zh-Hans-HK", ChineseSimplified}, {"zh-Hant-CN", ChineseTraditional},
         {"cmn", ChineseSimplified}, {"cmn-Hans-CN", ChineseSimplified}, {"cmn-Hant", ChineseTraditional}, {"cmn-TW", ChineseTraditional},
+        {"cmn-Hans-TW", ChineseSimplified},
         {"yue", ChineseTraditional}, {"yue-HK", ChineseTraditional}, {"yue-Hans-CN", ChineseSimplified},
+        {"zh-cmn-Hant", ChineseTraditional}, {"zh_cmn_Hant_TW.UTF-8", ChineseTraditional},
+        {"zh-cmn-Hans-TW", ChineseSimplified}, {"zh-cmn-TW", ChineseTraditional},
+        {"zh-yue", ChineseTraditional}, {"zh-yue-HK", ChineseTraditional}, {"zh-yue-Hans", ChineseSimplified},
     };
     RequireLanguages(entries);
 }
@@ -275,6 +286,9 @@ void RequireHostResolution() {
     Require(Resolve({"es", "fr", "de_DE.UTF-8"}, notices) == Spanish && notices.empty(), "LANGUAGE order");
     Require(Resolve({"en-GB", "fr"}, notices) == EnglishUk && notices.empty(), "first entry before later ones");
     Require(Resolve({"zh-Hant-TW"}, notices) == ChineseTraditional && notices.empty(), "zh-Hant-TW");
+    Require(Resolve({"zh-cmn-Hant"}, notices) == ChineseTraditional && notices.empty(), "Mandarin extlang keeps its script");
+    Require(Resolve({"zh-yue", "en-US"}, notices) == ChineseTraditional && notices.empty(), "Cantonese extlang uses its language mapping");
+    Require(Resolve({"zh-yue-Hans"}, notices) == ChineseSimplified && notices.empty(), "Cantonese extlang keeps its script");
     Require(Resolve({"lt_LT.UTF-8"}, notices) == EnglishUs && notices.size() == 1, "unlisted language");
     Require(notices[0] == "ANYPS5_LANGUAGE=auto: the host locale \"lt_LT.UTF-8\" has no console language, using English (United States), language number 1", notices[0]);
     notices.clear();
