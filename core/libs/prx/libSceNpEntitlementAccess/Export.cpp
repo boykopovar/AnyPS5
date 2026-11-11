@@ -208,6 +208,11 @@ int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(std::int
     return sceNpEntitlementAccessGetAddcontEntitlementInfo(service_label, entitlement_label, info);
 }
 
+int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoListIndividual(std::int32_t user_id, uint32_t service_label, NpEntitlementAccessAddcontEntitlementInfo* list, uint32_t list_num, uint32_t* hit_num) {
+    if (user_id == USER_ID_INVALID) return SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER;
+    return sceNpEntitlementAccessGetAddcontEntitlementInfoList(service_label, list, list_num, hit_num);
+}
+
 int APS5_VABI sceNpEntitlementAccessPollConsumableEntitlementInfo(int64_t requestId, int32_t* result, void* info) {
     (void)requestId;
     (void)result;

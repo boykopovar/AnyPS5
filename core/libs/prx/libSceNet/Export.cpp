@@ -2172,6 +2172,7 @@ constexpr int NET_SOCKINFO_F_NONBLOCK = 0x200000;
 constexpr int NET_SOCKINFO_F_IPV6 = 0x400000;
 constexpr int NET_SOCKINFO_TIME_WAIT = 0x40;
 constexpr int NET_SOCKINFO6_IPV46 = 0x1000;
+constexpr std::int8_t NET_SOCKINFO_DEFAULT_PRIORITY = 0x10;
 
 struct NetSockInfo {
     char name[32];
@@ -2270,6 +2271,7 @@ static int fill_sock_info(int s, NetSockInfo& record) {
     if (const int error = sock_buffer_size(socket, true, record.send_buffer_size)) return error;
     record.s = s;
     record.socket_type = static_cast<std::int8_t>(socket.type);
+    record.priority = NET_SOCKINFO_DEFAULT_PRIORITY;
     record.local_adr = local.sin_addr.s_addr;
     record.remote_adr = remote.sin_addr.s_addr;
     record.local_port = local.sin_port;
