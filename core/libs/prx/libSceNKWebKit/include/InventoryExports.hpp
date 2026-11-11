@@ -1322,7 +1322,6 @@ int APS5_VABI _ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv();
 int APS5_VABI _ZN3WTF10StringImpl57convertToLowercaseWithoutLocaleStartingAtFailingIndex8BitEj();
 int APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIDsEE();
 int APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIhEE();
-int APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_();
 int APS5_VABI _ZN3WTF10StringView16GraphemeClusters8IteratorC1EOS2_();
 int APS5_VABI _ZN3WTF10StringView16GraphemeClusters8IteratorC2EOS2_();
 int APS5_VABI _ZN3WTF10StringView16GraphemeClusters8IteratorD1Ev();
