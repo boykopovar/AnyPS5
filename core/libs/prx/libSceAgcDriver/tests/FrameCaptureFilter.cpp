@@ -280,6 +280,14 @@ void testTruncatedCapture(const std::filesystem::path& root) {
     checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, root / "truncated-output", plan); }, "filtering accepted a truncated capture");
 }
 
+
+void testNormalizedSourceAlias(const std::filesystem::path& root) {
+    const auto source = root / "source";
+    writeCapture(source);
+    AgcDriverTools::FrameCaptureFilterPlan plan;
+    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, root / "other" / ".." / "source", plan); }, "filtering accepted a normalized source path alias");
+}
+
 }
 
 int main() {
@@ -301,6 +309,7 @@ int main() {
     testBlankPlanLines(root);
     testMissingPlanFile(root);
     testTruncatedCapture(root);
+    testNormalizedAlias(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
