@@ -4,10 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI u_tolower();
-int APS5_VABI u_totitle();
-int APS5_VABI u_toupper();
-int APS5_VABI ublock_getCode();
 int APS5_VABI ubrk_close();
 int APS5_VABI ubrk_countAvailable();
 int APS5_VABI ubrk_current();
@@ -58,14 +54,8 @@ int APS5_VABI uloc_minimizeSubtags();
 int APS5_VABI uloc_setKeywordValue();
 int APS5_VABI uloc_toLanguageTag();
 int APS5_VABI uloc_toUnicodeLocaleType();
-int APS5_VABI unorm2_composePair();
-int APS5_VABI unorm2_getNFCInstance();
-int APS5_VABI unorm2_getNFDInstance();
 int APS5_VABI unorm2_getNFKCInstance();
 int APS5_VABI unorm2_getNFKDInstance();
-int APS5_VABI unorm2_getRawDecomposition();
-int APS5_VABI unorm2_isNormalized();
-int APS5_VABI unorm2_normalize();
 int APS5_VABI ures_close();
 int APS5_VABI ures_getByKey();
 int APS5_VABI ures_getStringByKey();

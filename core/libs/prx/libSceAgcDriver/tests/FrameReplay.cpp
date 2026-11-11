@@ -492,7 +492,7 @@ void testStoreAfterGatedCopy(const std::filesystem::path& tool) {
 }
 
 void testCopyInFlightAtDelta(const std::filesystem::path& tool) {
-    constexpr std::size_t CopyBytes = 32u << 20;
+    constexpr std::size_t CopyBytes = 128u << 20;
     constexpr std::size_t Stored = 64;
     const auto layout = allocate();
     const auto big = allocate(2 * CopyBytes);
