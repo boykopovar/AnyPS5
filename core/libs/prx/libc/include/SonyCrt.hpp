@@ -13,6 +13,7 @@
 #include <ctime>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -45,6 +46,57 @@ inline SonyConstraintHandler& SonyConstraintHandlerSlot() {
 
 namespace {
 
+struct SonyHostTimeZone {
+    std::int64_t standardEast;
+    std::int64_t daylight;
+};
+
+#ifdef _WIN32
+inline void SonyRefreshHostZone_nid_no_patch() {
+    _tzset();
+    const char* zone = std::getenv("TZ");
+    if (zone != nullptr && zone[0] != 0) {
+        int daylight = 0;
+        _get_daylight(&daylight);
+        if (daylight != 0) _dstbias = -3600;
+    }
+}
+#endif
+
+inline SonyHostTimeZone SonyHostZoneAt_nid_no_patch(std::int64_t utcTime) {
+    std::tm local{};
+#ifdef _WIN32
+    constexpr std::int64_t cycleSeconds = 146097LL * 86400LL;
+    constexpr std::int64_t lastHostSecond = 32535215999LL;
+    const std::int64_t cycles = utcTime >= 0 && utcTime <= lastHostSecond ? 0 : (utcTime >= 0 ? utcTime / cycleSeconds : -((-(utcTime + 1)) / cycleSeconds + 1));
+    const std::time_t t = static_cast<std::time_t>(utcTime - cycles * cycleSeconds);
+    SonyRefreshHostZone_nid_no_patch();
+    if (localtime_s(&local, &t) != 0) throw std::runtime_error(std::string(__func__) + ": no host local time for " + std::to_string(utcTime));
+    long standardBias = 0;
+    long daylightBias = 0;
+    _get_timezone(&standardBias);
+    _get_dstbias(&daylightBias);
+    return {-static_cast<std::int64_t>(standardBias), local.tm_isdst > 0 ? -static_cast<std::int64_t>(daylightBias) : 0};
+#else
+    const std::time_t t = static_cast<std::time_t>(utcTime);
+    ::tzset();
+    if (localtime_r(&t, &local) == nullptr) throw std::runtime_error(std::string(__func__) + ": no host local time for " + std::to_string(utcTime));
+    const std::int64_t daylight = local.tm_isdst > 0 ? static_cast<std::int64_t>(local.tm_gmtoff) + ::timezone : 0;
+    return {static_cast<std::int64_t>(local.tm_gmtoff) - daylight, daylight};
+#endif
+}
+
+inline std::int64_t SonyHostDaylightAmount_nid_no_patch(std::int64_t utcTime) {
+    constexpr std::int64_t monthSeconds = 2629746;
+    for (int month = 0; month <= 11; ++month) {
+        for (const int direction : {1, -1}) {
+            const SonyHostTimeZone zone = SonyHostZoneAt_nid_no_patch(utcTime + direction * month * monthSeconds);
+            if (zone.daylight != 0) return zone.daylight;
+        }
+    }
+    return 0;
+}
+
 template<typename TInteger>
 inline TInteger ParseInteger(const char* text, char** end, int base, TInteger (*parse)(const char*, char**, int)) {
 #ifdef __APPLE__
@@ -68,23 +120,50 @@ inline void SonyInvokeConstraintHandler(const char* message, void* pointer, int 
     if (handler) handler(message, pointer, error);
 }
 
-inline char* SonyStrtokS(char* str, const char* delim, char** context) {
-    if (!delim || !context) return nullptr;
-    char* cursor = str ? str : *context;
-    if (!cursor) return nullptr;
-    cursor += std::strspn(cursor, delim);
-    if (*cursor == '\0') {
-        *context = cursor;
+inline char* SonyStrtokS(char* str, std::size_t* remaining, const char* delimiters, char** context) {
+    if (!remaining || !context || !delimiters || *remaining > (SIZE_MAX >> 3) || (!str && !*context)) {
+        SonyInvokeConstraintHandler("strtok_s: bad argument", nullptr, EINVAL);
         return nullptr;
     }
-    char* token = cursor;
-    cursor += std::strcspn(cursor, delim);
-    if (*cursor != '\0') {
-        *cursor = '\0';
-        *context = cursor + 1;
-    } else {
-        *context = cursor;
+    if (!str) str = *context;
+    const auto isDelimiter = [delimiters](char value) {
+        for (const char* delimiter = delimiters; *delimiter != '\0'; ++delimiter)
+            if (*delimiter == value) return true;
+        return false;
+    };
+    const std::size_t available = *remaining;
+    std::size_t skipped = 0;
+    if (available == 0) {
+        SonyInvokeConstraintHandler("strtok_s: missing token", nullptr, EINVAL);
+        return nullptr;
     }
+    while (str[skipped] != '\0' && isDelimiter(str[skipped])) {
+        if (++skipped == available) {
+            SonyInvokeConstraintHandler("strtok_s: missing token", nullptr, EINVAL);
+            return nullptr;
+        }
+    }
+    char* const token = str + skipped;
+    const std::size_t left = available - skipped;
+    *remaining = left;
+    if (*token == '\0') {
+        *context = token;
+        return nullptr;
+    }
+    std::size_t length = 0;
+    while (token[length] != '\0' && !isDelimiter(token[length])) {
+        if (++length == left) {
+            SonyInvokeConstraintHandler("strtok_s: missing delimiter", nullptr, EINVAL);
+            return nullptr;
+        }
+    }
+    char* next = token + length;
+    *remaining = left - length;
+    if (*next != '\0') {
+        *next++ = '\0';
+        *remaining = left - length - 1;
+    }
+    *context = next;
     return token;
 }
 

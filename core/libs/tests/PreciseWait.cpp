@@ -1,12 +1,102 @@
 #include "prx/libc/include/PreciseWait.hpp"
 #include <algorithm>
 #include <array>
+#ifdef __linux__
+#include <cstddef>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <sys/syscall.h>
+#include <thread>
+#endif
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#ifdef __APPLE__
+#include <sys/resource.h>
+#endif
 
 namespace {
+
+#ifdef __linux__
+bool CheckLinuxTimerSlackFailures() {
+    for (unsigned mode = 0; mode < 5; ++mode) {
+        bool passed = false;
+        std::thread worker([&] {
+            if (prctl(PR_SET_TIMERSLACK, mode == 3 ? 1UL : 50000UL, 0UL, 0UL, 0UL) != 0) return;
+            if (mode == 4 && !PreciseLinuxLowTimerSlack()) return;
+            const bool denyRead = mode == 1 || mode == 2 || mode == 4;
+            const bool denyWrite = mode != 1;
+            sock_filter filter[] = {
+                BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+                BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_prctl, 0, 4),
+                BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[0])),
+                BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, PR_GET_TIMERSLACK, 1, 0),
+                BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, PR_SET_TIMERSLACK, 0, 1),
+                BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
+                BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+            };
+            filter[3].jt = denyRead ? 1 : 2;
+            filter[4].jt = denyWrite ? 0 : 1;
+            sock_fprog program{static_cast<unsigned short>(sizeof(filter) / sizeof(filter[0])), filter};
+            if (prctl(PR_SET_NO_NEW_PRIVS, 1UL, 0UL, 0UL, 0UL) != 0 ||
+                prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program) != 0) return;
+            const bool expectedLowSlack = mode == 1 || mode == 3 || mode == 4;
+            if (PreciseLinuxLowTimerSlack() != expectedLowSlack ||
+                PreciseLinuxLowTimerSlack() != expectedLowSlack) return;
+            for (const auto nanos : {1ULL, 15000ULL, 15001ULL, 99999ULL, 100000ULL, 100001ULL, 1000000ULL}) {
+                const auto start = PreciseMonotonicNanos();
+                PreciseSleepFromNanosWithSlack(start, nanos, true);
+                if (PreciseMonotonicNanos() < start + nanos) return;
+            }
+            if (!denyRead && prctl(PR_GET_TIMERSLACK, 0UL, 0UL, 0UL, 0UL) !=
+                (expectedLowSlack ? 1L : 50000L)) return;
+            passed = true;
+        });
+        worker.join();
+        if (!passed) {
+            std::cerr << "Linux timer slack failure scenario " << mode << " failed\n";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool CheckLinuxTimerSlackBoundaries() {
+    bool passed = false;
+    std::thread worker([&] {
+        if (prctl(PR_SET_TIMERSLACK, 50000UL, 0UL, 0UL, 0UL) != 0) {
+            std::cerr << "Could not initialize timer slack for boundary checks\n";
+            return;
+        }
+        const auto checkWait = [](unsigned long long nanos, bool allowLowSlack, long expectedSlack) {
+            const auto start = PreciseMonotonicNanos();
+            PreciseSleepFromNanosWithSlack(start, nanos, allowLowSlack);
+            if (PreciseMonotonicNanos() < start + nanos) {
+                std::cerr << "Linux boundary wait returned before its deadline\n";
+                return false;
+            }
+            if (prctl(PR_GET_TIMERSLACK, 0UL, 0UL, 0UL, 0UL) != expectedSlack) {
+                std::cerr << "Linux boundary wait changed timer slack unexpectedly\n";
+                return false;
+            }
+            return true;
+        };
+        for (const auto nanos : {0ULL, 1ULL, 14999ULL, 15000ULL}) {
+            if (!checkWait(nanos, true, 50000L)) return;
+        }
+        for (const auto nanos : {15001ULL, 99999ULL, 100000ULL, 100001ULL}) {
+            if (!checkWait(nanos, false, 50000L)) return;
+        }
+        for (const auto nanos : {15001ULL, 99999ULL, 100000ULL, 100001ULL}) {
+            if (!checkWait(nanos, true, 1L)) return;
+        }
+        passed = true;
+    });
+    worker.join();
+    return passed;
+}
+#endif
 
 bool IsRunnerPreempted() {
 #ifdef _WIN32
@@ -92,6 +182,11 @@ int main() {
         }
     }
 
+#ifdef __linux__
+    if (!CheckLinuxTimerSlackBoundaries()) return 1;
+    if (!CheckLinuxTimerSlackFailures()) return 1;
+#endif
+
     PreciseSleepUs(0);
 
     for (const unsigned long long micros : {50ULL, 1000ULL}) {
@@ -164,6 +259,32 @@ int main() {
             std::cerr << "PreciseSleepFromCounterWithTimer fallback returned early\n";
             return 1;
         }
+    }
+#endif
+
+#ifdef __APPLE__
+    {
+        const auto wake = PreciseMonotonicNanos() + 1000000ULL;
+        if (!PreciseKernelTimerSleep_nid_no_patch(wake) || PreciseMonotonicNanos() < wake) {
+            std::cerr << "PreciseKernelTimerSleep did not wait for its wake time\n";
+            return 1;
+        }
+    }
+    const auto threadCpuNanos = [] {
+        struct rusage usage{};
+        getrusage(RUSAGE_SELF, &usage);
+        return (static_cast<std::uint64_t>(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * 1000000ULL + static_cast<std::uint64_t>(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec)) * 1000ULL;
+    };
+    std::uint64_t bestCpuNanos = 0;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const auto cpuStart = threadCpuNanos();
+        for (int sleep = 0; sleep < 20; ++sleep) PreciseSleepUs(2000);
+        const auto cpuNanos = threadCpuNanos() - cpuStart;
+        if (attempt == 0 || cpuNanos < bestCpuNanos) bestCpuNanos = cpuNanos;
+    }
+    if (bestCpuNanos > 3000000ULL && !IsRunnerPreempted()) {
+        std::cerr << "PreciseSleepUs(2000) spun for " << bestCpuNanos / 1000ULL << " us of thread CPU time over 20 sleeps\n";
+        return 1;
     }
 #endif
 

@@ -116,6 +116,77 @@ static void CheckFloatSecondKindZero() {
     std::feclearexcept(FE_ALL_EXCEPT);
 }
 
+static void CheckFloatOne() {
+    struct FloatCase { std::uint32_t input; std::uint32_t first; std::uint32_t second; };
+    const FloatCase cases[] = {
+        {0x3fa00000u, 0x3f02b834u, 0xbf1598e2u},
+        {0x3fc00000u, 0x3f0ed4edu, 0xbed31a1fu},
+        {0x00000000u, 0x00000000u, 0xff800000u},
+        {0x00000001u, 0x00000000u, 0xff800000u},
+        {0x3f000000u, 0x3e781539u, 0xbfbc5935u},
+        {0x3f800000u, 0x3ee14e4fu, 0xbf47fd90u},
+        {0x7f7fffffu, 0x9f469478u, 0x9e3f4fecu},
+        {0x247fffffu, 0x23ffffffu, 0xda22f984u},
+        {0x24800000u, 0x24000000u, 0xda22f983u},
+        {0x24800001u, 0x24000001u, 0xda22f982u},
+        {0x31ffffffu, 0x317fffffu, 0xcca2f984u},
+        {0x32000000u, 0x31800000u, 0xcca2f983u},
+        {0x32000001u, 0x31800001u, 0xcca2f982u},
+        {0x3fffffffu, 0x3f13a43du, 0xbddb33dcu},
+        {0x40000000u, 0x3f13a43du, 0xbddb33d3u},
+        {0x40000001u, 0x3f13a43du, 0xbddb33beu},
+        {0x401fffffu, 0x3efe8321u, 0x3e156b8au},
+        {0x40200000u, 0x3efe8322u, 0x3e156b6fu},
+        {0x40200001u, 0x3efe8321u, 0x3e156b75u},
+        {0x4036db67u, 0x3ec7e1b3u, 0x3e90a361u},
+        {0x4036db68u, 0x3ec7e1b0u, 0x3e90a363u},
+        {0x4036db69u, 0x3ec7e1adu, 0x3e90a365u},
+        {0x40f71c57u, 0x3e3e6931u, 0xbe61384fu},
+        {0x40f71c58u, 0x3e3e6936u, 0xbe61384au},
+        {0x40f71c59u, 0x3e3e693eu, 0xbe613841u},
+        {0x40ffffffu, 0x3e70447fu, 0xbe21daa3u},
+        {0x41000000u, 0x3e704483u, 0xbe21da9cu},
+        {0x41000001u, 0x3e70448du, 0xbe21da8cu},
+        {0x47ffffffu, 0xbad3244au, 0x3ac5228cu},
+        {0x48000000u, 0xbad4ace7u, 0x3ac37abdu},
+        {0x48000001u, 0xbad7b424u, 0x3ac0221du},
+        {0x7effffffu, 0x1f7bfb6du, 0x1f0d3ccfu},
+        {0x7f000000u, 0x9e018611u, 0x9f8f85b0u},
+        {0x7f000001u, 0x1f8d328du, 0x1e732ee7u},
+        {0x7f800000u, 0x00000000u, 0x00000000u},
+        {0x7fc00123u, 0x7fc00123u, 0x7fc00123u},
+    };
+    for (const auto& test : cases) {
+        for (const std::uint32_t sign : {0u, 0x80000000u}) {
+            const std::uint32_t input = test.input | sign;
+            const std::uint32_t first = test.first ^ sign;
+            const std::uint32_t second = test.input > 0x7f800000u ? test.second | sign : sign != 0 && test.input != 0 ? 0x7fc00000u : test.second;
+            for (const bool secondKind : {false, true}) {
+                if (secondKind && sign != 0 && test.input == 0x7f800000u) continue;
+                *__error_nid_postfix() = 12345;
+                const float x = std::bit_cast<float>(input);
+                const auto actual = std::bit_cast<std::uint32_t>(secondKind ? y1f_nid_postfix(x) : j1f_nid_postfix(x));
+                const auto expected = secondKind ? second : first;
+                if (actual != expected || *__error_nid_postfix() != 12345) {
+                    std::fprintf(stderr, "Guest %s failed for %08x: %08x, expected %08x, errno %d\n", secondKind ? "y1f" : "j1f", input,
+                                 actual, expected, *__error_nid_postfix());
+                    std::abort();
+                }
+            }
+        }
+    }
+    for (const float input : {-1.0f, -std::numeric_limits<float>::denorm_min()}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isnan(y1f_nid_postfix(input)));
+        Require(std::fetestexcept(FE_DIVBYZERO | FE_INVALID) == 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    *__error_nid_postfix() = 12345;
+    Require(std::isnan(y1f_nid_postfix(-std::numeric_limits<float>::infinity())));
+    Require(std::fetestexcept(FE_INVALID) != 0 && *__error_nid_postfix() == 12345);
+    std::feclearexcept(FE_ALL_EXCEPT);
+}
+
 static void CheckIntegerOrders() {
     const OrderCase first[] = {
         {2, 0x3ddb7cdfd9d7bdbbull, 0x3b979ca10c924224ull}, {5, 0xbddb7cdfd9d7bdbbull, 0xb4cfed4f3ec0c466ull}, {33, 0x3e00000000000000ull, 0x0000000000000000ull},
@@ -198,6 +269,7 @@ int main() {
     CheckFirstKind();
     CheckSecondKind();
     CheckFloatSecondKindZero();
+    CheckFloatOne();
     CheckIntegerOrders();
     CheckValues();
     return 0;
