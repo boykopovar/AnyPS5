@@ -186,10 +186,12 @@ bool ExpectOrderS(const char* name, const std::vector<int>& keys, const std::vec
 int constraintCalls = 0;
 int constraintError = 0;
 const char* constraintMessage = nullptr;
+void* constraintPointer = nullptr;
 
-void APS5_VABI CountConstraint(const char* message, void*, int error) {
+void APS5_VABI CountConstraint(const char* message, void* pointer, int error) {
     ++constraintCalls;
     constraintMessage = message;
+    constraintPointer = pointer;
     constraintError = error;
 }
 
@@ -197,7 +199,7 @@ bool ExpectConstraint(const char* name, void* base, std::size_t count, std::size
     int direction = 1;
     const int calls = constraintCalls;
     const int result = qsort_s_nid_postfix(base, count, size, comparator ? CompareKeysWithDirection : nullptr, &direction);
-    if (result != 22 || constraintCalls != calls + 1 || constraintError != 22 || !constraintMessage || std::strcmp(constraintMessage, name) != 0) {
+    if (result != 22 || constraintCalls != calls + 1 || constraintError != 22 || constraintPointer || !constraintMessage || std::strcmp(constraintMessage, name) != 0) {
         std::fprintf(stderr, "qsort_s did not report \"%s\" through the installed handler (result %d, calls %d)\n", name, result, constraintCalls - calls);
         return false;
     }
@@ -208,10 +210,31 @@ bool ExpectQsortSConstraints() {
     void* previous = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(CountConstraint));
     Element element{};
     constexpr std::size_t huge = (static_cast<std::size_t>(-1) >> 1) + 1;
-    bool correct = ExpectConstraint("qsort_s : n > RSIZE_MAX", &element, huge, sizeof(Element), true);
-    correct &= ExpectConstraint("qsort_s : es > RSIZE_MAX", &element, 1, huge, true);
-    correct &= ExpectConstraint("qsort_s : a == NULL", nullptr, 2, sizeof(Element), true);
-    correct &= ExpectConstraint("qsort_s : cmp == NULL", &element, 2, sizeof(Element), false);
+    constexpr std::size_t aboveLimit = std::size_t{1} << 61;
+    bool correct = ExpectConstraint("qsort_s: bad argument", &element, huge, sizeof(Element), true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, 1, huge, true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, aboveLimit, sizeof(Element), true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, 1, aboveLimit, true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, 0, aboveLimit, true);
+    correct &= ExpectConstraint("qsort_s: bad argument", nullptr, 2, sizeof(Element), true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, 2, sizeof(Element), false);
+    int direction = 1;
+    const int calls = constraintCalls;
+    bool zeroSizeThrew = false;
+    try {
+        qsort_s_nid_postfix(&element, aboveLimit - 1, 0, CompareKeysWithDirection, &direction);
+    } catch (const std::invalid_argument&) {
+        zeroSizeThrew = true;
+    }
+    if (!zeroSizeThrew) {
+        std::fprintf(stderr, "qsort_s accepted a zero element size for SIZE_MAX >> 3 elements\n");
+        correct = false;
+    }
+    correct &= qsort_s_nid_postfix(&element, 1, aboveLimit - 1, CompareKeysWithDirection, &direction) == 0;
+    if (constraintCalls != calls) {
+        std::fprintf(stderr, "qsort_s reported a count or size of SIZE_MAX >> 3\n");
+        correct = false;
+    }
     if (set_constraint_handler_s_nid_postfix(previous) != reinterpret_cast<void*>(CountConstraint)) {
         std::fprintf(stderr, "set_constraint_handler_s did not return the installed handler\n");
         correct = false;
@@ -426,6 +449,61 @@ bool CheckMergesortUnalignedElements() {
     return correct;
 }
 
+std::vector<int> adversaryValues;
+int adversaryGas = 0;
+int adversarySolid = 0;
+int adversaryCandidate = 0;
+std::size_t adversaryComparisons = 0;
+
+int APS5_VABI CompareAdversary(const void* left, const void* right) {
+    ++adversaryComparisons;
+    const int first = *static_cast<const int*>(left);
+    const int second = *static_cast<const int*>(right);
+    if (adversaryValues[first] == adversaryGas && adversaryValues[second] == adversaryGas)
+        adversaryValues[first == adversaryCandidate ? first : second] = adversarySolid++;
+    if (adversaryValues[first] == adversaryGas) adversaryCandidate = first;
+    else if (adversaryValues[second] == adversaryGas) adversaryCandidate = second;
+    return (adversaryValues[first] > adversaryValues[second]) - (adversaryValues[first] < adversaryValues[second]);
+}
+
+int APS5_VABI CompareAdversaryS(const void* left, const void* right, void*) {
+    return CompareAdversary(left, right);
+}
+
+bool ExpectAdversaryFallsBackToHeapSort(bool withContext) {
+    constexpr int Count = 4096;
+    constexpr std::size_t Budget = 6 * Count * 12;
+    std::vector<int> elements(Count);
+    for (int index = 0; index < Count; ++index) elements[index] = index;
+    adversaryValues.assign(Count, Count);
+    adversaryGas = Count;
+    adversarySolid = 0;
+    adversaryCandidate = 0;
+    adversaryComparisons = 0;
+    if (withContext) {
+        if (qsort_s_nid_postfix(elements.data(), elements.size(), sizeof(int), CompareAdversaryS, nullptr) != 0) return false;
+    } else qsort_nid_postfix(elements.data(), elements.size(), sizeof(int), CompareAdversary);
+    const char* const name = withContext ? "qsort_s" : "qsort";
+    std::vector<bool> seen(Count);
+    for (int index = 0; index < Count; ++index) {
+        const int element = elements[index];
+        if (element < 0 || element >= Count || seen[element]) {
+            std::fprintf(stderr, "%s of an adversarial input lost or duplicated element %d\n", name, element);
+            return false;
+        }
+        seen[element] = true;
+        if (index > 0 && adversaryValues[elements[index - 1]] > adversaryValues[element]) {
+            std::fprintf(stderr, "%s of an adversarial input is not sorted at %d\n", name, index);
+            return false;
+        }
+    }
+    if (adversaryComparisons > Budget) {
+        std::fprintf(stderr, "%s of %d adversarial elements made %zu comparisons, more than %zu: no heap sort fallback\n", name, Count, adversaryComparisons, Budget);
+        return false;
+    }
+    return true;
+}
+
 std::uintptr_t heapsortBase = 0;
 std::uintptr_t heapsortLimit = 0;
 std::size_t heapsortStride = 0;
@@ -547,6 +625,8 @@ int main() {
     std::vector<int> manyKeys;
     for (int index = 0; index < 1000; ++index) manyKeys.push_back((index * 37 + 11) % 7);
     correct &= ExpectOrderHash("nested partitions", manyKeys, 0xefee58d9u);
+    correct &= ExpectAdversaryFallsBackToHeapSort(false);
+    correct &= ExpectAdversaryFallsBackToHeapSort(true);
     correct &= ExpectConsoleEdges();
     correct &= ExpectShortArraysUntouched();
     for (const std::size_t size : {1, 3, 8, 24})
