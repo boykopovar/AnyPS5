@@ -364,6 +364,17 @@ std::uint64_t fillNoteAfter(const Recorder& recorder, const GuestMemory::Unchang
     return found;
 }
 
+std::uint64_t newestFillNote(const Recorder& recorder, const GuestMemory::UnchangedQuery& range, std::uint64_t floor, std::uint32_t word) {
+    std::uint64_t newest = 0u;
+    bool proves = false;
+    for (const auto& write : recorder.PendingWritesOver(range.address, range.bytes)) {
+        if (write.note <= newest) continue;
+        newest = write.note;
+        proves = write.note >= floor && write.begin <= range.address && write.end >= range.address + range.bytes && write.word == static_cast<std::int64_t>(word);
+    }
+    return proves ? newest : 0u;
+}
+
 bool uniformPlaneTarget(const DepthTarget& target) {
     return target.format == VK_FORMAT_D32_SFLOAT_S8_UINT && target.stencilAddress != 0u && target.htileAddress == 0u;
 }
@@ -1673,7 +1684,6 @@ public:
     std::optional<std::uint32_t> clearPattern;
     std::uint64_t clearFillNote = 0u;
     std::uint64_t clearFillFloor = 0u;
-    std::uint64_t clearStoreStamp = 0u;
     bool clearStored = false;
     std::uint64_t stencilClearGeneration = 0u;
     std::optional<std::uint8_t> stencilClearValue;
@@ -3802,7 +3812,6 @@ bool NoteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes, std::siz
             else {
                 surface->clearGeneration = 0u;
                 surface->clearFillFloor = 0u;
-                surface->clearStoreStamp = 0u;
                 surface->clearPending = true;
                 surface->clearCompletionQueued = false;
                 surface->clearAspects = VK_IMAGE_ASPECT_DEPTH_BIT;
@@ -4090,12 +4099,12 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
                 else {
                     const auto* recorder = RecorderFor(surface->context);
                     const auto refill = surface->stencilClearGeneration != 0u && surface->stencilClearValue == value && surface->stencilFillNote == 0u && recorder != nullptr ? fillNoteAfter(*recorder, plane, surface->stencilFillFloor, *value * 0x01010101u) : 0u;
-                    const bool superseded = surface->stencilClearGeneration != 0u && refill == 0u;
+                    const auto priorFloor = surface->stencilFillFloor;
                     if (refill != 0u) surface->stencilFillNote = refill;
                     else {
                         surface->stencilClearGeneration = GuestMemory::CollectWritesUncached(plane.address, plane.bytes);
                         surface->stencilClearValue = *value;
-                        surface->stencilFillNote = recorder != nullptr && !superseded ? recorder->LastWriteNote(address, bytes) : 0u;
+                        surface->stencilFillNote = recorder != nullptr ? newestFillNote(*recorder, plane, priorFloor, *value * 0x01010101u) : 0u;
                         surface->stencilFillFloor = recorder != nullptr ? recorder->NewestWriteNote(plane.address, plane.bytes) : 0u;
                         surface->stencilStored = GuestMemory::StoredAllSince_nid_no_patch(plane.address, plane.bytes, plane.generation);
                     }
@@ -4109,6 +4118,7 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
             else {
                 const auto* recorder = RecorderFor(surface->context);
                 const auto refill = surface->clearGeneration != 0u && surface->clearPattern == pattern && surface->clearFillNote == 0u && recorder != nullptr ? fillNoteAfter(*recorder, metadata, surface->clearFillFloor, pattern) : 0u;
+                const auto priorFloor = surface->clearFillFloor;
                 if (surface->clearPending || (surface->clearGeneration != 0u && !surface->clearPattern.has_value())) {
                     surface->clearPending = false;
                     surface->clearCompletionQueued = false;
@@ -4116,17 +4126,14 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
                     surface->clearAspects = 0u;
                     surface->clearFillNote = 0u;
                     surface->clearFillFloor = 0u;
-                    surface->clearStoreStamp = 0u;
                     surface->clearStored = false;
                 }
-                const bool superseded = surface->clearGeneration != 0u && refill == 0u;
                 if (refill != 0u) surface->clearFillNote = refill;
                 else {
                     surface->clearGeneration = GuestMemory::CollectWritesUncached(metadata.address, metadata.bytes);
                     surface->clearAspects = VK_IMAGE_ASPECT_DEPTH_BIT | (target.htileStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
                     surface->clearPattern = pattern;
-                    surface->clearStoreStamp = GuestMemory::NewestStamp(metadata.address, metadata.bytes);
-                    surface->clearFillNote = recorder != nullptr && !superseded ? recorder->LastWriteNote(address, bytes) : 0u;
+                    surface->clearFillNote = recorder != nullptr ? newestFillNote(*recorder, metadata, priorFloor, pattern) : 0u;
                     surface->clearFillFloor = recorder != nullptr ? recorder->NewestWriteNote(metadata.address, metadata.bytes) : 0u;
                     surface->clearStored = GuestMemory::StoredAllSince_nid_no_patch(metadata.address, metadata.bytes, metadata.generation);
                 }

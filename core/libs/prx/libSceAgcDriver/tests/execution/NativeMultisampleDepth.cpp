@@ -1904,7 +1904,7 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                         AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, static_cast<std::size_t>(metadataBytes), [&] {
                             for (std::size_t i = 0u; i < metadataBytes / 4u; ++i) std::memcpy(metadata.Data() + i * 4u, &queuedPattern, 4u);
                         });
-                        QueueTargetFill(context, recorder, target.htileAddress, static_cast<std::size_t>(metadataBytes), queuedPattern);
+                        QueueTargetWordFill(context, recorder, target.htileAddress, static_cast<std::size_t>(metadataBytes), queuedPattern);
                         NoteDepthMetadataFill(target.htileAddress, static_cast<std::size_t>(metadataBytes), queuedPattern);
                     } else {
                         NoteDepthMetadataFill(target.htileAddress, static_cast<std::size_t>(metadataBytes), clearPattern);
@@ -4265,7 +4265,62 @@ void CheckStoredRepeatFill(Context context, std::uint32_t samples) {
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
     store(one, metadataBytes);
     sample(1.0f);
-    std::printf("Native D32S8 with HTILE, samples=%u: a stored whole-HTILE fill was accepted, an unstored or partially stored one was refused, a stored refill after a draw was accepted and a superseding fill was applied\n", samples);
+
+    reset(0.0f);
+    target.clearDepth = 1.0f;
+    QueueTargetWordFill(context, recorder, target.htileAddress, metadataBytes, one);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    QueueTargetWordFill(context, recorder, target.htileAddress, metadataBytes, one);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    sample(1.0f);
+
+    reset(0.0f);
+    QueueTargetWordFill(context, recorder, stencil.Address(), stencilBytes, 0u);
+    NoteDepthMetadataFill(stencil.Address(), stencilBytes, 0u);
+    QueueTargetWordFill(context, recorder, stencil.Address(), stencilBytes, 0u);
+    NoteDepthMetadataFill(stencil.Address(), stencilBytes, 0u);
+    sample(0.0f);
+    std::printf("Native D32S8 with HTILE, samples=%u: a stored whole-HTILE fill was accepted, an unstored or partially stored one was refused, a stored refill after a draw was accepted, a superseding fill was applied and repeated recorded HTILE and stencil fills were consumed before a sync\n", samples);
+}
+
+void CheckElidedFillOverArmedClear(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{5u, 3u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    TargetMemory memory(depthBytes), metadata(65536u);
+    std::memset(memory.Data(), 0, depthBytes);
+    const std::uint32_t pattern = 0xfffffff0u;
+    for (std::size_t offset = 0u; offset + 4u <= metadataBytes; offset += 4u) std::memcpy(metadata.Data() + offset, &pattern, 4u);
+    DepthTarget target{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0u, metadata.Address(), false, samples};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = target.htileDepthOnly = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    const auto words = DepthSampleWords(target);
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the elided fill over an armed clear fixture has no attachment view");
+    auto texture = CachedSampledTexture(context, words);
+    Require(texture != nullptr, "the elided fill over an armed clear fixture was not imported");
+    recorder.Sync();
+    Require(NoteHtileDepthClear(target.htileAddress, metadataBytes, metadataBytes), "a native HTILE clear dispatch over a stored plane was not noted");
+    ArmHtileDepthClear(target.htileAddress, metadataBytes);
+    recorder.NotePendingWrite(target.htileAddress, metadataBytes);
+    CompleteHtileDepthClear(target.htileAddress, metadataBytes);
+    QueueTargetWordFill(context, recorder, target.htileAddress, metadataBytes, pattern);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, pattern);
+    Require(CachedSampledTexture(context, words) != nullptr, "a recorded fill over an armed native HTILE clear dispatch was not consumed");
+    recorder.Sync();
+    Require(NoteHtileDepthClear(target.htileAddress, metadataBytes, metadataBytes), "a second native HTILE clear dispatch was not noted");
+    ArmHtileDepthClear(target.htileAddress, metadataBytes);
+    recorder.NotePendingWrite(target.htileAddress, metadataBytes);
+    CompleteHtileDepthClear(target.htileAddress, metadataBytes);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, pattern);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "external GPU writes over native multisample depth are not implemented");
+    std::printf("Native D32 with HTILE, samples=%u: a recorded fill superseded an armed clear dispatch while an elided fill kept its pending-write refusal\n", samples);
 }
 
 
@@ -4448,6 +4503,7 @@ int main(int argc, char** argv) {
             for (const auto samples : {2u, 4u, 8u}) {
                 if (!supported(samples)) { ++unavailable; continue; }
                 CheckStoredRepeatFill(context, samples);
+                if (DepthSupported(context, VK_FORMAT_D32_SFLOAT, samples)) CheckElidedFillOverArmedClear(context, samples);
                 ++checked;
             }
             std::printf("Native depth stored repeated HTILE fill cases checked=%u unavailable=%u\n", checked, unavailable);
