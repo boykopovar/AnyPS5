@@ -1,4 +1,5 @@
 #include "prx/libSceVoiceChat/include/Api.hpp"
+#include "prx/libSceVoiceChat/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
@@ -24,6 +25,7 @@ int main() {
     Require(sceVoiceChatRegisterPartyUserStateChangedHandler(nullptr, nullptr) == 0, "register party user state changed handler failed");
     Require(sceVoiceChatRegisterVoiceEventHandler(nullptr, nullptr) == 0, "register voice event handler failed");
     Require(sceVoiceChatUnregisterMicEventHandler(nullptr) == 0, "unregister mic event handler failed");
+    Require(sceVoiceChatUnregisterMicEventHandler2() == 0, "unregister mic event handler 2 failed");
     Require(sceVoiceChatUnregisterChannelEventHandler(nullptr) == 0, "unregister channel event handler failed");
     Require(sceVoiceChatUnregisterDaemonEventHandler(nullptr) == 0, "unregister daemon event handler failed");
     Require(sceVoiceChatUnregisterMemberEventHandler(nullptr) == 0, "unregister member event handler failed");

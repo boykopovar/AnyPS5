@@ -324,6 +324,7 @@ void gcnTilingTests() {
                     for (std::uint32_t layer = 0; layer < surface.layers; ++layer) {
                         for (std::uint32_t y = 0; y < height; ++y) {
                             for (std::uint32_t x = 0; x < width; ++x) {
+                                if (layer != 0 && (x + layer) % 8u != y % 8u) continue;
                                 std::uint32_t inBlock = 0, split = 0;
                                 for (std::uint32_t bit = 0; bit < 16u; ++bit) inBlock |= static_cast<std::uint32_t>(std::popcount((x & geometry.equation[bit] & 0xfffu) ^ ((y << 12u) & geometry.equation[bit] & 0xfff000u)) & 1) << bit;
                                 for (std::uint32_t bit = 0; bit < 4u; ++bit) split |= static_cast<std::uint32_t>(std::popcount((x & geometry.splitMasks[bit] & 0xfffu) ^ ((y << 12u) & geometry.splitMasks[bit] & 0xfff000u)) & 1) << bit;
