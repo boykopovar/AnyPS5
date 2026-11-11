@@ -271,6 +271,15 @@ void testMissingPlanFile(const std::filesystem::path& root) {
     checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(root / "missing.plan"); }, "plan reader accepted a missing file");
 }
 
+
+void testTruncatedCapture(const std::filesystem::path& root) {
+    const auto source = root / "truncated";
+    writeCapture(source);
+    std::filesystem::resize_file(source / "calls.bin", 10);
+    AgcDriverTools::FrameCaptureFilterPlan plan;
+    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, root / "truncated-output", plan); }, "filtering accepted a truncated capture");
+}
+
 }
 
 int main() {
@@ -291,6 +300,7 @@ int main() {
     testOverflowPlanIndex(root);
     testBlankPlanLines(root);
     testMissingPlanFile(root);
+    testTruncatedCapture(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
