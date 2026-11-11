@@ -497,10 +497,61 @@ def link_syntax(text):
     return "".join(parts)
 
 
+def link_span(text, start):
+    def space_end(position):
+        end = position
+        while end < len(text) and text[end] in " \t\r\n":
+            end += 1
+        return None if len(re.findall(r"\r\n|\r|\n", text[position:end])) > 1 else end
+
+    if text[start] == "<":
+        end = text.find(">", start + 1)
+        if end < 0 or any(character in "<\r\n" for character in text[start + 1:end]):
+            return None
+        end += 1
+    else:
+        end, depth = start, 0
+        while end < len(text):
+            character = text[end]
+            if character in " \t\r\n" or (character == ")" and depth == 0):
+                break
+            if 0 < ord(character) < 32 or ord(character) == 127:
+                return None
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+            end += 1
+        if depth or end == start:
+            return None
+    close = space_end(end)
+    if close is None or close == len(text):
+        return None
+    if text[close] == ")":
+        return end, close + 1
+    if close == end or text[close] not in "\"'(":
+        return None
+    delimiter = ")" if text[close] == "(" else text[close]
+    title = close + 1
+    close = text.find(delimiter, title)
+    if close < 0 or (delimiter == ")" and "(" in text[title:close]):
+        return None
+    close = space_end(close + 1)
+    return (end, close + 1) if close is not None and close < len(text) and text[close] == ")" else None
+
+
 def links(path, text):
     result = []
+    escaped = BACKSLASH_ESCAPE.sub(lambda match: "\0" * len(match[0]), text)
+    cursor = 0
     for match in LINK.finditer(link_syntax(text)):
-        target = text[match.start(1):match.end(1)]
+        if match.start() < cursor:
+            continue
+        span = link_span(escaped, match.start(1))
+        if span is None:
+            continue
+        end, cursor = span
+        target = text[match.start(1):end]
         if target.startswith("<"):
             target = target[1:-1]
         target = BACKSLASH_ESCAPE.sub(r"\1", target)

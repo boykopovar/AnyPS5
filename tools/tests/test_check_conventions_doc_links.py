@@ -96,6 +96,60 @@ class DocLinkTests(unittest.TestCase):
                     expected = target.split("#", 1)[0].split("?", 1)[0]
                     self.assertEqual(check_conventions.links("docs/x.md", text), [(expected, resolved)])
 
+    def test_bare_destinations_keep_balanced_parentheses_and_titles(self):
+        for depth in (1, 2, 3, 8):
+            target = "guide" + "(" * depth + "draft" + ")" * depth + ".md"
+            for title in ("", ' "Guide"', " 'Guide'", " (Guide)"):
+                with self.subTest(depth=depth, title=title):
+                    self.assertEqual(check_conventions.links("docs/x.md", f"[guide]({target}{title})"),
+                                     [(target, "docs/" + target)])
+
+    def test_bare_and_escaped_parentheses_are_counted_separately(self):
+        slash = chr(92)
+        target = f"guide(draft{slash}(old).md"
+        self.assertEqual(check_conventions.links("docs/x.md", f"[guide]({target})"),
+                         [("guide(draft(old).md", "docs/guide(draft(old).md")])
+        self.assertEqual(check_conventions.links("docs/x.md", "[guide](<guide(draft.md>)"),
+                         [("guide(draft.md", "docs/guide(draft.md")])
+
+    def test_unbalanced_bare_destinations_are_literal_text(self):
+        for text in ("[guide](guide(draft.md)", "[guide](guide(one(two).md)",
+                     "[guide](guide(draft file).md)", "[guide](guide(draft).md", "[guide](missing.md"):
+            with self.subTest(text=text):
+                self.assertEqual(check_conventions.links("docs/x.md", text), [])
+
+    def test_links_inside_extended_destinations_or_titles_are_not_separate_links(self):
+        text = '[guide](guide(a)[part](b).md "[example](missing.md)") [other](other(c).md)'
+        self.assertEqual(check_conventions.links("docs/x.md", text),
+                         [("guide(a)[part](b).md", "docs/guide(a)[part](b).md"), ("other(c).md", "docs/other(c).md")])
+
+    def test_titles_require_matching_delimiters_and_the_outer_close(self):
+        for text in ('[guide](guide(a).md "Guide)', "[guide](guide(a).md 'Guide)",
+                     "[guide](guide(a).md (Guide(inner)))", "[guide](<guide(a).md>extra)"):
+            with self.subTest(text=text):
+                self.assertEqual(check_conventions.links("docs/x.md", text), [])
+        slash = chr(92)
+        text = f'[guide](guide(a).md "Guide {slash}"quoted{slash}"")'
+        self.assertEqual(check_conventions.links("docs/x.md", text), [("guide(a).md", "docs/guide(a).md")])
+
+    def test_cli_checks_complete_balanced_filenames(self):
+        for exists in (True, False):
+            with self.subTest(exists=exists), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                name = "guide" if exists else "missing"
+                base = {"README.md": "Guide\n", "docs/user/guide(draft).md": "Draft\n"}
+                head = {"README.md": f"See [guide](docs/user/{name}(draft).md).\n"}
+                repository(root, base, head)
+                result = subprocess.run([sys.executable, str(Path(check_conventions.__file__)),
+                                         "--base", "base", "--head", "HEAD"],
+                                        cwd=root, capture_output=True, encoding="utf-8", errors="strict",
+                                        env={key: value for key, value in os.environ.items()
+                                             if key not in ("GITHUB_ACTIONS", "GITHUB_EVENT_PATH", "GITHUB_STEP_SUMMARY")})
+                self.assertEqual(result.returncode, 0 if exists else 1, result.stdout + result.stderr)
+                if not exists:
+                    self.assertEqual(result.stdout.count("[doc-link]"), 1, result.stdout)
+                    self.assertIn("docs/user/missing(draft).md", result.stdout)
+
     def test_angle_absolute_urls_fragments_and_empty_destinations_are_ignored(self):
         for target in ("https://example.test/guide", "HTTPS://example.test/a b)", "mailto:person@example.test",
                        "//example.test/guide", "#details", ""):
