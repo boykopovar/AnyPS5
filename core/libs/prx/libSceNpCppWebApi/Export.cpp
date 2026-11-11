@@ -7445,16 +7445,179 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common19UpStreamTransactionINS2_12IntrusivePt
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_17TitleCloudStorage2V122UploadDataResponseBodyEEENS4_INS6_7DataApi25UploadDataResponseHeadersEEEE11hasResponseEv(const void* self) {
+
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEEC1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEED1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V120GetOfferResponseBodyEEC1Ev(IntrusivePtr* self) {
+    *self = {};
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V120GetOfferResponseBodyEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, ReferenceCountOffset, __func__);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEEC1Ev(IntrusivePtr* self) {
+    *self = {};
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, ReferenceCountOffset, __func__);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V124SubmitTicketResponseBodyEEC1Ev(IntrusivePtr* self) {
+    *self = {};
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V124SubmitTicketResponseBodyEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, ReferenceCountOffset, __func__);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V18LocationEEC1Ev(IntrusivePtr* self) {
+    *self = {};
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V18LocationEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, ReferenceCountOffset, __func__);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V19SubmitterEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, ReferenceCountOffset, __func__);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11Matchmaking2V113PlayerForReadEEEEEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, VectorReferenceCountOffset, __func__);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11Matchmaking2V118PlayerForOfferReadEEEEEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, VectorReferenceCountOffset, __func__);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11Matchmaking2V19AttributeEEEEEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, VectorReferenceCountOffset, __func__);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEEED2Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11Matchmaking2V118PlayerForOfferReadEEEED2Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEED1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+void* APS5_VABI _ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEEppEv(void* self) {
+    auto* iterator = static_cast<CommonConstIterator*>(self);
+    iterator->element = static_cast<std::uint8_t*>(iterator->element) + sizeof(IntrusivePtr);
+    return iterator;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11Matchmaking2V120GetOfferResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() {
+    return TransactionNotStarted;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() {
+    return TransactionNotStarted;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE() {
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11Matchmaking2V124SubmitTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() {
+    return TransactionNotStarted;
+}
+
+CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEEE3endEv(CommonIterator* iterator, const IntrusivePtr* self) {
+    iterator->referenceCount = 0;
+    iterator->element = IntrusiveVectorElements(self, true, __func__);
+    return iterator;
+}
+
+CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEEE5beginEv(CommonIterator* iterator, const IntrusivePtr* self) {
+    iterator->referenceCount = 0;
+    iterator->element = IntrusiveVectorElements(self, false, __func__);
+    return iterator;
+}
+
+CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11Matchmaking2V118PlayerForOfferReadEEEE3endEv(CommonIterator* iterator, const IntrusivePtr* self) {
+    iterator->referenceCount = 0;
+    iterator->element = IntrusiveVectorElements(self, true, __func__);
+    return iterator;
+}
+
+CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11Matchmaking2V118PlayerForOfferReadEEEE5beginEv(CommonIterator* iterator, const IntrusivePtr* self) {
+    iterator->referenceCount = 0;
+    iterator->element = IntrusiveVectorElements(self, false, __func__);
+    return iterator;
+}
+
+void* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEEEppEv(void* self) {
+    return HostIteratorAdvance(self, sizeof(IntrusivePtr));
+}
+
+void* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11Matchmaking2V118PlayerForOfferReadEEEEppEv(void* self) {
+    return HostIteratorAdvance(self, sizeof(IntrusivePtr));
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11Matchmaking2V120GetOfferResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_(const void* self, void* response) {
+    (void)self;
+    (void)response;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11Matchmaking2V120GetOfferResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv(const void* self) {
     (void)self;
     return 0;
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv(const void* self) {
+
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_(const void* self, void* response) {
+    (void)self;
+    (void)response;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv(const void* self) {
     (void)self;
     return 0;
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6BinaryEEENS4_INS1_17TitleCloudStorage2V17DataApi27DownloadDataResponseHeadersEEEE11hasResponseEv(const void* self) {
+
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11Matchmaking2V124SubmitTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_(const void* self, void* response) {
+    (void)self;
+    (void)response;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11Matchmaking2V124SubmitTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv(const void* self) {
     (void)self;
     return 0;
 }
@@ -8015,6 +8178,121 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14S
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V122PlayerSessionSpectatorEEEEneERKS9_(const void* self, const void* other) {
+    return HostIteratorNotEqual(self, other);
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEcvbEv(const IntrusivePtr* self) {
+    return self->object != nullptr;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEptEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V118PlayerForOfferReadEEcvbEv(const IntrusivePtr* self) {
+    return self->object != nullptr;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V118PlayerForOfferReadEEptEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V120GetOfferResponseBodyEEcvbEv(const IntrusivePtr* self) {
+    return self->object != nullptr;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V120GetOfferResponseBodyEEdeEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V120GetOfferResponseBodyEEptEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEEcvbEv(const IntrusivePtr* self) {
+    return self->object != nullptr;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEEptEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V18LocationEEcvbEv(const IntrusivePtr* self) {
+    return self->object != nullptr;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V18LocationEEptEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V19AttributeEEptEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V19SubmitterEEcvbEv(const IntrusivePtr* self) {
+    return self->object != nullptr;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V19SubmitterEEptEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11Matchmaking2V113PlayerForReadEEEEEEcvbEv(const IntrusivePtr* self) {
+    return self->object != nullptr;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11Matchmaking2V113PlayerForReadEEEEEEdeEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11Matchmaking2V118PlayerForOfferReadEEEEEEcvbEv(const IntrusivePtr* self) {
+    return self->object != nullptr;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11Matchmaking2V118PlayerForOfferReadEEEEEEdeEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11Matchmaking2V19AttributeEEEEEEcvbEv(const IntrusivePtr* self) {
+    return self->object != nullptr;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11Matchmaking2V19AttributeEEEEEEdeEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEEdeEv(const void* self) {
+    return static_cast<const CommonConstIterator*>(self)->element;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEEneERKS9_(const void* self, const void* other) {
+    return static_cast<const CommonConstIterator*>(self)->element !=
+           static_cast<const CommonConstIterator*>(other)->element;
+}
+
+CommonConstIterator APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEE3endEv(const void* self) {
+    const VectorBody* body = HostVectorBody(self, 1, __func__);
+    return CommonConstIterator(0, body != nullptr && body->elements != nullptr ? static_cast<std::uint8_t*>(body->elements) + body->size * sizeof(IntrusivePtr) : nullptr);
+}
+
+CommonConstIterator APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEE5beginEv(const void* self) {
+    const VectorBody* body = HostVectorBody(self, 1, __func__);
+    return CommonConstIterator(0, body != nullptr ? body->elements : nullptr);
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEEEdeEv(const void* self) {
+    return static_cast<const CommonIterator*>(self)->element;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEEEneERKS9_(const void* self, const void* other) {
+    return HostIteratorNotEqual(self, other);
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11Matchmaking2V118PlayerForOfferReadEEEEdeEv(const void* self) {
+    return static_cast<const CommonIterator*>(self)->element;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11Matchmaking2V118PlayerForOfferReadEEEEneERKS9_(const void* self, const void* other) {
     return HostIteratorNotEqual(self, other);
 }
 
