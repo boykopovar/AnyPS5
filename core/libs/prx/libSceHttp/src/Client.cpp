@@ -29,6 +29,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -38,6 +39,8 @@ class HttpFailure : public std::runtime_error {
 public:
     explicit HttpFailure(const char* message) : std::runtime_error(message) {}
 };
+
+constexpr std::array<std::string_view, 12> HttpMonths{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
 std::string Lower(std::string text) {
     for (char& byte : text) if (byte >= 'A' && byte <= 'Z') byte += 'a' - 'A';
@@ -63,19 +66,57 @@ std::optional<std::chrono::sys_seconds> HttpDate(const std::string& text) {
     for (const auto index : {5, 6, 12, 13, 14, 15, 17, 18, 20, 21, 23, 24})
         if (text[index] < '0' || text[index] > '9') return {};
     static constexpr std::array<std::string_view, 7> weekdays{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-    static constexpr std::array<std::string_view, 12> months{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     const auto weekday = std::find(weekdays.begin(), weekdays.end(), std::string_view(text).substr(0, 3));
-    const auto month = std::find(months.begin(), months.end(), std::string_view(text).substr(8, 3));
-    if (weekday == weekdays.end() || month == months.end()) return {};
+    const auto month = std::find(HttpMonths.begin(), HttpMonths.end(), std::string_view(text).substr(8, 3));
+    if (weekday == weekdays.end() || month == HttpMonths.end()) return {};
     const auto year = static_cast<int>(Number(std::string_view(text).substr(12, 4)));
     const auto date = static_cast<unsigned>(Number(std::string_view(text).substr(5, 2)));
     const auto hour = static_cast<int>(Number(std::string_view(text).substr(17, 2)));
     const auto minute = static_cast<int>(Number(std::string_view(text).substr(20, 2)));
     const auto second = static_cast<int>(Number(std::string_view(text).substr(23, 2)));
-    const std::chrono::year_month_day day{std::chrono::year{year}, std::chrono::month{static_cast<unsigned>(month - months.begin() + 1)}, std::chrono::day{date}};
+    const std::chrono::year_month_day day{std::chrono::year{year}, std::chrono::month{static_cast<unsigned>(month - HttpMonths.begin() + 1)}, std::chrono::day{date}};
     if (year < 1900 || !day.ok() || hour > 23 || minute > 59 || second > 60 ||
         std::chrono::weekday{std::chrono::sys_days{day}}.c_encoding() != static_cast<unsigned>(weekday - weekdays.begin())) return {};
     return std::chrono::sys_days{day} + std::chrono::hours{hour} + std::chrono::minutes{minute} + std::chrono::seconds{second};
+}
+
+std::string CanonicalDate(std::string text, std::chrono::sys_seconds now) {
+    if (HttpDate(text)) return text;
+    std::string canonical;
+    if (text.size() >= 30 && text.size() <= 33) {
+        const auto comma = text.find(',');
+        static constexpr std::array<std::string_view, 7> weekdays{
+            "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+        if (comma == std::string::npos || comma + 24 != text.size() || text[comma + 1] != ' ' ||
+            std::find(weekdays.begin(), weekdays.end(), std::string_view(text).substr(0, comma)) == weekdays.end()) return text;
+        const auto date = std::string_view(text).substr(comma + 2);
+        if (date[2] != '-' || date[6] != '-' || date[9] != ' ') return text;
+        for (const auto index : {0, 1, 7, 8, 10, 11, 13, 14, 16, 17})
+            if (date[index] < '0' || date[index] > '9') return text;
+        const auto month = std::find(HttpMonths.begin(), HttpMonths.end(), date.substr(3, 3));
+        if (month == HttpMonths.end()) return text;
+        const auto today = std::chrono::floor<std::chrono::days>(now);
+        const std::chrono::year_month_day current{today};
+        const std::chrono::hh_mm_ss time{now - today};
+        const int limitYear = static_cast<int>(current.year()) + 50;
+        int year = limitYear / 100 * 100 + static_cast<int>(Number(date.substr(7, 2)));
+        const auto candidate = std::tuple{static_cast<int>(month - HttpMonths.begin() + 1),
+            static_cast<int>(Number(date.substr(0, 2))), static_cast<int>(Number(date.substr(10, 2))),
+            static_cast<int>(Number(date.substr(13, 2))), static_cast<int>(Number(date.substr(16, 2)))};
+        const auto limit = std::tuple{static_cast<int>(static_cast<unsigned>(current.month())),
+            static_cast<int>(static_cast<unsigned>(current.day())), static_cast<int>(time.hours().count()),
+            static_cast<int>(time.minutes().count()), static_cast<int>(time.seconds().count())};
+        if (year > limitYear || (year == limitYear && candidate > limit)) year -= 100;
+        canonical = text.substr(0, 3) + ", " + std::string(date.substr(0, 2)) + " " + std::string(date.substr(3, 3)) +
+            " " + std::to_string(year) + " " + std::string(date.substr(10));
+    } else if (text.size() == 24 && text[3] == ' ' && text[7] == ' ' && text[10] == ' ' && text[19] == ' ') {
+        std::string day = text.substr(8, 2);
+        if (day[0] == ' ') day[0] = '0';
+        canonical = text.substr(0, 3) + ", " + day + " " + text.substr(4, 3) + " " + text.substr(20, 4) +
+            " " + text.substr(11, 8) + " GMT";
+    } else return text;
+    if (HttpDate(canonical)) return canonical;
+    return text;
 }
 
 bool StrongEtag(std::string_view text) {
@@ -393,12 +434,14 @@ struct HttpClientState : Aps5HttpClient {
                 const auto line = connection.Line();
                 if (line.size() < 12 || (!line.starts_with("HTTP/1.1 ") && !line.starts_with("HTTP/1.0 "))) throw HttpFailure("invalid HTTP status line");
                 status = static_cast<int>(Number(std::string_view(line).substr(9, 3)));
+                const auto responseTime = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
                 headers.clear();
                 for (;;) {
                     const auto field = connection.Line();
                     if (field.empty()) break;
-                    const auto [name, value] = Field(field);
+                    auto [name, value] = Field(field);
                     if (name != "content-range" && name != "content-length" && name != "content-encoding" && name != "transfer-encoding" && name != "location" && name != "etag" && name != "last-modified" && name != "date") continue;
+                    if (name == "last-modified" || name == "date") value = CanonicalDate(std::move(value), responseTime);
                     const auto [found, inserted] = headers.emplace(name, value);
                     if (!inserted && found->second != value) throw HttpFailure("conflicting HTTP headers");
                 }
