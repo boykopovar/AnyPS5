@@ -235,16 +235,38 @@ class RegistrationTests(unittest.TestCase):
 
     def test_looping_subdirectory_is_skipped(self):
         with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory).resolve()
+            loop = build / "first"
+            (build / "nested").mkdir()
+            (build / "CTestTestfile.cmake").write_text('subdirs("nested" "first")\n', encoding="utf-8")
+            (build / "nested/CTestTestfile.cmake").write_text(
+                'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
+            original_resolve = Path.resolve
+
+            def resolve(path):
+                if path == loop:
+                    raise RuntimeError("Symlink loop")
+                return original_resolve(path)
+
+            for root, expected in ((build, {"buffer_bounds_tests"}), (loop, set())):
+                with self.subTest(root=root), patch.object(Path, "resolve", autospec=True, side_effect=resolve) as resolving:
+                    self.assertEqual(check_test_registration.registered(root), expected)
+                    resolving.assert_any_call(loop)
+
+    def test_real_looping_subdirectory_is_skipped_where_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
             build = Path(directory)
             (build / "nested").mkdir()
             try:
-                os.symlink("second", build / "first")
-                os.symlink("first", build / "second")
+                os.symlink("second", build / "first", target_is_directory=True)
+                os.symlink("first", build / "second", target_is_directory=True)
+            except NotImplementedError as error:
+                self.skipTest(f"symbolic links are unavailable: {error}")
             except OSError as error:
                 if os.name == "nt" and getattr(error, "winerror", None) == 1314:
-                    self.skipTest("creating symlinks requires Windows privileges")
+                    self.skipTest(f"symbolic link privilege is unavailable: {error}")
                 raise
-            (build / "CTestTestfile.cmake").write_text('subdirs("first" "nested")\n', encoding="utf-8")
+            (build / "CTestTestfile.cmake").write_text('subdirs("nested" "first")\n', encoding="utf-8")
             (build / "nested/CTestTestfile.cmake").write_text(
                 'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
             self.assertEqual(check_test_registration.registered(build), {"buffer_bounds_tests"})
@@ -720,6 +742,75 @@ class DisabledScriptRegistrationTests(unittest.TestCase):
         self.assertNotIn("registration-probe-ran", output)
         self.assertEqual(audit.returncode, 1, audit.stdout + audit.stderr)
         self.assertIn(f"error: {self.script} is a test script that no add_test or workflow runs", audit.stdout)
+
+    def test_set_property_disabled_matches_ctest(self):
+        cases = (("set_property(TEST probe PROPERTY DISABLED TRUE)", True),
+                 ("set_property(TEST probe PROPERTY DISABLED ON)\nset_property(TEST probe PROPERTY DISABLED)", False),
+                 ("set_property(TEST probe PROPERTY DISABLED TRUE FALSE)", False),
+                 ("set_property(TEST probe APPEND PROPERTY DISABLED TRUE)", True),
+                 ("set_tests_properties(probe PROPERTIES DISABLED ON)\nset_property(TEST probe APPEND PROPERTY DISABLED FALSE)", False),
+                 ("set_tests_properties(probe PROPERTIES DISABLED ON)\nset_property(TEST probe APPEND PROPERTY DISABLED)", True),
+                 ("set_property(TEST probe PROPERTY DISABLED TR)\nset_property(TEST probe APPEND_STRING PROPERTY DISABLED UE)", True),
+                 ("set_property(TEST probe APPEND_STRING PROPERTY DISABLED T RUE)", False))
+        for properties, disabled in cases:
+            with self.subTest(properties=properties):
+                output, audit = self.run_project(self.registration + properties + "\n")
+                self.assertEqual("registration-probe-ran" not in output, disabled, output)
+                self.assertEqual(audit.returncode, int(disabled), audit.stdout + audit.stderr)
+                if disabled:
+                    self.assertIn("Not Run (Disabled)", output)
+                    self.assertIn(self.script, audit.stdout)
+
+    def test_set_property_disables_multiple_modern_and_legacy_registrations(self):
+        output, audit = self.run_project(
+            self.registration +
+            'add_test(legacy "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_probe.py")\n'
+            'set_property(TEST probe legacy PROPERTY DISABLED TRUE)\n')
+        self.assertEqual(output.count("Not Run (Disabled)"), 2)
+        self.assertNotIn("registration-probe-ran", output)
+        self.assertEqual(audit.returncode, 1, audit.stdout + audit.stderr)
+
+    def test_conditional_set_property_preserves_possible_coverage(self):
+        for properties in ('if(FALSE)\nset_property(TEST probe PROPERTY DISABLED TRUE)\nendif()\n',
+                           'set_property(TEST probe PROPERTY DISABLED TR)\n'
+                           'if(TRUE)\nset_property(TEST probe PROPERTY DISABLED ON)\nendif()\n'
+                           'set_property(TEST probe APPEND_STRING PROPERTY DISABLED UE)\n'):
+            with self.subTest(properties=properties):
+                output, audit = self.run_project(self.registration + properties)
+                self.assertIn("registration-probe-ran", output)
+                self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
+
+    def test_conditional_true_spellings_preserve_definite_disabled_state(self):
+        for command in ('set_property(TEST probe PROPERTY DISABLED TRUE)',
+                        'set_tests_properties(probe PROPERTIES DISABLED TRUE)'):
+            for append in ('', 'set_property(TEST probe APPEND_STRING PROPERTY DISABLED UE)\n'):
+                with self.subTest(command=command, append=append):
+                    output, audit = self.run_project(
+                        self.registration + 'set_tests_properties(probe PROPERTIES DISABLED ON)\n'
+                        f'if(FALSE)\n{command}\nendif()\n' + append)
+                    disabled = not append
+                    self.assertEqual('registration-probe-ran' not in output, disabled, output)
+                    self.assertEqual(audit.returncode, int(disabled), audit.stdout + audit.stderr)
+
+    def test_set_property_in_shared_and_alternative_scopes_matches_ctest(self):
+        disabled = self.registration + 'set_property(TEST probe PROPERTY DISABLED TRUE)\n'
+        output, audit = self.run_project('if(TRUE)\n' + disabled + 'else()\n' + disabled + 'endif()\n')
+        self.assertIn("Disabled", output)
+        self.assertEqual(audit.returncode, 1, audit.stdout + audit.stderr)
+
+    def test_unrelated_set_properties_do_not_disable_a_registration(self):
+        for command in ('set_property(DIRECTORY PROPERTY DISABLED TRUE)',
+                        'set_property(TEST probe PROPERTY LABELS DISABLED TRUE)',
+                        'set_property(TEST PROPERTY DISABLED TRUE)'):
+            with self.subTest(command=command):
+                output, audit = self.run_project(self.registration + command + "\n")
+                self.assertIn("registration-probe-ran", output)
+                self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
+
+    def test_cross_directory_properties_do_not_disable_local_tests(self):
+        content = self.registration + 'set_property(TEST probe DIRECTORY other PROPERTY DISABLED TRUE)\n'
+        (self.source / 'CMakeLists.txt').write_text(content, encoding='utf-8')
+        self.assertEqual(check_test_registration.run_scripts(self.source, ['CMakeLists.txt']), {self.script})
 
     def test_conditional_disable_does_not_hide_an_enabled_registration(self):
         output, audit = self.run_project(

@@ -1,6 +1,17 @@
 #include "prx/libSceNpManager/include/AdditionalExports.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+template <typename TValue>
+TValue ReadAt(const void* object, std::size_t offset, const char* function) {
+    TValue value{};
+    if (!GuestCopyIn_nid_no_patch(&value, static_cast<const std::byte*>(object) + offset, sizeof(value))) NotImplemented_nid_no_patch(function);
+    return value;
+}
+
+}
+
 extern "C" {
 
 int APS5_VABI libSceNpManagerUnknown_095ladq7hQ8_nid_no_patch() {
@@ -103,8 +114,8 @@ int APS5_VABI libSceNpManagerUnknown_AydqLDpvliU_nid_no_patch() {
 
 APS5_EXPORT("AydqLDpvliU", libSceNpManagerUnknown_AydqLDpvliU_nid_no_patch);
 
-int APS5_VABI libSceNpManagerUnknown_BQA2KNZr2H0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI libSceNpManagerUnknown_BQA2KNZr2H0_nid_no_patch(const void* left, const void* right) {
+    return ReadAt<std::int32_t>(left, 0, __func__) != ReadAt<std::int32_t>(right, 8, __func__);
 }
 
 APS5_EXPORT("BQA2KNZr2H0", libSceNpManagerUnknown_BQA2KNZr2H0_nid_no_patch);
@@ -163,8 +174,8 @@ int APS5_VABI libSceNpManagerUnknown_GRp4UNp_minus_eCM_nid_no_patch() {
 
 APS5_EXPORT("GRp4UNp-eCM", libSceNpManagerUnknown_GRp4UNp_minus_eCM_nid_no_patch);
 
-int APS5_VABI libSceNpManagerUnknown_Gv4cB8leZaU_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI libSceNpManagerUnknown_Gv4cB8leZaU_nid_no_patch(const void* object, std::int32_t value) {
+    return ReadAt<std::int32_t>(object, 8, __func__) == value;
 }
 
 APS5_EXPORT("Gv4cB8leZaU", libSceNpManagerUnknown_Gv4cB8leZaU_nid_no_patch);
@@ -349,8 +360,8 @@ int APS5_VABI libSceNpManagerUnknown__minus_5ZuQ1HlZNY_nid_no_patch() {
 
 APS5_EXPORT("-5ZuQ1HlZNY", libSceNpManagerUnknown__minus_5ZuQ1HlZNY_nid_no_patch);
 
-int APS5_VABI libSceNpManagerUnknown__minus_OrDVMqLIG4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI libSceNpManagerUnknown__minus_OrDVMqLIG4_nid_no_patch(const void* object) {
+    return ReadAt<std::uint64_t>(object, 8, __func__);
 }
 
 APS5_EXPORT("-OrDVMqLIG4", libSceNpManagerUnknown__minus_OrDVMqLIG4_nid_no_patch);
@@ -397,8 +408,8 @@ int APS5_VABI libSceNpManagerUnknown_aqQDBO03Uw4_nid_no_patch() {
 
 APS5_EXPORT("aqQDBO03Uw4", libSceNpManagerUnknown_aqQDBO03Uw4_nid_no_patch);
 
-int APS5_VABI libSceNpManagerUnknown_b1nDsAsD4Fo_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI libSceNpManagerUnknown_b1nDsAsD4Fo_nid_no_patch(const void* left, const void* right) {
+    return ReadAt<std::int32_t>(left, 0, __func__) == ReadAt<std::int32_t>(right, 8, __func__);
 }
 
 APS5_EXPORT("b1nDsAsD4Fo", libSceNpManagerUnknown_b1nDsAsD4Fo_nid_no_patch);
@@ -499,8 +510,8 @@ int APS5_VABI libSceNpManagerUnknown_j26eOWbUwwo_nid_no_patch() {
 
 APS5_EXPORT("j26eOWbUwwo", libSceNpManagerUnknown_j26eOWbUwwo_nid_no_patch);
 
-int APS5_VABI libSceNpManagerUnknown_j6YmS_minus_P2zAA_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI libSceNpManagerUnknown_j6YmS_minus_P2zAA_nid_no_patch(const void* left, const void* right) {
+    return ReadAt<std::int32_t>(left, 8, __func__) == ReadAt<std::int32_t>(right, 8, __func__);
 }
 
 APS5_EXPORT("j6YmS-P2zAA", libSceNpManagerUnknown_j6YmS_minus_P2zAA_nid_no_patch);

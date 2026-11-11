@@ -403,6 +403,9 @@ int APS5_VABI sceUltMutexTryLock(void* mutex) {
         return ULT_ERROR_STATE;
     }
     if (state->_owner == self) {
+        if (state->_attribute == 0) {
+            return ULT_ERROR_STATE;
+        }
         ++state->_lockCount;
         return ULT_OK;
     }
@@ -848,11 +851,12 @@ int APS5_VABI sceUltSemaphoreDestroy(void* semaphore) {
 }
 
 int APS5_VABI sceUltUlthreadRuntimeOptParamInitialize(UltUlthreadRuntimeOptParam* optParam, std::uint32_t buildVersion) {
-    (void)buildVersion;
     if (optParam == nullptr) {
         return ULT_ERROR_NULL;
     }
+    const std::uint32_t defaults[] = {0x6C696275, 0x6C746D61, 0x67696300, buildVersion, 0x4000, 0, 0x1FFF, 0, 0x2BC, 4};
     std::memset(optParam, 0, sizeof(*optParam));
+    std::memcpy(optParam->bytes, defaults, sizeof(defaults));
     return ULT_OK;
 }
 
@@ -865,10 +869,14 @@ std::uint64_t APS5_VABI sceUltUlthreadRuntimeGetWorkAreaSize(std::uint32_t maxNu
 }
 
 int APS5_VABI sceUltUlthreadRuntimeCreate(void* runtime, const char* name, std::uint32_t maxNumUlthread, std::uint32_t numWorkerThread, void* workArea, const void* optParam, std::uint32_t buildVersion) {
-    (void)optParam;
     (void)buildVersion;
     if (runtime == nullptr) {
         return ULT_ERROR_NULL;
+    }
+    if (optParam != nullptr) {
+        std::uint32_t header[3];
+        std::memcpy(header, optParam, sizeof(header));
+        if (header[0] != 0x6C696275 || header[1] != 0x6C746D61 || header[2] != 0x67696300) return ULT_ERROR_INVALID;
     }
     std::memset(runtime, 0, 4096);
     UltRuntimeState state{maxNumUlthread, numWorkerThread, workArea};
