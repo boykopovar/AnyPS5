@@ -1248,6 +1248,39 @@ class ReleaseNotesTests(unittest.TestCase):
                         prepare_release_notes.prepare_notes(*paths)
                     self.assertEqual([path.read_bytes() for path in paths], previous)
 
+    @unittest.skipUnless(os.name == "nt", "Windows case-insensitive output paths")
+    def test_missing_case_aliases_are_rejected_before_creating_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "notes.json"
+            body, full = root / "output/Notes.md", root / "output/notes.md"
+            notes = "Intro\n\n## What's Changed\n" + "- entry\n" * 20000 + "\n**Full Changelog**: link\n"
+            source.write_text(json.dumps({"body": notes}), encoding="utf-8")
+            original = source.read_bytes()
+            with self.assertRaisesRegex(ValueError, "distinct files"):
+                prepare_release_notes.prepare_notes(source, body, full)
+            self.assertEqual(source.read_bytes(), original)
+            self.assertFalse(body.parent.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows case-insensitive output paths")
+    def test_cli_missing_case_aliases_preserve_input_in_write_and_check_modes(self):
+        for flags in ([], ["--check"]):
+            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "notes.json"
+                source.write_text(json.dumps({"body": "Release notes"}), encoding="utf-8")
+                original = source.read_bytes()
+                result = subprocess.run([sys.executable, str(Path(prepare_release_notes.__file__)),
+                                         "--input", str(source), "--body", str(root / "output/Notes.md"),
+                                         "--full", str(root / "output/notes.md"), *flags],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=10)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("distinct files", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(source.read_bytes(), original)
+                self.assertFalse((root / "output").exists())
+
     def test_symlink_loop_output_is_reported_without_traceback(self):
         notes = json.dumps({"body": "release notes"})
         with tempfile.TemporaryDirectory() as directory:
