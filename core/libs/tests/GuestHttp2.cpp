@@ -147,6 +147,7 @@ int main() {
     const int box = sceHttp2CreateCookieBox(0x10000);
     Require(sceHttp2Init(1, 1, 0x10000, 0) == static_cast<int>(0x817B11FE));
     Require(Throws([] { sceHttp2Init(1, 1, 0x10000, -1); }));
+    Require(sceHttp2Init(1, 0, 0x40000, 1) == static_cast<int>(0x8095F006));
     const int context = sceHttp2Init(1, 1, 0x10000, 4);
     const int tmpl = sceHttp2CreateTemplate(context, "agent", 3, 0);
     const int proxyTemplate = sceHttp2CreateTemplate(context, "agent", 3, 1);
@@ -234,6 +235,10 @@ int main() {
     std::uint32_t timeout = 500;
     Require(Throws([&] { sceHttp2WaitAsync(request, &result, &timeout, nullptr); }));
     Require(result.req_id == 123 && timeout == 500);
+    Require(sceHttp2WaitAsync(request, nullptr, &timeout, nullptr) == static_cast<int>(0x817B1225));
+    Require(sceHttp2WaitAsync(request, &result, &timeout, reinterpret_cast<void*>(0x10)) == static_cast<int>(0x817B11FE));
+    Require(sceHttp2WaitAsync(-1, &result, &timeout, nullptr) == InvalidId);
+    Require(sceHttp2ReadDataAsync(request, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80436063));
     KernelEvent event{};
     int count = 123;
     const KernelUseconds poll = 0;

@@ -129,6 +129,18 @@ int main(int argc, char** argv) {
         Require(static_cast<bool>(ini));
     }
     SetEntitlements(file);
+    Require(sceNpEntitlementAccessInitialize(nullptr, nullptr) == static_cast<int>(0x817D0002));
+    NpEntitlementAccessInitParam initParam{};
+    NpEntitlementAccessBootParam bootParam{};
+    initParam.reserved[7] = 1;
+    Require(sceNpEntitlementAccessInitialize(&initParam, &bootParam) == static_cast<int>(0x817D0002));
+    initParam.reserved[7] = 0;
+    bootParam.reserved[31] = 1;
+    Require(sceNpEntitlementAccessInitialize(&initParam, &bootParam) == static_cast<int>(0x817D0002));
+    bootParam.reserved[31] = 0;
+    Require(sceNpEntitlementAccessInitialize(&initParam, nullptr) == static_cast<int>(0x817D0002));
+    Require(sceNpEntitlementAccessInitialize(&initParam, &bootParam) == 0);
+    Require(sceNpEntitlementAccessInitialize(&initParam, &bootParam) == static_cast<int>(0x817D0003));
     NpEntitlementAccessAddcontEntitlementInfo list[3]{};
     std::uint32_t hits = 0;
     Require(sceNpEntitlementAccessGetAddcontEntitlementInfoList(0, list, 3, &hits) == 0);

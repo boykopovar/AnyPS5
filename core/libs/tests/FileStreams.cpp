@@ -4,6 +4,7 @@
 #include "tests/TemporaryFile.hpp"
 #include <array>
 #include <iterator>
+#include <memory>
 #include <algorithm>
 #include <barrier>
 #include <cerrno>
@@ -129,47 +130,45 @@ static int APS5_VABI ScanShortCharacterList(FileStream* stream, const char* form
 
 static void CheckShortCharacterScanLocking(bool secure, int (APS5_VABI* scanner)(FileStream*, const char*, ...)) {
     constexpr std::size_t bytes = 1u << 20;
-    using Scanner = int (APS5_VABI*)(FileStream*, const char*, ...);
-    for (const Scanner scan : {scanner}) {
-        auto* native = TemporaryFile::Open();
-        Require(native != nullptr);
-        const std::vector<char> input(bytes, 'a');
-        Require(std::fwrite(input.data(), 1, input.size(), native) == input.size());
-        std::rewind(native);
-        FileStream stream(native);
-        std::vector<char> output(bytes + 1, 'Z');
-        int result = -1, consumed = -1;
-        std::exception_ptr failure;
-        std::atomic<bool> finished{false};
-        std::barrier start(2);
-        std::thread reader([&] {
-            start.arrive_and_wait();
-            try {
-                result = secure ? scan(&stream, "%1048576c%n", output.data(), output.size(), &consumed) : scan(&stream, "%1048576c%n", output.data(), &consumed);
-            } catch (...) {
-                failure = std::current_exception();
-            }
-            finished.store(true);
-        });
+    auto* native = TemporaryFile::Open();
+    Require(native != nullptr);
+    std::unique_ptr<std::FILE, int (*)(std::FILE*)> owner(native, std::fclose);
+    const std::vector<char> input(bytes, 'a');
+    Require(std::fwrite(input.data(), 1, input.size(), native) == input.size());
+    std::rewind(native);
+    FileStream stream(native);
+    std::vector<char> output(bytes + 1, 'Z');
+    int result = -1, consumed = -1;
+    std::exception_ptr failure;
+    std::atomic<bool> finished{false};
+    std::barrier start(2);
+    std::thread reader([&] {
         start.arrive_and_wait();
-        bool releasedDuringField = false;
-        while (!finished.load()) {
-            if (ftrylockfile_nid_postfix(&stream) == 0) {
-                const auto position = ftell_nid_postfix(&stream);
-                releasedDuringField = releasedDuringField || (position > 0 && position < static_cast<long>(bytes));
-                funlockfile_nid_postfix(&stream);
-            }
-            std::this_thread::yield();
+        try {
+            result = secure ? scanner(&stream, "%1048576c%n", output.data(), output.size(), &consumed) : scanner(&stream, "%1048576c%n", output.data(), &consumed);
+        } catch (...) {
+            failure = std::current_exception();
         }
-        reader.join();
-        if (failure) std::rethrow_exception(failure);
-        Require(ftrylockfile_nid_postfix(&stream) == 0, "Short stream character scan retained its file lock after returning");
-        funlockfile_nid_postfix(&stream);
-        Require(std::fclose(native) == 0);
-        Require(!releasedDuringField, "Short stream character scan released its file lock during a field");
-        Require(result == 1 && consumed == static_cast<int>(bytes) && output.back() == 'Z');
-        Require(std::memcmp(output.data(), input.data(), bytes) == 0);
+        finished.store(true);
+    });
+    start.arrive_and_wait();
+    bool releasedDuringField = false;
+    while (!finished.load()) {
+        if (ftrylockfile_nid_postfix(&stream) == 0) {
+            const auto position = ftell_nid_postfix(&stream);
+            releasedDuringField = releasedDuringField || (position > 0 && position < static_cast<long>(bytes));
+            funlockfile_nid_postfix(&stream);
+        }
+        std::this_thread::yield();
     }
+    reader.join();
+    if (failure) std::rethrow_exception(failure);
+    Require(ftrylockfile_nid_postfix(&stream) == 0, "Short stream character scan retained its file lock after returning");
+    funlockfile_nid_postfix(&stream);
+    Require(std::fclose(owner.release()) == 0);
+    Require(!releasedDuringField, "Short stream character scan released its file lock during a field");
+    Require(result == 1 && consumed == static_cast<int>(bytes) && output.back() == 'Z');
+    Require(std::memcmp(output.data(), input.data(), bytes) == 0);
 }
 
 static void CheckShortCharacterScans() {
@@ -387,6 +386,45 @@ static void CheckUpdateStreamReadsAfterWrites(const std::string& base) {
     Require(fseek_nid_postfix(stream, 2, SEEK_SET) == 0 && ungetc_nid_postfix('Y', stream) == 'Y', "ungetc after fseek on an r+ stream");
     Require(fgetc_nid_postfix(stream) == 'Y' && fgetc_nid_postfix(stream) == '2', "ungetc after fseek on an r+ stream pushed back other bytes");
     Require(fclose_nid_postfix(stream) == 0);
+    Require(std::remove(path.c_str()) == 0);
+}
+
+static void CheckUnbufferedStreamReadsAfterWrites(const std::string& base) {
+    const std::string path = base + ".unbuffered";
+    using Access = void (*)(FileStream*);
+    for (const Access write : {
+             +[](FileStream* stream) { Require(fwrite_nid_postfix("AB", 1, 2, stream) == 2, "fwrite on an unbuffered r+ stream"); },
+             +[](FileStream* stream) { Require(fputs_nid_postfix("AB", stream) >= 0, "fputs on an unbuffered r+ stream"); },
+             +[](FileStream* stream) { Require(fputc_nid_postfix('A', stream) == 'A' && fputc_nid_postfix('B', stream) == 'B', "fputc on an unbuffered r+ stream"); },
+             +[](FileStream* stream) { Require(putc_unlocked_nid_postfix('A', stream) == 'A' && putc_unlocked_nid_postfix('B', stream) == 'B', "putc_unlocked on an unbuffered r+ stream"); },
+             +[](FileStream* stream) { Require(fprintf_nid_postfix(stream, "%s", "AB") == 2, "fprintf on an unbuffered r+ stream"); },
+             +[](FileStream* stream) { Require(fputwc_nid_postfix(u'A', stream) == u'A' && fputwc_nid_postfix(u'B', stream) == u'B', "fputwc on an unbuffered r+ stream"); },
+             +[](FileStream* stream) {
+                 Require(fputc_nid_postfix('A', stream) == 'A' && fputc_nid_postfix('B', stream) == 'B' && fflush_nid_postfix(stream) == 0, "fputc and fflush on an unbuffered r+ stream");
+             },
+         }) {
+        for (const Access read : {
+                 +[](FileStream* stream) { Require(fgetc_nid_postfix(stream) == '2', "fgetc after a write on an unbuffered r+ stream"); },
+                 +[](FileStream* stream) { Require(getc_unlocked_nid_postfix(stream) == '2', "getc_unlocked after a write on an unbuffered r+ stream"); },
+                 +[](FileStream* stream) {
+                     char byte = 0;
+                     Require(fread_nid_postfix(&byte, 1, 1, stream) == 1 && byte == '2', "fread after a write on an unbuffered r+ stream");
+                 },
+                 +[](FileStream* stream) {
+                     Require(ungetc_nid_postfix('Z', stream) == 'Z' && fgetc_nid_postfix(stream) == 'Z' && fgetc_nid_postfix(stream) == '2', "ungetc after a write on an unbuffered r+ stream");
+                 },
+             }) {
+            auto* stream = fopen_nid_postfix(path.c_str(), "wb");
+            Require(stream != nullptr && fputs_nid_postfix("0123456789", stream) >= 0 && fclose_nid_postfix(stream) == 0);
+            stream = fopen_nid_postfix(path.c_str(), "r+b");
+            Require(stream != nullptr && setvbuf_nid_postfix(stream, nullptr, 2, 0) == 0, "setvbuf to unbuffered on an r+ stream");
+            write(stream);
+            read(stream);
+            Require(ferror_nid_postfix(stream) == 0 && ftell_nid_postfix(stream) == 3, "Read after write on an unbuffered r+ stream set the error indicator or moved elsewhere");
+            Require(fclose_nid_postfix(stream) == 0);
+            Require(ReadWhole(path) == "AB23456789", "Read after write on an unbuffered r+ stream changed the file");
+        }
+    }
     Require(std::remove(path.c_str()) == 0);
 }
 
@@ -652,6 +690,7 @@ int main(int argc, char** argv) {
     CheckOrdinaryCharacterScans();
     CheckZeroSizedTransfers(argv[1]);
     CheckUpdateStreamReadsAfterWrites(argv[1]);
+    CheckUnbufferedStreamReadsAfterWrites(argv[1]);
     CheckStreamWritesAfterReads(argv[1]);
     Require(_Stdout_nid_postfix.GetHandle() == stdout);
     Require(_Stderr_nid_postfix.GetHandle() == stderr);

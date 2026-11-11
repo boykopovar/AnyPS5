@@ -211,6 +211,96 @@ void CheckFailures(const std::string& base) {
     Read(client.get(), 90000, 127);
 }
 
+void CheckRepresentations(const std::string& base) {
+    bool passed = true;
+    const auto run = [&](const char* name, auto action) {
+        try {
+            action(base + "/identity/" + name + "/payload.bin");
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "HTTP representation %s: %s\n", name, error.what());
+            passed = false;
+        }
+    };
+    for (const char* name : {"etag-206-omit", "date-206-omit", "date-boundary", "etag-200-match", "date-200-match", "both-200-match",
+                             "date-leap-second", "date-minimum-year", "etag-initial-trailer", "etag-206-trailer",
+                             "etag-206-trailer-framing", "etag-200-trailer", "etag-200-mixed-trailer"}) {
+        run(name, [&](const std::string& url) {
+            auto client = Create();
+            Check(Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 1, "validated source open failed");
+            Read(client.get(), 0, 31);
+            Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 100000, "validated source size differs");
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "validated source seek failed");
+            Read(client.get(), 90000, 67);
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 0) == 0, "validated source rewind failed");
+            Read(client.get(), 0, 31);
+        });
+    }
+    for (const char* name : {"etag-200-absent", "etag-200-changed", "etag-200-weak", "etag-200-invalid", "date-200-absent", "date-200-changed", "both-200-absent", "etag-206-changed", "date-206-changed", "late-size", "late-range", "late-short", "late-chunk", "late-redirect-path", "late-redirect-query", "late-redirect-host",
+                             "etag-200-trailer-changed", "etag-200-trailer-weak", "etag-200-trailer-conflict",
+                             "etag-206-trailer-conflict", "etag-206-trailer-changed", "etag-200-trailer-duplicate", "etag-200-trailer-malformed",
+                             "etag-200-trailer-name", "date-200-trailer-only"}) {
+        run(name, [&](const std::string& url) {
+            auto client = Create();
+            Check(Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 1, "changing source open failed");
+            Read(client.get(), 0, 31);
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "changing source seek failed");
+            std::array<std::uint8_t, 10> bytes;
+            bytes.fill(0xa5);
+            bool failed = false;
+            try { Aps5HttpClient_Read_nid_postfix(client.get(), bytes.data() + 1, 8); }
+            catch (const std::exception&) { failed = true; }
+            Check(failed, "an invalid or changed response was accepted");
+            Check(std::all_of(bytes.begin(), bytes.end(), [](auto byte) { return byte == 0xa5; }), "failed read changed the destination");
+            Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 100000, "failed read changed the source size");
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 1) == 90000, "failed read changed the source position");
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 0) == 0, "failed read lost the cached position");
+            Read(client.get(), 0, 31);
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "retry seek failed");
+            Read(client.get(), 90000, 67);
+            Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 100000, "retry changed the source size");
+            Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/range/alternate.bin").c_str()) == 1, "reopen after changing source failed");
+            Read(client.get(), 0, 777, true);
+        });
+    }
+    for (const char* name : {"absent", "absent-chunk", "absent-close", "weak", "weak-date", "invalid-tag", "tag-space", "tag-quote", "tag-unclosed", "recent-date", "invalid-date", "date-without-date", "complete-range", "initial-full", "initial-chunk", "initial-close",
+                             "date-short-year", "date-short-day", "date-short-time", "date-full-names", "date-wrong-case",
+                             "date-wrong-weekday", "date-early-year", "date-invalid-day", "date-short-response-time",
+                             "date-wrong-response-weekday", "date-extra-response-space", "date-rfc850", "date-asctime",
+                             "date-trailer-only", "weak-trailer-date"}) {
+        run(name, [&](const std::string& url) {
+            auto client = Create();
+            Check(Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 1, "snapshot source open failed");
+            Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 777, "open exposed the unvalidated partial response");
+            Read(client.get(), 0, 777, true);
+            End(client.get());
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), -77, 2) == 700, "snapshot end seek failed");
+            Read(client.get(), 700, 77, true);
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 0) == 0, "snapshot rewind failed");
+            Read(client.get(), 0, 777, true);
+            End(client.get());
+        });
+    }
+    for (const char* name : {"fallback-206", "fallback-short", "fallback-chunk", "fallback-refused"}) {
+        run(name, [&](const std::string& url) {
+            auto client = Create();
+            Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/range/payload.bin").c_str()) == 1, "fallback control open failed");
+            Read(client.get(), 0, 31);
+            Check(Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 0, "invalid full fallback was accepted");
+            Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == -1, "failed fallback left a source open");
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 0) == -1, "failed fallback retained a position");
+            std::uint8_t byte = 0xa5;
+            bool failed = false;
+            try { Aps5HttpClient_Read_nid_postfix(client.get(), &byte, 1); }
+            catch (const std::exception&) { failed = true; }
+            Check(failed && byte == 0xa5, "failed fallback retained readable bytes");
+            Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/range/alternate.bin").c_str()) == 1, "reopen after failed fallback failed");
+            Read(client.get(), 0, 777, true);
+            End(client.get());
+        });
+    }
+    Check(passed, "HTTP representation integrity cases failed");
+}
+
 void CheckCancellation(const std::string& base) {
     auto client = Create();
     Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/stall/payload.bin").c_str()) == 1, "stalled source open failed");
@@ -254,6 +344,7 @@ int main(int argc, char** argv) {
         CheckRedirects(base);
         CheckCacheAndReopen(base);
         CheckFailures(base);
+        CheckRepresentations(base);
         CheckCancellation(base);
         CheckRangeUnits(base);
         std::puts("Reusable HTTP client body, framing, range, cache, reopen, isolation and cancellation tests passed");
