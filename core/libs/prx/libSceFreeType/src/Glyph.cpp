@@ -259,53 +259,6 @@ int APS5_VABI FT_Glyph_Copy_nid_postfix(GuestGlyphRec* source, GuestGlyphRec** t
     return 0;
 }
 
-int APS5_VABI FT_Glyph_To_Bitmap_nid_postfix(GuestGlyphRec** glyph, std::int32_t renderMode, const GuestVector* origin, std::uint8_t destroy) {
-    FT_Vector nativeOrigin{};
-    const FT_Vector* nativeOriginPointer = nullptr;
-    if (origin) {
-        nativeOrigin = {Count<FT_Pos>(origin->x, __func__), Count<FT_Pos>(origin->y, __func__)};
-        nativeOriginPointer = &nativeOrigin;
-    }
-    return Replace(glyph, destroy != 0, __func__, [&](FT_Glyph* native) {
-        return FT_Glyph_To_Bitmap(native, static_cast<FT_Render_Mode>(renderMode), nativeOriginPointer, 0);
-    });
-}
-
-int APS5_VABI FT_Glyph_Transform_nid_postfix(GuestGlyphRec* glyph, const GuestMatrix* matrix, const GuestVector* delta) {
-    if (!glyph) return FT_Glyph_Transform(nullptr, nullptr, nullptr);
-    FT_Matrix nativeMatrix{};
-    const FT_Matrix* nativeMatrixPointer = nullptr;
-    if (matrix) {
-        nativeMatrix = {Count<FT_Fixed>(matrix->xx, __func__), Count<FT_Fixed>(matrix->xy, __func__),
-                        Count<FT_Fixed>(matrix->yx, __func__), Count<FT_Fixed>(matrix->yy, __func__)};
-        nativeMatrixPointer = &nativeMatrix;
-    }
-    FT_Vector nativeDelta{};
-    const FT_Vector* nativeDeltaPointer = nullptr;
-    if (delta) {
-        nativeDelta = {Count<FT_Pos>(delta->x, __func__), Count<FT_Pos>(delta->y, __func__)};
-        nativeDeltaPointer = &nativeDelta;
-    }
-    std::lock_guard lock(glyphMutex);
-    auto& owner = Find(glyph, __func__);
-    owner.Sync(__func__);
-    const FT_Error error = FT_Glyph_Transform(owner.host.get(), nativeMatrixPointer, nativeDeltaPointer);
-    if (!error) owner.Publish(__func__);
-    return error;
-}
-
-int APS5_VABI FT_Glyph_Stroke_nid_postfix(GuestGlyphRec** glyph, void* stroker, std::uint8_t destroy) {
-    return Replace(glyph, destroy != 0, __func__, [&](FT_Glyph* native) {
-        return FT_Glyph_Stroke(native, static_cast<FT_Stroker>(stroker), 0);
-    });
-}
-
-int APS5_VABI FT_Glyph_StrokeBorder_nid_postfix(GuestGlyphRec** glyph, void* stroker, std::uint8_t inside, std::uint8_t destroy) {
-    return Replace(glyph, destroy != 0, __func__, [&](FT_Glyph* native) {
-        return FT_Glyph_StrokeBorder(native, static_cast<FT_Stroker>(stroker), static_cast<FT_Bool>(inside), 0);
-    });
-}
-
 void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(GuestGlyphRec* glyph, std::uint32_t mode, GuestBBox* box) {
     if (!box) return;
     *box = {};
@@ -359,4 +312,54 @@ void APS5_VABI FT_Done_Glyph_nid_postfix(GuestGlyphRec* glyph) {
     glyphs.erase(glyph);
 }
 
+}
+
+extern "C" int FreeType::FreeTypeGlyphMutationToBitmapHost(GuestGlyphRec** glyph, std::int32_t renderMode, const GuestVector* origin,
+                                                           std::uint8_t destroy, const char* function) {
+    FT_Vector nativeOrigin{};
+    const FT_Vector* nativeOriginPointer = nullptr;
+    if (origin) {
+        nativeOrigin = {Count<FT_Pos>(origin->x, function), Count<FT_Pos>(origin->y, function)};
+        nativeOriginPointer = &nativeOrigin;
+    }
+    return Replace(glyph, destroy != 0, function, [&](FT_Glyph* native) {
+        return FT_Glyph_To_Bitmap(native, static_cast<FT_Render_Mode>(renderMode), nativeOriginPointer, 0);
+    });
+}
+
+extern "C" int FreeType::FreeTypeGlyphMutationTransformHost(GuestGlyphRec* glyph, const GuestMatrix* matrix, const GuestVector* delta,
+                                                             const char* function) {
+    if (!glyph) return FT_Glyph_Transform(nullptr, nullptr, nullptr);
+    FT_Matrix nativeMatrix{};
+    const FT_Matrix* nativeMatrixPointer = nullptr;
+    if (matrix) {
+        nativeMatrix = {Count<FT_Fixed>(matrix->xx, function), Count<FT_Fixed>(matrix->xy, function),
+                        Count<FT_Fixed>(matrix->yx, function), Count<FT_Fixed>(matrix->yy, function)};
+        nativeMatrixPointer = &nativeMatrix;
+    }
+    FT_Vector nativeDelta{};
+    const FT_Vector* nativeDeltaPointer = nullptr;
+    if (delta) {
+        nativeDelta = {Count<FT_Pos>(delta->x, function), Count<FT_Pos>(delta->y, function)};
+        nativeDeltaPointer = &nativeDelta;
+    }
+    std::lock_guard lock(glyphMutex);
+    auto& owner = Find(glyph, function);
+    owner.Sync(function);
+    const FT_Error error = FT_Glyph_Transform(owner.host.get(), nativeMatrixPointer, nativeDeltaPointer);
+    if (!error) owner.Publish(function);
+    return error;
+}
+
+extern "C" int FreeType::FreeTypeGlyphMutationStrokeHost(GuestGlyphRec** glyph, void* stroker, std::uint8_t destroy, const char* function) {
+    return Replace(glyph, destroy != 0, function, [&](FT_Glyph* native) {
+        return FT_Glyph_Stroke(native, static_cast<FT_Stroker>(stroker), 0);
+    });
+}
+
+extern "C" int FreeType::FreeTypeGlyphMutationStrokeBorderHost(GuestGlyphRec** glyph, void* stroker, std::uint8_t inside,
+                                                               std::uint8_t destroy, const char* function) {
+    return Replace(glyph, destroy != 0, function, [&](FT_Glyph* native) {
+        return FT_Glyph_StrokeBorder(native, static_cast<FT_Stroker>(stroker), static_cast<FT_Bool>(inside), 0);
+    });
 }
