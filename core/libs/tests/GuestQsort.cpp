@@ -524,6 +524,7 @@ int APS5_VABI RecordingCompareKeys(const void* left, const void* right) {
 }
 
 bool CheckHeapsort() {
+    InitializeHeap();
     bool correct = true;
     for (const std::size_t count : {0, 1, 2, 3, 7, 16, 33, 1000}) {
         std::vector<Element> elements;
@@ -598,7 +599,59 @@ bool CheckHeapsort() {
     correct &= heapsort_nid_postfix(nullptr, 0, 4, CompareKeys) == 0;
     correct &= heapsort_nid_postfix(nullptr, 1, 4, CompareKeys) == 0;
     correct &= heapsort_nid_postfix(nullptr, 1, 0, CompareKeys) == 0;
+    Element pair[2] = {{2, 0}, {1, 1}};
+    failAllocation = true;
+    correct &= heapsort_nid_postfix(pair, 2, sizeof(Element), CompareKeys) == -1 && pair[0].key == 2;
+    failAllocation = false;
     if (!correct) std::fprintf(stderr, "heapsort failed\n");
+    return correct;
+}
+
+std::vector<int> heapsortCalls;
+
+int APS5_VABI RecordHeapsortCalls(const void* left, const void* right) {
+    const auto identify = [](const void* candidate) {
+        const auto address = reinterpret_cast<std::uintptr_t>(candidate);
+        const bool inArray = address >= heapsortBase && address < heapsortLimit;
+        return static_cast<const Element*>(candidate)->tag + (inArray ? 0 : 100);
+    };
+    heapsortCalls.push_back(identify(left) * 1000 + identify(right));
+    return CompareKeys(left, right);
+}
+
+bool CheckHeapsortComparisons() {
+    InitializeHeap();
+    struct Case {
+        std::vector<int> keys;
+        std::vector<int> calls;
+        std::vector<int> order;
+    };
+    const std::vector<Case> cases = {
+        {{3, 1, 2, 5, 4}, {3004, 3001, 3002, 3000, 1004, 4000, 4002, 100001, 100004, 2, 101000, 102001}, {1, 2, 0, 4, 3}},
+        {{1, 1, 1, 1, 1}, {3004, 3001, 1002, 1000, 1002, 104003, 104001, 1002, 103001, 102001}, {1, 2, 3, 4, 0}},
+        {{9, 4, 7, 1, 8, 2, 6, 3, 5, 0, 9, 4, 7, 1, 8, 2},
+         {15007, 13014, 14006, 11012, 12005, 9010, 10004, 7008, 8003, 12014, 14002, 13006, 6002, 8010, 10001, 9004, 4001, 10014, 10000, 10014, 8004, 9001,
+          115001, 4014, 8001, 7003, 106007, 106008, 106004, 6014, 12002, 11005, 113011, 6012, 11002, 105002, 6002, 11005, 113011, 6011, 8001, 7003, 115007,
+          8011, 7001, 109001, 1011, 7009, 103015, 7011, 13005, 103005, 7005, 15009, 103015, 15005, 3009, 113003, 113015, 13005, 109005, 13009, 103013,
+          109013},
+         {9, 13, 3, 5, 15, 7, 11, 1, 8, 6, 2, 12, 14, 4, 10, 0}},
+        {{1, 3, 2}, {1002, 1000, 102000}, {0, 2, 1}},
+    };
+    bool correct = true;
+    for (const auto& sample : cases) {
+        std::vector<Element> elements;
+        for (std::size_t index = 0; index < sample.keys.size(); ++index) elements.push_back({sample.keys[index], static_cast<int>(index)});
+        heapsortBase = reinterpret_cast<std::uintptr_t>(elements.data());
+        heapsortLimit = heapsortBase + elements.size() * sizeof(Element);
+        heapsortCalls.clear();
+        correct &= heapsort_nid_postfix(elements.data(), elements.size(), sizeof(Element), RecordHeapsortCalls) == 0;
+        if (heapsortCalls != sample.calls) {
+            std::fprintf(stderr, "heapsort of %zu elements made %zu comparisons in a different order than FreeBSD's heapsort.c (%zu expected)\n",
+                sample.keys.size(), heapsortCalls.size(), sample.calls.size());
+            correct = false;
+        }
+        for (std::size_t index = 0; index < elements.size(); ++index) correct &= elements[index].tag == sample.order[index];
+    }
     return correct;
 }
 }
@@ -636,5 +689,6 @@ int main() {
     correct &= CheckMergesortComparisons();
     correct &= CheckMergesortUnalignedElements();
     correct &= CheckHeapsort();
+    correct &= CheckHeapsortComparisons();
     return correct ? 0 : 1;
 }
