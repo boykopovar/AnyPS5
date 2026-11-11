@@ -16,6 +16,7 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ExData.cpp)
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PemReadBioX509.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_bn_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslBn.cpp)
@@ -48,6 +49,39 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl_pkey_lifecycle PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_libressl_pkey_lifecycle PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
+    add_test_executable(guest_libressl_pkey_rsa_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslPkeyRsa.cpp)
+    target_include_directories(guest_libressl_pkey_rsa_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_pkey_rsa_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_pkey_rsa_tests)
+    add_test(NAME guest_libressl_pkey_rsa COMMAND guest_libressl_pkey_rsa_tests)
+    set_tests_properties(guest_libressl_pkey_rsa PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_pkey_rsa PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
+    add_test_executable(guest_libressl_rsa_private_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslRsaPrivate.cpp)
+    target_include_directories(guest_libressl_rsa_private_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_rsa_private_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_rsa_private_tests)
+    add_test(NAME guest_libressl_rsa_private COMMAND guest_libressl_rsa_private_tests)
+    set_tests_properties(guest_libressl_rsa_private PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_rsa_private PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
+    add_test_executable(guest_libressl_rsa_pss_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslRsaPss.cpp)
+    target_include_directories(guest_libressl_rsa_pss_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_rsa_pss_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_rsa_pss_tests)
+    add_test(NAME guest_libressl_rsa_pss COMMAND guest_libressl_rsa_pss_tests)
+    set_tests_properties(guest_libressl_rsa_pss PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_rsa_pss PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
@@ -164,9 +198,10 @@ if(BUILD_TESTING)
     target_link_libraries(guest_libressl_general_name_tests PRIVATE libSceLibreSsl libc)
     configure_windows_unwind(guest_libressl_general_name_tests)
     add_test(NAME guest_libressl_general_name COMMAND guest_libressl_general_name_tests)
-    set_tests_properties(guest_libressl_general_name PROPERTIES TIMEOUT 30)
+    add_test(NAME guest_libressl_ocsp_response_free COMMAND guest_libressl_general_name_tests ocsp)
+    set_tests_properties(guest_libressl_general_name guest_libressl_ocsp_response_free PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(guest_libressl_general_name PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_libressl_general_name guest_libressl_ocsp_response_free PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
@@ -333,6 +368,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libressl_ssl_session PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
+
+    add_test_executable(guest_libressl_ec_keys_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslEcKeys.cpp)
+    target_include_directories(guest_libressl_ec_keys_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_ec_keys_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_ec_keys_tests)
+    add_test(NAME guest_libressl_ec_keys COMMAND guest_libressl_ec_keys_tests)
+    set_tests_properties(guest_libressl_ec_keys PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_ec_keys PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
 endif()
 
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Cipher.cpp)
@@ -430,6 +476,19 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl_object_text PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_libressl_object_text PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_object_name_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/ObjectName.cpp)
+    target_include_directories(guest_libressl_object_name_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_object_name_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_object_name_tests)
+    add_test(NAME guest_libressl_object_name COMMAND guest_libressl_object_name_tests)
+    set_tests_properties(guest_libressl_object_name PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_object_name PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 endif()
@@ -587,6 +646,38 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl_ssl_settings PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_libressl_ssl_settings PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509NameOneline.cpp)
+
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/DigestVerify.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_digest_verify_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/DigestVerify.cpp)
+    target_include_directories(guest_libressl_digest_verify_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_digest_verify_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_digest_verify_tests)
+    add_test(NAME guest_libressl_digest_verify COMMAND guest_libressl_digest_verify_tests)
+    add_test(NAME guest_libressl_digest_verify_allocator COMMAND guest_libressl_digest_verify_tests allocator)
+    set_tests_properties(guest_libressl_digest_verify guest_libressl_digest_verify_allocator PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_digest_verify guest_libressl_digest_verify_allocator PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_x509_name_oneline_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509NameOneline.cpp)
+    target_include_directories(guest_libressl_x509_name_oneline_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_x509_name_oneline_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_x509_name_oneline_tests)
+    add_test(NAME guest_libressl_x509_name_oneline COMMAND guest_libressl_x509_name_oneline_tests)
+    add_test(NAME guest_libressl_x509_name_oneline_allocator COMMAND guest_libressl_x509_name_oneline_tests allocator)
+    set_tests_properties(guest_libressl_x509_name_oneline guest_libressl_x509_name_oneline_allocator PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_x509_name_oneline guest_libressl_x509_name_oneline_allocator PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 endif()

@@ -182,6 +182,18 @@ void AgcDrawupImage() {
     {
         DrawupFixture f;
         auto* frame = reinterpret_cast<FontGraphicsFrame*>(&f.frame);
+        void* out = reinterpret_cast<void*>(0xdead);
+        const int before = g_errorCount;
+        Require(sceFontGraphicsAgcDrawupFillTextureImage(nullptr, &f.surface, &out, 0.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
+        Require(out == nullptr);
+        out = reinterpret_cast<void*>(0xdead);
+        Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, nullptr, &out, 0.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
+        Require(out == nullptr);
+        Require(g_errorCount == before);
+    }
+    {
+        DrawupFixture f;
+        auto* frame = reinterpret_cast<FontGraphicsFrame*>(&f.frame);
         const int before = g_errorCount;
         Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, nullptr, 0.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
         Require(g_errorCount == before);
@@ -259,6 +271,25 @@ void AgcDrawupPattern() {
         Require(record->state == 1);
         Require(record->mode == 0x22);
     }
+    {
+        DrawupFixture f;
+        auto* frame = reinterpret_cast<FontGraphicsFrame*>(&f.frame);
+        void* out = reinterpret_cast<void*>(0xdead);
+        const int before = g_errorCount;
+        Require(sceFontGraphicsAgcDrawupFillTexturePattern(nullptr, &f.surface, 1, 2, 3, 4, 5, 6, &out) == InvalidParameter);
+        Require(out == nullptr);
+        Require(sceFontGraphicsAgcDrawupFillTexturePattern(frame, nullptr, 1, 2, 3, 4, 5, 6, &out) == InvalidParameter);
+        f.surface.tag = 0x57;
+        Require(sceFontGraphicsAgcDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, &out) == InvalidParameter);
+        f.surface.tag = 0x58;
+        f.surface.head = nullptr;
+        Require(sceFontGraphicsAgcDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, &out) == InvalidParameter);
+        f.surface.head = &f.object;
+        f.surface.busy = 1;
+        Require(sceFontGraphicsAgcDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, &out) == InvalidParameter);
+        Require(out == nullptr);
+        Require(g_errorCount == before);
+    }
 }
 
 void AgcSequences() {
@@ -283,6 +314,9 @@ void AgcSequences() {
         Require(out == nullptr && count == 0 && out2 == nullptr && count2 == 0);
         Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, nullptr, &out2, &count2) == InvalidParameter);
         Require(out == nullptr && out2 == nullptr && count2 == 0);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, nullptr, &count2) == InvalidParameter);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, &out2, nullptr) == InvalidParameter);
+        Require(out == nullptr && count == 0 && out2 == nullptr);
         Require(g_errorCount == before);
         sequence.tag = 0xf81;
         Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, &out2, &count2) == InvalidSequence);

@@ -38,11 +38,13 @@ def timeline_sequence(command, header):
                 line = line[:-2] + b"\n"
         if not line or len(line.rstrip(b"\n")) > 127:
             return 0
-        fields = re.fullmatch(rb"\s*(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)\s*", line.split(b"\0", 1)[0])
+        fields = re.fullmatch(rb"\s*(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)((?:(?:\s+|(?=\+))\+?[0-9]+){4})?\s*", line.split(b"\0", 1)[0])
         if fields is None:
             return 0
-        start, duration, buttons = [int(token) for token in fields.groups()]
+        start, duration, buttons = [int(token) for token in fields.groups()[:3]]
         if buttons & ~0x70fffe or not 1 <= duration <= 5000 or start < previous_end or start + duration > 3600000:
+            return 0
+        if fields.group(4) and any(int(axis) > 255 for axis in re.findall(rb"\+?[0-9]+", fields.group(4))):
             return 0
         previous_end = start + duration
     while tail := command.read(4096):
@@ -63,12 +65,16 @@ def previous_sequence(path):
                 return timeline_sequence(command, line)
     except FileNotFoundError:
         return 0
-    tokens = line.split()
+    if os.name == "nt":
+        line = line.split(b"\x1a", 1)[0]
+    if len(line.rstrip(b"\n")) > 127:
+        return 0
+    tokens = line.split(b"\0", 1)[0].split()
     if len(tokens) in (4, 8):
         touch = re.fullmatch(rb"touch\((\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+)\)", tokens.pop())
         if touch is None or any(int(value) > limit for value, limit in zip(touch.groups(), (1919, 942, 127, 1))):
             return 0
-    if len(line.rstrip(b"\n")) > 127 or len(tokens) not in (3, 7):
+    if len(tokens) not in (3, 7):
         return 0
     if any(re.fullmatch(rb"\+?[0-9]+", token) is None for token in tokens):
         return 0
