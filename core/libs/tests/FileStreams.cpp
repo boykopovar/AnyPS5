@@ -4,6 +4,7 @@
 #include "tests/TemporaryFile.hpp"
 #include <array>
 #include <iterator>
+#include <memory>
 #include <algorithm>
 #include <barrier>
 #include <cerrno>
@@ -33,6 +34,267 @@
 
 static void Require(bool condition, const char* message = "File stream check failed") {
     if (!condition) throw std::runtime_error(message);
+}
+
+static void CheckWriteFlushErrno(const std::string& base) {
+    const std::string path = base + ".write-flush-errno";
+    {
+        auto* stream = fopen_nid_postfix(path.c_str(), "w+b");
+        Require(stream != nullptr);
+        errno = 35;
+        char byte = 'a';
+        Require(fwrite_nid_postfix(&byte, 0, 1, stream) == 0 && errno == 35);
+        Require(fwrite_nid_postfix(&byte, 1, 0, stream) == 0 && errno == 35);
+        Require(fwrite_nid_postfix(&byte, 1, 1, stream) == 1 && errno == 35);
+        Require(fputc_nid_postfix('b', stream) == 'b' && errno == 35);
+        Require(putc_nid_postfix('c', stream) == 'c' && errno == 35);
+        Require(__swbuf_nid_postfix('d', stream) == 'd' && errno == 35);
+        Require(putc_unlocked_nid_postfix('e', stream) == 'e' && errno == 35);
+        Require(fputc_nid_postfix(-1, stream) == 255 && errno == 35);
+        Require(putc_unlocked_nid_postfix(-1, stream) == 255 && errno == 35);
+        Require(putc_nid_postfix(0x141, stream) == 0x41 && errno == 35);
+        Require(__swbuf_nid_postfix(300, stream) == 44 && errno == 35);
+        Require(fputs_nid_postfix("hello", stream) >= 0 && errno == 35);
+        Require(fputs_nid_postfix("", stream) >= 0 && errno == 35);
+        Require(fflush_nid_postfix(stream) == 0 && errno == 35);
+        Require(fflush_nid_postfix(nullptr) == 0 && errno == 35);
+        Require(fclose_nid_postfix(stream) == 0 && std::remove(path.c_str()) == 0);
+    }
+#ifndef _WIN32
+    int fds[2];
+    Require(::pipe(fds) == 0);
+    const int readFlags = ::fcntl(fds[0], F_GETFL, 0);
+    Require(readFlags >= 0 && ::fcntl(fds[0], F_SETFL, readFlags | O_NONBLOCK) == 0);
+    const int writeFlags = ::fcntl(fds[1], F_GETFL, 0);
+    Require(writeFlags >= 0 && ::fcntl(fds[1], F_SETFL, writeFlags | O_NONBLOCK) == 0);
+
+    const auto drainPipe = [&] {
+        char drain[4096];
+        while (::read(fds[0], drain, sizeof(drain)) > 0) {}
+    };
+
+    const auto fillPipe = [&] {
+        char chunk[4096]{};
+        for (int step = 0; step < 1000; ++step) {
+            const auto written = ::write(fds[1], chunk, sizeof(chunk));
+            if (written < 0) {
+                Require(errno == EAGAIN || errno == EWOULDBLOCK, "Filling pipe failed unexpectedly");
+                return;
+            }
+        }
+        Require(false, "Pipe did not fill within bounded iterations");
+    };
+
+    {
+        drainPipe();
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        FileStream stream(native);
+        errno = 35;
+        char buffer[32]{};
+        Require(fwrite_nid_postfix(buffer, 1, sizeof(buffer), &stream) == sizeof(buffer));
+        Require(errno == 35);
+        Require(fflush_nid_postfix(&stream) == 0);
+        Require(errno == 35);
+        drainPipe();
+        Require(stream.Close() == 0);
+    }
+    {
+        fillPipe();
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        Require(std::setvbuf(native, nullptr, _IONBF, 0) == 0);
+        FileStream stream(native);
+        errno = 35;
+        char byte = 'q';
+        Require(fwrite_nid_postfix(&byte, 0, 1, &stream) == 0 && errno == 35);
+        Require(fwrite_nid_postfix(&byte, 1, 0, &stream) == 0 && errno == 35);
+        Require(fputs_nid_postfix("", &stream) >= 0 && errno == 35);
+        Require(ferror_nid_postfix(&stream) == 0);
+        drainPipe();
+        Require(stream.Close() == 0);
+    }
+    struct WriterCase {
+        bool (*failWrite)(FileStream*);
+        bool (*recoverWrite)(FileStream*);
+        char expectedByte;
+    };
+    const WriterCase writerCases[] = {
+        {
+            [](FileStream* s) { return fputc_nid_postfix('1', s) == EOF; },
+            [](FileStream* s) { return fputc_nid_postfix('A', s) == 'A'; },
+            'A'
+        },
+        {
+            [](FileStream* s) { return putc_nid_postfix('2', s) == EOF; },
+            [](FileStream* s) { return putc_nid_postfix('B', s) == 'B'; },
+            'B'
+        },
+        {
+            [](FileStream* s) { return __swbuf_nid_postfix('3', s) == EOF; },
+            [](FileStream* s) { return __swbuf_nid_postfix('C', s) == 'C'; },
+            'C'
+        },
+        {
+            [](FileStream* s) { return putc_unlocked_nid_postfix('4', s) == EOF; },
+            [](FileStream* s) { return putc_unlocked_nid_postfix('D', s) == 'D'; },
+            'D'
+        },
+        {
+            [](FileStream* s) { return fputs_nid_postfix("error-string", s) == EOF; },
+            [](FileStream* s) { return fputs_nid_postfix("E", s) >= 0; },
+            'E'
+        },
+        {
+            [](FileStream* s) { char b = '5'; return fwrite_nid_postfix(&b, 1, 1, s) == 0; },
+            [](FileStream* s) { char b = 'F'; return fwrite_nid_postfix(&b, 1, 1, s) == 1; },
+            'F'
+        },
+    };
+
+    for (const auto& testCase : writerCases) {
+        fillPipe();
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        Require(std::setvbuf(native, nullptr, _IONBF, 0) == 0);
+        FileStream stream(native);
+        errno = 0;
+        Require(testCase.failWrite(&stream));
+        Require(errno == 35);
+        Require(ferror_nid_postfix(&stream) != 0);
+        drainPipe();
+        errno = 35;
+        Require(testCase.recoverWrite(&stream));
+        Require(errno == 35);
+        Require(ferror_nid_postfix(&stream) != 0);
+        char readByte = 0;
+        Require(::read(fds[0], &readByte, 1) == 1 && readByte == testCase.expectedByte);
+        clearerr_nid_postfix(&stream);
+        Require(ferror_nid_postfix(&stream) == 0);
+        drainPipe();
+        Require(stream.Close() == 0);
+    }
+#ifdef __linux__
+    {
+        fillPipe();
+        const auto pageSize = ::sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0);
+        const auto pageBytes = static_cast<std::size_t>(pageSize);
+        std::vector<char> drain(pageBytes);
+        const auto drained = ::read(fds[0], drain.data(), drain.size());
+        Require(drained > 0 && static_cast<std::size_t>(drained) == drain.size());
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        Require(std::setvbuf(native, nullptr, _IONBF, 0) == 0);
+        FileStream stream(native);
+        std::vector<char> buffer(pageBytes * 3);
+        errno = 0;
+        Require(fwrite_nid_postfix(buffer.data(), 3, pageBytes, &stream) == pageBytes / 3);
+        Require(errno == 35);
+        Require(ferror_nid_postfix(&stream) != 0);
+        drainPipe();
+        Require(stream.Close() == 0);
+    }
+#endif
+    {
+        fillPipe();
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        char streamBuf[512];
+        Require(std::setvbuf(native, streamBuf, _IOFBF, sizeof(streamBuf)) == 0);
+        FileStream stream(native);
+        char payload[16] = "buffered test";
+        errno = 35;
+        Require(fwrite_nid_postfix(payload, 1, sizeof(payload), &stream) == sizeof(payload));
+        Require(errno == 35);
+        errno = 0;
+        Require(fflush_nid_postfix(&stream) == EOF);
+        Require(errno == 35);
+        Require(ferror_nid_postfix(&stream) != 0);
+        drainPipe();
+        Require(stream.Close() == 0);
+    }
+    {
+        fillPipe();
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        char streamBuf[512];
+        Require(std::setvbuf(native, streamBuf, _IOFBF, sizeof(streamBuf)) == 0);
+        FileStream stream(native);
+        char payload[16] = "global test";
+        Require(fwrite_nid_postfix(payload, 1, sizeof(payload), &stream) == sizeof(payload));
+        errno = 0;
+        Require(fflush_nid_postfix(nullptr) == EOF);
+        Require(errno == 35);
+        drainPipe();
+        Require(stream.Close() == 0);
+    }
+    struct LineBufferCase {
+        void (*controlWrite)(FileStream*);
+        void (*newlineFlushWrite)(FileStream*);
+    };
+    const LineBufferCase lineCases[] = {
+        {
+            [](FileStream* s) { Require(fputc_nid_postfix('x', s) == 'x'); },
+            [](FileStream* s) { Require(fputc_nid_postfix('\n', s) == EOF); }
+        },
+        {
+            [](FileStream* s) { Require(fputs_nid_postfix("control", s) >= 0); },
+            [](FileStream* s) { Require(fputs_nid_postfix("flush\n", s) == EOF); }
+        },
+        {
+            [](FileStream* s) {
+                char data[] = "ctrl";
+                Require(fwrite_nid_postfix(data, 1, sizeof(data) - 1, s) == sizeof(data) - 1);
+            },
+            [](FileStream* s) {
+                char data[] = "flush\n";
+                fwrite_nid_postfix(data, 1, sizeof(data) - 1, s);
+            }
+        }
+    };
+
+    for (const auto& lineCase : lineCases) {
+        drainPipe();
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        char streamBuf[512];
+        Require(std::setvbuf(native, streamBuf, _IOLBF, sizeof(streamBuf)) == 0);
+        FileStream stream(native);
+
+        fillPipe();
+        errno = 35;
+        lineCase.controlWrite(&stream);
+        Require(errno == 35);
+        Require(ferror_nid_postfix(&stream) == 0);
+
+        errno = 0;
+        lineCase.newlineFlushWrite(&stream);
+        Require(errno == 35);
+        Require(ferror_nid_postfix(&stream) != 0);
+
+        drainPipe();
+        Require(stream.Close() == 0);
+    }
+
+    drainPipe();
+    Require(::close(fds[1]) == 0);
+    Require(::close(fds[0]) == 0);
+#endif
 }
 
 template<typename TAction>
@@ -129,47 +391,45 @@ static int APS5_VABI ScanShortCharacterList(FileStream* stream, const char* form
 
 static void CheckShortCharacterScanLocking(bool secure, int (APS5_VABI* scanner)(FileStream*, const char*, ...)) {
     constexpr std::size_t bytes = 1u << 20;
-    using Scanner = int (APS5_VABI*)(FileStream*, const char*, ...);
-    for (const Scanner scan : {scanner}) {
-        auto* native = TemporaryFile::Open();
-        Require(native != nullptr);
-        const std::vector<char> input(bytes, 'a');
-        Require(std::fwrite(input.data(), 1, input.size(), native) == input.size());
-        std::rewind(native);
-        FileStream stream(native);
-        std::vector<char> output(bytes + 1, 'Z');
-        int result = -1, consumed = -1;
-        std::exception_ptr failure;
-        std::atomic<bool> finished{false};
-        std::barrier start(2);
-        std::thread reader([&] {
-            start.arrive_and_wait();
-            try {
-                result = secure ? scan(&stream, "%1048576c%n", output.data(), output.size(), &consumed) : scan(&stream, "%1048576c%n", output.data(), &consumed);
-            } catch (...) {
-                failure = std::current_exception();
-            }
-            finished.store(true);
-        });
+    auto* native = TemporaryFile::Open();
+    Require(native != nullptr);
+    std::unique_ptr<std::FILE, int (*)(std::FILE*)> owner(native, std::fclose);
+    const std::vector<char> input(bytes, 'a');
+    Require(std::fwrite(input.data(), 1, input.size(), native) == input.size());
+    std::rewind(native);
+    FileStream stream(native);
+    std::vector<char> output(bytes + 1, 'Z');
+    int result = -1, consumed = -1;
+    std::exception_ptr failure;
+    std::atomic<bool> finished{false};
+    std::barrier start(2);
+    std::thread reader([&] {
         start.arrive_and_wait();
-        bool releasedDuringField = false;
-        while (!finished.load()) {
-            if (ftrylockfile_nid_postfix(&stream) == 0) {
-                const auto position = ftell_nid_postfix(&stream);
-                releasedDuringField = releasedDuringField || (position > 0 && position < static_cast<long>(bytes));
-                funlockfile_nid_postfix(&stream);
-            }
-            std::this_thread::yield();
+        try {
+            result = secure ? scanner(&stream, "%1048576c%n", output.data(), output.size(), &consumed) : scanner(&stream, "%1048576c%n", output.data(), &consumed);
+        } catch (...) {
+            failure = std::current_exception();
         }
-        reader.join();
-        if (failure) std::rethrow_exception(failure);
-        Require(ftrylockfile_nid_postfix(&stream) == 0, "Short stream character scan retained its file lock after returning");
-        funlockfile_nid_postfix(&stream);
-        Require(std::fclose(native) == 0);
-        Require(!releasedDuringField, "Short stream character scan released its file lock during a field");
-        Require(result == 1 && consumed == static_cast<int>(bytes) && output.back() == 'Z');
-        Require(std::memcmp(output.data(), input.data(), bytes) == 0);
+        finished.store(true);
+    });
+    start.arrive_and_wait();
+    bool releasedDuringField = false;
+    while (!finished.load()) {
+        if (ftrylockfile_nid_postfix(&stream) == 0) {
+            const auto position = ftell_nid_postfix(&stream);
+            releasedDuringField = releasedDuringField || (position > 0 && position < static_cast<long>(bytes));
+            funlockfile_nid_postfix(&stream);
+        }
+        std::this_thread::yield();
     }
+    reader.join();
+    if (failure) std::rethrow_exception(failure);
+    Require(ftrylockfile_nid_postfix(&stream) == 0, "Short stream character scan retained its file lock after returning");
+    funlockfile_nid_postfix(&stream);
+    Require(std::fclose(owner.release()) == 0);
+    Require(!releasedDuringField, "Short stream character scan released its file lock during a field");
+    Require(result == 1 && consumed == static_cast<int>(bytes) && output.back() == 'Z');
+    Require(std::memcmp(output.data(), input.data(), bytes) == 0);
 }
 
 static void CheckShortCharacterScans() {
@@ -390,6 +650,45 @@ static void CheckUpdateStreamReadsAfterWrites(const std::string& base) {
     Require(std::remove(path.c_str()) == 0);
 }
 
+static void CheckUnbufferedStreamReadsAfterWrites(const std::string& base) {
+    const std::string path = base + ".unbuffered";
+    using Access = void (*)(FileStream*);
+    for (const Access write : {
+             +[](FileStream* stream) { Require(fwrite_nid_postfix("AB", 1, 2, stream) == 2, "fwrite on an unbuffered r+ stream"); },
+             +[](FileStream* stream) { Require(fputs_nid_postfix("AB", stream) >= 0, "fputs on an unbuffered r+ stream"); },
+             +[](FileStream* stream) { Require(fputc_nid_postfix('A', stream) == 'A' && fputc_nid_postfix('B', stream) == 'B', "fputc on an unbuffered r+ stream"); },
+             +[](FileStream* stream) { Require(putc_unlocked_nid_postfix('A', stream) == 'A' && putc_unlocked_nid_postfix('B', stream) == 'B', "putc_unlocked on an unbuffered r+ stream"); },
+             +[](FileStream* stream) { Require(fprintf_nid_postfix(stream, "%s", "AB") == 2, "fprintf on an unbuffered r+ stream"); },
+             +[](FileStream* stream) { Require(fputwc_nid_postfix(u'A', stream) == u'A' && fputwc_nid_postfix(u'B', stream) == u'B', "fputwc on an unbuffered r+ stream"); },
+             +[](FileStream* stream) {
+                 Require(fputc_nid_postfix('A', stream) == 'A' && fputc_nid_postfix('B', stream) == 'B' && fflush_nid_postfix(stream) == 0, "fputc and fflush on an unbuffered r+ stream");
+             },
+         }) {
+        for (const Access read : {
+                 +[](FileStream* stream) { Require(fgetc_nid_postfix(stream) == '2', "fgetc after a write on an unbuffered r+ stream"); },
+                 +[](FileStream* stream) { Require(getc_unlocked_nid_postfix(stream) == '2', "getc_unlocked after a write on an unbuffered r+ stream"); },
+                 +[](FileStream* stream) {
+                     char byte = 0;
+                     Require(fread_nid_postfix(&byte, 1, 1, stream) == 1 && byte == '2', "fread after a write on an unbuffered r+ stream");
+                 },
+                 +[](FileStream* stream) {
+                     Require(ungetc_nid_postfix('Z', stream) == 'Z' && fgetc_nid_postfix(stream) == 'Z' && fgetc_nid_postfix(stream) == '2', "ungetc after a write on an unbuffered r+ stream");
+                 },
+             }) {
+            auto* stream = fopen_nid_postfix(path.c_str(), "wb");
+            Require(stream != nullptr && fputs_nid_postfix("0123456789", stream) >= 0 && fclose_nid_postfix(stream) == 0);
+            stream = fopen_nid_postfix(path.c_str(), "r+b");
+            Require(stream != nullptr && setvbuf_nid_postfix(stream, nullptr, 2, 0) == 0, "setvbuf to unbuffered on an r+ stream");
+            write(stream);
+            read(stream);
+            Require(ferror_nid_postfix(stream) == 0 && ftell_nid_postfix(stream) == 3, "Read after write on an unbuffered r+ stream set the error indicator or moved elsewhere");
+            Require(fclose_nid_postfix(stream) == 0);
+            Require(ReadWhole(path) == "AB23456789", "Read after write on an unbuffered r+ stream changed the file");
+        }
+    }
+    Require(std::remove(path.c_str()) == 0);
+}
+
 template<typename TAccess>
 static void CheckWriteAfterRead(const std::string& path, const char* mode, const char* expected, TAccess access) {
     auto* stream = fopen_nid_postfix(path.c_str(), "wb");
@@ -408,6 +707,7 @@ static void CheckReadsOnWriteOnlyStreams(const std::string& path) {
         const auto failed = [stream](bool result, const char* message) {
             Require(result && errno == EBADF && ferror_nid_postfix(stream) != 0, message);
             clearerr_nid_postfix(stream);
+            Require(ferror_nid_postfix(stream) == 0, "clearerr after a write-only read");
             errno = 0;
         };
         std::array<char, 4> buffer{};
@@ -418,12 +718,18 @@ static void CheckReadsOnWriteOnlyStreams(const std::string& path) {
         failed(fgets_nid_postfix(buffer.data(), static_cast<int>(buffer.size()), stream) == nullptr, "fgets on a write-only stream");
         int value = 0;
         Require(fscanf_nid_postfix(stream, "%d", &value) == EOF, "fscanf on a write-only stream");
-#ifdef _WIN32
         Require(errno == EBADF && ferror_nid_postfix(stream) != 0, "fscanf on a write-only stream left errno or the error indicator unset");
         clearerr_nid_postfix(stream);
+        Require(ferror_nid_postfix(stream) == 0, "clearerr after fscanf on a write-only stream");
         errno = 0;
+        Require(ScanList(stream, "%d", &value) == EOF, "vfscanf on a write-only stream");
+        Require(errno == EBADF && ferror_nid_postfix(stream) != 0, "vfscanf on a write-only stream left errno or the error indicator unset");
+        clearerr_nid_postfix(stream);
+        Require(ferror_nid_postfix(stream) == 0, "clearerr after vfscanf on a write-only stream");
+        errno = 0;
+        failed(fgetwc_nid_postfix(stream) == -1, "fgetwc on a write-only stream");
         Require(ungetc_nid_postfix('q', stream) == EOF && errno == 0 && ferror_nid_postfix(stream) == 0, "ungetc on a write-only stream");
-#endif
+        Require(ungetwc_nid_postfix(L'q', stream) == -1 && errno == 0 && ferror_nid_postfix(stream) == 0, "ungetwc on a write-only stream");
         Require(fclose_nid_postfix(stream) == 0, "fclose after reads on a write-only stream");
         Require(ReadWhole(path) == "abc", "Reads on a write-only stream changed the file");
         Require(std::remove(path.c_str()) == 0);
@@ -460,7 +766,17 @@ static void CheckStreamWritesAfterReads(const std::string& base) {
                 Require(ferror_nid_postfix(stream) == 0, "Write after fgetc on an update stream set the error indicator");
             });
         }
+        CheckWriteAfterRead(path, "r+b", "0XY3456789", [write](FileStream* stream) {
+            Require(setvbuf_nid_postfix(stream, nullptr, 2, 0) == 0 && fgetc_nid_postfix(stream) == '0', "fgetc on an unbuffered update stream");
+            write(stream);
+            Require(ferror_nid_postfix(stream) == 0, "Write after fgetc on an unbuffered update stream set the error indicator");
+        });
     }
+    CheckWriteAfterRead(path, "r+b", "012XY56789", [](FileStream* stream) {
+        std::array<char, 3> buffer{};
+        Require(setvbuf_nid_postfix(stream, nullptr, 2, 0) == 0 && fread_nid_postfix(buffer.data(), 1, buffer.size(), stream) == buffer.size(), "fread on an unbuffered update stream");
+        Require(fputs_nid_postfix("XY", stream) >= 0 && ferror_nid_postfix(stream) == 0, "fputs after fread on an unbuffered update stream");
+    });
     CheckWriteAfterRead(path, "r+b", appended, [](FileStream* stream) {
         std::array<char, 10> buffer{};
         Require(fread_nid_postfix(buffer.data(), 1, buffer.size(), stream) == buffer.size() && feof_nid_postfix(stream) == 0, "fread of every byte of an r+ stream");
@@ -635,7 +951,9 @@ int main(int argc, char** argv) {
     CheckOrdinaryCharacterScans();
     CheckZeroSizedTransfers(argv[1]);
     CheckUpdateStreamReadsAfterWrites(argv[1]);
+    CheckUnbufferedStreamReadsAfterWrites(argv[1]);
     CheckStreamWritesAfterReads(argv[1]);
+    CheckWriteFlushErrno(argv[1]);
     Require(_Stdout_nid_postfix.GetHandle() == stdout);
     Require(_Stderr_nid_postfix.GetHandle() == stderr);
     Require(fputs_nid_postfix("stdout object works\n", &_Stdout_nid_postfix) >= 0);
