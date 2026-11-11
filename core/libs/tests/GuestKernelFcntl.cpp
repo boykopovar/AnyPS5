@@ -599,11 +599,25 @@ static void StandardInputFlags() {
     Require(fcntl_nid_postfix(0, GetDescriptorFlags) == 0);
 }
 
+static void PipeOwnerRoundTrips() {
+    constexpr int GetOwnerCommand = 5;
+    constexpr int SetOwnerCommand = 6;
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    Require(fcntl_nid_postfix(pipe[0], GetOwnerCommand) == 0);
+    Require(fcntl_nid_postfix(pipe[0], SetOwnerCommand, 4242) == 0);
+    Require(fcntl_nid_postfix(pipe[0], GetOwnerCommand) == 4242);
+    Require(fcntl_nid_postfix(pipe[0], SetOwnerCommand, 0) == 0);
+    Require(fcntl_nid_postfix(pipe[0], GetOwnerCommand) == 0);
+    Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+}
+
 int main() {
     SocketsKeepTheirPath();
     FileFlagsRoundTrip();
     RecordLocksBelongToTheProcess();
     PipeFlagsRoundTrip();
+    PipeOwnerRoundTrips();
 #ifndef _WIN32
     HostSocketFlags();
 #endif
