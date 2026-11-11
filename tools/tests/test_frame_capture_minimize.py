@@ -24,6 +24,23 @@ class PredicateMinimizer(frame_capture_minimize.Minimizer):
 
 
 class FrameCaptureMinimizeTests(unittest.TestCase):
+    def empty_cli(self, root, filter_source=None, replay_source=None, output=None):
+        capture = root / "capture"
+        capture.mkdir()
+        capture_filter = root / "filter.py"
+        capture_filter.write_text(filter_source or """import json, pathlib, sys
+command, source, *rest = sys.argv[1:]
+if command == 'inspect':
+    print(json.dumps({'calls': [], 'chunks': []}))
+else:
+    pathlib.Path(rest[1]).mkdir(parents=True)
+""", encoding="utf-8")
+        replay = root / "replay.py"
+        replay.write_text(replay_source or "print('failure')\nraise SystemExit(7)\n", encoding="utf-8")
+        output = output or root / "result"
+        arguments = ["--capture", str(capture), "--replay", str(replay), "--filter", str(capture_filter), "--output", str(output), "--expect-exit-code", "7", "--match-regex", "failure"]
+        return arguments, capture_filter, replay, output
+
     def test_minimizes_calls_and_chunks_while_preserving_required_units(self):
         minimizer = PredicateMinimizer({2}, {4})
         removed_calls = set()
