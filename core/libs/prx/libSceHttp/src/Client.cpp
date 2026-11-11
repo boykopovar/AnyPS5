@@ -11,6 +11,7 @@
 #endif
 
 #include "prx/libSceHttp/include/Client.hpp"
+#include "prx/libSceHttp/src/ClientParsing.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
@@ -34,11 +35,6 @@
 
 namespace {
 
-class HttpFailure : public std::runtime_error {
-public:
-    explicit HttpFailure(const char* message) : std::runtime_error(message) {}
-};
-
 std::string Lower(std::string text) {
     for (char& byte : text) if (byte >= 'A' && byte <= 'Z') byte += 'a' - 'A';
     return text;
@@ -48,13 +44,6 @@ std::string_view Trim(std::string_view text) {
     while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
     while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
     return text;
-}
-
-std::uint64_t Number(std::string_view text, int base = 10) {
-    std::uint64_t number = 0;
-    const auto result = std::from_chars(text.data(), text.data() + text.size(), number, base);
-    if (text.empty() || result.ec != std::errc{} || result.ptr != text.data() + text.size()) throw HttpFailure("invalid HTTP size");
-    return number;
 }
 
 std::optional<std::chrono::sys_seconds> HttpDate(const std::string& text) {
@@ -87,12 +76,6 @@ bool StrongEtag(std::string_view text) {
     return true;
 }
 
-bool IsToken(unsigned char byte) {
-    constexpr std::string_view punctuation = "!#$%&'*+-.^_`|~";
-    return (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
-        (byte >= '0' && byte <= '9') || punctuation.find(byte) != std::string_view::npos;
-}
-
 std::pair<std::string, std::string> Field(const std::string& text) {
     const auto colon = text.find(':');
     if (colon == std::string::npos || colon == 0) throw HttpFailure("invalid HTTP field");
@@ -103,55 +86,6 @@ std::pair<std::string, std::string> Field(const std::string& text) {
     for (const unsigned char byte : value)
         if ((byte < 0x20 && byte != '\t') || byte == 0x7f) throw HttpFailure("invalid HTTP field value");
     return {std::move(name), std::move(value)};
-}
-
-std::uint64_t ChunkSize(std::string_view text) {
-    auto index = text.find_first_of("; \t");
-    const auto count = Number(text.substr(0, index), 16);
-    if (index == std::string_view::npos) return count;
-    const auto whitespace = [&] {
-        while (index < text.size() && (text[index] == ' ' || text[index] == '\t')) ++index;
-    };
-    const auto token = [&] {
-        const auto start = index;
-        while (index < text.size() && IsToken(static_cast<unsigned char>(text[index]))) ++index;
-        if (index == start) throw HttpFailure("invalid HTTP chunk extension token");
-    };
-    while (index < text.size()) {
-        whitespace();
-        if (index == text.size() || text[index++] != ';') throw HttpFailure("invalid HTTP chunk extension separator");
-        whitespace();
-        token();
-        const auto nameEnd = index;
-        whitespace();
-        if (index == text.size() || text[index] != '=') {
-            index = nameEnd;
-            continue;
-        }
-        ++index;
-        whitespace();
-        if (index == text.size()) throw HttpFailure("missing HTTP chunk extension value");
-        if (text[index] != '"') {
-            token();
-            continue;
-        }
-        ++index;
-        bool closed = false;
-        while (index < text.size()) {
-            auto byte = static_cast<unsigned char>(text[index++]);
-            if (byte == '"') {
-                closed = true;
-                break;
-            }
-            if (byte == '\\') {
-                if (index == text.size()) throw HttpFailure("truncated HTTP chunk extension escape");
-                byte = static_cast<unsigned char>(text[index++]);
-            }
-            if ((byte < 0x20 && byte != '\t') || byte == 0x7f) throw HttpFailure("invalid HTTP chunk extension quoted byte");
-        }
-        if (!closed) throw HttpFailure("unclosed HTTP chunk extension quote");
-    }
-    return count;
 }
 
 struct Url {

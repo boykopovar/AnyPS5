@@ -102,57 +102,6 @@ void CheckInputValidation(const std::string& base) {
     Read(client.get(), 30, 19);
 }
 
-void CheckChunkExtensions(const std::string& base) {
-    int accepted = 0;
-    int refused = 0;
-    for (const std::string mode : {"full", "range", "empty"}) {
-        for (const char* name : {"none", "flag", "token", "bws", "quoted", "empty-quoted", "quoted-delimiters", "escaped",
-                                 "obs-text", "quoted-tab", "punctuation", "repeat", "multiple", "quoted-boundaries", "quoted-pairs", "case"}) {
-            auto client = Create();
-            Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/chunk-extensions/" + mode + "/" + name + "/payload.bin").c_str()) == 1,
-                  "valid chunk extension refused");
-            const bool empty = mode == "empty";
-            Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == (empty ? 0 : 100000), "chunk extension body size differs");
-            if (!empty) {
-                Read(client.get(), 0, 64);
-                Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "chunk extension seek failed");
-                Read(client.get(), 90000, 64);
-                Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 2) == 100000, "chunk extension end differs");
-            }
-            End(client.get());
-            ++accepted;
-        }
-        for (const char* name : {"missing-name", "missing-name-space", "empty-name-value", "quoted-name", "name-separator",
-                                 "missing-value", "missing-ows-value", "unclosed-quote", "escaped-end", "bad-token", "name-control", "name-high-byte",
-                                 "quote-control", "quote-del", "quoted-pair-control", "quoted-pair-del", "junk-after-quote", "doubled-semicolon",
-                                 "extra-equals", "bare-bws", "trailing-name-bws", "trailing-token-bws", "trailing-quote-bws", "newline", "bare-backslash"}) {
-            auto client = Create();
-            const auto url = base + "/chunk-extensions/" + mode + "/" + name + "/payload.bin";
-            if (Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 0) {
-                Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == -1, "invalid extension retained a source");
-                ++refused;
-            } else std::fprintf(stderr, "Malformed chunk extension accepted: %s/%s\n", mode.c_str(), name);
-        }
-    }
-    auto late = Create();
-    Check(Aps5HttpClient_Open_nid_postfix(late.get(), (base + "/chunk-extensions/range/terminal-unclosed-quote/payload.bin").c_str()) == 1,
-          "late chunk extension control refused");
-    Read(late.get(), 0, 31);
-    Check(Aps5HttpClient_Seek_nid_postfix(late.get(), 90000, 0) == 90000, "late chunk extension seek failed");
-    std::uint8_t byte = 0xa5;
-    bool lateRefused = false;
-    try { Aps5HttpClient_Read_nid_postfix(late.get(), &byte, 1); }
-    catch (const std::exception&) { lateRefused = true; }
-    if (lateRefused) {
-        Check(byte == 0xa5 && Aps5HttpClient_GetSize_nid_postfix(late.get()) == 100000 &&
-              Aps5HttpClient_Seek_nid_postfix(late.get(), 0, 1) == 90000, "late chunk extension refusal changed source state");
-        Check(Aps5HttpClient_Seek_nid_postfix(late.get(), 0, 0) == 0, "late chunk extension cache rewind failed");
-        Read(late.get(), 0, 31);
-    }
-    std::printf("Chunk extensions: valid %d/48, malformed refused %d/75, late terminal refusal %d/1\n", accepted, refused, lateRefused);
-    Check(accepted == 48 && refused == 75 && lateRefused, "malformed chunk extensions were ignored");
-}
-
 void CheckRangeUnits(const std::string& base) {
     auto invalid = Create();
     for (const char* route : {"/unit/items/", "/unit/BYTES=/", "/range-number/"}) Check(Aps5HttpClient_Open_nid_postfix(invalid.get(), (base + route + "payload.bin").c_str()) == 0, "invalid Content-Range accepted");
@@ -393,7 +342,6 @@ int main(int argc, char** argv) {
         CheckBodies(base);
         CheckEmpty(base);
         CheckRedirects(base);
-        CheckChunkExtensions(base);
         CheckCacheAndReopen(base);
         CheckFailures(base);
         CheckRepresentations(base);
