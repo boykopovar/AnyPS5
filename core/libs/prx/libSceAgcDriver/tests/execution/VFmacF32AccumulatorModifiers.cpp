@@ -121,6 +121,10 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
+bool IsDenormal32(std::uint32_t bits) {
+    return (bits & 0x7f800000u) == 0u && (bits & 0x007fffffu) != 0u;
+}
+
 void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::ShaderFloatMode& floatMode, const Variant& variant) {
     Code[6] = 0xd52b000au | variant.abs << 8u;
     Code[7] = 0x042a0b04u | variant.neg << 29u;
@@ -152,13 +156,20 @@ void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::ShaderFloatMod
     device.WaitIdle();
 }
 
-void Check(const char* mode, const Variant& variant, const std::uint32_t* expected) {
+std::uint32_t Check(const char* mode, const Variant& variant, const std::uint32_t* expected, bool skipDenormals) {
+    std::uint32_t skipped = 0u;
     for (std::uint32_t tid = 0; tid < RowCount; ++tid) {
+        const Row& row = Rows[tid];
+        if (skipDenormals && (IsDenormal32(row.a) || IsDenormal32(row.b) || IsDenormal32(row.accumulator) || IsDenormal32(expected[tid]))) {
+            ++skipped;
+            continue;
+        }
         const std::uint32_t actual = Output[tid * Results];
         Require(actual == expected[tid], std::string("v_fmac_f32 ") + variant.name + " " + mode + ": lane " + std::to_string(tid) + " of " +
                                              Hex(Rows[tid].a) + " * " + Hex(Rows[tid].b) + " + " + Hex(Rows[tid].accumulator) + " is " + Hex(actual) +
                                              ", expected " + Hex(expected[tid]));
     }
+    return skipped;
 }
 
 }
@@ -167,13 +178,15 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        const bool keepsDenormals = device->Target().float32DenormPreserve;
+        std::uint32_t skipped = 0u;
         for (const Variant& variant : Variants) {
             Run(*device, ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false}, variant);
-            Check("M1", variant, variant.expectedM1);
+            skipped += Check("M1", variant, variant.expectedM1, !keepsDenormals);
             Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false}, variant);
-            Check("M2", variant, variant.expectedM2);
+            Check("M2", variant, variant.expectedM2, false);
         }
-        std::puts("v_fmac_f32 accumulator modifiers tests passed");
+        std::printf("v_fmac_f32 accumulator modifiers tests passed (%u M1 lanes with an f32 denormal not checked; they need DenormPreserve 32)\n", skipped);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
