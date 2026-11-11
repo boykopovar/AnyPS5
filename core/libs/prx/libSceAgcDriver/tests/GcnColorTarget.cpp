@@ -50,8 +50,10 @@ constexpr std::uint32_t Thin1D = 13u;
 constexpr std::size_t ColorBytes = Width * Height * 4u;
 constexpr std::size_t CmaskBytes = 512u;
 constexpr std::size_t MemoryBytes = 65536u;
+constexpr std::size_t FmaskOffset = ColorBytes + 4096u;
 std::byte* colorMemory = nullptr;
 std::byte* cmaskMemory = nullptr;
+std::byte* fmaskMemory = nullptr;
 
 std::byte* LowMemory(std::size_t bytes) {
 #ifdef _WIN32
@@ -81,7 +83,7 @@ std::uint64_t AddressOf(const void* data) {
     return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
 }
 
-void SetTarget(AgcDriver::Registers& cx, std::uint32_t samples, std::uint32_t fragments, std::uint32_t flags, bool cmask = true) {
+void SetTarget(AgcDriver::Registers& cx, std::uint32_t samples, std::uint32_t fragments, std::uint32_t flags, bool cmask = true, std::uint64_t fmask = 0) {
     cx[0x318] = static_cast<std::uint32_t>(AddressOf(colorMemory) >> 8u);
     cx[0x319] = Width / 8u - 1u;
     cx[0x31a] = Width * Height / 64u - 1u;
@@ -90,11 +92,13 @@ void SetTarget(AgcDriver::Registers& cx, std::uint32_t samples, std::uint32_t fr
     cx[0x31d] = Thin1D | (static_cast<std::uint32_t>(std::countr_zero(samples)) << 12u) | (static_cast<std::uint32_t>(std::countr_zero(fragments)) << 15u);
     cx[0x31f] = cmask ? static_cast<std::uint32_t>(AddressOf(cmaskMemory) >> 8u) : 0u;
     cx[0x320] = static_cast<std::uint32_t>(CmaskBytes / 128u - 1u);
+    cx[0x321] = static_cast<std::uint32_t>(fmask >> 8u);
+    cx[0x322] = Width * Height / 64u - 1u;
 }
 
-AgcDriver::Graphics::ColorTarget Decode(std::uint32_t samples, std::uint32_t fragments, std::uint32_t flags, bool cmask = true) {
+AgcDriver::Graphics::ColorTarget Decode(std::uint32_t samples, std::uint32_t fragments, std::uint32_t flags, bool cmask = true, std::uint64_t fmask = 0) {
     AgcDriver::Registers cx;
-    SetTarget(cx, samples, fragments, flags, cmask);
+    SetTarget(cx, samples, fragments, flags, cmask, fmask);
     return AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
 }
 
@@ -117,6 +121,29 @@ void SingleSampleFastClearDecode() {
     const auto compressed = Decode(1u, 1u, Compression);
     Check(compressed.cmaskAddress == 0u && !compressed.cmaskFastClear, "a single-sample GCN color target with only COMPRESSION took a CMASK");
     Check(Failure([] { Decode(1u, 1u, FastClear, false); }).find("has no CMASK address") != std::string::npos, "a single-sample GCN fast clear without a CMASK address was accepted");
+}
+
+void FewerFragmentsDecode() {
+    const auto fmask = AddressOf(fmaskMemory);
+    const auto eqaa = Decode(4u, 2u, Compression, true, fmask);
+    Check(eqaa.samples == 4u && eqaa.coverageSamples == 4u && eqaa.eqaaFragments == 2u, "a 4-sample 2-fragment GCN color target did not decode as EQAA at its 4 coverage samples");
+    Check(eqaa.fmaskAddress == fmask && eqaa.cmaskAddress == AddressOf(cmaskMemory), "a 4-sample 2-fragment GCN color target lost its FMASK or CMASK base");
+    Check(eqaa.gcnFmaskBytes == Width * Height, "the FMASK of a 4-sample 2-fragment GCN color target does not hold 2 bits per sample, one byte per pixel");
+    const auto eightTwo = Decode(8u, 2u, Compression, true, fmask);
+    Check(eightTwo.samples == 8u && eightTwo.eqaaFragments == 2u && eightTwo.gcnFmaskBytes == Width * Height * 2u, "the FMASK of an 8-sample 2-fragment GCN color target does not hold 2 bits per sample, two bytes per pixel");
+    const auto eightFour = Decode(8u, 4u, Compression, true, fmask);
+    Check(eightFour.samples == 8u && eightFour.eqaaFragments == 4u && eightFour.gcnFmaskBytes == Width * Height * 4u, "the FMASK of an 8-sample 4-fragment GCN color target does not hold 4 bits per sample, four bytes per pixel");
+    const auto oneFragment = Decode(4u, 1u, 0u, true, fmask);
+    Check(oneFragment.samples == 1u && oneFragment.coverageSamples == 4u && oneFragment.eqaaFragments == 0u, "a 4-sample 1-fragment GCN color target did not decode as one stored sample with 4 coverage samples");
+    Check(oneFragment.fmaskAddress == 0u && oneFragment.gcnFmaskBytes == 0u && oneFragment.cmaskAddress == 0u, "an uncompressed 4-sample 1-fragment GCN color target took an FMASK or CMASK");
+    const auto compressedOne = Decode(4u, 1u, Compression, true, fmask);
+    Check(compressedOne.samples == 1u && compressedOne.fmaskAddress == fmask && compressedOne.gcnFmaskBytes == Width * Height, "the FMASK of a compressed 4-sample 1-fragment GCN color target does not hold 1 bit for each of 8 samples, one byte per pixel");
+    Check(Failure([] { Decode(4u, 2u, 0u, true, AddressOf(fmaskMemory)); }).find("supported only with FMASK") != std::string::npos, "a 4-sample 2-fragment GCN color target without COMPRESSION was accepted");
+    Check(Failure([] { Decode(4u, 2u, Compression, true, 0u); }).find("has no FMASK address") != std::string::npos, "a compressed 4-sample 2-fragment GCN color target without an FMASK base was accepted");
+    Check(Failure([] { Decode(2u, 4u, 0u); }).find("more fragments than samples") != std::string::npos, "a 2-sample 4-fragment GCN color target was accepted");
+    const auto fastClearedOne = Decode(4u, 1u, FastClear | Compression, true, fmask);
+    Check(fastClearedOne.samples == 1u && fastClearedOne.coverageSamples == 4u && fastClearedOne.cmaskFastClear && fastClearedOne.cmaskAddress == AddressOf(cmaskMemory) && fastClearedOne.cmaskBytes == CmaskBytes, "a fast-cleared 4-sample 1-fragment GCN color target lost its CMASK fast clear");
+    Check(fastClearedOne.fmaskAddress == fmask && fastClearedOne.gcnFmaskBytes == Width * Height, "a fast-cleared compressed 4-sample 1-fragment GCN color target lost its FMASK");
 }
 
 std::string FmaskDecompress(std::uint32_t visibleHeight) {
@@ -158,14 +185,16 @@ int main() {
             return 1;
         }
         cmaskMemory = colorMemory + ColorBytes;
+        fmaskMemory = colorMemory + FmaskOffset;
         MultisampledTargetsDecode();
         SingleSampleFastClearDecode();
+        FewerFragmentsDecode();
         PaddedTargetsAreCovered();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
     if (failures != 0) return 1;
-    std::puts("GCN multisampled and fast-cleared single-sample color targets decode with their CMASK, and a metadata pass over the visible rows of a padded target is covered");
+    std::puts("GCN multisampled and fast-cleared single-sample color targets decode with their CMASK, EQAA and one-fragment targets with their FMASK base and size, and a metadata pass over the visible rows of a padded target is covered");
     return 0;
 }

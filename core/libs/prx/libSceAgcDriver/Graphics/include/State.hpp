@@ -87,6 +87,7 @@ struct ColorTarget {
     std::uint32_t dccControl = 0;
     std::uint64_t fmaskAddress = 0;
     std::uint32_t fmaskPipeBankXor = 0;
+    std::uint32_t gcnFmaskBytes = 0;
     std::uint32_t partialWriteMask = 0;
     std::uint32_t mergeBlend = 0;
     bool staged = false;
