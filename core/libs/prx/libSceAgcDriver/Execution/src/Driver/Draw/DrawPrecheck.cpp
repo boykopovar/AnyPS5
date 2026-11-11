@@ -53,7 +53,7 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
             if (!writes.empty() && localDevice != nullptr) {
                 const auto queueId = submission.queue;
                 const auto opcode = (packet[0] >> 8u) & 0xffu;
-                DrawPipeline::Queue0().Enqueue([this, localDevice, queueId, opcode, pass = *pass] {
+                DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::ColorMetadata, [this, localDevice, queueId, opcode, pass = *pass] {
                     GuestMemory::SetCurrentPacket(opcode, queueId);
                     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
                     std::lock_guard gpuLock(GuestMemory::GpuMutex());

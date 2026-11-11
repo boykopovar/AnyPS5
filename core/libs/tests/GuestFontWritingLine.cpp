@@ -243,6 +243,24 @@ int main() {
     Require(sceFontWritingLineRefersRenderStep(ltr) == nullptr);
     Require(sceFontWritingLineGetRenderMetrics(ltr, &metrics) == SCE_FONT_OK && Same(metrics, {16.0f, 2.0f, {-9.0f, 7.0f, 3.0f, 15.0f}}));
 
+    const FontWritingMetrics runG{6.0f, 0.0f, {0.0f, 8.0f, 0.0f, 6.0f}};
+    const FontWritingMetrics runH{5.0f, 0.0f, {2.0f, 12.0f, 1.0f, 4.0f}};
+    Require(sceFontWritingLineClear(ltr) == SCE_FONT_OK);
+    Require(sceFontWritingLineWritesOrder(ltr, Attribute(0), &runG, &a) == SCE_FONT_OK);
+    Require(sceFontWritingLineWritesOrder(ltr, Attribute(0), &runH, &b) == SCE_FONT_OK);
+    Require(sceFontWritingLineRefersRenderStep(ltr) != nullptr);
+    Require(sceFontWritingLineRefersRenderStep(ltr) != nullptr);
+    Require(sceFontWritingLineGetRenderMetrics(ltr, &metrics) == SCE_FONT_OK && Same(metrics, {6.0f, 0.0f, {0.0f, 8.0f, 0.0f, 6.0f}}));
+    Require(sceFontWritingLineRefersRenderStep(ltr) == nullptr);
+    Require(sceFontWritingLineGetRenderMetrics(ltr, &metrics) == SCE_FONT_OK && Same(metrics, {11.0f, 0.0f, {0.0f, 12.0f, 0.0f, 10.0f}}));
+
+    const FontWritingMetrics runI{4.0f, 0.0f, {2.0f, 8.0f, 3.0f, 5.0f}};
+    Require(sceFontWritingLineClear(ltr) == SCE_FONT_OK);
+    Require(sceFontWritingLineWritesOrder(ltr, Attribute(0), &runI, &c) == SCE_FONT_OK);
+    Require(sceFontWritingLineRefersRenderStep(ltr) != nullptr);
+    Require(sceFontWritingLineRefersRenderStep(ltr) == nullptr);
+    Require(sceFontWritingLineGetRenderMetrics(ltr, &metrics) == SCE_FONT_OK && Same(metrics, {4.0f, 0.0f, {2.0f, 8.0f, 3.0f, 5.0f}}));
+
     float space = 7.0f;
     Require(sceFontWritingLineGetOrderingSpace(rtl, nullptr, nullptr, &space, nullptr) == SCE_FONT_OK && space == 15.0f);
     Require(Throws([&] { sceFontWritingLineGetOrderingSpace(rtl, &space, &space, &space, nullptr); }));
