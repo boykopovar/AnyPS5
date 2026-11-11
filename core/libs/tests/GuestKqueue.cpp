@@ -183,6 +183,12 @@ static void BadPointersFaultAndBatchesFill() {
     const KernelTimespec zero{0, 0};
     RequireFailure(kevent_nid_postfix(kq, unmapped, 1, nullptr, 0, nullptr), fault);
     RequireFailure(kevent_nid_postfix(kq, nullptr, 0, events, 16, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    RequireFailure(kevent_nid_postfix(-1, nullptr, 0, nullptr, 0, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    RequireFailure(kevent_nid_postfix(kq, nullptr, 0, events, -1, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    int ends[2];
+    Require(pipe_nid_postfix(ends) == 0);
+    RequireFailure(kevent_nid_postfix(ends[0], nullptr, 0, nullptr, 0, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    Require(close_nid_postfix(ends[0]) == 0 && close_nid_postfix(ends[1]) == 0);
     RequireFailure(kevent_nid_postfix(kq, nullptr, 0, unmapped, 16, &zero), fault);
     void* page = nullptr;
     Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);

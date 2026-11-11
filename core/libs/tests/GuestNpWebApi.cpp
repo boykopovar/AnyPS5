@@ -7,7 +7,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <climits>
 #include <cstring>
+#include <initializer_list>
 #include <thread>
 
 namespace {
@@ -68,6 +70,29 @@ void InstallProcessParameters() {
     std::memcpy(process.data(), &size, sizeof(size));
     std::memcpy(process.data() + 8, &magic, sizeof(magic));
     Require(ProcessParametersFixture::Install(process.data(), process.size()), "process parameters were not installed");
+}
+
+void TestUnknownFieldChecks() {
+    struct Object {
+        std::uint64_t words[6];
+    };
+    Object object{};
+    for (const std::int64_t value : {std::int64_t{-1}, std::int64_t{0}, std::int64_t{1}, std::int64_t{-2}, INT64_MIN, INT64_MAX}) {
+        std::memset(&object, 0xa5, sizeof(object));
+        std::memcpy(reinterpret_cast<std::byte*>(&object) + 0x20, &value, sizeof(value));
+        Require(libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(&object) == (value != -1), "ojGP5vur+qM checks the 64 bits at +0x20");
+    }
+    for (const std::int32_t value : {std::int32_t{-1}, std::int32_t{0}, std::int32_t{1}, std::int32_t{-2}, INT32_MIN, INT32_MAX}) {
+        std::memset(&object, 0xa5, sizeof(object));
+        std::memcpy(reinterpret_cast<std::byte*>(&object) + 0xc, &value, sizeof(value));
+        Require(libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(&object) == (value != -1), "zQE2rxZdLy8 checks the 32 bits at +0xc");
+    }
+    std::memset(&object, 0xff, sizeof(object));
+    const std::int32_t low = -1;
+    const std::int32_t high = 0;
+    std::memcpy(reinterpret_cast<std::byte*>(&object) + 0x20, &low, sizeof(low));
+    std::memcpy(reinterpret_cast<std::byte*>(&object) + 0x24, &high, sizeof(high));
+    Require(libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(&object), "ojGP5vur+qM compares all 64 bits");
 }
 
 void TestLibraryContexts() {
@@ -686,6 +711,7 @@ void TestIntCreateCtxIndExtdPushEventFilter() {
 int main() {
     InstallProcessParameters();
     SetSdkVersion(0x04508001);
+    TestUnknownFieldChecks();
     TestLibraryContexts();
     TestIntServicePushEventFilter();
     TestUserContexts();

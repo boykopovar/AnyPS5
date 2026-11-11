@@ -137,6 +137,8 @@ NKWebKit::RectValue APS5_VABI WKHitTestResultGetElementBoundingBox(const void* h
 std::uint32_t APS5_VABI WKHitTestResultGetTypeID();
 bool APS5_VABI WKHitTestResultIsContentEditable(const void* hitTestResultRef);
 std::uint32_t APS5_VABI WKIconDatabaseGetTypeID();
+const void* APS5_VABI WKImageCreate(NKWebKit::SizeValue size, unsigned options);
+NKWebKit::SizeValue APS5_VABI WKImageGetSize(const void* imageRef);
 std::uint32_t APS5_VABI WKImageGetTypeID();
 std::uint32_t APS5_VABI WKInspectorGetTypeID();
 bool APS5_VABI WKInspectorIsAttached(const void* inspectorRef);
@@ -170,6 +172,7 @@ void APS5_VABI WKNotificationPermissionRequestDeny(const void* permissionRequest
 std::uint32_t APS5_VABI WKNotificationPermissionRequestGetTypeID();
 const void* APS5_VABI WKOpenPanelParametersCopyAcceptedFileExtensions(const void* parametersRef);
 const void* APS5_VABI WKOpenPanelParametersCopyAcceptedMIMETypes(const void* parametersRef);
+const void* APS5_VABI WKOpenPanelParametersCopyAllowedMIMETypes(const void* parametersRef);
 const void* APS5_VABI WKOpenPanelParametersCopySelectedFileNames(const void* parametersRef);
 bool APS5_VABI WKOpenPanelParametersGetAllowsDirectories(const void* parametersRef);
 bool APS5_VABI WKOpenPanelParametersGetAllowsMultipleFiles(const void* parametersRef);

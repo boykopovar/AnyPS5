@@ -85,10 +85,7 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
  if (sem == nullptr) {
   return SCE_KERNEL_ERROR_ESRCH;
  }
- if (need <= 0) {
-  APS5_INVALID_ARG_EX;
- }
- if (need > sem->maxCount) {
+ if (need <= 0 || need > sem->maxCount) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
 

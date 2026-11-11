@@ -751,6 +751,19 @@ bool LiveGuestThreadExists(std::int64_t tid) {
     return false;
 }
 
+std::vector<LiveGuestThreadName> LiveGuestThreadNames() {
+    scePthreadSelf();
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    std::vector<LiveGuestThreadName> threads;
+    for (const auto& [id, thread] : registry.threads) {
+        if (GuestThreadEnded(thread)) continue;
+        std::lock_guard nameLock(thread->nameLock);
+        threads.push_back({thread->tid, thread->name});
+    }
+    return threads;
+}
+
 bool GuestThreadCpuNanos(int cpuClockThread, std::uint64_t* nanos) {
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
@@ -1456,7 +1469,7 @@ void APS5_VABI scePthreadYield() {
 }
 
 int APS5_VABI scePthreadCancel(Pthread thread) {
-    if (!thread) return SCE_KERNEL_ERROR_ESRCH;
+    if (!thread) return SCE_KERNEL_ERROR_EINVAL;
     GuestThreadReference reference;
     auto registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
@@ -1563,7 +1576,12 @@ int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask) {
 
 int APS5_VABI scePthreadSetcancelstate(int state, int* old_state) {
     if (state != GUEST_CANCEL_ENABLE && state != GUEST_CANCEL_DISABLE) return SCE_KERNEL_ERROR_EINVAL;
-    if (old_state) *old_state = CurrentGuestState().cancelState;
+    if (old_state) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(old_state, &CurrentGuestState().cancelState, sizeof(int));
+        errno = savedErrno;
+        if (!copied) return SCE_KERNEL_ERROR_EFAULT;
+    }
     CurrentGuestState().cancelState = state;
     if (CurrentGuestState().cancelType == GUEST_CANCEL_ASYNCHRONOUS) ThreadCancel::Check();
     return SCE_OK;
@@ -1571,7 +1589,12 @@ int APS5_VABI scePthreadSetcancelstate(int state, int* old_state) {
 
 int APS5_VABI scePthreadSetcanceltype(int type, int* old_type) {
     if (type != GUEST_CANCEL_DEFERRED && type != GUEST_CANCEL_ASYNCHRONOUS) return SCE_KERNEL_ERROR_EINVAL;
-    if (old_type) *old_type = CurrentGuestState().cancelType;
+    if (old_type) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(old_type, &CurrentGuestState().cancelType, sizeof(int));
+        errno = savedErrno;
+        if (!copied) return SCE_KERNEL_ERROR_EFAULT;
+    }
     CurrentGuestState().cancelType = type;
     if (CurrentGuestState().cancelType == GUEST_CANCEL_ASYNCHRONOUS) ThreadCancel::Check();
     return SCE_OK;

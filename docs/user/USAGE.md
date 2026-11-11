@@ -284,7 +284,7 @@ A Windows executable started without a standard output or error handle, such as 
 
 ### Display resolution and window size
 
-The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. F11 switches between window and fullscreen; set `ANYPS5_FULLSCREEN` to a non-empty value other than `0` to open the window fullscreen from the start. Changing the window size does not change the game's render resolution. The only host setting that changes the resolution a game reads is `APS5_OUTPUT_RESOLUTION`, described below; otherwise AnyPS5 provides no render-resolution override, so use a game's own display setting when it offers one.
+The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. F11 switches between window and fullscreen and returns the window to the size it had before. Set `ANYPS5_FULLSCREEN` to `1` or `borderless` to open the window fullscreen at the desktop resolution from the start, or to `0` or `windowed` (the default) to keep it windowed. Any other non-empty value, such as `true` or `yes`, still opens it fullscreen as before, and a warning on stderr names the value. Fullscreen goes to the display the window is on, which is the one `ANYPS5_DISPLAY_INDEX` selects at start. The mouse cursor is hidden while the window is fullscreen unless the game has opened a mouse. Changing the window size does not change the game's render resolution. The only host setting that changes the resolution a game reads is `APS5_OUTPUT_RESOLUTION`, described below; otherwise AnyPS5 provides no render-resolution override, so use a game's own display setting when it offers one.
 
 `APS5_OUTPUT_RESOLUTION=<width>x<height>`, for example `APS5_OUTPUT_RESOLUTION=1920x1080`, makes the game's video output status report the 1080p class when the width is below 3840 and the height below 2160, and the 2160p class otherwise, instead of the class of the display's current mode. The two numbers must be positive integers separated by `x` or `X`. An empty value is the same as an unset one; any other value stops the game with an error that names the variable.
 
@@ -537,7 +537,7 @@ To share a run, attach `anyps5-report.json` to the title's discussion. The runti
 
 ### Tracing system library calls
 
-Windows, Linux and macOS. An executable converted with `--trace-imports` records the calls it makes to the libraries named in `APS5_TRACE_CALLS`, a comma-separated list such as `libkernel,libSceSaveData`, or `all`. Without the variable nothing is recorded. If an import has no library label, the tracer uses the filename of the host module containing its function; select that name, such as `libSceAvPlayer.native`, rather than a guest alias. The crash and abort reports then end with the last 64 calls (on Linux and macOS, which have no crash report, only an abort prints them): sequence number, thread, library, import name as the executable imports it (a NID) and the caller's address. The last 32 of these calls made by the reporting thread follow, taken from the 65536 most recent calls, so a thread whose calls were pushed out of the last 64 by a busier one still shows them. Then come the 32 most called imports since start-up, with their number of calls.
+Windows, Linux and macOS. An executable converted with `--trace-imports` records the calls it makes to the libraries named in `APS5_TRACE_CALLS`, a comma-separated list such as `libkernel,libSceSaveData`, or `all`. Without the variable nothing is recorded. If an import has no library label, the tracer uses the filename of the host module containing its function; select that name, such as `libSceAvPlayer.native`, rather than a guest alias. The crash and abort reports then end with the last 64 calls (on macOS, which has no crash report, only an abort prints them): sequence number, thread, library, import name as the executable imports it (a NID) and the caller's address. The last 32 of these calls made by the reporting thread follow, taken from the 65536 most recent calls, so a thread whose calls were pushed out of the last 64 by a busier one still shows them. Then come the 32 most called imports since start-up, with their number of calls.
 
 ```
 last traced system library calls (APS5_TRACE_CALLS):
@@ -635,6 +635,19 @@ The panel uses the font and scale of the [performance overlay](#performance-over
 Some system dialogs need PlayStation Network: the profile, the friend list, the store, the invitation dialog, the Facebook link and the authorized-apps dialog. AnyPS5 does not provide PlayStation Network, so these dialogs finish at once with the same answer as a cancel, and nothing is shown. The web browser dialog is not known to need PlayStation Network, so its notice only says that the system feature is not available.
 
 Set `ANYPS5_PSN_DIALOGS=show` to show a notice on the game's screen when one of these dialogs opens. The notice has one OK button and takes the controller until it is answered. It is not shown again within two seconds of the previous one, and it is not shown while another dialog or notice is showing. The game's result is the same either way. `silent`, an unset variable and an empty one show nothing. Any other value stops the game at its first such dialog with an error that names `ANYPS5_PSN_DIALOGS`.
+
+### Linux crash report
+
+On Linux x86-64, a `SIGSEGV`, `SIGBUS`, `SIGILL` or `SIGFPE` that nothing else handles prints a report to stderr, and to the log file when `ANYPS5_LOG_FILE` is set, before the process ends with that signal:
+
+- the signal, its `si_code`, the fault address and the thread ID;
+- `rip`, as an address and as the mapped file plus its offset in that file, for example `app.elf+0xc77cda` or `libkernel.prx+0xc7e30`;
+- `guest abort()` for `int 0x45`, or `guest assert/break` for `int 0x41`, when the kernel's general-protection context and readable instruction bytes identify that interrupt;
+- the sixteen general registers;
+- the return addresses of the `rbp` frame chain, up to 32;
+- up to 24 stack words within 32 KiB above `rsp` that point at executable mappings.
+
+With `--trace-imports` and `APS5_TRACE_CALLS`, the last traced calls follow, as in the abort report. An offset in a guest module or the executable can be disassembled from the converted file at that file offset.
 
 ### Windows crash diagnostics
 

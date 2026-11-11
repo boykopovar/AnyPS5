@@ -506,9 +506,28 @@ static void TestSessionManagerRemaining() {
     _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody13setMaxPlayersERKi(nullptr, nullptr);
 }
 
+static void TestSmallInstantiations() {
+    IntrusivePtr empty{};
+    IntrusivePtr copied{};
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6BinaryEEC1ERKS5_(&copied, &empty);
+    Require(copied.object == nullptr, "the binary copy is not empty");
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6BinaryEED1Ev(&copied);
+    Require(!_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEcvbEv(&empty), "an empty restriction handle is true");
+
+    alignas(8) unsigned char object[8]{};
+    IntrusivePtr vector{};
+    vector.object = object;
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEdeEv(&vector) == object, "the string vector operand is wrong");
+
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_15ProfanityFilter2V223FilterProfanityResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() == 0, "the profanity transaction reports a response");
+    alignas(8) unsigned char transaction[0x10]{};
+    Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_15ProfanityFilter2V223FilterProfanityResponseEEENS4_INS2_18ResponseHeaderBaseEEEEC1ERKSB_(transaction) == 0, "the profanity transaction copy failed");
+}
+
 int main() {
     TestLeaderboardEntryAccessors();
     TestSessionManagerRemaining();
+    TestSmallInstantiations();
     TestParameterLifecycles();
     TestSessionManagerParameterLifecycles();
     TestLeaderboardsParameterLifecycles();
