@@ -904,6 +904,32 @@ int main() {
         return !GuardImplies(b.program, &observed, &active);
     });
 
+    passed &= run("a dominating ballot cannot justify a different ballot on the same path", [] {
+        Builder b;
+        auto& entry = *b.block;
+        auto& left = b.newBlock();
+        auto& right = b.newBlock();
+        auto& merge = b.newBlock();
+        auto& body = b.newBlock();
+        auto& exit = b.newBlock();
+        entry.AddBranch(&left);
+        entry.AddBranch(&right);
+        left.AddBranch(&merge);
+        right.AddBranch(&merge);
+        merge.AddBranch(&body);
+        merge.AddBranch(&exit);
+        body.AddBranch(&exit);
+        b.block = &merge;
+        const auto [low, high] = b.ballotWords(b.truth());
+        b.block = &body;
+        const auto optional = b.ballotWords(b.truth());
+        b.block = &exit;
+        auto& observed = b.mask(16u);
+        const IrBlock* const path[] = {&entry, &left, &merge, &body, &exit};
+        return GuardImpliesMaskOnPath(b.program, &observed, low, high, path) &&
+               !GuardImpliesMaskOnPath(b.program, &observed, low, optional.second, path);
+    });
+
     passed &= run("a later ballot in a reconverged block cannot justify an earlier observation", [] {
         Builder b;
         auto& entry = *b.block;
