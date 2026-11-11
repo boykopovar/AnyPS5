@@ -1,5 +1,9 @@
 # libSceRudp technical debt
 
+### Functional
+
+- [sceRudpGetMaxSegmentSize](../../../core/libs/prx/libSceRudp/Export.cpp) (libSceRudp) - returning `0x80770004` (`RUDP_ERROR_INVALID_ARGUMENT`) when the `size` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+
 ### Silent stubs
 
 - [sceRudpProcessEvents, sceRudpNetFlush and sceRudpNetReceived](../../../core/libs/prx/libSceRudp/Export.cpp) (libSceRudp) - there is no reliable-UDP stack on the host, and every `sceRudpWrite`, `sceRudpRead` and `sceRudpGetStatus` call here reports a reset or idle context without queueing data, so no context ever holds pending data to process, send or receive; the three calls return success after `sceRudpInit` and `RUDP_ERROR_NOT_INITIALIZED` before it, as [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/rudp/rudp.cpp) returns OK from its stubs. What the console's `sceRudpNetReceived` returns is unverified. PPSA03490 calls `sceRudpProcessEvents(0)` followed by `sceRudpNetFlush()` from its P2P service thread and ignores the first result.

@@ -1,5 +1,6 @@
 #include "prx/libSceRudp/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstddef>
@@ -540,7 +541,13 @@ int APS5_VABI sceRudpGetMaxSegmentSize(uint16_t* size) {
     if (size == nullptr) {
         return RUDP_ERROR_INVALID_ARGUMENT;
     }
-    *size = RUDP_MAX_SEGMENT_SIZE;
+    const uint16_t value = RUDP_MAX_SEGMENT_SIZE;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(size, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) {
+        return RUDP_ERROR_INVALID_ARGUMENT;
+    }
     return 0;
 }
 

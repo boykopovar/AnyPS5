@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -49,6 +50,9 @@ int main() {
     for (std::size_t offset : {1u, 2u, 4u}) Require(sceRudpInit_nid_postfix(pool + offset, 0x1000) == memory);
     Require(sceRudpInit_nid_postfix(pool + 8, 0xC58) == 0);
     Require(sceRudpInit_nid_postfix(nullptr, 0) == alreadyInitialized);
+    errno = 71;
+    Require(sceRudpGetMaxSegmentSize(reinterpret_cast<uint16_t*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     Require(sceRudpGetMaxSegmentSize(nullptr) == invalidArgument);
     Require(sceRudpGetMaxSegmentSize(&mss) == 0);
     Require(mss == 1410);
