@@ -42,7 +42,7 @@ class RecipeTests(unittest.TestCase):
             root = Path(directory)
             recipe = self.make_recipe(root)
             for key, value in (("title_id", "not-a-title"), ("build_commands", []),
-                               ("build_dir", "../outside"), ("seconds", 10),
+                               ("build_dir", "../outside"), ("build_dir", "."), ("seconds", 10),
                                ("repetitions", 2), ("regression_pct", 100),
                                ("max_spread_pct", math.inf)):
                 with self.subTest(key=key):
@@ -371,3 +371,25 @@ class CleanBuildTests(unittest.TestCase):
             self.assertEqual(result, repo / "build")
             self.assertFalse(stale.exists())
             self.assertTrue(result.is_dir())
+
+
+class BuildPathSafetyTests(unittest.TestCase):
+    def make_repo(self, root):
+        repo = root / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.name", "Test"], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.email", "test@example.invalid"], check=True)
+        return repo
+
+    def test_refuses_to_clear_a_build_directory_with_tracked_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self.make_repo(Path(directory))
+            tracked = repo / "build" / "source.cpp"
+            tracked.parent.mkdir()
+            tracked.write_text("tracked source", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "build/source.cpp"], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "test: tracked build source"], check=True)
+            with self.assertRaisesRegex(ValueError, "contains tracked source"):
+                performance_bisect.reset_build_dir(repo, repo / "build")
+            self.assertEqual(tracked.read_text(encoding="utf-8"), "tracked source")
