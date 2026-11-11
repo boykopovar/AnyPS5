@@ -18,6 +18,7 @@ constexpr int ControlPadding = 0x1001;
 constexpr int ControlPssSaltLen = 0x1002;
 constexpr int ControlGetPadding = 0x1006;
 constexpr int ControlGetPssSaltLen = 0x1007;
+constexpr int ControlMd = 1;
 constexpr int PaddingPss = 6;
 constexpr int SaltLength = 32;
 
@@ -56,6 +57,30 @@ static int VerifyPss(void* pkey, const unsigned char* message, std::size_t messa
     return EVP_DigestVerifyFinal_nid_postfix(context, const_cast<unsigned char*>(signature), signatureLength);
 }
 
+static void TestControlValidation(void* pkey) {
+    auto* context = EVP_MD_CTX_create_nid_postfix();
+    Require(context != nullptr);
+    void* pctx = nullptr;
+    Require(EVP_DigestVerifyInit_nid_postfix(context, &pctx, EVP_sha256_nid_postfix(), nullptr, pkey) == 1);
+    auto* keyContext = static_cast<PkeyContext*>(pctx);
+
+    int readSalt = 0;
+    Require(PkeyContextControl_nid_no_patch(keyContext, -1, -1, ControlPssSaltLen, 32, nullptr) == -2);
+    Require(PkeyContextControl_nid_no_patch(keyContext, -1, -1, ControlGetPssSaltLen, 0, &readSalt) == -2);
+    Require(PkeyContextControl_nid_no_patch(keyContext, -1, -1, ControlPadding, PaddingPss, nullptr) == 1);
+    Require(PkeyContextControl_nid_no_patch(keyContext, -1, -1, ControlPssSaltLen, -3, nullptr) == -2);
+    Require(PkeyContextControl_nid_no_patch(keyContext, -1, -1, ControlPssSaltLen, 32, nullptr) == 1);
+    Require(PkeyContextControl_nid_no_patch(keyContext, -1, -1, ControlMd, 0, const_cast<EvpMd*>(EVP_sha256_nid_postfix())) == 1);
+
+    auto* dup = PkeyContextDuplicate_nid_no_patch(keyContext);
+    Require(dup != nullptr);
+    int dupPadding = 0;
+    int dupSalt = 0;
+    Require(PkeyContextControl_nid_no_patch(dup, -1, -1, ControlGetPadding, 0, &dupPadding) == 1 && dupPadding == PaddingPss);
+    Require(PkeyContextControl_nid_no_patch(dup, -1, -1, ControlGetPssSaltLen, 0, &dupSalt) == 1 && dupSalt == 32);
+    PkeyContextFree_nid_no_patch(dup);
+}
+
 int main() {
     void* pkey = BuildKey();
 
@@ -71,6 +96,8 @@ int main() {
     Require(VerifyPss(pkey, otherMessage.data(), otherMessage.size(), kSignature, sizeof(kSignature), SaltLength) != 1);
 
     Require(VerifyPss(pkey, kMessage, sizeof(kMessage), kSignature, sizeof(kSignature), SaltLength + 1) != 1);
+
+    TestControlValidation(pkey);
 
     EVP_PKEY_free_nid_postfix(pkey);
     return 0;

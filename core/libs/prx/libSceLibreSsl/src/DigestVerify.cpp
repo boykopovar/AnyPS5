@@ -141,6 +141,8 @@ int APS5_VABI RsaContextCopy(PkeyContext* target, PkeyContext* source) {
     to.bits = from.bits;
     to.padding = from.padding;
     to.digest = from.digest;
+    to.maskDigest = from.maskDigest;
+    to.saltLength = from.saltLength;
     return 1;
 }
 
@@ -198,7 +200,7 @@ int APS5_VABI RsaVerify(PkeyContext* context, const unsigned char* signature, st
 
 bool CheckPaddingDigest(const EvpMd* digest, int padding) {
     if (!digest) return true;
-    if (padding != PaddingPkcs1) NotImplemented_nid_no_patch("pkey_rsa_ctrl with a padding mode other than PKCS#1 v1.5");
+    if (padding != PaddingPkcs1 && padding != PaddingPss) NotImplemented_nid_no_patch("pkey_rsa_ctrl with a padding mode other than PKCS#1 v1.5 or PSS");
     return true;
 }
 
@@ -219,10 +221,11 @@ int APS5_VABI RsaControl(PkeyContext* context, int command, int argument, void* 
         *static_cast<int*>(pointer) = data.padding;
         return 1;
     case ControlPssSaltLen:
-        if (data.padding != PaddingPss) return -2;
+        if (data.padding != PaddingPss || argument < LongestSalt) return -2;
         data.saltLength = argument;
         return 1;
     case ControlGetPssSaltLen:
+        if (data.padding != PaddingPss) return -2;
         *static_cast<int*>(pointer) = data.saltLength;
         return 1;
     default:
