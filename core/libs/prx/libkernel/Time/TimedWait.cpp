@@ -51,6 +51,7 @@ std::condition_variable& ChangeCondition() {
 struct ThreadWaitState {
     std::atomic<int> own{0};
     std::atomic<int>* bound = &own;
+    int timerDepth = 0;
 };
 
 struct DeferredDrain {
@@ -110,16 +111,16 @@ HANDLE CreateHighResolutionTimer() {
 }
 
 bool TimerWait(HANDLE timer, std::uint64_t nanos) {
-    thread_local int depth = 0;
     struct Nesting {
+        int& depth;
         HANDLE own;
-        explicit Nesting(bool nested) : own(nested ? CreateHighResolutionTimer() : nullptr) { ++depth; }
+        explicit Nesting(int& depth) : depth(depth), own(depth != 0 ? CreateHighResolutionTimer() : nullptr) { ++depth; }
         ~Nesting() {
             --depth;
             if (own) CloseHandle(own);
         }
-    } nesting(depth != 0);
-    if (depth > 1) timer = nesting.own;
+    } nesting(WaitState().timerDepth);
+    if (nesting.depth > 1) timer = nesting.own;
     if (!timer) return false;
     LARGE_INTEGER due{};
     due.QuadPart = -static_cast<LONGLONG>(nanos / 100ULL);
