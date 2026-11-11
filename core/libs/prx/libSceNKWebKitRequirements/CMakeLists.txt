@@ -72,7 +72,7 @@ if(BUILD_TESTING)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKitRequirements>")
     endif()
 
-    foreach(topic IN ITEMS Jpeg JpegRestart Xml Psl)
+    foreach(topic IN ITEMS Jpeg Xml Psl)
         string(TOLOWER ${topic} test_name)
         add_test_executable(guest_nk_req_${test_name}_tests tests/${topic}.cpp)
         target_include_directories(guest_nk_req_${test_name}_tests PRIVATE
@@ -104,5 +104,18 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_ubsan_cfi PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKitRequirements>\;$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_nk_req_jpeg_restart_tests tests/JpegRestart.cpp)
+    target_include_directories(guest_nk_req_jpeg_restart_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_nk_req_jpeg_restart_tests PRIVATE libSceNKWebKitRequirements jpeg_turbo libc)
+    configure_windows_unwind(guest_nk_req_jpeg_restart_tests)
+    add_test(NAME guest_nk_req_jpeg_restart COMMAND guest_nk_req_jpeg_restart_tests)
+    set_tests_properties(guest_nk_req_jpeg_restart PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_nk_req_jpeg_restart PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKitRequirements>")
     endif()
 endif()
