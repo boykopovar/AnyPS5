@@ -1,8 +1,11 @@
 #pragma once
 
+#include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 namespace WebCore {
 
@@ -134,6 +137,62 @@ struct Color {
     std::uint64_t m_colorAndFlags{0};
 };
 
+struct RedirectChainCacheStatus {
+    enum class Status : std::uint8_t {
+        NoRedirection,
+        NotCachedRedirection,
+        CachedRedirection,
+    };
+
+    WTF::WallTime endOfValidity;
+    Status status{Status::NoRedirection};
+};
+
+enum class ViewportFit : std::uint8_t {
+    Auto,
+    Contain,
+    Cover
+};
+
+struct ViewportAttributes {
+    FloatSize layoutSize;
+    float initialScale;
+    float minimumScale;
+    float maximumScale;
+    float userScalable;
+    float orientation;
+    float shrinkToFit;
+    ViewportFit viewportFit;
+};
+
+struct ViewportArguments {
+    enum Type : int {
+        Implicit,
+        ViewportMeta,
+        CSSDeviceAdaptation
+    };
+
+    static constexpr int ValueAuto = -1;
+    static constexpr int ValueDeviceWidth = -2;
+    static constexpr int ValueDeviceHeight = -3;
+
+    Type type{Implicit};
+    float width{ValueAuto};
+    float minWidth{ValueAuto};
+    float maxWidth{ValueAuto};
+    float height{ValueAuto};
+    float minHeight{ValueAuto};
+    float maxHeight{ValueAuto};
+    float zoom{ValueAuto};
+    float minZoom{ValueAuto};
+    float maxZoom{ValueAuto};
+    float userZoom{ValueAuto};
+    float orientation{ValueAuto};
+    float shrinkToFit{ValueAuto};
+    ViewportFit viewportFit{ViewportFit::Auto};
+    bool widthWasExplicit{false};
+};
+
 static_assert(sizeof(IntPoint) == 8);
 static_assert(sizeof(IntSize) == 8);
 static_assert(sizeof(IntRect) == 16);
@@ -152,5 +211,15 @@ static_assert(sizeof(TransformationMatrix) == 128);
 static_assert(sizeof(MatrixTransformOperation) == 64);
 static_assert(offsetof(MatrixTransformOperation, m_a) == 16);
 static_assert(sizeof(Color) == 8);
+static_assert(sizeof(RedirectChainCacheStatus) == 16);
+static_assert(offsetof(RedirectChainCacheStatus, endOfValidity) == 0);
+static_assert(offsetof(RedirectChainCacheStatus, status) == 8);
+static_assert(std::is_trivially_copyable_v<RedirectChainCacheStatus>);
+static_assert(sizeof(ViewportAttributes) == 36);
+static_assert(offsetof(ViewportAttributes, viewportFit) == 32);
+static_assert(sizeof(ViewportArguments) == 56);
+static_assert(offsetof(ViewportArguments, width) == 4);
+static_assert(offsetof(ViewportArguments, viewportFit) == 52);
+static_assert(offsetof(ViewportArguments, widthWasExplicit) == 53);
 
 }  // namespace WebCore

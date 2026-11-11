@@ -2,32 +2,32 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceAjmi/Export.cpp) - 22 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceAjmi/Export.cpp) - 22 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Of the 20 missing from that catalogue, 18 are named by NID hash (17 share a `sceAjm` twin's 13.42 address) and 2 keep NID aliases. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 | Name | NID |
 | --- | --- |
 | `sceAjmiBatchCancel` | `6lWAGxD8NLs` |
 | `sceAjmiBatchWait` | `JJ9g04D344Q` |
 | `Unknown` | `4MsUK9kAnKg` |
-| `Unknown` | `6fY-ci3au2U` |
-| `Unknown` | `9zA4YMlkR9M` |
-| `Unknown` | `BD002VBfhuE` |
-| `Unknown` | `EYIibEpcHuw` |
-| `Unknown` | `J3UwQ5e6sNU` |
-| `Unknown` | `LESEGgm133w` |
-| `Unknown` | `MTdd8ApwO50` |
-| `Unknown` | `QhA7rTjJbro` |
-| `Unknown` | `RbLGSlJB6dc` |
-| `Unknown` | `Uqtj4RSP-JQ` |
-| `Unknown` | `X8sT-xi-dVE` |
-| `Unknown` | `YtubBgSeNH0` |
-| `Unknown` | `cWZnCK7na5Y` |
-| `Unknown` | `dTsNpEt1AqQ` |
-| `Unknown` | `dmwcwCeItmE` |
+| `sceAjmiModuleUnregister` | `6fY-ci3au2U` |
+| `sceAjmiBatchStartBuffer` | `9zA4YMlkR9M` |
+| `sceAjmiFinalize` | `BD002VBfhuE` |
+| `sceAjmiStrError` | `EYIibEpcHuw` |
+| `sceAjmiBatchJobControlBufferRa` | `J3UwQ5e6sNU` |
+| `sceAjmiInstanceSwitch` | `LESEGgm133w` |
+| `sceAjmiDecAt9ParseConfigData` | `MTdd8ApwO50` |
+| `sceAjmiInitialize` | `QhA7rTjJbro` |
+| `sceAjmiBatchErrorDump` | `RbLGSlJB6dc` |
+| `sceAjmiInstanceCodecType` | `Uqtj4RSP-JQ` |
+| `sceAjmiMemoryUnregister` | `X8sT-xi-dVE` |
+| `sceAjmiInstanceDestroy` | `YtubBgSeNH0` |
+| `sceAjmiDecMp3ParseFrame` | `cWZnCK7na5Y` |
+| `sceAjmiMemoryRegister` | `dTsNpEt1AqQ` |
+| `sceAjmiModuleRegister` | `dmwcwCeItmE` |
 | `Unknown` | `m0xisYC6U2w` |
-| `Unknown` | `ofRX8Vq0ss0` |
-| `Unknown` | `pfPwiigOE3A` |
-| `Unknown` | `r7NMFYcJi08` |
+| `sceAjmiInstanceCreate` | `ofRX8Vq0ss0` |
+| `sceAjmiInstanceExtend` | `pfPwiigOE3A` |
+| `sceAjmiBatchJobRunSplitBufferRa` | `r7NMFYcJi08` |
 
 ### Unknown function info
 

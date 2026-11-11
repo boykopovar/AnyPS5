@@ -226,6 +226,9 @@ void TestErrors() {
     Require(WebRtcOpus_EncoderCreate_nid_postfix(&inst, 1, 2, SampleRate) == -1 && inst == untouched);
     Require(WebRtcOpus_EncoderCreate_nid_postfix(&inst, 1, Voip, 44100) == -1 && inst == untouched);
     Require(WebRtcOpus_EncoderCreate_nid_postfix(&inst, 3, Audio, SampleRate) == -1 && inst == untouched);
+    Require(WebRtcOpus_EncoderCreate_nid_postfix(&inst, 0, Audio, SampleRate) == -1 && inst == untouched);
+    Require(WebRtcOpus_EncoderCreate_nid_postfix(&inst, (std::size_t{1} << 32) + 1, Audio, SampleRate) == -1 && inst == untouched);
+    Require(WebRtcOpus_EncoderCreate_nid_postfix(&inst, (std::size_t{1} << 32) + 2, Voip, SampleRate) == -1 && inst == untouched);
     Require(WebRtcOpus_EncoderFree_nid_postfix(nullptr) == -1);
     Require(WebRtcOpus_SetBitRate_nid_postfix(nullptr, 32000) == -1);
     Require(WebRtcOpus_SetPacketLossRate_nid_postfix(nullptr, 10) == -1);

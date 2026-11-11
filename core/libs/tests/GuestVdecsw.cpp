@@ -164,6 +164,33 @@ void testGenericPictureInfoLifetime() {
     check(throws([&] { sceVdecswGetPictureInfo(&output, &info, nullptr); }) && std::memcmp(&info, &before, sizeof(info)) == 0, "generic picture info survived decoder destruction");
 }
 
+void testPictureInfoOfReusedFrameBuffer() {
+    Session first;
+    Session second;
+    std::vector<std::uint8_t> buffer(std::max(first.memory.maxFrameBufferSize, second.memory.maxFrameBufferSize));
+    const auto units = accessUnits(false);
+    const auto decodeInto = [&](const Session& session, std::uint64_t pts) {
+        const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), pts, pts, pts};
+        check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "shared buffer input failed");
+        InputResult consumed{sizeof(InputResult)};
+        check(sceVdecswSyncDecodeInput(session.decoder, &consumed) == 0, "shared buffer input was not consumed");
+        const FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size()};
+        check(sceVdecswSetDecodeOutput(session.decoder, &frame) == 0, "shared buffer was rejected");
+        check(sceVdecswFinalizeDecodeSequence(session.decoder) == 0, "shared buffer finalize failed");
+        OutputInfo output{sizeof(OutputInfo)};
+        check(sceVdecswSyncDecodeOutput(session.decoder, &output) == 0 && output.isValid && output.frameBuffer == buffer.data(), "shared buffer picture missing");
+        return output;
+    };
+    decodeInto(first, 1000);
+    const auto output = decodeInto(second, 2000);
+    AvcPictureInfo typed{sizeof(AvcPictureInfo)};
+    check(sceVdecswGetAvcPictureInfo(&output, &typed, nullptr) == 0 && typed.ptsData == 2000 && typed.dtsData == 2000 && typed.attachedData == 2000, "AVC picture info of a reused frame buffer came from the decoder that wrote it earlier");
+    AvcPictureInfo generic{sizeof(AvcPictureInfo)};
+    check(sceVdecswGetPictureInfo(&output, &generic, nullptr) == 0 && generic.ptsData == 2000, "generic picture info of a reused frame buffer came from the decoder that wrote it earlier");
+    check(sceVdecswResetDecoder(second.decoder) == 0, "shared buffer reset failed");
+    check(throws([&] { sceVdecswGetAvcPictureInfo(&output, &typed, nullptr); }), "picture info of a reused frame buffer outlived the reset of its last decoder");
+}
+
 void testDecode() {
     Session session;
     const auto units = accessUnits(false);
@@ -547,6 +574,7 @@ int main() {
     try {
         testGenericPictureInfoValidation();
         testGenericPictureInfoLifetime();
+        testPictureInfoOfReusedFrameBuffer();
         testDecode();
         testHevc();
         testHevcCrop();

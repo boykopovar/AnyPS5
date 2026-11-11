@@ -142,7 +142,7 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
         ph.PhysicalAddress = _readU64At(offset + 0x18);
         ph.FileSize = _readU64At(offset + 0x20);
         ph.MemorySize = _readU64At(offset + 0x28);
-        ph.Alignment = _readU64At(offset + 0x30);
+        ph.Alignment = _readU64At(offset + kPhdrAlignOffset);
 
         if (ph.Type == PT_LOAD && ph.FileSize > ph.MemorySize)
             throw RelinkerException("PT_LOAD file size exceeds memory size", ph.Offset);
@@ -231,10 +231,28 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
         sh.SectionSize = _readU64At(offset + 0x20);
         sh.Link = _readU32At(offset + 0x28);
         sh.Info = _readU32At(offset + 0x2c);
+        sh.Alignment = _readU64At(offset + kShdrAlignOffset);
         sh.EntrySize = _readU64At(offset + kShdrEntSizeOffset);
 
-        if (sh.Type == SHT_SYMTAB && sh.EntrySize != kSymEntrySize) {
+        if ((sh.Type == SHT_SYMTAB || sh.Type == SHT_DYNSYM || sh.Type == SHT_RELA || sh.Type == SHT_REL || sh.Type == SHT_DYNAMIC)
+            && sh.Link >= header.SectionHeaderCount) {
+            throw RelinkerException("Section link index out of bounds", offset + kShdrLinkOffset);
+        }
+
+        if (sh.Type != SHT_NULL && sh.Alignment > 1 && !std::has_single_bit(sh.Alignment)) {
+            throw RelinkerException("Section header alignment is not a power of two", offset + kShdrAlignOffset);
+        }
+
+        if ((sh.Type == SHT_SYMTAB || sh.Type == SHT_DYNSYM) && sh.EntrySize != kSymEntrySize) {
             throw RelinkerException("Invalid symbol table entry size", offset + kShdrEntSizeOffset);
+        }
+
+        if (sh.Type == SHT_RELA && sh.EntrySize != kRelaEntrySize) {
+            throw RelinkerException("Invalid relocation entry size", offset + kShdrEntSizeOffset);
+        }
+
+        if (sh.Type == SHT_REL && sh.EntrySize != 16) {
+            throw RelinkerException("Invalid relocation entry size", offset + kShdrEntSizeOffset);
         }
 
         if (sh.Type != SHT_NULL && sh.Type != SHT_NOBITS && sh.SectionSize != 0) {
