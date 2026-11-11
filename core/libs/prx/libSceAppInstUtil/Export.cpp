@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAppInstUtil/include/InventoryExports.hpp"
 #include "prx/libSceAppInstUtil/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -43,10 +44,14 @@ int APS5_VABI sceAppInstUtilAppIsInUpdating(const char* titleId, bool* updating)
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppExists(const char* titleId, int32_t* exists) {
+    const int savedErrno = errno;
     if (titleId == nullptr || exists == nullptr) return ErrorNullArgument;
     std::lock_guard lock(g_serviceMutex);
     if (g_serviceReferences <= 0) return ErrorNotInitialized;
-    *exists = std::strcmp(titleId, GetAppTitleId_nid_postfix().value) == 0 ? 1 : 0;
+    const int32_t localExists = std::strcmp(titleId, GetAppTitleId_nid_postfix().value) == 0 ? 1 : 0;
+    const bool copied = GuestCopyOut_nid_no_patch(exists, &localExists, sizeof(localExists));
+    errno = savedErrno;
+    if (!copied) return ErrorNullArgument;
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppGetSize(const char* titleId, std::uint64_t* size) {
