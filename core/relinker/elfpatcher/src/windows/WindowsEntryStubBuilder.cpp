@@ -665,7 +665,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
             probeFailed = code.Branch({0xe9});
             code.PatchBranch(exists, code.GetRva());
         };
-        if (index >= guestModules.size() && !imported[index]) probeMissingFile();
+        if (index >= guestModules.size() && !imported[index] && !executableProviders[index]) probeMissingFile();
 
         code.Emit({0x48, 0x89, 0xf1, 0x31, 0xd2, 0x41, 0xb8, 0, 0x11, 0, 0});
         call("LoadLibraryExW");

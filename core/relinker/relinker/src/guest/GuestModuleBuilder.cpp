@@ -219,12 +219,15 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     if (dynamic.DynSymData.size() % 24 != 0) throw Domain::RelinkerException("Invalid executable symbol table");
     const auto executableExports = windows ? std::set<std::string>{} : ExportedNames(dynamic);
     std::set<std::string> resolvedOnExecutable;
+    const auto noteResolvedOnExecutable = [&](const std::string& library) {
+        if (resolvedOnExecutable.insert(library).second)
+            progress.Message("Needed module " + library + " is resolved on the executable (--executable-module)\n");
+    };
     const auto noteHostImport = [&](const std::string& library, const std::string& symbol) {
         if (!executableModuleNames.contains(library)) return;
         if (!executableExports.contains(symbol))
             throw Domain::RelinkerException("--executable-module " + library + ": the executable does not export " + symbol);
-        if (resolvedOnExecutable.insert(library).second)
-            progress.Message("Needed module " + library + " is resolved on the executable (--executable-module)\n");
+        noteResolvedOnExecutable(library);
     };
     std::vector<std::string> executableModules(dynamic.DynSymData.size() / 24);
     std::vector<bool> executableReferences(executableModules.size());
@@ -385,7 +388,9 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     const auto hostLibrary = [&](const std::string& name) { return windows || macos ? name : Domain::NeededLibraryName(name); };
     const auto loadsHost = [&](const std::string& name) {
         if (findGuest(name) != guestNames.end()) return false;
-        return windows || !executableModuleNames.contains(name);
+        if (windows || !executableModuleNames.contains(name)) return true;
+        noteResolvedOnExecutable(name);
+        return false;
     };
     std::vector<std::filesystem::path> runDirectories;
     bool runDirectoriesExist = !windows && !macos;
@@ -426,6 +431,11 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         if (const auto host = hostLibrary(name); startup && uniqueHosts.insert(host).second) hostLibraries.push_back(host);
     };
     for (const auto& name : neededNames) addHost(name, true);
+    for (const auto& name : executableModuleNames) {
+        const auto needs = [&](const std::vector<std::string>& names) { return std::find(names.begin(), names.end(), name) != names.end(); };
+        if (resolvedOnExecutable.contains(name) || needs(neededNames) || std::any_of(images.begin(), images.end(), [&](const auto& image) { return needs(image.Dependencies); })) continue;
+        progress.Message("Warning: --executable-module " + name + " matches no needed library of the executable or its modules; it has no effect\n");
+    }
     for (std::size_t index = 0; index < images.size(); ++index) {
         auto& hosts = moduleHostLibraries[index];
         for (const auto& dependency : images[index].Dependencies) {

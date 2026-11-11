@@ -21,12 +21,18 @@ ENTRY_VALUE = 42
 LIBRARY_VALUE = 44
 LOAD_FAILURE = 'Failed to load module:'
 NAME = ['--executable-module', MODULE]
+MISSPELLED = MODULE + 'X'
+UNMATCHED = f'Warning: --executable-module {MISSPELLED} matches no needed library'
 RESOLVED = f'Needed module {MODULE} is resolved on the executable'
 PROBED = (MODULE + '.dll').encode('utf-16-le')
 
 
-def importer(symbol=EXPORTED, owner=MODULE, expected=EXECUTABLE_VALUE):
-    return consumer(owner, symbol=symbol, expected=expected, module_name=MODULE)
+def importer(symbol=EXPORTED, owner=MODULE, expected=EXECUTABLE_VALUE, module=MODULE):
+    return consumer(owner, symbol=symbol, expected=expected, module_name=module)
+
+
+def unreferenced():
+    return importer(module='SyntheticOther')
 
 
 def convert(relinker, case, options, modules, symbols=SYMBOLS):
@@ -66,6 +72,11 @@ def assert_no_resolved_message(case):
     assert RESOLVED not in convert.last.stdout, (case, convert.last.stdout)
 
 
+def assert_unmatched_message(case):
+    assert UNMATCHED in convert.last.stdout, (case, convert.last.stdout, convert.last.stderr)
+    assert RESOLVED not in convert.last.stdout, (case, convert.last.stdout)
+
+
 def run(output):
     return subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
 
@@ -101,6 +112,10 @@ def check_windows(relinker, work):
     if native:
         result = expect_entry(output)
         assert 'the executable exports every symbol imported from it' in result.stderr, result.stderr
+
+    output = convert(relinker, work / 'windows-misspelled', ['--windows', '--executable-module', MISSPELLED], {'consumer.prx': importer()})
+    assert_unmatched_message('windows-misspelled')
+    assert PROBED not in output.read_bytes()
 
     output = convert(relinker, work / 'windows-unnamed', ['--windows'], {'consumer.prx': importer()})
     assert_no_resolved_message('windows-unnamed')
@@ -148,6 +163,14 @@ def check_linux(relinker, work):
     assert MODULE not in executable and '$ORIGIN/app0/sce_module/consumer.prx.guest.prx' in executable, executable
     assert MODULE not in module, module
 
+    executable, module = needed('linux-unreferenced', {'consumer.prx': unreferenced()}, 'consumer.prx.guest.prx', NAME)
+    assert_resolved_message('linux-unreferenced')
+    assert MODULE not in executable and MODULE not in module, (executable, module)
+
+    executable, module = needed('linux-misspelled', {'consumer.prx': importer()}, 'consumer.prx.guest.prx', ['--executable-module', MISSPELLED])
+    assert_unmatched_message('linux-misspelled')
+    assert MODULE in executable and MODULE in module, (executable, module)
+
     executable, module = needed('linux-unnamed', {'consumer.prx': importer()}, 'consumer.prx.guest.prx')
     assert_no_resolved_message('linux-unnamed')
     assert MODULE in executable and MODULE in module, (executable, module)
@@ -165,6 +188,12 @@ def check_macos(relinker, work):
     output = convert(relinker, work / 'macos-resolved', ['--macos', *NAME], {'consumer.prx': importer()})
     assert_resolved_message('macos-resolved')
     assert dependency not in MachO(output.read_bytes()).dylibs
+    output = convert(relinker, work / 'macos-unreferenced', ['--macos', *NAME], {'consumer.prx': unreferenced()})
+    assert_resolved_message('macos-unreferenced')
+    assert dependency not in MachO(output.read_bytes()).dylibs
+    output = convert(relinker, work / 'macos-misspelled', ['--macos', '--executable-module', MISSPELLED], {'consumer.prx': importer()})
+    assert_unmatched_message('macos-misspelled')
+    assert dependency in MachO(output.read_bytes()).dylibs
     output = convert(relinker, work / 'macos-unnamed', ['--macos'], {'consumer.prx': importer()})
     assert dependency in MachO(output.read_bytes()).dylibs
     output = convert(relinker, work / 'macos-absent', ['--macos'], {'consumer.prx': importer(ABSENT)})
