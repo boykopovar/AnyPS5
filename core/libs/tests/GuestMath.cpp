@@ -3722,6 +3722,12 @@ int main() {
     Require(rand_nid_postfix() == 0 && rand_nid_postfix() == 408024109);
     srand_nid_postfix(0xffffffffu);
     Require(rand_nid_postfix() == 876841727 && rand_nid_postfix() == 830605684);
+    srand_nid_postfix(0x2au);
+    Require(rand_nid_postfix() == 0x3d720f6e && rand_nid_postfix() == 0x3800fec1 && rand_nid_postfix() == 0xf6ada53);
+    srand_nid_postfix(0x7fffffffu);
+    Require(rand_nid_postfix() == 0xdf8cb69 && rand_nid_postfix() == 0x30ba327f && rand_nid_postfix() == 0x2ebfb7d2);
+    srand_nid_postfix(0x80000000u);
+    Require(rand_nid_postfix() == 0x264abf96 && rand_nid_postfix() == 0x1919cb21 && rand_nid_postfix() == 0x39c42149);
     for (int step = 0; step < 1000; ++step) Require(static_cast<unsigned int>(rand_nid_postfix()) <= 0x3fffffffu);
     bool threw = false;
     try { rand_r_nid_postfix(nullptr); } catch (...) { threw = true; }
