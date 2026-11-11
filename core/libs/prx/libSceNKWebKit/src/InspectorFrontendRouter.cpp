@@ -162,6 +162,9 @@ void CheckChannels(const FrontendRouter& router) {
 }
 
 void Clear(FrontendRouter& router) {
+    if (router.buffer != router.inlineBuffer) _ZN3WTF8fastFreeEPv(router.buffer);
+    router.buffer = router.inlineBuffer;
+    router.capacity = InlineCapacity;
     router.size = 0;
 }
 

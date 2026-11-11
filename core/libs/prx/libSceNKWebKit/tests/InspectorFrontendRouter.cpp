@@ -313,8 +313,8 @@ void TestDisconnectAll() {
         Require(router.ptr->capacity == 16);
         _ZN9Inspector14FrontendRouter22disconnectAllFrontendsEv(router.ptr);
         Require(router.ptr->size == 0);
-        Require(router.ptr->capacity == 16);
-        Require(router.ptr->buffer != router.ptr->inlineBuffer);
+        Require(router.ptr->capacity == 2);
+        Require(router.ptr->buffer == router.ptr->inlineBuffer);
         Require(!_ZNK9Inspector14FrontendRouter12hasFrontendsEv(router.ptr));
     }
     {
