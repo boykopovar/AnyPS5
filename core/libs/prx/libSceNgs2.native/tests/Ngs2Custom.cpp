@@ -1512,7 +1512,7 @@ static void TestMasteringModuleParams() {
     }
     for (std::uint32_t id = 0x40030002; id <= 0x40030006; id++) Require(MasteringControl(voice, id, AnyModuleParam{}) == SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_ID);
     for (const std::uint32_t id : {0x30000002u, 0x30000003u, 0x30000004u, 0x30000006u}) Require(MasteringControl(voice, id, AnyModuleParam{}) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
-    Require(MasteringControl(voice, SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, 2, 0}) == SCE_NGS2_OK);
+    Require(ControlThrows<std::runtime_error>(voice, SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, 2, 0}));
 
     for (const std::uint32_t mode : {0u, 1u, 2u}) Require(MasteringControl(voice, 0x40001801, Ngs2VoicePeakMeterParam{{}, mode, 0}) == SCE_NGS2_OK);
     for (const std::uint32_t mode : {3u, 0xffffffffu}) {

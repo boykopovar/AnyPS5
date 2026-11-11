@@ -434,7 +434,6 @@ static void ProcessMixMatrix(Ngs2Voice& voice, std::uint32_t grain) {
     RefreshHasSamples(voice);
 }
 
-
 void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
     const auto rackId = voice.rack->rackId;
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING && voice.rack->numModules != 0 && (param.id >> 16) == SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 >> 16) {
