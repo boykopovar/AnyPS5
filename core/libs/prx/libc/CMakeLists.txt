@@ -141,6 +141,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/CrashReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/GuestGs.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/x86_64/CallTrace.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/CrashReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/DlIteratePhdr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/macos/GuestImages.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Strings.cpp
@@ -155,6 +156,8 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/J0f.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/J1f.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Random.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedMultiprecision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatBuiltins.cpp
@@ -2231,6 +2234,17 @@ if(BUILD_TESTING)
         add_test_executable(cpu_topology_tests ${LIBS_INCLUDE_DIR}/tests/CpuTopology.cpp)
         target_include_directories(cpu_topology_tests PRIVATE ${LIBS_INCLUDE_DIR})
         add_test(NAME cpu_topology COMMAND cpu_topology_tests)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+            add_test_executable(linux_crash_report_tests ${LIBS_INCLUDE_DIR}/tests/LinuxCrashReport.cpp)
+            target_include_directories(linux_crash_report_tests PRIVATE ${LIBS_INCLUDE_DIR})
+            target_link_libraries(linux_crash_report_tests PRIVATE ${CMAKE_DL_LIBS})
+            target_link_options(linux_crash_report_tests PRIVATE "-Wl,--export-dynamic-symbol=write" "-Wl,--export-dynamic-symbol=sigaltstack")
+            add_dependencies(linux_crash_report_tests libc)
+            add_test(NAME linux_crash_report COMMAND linux_crash_report_tests $<TARGET_FILE:libc> basic)
+            add_test(NAME linux_crash_report_handlers COMMAND linux_crash_report_tests $<TARGET_FILE:libc> handlers)
+            add_test(NAME linux_crash_report_logging COMMAND linux_crash_report_tests $<TARGET_FILE:libc> logging)
+            set_tests_properties(linux_crash_report linux_crash_report_handlers linux_crash_report_logging PROPERTIES TIMEOUT 30)
+        endif()
     endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE OR WIN32)
         add_test_executable(guest_backtrace_tests ${LIBS_INCLUDE_DIR}/tests/GuestBacktrace.cpp)
@@ -2324,6 +2338,18 @@ if(NOT WIN32)
         set_target_properties(guest_allocations_oom_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
         add_test(NAME guest_allocations_oom COMMAND guest_allocations_oom_tests)
         set_tests_properties(guest_allocations_oom PROPERTIES TIMEOUT 60)
+    endif()
+endif()
+
+add_test_executable(guest_sce_v2_facet_ids_tests EXCLUDE_FROM_ALL ${LIBS_INCLUDE_DIR}/tests/GuestSceV2FacetIds.cpp)
+target_include_directories(guest_sce_v2_facet_ids_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_sce_v2_facet_ids_tests PRIVATE libc)
+configure_windows_unwind(guest_sce_v2_facet_ids_tests)
+if(BUILD_TESTING)
+    set_target_properties(guest_sce_v2_facet_ids_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    add_test(NAME guest_sce_v2_facet_ids COMMAND guest_sce_v2_facet_ids_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_facet_ids PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
 

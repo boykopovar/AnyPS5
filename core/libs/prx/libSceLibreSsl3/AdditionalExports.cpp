@@ -168,11 +168,6 @@ int APS5_VABI SSL_CTX_set_default_verify_paths_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI Unknown_GjO5Ap3E_minus_t4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("GjO5Ap3E-t4", Unknown_GjO5Ap3E_minus_t4_nid_no_patch);
-
 int APS5_VABI X509_set_version_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -280,10 +275,6 @@ int APS5_VABI SSL_CTX_set_ciphersuites_nid_postfix() {
 }
 
 int APS5_VABI PEM_write_bio_PrivateKey_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI SSL_CTX_set_keylog_callback_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
