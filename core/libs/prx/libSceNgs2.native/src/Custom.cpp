@@ -114,7 +114,7 @@ static int CheckMasteringModules(const Ngs2CustomRackOption& option) {
         if (std::any_of(option.module, option.module + m, [&info](const auto& other) { return other.module_id == info.module_id; })) {
             throw std::runtime_error("NGS2: several custom mastering modules " + Ngs2Hex(info.module_id) + " are not implemented");
         }
-        if (info.source_buffer_id != 0 || info.extra_buffer_id != 0 || info.dest_buffer_id != 0) return SCE_NGS2_ERROR_INVALID_BUFFER_INDEX;
+        if (info.source_buffer_id != 0 || info.extra_buffer_id != 0 || info.dest_buffer_id != 0) throw std::runtime_error("NGS2: custom mastering module buffer ids other than 0 are not implemented");
         int result = CheckMasteringModuleState(option, info);
         if (result == SCE_NGS2_OK) result = CheckMasteringModuleOption(info);
         if (result != SCE_NGS2_OK) return result;
