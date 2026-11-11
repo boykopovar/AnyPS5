@@ -38,6 +38,7 @@ public:
     static void NoteInline(InlineReason reason, std::uint32_t opcode);
     static void ReportCommitter();
     static std::size_t Depth();
+    static bool PipelineIndirect();
     static std::size_t QueuedItems();
     static bool& Active();
     static std::atomic<std::uint64_t>& EpochToken();
