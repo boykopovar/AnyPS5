@@ -1005,16 +1005,6 @@ endif()
 set_target_properties(agc_frame_replay PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_frame_replay)
 
-add_executable(agc_frame_capture_filter EXCLUDE_FROM_ALL
-        tools/FrameCaptureFilter.cpp
-        tools/FrameCaptureFilterMain.cpp
-        Execution/src/FrameCapture.cpp
-)
-target_include_directories(agc_frame_capture_filter PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(agc_frame_capture_filter PRIVATE libc libzstd_static)
-set_target_properties(agc_frame_capture_filter PROPERTIES CXX_EXTENSIONS OFF)
-configure_windows_unwind(agc_frame_capture_filter)
-
 add_executable(agc_pm4_replay EXCLUDE_FROM_ALL
         tools/Pm4Replay.cpp
         tools/Pm4Analysis.cpp
