@@ -62,6 +62,13 @@ class DebtFragmentTests(unittest.TestCase):
         self.assertEqual([(rule, path, line) for rule, path, line, _ in findings], [("debt-fragment", FRAGMENT, 3)])
         self.assertIn("matches 2 entries", findings[0][3])
 
+    def test_wrapped_fragment_links_keep_the_debt_base_and_complete_target(self):
+        prefix = "# libSceExample\n\n## add Silent stubs\n\n"
+        self.assertEqual(self.check(prefix + f'- [sceExampleD]({LINK}\n "Entry") (libSceExample) - returns 1\n'), [])
+        missing = "../../../core/libs/prx/libSceExample/Gone(draft).cpp"
+        findings = self.check(prefix + f'- [sceExampleD]({missing}\n "Entry") (libSceExample) - throws\n')
+        self.assertEqual(findings, [("doc-link", FRAGMENT, 5, missing)])
+
     def test_an_entry_for_another_library_is_in_the_wrong_file(self):
         findings = self.check(f"# libSceExample\n\n## add Silent stubs\n\n- [sceOtherA]({OTHER}) (libSceOther) - returns 0\n")
         self.assertEqual(findings, [("debt-file", FRAGMENT, 3, "docs/dev/debt/libSceOther.md")])
