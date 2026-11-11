@@ -4,9 +4,13 @@
 
 - [Script dispatch](../../../core/libs/prx/libSceIcu/Script.cpp) has no console validation: NIDs are from the 3.20 inventory, and firmware availability, exact ICU version and console output are unknown. Ten `uscript_*` C exports forward to the pinned [ICU 78.1](https://github.com/unicode-org/icu/tree/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common) `uchar.cpp`, `propname.cpp` and `uscript_props.cpp` implementations with typed LP64 `uscript.h` ABI and one-byte `UBool`. They depend on the source and static target introduced by [#13578](https://github.com/boykopovar/AnyPS5/pull/13578). Script names are borrowed; samples and extension arrays remain caller-owned, with bounded conversion storage. A null error pointer returns a sentinel, including for `uscript_getSampleString` where ICU would dereference it. Closes when: console ABI and results are measured.
 
+### Functional locale parsing and metadata
+
+- [LocaleCore.cpp](../../../core/libs/prx/libSceIcu/LocaleCore.cpp) implements six public ICU C entry points: `uloc_getLanguage`, `uloc_getCountry`, `uloc_getScript`, `uloc_getBaseName`, `uloc_canonicalize`, and `uloc_getKeywordValue`. These use typed System V guest signatures with 32-bit length/status fields, copy and overflow semantics, case normalization, locale components, and keyword lookup. Release-active guest tests and Linux ASan/UBSan/leak checks cover bounded buffers, malformed keyword items, and status propagation; 22,647 additional input/capacity combinations were differential-checked against *native desktop ICU 74*. This is a source-compatible subset, not an assertion of PS5 firmware 68 binary equivalence. Long/host-specific aliases, obscure locale grammar, data-driven locale operations, and arbitrary malformed input remain unverified. Neither PS5 hardware calls nor a console trace was available.
+
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 72 functions match typed NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Prototypes and behavior are unverified. Each declaration throws through `NotImplemented_nid_no_patch`; no runtime functionality is implemented.
+- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 66 remaining throwing functions match NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Their prototypes and behavior are unverified and retain `NotImplemented_nid_no_patch`. The six locale functions described above have been removed from this throwing inventory.
 
 - [Per-image ELF records](https://gist.github.com/kyon-eth/a8e9ce3fc8802f48d30cd94c413904b7/211c546f6f8e79a23b5ec6ea8fd0610527beabee) describe the module, library, raw names, type, values and sizes for the declarations in [Export.cpp](../../../core/libs/prx/libSceIcu/Export.cpp). The metadata SHA-256 is `551b2d4f646b934cb7eae6a2f2f3bf58e4fb2ba53644d2d1af40f133fda15eb9`; image provenance and labels are not authenticated.
 
@@ -50,17 +54,11 @@
 | `udata_setCommonData` | `wHZwCpZVcGI` |
 | `udata_setFileAccess` | `mCyTdtewGpk` |
 | `uloc_addLikelySubtags` | `HQ6DCQrAXD4` |
-| `uloc_canonicalize` | `G-Jl6md9fz4` |
 | `uloc_countAvailable` | `J5lZTL2H6Aw` |
 | `uloc_forLanguageTag` | `a+8yAm1ZfCE` |
 | `uloc_getAvailable` | `JnzWSfYU-xg` |
-| `uloc_getBaseName` | `CZ0z95gBgXg` |
 | `uloc_getCharacterOrientation` | `pMLs993oHk0` |
-| `uloc_getCountry` | `SIZrguvplN4` |
 | `uloc_getDefault` | `m1nD9D9LmP0` |
-| `uloc_getKeywordValue` | `QYSES3tXUHM` |
-| `uloc_getLanguage` | `dxyWDe5AwgY` |
-| `uloc_getScript` | `9lLmMrDj590` |
 | `uloc_minimizeSubtags` | `yb9tILRzD1k` |
 | `uloc_setKeywordValue` | `sw98L1MbqpM` |
 | `uloc_toLanguageTag` | `zmMWRKwedmw` |
