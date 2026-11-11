@@ -309,6 +309,8 @@ int APS5_VABI sceAcm_ConvReverb_SharedInput(AcmBatchInfo* batch, std::uint32_t m
     }
     const auto blockCount = input->blockCount;
     if (!input->history || blockCount == 0) return SCE_ACM_ERROR_BAD_POINTER;
+    if (input->availableBlocks != 0 && input->currentBlock != 0 && input->currentBlock > blockCount) return SCE_ACM_ERROR_BAD_POINTER;
+    if (std::uint64_t{blockCount} * blockSize * (input->sampleFormat == 0 ? 8 : 4) > 0xFFFFFFFFu) return SCE_ACM_ERROR_BAD_POINTER;
     input->currentBlock = (input->availableBlocks == 0 || input->currentBlock == 0 ? blockCount : input->currentBlock) - 1;
     input->availableBlocks = std::min(input->availableBlocks + 1, blockCount);
     const auto channelCount = input->channelCount;

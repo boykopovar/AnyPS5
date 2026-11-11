@@ -39,6 +39,10 @@ int main() {
     Require(sceSaveDataDialogInitialize() == 0, "initialize");
     Require(sceSaveDataDialogInitialize() == SAVE_DATA_DIALOG_ERROR_ALREADY_INITIALIZED, "double init");
     Require(sceSaveDataDialogOpen(nullptr) == SAVE_DATA_DIALOG_ERROR_ARG_NULL, "open with null param");
+    Require(sceSaveDataDialogOpen(reinterpret_cast<const void*>(0x10)) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
+            "open with unreadable param");
+    Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_INITIALIZED,
+            "unreadable param must leave the dialog initialized");
     Require(sceSaveDataDialogClose(nullptr) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "close while initialized not running");
     Require(sceSaveDataDialogGetResult(&uninitResult) == SAVE_DATA_DIALOG_ERROR_NOT_FINISHED, "get result before open");
     Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc while initialized not running");
@@ -104,6 +108,52 @@ int main() {
     Require(sceSaveDataDialogTerminate() == 0, "terminate while running");
     Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_NONE, "terminated state");
     Require(sceSaveDataDialogTerminate() == SAVE_DATA_DIALOG_ERROR_NOT_INITIALIZED, "terminate after terminate");
+
+    Require(sceSaveDataDialogInitialize() == 0, "re-initialize for unreadable items");
+    SaveDataDialogParam selectionParam{};
+    selectionParam.size = sizeof(selectionParam);
+    selectionParam.mode = 1;
+    selectionParam.items = &items;
+    Require(sceSaveDataDialogOpen(&selectionParam) == 0, "open selection dialog with items");
+    SaveDataDialogParam unreadableItemsParam{};
+    unreadableItemsParam.size = sizeof(unreadableItemsParam);
+    unreadableItemsParam.mode = 0;
+    unreadableItemsParam.items = reinterpret_cast<void*>(0x10);
+    Require(sceSaveDataDialogOpen(&unreadableItemsParam) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
+            "open with unreadable items");
+    Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED,
+            "unreadable items must leave the previous result finished");
+    SaveDataDirName keptDir{};
+    SaveDataDialogResult keptResult{};
+    keptResult.dir_name = &keptDir;
+    Require(sceSaveDataDialogGetResult(&keptResult) == 0, "read result after unreadable items");
+    Require(keptResult.mode == 1 && std::strcmp(keptDir.data, "SDU1") == 0,
+            "unreadable items must not change the previous result");
+    SaveDataDialogItems unreadableNameItems{};
+    unreadableNameItems.dir_names = reinterpret_cast<const SaveDataDirName*>(0x10);
+    unreadableNameItems.dir_names_num = 1;
+    SaveDataDialogParam unreadableNameParam{};
+    unreadableNameParam.size = sizeof(unreadableNameParam);
+    unreadableNameParam.mode = 0;
+    unreadableNameParam.items = &unreadableNameItems;
+    Require(sceSaveDataDialogOpen(&unreadableNameParam) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
+            "open with unreadable directory name entry");
+    Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED,
+            "unreadable directory name entry must leave the previous result finished");
+    SaveDataDirName unterminatedName{};
+    std::memset(unterminatedName.data, 'U', sizeof(unterminatedName.data));
+    SaveDataDialogItems unterminatedItems{};
+    unterminatedItems.dir_names = &unterminatedName;
+    unterminatedItems.dir_names_num = 1;
+    SaveDataDialogParam unterminatedParam{};
+    unterminatedParam.size = sizeof(unterminatedParam);
+    unterminatedParam.mode = 0;
+    unterminatedParam.items = &unterminatedItems;
+    Require(sceSaveDataDialogOpen(&unterminatedParam) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
+            "open with a directory name that has no terminating NUL");
+    Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED,
+            "unterminated directory name must leave the previous result finished");
+    Require(sceSaveDataDialogTerminate() == 0, "terminate after unreadable items");
 
     Require(sceSaveDataDialogInitialize() == 0, "re-initialize");
     param.mode = 1;

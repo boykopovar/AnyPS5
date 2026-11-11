@@ -435,7 +435,7 @@ void TestSemaphoreObjects() {
     _ZN3sce2np9SemaphoreC1Ev(owned);
     Require(_ZN3sce2np9Semaphore6CreateEiiPKc(owned, 1, 1, "NpSemaphoreOwned") == 0, "an allocated semaphore is created");
     using Destructor = void APS5_VABI (*)(NpSemaphoreObject*);
-    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    reinterpret_cast<Destructor>(const_cast<void*>(owned->vtable[1]))(owned);
     Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 
@@ -525,12 +525,12 @@ void TestMutexAndCondObjects() {
     auto* ownedMutex = static_cast<NpMutexObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpMutexObject), &allocator));
     _ZN3sce2np5MutexC1Ev(ownedMutex);
     Require(_ZN3sce2np5Mutex4InitEPKcj(ownedMutex, "NpMutexOwned", 0) == 0, "an allocated mutex is initialized");
-    reinterpret_cast<MutexDestructor>(ownedMutex->vtable[1])(ownedMutex);
+    reinterpret_cast<MutexDestructor>(const_cast<void*>(ownedMutex->vtable[1]))(ownedMutex);
     Require(record.released == record.block.data(), "the mutex deleting destructor frees through the stored allocator");
     record.released = nullptr;
     auto* ownedCond = static_cast<NpCondObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpCondObject), &allocator));
     _ZN3sce2np4CondC1Ev(ownedCond);
-    reinterpret_cast<CondDestructor>(ownedCond->vtable[1])(ownedCond);
+    reinterpret_cast<CondDestructor>(const_cast<void*>(ownedCond->vtable[1]))(ownedCond);
     Require(record.released == record.block.data(), "the condition deleting destructor frees through the stored allocator");
 }
 
@@ -667,9 +667,62 @@ void TestRingBuf() {
         "the next write takes the expanded full buffer for empty and starts over the queued data, as in the module");
     _ZN3sce2np13RingBufMemory7DestroyEv(&full);
     using Destructor = void (APS5_VABI*)(NpRingBufMemory*);
-    reinterpret_cast<Destructor>(memory->ringBuf.vtable[1])(memory);
+    reinterpret_cast<Destructor>(const_cast<void*>(memory->ringBuf.vtable[1]))(memory);
 
     Require(record.released == record.block.data(), "the deleting destructor frees the object through its allocator");
+    sceNpMemoryHeapDestroy(&memoryHeap);
+}
+
+void TestRingBufBounds() {
+    constexpr int NoSpace = static_cast<int>(0x80559E0A);
+    std::uint8_t storage[8];
+    NpRingBuf ring {};
+    _ZN3sce2np7RingBufC1Ev(&ring);
+    Require(_ZN3sce2np7RingBuf4InitEPvm(&ring, storage, sizeof(storage)) == 0 && _ZN3sce2np7RingBuf5WriteEPKvm(&ring, "abc", 3) == 0,
+        "a ring buffer holds three bytes");
+    char out[16] = {};
+    Require(_ZN3sce2np7RingBuf4PeekEmPvm(&ring, 1, out, SIZE_MAX) == NoSpace && _ZNK3sce2np7RingBuf11GetDataSizeEv(&ring) == 3,
+        "a peek whose size wraps the offset sum is refused");
+    _ZN3sce2np7RingBuf7DestroyEv(&ring);
+
+    NpRingBuf empty {};
+    _ZN3sce2np7RingBufC1Ev(&empty);
+    Require(_ZN3sce2np7RingBuf4InitEPvm(&empty, storage, sizeof(storage)) == 0, "an empty ring buffer takes the storage");
+    bool refused = false;
+    try {
+        _ZN3sce2np7RingBuf15CheckinForWriteEm(&empty, 9);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && empty.writePointer == empty.buf && _ZNK3sce2np7RingBuf11GetDataSizeEv(&empty) == 0,
+        "a checkin for write past the end of the storage leaves the ring unchanged");
+    refused = false;
+    try {
+        _ZN3sce2np7RingBuf15CheckinForWriteEm(&empty, SIZE_MAX - 7);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && empty.writePointer == empty.buf && _ZNK3sce2np7RingBuf11GetDataSizeEv(&empty) == 0,
+        "a checkin for write whose size wraps the write pointer is refused");
+    _ZN3sce2np7RingBuf7DestroyEv(&empty);
+
+    NpMemoryHeap memoryHeap {};
+    Require(sceNpMemoryHeapInit(&memoryHeap, 0x1000, "np-expand") == 0, "a memory heap is created for expansion");
+    NpAllocatorEx heapAllocator {};
+    sceNpMemoryHeapGetAllocatorEx(&memoryHeap, 0x1235, &heapAllocator);
+    NpRingBufMemory expanding {};
+    _ZN3sce2np13RingBufMemoryC1EP16SceNpAllocatorEx(&expanding, &heapAllocator);
+    Require(_ZN3sce2np13RingBufMemory4InitEm(&expanding, 4) == 0, "a memory ring buffer is initialized for expansion");
+    std::uint8_t* const original = expanding.ringBuf.buf;
+    refused = false;
+    try {
+        _ZN3sce2np13RingBufMemory6ExpandEm(&expanding, SIZE_MAX - 2);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && expanding.ringBuf.bufSize == 4 && expanding.ringBuf.buf == original,
+        "an expansion whose new size overflows is refused before the storage is reallocated");
+    _ZN3sce2np13RingBufMemory7DestroyEv(&expanding);
     sceNpMemoryHeapDestroy(&memoryHeap);
 }
 
@@ -860,7 +913,7 @@ void TestEventFlagObjects() {
     _ZN3sce2np9EventFlagC1Ev(owned);
     Require(_ZN3sce2np9EventFlag6CreateEPKcj(owned, "NpEventFlagOwned", 0) == 0, "an allocated event flag is created");
     using Destructor = void APS5_VABI (*)(NpEventFlagObject*);
-    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    reinterpret_cast<Destructor>(const_cast<void*>(owned->vtable[1]))(owned);
     Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 
@@ -1536,8 +1589,12 @@ void TestHexAndCopies() {
     Require(sceNpStrcpyToBuf(copy, 6, "Hello") == 0 && Equals(copy, "Hello"), "a string that fits is copied");
     Require(sceNpStrcpyToBuf(copy, 5, "Hello") == NpBufferTooSmall, "a string without room for its terminator is refused");
     copy[0] = 'x';
+    Require(sceNpStrcpyToBuf(copy, 6, nullptr) == NpUtilInvalid && copy[0] == 'x', "a null source is refused");
+    copy[0] = 'x';
     Require(sceNpStrncpyToBuf(copy, 0, nullptr, 0) == NpBufferTooSmall && copy[0] == 'x', "a null source with a zero limit still needs room for the terminator");
     Require(sceNpStrncpyToBuf(copy, 1, nullptr, 0) == 0 && copy[0] == '\0', "a null source with a zero limit copies an empty string into a one-byte buffer");
+    copy[0] = 'x';
+    Require(sceNpStrncpyToBuf(copy, 8, nullptr, 4) == NpUtilInvalid && copy[0] == 'x', "a null source with a non-zero limit is refused");
     Require(sceNpStrncpyToBuf(copy, 6, "Hello World", 5) == 0 && Equals(copy, "Hello"), "the length limit sizes the copy");
     Require(sceNpStrncpyToBuf(copy, 5, "Hello World", 5) == NpBufferTooSmall, "the limited string still needs a terminator");
     const char unterminated[] = {'A', 'B', 'C', 'D', 'E', 'F', '\0'};
@@ -1864,6 +1921,7 @@ int main() {
     TestMutexAndCondObjects();
     TestAllocatorExRecorded();
     TestRingBuf();
+    TestRingBufBounds();
     TestMemoryStreams();
     TestTitleIdObjects();
     TestTitleSecretObjects();

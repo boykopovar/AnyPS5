@@ -328,6 +328,15 @@ static void CheckStrictMemoryProtectionBits() {
         Require(sceKernelGetDirectMemoryType(physical, &type, &start, &end) == 0 && type == 0);
         Require(bytes[0] == 5 && bytes[length - 1] == 7);
     }
+    for (const int flags : {0x1000000, 0x40000000, -1}) {
+        void* invalid = nullptr;
+        Require(sceKernelMapDirectMemory2(&invalid, length, 0, 3, flags, physical, 0) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+    }
+    for (const std::size_t alignment : {std::size_t{1}, std::size_t{0x2000}, std::size_t{0x3000}, std::size_t{0x6000}, std::size_t{0x80000000}}) {
+        void* invalid = nullptr;
+        Require(sceKernelMapDirectMemory2(&invalid, length, 0, 3, 0, physical, alignment) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+    }
+    Require(bytes[0] == 5 && bytes[length - 1] == 7);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), length) == 0);
     Require(sceKernelReleaseDirectMemory(physical, length) == 0);
 }
@@ -938,6 +947,29 @@ static void CheckFixedMappingReplacesPartialOverlap() {
     Require(static_cast<unsigned char*>(fixed)[page * 2 + 7] == 0x5c);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(fixed), page * 3) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
+}
+
+static void CheckFixedDirectMapRejectsAlignmentBeforeReplacing() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
+    void* flexible = nullptr;
+    Require(sceKernelMapFlexibleMemory(&flexible, page * 2, 3, 0) == 0);
+    auto* survivor = static_cast<volatile unsigned char*>(flexible) + page;
+    survivor[7] = 0x3e;
+    void* fixed = static_cast<unsigned char*>(flexible) + page;
+    bool threw = false;
+    try {
+        sceKernelMapDirectMemory(&fixed, page * 2, 3, 0x10, phys, 0x5000);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && fixed == static_cast<unsigned char*>(flexible) + page);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(const_cast<unsigned char*>(survivor), 0, &info, sizeof(info)) == 0 && info.protection == 3);
+    Require(survivor[7] == 0x3e);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(flexible), page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
 }
 
 static void CheckFixedMappingOverHoleInsideAllocation() {
@@ -4325,6 +4357,7 @@ int main(int argc, char** argv) {
     CheckReleaseDirectMemoryClearsMappings();
     CheckReleaseDirectMemoryRejectsInvalidRanges();
     CheckFixedMappingReplacesPartialOverlap();
+    CheckFixedDirectMapRejectsAlignmentBeforeReplacing();
     CheckFixedMappingOverHoleInsideAllocation();
     CheckDirectMemoryGpuProtBits();
     CheckSplitPrivateCollect();

@@ -460,18 +460,27 @@ float ScaledHyperbolic(float x, float y, bool sine) {
 
 }
 
+namespace {
+
+std::lldiv_t wrappingLldiv(long long numerator, long long denominator) {
+    if (denominator == -1) return {static_cast<long long>(0ull - static_cast<unsigned long long>(numerator)), 0};
+    return std::lldiv(numerator, denominator);
+}
+
+}
+
 extern "C" {
 
 std::lldiv_t APS5_VABI lldiv_nid_postfix(long long numerator, long long denominator) {
-    return std::lldiv(numerator, denominator);
+    return wrappingLldiv(numerator, denominator);
 }
 
 std::lldiv_t APS5_VABI ldiv_nid_postfix(std::int64_t numerator, std::int64_t denominator) {
-    return std::lldiv(numerator, denominator);
+    return wrappingLldiv(numerator, denominator);
 }
 
 std::lldiv_t APS5_VABI imaxdiv_nid_postfix(std::int64_t numerator, std::int64_t denominator) {
-    return std::lldiv(numerator, denominator);
+    return wrappingLldiv(numerator, denominator);
 }
 
 std::int64_t APS5_VABI labs_nid_postfix(std::int64_t x) {
@@ -1491,7 +1500,6 @@ double APS5_VABI log1p_nid_postfix(double x) {
     const double Lp5 = 1.818357216161805012e-01;
     const double Lp6 = 1.531383769920937332e-01;
     const double Lp7 = 1.479819860511658591e-01;
-    static volatile double vzero = 0.0;
     const std::int32_t hx = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(x) >> 32);
     const std::int32_t ax = hx & 0x7fffffff;
     std::int32_t k = 1;
@@ -1501,9 +1509,9 @@ double APS5_VABI log1p_nid_postfix(double x) {
     if (hx < 0x3fda827a) {
         if (ax >= 0x3ff00000) {
             if (x == -1.0) {
-                return -two54 / vzero;
+                return -std::numeric_limits<double>::infinity();
             }
-            errno = EDOM;
+            _Feraise_nid_postfix(0x01);
             return (x - x) / (x - x);
         }
         if (ax < 0x3e200000) {
@@ -1751,8 +1759,135 @@ float APS5_VABI expm1f_nid_postfix(float x) {
     return result;
 }
 float APS5_VABI erff_nid_postfix(float x) { return std::erf(x); }
-double APS5_VABI erf_nid_postfix(double x) { return std::erf(x); }
-double APS5_VABI erfc_nid_postfix(double x) { return std::erfc(x); }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_erf.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_erf.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+static double ErfSmallRatio(double z) {
+    const double pp0 = 1.28379167095512558561e-01;
+    const double pp1 = -3.25042107247001499370e-01;
+    const double pp2 = -2.84817495755985104766e-02;
+    const double pp3 = -5.77027029648944159157e-03;
+    const double pp4 = -2.37630166566501626084e-05;
+    const double qq1 = 3.97917223959155352819e-01;
+    const double qq2 = 6.50222499887672944485e-02;
+    const double qq3 = 5.08130628187576562776e-03;
+    const double qq4 = 1.32494738004321644526e-04;
+    const double qq5 = -3.96022827877536812320e-06;
+    const double r = pp0 + z * (pp1 + z * (pp2 + z * (pp3 + z * pp4)));
+    const double s = 1.0 + z * (qq1 + z * (qq2 + z * (qq3 + z * (qq4 + z * qq5))));
+    return r / s;
+}
+
+static double ErfNearOneRatio(double s) {
+    const double pa0 = -2.36211856075265944077e-03;
+    const double pa1 = 4.14856118683748331666e-01;
+    const double pa2 = -3.72207876035701323847e-01;
+    const double pa3 = 3.18346619901161753674e-01;
+    const double pa4 = -1.10894694282396677476e-01;
+    const double pa5 = 3.54783043256182359371e-02;
+    const double pa6 = -2.16637559486879084300e-03;
+    const double qa1 = 1.06420880400844228286e-01;
+    const double qa2 = 5.40397917702171048937e-01;
+    const double qa3 = 7.18286544141962662868e-02;
+    const double qa4 = 1.26171219808761642112e-01;
+    const double qa5 = 1.36370839120290507362e-02;
+    const double qa6 = 1.19844998467991074170e-02;
+    const double P = pa0 + s * (pa1 + s * (pa2 + s * (pa3 + s * (pa4 + s * (pa5 + s * pa6)))));
+    const double Q = 1.0 + s * (qa1 + s * (qa2 + s * (qa3 + s * (qa4 + s * (qa5 + s * qa6)))));
+    return P / Q;
+}
+
+static double ErfTail(double x, bool nearSplit) {
+    const double s = 1.0 / (x * x);
+    double R;
+    double S;
+    if (nearSplit) {
+        R = -9.86494403484714822705e-03 + s * (-6.93858572707181764372e-01 + s * (-1.05586262253232909814e+01 + s * (-6.23753324503260060396e+01 + s * (-1.62396669462573470355e+02 + s * (-1.84605092906711035994e+02 + s * (-8.12874355063065934246e+01 + s * -9.81432934416914548592e+00))))));
+        S = 1.0 + s * (1.96512716674392571292e+01 + s * (1.37657754143519042600e+02 + s * (4.34565877475229228821e+02 + s * (6.45387271733267880336e+02 + s * (4.29008140027567833386e+02 + s * (1.08635005541779435134e+02 + s * (6.57024977031928170135e+00 + s * -6.04244152148580987438e-02)))))));
+    } else {
+        R = -9.86494292470009928597e-03 + s * (-7.99283237680523006574e-01 + s * (-1.77579549177547519889e+01 + s * (-1.60636384855821916062e+02 + s * (-6.37566443368389627722e+02 + s * (-1.02509513161107724954e+03 + s * -4.83519191608651397019e+02)))));
+        S = 1.0 + s * (3.03380607434824582924e+01 + s * (3.25792512996573918826e+02 + s * (1.53672958608443695994e+03 + s * (3.19985821950859553908e+03 + s * (2.55305040643316442583e+03 + s * (4.74528541206955367215e+02 + s * -2.24409524465858183362e+01))))));
+    }
+    const double z = std::bit_cast<double>(std::bit_cast<std::uint64_t>(x) & 0xffffffff00000000ull);
+    return exp_nid_postfix(-z * z - 0.5625) * exp_nid_postfix((z - x) * (z + x) + R / S);
+}
+
+double APS5_VABI erf_nid_postfix(double x) {
+    const double erx = 8.45062911510467529297e-01;
+    const double efx = 1.28379167095512586316e-01;
+    const double efx8 = 1.02703333676410069053e+00;
+    static volatile double tiny = 1e-300;
+    const std::int32_t hx = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(x) >> 32);
+    const std::int32_t ix = hx & 0x7fffffff;
+    if (ix >= 0x7ff00000) {
+        return static_cast<double>(1 - static_cast<std::int32_t>((static_cast<std::uint32_t>(hx) >> 31) << 1)) + 1.0 / x;
+    }
+    if (ix < 0x3feb0000) {
+        if (ix < 0x3e300000) {
+            if (ix < 0x00800000) {
+                return (8 * x + efx8 * x) / 8;
+            }
+            return x + efx * x;
+        }
+        return x + x * ErfSmallRatio(x * x);
+    }
+    if (ix < 0x3ff40000) {
+        const double ratio = ErfNearOneRatio(std::fabs(x) - 1.0);
+        return hx >= 0 ? erx + ratio : -erx - ratio;
+    }
+    if (ix >= 0x40180000) {
+        return hx >= 0 ? 1.0 - tiny : tiny - 1.0;
+    }
+    const double magnitude = std::fabs(x);
+    const double r = ErfTail(magnitude, ix < 0x4006db6e);
+    return hx >= 0 ? 1.0 - r / magnitude : r / magnitude - 1.0;
+}
+
+double APS5_VABI erfc_nid_postfix(double x) {
+    const double erx = 8.45062911510467529297e-01;
+    static volatile double tiny = 1e-300;
+    const std::int32_t hx = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(x) >> 32);
+    const std::int32_t ix = hx & 0x7fffffff;
+    if (ix >= 0x7ff00000) {
+        return static_cast<double>((static_cast<std::uint32_t>(hx) >> 31) << 1) + 1.0 / x;
+    }
+    if (ix < 0x3feb0000) {
+        if (ix < 0x3c700000) {
+            return 1.0 - x;
+        }
+        const double y = ErfSmallRatio(x * x);
+        if (hx < 0x3fd00000) {
+            return 1.0 - (x + x * y);
+        }
+        double r = x * y;
+        r += x - 0.5;
+        return 0.5 - r;
+    }
+    if (ix < 0x3ff40000) {
+        const double ratio = ErfNearOneRatio(std::fabs(x) - 1.0);
+        if (hx >= 0) {
+            return (1.0 - erx) - ratio;
+        }
+        return 1.0 + (erx + ratio);
+    }
+    if (ix >= 0x403c0000) {
+        return hx > 0 ? tiny * tiny : 2.0 - tiny;
+    }
+    if (hx < 0 && ix >= 0x40180000) {
+        return 2.0 - tiny;
+    }
+    const double magnitude = std::fabs(x);
+    const double r = ErfTail(magnitude, ix < 0x4006db6d);
+    return hx > 0 ? r / magnitude : 2.0 - r / magnitude;
+}
 float APS5_VABI erfcf_nid_postfix(float x) { return std::erfc(x); }
 int signgam_nid_postfix = 0;
 
@@ -2813,9 +2948,58 @@ float APS5_VABI atanhf_nid_postfix(float x) {
     return std::signbit(x) ? -t : t;
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_sincos.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_sincos.c */
+/*-
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ * 
+ * s_sin.c and s_cos.c merged by Steven G. Kargl.  Descriptions of the
+ * algorithms are contained in the original files.
+ */
 void APS5_VABI sincos_nid_postfix(double x, double* sinp, double* cosp) {
-    *sinp = std::sin(x);
-    *cosp = std::cos(x);
+    const std::int32_t ix = HighWord(x) & 0x7fffffff;
+    if (ix <= 0x3fe921fb) {
+        if (ix < 0x3e400000 && static_cast<int>(x) == 0) {
+            *sinp = x;
+            *cosp = 1;
+            return;
+        }
+        *sinp = KernelSin(x, 0, 0);
+        *cosp = KernelCos(x, 0);
+        return;
+    }
+    if (ix >= 0x7ff00000) {
+        if (ix == 0x7ff00000) {
+            errno = EDOM;
+        }
+        *sinp = x - x;
+        *cosp = x - x;
+        return;
+    }
+    double y[2];
+    switch (RemPio2(x, y) & 3) {
+        case 0:
+            *sinp = KernelSin(y[0], y[1], 1);
+            *cosp = KernelCos(y[0], y[1]);
+            break;
+        case 1:
+            *sinp = KernelCos(y[0], y[1]);
+            *cosp = -KernelSin(y[0], y[1], 1);
+            break;
+        case 2:
+            *sinp = -KernelSin(y[0], y[1], 1);
+            *cosp = -KernelCos(y[0], y[1]);
+            break;
+        default:
+            *sinp = -KernelCos(y[0], y[1]);
+            *cosp = KernelSin(y[0], y[1], 1);
+    }
 }
 
 float APS5_VABI atanf_nid_postfix(float x) {

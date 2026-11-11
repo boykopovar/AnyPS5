@@ -46,42 +46,48 @@ DEFAULT_SYMBOLS = [(IMPORT_NAME, 0, 0x12, 0), (EXPORT_NAME, 1, 0x12, EXPORT_ADDR
 DEFAULT_TAGS = (4, 5, 6, 10, 11, 23, 2, 20)
 
 
-def hash_bytes(kind, count):
+def hash_bytes(kind, count, bloom_count=1):
     if kind == "sysv":
         return struct.pack("<II", 1, count) + bytes(4 + 4 * count)
     chains = [0] * (count - 1)
-    chains[-1] = 1
-    return struct.pack("<IIII", 1, 1, 1, 0) + bytes(8) + struct.pack("<I", 1) + struct.pack("<%dI" % len(chains), *chains)
+    if chains:
+        chains[-1] = 1
+        bucket = struct.pack("<I", 1)
+    else:
+        bucket = struct.pack("<I", 0)
+    return struct.pack("<IIII", 1, 1, bloom_count, 0) + bytes(8 * bloom_count) + bucket + struct.pack("<%dI" % len(chains), *chains)
 
 
-def data_bytes(tags, values, symbols, relocations, glob_dats, kind):
+def data_bytes(tags, values, symbols, relocations, glob_dats, kind, bloom_count=1):
     strings = b"\0"
     entries = struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0)
     for name, shndx, info, value in symbols:
         entries += struct.pack("<IBBHQQ", len(strings), info, 0, shndx, value, 1)
         strings += symbol_name(name).encode() + b"\0"
-    resolved = {4: DATA_ADDRESS, GNU_HASH: DATA_ADDRESS, 5: DATA_ADDRESS + 0x100, 6: DATA_ADDRESS + 0x40, 10: len(strings), 11: 24,
+    hash_blob = hash_bytes(kind, len(symbols) + 1, bloom_count)
+    hash_offset = 0x400 if bloom_count > 4 else 0
+    resolved = {4: DATA_ADDRESS, GNU_HASH: DATA_ADDRESS + hash_offset, 5: DATA_ADDRESS + 0x100, 6: DATA_ADDRESS + 0x40, 10: len(strings), 11: 24,
                 7: DATA_ADDRESS + 0x200, 8: 24 * len(glob_dats), 23: DATA_ADDRESS + 0x280, 2: 24 * len(relocations), 20: 7,
                 9: 24, 17: DATA_ADDRESS + 0x200}
     resolved.update(values)
     dynamic = b"".join(struct.pack("<qQ", tag, resolved[tag]) for tag in tags) + struct.pack("<qQ", 0, 0)
-    image = bytearray(0x810)
+    image = bytearray(max(0x810, hash_offset + len(hash_blob)))
     pack = lambda rows, kind_code: b"".join(struct.pack("<QQq", slot, (index << 32) | kind_code, 0) for slot, index in rows)
-    for offset, blob in ((0, hash_bytes(kind, len(symbols) + 1)), (0x40, entries), (0x100, strings), (0x200, pack(glob_dats, 6)),
+    for offset, blob in ((hash_offset, hash_blob), (0x40, entries), (0x100, strings), (0x200, pack(glob_dats, 6)),
                          (0x280, pack(relocations, 7)), (0x300, dynamic)):
         image[offset:offset + len(blob)] = blob
     return bytes(image), len(dynamic)
 
 
 def build_module(tags=DEFAULT_TAGS, values=None, symbols=DEFAULT_SYMBOLS, relocations=((SLOT, 1),), glob_dats=(), code=None,
-                 code_flags=5, extra_code=None, kind="sysv", machine=0x3E):
+                 code_flags=5, extra_code=None, kind="sysv", machine=0x3E, bloom_count=1):
     code = code_bytes() if code is None else code
-    data, dynamic_size = data_bytes(tags, values or {}, symbols, relocations, glob_dats, kind)
+    data, dynamic_size = data_bytes(tags, values or {}, symbols, relocations, glob_dats, kind, bloom_count)
     headers = [(1, code_flags, 0x1000, CODE_ADDRESS, len(code)), (1, 6, 0x2000, DATA_ADDRESS, len(data)),
                (2, 6, 0x2300, DATA_ADDRESS + 0x300, dynamic_size)]
     if extra_code is not None:
         headers.append((1, 7, 0x3000, 0x3000, len(extra_code)))
-    image = bytearray(0x3000 + len(extra_code or b""))
+    image = bytearray(max(0x3000, 0x2000 + len(data)) + len(extra_code or b""))
     image[:64] = struct.pack("<16sHHIQQQIHHHHHH", b"\x7fELF\x02\x01\x01" + bytes(9), 3, machine, 1, 0, 64, 0, 0, 64, 56, len(headers), 0, 0, 0)
     for index, (kind_code, flags, offset, vaddr, size) in enumerate(headers):
         image[64 + index * 56:120 + index * 56] = struct.pack("<IIQQQQQQ", kind_code, flags, offset, vaddr, vaddr, size, size, 0x1000)
@@ -213,6 +219,28 @@ class ImportRelocationTests(unittest.TestCase):
                 module = with_relocation(module, table, 0, SLOT, 0xFFFFFFFF, kind)
                 with self.assertRaisesRegex(annotate_module.ModuleError, "symbol index .* is outside"):
                     annotate_module.Module(module).imports()
+
+    def test_gnu_hash_bloom_filter_size_must_be_nonzero_power_of_two(self):
+        for bloom_count in (0, 3, 1025):
+            with self.subTest(bloom_count=bloom_count):
+                module = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), kind="gnu", bloom_count=bloom_count)
+                with self.assertRaisesRegex(annotate_module.ModuleError, "GNU hash Bloom filter count %d is not a power of two" % bloom_count):
+                    annotate_module.Module(module)
+
+    def test_gnu_hash_accepts_valid_bloom_filter_sizes(self):
+        for bloom_count in (1, 2, 4):
+            with self.subTest(bloom_count=bloom_count):
+                module = annotate_module.Module(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), kind="gnu", bloom_count=bloom_count))
+                self.assertEqual(module.symbol_count, len(DEFAULT_SYMBOLS) + 1)
+
+    def test_gnu_hash_accepts_empty_symbol_table(self):
+        module = annotate_module.Module(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), symbols=[], relocations=(), kind="gnu", bloom_count=1))
+        self.assertEqual(module.symbol_count, 1)
+
+    def test_dt_hash_precedence_preserves_unused_invalid_gnu_hash(self):
+        tags = (4, GNU_HASH, 5, 6, 10, 11, 23, 2, 20)
+        module = build_module(tags=tags, values={GNU_HASH: DATA_ADDRESS + 0x400}, kind="sysv", bloom_count=3)
+        self.assertEqual(annotate_module.Module(module).symbol_count, len(DEFAULT_SYMBOLS) + 1)
 
 
 class ObjdumpDiscoveryTests(unittest.TestCase):
@@ -373,6 +401,32 @@ class AnnotateModuleTests(unittest.TestCase):
                     self.assertIn("0 stubs", summary)
                     self.assertNotIn("; GOT ", self.read(".asm"))
                     self.assertNotIn("; -> ", self.read(".asm"))
+
+    def test_lea_ignores_segment_base_when_naming_import_addresses(self):
+        address = 0x100001000
+        for segment in (b"", b"\x64", b"\x65"):
+            for address_prefix in (b"", b"\x67"):
+                with self.subTest(segment=segment, address_prefix=address_prefix):
+                    code = b""
+                    for opcode in (b"\x48\x8d\x05", b"\x48\x8b\x05", b"\xff\x15", b"\xff\x25"):
+                        instruction_bytes = segment + address_prefix + opcode
+                        next_address = address + len(code) + len(instruction_bytes) + 4
+                        code += instruction_bytes + struct.pack("<I", (SLOT - next_address) & 0xFFFFFFFF)
+                    symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 0, 0x12, 0)]
+                    module = bytearray(build_module(code=code + b"\xc3", symbols=symbols,
+                                                   relocations=((SLOT, 1), (0x100000000 + SLOT, 3))))
+                    struct.pack_into("<Q", module, 64 + 16, address)
+                    summary = self.annotate(bytes(module))
+                    listing = self.read(".asm").splitlines()
+                    expected = IMPORT_NAME if address_prefix else SECOND_IMPORT_NAME
+                    self.assertTrue(instruction(listing, r"lea[wlq]?").endswith("; GOT " + expected))
+                    for mnemonic in (r"mov[wlq]?", r"callq?", r"jmpq?"):
+                        line = instruction(listing, mnemonic)
+                        if segment:
+                            self.assertNotIn("; GOT ", line)
+                        else:
+                            self.assertTrue(line.endswith("; GOT " + expected), line)
+                    self.assertIn("0 stubs" if segment else "1 stubs", summary)
 
     def test_none_relocation_does_not_annotate_a_stub_or_call(self):
         module = with_relocation(build_module(), 0x2280, 0, SLOT, 1, 0)
@@ -581,6 +635,12 @@ class AnnotateModuleTests(unittest.TestCase):
     def test_wrong_machine_fails(self):
         self.assert_fails(build_module(machine=0xB7), "not an x86-64 ELF")
 
+    def test_invalid_gnu_hash_bloom_filter_size_fails(self):
+        for bloom_count in (0, 3, 1025):
+            with self.subTest(bloom_count=bloom_count):
+                module = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), kind="gnu", bloom_count=bloom_count)
+                self.assert_fails(module, "GNU hash Bloom filter count %d is not a power of two" % bloom_count)
+
 
 class InputProtectionTests(unittest.TestCase):
     def test_cli_rejects_alias_without_success_or_partial_reports(self):
@@ -600,6 +660,22 @@ class InputProtectionTests(unittest.TestCase):
             self.assertEqual(module.read_bytes(), original)
             self.assertFalse((root / "report.imports.txt").exists())
             self.assertFalse((root / "report.asm").exists())
+
+    def test_cli_rejects_invalid_gnu_bloom_size_without_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "invalid.prx"
+            invalid = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), kind="gnu", bloom_count=3)
+            module.write_bytes(invalid)
+            result = subprocess.run([sys.executable, annotate_module.__file__, str(module), "--out", str(root / "out"), "--no-names"],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("GNU hash Bloom filter count 3 is not a power of two", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertFalse((root / "out.imports.txt").exists())
+            self.assertFalse((root / "out.exports.txt").exists())
+            self.assertFalse((root / "out.asm").exists())
 
     def test_all_report_outputs_are_checked_before_any_write(self):
         with tempfile.TemporaryDirectory() as directory:
