@@ -491,6 +491,37 @@ struct LibreSslOcspResponse {
     void* responseBytes;
 };
 
+struct LibreSslOcspResponderId {
+    int type;
+    union {
+        void* byName;
+        Asn1String* byKey;
+    } value;
+};
+
+struct LibreSslOcspResponseData {
+    Asn1String* version;
+    LibreSslOcspResponderId* responderId;
+    Asn1String* producedAt;
+    LibreSslStack* responses;
+    LibreSslStack* responseExtensions;
+};
+
+struct LibreSslOcspBasicResponse {
+    LibreSslOcspResponseData* tbsResponseData;
+    void* signatureAlgorithm;
+    Asn1String* signature;
+    LibreSslStack* certs;
+};
+
+static_assert(sizeof(LibreSslOcspResponderId) == 16);
+static_assert(offsetof(LibreSslOcspResponderId, value) == 8);
+static_assert(sizeof(LibreSslOcspResponseData) == 40);
+static_assert(offsetof(LibreSslOcspResponseData, responderId) == 8);
+static_assert(offsetof(LibreSslOcspResponseData, responses) == 24);
+static_assert(sizeof(LibreSslOcspBasicResponse) == 32);
+static_assert(offsetof(LibreSslOcspBasicResponse, certs) == 24);
+
 struct LibreSslOcspResponseBytes {
     LibreSslAsn1Object* responseType;
     Asn1String* response;
@@ -732,8 +763,8 @@ int APS5_VABI OBJ_obj2nid_nid_postfix(void);
 int APS5_VABI OBJ_sn2nid_nid_postfix(const char* name);
 int APS5_VABI OCSP_BASICRESP_free_nid_postfix(void);
 void APS5_VABI OCSP_RESPONSE_free_nid_postfix(LibreSslOcspResponse* response);
-int APS5_VABI OCSP_basic_add1_cert_nid_postfix(void);
-int APS5_VABI OCSP_basic_verify_nid_postfix(void);
+int APS5_VABI OCSP_basic_add1_cert_nid_postfix(LibreSslOcspBasicResponse* response, LibreSslX509* certificate);
+int APS5_VABI OCSP_basic_verify_nid_postfix(LibreSslOcspBasicResponse* response, LibreSslStack* certificates, LibreSslX509Store* store, std::uint64_t flags);
 const char* APS5_VABI OCSP_cert_status_str_nid_postfix(std::int64_t status);
 int APS5_VABI OCSP_check_validity_nid_postfix(const Asn1String* thisUpdate, const Asn1String* nextUpdate, std::int64_t slack, std::int64_t maxAge);
 const char* APS5_VABI OCSP_crl_reason_str_nid_postfix(std::int64_t reason);
