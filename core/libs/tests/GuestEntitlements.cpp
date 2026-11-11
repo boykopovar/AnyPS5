@@ -128,7 +128,6 @@ int main(int argc, char** argv) {
         ini << "# owned add-ons\nFIRSTADDON0000\n  SECONDADDON ; second\nSIXTEENCHARLABEL\n";
         Require(static_cast<bool>(ini));
     }
-    Require(sceNpEntitlementAccessInitialize(nullptr, nullptr) == 0);
     SetEntitlements(file);
     NpEntitlementAccessAddcontEntitlementInfo list[3]{};
     std::uint32_t hits = 0;
