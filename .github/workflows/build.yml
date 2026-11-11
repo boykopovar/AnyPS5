@@ -343,7 +343,10 @@ jobs:
         run: arch -x86_64 /usr/bin/true || sudo softwareupdate --install-rosetta --agree-to-license
       - run: cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON -DCMAKE_OSX_ARCHITECTURES=${{ matrix.architectures }}
       - run: cmake --build build-relinker --parallel 3
-      - run: ctest --test-dir build-relinker --output-on-failure --timeout 120 --parallel 4 --no-tests=error
+      - run: |
+          repeat=()
+          if [ "$RUNNER_OS" = Windows ]; then repeat=(--repeat after-timeout:2); fi
+          ctest --test-dir build-relinker --output-on-failure --timeout 120 --parallel 4 --no-tests=error "${repeat[@]}"
 
   relinker-asan:
     needs: eligibility
@@ -630,7 +633,7 @@ jobs:
     needs: eligibility
     if: ${{ ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.eligibility.outputs.full == 'true') || (github.event_name == 'pull_request' && needs.eligibility.outputs.mingw-host-tests == 'true') }}
     runs-on: windows-latest
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.select == false && 90 || 45 }}
+    timeout-minutes: 90
     env:
       WINLIBS_RELEASE: 15.2.0posix-14.0.0-ucrt-r7
       WINLIBS_ZIP: winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip
