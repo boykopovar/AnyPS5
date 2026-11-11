@@ -2,10 +2,13 @@
 
 #include "SceTypes.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include <cstddef>
 #include <cstdint>
 
 extern "C" {
+
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore20serializationForHTMLERKNS_5ColorE(const WebCore::Color* color);
 
 WebCore::FloatPoint APS5_VABI _ZN7WebCore10FloatPoint15narrowPrecisionEdd(double x, double y);
 void APS5_VABI _ZN7WebCore10FloatPoint9normalizeEv(WebCore::FloatPoint* self);
