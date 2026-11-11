@@ -276,6 +276,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_encoding.py)
         add_test(NAME progress_render_sliver COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_render_sliver.py)
+        add_test(NAME tools_progress_diff_json COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_diff_json.py)
+        set_tests_properties(tools_progress_diff_json PROPERTIES TIMEOUT 20)
         add_test(NAME progress_wrappers COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_wrappers.py)
         add_test(NAME progress_read_encoding COMMAND ${Python3_EXECUTABLE}
@@ -558,6 +561,9 @@ if(BUILD_TESTING)
         add_test(NAME web_library_assets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_web.py)
         set_tests_properties(web_library_assets PROPERTIES TIMEOUT 20)
+        add_test(NAME tools_pad_preview COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_preview.py)
+        set_tests_properties(tools_pad_preview PROPERTIES TIMEOUT 20)
         add_test(NAME pad_input COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_input.py)
         set_tests_properties(pad_input PROPERTIES TIMEOUT 20)
@@ -630,6 +636,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_agent_files.py)
         add_test(NAME conventions_alignment COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_alignment.py)
+        add_test(NAME tools_intervals_complete COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_intervals_complete.py)
+        set_tests_properties(tools_intervals_complete PROPERTIES TIMEOUT 20)
         add_test(NAME trace_intervals_csv COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_intervals_csv.py)
         set_tests_properties(trace_intervals_csv PROPERTIES TIMEOUT 20)
