@@ -24,3 +24,12 @@ extern "C" void APS5_VABI _Call_onceEx_nid_postfix(std::int32_t* flag,
     value = 1;
     if (!GuestCopyOut_nid_no_patch(flag, &value, sizeof(value))) APS5_INVALID_ARG_EX;
 }
+
+extern "C" void APS5_VABI _Do_call_nid_postfix(void* target) {
+    using Callback = void (APS5_VABI *)(void*);
+    const Callback* table;
+    Callback callback;
+    if (!GuestCopyIn_nid_no_patch(&table, target, sizeof(table))) APS5_INVALID_ARG_EX;
+    if (!GuestCopyIn_nid_no_patch(&callback, table, sizeof(callback)) || !callback) APS5_INVALID_ARG_EX;
+    callback(target);
+}

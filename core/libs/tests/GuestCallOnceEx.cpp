@@ -53,6 +53,63 @@ struct CallbackFailure {
     int marker;
 };
 
+using VirtualCallback = void (APS5_VABI *)(void*);
+
+struct CallTarget {
+    const VirtualCallback* table;
+    void* observed = nullptr;
+    int firstCalls = 0;
+    int secondCalls = 0;
+    bool throwing = false;
+};
+
+void APS5_VABI FirstSlot(void* argument) {
+    auto& target = *static_cast<CallTarget*>(argument);
+    target.observed = argument;
+    ++target.firstCalls;
+    if (target.throwing) throw CallbackFailure{67};
+}
+
+void APS5_VABI SecondSlot(void* argument) {
+    ++static_cast<CallTarget*>(argument)->secondCalls;
+}
+
+void CheckVirtualDispatch() {
+    const std::array<VirtualCallback, 2> table{FirstSlot, SecondSlot};
+    CallTarget target{table.data()};
+    _Do_call_nid_postfix(&target);
+    _Do_call_nid_postfix(&target);
+    Require(target.observed == &target && target.firstCalls == 2 && target.secondCalls == 0);
+    target.throwing = true;
+    try {
+        _Do_call_nid_postfix(&target);
+        Require(false);
+    } catch (const CallbackFailure& failure) {
+        Require(failure.marker == 67);
+    }
+    Require(target.observed == &target && target.firstCalls == 3 && target.secondCalls == 0);
+}
+
+void CheckVirtualCallOnce() {
+    const std::array<VirtualCallback, 2> table{FirstSlot, SecondSlot};
+    CallTarget target{table.data()};
+    target.throwing = true;
+    std::int32_t flag = 0;
+    try {
+        _Call_onceEx_nid_postfix(&flag, _Do_call_nid_postfix, &target);
+        Require(false);
+    } catch (const CallbackFailure& failure) {
+        Require(failure.marker == 67);
+    }
+    Require(flag == 0 && target.observed == &target && target.firstCalls == 1 && target.secondCalls == 0);
+    target.throwing = false;
+    std::thread retry([&] { _Call_onceEx_nid_postfix(&flag, _Do_call_nid_postfix, &target); });
+    retry.join();
+    Require(flag == 1 && target.observed == &target && target.firstCalls == 2 && target.secondCalls == 0);
+    _Call_onceEx_nid_postfix(&flag, _Do_call_nid_postfix, &target);
+    Require(flag == 1 && target.firstCalls == 2 && target.secondCalls == 0);
+}
+
 struct Mutation {
     std::int32_t flag = 0;
     int calls = 0;
@@ -252,6 +309,26 @@ private:
     std::size_t size;
 };
 
+void CheckVirtualPointers() {
+    FlagPage page;
+    RequireThrow<std::invalid_argument>([] { _Do_call_nid_postfix(nullptr); });
+    RequireThrow<std::invalid_argument>([&] { _Do_call_nid_postfix(page.Unreadable()); });
+    CallTarget target{nullptr};
+    RequireThrow<std::invalid_argument>([&] { _Do_call_nid_postfix(&target); });
+    target.table = reinterpret_cast<const VirtualCallback*>(page.Unreadable());
+    RequireThrow<std::invalid_argument>([&] { _Do_call_nid_postfix(&target); });
+    const std::array<VirtualCallback, 2> emptyTable{nullptr, SecondSlot};
+    target.table = emptyTable.data();
+    RequireThrow<std::invalid_argument>([&] { _Do_call_nid_postfix(&target); });
+    std::int32_t flag = 0;
+    RequireThrow<std::invalid_argument>([&] { _Call_onceEx_nid_postfix(&flag, _Do_call_nid_postfix, &target); });
+    Require(flag == 0 && target.observed == nullptr && target.firstCalls == 0 && target.secondCalls == 0);
+    const std::array<VirtualCallback, 2> table{FirstSlot, SecondSlot};
+    target.table = table.data();
+    _Call_onceEx_nid_postfix(&flag, _Do_call_nid_postfix, &target);
+    Require(flag == 1 && target.observed == &target && target.firstCalls == 1 && target.secondCalls == 0);
+}
+
 void CheckPointers() {
     int calls = 0;
     RequireThrow<std::invalid_argument>([&] { _Call_onceEx_nid_postfix(nullptr, Increment, &calls); });
@@ -277,6 +354,9 @@ void CheckPointers() {
 }
 
 int main() {
+    CheckVirtualDispatch();
+    CheckVirtualCallOnce();
+    CheckVirtualPointers();
     CheckFlagsAndArguments();
     CheckConcurrentPublication(false);
     CheckConcurrentPublication(true);
