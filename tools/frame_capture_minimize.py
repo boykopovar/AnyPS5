@@ -13,6 +13,14 @@ class TrialLimitReached(Exception):
 
 
 class Minimizer:
+    CALL_KINDS = {
+        "register-shader", "resolve-shader-abi", "resolve-graphics-abi",
+        "resolve-graphics-stages-abi", "register-video-output", "unregister-video-output",
+        "set-tf-ring", "submit", "flip", "reserve-eop-flip", "suspend", "memory",
+        "frame-start", "end", "display-buffer",
+    }
+    CHUNK_KINDS = {"range", "snapshot", "delta", "reference"}
+
     def __init__(self, args, pattern):
         self.args = args
         self.pattern = pattern
@@ -43,6 +51,9 @@ class Minimizer:
             kind = entry.get("kind")
             if not isinstance(kind, str):
                 raise RuntimeError(f"capture inspection {label}[{position}] is missing a kind")
+            valid_kinds = Minimizer.CALL_KINDS if label == "calls" else Minimizer.CHUNK_KINDS
+            if kind not in valid_kinds:
+                raise RuntimeError(f"capture inspection {label}[{position}] has an unknown kind {kind!r}")
             if label == "calls" and kind == "memory":
                 group = entry.get("memory_group")
                 if isinstance(group, bool) or not isinstance(group, int) or group < 0:
