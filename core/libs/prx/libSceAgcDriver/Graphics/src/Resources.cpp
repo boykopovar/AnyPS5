@@ -280,6 +280,7 @@ void FillDeviceFunctions(const Context& context, DeviceFunctions& functions) {
     functions.cmdEndRenderPass = context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass");
     functions.cmdSetViewport = context.lookup<PFN_vkCmdSetViewport>("vkCmdSetViewport");
     functions.cmdSetScissor = context.lookup<PFN_vkCmdSetScissor>("vkCmdSetScissor");
+    if (context.dynamicColorWriteMask) functions.cmdSetColorWriteMask = context.Function<PFN_vkCmdSetColorWriteMaskEXT>("vkCmdSetColorWriteMaskEXT");
     functions.cmdSetDepthBounds = context.lookup<PFN_vkCmdSetDepthBounds>("vkCmdSetDepthBounds");
     functions.cmdSetDepthBias = context.lookup<PFN_vkCmdSetDepthBias>("vkCmdSetDepthBias");
     if (context.graphicsPipelineLibrary) {

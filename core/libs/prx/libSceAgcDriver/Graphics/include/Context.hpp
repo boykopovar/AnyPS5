@@ -157,6 +157,7 @@ struct DeviceFunctions {
     PFN_vkCmdEndRenderingKHR cmdEndRendering = nullptr;
     TrackedFunction<PFN_vkCmdSetViewport> cmdSetViewport;
     TrackedFunction<PFN_vkCmdSetScissor> cmdSetScissor;
+    PFN_vkCmdSetColorWriteMaskEXT cmdSetColorWriteMask = nullptr;
     TrackedFunction<PFN_vkCmdSetDepthBounds> cmdSetDepthBounds;
     TrackedFunction<PFN_vkCmdSetDepthBias> cmdSetDepthBias;
     TrackedFunction<PFN_vkCmdSetCullModeEXT> cmdSetCullMode;
@@ -314,6 +315,7 @@ struct Context {
     bool pushDescriptors = false;
     bool graphicsPipelineLibrary = false;
     bool pipelineLinkTimeOptimization = true;
+    bool dynamicColorWriteMask = false;
     std::uint32_t srgbDecodeFormats = 0;
     std::uint32_t srgbCopyFormats = 0;
     bool provokingVertexLast = false;
