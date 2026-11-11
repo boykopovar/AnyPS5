@@ -3006,6 +3006,18 @@ int main() {
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
     const int reverse_result = sceNetResolverStartAton(resolver, loopback.data(), reverse, sizeof(reverse), 5000000, 1, 0);
     Require(reverse_result == 0 || reverse_result == static_cast<int>(0x804101E1));
+    const auto* unreadableAddress = reinterpret_cast<const void*>(std::uintptr_t{0x10});
+    auto* unwritableName = reinterpret_cast<char*>(std::uintptr_t{0x10});
+    char invalidOutput[256];
+    std::memset(invalidOutput, 0x5A, sizeof(invalidOutput));
+    Require(sceNetResolverStartAton(resolver, unreadableAddress, invalidOutput, sizeof(invalidOutput), 5000000, 1, 0) ==
+        static_cast<int>(0x8041010E) && *sceNetErrnoLoc() == 14 && static_cast<unsigned char>(invalidOutput[0]) == 0x5A);
+    Require(sceNetResolverStartAton(resolver, unreadableAddress, invalidOutput, 0, 5000000, 1, 0) ==
+        static_cast<int>(0x80410116) && *sceNetErrnoLoc() == 22);
+    if (reverse_result == 0) {
+        Require(sceNetResolverStartAton(resolver, loopback.data(), unwritableName, sizeof(reverse), 5000000, 1, 0) ==
+            static_cast<int>(0x8041010E) && *sceNetErrnoLoc() == 14);
+    }
     Require(sceNetResolverStartNtoa(resolver, nullptr, ipv4.data(), 5000000, 1, 0) == static_cast<int>(0x80410116));
     ipv4.fill(0xA5);
     Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == static_cast<int>(0x80410104) &&
@@ -3042,6 +3054,15 @@ int main() {
     std::memset(reverse, 0x5A, sizeof(reverse));
     const int reverse6_result = sceNetResolverStartAton6(resolver, loopback6.data(), reverse, sizeof(reverse), 5000000, 1, 0);
     Require(reverse6_result == 0 || reverse6_result == static_cast<int>(0x804101E1));
+    std::memset(invalidOutput, 0x5A, sizeof(invalidOutput));
+    Require(sceNetResolverStartAton6(resolver, unreadableAddress, invalidOutput, sizeof(invalidOutput), 5000000, 1, 0) ==
+        static_cast<int>(0x8041010E) && *sceNetErrnoLoc() == 14 && static_cast<unsigned char>(invalidOutput[0]) == 0x5A);
+    Require(sceNetResolverStartAton6(resolver, unreadableAddress, invalidOutput, 0, 5000000, 1, 0) ==
+        static_cast<int>(0x80410116) && *sceNetErrnoLoc() == 22);
+    if (reverse6_result == 0) {
+        Require(sceNetResolverStartAton6(resolver, loopback6.data(), unwritableName, sizeof(reverse), 5000000, 1, 0) ==
+            static_cast<int>(0x8041010E) && *sceNetErrnoLoc() == 14);
+    }
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == reverse6_result);
     char host_reverse6[256]{};
     sockaddr_in6 host_loopback6{};

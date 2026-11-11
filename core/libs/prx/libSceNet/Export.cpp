@@ -2975,7 +2975,7 @@ int reverse_lookup(int rid, const sockaddr* address, NativeLength addressLength,
         return end_lookup(rid, generation, NET_ERROR_RESOLVER_ENODNS);
     }
     if (const int error = end_lookup(rid, generation, 0)) return error;
-    std::memcpy(hostname, name.data(), std::strlen(name.data()) + 1);
+    if (!GuestCopyOut_nid_no_patch(hostname, name.data(), std::strlen(name.data()) + 1)) return fail(NET_EFAULT);
     return 0;
 }
 
@@ -2986,7 +2986,7 @@ int APS5_VABI sceNetResolverStartAton(int rid, const void* addr, char* hostname,
     if (!addr || !hostname || len <= 0) return fail(NET_EINVAL);
     sockaddr_in address{};
     address.sin_family = AF_INET;
-    std::memcpy(&address.sin_addr, addr, sizeof(address.sin_addr));
+    if (!GuestCopyIn_nid_no_patch(&address.sin_addr, addr, sizeof(address.sin_addr))) return fail(NET_EFAULT);
     return reverse_lookup(rid, reinterpret_cast<const sockaddr*>(&address), sizeof(address), hostname, len, __func__);
 }
 
@@ -2997,7 +2997,7 @@ int APS5_VABI sceNetResolverStartAton6(int rid, const void* addr, char* hostname
     if (!addr || !hostname || len <= 0) return fail(NET_EINVAL);
     sockaddr_in6 address{};
     address.sin6_family = AF_INET6;
-    std::memcpy(&address.sin6_addr, addr, sizeof(address.sin6_addr));
+    if (!GuestCopyIn_nid_no_patch(&address.sin6_addr, addr, sizeof(address.sin6_addr))) return fail(NET_EFAULT);
     return reverse_lookup(rid, reinterpret_cast<const sockaddr*>(&address), sizeof(address), hostname, len, __func__);
 }
 
