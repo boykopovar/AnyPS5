@@ -267,6 +267,7 @@ struct AddressSpaceStats {
     std::uint64_t dissolvedOverlap = 0;
     std::uint64_t dissolvedImports = 0;
     std::uint64_t waiterDrops = 0;
+    std::uint64_t patchedEpoch = 0;
 };
 AddressSpaceStats AddressSpaceCounters();
 
@@ -280,6 +281,7 @@ struct MirrorStats {
     std::uint64_t heapChecks = 0;
     std::uint64_t sparseBinds = 0;
     std::uint64_t evictions = 0;
+    std::uint64_t rangeMirrors = 0;
 };
 MirrorStats MirrorCounters();
 std::uint64_t SnapshotMismatches();
@@ -390,6 +392,7 @@ public:
         const std::vector<ShaderRecompiler::BdaAbi::Range>* ranges;
     };
     std::optional<CachedTable> CachedAddressTable() const;
+    static std::optional<std::pair<std::uint64_t, std::shared_ptr<const std::vector<ShaderRecompiler::BdaAbi::Range>>>> TrySnapshotAddressSpace() noexcept;
     // The registered memory an address-based build maps, shared by consecutive builds (see
     // GuestBufferMemory.cpp): its lease and the sorted, immutable regions of the ranges served in
     // place by imports and mirrors. Opaque outside GuestBufferMemory.cpp.
@@ -466,6 +469,7 @@ public:
     bool InPlaceReadsOverlap(std::uint64_t address, std::size_t bytes) const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> DeviceReads() const;
     void DeviceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const;
+    void AddressStores(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const;
 
 private:
     struct Region {
@@ -549,6 +553,7 @@ private:
     static ShaderRecompiler::BdaAbi::Range addressRange(const Region& region);
     static std::uint64_t servedEnd(const Region& region);
     static std::uint64_t inPlaceEnd(const Region& region);
+    static bool addressWritable(const Region& region);
     void validate(std::uint64_t address, std::size_t bytes) const;
     // The region of a descriptor-bound range (AddWritable/AddReadable), committed pages only. A
     // range inside a base region of the space adds nothing: the region serves it, as today's merge

@@ -1,4 +1,5 @@
 import contextlib
+import errno
 import io
 import os
 import subprocess
@@ -7,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import symbolize_samples
@@ -68,6 +70,44 @@ def build_pe(path, with_symbols=True, with_exports=False, second_code=False, tim
 
 
 class SymbolizeSamplesTests(unittest.TestCase):
+    def test_json_loop_errors_preserve_files_with_matching_window(self):
+        self.check_loop_errors_preserve_files("--json")
+        self.check_loop_errors_preserve_files("--json", "--require-matching-window")
+
+    def check_loop_errors_preserve_files(self, *flags):
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        later, earlier, output, loop = [self.root / name for name in ("loop-later.txt", "loop-earlier.txt", "loop-output.txt", "simulated-loop")]
+        later.write_text(record + "libSceAgcDriver.prx+0x1011 7\n", encoding="utf-8")
+        earlier.write_text(record + "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
+        output.write_bytes(b"previous output")
+        loop.write_bytes(b"loop target sentinel")
+        before = {path: path.read_bytes() for path in (later, earlier, output, loop)}
+        original_open, original_resolve = open, Path.resolve
+        def open_path(path, *args, **kwargs):
+            if isinstance(path, (str, os.PathLike)) and Path(path) == loop:
+                raise OSError(errno.ELOOP, "Too many levels of symbolic links", str(loop))
+            return original_open(path, *args, **kwargs)
+        def resolve(path, *args, **kwargs):
+            if path == loop:
+                raise RuntimeError("Symlink loop from " + str(loop))
+            return original_resolve(path, *args, **kwargs)
+        for role in ("samples", "since", "out"):
+            with self.subTest(role=role, flags=flags):
+                source, baseline, destination = (loop if role == "samples" else later), (loop if role == "since" else earlier), (loop if role == "out" else output)
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with patch.object(Path, "resolve", resolve), patch("builtins.open", open_path), \
+                        contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                    symbolize_samples.main([str(source), "--since", str(baseline), "--libs", str(self.libs), "--out", str(destination), *flags])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("error:", stderr.getvalue())
+                self.assertIn("simulated-loop", stderr.getvalue())
+                self.assertNotIn("Traceback", stderr.getvalue())
+                self.assertEqual({path: path.read_bytes() for path in before}, before)
+
+    def test_loop_errors_preserve_files_with_matching_window(self):
+        self.check_loop_errors_preserve_files()
+        self.check_loop_errors_preserve_files("--require-matching-window")
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
@@ -303,6 +343,29 @@ class SymbolizeSamplesTests(unittest.TestCase):
                 path.write_bytes(data)
                 with self.assertRaisesRegex(ValueError, "COFF string table"):
                     symbolize_samples.PeModule(path)
+
+    def test_coff_short_names_reject_nonzero_bytes_after_the_terminator(self):
+        path = self.libs / "libSceAgcDriver.prx"
+        original = path.read_bytes()
+        table = struct.unpack_from("<I", original, 0x4C)[0]
+        for name in (b"f\0X\0\0\0\0\0", b"func\0X\0\0", b"name12\0X"):
+            with self.subTest(name=name):
+                data = bytearray(original)
+                data[table + 2 * 18:table + 2 * 18 + 8] = name
+                path.write_bytes(data)
+                with self.assertRaisesRegex(ValueError, "COFF short name"):
+                    symbolize_samples.PeModule(path)
+
+    def test_coff_exact_eight_bytes_and_padded_utf8_names_remain_supported(self):
+        path = self.libs / "libSceAgcDriver.prx"
+        original = path.read_bytes()
+        table = struct.unpack_from("<I", original, 0x4C)[0]
+        for name in ("caf\u00e9abc", "caf\u00e9"):
+            with self.subTest(name=name):
+                data = bytearray(original)
+                data[table + 2 * 18:table + 2 * 18 + 8] = name.encode("utf-8").ljust(8, b"\0")
+                path.write_bytes(data)
+                self.assertEqual(symbolize_samples.PeModule(path).name(0x1010), name)
 
     def test_coff_auxiliary_records_cannot_exceed_the_symbol_count(self):
         path = self.libs / "libSceAgcDriver.prx"
@@ -659,6 +722,155 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertEqual(blocked.read_bytes(), original)
 
 
+    def test_json_and_text_share_counts_for_real_pe_symbols_and_unknown_modules(self):
+        import json
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        later, earlier, output = self.root / "later.txt", self.root / "earlier.txt", self.root / "symbolized.txt"
+        later.write_text(record + "libSceAgcDriver.prx+0x1011;unknown.dll+0x10 7\nlibSceAgcDriver.prx+0x1041 2\n", encoding="utf-8")
+        earlier.write_text(record + "libSceAgcDriver.prx+0x1011;unknown.dll+0x10 4\n", encoding="utf-8")
+        command = [sys.executable, symbolize_samples.__file__, str(later), "--since", str(earlier), "--libs", str(self.libs)]
+        plain = subprocess.run(command, capture_output=True, text=True, timeout=5)
+        encoded = subprocess.run(command + ["--json", "--out", str(output)], capture_output=True, text=True, timeout=5)
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        self.assertEqual(encoded.returncode, 0, encoded.stderr)
+        report = json.loads(encoded.stdout)
+        self.assertEqual(report["samples"], 5)
+        self.assertEqual(report["self"], [{"symbol": "unknown.dll+0x10", "count": 3}, {"symbol": "libSceAgcDriver.prx!AgcDriver_long_function_name", "count": 2}])
+        for category in ("self", "inclusive"):
+            for row in report[category]:
+                self.assertIn(f"{row['count']:8d}", plain.stdout)
+                self.assertIn(row["symbol"], plain.stdout)
+        self.assertEqual(report["modules"], [
+            {"name": "libSceAgcDriver.prx", "candidate_accepted": True, "identity_recorded": True, "identity_matches": True},
+            {"name": "unknown.dll", "candidate_accepted": False, "identity_recorded": False, "identity_matches": False}])
+        self.assertIn("unknown.dll+0x10 3", output.read_text(encoding="utf-8"))
+
+    def test_json_address_counts_respect_thread_filter_and_unverified_option(self):
+        import json
+        samples = self.root / "threads.txt"
+        samples.write_text("thread 1 samples 10\nlibSceAgcDriver.prx 0x1011 2 4\nthread 2 samples 20\nlibSceAgcDriver.prx 0x1041 3 6\n", encoding="utf-8")
+        command = [sys.executable, symbolize_samples.__file__, str(samples), "--libs", str(self.libs), "--thread", "2", "--json"]
+        for unverified in (False, True):
+            result = subprocess.run(command + (["--unverified"] if unverified else []), capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["samples"], 20)
+            self.assertEqual(report["self"][0]["count"], 3)
+            self.assertEqual(report["inclusive"][0]["count"], 6)
+            self.assertEqual(report["modules"][0]["candidate_accepted"], unverified)
+            self.assertFalse(report["modules"][0]["identity_recorded"])
+            self.assertFalse(report["modules"][0]["identity_matches"])
+
+
+    def test_json_accepts_a_matching_pe_without_inventing_symbol_names(self):
+        import json
+        build_pe(self.libs / "empty.prx", with_symbols=False)
+        samples = self.root / "empty-symbols.txt"
+        samples.write_text(f"# module empty.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\nempty.prx+0x1011 2\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples), "--libs", str(self.libs), "--json"], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["self"], [{"symbol": "empty.prx+0x1011", "count": 2}])
+        self.assertEqual(report["modules"], [{"name": "empty.prx", "candidate_accepted": True, "identity_recorded": True, "identity_matches": True}])
+
+    def test_strict_window_checks_identity_and_all_cumulative_counter_categories(self):
+        import collections
+        for category, key in (("stacks", "lib.prx+0x10"), ("self_counts", ("lib.prx", "0x10")),
+                              ("inclusive", ("lib.prx", "0x10")), ("total", "samples")):
+            with self.subTest(category=category):
+                earlier, later = symbolize_samples.Samples(), symbolize_samples.Samples()
+                earlier.headers = later.headers = {"lib.prx": (100, 200)}
+                setattr(earlier, category, collections.Counter({key: 5}))
+                setattr(later, category, collections.Counter({key: 7}))
+                symbolize_samples.validate_window(later, earlier)
+                self.assertEqual(getattr(symbolize_samples.window(later, earlier), category)[key], 2)
+                getattr(later, category)[key] = 4
+                with self.assertRaisesRegex(ValueError, "counters decreased"):
+                    symbolize_samples.validate_window(later, earlier)
+                self.assertFalse(getattr(symbolize_samples.window(later, earlier), category))
+                getattr(later, category)[key] = 5
+                symbolize_samples.validate_window(later, earlier)
+
+    def test_strict_window_cli_is_opt_in_and_rejects_before_writing_output(self):
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        later, earlier, output = self.root / "later.txt", self.root / "earlier.txt", self.root / "output.txt"
+        later.write_text(record + "libSceAgcDriver.prx+0x1011 7\n", encoding="utf-8")
+        command = [sys.executable, symbolize_samples.__file__, str(later), "--libs", str(self.libs), "--out", str(output)]
+        for previous, current in ((record.replace(f"{TIMESTAMP:#x}", "0x1"), record), ("", record), (record, "")):
+            later.write_text(current + "libSceAgcDriver.prx+0x1011 7\n", encoding="utf-8")
+            earlier.write_text(previous + "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
+            output.write_text("previous output", encoding="utf-8")
+            strict = subprocess.run(command + ["--since", str(earlier), "--require-matching-window"], capture_output=True, text=True, timeout=5)
+            self.assertEqual(strict.returncode, 2, strict.stderr)
+            self.assertEqual(strict.stdout, "")
+            self.assertNotIn("Traceback", strict.stderr)
+            self.assertEqual(output.read_text(encoding="utf-8"), "previous output")
+            default = subprocess.run(command + ["--since", str(earlier)], capture_output=True, text=True, timeout=5)
+            self.assertEqual(default.returncode, 0, default.stderr)
+            self.assertIn("3 samples", default.stdout)
+        later.write_text(record + "libSceAgcDriver.prx+0x1011 7\nlibOther.prx 0x20 1 1\n", encoding="utf-8")
+        earlier.write_text(record + "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
+        unrecorded = subprocess.run(command + ["--since", str(earlier), "--require-matching-window"], capture_output=True, text=True, timeout=5)
+        self.assertEqual(unrecorded.returncode, 2, unrecorded.stderr)
+        self.assertIn("libOther.prx", unrecorded.stderr)
+        later.write_text(record + "libSceAgcDriver.prx+0x1011 7\n", encoding="utf-8")
+        matched = subprocess.run(command + ["--since", str(earlier), "--require-matching-window"], capture_output=True, text=True, timeout=5)
+        self.assertEqual(matched.returncode, 0, matched.stderr)
+        self.assertIn("3 samples", matched.stdout)
+        missing = subprocess.run(command + ["--require-matching-window"], capture_output=True, text=True, timeout=5)
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("needs --since", missing.stderr)
+
+    def test_strict_window_module_records_use_case_insensitive_lookup(self):
+        later, earlier = self.root / "later.txt", self.root / "earlier.txt"
+        for frames in ("libSceAgcDriver.prx+0x1011 {count}\n",
+                       "libSceAgcDriver.prx 0x1011 {count} {count}\n"):
+            with self.subTest(frames=frames):
+                earlier.write_text(f"# module LIBSCEAGCDRIVER.PRX {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n" +
+                                   frames.format(count=4), encoding="utf-8")
+                later.write_text(f"# module libsceagcdriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n" +
+                                 frames.format(count=7), encoding="utf-8")
+                result = subprocess.run([sys.executable, symbolize_samples.__file__, str(later),
+                                         "--libs", str(self.libs), "--since", str(earlier),
+                                         "--require-matching-window"], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("3 samples", result.stdout)
+                self.assertIn("libSceAgcDriver.prx!short", result.stdout)
+                self.assertEqual(result.stderr, "")
+                later.write_text(f"# module libsceagcdriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP + 1:#x}\n" +
+                                 frames.format(count=7), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "libSceAgcDriver.prx: module identity differs"):
+                    symbolize_samples.validate_window(symbolize_samples.load(later),
+                                                      symbolize_samples.load(earlier))
+
+
+    def test_json_honours_top_sorts_modules_and_reports_identity_mismatch(self):
+        import json
+        samples = self.root / "mismatch.txt"
+        samples.write_text(f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP + 1:#x}\nz.dll+0x10;libSceAgcDriver.prx+0x1011 5\na.dll+0x20 3\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples), "--libs", str(self.libs), "--json", "--top", "1"], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["self"], [{"symbol": "libSceAgcDriver.prx+0x1011", "count": 5}])
+        self.assertEqual(len(report["inclusive"]), 1)
+        self.assertEqual(report["modules"], [
+            {"name": "a.dll", "candidate_accepted": False, "identity_recorded": False, "identity_matches": False},
+            {"name": "libSceAgcDriver.prx", "candidate_accepted": False, "identity_recorded": True, "identity_matches": False},
+            {"name": "z.dll", "candidate_accepted": False, "identity_recorded": False, "identity_matches": False}])
+
+    def test_json_module_identity_uses_case_insensitive_records(self):
+        import json
+        samples = self.root / "mixed-case.txt"
+        for timestamp in (TIMESTAMP, TIMESTAMP + 1):
+            with self.subTest(timestamp=timestamp):
+                samples.write_text(f"# module LIBSCEAGCDRIVER.PRX {SIZE_OF_IMAGE:#x} {timestamp:#x}\n"
+                                   "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
+                lines, _ = self.run_main(samples, "--libs", self.libs, "--json")
+                self.assertEqual(json.loads("\n".join(lines))["modules"], [
+                    {"name": "libSceAgcDriver.prx", "candidate_accepted": timestamp == TIMESTAMP,
+                     "identity_recorded": True, "identity_matches": timestamp == TIMESTAMP}])
+
+
 class CandidateModuleTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -713,6 +925,30 @@ class CandidateModuleTests(unittest.TestCase):
 
 
 class ThreadFilterInputTests(unittest.TestCase):
+    def test_address_captures_without_thread_headings_reject_thread_filter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plain = root / "plain.txt"
+            threaded = root / "threads.txt"
+            threaded.write_text("thread 7 samples 10\n  example.prx 0x1010 10 10\n", encoding="utf-8")
+            for header in ("", "# 5 samples\n"):
+                plain.write_text(header + "example.prx 0x1010 5 5\n", encoding="utf-8")
+                original = {path: path.read_bytes() for path in (plain, threaded)}
+                for target in ("samples", "since"):
+                    with self.subTest(header=header, target=target):
+                        samples = plain if target == "samples" else threaded
+                        options = [] if target == "samples" else ["--since", str(plain)]
+                        result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
+                                                 "--libs", str(root), "--thread", "7", *options],
+                                                capture_output=True, text=True, timeout=5)
+                        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn(f"{plain}:{2 if header else 1}:", result.stderr)
+                        self.assertIn("thread filtering requires thread headings", result.stderr)
+                        self.assertNotIn("Traceback", result.stderr)
+                        for path, content in original.items():
+                            self.assertEqual(path.read_bytes(), content)
+
     def test_collapsed_stacks_reject_thread_filter_without_writing_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -760,6 +996,59 @@ class MappedExportTests(unittest.TestCase):
         module = self.module()
         self.assertEqual(module.name(0x1021), "~first_func")
         self.assertEqual(module.name(0x1061), "~second_func")
+
+    def overlapping_section(self, rva, size=0x10, raw_size=0x10, first=False):
+        struct.pack_into("<H", self.data, 0x46, 3)
+        entry = 0x148 + 80
+        struct.pack_into("<8sIIII", self.data, entry, b".overlap", size, rva, raw_size, 0xA00)
+        struct.pack_into("<I", self.data, entry + 36, 0x40000040)
+        if first:
+            original = bytes(self.data[0x148 + 40:0x148 + 80])
+            self.data[0x148 + 40:0x148 + 80] = self.data[entry:entry + 40]
+            self.data[entry:entry + 40] = original
+
+    def test_overlapping_export_metadata_is_rejected_in_either_section_order(self):
+        original = bytes(self.data)
+        for first in (False, True):
+            for rva in (0x2000, 0x2040, 0x2048, 0x2050, 0x2060):
+                with self.subTest(first=first, rva=rva):
+                    self.data = bytearray(original)
+                    self.overlapping_section(rva, first=first)
+                    with self.assertRaisesRegex(ValueError, "overlapping PE sections"):
+                        self.module()
+
+    def test_export_reads_cannot_cross_into_an_overlapping_mapping(self):
+        original = bytes(self.data)
+        for first in (False, True):
+            for rva in (0x2016, 0x2042, 0x204A, 0x2051, 0x2062):
+                with self.subTest(first=first, rva=rva):
+                    self.data = bytearray(original)
+                    self.overlapping_section(rva, first=first)
+                    with self.assertRaisesRegex(ValueError, "overlapping PE sections"):
+                        self.module()
+
+    def test_virtual_and_raw_overlap_is_rejected(self):
+        self.overlapping_section(0x2060, raw_size=0)
+        with self.assertRaisesRegex(ValueError, "overlapping PE sections"):
+            self.module()
+
+    def test_unrelated_overlap_does_not_discard_valid_exports(self):
+        self.overlapping_section(0x21F0)
+        self.assertEqual(self.module().name(0x1021), "~first_func")
+
+    def test_export_name_can_terminate_immediately_before_an_overlap(self):
+        struct.pack_into("<I", self.data, 0x600 + 24, 1)
+        self.overlapping_section(0x206B)
+        self.assertEqual(self.module().name(0x1021), "~first_func")
+
+    def test_ambiguous_exports_preserve_frames_with_a_warning(self):
+        self.overlapping_section(0x2060)
+        self.path.write_bytes(self.data)
+        warnings = []
+        symbolizer = symbolize_samples.Symbolizer([self.path.parent], {}, unverified=True, warn=warnings.append)
+        frame = "mapped.dll+0x1021"
+        self.assertEqual(symbolizer.frame(frame), frame)
+        self.assertTrue(any("overlapping PE sections" in warning for warning in warnings))
 
     def test_virtual_tail_name_matches_backed_empty_control(self):
         self.data[0x660] = 0

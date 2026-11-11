@@ -27,13 +27,33 @@
 #include <exception>
 #include <initializer_list>
 #include <iostream>
+#include <span>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
+namespace AgcDriver::DriverDetail {
+
+struct DriverTestAccess {
+    static std::uint64_t DrawQueuedStoreMisses() {
+        auto& driver = Driver::Get();
+        std::lock_guard lock(driver.drawCacheMutex);
+        return driver.drawEntryCounters.misses[static_cast<std::size_t>(DrawMiss::QueuedStores)];
+    }
+
+    static std::uint64_t DispatchQueuedStoreMisses() {
+        auto& driver = Driver::Get();
+        std::lock_guard lock(driver.dispatchCacheMutex);
+        return driver.entryCounters.queuedStores;
+    }
+};
+
+}
+
 namespace {
 
+using AgcDriver::DriverDetail::DriverTestAccess;
 using AgcDriver::DriverDetail::DrawPipeline;
 using AgcDriver::Graphics::Require;
 
@@ -55,6 +75,8 @@ alignas(256) std::array<std::uint32_t, 16> TableVertexCode{
     0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u,
 };
 alignas(256) std::array<float, 4> OneConstant{1.0f, 0.0f, 0.0f, 0.0f};
+alignas(256) constexpr std::array<std::uint32_t, 7> CounterCode{0xf4080200u, 0xfa000000u, 0xbf8cc07fu, 0x7e000281u, 0xe0c80000u, 0x80020000u, 0xbf810000u};
+alignas(256) volatile std::uint32_t Done = 0;
 
 struct Header {
     Shader shader{};
@@ -217,6 +239,7 @@ int DrawsReadQueuedDumps() {
     const auto dumpDrainsBefore = DrawPipeline::DrainRequestsByOpcode(DumpOpcode);
     const auto captureDrainsBefore = DrawPipeline::DrainRequestsByReason(DrawPipeline::DrainReason::Capture);
     const auto knownBefore = AgcDriver::ShaderMemory::KnownValues();
+    const auto queuedStoreMissesBefore = DriverTestAccess::DrawQueuedStoreMisses();
     std::atomic<bool> released{false};
     struct Release {
         std::atomic<bool>& flag;
@@ -234,6 +257,7 @@ int DrawsReadQueuedDumps() {
     released.store(true, std::memory_order_release);
     AgcDriverWaitIdle_nid_postfix();
     const auto known = AgcDriver::ShaderMemory::KnownValues();
+    const auto queuedStoreMisses = DriverTestAccess::DrawQueuedStoreMisses() - queuedStoreMissesBefore;
 
     AgcDriver::GuestMemory::FlushGpuWrites(destination, TableWords * 4u);
     Require(std::memcmp(block.Data() + TableOffset, second.data(), TableWords * 4u) == 0, "queued constant RAM dump: the table in guest memory is not the second dump's");
@@ -249,8 +273,9 @@ int DrawsReadQueuedDumps() {
     } else {
         Require(captureDrains == 0, "queued constant RAM dump: a capture after a queued dump drained the draw pipeline " + std::to_string(captureDrains) + " times instead of reading the queued bytes");
         Require(drains == 0, "queued constant RAM dump: the submission drained the draw pipeline " + std::to_string(drains) + " times");
+        Require(queuedStoreMisses != 0, "queued constant RAM dump: no draw-cache miss was counted as a recapture over queued stores");
     }
-    std::cout << "three draws around two queued constant RAM dumps read " << known.served - knownBefore.served << " dumped words without draining the draw pipeline\n";
+    std::cout << "three draws around two queued constant RAM dumps read " << known.served - knownBefore.served << " dumped words without draining the draw pipeline, " << queuedStoreMisses << " draw-cache misses recaptured over queued stores\n";
     return 0;
 }
 
@@ -325,6 +350,104 @@ int VertexTableDecodeWaitsForQueuedDump() {
     return 0;
 }
 
+std::uint32_t Low(std::uint64_t value) {
+    return static_cast<std::uint32_t>(value);
+}
+
+std::uint32_t High(std::uint64_t value) {
+    return static_cast<std::uint32_t>(value >> 32u);
+}
+
+std::uint64_t AddressOf(const volatile void* pointer) {
+    return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer));
+}
+
+std::vector<std::uint32_t> BufferDescriptor(std::uint64_t address, std::uint32_t bytes) {
+    return {Low(address), High(address) & 0xffffu, bytes, 0x31016facu};
+}
+
+void AppendCountDispatch(std::vector<std::uint32_t>& commands, std::uint64_t table) {
+    const auto code = AddressOf(CounterCode.data());
+    Append(commands, 0x76, {0x20c, static_cast<std::uint32_t>(code >> 8u)});
+    Append(commands, 0x76, {0x20d, static_cast<std::uint32_t>(code >> 40u) & 0xffu});
+    for (const std::uint32_t offset : {0x207u, 0x208u, 0x209u}) Append(commands, 0x76, {offset, 1});
+    Append(commands, 0x76, {0x212, 0});
+    Append(commands, 0x76, {0x213, 2u << 1u});
+    Append(commands, 0x76, {0x240, Low(table), High(table)});
+    Append(commands, 0x15, {1, 1, 1, 0x8041u});
+}
+
+void AppendWriteData(std::vector<std::uint32_t>& commands, const volatile std::uint32_t* target, std::uint32_t value) {
+    Append(commands, 0x37, {0x00100200u, Low(AddressOf(target)), High(AddressOf(target)), value});
+}
+
+void Submit(std::vector<std::uint32_t>& commands, const std::string& what) {
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "queued constant RAM dump: the " + what + " submission failed");
+}
+
+std::uint32_t Counted(const GuestBlock& block, std::uint64_t offset) {
+    std::uint32_t value = 0;
+    AgcDriver::GuestMemory::Read(block.Address() + offset, std::as_writable_bytes(std::span(&value, 1)));
+    return value;
+}
+
+int DispatchReadsQueuedDump() {
+    constexpr std::uint64_t DescriptorOffset = 0x4000;
+    constexpr std::uint64_t StaleOffset = 0x5000;
+    constexpr std::uint64_t FreshOffset = 0x5100;
+    const GuestBlock block;
+    const auto table = block.Address() + DescriptorOffset;
+    const auto stale = BufferDescriptor(block.Address() + StaleOffset, 16u);
+    const auto fresh = BufferDescriptor(block.Address() + FreshOffset, 16u);
+    std::memcpy(block.Data() + DescriptorOffset, stale.data(), stale.size() * 4u);
+
+    Done = 0;
+    std::vector<std::uint32_t> warmUp;
+    AppendCountDispatch(warmUp, table);
+    AppendWriteData(warmUp, &Done, 1);
+    Submit(warmUp, "warm-up dispatch");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(Done == 1 && Counted(block, StaleOffset) == 1, "queued constant RAM dump: the warm-up dispatch did not count through the table's descriptor");
+
+    std::vector<std::uint32_t> commands;
+    AppendConstantRamDump(commands, fresh, table);
+    AppendCountDispatch(commands, table);
+    AppendWriteData(commands, &Done, 2);
+
+    WaitUntil([] { return DrawPipeline::QueuedItems() == 0; }, "the pipeline to empty");
+    const auto drainsBefore = DrainRequests();
+    const auto dumpDrainsBefore = DrawPipeline::DrainRequestsByOpcode(DumpOpcode);
+    const auto captureDrainsBefore = DrawPipeline::DrainRequestsByReason(DrawPipeline::DrainReason::Capture);
+    const auto packetDrainsBefore = DrawPipeline::DrainRequestsByReason(DrawPipeline::DrainReason::Packet);
+    const auto missesBefore = DriverTestAccess::DispatchQueuedStoreMisses();
+    std::atomic<bool> released{false};
+    struct Release {
+        std::atomic<bool>& flag;
+        ~Release() { flag.store(true, std::memory_order_release); }
+    } release{released};
+    DrawPipeline::Queue0().Enqueue([&released] {
+        while (!released.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }, {});
+    Submit(commands, "dump and dispatch");
+    WaitUntil([&] { return DrainRequests() != drainsBefore || DriverTestAccess::DispatchQueuedStoreMisses() != missesBefore || Done == 2; }, "the dispatch after the queued dump to drain the draw pipeline or validate its cached variant");
+    const auto dumpDrains = DrawPipeline::DrainRequestsByOpcode(DumpOpcode) - dumpDrainsBefore;
+    released.store(true, std::memory_order_release);
+    AgcDriverWaitIdle_nid_postfix();
+    const auto captureDrains = DrawPipeline::DrainRequestsByReason(DrawPipeline::DrainReason::Capture) - captureDrainsBefore;
+    const auto packetDrains = DrawPipeline::DrainRequestsByReason(DrawPipeline::DrainReason::Packet) - packetDrainsBefore;
+    const auto misses = DriverTestAccess::DispatchQueuedStoreMisses() - missesBefore;
+    const auto staleCount = Counted(block, StaleOffset);
+    const auto freshCount = Counted(block, FreshOffset);
+
+    Require(Done == 2, "queued constant RAM dump: the dispatch submission did not finish");
+    Require(staleCount == 1 && freshCount == 1, "queued constant RAM dump: after the dispatch over the queued dump the old descriptor's buffer holds " + std::to_string(staleCount) + " and the dumped one's " + std::to_string(freshCount) + ", expected 1 and 1");
+    Require(dumpDrains == 0, "queued constant RAM dump: the DUMP_CONST_RAM before the dispatch drained the draw pipeline " + std::to_string(dumpDrains) + " times");
+    if (std::getenv("APS5_VERIFY_KNOWN_VALUES") == nullptr) Require(captureDrains == 0, "queued constant RAM dump: the dispatch validated its cached variant over the queued dump by draining the draw pipeline " + std::to_string(captureDrains) + " times");
+    std::cout << "a dispatch after a queued dump of its descriptor table counted through the dumped descriptor: " << packetDrains << " drains at the dispatch packet, " << misses << " dispatch-cache misses recaptured over queued stores\n";
+    return 0;
+}
+
 }
 
 int main() {
@@ -340,6 +463,7 @@ int main() {
         }
         auto result = DrawsReadQueuedDumps();
         if (result == 0) result = VertexTableDecodeWaitsForQueuedDump();
+        if (result == 0) result = DispatchReadsQueuedDump();
         AgcDriverShutdown_nid_postfix();
         return result;
     } catch (const std::exception& error) {

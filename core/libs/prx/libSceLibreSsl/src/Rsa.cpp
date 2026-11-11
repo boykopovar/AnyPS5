@@ -11,6 +11,7 @@
 #include <vector>
 #include "mbedtls/bignum.h"
 #include "mbedtls/sha1.h"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
@@ -433,19 +434,35 @@ int AddNone(unsigned char* to, int size, const unsigned char* from, int length, 
 }
 
 int CheckPkcs1Type1(unsigned char* to, int size, const unsigned char* from, int length, int modulusLength, const char* function) {
-    if (modulusLength != length + 1 || !length || from[0] != 0x01) return -1;
+    if (modulusLength != length + 1 || !length || from[0] != 0x01) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 106, __FILE__, __LINE__);
+        return -1;
+    }
     const unsigned char* data = from + 1;
     int remaining = length - 1;
     int index = 0;
     for (; index < remaining; ++index, ++data) {
         if (*data == 0xFF) continue;
-        if (*data) return -1;
+        if (*data) {
+            LibreSslPutError_nid_no_patch(4, 0xfff, 102, __FILE__, __LINE__);
+            return -1;
+        }
         ++data;
         break;
     }
-    if (index == remaining || index < 8) return -1;
+    if (index == remaining) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 113, __FILE__, __LINE__);
+        return -1;
+    }
+    if (index < 8) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 103, __FILE__, __LINE__);
+        return -1;
+    }
     remaining -= index + 1;
-    if (remaining > size) return -1;
+    if (remaining > size) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 109, __FILE__, __LINE__);
+        return -1;
+    }
     RequireBuffer(to, remaining, function, "output");
     if (remaining) std::memcpy(to, data, static_cast<std::size_t>(remaining));
     return remaining;
@@ -519,24 +536,39 @@ int APS5_VABI DefaultPublicDecrypt(int length, const unsigned char* from, unsign
     constexpr const char* function = "RSA_eay_public_decrypt";
     const LibreSslBignum* modulus;
     const LibreSslBignum* exponent;
-    if (!UsablePublicKey(rsa, function, modulus, exponent)) return -1;
+    if (!UsablePublicKey(rsa, function, modulus, exponent)) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, Bits(*modulus) > MaxModulusBits ? 105 : 101, __FILE__, __LINE__);
+        return -1;
+    }
     const int size = (Bits(*modulus) + 7) / 8;
-    if (length > size || length < 0) return -1;
+    if (length > size) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 108, __FILE__, __LINE__);
+        return -1;
+    }
+    if (length < 0) return -1;
     RequireBuffer(from, length, function, "input");
     const auto value = FromBytes(from, static_cast<std::size_t>(length));
-    if (Compare(value.data(), static_cast<int>(value.size()), modulus->d, modulus->top) >= 0) return -1;
+    if (Compare(value.data(), static_cast<int>(value.size()), modulus->d, modulus->top) >= 0) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 132, __FILE__, __LINE__);
+        return -1;
+    }
     Words result;
     if (!PublicOperation(*rsa, value, *exponent, *modulus, result, function)) return -1;
     if (padding == PaddingX931) NotImplemented_nid_no_patch("RSA_padding_check_X931");
     const auto bytes = ToBytes(result);
     switch (padding) {
     case PaddingPkcs1:
-        return CheckPkcs1Type1(to, size, bytes.data(), static_cast<int>(bytes.size()), size, function);
+        if (const int pkcs1 = CheckPkcs1Type1(to, size, bytes.data(), static_cast<int>(bytes.size()), size, function); pkcs1 >= 0) return pkcs1;
+        break;
     case PaddingNone:
-        return CheckNone(to, size, bytes.data(), static_cast<int>(bytes.size()), function);
+        if (const int none = CheckNone(to, size, bytes.data(), static_cast<int>(bytes.size()), function); none >= 0) return none;
+        break;
     default:
+        LibreSslPutError_nid_no_patch(4, 0xfff, 118, __FILE__, __LINE__);
         return -1;
     }
+    LibreSslPutError_nid_no_patch(4, 0xfff, 114, __FILE__, __LINE__);
+    return -1;
 }
 
 struct DigestObject {
@@ -607,11 +639,22 @@ int VerifyDigestInfo(int type, const unsigned char* digest, unsigned int digestL
     Element hash;
     if (!ReadAlgorithm(fields, algorithm, function) || !ReadPrimitive(fields, 4, hash, function) || fields.length) return 0;
     if (sequence.end != data + length) return 0;
-    if (algorithm.parameter && !algorithm.nullParameter) return 0;
-    if (!SameDigestType(algorithm, type, function)) return 0;
-    if (static_cast<unsigned long>(hash.length) != digestLength) return 0;
+    if (algorithm.parameter && !algorithm.nullParameter) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
+        return 0;
+    }
+    if (!SameDigestType(algorithm, type, function)) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 100, __FILE__, __LINE__);
+        return 0;
+    }
+    if (static_cast<unsigned long>(hash.length) != digestLength) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
+        return 0;
+    }
     RequireBuffer(digest, digestLength, function, "digest");
-    return !digestLength || !std::memcmp(digest, hash.content, digestLength);
+    if (!digestLength || !std::memcmp(digest, hash.content, digestLength)) return 1;
+    LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
+    return 0;
 }
 
 const LibreSslBignum& RequireNormal(const void* number, const char* function, const char* name) {
@@ -1162,15 +1205,26 @@ int APS5_VABI RSA_verify_nid_postfix(int type, const unsigned char* digest, unsi
         if (!rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null method");
         if (rsa->meth->verify) return reinterpret_cast<RsaVerify>(rsa->meth->verify)(type, digest, digestLength, signature, signatureLength, rsa);
     }
-    if (signatureLength != static_cast<unsigned int>(RSA_size_nid_postfix(rsa))) return 0;
-    if (type == DigestMd5Sha1 && digestLength != Md5Sha1Bytes) return 0;
+    if (signatureLength != static_cast<unsigned int>(RSA_size_nid_postfix(rsa))) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 119, __FILE__, __LINE__);
+        return 0;
+    }
+    if (type == DigestMd5Sha1 && digestLength != Md5Sha1Bytes) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 131, __FILE__, __LINE__);
+        return 0;
+    }
     std::vector<unsigned char> block(signatureLength);
     const int length = RSA_public_decrypt_nid_postfix(static_cast<int>(signatureLength), signature, block.data(), rsa, PaddingPkcs1);
     if (length <= 0) return 0;
     if (type != DigestMd5Sha1) return VerifyDigestInfo(type, digest, digestLength, block.data(), length, __func__);
-    if (length != static_cast<int>(Md5Sha1Bytes)) return 0;
+    if (length != static_cast<int>(Md5Sha1Bytes)) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
+        return 0;
+    }
     RequireBuffer(digest, Md5Sha1Bytes, __func__, "digest");
-    return !std::memcmp(block.data(), digest, Md5Sha1Bytes);
+    if (!std::memcmp(block.data(), digest, Md5Sha1Bytes)) return 1;
+    LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
+    return 0;
 }
 
 LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, long length) {
@@ -1201,6 +1255,165 @@ LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsig
         *out = rsa;
     }
     return rsa;
+}
+
+}
+
+namespace {
+
+constexpr int PssDigestSalt = -1;
+constexpr int PssLongestSalt = -2;
+constexpr int PssMaxDigestBytes = 64;
+constexpr unsigned char PssTrailer = 0xbc;
+constexpr unsigned char PssZeroes[8] {};
+constexpr int RsaLibrary = 4;
+constexpr int RsaFunction = 0xfff;
+constexpr int MallocFailure = 65;
+constexpr int BadSignature = 104;
+constexpr int DataTooLarge = 109;
+constexpr int DataTooLargeForKeySize = 110;
+constexpr int FirstOctetInvalid = 133;
+constexpr int LastOctetInvalid = 134;
+constexpr int SlenRecoveryFailed = 135;
+constexpr int SlenCheckFailed = 136;
+
+int Fail(int reason) {
+    LibreSslPutError_nid_no_patch(RsaLibrary, RsaFunction, reason);
+    return 0;
+}
+
+int Mgf1Blocks(EvpMdContext& context, unsigned char* mask, long length, const unsigned char* seed, long seedLength, const EvpMd* digest, int digestLength, const char* function) {
+    unsigned char block[PssMaxDigestBytes];
+    long done = 0;
+    for (long counter = 0; done < length; ++counter) {
+        const unsigned char count[4] {static_cast<unsigned char>(counter >> 24), static_cast<unsigned char>(counter >> 16), static_cast<unsigned char>(counter >> 8), static_cast<unsigned char>(counter)};
+        if (!EVP_DigestInit_ex_nid_postfix(&context, digest, nullptr) || !EVP_DigestUpdate_nid_postfix(&context, seed, static_cast<std::size_t>(seedLength)) ||
+            !EVP_DigestUpdate_nid_postfix(&context, count, sizeof(count)))
+            return -1;
+        if (done + digestLength <= length) {
+            if (!EVP_DigestFinal_ex_nid_postfix(&context, mask + done, nullptr)) return -1;
+            if (!digestLength) throw std::invalid_argument(std::string(function) + ": MGF1 with a digest size of 0 never fills the mask");
+            done += digestLength;
+        } else {
+            if (!EVP_DigestFinal_ex_nid_postfix(&context, block, nullptr)) return -1;
+            std::memcpy(mask + done, block, static_cast<std::size_t>(length - done));
+            done = length;
+        }
+    }
+    return 0;
+}
+
+int Mgf1(unsigned char* mask, long length, const unsigned char* seed, long seedLength, const EvpMd* digest, const char* function) {
+    EvpMdContext context;
+    EVP_MD_CTX_init_nid_postfix(&context);
+    const int digestLength = EVP_MD_size_nid_postfix(digest);
+    const int result = digestLength < 0 ? -1 : Mgf1Blocks(context, mask, length, seed, seedLength, digest, digestLength, function);
+    EVP_MD_CTX_cleanup_nid_postfix(&context);
+    return result;
+}
+
+void RequireLengthSum(int digestLength, int saltLength, const char* function) {
+    if (std::int64_t(digestLength) + saltLength + 2 > INT_MAX) throw std::invalid_argument(std::string(function) + ": hLen + sLen + 2 overflows int");
+}
+
+int VerifyPss(EvpMdContext& context, const LibreSslRsa* rsa, const unsigned char* mHash, const EvpMd* hash, const unsigned char* em, int saltLength, const char* function) {
+    const int digestLength = EVP_MD_size_nid_postfix(hash);
+    if (digestLength < 0) return 0;
+    if (saltLength == PssDigestSalt) saltLength = digestLength;
+    else if (saltLength < PssLongestSalt) return Fail(SlenCheckFailed);
+    int length = RSA_size_nid_postfix(rsa);
+    const int topBits = (Bits(*static_cast<const LibreSslBignum*>(rsa->n)) - 1) & 0x7;
+    if (!em) throw std::invalid_argument(std::string(function) + ": null EM");
+    if (em[0] & (0xFF << topBits)) return Fail(FirstOctetInvalid);
+    if (!topBits) {
+        ++em;
+        --length;
+    }
+    RequireLengthSum(digestLength, saltLength, function);
+    if (length < digestLength + saltLength + 2) return Fail(DataTooLarge);
+    if (!length && topBits) throw std::invalid_argument(std::string(function) + ": a 0-bit modulus reads the byte before EM");
+    if (em[length - 1] != PssTrailer) return Fail(LastOctetInvalid);
+    const int maskedLength = length - digestLength - 1;
+    if (maskedLength < 0) return Fail(MallocFailure);
+    if (!maskedLength) throw std::invalid_argument(std::string(function) + ": an empty masked DB is read past its allocation");
+    const unsigned char* digest = em + maskedLength;
+    std::vector<unsigned char> block(static_cast<std::size_t>(maskedLength));
+    if (Mgf1(block.data(), maskedLength, digest, digestLength, hash, function) < 0) return 0;
+    for (std::size_t index = 0; index < block.size(); ++index) block[index] ^= em[index];
+    if (topBits) block[0] &= static_cast<unsigned char>(0xFF >> (8 - topBits));
+    std::size_t index = 0;
+    while (!block[index] && index < block.size() - 1) ++index;
+    if (block[index++] != 0x01) return Fail(SlenRecoveryFailed);
+    const std::size_t salt = block.size() - index;
+    if (saltLength >= 0 && salt != static_cast<std::size_t>(saltLength)) return Fail(SlenCheckFailed);
+    if (!EVP_DigestInit_ex_nid_postfix(&context, hash, nullptr) || !EVP_DigestUpdate_nid_postfix(&context, PssZeroes, sizeof(PssZeroes)) ||
+        !EVP_DigestUpdate_nid_postfix(&context, mHash, static_cast<std::size_t>(digestLength)))
+        return 0;
+    if (salt && !EVP_DigestUpdate_nid_postfix(&context, block.data() + index, salt)) return 0;
+    unsigned char computed[PssMaxDigestBytes];
+    if (!EVP_DigestFinal_ex_nid_postfix(&context, computed, nullptr)) return 0;
+    if (std::memcmp(computed, digest, static_cast<std::size_t>(digestLength))) return Fail(BadSignature);
+    return 1;
+}
+
+int AddPss(EvpMdContext& context, const LibreSslRsa* rsa, unsigned char* em, const unsigned char* mHash, const EvpMd* hash, int saltLength, const char* function) {
+    const int digestLength = EVP_MD_size_nid_postfix(hash);
+    if (digestLength < 0) return 0;
+    if (saltLength == PssDigestSalt) saltLength = digestLength;
+    else if (saltLength < PssLongestSalt) return Fail(SlenCheckFailed);
+    int length = RSA_size_nid_postfix(rsa);
+    const int topBits = (Bits(*static_cast<const LibreSslBignum*>(rsa->n)) - 1) & 0x7;
+    if (!topBits) {
+        if (!em) throw std::invalid_argument(std::string(function) + ": null EM");
+        *em++ = 0;
+        --length;
+    }
+    if (saltLength == PssLongestSalt) {
+        const std::int64_t longest = std::int64_t(length) - digestLength - 2;
+        if (longest < INT_MIN) throw std::invalid_argument(std::string(function) + ": emLen - hLen - 2 overflows int");
+        saltLength = static_cast<int>(longest);
+    } else {
+        RequireLengthSum(digestLength, saltLength, function);
+        if (length < digestLength + saltLength + 2) return Fail(DataTooLargeForKeySize);
+    }
+    std::vector<unsigned char> salt(static_cast<std::size_t>(saltLength > 0 ? saltLength : 0));
+    if (!salt.empty()) HostEntropy_nid_no_patch(salt.data(), salt.size());
+    if (!EVP_DigestInit_ex_nid_postfix(&context, hash, nullptr) || !EVP_DigestUpdate_nid_postfix(&context, PssZeroes, sizeof(PssZeroes)) ||
+        !EVP_DigestUpdate_nid_postfix(&context, mHash, static_cast<std::size_t>(digestLength)))
+        return 0;
+    if (saltLength < 0) throw std::invalid_argument(std::string(function) + ": sLen -2 gives a negative salt length for the salt digest update");
+    if (!salt.empty() && !EVP_DigestUpdate_nid_postfix(&context, salt.data(), salt.size())) return 0;
+    if (!em) throw std::invalid_argument(std::string(function) + ": null EM");
+    const int maskedLength = length - digestLength - 1;
+    unsigned char* digest = em + maskedLength;
+    if (!EVP_DigestFinal_ex_nid_postfix(&context, digest, nullptr)) return 0;
+    if (Mgf1(em, maskedLength, digest, digestLength, hash, function)) return 0;
+    unsigned char* position = em + (length - saltLength - digestLength - 2);
+    *position++ ^= 0x01;
+    for (unsigned char value : salt) *position++ ^= value;
+    if (topBits) em[0] &= static_cast<unsigned char>(0xFF >> (8 - topBits));
+    em[length - 1] = PssTrailer;
+    return 1;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI RSA_padding_add_PKCS1_PSS_nid_postfix(LibreSslRsa* rsa, unsigned char* em, const unsigned char* mHash, const EvpMd* hash, int saltLength) {
+    EvpMdContext context;
+    EVP_MD_CTX_init_nid_postfix(&context);
+    const int result = AddPss(context, rsa, em, mHash, hash, saltLength, __func__);
+    EVP_MD_CTX_cleanup_nid_postfix(&context);
+    return result;
+}
+
+int APS5_VABI RSA_verify_PKCS1_PSS_nid_postfix(LibreSslRsa* rsa, const unsigned char* mHash, const EvpMd* hash, const unsigned char* em, int saltLength) {
+    EvpMdContext context;
+    EVP_MD_CTX_init_nid_postfix(&context);
+    const int result = VerifyPss(context, rsa, mHash, hash, em, saltLength, __func__);
+    EVP_MD_CTX_cleanup_nid_postfix(&context);
+    return result;
 }
 
 }

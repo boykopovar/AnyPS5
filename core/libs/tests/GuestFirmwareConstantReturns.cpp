@@ -85,6 +85,8 @@ void CheckComposite() {
     Require(sceCompositorSetIndirectCanvasCommand() == 0);
     Require(sceCompositorSetIndirectCompositionCommand() == 0);
     Require(sceCompositorSetIndirectRenderTargetConfigCommand() == 0);
+    Require(sceCompositorGetDummySize() == 0x400);
+    Require(libSceCompositeUnknown_NMGq0MJ2iGo_nid_no_patch() == 0);
     const std::uint32_t virtualHandles[] = {0xff00, 0xff01, 0xffff, 0xffffff00, 0x1234ff78, 0xffffffff, 0x8000ff00};
     const std::uint32_t otherHandles[] = {0, 0xfe00, 0x7f00, 0x12345678, 0x100, 0xff};
     for (const std::uint32_t handle : virtualHandles) Require(sceCompositorIsVirtualCanvasHandle(handle));
@@ -174,6 +176,8 @@ void CheckVisionManager() {
         const int result = sceVisionManagerGetNumOfRegisterUserDataSlot(versions[i], &count);
         Require(slots[i] == 0 ? result == VisionInvalid && count == 0xaaaaaaaa : result == 0 && count == slots[i]);
     }
+    Require(sceVisionManagerGetNumOfRegisterUserDataSlot(LibraryVersion, nullptr) == VisionInvalid);
+    Require(sceVisionManagerGetNumOfRegisterUserDataSlot(RegisterUserDataVersion, nullptr) == VisionInvalid);
 
     const std::uint32_t fills[] = {0xaaaaaaaau, 0u, ~0u};
     for (const std::uint32_t fill : fills) {

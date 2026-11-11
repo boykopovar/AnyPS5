@@ -4,3 +4,4 @@
 
 #include "prx/libSceJsc/include/Api.hpp"
 #include "prx/libSceJsc/include/InventoryExports.hpp"
+#include "prx/libSceJsc/include/PlacementNewExports.hpp"

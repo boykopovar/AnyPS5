@@ -8,11 +8,6 @@
 extern "C" {
 
 APS5_DUMMY_FUN
-int APS5_VABI BIO_up_ref_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI BIO_vfree_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -206,22 +201,7 @@ int APS5_VABI SSL_CTX_clear_chain_certs_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI X509_STORE_CTX_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI X509_STORE_CTX_init_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_STORE_CTX_new_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_STORE_up_ref_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
