@@ -63,6 +63,11 @@ int main() {
     int zero[8] = {};
     Require(sceAudioOutSetVolume(port, 0xff, zero) == 0, "volume 0 is accepted");
     Require(sceAudioOutSetVolume(port, 0xff, vol) == 0, "volume 32768 is accepted");
+    constexpr int INVALID_CHANNEL_FLAG = -2144993261;
+    Require(sceAudioOutSetVolume(port, 0x0, vol) == INVALID_CHANNEL_FLAG, "a flag without a channel bit returns the invalid flag code");
+    Require(sceAudioOutSetVolume(port, 0x100, vol) == INVALID_CHANNEL_FLAG, "a flag with only a bit above the eight channels returns the invalid flag code");
+    Require(sceAudioOutSetVolume(port, 0x3, vol) == 0, "flag 0x3 is accepted");
+    Require(sceAudioOutSetVolume(port, 0x4, vol) == 0, "flag 0x4 is accepted");
     for (const int bad : {32769, 65535, -1, -32768}) {
         int badVol[8] = {bad, bad, bad, bad, bad, bad, bad, bad};
         Require(sceAudioOutSetVolume(port, 0xff, badVol) == INVALID_VOLUME, "volume outside 0..32768 returns invalid volume");
