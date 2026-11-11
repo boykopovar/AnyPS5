@@ -215,8 +215,15 @@ int APS5_VABI pthread_attr_setstackaddr_nid_postfix(PthreadAttr* attr, void* sta
     return 0;
 }
 
-int APS5_VABI pthread_get_specificarray_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI pthread_get_specificarray_np_nid_postfix(PthreadKey key, int total, void** array) {
+    constexpr int GuestEinval = 22;
+    constexpr int GuestEfault = 14;
+    constexpr int MaxKeys = 512;
+    if (total <= 0 || key < 1 || (key - 1 + total) > MaxKeys) return GuestEinval;
+    if (!array) return GuestEfault;
+    for (int i = 0; i < total; ++i) {
+        array[i] = scePthreadGetspecific(key + i);
+    }
     return 0;
 }
 
