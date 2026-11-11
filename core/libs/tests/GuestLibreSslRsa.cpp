@@ -2,7 +2,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -491,7 +490,10 @@ static bool Pkcs1Block(const Bytes& block, const Bytes& message) {
 static bool Sslv23Block(const Bytes& block, const Bytes& message) {
     if (!Pkcs1Block(block, message)) return false;
     const std::size_t separator = block.size() - message.size() - 1;
-    return separator >= 10 && std::all_of(block.begin() + static_cast<long>(separator) - 8, block.begin() + static_cast<long>(separator), [](unsigned char byte) { return byte == 3; });
+    if (separator < 10) return false;
+    for (std::size_t index = separator - 8; index < separator; ++index)
+        if (block[index] != 3) return false;
+    return true;
 }
 
 static bool OaepBlock(const Bytes& block, const Bytes& message) {
