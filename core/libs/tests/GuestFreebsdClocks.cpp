@@ -64,15 +64,14 @@ static void UnsupportedResolutionStillThrows() {
     KernelTimespec resolution{-1, -1};
     bool rejected = false;
     try {
-        clock_getres_nid_postfix(3, &resolution);
-
+        clock_getres_nid_postfix(32, &resolution);
     } catch (const std::runtime_error&) {
         rejected = true;
     }
     Require(rejected && resolution.tv_sec == -1 && resolution.tv_nsec == -1);
     constexpr int fault = static_cast<int>(0x8002000eu);
     Require(sceKernelClockGetres(GUEST_CLOCK_REALTIME, nullptr) == fault);
-    Require(sceKernelClockGetres(3, nullptr) == fault);
+    Require(sceKernelClockGetres(32, nullptr) == fault);
 }
 
 static void OmittedTimeIsFaultAfterClockValidation() {
@@ -164,12 +163,16 @@ static void ResolutionsAreTheConsoles() {
     RequireResolution(GUEST_CLOCK_SECOND, 1, 0);
     RequireResolution(GUEST_CLOCK_THREAD_CPUTIME_ID, 0, 1000);
     RequireResolution(21, 0, 1000);
-    KernelTimespec resolution{-1, -1};
-    *__error_nid_postfix() = 0;
-    Require(clock_getres_nid_postfix(GUEST_CLOCK_PROCESS_CPUTIME_ID, &resolution) == -1 && *__error_nid_postfix() == 22);
-    Require(resolution.tv_sec == -1 && resolution.tv_nsec == -1);
-    Require(sceKernelClockGetres(GUEST_CLOCK_PROCESS_CPUTIME_ID, &resolution) == static_cast<int>(0x80020016u));
-    Require(resolution.tv_sec == -1 && resolution.tv_nsec == -1);
+    constexpr int einval = static_cast<int>(0x80020016u);
+    for (int clockId = 3; clockId < 32; ++clockId) {
+        if (clockId == 4 || clockId == 5 || (clockId >= 7 && clockId <= 14) || clockId == 21) continue;
+        KernelTimespec resolution{-1, -1};
+        *__error_nid_postfix() = 0;
+        Require(clock_getres_nid_postfix(clockId, &resolution) == -1 && *__error_nid_postfix() == 22);
+        Require(resolution.tv_sec == -1 && resolution.tv_nsec == -1);
+        Require(sceKernelClockGetres(clockId, &resolution) == einval);
+        Require(resolution.tv_sec == -1 && resolution.tv_nsec == -1);
+    }
     Read(GUEST_CLOCK_PROCESS_CPUTIME_ID);
 }
 
