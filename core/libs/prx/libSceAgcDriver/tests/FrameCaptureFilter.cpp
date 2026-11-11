@@ -223,6 +223,13 @@ void testUnknownPlanEntry(const std::filesystem::path& root) {
     checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted an unknown entry kind");
 }
 
+
+void testDuplicateCallPlanIndex(const std::filesystem::path& root) {
+    const auto path = root / "duplicate-call.plan";
+    { std::ofstream output(path); output << "aps5-frame-filter 1\ncall 2\ncall 2\n"; }
+    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted duplicate call indexes");
+}
+
 }
 
 int main() {
@@ -236,6 +243,7 @@ int main() {
     testAllGroupCallsRemoved(root);
     testMalformedHeader(root);
     testUnknownEntry(root);
+    testDuplicateCall(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
