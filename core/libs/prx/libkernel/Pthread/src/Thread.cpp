@@ -756,6 +756,7 @@ extern "C" bool LiveGuestThreadName_nid_no_patch(std::int64_t tid, char* name, s
     std::lock_guard lock(registry.lock);
     for (const auto& [id, thread] : registry.threads) {
         if (GuestThreadEnded(thread) || thread->tid != tid) continue;
+        if (capacity == 0) return true;
         std::lock_guard nameGuard(thread->nameLock);
         const std::size_t length = std::min(thread->name.size(), capacity - 1);
         std::memcpy(name, thread->name.data(), length);
@@ -1561,8 +1562,8 @@ int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
     std::string value;
     const int copied = CopyGuestString_nid_no_patch(name, 32, value);
     if (copied == 14) return SCE_KERNEL_ERROR_EFAULT;
-    if (copied == 12) return SCE_KERNEL_ERROR_ENOMEM;
-    if (copied != 0 || value.size() > 31) return SCE_KERNEL_ERROR_EINVAL;
+    if (copied == 63) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+    if (copied != 0) NotImplemented_nid_no_patch("scePthreadRename name copy failure");
     std::lock_guard lock(thread->nameLock);
     thread->name = std::move(value);
 #ifdef _WIN32

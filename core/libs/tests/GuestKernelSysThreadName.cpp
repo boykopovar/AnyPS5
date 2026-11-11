@@ -13,7 +13,7 @@ namespace {
 
 constexpr std::int32_t SceEsrch = static_cast<std::int32_t>(0x80020003u);
 constexpr std::int32_t SceEfault = static_cast<std::int32_t>(0x8002000eu);
-constexpr std::int32_t UnmeasuredRenameError = static_cast<std::int32_t>(0x80020016u);
+constexpr std::int32_t SceEnametoolong = static_cast<std::int32_t>(0x8002003fu);
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
@@ -48,10 +48,14 @@ int main() {
     Require(sceKernelGetThreadName(workerId.load(), name) == 0);
     Require(std::strlen(name) == 31);
     for (const char* tooLong : {"abcdefghijklmnopqrstuvwxyz012345", "abcdefghijklmnopqrstuvwxyz0123456789"}) {
-        Require(scePthreadRename(worker, tooLong) == UnmeasuredRenameError);
+        Require(scePthreadRename(worker, tooLong) == SceEnametoolong);
         Require(sceKernelGetThreadName(workerId.load(), name) == 0);
         Require(std::strcmp(name, "abcdefghijklmnopqrstuvwxyz01234") == 0);
     }
+
+    Require(scePthreadRename(worker, reinterpret_cast<const char*>(0x1000)) == SceEfault);
+    Require(sceKernelGetThreadName(workerId.load(), name) == 0);
+    Require(std::strcmp(name, "abcdefghijklmnopqrstuvwxyz01234") == 0);
 
     Require(scePthreadRename(worker, "") == 0);
     std::memset(name, 0xa5, sizeof(name));
