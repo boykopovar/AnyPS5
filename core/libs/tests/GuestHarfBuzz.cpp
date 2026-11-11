@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 namespace {
 
@@ -56,6 +57,16 @@ int main() {
     Require(hb_ot_tag_to_script_nid_postfix(Tag('n', 'k', 'o', ' ')) == Tag('N', 'k', 'o', 'o'), "nko padded");
     Require(hb_ot_tag_to_script_nid_postfix(Tag('v', 'a', 'i', ' ')) == Tag('V', 'a', 'i', 'i'), "vai padded");
     Require(hb_ot_tag_to_script_nid_postfix(Tag('y', 'i', ' ', ' ')) == Tag('Y', 'i', 'i', 'i'), "yi padded");
+
+    Require(hb_icu_script_to_script_nid_postfix(-1) == 0, "icu script -1");
+    Require(hb_icu_script_to_script_nid_postfix(std::numeric_limits<std::int32_t>::min()) == 0, "icu script min");
+    Require(hb_icu_script_to_script_nid_postfix(193) == 0, "icu script 193");
+    Require(hb_icu_script_to_script_nid_postfix(std::numeric_limits<std::int32_t>::max()) == 0, "icu script max");
+    Require(hb_icu_script_to_script_nid_postfix(0) == Tag('Z', 'y', 'y', 'y'), "icu script common");
+    Require(hb_icu_script_to_script_nid_postfix(1) == Tag('Z', 'i', 'n', 'h'), "icu script inherited");
+    Require(hb_icu_script_to_script_nid_postfix(2) == Tag('A', 'r', 'a', 'b'), "icu script arabic");
+    Require(hb_icu_script_to_script_nid_postfix(25) == Tag('L', 'a', 't', 'n'), "icu script latin");
+    Require(hb_icu_script_to_script_nid_postfix(192) == Tag('Y', 'e', 'z', 'i'), "icu script yezidi");
 
     return 0;
 }
