@@ -25,6 +25,7 @@ using StatusControl = bool (*)(int descriptor, int command, int flags, int* resu
 using IoctlControl = bool (*)(int descriptor, std::uint32_t request, void* argument, int* error);
 struct Forwards {
     int (*family)(int descriptor);
+    int (*listen)(int descriptor, int backlog);
     int (*bind)(int descriptor, const void* address, std::uint32_t length);
     int (*getsockname)(int descriptor, void* address, std::uint32_t* length);
     std::int64_t (*sendto)(int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, int* error);
