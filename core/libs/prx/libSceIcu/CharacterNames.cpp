@@ -22,11 +22,6 @@ void U_CALLCONV ForwardAdd(USet* set, UChar32 character) {
     adder.add(adder.set, character);
 }
 
-UErrorCode& Status(std::int32_t* error) {
-    if (!error) APS5_INVALID_ARG_EX;
-    return *reinterpret_cast<UErrorCode*>(error);
-}
-
 UCharNameChoice Choice(std::int32_t choice) {
     return static_cast<UCharNameChoice>(choice < 0 ? U_CHAR_NAME_CHOICE_COUNT : choice);
 }
@@ -37,17 +32,28 @@ extern "C" {
 
 std::int32_t APS5_VABI u_charName_nid_postfix(std::int32_t character, std::int32_t choice, char* buffer, std::int32_t capacity,
                                               std::int32_t* error) {
-    return u_charName(character, Choice(choice), buffer, capacity, &Status(error));
+    if (!error) APS5_INVALID_ARG_EX;
+    auto status = static_cast<UErrorCode>(*error);
+    auto result = u_charName(character, Choice(choice), buffer, capacity, &status);
+    *error = status;
+    return result;
 }
 
 std::int32_t APS5_VABI u_charFromName_nid_postfix(std::int32_t choice, const char* name, std::int32_t* error) {
-    return u_charFromName(Choice(choice), name, &Status(error));
+    if (!error) APS5_INVALID_ARG_EX;
+    auto status = static_cast<UErrorCode>(*error);
+    auto result = u_charFromName(Choice(choice), name, &status);
+    *error = status;
+    return result;
 }
 
 void APS5_VABI u_enumCharNames_nid_postfix(std::int32_t start, std::int32_t limit, Icu::CharacterNameVisitor visitor, void* context,
                                            std::int32_t choice, std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
     NameEnumeration enumeration{visitor, context};
-    u_enumCharNames(start, limit, visitor ? ForwardName : nullptr, &enumeration, Choice(choice), &Status(error));
+    auto status = static_cast<UErrorCode>(*error);
+    u_enumCharNames(start, limit, visitor ? ForwardName : nullptr, &enumeration, Choice(choice), &status);
+    *error = status;
 }
 
 std::int32_t APS5_VABI uprv_getMaxCharNameLength_nid_postfix() {
