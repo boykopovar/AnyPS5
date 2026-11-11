@@ -393,7 +393,7 @@ int APS5_VABI pthread_timedjoin_np_nid_postfix(Pthread thread, void** value, con
 namespace {
 struct RegisterPthreadOnLoad {
     RegisterPthreadOnLoad() {
-        RegisterPthreadCreate_nid_no_patch(reinterpret_cast<PthreadCreateFn_nid_no_patch>(pthread_create_nid_postfix));
+        RegisterPthreadCreate_nid_no_patch(reinterpret_cast<PthreadCreateFn_nid_no_patch>(scePthreadCreate));
         RegisterPthreadJoin_nid_no_patch(reinterpret_cast<PthreadJoinFn_nid_no_patch>(pthread_join_nid_postfix));
         RegisterPthreadDetach_nid_no_patch(reinterpret_cast<PthreadDetachFn_nid_no_patch>(pthread_detach_nid_postfix));
         RegisterProcessorCount_nid_no_patch(static_cast<unsigned>(std::popcount(DEFAULT_THREAD_AFFINITY)));
@@ -406,6 +406,7 @@ struct RegisterPthreadOnLoad {
             reinterpret_cast<decltype(forwards.equal)>(scePthreadEqual),
             reinterpret_cast<decltype(forwards.self)>(scePthreadSelf),
             scePthreadExit,
+            reinterpret_cast<decltype(forwards.attrDetachState)>(scePthreadAttrGetdetachstate),
         };
         RegisterThreadForwards_nid_no_patch(&forwards);
         static const PthreadSyncForwards_nid_no_patch sync{
