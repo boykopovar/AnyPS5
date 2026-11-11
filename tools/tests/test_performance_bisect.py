@@ -139,3 +139,25 @@ class GitHistoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ancestor"):
             performance_bisect.first_parent_commits(self.repo, self.commits[-1], self.good)
 
+
+
+class CommandTests(unittest.TestCase):
+    def test_command_placeholders_expand_as_literal_arguments(self):
+        values = {"worktree": Path("/tmp/source"), "build_dir": Path("/tmp/source/build"),
+                  "result_dir": Path("/tmp/results"), "commit": "abc123"}
+        command = ["cmake", "--build", "{build_dir}", "literal;argument", "{commit}"]
+        self.assertEqual(performance_bisect.format_command(command, values),
+                         ["cmake", "--build", "/tmp/source/build", "literal;argument", "abc123"])
+
+    def test_build_commands_expand_paths_without_a_shell(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            build_dir = root / "source" / "build"
+            recipe = {"build_dir": "build", "build_commands": [[sys.executable, "-c",
+                       "from pathlib import Path; Path(r'{build_dir}').mkdir(parents=True)"]]}
+            actual = performance_bisect.run_build_commands(source, recipe, GOOD, root / "results")
+            self.assertEqual(actual, build_dir)
+            self.assertTrue(build_dir.is_dir())
+
