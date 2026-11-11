@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <bit>
 #include <cstddef>
@@ -384,7 +385,10 @@ Bignum* APS5_VABI BN_mod_inverse_nid_postfix(Bignum* r, const Bignum* a, const B
     const Int modulus = Load(Checked(n, __func__));
     if (modulus.mag.empty()) return nullptr;
     Mag inverse;
-    if (!InverseMod(value, modulus.mag, inverse)) return nullptr;
+    if (!InverseMod(value, modulus.mag, inverse)) {
+        LibreSslPutError_nid_no_patch(3, 0xfff, 108);
+        return nullptr;
+    }
     Bignum* target = r ? r : NewBignum();
     if (!target) return nullptr;
     if (!Store(target, inverse, false)) {

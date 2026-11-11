@@ -9,6 +9,10 @@ namespace NKWebKit {
 struct PointValue;
 struct SizeValue;
 struct RectValue;
+struct OpaqueJSContext;
+struct OpaqueJSValue;
+using JSContextRef = const OpaqueJSContext*;
+using JSValueRef = const OpaqueJSValue*;
 }
 
 extern "C" {
@@ -48,6 +52,9 @@ bool APS5_VABI WKBooleanGetValue(const void* booleanRef);
 std::uint32_t APS5_VABI WKBundleBackForwardListGetTypeID();
 std::uint32_t APS5_VABI WKBundleBackForwardListItemGetTypeID();
 std::uint32_t APS5_VABI WKBundleDOMWindowExtensionGetTypeID();
+const void* APS5_VABI WKBundleDOMWindowExtensionCreate(const void* frameRef, const void* scriptWorldRef);
+const void* APS5_VABI WKBundleDOMWindowExtensionGetFrame(const void* extensionRef);
+const void* APS5_VABI WKBundleDOMWindowExtensionGetScriptWorld(const void* extensionRef);
 std::uint32_t APS5_VABI WKBundleFrameGetTypeID();
 std::uint32_t APS5_VABI WKBundleGetTypeID();
 std::uint32_t APS5_VABI WKBundleHitTestResultGetTypeID();
@@ -99,6 +106,7 @@ std::uint32_t APS5_VABI WKDownloadGetTypeID();
 const void* APS5_VABI WKDownloadCopyRequest(const void* downloadRef);
 const void* APS5_VABI WKDownloadGetOriginatingPage(const void* downloadRef);
 bool APS5_VABI WKDownloadGetWasUserInitiated(const void* downloadRef);
+void APS5_VABI WKDownloadCancel(const void* downloadRef);
 const void* APS5_VABI WKErrorCopyWKErrorDomain();
 std::uint32_t APS5_VABI WKErrorGetTypeID();
 std::uint32_t APS5_VABI WKFormSubmissionListenerGetTypeID();
@@ -215,6 +223,8 @@ std::uint16_t APS5_VABI WKSecurityOriginGetPort(const void* value);
 const void* APS5_VABI WKSecurityOriginCopyToString(const void* value);
 std::uint32_t APS5_VABI WKSecurityOriginGetTypeID();
 std::uint32_t APS5_VABI WKSerializedScriptValueGetTypeID();
+const void* APS5_VABI WKSerializedScriptValueCreate(NKWebKit::JSContextRef context, NKWebKit::JSValueRef value, NKWebKit::JSValueRef* exception);
+NKWebKit::JSValueRef APS5_VABI WKSerializedScriptValueDeserialize(const void* serializedScriptValueRef, NKWebKit::JSContextRef context, NKWebKit::JSValueRef* exception);
 const void* APS5_VABI WKSessionStateCopyData(const void* sessionState);
 const void* APS5_VABI WKSessionStateCreateFromData(const void* data);
 std::uint32_t APS5_VABI WKSessionStateGetTypeID();
