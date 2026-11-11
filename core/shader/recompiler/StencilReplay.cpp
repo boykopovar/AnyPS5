@@ -649,19 +649,60 @@ private:
         return std::pair{info.startPc, info.endPc};
     }
 
-    bool relatedValue(const IrValue* left, const IrValue* right, const IrValue* predicate, const std::set<const IrBlock*>& region) {
-        return sameValue(left, right) || inactiveEquals(left, right, predicate, region) || inactiveEquals(right, left, predicate, region);
+    static bool lateralValue(IrOpcode opcode) {
+        if (ImageOpcodeInfoOf(opcode).needsSampler || SharedAccessOf(opcode) != SharedAccess::None) return true;
+        switch (opcode) {
+            case IrOpcode::Ballot:
+            case IrOpcode::WqmU64:
+            case IrOpcode::ReadLane:
+            case IrOpcode::ReadFirstLane:
+            case IrOpcode::DppMoveU32:
+            case IrOpcode::DppUpdateU32:
+            case IrOpcode::SwizzleU32:
+            case IrOpcode::PermuteU32:
+            case IrOpcode::BpermuteU32:
+            case IrOpcode::HalfSwapU32:
+            case IrOpcode::Permlane16U32:
+            case IrOpcode::WriteLane:
+                return true;
+            default:
+                return false;
+        }
     }
 
-    bool tailPairs(const IrBlock* bodyBlock, const IrBlock* skipBlock, const IrValue* predicate, const std::set<const IrBlock*>& region, std::map<const IrBlock*, const IrBlock*>& touched, unsigned depth = 0) {
+    bool relatedValue(const IrValue* left, const IrValue* right, const IrValue* predicate, const std::set<const IrBlock*>& region, const IrBlock* skipPred, unsigned depth = 0) {
+        if (depth > 8u) return false;
+        left = left->Resolve();
+        right = right->Resolve();
+        if (sameValue(left, right)) return true;
+        if (inactiveEquals(left, right, predicate, region) || inactiveEquals(right, left, predicate, region)) return true;
+        if (right->IsPhi() && skipPred != nullptr) {
+            for (std::size_t index = 0; index < right->PhiBlockCount(); ++index) {
+                if (right->PhiBlock(index) == skipPred) return relatedValue(left, right->Argument(index), predicate, region, nullptr, depth + 1u);
+            }
+            return false;
+        }
+        if (left->MayHaveSideEffects() || right->MayHaveSideEffects()) return false;
+        if (left->Opcode() != right->Opcode() || left->Type() != right->Type() || left->ArgumentCount() != right->ArgumentCount() || left->Flags<std::uint64_t>() != right->Flags<std::uint64_t>()) return false;
+        if (left->ArgumentCount() == 0u) return left->Opcode() == IrOpcode::LaneId;
+        if (lateralValue(left->Opcode())) return false;
+        for (std::size_t operand = 0; operand < left->ArgumentCount(); ++operand) {
+            if (!relatedValue(left->Argument(operand), right->Argument(operand), predicate, region, skipPred, depth + 1u)) return false;
+        }
+        return true;
+    }
+
+    bool tailPairs(const IrBlock* bodyBlock, const IrBlock* skipBlock, const IrValue* predicate, const std::set<const IrBlock*>& region, std::map<const IrBlock*, const IrBlock*>& touched, const IrBlock* skipPred, unsigned depth = 0) {
         if (depth > 32u) return false;
         if (const auto found = touched.find(bodyBlock); found != touched.end()) return found->second == skipBlock;
         touched.emplace(bodyBlock, skipBlock);
         const auto& bodyInstructions = bodyBlock->Instructions();
         const auto& skipInstructions = skipBlock->Instructions();
-        if (bodyInstructions.size() != skipInstructions.size()) return false;
         auto bodyIt = bodyInstructions.begin();
         auto skipIt = skipInstructions.begin();
+        while (bodyIt != bodyInstructions.end() && (*bodyIt)->IsPhi()) ++bodyIt;
+        while (skipIt != skipInstructions.end() && (*skipIt)->IsPhi()) ++skipIt;
+        if (std::distance(bodyIt, bodyInstructions.end()) != std::distance(skipIt, skipInstructions.end())) return false;
         for (; bodyIt != bodyInstructions.end(); ++bodyIt, ++skipIt) {
             const IrValue* bodyInstruction = *bodyIt;
             const IrValue* skipInstruction = *skipIt;
@@ -673,7 +714,7 @@ private:
                 if (!(bodyExport == skipExport)) return false;
             }
             for (std::size_t operand = 0; operand < bodyInstruction->ArgumentCount(); ++operand) {
-                if (!relatedValue(bodyInstruction->Argument(operand), skipInstruction->Argument(operand), predicate, region)) return false;
+                if (!relatedValue(bodyInstruction->Argument(operand), skipInstruction->Argument(operand), predicate, region, skipPred)) return false;
             }
         }
         const auto& bodyInfo = program.Metadata().blockInfo[blockIndices.at(bodyBlock)];
@@ -681,13 +722,13 @@ private:
         if (bodyInfo.terminator.kind != skipInfo.terminator.kind) return false;
         if (bodyInfo.terminator.kind == TerminatorKind::Return) return true;
         if (bodyInfo.terminator.kind == TerminatorKind::Branch) {
-            return tailPairs(program.BlockOrder()[indices.at(bodyInfo.terminator.trueBlock)], program.BlockOrder()[indices.at(skipInfo.terminator.trueBlock)], predicate, region, touched, depth + 1u);
+            return tailPairs(program.BlockOrder()[indices.at(bodyInfo.terminator.trueBlock)], program.BlockOrder()[indices.at(skipInfo.terminator.trueBlock)], predicate, region, touched, skipBlock, depth + 1u);
         }
         if (bodyInfo.terminator.kind != TerminatorKind::ConditionalBranch) return false;
         if (bodyInfo.terminator.condition != skipInfo.terminator.condition || !bodyInfo.condition || !skipInfo.condition) return false;
-        if (!relatedValue(bodyInfo.condition, skipInfo.condition, predicate, region)) return false;
-        return tailPairs(program.BlockOrder()[indices.at(bodyInfo.terminator.trueBlock)], program.BlockOrder()[indices.at(skipInfo.terminator.trueBlock)], predicate, region, touched, depth + 1u)
-            && tailPairs(program.BlockOrder()[indices.at(bodyInfo.terminator.falseBlock)], program.BlockOrder()[indices.at(skipInfo.terminator.falseBlock)], predicate, region, touched, depth + 1u);
+        if (!relatedValue(bodyInfo.condition, skipInfo.condition, predicate, region, skipPred)) return false;
+        return tailPairs(program.BlockOrder()[indices.at(bodyInfo.terminator.trueBlock)], program.BlockOrder()[indices.at(skipInfo.terminator.trueBlock)], predicate, region, touched, skipBlock, depth + 1u)
+            && tailPairs(program.BlockOrder()[indices.at(bodyInfo.terminator.falseBlock)], program.BlockOrder()[indices.at(skipInfo.terminator.falseBlock)], predicate, region, touched, skipBlock, depth + 1u);
     }
 
     bool optionalBody(const IrBlock* branch, const IrBlock* body, const IrBlock* merge, const IrValue* predicate) {
@@ -747,8 +788,18 @@ private:
                 if (!range) continue;
                 const auto found = skipRanges.find(*range);
                 if (found == skipRanges.end()) continue;
-                std::map<const IrBlock*, const IrBlock*> touched;
-                if (tailPairs(block, found->second, predicate, region, touched)) for (const auto& [pairedBlock, skipBlock] : touched) paired.insert(pairedBlock);
+                std::vector<const IrBlock*> candidates;
+                for (const auto* predecessor : found->second->Predecessors()) {
+                    if (skipGraph.contains(predecessor) || predecessor == merge) candidates.push_back(predecessor);
+                }
+                if (candidates.empty()) candidates.push_back(nullptr);
+                for (const auto* skipPred : candidates) {
+                    std::map<const IrBlock*, const IrBlock*> touched;
+                    if (tailPairs(block, found->second, predicate, region, touched, skipPred)) {
+                        for (const auto& [pairedBlock, skipBlock] : touched) paired.insert(pairedBlock);
+                        break;
+                    }
+                }
             }
             for (const auto* block : copiedExits) if (!paired.contains(block)) return false;
         }
