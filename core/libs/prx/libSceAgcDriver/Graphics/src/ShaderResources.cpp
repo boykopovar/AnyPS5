@@ -318,11 +318,19 @@ void touchTexture(TextureCache& cache, std::list<CachedTexture>::iterator it) {
 
 constexpr std::uint64_t SpareSnapshotBytes = 256ull << 20;
 
+void expireSpareSnapshots(TextureCache& cache, std::uint64_t present) {
+    while (!cache.spare.empty() && present - cache.spare.front().second > SpareSnapshotPresents) {
+        cache.spareBytes -= cache.spare.front().first.size();
+        cache.spare.erase(cache.spare.begin());
+    }
+}
+
 void parkSnapshot(TextureCache& cache, std::vector<std::byte>& bytes) {
     const auto size = bytes.size();
     if (size == 0) return;
     const auto present = Recorder::Presents();
-    while (!cache.spare.empty() && (present - cache.spare.front().second > SpareSnapshotPresents || cache.spareBytes + size > SpareSnapshotBytes)) {
+    expireSpareSnapshots(cache, present);
+    while (!cache.spare.empty() && cache.spareBytes + size > SpareSnapshotBytes) {
         cache.spareBytes -= cache.spare.front().first.size();
         cache.spare.erase(cache.spare.begin());
     }
@@ -334,11 +342,7 @@ void parkSnapshot(TextureCache& cache, std::vector<std::byte>& bytes) {
 }
 
 std::vector<std::byte> spareSnapshot(TextureCache& cache, std::size_t bytes) {
-    const auto present = Recorder::Presents();
-    while (!cache.spare.empty() && present - cache.spare.front().second > SpareSnapshotPresents) {
-        cache.spareBytes -= cache.spare.front().first.size();
-        cache.spare.erase(cache.spare.begin());
-    }
+    expireSpareSnapshots(cache, Recorder::Presents());
     for (auto spare = cache.spare.begin(); spare != cache.spare.end(); ++spare) {
         if (spare->first.size() != bytes) continue;
         cache.spareBytes -= bytes;
@@ -1135,10 +1139,8 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         ++cache.counts.stale;
     }
     const auto clear = source == nullptr ? SampledClearColor(context, resource, *keys, depthCompare) : std::nullopt;
-    const bool noSnapshot = source != nullptr || clear.has_value();
-    if (noSnapshot) parkSnapshot(cache, recycled);
-    else if (recycled.empty()) recycled = spareSnapshot(cache, bytes);
-    CachedTexture entry{key, address, noSnapshot ? std::vector<std::byte>{} : (recycled.empty() ? std::vector<std::byte>(bytes) : std::move(recycled)), nullptr, *keys, snapshotGeneration};
+    if (source != nullptr || clear.has_value()) parkSnapshot(cache, recycled);
+    CachedTexture entry{key, address, std::vector<std::byte>{}, nullptr, *keys, snapshotGeneration};
     entry.committed = std::move(committed);
     entry.surfaceBytes = bytes;
     const auto createTexture = [&](auto&&... args) {
@@ -1173,17 +1175,29 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         // Snapshot before the upload so a write racing with it is caught by the next comparison.
         const bool pending = *keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes);
         if (pending) counters.pendingReads.fetch_add(1, std::memory_order_relaxed);
-        ReadTextureSurface(resource, *keys, entry.bytes);
+        constexpr std::size_t SnapshotCompareBytes = 256u << 10u;
+        const bool dropped = *keys == DccKeys::Uncompressed && bytes > SnapshotCompareBytes && (entry.generation != 0 || (!pending && untracked[0] != 0));
+        std::shared_ptr<Buffer> staging;
+        if (dropped) {
+            parkSnapshot(cache, recycled);
+            expireSpareSnapshots(cache, Recorder::Presents());
+            staging = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        } else {
+            if (recycled.empty()) recycled = spareSnapshot(cache, bytes);
+            entry.bytes = recycled.empty() ? std::vector<std::byte>(bytes) : std::move(recycled);
+        }
+        const auto read = staging != nullptr ? staging->Bytes() : std::span<std::byte>(entry.bytes);
+        ReadTextureSurface(resource, *keys, read);
         if (!pending) entry.untracked = untracked;
         static const bool traceTextures = std::getenv("APS5_TRACE_TEXTURES") != nullptr;
         if (traceTextures) {
             std::size_t nonzero = 0;
-            for (std::size_t i = 0; i < entry.bytes.size(); i += 64) nonzero += entry.bytes[i] != std::byte{0};
-            std::fprintf(stderr, "[texture] 0x%llx %ux%u format %u tile %d: %zu of %zu sampled bytes nonzero\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), nonzero, entry.bytes.size() / 64);
+            for (std::size_t i = 0; i < read.size(); i += 64) nonzero += read[i] != std::byte{0};
+            std::fprintf(stderr, "[texture] 0x%llx %ux%u format %u tile %d: %zu of %zu sampled bytes nonzero\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), nonzero, read.size() / 64);
         }
-        entry.texture = createTexture(*context.detiler, resource, components, entry.bytes, depthCompare, layerRows);
+        if (staging != nullptr) entry.texture = createTexture(*context.detiler, resource, components, std::move(staging), depthCompare, layerRows);
+        else entry.texture = createTexture(*context.detiler, resource, components, entry.bytes, depthCompare, layerRows);
         entry.accounted = entry.texture->AllocationBytes();
-        constexpr std::size_t SnapshotCompareBytes = 256u << 10u;
         if (entry.bytes.size() > SnapshotCompareBytes && (entry.generation != 0 || entry.untracked[0] != 0)) parkSnapshot(cache, entry.bytes);
         counters.snapshots.fetch_add(1, std::memory_order_relaxed);
     }
