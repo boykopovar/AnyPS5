@@ -254,8 +254,19 @@ int APS5_VABI sceImeDialogGetPanelPositionAndForm(PositionAndForm* form) {
 
 int APS5_VABI sceImeDialogGetPanelSize(const Param* param, uint32_t* width, uint32_t* height) {
     (void)param;
-    if (width != nullptr) *width = 1920;
-    if (height != nullptr) *height = 1080;
+    constexpr uint32_t defaultWidth = 1920;
+    constexpr uint32_t defaultHeight = 1080;
+    if (width == nullptr || height == nullptr) return ErrorInvalidAddress;
+    uint32_t savedWidth{};
+    uint32_t heightProbe{};
+    if (!GuestCopyIn_nid_no_patch(&savedWidth, width, sizeof(savedWidth))) return ErrorInvalidAddress;
+    if (!GuestCopyIn_nid_no_patch(&heightProbe, height, sizeof(heightProbe))) return ErrorInvalidAddress;
+    (void)heightProbe;
+    if (!GuestCopyOut_nid_no_patch(width, &defaultWidth, sizeof(defaultWidth))) return ErrorInvalidAddress;
+    if (!GuestCopyOut_nid_no_patch(height, &defaultHeight, sizeof(defaultHeight))) {
+        GuestCopyOut_nid_no_patch(width, &savedWidth, sizeof(savedWidth));
+        return ErrorInvalidAddress;
+    }
     return 0;
 }
 
