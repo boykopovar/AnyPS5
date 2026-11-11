@@ -22,6 +22,8 @@ jobs:
   windows-msys2:
     runs-on: windows-latest
     timeout-minutes: 90
+    env:
+      PYTHONUTF8: "1"
     defaults:
       run:
         shell: bash
