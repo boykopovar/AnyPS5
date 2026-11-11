@@ -1070,7 +1070,16 @@ bool GetSocketOptionForKernel(int descriptor, int level, int option, void* value
         std::lock_guard lk(g_mutex);
         if (g_socks.count(descriptor) == 0) return false;
     }
-    *error = sceNetGetsockopt(descriptor, level, option, value, length) == 0 ? 0 : *errno_slot();
+    std::array<unsigned char, sizeof(KernelTimeval)> result{};
+    auto size = std::min<std::uint32_t>(*length, result.size());
+    if (sceNetGetsockopt(descriptor, level, option, value ? result.data() : nullptr, &size) != 0) {
+        *error = *errno_slot();
+    } else if (size != 0 && !GuestCopyOut_nid_no_patch(value, result.data(), size)) {
+        *error = NET_EFAULT;
+    } else {
+        *length = size;
+        *error = 0;
+    }
     return true;
 }
 
