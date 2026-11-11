@@ -415,6 +415,24 @@ void readStat(const Json& definition, std::size_t index, StatRules& rules) {
     if (!rules.stats.emplace(*statId, stat).second) rules.skipped.push_back(name + " is defined twice; the first definition is used");
 }
 
+std::string quotedMember(std::string_view text) {
+    constexpr char digits[] = "0123456789abcdef";
+    std::string quoted = "\"";
+    for (const char character : text) {
+        const auto byte = static_cast<unsigned char>(character);
+        if (byte < 0x20 || byte == 0x7F) {
+            quoted += "\\u00";
+            quoted += digits[byte >> 4];
+            quoted += digits[byte & 0xF];
+        } else {
+            if (character == '"' || character == '\\') quoted += '\\';
+            quoted += character;
+        }
+    }
+    quoted += '"';
+    return quoted;
+}
+
 void readRule(const Json& rule, std::size_t index, StatRules& rules) {
     const auto where = "stats_extraction.json statsExtractionRuleArray[" + std::to_string(index) + "]";
     const auto* condition = rule.Find("condition");
@@ -443,7 +461,21 @@ void readRule(const Json& rule, std::size_t index, StatRules& rules) {
         }
         filter = StatFilter{*filterPath, *filterValue};
     }
+    for (const auto& member : action->members) {
+        if (member.first != "input" && member.first != "output") {
+            rules.skipped.push_back(where + " for " + event->text + " has unsupported action member " + quotedMember(member.first) + "; only direct property copies are supported");
+            return;
+        }
+    }
     const auto* output = action->Find("output");
+    if (output != nullptr) {
+        for (const auto& member : output->members) {
+            if (member.first != "statId") {
+                rules.skipped.push_back(where + " for " + event->text + " has unsupported output member " + quotedMember(member.first) + "; only a statId output is supported");
+                return;
+            }
+        }
+    }
     const auto* id = output != nullptr ? output->Find("statId") : nullptr;
     const auto statId = id != nullptr ? id->Unsigned() : std::nullopt;
     if (!statId) {
