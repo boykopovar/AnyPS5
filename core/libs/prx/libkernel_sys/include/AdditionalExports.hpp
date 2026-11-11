@@ -258,7 +258,7 @@ int APS5_VABI pthread_setschedother_np_nid_postfix();
 int APS5_VABI sceKernelAddDynlibEvent();
 int APS5_VABI sceKernelAddFGCInfo();
 int APS5_VABI sceKernelCreateUuidV1(std::uint8_t* uuid);
-int APS5_VABI sceKernelCreateUuidV7();
+int APS5_VABI sceKernelCreateUuidV7(std::uint8_t* uuid);
 int APS5_VABI sceKernelDeleteDynlibEvent();
 int APS5_VABI sceKernelDeleteFGCInfo();
 int APS5_VABI sceKernelEnableDmemAliasing3();

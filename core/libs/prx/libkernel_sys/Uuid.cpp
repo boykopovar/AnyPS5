@@ -113,4 +113,25 @@ int APS5_VABI sceKernelCreateUuidV1(std::uint8_t* uuid) {
     return 0;
 }
 
+int APS5_VABI sceKernelCreateUuidV7(std::uint8_t* uuid) {
+    if (!uuid) return SCE_KERNEL_ERROR_EINVAL;
+    KernelTimespec now{};
+    if (clock_gettime_nid_postfix(GuestClockRealtime, &now) != 0) throw std::runtime_error("sceKernelCreateUuidV7: clock_gettime(CLOCK_REALTIME) failed");
+    const auto timeMs = static_cast<std::uint64_t>(now.tv_sec) * 1000ULL + static_cast<std::uint64_t>(now.tv_nsec) / 1000000ULL;
+    std::array<std::uint8_t, 16> bytes{};
+    bytes[0] = static_cast<std::uint8_t>(timeMs >> 40);
+    bytes[1] = static_cast<std::uint8_t>(timeMs >> 32);
+    bytes[2] = static_cast<std::uint8_t>(timeMs >> 24);
+    bytes[3] = static_cast<std::uint8_t>(timeMs >> 16);
+    bytes[4] = static_cast<std::uint8_t>(timeMs >> 8);
+    bytes[5] = static_cast<std::uint8_t>(timeMs);
+    HostEntropy_nid_no_patch(&bytes[6], 10);
+    bytes[6] = static_cast<std::uint8_t>((bytes[6] & 0x0fu) | 0x70u);
+    bytes[8] = static_cast<std::uint8_t>((bytes[8] & 0x3fu) | 0x80u);
+    if (!GuestCopyOut_nid_no_patch(uuid, bytes.data(), bytes.size())) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
+    return 0;
+}
+
 }

@@ -69,4 +69,20 @@ int main() {
     Require((kernelUuidBytes[8] & 0xc0) == 0x80);
     Require((kernelUuidBytes[10] & 0x01) != 0);
     Require(std::memcmp(&kernelUuidBytes[10], first[0].node, sizeof(first[0].node)) == 0);
+
+    Require(sceKernelCreateUuidV7(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateUuidV7(reinterpret_cast<std::uint8_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    std::array<std::uint8_t, 16> v7Bytes{};
+    Require(sceKernelCreateUuidV7(v7Bytes.data()) == 0);
+    Require((v7Bytes[6] >> 4) == 7);
+    Require((v7Bytes[8] & 0xc0) == 0x80);
+    const auto v7Ms = (static_cast<std::uint64_t>(v7Bytes[0]) << 40) |
+                      (static_cast<std::uint64_t>(v7Bytes[1]) << 32) |
+                      (static_cast<std::uint64_t>(v7Bytes[2]) << 24) |
+                      (static_cast<std::uint64_t>(v7Bytes[3]) << 16) |
+                      (static_cast<std::uint64_t>(v7Bytes[4]) << 8) |
+                      static_cast<std::uint64_t>(v7Bytes[5]);
+    const auto currentUnixMs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+    Require(v7Ms + 60000ULL > currentUnixMs && v7Ms < currentUnixMs + 60000ULL);
 }
