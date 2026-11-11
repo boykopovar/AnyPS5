@@ -84,8 +84,8 @@ std::size_t HostPageSize() {
     return size;
 }
 
-bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
-    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
+bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes, bool prepare = true) {
+    if (prepare) GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
 #ifdef _WIN32
     SIZE_T copied = 0;
     return ReadProcessMemory(GetCurrentProcess(), source, destination, bytes, &copied) != 0 && copied == bytes;
@@ -858,6 +858,13 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
 #else
     throw std::runtime_error("GuestCopyOut: no checked write is available on this host");
 #endif
+}
+
+extern "C" bool GuestCopyInUnsynced_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(source);
+    if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+    return CopyGuestBytes(destination, source, bytes, false);
 }
 
 extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes) {

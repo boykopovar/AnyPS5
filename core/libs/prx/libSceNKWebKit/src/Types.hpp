@@ -61,6 +61,31 @@ public:
     std::vector<std::uint8_t> bytes;
 };
 
+enum class SerializedScriptValueKind {
+    Json,
+    Undefined,
+    NaN,
+    PositiveInfinity,
+    NegativeInfinity,
+};
+
+class SerializedScriptValue final : public ObjectOf<ObjectType::SerializedScriptValue> {
+public:
+    std::string data;
+    SerializedScriptValueKind kind = SerializedScriptValueKind::Json;
+
+    SerializedScriptValue() = default;
+    SerializedScriptValue(std::string str, SerializedScriptValueKind k = SerializedScriptValueKind::Json)
+        : data(std::move(str)), kind(k) {}
+};
+
+class SessionState final : public ObjectOf<ObjectType::SessionState> {
+public:
+    explicit SessionState(std::vector<std::uint8_t> data) : data(std::move(data)) {}
+
+    std::vector<std::uint8_t> data;
+};
+
 template<ObjectType kind, typename Value>
 class Number final : public ObjectOf<kind> {
 public:
@@ -149,6 +174,20 @@ public:
     }
 };
 
+class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
+public:
+};
+
+class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
+public:
+    BundleDOMWindowExtension() = default;
+    BundleDOMWindowExtension(Retained<BundleFrame> frame, Retained<BundleScriptWorld> scriptWorld)
+        : frame(std::move(frame)), scriptWorld(std::move(scriptWorld)) {}
+
+    Retained<BundleFrame> frame;
+    Retained<BundleScriptWorld> scriptWorld;
+};
+
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
     Retained<URL> absoluteImageURL;
@@ -164,6 +203,7 @@ public:
     Retained<Object> request;
     Retained<Object> originatingPage;
     bool wasUserInitiated = false;
+    bool isCancelled = false;
 };
 
 class AccessibilityObject final : public ObjectOf<ObjectType::AccessibilityObject> {
@@ -252,6 +292,47 @@ public:
     bool isFront = false;
     bool isProfilingPage = false;
     bool isVisible = false;
+};
+
+class Connection final : public ObjectOf<ObjectType::Connection> {
+public:
+    Retained<Object> lastMessageName;
+    Retained<Object> lastMessageBody;
+    bool clientConfigured = false;
+};
+
+class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
+public:
+    bool decided = false;
+    bool allowed = false;
+
+    void Allow() {
+        decided = true;
+        allowed = true;
+    }
+
+    void Deny() {
+        decided = true;
+        allowed = false;
+    }
+};
+
+class Notification final : public ObjectOf<ObjectType::Notification> {
+public:
+    std::u16string title;
+    std::u16string body;
+    std::u16string iconURL;
+    std::u16string tag;
+    std::u16string lang;
+    std::u16string dir;
+    std::uint64_t notificationID = 0;
+};
+
+class Frame final : public ObjectOf<ObjectType::Frame> {
+public:
+    bool isDisplayingMarkupDocument = false;
+    bool isDisplayingStandaloneImageDocument = false;
+    bool isMainFrame = false;
 };
 
 }  // namespace NKWebKit

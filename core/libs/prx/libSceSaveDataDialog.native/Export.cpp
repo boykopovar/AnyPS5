@@ -73,20 +73,33 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) {
  if (param == nullptr) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
- const auto* p = static_cast<const SaveDataDialogParam*>(param);
- g_mode = p->mode;
- g_user_data = p->user_data;
- g_dir_name[0] = '\0';
- const auto* items = static_cast<const SaveDataDialogItems*>(p->items);
- if (items != nullptr && items->dir_names != nullptr) {
-  for (std::uint32_t i = 0; i < items->dir_names_num; i++) {
-   const char* name = items->dir_names[i].data;
-   if (name[0] != '\0') {
-    std::snprintf(g_dir_name, sizeof(g_dir_name), "%s", name);
+ SaveDataDialogParam p{};
+ if (!GuestCopyIn_nid_no_patch(&p, param, sizeof(p))) {
+  return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+ }
+ SaveDataDialogItems items{};
+ if (p.items != nullptr && !GuestCopyIn_nid_no_patch(&items, p.items, sizeof(items))) {
+  return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+ }
+ char dir_name[sizeof(g_dir_name)] = {};
+ if (items.dir_names != nullptr) {
+  for (std::uint32_t i = 0; i < items.dir_names_num; i++) {
+   SaveDataDirName name{};
+   if (!GuestCopyIn_nid_no_patch(&name, &items.dir_names[i], sizeof(name))) {
+    return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+   }
+   if (name.data[0] != '\0') {
+    if (std::memchr(name.data, '\0', sizeof(name.data)) == nullptr) {
+     return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+    }
+    std::snprintf(dir_name, sizeof(dir_name), "%s", name.data);
     break;
    }
   }
  }
+ g_mode = p.mode;
+ g_user_data = p.user_data;
+ std::memcpy(g_dir_name, dir_name, sizeof(g_dir_name));
  g_status = g_mode == SAVE_DATA_DIALOG_MODE_PROGRESS_BAR
   ? SAVE_DATA_DIALOG_STATUS_RUNNING : SAVE_DATA_DIALOG_STATUS_FINISHED;
  return SAVE_DATA_DIALOG_OK;
