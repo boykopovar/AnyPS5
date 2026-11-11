@@ -102,6 +102,7 @@ private:
     void run();
     void execute(Chunk& chunk);
     void await() noexcept;
+    void awaitSpare() noexcept;
     DeviceFunctions& table;
     DeviceFunctions real;
     VkDevice device = VK_NULL_HANDLE;
@@ -115,6 +116,7 @@ private:
     Chunk* head = nullptr;
     Chunk* tail = nullptr;
     Chunk* spare = nullptr;
+    std::size_t chunkCount = 0;
     std::atomic<std::uint64_t> posted{0};
     std::atomic<std::uint64_t> executed{0};
     std::atomic<bool> sleeping{false};

@@ -15,6 +15,7 @@ namespace AgcDriver::Graphics {
 namespace {
 
 constexpr std::size_t ChunkBytes = 64 * 1024;
+constexpr std::size_t PooledChunks = 16;
 constexpr std::size_t RecordAlign = 16;
 
 struct Record {
@@ -401,6 +402,17 @@ std::unique_ptr<CommandEncoder> CommandEncoder::Attach(VkDevice device, DeviceFu
 
 CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot) : table(table), real(table), device(device), slot(slot) {
     static_cast<void>(HandoffSpinWindow());
+    try {
+        for (; chunkCount < PooledChunks; ++chunkCount) {
+            auto chunk = std::make_unique<Chunk>();
+            chunk->bytes.resize(ChunkBytes);
+            chunk->next = spare;
+            spare = chunk.release();
+        }
+    } catch (...) {
+        for (auto* chunk = spare; chunk != nullptr;) delete std::exchange(chunk, chunk->next);
+        throw;
+    }
     worker = std::thread([this] { run(); });
     std::lock_guard lock(slotMutex());
     slots()[slot].real = real;
@@ -465,11 +477,18 @@ std::byte* CommandEncoder::Append(Run run, std::size_t bytes) {
     const auto need = RecordHeader + aligned(bytes);
     if (filling != nullptr && (filling->recording != recording || filling->used + need > filling->bytes.size())) post();
     if (filling == nullptr) {
-        {
-            std::lock_guard lock(queueMutex);
-            if (spare != nullptr) filling = std::exchange(spare, spare->next);
+        for (;;) {
+            {
+                std::lock_guard lock(queueMutex);
+                if (spare != nullptr) filling = std::exchange(spare, spare->next);
+            }
+            if (filling != nullptr || chunkCount < PooledChunks || executed.load(std::memory_order_acquire) >= posted.load(std::memory_order_acquire)) break;
+            awaitSpare();
         }
-        if (filling == nullptr) filling = new Chunk;
+        if (filling == nullptr) {
+            filling = new Chunk;
+            ++chunkCount;
+        }
         try {
             if (filling->bytes.size() < std::max(ChunkBytes, need)) filling->bytes.resize(std::max(ChunkBytes, need));
         } catch (...) {
@@ -526,6 +545,18 @@ void CommandEncoder::await() noexcept {
     if (!SpinUntil(HandoffSpinWindow(), [&] { return executed.load(std::memory_order_acquire) >= through; })) {
         for (auto seen = executed.load(std::memory_order_acquire); seen < through; seen = executed.load(std::memory_order_acquire)) executed.wait(seen, std::memory_order_acquire);
     }
+    waitCount.fetch_add(1, std::memory_order_relaxed);
+    waitNs.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
+}
+
+void CommandEncoder::awaitSpare() noexcept {
+    const auto start = std::chrono::steady_clock::now();
+    const auto seen = executed.load(std::memory_order_acquire);
+    {
+        std::lock_guard lock(queueMutex);
+        if (spare != nullptr) return;
+    }
+    executed.wait(seen, std::memory_order_acquire);
     waitCount.fetch_add(1, std::memory_order_relaxed);
     waitNs.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
 }

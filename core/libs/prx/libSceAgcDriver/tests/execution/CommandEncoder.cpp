@@ -737,7 +737,7 @@ void PostingNeverAllocates() {
     CommandEncoder::SetDelayForTesting([&] {
         while (!release.load()) std::this_thread::yield();
     });
-    for (std::uint32_t index = 0; index < 200; ++index) {
+    for (std::uint32_t index = 0; index < 12; ++index) {
         encoder.Open(commands, RecordingOf(commands));
         table.cmdDraw(commands, index, 1, 0, 0);
         bool allocated = false;
@@ -751,14 +751,50 @@ void PostingNeverAllocates() {
         Require(!allocated, "posting chunk " + std::to_string(index) + " allocated memory");
     }
     encoder.Open(commands, RecordingOf(commands));
-    table.cmdDraw(commands, 200, 1, 0, 0);
+    table.cmdDraw(commands, 12, 1, 0, 0);
     release.store(true);
     AgcDriver::Tests::SetAllocationFailureCountdown(0);
     encoder.Quiesce();
     AgcDriver::Tests::SetAllocationFailureCountdown(-1);
     encoder.Close();
     CommandEncoder::SetDelayForTesting({});
-    Require(Recorded(commands) == 201, "the encoder recorded " + std::to_string(Recorded(commands)) + " of 201 commands posted without allocating");
+    Require(Recorded(commands) == 13, "the encoder recorded " + std::to_string(Recorded(commands)) + " of 13 commands posted without allocating");
+}
+
+void ProducerAheadOfTheChunkPoolWaits() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x4e);
+    const auto commands = Handle<VkCommandBuffer>(0x1400);
+    constexpr std::uint32_t Windows = 64;
+    std::atomic<bool> release{false};
+    std::atomic<bool> producerDone{false};
+    bool doneWhileHeld = true;
+    CommandEncoder::Statistics counts{};
+    CommandEncoder::SetDelayForTesting([&] {
+        while (!release.load()) std::this_thread::yield();
+    });
+    {
+        const auto attached = Attached(device, table);
+        auto& encoder = *attached;
+        std::thread producer([&] {
+            for (std::uint32_t index = 0; index < Windows; ++index) {
+                encoder.Open(commands, RecordingOf(commands));
+                table.cmdDraw(commands, index, 1, 0, 0);
+                encoder.Close();
+            }
+            producerDone.store(true);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        doneWhileHeld = producerDone.load();
+        release.store(true);
+        producer.join();
+        encoder.Quiesce();
+        counts = encoder.Counts();
+    }
+    CommandEncoder::SetDelayForTesting({});
+    Require(!doneWhileHeld, "a producer posted " + std::to_string(Windows) + " windows ahead of a held encoder without waiting for its chunk pool");
+    Require(Recorded(commands) == Windows && counts.waits != 0, "a producer that waited for the chunk pool recorded " + std::to_string(Recorded(commands)) + " of " + std::to_string(Windows) + " commands after " + std::to_string(counts.waits) + " waits");
 }
 
 void ReplayFailureNeedsNoAllocation() {
@@ -810,6 +846,7 @@ int main() {
         AppendFailureKeepsTheWindow();
         DevicesPastTheSlotsRecordInline();
         PostingNeverAllocates();
+        ProducerAheadOfTheChunkPoolWaits();
         ReplayFailureNeedsNoAllocation();
         std::cout << "command encoder tests passed\n";
         return 0;
