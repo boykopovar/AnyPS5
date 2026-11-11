@@ -138,5 +138,16 @@ if command == 'inspect':
             self.assertIn("baseline did not reproduce", stderr.getvalue())
 
 
+    def test_output_exists_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "result"
+            output.write_text("keep", encoding="utf-8")
+            arguments, _, _, _ = self.empty_cli(root, output=output)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                result = frame_capture_minimize.main(arguments)
+            self.assertEqual(result, 2)
+            self.assertEqual(output.read_text(encoding="utf-8"), "keep")
+
 if __name__ == "__main__":
     unittest.main()
