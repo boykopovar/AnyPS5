@@ -887,6 +887,25 @@ static void CheckScalbnErrno() {
         Require(std::bit_cast<std::uint32_t>(scalbnf_nid_postfix(1.0f, item.exponent)) == item.expected);
         Require(errno == 1234);
     }
+    constexpr struct {
+        long double value;
+        int exponent;
+        std::uint64_t mantissa;
+        std::uint16_t signExponent;
+    } longDoubles[] = {
+        {1.0L, 16384, 0x8000000000000000ull, 0x7fff},
+        {-1.0L, 20000, 0x8000000000000000ull, 0xffff},
+        {1.0L, -16446, 0, 0},
+        {1.0L, -20000, 0, 0},
+        {0x1p-16445L, -1, 0, 0},
+        {1.0L, -16445, 1, 0},
+        {3.0L, 4, 0xc000000000000000ull, 0x4004},
+    };
+    for (const auto& item : longDoubles) {
+        errno = 1234;
+        Require(ExtendedBits(scalbnl_nid_postfix(item.value, item.exponent), item.mantissa, item.signExponent));
+        Require(errno == 1234);
+    }
 }
 
 static void CheckLongDouble() {
