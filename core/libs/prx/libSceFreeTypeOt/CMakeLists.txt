@@ -22,6 +22,17 @@ else()
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_freetype_ot_glyph_cbox_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtGlyphCBox.cpp)
+    target_include_directories(guest_freetype_ot_glyph_cbox_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_ot_glyph_cbox_tests PRIVATE libSceFreeTypeOt libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_ot_glyph_cbox_tests)
+    add_test(NAME guest_freetype_ot_glyph_cbox COMMAND guest_freetype_ot_glyph_cbox_tests)
+    set_tests_properties(guest_freetype_ot_glyph_cbox PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_freetype_ot_glyph_cbox PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
+    endif()
+
     add_test_executable(guest_freetype_ot_constants_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtConstants.cpp)
     target_include_directories(guest_freetype_ot_constants_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_ot_constants_tests PRIVATE libSceFreeTypeOt)
