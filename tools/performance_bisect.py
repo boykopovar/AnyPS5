@@ -293,3 +293,21 @@ def build_parser():
     parser.add_argument("--output", type=Path, help="write the measured bracket as JSON")
     parser.add_argument("--temp-dir", type=Path, help="existing directory with enough space for a build worktree")
     return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        if args.temp_dir is not None and not args.temp_dir.is_dir():
+            raise ValueError("--temp-dir must name an existing directory")
+        recipe = load_recipe(args.recipe)
+        report = bisect(args.repo, args.good, args.bad, recipe, args.output, args.temp_dir)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as error:
+        parser.exit(2, f"{parser.prog}: {error}\n")
+    print(f"first measured regression: {report['first_bad']['commit']} ({report['first_bad']['median_fps']:.2f} FPS)")
+    print(f"previous measured good commit: {report['previous_good']['commit']} ({report['previous_good']['median_fps']:.2f} FPS)")
+    if args.output:
+        print(f"report written to {args.output}")
+    return 0
+
