@@ -88,11 +88,6 @@ int APS5_VABI _ZN3rtc19webrtc_logging_impl3LogEPKNS0_10LogArgTypeEz_nid_postfix(
     return 0;
 }
 
-int APS5_VABI _ZN3rtc10LogMessage6IsNoopENS_15LoggingSeverityE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3rtc13SocketAddressC1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -128,11 +123,6 @@ int APS5_VABI _ZNK6webrtc18EnvironmentFactory6CreateEv_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc12RtpExtensionD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc26PeerConnectionDependenciesC1EOS0__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -163,11 +153,6 @@ int APS5_VABI _ZN6webrtc23PeerConnectionInterface16RTCConfigurationD1Ev_nid_post
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc13CryptoOptionsC1ERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerC1ERKS1__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -183,27 +168,12 @@ int APS5_VABI _ZN3rtc14RTCCertificateD1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZNK6webrtc20AudioSourceInterface7optionsEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK6webrtc8RTCError7messageEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc21PendingTaskSafetyFlag6CreateEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI _ZN7cricket5CodecD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc21PendingTaskSafetyFlag11SetNotAliveEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -224,24 +194,9 @@ int APS5_VABI libwebrtcUnknown04(void) {
     return 0;
 }
 
-int APS5_VABI _ZNK6webrtc21PendingTaskSafetyFlag5aliveEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("Sr1wSrhjO3E", libwebrtcUnknown05);
 int APS5_VABI libwebrtcUnknown05(void) {
     NotImplemented_nid_no_patch("Sr1wSrhjO3E");
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc17CopyOnWriteBufferC1ERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc17CopyOnWriteBufferD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -251,16 +206,6 @@ int APS5_VABI _ZN6webrtc17RtpPacketReceivedC1ERKS0__nid_postfix(void) {
 }
 
 int APS5_VABI _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc17CopyOnWriteBuffer24UnshareAndEnsureCapacityEm_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc17CopyOnWriteBufferC1Emm_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -359,11 +304,6 @@ int APS5_VABI libwebrtcUnknown11(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3rtc9KeyParamsC1ENS_7KeyTypeE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerC1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -405,16 +345,6 @@ int APS5_VABI _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc10ColorSpaceC1ERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc12EncodedImageC1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -426,21 +356,6 @@ int APS5_VABI _ZN6webrtc12EncodedImageD1Ev_nid_postfix(void) {
 }
 
 int APS5_VABI _ZN6webrtc10I420Buffer6CreateEiiiii_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc10I420Buffer12MutableDataYEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc10I420Buffer12MutableDataUEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc10I420Buffer12MutableDataVEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -481,9 +396,8 @@ int APS5_VABI _ZNK6webrtc19I420BufferInterface12ChromaHeightEv_nid_postfix(void)
     return 0;
 }
 
-int APS5_VABI _ZNK6webrtc16VideoFrameBuffer7GetI420Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const void* APS5_VABI _ZNK6webrtc16VideoFrameBuffer7GetI420Ev_nid_postfix(const void*) {
+    return nullptr;
 }
 
 int APS5_VABI _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(void) {
@@ -496,52 +410,7 @@ int APS5_VABI _ZN6webrtc10VideoFrame7Builder22set_video_frame_bufferERKNS_13scop
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc10VideoFrame7Builder16set_timestamp_msEl_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc10VideoFrame7Builder17set_timestamp_rtpEj_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc10VideoFrame7Builder15set_ntp_time_msEl_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc10VideoFrame7Builder6set_idEt_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK6webrtc10VideoFrame5widthEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK6webrtc10VideoFrame6heightEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNK6webrtc10VideoFrame18video_frame_bufferEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK6webrtc10VideoFrame14render_time_msEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc10VideoFrame7BuilderC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc10VideoFrame7BuilderD1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -572,46 +441,6 @@ int APS5_VABI _ZN3rtc14VideoSinkWantsD1Ev_nid_postfix(void) {
 }
 
 int APS5_VABI _ZN3rtc10LogMessage6streamEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc10LogMessage17GetMinLogSeverityEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc10LogMessage13GetLogToDebugEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc10LogMessage10LogThreadsEb_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc10LogMessage13LogTimestampsEb_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc10LogMessage10LogToDebugENS_15LoggingSeverityE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc10LogMessage14SetLogToStderrEb_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc10LogMessage14AddLogToStreamEPNS_7LogSinkENS_15LoggingSeverityE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc10LogMessage17RemoveLogToStreamEPNS_7LogSinkE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -703,11 +532,6 @@ int APS5_VABI _ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3rtc17CopyOnWriteBufferC1Em_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc17CodecSpecificInfoD1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -775,11 +599,6 @@ int APS5_VABI _ZN6webrtc12VideoEncoder11EncoderInfoD1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc12VideoEncoder21RateControlParametersD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("P+3Zbh6lqCo", libwebrtcUnknown24);
 int APS5_VABI libwebrtcUnknown24(void) {
     NotImplemented_nid_no_patch("P+3Zbh6lqCo");
@@ -792,29 +611,9 @@ int APS5_VABI libwebrtcUnknown25(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3rtc14PlatformThreadaSEOS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc14PlatformThreadD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc14PlatformThread8FinalizeEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("SGDTMkzQm78", libwebrtcUnknown26);
 int APS5_VABI libwebrtcUnknown26(void) {
     NotImplemented_nid_no_patch("SGDTMkzQm78");
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc11field_trial25InitFieldTrialsFromStringEPKc_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -1041,10 +840,7 @@ int APS5_VABI _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc4rtcp3PliD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI _ZN6webrtc4rtcp3PliD1Ev_nid_postfix(void*) {}
 
 int APS5_VABI _ZN6webrtc4rtcp14ReceiverReportC1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -1096,19 +892,9 @@ int APS5_VABI _ZN6webrtc12AudioDecoder15DecodeRedundantEPKhmimPsPNS0_10SpeechTyp
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("vzyzE1cN1b8", libwebrtcUnknown35);
 int APS5_VABI libwebrtcUnknown35(void) {
     NotImplemented_nid_no_patch("vzyzE1cN1b8");
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -1130,14 +916,10 @@ int APS5_VABI libwebrtcUnknown36(void) {
 
 APS5_EXPORT("Vf6lJz4-bEU", libwebrtcUnknown37);
 int APS5_VABI libwebrtcUnknown37(void) {
-    NotImplemented_nid_no_patch("Vf6lJz4-bEU");
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc12AudioEncoder45OnReceivedUplinkRecoverablePacketLossFractionEf_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI _ZN6webrtc12AudioEncoder45OnReceivedUplinkRecoverablePacketLossFractionEf_nid_postfix(void*, float) {}
 
 int APS5_VABI _ZN6webrtc12AudioEncoder28OnReceivedTargetAudioBitrateEi_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -1217,10 +999,7 @@ int APS5_VABI _ZN6webrtc13PacketOptionsC1ERKS0__nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc13PacketOptionsD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI _ZN6webrtc13PacketOptionsD1Ev_nid_postfix(void*) {}
 
 int APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface5StatsD1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -1383,11 +1162,6 @@ int APS5_VABI _ZN6webrtc19SmoothingFilterImplC1Ei_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc19SmoothingFilterImplD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc9WavReader5ResetEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1467,45 +1241,15 @@ int APS5_VABI libwebrtcUnknown45(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3rtc11RateTrackerC1Elm_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("OGFO5SAL9Sg", libwebrtcUnknown46);
 int APS5_VABI libwebrtcUnknown46(void) {
     NotImplemented_nid_no_patch("OGFO5SAL9Sg");
     return 0;
 }
 
-int APS5_VABI _ZN3rtc11RateTrackerD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc11RateTracker10AddSamplesEl_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK3rtc11RateTracker22ComputeRateForIntervalEl_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("0FWPqLUBGmw", libwebrtcUnknown47);
 int APS5_VABI libwebrtcUnknown47(void) {
     NotImplemented_nid_no_patch("0FWPqLUBGmw");
-    return 0;
-}
-
-int APS5_VABI _ZNK3rtc14NetworkManager16GetMdnsResponderEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZThn8_NK3rtc14NetworkManager16GetMdnsResponderEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -1607,11 +1351,6 @@ int APS5_VABI _ZN6webrtc3voe16RemixAndResampleENS_15InterleavedViewIKsEEiPNS_13P
 }
 
 int APS5_VABI _ZN6webrtc21EchoCanceller3FactoryC1ERKNS_20EchoCanceller3ConfigE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc25AudioEncoderRuntimeConfigD1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

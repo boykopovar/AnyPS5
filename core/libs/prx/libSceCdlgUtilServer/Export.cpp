@@ -3,6 +3,7 @@
 #include "prx/libSceCdlgUtilServer/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -132,8 +133,9 @@ int APS5_VABI libSceCdlgUtilServerUnknown_VrN0lR_plus_BJyc_nid_no_patch() {
 }
 APS5_EXPORT("VrN0lR+BJyc", libSceCdlgUtilServerUnknown_VrN0lR_plus_BJyc_nid_no_patch);
 
-int APS5_VABI libSceCdlgUtilServerUnknown_W4zcizD4i3I_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceCdlgUtilServerUnknown_W4zcizD4i3I_nid_no_patch(const void* self) {
+    if (self == nullptr) throw std::invalid_argument("W4zcizD4i3I: null object");
+    return static_cast<const unsigned char*>(self)[0x10];
 }
 APS5_EXPORT("W4zcizD4i3I", libSceCdlgUtilServerUnknown_W4zcizD4i3I_nid_no_patch);
 
@@ -153,7 +155,7 @@ int APS5_VABI libSceCdlgUtilServerUnknown_ZRy0WQp2COs_nid_no_patch() {
 APS5_EXPORT("ZRy0WQp2COs", libSceCdlgUtilServerUnknown_ZRy0WQp2COs_nid_no_patch);
 
 int APS5_VABI libSceCdlgUtilServerUnknown_aFrwE9W9faU_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("aFrwE9W9faU", libSceCdlgUtilServerUnknown_aFrwE9W9faU_nid_no_patch);
 

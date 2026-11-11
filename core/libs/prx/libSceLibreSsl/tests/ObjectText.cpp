@@ -178,6 +178,36 @@ void Created() {
     OBJ_cleanup_nid_postfix();
 }
 
+std::string Written(const LibreSslAsn1Object* object, int expected) {
+    LibreSsl::Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "a memory BIO");
+    Require(i2a_ASN1_OBJECT_nid_postfix(bio, object) == expected, "i2a_ASN1_OBJECT returns the written length");
+    char* data = nullptr;
+    const auto length = BIO_ctrl_nid_postfix(bio, 3, 0, &data);
+    std::string text(data, static_cast<std::size_t>(length));
+    BIO_free_nid_postfix(bio);
+    Require(ERR_get_error_nid_postfix() == 0, "i2a_ASN1_OBJECT queues no error");
+    return text;
+}
+
+void Printed() {
+    Require(Written(nullptr, 4) == "NULL", "a null object prints NULL");
+    Require(Written(&LibreSslObjects_nid_no_patch[13], 10) == "commonName", "a known object prints its long name");
+    LibreSslAsn1Object empty{};
+    Require(Written(&empty, 4) == "NULL", "an object without an encoding prints NULL");
+    Encoded unknown({0x2a, 0x03, 0x04});
+    Require(Written(&unknown.object, 7) == "1.2.3.4", "an unknown object prints its OID");
+    Encoded truncated({0x2a, 0x83});
+    Require(Written(&truncated.object, 9) == "<INVALID>", "an undecodable object prints <INVALID>");
+    std::vector<unsigned char> arcs(300, 0x7f);
+    arcs[0] = 0x2a;
+    LibreSslAsn1Object longer{nullptr, nullptr, 0, static_cast<int>(arcs.size()), arcs.data(), 0};
+    std::string expected = "1.2";
+    for (std::size_t index = 1; index < arcs.size(); ++index) expected += ".127";
+    Require(Written(&longer, static_cast<int>(expected.size())) == expected, "text longer than 255 bytes is printed whole");
+    Require(i2a_ASN1_OBJECT_nid_postfix(nullptr, &unknown.object) == 0, "a null BIO writes nothing");
+}
+
 } // namespace
 
 int main() {
@@ -189,4 +219,5 @@ int main() {
     Numbers();
     Errors();
     Created();
+    Printed();
 }

@@ -121,8 +121,8 @@ struct ResponseSpec {
 class Server {
 public:
     explicit Server(Mode mode, std::string location = "/another", int redirectStatus = 302,
-        std::vector<std::string> responseCookies = {})
-        : mode(mode), location(std::move(location)), redirectStatus(redirectStatus), responseCookies(std::move(responseCookies)) {
+        std::vector<std::string> responseCookies = {}, bool clientMayClose = false)
+        : mode(mode), location(std::move(location)), redirectStatus(redirectStatus), responseCookies(std::move(responseCookies)), clientMayClose(clientMayClose) {
         mbedtls_net_init(&listener);
         mbedtls_entropy_init(&entropy);
         mbedtls_ctr_drbg_init(&random);
@@ -193,6 +193,7 @@ private:
     const std::string location;
     const int redirectStatus;
     const std::vector<std::string> responseCookies;
+    const bool clientMayClose;
     std::mutex responseMutex;
     ResponseSpec responseSpec;
     unsigned accepted = 0;
@@ -428,7 +429,8 @@ private:
             for (std::size_t sent = 0; sent < bytes.size();) {
                 const auto* data = reinterpret_cast<const unsigned char*>(bytes.data() + sent);
                 const int count = ssl ? mbedtls_ssl_write(ssl, data, bytes.size() - sent) : mbedtls_net_send(&client, data, bytes.size() - sent);
-                Require(count > 0, "HTTP1 response write");
+                Require(count > 0 || clientMayClose, "HTTP1 response write");
+                if (count <= 0) return;
                 sent += static_cast<std::size_t>(count);
             }
         };
@@ -681,7 +683,7 @@ void CookieBoxDelete(int ssl, Mode mode = Mode::CookieFlood) {
     std::vector<std::string> responseCookies;
     if (mode != Mode::CookieFlood)
         for (int index = 0; index < 1500; ++index) responseCookies.push_back("item" + std::to_string(index) + "=value; Path=/");
-    Server server(mode, "/another", 302, std::move(responseCookies));
+    Server server(mode, "/another", 302, std::move(responseCookies), true);
     Client client(ssl, 4, 0, mode == Mode::CookieFlood ? 3 : 2);
     const std::string url = server.Url("127.0.0.1");
     const int box = sceHttp2CreateCookieBox(0x10000);

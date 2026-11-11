@@ -177,6 +177,10 @@ void CheckPortWrappers() {
     Require(Open(parameters, &id) == OUT_OF_RESOURCES && id == 7, "open ex takes the only port");
     Require(sceAudio3dPortCreate(0x100, 0, 0, &id) == INVALID_PARAMETER && id == 7, "create is checked before the port count");
     Require(sceAudio3dPortGetStatus(1, &status, nullptr, 0) == INVALID_PORT && status == 7, "status of port 1");
+    errno = 71;
+    Require(sceAudio3dPortGetStatus(0, reinterpret_cast<uint32_t*>(0x10), nullptr, 0) == INVALID_PARAMETER, "unwritable status");
+    Require(sceAudio3dPortGetStatus(0, nullptr, reinterpret_cast<char*>(0x10), 16) == INVALID_PARAMETER, "unwritable description");
+    Require(errno == 71, "errno preserved");
     Require(sceAudio3dPortGetStatus(0, nullptr, nullptr, 0) == 0, "status without outputs");
     char description[32];
     std::memset(description, 'x', sizeof(description));
