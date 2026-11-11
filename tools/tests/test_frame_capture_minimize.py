@@ -277,6 +277,24 @@ if command == 'inspect':
             frame_capture_minimize.Minimizer.write_plan(path, {8, 2}, {9, 1})
             self.assertEqual(path.read_text(encoding="ascii"), "aps5-frame-filter 1\ncall 2\ncall 8\nchunk 1\nchunk 9\n")
 
+    def test_chunk_reduction_keeps_deltas_for_retained_memory_calls(self):
+        description = {
+            "calls": [{"index": 0, "memory_group": 4}, {"index": 1, "memory_group": 4}],
+            "chunks": [{"index": 0, "kind": "range", "group": 4}, {"index": 1, "kind": "delta", "group": 4}, {"index": 2, "kind": "snapshot", "group": 4}],
+        }
+        units, removed_groups = frame_capture_minimize.Minimizer.reducible_chunks(description, {0})
+        self.assertEqual(units, [1, 2])
+        self.assertEqual(removed_groups, set())
+
+    def test_chunk_reduction_auto_removes_deltas_for_deleted_groups(self):
+        description = {
+            "calls": [{"index": 0, "memory_group": 4}],
+            "chunks": [{"index": 0, "kind": "range", "group": 4}, {"index": 1, "kind": "delta", "group": 4}, {"index": 2, "kind": "snapshot", "group": 4}],
+        }
+        units, removed_groups = frame_capture_minimize.Minimizer.reducible_chunks(description, {0})
+        self.assertEqual(units, [2])
+        self.assertEqual(removed_groups, {4})
+
     def test_python_filter_command_uses_current_interpreter(self):
         self.assertEqual(frame_capture_minimize.Minimizer.command(Path("filter.py")), [sys.executable, "filter.py"])
 

@@ -75,6 +75,26 @@ class Minimizer:
         lines.extend(f"chunk {index}" for index in sorted(chunks))
         path.write_text("\n".join(lines) + "\n", encoding="ascii")
 
+    @staticmethod
+    def reducible_chunks(description, removed_calls):
+        retained_groups = {
+            entry["memory_group"]
+            for entry in description["calls"]
+            if entry["index"] not in removed_calls and entry["memory_group"] is not None
+        }
+        removed_groups = {
+            entry["memory_group"]
+            for entry in description["calls"]
+            if entry["index"] in removed_calls and entry["memory_group"] is not None
+        } - retained_groups
+        units = [
+            entry["index"]
+            for entry in description["chunks"]
+            if entry["kind"] != "range"
+            and not (entry["kind"] == "delta" and entry["group"] in removed_groups)
+        ]
+        return units, removed_groups
+
     def replay_once(self, capture, workdir):
         command = [*self.command(self.replay), str(capture)]
         command.extend(argument.replace("{trial_dir}", str(workdir)) for argument in self.args.replay_arg)
@@ -230,9 +250,7 @@ def main(argv=None):
                 return 1
         print(f"baseline predicate confirmed {args.confirm_runs} times", file=sys.stderr)
         _, removed_calls, removed_chunks, calls_complete = minimizer.minimize(call_units, removed_calls, removed_chunks, True)
-        retained_groups = {entry["memory_group"] for entry in description["calls"] if entry["index"] not in removed_calls and entry["memory_group"] is not None}
-        removed_groups = {entry["memory_group"] for entry in description["calls"] if entry["index"] in removed_calls and entry["memory_group"] is not None} - retained_groups
-        chunk_units = [entry["index"] for entry in description["chunks"] if entry["kind"] != "range" and not (entry["kind"] == "delta" and entry["group"] in removed_groups)]
+        chunk_units, removed_groups = minimizer.reducible_chunks(description, removed_calls)
         _, removed_calls, removed_chunks, chunks_complete = minimizer.minimize(chunk_units, removed_calls, removed_chunks, False)
         minimizer.materialize(removed_calls, removed_chunks, minimizer.output)
         auto_removed_chunks = {entry["index"] for entry in description["chunks"] if entry["kind"] == "delta" and entry["group"] in removed_groups}
