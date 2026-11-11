@@ -373,6 +373,10 @@ static void ProcessGain(Ngs2Voice& voice, std::size_t module, std::uint32_t grai
     gain.current = gain.target;
 }
 
+bool Ngs2IsMasteringModuleParam(const Ngs2Voice& voice, std::uint32_t id) {
+    return voice.rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING && voice.rack->numModules != 0 && (id >> 16) == SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 >> 16;
+}
+
 bool Ngs2HasCustomModule(const Ngs2Rack& rack, std::uint32_t moduleId) {
     return std::find(rack.customModuleIds.begin(), rack.customModuleIds.end(), moduleId) != rack.customModuleIds.end();
 }
@@ -423,20 +427,21 @@ static void ApplyMasteringModuleParam(Ngs2Voice& voice, const Ngs2VoiceParamHead
 
 static void ProcessMixMatrix(Ngs2Voice& voice, std::uint32_t grain) {
     if (voice.mixMatrix.empty()) return;
-    std::vector<float> mixed(voice.samples.size(), 0.0f);
+    voice.mixScratch.assign(voice.samples.size(), 0.0f);
+    auto& mixed = voice.mixScratch;
     for (std::uint32_t out = 0; out < voice.channels; out++) {
         for (std::uint32_t in = 0; in < voice.channels; in++) {
             const float level = voice.mixMatrix[out * SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS + in];
             for (std::uint32_t i = 0; i < grain; i++) mixed[out * grain + i] += level * voice.samples[in * grain + i];
         }
     }
-    voice.samples = std::move(mixed);
+    voice.samples.swap(mixed);
     RefreshHasSamples(voice);
 }
 
 void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
     const auto rackId = voice.rack->rackId;
-    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING && voice.rack->numModules != 0 && (param.id >> 16) == SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 >> 16) {
+    if (Ngs2IsMasteringModuleParam(voice, param.id)) {
         ApplyMasteringModuleParam(voice, param);
         return;
     }

@@ -732,7 +732,7 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
         voice.userFx[index].configured = true;
         return result;
     }
-    if (voice.rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING && voice.rack->numModules != 0 && (param.id >> 16) == SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 >> 16) {
+    if (Ngs2IsMasteringModuleParam(voice, param.id)) {
         Ngs2CheckMasteringModuleParam(param);
         return CopyParam(param);
     }
