@@ -12,6 +12,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  PYTHONUTF8: "1"
   RELEASE_TAG: ${{ github.ref_name }}
   CONFIGURE: >-
     -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
