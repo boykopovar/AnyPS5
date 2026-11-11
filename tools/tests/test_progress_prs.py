@@ -6,11 +6,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import progress_prs
+try:
+    import progress_prs
+except ModuleNotFoundError:
+    progress_prs = None
 
 
 class OpenPrProgressTests(unittest.TestCase):
     def setUp(self):
+        self.assertIsNotNone(progress_prs, "open-PR progress estimator must be available")
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name) / "repo"
         self.root.mkdir()

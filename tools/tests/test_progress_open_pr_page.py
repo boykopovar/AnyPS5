@@ -7,6 +7,10 @@ import progress
 
 
 class OpenPrProgressPageTests(unittest.TestCase):
+    def setUp(self):
+        self.assertTrue(hasattr(progress, "open_pr_progress_section"),
+                        "open-PR progress rendering must be available")
+
     def test_estimate_is_shown_in_html_and_json_data(self):
         estimate = {"available": True, "generated_at": "2026-11-10T00:00:00Z",
                     "baseline": {"done": 2, "total": 10, "percent": 20.0},
