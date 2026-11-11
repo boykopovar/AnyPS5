@@ -98,6 +98,11 @@ static std::filesystem::file_status LinkStatus(const std::filesystem::path& path
     return status;
 }
 
+static std::filesystem::path WithoutTrailingSeparators_nid_no_patch(std::filesystem::path path) {
+    while (!path.has_filename() && path.has_relative_path()) path = path.parent_path();
+    return path;
+}
+
 static int RenamePath_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination) {
     constexpr int GuestEnoent = 2;
     constexpr int GuestEnotdir = 20;
@@ -116,11 +121,14 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
     const auto& actualSource = source;
     const auto& actualDest = destination;
 #endif
+    const auto lookupDestination = WithoutTrailingSeparators_nid_no_patch(actualDest);
+    const bool destinationNamesDirectory = lookupDestination != actualDest;
+
     const auto sourceStatus = LinkStatus(actualSource, error);
     if (error && error != std::errc::no_such_file_or_directory) return FilesystemError(error);
     if (sourceStatus.type() == fs::file_type::not_found) return GuestEnoent;
 
-    const auto parent = actualDest.parent_path().empty() ? fs::path(".") : actualDest.parent_path();
+    const auto parent = lookupDestination.parent_path().empty() ? fs::path(".") : lookupDestination.parent_path();
     error.clear();
     const auto parentStatus = fs::status(parent, error);
     if (error) return FilesystemError(error);
@@ -128,15 +136,17 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
     if (!fs::is_directory(parentStatus)) return GuestEnotdir;
 
     error.clear();
-    const auto destinationStatus = LinkStatus(actualDest, error);
+    const auto destinationStatus = LinkStatus(lookupDestination, error);
     if (error && error != std::errc::no_such_file_or_directory) return FilesystemError(error);
     const bool destinationExists = destinationStatus.type() != fs::file_type::not_found;
     const bool sourceIsDirectory = fs::is_directory(sourceStatus) && !IsWindowsLink(source);
-    const bool destinationIsDirectory = destinationExists && fs::is_directory(destinationStatus) && !IsWindowsLink(destination);
+    const bool destinationIsDirectory = destinationExists && fs::is_directory(destinationStatus) && !IsWindowsLink(lookupDestination);
+    if (destinationNamesDirectory && !destinationExists && !sourceIsDirectory) return GuestEnoent;
+    if (destinationNamesDirectory && destinationExists && !destinationIsDirectory) return GuestEnotdir;
     bool sameFile = false;
     if (destinationExists) {
         error.clear();
-        sameFile = fs::equivalent(actualSource, actualDest, error);
+        sameFile = fs::equivalent(actualSource, lookupDestination, error);
         if (error == std::errc::no_such_file_or_directory) error.clear();
 #ifdef __APPLE__
         if (error == std::errc::not_supported) error.clear();
@@ -149,18 +159,18 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
         error.clear();
         const auto canonicalSource = fs::weakly_canonical(actualSource, error);
         if (error) return FilesystemError(error);
-        const auto canonicalDestination = fs::weakly_canonical(actualDest, error);
+        const auto canonicalDestination = fs::weakly_canonical(lookupDestination, error);
         if (error) return FilesystemError(error);
         const auto relative = canonicalDestination.lexically_relative(canonicalSource);
         if (!relative.empty() && *relative.begin() != "..") return GuestEinval;
     }
     if (destinationExists && !sameFile && destinationIsDirectory) {
         error.clear();
-        if (!fs::is_empty(actualDest, error)) {
+        if (!fs::is_empty(lookupDestination, error)) {
             return error ? FilesystemError(error) : GuestEnotempty;
         }
     }
-    error = RenameNative_nid_no_patch(actualSource, actualDest, destinationExists && (!sourceIsDirectory || !sameFile));
+    error = RenameNative_nid_no_patch(actualSource, lookupDestination, destinationExists && (!sourceIsDirectory || !sameFile));
     return error ? FilesystemError(error) : 0;
 }
 

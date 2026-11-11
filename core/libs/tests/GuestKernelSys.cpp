@@ -1075,6 +1075,16 @@ void DirectoryRenameTests(const std::filesystem::path& parent) {
     Require(std::filesystem::remove(twice));
     Require(sceKernelFstat(target, &after) == 0 && after.st_dev == before.st_dev && after.st_ino == before.st_ino && (after.st_mode & 0170000) == 0040000);
     Require(sceKernelClose(target) == 0);
+    const auto slashSource = fixture / "slash-source";
+    const auto slashMoved = fixture / "slash-moved";
+    const auto slashEmpty = fixture / "slash-empty";
+    Require(std::filesystem::create_directory(slashSource));
+    Require(sceKernelRename(slashSource.string().c_str(), (slashMoved.string() + "/").c_str()) == 0);
+    Require(std::filesystem::is_directory(slashMoved) && !std::filesystem::exists(slashSource));
+    Require(std::filesystem::create_directory(slashEmpty));
+    Require(sceKernelRename(slashMoved.string().c_str(), (slashEmpty.string() + "/").c_str()) == 0);
+    Require(std::filesystem::is_directory(slashEmpty) && !std::filesystem::exists(slashMoved));
+    Require(std::filesystem::remove(slashEmpty));
     Require(std::filesystem::remove(original / "marker") && std::filesystem::remove(original / "new-only"));
     Require(std::filesystem::remove(moved / "different"));
     Require(std::filesystem::remove(original) && std::filesystem::remove(moved) && std::filesystem::remove(fixture));
@@ -2070,6 +2080,15 @@ int main() {
     Require(sceKernelClose(subFd) == 0);
     Require(renameat_nid_postfix(-100, (root / "made.bin").string().c_str(), -100, (root / "final.bin").string().c_str()) == 0);
     Require(std::filesystem::is_regular_file(root / "final.bin"));
+    std::filesystem::create_directory(root / "slash_fast_source");
+    const auto slashFastMoved = (root / "slash_fast_moved").string() + "/";
+    Require(renameat_nid_postfix(-100, (root / "slash_fast_source").string().c_str(), -100, slashFastMoved.c_str()) == 0);
+    Require(std::filesystem::is_directory(root / "slash_fast_moved") && !std::filesystem::exists(root / "slash_fast_source"));
+    std::filesystem::create_directory(root / "slash_fast_empty");
+    const auto slashFastEmpty = (root / "slash_fast_empty").string() + "/";
+    Require(renameat_nid_postfix(-100, (root / "slash_fast_moved").string().c_str(), -100, slashFastEmpty.c_str()) == 0);
+    Require(std::filesystem::is_directory(root / "slash_fast_empty") && !std::filesystem::exists(root / "slash_fast_moved"));
+    std::filesystem::remove(root / "slash_fast_empty");
     Require(fchmodat_nid_postfix(base, "file.txt", 0600, 0x0200) == 0);
     Require(fchmodat_nid_postfix(-100, (root / "file.txt").string().c_str(), 0644, 0) == 0);
 #ifndef _WIN32
