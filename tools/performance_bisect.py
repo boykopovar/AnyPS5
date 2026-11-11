@@ -35,8 +35,8 @@ def load_recipe(path):
         if not isinstance(command, list) or not command or any(not isinstance(item, str) or not item for item in command):
             raise ValueError(f"recipe.build_commands[{number - 1}] must be a non-empty argument list")
     build_dir = recipe.get("build_dir", "build")
-    if not isinstance(build_dir, str) or not build_dir or Path(build_dir).is_absolute() or ".." in Path(build_dir).parts:
-        raise ValueError("recipe.build_dir must be a relative path inside the worktree")
+    if not isinstance(build_dir, str) or not build_dir or Path(build_dir).is_absolute() or ".." in Path(build_dir).parts or Path(build_dir) == Path("."):
+        raise ValueError("recipe.build_dir must be a non-root relative path inside the worktree")
     games = recipe.get("games")
     if not isinstance(games, list) or not games or any(not isinstance(item, str) or not Path(item).is_dir() for item in games):
         raise ValueError("recipe.games must list existing extracted-game directories")
@@ -143,8 +143,22 @@ def format_command(command, values):
     return result
 
 
+def reset_build_dir(worktree, build_dir):
+    root = worktree.resolve()
+    if not build_dir.resolve().is_relative_to(root):
+        raise ValueError("recipe.build_dir resolves outside the worktree")
+    relative = build_dir.relative_to(worktree).as_posix()
+    if git(worktree, "ls-files", "--", relative):
+        raise ValueError("recipe.build_dir contains tracked source files and cannot be cleared safely")
+    if build_dir.is_symlink():
+        build_dir.unlink()
+    elif build_dir.exists():
+        shutil.rmtree(build_dir)
+
+
 def run_build_commands(worktree, recipe, commit, results_dir):
     build_dir = worktree / recipe["build_dir"]
+    reset_build_dir(worktree, build_dir)
     values = {"worktree": worktree, "build_dir": build_dir, "result_dir": results_dir, "commit": commit}
     for command in recipe["build_commands"]:
         expanded = format_command(command, values)
