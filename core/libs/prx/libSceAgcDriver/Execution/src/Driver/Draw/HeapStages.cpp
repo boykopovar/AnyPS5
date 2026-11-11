@@ -404,18 +404,38 @@ HeapWalkMemo& heapWalkMemo() {
 
 }
 
+void AppendWalkRead(std::vector<std::pair<std::uint64_t, std::uint64_t>>& runs, std::uint64_t address) {
+    if (!runs.empty() && address >= runs.back().first && address <= runs.back().second) {
+        runs.back().second = std::max(runs.back().second, address + WordBytes);
+        return;
+    }
+    runs.emplace_back(address, address + WordBytes);
+}
+
+void CoalesceWalkReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& runs, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) {
+    if (!std::is_sorted(runs.begin(), runs.end())) std::sort(runs.begin(), runs.end());
+    ranges.clear();
+    for (const auto& [begin, end] : runs) {
+        if (!ranges.empty() && begin <= ranges.back().second) {
+            ranges.back().second = std::max(ranges.back().second, end);
+            continue;
+        }
+        ranges.emplace_back(begin, end);
+    }
+}
+
 namespace {
 
 using AddressRanges = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
 
 struct WalkReads {
-    std::vector<std::uint64_t> words;
+    AddressRanges runs;
     std::uint64_t page = ~std::uint64_t{0};
     AddressRanges accessible;
     bool failed = false;
 
     void Reset() {
-        words.clear();
+        runs.clear();
         accessible.clear();
         failed = false;
         page = ~std::uint64_t{0};
@@ -434,7 +454,7 @@ bool readWalkWord(void* context, std::uint64_t address, std::uint32_t* value) {
         }
     }
     std::memcpy(value, reinterpret_cast<const void*>(address), sizeof(*value));
-    reads.words.push_back(address);
+    AppendWalkRead(reads.runs, address);
     return true;
 }
 
@@ -446,17 +466,7 @@ bool walkAccessible(void* context, std::uint64_t address, std::uint64_t bytes) {
     return accessible;
 }
 
-void coalesceWords(std::vector<std::uint64_t>& words, AddressRanges& ranges) {
-    std::sort(words.begin(), words.end());
-    ranges.clear();
-    for (const auto address : words) {
-        if (!ranges.empty() && address <= ranges.back().second) {
-            ranges.back().second = std::max(ranges.back().second, address + WordBytes);
-            continue;
-        }
-        ranges.emplace_back(address, address + WordBytes);
-    }
-}
+
 
 void copyRangeValues(const AddressRanges& ranges, std::vector<std::uint32_t>& values) {
     values.clear();
@@ -668,7 +678,7 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     } catch (const std::exception&) {
         return {};
     }
-    coalesceWords(reads.words, ranges);
+    CoalesceWalkReads(reads.runs, ranges);
     auto& values = HostThreadLocal<std::vector<std::uint32_t>, ValuesStorage>();
     if (!reads.failed) copyRangeValues(ranges, values);
     const bool settled = rangesSettled(ranges, before.get(), generation);

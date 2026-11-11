@@ -41,6 +41,10 @@ struct HeapStageMaterialized {
 
 void ResetHeapStageWords(ShaderRecompiler::HeapStageWords& words);
 
+void AppendWalkRead(std::vector<std::pair<std::uint64_t, std::uint64_t>>& runs, std::uint64_t address);
+
+void CoalesceWalkReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& runs, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
+
 HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
                                            std::uint64_t shaderBase);
 void NoteHeapDirect();
