@@ -185,3 +185,21 @@ def measure_commit(repo, worktree, results_root, recipe, commit):
     result = summarize(samples, recipe["max_spread_pct"])
     print(f"{commit[:12]} median: {result['median_fps']:.2f} FPS; spread {result['spread_pct']:.2f}%", file=sys.stderr, flush=True)
     return result
+
+
+def write_report(path, report):
+    output = Path(path)
+    if output.exists():
+        raise ValueError(f"report already exists: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=output.parent,
+                                         prefix=output.name + ".", suffix=".tmp", delete=False) as file:
+            temporary = Path(file.name)
+            file.write(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
+        temporary.replace(output)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+

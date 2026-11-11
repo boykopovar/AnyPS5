@@ -221,3 +221,14 @@ class CommitMeasurementTests(unittest.TestCase):
             self.assertEqual(run.call_count, 3)
             self.assertEqual(measurement["median_fps"], 60.0)
             self.assertTrue((results / GOOD).is_dir())
+
+
+class ReportTests(unittest.TestCase):
+    def test_report_is_written_once_as_complete_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nested" / "report.json"
+            performance_bisect.write_report(path, {"result": "first bad"})
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "first bad"})
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                performance_bisect.write_report(path, {"result": "overwrite"})
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "first bad"})
