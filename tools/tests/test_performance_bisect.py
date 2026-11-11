@@ -36,6 +36,7 @@ class RecipeTests(unittest.TestCase):
             self.assertEqual(recipe["build_dir"], "build")
             self.assertEqual(recipe["repetitions"], 3)
             self.assertEqual(recipe["titles"], str((root / "titles.json").resolve()))
+            self.assertEqual(recipe["games"], [str((root / "game").resolve())])
 
     def test_rejects_recipe_typo_and_bad_title_id(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -51,6 +52,32 @@ class RecipeTests(unittest.TestCase):
                     path.write_text(json.dumps(bad), encoding="utf-8")
                     with self.assertRaises(ValueError):
                         performance_bisect.load_recipe(path)
+
+    def test_resolves_relative_paths_from_the_recipe_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config"
+            config.mkdir()
+            game = config / "packages"
+            game.mkdir()
+            (config / "titles.json").write_text("{}", encoding="utf-8")
+            recipe = self.make_recipe(root)
+            recipe.update(games=["packages"], titles="titles.json")
+            path = config / "recipe.json"
+            path.write_text(json.dumps(recipe), encoding="utf-8")
+            loaded = performance_bisect.load_recipe(path)
+            self.assertEqual(loaded["games"], [str(game.resolve())])
+            self.assertEqual(loaded["titles"], str((config / "titles.json").resolve()))
+
+    def test_rejects_empty_game_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            recipe = self.make_recipe(root)
+            recipe["games"] = [""]
+            path = root / "recipe.json"
+            path.write_text(json.dumps(recipe), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "non-empty paths"):
+                performance_bisect.load_recipe(path)
 
     def test_rejects_unknown_fields_and_non_string_optional_paths(self):
         with tempfile.TemporaryDirectory() as directory:
