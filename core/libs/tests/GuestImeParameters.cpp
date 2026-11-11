@@ -179,6 +179,13 @@ static void CheckKeyboardResourceIds() {
     Require(sceImeKeyboardGetResourceId(1, &ids) == NotOpened, "closed keyboard reported as opened");
 }
 
+static void CheckConsecutiveClauseConversion() {
+    const std::uint8_t values[] = {0, 1, 2, 0xff};
+    for (const std::uint8_t value : values) {
+        Require(sceImeSetConsecutiveClauseConversionEnabled(value) == 0, "any value must succeed");
+    }
+}
+
 int main() {
     CheckInitialization();
     CheckPanelSizes();
@@ -186,4 +193,5 @@ int main() {
     CheckClosedPanel();
     CheckOpenPanel();
     CheckKeyboardResourceIds();
+    CheckConsecutiveClauseConversion();
 }

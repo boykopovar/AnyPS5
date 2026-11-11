@@ -33,7 +33,7 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Samples = 4;
 
-alignas(4096) std::array<std::byte, Width * Height * 4 * Samples> Multisampled{};
+alignas(4096) std::array<std::byte, 65536> Multisampled{};
 alignas(4096) std::array<float, Width * Height> DepthA{};
 alignas(4096) std::array<float, Width * Height> DepthB{};
 
@@ -87,6 +87,7 @@ void Draw(const Context& context, AgcDriver::VulkanDevice& device, const Shaders
     State state{};
     state.stages = {ShaderPath::Vertex, 0u, 32u, 32u, std::nullopt, std::nullopt};
     state.color = {reinterpret_cast<std::uintptr_t>(Multisampled.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Multisampled.size(), 0xe4u};
+    state.color.tileMode = ColorTileMode::RenderTarget;
     state.color.samples = Samples;
     state.colors = {state.color};
     state.hasColorTarget = true;

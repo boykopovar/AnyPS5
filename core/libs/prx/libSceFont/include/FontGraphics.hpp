@@ -7,6 +7,8 @@
 
 namespace Font {
 
+int OutlineVertexesInterfaceInit(void* interface, const void* first, const void* second, std::uint64_t count);
+
 void SetGraphicsErrorCallback(GraphicsErrorCallback callback);
 int ReportGraphicsError(int error);
 int GraphicsRegionInit(FontGraphicsRegion* region, float x, float y, float width, float height);
