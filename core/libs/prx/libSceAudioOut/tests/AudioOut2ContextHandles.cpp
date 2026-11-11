@@ -109,6 +109,12 @@ void UncreatedContextIsInvalid() {
     Require(sceAudioOut2ContextDestroy(live) == 0, "a live context was not destroyed");
 }
 
+void ContextMemoryNullSize() {
+    AudioOut2ContextParam params{};
+    Require(sceAudioOut2ContextResetParam(&params) == 0, "the context parameters did not reset");
+    Require(sceAudioOut2ContextQueryMemory(&params, nullptr) == static_cast<int>(0x80268001), "a null size pointer was not refused with the console code");
+}
+
 void FirmwareExSignatures() {
     constexpr int errorInvalidParam = static_cast<int>(0x80268001);
     constexpr int errorInvalidArgument = static_cast<int>(0x80260502);
@@ -255,6 +261,7 @@ int main() {
     SetEnvironment("SDL_AUDIODRIVER", "disk");
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
     FirmwareExSignatures();
+    ContextMemoryNullSize();
     OversizedGrainIsRefused();
     BadGuestPointersAreRefused();
     UncreatedContextIsInvalid();
