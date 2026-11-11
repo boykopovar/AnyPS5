@@ -766,11 +766,14 @@ int APS5_VABI curl_msnprintf_nid_postfix(char* buffer, size_t maxlength, const c
 }
 
 int APS5_VABI curl_mvprintf_nid_postfix(const char* format, VaList* args) {
-    NotImplemented_nid_no_patch(__func__);
+    return CurlFormat::FormatStream(&_Stdout_nid_postfix, format, args);
 }
 
 int APS5_VABI curl_mprintf_nid_postfix(const char* format, ...) {
-    NotImplemented_nid_no_patch(__func__);
+    CURL_ARGS_START(format);
+    const int result = CurlFormat::FormatStream(&_Stdout_nid_postfix, format, args);
+    CURL_ARGS_END();
+    return result;
 }
 
 char* APS5_VABI curl_mvaprintf_nid_postfix(const char* format, VaList* args) {
