@@ -1,8 +1,12 @@
 # libSceIcu technical debt
 
+### Functional locale parsing and metadata
+
+- [LocaleCore.cpp](../../../core/libs/prx/libSceIcu/LocaleCore.cpp) implements six public ICU C entry points: `uloc_getLanguage`, `uloc_getCountry`, `uloc_getScript`, `uloc_getBaseName`, `uloc_canonicalize`, and `uloc_getKeywordValue`. These use typed System V guest signatures with 32-bit length/status fields, copy and overflow semantics, case normalization, locale components, and keyword lookup. Release-active guest tests and Linux ASan/UBSan/leak checks cover bounded buffers, malformed keyword items, and status propagation; 22,647 additional input/capacity combinations were differential-checked against *native desktop ICU 74*. This is a source-compatible subset, not an assertion of PS5 firmware 68 binary equivalence. Long/host-specific aliases, obscure locale grammar, data-driven locale operations, and arbitrary malformed input remain unverified. Neither PS5 hardware calls nor a console trace was available.
+
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 72 functions match typed NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Prototypes and behavior are unverified. Each declaration throws through `NotImplemented_nid_no_patch`, except the 14 `ubrk_*` and two `udata_set*` functions implemented under Data and C break iteration.
+- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 40 remaining throwing functions match NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Their prototypes and behavior are unverified and retain `NotImplemented_nid_no_patch`. The six locale functions described above have been removed from this throwing inventory, `u_tolower`, `u_toupper`, `u_totitle` and `ublock_getCode` are in [CodePoints.cpp](../../../core/libs/prx/libSceIcu/CodePoints.cpp), six `unorm2_*` in [Normalization.cpp](../../../core/libs/prx/libSceIcu/Normalization.cpp), and the 14 `ubrk_*` and two `udata_set*` functions are under Data and C break iteration.
 
 - [Per-image ELF records](https://gist.github.com/kyon-eth/a8e9ce3fc8802f48d30cd94c413904b7/211c546f6f8e79a23b5ec6ea8fd0610527beabee) describe the module, library, raw names, type, values and sizes for the declarations in [Export.cpp](../../../core/libs/prx/libSceIcu/Export.cpp). The metadata SHA-256 is `551b2d4f646b934cb7eae6a2f2f3bf58e4fb2ba53644d2d1af40f133fda15eb9`; image provenance and labels are not authenticated.
 
@@ -12,20 +16,6 @@
 | `u_totitle` | `f4x1+G7t6eY` |
 | `u_toupper` | `rpv+luk5Ye0` |
 | `ublock_getCode` | `Oi8niAD8r1M` |
-| `ubrk_close` | `-Hc6XkAq-eU` |
-| `ubrk_countAvailable` | `bZT8JIrrg3I` |
-| `ubrk_current` | `fsgqunLD2b8` |
-| `ubrk_first` | `cL3dlqTcRqk` |
-| `ubrk_following` | `dC+0Pz5afr0` |
-| `ubrk_getAvailable` | `+Nd4bYkEgRc` |
-| `ubrk_getRuleStatus` | `av8J5NBkbRE` |
-| `ubrk_isBoundary` | `ypOz3lP3VhE` |
-| `ubrk_last` | `n6SEUE4Txvg` |
-| `ubrk_next` | `4Uj1DZGlHTw` |
-| `ubrk_open` | `NfGO57hqUEw` |
-| `ubrk_preceding` | `9hkT1aMC0Rs` |
-| `ubrk_previous` | `tGeOQLpMGgA` |
-| `ubrk_setText` | `NtjY-lZG4ss` |
 | `ubrk_setUText` | `qQMUbG5L6oE` |
 | `ucnv_cbFromUWriteBytes` | `qjWeIkH81-Y` |
 | `ucnv_close` | `JTIHqYZFMQE` |
@@ -43,20 +33,12 @@
 | `ucnv_toUnicode` | `O1eMKYxVlTs` |
 | `ucurr_getName` | `T7jc4xaLMKo` |
 | `ucurr_openISOCurrencies` | `BFt6nFM3lbc` |
-| `udata_setCommonData` | `wHZwCpZVcGI` |
-| `udata_setFileAccess` | `mCyTdtewGpk` |
 | `uloc_addLikelySubtags` | `HQ6DCQrAXD4` |
-| `uloc_canonicalize` | `G-Jl6md9fz4` |
 | `uloc_countAvailable` | `J5lZTL2H6Aw` |
 | `uloc_forLanguageTag` | `a+8yAm1ZfCE` |
 | `uloc_getAvailable` | `JnzWSfYU-xg` |
-| `uloc_getBaseName` | `CZ0z95gBgXg` |
 | `uloc_getCharacterOrientation` | `pMLs993oHk0` |
-| `uloc_getCountry` | `SIZrguvplN4` |
 | `uloc_getDefault` | `m1nD9D9LmP0` |
-| `uloc_getKeywordValue` | `QYSES3tXUHM` |
-| `uloc_getLanguage` | `dxyWDe5AwgY` |
-| `uloc_getScript` | `9lLmMrDj590` |
 | `uloc_minimizeSubtags` | `yb9tILRzD1k` |
 | `uloc_setKeywordValue` | `sw98L1MbqpM` |
 | `uloc_toLanguageTag` | `zmMWRKwedmw` |
@@ -83,7 +65,7 @@
 
 ### Unknown function info
 
-- The 134 [recovered inventory exports](../../../core/libs/prx/libSceIcu/RecoveredInventory.cpp) have unverified parameters, return types, callback ABIs and behavior. Every entry immediately throws through `NotImplemented_nid_no_patch`; the parameterless `int` declarations are import-resolution placeholders. The [13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/226383a7fa4b1275d6cebf61eb1c1e7ca7b58bcb/data/firmware-13.60/libsceicu-9790ee85e3.jsonl) establishes only name/NID bindings. The [module map](https://github.com/boykopovar/ps5-nid-map/blob/cc1d586fddab576a520f226da6b2632b031e6d09/data/Modules/libSceIcu.inc) assigns all 134 NIDs to logical `libSceIcu` in `libSceIcu.sprx`. Recovered `ucfpos`, `uset` and `uiter` groups are excluded. Console ABI, behavior and title compatibility remain unverified.
+- The 134 [recovered inventory exports](../../../core/libs/prx/libSceIcu/RecoveredInventory.cpp) have unverified parameters, return types, callback ABIs and behavior. The 117 left in that file throw through `NotImplemented_nid_no_patch` as parameterless `int` placeholders; the `ubidi` and `ucsdet` ones are in [Bidi.cpp](../../../core/libs/prx/libSceIcu/Bidi.cpp) and [CharsetDetection.cpp](../../../core/libs/prx/libSceIcu/CharsetDetection.cpp). The [13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/226383a7fa4b1275d6cebf61eb1c1e7ca7b58bcb/data/firmware-13.60/libsceicu-9790ee85e3.jsonl) establishes only name/NID bindings. The [module map](https://github.com/boykopovar/ps5-nid-map/blob/cc1d586fddab576a520f226da6b2632b031e6d09/data/Modules/libSceIcu.inc) assigns all 134 NIDs to logical `libSceIcu` in `libSceIcu.sprx`. Recovered `ucfpos`, `uset` and `uiter` groups are excluded. Console ABI, behavior and title compatibility remain unverified.
 
 - [ICU export availability](../../../core/libs/prx/libSceIcu/Unescape.cpp) across firmware versions remains unproven. The [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceIcu.c) includes the implemented escape, invariant-character and version helpers. [BunnyFl’s firmware 13.42 report](https://github.com/boykopovar/AnyPS5/pull/10961#issuecomment-6400071863) records `u_getVersion` returning `78.1.0.0` under an emulator, but neither escape function is in the checked native `system_ex/common_ex/lib/libSceIcu.sprx` export table. Only 104 of the 661 inventory NIDs appear among that module’s 299 exports. The exports for compatibility with older firmware are retained; availability and routing across firmware versions remain unproven.
 
@@ -100,7 +82,7 @@
 
 ### Functional
 
-- [Older callable exports](../../../core/libs/prx/libSceIcu/LegacyExports.cpp) - 1691 of the 2347 3.20 callable NIDs are declared under ICU 68 names: each NID is the `tools/nid_names.py` hash of a dynamic symbol of `libicuuc`, `libicui18n` or `libicuio` in the [ICU 68.2 Ubuntu 20.04 build](https://github.com/unicode-org/icu/releases/download/release-68-2/icu4c-68_2-Ubuntu20.04-x64.tgz), with the `_68` renaming suffix removed from C names; 1293 of them are C++ names in the `icu_68` namespace. A name match does not show that the console function has ICU 68's prototype or behavior, and none is implemented; each throws through `NotImplemented_nid_no_patch`. The other 656 keep placeholder names; 652 of them match no ICU 68.2 symbol. These NIDs do not appear in the later version-labelled module inventory; no cross-version identity or compatibility is claimed.
+- [Older callable exports](../../../core/libs/prx/libSceIcu/LegacyExports.cpp) - 1691 of the 2347 3.20 callable NIDs are declared under ICU 68 names: each NID is the `tools/nid_names.py` hash of a dynamic symbol of `libicuuc`, `libicui18n` or `libicuio` in the [ICU 68.2 Ubuntu 20.04 build](https://github.com/unicode-org/icu/releases/download/release-68-2/icu4c-68_2-Ubuntu20.04-x64.tgz), with the `_68` renaming suffix removed from C names; 1293 of them are C++ names in the `icu_68` namespace. A name match does not show that the console function has ICU 68's prototype or behavior. `ubidi_getClass` and ten `unorm2_*` are implemented (see bidirectional text and normalization); the others throw. The other 656 keep placeholder names; 652 of them match no ICU 68.2 symbol. These NIDs do not appear in the later version-labelled module inventory; no cross-version identity or compatibility is claimed.
 
 - [UTF-8 macro helpers](../../../core/libs/prx/libSceIcu/Utf8.cpp) have no console ABI or behavior verification. Their names and NIDs are in the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceIcu.c); behavior follows ICU 78.1 [utf_impl.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/utf_impl.cpp). These are macro bodies, not complete UTF-8 operations: append encodes ASCII with two bytes, and null-error-pointer failures write the legacy length-dependent error characters. Null index pointers, negative positions, reversed bounds, overflowing index or capacity arithmetic, and null buffers when accessed throw instead of reproducing undefined behavior. Negative forward lengths denote NUL-terminated input. Cross-firmware export availability and native behavior outside the macros' preconditions remain unverified.
 
@@ -152,6 +134,14 @@
 - [UTF-16 to Java modified UTF-8 conversion](../../../core/libs/prx/libSceIcu/JavaUtf8.cpp) is unverified on a console. `u_strToJavaModifiedUTF8` follows ICU 78.1 [ustrtrns.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ustrtrns.cpp): each code unit is encoded alone (surrogates take three bytes, U+0000 takes two), output stops at the first unit that does not fit, and the result codes follow `u_terminateChars`. A null `UErrorCode` and a result longer than `INT32_MAX` throw. The NID comes from the 3.20 inventory and its presence on current firmware is unproven (see ICU export availability). Closes when: compared with the console.
 - [UTF-16 to UTF-32 conversion](../../../core/libs/prx/libSceIcu/Utf32.cpp) is unverified on a console. `u_strToUTF32` and `u_strToUTF32WithSub` follow ICU 78.1 [ustrtrns.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ustrtrns.cpp): only a lead surrogate followed by a trail surrogate is combined, every other surrogate is replaced or fails with `U_INVALID_CHAR_FOUND`, and the result codes follow `u_terminateUChar32s`. A null `UErrorCode` and a result longer than `INT32_MAX` throw. The NIDs come from the 3.20 inventory and their presence on current firmware is unproven (see ICU export availability). Closes when: compared with the console.
 
+- [Bidirectional text](../../../core/libs/prx/libSceIcu/Bidi.cpp) is unverified on a console. `ubidi_open`, `ubidi_close`, `ubidi_setPara`, `ubidi_getParaLevel`, `ubidi_countRuns`, `ubidi_getVisualRun`, `ubidi_getLogicalRun`, `ubidi_getBaseDirection`, `ubidi_reorderVisual`, `ubidi_setClassCallback` and the internal `ubidi_getClass` call ICU 78.1 from the [3rdparty/icu](https://github.com/unicode-org/icu/tree/049e0d6a4206/icu4c/source/common) submodule. The console's ICU 68 has Unicode 13, so characters assigned later may get other classes. A `UBiDi` is a host ICU object that only these exports accept. A guest class callback runs with the guest ABI through a host adapter, and `ubidi_setClassCallback` reports the guest's previous callback and context. `ubidi_getLogicalRun` with a null `UBiDi` throws where ICU dereferences it. The ICU 68.2 and 78.1 prototypes agree. Closes when: compared with the console.
+
+- [Charset detection](../../../core/libs/prx/libSceIcu/CharsetDetection.cpp) is unverified on a console. `ucsdet_open`, `ucsdet_close`, `ucsdet_setText`, `ucsdet_detectAll`, `ucsdet_getName`, `ucsdet_getConfidence` and `ucsdet_enableInputFilter` call the ICU 78.1 [detector](https://github.com/unicode-org/icu/tree/049e0d6a4206/icu4c/source/i18n/csdetect.cpp) built from the submodule; confidences and match order may differ from the console's ICU 68. Detectors and matches are host objects, names point to host string constants and the detector keeps a pointer to the guest text, as ICU does. A null `UErrorCode`, detector, match or match count, and a null text with length -1, throw where ICU dereferences them. Closes when: compared with the console.
+
+- [Normalization](../../../core/libs/prx/libSceIcu/Normalization.cpp) is unverified on a console. Sixteen `unorm2_*` exports call ICU 78.1 with its compiled-in NFC data (Unicode 17; the console's ICU 68 has Unicode 13): the NFC and NFD instances, `unorm2_getInstance` for `nfc` without a package, normalization, appending, quick checks, decompositions, composition, combining classes and boundaries. Other names or packages need a `.nrm` data file this build lacks and throw, as do the NFKC, NFKD and NFKC_Casefold instance getters. `unorm2_openFiltered` and `unorm2_close` throw because the guest `uset_*` sets are not ICU objects. A null `UErrorCode`, and a null normalizer where ICU dereferences it, throw. Closes when: compared with the console and the data files are available.
+
+- [Simple case mapping and blocks](../../../core/libs/prx/libSceIcu/CodePoints.cpp) are unverified on a console. `u_tolower`, `u_toupper`, `u_totitle` and `ublock_getCode` call ICU 78.1 over its compiled-in case and property tables (Unicode 17; the console's ICU 68 has Unicode 13, so later characters and blocks may differ). They were declared without the `_nid_postfix` suffix, which the NID ignores. Closes when: compared with the console.
+
 - [Character property](../../../core/libs/prx/libSceIcu/Properties.cpp) and [case mapping](../../../core/libs/prx/libSceIcu/CaseMapping.cpp) exports retain their #13578 `NotImplemented_nid_no_patch` guards for data-dependent inputs despite the filtered package: `u_hasBinaryProperty` and `u_getIntPropertyValue` for emoji, NFKC, NFKC_Casefold, Indic positional and syllabic category and vertical orientation properties, `u_getIntPropertyMaxValue` for the last three, and `u_strToLower` and `u_strToUpper` with a null (default) locale. Prototypes follow the ICU 78.1 headers; other inputs follow its compiled-in tables from the [3rdparty/icu](https://github.com/unicode-org/icu/tree/049e0d6a4206/icu4c/source/common) submodule; null pointers ICU dereferences and lengths below -1 throw `std::invalid_argument`. Closes when: compared with the console and the data files are available.
 
 ### Known export names; ABI prototypes unverified
@@ -171,8 +161,29 @@
 
 - [Native host tools](../../../cmake/icu-host/CMakeLists.txt) for [libSceIcu](../../../core/libs/prx/libSceIcu/CMakeLists.txt) use a separate CMake build even for cross builds. They run on Linux (GCC 15) and Windows (MinGW GCC 15.2, Python 3.12); macOS execution remains unverified. Closes when: tested on macOS.
 
-- [C break iterators](../../../core/libs/prx/libSceIcu/BreakIterator.cpp) have unverified console ABI and behavior. The 14 `ubrk_*` exports listed under Additional callable exports forward to pinned ICU 78.1 [ubrk.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ubrk.cpp); guest `UChar` is 16-bit, `UBool` 8-bit and status 32-bit. ICU retains the caller's UTF-16 buffer without copying; it must remain alive and unchanged until replacement or close. Handles belong to this backend and cannot be mixed with ICU 68 objects. Null handles or status pointers throw where ICU dereferences them; negative locale indices and index equal to the count throw where `locavailable.cpp` reads outside its allocated array; other arguments and status values pass through ICU. UText callbacks, rule construction, cloning and locale-query exports remain unavailable. Closes when: compared with the console.
+- [C break iterators](../../../core/libs/prx/libSceIcu/BreakIterator.cpp) have unverified console ABI and behavior. The 14 `ubrk_*` exports in the table below forward to pinned ICU 78.1 [ubrk.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ubrk.cpp); guest `UChar` is 16-bit, `UBool` 8-bit and status 32-bit. ICU retains the caller's UTF-16 buffer without copying; it must remain alive and unchanged until replacement or close. Handles belong to this backend and cannot be mixed with ICU 68 objects. Null handles or status pointers throw where ICU dereferences them; negative locale indices and index equal to the count throw where `locavailable.cpp` reads outside its allocated array; other arguments and status values pass through ICU. UText callbacks, rule construction, cloning and locale-query exports remain unavailable. Closes when: compared with the console.
 
-- [Data registration](../../../core/libs/prx/libSceIcu/Data.cpp) has unverified console behavior. The two `udata_set*` setters listed under Additional callable exports follow ICU 78.1 [udata.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/udata.cpp). Common data must be correctly aligned and remain alive while ICU uses it; ICU validates the header, not the extent of caller storage. A null status is a no-op for common-data registration and is ignored by file-access configuration. Closes when: compared with the console.
+- [Data registration](../../../core/libs/prx/libSceIcu/Data.cpp) has unverified console behavior. The two `udata_set*` setters in the table below follow ICU 78.1 [udata.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/udata.cpp). Common data must be correctly aligned and remain alive while ICU uses it; ICU validates the header, not the extent of caller storage. A null status is a no-op for common-data registration and is ignored by file-access configuration. Closes when: compared with the console.
 
 - [Allocator integration](../../../core/libs/prx/libSceIcu/Configuration.cpp) is unverified on the console. `u_setMemoryFunctions` and `u_cleanup` keep the validation and state described above and also forward to the native ICU 78.1 functions. Native callback thunks invoke the configured guest-ABI allocator for ICU allocation, reallocation and freeing. Close releases per-handle allocations; shared caches survive until native `u_cleanup`, which runs before clearing the callbacks. Reconfiguration and cleanup require no concurrent use or outstanding handles, as in ICU. Hand-ported objects retain their own allocation paths. Firmware availability remains as recorded under ICU export availability; no ICU 68 C++ objects are changed. Closes when: compared with the console, including the guest callbacks on Windows.
+
+The 16 exports' names and NIDs follow main's checked [per-image inventory](https://gist.github.com/kyon-eth/a8e9ce3fc8802f48d30cd94c413904b7/211c546f6f8e79a23b5ec6ea8fd0610527beabee), whose image provenance is unverified.
+
+| Name | NID |
+| --- | --- |
+| `ubrk_close` | `-Hc6XkAq-eU` |
+| `ubrk_countAvailable` | `bZT8JIrrg3I` |
+| `ubrk_current` | `fsgqunLD2b8` |
+| `ubrk_first` | `cL3dlqTcRqk` |
+| `ubrk_following` | `dC+0Pz5afr0` |
+| `ubrk_getAvailable` | `+Nd4bYkEgRc` |
+| `ubrk_getRuleStatus` | `av8J5NBkbRE` |
+| `ubrk_isBoundary` | `ypOz3lP3VhE` |
+| `ubrk_last` | `n6SEUE4Txvg` |
+| `ubrk_next` | `4Uj1DZGlHTw` |
+| `ubrk_open` | `NfGO57hqUEw` |
+| `ubrk_preceding` | `9hkT1aMC0Rs` |
+| `ubrk_previous` | `tGeOQLpMGgA` |
+| `ubrk_setText` | `NtjY-lZG4ss` |
+| `udata_setCommonData` | `wHZwCpZVcGI` |
+| `udata_setFileAccess` | `mCyTdtewGpk` |

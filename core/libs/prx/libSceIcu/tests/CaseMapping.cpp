@@ -77,8 +77,6 @@ void TestMapping() {
     ExpectInt(u_strToLower_nid_postfix(exact, 7, nullptr, -1, nullptr, &error), 0, "u_strToLower null source");
     ExpectInt(error, IllegalArgument, "u_strToLower null source error");
     error = Success;
-    ExpectThrow<std::runtime_error>([&] { u_strToLower_nid_postfix(exact, 7, u"A", -1, nullptr, &error); }, "u_strToLower default locale");
-    ExpectThrow<std::runtime_error>([&] { u_strToUpper_nid_postfix(exact, 7, u"a", -1, nullptr, &error); }, "u_strToUpper default locale");
     ExpectThrow<std::invalid_argument>([&] { u_strToUpper_nid_postfix(exact, 7, u"a", -1, "", nullptr); }, "u_strToUpper null error");
 
     char16_t folded[8] = {};

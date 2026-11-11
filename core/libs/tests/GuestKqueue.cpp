@@ -581,10 +581,14 @@ static void PipeWrite() {
     Require(empty >= PipeAtomic);
     Require(write_nid_postfix(pipe[1], "abc", 3) == 3);
     Require(Poll(kq, events, 4) == 1 && events[0].data == empty - 3);
-#ifndef _WIN32
+    std::int64_t queued = 3;
+#ifdef _WIN32
+    const std::string fill(static_cast<std::size_t>(empty - queued), 'x');
+    Require(write_nid_postfix(pipe[1], fill.data(), static_cast<std::int64_t>(fill.size())) == static_cast<std::int64_t>(fill.size()));
+    queued += static_cast<std::int64_t>(fill.size());
+#else
     Require(fcntl_nid_postfix(pipe[1], SetStatusFlags, NonBlocking) == 0);
     const std::string chunk(4096, 'x');
-    std::int64_t queued = 3;
     for (;;) {
         const std::int64_t written = write_nid_postfix(pipe[1], chunk.data(), static_cast<std::int64_t>(chunk.size()));
         if (written < 0) {
@@ -593,6 +597,7 @@ static void PipeWrite() {
         }
         queued += written;
     }
+#endif
     Require(queued > PipeAtomic);
     Require(Poll(kq, events, 4) == 0);
     const KernelTimespec limit{5, 0};
@@ -613,11 +618,6 @@ static void PipeWrite() {
     Require(waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(4));
     Require(events[0].ident == writeEnd && events[0].data >= PipeAtomic && (events[0].flags & EvEof) == 0);
     Require(Poll(kq, events, 4) == 1 && events[0].data == empty);
-#else
-    char back[3];
-    Require(read_nid_postfix(pipe[0], back, 3) == 3);
-    Require(Poll(kq, events, 4) == 1 && events[0].data == empty);
-#endif
     Require(close_nid_postfix(pipe[0]) == 0);
     Require(Poll(kq, events, 4) == 1 && events[0].data == 0 && (events[0].flags & EvEof) != 0);
     const int late = kqueue_nid_postfix();
