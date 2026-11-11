@@ -1,4 +1,5 @@
 #include "prx/libSceCamera/libSceCamera.hpp"
+#include <cerrno>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -52,6 +53,10 @@ void CheckAudioAfterOpen() {
     for (const char* name : {"sceCameraAudioGetData", "sceCameraAudioGetData2"}) {
         const AudioGetData getData = ResolveAudio(name);
         Require(getData(nullptr) == ErrorParam, "camera audio data must reject a null buffer");
+        Require(getData(reinterpret_cast<void*>(0x10)) == ErrorParam, "camera audio data must reject an inaccessible buffer");
+        errno = 71;
+        Require(getData(reinterpret_cast<void*>(0x10)) == ErrorParam, "inaccessible audio buffer");
+        Require(errno == 71, "errno preserved");
         Require(getData(data.data()) == 0, "camera audio data must answer 0 after the failed open");
     }
     for (const std::uint8_t byte : data) Require(byte == 0xA5, "camera audio data must not be written");

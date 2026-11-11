@@ -174,6 +174,20 @@ public:
     }
 };
 
+class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
+public:
+};
+
+class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
+public:
+    BundleDOMWindowExtension() = default;
+    BundleDOMWindowExtension(Retained<BundleFrame> frame, Retained<BundleScriptWorld> scriptWorld)
+        : frame(std::move(frame)), scriptWorld(std::move(scriptWorld)) {}
+
+    Retained<BundleFrame> frame;
+    Retained<BundleScriptWorld> scriptWorld;
+};
+
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
     Retained<URL> absoluteImageURL;
@@ -189,6 +203,7 @@ public:
     Retained<Object> request;
     Retained<Object> originatingPage;
     bool wasUserInitiated = false;
+    bool isCancelled = false;
 };
 
 class AccessibilityObject final : public ObjectOf<ObjectType::AccessibilityObject> {
