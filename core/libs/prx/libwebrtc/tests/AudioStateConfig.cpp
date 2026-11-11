@@ -35,8 +35,56 @@ void TestNullConfigThrows() {
 
 }
 
+struct FakeReference {
+    const void* const* vtable;
+    char name;
+};
+
+char calls[16];
+int callCount;
+
+void APS5_VABI FakeAddRef(const FakeReference* object) {
+    calls[callCount++] = static_cast<char>(object->name - 'a' + 'A');
+}
+
+int APS5_VABI FakeRelease(const FakeReference* object) {
+    calls[callCount++] = object->name;
+    return 1;
+}
+
+const void* const FakeVtable[] = {
+    reinterpret_cast<const void*>(&FakeAddRef),
+    reinterpret_cast<const void*>(&FakeRelease),
+};
+
+void TestDestructorReleasesInReverseOrder() {
+    FakeReference mixer{FakeVtable, 'm'};
+    FakeReference processing{FakeVtable, 'p'};
+    FakeReference device{FakeVtable, 'd'};
+    FakeReference factory{FakeVtable, 'f'};
+    WebRtcAudioStateConfig config{&mixer, &processing, &device, &factory};
+    callCount = 0;
+    _ZN6webrtc10AudioState6ConfigD1Ev_nid_postfix(&config);
+    Require(callCount == 4);
+    Require(std::memcmp(calls, "fdpm", 4) == 0);
+}
+
+void TestDestructorSkipsNullReferences() {
+    FakeReference processing{FakeVtable, 'p'};
+    WebRtcAudioStateConfig config{};
+    _ZN6webrtc10AudioState6ConfigC1Ev_nid_postfix(&config);
+    callCount = 0;
+    _ZN6webrtc10AudioState6ConfigD1Ev_nid_postfix(&config);
+    Require(callCount == 0);
+    config.audioProcessing = &processing;
+    _ZN6webrtc10AudioState6ConfigD1Ev_nid_postfix(&config);
+    Require(callCount == 1 && calls[0] == 'p');
+}
+
 int main() {
     TestConstructorClearsEveryReference();
     TestNullConfigThrows();
+    TestDestructorReleasesInReverseOrder();
+    TestDestructorSkipsNullReferences();
     return 0;
 }
