@@ -2,6 +2,7 @@ add_library(libSceLibreSsl SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/E
 target_include_directories(libSceLibreSsl PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceLibreSsl PRIVATE mbedcrypto)
 configure_windows_unwind(libSceLibreSsl)
+include(${CMAKE_CURRENT_SOURCE_DIR}/LibreSslCrypto.cmake)
 if(BUILD_TESTING)
     add_test_executable(guest_libre_ssl_des_answers_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslDesAnswers.cpp)
     target_include_directories(guest_libre_ssl_des_answers_tests PRIVATE ${LIBS_INCLUDE_DIR})
