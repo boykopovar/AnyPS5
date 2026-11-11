@@ -367,13 +367,13 @@ int main() {
     std::memcpy(object + 28, &word116, sizeof(word116));
     Require(_ZNK9Inspector15ScriptArguments13argumentCountEv(object) == word116);
     const std::uint32_t word117 = 0x89abcdefu;
-    std::memcpy(object + 20, &word117, sizeof(word117));
+    std::memcpy(object + 28, &word117, sizeof(word117));
     Require(_ZNK9Inspector15ScriptCallFrame10lineNumberEv(object) == word117);
     const std::uint32_t word118 = 0x89abcdefu;
-    std::memcpy(object + 24, &word118, sizeof(word118));
+    std::memcpy(object + 32, &word118, sizeof(word118));
     Require(_ZNK9Inspector15ScriptCallFrame12columnNumberEv(object) == word118);
     const std::uint32_t word119 = 0x89abcdefu;
-    std::memcpy(object + 16, &word119, sizeof(word119));
+    std::memcpy(object + 24, &word119, sizeof(word119));
     Require(_ZNK9Inspector15ScriptCallFrame8sourceIDEv(object) == word119);
     const std::uint32_t word120 = 0x89abcdefu;
     std::memcpy(object + 20, &word120, sizeof(word120));
