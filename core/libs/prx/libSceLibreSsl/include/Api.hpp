@@ -925,7 +925,7 @@ int APS5_VABI X509_STORE_CTX_get_error_depth_nid_postfix(LibreSslX509StoreContex
 void* APS5_VABI X509_STORE_CTX_get_ex_data_nid_postfix(LibreSslX509StoreContext* context, int index);
 void APS5_VABI X509_STORE_CTX_set_error_nid_postfix(LibreSslX509StoreContext* context, int error);
 int APS5_VABI X509_STORE_add_cert_nid_postfix(void);
-int APS5_VABI X509_STORE_add_crl_nid_postfix(void);
+int APS5_VABI X509_STORE_add_crl_nid_postfix(LibreSslX509Store* store, void* crl);
 LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Store* store, LibreSslX509LookupMethod* method);
 void APS5_VABI X509_STORE_free_nid_postfix(LibreSslX509Store* store);
 LibreSslX509Store* APS5_VABI X509_STORE_new_nid_postfix(void);
