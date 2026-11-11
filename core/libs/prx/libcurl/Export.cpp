@@ -733,11 +733,14 @@ void APS5_VABI curl_mime_free_nid_postfix(curl_mime* mime) {
 
 
 int APS5_VABI curl_mvfprintf_nid_postfix(std::FILE* whereto, const char* format, VaList* args) {
-    NotImplemented_nid_no_patch(__func__);
+    return CurlFormat::FormatStream(reinterpret_cast<FileStream*>(whereto), format, args);
 }
 
 int APS5_VABI curl_mfprintf_nid_postfix(std::FILE* whereto, const char* format, ...) {
-    NotImplemented_nid_no_patch(__func__);
+    CURL_ARGS_START(format);
+    const int result = CurlFormat::FormatStream(reinterpret_cast<FileStream*>(whereto), format, args);
+    CURL_ARGS_END();
+    return result;
 }
 
 int APS5_VABI curl_mvsprintf_nid_postfix(char* buffer, const char* format, VaList* args) {

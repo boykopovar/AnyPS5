@@ -97,6 +97,17 @@ private:
     std::size_t length = 0;
 };
 
+class StreamOutput final : public IOutput {
+public:
+    explicit StreamOutput(FileStream* stream) : stream(stream) {}
+    bool Put(unsigned char value) override {
+        return fputc_nid_postfix(value, stream) != -1;
+    }
+
+private:
+    FileStream* stream;
+};
+
 class AllocatedOutput final : public IOutput {
 public:
     bool Put(unsigned char value) override {
@@ -675,6 +686,11 @@ char* FormatAllocated(const char* format, const void* args) {
     std::memcpy(copy, text.data(), text.size());
     copy[text.size()] = '\0';
     return copy;
+}
+
+int FormatStream(FileStream* stream, const char* format, const void* args) {
+    StreamOutput output(stream);
+    return Formatter(output, args).Run(format);
 }
 
 }
