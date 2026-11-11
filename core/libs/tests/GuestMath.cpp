@@ -189,6 +189,14 @@ static void CheckNearbyint() {
     }
     asm volatile("fldcw %0" :: "m"(savedControl));
     _mm_setcsr(savedMxcsr);
+    for (const auto& [input, expected] : {std::pair{0xff800001u, 0xffc00001u}, std::pair{0x7f800001u, 0x7fc00001u}}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint32_t>(nearbyintf_nid_postfix(std::bit_cast<float>(input))) == expected);
+        Require(std::fetestexcept(FE_INVALID) != 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::bit_cast<std::uint32_t>(nearbyintf_nid_postfix(std::bit_cast<float>(0x7fc00000u))) == 0x7fc00000u);
+    Require(std::fetestexcept(FE_INVALID) == 0);
 }
 
 static std::uint16_t X87ControlWord() {
@@ -877,6 +885,25 @@ static void CheckScalbnErrno() {
     for (const auto& item : floats) {
         errno = 1234;
         Require(std::bit_cast<std::uint32_t>(scalbnf_nid_postfix(1.0f, item.exponent)) == item.expected);
+        Require(errno == 1234);
+    }
+    constexpr struct {
+        long double value;
+        int exponent;
+        std::uint64_t mantissa;
+        std::uint16_t signExponent;
+    } longDoubles[] = {
+        {1.0L, 16384, 0x8000000000000000ull, 0x7fff},
+        {-1.0L, 20000, 0x8000000000000000ull, 0xffff},
+        {1.0L, -16446, 0, 0},
+        {1.0L, -20000, 0, 0},
+        {0x1p-16445L, -1, 0, 0},
+        {1.0L, -16445, 1, 0},
+        {3.0L, 4, 0xc000000000000000ull, 0x4004},
+    };
+    for (const auto& item : longDoubles) {
+        errno = 1234;
+        Require(ExtendedBits(scalbnl_nid_postfix(item.value, item.exponent), item.mantissa, item.signExponent));
         Require(errno == 1234);
     }
 }

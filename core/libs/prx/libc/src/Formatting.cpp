@@ -43,7 +43,8 @@ bool RequiresGuestFormatting(const char* format) {
     while ((format = std::strchr(format, '%')) != nullptr) {
         ++format;
         if (*format == '%') { ++format; continue; }
-        while (*format && std::strchr("-+ #00123456789.*$", *format)) ++format;
+        bool precision = false;
+        while (*format && std::strchr("-+ #00123456789.*$", *format)) precision |= *format++ == '.';
         if (*format == 'S' || *format == 'C' || *format == 'p' ||
             (*format == 'l' && (format[1] == 's' || format[1] == 'c' || format[1] == 'p'))) return true;
         const char* lengthStart = format;
@@ -52,6 +53,7 @@ bool RequiresGuestFormatting(const char* format) {
         const std::string length(lengthStart, format);
         if (*format && LibcDetail::ApplicableLength(length, *format) != length) return true;
         if (*format && std::strchr("aAeEfFgG", *format)) return true;
+        if (precision && *format == 's') return true;
         if (*format) ++format;
     }
     return false;

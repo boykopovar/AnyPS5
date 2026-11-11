@@ -171,6 +171,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileAndHeap.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Mergesort.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Heapsort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostErrno.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileLock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StdioExtras.cpp
@@ -693,6 +694,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_time_return PROPERTIES TIMEOUT 10)
     if(WIN32)
         set_tests_properties(guest_time_return PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_wide_set_boundary_tests ${LIBS_INCLUDE_DIR}/tests/GuestWideSetBoundary.cpp)
+    target_include_directories(guest_wide_set_boundary_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_wide_set_boundary_tests PRIVATE libc)
+    configure_windows_unwind(guest_wide_set_boundary_tests)
+    add_test(NAME guest_wide_set_boundary COMMAND guest_wide_set_boundary_tests)
+    set_tests_properties(guest_wide_set_boundary PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_wide_set_boundary PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_time_extras_tests ${LIBS_INCLUDE_DIR}/tests/GuestTimeExtras.cpp)
