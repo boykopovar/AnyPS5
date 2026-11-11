@@ -8,6 +8,12 @@
 #include <cstdlib>
 #include <exception>
 #include <limits>
+#ifdef __linux__
+#include <link.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <vector>
+#endif
 
 namespace {
 
@@ -41,6 +47,53 @@ unsigned char* Map(std::size_t pages) {
     Require(raw != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)), "mmap failed");
     return static_cast<unsigned char*>(raw);
 }
+
+#ifdef __linux__
+struct LoadedImageEnds {
+    bool main = true;
+    std::uintptr_t hostPage = 0;
+    std::vector<std::uintptr_t> ends;
+};
+
+int CollectLoadedImageEnds(dl_phdr_info* image, std::size_t, void* data) {
+    auto& images = *static_cast<LoadedImageEnds*>(data);
+    const bool main = images.main;
+    images.main = false;
+    if (main) return 0;
+    for (int index = 0; index < image->dlpi_phnum; ++index) {
+        const auto& header = image->dlpi_phdr[index];
+        if (header.p_type != PT_LOAD) continue;
+        images.ends.push_back((image->dlpi_addr + header.p_vaddr + header.p_memsz + images.hostPage - 1) & ~(images.hostPage - 1));
+    }
+    return 0;
+}
+
+void ProtectHostPagesAboveLoadedImages() {
+    LoadedImageEnds images;
+    images.hostPage = static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
+    dl_iterate_phdr(CollectLoadedImageEnds, &images);
+    int checked = 0;
+    for (const auto end : images.ends) {
+        if (end % Page == 0) continue;
+        void* const wanted = reinterpret_cast<void*>(end);
+        void* const host = mmap(wanted, Page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+        if (host == MAP_FAILED) continue;
+        if (host != wanted) {
+            Require(munmap(host, Page) == 0, "munmap of a misplaced host page failed");
+            continue;
+        }
+        auto* const bytes = static_cast<volatile unsigned char*>(host);
+        Require(mprotect_nid_postfix(host, Page, ProtectRead) == 0, "mprotect of host pages whose 16 KiB page starts in a host image must succeed");
+        Require(Protect(host, Page, ProtectRead) == 0, "sceKernelMprotect of host pages whose 16 KiB page starts in a host image must succeed");
+        bytes[0] = 0x5a;
+        bytes[Page - 1] = 0xa5;
+        Require(bytes[0] == 0x5a && bytes[Page - 1] == 0xa5, "host pages above a host image must stay writable");
+        Require(munmap(host, Page) == 0, "munmap of the host page failed");
+        ++checked;
+    }
+    if (checked == 0) std::puts("skipped the host image check, no host image ends inside a 16 KiB page with free memory above it");
+}
+#endif
 
 }
 
@@ -98,5 +151,8 @@ int main() {
     }
     Require(munmap_nid_postfix(directPages + Page, Page * 2) == 0, "munmap of the direct pages failed");
     Require(sceKernelReleaseDirectMemory(physical, Page * 3) == 0, "direct memory release failed");
+#ifdef __linux__
+    ProtectHostPagesAboveLoadedImages();
+#endif
     return 0;
 }
