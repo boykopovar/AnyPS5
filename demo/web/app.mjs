@@ -289,13 +289,17 @@ async function selectInputs(inputs) {
   $("progress").removeAttribute("value");
   lock(true);
   update();
-  const currentWorker = new Worker(new URL("./worker.mjs", import.meta.url), { type: "module" });
-  worker = currentWorker;
-  currentWorker.onmessage = event => onMessage(event, currentWorker);
-  currentWorker.onerror = event => {
-    if (currentWorker === worker) return fail(event.message || "The converter worker stopped. Try a smaller app or use the native relinker.");
-  };
-  currentWorker.postMessage({ type: "inspect", inputs });
+  try {
+    const currentWorker = new Worker(new URL("./worker.mjs", import.meta.url), { type: "module" });
+    worker = currentWorker;
+    currentWorker.onmessage = event => onMessage(event, currentWorker);
+    currentWorker.onerror = event => {
+      if (currentWorker === worker) return fail(event.message || "The converter worker stopped. Try a smaller app or use the native relinker.");
+    };
+    currentWorker.postMessage({ type: "inspect", inputs });
+  } catch (error) {
+    await fail(error.message);
+  }
 }
 
 $("choose").onclick = () => { $("file").value = ""; $("file").click(); };
