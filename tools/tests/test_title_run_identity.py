@@ -122,6 +122,16 @@ class TitleRunIdentityTests(unittest.TestCase):
         (work / "previous-run.bin").write_bytes(b"preserve stale work until every input is protected")
         return work
 
+    def test_module_directories_cannot_escape_before_cleanup(self):
+        package = self.package(self.root / "games" / TITLE)
+        work = self.stale_work()
+        (work / "plugin.sprx").write_bytes(b"\x7fELF" + bytes(60))
+        for directory in (os.path.relpath(work, package), str(work), "Media/../../outside",
+                          "..\\outside", "C:\\outside", "\\\\server\\share\\outside"):
+            with self.subTest(directory=directory):
+                self.titles.write_text(json.dumps({TITLE: {"relink": ["--module-dir", directory]}}), encoding="utf-8")
+                self.refuse_layout(r"unsafe module directory")
+
     def test_content_file_below_work_is_refused_before_cleanup(self):
         self.package(self.root / "games" / TITLE)
         content = self.stale_work() / "content"

@@ -497,6 +497,7 @@ def stage_inputs(package, entry, source):
     for executable in entry.get("executables", []):
         unwrap_or_copy(package / executable, source / executable)
 
+
 def path_locations(path):
     return (Path(os.path.abspath(path)), comparison_path(path))
 
@@ -620,6 +621,10 @@ def validate_layout(args, found, ids, titles, source, platform):
     if args.compare:
         files.append(args.compare)
     for title_id in ids:
+        for directory in module_dirs(titles.get(title_id, {})):
+            relative = PureWindowsPath(directory)
+            if relative.drive or relative.root or ".." in relative.parts:
+                raise ValueError(f"unsafe module directory for {title_id}: {directory!r}")
         for executable in titles.get(title_id, {}).get("executables", []):
             relative = PureWindowsPath(executable)
             if not relative.parts or relative.drive or relative.root or ".." in relative.parts:
