@@ -3269,13 +3269,17 @@ std::size_t SnapshotPool(Recorder::SnapshotUse use) {
 }
 }
 
+void Recorder::dropDrawInputMirror(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry) {
+    if (entry->second.mirror == nullptr) return;
+    drawSnapshotPools[SnapshotPool(std::get<1>(entry->first))].bytes -= std::get<2>(entry->first);
+    drawInputMirrorBytes -= std::get<2>(entry->first);
+    entry->second.mirror.reset();
+}
+
 void Recorder::eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry) {
+    dropDrawInputMirror(entry);
     auto& pool = drawSnapshotPools[SnapshotPool(std::get<1>(entry->first))];
     pool.bytes -= std::get<2>(entry->first);
-    if (entry->second.mirror != nullptr) {
-        pool.bytes -= std::get<2>(entry->first);
-        drawInputMirrorBytes -= std::get<2>(entry->first);
-    }
     pool.recency.erase(entry->second.recent);
     drawSnapshots.erase(entry);
 }
@@ -3292,12 +3296,15 @@ std::pair<std::size_t, std::size_t> Recorder::DrawInputBytes() const {
 std::shared_ptr<Buffer> Recorder::mirrorDrawInput(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry) {
     const auto bytes = std::get<2>(entry->first);
     auto& pool = drawSnapshotPools[SnapshotPool(std::get<1>(entry->first))];
-    if (drawInputMirrorBytes + bytes > DrawInputMirrorBudget || 2 * bytes > DrawInputBudget || !context.HostMemoryType(~0u)) return {};
+    if (bytes > DrawInputMirrorBudget || 2 * bytes > DrawInputBudget || !context.HostMemoryType(~0u)) return {};
     const auto host = entry->second.buffer;
     const auto copied = host->Bytes().size();
-    if (!context.DeviceLocalHeadroom(context.MemoryType(~0u, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT), copied)) return {};
+    auto mirror = Buffer::WithinDeviceLocalHeadroom(context, copied, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    if (mirror == nullptr) return {};
+    for (auto oldest = pool.recency.begin(); drawInputMirrorBytes + bytes > DrawInputMirrorBudget && oldest != pool.recency.end(); ++oldest) {
+        if (*oldest != entry->first) dropDrawInputMirror(drawSnapshots.find(*oldest));
+    }
     while (pool.bytes + bytes > DrawInputBudget && pool.recency.front() != entry->first) eraseDrawSnapshot(drawSnapshots.find(pool.recency.front()));
-    auto mirror = std::make_shared<Buffer>(context, copied, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     const auto commands = Commands();
     const auto timing = BeginGpuTiming(CommandClass::InputMirror);
     CopyBuffer(context, commands, host->Handle(), 0, mirror->Handle(), 0, copied);

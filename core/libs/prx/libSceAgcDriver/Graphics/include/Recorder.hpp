@@ -979,6 +979,7 @@ private:
     std::array<DrawSnapshotPool, 2> drawSnapshotPools;
     void eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
     std::size_t drawInputMirrorBytes = 0;
+    void dropDrawInputMirror(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
     std::shared_ptr<Buffer> mirrorDrawInput(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
     struct IndexRange {
         std::uint64_t generation;

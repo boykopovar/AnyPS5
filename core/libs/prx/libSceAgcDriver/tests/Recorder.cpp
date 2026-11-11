@@ -5998,6 +5998,20 @@ bool drawInputHolds(const Context& context, Recorder& recorder, const std::share
     return std::memcmp(deviceBufferBytes(context, recorder, buffer, bytes).data(), reinterpret_cast<const void*>(address), bytes) == 0;
 }
 
+constexpr VkDeviceSize TightHeapBudget = VkDeviceSize{64} << 20u;
+constexpr VkDeviceSize TightHeapRoom = 44000;
+
+VKAPI_ATTR void VKAPI_CALL tightMemoryBudget(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
+    for (auto* next = static_cast<VkBaseOutStructure*>(properties->pNext); next != nullptr; next = next->pNext) {
+        if (next->sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT) continue;
+        auto* budget = reinterpret_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(next);
+        for (std::uint32_t heap = 0; heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+            budget->heapBudget[heap] = TightHeapBudget;
+            budget->heapUsage[heap] = TightHeapBudget - TightHeapBudget / 8u - TightHeapRoom;
+        }
+    }
+}
+
 void drawInputMirrorTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     using Use = Recorder::SnapshotUse;
@@ -6019,6 +6033,10 @@ void drawInputMirrorTests(const Device& device) {
     const auto generation = CollectWrites(address, bytes);
     Require(generation != 0, "the watched block has no generation");
     const bool mirrors = Recorder::DrawInputMirrors();
+    State plain;
+    State mesh;
+    mesh.stages.mesh.emplace();
+    Require(BindsIndexCopy(plain) && !BindsIndexCopy(mesh), "a mesh draw's index copy may be mirrored although the mesh shader reads its indices from guest memory");
     Recorder cache(context);
     constexpr std::size_t held = 256;
     constexpr auto half = Recorder::DrawInputMirrorBudget / 2;
@@ -6048,31 +6066,42 @@ void drawInputMirrorTests(const Device& device) {
     Require(drawInputHolds(context, cache, firstMirror, first, held), "a draw input mirror does not hold the bytes of its snapshot");
     Require(reuse(first) == firstMirror, "a draw input mirror was made again");
     Require(use(3 * half + 8192, half + 4096), "a draw input mirror is not counted in the draw input budget");
-    Require(reuse(second) == secondHost && use(3 * half + 8192, half + 4096), "a draw input mirror went past the mirror budget");
-    const auto filler = snapshot(third);
-    const auto fill = Recorder::DrawInputBudget - (2 * half + 4096);
-    cache.KeepDrawSnapshot(third, fill, generation, registry, filler, Use::Vertex);
-    Require(reuse(first) == nullptr && use(half + fill, 0), "the draw input budget did not evict the least recently used snapshot and its mirror");
     const auto secondMirror = reuse(second);
-    Require(secondMirror != secondHost && !secondMirror->Mapped() && use(2 * half + fill, half), "a draw input was not mirrored once the mirror budget had room");
-    Require(drawInputHolds(context, cache, secondMirror, second, held), "a draw input mirror made after an eviction does not hold the bytes of its snapshot");
-    const auto fourthHost = snapshot(fourth);
-    cache.KeepDrawSnapshot(fourth, 4096, generation, registry, fourthHost, Use::Vertex);
-    Require(use(Recorder::DrawInputBudget, half), "a draw input that fits the budget evicted another");
-    const auto fourthMirror = reuse(fourth);
-    Require(fourthMirror != fourthHost && !fourthMirror->Mapped() && use(2 * half + 8192, half + 4096), "making a mirror did not evict the least recently used snapshot to stay within the draw input budget");
-    Require(cache.ReusableDrawSnapshot(third, held, Use::Vertex) == nullptr && reuse(second) == secondMirror && reuse(fourth) == fourthMirror, "making a mirror evicted a more recently used snapshot");
-    Require(cache.ReusableDrawSnapshot(fourth, held, Use::Vertex) == fourthHost, "a lookup that reads the bytes on the CPU did not get the host snapshot");
-    std::memset(reinterpret_cast<void*>(second), 0x5a, 16);
-    CollectWrites(second, 16);
-    Require(reuse(second) == nullptr && use(4096 + 4096, 4096), "a mirrored snapshot outlived a CPU store or kept its mirror's bytes");
+    Require(secondMirror != nullptr && secondMirror != secondHost && !secondMirror->Mapped() && use(3 * half + 4096, half), "a full mirror budget did not drop the least recently used mirror for a new one");
+    Require(drawInputHolds(context, cache, secondMirror, second, held), "a draw input mirror made after dropping another does not hold the bytes of its snapshot");
+    Require(cache.ReusableDrawSnapshot(first, held, Use::Vertex) == firstHost, "dropping a mirror dropped its snapshot");
+    const auto filler = snapshot(third);
+    const auto fill = Recorder::DrawInputBudget - (half + 4096);
+    cache.KeepDrawSnapshot(third, fill, generation, registry, filler, Use::Vertex);
+    Require(reuse(second) == nullptr && use(Recorder::DrawInputBudget, 0), "the draw input budget did not evict the least recently used snapshot and its mirror");
+    const auto firstAgain = reuse(first);
+    Require(firstAgain != firstHost && !firstAgain->Mapped() && use(2 * half + 8192, half + 4096), "making a mirror did not evict the least recently used snapshot to stay within the draw input budget");
+    Require(drawInputHolds(context, cache, firstAgain, first, held), "a draw input mirror made after an eviction does not hold the bytes of its snapshot");
+    Require(cache.ReusableDrawSnapshot(third, held, Use::Vertex) == nullptr && reuse(first) == firstAgain, "making a mirror evicted a more recently used snapshot");
+    Require(cache.ReusableDrawSnapshot(first, held, Use::Vertex) == firstHost, "a lookup that reads the bytes on the CPU did not get the host snapshot");
+    std::memset(reinterpret_cast<void*>(first), 0x5a, 16);
+    CollectWrites(first, 16);
+    Require(reuse(first) == nullptr && use(0, 0), "a mirrored snapshot outlived a CPU store or kept its mirror's bytes");
     cache.Sync();
+    auto tight = context;
+    tight.memoryProperties2 = tightMemoryBudget;
+    Recorder narrow(tight);
+    constexpr std::size_t wide = 40000;
+    const auto wideAt = address + 16384;
+    const auto wideHost = std::make_shared<Buffer>(context, wide, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    std::memcpy(wideHost->Bytes().data(), reinterpret_cast<const void*>(wideAt), wide);
+    const auto olderHost = snapshot(third);
+    narrow.KeepDrawSnapshot(third, Recorder::DrawInputBudget - wide - 4096, generation, registry, olderHost, Use::Vertex);
+    narrow.KeepDrawSnapshot(wideAt, wide, generation, registry, wideHost, Use::Vertex);
+    Require(narrow.ReusableDrawSnapshot(wideAt, wide, Use::Vertex, nullptr, 0, nullptr, true) == wideHost && narrow.DrawInputBytes() == std::pair<std::size_t, std::size_t>{Recorder::DrawInputBudget - 4096, 0}, "a mirror whose allocation the device-local headroom refuses was made");
+    Require(narrow.ReusableDrawSnapshot(third, held, Use::Vertex) == olderHost, "a mirror the device-local headroom refused evicted an older snapshot");
+    narrow.Sync();
     auto unified = context;
     for (std::uint32_t heap = 0; heap < unified.memory.memoryHeapCount; ++heap) unified.memory.memoryHeaps[heap].flags |= VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
     Recorder shared(unified);
-    const auto sharedHost = snapshot(first);
-    shared.KeepDrawSnapshot(first, held, generation, registry, sharedHost, Use::Vertex);
-    Require(shared.ReusableDrawSnapshot(first, held, Use::Vertex, nullptr, 0, nullptr, true) == sharedHost && shared.DrawInputBytes().second == 0, "a draw input was mirrored on a device whose memory is all device-local");
+    const auto sharedHost = snapshot(fourth);
+    shared.KeepDrawSnapshot(fourth, held, generation, registry, sharedHost, Use::Vertex);
+    Require(shared.ReusableDrawSnapshot(fourth, held, Use::Vertex, nullptr, 0, nullptr, true) == sharedHost && shared.DrawInputBytes().second == 0, "a draw input was mirrored on a device whose memory is all device-local");
 }
 
 void drawInputReuseTests(const Device& device, Recorder& recorder) {
