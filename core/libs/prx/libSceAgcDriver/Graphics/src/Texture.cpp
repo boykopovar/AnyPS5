@@ -187,7 +187,7 @@ int OverwriteLevel() {
 // selections widened to every pending unit (the hysteresis in writeBack), units dropped as dead
 // (DiscardPendingInside) and units an alias's own results superseded (markLayersPending); relaxed,
 // reported only.
-std::atomic<std::uint64_t> singlePassMoves{0}, slabRetiles{0}, paddingSeedCopies{0}, linearImportRetiles{0};
+std::atomic<std::uint64_t> singlePassMoves{0}, slabRetiles{0}, paddingSeedCopies{0}, linearImportRetiles{0}, segmentedUploads{0};
 std::atomic<std::uint64_t> partialUploads{0}, partialUploadBytes{0}, partialWriteBacks{0}, partialWriteBackBytes{0}, emptyWriteBacks{0}, coalescedWriteBacks{0}, unitsDropped{0}, overwriteRefreshes{0}, overwriteUploadSkips{0}, overwriteUnitsDropped{0}, unitsSuperseded{0}, clearHandOvers{0}, creationHandOvers{0}, handedOverSuperseded{0};
 // FlushPending listings skipped because no pending unit of the image lay inside the range, images
 // whose selected pending units were dropped because their memory is no longer registered (see
@@ -2840,6 +2840,10 @@ std::uint64_t StorageTexture::SinglePassMoves() {
     return singlePassMoves.load(std::memory_order_relaxed);
 }
 
+std::uint64_t StorageTexture::SegmentedUploads() {
+    return segmentedUploads.load(std::memory_order_relaxed);
+}
+
 std::uint64_t StorageTexture::SlabRetiles() {
     return slabRetiles.load(std::memory_order_relaxed);
 }
@@ -3263,7 +3267,11 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         if (profile) LookupOutcomes::Add(LookupOutcomes::UploadClear, start);
         return;
     }
-    if (const auto* import = uploadedKeys == DccKeys::Uncompressed ? HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) : nullptr) {
+    const auto* import = uploadedKeys == DccKeys::Uncompressed ? HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) : nullptr;
+    std::vector<ImportSegment> segments;
+    if (import == nullptr && uploadedKeys == DccKeys::Uncompressed && blockUnits) segments = segmentedUploadSegments();
+    const bool segmented = !segments.empty();
+    if (import != nullptr || segmented) {
         now = GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
         if (GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
             layerOriginal.assign(trackedLayers, false);
@@ -3275,7 +3283,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         // A whole-surface upload of a block-unit image goes through the windows too when a unit
         // shadow holds part of the surface (the detile then reads the slabs; a new image has no
         // layout yet); a partial one always does.
-        if (blockUnits && (layers != nullptr || AnyShadowedOverlaps(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)))) {
+        if (segmented || (blockUnits && (layers != nullptr || AnyShadowedOverlaps(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))))) {
             std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
             if (layers != nullptr) {
                 for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
@@ -3286,8 +3294,10 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
                 forgetBorrowed(0, trackedLayers);
                 runs.emplace_back(0, guestBytes);
             }
-            const auto uploadedBytes = uploadWindows(*import, runs, layers == nullptr && version == 0);
+            if (segments.empty()) segments.push_back({import, descriptor.baseAddress, descriptor.baseAddress + guestBytes});
+            const auto uploadedBytes = uploadWindows(segments, runs, layers == nullptr && version == 0);
             countStorageUpload(1, uploadedBytes);
+            if (segmented) segmentedUploads.fetch_add(1, std::memory_order_relaxed);
             if (layers != nullptr) {
                 partialUploads.fetch_add(1, std::memory_order_relaxed);
                 partialUploadBytes.fetch_add(uploadedBytes, std::memory_order_relaxed);
@@ -3774,7 +3784,30 @@ void StorageTexture::recordDirectUploadDone(VkCommandBuffer commands) {
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &written);
 }
 
-std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, bool discard) {
+std::vector<StorageTexture::ImportSegment> StorageTexture::segmentedUploadSegments() const {
+    static const bool disabled = std::getenv("APS5_NO_SEGMENT_UPLOAD") != nullptr;
+    if (disabled || !blockUnits) return {};
+    auto segments = importSegments();
+    if (segments.size() < 2) return {};
+    for (const auto& segment : segments) {
+        if ((segment.begin - descriptor.baseAddress) % trackedLayerBytes != 0) return {};
+    }
+    const auto crossesSegment = [&](std::uint64_t begin, std::uint64_t end) {
+        const auto first = descriptor.baseAddress + begin;
+        const auto last = descriptor.baseAddress + end - 1;
+        return std::any_of(segments.begin(), segments.end(), [&](const ImportSegment& segment) { return segment.begin > first && segment.begin <= last; });
+    };
+    for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
+        for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
+            if (!geometry.HasLayer(level, layer) || !mips[level].tail) continue;
+            const auto sliceBegin = geometry.GuestOffset(layer, mips[level]);
+            if (mips[level].tiledSize != 0 && crossesSegment(sliceBegin, sliceBegin + mips[level].tiledSize)) return {};
+        }
+    }
+    return segments;
+}
+
+std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segments, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, bool discard) {
     const auto elementBytes = BytesPerElement(descriptor.format);
     // Each run's pieces by source (a unit shadow's slab while fresh, else the import), the tail
     // blocks moved whole by one window each; the windows are built per piece.
@@ -3788,7 +3821,26 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
             if (tailBlocks.empty() || tailBlocks.back().first != sliceBegin) tailBlocks.emplace_back(sliceBegin, sliceBegin + mip.tiledSize);
         }
     }
-    const auto sources = ShadowSources(context, import, descriptor.baseAddress, runs, tailBlocks);
+    std::vector<ShadowRun> sources;
+    if (segments.size() == 1) {
+        sources = ShadowSources(context, *segments.front().import, descriptor.baseAddress, runs, tailBlocks);
+    } else {
+        for (const auto& segment : segments) {
+            const auto segmentBegin = segment.begin - descriptor.baseAddress;
+            const auto segmentEnd = segment.end - descriptor.baseAddress;
+            std::vector<std::pair<std::uint64_t, std::uint64_t>> segmentRuns, segmentTails;
+            for (const auto& [begin, end] : runs) {
+                const auto from = std::max(begin, segmentBegin);
+                const auto to = std::min(end, segmentEnd);
+                if (from < to) segmentRuns.emplace_back(from, to);
+            }
+            for (const auto& [begin, end] : tailBlocks) {
+                if (begin >= segmentBegin && end <= segmentEnd) segmentTails.emplace_back(begin, end);
+            }
+            auto part = ShadowSources(context, *segment.import, descriptor.baseAddress, segmentRuns, segmentTails);
+            sources.insert(sources.end(), std::make_move_iterator(part.begin()), std::make_move_iterator(part.end()));
+        }
+    }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> pieces;
     bool allShadow = true;
     for (const auto& source : sources) {
@@ -3846,6 +3898,8 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
         batch = std::make_unique<CommandBatch>(context);
         commands = batch->Handle();
     }
+    const bool wholeImport = segments.size() == 1;
+    const auto& import = *segments.front().import;
     const auto importOffset = HostImportOffset(import, descriptor.baseAddress);
     if (direct) {
         recordDirectUploadBarrier(commands, discard);
@@ -3855,7 +3909,7 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
             auto detile = window.window;
             detile.pipeBankXor = descriptor.pipeBankXor;
             const auto view = elementLayerView(window.level, window.layer);
-            if (source.shadow) {
+            if (source.shadow || !wholeImport) {
                 detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, source.buffer, source.offset + (window.tiledBegin - source.begin), view, mip, false, window.layer, detile);
             } else {
                 detile.tiledBase = 0;
@@ -3876,7 +3930,7 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
         const auto& source = sourceOf(window);
         auto detile = window.window;
         detile.pipeBankXor = descriptor.pipeBankXor;
-        if (source.shadow) {
+        if (source.shadow || !wholeImport) {
             // The slab holds the piece from the window's first tiled byte: the window's tiled base
             // is its range begin (sliceWindows builds it so), read from the piece's slab offset.
             detiler.Dispatch(commands, descriptor.tileMode, elementBytes, source.buffer, source.offset + (window.tiledBegin - source.begin), linear->Handle(), positions[i], mip, false, window.layer, false, detile);
