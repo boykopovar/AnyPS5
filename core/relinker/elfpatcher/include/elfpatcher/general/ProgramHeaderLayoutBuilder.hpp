@@ -8,6 +8,8 @@
 
 namespace Elfpatcher {
 
+    bool HasWritableLoadCoverage(const std::vector<Domain::ProgramHeader>& headers, const Domain::ProgramHeader& relro);
+
     class ProgramHeaderLayoutBuilder : public IProgramHeaderLayoutBuilder {
     public:
         ProgramHeaderLayoutBuilder(
