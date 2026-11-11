@@ -26,6 +26,8 @@ constexpr int sceBusy = static_cast<int>(0x80020010u);
 constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
 constexpr std::int32_t posixFailure = -1;
 constexpr int posixAgain = 35;
+constexpr int posixInvalid = 22;
+constexpr std::size_t MaxObjectNameBytes = 32;
 std::mutex& InitializationMutex() {
     static std::mutex mutex;
     return mutex;
@@ -364,10 +366,13 @@ int APS5_VABI pthread_mutex_setname_np_nid_postfix(PthreadMutex* mutex, const ch
         throw std::invalid_argument("pthread_mutex_setname_np: mutex is statically initialized or destroyed");
     if (current->_named)
         return posixAgain;
-    if (name) {
-        current->_name = name;
-        current->_named = true;
-    }
+    if (!name)
+        return posixInvalid;
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, MaxObjectNameBytes, copy))
+        return error;
+    current->_name = std::move(copy);
+    current->_named = true;
     return 0;
 }
 

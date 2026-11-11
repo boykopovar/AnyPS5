@@ -23,6 +23,7 @@
 namespace {
 
 constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
+constexpr std::size_t MaxObjectNameBytes = 32;
 std::mutex& InitializationMutex() {
     static std::mutex mutex;
     return mutex;
@@ -189,12 +190,19 @@ int CondOperations::LoadAttribute(const PthreadCondattr* attr, PthreadCondattr& 
 }
 
 int CondOperations::SetName(PthreadCond* cond, const char* name) {
-    if (!name)
-        throw std::invalid_argument("Condition variable name is null");
     std::lock_guard lock(InitializationMutex());
     const auto current = resolveLocked(cond);
     if (!current)
         return SCE_KERNEL_ERROR_EINVAL;
+    if (current->_named)
+        return SCE_KERNEL_ERROR_EAGAIN;
+    if (!name)
+        return SCE_KERNEL_ERROR_EINVAL;
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, MaxObjectNameBytes, copy))
+        return SceKernelError(error);
+    current->_name = std::move(copy);
+    current->_named = true;
     return 0;
 }
 

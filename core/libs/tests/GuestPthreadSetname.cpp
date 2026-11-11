@@ -6,6 +6,7 @@
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
+#include <string>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -15,6 +16,8 @@
 
 static constexpr int GuestEagain = 35;
 static constexpr int GuestEfault = 14;
+static constexpr int GuestEinval = 22;
+static constexpr int GuestEnametoolong = 63;
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -27,6 +30,8 @@ template<typename TAction> static void RequireThrows(TAction action, std::source
     Require(false, location);
 }
 
+static std::string NameOf(std::size_t length) { return std::string(length, 'a'); }
+
 static void TestMutex() {
     PthreadMutex mutex = nullptr;
     Require(pthread_mutex_init_nid_postfix(&mutex, nullptr) == 0);
@@ -38,6 +43,13 @@ static void TestMutex() {
     RequireThrows([] { pthread_mutex_setname_np_nid_postfix(nullptr, "mutex"); });
     Require(pthread_mutex_destroy_nid_postfix(&mutex) == 0);
     RequireThrows([&] { pthread_mutex_setname_np_nid_postfix(&mutex, "destroyed"); });
+    PthreadMutex fresh = nullptr;
+    Require(pthread_mutex_init_nid_postfix(&fresh, nullptr) == 0);
+    Require(pthread_mutex_setname_np_nid_postfix(&fresh, nullptr) == GuestEinval && !fresh->_named);
+    Require(pthread_mutex_setname_np_nid_postfix(&fresh, NameOf(32).c_str()) == GuestEnametoolong && !fresh->_named);
+    Require(pthread_mutex_setname_np_nid_postfix(&fresh, NameOf(1024).c_str()) == GuestEnametoolong && !fresh->_named);
+    Require(pthread_mutex_setname_np_nid_postfix(&fresh, NameOf(31).c_str()) == 0 && fresh->_name == NameOf(31));
+    Require(pthread_mutex_destroy_nid_postfix(&fresh) == 0);
 }
 
 static void TestRwlock() {
@@ -52,6 +64,13 @@ static void TestRwlock() {
     RequireThrows([&] { pthread_rwlock_setname_np_nid_postfix(&rwlock, "destroyed"); });
     PthreadRwlock unset = nullptr;
     RequireThrows([&] { pthread_rwlock_setname_np_nid_postfix(&unset, "static"); });
+    PthreadRwlock fresh = nullptr;
+    Require(pthread_rwlock_init_nid_postfix(&fresh, nullptr) == 0);
+    Require(pthread_rwlock_setname_np_nid_postfix(&fresh, nullptr) == GuestEinval && !fresh->_named);
+    Require(pthread_rwlock_setname_np_nid_postfix(&fresh, NameOf(32).c_str()) == GuestEnametoolong && !fresh->_named);
+    Require(pthread_rwlock_setname_np_nid_postfix(&fresh, NameOf(1024).c_str()) == GuestEnametoolong && !fresh->_named);
+    Require(pthread_rwlock_setname_np_nid_postfix(&fresh, NameOf(31).c_str()) == 0 && fresh->_name == NameOf(31));
+    Require(pthread_rwlock_destroy_nid_postfix(&fresh) == 0);
 }
 
 class GuardPage {
@@ -113,7 +132,12 @@ static void TestBarrierBadPointers() {
     Require(pthread_barrier_init_nid_postfix(&barrier, nullptr, 1) == 0);
     const char* const badName[] = {reinterpret_cast<const char*>(0x10), static_cast<const char*>(guard.Unreadable()), guard.Unterminated(8)};
     for (const char* name : badName) Require(pthread_barrier_setname_np_nid_postfix(&barrier, name) == GuestEfault && !barrier->named);
-    Require(pthread_barrier_setname_np_nid_postfix(&barrier, nullptr) == 0 && !barrier->named);
+    Require(pthread_barrier_setname_np_nid_postfix(&barrier, nullptr) == GuestEinval && !barrier->named);
+    Require(pthread_barrier_setname_np_nid_postfix(&barrier, NameOf(32).c_str()) == GuestEnametoolong && !barrier->named);
+    Require(pthread_barrier_setname_np_nid_postfix(&barrier, NameOf(1024).c_str()) == GuestEnametoolong && !barrier->named);
+    Require(pthread_barrier_setname_np_nid_postfix(&barrier, NameOf(31).c_str()) == 0 && barrier->name == NameOf(31));
+    Require(pthread_barrier_destroy_nid_postfix(&barrier) == 0);
+    Require(pthread_barrier_init_nid_postfix(&barrier, nullptr, 1) == 0);
     Require(pthread_barrier_setname_np_nid_postfix(&barrier, guard.Name("edge")) == 0 && barrier->name == "edge");
     Require(pthread_barrier_destroy_nid_postfix(&barrier) == 0);
 }

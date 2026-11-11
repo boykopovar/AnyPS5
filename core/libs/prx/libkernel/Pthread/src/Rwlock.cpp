@@ -21,6 +21,7 @@ static constexpr int FIRST_STORED_RWLOCK_TYPE = 1;
 static constexpr int LAST_STORED_RWLOCK_TYPE = 2;
 static constexpr int POSIX_EINVAL = 22;
 static constexpr int POSIX_EAGAIN = 35;
+static constexpr std::size_t MAX_OBJECT_NAME_BYTES = 32;
 
 static PthreadRwlockPrivate* const DestroyedRwlock = reinterpret_cast<PthreadRwlockPrivate*>(std::uintptr_t{1});
 
@@ -215,7 +216,9 @@ int APS5_VABI pthread_rwlock_setname_np_nid_postfix(PthreadRwlock* rwlock, const
     std::lock_guard state(current->_state);
     if (current->_named) return POSIX_EAGAIN;
     if (!name) return POSIX_EINVAL;
-    current->_name = name;
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, MAX_OBJECT_NAME_BYTES, copy)) return error;
+    current->_name = std::move(copy);
     current->_named = true;
     return SCE_OK;
 }
