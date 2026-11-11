@@ -232,3 +232,16 @@ class ReportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "already exists"):
                 performance_bisect.write_report(path, {"result": "overwrite"})
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"result": "first bad"})
+
+
+class EndpointValidationTests(unittest.TestCase):
+    def test_requires_slow_endpoint_and_matching_measurement_identity(self):
+        baseline = {"median_fps": 60.0, "identity": IDENTITY}
+        self.assertIsNone(performance_bisect.validate_regression_endpoints(
+            baseline, {"median_fps": 57.0, "identity": IDENTITY}, 5.0))
+        with self.assertRaisesRegex(ValueError, "bad endpoint"):
+            performance_bisect.validate_regression_endpoints(
+                baseline, {"median_fps": 59.0, "identity": IDENTITY}, 5.0)
+        with self.assertRaisesRegex(ValueError, "identity changed"):
+            performance_bisect.validate_regression_endpoints(
+                baseline, {"median_fps": 50.0, "identity": dict(IDENTITY, gpu="Other")}, 5.0)

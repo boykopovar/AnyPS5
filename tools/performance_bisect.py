@@ -203,3 +203,10 @@ def write_report(path, report):
         if temporary is not None:
             temporary.unlink(missing_ok=True)
 
+
+
+def validate_regression_endpoints(baseline, endpoint, threshold_pct):
+    require_same_identity(baseline, endpoint)
+    if not is_regression(endpoint["median_fps"], baseline["median_fps"], threshold_pct):
+        raise ValueError(f"bad endpoint is not at least {threshold_pct:.2f}% slower than the good endpoint")
+
