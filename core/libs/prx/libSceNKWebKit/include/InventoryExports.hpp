@@ -1550,7 +1550,6 @@ int APS5_VABI _ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE();
 int APS5_VABI _ZN3WTF24currentTextBreakLocaleIDEv();
 int APS5_VABI _ZN3WTF25activateSignalHandlersForENS_6SignalE();
 int APS5_VABI _ZN3WTF26getAndResetAccumulatedLogsEv();
-int APS5_VABI _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE();
 int APS5_VABI _ZN3WTF30numCodeUnitsInGraphemeClustersENS_10StringViewEj();
 int APS5_VABI _ZN3WTF31NonSharedCharacterBreakIteratorC1ENS_10StringViewE();
 int APS5_VABI _ZN3WTF31NonSharedCharacterBreakIteratorC2ENS_10StringViewE();
