@@ -59,6 +59,18 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKitRequirements>")
     endif()
 
+    add_test_executable(guest_nk_req_xmldiagnostics_tests tests/XmlDiagnostics.cpp)
+    target_include_directories(guest_nk_req_xmldiagnostics_tests PRIVATE
+        ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/libxml2/include ${CMAKE_BINARY_DIR}/3rdparty/libxml2)
+    target_link_libraries(guest_nk_req_xmldiagnostics_tests PRIVATE libSceNKWebKitRequirements LibXml2 libc)
+    configure_windows_unwind(guest_nk_req_xmldiagnostics_tests)
+    add_test(NAME guest_nk_req_xmldiagnostics COMMAND guest_nk_req_xmldiagnostics_tests)
+    set_tests_properties(guest_nk_req_xmldiagnostics PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_nk_req_xmldiagnostics PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKitRequirements>")
+    endif()
+
     add_test_executable(guest_webkit_gzip_tests ${LIBS_INCLUDE_DIR}/tests/GuestWebkitGzip.cpp)
     target_include_directories(guest_webkit_gzip_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_webkit_gzip_tests PRIVATE libSceNKWebKitRequirements zlibstatic)

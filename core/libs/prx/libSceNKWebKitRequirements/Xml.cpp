@@ -488,40 +488,48 @@ static void HostSerror(void* userData, xmlErrorPtr error) {
     b->guest_sax->serror(guest_ctx, &b->guest_error);
 }
 
+static std::string FormatDiagnostic(const char* format, va_list args) {
+    va_list measure;
+    va_copy(measure, args);
+    const int length = std::vsnprintf(nullptr, 0, format, measure);
+    va_end(measure);
+    if (length < 0) throw std::runtime_error("libxml2: diagnostic formatting failed");
+    std::string text(static_cast<std::size_t>(length), '\0');
+    std::vsnprintf(text.data(), text.size() + 1, format, args);
+    return text;
+}
+
 static void HostWarning(void* ctx, const char* msg, ...) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->warning) return;
     void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
-    char buf[1024];
     va_list args;
     va_start(args, msg);
-    vsnprintf(buf, sizeof(buf), msg, args);
+    const std::string text = FormatDiagnostic(msg, args);
     va_end(args);
-    b->guest_sax->warning(guest_ctx, "%s", buf);
+    b->guest_sax->warning(guest_ctx, "%s", text.c_str());
 }
 
 static void HostError(void* ctx, const char* msg, ...) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->error) return;
     void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
-    char buf[1024];
     va_list args;
     va_start(args, msg);
-    vsnprintf(buf, sizeof(buf), msg, args);
+    const std::string text = FormatDiagnostic(msg, args);
     va_end(args);
-    b->guest_sax->error(guest_ctx, "%s", buf);
+    b->guest_sax->error(guest_ctx, "%s", text.c_str());
 }
 
 static void HostFatalError(void* ctx, const char* msg, ...) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->fatalError) return;
     void* guest_ctx = b->guest_user_data ? b->guest_user_data : &b->guest_ctxt;
-    char buf[1024];
     va_list args;
     va_start(args, msg);
-    vsnprintf(buf, sizeof(buf), msg, args);
+    const std::string text = FormatDiagnostic(msg, args);
     va_end(args);
-    b->guest_sax->fatalError(guest_ctx, "%s", buf);
+    b->guest_sax->fatalError(guest_ctx, "%s", text.c_str());
 }
 
 static void InitHostSax(NKWebKit::GuestSAXHandler* guest_sax, xmlSAXHandler* host_sax) {
