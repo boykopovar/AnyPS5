@@ -478,3 +478,15 @@ class FirstParentMergeTests(GitHistoryTests):
         self.assertIn(merge_commit, commits)
         self.assertNotIn(side_commit, commits)
         self.assertEqual(len(commits), len(set(commits)))
+
+
+class BisectCleanupTests(GitHistoryTests):
+    def test_removes_temporary_worktree_when_a_measurement_fails(self):
+        valid = {"median_fps": 60.0, "identity": IDENTITY}
+        bad = {"median_fps": 54.0, "identity": IDENTITY}
+        recipe = {"regression_pct": 5.0, "max_spread_pct": 3.0}
+        with patch.object(performance_bisect, "measure_commit", side_effect=[valid, bad, RuntimeError("build failed")]), \
+                self.assertRaisesRegex(RuntimeError, "build failed"):
+            performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, None)
+        worktrees = performance_bisect.git(self.repo, "worktree", "list")
+        self.assertEqual(worktrees.count("source"), 0)
