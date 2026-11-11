@@ -41,7 +41,6 @@ int APS5_VABI _ZN3JSC20TypedArrayControllerC2Ev();
 int APS5_VABI _ZN3WTF21RefCountedLeakCounter16suppressMessagesEPKc();
 int APS5_VABI _ZN9Inspector26LayerTreeBackendDispatcherD0Ev();
 int APS5_VABI _ZN3JSC49throwConstructorCannotBeCalledAsFunctionTypeErrorEPNS_14JSGlobalObjectERNS_10ThrowScopeEPKc();
-int APS5_VABI WKNotificationManagerProviderDidUpdateNotificationPolicy();
 int APS5_VABI _ZN7WebCore29isCharacterSmartReplaceExemptEib();
 int APS5_VABI _ZN7WebCore26Matrix3DTransformOperationC2ERKNS_20TransformationMatrixE();
 int APS5_VABI _ZNK7WebCore11MediaPlayer9userAgentEv();

@@ -9770,10 +9770,6 @@ int APS5_VABI _ZN3JSC49throwConstructorCannotBeCalledAsFunctionTypeErrorEPNS_14J
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKNotificationManagerProviderDidUpdateNotificationPolicy() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore29isCharacterSmartReplaceExemptEib() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -10955,10 +10951,6 @@ int APS5_VABI WKContextGetGlobalStatistics() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextGetNotificationManager() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKContextJavaScriptConfigurationFileEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11299,40 +11291,6 @@ int APS5_VABI WKMessageListenerSendReply() {
 int APS5_VABI WKMouseEventMake() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-
-
-
-
-
-
-
-
-
-
-int APS5_VABI WKNotificationManagerProviderDidClickNotification() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKNotificationManagerProviderDidCloseNotifications() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKNotificationManagerProviderDidRemoveNotificationPolicies() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKNotificationManagerProviderDidShowNotification() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKNotificationManagerSetProvider() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
-
-
 
 int APS5_VABI WKPageAreScrollbarAnimationsSuppressed() {
     NotImplemented_nid_no_patch(__func__);
