@@ -109,7 +109,9 @@ def check_windows_stores(relinker, work):
     writable = (PT_LOAD, 6, 0x2000, 0x2000, 0x1000, 0x1000, 0x1000)
     for name, extra, address, expected in (("relro", [writable, *COVERED], 0x1008, ACCESS_VIOLATION),
                                            ("writable", [writable, *COVERED], 0x2008, 42),
-                                           ("standalone", STANDALONE, 0x1008, ACCESS_VIOLATION)):
+                                           ("standalone", STANDALONE, 0x1008, ACCESS_VIOLATION),
+                                           ("earlier", [writable, (PT_SCE_RELRO, 4, 0x2000, 0x2000, 0x1000, 0x1000, 0x1000), *COVERED], 0x2008, 42),
+                                           ("last", [writable, (PT_SCE_RELRO, 4, 0x2000, 0x2000, 0x1000, 0x1000, 0x1000), *COVERED], 0x1008, ACCESS_VIOLATION)):
         result, output = relink(relinker, work, f"store-{name}", storing_fixture(extra, address), ["--windows"])
         assert result.returncode == 0, (name, result.stdout, result.stderr)
         run = subprocess.run([str(output)], capture_output=True, timeout=20)
