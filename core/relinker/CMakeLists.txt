@@ -1285,7 +1285,7 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     set_tests_properties(macos_executable_exports PROPERTIES TIMEOUT 30 LABELS relinker)
     add_test(NAME macos_guest_weak_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_weak_imports.py $<TARGET_FILE:relinker>)
-    set_property(TEST macos_guest_weak_imports APPEND PROPERTY LABELS relinker)
+    set_tests_properties(macos_guest_weak_imports PROPERTIES TIMEOUT 30 LABELS relinker)
     add_test(NAME macos_code_signature COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_code_signature.py $<TARGET_FILE:relinker>)
     set_tests_properties(macos_code_signature PROPERTIES TIMEOUT 60 LABELS relinker)
