@@ -4,16 +4,24 @@ import {diagnostic, initialLocale, locales, messages, translate} from '../i18n.j
 import {captureKey} from '../capture.js';
 import {parseIni, serialize} from '../validation.js';
 
-test('every selectable language supplies the main interface and every FAQ', () => {
+test('every selectable language supplies the primary interface and English fallbacks are complete', () => {
     assert.equal(locales[0].code, 'ar-EG');
     assert.equal(new Set(locales.map(item => item.code)).size, locales.length);
     const required = ['controls', 'configuration', 'help', 'settings', 'language', 'close', 'intro', 'search', 'import', 'reset', 'select', 'add', 'capture', 'remove', 'download', 'copy', 'backControls', 'helpIntro', 'configIntro'];
     for (let index = 0; index < 6; index++) required.push(`group${index}`);
     for (let index = 0; index < 4; index++) required.push(`faq${index}Question`, `faq${index}Answer`);
+    for (const [key, message] of Object.entries(messages.en)) {
+        assert.equal(typeof message, 'string', `en: ${key}`);
+        assert.notEqual(message.trim(), '', `en: ${key}`);
+    }
     for (const locale of locales) {
         assert.doesNotThrow(() => new Intl.DateTimeFormat(locale.code));
         assert.equal(locale.direction, ['ar-EG', 'ur', 'fa'].includes(locale.code) ? 'rtl' : 'ltr');
-        for (const key of required) assert.ok(messages[locale.code][key], `${locale.code}: ${key}`);
+        assert.ok(messages[locale.code], locale.code);
+        for (const key of required) {
+            assert.equal(typeof messages[locale.code][key], 'string', `${locale.code}: ${key}`);
+            assert.notEqual(messages[locale.code][key].trim(), '', `${locale.code}: ${key}`);
+        }
     }
 });
 
@@ -38,6 +46,7 @@ test('translated diagnostics retain action tokens and unknown technical details'
     assert.equal(diagnostic('sv', 'Cross: Unknown or empty KEY value.'), 'Cross: Okänt eller tomt KEY-värde.');
     assert.equal(diagnostic('ar-EG', 'Unexpected diagnostic'), 'Unexpected diagnostic');
     assert.equal(diagnostic('sv', 'Unexpected diagnostic'), 'Unexpected diagnostic');
+    assert.equal(diagnostic('ar-EG', 'Composition and dead keys are ambiguous. Select an SDL key from the list.'), 'زرار تركيب الحروف مش واضح في التسجيل. اختار زرار SDL من القائمة.');
     assert.equal(diagnostic('fr', 'Cross: Unknown or empty KEY value.'), 'Cross: Unknown or empty KEY value.');
 });
 
@@ -53,4 +62,17 @@ test('Egyptian diagnostics translate setting refusals with their names and range
     assert.equal(diagnostic('ar-EG', 'MouseSensitivity must be a number greater than 0 and at most 10.'), 'MouseSensitivity لازم يكون رقم أكبر من 0 وبحد أقصى 10.');
     assert.equal(diagnostic('ar-EG', 'MouseCurve must be a number from 0.2 to 5.'), 'MouseCurve لازم يكون رقم من 0.2 لـ 5.');
     assert.equal(diagnostic('ar-EG', 'MadeUp: unknown input setting.'), 'الإعداد MadeUp مش معروف.');
+});
+
+test('Portuguese diagnostics keep action and type tokens', () => {
+    assert.equal(diagnostic('pt-BR', 'Cross: Unknown or empty KEY value.'), 'Cross: Valor KEY desconhecido ou vazio.');
+    assert.equal(diagnostic('pt-BR', 'Cross: duplicate KEY:F will be omitted.'), 'Cross: duplicado KEY:F será omitido.');
+    assert.equal(diagnostic('pt-BR', 'Composition and dead keys are ambiguous. Select an SDL key from the list.'), 'A composição e as teclas mortas são ambíguas. Escolha uma tecla SDL na lista.');
+    assert.equal(diagnostic('pt-BR', 'Unexpected diagnostic'), 'Unexpected diagnostic');
+});
+
+test('inherited property names fall back to the original message', () => {
+    for (const locale of ['xx', 'constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+        assert.equal(diagnostic(locale, 'Unexpected diagnostic'), 'Unexpected diagnostic');
+    }
 });

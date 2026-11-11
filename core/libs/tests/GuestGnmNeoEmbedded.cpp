@@ -33,6 +33,7 @@ const std::uint32_t* ShaderCode() {
 }
 
 void CheckVs() {
+    Require(sceGnmSetEmbeddedVsShader(nullptr, 0x1d, 0, 0) == -1);
     Require(sceGnmSetEmbeddedVsShader(Fresh(), 0x1d, 0, 0) == 0);
     RequireAt(0, {0xc0027600u, 0x48});
     RequireAt(4, {0xc0027600u, 0x4a, 0xc0000, 4, 0xc0016900u, 0x207, 0, 0xc0016900u, 0x1b1, 0, 0xc0016900u, 0x1c3, 4,
@@ -46,6 +47,7 @@ void CheckVs() {
 }
 
 void CheckPs() {
+    Require(sceGnmSetEmbeddedPsShader(nullptr, 0x28, 0, 0) == -1);
     Require(sceGnmSetEmbeddedPsShader(Fresh(), 0x28, 0, 0) == 0);
     RequireAt(0, {0xc0027600u, 8});
     RequireAt(4, {0xc0027600u, 10, 0xc0000, 4, 0xc0026900u, 0x1c4, 0, 4, 0xc0026900u, 0x1b3, 2, 2, 0xc0016900u, 0x1b6, 0,
