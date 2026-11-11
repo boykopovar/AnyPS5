@@ -303,16 +303,21 @@ int APS5_VABI sceHmd2ReprojectionInitialize(const Hmd2::ReprojectionInitializePa
     (void)reserved;
     std::lock_guard lock(reprojectionMutex);
     if (reprojectionState != nullptr) return Hmd2::ReprojectionAlreadyInitialized;
-    if (parameter == nullptr || parameter->workMemory == nullptr || parameter->displayMemory == nullptr) {
+    if (parameter == nullptr) return Hmd2::ParameterNull;
+    Hmd2::ReprojectionInitializeParameter localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, parameter, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied || localParam.workMemory == nullptr || localParam.displayMemory == nullptr) {
         return Hmd2::ParameterNull;
     }
-    if (parameter->auxiliaryMemory != nullptr) {
+    if (localParam.auxiliaryMemory != nullptr) {
         throw std::runtime_error("sceHmd2ReprojectionInitialize: auxiliary memory not supported");
     }
-    auto* state = static_cast<Hmd2::ReprojectionState*>(parameter->workMemory);
+    auto* state = static_cast<Hmd2::ReprojectionState*>(localParam.workMemory);
     state->outputMode = 0;
-    state->timingUs = parameter->timingInterval != 0
-                          ? parameter->timingInterval
+    state->timingUs = localParam.timingInterval != 0
+                          ? localParam.timingInterval
                           : Hmd2::ReprojectionTimingDefault;
     reprojectionState = state;
     return 0;
