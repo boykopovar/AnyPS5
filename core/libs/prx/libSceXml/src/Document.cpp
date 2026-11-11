@@ -1,6 +1,7 @@
 #include "prx/libSceXml/src/Document.hpp"
 
 #include "prx/libSceXml/src/DomReader.hpp"
+#include "prx/libSceXml/src/NodeList.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <array>
@@ -63,6 +64,12 @@ void SetNode(XmlNodeId* result, const Generation* generation, std::uint64_t offs
     result->first = const_cast<Generation*>(generation);
     result->second = reinterpret_cast<void*>(offset);
     result->flag = 0;
+}
+
+XmlNodeId MakeNode(const Generation* generation, std::uint64_t offset) {
+    XmlNodeId id{};
+    SetNode(&id, generation, offset);
+    return id;
 }
 
 void SetInvalid(XmlNodeId* result) {
@@ -274,6 +281,59 @@ std::uint32_t DocumentNumber(const XmlHandle* document, NumberQuery query, XmlNo
         return reader.HasAttributes(offset) ? 1 : 0;
     }
     return 0;
+}
+
+int DocumentChildNodes(const XmlHandle* document, XmlNodeId node, XmlHandle* list) {
+    if (document == nullptr || list == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
+    if (document->impl == nullptr || list->impl == nullptr) return ListNotInitialized;
+    Live(document);
+    Generation& generation = *RefOf(document)->generation;
+    const Reader reader(generation.buffers);
+    std::vector<XmlNodeId> items;
+    for (std::uint64_t child = reader.FirstChild(OffsetOf(node)); child != 0; child = reader.Sibling(child)) {
+        items.push_back(MakeNode(&generation, child));
+    }
+    return NodeListReplace(list, items);
+}
+
+int DocumentAttributes(const XmlHandle* document, XmlNodeId node, XmlHandle* list) {
+    if (document == nullptr || list == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
+    if (document->impl == nullptr || list->impl == nullptr) return ListNotInitialized;
+    Live(document);
+    Generation& generation = *RefOf(document)->generation;
+    const Reader reader(generation.buffers);
+    std::vector<XmlNodeId> items;
+    for (std::uint64_t attribute = reader.FirstAttribute(OffsetOf(node)); attribute != 0; attribute = reader.NextAttribute(attribute)) {
+        items.push_back(MakeNode(&generation, attribute));
+    }
+    return NodeListReplace(list, items);
+}
+
+int DocumentElementsByTagName(const XmlHandle* document, XmlNodeId node, const XmlString* name, XmlHandle* list) {
+    if (document == nullptr || list == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
+    if (document->impl == nullptr || list->impl == nullptr) return ListNotInitialized;
+    if (name == nullptr || name->buffer == nullptr || name->size == 0) return NodeListReplace(list, {});
+    Live(document);
+    Generation& generation = *RefOf(document)->generation;
+    const Reader reader(generation.buffers);
+    std::string wanted(name->size, '\0');
+    if (!GuestCopyIn_nid_no_patch(wanted.data(), name->buffer, name->size)) throw std::logic_error("sce::Xml::Dom::Document: getElementsByTagName reading a name where it is not readable faults in 13.42");
+    std::vector<XmlNodeId> items;
+    std::vector<std::uint64_t> pending;
+    const auto pushChildren = [&](std::uint64_t parent) {
+        std::vector<std::uint64_t> children;
+        for (std::uint64_t child = reader.FirstChild(parent); child != 0; child = reader.Sibling(child)) children.push_back(child);
+        for (std::size_t index = children.size(); index-- > 0;) pending.push_back(children[index]);
+    };
+    pushChildren(OffsetOf(node));
+    while (!pending.empty()) {
+        const std::uint64_t current = pending.back();
+        pending.pop_back();
+        const char* nodeName = reader.NodeName(current);
+        if (nodeName != nullptr && wanted == nodeName) items.push_back(MakeNode(&generation, current));
+        pushChildren(current);
+    }
+    return NodeListReplace(list, items);
 }
 
 }
