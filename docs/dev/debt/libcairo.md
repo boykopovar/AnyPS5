@@ -10,6 +10,8 @@
 
 - The PS5 library revision and [surface user-data](../../../core/libs/prx/libcairo/Surface.cpp) callback behavior remain unmeasured. A null surface pointer still throws because its contract is unknown. Surface user-data ownership follows [Cairo 1.18.0](https://cairographics.org/releases/cairo-1.18.0.tar.xz), `src/cairo-surface.c` and `src/cairo-array.c`. Arbitrary recursive slot replacement or growth from callbacks is not established.
 
+- [PNG stream writing](../../../core/libs/prx/libcairo/Png.cpp) follows Cairo 1.18.0 image formats, subsurface clipping and callback status propagation. The shared encoder buffers the PNG before delivering chunks. Compression and callback chunk sizes can differ from native Cairo, and the encoder's size limit is reported as `CAIRO_STATUS_NO_MEMORY`. Null pointers, unreadable pixels and nonfinite subsurface coordinates have unverified behavior and throw. PS5 behavior remains unmeasured.
+
 ### Functional font options
 
 - [FontOptions.cpp](../../../core/libs/prx/libcairo/FontOptions.cpp) implements eight font-option lifecycle, antialias and hint-setting helpers with Cairo-compatible owned state and a protected nil object. Tested on Windows and Linux sanitizers.
@@ -30,7 +32,7 @@
 
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 73 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
+- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - The remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
 
 | Name | NID |
 | --- | --- |
@@ -50,7 +52,6 @@
 | `cairo_in_stroke` | `8zMm0QOWZAA` |
 | `cairo_scaled_font_get_ctm` | `A++pFuyxZPg` |
 | `cairo_set_font_size` | `A-0StSi2AwA` |
-| `cairo_surface_write_to_png_stream` | `A3FLVZ4FHbY` |
 | `cairo_pattern_set_extend` | `Ax867+0HUgA` |
 | `cairo_set_source_rgba` | `BZFvjfb9xDk` |
 | `cairo_ft_font_face_create_for_pattern` | `By6b1vjSVok` |
