@@ -693,6 +693,7 @@ public:
         std::map<std::string, Clock::duration> phases;
         const bool allPhases = std::any_of(summary.environment.begin(), summary.environment.end(), [](const auto& entry) { return entry.first == "APS5_TRACE_ALL_PHASES" && entry.second == "1"; });
         std::map<std::string, std::uint64_t> phaseCounts;
+        std::map<std::string, Clock::duration> waitedPhases;
         std::map<std::string, std::uint64_t> ownedCounts;
         std::map<std::string, std::uint64_t> graphicsCounts;
         bool dropped = summary.ownedDrawUnbound != 0;
@@ -723,6 +724,10 @@ public:
                     const auto name = Name(total.scope, total.stage);
                     phases[name] += total.length;
                     if (allPhases) phaseCounts[name] += total.count;
+                } else if (allPhases) {
+                    const auto name = Name(total.scope, total.stage);
+                    waitedPhases[name] += total.length;
+                    phaseCounts[name] += total.count;
                 }
             }
             if (!thread.name.starts_with(WorkerPrefix)) continue;
@@ -751,12 +756,16 @@ public:
         if (allPhases) {
             output += ",\"phase_totals\":{";
             bool first = true;
-            for (const auto& [name, length] : phases) {
-                if (!first) output += ',';
-                first = false;
-                AppendString(output, name);
-                output += ":{\"count\":" + std::to_string(phaseCounts.at(name)) + ",\"sum_ms\":" + number(milliseconds(length)) + ",\"ms_per_present\":" + number(milliseconds(length) * perPresent) + "}";
-            }
+            const auto emitPhases = [&](const std::map<std::string, Clock::duration>& sums) {
+                for (const auto& [name, length] : sums) {
+                    if (!first) output += ',';
+                    first = false;
+                    AppendString(output, name);
+                    output += ":{\"count\":" + std::to_string(phaseCounts.at(name)) + ",\"sum_ms\":" + number(milliseconds(length)) + ",\"ms_per_present\":" + number(milliseconds(length) * perPresent) + "}";
+                }
+            };
+            emitPhases(phases);
+            emitPhases(waitedPhases);
             output += "}";
         }
         output += ",\"owned_draw_counts\":{";
