@@ -276,6 +276,11 @@ int main(int argc, char** argv) {
         _ZdlPv_nid_postfix(storage.data());
 
         require(frees == 1);
+        require(malloc_nid_postfix(16) == storage.data() && lastSize == 16);
+        __std_free_crt_nid_postfix(storage.data());
+        require(frees == 2);
+        __std_free_crt_nid_postfix(nullptr);
+        require(frees == 2);
         return 0;
     }
     if (argc > 1 && std::strcmp(argv[1], "exit-order") == 0) {

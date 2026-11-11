@@ -3,14 +3,23 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ControlFlow/RequestSerializer.hpp"
+#include "Recompiler.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <random>
+#include <sstream>
+#include <string_view>
 #include <initializer_list>
 #include <iostream>
 #include <string>
@@ -49,6 +58,7 @@ alignas(8) Header ConstantPixelHeader{};
 alignas(8) Header OffsetTriangleVertexHeader{};
 alignas(256) std::array<std::uint32_t, 4> IndirectRecord{3, 1, 0, 0};
 alignas(256) std::array<std::uint32_t, 8> OffsetRecords{3, 1, 4, 0, 3, 1, 0, 0};
+alignas(256) std::array<std::uint32_t, 4> OffsetRecord{3, 1, 0, 0};
 
 const Shader* Registered(Header& header, const std::uint32_t* code, std::size_t bytes, std::uint8_t type) {
     header.shader.file_header = 0x34333231u;
@@ -304,6 +314,96 @@ void RecordsKeepThePacketsFragmentWord(bool libraries) {
     }
 }
 
+void RecordWordsReachTheShader(bool libraries) {
+    const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
+    const bool cached = std::getenv("APS5_DRAW_CACHE_INDIRECT") != nullptr;
+    const bool forwarded = std::getenv("APS5_DRAW_CACHE_PUSH_WORD") != nullptr;
+    const bool verify = forwarded && std::getenv("APS5_VERIFY_DRAW_PUSH_WORD") != nullptr;
+    Registered(OffsetTriangleVertexHeader, OffsetTriangleVertexCode.data(), sizeof(OffsetTriangleVertexCode), 2);
+    ColorMemory.fill(std::byte{0});
+    const auto submitRecord = [&](std::uint32_t firstVertex) {
+        OffsetRecord[2] = firstVertex;
+        auto commands = Draws(32.0f, OffsetTriangleVertexCode.data(), 1, PixelCode.data(), 1, {});
+        Append(commands, 0x76, {0x00c, std::bit_cast<std::uint32_t>(1.0f)});
+        Append(commands, 0x79, {0x24a, 0});
+        const auto records = reinterpret_cast<std::uintptr_t>(OffsetRecord.data());
+        Append(commands, 0x11, {1, static_cast<std::uint32_t>(records), static_cast<std::uint32_t>(records >> 32u)});
+        Append(commands, 0x24, {0, 0x8c, 0, 2});
+        return Submit(commands);
+    };
+    const auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    submitRecord(4);
+    Require(BrightestColorByte() == 0, mode + ": a CPU-path indirect draw whose record moves the triangle off screen through the patched user word wrote " + std::to_string(BrightestColorByte()) + ", expected nothing");
+    submitRecord(4);
+    const auto seen = submitRecord(4);
+    Require(BrightestColorByte() == 0, mode + ": a repeated CPU-path indirect draw whose record moves the triangle off screen wrote " + std::to_string(BrightestColorByte()) + ", expected nothing: the record's word must reach the shader, not the packet's");
+    const auto after = submitRecord(0);
+    Require(BrightestColorByte() == 255, mode + ": a CPU-path indirect draw whose record puts the triangle on screen wrote " + std::to_string(BrightestColorByte()) + ", expected 255");
+    Require(after.lookups - before.lookups == 4, mode + ": four CPU-path indirect draws made " + std::to_string(after.lookups - before.lookups) + " draw-cache lookups, expected 4");
+    if (cached) Require(after.inserts - before.inserts == 1 && seen.hits - before.hits == 1 && after.hits - before.hits == 2, mode + ": with APS5_DRAW_CACHE_INDIRECT, four CPU-path indirect draws inserted " + std::to_string(after.inserts - before.inserts) + " entries and hit " + std::to_string(after.hits - before.hits) + " times, expected 1 and 2");
+    else Require(after.inserts == before.inserts && after.hits == before.hits, mode + ": without APS5_DRAW_CACHE_INDIRECT, CPU-path indirect draws were cached");
+    const auto wordsForwarded = after.recordWordsForwarded - before.recordWordsForwarded;
+    const auto stagesRecompiled = after.recordStagesRecompiled - before.recordStagesRecompiled;
+    const auto refused = after.recordWordsRefused - before.recordWordsRefused;
+    const auto verified = after.recordWordsVerified - before.recordWordsVerified;
+    if (forwarded) Require(wordsForwarded == 4 && stagesRecompiled == 0 && refused == 0, mode + ": with APS5_DRAW_CACHE_PUSH_WORD, four records forwarded " + std::to_string(wordsForwarded) + " patched words as push data, re-materialized " + std::to_string(stagesRecompiled) + " stages and refused " + std::to_string(refused) + " words, expected 4, 0 and 0");
+    else Require(wordsForwarded == 0 && stagesRecompiled == 4, mode + ": without APS5_DRAW_CACHE_PUSH_WORD, four records forwarded " + std::to_string(wordsForwarded) + " words and re-materialized " + std::to_string(stagesRecompiled) + " stages, expected 0 and 4");
+    Require(verified == (verify ? 4u : 0u), mode + ": " + std::to_string(verified) + " forwarded words were verified against a full build, expected " + std::to_string(verify ? 4 : 0));
+}
+
+void GraphicsRequestDumps(std::string_view mode) {
+    const auto directory = std::filesystem::temp_directory_path() / ("agc_graphics_dump-" + std::to_string(std::random_device{}()));
+    const auto previous = std::filesystem::current_path();
+    std::filesystem::create_directories(directory);
+    std::filesystem::current_path(directory);
+    try {
+        const auto name = [](const void* code) {
+            std::ostringstream address;
+            address << std::hex << reinterpret_cast<std::uintptr_t>(code);
+            return "shader_" + address.str() + ".req";
+        };
+        if (mode == "--dump-filtered") {
+            std::ostringstream address;
+            address << std::hex << reinterpret_cast<std::uintptr_t>(PixelCode.data());
+#ifdef _WIN32
+            Require(_putenv_s("APS5_DUMP_SHADERS", address.str().c_str()) == 0, "cannot select the pixel shader");
+#else
+            Require(setenv("APS5_DUMP_SHADERS", address.str().c_str(), 1) == 0, "cannot select the pixel shader");
+#endif
+        }
+        Registered(TriangleVertexHeader, TriangleVertexCode.data(), sizeof(TriangleVertexCode), 2);
+        Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+        const auto draw = [&] { return Submit(Draws(32.0f, TriangleVertexCode.data(), 0, PixelCode.data(), 1, {{std::bit_cast<std::uint32_t>(1.0f)}})); };
+        for (int repeat = 0; repeat < 3; ++repeat) draw();
+        Require(BrightestColorByte() > 0, "shader dumping prevented the draw from writing its target");
+        const auto vertex = directory / name(TriangleVertexCode.data());
+        const auto pixel = directory / name(PixelCode.data());
+        Require(std::filesystem::exists(vertex) == (mode == "--dump-graphics"), "the vertex request dump did not respect the graphics switch or address filter");
+        Require(std::filesystem::exists(pixel) == (mode != "--dump-disabled"), "the pixel request dump did not respect the graphics switch");
+        for (const auto& path : {vertex, pixel}) {
+            if (!std::filesystem::exists(path)) continue;
+            std::ifstream file(path, std::ios::binary);
+            const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+            const auto replay = ShaderRecompiler::RequestSerializer{}.Deserialize(text);
+            const auto expected = path == vertex ? ShaderRecompiler::ShaderStage::Vertex : ShaderRecompiler::ShaderStage::Fragment;
+            Require(replay.request.shader.stage == expected, "a graphics request lost its shader stage");
+            static_cast<void>(ShaderRecompiler::Recompile(replay.request));
+            file.close();
+            std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now() - std::chrono::seconds(60));
+            const auto stamp = std::filesystem::last_write_time(path);
+            Require(stamp < std::filesystem::file_time_type::clock::now() - std::chrono::seconds(30), "a captured request could not be backdated");
+            draw();
+            Require(std::filesystem::last_write_time(path) == stamp, "a repeated draw rewrote a captured request");
+        }
+        AgcDriverShutdown_nid_postfix();
+        std::filesystem::current_path(previous);
+        std::filesystem::remove_all(directory);
+    } catch (...) {
+        std::filesystem::current_path(previous);
+        throw;
+    }
+}
+
 void SightingsKeepCollidingKeys() {
     DrawKeySightings sightings(DrawKeySightings::Ways);
     Require(!sightings.SeenBefore(0) && sightings.SeenBefore(0), "draw key 0 was not admitted at its second sight");
@@ -316,7 +416,7 @@ void SightingsKeepCollidingKeys() {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         SightingsKeepCollidingKeys();
         bool libraries = false;
@@ -324,6 +424,11 @@ int main() {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
             libraries = device->GraphicsPipelineLibraries();
+        }
+        if (argc == 2 && std::string_view(argv[1]).starts_with("--dump-")) {
+            GraphicsRequestDumps(argv[1]);
+            std::cout << "graphics shader request dumps passed\n";
+            return 0;
         }
         if (!libraries && std::getenv("APS5_NO_GPL") == nullptr) return VulkanTestSkipped;
         if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr) {
@@ -335,6 +440,7 @@ int main() {
             RetainedPixelCacheTransitions();
             CpuPathIndirectDrawsAreCachedWhenAsked(libraries);
             RecordsKeepThePacketsFragmentWord(libraries);
+            RecordWordsReachTheShader(libraries);
         }
         AgcDriverShutdown_nid_postfix();
         Require(AgcDriver::Graphics::PipelineLibraryWorkers() == 0, "the driver's shutdown left the pipeline library worker running");

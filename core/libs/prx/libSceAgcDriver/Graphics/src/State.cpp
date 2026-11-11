@@ -500,6 +500,8 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     }
     depth.format = zFormat == 1 ? (stencil ? VK_FORMAT_D16_UNORM_S8_UINT : VK_FORMAT_D16_UNORM) : (stencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT);
     depth.htileDepthOnly = (stencilInfo & (1u << 29u)) != 0u;
+    depth.depthPartiallyResident = zFormat != 0 && (read(cx, 0x010) & 0x1000u) != 0;
+    depth.stencilPartiallyResident = stencil && (stencilInfo & 0x1000u) != 0;
     if (const auto htile = find(cx, 0x005); zFormat != 0 && htile != cx.end() && htile->second != 0 && (read(cx, 0x010) & (1u << 29u)) != 0) {
         depth.htileAddress = base(0x005, 0x01e) + static_cast<std::uint64_t>(view & 0x1fffu) * HtileMetadataBytes(depth.extent);
         depth.htileStencil = stencil && !depth.htileDepthOnly;
@@ -512,8 +514,6 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValEx
     zero(cx, 0x000, 0x0000101cu, "depth copy, resummarize or decompress draws (DB_RENDER_CONTROL)");
     const bool depthClear = (read(cx, 0x000) & 1u) != 0;
     const auto view = read(cx, 0x002);
-    zero(cx, 0x010, 0x00001000u, "partially resident depth (DB_Z_INFO)");
-    zero(cx, 0x011, 0x00001000u, "partially resident stencil (DB_STENCIL_INFO)");
     const auto zFormat = read(cx, 0x010) & 3u;
     const bool stencil = (read(cx, 0x011) & 1u) != 0;
     const bool stencilClear = stencil && (read(cx, 0x000) & 2u) != 0;
@@ -1049,13 +1049,15 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
             if (number == uint) return single(VK_FORMAT_R32_UINT, 4);
             if (number == sint) return single(VK_FORMAT_R32_SINT, 4);
             return fail();
-        case 5:
-            if (swap != 0) return fail();
-            if (number == floating) return {VK_FORMAT_R16G16_SFLOAT, 4};
-            if (number == unorm) return {VK_FORMAT_R16G16_UNORM, 4};
-            if (number == snorm) return {VK_FORMAT_R16G16_SNORM, 4};
-            if (number == uint) return {VK_FORMAT_R16G16_UINT, 4};
+        case 5: {
+            if (swap > 1) return fail();
+            const auto mapping = static_cast<std::uint8_t>(alternate ? 0xecu : 0xe4u);
+            if (number == floating) return {VK_FORMAT_R16G16_SFLOAT, 4, mapping};
+            if (number == unorm) return {VK_FORMAT_R16G16_UNORM, 4, mapping};
+            if (number == snorm) return {VK_FORMAT_R16G16_SNORM, 4, mapping};
+            if (number == uint) return {VK_FORMAT_R16G16_UINT, 4, mapping};
             return fail();
+        }
         case 6:
             // COLOR_10_11_11: red in the low 11 bits, the Vulkan B10G11R11 packing.
             if (swap != 0 || (number != floating && number != unorm)) return fail();
@@ -1857,9 +1859,9 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             }
             if (mapping == 0xecu) {
                 const auto destinationAlpha = [](VkBlendFactor factor) { return factor == VK_BLEND_FACTOR_DST_ALPHA || factor == VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA || factor == VK_BLEND_FACTOR_SRC_ALPHA_SATURATE; };
-                if (destinationAlpha(state.srcColorBlendFactor) || destinationAlpha(state.dstColorBlendFactor) || destinationAlpha(state.srcAlphaBlendFactor) || destinationAlpha(state.dstAlphaBlendFactor)) throw std::runtime_error("AGC graphics: blending into an 8_8 color target with the alternate component order with a factor of the destination alpha, which the target keeps in its second channel, is not implemented");
+                if (destinationAlpha(state.srcColorBlendFactor) || destinationAlpha(state.dstColorBlendFactor) || destinationAlpha(state.srcAlphaBlendFactor) || destinationAlpha(state.dstAlphaBlendFactor)) throw std::runtime_error("AGC graphics: blending into a two-channel color target with the alternate component order with a factor of the destination alpha, which the target keeps in its second channel, is not implemented");
                 const auto weighted = [](VkBlendOp operation) { return operation != VK_BLEND_OP_MIN && operation != VK_BLEND_OP_MAX; };
-                if ((weighted(state.colorBlendOp) && (constantColor(state.srcColorBlendFactor) || constantColor(state.dstColorBlendFactor))) || (weighted(state.alphaBlendOp) && (constantColor(state.srcAlphaBlendFactor) || constantColor(state.dstAlphaBlendFactor)))) throw std::runtime_error("AGC graphics: blending into an 8_8 color target with the alternate component order with a constant color factor, which Vulkan applies to the second channel with the green blend constant instead of the alpha one, is not implemented");
+                if ((weighted(state.colorBlendOp) && (constantColor(state.srcColorBlendFactor) || constantColor(state.dstColorBlendFactor))) || (weighted(state.alphaBlendOp) && (constantColor(state.srcAlphaBlendFactor) || constantColor(state.dstAlphaBlendFactor)))) throw std::runtime_error("AGC graphics: blending into a two-channel color target with the alternate component order with a constant color factor, which Vulkan applies to the second channel with the green blend constant instead of the alpha one, is not implemented");
             }
         }
         if (UintPacked(color.packing)) state.blendEnable = VK_FALSE;
