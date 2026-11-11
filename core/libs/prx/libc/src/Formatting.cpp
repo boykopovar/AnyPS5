@@ -93,7 +93,7 @@ bool ScansWideInProcess(const char* format) {
 }
 
 
-bool HasNarrowCharacterScan(const char* format) {
+bool HasNarrowScan(const char* format, const char* conversions) {
     if (format == nullptr) return false;
     while ((format = std::strchr(format, '%')) != nullptr) {
         ++format;
@@ -106,7 +106,8 @@ bool HasNarrowCharacterScan(const char* format) {
         while (std::isdigit(static_cast<unsigned char>(*format))) ++format;
         const char* length = format;
         while (*format && std::strchr("hljztL", *format)) ++format;
-        if (*format == 'c' && !(format - length == 1 && *length == 'l')) return true;
+        if (*format != '\0' && std::strchr(conversions, *format) != nullptr &&
+                (*format != 'c' || !(format - length == 1 && *length == 'l'))) return true;
         if (*format == '[') {
             ++format;
             if (*format == '^') ++format;
@@ -123,7 +124,11 @@ bool ScansInProcess(const char* format) {
         LibcDetail::RequireNoPositionalWideScan(format);
         return true;
     }
-    return HasNarrowCharacterScan(format);
+#ifdef _WIN32
+    return HasNarrowScan(format, "cxXip");
+#else
+    return HasNarrowScan(format, "c");
+#endif
 }
 
 const char* CutAtQuadScanDirective(const char* format, std::string& head) {
@@ -661,7 +666,7 @@ int APS5_VABI fprintf_nid_postfix(FileStream* stream, const char* format, ...) {
 
 int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
 #ifndef _WIN32
-    if (HasNarrowCharacterScan(format) && LibcDetail::FindQuadScanDirective(format) == nullptr) {
+    if (HasNarrowScan(format, "c") && LibcDetail::FindQuadScanDirective(format) == nullptr) {
         std::va_list args;
         va_start(args, format);
         const int result = ScanGuestStream(stream, format, [&] { return va_arg(args, void*); }, [] { return 0u; }, false);
@@ -1014,7 +1019,7 @@ extern FileStream* __stdinp_nid_postfix;
 
 int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
 #ifndef _WIN32
-    if (HasNarrowCharacterScan(format) && LibcDetail::FindQuadScanDirective(format) == nullptr) {
+    if (HasNarrowScan(format, "c") && LibcDetail::FindQuadScanDirective(format) == nullptr) {
         LibcDetail::FormatArguments arguments(args);
         return ScanGuestStream(stream, format, [&] { return arguments.Next<void*>(); }, [] { return 0u; }, false);
     }
