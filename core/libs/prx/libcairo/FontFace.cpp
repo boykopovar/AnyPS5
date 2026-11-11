@@ -35,8 +35,8 @@ struct CairoFontFaceState {
 namespace {
 
 std::mutex& CacheMutex() {
-    static std::mutex mutex;
-    return mutex;
+    static auto* mutex = new std::mutex;
+    return *mutex;
 }
 
 std::map<CacheKey, CairoFontFaceState*>& Cache() {
@@ -58,7 +58,6 @@ CairoFontFace* NilFace() {
 }
 
 void Finalize(CairoFontFaceState* state) {
-    state->finalizing = true;
     for (std::size_t slot = state->userData.size(); slot-- > 0;) {
         const auto& entry = state->userData[slot];
         if (entry.data && entry.destroy) entry.destroy(entry.data);
@@ -102,8 +101,13 @@ void APS5_VABI cairo_font_face_destroy(CairoFontFace* fontFace) {
     auto* state = State(fontFace);
     {
         std::lock_guard lock(CacheMutex());
-        if (state->references.fetch_sub(1, std::memory_order_acq_rel) != 1) return;
-        Cache().erase(state->key);
+        auto count = state->references.load(std::memory_order_acquire);
+        while (count != 1 && !state->references.compare_exchange_weak(count, count - 1, std::memory_order_acq_rel)) {}
+        if (count != 1) return;
+        if (state->finalizing) NotImplemented_nid_no_patch(__func__);
+        state->finalizing = true;
+        auto& cache = Cache();
+        if (const auto found = cache.find(state->key); found != cache.end() && found->second == state) cache.erase(found);
     }
     Finalize(state);
 }

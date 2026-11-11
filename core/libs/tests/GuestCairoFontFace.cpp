@@ -27,6 +27,14 @@ void APS5_VABI Reenter(void* data) {
     reenteredData = cairo_font_face_get_user_data(reentered, &firstKey);
 }
 
+CairoFontFace* heldFace;
+
+void APS5_VABI ReferenceAndDestroy(void* data) {
+    destroyed.push_back(*static_cast<int*>(data));
+    assert(cairo_font_face_reference(heldFace) == heldFace);
+    cairo_font_face_destroy(heldFace);
+}
+
 void CheckCache() {
     FreeType::GuestFaceRec face{};
     FreeType::GuestFaceRec other{};
@@ -106,6 +114,16 @@ void CheckReentrantFinalizer() {
     assert(cairo_ft_font_face_create_for_ft_face(&face, 0) == reentered);
     cairo_font_face_destroy(reentered);
     cairo_font_face_destroy(reentered);
+    destroyed.clear();
+
+    heldFace = cairo_ft_font_face_create_for_ft_face(&face, 0);
+    cairo_font_face_set_user_data(heldFace, &firstKey, &one, Record);
+    cairo_font_face_set_user_data(heldFace, &secondKey, &two, ReferenceAndDestroy);
+    cairo_font_face_destroy(heldFace);
+    assert(destroyed == (std::vector<int>{2, 1}));
+    CairoFontFace* after = cairo_ft_font_face_create_for_ft_face(&face, 0);
+    assert(cairo_font_face_get_user_data(after, &secondKey) == nullptr);
+    cairo_font_face_destroy(after);
     destroyed.clear();
 }
 
