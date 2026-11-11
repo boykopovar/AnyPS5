@@ -9,3 +9,28 @@ The bisector is useful only when the supplied endpoints are comparable and the p
 The search follows first-parent commits and assumes one monotonic regression between the endpoints. It may miss a regression that later reverted, multiple performance changes, or a regression that falls below the threshold between sampled commits. Review the reported bracket and commits manually before attributing a cause.
 
 The tool needs an extracted game package, a working AnyPS5 build recipe, and a machine able to run the title. The repository tests use synthetic measurements; they do not benchmark a real title or validate a local GPU/driver setup.
+
+## Prepare a recipe
+
+Create a JSON recipe outside the checkout so it stays available while the bisector checks out older revisions. Build commands are argument arrays and run without a shell. They may use `{worktree}`, `{build_dir}`, `{result_dir}`, and `{commit}` placeholders. Use the same compiler, build type, and meaningful build options for every revision.
+
+```json
+{
+  "title_id": "PPSA00000",
+  "games": ["/data/ps5/extracted-games"],
+  "build_commands": [
+    ["cmake", "-S", "{worktree}", "-B", "{build_dir}", "-DCMAKE_BUILD_TYPE=Release"],
+    ["cmake", "--build", "{build_dir}", "--parallel", "4"]
+  ],
+  "seconds": 60,
+  "repetitions": 5,
+  "regression_pct": 5,
+  "max_spread_pct": 3
+}
+```
+
+Replace the example title ID, game directory, and build options with values for the local setup. `games` must point to an existing directory containing an extracted game package. `build_commands` must configure and build the selected revision in `{build_dir}`; every revision starts with that directory cleared, so the bisector cannot accidentally reuse another revision's build products. It refuses to clear a build path that contains tracked files or resolves outside its temporary worktree.
+
+Optional recipe fields are `build_dir` (default `build`), `titles` (default `tools/titles.json`), and `content` (directory for title data files referenced by the catalog). `seconds` defaults to 60 and must be at least 20; `repetitions` defaults to 3 and must be at least 3. `regression_pct` defaults to 5 and `max_spread_pct` to 3. Both percentages must be greater than 0 and less than 100.
+
+Only use build commands from a recipe you trust: the tool does not invoke a shell, but it does execute the listed programs and arguments on your machine.
