@@ -64,6 +64,7 @@ void APS5_VABI hb_buffer_set_script_nid_postfix(hb_buffer_t* buffer, std::uint32
 }
 
 void APS5_VABI hb_buffer_set_unicode_funcs_nid_postfix(hb_buffer_t* buffer, hb_unicode_funcs_t* unicode_funcs) {
+    if (!buffer) NotImplemented_nid_no_patch(__func__);
     hb_buffer_set_unicode_funcs(buffer, unicode_funcs);
 }
 
