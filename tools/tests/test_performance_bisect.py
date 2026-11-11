@@ -260,7 +260,7 @@ class BisectSearchTests(unittest.TestCase):
         with patch.object(performance_bisect, "measure_commit", side_effect=measure) as measured:
             first_bad, previous_good, samples = performance_bisect.find_first_bad_commit(
                 "repo", Path("worktree"), Path("results"), {"regression_pct": 5},
-                "good", baseline, "bad", commits)
+                "good", baseline, "bad", {"median_fps": 54.0, "identity": IDENTITY}, commits)
         self.assertEqual(first_bad, commits[4])
         self.assertEqual(previous_good, commits[3])
         self.assertLessEqual(measured.call_count, 4)
@@ -281,3 +281,32 @@ class BisectReportTests(unittest.TestCase):
         self.assertIn("monotonic", report["assumption"])
         self.assertEqual([row["commit"] for row in report["measurements"]], commits)
         self.assertEqual(report["first_bad"]["median_fps"], 54.0)
+
+
+class EndToEndBisectTests(GitHistoryTests):
+    def test_bisects_to_first_commit_over_threshold_and_removes_worktree(self):
+        values = {commit: 60.0 for commit in [self.good, *self.commits]}
+        values.update({commit: 54.0 for commit in self.commits[4:]})
+
+        def fake_measure(repo, worktree, results, recipe, commit):
+            return {"median_fps": values[commit], "spread_pct": 0.0,
+                    "samples": [{"fps": values[commit], "identity": IDENTITY}], "identity": IDENTITY}
+
+        recipe = {"regression_pct": 5.0, "max_spread_pct": 3.0}
+        with patch.object(performance_bisect, "measure_commit", side_effect=fake_measure):
+            report = performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, None)
+        self.assertEqual(report["first_bad"]["commit"], self.commits[4])
+        self.assertEqual(report["previous_good"]["commit"], self.commits[3])
+        self.assertEqual(report["tested_commits"], 5)
+        measured_commits = [entry["commit"] for entry in report["measurements"]]
+        self.assertEqual(measured_commits, [commit for commit in self.commits if commit in measured_commits])
+        self.assertEqual(len(measured_commits), report["tested_commits"] - 1)
+        self.assertEqual(performance_bisect.git(self.repo, "worktree", "list").count("source"), 0)
+
+    def test_rejects_bad_endpoint_without_creating_worktree(self):
+        recipe = {"regression_pct": 5.0, "max_spread_pct": 3.0}
+        with patch.object(performance_bisect, "measure_commit", side_effect=[
+                {"median_fps": 60.0, "identity": IDENTITY}, {"median_fps": 59.0, "identity": IDENTITY}]), \
+                self.assertRaisesRegex(ValueError, "bad endpoint"):
+            performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, None)
+

@@ -212,9 +212,9 @@ def validate_regression_endpoints(baseline, endpoint, threshold_pct):
 
 
 
-def find_first_bad_commit(repo, worktree, results, recipe, good_sha, baseline, bad_sha, commits):
+def find_first_bad_commit(repo, worktree, results, recipe, good_sha, baseline, bad_sha, endpoint, commits):
     low, high = 0, len(commits)
-    measurements = {good_sha: baseline}
+    measurements = {good_sha: baseline, bad_sha: endpoint}
     while high - low > 1:
         middle = (low + high) // 2
         commit = commits[middle - 1]
@@ -249,3 +249,27 @@ def make_report(good_sha, bad_sha, commits, first_bad, previous_good, measuremen
         "measurements": [{"commit": commit, **measurements[commit]}
                          for commit in commits if commit in measurements],
     }
+
+
+def bisect(repo, good, bad, recipe, output_dir, temp_dir=None):
+    repo = Path(repo).resolve()
+    if output_dir is not None and Path(output_dir).exists():
+        raise ValueError(f"report already exists: {output_dir}")
+    good_sha, bad_sha, commits = first_parent_commits(repo, good, bad)
+    with tempfile.TemporaryDirectory(prefix="anyps5-performance-bisect-", dir=temp_dir) as temporary:
+        root = Path(temporary)
+        worktree = root / "source"
+        results = root / "results"
+        git(repo, "worktree", "add", "--detach", str(worktree), good_sha)
+        try:
+            baseline = measure_commit(repo, worktree, results, recipe, good_sha)
+            endpoint = measure_commit(repo, worktree, results, recipe, bad_sha)
+            validate_regression_endpoints(baseline, endpoint, recipe["regression_pct"])
+            first_bad, previous_good, measurements = find_first_bad_commit(
+                repo, worktree, results, recipe, good_sha, baseline, bad_sha, endpoint, commits)
+            report = make_report(good_sha, bad_sha, commits, first_bad, previous_good, measurements, recipe)
+            if output_dir is not None:
+                write_report(output_dir, report)
+            return report
+        finally:
+            git(repo, "worktree", "remove", "--force", str(worktree))
