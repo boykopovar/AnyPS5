@@ -445,6 +445,7 @@ bool g_net_inited = false;
 bool g_net_init_param_set = false;
 std::array<std::uint8_t, 32> g_net_init_param{};
 std::atomic<GuestSceNetTest::ResolverLookup> g_resolverLookupForTests{nullptr};
+std::atomic<GuestSceNetTest::ResolverReverseLookup> g_resolverReverseLookupForTests{nullptr};
 
 int* errno_slot() {
     static thread_local int e = 0;
@@ -959,6 +960,10 @@ std::optional<std::uint32_t> InterfaceIdOfHostIndex(std::uint32_t index) {
 
 void GuestSceNetTest::SetResolverLookupForTests_nid_no_patch(ResolverLookup lookup) noexcept {
     g_resolverLookupForTests.store(lookup);
+}
+
+void GuestSceNetTest::SetResolverReverseLookupForTests_nid_no_patch(ResolverReverseLookup lookup) noexcept {
+    g_resolverReverseLookupForTests.store(lookup);
 }
 
 extern "C" {
@@ -2969,7 +2974,9 @@ int reverse_lookup(int rid, const sockaddr* address, NativeLength addressLength,
     std::uint64_t generation = 0;
     if (const int error = begin_lookup(rid, &Resolver::abort_aton, generation)) return error;
     std::vector<char> name(static_cast<std::size_t>(len));
-    const int result = ::getnameinfo(address, addressLength, name.data(), static_cast<NativeLength>(len), nullptr, 0, NI_NAMEREQD);
+    const auto reverseLookup = g_resolverReverseLookupForTests.load();
+    const int result = reverseLookup ? reverseLookup(address, static_cast<std::size_t>(addressLength), name.data(), name.size())
+                                     : ::getnameinfo(address, addressLength, name.data(), static_cast<NativeLength>(len), nullptr, 0, NI_NAMEREQD);
     if (result != 0) {
         set_errno(result == EAI_AGAIN ? NET_ETIMEDOUT : NET_ENOENT);
         log_soft(func, "host reverse DNS lookup failed");
