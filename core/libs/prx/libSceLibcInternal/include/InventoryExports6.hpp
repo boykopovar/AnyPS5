@@ -84,5 +84,6 @@ int APS5_VABI _ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix();
 int APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix();
 int APS5_VABI _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2EPKcm_nid_postfix();
 int APS5_VABI _ZNSt8numpunctIcEC2ERKSt8_Locinfomb_nid_postfix();
+int APS5_VABI _ZTv0_n24_NSt13basic_istreamIwSt11char_traitsIwEED0Ev_nid_postfix();
 
 }

@@ -134,10 +134,9 @@ int APS5_VABI tls_accept_socket_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI Unknown_4pEl_minus_5DmrrM_nid_no_patch() {
+int APS5_VABI ERR_print_errors_fp_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("4pEl-5DmrrM", Unknown_4pEl_minus_5DmrrM_nid_no_patch);
 
 int APS5_VABI X509_CRL_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -327,10 +326,9 @@ int APS5_VABI d2i_PUBKEY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI Unknown_qGsc6uT6p1E_nid_no_patch() {
+int APS5_VABI ECDSA_do_verify_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("qGsc6uT6p1E", Unknown_qGsc6uT6p1E_nid_no_patch);
 
 int APS5_VABI X509_add1_ext_i2d_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
