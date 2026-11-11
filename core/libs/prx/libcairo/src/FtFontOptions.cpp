@@ -48,17 +48,17 @@ extern "C" void APS5_VABI cairo_ft_font_options_substitute(const cairo_font_opti
     FcValue value;
 
     if (values.antialias != CAIRO_ANTIALIAS_DEFAULT) {
-        if (FcPatternGet(pattern, "antialias", 0, &value) == FcResultNoMatch) {
-            if (!FcPatternAddBool(pattern, "antialias", values.antialias != CAIRO_ANTIALIAS_NONE)) return;
+        if (FcPatternGet_nid_postfix(pattern, "antialias", 0, &value) == FcResultNoMatch) {
+            if (!FcPatternAddBool_nid_postfix(pattern, "antialias", values.antialias != CAIRO_ANTIALIAS_NONE)) return;
             if (values.antialias != CAIRO_ANTIALIAS_SUBPIXEL) {
-                FcPatternDel(pattern, "rgba");
-                if (!FcPatternAddInteger(pattern, "rgba", 5)) return;
+                FcPatternDel_nid_postfix(pattern, "rgba");
+                if (!FcPatternAddInteger_nid_postfix(pattern, "rgba", 5)) return;
             }
         }
     }
 
     if (values.antialias != CAIRO_ANTIALIAS_DEFAULT) {
-        if (FcPatternGet(pattern, "rgba", 0, &value) == FcResultNoMatch) {
+        if (FcPatternGet_nid_postfix(pattern, "rgba", 0, &value) == FcResultNoMatch) {
             int rgba;
             if (values.antialias == CAIRO_ANTIALIAS_SUBPIXEL) {
                 switch (values.subpixelOrder) {
@@ -80,15 +80,15 @@ extern "C" void APS5_VABI cairo_ft_font_options_substitute(const cairo_font_opti
             } else {
                 rgba = 5;
             }
-            if (!FcPatternAddInteger(pattern, "rgba", rgba)) return;
+            if (!FcPatternAddInteger_nid_postfix(pattern, "rgba", rgba)) return;
         }
     }
 
     if (values.hintStyle != CAIRO_HINT_STYLE_DEFAULT) {
-        if (FcPatternGet(pattern, "hinting", 0, &value) == FcResultNoMatch) {
-            if (!FcPatternAddBool(pattern, "hinting", values.hintStyle != CAIRO_HINT_STYLE_NONE)) return;
+        if (FcPatternGet_nid_postfix(pattern, "hinting", 0, &value) == FcResultNoMatch) {
+            if (!FcPatternAddBool_nid_postfix(pattern, "hinting", values.hintStyle != CAIRO_HINT_STYLE_NONE)) return;
         }
-        if (FcPatternGet(pattern, "hintstyle", 0, &value) == FcResultNoMatch) {
+        if (FcPatternGet_nid_postfix(pattern, "hintstyle", 0, &value) == FcResultNoMatch) {
             int hintStyle;
             switch (values.hintStyle) {
             case CAIRO_HINT_STYLE_NONE:
@@ -106,7 +106,7 @@ extern "C" void APS5_VABI cairo_ft_font_options_substitute(const cairo_font_opti
                 hintStyle = 3;
                 break;
             }
-            if (!FcPatternAddInteger(pattern, "hintstyle", hintStyle)) return;
+            if (!FcPatternAddInteger_nid_postfix(pattern, "hintstyle", hintStyle)) return;
         }
     }
 }

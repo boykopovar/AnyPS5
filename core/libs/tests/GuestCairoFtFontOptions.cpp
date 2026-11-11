@@ -16,26 +16,26 @@ void Integer(FcPattern* pattern, const char* name, int expected) {
     int value = -1;
     Require(FcPatternGetInteger(pattern, name, 0, &value) == FcResultMatch && value == expected, name);
     FcValue extra{};
-    Require(FcPatternGet(pattern, name, 1, &extra) == FcResultNoId, "duplicate integer property");
+    Require(FcPatternGet_nid_postfix(pattern, name, 1, &extra) == FcResultNoId, "duplicate integer property");
 }
 
 void Boolean(FcPattern* pattern, const char* name, int expected) {
     FcBool value = -1;
     Require(FcPatternGetBool(pattern, name, 0, &value) == FcResultMatch && value == expected, name);
     FcValue extra{};
-    Require(FcPatternGet(pattern, name, 1, &extra) == FcResultNoId, "duplicate bool property");
+    Require(FcPatternGet_nid_postfix(pattern, name, 1, &extra) == FcResultNoId, "duplicate bool property");
 }
 
 void Double(FcPattern* pattern, const char* name, double expected) {
     FcValue value{};
-    Require(FcPatternGet(pattern, name, 0, &value) == FcResultMatch &&
+    Require(FcPatternGet_nid_postfix(pattern, name, 0, &value) == FcResultMatch &&
             value.type == FcTypeDouble && value.u.d == expected, name);
-    Require(FcPatternGet(pattern, name, 1, &value) == FcResultNoId, "duplicate double property");
+    Require(FcPatternGet_nid_postfix(pattern, name, 1, &value) == FcResultNoId, "duplicate double property");
 }
 
 void Missing(FcPattern* pattern, const char* name) {
     FcValue value{};
-    Require(FcPatternGet(pattern, name, 0, &value) == FcResultNoMatch, name);
+    Require(FcPatternGet_nid_postfix(pattern, name, 0, &value) == FcResultNoMatch, name);
 }
 
 }
@@ -92,11 +92,11 @@ int main() {
         for (bool existingAntialias : {false, true}) {
             pattern = FcPatternCreate();
             Require(pattern != nullptr, "pattern allocation");
-            if (existingAntialias) Require(FcPatternAddBool(pattern, "antialias", 0), "add antialias");
+            if (existingAntialias) Require(FcPatternAddBool_nid_postfix(pattern, "antialias", 0), "add antialias");
             Require(FcPatternAddDouble(pattern, "rgba", 2.5), "add rgba");
-            Require(FcPatternAddBool(pattern, "hinting", 0), "add hinting");
+            Require(FcPatternAddBool_nid_postfix(pattern, "hinting", 0), "add hinting");
             Require(FcPatternAddDouble(pattern, "hintstyle", 2.5), "add hintstyle");
-            Require(FcPatternAddInteger(pattern, "lcdfilter", 42), "add LCD filter");
+            Require(FcPatternAddInteger_nid_postfix(pattern, "lcdfilter", 42), "add LCD filter");
             cairo_font_options_set_antialias(options, static_cast<cairo_antialias_t>(aa));
             cairo_font_options_set_hint_style(options, CAIRO_HINT_STYLE_SLIGHT);
             cairo_ft_font_options_substitute(options, pattern);
@@ -114,8 +114,8 @@ int main() {
 
     pattern = FcPatternCreate();
     Require(pattern != nullptr, "pattern allocation");
-    Require(FcPatternAddBool(pattern, "antialias", 0), "add antialias only");
-    Require(FcPatternAddBool(pattern, "hinting", 0), "add hinting only");
+    Require(FcPatternAddBool_nid_postfix(pattern, "antialias", 0), "add antialias only");
+    Require(FcPatternAddBool_nid_postfix(pattern, "hinting", 0), "add hinting only");
     cairo_font_options_set_antialias(options, CAIRO_ANTIALIAS_SUBPIXEL);
     cairo_font_options_set_subpixel_order(options, CAIRO_SUBPIXEL_ORDER_BGR);
     cairo_font_options_set_hint_style(options, CAIRO_HINT_STYLE_SLIGHT);
