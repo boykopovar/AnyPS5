@@ -21,7 +21,7 @@
 
 namespace {
 
-using Function = std::uint64_t(APS5_VABI*)(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
+using Function = std::uint64_t(APS5_VABI*)(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
 
 constexpr unsigned char Sentinel = 0xAB;
 constexpr std::size_t DescriptorBytes = 0x80;
@@ -277,7 +277,7 @@ int main(int argc, char** argv) {
             std::uint64_t result = 0;
             std::string thrown;
             try {
-                result = reinterpret_cast<Function>(target)(registers[0], registers[1], registers[2], registers[3], registers[4], registers[5]);
+                result = reinterpret_cast<Function>(target)(registers[0], registers[1], registers[2], registers[3], registers[4], registers[5], 0, 0);
             } catch (const std::exception& error) {
                 thrown = error.what();
             } catch (...) {
