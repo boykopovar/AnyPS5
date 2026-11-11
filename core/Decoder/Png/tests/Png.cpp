@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <optional>
+#include <source_location>
 #include <stdexcept>
 #include <vector>
 
@@ -13,7 +15,11 @@
 #define STBI_NO_STDIO
 #include "stb_image.h"
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (value) return;
+    std::fprintf(stderr, "%s:%u: PNG assertion failed\n", location.file_name(), location.line());
+    std::abort();
+}
 
 template<typename TFunction>
 static bool ThrowsInvalidArgument(TFunction function) {
@@ -225,7 +231,7 @@ static void RequireRoundTrip(std::uint32_t channels, Decoder::Png::ColorType col
     }
 }
 
-static std::vector<std::uint8_t> RowFilters(const std::vector<std::uint8_t>& png, std::uint32_t height, std::uint32_t rowSize) {
+static std::vector<std::uint8_t> ImageData(const std::vector<std::uint8_t>& png) {
     std::vector<std::uint8_t> stream;
     for (std::size_t offset = 8; offset + 12 <= png.size();) {
         const std::size_t length = static_cast<std::size_t>(png[offset]) << 24 | static_cast<std::size_t>(png[offset + 1]) << 16
@@ -235,7 +241,11 @@ static std::vector<std::uint8_t> RowFilters(const std::vector<std::uint8_t>& png
         if (std::equal(data - 4, data, "IDAT")) stream.insert(stream.end(), data, data + length);
         offset += 12 + length;
     }
+    return stream;
+}
 
+static std::vector<std::uint8_t> RowFilters(const std::vector<std::uint8_t>& png, std::uint32_t height, std::uint32_t rowSize) {
+    const std::vector<std::uint8_t> stream = ImageData(png);
     int size = 0;
     char* rows = stbi_zlib_decode_malloc(reinterpret_cast<const char*>(stream.data()), static_cast<int>(stream.size()), &size);
     Require(rows && static_cast<std::size_t>(size) == static_cast<std::size_t>(height) * (rowSize + 1));
@@ -243,6 +253,67 @@ static std::vector<std::uint8_t> RowFilters(const std::vector<std::uint8_t>& png
     for (std::uint32_t y = 0; y < height; ++y) filters.push_back(static_cast<std::uint8_t>(rows[y * (rowSize + 1)]));
     stbi_image_free(rows);
     return filters;
+}
+
+static std::vector<std::uint8_t> StoredRows(const std::vector<std::uint8_t>& stream) {
+    Require(stream.size() >= 11 && (stream[0] & 15) == 8 && (stream[1] & 0x20) == 0);
+    Require((static_cast<unsigned>(stream[0]) * 256 + stream[1]) % 31 == 0);
+    std::vector<std::uint8_t> rows;
+    std::size_t offset = 2;
+    std::size_t blocks = 0;
+    bool final = false;
+    while (!final) {
+        Require(offset + 5 <= stream.size() - 4);
+        const std::uint8_t header = stream[offset++];
+        Require((header & 6) == 0);
+        final = (header & 1) != 0;
+        const unsigned length = stream[offset] | static_cast<unsigned>(stream[offset + 1]) << 8;
+        const unsigned inverse = stream[offset + 2] | static_cast<unsigned>(stream[offset + 3]) << 8;
+        Require((length ^ inverse) == 0xFFFF);
+        offset += 4;
+        Require(length <= stream.size() - offset - 4);
+        rows.insert(rows.end(), stream.begin() + offset, stream.begin() + offset + length);
+        offset += length;
+        ++blocks;
+    }
+    Require(offset + 4 == stream.size());
+    const std::uint32_t checksum = static_cast<std::uint32_t>(stream[offset]) << 24 | static_cast<std::uint32_t>(stream[offset + 1]) << 16
+        | static_cast<std::uint32_t>(stream[offset + 2]) << 8 | stream[offset + 3];
+    Require(checksum == Adler32(rows));
+    if (rows.size() > 0xFFFF) Require(blocks > 1);
+    return rows;
+}
+
+static void RequireCompressionLevels(std::uint32_t channels) {
+    constexpr std::uint32_t width = 256;
+    constexpr std::uint32_t height = 65;
+    const std::uint32_t rowSize = width * channels;
+    std::vector<std::uint8_t> pixels(rowSize * height);
+    for (std::size_t i = 0; i < pixels.size(); ++i) pixels[i] = static_cast<std::uint8_t>(i / channels % width);
+    for (const std::uint8_t filters : {Decoder::Png::FILTER_NONE, Decoder::Png::FILTER_SUB}) {
+        for (int level = 0; level <= 9; ++level) {
+            const auto png = Decoder::Png::Encode(pixels, width, height, channels, {level, filters});
+            if (level == 0) {
+                const auto rows = StoredRows(ImageData(png));
+                Require(rows.size() == static_cast<std::size_t>(rowSize + 1) * height);
+                if (filters == Decoder::Png::FILTER_NONE) {
+                    for (std::uint32_t y = 0; y < height; ++y) {
+                        const auto row = rows.begin() + static_cast<std::size_t>(rowSize + 1) * y;
+                        Require(*row == 0);
+                        Require(std::equal(pixels.begin() + rowSize * y, pixels.begin() + rowSize * (y + 1), row + 1));
+                    }
+                }
+            }
+            for (const auto filter : RowFilters(png, height, rowSize)) Require(filter == (filters == Decoder::Png::FILTER_NONE ? 0 : 1));
+            const auto image = Decoder::Png::Decode(png);
+            Require(image && image->width == width && image->height == height);
+            for (std::size_t pixel = 0; pixel < width * height; ++pixel) {
+                const auto expected = pixels[pixel * channels];
+                Require(image->pixels[pixel * 4] == expected && image->pixels[pixel * 4 + 1] == expected && image->pixels[pixel * 4 + 2] == expected);
+                Require(image->pixels[pixel * 4 + 3] == (channels % 2 == 0 ? expected : 255));
+            }
+        }
+    }
 }
 
 static void RequireFilterSets(std::uint32_t channels) {
@@ -277,6 +348,7 @@ static void RequireFilterSets(std::uint32_t channels) {
 }
 
 int main() {
+    for (const std::uint32_t channels : {1, 2, 3, 4}) RequireCompressionLevels(channels);
     RequireRoundTrip(1, Decoder::Png::ColorType::Grayscale);
     RequireRoundTrip(2, Decoder::Png::ColorType::GrayscaleAlpha);
     RequireRoundTrip(3, Decoder::Png::ColorType::Rgb);
