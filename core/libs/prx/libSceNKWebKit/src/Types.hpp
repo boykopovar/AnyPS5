@@ -335,4 +335,27 @@ public:
     bool isMainFrame = false;
 };
 
+class RunBeforeUnloadConfirmPanelResultListener final : public ObjectOf<ObjectType::RunBeforeUnloadConfirmPanelResultListener> {
+public:
+    bool called = false;
+    bool shouldClose = false;
+};
+
+class RunJavaScriptAlertResultListener final : public ObjectOf<ObjectType::RunJavaScriptAlertResultListener> {
+public:
+    bool called = false;
+};
+
+class RunJavaScriptConfirmResultListener final : public ObjectOf<ObjectType::RunJavaScriptConfirmResultListener> {
+public:
+    bool called = false;
+    bool result = false;
+};
+
+class RunJavaScriptPromptResultListener final : public ObjectOf<ObjectType::RunJavaScriptPromptResultListener> {
+public:
+    bool called = false;
+    Retained<String> value;
+};
+
 }  // namespace NKWebKit

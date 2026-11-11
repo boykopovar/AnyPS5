@@ -1403,6 +1403,101 @@ static void TestOpenPanelResultListener() {
     Require(threw);
 }
 
+static void TestPageDialogResultListeners() {
+    Require(WKPageRunBeforeUnloadConfirmPanelResultListenerGetTypeID() == 93);
+    Require(WKPageRunJavaScriptAlertResultListenerGetTypeID() == 94);
+    Require(WKPageRunJavaScriptConfirmResultListenerGetTypeID() == 95);
+    Require(WKPageRunJavaScriptPromptResultListenerGetTypeID() == 96);
+
+    auto beforeUnload = NKWebKit::Make<NKWebKit::RunBeforeUnloadConfirmPanelResultListener>();
+    const void* beforeUnloadRef = beforeUnload.Get();
+    Require(!beforeUnload->called);
+    Require(!beforeUnload->shouldClose);
+    WKPageRunBeforeUnloadConfirmPanelResultListenerCall(beforeUnloadRef, true);
+    Require(beforeUnload->called);
+    Require(beforeUnload->shouldClose);
+    WKPageRunBeforeUnloadConfirmPanelResultListenerCall(beforeUnloadRef, false);
+    Require(!beforeUnload->shouldClose);
+
+    auto alert = NKWebKit::Make<NKWebKit::RunJavaScriptAlertResultListener>();
+    const void* alertRef = alert.Get();
+    Require(!alert->called);
+    WKPageRunJavaScriptAlertResultListenerCall(alertRef);
+    Require(alert->called);
+
+    auto confirm = NKWebKit::Make<NKWebKit::RunJavaScriptConfirmResultListener>();
+    const void* confirmRef = confirm.Get();
+    Require(!confirm->called);
+    Require(!confirm->result);
+    WKPageRunJavaScriptConfirmResultListenerCall(confirmRef, true);
+    Require(confirm->called);
+    Require(confirm->result);
+    WKPageRunJavaScriptConfirmResultListenerCall(confirmRef, false);
+    Require(!confirm->result);
+
+    auto prompt = NKWebKit::Make<NKWebKit::RunJavaScriptPromptResultListener>();
+    const void* promptRef = prompt.Get();
+    Require(!prompt->called);
+    Require(!prompt->value);
+    auto stringObj = NKWebKit::String::FromUtf8("Hello World");
+    WKPageRunJavaScriptPromptResultListenerCall(promptRef, stringObj.Get());
+    Require(prompt->called);
+    Require(prompt->value != nullptr);
+    Require(prompt->value->Utf8() == "Hello World");
+    WKPageRunJavaScriptPromptResultListenerCall(promptRef, nullptr);
+    Require(!prompt->value);
+
+    bool threw = false;
+    try {
+        WKPageRunBeforeUnloadConfirmPanelResultListenerCall(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKPageRunJavaScriptAlertResultListenerCall(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKPageRunJavaScriptConfirmResultListenerCall(nullptr, false);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKPageRunJavaScriptPromptResultListenerCall(nullptr, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        auto dummy = NKWebKit::Make<NKWebKit::OpenPanelResultListener>();
+        WKPageRunJavaScriptAlertResultListenerCall(dummy.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        auto dummy = NKWebKit::Make<NKWebKit::OpenPanelResultListener>();
+        WKPageRunJavaScriptPromptResultListenerCall(promptRef, dummy.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static const void* MakeProtectionSpace(const char* host, int port, NKWebKit::ProtectionSpaceServerType serverType, const char* realm, NKWebKit::ProtectionSpaceAuthenticationScheme scheme) {
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::ProtectionSpace>(NKWebKit::String::FromUtf8(host), port, serverType, NKWebKit::String::FromUtf8(realm), scheme));
 }
@@ -2097,6 +2192,7 @@ int main() {
     TestAXObject();
     TestPopupMenuItem();
     TestOpenPanelResultListener();
+    TestPageDialogResultListeners();
     TestProtectionSpace();
     TestPermissionRequests();
     TestFrameHandle();

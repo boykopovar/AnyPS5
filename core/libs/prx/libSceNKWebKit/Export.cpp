@@ -12040,23 +12040,7 @@ int APS5_VABI WKPageRubberBandsAtTop() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageRunBeforeUnloadConfirmPanelResultListenerCall() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageRunJavaScriptAlertResultListenerCall() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageRunJavaScriptConfirmResultListenerCall() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageRunJavaScriptInMainFrame() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageRunJavaScriptPromptResultListenerCall() {
     NotImplemented_nid_no_patch(__func__);
 }
 
