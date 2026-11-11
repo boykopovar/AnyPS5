@@ -9,6 +9,47 @@ configure_windows_unwind(libSceJpegDec)
 target_link_libraries(libSceJpegDec PRIVATE decoder_jpeg)
 
 if(BUILD_TESTING)
+    set(JPEG_DEC_DELETE_MODULE_DIR ${CMAKE_CURRENT_BINARY_DIR}/delete-modules)
+    add_custom_command(
+        OUTPUT ${JPEG_DEC_DELETE_MODULE_DIR}/libSceJpegDec.prx
+               ${JPEG_DEC_DELETE_MODULE_DIR}/libc.prx
+               ${JPEG_DEC_DELETE_MODULE_DIR}/libkernel.prx
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${JPEG_DEC_DELETE_MODULE_DIR}
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libSceJpegDec> ${JPEG_DEC_DELETE_MODULE_DIR}/libSceJpegDec.prx
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libc> ${JPEG_DEC_DELETE_MODULE_DIR}/libc.prx
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libkernel> ${JPEG_DEC_DELETE_MODULE_DIR}/libkernel.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libc ${JPEG_DEC_DELETE_MODULE_DIR}/libc.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libkernel --preserve-export-list ${LIBC_EXPORT_LIST} ${JPEG_DEC_DELETE_MODULE_DIR}/libkernel.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libSceJpegDec --preserve-export-list ${LIBC_EXPORT_LIST} ${JPEG_DEC_DELETE_MODULE_DIR}/libSceJpegDec.prx
+        DEPENDS libSceJpegDec libc libkernel nid_patcher ${LIBC_EXPORT_LIST}
+        VERBATIM
+    )
+    add_custom_target(jpeg_dec_delete_modules DEPENDS ${JPEG_DEC_DELETE_MODULE_DIR}/libSceJpegDec.prx)
+    add_test_executable(guest_jpeg_dec_delete_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestJpegDecDelete.cpp)
+    target_include_directories(guest_jpeg_dec_delete_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_jpeg_dec_delete_tests PRIVATE ${CMAKE_DL_LIBS})
+    if(WIN32)
+        target_link_libraries(guest_jpeg_dec_delete_tests PRIVATE libc)
+    endif()
+    configure_windows_unwind(guest_jpeg_dec_delete_tests)
+    add_dependencies(guest_jpeg_dec_delete_tests jpeg_dec_delete_modules)
+    add_test(NAME guest_jpeg_dec_delete COMMAND guest_jpeg_dec_delete_tests $<TARGET_FILE:libSceJpegDec> raw)
+    add_test(NAME guest_jpeg_dec_delete_stream COMMAND guest_jpeg_dec_delete_tests $<TARGET_FILE:libSceJpegDec> raw continuation)
+    add_test(NAME guest_jpeg_dec_delete_nid COMMAND guest_jpeg_dec_delete_tests ${JPEG_DEC_DELETE_MODULE_DIR}/libSceJpegDec.prx nid)
+    add_test(NAME guest_jpeg_dec_delete_stream_nid COMMAND guest_jpeg_dec_delete_tests ${JPEG_DEC_DELETE_MODULE_DIR}/libSceJpegDec.prx nid continuation)
+    set_tests_properties(guest_jpeg_dec_delete guest_jpeg_dec_delete_stream guest_jpeg_dec_delete_nid guest_jpeg_dec_delete_stream_nid PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set(JPEG_DEC_DELETE_PATH PATH)
+    elseif(APPLE)
+        set(JPEG_DEC_DELETE_PATH DYLD_LIBRARY_PATH)
+    else()
+        set(JPEG_DEC_DELETE_PATH LD_LIBRARY_PATH)
+    endif()
+    set_tests_properties(guest_jpeg_dec_delete guest_jpeg_dec_delete_stream PROPERTIES ENVIRONMENT_MODIFICATION
+        "${JPEG_DEC_DELETE_PATH}=path_list_prepend:$<TARGET_FILE_DIR:libSceJpegDec>")
+    set_tests_properties(guest_jpeg_dec_delete_nid guest_jpeg_dec_delete_stream_nid PROPERTIES ENVIRONMENT_MODIFICATION
+        "${JPEG_DEC_DELETE_PATH}=path_list_prepend:${JPEG_DEC_DELETE_MODULE_DIR}")
+
     add_test_executable(guest_jpeg_input_extent_tests ${LIBS_INCLUDE_DIR}/tests/GuestJpegInputExtent.cpp)
     target_include_directories(guest_jpeg_input_extent_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_jpeg_input_extent_tests PRIVATE libSceJpegDec decoder_jpeg libc)
