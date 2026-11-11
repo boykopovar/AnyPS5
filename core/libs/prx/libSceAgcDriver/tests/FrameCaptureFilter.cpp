@@ -167,6 +167,21 @@ void testEmptyPlan(const std::filesystem::path& root) {
     check(filtered.Chunks().size() == original.Chunks().size(), "empty plan changed chunk count");
 }
 
+
+void testReferenceChunk(const std::filesystem::path& root) {
+    const auto source = root / "reference-source";
+    const auto output = root / "reference-output";
+    AgcDriver::FrameCaptureWriter writer(source);
+    const std::vector<std::byte> reference(32, std::byte{0x63});
+    writer.WriteReference(4, 0x20000, reference);
+    writer.Finish("{}\n");
+    AgcDriverTools::FilterFrameCapturePlan plan;
+    AgcDriverTools::FilterFrameCapture(source, output, plan);
+    const AgcDriver::FrameCaptureReader filtered(output);
+    check(filtered.Chunks().size() == 1 && filtered.Chunks()[0].kind == AgcDriver::FrameMemoryKind::Reference, "filtering dropped a reference chunk");
+    check(filtered.Read(filtered.Chunks()[0]) == reference, "filtering changed reference bytes");
+}
+
 }
 
 int main() {
@@ -175,6 +190,7 @@ int main() {
     testNestedDestination(root);
     testParentDestination(root);
     testEmptyPlan(root);
+    testReferenceChunk(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
