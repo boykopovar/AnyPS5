@@ -541,6 +541,21 @@ int APS5_VABI sceKernelConfiguredFlexibleMemorySize(size_t* size) {
  return 0;
 }
 
+int APS5_VABI sceKernelGetResidentFmemCount(int pid, uint64_t* resident, uint64_t* mapped) {
+ if (!resident || !mapped) return SCE_KERNEL_ERROR_EFAULT;
+ if (pid < 0) return SCE_KERNEL_ERROR_EINVAL;
+ if (pid != 0 && pid != getpid_nid_postfix()) return SCE_KERNEL_ERROR_ESRCH;
+ const size_t images = GuestImageSegmentBytes_nid_no_patch();
+ std::lock_guard lock(g_flexibleLock);
+ const uint64_t mappedPages = static_cast<uint64_t>((images + _flexibleUsedLocked()) / 16384ULL);
+ const uint64_t residentPages = mappedPages;
+ if (!GuestCopyOut_nid_no_patch(resident, &residentPages, sizeof(residentPages)) ||
+     !GuestCopyOut_nid_no_patch(mapped, &mappedPages, sizeof(mappedPages))) {
+  return SCE_KERNEL_ERROR_EFAULT;
+ }
+ return 0;
+}
+
 int APS5_VABI sceKernelInternalMemoryGetAvailableSize(std::size_t* size) {
  if (!size) return -1;
  NotImplemented_nid_no_patch(__func__);
