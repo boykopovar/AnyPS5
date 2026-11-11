@@ -19,6 +19,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace AgcDriver {
@@ -53,6 +54,10 @@ struct DeviceQueuePlan {
 
 DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> families, std::uint32_t family, bool settles, bool sparseBinding, bool presents);
 
+enum class PresentationRejection { None, MissingSwapchain, NoSurfaceQueue };
+
+std::string SoftwareFallbackWarning(VkPhysicalDeviceType selectedType, std::string_view selectedName, std::string_view hardwareName, PresentationRejection rejection, bool requested);
+
 class VulkanUnavailable final : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
@@ -80,8 +85,6 @@ public:
     VulkanDevice& operator=(const VulkanDevice&) = delete;
     std::string DeviceName() const;
     std::string DriverInfo() const;
-    enum class PipelineBinaryStatus { Unavailable, Disabled, Ready };
-    PipelineBinaryStatus PipelineBinariesStatus() const;
     bool SupportsImageFormat(VkFormat format, VkImageUsageFlags usage) const;
     bool BdaAtomicsUsable() const;
     bool RasterOrderGroupUsable() const;
