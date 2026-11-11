@@ -329,14 +329,14 @@ int APS5_VABI sceNpTrophyGetTrophyIcon(int contextId, int handle, int trophyId, 
 int APS5_VABI sceNpTrophyGetGameInfo(int contextId, int handle, GameDetails* details, GameData* data) {
     if (!details && !data) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     if (details) {
-        std::uint32_t detailsSize = 0;
+        std::uint64_t detailsSize = 0;
         const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&detailsSize, &details->size, sizeof(detailsSize));
         errno = savedErrno;
         if (!copied || detailsSize != sizeof(GameDetails)) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
     if (data) {
-        std::uint32_t dataSize = 0;
+        std::uint64_t dataSize = 0;
         const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&dataSize, &data->size, sizeof(dataSize));
         errno = savedErrno;
@@ -372,14 +372,14 @@ int APS5_VABI sceNpTrophyGetGameInfo(int contextId, int handle, GameDetails* det
 int APS5_VABI sceNpTrophyGetGroupInfo(int contextId, int handle, int groupId, GroupDetails* details, GroupData* data) {
     if (!details && !data) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     if (details) {
-        std::uint32_t detailsSize = 0;
+        std::uint64_t detailsSize = 0;
         const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&detailsSize, &details->size, sizeof(detailsSize));
         errno = savedErrno;
         if (!copied || detailsSize != sizeof(GroupDetails)) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
     if (data) {
-        std::uint32_t dataSize = 0;
+        std::uint64_t dataSize = 0;
         const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&dataSize, &data->size, sizeof(dataSize));
         errno = savedErrno;
@@ -420,14 +420,14 @@ int APS5_VABI sceNpTrophyGetGroupInfo(int contextId, int handle, int groupId, Gr
 int APS5_VABI sceNpTrophyGetTrophyInfo(int contextId, int handle, int trophyId, TrophyDetails* details, TrophyData* data) {
     if (!details && !data) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     if (details) {
-        std::uint32_t detailsSize = 0;
+        std::uint64_t detailsSize = 0;
         const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&detailsSize, &details->size, sizeof(detailsSize));
         errno = savedErrno;
         if (!copied || detailsSize != sizeof(TrophyDetails)) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
     if (data) {
-        std::uint32_t dataSize = 0;
+        std::uint64_t dataSize = 0;
         const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&dataSize, &data->size, sizeof(dataSize));
         errno = savedErrno;
