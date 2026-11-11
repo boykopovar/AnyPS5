@@ -76,8 +76,12 @@ EGLBoolean APS5_VABI eglGetConfigs_nid_postfix(EGLDisplay display, EGLConfig* co
     std::lock_guard lock(mutex);
     if (!Display_nid_no_patch(display)) return 0;
     if (!count || (configs && size < 0)) return EglError_nid_no_patch(0x300c);
-    *count = configs ? std::min(size, 1) : 1;
-    if (configs && size) configs[0] = &configToken;
+    const EGLint written = configs ? std::min(size, 1) : 1;
+    if (!GuestCopyOut_nid_no_patch(count, &written, sizeof(written))) return EglError_nid_no_patch(0x300c);
+    if (configs && size) {
+        const EGLConfig value = &configToken;
+        if (!GuestCopyOut_nid_no_patch(configs, &value, sizeof(value))) return EglError_nid_no_patch(0x300c);
+    }
     return 1;
 }
 
