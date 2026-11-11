@@ -243,5 +243,8 @@ if command == 'inspect':
             frame_capture_minimize.Minimizer.write_plan(path, {8, 2}, {9, 1})
             self.assertEqual(path.read_text(encoding="ascii"), "aps5-frame-filter 1\ncall 2\ncall 8\nchunk 1\nchunk 9\n")
 
+    def test_python_filter_command_uses_current_interpreter(self):
+        self.assertEqual(frame_capture_minimize.Minimizer.command(Path("filter.py")), [sys.executable, "filter.py"])
+
 if __name__ == "__main__":
     unittest.main()
