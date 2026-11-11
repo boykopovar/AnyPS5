@@ -116,7 +116,10 @@ int EnterFrame(GuestStreamRec* stream, std::uint64_t count, const char* function
         if (readBytes < count) {
             Free(memory, record.base, function);
             record.base = nullptr;
-            error = InvalidStreamOperation;
+            record.cursor = nullptr;
+            record.limit = nullptr;
+            record.pos += readBytes;
+            return InvalidStreamOperation;
         }
         record.cursor = record.base;
         record.limit = Offset(record.cursor, count);

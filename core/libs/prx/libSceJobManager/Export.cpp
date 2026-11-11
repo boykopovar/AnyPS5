@@ -21,7 +21,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <immintrin.h>
+#include "prx/libc/include/GuestCpu.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include <memory>
 #include <mutex>
 #include <span>
@@ -738,9 +739,9 @@ int CreateIn(Manager* manager, TSequences& sequences, std::uint32_t& free, std::
     const std::lock_guard guard(manager->lock);
     if (free == 0) return SequenceNoneFree;
     const int index = std::countr_zero(free);
-    free &= ~(std::uint32_t{1} << index);
     Sequence& sequence = sequences[static_cast<std::size_t>(index)].value;
     if (!sequence.Open(manager, limits, priority, name)) return SequenceNoNodes;
+    free &= ~(std::uint32_t{1} << index);
     *out = &sequence;
     return 0;
 }
@@ -821,18 +822,18 @@ constexpr std::uint32_t SpinPauses = 1024;
 void* APS5_VABI WorkerEntry(void* argument) {
     Manager& manager = *static_cast<Manager*>(argument);
     currentWorker = &manager;
-    std::uint64_t lastWork = __rdtsc();
+    std::uint64_t lastWork = GuestCpu::ReadTsc();
     std::unique_lock guard(manager.lock);
     while (manager.running) {
         if (RunOne(manager, guard)) {
-            lastWork = __rdtsc();
+            lastWork = GuestCpu::ReadTsc();
             continue;
         }
-        const bool spinning = manager.pendingInvocations != 0 && __rdtsc() - lastWork < manager.spinTicks;
+        const bool spinning = manager.pendingInvocations != 0 && GuestCpu::ReadTsc() - lastWork < manager.spinTicks;
         if (spinning) {
             const std::uint32_t epoch = manager.workEpoch.load(std::memory_order_acquire);
             guard.unlock();
-            for (std::uint32_t pause = 0; pause != SpinPauses && manager.workEpoch.load(std::memory_order_acquire) == epoch; ++pause) _mm_pause();
+            for (std::uint32_t pause = 0; pause != SpinPauses && manager.workEpoch.load(std::memory_order_acquire) == epoch; ++pause) PreciseSpinPause();
             guard.lock();
             continue;
         }
@@ -840,7 +841,7 @@ void* APS5_VABI WorkerEntry(void* argument) {
             const std::uint32_t epoch = manager.workEpoch.load(std::memory_order_acquire);
             guard.unlock();
             while (manager.workEpoch.load(std::memory_order_acquire) == epoch) {
-                for (std::uint32_t pause = 0; pause != SpinPauses; ++pause) _mm_pause();
+                for (std::uint32_t pause = 0; pause != SpinPauses; ++pause) PreciseSpinPause();
             }
             guard.lock();
             continue;
