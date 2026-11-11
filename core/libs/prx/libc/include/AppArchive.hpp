@@ -45,6 +45,8 @@ void AppArchiveAttach_nid_no_patch(int descriptor, const AppArchiveNode& node);
 void AppArchiveShare_nid_no_patch(int from, int to);
 void AppArchiveDetach_nid_no_patch(int descriptor);
 bool AppArchiveDescriptor_nid_no_patch(int descriptor, AppArchiveNode* node, std::uint64_t* position);
+int AppArchiveMaterialize_nid_no_patch(const AppArchiveNode& node, std::uint64_t offset, std::uint64_t length);
+bool AppArchiveMappingDescriptor_nid_no_patch(int descriptor, std::uint64_t offset, std::uint64_t length, int* backing);
 bool AppArchiveDescriptorRead_nid_no_patch(int descriptor, const AppArchiveBuffer* buffers, int count, const std::int64_t* offset, std::uint64_t* read);
 bool AppArchiveDescriptorSeek_nid_no_patch(int descriptor, std::int64_t offset, int whence, std::int64_t* position);
 
