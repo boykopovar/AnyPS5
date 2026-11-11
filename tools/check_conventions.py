@@ -310,7 +310,9 @@ class Check:
             return
         for path, lines in self.files(lambda p: p.suffix in ASSEMBLY):
             preprocessed = PurePosixPath(path).suffix == ".S"
-            masked = cpp_text(self.show(path), preserve_comments=True).split("\n")
+            source = self.show(path).split("\n")
+            expanded = cpp_text("\n".join(source)).split("\n")
+            masked = cpp_text("\n".join(source), preserve_comments=True).split("\n")
             directives = set()
             for number, text in enumerate(masked, 1):
                 if preprocessed and (DIRECTIVE.match(text) or (number - 1 in directives and masked[number - 2].rstrip().endswith("\\"))):
@@ -318,7 +320,7 @@ class Check:
             for number, _ in lines:
                 bare = masked[number - 1]
                 comment = "//" in bare or "/*" in bare or ("#" in bare and number not in directives)
-                if comment and not (preprocessed and ALLOWED_COMMENT.match(bare)):
+                if comment and not (preprocessed and ALLOWED_COMMENT.match(bare)) and not license_run(source, expanded, number - 1):
                     self.report("comment", path, number)
 
     def submodules(self):

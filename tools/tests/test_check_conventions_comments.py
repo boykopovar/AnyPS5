@@ -650,6 +650,16 @@ class TestFixtureExportTests(unittest.TestCase):
         self.assertIn("core/libs/tests/Fixture.S:3: error: [comment]", result.stdout)
         self.assertNotIn("core/libs/tests/Fixture.S:2:", result.stdout)
 
+    def test_licence_notice_in_assembly_is_not_reported(self):
+        notice = ("/*-\n * Copyright (c) 1990 The Regents of the University of California.\n"
+                  " * Redistribution and use in source and binary forms, with or without\n"
+                  " * modification, are permitted provided that the conditions are met.\n */\n")
+        result = self.check("core/libs/tests/Fixture.S", notice + ".text\n    ret\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.check("core/libs/tests/Fixture.S", notice + ".text\n    // save the frame\n    ret\n")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("core/libs/tests/Fixture.S:7: error: [comment]", result.stdout)
+
     def test_assembly_without_comments_passes(self):
         result = self.check("core/libs/tests/Fixture.S",
                             '\ufeff#include "macros.h"\n#ifdef _WIN32\n.section .rdata,"dr"\n#else\n.string "a//b#c"\n#endif // _WIN32\n#\n'
