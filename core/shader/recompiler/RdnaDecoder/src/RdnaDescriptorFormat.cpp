@@ -14,7 +14,7 @@ struct FormatInfo {
     bool sint32;
 };
 
-constexpr std::array<FormatInfo, 82> kFormatInfoTable {{
+constexpr std::array<FormatInfo, 83> kFormatInfoTable {{
     {IrBufferFormat::Format8UNorm, true, false, false},
     {IrBufferFormat::Format8SNorm, true, false, false},
     {IrBufferFormat::Format8UInt, true, true, false},
@@ -70,6 +70,7 @@ constexpr std::array<FormatInfo, 82> kFormatInfoTable {{
     {IrBufferFormat::Format5_5_5_1UNorm, true, false, false},
     {IrBufferFormat::Format1_5_5_5UNorm, false, false, false},
     {IrBufferFormat::Format4_4_4_4UNorm, true, false, false},
+    {IrBufferFormat::Format8_24UNorm, true, false, false},
     {IrBufferFormat::Fmask8_S2_F1, true, false, false},
     {IrBufferFormat::Fmask8_S4_F1, true, false, false},
     {IrBufferFormat::Fmask8_S8_F1, true, false, false},
@@ -106,6 +107,11 @@ const FormatInfo* FindFormatInfo(IrBufferFormat format) {
     return it != kFormatInfoTable.end() ? &(*it) : nullptr;
 }
 
+}
+
+bool IsDefinedImageFormat(IrBufferFormat format) {
+    const auto value = static_cast<std::uint32_t>(format);
+    return std::ranges::any_of(DefinedImageFormats, [&](const ImageFormatRange& range) { return value >= range.first && value <= range.last; });
 }
 
 bool IsFmaskTextureFormat(IrBufferFormat format) {

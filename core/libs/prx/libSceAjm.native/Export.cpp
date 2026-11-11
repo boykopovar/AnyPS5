@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceAjm.native/include/InventoryExports.hpp"
 #include "prx/libSceAjm.native/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -30,6 +32,7 @@ constexpr std::size_t VORBIS_IDENTIFICATION_SIZE = 30;
 constexpr std::size_t VORBIS_COMMENT_SIZE = 16;
 constexpr std::size_t WVORBIS_SETUP_MIN_SIZE = 9;
 constexpr std::size_t WVORBIS_SETUP_PART1_LENGTH_OFFSET = 7;
+constexpr std::size_t WVORBIS_LENGTH_FIELD_MAX = 0xFFFF;
 constexpr std::int32_t VORBIS_BLOCK_SIZE_MIN = 64;
 constexpr std::int32_t VORBIS_BLOCK_SIZE_MAX = 8192;
 constexpr std::uint8_t VORBIS_MAGIC[] {'v', 'o', 'r', 'b', 'i', 's'};
@@ -66,9 +69,36 @@ int APS5_VABI sceAjmBatchJobEncode(AjmBatchInfo* info, uint32_t instance, const 
 }
 
 const char* APS5_VABI sceAjmStrError(int error) {
- (void)error;
- AjmStub(__func__);
- return nullptr;
+    static const char* const messages[] = {
+        "context does not exist",
+        "instance does not exist",
+        "batch does not exist",
+        "invalid parameter",
+        "not enough memory",
+        "not enough resources",
+        "codec is not supported",
+        "codec is already registered in the context",
+        "codec is not registered in the context",
+        "wrong revision in the flags",
+        "flag is not supported",
+        "busy",
+        "priority is invalid",
+        "in progress",
+        "operation cannot be performed at the moment",
+        "malformed batch",
+        "error at job creation",
+        "invalid opcode",
+        "priority violation",
+        "buffer is too big",
+        "invalid address",
+        "batch was cancelled",
+        "specified memory area is already registered",
+        "specified memory area is not registered",
+    };
+    if (error == 0) return "ok";
+    const std::uint32_t index = static_cast<std::uint32_t>(error) - 0x80930002u;
+    if (index < sizeof(messages) / sizeof(messages[0])) return messages[index];
+    return "(unknown)";
 }
 
 int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(WVorbisHeaderPacketParameter* param) {
@@ -86,12 +116,13 @@ int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(WVorbisHeaderPacketParameter* p
 
     const auto* setup = static_cast<const std::uint8_t*>(param->setupPacket);
     const auto part1 = static_cast<std::uint16_t>(setup[WVORBIS_SETUP_PART1_LENGTH_OFFSET] | setup[WVORBIS_SETUP_PART1_LENGTH_OFFSET + 1] << 8);
+    if (part1 > param->setupPacketSize || param->setupPacketSize - part1 > WVORBIS_LENGTH_FIELD_MAX) return AJM_WVORBIS_ERROR_INVALID_SETUP;
     auto* out = static_cast<std::uint8_t*>(param->output);
     out = PutLittle(out, 0, 2);
     out = PutLittle(out, VORBIS_IDENTIFICATION_SIZE, 2);
     out = PutLittle(out, VORBIS_COMMENT_SIZE, 2);
     out = PutLittle(out, part1, 2);
-    out = PutLittle(out, static_cast<std::uint16_t>(param->setupPacketSize) - part1, 2);
+    out = PutLittle(out, static_cast<std::uint32_t>(param->setupPacketSize - part1), 2);
 
     out = PutVorbisHeaderStart(out, 1);
     out = PutLittle(out, 0, 4);
@@ -141,5 +172,44 @@ int APS5_VABI sceAjmInstanceSwitch(uint32_t context, uint32_t codec, uint64_t fl
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAjm_nativeUnknown_IfQ_minus_AhcmW9k_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("IfQ-AhcmW9k", libSceAjm_nativeUnknown_IfQ_minus_AhcmW9k_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_JAPya_minus_QyJlU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JAPya-QyJlU", libSceAjm_nativeUnknown_JAPya_minus_QyJlU_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_MgTTRx1YSFw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("MgTTRx1YSFw", libSceAjm_nativeUnknown_MgTTRx1YSFw_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_POOw6Y5luA8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("POOw6Y5luA8", libSceAjm_nativeUnknown_POOw6Y5luA8_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_mKgie3ed4ao_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mKgie3ed4ao", libSceAjm_nativeUnknown_mKgie3ed4ao_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_mwtwIZb60YM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mwtwIZb60YM", libSceAjm_nativeUnknown_mwtwIZb60YM_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_qkuXdR4_minus_Ihc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qkuXdR4-Ihc", libSceAjm_nativeUnknown_qkuXdR4_minus_Ihc_nid_no_patch);
 
 }

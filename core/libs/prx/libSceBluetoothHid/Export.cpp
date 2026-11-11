@@ -4,7 +4,9 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <stdexcept>
 #include <string>
+#include <cerrno>
 #include <mutex>
 
 static_assert(sizeof(BluetoothHidThreadParam) == 24);
@@ -74,16 +76,24 @@ std::int32_t APS5_VABI sceBluetoothHidUnregisterDevice(std::uint16_t vendorId, s
 }
 
 int APS5_VABI sceBluetoothHidGetDeviceName(std::uint64_t deviceHandle, BluetoothHidDeviceName* name) {
+    std::lock_guard lock(stateMutex);
+    (void)deviceHandle;
+    if (!initialized) return NotInitialized;
+    if (name == nullptr) return InvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceBluetoothHidGetInputReport(std::uint64_t deviceHandle, std::uint8_t reportId) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceBluetoothHidSetOutputReport(std::uint64_t deviceHandle, std::uint8_t reportId, const void* data, std::size_t size) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -93,42 +103,70 @@ int APS5_VABI sceBluetoothHidDebugGetVersion() {
 }
 
 int APS5_VABI sceBluetoothHidDisconnectDevice(std::int32_t deviceId) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceBluetoothHidGetDeviceInfo(std::int32_t deviceId, BluetoothHidDeviceInfo* info) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceBluetoothHidGetFeatureReport(std::uint64_t deviceHandle, std::uint8_t reportId) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceBluetoothHidGetReportDescriptor(std::uint64_t deviceHandle, void* descriptor, std::size_t size) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceBluetoothHidInterruptOutput(std::uint64_t deviceHandle, std::uint8_t reportId, const void* data, std::size_t size) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceBluetoothHidParamInitialize(BluetoothHidParam* param, const BluetoothHidThreadParam* threadParam) {
-    NotImplemented_nid_no_patch(__func__);
+    if (param == nullptr) return InvalidArgument;
+    BluetoothHidParam localParam{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) {
+        errno = savedErrno;
+        return InvalidArgument;
+    }
+    localParam.threadParam = threadParam;
+    localParam.reserved = 0;
+    if (!GuestCopyOut_nid_no_patch(param, &localParam, sizeof(localParam))) {
+        errno = savedErrno;
+        return InvalidArgument;
+    }
+    errno = savedErrno;
     return 0;
 }
 
 int APS5_VABI sceBluetoothHidSetFeatureReport(std::uint64_t deviceHandle, std::uint8_t reportId, const void* data, std::size_t size) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceBluetoothHidThreadParamInitialize(BluetoothHidThreadParam* param, std::int32_t priority, std::uint64_t affinityMask) {
-    NotImplemented_nid_no_patch(__func__);
+    if (param == nullptr) return InvalidArgument;
+    param->priority = priority;
+    param->affinityMask = affinityMask;
+    param->reserved = 0;
     return 0;
 }
 

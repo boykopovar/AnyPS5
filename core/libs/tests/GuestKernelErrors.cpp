@@ -3,7 +3,6 @@
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
-#include "prx/libSceSaveData/SaveDataCore.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -12,6 +11,12 @@
 #include <limits>
 #include <stdexcept>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 extern "C" {
 
@@ -51,7 +56,117 @@ static void RequireTimesOut(TLock lock) {
     Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15));
 }
 
+struct ReaderHold {
+    PthreadRwlock* lock;
+    std::atomic<bool> held{false};
+    std::atomic<bool> release{false};
+};
+
+static void* APS5_VABI HoldRead(void* argument) {
+    auto& hold = *static_cast<ReaderHold*>(argument);
+    Require(scePthreadRwlockRdlock(hold.lock) == SCE_OK);
+    hold.held.store(true);
+    while (!hold.release.load()) std::this_thread::yield();
+    Require(scePthreadRwlockUnlock(hold.lock) == SCE_OK);
+    return nullptr;
+}
+
+static void CheckTimedRwlockWithReader() {
+    PthreadRwlock rwlock = nullptr;
+    Require(scePthreadRwlockInit(&rwlock, nullptr, nullptr) == SCE_OK);
+    ReaderHold hold{&rwlock};
+    Pthread reader = nullptr;
+    Require(scePthreadCreate(&reader, nullptr, HoldRead, &hold, "reader-hold") == SCE_OK);
+    while (!hold.held.load()) std::this_thread::yield();
+    Require(scePthreadRwlockTimedrdlock(&rwlock, 20000) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&rwlock) == SCE_OK);
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadRwlockTimedwrlock(&rwlock, usec); });
+    Require(scePthreadRwlockTrywrlock(&rwlock) == SCE_KERNEL_ERROR_EBUSY);
+    hold.release.store(true);
+    Require(scePthreadJoin(reader, nullptr) == SCE_OK);
+    Require(scePthreadRwlockTimedwrlock(&rwlock, 20000) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&rwlock) == SCE_OK);
+    Require(scePthreadRwlockTimedrdlock(&rwlock, 20000) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&rwlock) == SCE_OK);
+    Require(scePthreadRwlockDestroy(&rwlock) == SCE_OK);
+}
+
+class MutexFaultPages {
+public:
+    MutexFaultPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * size, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY));
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + size, size, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0);
+        size = static_cast<std::size_t>(pageSize);
+        memory = static_cast<char*>(mmap(nullptr, 2 * size, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+        Require(mprotect(memory + size, size, PROT_NONE) == 0);
+#endif
+    }
+
+    ~MutexFaultPages() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 2 * size);
+#endif
+    }
+
+    MutexFaultPages(const MutexFaultPages&) = delete;
+    MutexFaultPages& operator=(const MutexFaultPages&) = delete;
+
+    void* ReadOnly() const { return memory; }
+    void* Unreadable() const { return memory + size; }
+
+private:
+    char* memory = nullptr;
+    std::size_t size = 0;
+};
+
+static void CheckMutexInitDestroyFaults() {
+    constexpr int posixEfault = 14;
+    MutexFaultPages pages;
+    void* const badSlots[] = {reinterpret_cast<void*>(0x10), pages.ReadOnly(), pages.Unreadable()};
+    for (void* pointer : badSlots) {
+        auto* slot = static_cast<PthreadMutex*>(pointer);
+        PthreadMutexattr attr = nullptr;
+        Require(pthread_mutex_init_nid_postfix(slot, nullptr) == posixEfault);
+        if (pointer != pages.ReadOnly()) Require(pthread_mutex_destroy_nid_postfix(slot) == posixEfault);
+        Require(scePthreadMutexDestroy(slot) == SCE_KERNEL_ERROR_EFAULT);
+        Require(pthread_mutexattr_init_nid_postfix(&attr) == 0);
+        Require(pthread_mutex_init_nid_postfix(slot, &attr) == posixEfault);
+        Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, 9) == 0);
+        Require(pthread_mutex_init_nid_postfix(slot, &attr) == 22);
+        Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
+    }
+    Require(pthread_mutex_destroy_nid_postfix(static_cast<PthreadMutex*>(pages.ReadOnly())) == 0);
+
+    void* const badAttributes[] = {reinterpret_cast<void*>(0x10), pages.Unreadable()};
+    for (void* pointer : badAttributes) {
+        PthreadMutex mutex = nullptr;
+        Require(pthread_mutex_init_nid_postfix(&mutex, static_cast<const PthreadMutexattr*>(pointer)) == posixEfault);
+        Require(mutex == nullptr);
+    }
+
+    PthreadMutex mutex = nullptr;
+    Require(pthread_mutex_init_nid_postfix(&mutex, nullptr) == 0 && mutex != nullptr);
+    Require(pthread_mutex_destroy_nid_postfix(&mutex) == 0);
+    PthreadMutex second = nullptr;
+    Require(scePthreadMutexInit(&second, nullptr, nullptr) == SCE_OK);
+    Require(scePthreadMutexDestroy(&second) == SCE_OK);
+}
+
 int main() {
+    CheckMutexInitDestroyFaults();
+    CheckTimedRwlockWithReader();
     constexpr int maximum = std::numeric_limits<int>::max();
     KernelSema semaphore = nullptr;
     Require(sceKernelCreateSema(&semaphore, "overflow", 1, maximum - 1, maximum, nullptr) == SCE_OK);
@@ -85,6 +200,7 @@ int main() {
     Require(sceKernelDeleteEqueue(eq) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelCreateEqueue(nullptr, "errors") == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateEqueue(&eq, nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
     PthreadMutexattr attr = nullptr;
     Require(scePthreadMutexattrInit(&attr) == SCE_OK);

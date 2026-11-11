@@ -165,6 +165,11 @@ bool ApplicationHeapDefault_nid_no_patch() {
 void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
     std::call_once(heapInitialization, [processParameters] {
         try {
+            if (processParameters == ApplicationEmptyProcessParameters_nid_no_patch()) {
+                const std::array<void*, 10> none{};
+                ApplicationHeapRegister_nid_no_patch(none.data());
+                return;
+            }
             if (read<std::uint64_t>(processParameters, 0) < 0x40 || read<std::uint32_t>(processParameters, 8) != 0x4942524f) throw std::runtime_error("application heap: invalid process parameters");
             const auto* libcParameters = read<const void*>(processParameters, 0x38);
             if (read<std::uint64_t>(libcParameters, 0) < 0x38) throw std::runtime_error("application heap: invalid libc parameters");
@@ -191,6 +196,16 @@ void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
     });
     std::lock_guard lock(heapMutex);
     if (heapFailure) std::rethrow_exception(heapFailure);
+}
+
+void ApplicationHeapEnsureInitialized_nid_no_patch() {
+    std::unique_lock lock(heapMutex);
+    ensureInitialized(lock);
+    if (heapFailure) std::rethrow_exception(heapFailure);
+}
+
+void ApplicationHeapFinalize_nid_no_patch() {
+    finalize();
 }
 
 void* ApplicationHeapAllocate_nid_no_patch(std::size_t bytes) {

@@ -9,6 +9,12 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using TimedLock = int (APS5_VABI *)(PthreadRwlock*, const KernelTimespec*);
 
@@ -16,6 +22,7 @@ static constexpr int SCE_OK = 0;
 static constexpr int GUEST_EPERM = 1;
 static constexpr int GUEST_EDEADLK = 11;
 static constexpr int GUEST_EBUSY = 16;
+static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_ETIMEDOUT = 60;
 static constexpr int GUEST_REALTIME_CLOCK = 0;
@@ -157,7 +164,9 @@ static void CheckDestroyLifecycle() {
     Require(held == DestroyedRwlock);
     Require(scePthreadRwlockUnlock(&held) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadRwlockRdlock(&held) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadRwlockWrlock(&held) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadRwlockTryrdlock(&held) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadRwlockTrywrlock(&held) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadRwlockDestroy(&held) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_rwlock_rdlock_nid_postfix(&held) == GUEST_EINVAL);
     Require(held == DestroyedRwlock);
@@ -359,7 +368,7 @@ static void CheckAttrProcessSharing() {
     Require(pthread_rwlockattr_setpshared_nid_postfix(&attr, PROCESS_PRIVATE) == 0);
     pshared = -1;
     Require(pthread_rwlockattr_getpshared_nid_postfix(&attr, &pshared) == 0 && pshared == PROCESS_PRIVATE);
-    Require(Throws([&] { pthread_rwlockattr_getpshared_nid_postfix(&attr, nullptr); }));
+    Require(pthread_rwlockattr_getpshared_nid_postfix(&attr, nullptr) == GUEST_EFAULT);
 
     PthreadRwlockattr unset = nullptr;
     for (const int invalid : {1, 2, -1}) {
@@ -371,6 +380,11 @@ static void CheckAttrProcessSharing() {
     Require(Throws([&] { pthread_rwlockattr_getpshared_nid_postfix(nullptr, &pshared); }));
     Require(Throws([&] { pthread_rwlockattr_getpshared_nid_postfix(&unset, &pshared); }));
     Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
+    Require(attr != nullptr);
+    pshared = -1;
+    Require(pthread_rwlockattr_getpshared_nid_postfix(&attr, &pshared) == 0 && pshared == PROCESS_PRIVATE);
+    Require(pthread_rwlockattr_setpshared_nid_postfix(&attr, PROCESS_PRIVATE) == 0);
+    Require(Throws([&] { scePthreadRwlockattrDestroy(&attr); }));
 }
 
 static void CheckAttrSettype() {
@@ -385,7 +399,7 @@ static void CheckAttrSettype() {
     }
     for (const int type : {0, 3, -1, static_cast<int>(0x80000000u)}) Require(scePthreadRwlockattrSettype(&attr, type) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
-    Require(scePthreadRwlockattrSettype(&attr, 1) == SCE_KERNEL_ERROR_EINVAL);
+    for (const int type : {1, 2}) Require(scePthreadRwlockattrSettype(&attr, type) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadRwlockattrSettype(nullptr, 1) == SCE_KERNEL_ERROR_EINVAL);
 }
 
@@ -400,19 +414,137 @@ static void CheckAttrType() {
         Require(pthread_rwlockattr_gettype_np_nid_postfix(&attr, &type) == 0 && type == set);
         Require(scePthreadRwlockattrGettype(&attr, &type) == SCE_OK && type == set);
     }
-    Require(Throws([&] { pthread_rwlockattr_gettype_np_nid_postfix(&attr, nullptr); }));
+    Require(pthread_rwlockattr_gettype_np_nid_postfix(&attr, nullptr) == GUEST_EFAULT);
     int pshared = -1;
     Require(scePthreadRwlockattrGetpshared(&attr, &pshared) == SCE_OK && pshared == PROCESS_PRIVATE);
     Require(scePthreadRwlockattrSetpshared(&attr, 1) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadRwlockattrSetpshared(&attr, PROCESS_PRIVATE) == SCE_OK);
     Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
+    type = -1;
+    Require(Throws([&] { pthread_rwlockattr_gettype_np_nid_postfix(&attr, &type); }) && type == -1);
+    Require(Throws([&] { scePthreadRwlockattrGettype(&attr, &type); }) && type == -1);
     PthreadRwlockattr unset = nullptr;
     Require(Throws([&] { pthread_rwlockattr_gettype_np_nid_postfix(nullptr, &type); }));
     Require(Throws([&] { pthread_rwlockattr_gettype_np_nid_postfix(&unset, &type); }));
     Require(Throws([&] { scePthreadRwlockattrGettype(&unset, &type); }));
 }
 
+static void CheckSceAttrLifecycle() {
+    PthreadRwlockattr attr = nullptr;
+    Require(scePthreadRwlockattrInit(&attr) == SCE_OK && attr != nullptr);
+    PthreadRwlock lock = nullptr;
+    Require(scePthreadRwlockInit(&lock, &attr, "sce attr") == SCE_OK && lock != nullptr);
+    Require(pthread_rwlock_wrlock_nid_postfix(&lock) == 0);
+    Require(pthread_rwlock_tryrdlock_nid_postfix(&lock) == GUEST_EBUSY);
+    Require(pthread_rwlock_unlock_nid_postfix(&lock) == 0);
+    Require(pthread_rwlock_destroy_nid_postfix(&lock) == 0);
+    Require(scePthreadRwlockattrDestroy(&attr) == SCE_OK && attr == nullptr);
+    const auto throws = [](auto&& call) {
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            return true;
+        }
+        return false;
+    };
+    Require(throws([&] { scePthreadRwlockattrDestroy(&attr); }));
+    Require(throws([] { scePthreadRwlockattrDestroy(nullptr); }));
+    Require(throws([] { scePthreadRwlockattrInit(nullptr); }));
+}
+
+class GuardPage {
+public:
+    GuardPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        page = static_cast<std::size_t>(size);
+        memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+        Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardPage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 2 * page);
+#endif
+    }
+
+    GuardPage(const GuardPage&) = delete;
+    GuardPage& operator=(const GuardPage&) = delete;
+
+    void* Unreadable() const { return memory + page; }
+
+private:
+    char* memory = nullptr;
+    std::size_t page = 0;
+};
+
+static void CheckBadPointers() {
+    GuardPage guard;
+    void* const bad[] = {reinterpret_cast<void*>(0x10), guard.Unreadable()};
+    for (void* pointer : bad) {
+        auto* attrs = static_cast<PthreadRwlockattr*>(pointer);
+        int value = -1;
+        Require(pthread_rwlockattr_getpshared_nid_postfix(attrs, &value) == GUEST_EFAULT && value == -1);
+        Require(pthread_rwlockattr_setpshared_nid_postfix(attrs, PROCESS_PRIVATE) == GUEST_EFAULT);
+        Require(pthread_rwlockattr_gettype_np_nid_postfix(attrs, &value) == GUEST_EFAULT && value == -1);
+        Require(pthread_rwlockattr_settype_np_nid_postfix(attrs, 1) == GUEST_EFAULT);
+        Require(scePthreadRwlockattrSettype(attrs, 1) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadRwlockattrGettype(attrs, &value) == SCE_KERNEL_ERROR_EFAULT && value == -1);
+        Require(scePthreadRwlockattrSetpshared(attrs, PROCESS_PRIVATE) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadRwlockattrGetpshared(attrs, &value) == SCE_KERNEL_ERROR_EFAULT && value == -1);
+        Require(scePthreadRwlockattrDestroy(attrs) == SCE_KERNEL_ERROR_EFAULT);
+        Require(pthread_rwlockattr_destroy_nid_postfix(attrs) == GUEST_EFAULT);
+        Require(scePthreadRwlockattrInit(attrs) == SCE_KERNEL_ERROR_EFAULT);
+        Require(pthread_rwlockattr_init_nid_postfix(attrs) == GUEST_EFAULT);
+    }
+    void* const badOut[] = {nullptr, reinterpret_cast<void*>(0x10), guard.Unreadable()};
+    PthreadRwlockattr attr = nullptr;
+    Require(pthread_rwlockattr_init_nid_postfix(&attr) == 0);
+    Require(scePthreadRwlockattrSettype(nullptr, 1) == SCE_KERNEL_ERROR_EINVAL);
+    for (void* pointer : badOut) {
+        auto* out = static_cast<int*>(pointer);
+        Require(pthread_rwlockattr_getpshared_nid_postfix(&attr, out) == GUEST_EFAULT);
+        Require(pthread_rwlockattr_gettype_np_nid_postfix(&attr, out) == GUEST_EFAULT);
+        Require(scePthreadRwlockattrGetpshared(&attr, out) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadRwlockattrGettype(&attr, out) == SCE_KERNEL_ERROR_EFAULT);
+    }
+    Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
+}
+
+static void CheckSceTryLocks() {
+    PthreadRwlock lock = nullptr;
+    Require(scePthreadRwlockInit(&lock, nullptr, "sce try") == SCE_OK && lock != nullptr);
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTrywrlock(&lock) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTrywrlock(&lock) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTrywrlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockDestroy(&lock) == SCE_OK);
+}
+
 int main() {
+    CheckBadPointers();
+    CheckSceAttrLifecycle();
+    CheckSceTryLocks();
     CheckAttrSettype();
     CheckAttrProcessSharing();
     CheckAttrType();

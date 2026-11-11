@@ -11,6 +11,8 @@
 #include <exception>
 #include <limits>
 #include <span>
+#include <string>
+#include <utility>
 #include <stdexcept>
 #include <vector>
 
@@ -61,6 +63,45 @@ void CheckConversion(int type, std::span<const unsigned char> input, std::span<c
         && value.flags == original.flags, "conversion preserves the input object");
     Require(std::equal(input.begin(), input.end(), storage.begin()), "conversion preserves the input bytes");
     free_nid_postfix(result);
+}
+
+constexpr std::uint64_t Asn1Error(int reason) {
+    return (std::uint64_t{13} << 24) | (std::uint64_t{0xfff} << 12) | static_cast<std::uint64_t>(reason);
+}
+
+void RequireConversionError(unsigned char** output, int type, const unsigned char* data, int length, int reason, const char* message) {
+    ERR_clear_error_nid_postfix();
+    Asn1String value{length, type, const_cast<unsigned char*>(data), 0};
+    const unsigned char* before = output ? *output : nullptr;
+    Require(ASN1_STRING_to_UTF8_nid_postfix(output, &value) == -1, message);
+    Require(!output || *output == before, "a failed conversion leaves the output alone");
+    Require(ERR_get_error_nid_postfix() == Asn1Error(reason) && ERR_get_error_nid_postfix() == 0, message);
+}
+
+void MalformedStrings() {
+    unsigned char sentinel = 0xab;
+    unsigned char* result = &sentinel;
+    constexpr unsigned char oddBmp[] = {0, 0x41, 0};
+    RequireConversionError(&result, 30, oddBmp, 3, 129, "odd BMPString length");
+    RequireConversionError(&result, 30, nullptr, 1, 129, "BMPString length is checked before the data");
+    constexpr unsigned char bmpSurrogate[] = {0, 0x41, 0xd8, 0};
+    RequireConversionError(&result, 30, bmpSurrogate, 4, 124, "BMPString surrogate");
+    constexpr unsigned char shortUniversal[] = {0, 0, 0, 0x41, 0};
+    RequireConversionError(&result, 28, shortUniversal, 5, 133, "UniversalString length not a multiple of four");
+    RequireConversionError(&result, 28, nullptr, 2, 133, "UniversalString length is checked before the data");
+    constexpr unsigned char universalBeyond[] = {0, 0x11, 0, 0};
+    RequireConversionError(&result, 28, universalBeyond, 4, 124, "UniversalString above U+10FFFF");
+    constexpr unsigned char universalSurrogate[] = {0, 0, 0xdc, 0};
+    RequireConversionError(&result, 28, universalSurrogate, 4, 124, "UniversalString surrogate");
+    constexpr unsigned char overlong[] = {0xc0, 0x80};
+    constexpr unsigned char truncated[] = {'A', 0xe2, 0x82};
+    constexpr unsigned char surrogate[] = {0xed, 0xa0, 0x80};
+    constexpr unsigned char beyond[] = {0xf5, 0x80, 0x80, 0x80};
+    constexpr unsigned char continuation[] = {0x80};
+    for (const auto& [data, length] : {std::pair{overlong, 2}, std::pair{truncated, 3}, std::pair{surrogate, 3},
+             std::pair{beyond, 4}, std::pair{continuation, 1}})
+        RequireConversionError(&result, 12, data, length, 134, "malformed UTF8String");
+    RequireConversionError(nullptr, 30, oddBmp, 3, 129, "a malformed string fails before the output is used");
 }
 
 void Accessors() {
@@ -124,19 +165,53 @@ void Integers() {
     Require(value.length == original.length && value.type == original.type && value.data == original.data
         && value.flags == original.flags && minimum == std::array<unsigned char, 8>{0x80, 0, 0, 0, 0, 0, 0, 0}, "minimum integer preserves input");
     value.type = 2;
-    RequireThrows([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "positive magnitude above signed maximum");
+    RequireInvalidArgument([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "positive magnitude above signed maximum");
     value.type = 0x102;
     minimum.back() = 1;
-    RequireThrows([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "negative magnitude below signed minimum");
+    RequireInvalidArgument([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "negative magnitude below signed minimum");
     value.data = maximum.data();
     maximum[0] = 0x80;
     for (int type : {2, 0x102}) {
         value.type = type;
-        RequireThrows([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "source signed-overflow path throws");
+        RequireInvalidArgument([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "source signed-overflow path throws");
     }
     std::array<unsigned char, 9> zero{};
     value = {9, 2, zero.data(), 0};
     Require(ASN1_INTEGER_get_nid_postfix(&value) == -1, "overlength leading zeros are not trimmed");
+}
+
+std::string Printed(const Asn1String& value, int expected = 1) {
+    LibreSsl::Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "a memory BIO");
+    Require(ASN1_STRING_print_nid_postfix(bio, &value) == expected, "ASN1_STRING_print result");
+    char* data = nullptr;
+    const auto length = BIO_ctrl_nid_postfix(bio, 3, 0, &data);
+    std::string text(data, static_cast<std::size_t>(length));
+    BIO_free_nid_postfix(bio);
+    return text;
+}
+
+void Print() {
+    unsigned char mixed[] = {'h', 'i', '\n', '\r', '\t', 0, 0x7e, 0x7f, 0x80, 0xff, ' '};
+    Asn1String value{sizeof(mixed), 4, mixed, 0};
+    Require(Printed(value) == std::string("hi\n\r..~... "), "only printable ASCII, LF and CR are kept");
+    std::string letters;
+    for (int index = 0; index < 200; ++index) letters += static_cast<char>('a' + index % 26);
+    value = {200, 22, reinterpret_cast<unsigned char*>(letters.data()), 0};
+    Require(Printed(value) == letters, "output longer than the 80-byte chunk is complete");
+    value = {0, 4, nullptr, 0};
+    Require(Printed(value).empty(), "an empty string prints nothing");
+    value.length = -1;
+    Require(Printed(value).empty(), "a negative length prints nothing");
+    Require(ASN1_STRING_print_nid_postfix(nullptr, nullptr) == 0, "a null string prints nothing");
+    value = {2, 4, mixed, 0};
+    Require(ASN1_STRING_print_nid_postfix(nullptr, &value) == 0, "a failed write returns 0");
+    LibreSsl::Bio* readOnly = BIO_new_mem_buf_nid_postfix("x", 1);
+    Require(readOnly && ASN1_STRING_print_nid_postfix(readOnly, &value) == 0, "a read-only BIO returns 0");
+    BIO_free_nid_postfix(readOnly);
+    ERR_clear_error_nid_postfix();
+    value.data = nullptr;
+    RequireInvalidArgument([&] { ASN1_STRING_print_nid_postfix(nullptr, &value); }, "null data with a positive length");
 }
 
 void Strings() {
@@ -183,14 +258,49 @@ void Strings() {
     RequireThrows([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &value); }, "null terminated-string data");
 }
 
+std::string PrintedTime(int type, const char* text, int expected) {
+    Asn1String time{static_cast<int>(std::strlen(text)), type, reinterpret_cast<unsigned char*>(const_cast<char*>(text)), 0};
+    LibreSsl::Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "a memory BIO");
+    Require(ASN1_TIME_print_nid_postfix(bio, &time) == expected, text);
+    char* data = nullptr;
+    const auto length = BIO_ctrl_nid_postfix(bio, 3, 0, &data);
+    std::string output(data, static_cast<std::size_t>(length));
+    BIO_free_nid_postfix(bio);
+    return output;
+}
+
+void Times() {
+    const std::pair<const char*, const char*> utc[] = {{"170102030405Z", "Jan  2 03:04:05 2017 GMT"}, {"4912312359Z", "Dec 31 23:59:00 2049 GMT"},
+        {"500101000000", "Jan  1 00:00:00 1950"}, {"991231235959+0100", "Dec 31 23:59:59 1999"}, {"17010203040aZ", "Jan  2 03:04:00 2017 GMT"}};
+    for (const auto& [input, output] : utc) Require(PrintedTime(23, input, 1) == output, input);
+    const std::pair<const char*, const char*> generalized[] = {{"20170102030405Z", "Jan  2 03:04:05 2017 GMT"},
+        {"20170102030405.123Z", "Jan  2 03:04:05.123 2017 GMT"}, {"20170102030405.Z", "Jan  2 03:04:05. 2017 GMT"},
+        {"20170102030405.12a", "Jan  2 03:04:05.12 2017"}, {"201701020304", "Jan  2 03:04:00 2017"}, {"19991231235959.5", "Dec 31 23:59:59.5 1999"}};
+    for (const auto& [input, output] : generalized) Require(PrintedTime(24, input, 1) == output, input);
+    const std::pair<int, const char*> bad[] = {{23, "1713"}, {23, "171302030405Z"}, {23, "170002030405Z"}, {23, "17x102030405Z"},
+        {24, "20170102030"}, {24, "20171302030405Z"}, {4, "170102030405Z"}, {22, "x"}};
+    for (const auto& [type, input] : bad) Require(PrintedTime(type, input, 0) == "Bad time value", input);
+    Asn1String time{13, 23, reinterpret_cast<unsigned char*>(const_cast<char*>("170102030405Z")), 0};
+    Require(ASN1_TIME_print_nid_postfix(nullptr, &time) == 1, "a valid time returns 1 even when the write fails");
+    time.type = 4;
+    Require(ASN1_TIME_print_nid_postfix(nullptr, &time) == 0, "an invalid time returns 0 without a BIO");
+    Asn1String empty{0, 23, nullptr, 0};
+    Require(ASN1_TIME_print_nid_postfix(nullptr, &empty) == 0, "an empty time is bad");
+    RequireInvalidArgument([] { ASN1_TIME_print_nid_postfix(nullptr, nullptr); }, "a null time");
+    time.data = nullptr;
+    RequireInvalidArgument([&] { ASN1_TIME_print_nid_postfix(nullptr, &time); }, "null time data with a positive length");
+}
+
 std::size_t lastAllocationSize = 0;
 int allocationCount = 0;
+bool failAllocation = false;
 int freeCount = 0;
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
     lastAllocationSize = size;
     ++allocationCount;
-    return std::malloc(size);
+    return failAllocation ? nullptr : std::malloc(size);
 }
 
 void APS5_VABI Free_nid_no_patch(void* pointer) {
@@ -214,6 +324,32 @@ void Allocator() {
     constexpr unsigned char expected[] = {0xc3, 0xbf};
     CheckConversion(20, input, expected);
     Require(allocationCount == 1 && lastAllocationSize == 3 && freeCount == 1, "conversion uses the application allocator");
+    constexpr unsigned char universal[] = {0, 0, 0, 'A', 0, 0, 0x03, 0xa9, 0, 0, 0x20, 0xac, 0, 0x01, 0xf6, 0x00};
+    constexpr unsigned char mixed[] = {'A', 0xce, 0xa9, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80};
+    CheckConversion(28, universal, mixed);
+    Require(allocationCount == 2 && lastAllocationSize == sizeof(mixed) + 1 && freeCount == 2,
+        "a conversion with every UTF-8 length makes one allocation of the exact size");
+    unsigned char badUtf8[] = {'A', 0xc0, 0x80};
+    Asn1String malformed{3, 12, badUtf8, 0};
+    unsigned char* untouched = nullptr;
+    ERR_clear_error_nid_postfix();
+    Require(ASN1_STRING_to_UTF8_nid_postfix(&untouched, &malformed) == -1 && untouched == nullptr && allocationCount == 2,
+        "a malformed string allocates nothing");
+    ERR_clear_error_nid_postfix();
+    failAllocation = true;
+    unsigned char sentinel = 0xab;
+    unsigned char* result = &sentinel;
+    unsigned char latin[] = {0xff};
+    Asn1String converted{1, 20, latin, 0};
+    ERR_clear_error_nid_postfix();
+    Require(ASN1_STRING_to_UTF8_nid_postfix(&result, &converted) == -1 && result == &sentinel, "allocation failure of a converted string");
+    Require(ERR_get_error_nid_postfix() == Asn1Error(65) && ERR_get_error_nid_postfix() == 0, "one malloc failure for a converted string");
+    unsigned char utf8[] = {'A'};
+    Asn1String copied{1, 12, utf8, 0};
+    Require(ASN1_STRING_to_UTF8_nid_postfix(&result, &copied) == -1 && result == &sentinel, "allocation failure of a UTF8String copy");
+    Require(ERR_get_error_nid_postfix() == Asn1Error(65) && ERR_get_error_nid_postfix() == Asn1Error(65) && ERR_get_error_nid_postfix() == 0,
+        "ASN1_STRING_set and ASN1_mbstring_ncopy both report the malloc failure of a UTF8String copy");
+    failAllocation = false;
 }
 
 } // namespace
@@ -226,6 +362,9 @@ int main(int argc, char**) {
     std::array<void*, 10> api{};
     ApplicationHeapRegister_nid_no_patch(api.data());
     Accessors();
+    Print();
     Integers();
     Strings();
+    MalformedStrings();
+    Times();
 }

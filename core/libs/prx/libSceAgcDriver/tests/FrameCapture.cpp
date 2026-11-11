@@ -5,7 +5,9 @@
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -141,6 +143,7 @@ void testRoundTrip(const std::filesystem::path& directory) {
 
     const FrameCaptureReader reader(directory);
     check(!reader.Truncated(), "a finished capture reads as truncated");
+    check(reader.Version() == 2, "a capture this build wrote reads as calls format " + std::to_string(reader.Version()) + ", not 2");
     check(reader.Header() == "{\"magic\":\"aps5-frame-capture 1\"}\n", "header does not round-trip");
     check(reader.Calls().size() == calls.size(), "call count does not round-trip");
     for (std::size_t index = 0; index < calls.size(); ++index) check(sameCall(reader.Calls()[index], calls[index]), "call " + std::to_string(index) + " does not round-trip");
@@ -184,6 +187,30 @@ void testTruncated(const std::filesystem::path& source, const std::filesystem::p
     check(reader.Chunks().back().kind != FrameMemoryKind::Delta, "a cut memory chunk is not dropped");
 }
 
+void testVersionOne(const std::filesystem::path& source, const std::filesystem::path& directory) {
+    std::filesystem::remove_all(directory);
+    std::filesystem::copy(source, directory, std::filesystem::copy_options::recursive);
+    constexpr std::string_view VersionOne = "aps5-frame-calls 1\n";
+    {
+        std::fstream file(directory / FrameCaptureWriter::CallsName, std::ios::binary | std::ios::in | std::ios::out);
+        file.write(VersionOne.data(), static_cast<std::streamsize>(VersionOne.size()));
+        check(file.good(), "cannot write the calls format 1 magic");
+    }
+    std::uint32_t version = 0;
+    std::vector<FrameCall> readBack;
+    try {
+        const FrameCaptureReader reader(directory);
+        version = reader.Version();
+        readBack = reader.Calls();
+    } catch (const std::runtime_error& error) {
+        check(false, std::string("a calls format 1 capture does not read: ") + error.what());
+    }
+    check(version == 1, "a calls format 1 capture reads as format " + std::to_string(version));
+    const auto calls = sampleCalls();
+    check(readBack.size() == calls.size(), "a calls format 1 capture reads " + std::to_string(readBack.size()) + " calls, not " + std::to_string(calls.size()));
+    for (std::size_t index = 0; index < calls.size(); ++index) check(sameCall(readBack[index], calls[index]), "call " + std::to_string(index) + " of a calls format 1 capture does not round-trip");
+}
+
 void testCorrupt(const std::filesystem::path& source, const std::filesystem::path& directory) {
     std::filesystem::remove_all(directory);
     std::filesystem::copy(source, directory, std::filesystem::copy_options::recursive);
@@ -211,6 +238,40 @@ void testWriter(const std::filesystem::path& directory) {
     checkThrows([&] { other.WriteCall(unknown); }, "an unknown call kind is written");
 }
 
+std::vector<std::byte> guest(64);
+std::vector<std::pair<std::uint64_t, std::uint64_t>> reads;
+constexpr std::uint64_t GuestBase = 0x10000;
+
+void readFake(std::uint64_t address, std::span<std::byte> destination) {
+    reads.emplace_back(address, destination.size());
+    std::memcpy(destination.data(), guest.data() + (address - GuestBase), destination.size());
+}
+
+void checkReadAround(std::vector<std::pair<std::uint64_t, std::uint64_t>> skipped, std::uint64_t zeroBegin, std::uint64_t zeroEnd, const std::string& what) {
+    reads.clear();
+    std::vector<std::byte> bytes(48, std::byte{0xcc});
+    const auto zeroed = AgcDriver::ReadAroundRanges(GuestBase + 8, bytes, skipped, readFake);
+    check(zeroed == zeroEnd - zeroBegin, what + ": the zeroed byte count is wrong");
+    for (std::size_t at = 0; at < bytes.size(); ++at) {
+        const auto address = GuestBase + 8 + at;
+        const bool zero = address >= GuestBase + zeroBegin && address < GuestBase + zeroEnd;
+        check(bytes[at] == (zero ? std::byte{0} : guest[address - GuestBase]), what + ": byte " + std::to_string(at) + " is wrong");
+    }
+    for (const auto& [address, size] : reads) {
+        for (const auto& [begin, length] : skipped) check(size == 0 || address + size <= begin || address >= begin + length, what + ": a skipped range was read");
+    }
+}
+
+void testReadAroundRanges() {
+    for (std::size_t at = 0; at < guest.size(); ++at) guest[at] = static_cast<std::byte>(at + 1);
+    checkReadAround({{GuestBase + 20, 8}}, 20, 28, "a range in the middle");
+    checkReadAround({{GuestBase + 4, 10}}, 8, 14, "a range over the start");
+    checkReadAround({{GuestBase + 50, 20}}, 50, 56, "a range over the end");
+    checkReadAround({{GuestBase + 16, 8}, {GuestBase + 20, 8}}, 16, 28, "overlapping ranges");
+    checkReadAround({{GuestBase, 4}, {GuestBase + 60, 4}}, 0, 0, "ranges outside the block");
+    checkReadAround({{GuestBase, 64}}, 8, 56, "a range over the whole block");
+}
+
 void testAllZero() {
     std::vector<std::byte> bytes(37);
     check(AgcDriver::AllZero(bytes), "zero bytes are not all zero");
@@ -228,8 +289,10 @@ int main() {
     const auto root = std::filesystem::temp_directory_path() / ("aps5-frame-capture-test-" + std::to_string(getpid()));
     std::filesystem::remove_all(root);
     testAllZero();
+    testReadAroundRanges();
     testRoundTrip(root / "capture");
     testTruncated(root / "capture", root / "truncated");
+    testVersionOne(root / "capture", root / "version-one");
     testCorrupt(root / "capture", root / "corrupt");
     testWriter(root / "writer");
     std::filesystem::remove_all(root);

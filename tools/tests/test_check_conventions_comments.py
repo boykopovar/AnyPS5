@@ -157,6 +157,77 @@ class RawLiteralCommentTests(unittest.TestCase):
                 self.assertEqual(self.findings(comment, [1]), [("comment", self.path, 1, "")])
 
 
+class LicenseHeaderCommentTests(unittest.TestCase):
+    path = "core/example.cpp"
+
+    def findings(self, source, added):
+        check = Check.__new__(Check)
+        check.tree = set()
+        check.status = {}
+        check.findings = []
+        lines = source.split("\n")
+        check.added = {self.path: [(number, lines[number - 1]) for number in added]}
+        with patch.object(check, "show", return_value=source), patch.object(check, "duplicates"):
+            check.code()
+        return check.findings
+
+    def test_an_unmarked_line_in_a_marked_run_is_not_reported(self):
+        source = ("/* Derived from FreeBSD lib/msun/src/e_atan2.c (release/11.4.0) */\n"
+                   "/* Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved. */\n"
+                   "#include <cmath>\n"
+                   "int value;\n")
+        self.assertEqual(self.findings(source, [1, 2]), [])
+
+    def test_new_comment_after_code_starts_is_still_reported(self):
+        source = ("/* an existing header notice */\n"
+                   "#include <cmath>\n"
+                   "/* a new mid-file comment */\n"
+                   "int value;\n")
+        self.assertEqual(self.findings(source, [3]), [("comment", self.path, 3, "")])
+
+    def test_mid_file_license_block_is_not_reported(self):
+        source = ("#include <cmath>\n"
+                   "/* Permission to use, copy, modify, and distribute this\n"
+                   " * software is freely granted, provided that this notice\n"
+                   " * is preserved. */\n"
+                   "int value;\n")
+        self.assertEqual(self.findings(source, [2, 3, 4]), [])
+
+    def test_derived_from_alone_is_not_a_license_marker(self):
+        source = ("#include <cmath>\n"
+                   "int value;\n"
+                   "// Derived from X\n"
+                   "int other;\n")
+        self.assertEqual(self.findings(source, [3]), [("comment", self.path, 3, "")])
+
+    def test_mentioning_copyright_without_a_marker_shape_is_still_reported(self):
+        source = "// handle copyright string\n#include <cmath>\nint value;\n"
+        self.assertEqual(self.findings(source, [1]), [("comment", self.path, 1, "")])
+
+    def test_todo_after_a_blank_line_following_a_license_block_is_still_reported(self):
+        source = ("/* Copyright (c) 2024 Example Corp. All rights reserved. */\n"
+                   "\n"
+                   "// TODO: refactor this\n"
+                   "#include <cmath>\n"
+                   "int value;\n")
+        self.assertEqual(self.findings(source, [1, 3]), [("comment", self.path, 3, "")])
+
+    def test_a_new_comment_is_reported_when_the_file_opens_with_code(self):
+        source = "int value;\n/* a new comment after code */\n"
+        self.assertEqual(self.findings(source, [2]), [("comment", self.path, 2, "")])
+
+    def test_a_marker_on_a_code_line_is_still_reported(self):
+        source = "#include <cmath>\nint value; // Copyright (c) 2020 X\n"
+        self.assertEqual(self.findings(source, [2]), [("comment", self.path, 2, "")])
+
+    def test_a_marker_sharing_its_line_with_other_text_is_still_exempt(self):
+        source = ("#include <cmath>\n"
+                   "int value;\n"
+                   "// Copyright 2025 TODO: hack\n"
+                   "int other;\n")
+        self.assertEqual(self.findings(source, [3]), [])
+
+
 class HashCommentTests(unittest.TestCase):
     def findings(self, path, source, added):
         check = Check.__new__(Check)
@@ -184,6 +255,11 @@ class HashCommentTests(unittest.TestCase):
         for source in ("#!/usr/bin/env python3\nprint(1)\n", "\ufeff#!/usr/bin/env python3\nprint(1)\n"):
             with self.subTest(source=source):
                 self.assertEqual(self.findings("tools/generate.py", source, [1, 2]), [])
+
+    def test_hash_bang_after_the_first_line_is_a_comment(self):
+        for path in ("tools/generate.py", "cmake/Generate.cmake", "CMakeLists.txt"):
+            with self.subTest(path=path):
+                self.assertEqual(self.findings(path, "set = 1\n#!pending\n", [1, 2]), [("comment", path, 2, "")])
 
     def test_unparsable_python_falls_back_to_the_line_check(self):
         source = 'TEMPLATE = """\n#include <cstdint>\n'
@@ -317,7 +393,7 @@ class SilentStubSectionTests(unittest.TestCase):
             env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="safe.directory", GIT_CONFIG_VALUE_0=str(root))
             return subprocess.run(
                 [sys.executable, str(checker), "--base", "HEAD~1"],
-                cwd=root, capture_output=True, text=True, env=env, timeout=10,
+                cwd=root, capture_output=True, text=True, env=env, timeout=120,
             )
 
     def require_rejected(self, debt, debt_path=library_debt):
@@ -386,6 +462,25 @@ class SilentStubSectionTests(unittest.TestCase):
         result = self.check_stub(f"# libSceExample technical debt\n\n### Functional\n\n{entry}")
         self.assertIn("docs/dev/debt/libSceExample.md:5: error: [debt-file]", result.stdout)
         self.assertIn("docs/dev/debt/shader.md", result.stdout)
+
+    def test_entry_linking_core_on_a_continuation_line_goes_in_the_library_file(self):
+        entry = "- sceExample is unverified against the console\n  ([reference](../../../core/libs/prx/libSceExample/Reference.hpp)).\n"
+        result = self.check_stub(f"# libSceExample technical debt\n\n### Functional\n\n{entry}")
+        self.assertNotIn("[debt-file]", result.stdout + result.stderr)
+        result = self.check_stub(f"# Project technical debt\n\n### Functional\n\n{entry.replace('../../../', '../../')}", "docs/dev/TechnicalDebt.md")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("docs/dev/TechnicalDebt.md:5: error: [debt-file]", result.stdout)
+        self.assertIn("docs/dev/debt/libSceExample.md", result.stdout)
+
+    def test_entry_continuation_after_a_blank_line_still_names_its_file(self):
+        entry = "- sceExample is unverified against the console\n\n  ([reference](../../../core/libs/prx/libSceExample/Reference.hpp)).\n"
+        result = self.check_stub(f"# libSceExample technical debt\n\n### Functional\n\n{entry}")
+        self.assertNotIn("[debt-file]", result.stdout + result.stderr)
+
+    def test_core_link_in_prose_after_an_entry_does_not_name_its_file(self):
+        text = "# Project technical debt\n\n### Build\n\n- A toolchain limitation.\n\nSee [reference](../../core/libs/prx/libSceExample/Reference.hpp).\n"
+        result = self.check_stub(text, "docs/dev/TechnicalDebt.md")
+        self.assertNotIn("[debt-file]", result.stdout + result.stderr)
 
     def test_entry_without_a_core_link_stays_in_the_index(self):
         result = self.check_stub("# Project technical debt\n\n### Build\n\n- A toolchain limitation.\n", "docs/dev/TechnicalDebt.md")

@@ -3,12 +3,13 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/JumpBuffer.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
@@ -19,10 +20,16 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#ifdef __APPLE__
+#include <new>
+#include <typeinfo>
+#endif
 
 static_assert(sizeof(GuestSigaction) == 32 && offsetof(GuestSigaction, flags) == 8 && offsetof(GuestSigaction, mask) == 12);
 
-extern "C" GuestSignalSet _sigintr_nid_postfix{};
+extern "C" {
+GuestSignalSet _sigintr_nid_postfix{};
+}
 
 namespace {
 
@@ -42,9 +49,15 @@ std::atomic<std::uint32_t> handlerMasks[MaxSignal + 1][4]{};
 std::atomic<int> handlerFlags[MaxSignal + 1]{};
 std::atomic<bool> handlerReset[MaxSignal + 1]{};
 static_assert(std::atomic<GuestHandler>::is_always_lock_free);
-std::atomic<std::uint32_t> blockedMask{0};
-std::atomic<std::uint32_t> blockedMaskExtra[3]{};
-std::atomic<std::uint64_t> handlerHolds[MaxSignal + 1]{};
+struct ThreadSignals {
+    std::atomic<std::uint32_t> blocked[4]{};
+    std::atomic<std::uint64_t> holds[MaxSignal + 1]{};
+};
+ThreadSignals& CurrentSignals() {
+    thread_local ThreadSignals* signals = nullptr;
+    if (signals == nullptr) signals = new ThreadSignals();
+    return *signals;
+}
 constexpr std::uint64_t HoldCount = 0xffffffffu;
 thread_local std::uint32_t holdReleases[MaxSignal + 1]{};
 static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
@@ -82,34 +95,33 @@ std::uint32_t SignalBit(int guest) { return 1u << ((guest - 1) % 32); }
 std::uint32_t SignalWord(int guest) { return static_cast<std::uint32_t>((guest - 1) / 32); }
 bool SignalInSet(const GuestSignalSet& set, int guest) { return (set.bits[SignalWord(guest)] & SignalBit(guest)) != 0; }
 bool SetHasSignal(const GuestSignalSet& set) { return (set.bits[0] | set.bits[1] | set.bits[2] | set.bits[3]) != 0; }
-bool HeldByHandler(int guest) { return (handlerHolds[guest].load() & HoldCount) != 0; }
-void ReleaseHold(int guest, std::uint32_t epoch) {
-    auto value = handlerHolds[guest].load();
-    while ((value >> 32) == epoch && (value & HoldCount) != 0 && !handlerHolds[guest].compare_exchange_weak(value, value - 1)) {}
+bool HeldByHandler(ThreadSignals& self, int guest) { return (self.holds[guest].load() & HoldCount) != 0; }
+void ReleaseHold(ThreadSignals& self, int guest, std::uint32_t epoch) {
+    auto value = self.holds[guest].load();
+    while ((value >> 32) == epoch && (value & HoldCount) != 0 && !self.holds[guest].compare_exchange_weak(value, value - 1)) {}
 }
-void ClearHold(int guest) {
-    auto value = handlerHolds[guest].load();
-    while ((value & HoldCount) != 0 && !handlerHolds[guest].compare_exchange_weak(value, ((value >> 32) + 1) << 32)) {}
+void ClearHold(ThreadSignals& self, int guest) {
+    auto value = self.holds[guest].load();
+    while ((value & HoldCount) != 0 && !self.holds[guest].compare_exchange_weak(value, ((value >> 32) + 1) << 32)) {}
 }
-std::uint32_t HeldWord(int word) {
+std::uint32_t HeldWord(ThreadSignals& self, int word) {
     std::uint32_t held = 0;
     for (int bit = 0; bit < 32; ++bit)
-        if (HeldByHandler(word * 32 + bit + 1)) held |= 1u << bit;
+        if (HeldByHandler(self, word * 32 + bit + 1)) held |= 1u << bit;
     return held;
 }
-std::uint32_t BlockedWord(int word) {
-    return (word == 0 ? blockedMask.load() : blockedMaskExtra[word - 1].load()) | HeldWord(word);
+std::uint32_t BlockedWord(ThreadSignals& self, int word) {
+    return self.blocked[word].load() | HeldWord(self, word);
 }
-bool SignalBlocked(int guest) {
+bool SignalBlocked(ThreadSignals& self, int guest) {
     if (guest < 1 || guest > MaxSignal) return false;
-    const auto word = SignalWord(guest);
-    const auto mask = word == 0 ? blockedMask.load() : blockedMaskExtra[word - 1].load();
-    return (mask & SignalBit(guest)) != 0 || HeldByHandler(guest);
+    return (self.blocked[SignalWord(guest)].load() & SignalBit(guest)) != 0 || HeldByHandler(self, guest);
 }
+bool SignalBlocked(int guest) { return SignalBlocked(CurrentSignals(), guest); }
 
 struct PendingSignals {
     std::mutex lock;
-    std::condition_variable changed;
+    TimedWait::Condition changed;
     std::atomic<std::uint32_t> words[4]{};
 };
 
@@ -126,7 +138,7 @@ void MarkPending(int guest) {
         std::lock_guard lock(pending.lock);
         pending.words[SignalWord(guest)].fetch_or(SignalBit(guest), std::memory_order_relaxed);
     }
-    pending.changed.notify_all();
+    pending.changed.NotifyAll();
 }
 
 bool TakePending(int guest) {
@@ -165,6 +177,9 @@ int NativeSignal(int guest) {
         case 6: return SIGABRT;
         case 8: return SIGFPE;
         case 11: return SIGSEGV;
+#ifndef _WIN32
+        case 13: return SIGPIPE;
+#endif
         case 15: return SIGTERM;
         default: return 0;
     }
@@ -175,6 +190,7 @@ void ResetToDefault(int guest) {
     if (const int native = NativeSignal(guest)) std::signal(native, SIG_DFL);
 }
 void RunHandler(int guest, GuestHandler handler) {
+    auto& self = CurrentSignals();
     const int flags = handlerFlags[guest].load();
     std::uint32_t mask[4];
     for (int word = 0; word < 4; ++word) mask[word] = handlerMasks[guest][word].load();
@@ -182,31 +198,31 @@ void RunHandler(int guest, GuestHandler handler) {
     mask[0] &= ~UnblockableSignals;
     if ((flags & SaResethand) != 0) ResetToDefault(guest);
     std::uint32_t before[4];
-    for (int word = 0; word < 4; ++word) before[word] = (word == 0 ? blockedMask.load() : blockedMaskExtra[word - 1].load()) & mask[word];
+    for (int word = 0; word < 4; ++word) before[word] = self.blocked[word].load() & mask[word];
     std::uint32_t epochs[MaxSignal + 1]{};
     std::uint32_t releases[MaxSignal + 1]{};
     for (int held = 1; held <= MaxSignal; ++held) {
         if ((mask[SignalWord(held)] & SignalBit(held)) == 0) continue;
         releases[held] = holdReleases[held];
-        epochs[held] = static_cast<std::uint32_t>(handlerHolds[held].fetch_add(1) >> 32);
+        epochs[held] = static_cast<std::uint32_t>(self.holds[held].fetch_add(1) >> 32);
     }
     handler(guest);
     std::uint32_t replaced[4]{};
     for (int held = 1; held <= MaxSignal; ++held) {
         if ((mask[SignalWord(held)] & SignalBit(held)) == 0) continue;
         if (holdReleases[held] != releases[held]) replaced[SignalWord(held)] |= SignalBit(held);
-        ReleaseHold(held, epochs[held]);
+        ReleaseHold(self, held, epochs[held]);
     }
     for (int word = 0; word < 4; ++word) {
         if (replaced[word] == 0) continue;
-        auto& target = word == 0 ? blockedMask : blockedMaskExtra[word - 1];
+        auto& target = self.blocked[word];
         target.fetch_and(~(replaced[word] & ~before[word]));
         target.fetch_or(replaced[word] & before[word]);
     }
 }
 void Dispatch(int native) {
     int guest = 0;
-    for (int candidate : {2, 4, 6, 8, 11, 15})
+    for (int candidate : {2, 4, 6, 8, 11, 13, 15})
         if (NativeSignal(candidate) == native) { guest = candidate; break; }
     if (!guest) return;
 #ifdef _WIN32
@@ -307,28 +323,34 @@ bool DeliverUnblockedPending() {
     return caught;
 }
 
+std::optional<std::uint64_t> SignalWaitDeadline(const KernelTimespec& timeout) {
+    if (timeout.tv_sec > INT32_MAX) return std::nullopt;
+    const std::uint64_t now = TimedWait::NowNanos();
+    if (timeout.tv_sec < 0) return now;
+    return now + static_cast<std::uint64_t>(timeout.tv_sec) * 1000000000ULL + static_cast<std::uint64_t>(timeout.tv_nsec);
+}
+
 int WaitForPendingInSet(const GuestSignalSet& set, bool waitForever, const KernelTimespec* timeout, int* guest) {
     auto& pending = Pending();
     std::unique_lock lock(pending.lock);
-    std::optional<std::chrono::steady_clock::time_point> deadline;
+    const std::optional<std::uint64_t> deadline = waitForever ? std::nullopt : SignalWaitDeadline(*timeout);
     for (;;) {
         if (PendingInSet(set, guest)) return 0;
-        if (waitForever) {
-            pending.changed.wait(lock);
+        if (!deadline) {
+            pending.changed.Wait(lock);
             continue;
         }
-        if (!deadline) deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout->tv_sec) +
-            std::chrono::nanoseconds(timeout->tv_nsec);
-        if (pending.changed.wait_until(lock, *deadline) == std::cv_status::no_timeout) continue;
+        if (pending.changed.WaitUntil(lock, *deadline)) continue;
         return PendingInSet(set, guest) ? 0 : GuestEagain;
     }
 }
 
-void FillSiginfo(GuestSiginfo* info, int guest) {
-    *info = {};
-    info->signo = guest;
-    info->code = GuestSiuser;
-    info->pid = getpid_nid_postfix();
+bool FillSiginfo(GuestSiginfo* info, int guest) {
+    GuestSiginfo local{};
+    local.signo = guest;
+    local.code = GuestSiuser;
+    local.pid = getpid_nid_postfix();
+    return GuestCopyOut_nid_no_patch(info, &local, sizeof(local));
 }
 
 void WaitForDeliverableSignal() {
@@ -338,7 +360,7 @@ void WaitForDeliverableSignal() {
         {
             std::unique_lock lock(pending.lock);
             if (!TakePendingUnblocked(&guest)) {
-                pending.changed.wait(lock);
+                pending.changed.Wait(lock);
                 continue;
             }
         }
@@ -352,10 +374,11 @@ namespace {
 constexpr std::int64_t MaxItimerSeconds = 0x7fffffff / 2;
 struct AlarmState {
     std::mutex lock;
-    std::condition_variable changed;
+    TimedWait::Condition changed;
     std::optional<std::chrono::steady_clock::time_point> deadline;
     std::chrono::microseconds interval{0};
     bool threadStarted = false;
+    ThreadSignals* armer = nullptr;
 };
 
 AlarmState& Alarms() {
@@ -370,22 +393,30 @@ std::string DescribeInterval(std::chrono::microseconds interval) {
     return text;
 }
 
-void ExpireAlarm(std::chrono::microseconds interval) {
+void ExpireAlarm(std::chrono::microseconds interval, ThreadSignals& armer) {
     std::uintptr_t handler = 0;
     {
         std::lock_guard lock(registration);
         handler = dispositions[GuestSigalrm].handler;
     }
+    KqueueSignalSent(GuestSigalrm);
     if (handler == 1) return;
-    if (SignalBlocked(GuestSigalrm)) {
+    if (SignalBlocked(armer, GuestSigalrm)) {
         MarkPending(GuestSigalrm);
         std::atomic_thread_fence(std::memory_order_seq_cst);
-        if (SignalBlocked(GuestSigalrm) || !TakePending(GuestSigalrm)) return;
+        if (SignalBlocked(armer, GuestSigalrm) || !TakePending(GuestSigalrm)) return;
         handler = Disposition(GuestSigalrm).handler;
         if (handler == 1) return;
     }
     if (handler == 0) TerminateBySigalrm("the alarm expired");
+#ifdef __APPLE__
+    const std::string message = "ITIMER_REAL (it_interval " + DescribeInterval(interval) + ") expired: delivering SIGALRM to a guest handler is not implemented";
+    void* object = __cxa_allocate_exception_nid_postfix(sizeof(std::runtime_error));
+    new (object) std::runtime_error(message);
+    __cxa_throw_nid_postfix(object, const_cast<std::type_info*>(&typeid(std::runtime_error)), [](void* thrown) { static_cast<std::runtime_error*>(thrown)->~runtime_error(); });
+#else
     throw std::runtime_error("ITIMER_REAL (it_interval " + DescribeInterval(interval) + ") expired: delivering SIGALRM to a guest handler is not implemented");
+#endif
 }
 
 void RunAlarms() {
@@ -393,20 +424,22 @@ void RunAlarms() {
     std::unique_lock lock(alarms.lock);
     for (;;) {
         if (!alarms.deadline) {
-            alarms.changed.wait(lock);
+            alarms.changed.Wait(lock);
             continue;
         }
         const auto deadline = *alarms.deadline;
-        if (alarms.changed.wait_until(lock, deadline) != std::cv_status::timeout || alarms.deadline != deadline) continue;
-        const auto interval = alarms.interval;
-        if (interval.count() == 0) alarms.deadline.reset();
-        else {
-            const auto now = std::chrono::steady_clock::now();
-            const auto periods = now < deadline ? 1 : (now - deadline) / interval + 1;
-            alarms.deadline = deadline + periods * interval;
+        const auto now = std::chrono::steady_clock::now();
+        if (now < deadline) {
+            const auto remaining = std::chrono::duration_cast<std::chrono::nanoseconds>(deadline - now).count();
+            alarms.changed.WaitUntil(lock, TimedWait::NowNanos() + static_cast<std::uint64_t>(remaining));
+            continue;
         }
+        const auto interval = alarms.interval;
+        ThreadSignals& armer = *alarms.armer;
+        if (interval.count() == 0) alarms.deadline.reset();
+        else alarms.deadline = deadline + ((now - deadline) / interval + 1) * interval;
         lock.unlock();
-        ExpireAlarm(interval);
+        ExpireAlarm(interval, armer);
         lock.lock();
     }
 }
@@ -421,7 +454,7 @@ void NotifyAlarms(AlarmState& alarms) {
         std::thread(RunAlarms).detach();
         alarms.threadStarted = true;
     }
-    alarms.changed.notify_all();
+    alarms.changed.NotifyAll();
 }
 }
 
@@ -437,14 +470,17 @@ extern "C" unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int seconds) 
     const auto remaining = static_cast<unsigned int>((micros + 999999) / 1000000);
     alarms.interval = std::chrono::microseconds(0);
     if (seconds == 0) alarms.deadline.reset();
-    else alarms.deadline = now + std::chrono::seconds(seconds);
+    else {
+        alarms.deadline = now + std::chrono::seconds(seconds);
+        alarms.armer = &CurrentSignals();
+    }
     NotifyAlarms(alarms);
     return remaining;
 }
 
 static_assert(sizeof(GuestItimerval) == 32 && offsetof(GuestItimerval, value) == 16);
 
-extern "C" int APS5_VABI getitimer_nid_postfix(int which, GuestItimerval* output) {
+static int GetitimerInto(int which, GuestItimerval* output) {
     if (which < 0 || which > 2) {
         *__error_nid_postfix() = 22;
         return -1;
@@ -475,6 +511,16 @@ extern "C" int APS5_VABI getitimer_nid_postfix(int which, GuestItimerval* output
     return 0;
 }
 
+extern "C" int APS5_VABI getitimer_nid_postfix(int which, GuestItimerval* output) {
+    GuestItimerval result{};
+    const int status = GetitimerInto(which, output == nullptr ? nullptr : &result);
+    if (status == 0 && !GuestCopyOut_nid_no_patch(output, &result, sizeof(result))) {
+        *__error_nid_postfix() = 14;
+        return -1;
+    }
+    return status;
+}
+
 namespace {
 constexpr int ItimerReal = 0;
 constexpr int ItimerProf = 2;
@@ -502,7 +548,7 @@ extern "C" int APS5_VABI setitimer_nid_postfix(int which, const GuestItimerval* 
     if (value == nullptr && previous == nullptr) { *__error_nid_postfix() = 14; return -1; }
     GuestItimerval requested{};
     if (value != nullptr) {
-        requested = *value;
+        if (!GuestCopyIn_nid_no_patch(&requested, value, sizeof(requested))) { *__error_nid_postfix() = 14; return -1; }
         if (!ValidItimer(requested.value)) { *__error_nid_postfix() = 22; return -1; }
         if (!ItimerSet(requested.value)) requested.interval = {};
         else if (!ValidItimer(requested.interval)) { *__error_nid_postfix() = 22; return -1; }
@@ -510,7 +556,10 @@ extern "C" int APS5_VABI setitimer_nid_postfix(int which, const GuestItimerval* 
     if (which != ItimerReal) {
         if (ItimerSet(requested.value))
             throw std::runtime_error(std::string("setitimer: ") + (which == ItimerProf ? "ITIMER_PROF" : "ITIMER_VIRTUAL") + " needs process CPU time accounting, which is not implemented");
-        if (previous != nullptr) *previous = {};
+        if (previous != nullptr) {
+            const GuestItimerval cleared{};
+            if (!GuestCopyOut_nid_no_patch(previous, &cleared, sizeof(cleared))) { *__error_nid_postfix() = 14; return -1; }
+        }
         return 0;
     }
     if (requested.interval.tv_sec == 0 && requested.interval.tv_usec != 0 && requested.interval.tv_usec < MinExactIntervalMicros)
@@ -524,12 +573,14 @@ extern "C" int APS5_VABI setitimer_nid_postfix(int which, const GuestItimerval* 
         old.value = ItimerTimeval(RemainingAlarm(alarms, now));
         if (value != nullptr) {
             alarms.interval = ItimerDuration(requested.interval);
-            if (ItimerSet(requested.value)) alarms.deadline = now + ItimerDuration(requested.value);
-            else alarms.deadline.reset();
+            if (ItimerSet(requested.value)) {
+                alarms.deadline = now + ItimerDuration(requested.value);
+                alarms.armer = &CurrentSignals();
+            } else alarms.deadline.reset();
             NotifyAlarms(alarms);
         }
     }
-    if (previous != nullptr) *previous = old;
+    if (previous != nullptr && !GuestCopyOut_nid_no_patch(previous, &old, sizeof(old))) { *__error_nid_postfix() = 14; return -1; }
     return 0;
 }
 
@@ -542,42 +593,44 @@ thread_local GuestStack alternateStack{nullptr, 0, SsDisable};
 
 namespace {
 
-int ChangeBlockedMask(int how, const GuestSignalSet* set, GuestSignalSet* previousSet, bool releaseHolds, bool* caught = nullptr) {
+int ChangeBlockedMask(int how, const GuestSignalSet* set, GuestSignalSet* previousSet, bool releaseHolds, bool* caught = nullptr, GuestSignalSet* guestPrevious = nullptr) {
     if (set != nullptr && (how < 1 || how > 3)) { *__error_nid_postfix() = 22; return -1; }
+    auto& self = CurrentSignals();
     {
         std::lock_guard lock(registration);
         if (previousSet != nullptr)
-            for (int word = 0; word < 4; ++word) previousSet->bits[word] = BlockedWord(word);
+            for (int word = 0; word < 4; ++word) previousSet->bits[word] = BlockedWord(self, word);
         if (set != nullptr) {
             switch (how) {
                 case 1:
-                    blockedMask.fetch_or(set->bits[0] & ~UnblockableSignals);
-                    for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].fetch_or(set->bits[word]);
+                    self.blocked[0].fetch_or(set->bits[0] & ~UnblockableSignals);
+                    for (int word = 1; word < 4; ++word) self.blocked[word].fetch_or(set->bits[word]);
                     break;
                 case 2:
-                    blockedMask.fetch_and(~set->bits[0]);
-                    for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].fetch_and(~set->bits[word]);
+                    for (int word = 0; word < 4; ++word) self.blocked[word].fetch_and(~set->bits[word]);
                     if (releaseHolds)
                         for (int guest = 1; guest <= MaxSignal; ++guest) {
                             if (!SignalInSet(*set, guest)) continue;
-                            ClearHold(guest);
+                            ClearHold(self, guest);
                             ++holdReleases[guest];
                         }
                     break;
                 case 3:
-                    blockedMask.store(set->bits[0] & ~UnblockableSignals);
-                    for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].store(set->bits[word]);
+                    self.blocked[0].store(set->bits[0] & ~UnblockableSignals);
+                    for (int word = 1; word < 4; ++word) self.blocked[word].store(set->bits[word]);
                     if (releaseHolds)
                         for (int guest = 1; guest <= MaxSignal; ++guest) {
-                            ClearHold(guest);
+                            ClearHold(self, guest);
                             ++holdReleases[guest];
                         }
                     break;
             }
         }
     }
+    const bool faulted = guestPrevious != nullptr && !GuestCopyOut_nid_no_patch(guestPrevious, previousSet, sizeof(*previousSet));
     std::atomic_thread_fence(std::memory_order_seq_cst);
     if (DeliverUnblockedPending() && caught != nullptr) *caught = true;
+    if (faulted) { *__error_nid_postfix() = 14; return -1; }
     return 0;
 }
 
@@ -603,6 +656,11 @@ GuestHandler APS5_VABI signal_nid_postfix(int guest, GuestHandler handler) {
     return previous;
 }
 int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous) {
+    GuestSigaction requested{};
+    if (action != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&requested, action, sizeof(requested))) { *__error_nid_postfix() = 14; return -1; }
+        action = &requested;
+    }
     if (guest < 1 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
     if (action && action->handler > 1 && (action->flags & ~SaDefinedFlags) != 0) { *__error_nid_postfix() = 22; return -1; }
     if (action && (guest == GuestSigkill || guest == GuestSigstop) && action->handler != 0) { *__error_nid_postfix() = 22; return -1; }
@@ -614,7 +672,7 @@ int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, Gue
         dispositions[guest] = *action;
         DiscardPendingIfIgnored(guest, *action);
     }
-    if (previous) *previous = old;
+    if (previous && !GuestCopyOut_nid_no_patch(previous, &old, sizeof(old))) { *__error_nid_postfix() = 14; return -1; }
     return 0;
 }
 int APS5_VABI _sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous) {
@@ -625,6 +683,7 @@ int APS5_VABI raise_nid_postfix(int guest) {
     if (guest < 1 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
     const GuestSigaction action = Disposition(guest);
     if (action.handler > 1 && !Delivered(action)) throw std::runtime_error("raise: SA_SIGINFO handlers are not delivered");
+    KqueueSignalSent(guest);
     if (action.handler == 1 || (action.handler == 0 && guest != GuestSigcont && IgnoredByDefault(guest))) return 0;
     if (SignalBlocked(guest)) {
         MarkPending(guest);
@@ -660,22 +719,32 @@ int APS5_VABI pthread_kill_nid_postfix(Pthread thread, int guest) {
     if (!GuestThreadIsLive(thread)) return PosixThread::GUEST_ESRCH;
     if (guest == 0) return 0;
     if (Disposition(guest).handler != 1) MarkPending(guest);
+    KqueueSignalSent(guest);
     return 0;
 }
 int APS5_VABI sigaltstack_nid_postfix(const GuestStack* stack, GuestStack* previous) {
     GuestStack replacement = alternateStack;
+    GuestStack requested{};
     if (stack != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&requested, stack, sizeof(requested))) { *__error_nid_postfix() = 14; return -1; }
+        stack = &requested;
         if ((stack->flags & ~SsDisable) != 0) { *__error_nid_postfix() = 22; return -1; }
         if (stack->flags & SsDisable) replacement.flags = SsDisable;
         else if (stack->size < MinSignalStackSize) { *__error_nid_postfix() = 12; return -1; }
         else replacement = {stack->sp, stack->size, 0};
     }
-    if (previous != nullptr) *previous = alternateStack;
+    const GuestStack old = alternateStack;
     alternateStack = replacement;
+    if (previous != nullptr && !GuestCopyOut_nid_no_patch(previous, &old, sizeof(old))) { *__error_nid_postfix() = 14; return -1; }
     return 0;
 }
 int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet) {
-    return ChangeBlockedMask(how, set, previousSet, true);
+    GuestSignalSet requested{}, old{};
+    if (set != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&requested, set, sizeof(requested))) { *__error_nid_postfix() = 14; return -1; }
+        set = &requested;
+    }
+    return ChangeBlockedMask(how, set, previousSet != nullptr ? &old : nullptr, true, nullptr, previousSet);
 }
 
 int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSet) {
@@ -684,37 +753,72 @@ int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSe
 }
 
 int APS5_VABI pthread_sigmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet) {
-    if (set != nullptr && (how < 1 || how > 3)) return 22;
-    return _sigprocmask_nid_postfix(how, set, previousSet);
+    const int saved = *__error_nid_postfix();
+    const int error = _sigprocmask_nid_postfix(how, set, previousSet) == 0 ? 0 : *__error_nid_postfix();
+    *__error_nid_postfix() = saved;
+    return error;
 }
 
 int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet* set, void* info, const KernelTimespec* timeout) {
-    if (set == nullptr || !SetHasSignal(*set)) { *__error_nid_postfix() = 22; return -1; }
-    if (timeout != nullptr && (timeout->tv_nsec < 0 || timeout->tv_nsec >= 1000000000) && !PendingInSetPresent(*set)) {
-        *__error_nid_postfix() = 22;
-        return -1;
+    if (set == nullptr) { *__error_nid_postfix() = 22; return -1; }
+    GuestSignalSet requestedSet{};
+    if (!GuestCopyIn_nid_no_patch(&requestedSet, set, sizeof(requestedSet))) { *__error_nid_postfix() = 14; return -1; }
+    if (!SetHasSignal(requestedSet)) { *__error_nid_postfix() = 22; return -1; }
+    KernelTimespec requestedTimeout{};
+    if (timeout != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&requestedTimeout, timeout, sizeof(requestedTimeout))) { *__error_nid_postfix() = 14; return -1; }
+        if ((requestedTimeout.tv_nsec < 0 || requestedTimeout.tv_nsec >= 1000000000) && !PendingInSetPresent(requestedSet)) {
+            *__error_nid_postfix() = 22;
+            return -1;
+        }
     }
     int guest = 0;
-    const int result = WaitForPendingInSet(*set, timeout == nullptr, timeout, &guest);
+    const int result = WaitForPendingInSet(requestedSet, timeout == nullptr, timeout != nullptr ? &requestedTimeout : nullptr, &guest);
     if (result != 0) { *__error_nid_postfix() = result; return -1; }
-    if (info != nullptr) FillSiginfo(static_cast<GuestSiginfo*>(info), guest);
+    if (info != nullptr && !FillSiginfo(static_cast<GuestSiginfo*>(info), guest)) {
+        *__error_nid_postfix() = 14;
+        return -1;
+    }
     return guest;
 }
 
 int APS5_VABI sigwaitinfo_nid_postfix(const GuestSignalSet* set, void* info) {
-    if (set == nullptr || !SetHasSignal(*set)) { *__error_nid_postfix() = 22; return -1; }
+    if (set == nullptr) { *__error_nid_postfix() = 22; return -1; }
+    GuestSignalSet requestedSet{};
+    if (!GuestCopyIn_nid_no_patch(&requestedSet, set, sizeof(requestedSet))) { *__error_nid_postfix() = 14; return -1; }
+    if (!SetHasSignal(requestedSet)) { *__error_nid_postfix() = 22; return -1; }
     int guest = 0;
-    if (WaitForPendingInSet(*set, true, nullptr, &guest) != 0) { *__error_nid_postfix() = GuestEagain; return -1; }
-    if (info != nullptr) FillSiginfo(static_cast<GuestSiginfo*>(info), guest);
+    if (WaitForPendingInSet(requestedSet, true, nullptr, &guest) != 0) { *__error_nid_postfix() = GuestEagain; return -1; }
+    if (info != nullptr && !FillSiginfo(static_cast<GuestSiginfo*>(info), guest)) {
+        *__error_nid_postfix() = 14;
+        return -1;
+    }
     return guest;
 }
 
 int APS5_VABI sigwait_nid_postfix(const GuestSignalSet* set, int* received) {
-    if (set == nullptr || received == nullptr || !SetHasSignal(*set)) return 22;
+    if (set == nullptr || received == nullptr) return 22;
+    GuestSignalSet requestedSet{};
+    const int saved = *__error_nid_postfix();
+    if (!GuestCopyIn_nid_no_patch(&requestedSet, set, sizeof(requestedSet))) {
+        *__error_nid_postfix() = saved;
+        return 14;
+    }
+    if (!SetHasSignal(requestedSet)) {
+        *__error_nid_postfix() = saved;
+        return 22;
+    }
     int guest = 0;
-    const int result = WaitForPendingInSet(*set, true, nullptr, &guest);
-    if (result != 0) return result;
-    *received = guest;
+    const int result = WaitForPendingInSet(requestedSet, true, nullptr, &guest);
+    if (result != 0) {
+        *__error_nid_postfix() = saved;
+        return result;
+    }
+    if (!GuestCopyOut_nid_no_patch(received, &guest, sizeof(guest))) {
+        *__error_nid_postfix() = saved;
+        return 14;
+    }
+    *__error_nid_postfix() = saved;
     return 0;
 }
 
@@ -725,12 +829,17 @@ int APS5_VABI pause_nid_postfix(void) {
 }
 
 int APS5_VABI sigsuspend_nid_postfix(const GuestSignalSet* set) {
-    if (set == nullptr) throw std::invalid_argument("sigsuspend: null mask");
+    GuestSignalSet requested{};
+    if (set == nullptr || !GuestCopyIn_nid_no_patch(&requested, set, sizeof(requested))) {
+        *__error_nid_postfix() = 14;
+        return -1;
+    }
     GuestSignalSet previous{{0, 0, 0, 0}};
     {
         std::lock_guard lock(registration);
-        previous.bits[0] = blockedMask.exchange(set->bits[0] & ~UnblockableSignals);
-        for (int word = 1; word < 4; ++word) previous.bits[word] = blockedMaskExtra[word - 1].exchange(set->bits[word]);
+        auto& self = CurrentSignals();
+        previous.bits[0] = self.blocked[0].exchange(requested.bits[0] & ~UnblockableSignals);
+        for (int word = 1; word < 4; ++word) previous.bits[word] = self.blocked[word].exchange(requested.bits[word]);
     }
     WaitForDeliverableSignal();
     ChangeBlockedMask(GuestSigsetmask, &previous, nullptr, false);
@@ -745,10 +854,14 @@ int APS5_VABI _sigsuspend_nid_postfix(const GuestSignalSet* set) {
 
 int APS5_VABI sigpending_nid_postfix(GuestSignalSet* set) {
     if (set == nullptr) { *__error_nid_postfix() = 14; return -1; }
-    auto& pending = Pending();
-    std::lock_guard lock(pending.lock);
-    for (int word = 0; word < 4; ++word)
-        set->bits[word] = pending.words[word].load(std::memory_order_relaxed) & BlockedWord(word);
+    GuestSignalSet result{};
+    {
+        auto& pending = Pending();
+        std::lock_guard lock(pending.lock);
+        for (int word = 0; word < 4; ++word)
+            result.bits[word] = pending.words[word].load(std::memory_order_relaxed) & BlockedWord(CurrentSignals(), word);
+    }
+    if (!GuestCopyOut_nid_no_patch(set, &result, sizeof(result))) { *__error_nid_postfix() = 14; return -1; }
     return 0;
 }
 }
@@ -768,11 +881,4 @@ namespace {
     JumpBuffer::GuestSigprocmaskRegister_nid_no_patch(sigprocmask_nid_postfix);
     return true;
 }();
-
-struct RegisterSignalsOnLoad {
-    RegisterSignalsOnLoad() {
-        RegisterSigaction_nid_no_patch(reinterpret_cast<SigactionFn_nid_no_patch>(sigaction_nid_postfix), _sigintr_nid_postfix.bits);
-    }
-};
-const RegisterSignalsOnLoad gRegisterSignals;
 }

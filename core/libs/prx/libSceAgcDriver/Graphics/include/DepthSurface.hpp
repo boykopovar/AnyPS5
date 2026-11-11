@@ -17,7 +17,8 @@ namespace AgcDriver::Graphics {
 class Texture;
 class StorageTexture;
 
-VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten = true);
+VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten = true, bool stencilTested = false);
+VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilTested, bool stencilWritten, std::optional<std::uint8_t> overwrittenStencil = std::nullopt);
 SampleOrderTarget DepthSurfaceOrderTarget(const Context& context, const DepthTarget& target);
 DepthSampleLocations DepthSurfaceSampleLocations(const Context& context, const DepthTarget& target);
 enum class DepthPlaneScope { Overlapped, Whole };
@@ -34,9 +35,18 @@ bool SampleLocationsCompatibleDepth(const Context& context, VkFormat format, std
 std::uint64_t DepthSurfacesSerial();
 std::uint64_t DepthSurfacesReleased();
 std::uint64_t DepthSliceBytes(VkExtent2D extent, std::uint32_t bytesPerTexel);
+bool DirectDepthCopy(const Context& context, VkFormat depthFormat, VkImageAspectFlagBits aspect, VkFormat colorFormat);
+void SetDirectDepthCopy(bool enabled);
+std::uint64_t DirectDepthCopyCount();
+void SetDepthTransferPasses(bool enabled);
+std::uint64_t DepthTransferPassCount();
 std::uint64_t MultisampledDepthBytes_nid_no_patch(VkExtent2D extent, std::uint32_t bytesPerTexel, std::uint32_t samples);
-void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes);
+void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt, bool allowPublication = true);
+void AppendHostWrittenDepthRanges(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
+enum class DepthPublicationStage { ReadCaptured, GuestCopied, BeforeCommit, PlaneCommitted, StencilPlaneRead };
+void SetDepthPublicationHookForTest(void (*hook)(DepthPublicationStage));
 bool HasResidentDepthGuards_nid_no_patch();
+bool ResidentDepthGuardOverlaps_nid_no_patch(std::uint64_t address, std::size_t bytes);
 void RetireUnmappedDepth_nid_no_patch(std::uintptr_t address, std::size_t bytes);
 void RequireNoNativeDepthFeedback_nid_no_patch(const Context& context, const DepthTarget& target, std::span<const std::shared_ptr<Texture>> sampled);
 void ClearDepthSurfaces(VkDevice device);
@@ -59,6 +69,15 @@ bool NoteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes, std::siz
 void ArmHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
 void QueueHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
 void CompleteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
+struct HtileMaskClear {
+    std::uint64_t address = 0;
+    std::size_t bytes = 0;
+    std::uint32_t mask = 0;
+    std::uint32_t value = 0;
+};
+std::optional<HtileMaskClear> MatchHtileBufferMaskClear(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, std::span<const std::uint32_t> packet, std::uint64_t indirectArguments);
+void NoteHtileMaskOnGpu(const Context& context, const HtileMaskClear& clear);
+void ForgetHtileMasks_nid_no_patch(std::uint64_t recorderId);
 struct MemoryValueFill {
     std::uint64_t address;
     std::size_t bytes;
@@ -68,11 +87,17 @@ std::optional<MemoryValueFill> MatchMemoryValueFill(std::span<const std::uint32_
 void NoteMemoryValueFill(const MemoryValueFill& fill);
 bool DepthSurfaceHolds(const Context& context, const GuestTextureResource& resource, const Texture* texture);
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
+std::size_t DiscardFilledDepthPlanes(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
+void NoteDepthRenderControl(const DepthRenderControl& draw);
+bool DepthRenderControlDrains(const DepthRenderControl& draw);
 VkImageAspectFlags HtileFillClears(std::uint32_t pattern, bool stencilInHtile);
 std::uint64_t HtileMetadataBytes(VkExtent2D extent);
 bool HtileFillCovers(std::uint64_t htile, VkExtent2D extent, std::uint64_t address, std::size_t bytes);
 std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D);
+std::optional<VkExtent2D> ActiveDepthExtent(VkDevice device, std::uint64_t address);
+std::shared_ptr<Texture> DepthSurfaceFirstSample(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components);
 std::size_t DepthPlaneCopyCount();
+VkDeviceSize DepthPlaneCopyBytes();
 VkFormat HostDepthFormat(const Context& context, VkFormat format);
 float HostDepthBiasConstant(const Context& context, VkFormat format, float constant);
 std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip);

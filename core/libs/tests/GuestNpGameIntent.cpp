@@ -2,10 +2,14 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <thread>
+#include <vector>
 
 static void Require(bool value, const char* what) {
     if (value) return;
@@ -28,7 +32,10 @@ int main() {
     constexpr int kInvalidArgument = -2141898748;
     constexpr int kIntentNotFound = -2141898746;
     constexpr int kValueNotFound = -2141898745;
+    constexpr int kLauncherInvalidArgument = -2141898236;
+    constexpr int kLauncherNotInitialized = -2141898238;
 
+    Require(sceNpGameIntentInitialize(nullptr) == kInvalidArgument, "initialization with a null parameter must report invalid argument");
     Require(Throws<std::invalid_argument>([] { sceNpGameIntentInitParamInit(nullptr); }),
             "null param init did not throw");
 
@@ -53,6 +60,14 @@ int main() {
             "uninitialized receive intent with null pointer must report not-initialized");
     Require(sceNpGameIntentReceiveIntent(&info) == kNotInitialized,
             "uninitialized receive intent with valid pointer must report not-initialized");
+    Require(sceNpGameIntentGetUdsNpComId() == kNotInitialized,
+            "uninitialized get uds np com id must report not-initialized");
+    Require(sceNpGameIntentLaunchApp() == kNotInitialized,
+            "uninitialized launch app must report not-initialized");
+    Require(sceNpGameIntentLaunchApp2() == kNotInitialized,
+            "uninitialized launch app 2 must report not-initialized");
+    Require(sceNpGameIntentNotifyAppLaunched() == kNotInitialized,
+            "uninitialized notify app launched must report not-initialized");
 
     Require(sceNpGameIntentInitialize(&initParam) == 0, "initialization failed");
     Require(sceNpGameIntentReceiveIntent(nullptr) == kInvalidArgument, "null receive intent did not fail");
@@ -109,14 +124,59 @@ int main() {
             "post-terminate get property value must report not-initialized");
     Require(sceNpGameIntentReceiveIntent(&info) == kNotInitialized,
             "post-terminate receive intent must report not-initialized");
+    Require(sceNpGameIntentGetUdsNpComId() == kNotInitialized,
+            "post-terminate get uds np com id must report not-initialized");
+    Require(sceNpGameIntentLaunchApp() == kNotInitialized,
+            "post-terminate launch app must report not-initialized");
+    Require(sceNpGameIntentLaunchApp2() == kNotInitialized,
+            "post-terminate launch app 2 must report not-initialized");
+    Require(sceNpGameIntentNotifyAppLaunched() == kNotInitialized,
+            "post-terminate notify app launched must report not-initialized");
 
     unsigned char appLauncherParam[0x28]{};
     *reinterpret_cast<std::uint64_t*>(appLauncherParam) = 0x28;
+    Require(sceNpAppLauncherLaunchApp(0, "app", nullptr) == kLauncherNotInitialized,
+            "launch before init must report not-initialized");
     Require(sceNpAppLauncherInitialize(appLauncherParam) == 0, "app launcher init failed");
+    Require(sceNpAppLauncherLaunchApp(0, nullptr, nullptr) == kLauncherInvalidArgument,
+            "null launch argument must be invalid");
+    Require(sceNpAppLauncherLaunchApp(0, "", nullptr) == kLauncherInvalidArgument,
+            "empty launch argument must be invalid");
+    std::vector<char> unterminated(0x2001, 'x');
+    Require(sceNpAppLauncherLaunchApp(0, "app", unterminated.data()) == kLauncherInvalidArgument,
+            "non-terminated 0x2001-byte argument must be invalid");
+    Require(sceNpAppLauncherLaunchApp(0, "app", nullptr) == kLauncherNotInitialized,
+            "launch without a connected service must report not-initialized");
     Require(sceNpAppLauncherTerminate() == 0, "app launcher terminate failed");
+    Require(sceNpAppLauncherLaunchApp(0, "app", nullptr) == kLauncherNotInitialized,
+            "launch after terminate must report not-initialized");
     *reinterpret_cast<std::uint64_t*>(appLauncherParam) = 0x10;
     Require(sceNpAppLauncherInitialize(appLauncherParam) == 0,
             "app launcher init must accept any init parameter");
+
+    std::atomic_bool stop{false};
+    std::thread writer([&] {
+        while (!stop.load(std::memory_order_relaxed)) {
+            sceNpAppLauncherInitialize(nullptr);
+            sceNpAppLauncherTerminate();
+        }
+    });
+    std::thread reader([&] {
+        while (!stop.load(std::memory_order_relaxed)) {
+            try {
+                (void)sceNpAppLauncherLaunchApp(0, "app", nullptr);
+            } catch (const std::runtime_error&) {
+            }
+        }
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    stop.store(true);
+    writer.join();
+    reader.join();
+
+    Require(sceNpAppLauncherTerminate() == 0, "final terminate failed");
+    Require(sceNpAppLauncherLaunchApp(0, "app", nullptr) == kLauncherNotInitialized,
+            "final launch must report not-initialized");
 
     std::puts("NpGameIntent tests passed");
     return 0;

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -29,7 +30,9 @@ static void CheckList() {
     Require(sceKernelGetModuleListInternal(shorter.data(), internal.size() - 1, &untouched) == SCE_KERNEL_ERROR_ENOMEM);
     Require(untouched == 99 && shorter.back() == -1);
     Require(sceKernelGetModuleListInternal(nullptr, 0, &untouched) == SCE_KERNEL_ERROR_EFAULT);
+    std::fill(shorter.begin(), shorter.end(), -1);
     Require(sceKernelGetModuleListInternal(shorter.data(), shorter.size(), nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(shorter == internal);
 }
 
 static void CheckEachModule() {
@@ -83,6 +86,36 @@ static void CheckLoadStartSysmodule() {
     Require(sceKernelLoadStartModuleForSysmodule("/system/common/lib/nonexistent_sysmodule.sprx", 0, nullptr, 0, nullptr, &res) ==
             static_cast<KernelModule>(SCE_KERNEL_ERROR_ENOENT));
     Require(res == 0);
+    res = -1;
+    Require(sceKernelLoadStartModuleForSysmodule("/system/common/lib/nonexistent_sysmodule.sprx", 0, nullptr, 0x10000, nullptr, &res) ==
+            static_cast<KernelModule>(SCE_KERNEL_ERROR_ENOENT));
+    Require(res == 0);
+    KernelLoadModuleOpt opt{};
+    res = -1;
+    Require(sceKernelLoadStartModuleForSysmodule("/system/common/lib/nonexistent_sysmodule.sprx", 0, nullptr, 0, &opt, &res) ==
+            static_cast<KernelModule>(SCE_KERNEL_ERROR_EINVAL));
+    Require(res == -1);
+}
+
+static void CheckIsModuleLoaded() {
+    std::set<std::string> names;
+    for (const auto handle : List(sceKernelGetModuleListInternal)) {
+        ModuleInfo info{};
+        info.st_size = sizeof(ModuleInfo);
+        Require(sceKernelGetModuleInfo(handle, &info) == 0);
+        names.insert(info.name);
+    }
+    const auto expected = [&](const std::string& name) { return names.count(name) ? 0 : SCE_KERNEL_ERROR_ESRCH; };
+    for (const auto& name : names) {
+        Require(sceKernelIsModuleLoaded(name.c_str()) == 0);
+        Require(sceKernelIsModuleLoaded((name + "x").c_str()) == expected(name + "x"));
+        Require(sceKernelIsModuleLoaded(name.substr(0, name.size() - 1).c_str()) == expected(name.substr(0, name.size() - 1)));
+    }
+    Require(sceKernelIsModuleLoaded("libSceNoSuchModule.sprx") == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelIsModuleLoaded("") == expected(""));
+    const std::string longName(300, 'a');
+    Require(sceKernelIsModuleLoaded(longName.c_str()) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelIsModuleLoaded(reinterpret_cast<const char*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
 }
 
 int main() {
@@ -91,5 +124,6 @@ int main() {
     CheckMatchesAddressLookup();
     CheckRefusals();
     CheckLoadStartSysmodule();
+    CheckIsModuleLoaded();
     return 0;
 }
