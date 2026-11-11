@@ -8,7 +8,7 @@
 
 ### Unknown function info
 
-- [sceHidControlSetRevokeList](../../../core/libs/prx/libSceHidControl/Export.cpp) - not exported by firmware 13.42's `libSceHidControl.sprx`, so its 3.20 declaration still throws through `NotImplemented_nid_no_patch`.
+- [sceHidControlSetRevokeList](../../../core/libs/prx/libSceHidControl/Export.cpp) - models the earlier 3.20 declaration forwarding to the revoke list control command (`0x8010484a`), matching `sceHidControlSetRevokeList2` parameter validation; console hardware behaviour for pre-13.42 SDK revisions remains unmeasured.
 
 ### Additional callable export inventory
 

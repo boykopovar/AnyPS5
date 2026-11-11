@@ -95,6 +95,7 @@ void CheckBeforeInit() {
     Require(sceHidControlGetVersionInfo(0, nullptr) == ErrorNotInitialized, "GetVersionInfo before init");
     Require(sceHidControlGetPswDeviceInfo(0, nullptr) == ErrorNotInitialized, "GetPswDeviceInfo before init");
     Require(libSceHidControlUnknown_AjBZjowWaFI_nid_no_patch(0, nullptr) == ErrorNotInitialized, "AjBZjowWaFI before init");
+    Require(sceHidControlSetRevokeList(0, 0, 0) == ErrorNotInitialized, "SetRevokeList before init");
     Require(sceHidControlSetRevokeList2(0, 0, nullptr) == ErrorNotInitialized, "SetRevokeList2 before init");
     Require(sceHidControlIsForceUpdateNeeded(0, 1, &flag) == ErrorNotInitialized && flag == 0x5a, "IsForceUpdateNeeded before init");
     Require(sceHidControlSetRemoteMergeProcess(0, 0) == ErrorNotInitialized, "SetRemoteMergeProcess before init");
@@ -182,6 +183,9 @@ void CheckArguments() {
     Require(libSceHidControlUnknown_AjBZjowWaFI_nid_no_patch(0, nullptr) == ErrorInvalidArgument, "AjBZjowWaFI null output");
     Require(sceHidControlSetRevokeList2(0, 0, nullptr) == 0, "SetRevokeList2 empty list");
     Require(sceHidControlSetRevokeList2(0, 1, nullptr) == ErrorInvalidArgument, "SetRevokeList2 null list");
+    Require(sceHidControlSetRevokeList(0, -1, 0) == ErrorInvalidArgument, "SetRevokeList negative count");
+    Require(sceHidControlSetRevokeList(0, 0, 0) == 0, "SetRevokeList empty list");
+    Require(sceHidControlSetRevokeList(0, 1, 0) == ErrorInvalidArgument, "SetRevokeList null list");
     Require(sceHidControlIsForceUpdateNeeded(0, 0, &flag) == ErrorInvalidArgument && flag == 0x5a, "IsForceUpdateNeeded zero value");
     Require(sceHidControlIsForceUpdateNeeded(0, 1, nullptr) == ErrorInvalidArgument, "IsForceUpdateNeeded null result");
     Require(sceHidControlPswUpdateIsUpdateNeeded(0, buffer.data(), nullptr) == ErrorInvalidArgument, "PswUpdateIsUpdateNeeded null result");

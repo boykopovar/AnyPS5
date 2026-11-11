@@ -551,9 +551,13 @@ int APS5_VABI libSceHidControlUnknown_AjBZjowWaFI_nid_no_patch(std::uint32_t dev
 }
 APS5_EXPORT("AjBZjowWaFI", libSceHidControlUnknown_AjBZjowWaFI_nid_no_patch);
 
-int APS5_VABI sceHidControlSetRevokeList(std::uint32_t, std::int32_t, std::int64_t) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceHidControlSetRevokeList(std::uint32_t first, std::int32_t count, std::int64_t list) {
+    if (!Initialized()) return ErrorNotInitialized;
+    if (count < 0) return ErrorInvalidArgument;
+    if (count == 0) return 0;
+    if (list == 0) return ErrorInvalidArgument;
+    Transfer request{first, static_cast<std::uint32_t>(count), reinterpret_cast<void*>(list)};
+    return Control<0x8010484a>(request);
 }
 
 int APS5_VABI sceHidControlSetRevokeList2(std::uint32_t first, std::uint32_t count, const void* list) {
