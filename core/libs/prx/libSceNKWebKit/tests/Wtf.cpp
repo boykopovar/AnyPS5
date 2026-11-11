@@ -248,34 +248,6 @@ static void TestGregorianDateTime() {
             Require(std::memcmp(&second, &first, sizeof(first)) == 0);
         }
     }
-    const double unsupported[] = {
-        std::numeric_limits<double>::quiet_NaN(),
-        std::numeric_limits<double>::infinity(),
-        -std::numeric_limits<double>::infinity(),
-        std::numeric_limits<double>::max(),
-        -std::numeric_limits<double>::max(),
-        std::nextafter(8640000000000000.0, std::numeric_limits<double>::infinity()),
-        std::nextafter(-8640000000000000.0, -std::numeric_limits<double>::infinity()),
-    };
-    const auto constructors = {
-        &_ZN3WTF17GregorianDateTimeC1EdNS_15LocalTimeOffsetE,
-        &_ZN3WTF17GregorianDateTimeC2EdNS_15LocalTimeOffsetE,
-    };
-    for (auto constructor : constructors) {
-        for (double ms : unsupported) {
-            GregorianDateTime result{2000, 1, 59, 29, 2, 12, 34, 56, 330, 1};
-            const auto original = result;
-            bool threw = false;
-            try {
-                constructor(&result, ms, {false, 0});
-            } catch (const std::runtime_error& error) {
-                threw = std::strstr(error.what(), "GregorianDateTimeC") != nullptr
-                    && std::strstr(error.what(), "not implemented") != nullptr;
-            }
-            Require(threw);
-            Require(std::memcmp(&result, &original, sizeof(result)) == 0);
-        }
-    }
 }
 
 static void TestTime() {
@@ -643,6 +615,7 @@ int main() {
     TestMemoryAllocations();
     TestAllocationBoundaries();
     TestTime();
+    TestGregorianDateTime();
     TestSystem();
     TestString();
     TestWebCorePure();
