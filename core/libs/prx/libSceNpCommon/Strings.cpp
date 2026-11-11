@@ -493,11 +493,13 @@ int APS5_VABI sceNpStrnParseHex(const char* hex, std::size_t length, void* out, 
 }
 
 int APS5_VABI sceNpStrcpyToBuf(char* dst, std::size_t size, const char* src) {
+    if (src == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return CopyToBuffer(dst, size, src, std::strlen(src));
 }
 
 int APS5_VABI sceNpStrncpyToBuf(char* dst, std::size_t size, const char* src, std::size_t maxLength) {
     if (src == nullptr && maxLength == 0) return CopyToBuffer(dst, size, "", 0);
+    if (src == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return CopyToBuffer(dst, size, src, strnlen(src, maxLength));
 }
 

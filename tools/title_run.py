@@ -141,11 +141,14 @@ def frame_is_uniform(path, tolerance=8):
     try:
         offset = struct.unpack_from("<I", data, 10)[0]
         width, height = struct.unpack_from("<ii", data, 18)
-        channels = struct.unpack_from("<H", data, 28)[0] // 8
+        bits = struct.unpack_from("<H", data, 28)[0]
     except struct.error:
         return None
+    if bits not in (24, 32):
+        return None
+    channels = bits // 8
     stride = (width * channels + 3) & ~3
-    if channels < 3 or len(data) < offset + stride * abs(height) - (stride - width * channels):
+    if len(data) < offset + stride * abs(height) - (stride - width * channels):
         return None
     first = data[offset:offset + 3]
     for row in range(abs(height)):
@@ -296,16 +299,39 @@ def lock_work(path):
     return handle
 
 
+def module_dirs(entry):
+    relink = entry.get("relink", [])
+    return [relink[index + 1] for index in range(len(relink) - 1) if relink[index] == "--module-dir"]
+
+
+MODULE_MAGICS = (b"\x7fELF", b"\x4f\x15\x3d\x1d", b"\x54\x14\xf5\xee")
+
+
+def is_module(path):
+    with path.open("rb") as file:
+        return file.read(4) in MODULE_MAGICS
+
+
+def stage_inputs(package, entry, source):
+    (source / "sce_module").mkdir(parents=True)
+    unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
+    executables = [path for path in (package / "eboot.bin", *(package / name for name in entry.get("executables", []))) if path.is_file()]
+    for directory in ["sce_module", *module_dirs(entry)]:
+        if not (package / directory).is_dir():
+            continue
+        (source / directory).mkdir(parents=True, exist_ok=True)
+        for module in sorted(path for path in (package / directory).iterdir()
+                             if path.is_file() and is_module(path) and not any(path.samefile(executable) for executable in executables)):
+            unwrap_or_copy(module, source / directory / module.name)
+    for executable in entry.get("executables", []):
+        unwrap_or_copy(package / executable, source / executable)
+
+
 def prepare(title_id, found, entry, platform, build, work):
     package = found["package"]
     shutil.rmtree(work, ignore_errors=True)
     source = work / "input"
-    (source / "sce_module").mkdir(parents=True)
-    unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
-    for module in sorted((package / "sce_module").glob("*.prx")):
-        unwrap_or_copy(module, source / "sce_module" / module.name)
-    for executable in entry.get("executables", []):
-        unwrap_or_copy(package / executable, source / executable)
+    stage_inputs(package, entry, source)
     executable = work / (title_id + (".exe" if platform == "windows" else ""))
     relinker = build / "core/relinker" / ("relinker.exe" if platform == "windows" else "relinker")
     with (work / "relink.log").open("w", encoding="utf-8") as log:
@@ -367,7 +393,7 @@ if os.name == "nt":
 
 class Session:
     def __init__(self, command, cwd, env, stdout, stderr, owned=None):
-        self.owned = os.path.normcase(os.path.abspath(owned or Path(command[0]).parent))
+        self.owned = os.path.normcase(os.path.realpath(owned or Path(command[0]).parent))
         if os.name == "nt":
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, creationflags=subprocess.CREATE_NO_WINDOW)
             self.handles, self.images = {}, {}
@@ -439,7 +465,7 @@ class Session:
     def image_path(self, handle):
         size = wintypes.DWORD(32768)
         buffer = ctypes.create_unicode_buffer(size.value)
-        return os.path.normcase(os.path.abspath(buffer.value)) if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)) else ""
+        return os.path.normcase(os.path.realpath(buffer.value)) if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)) else ""
 
     def exit_code(self):
         if os.name == "nt" and not self.process_ids():
@@ -552,7 +578,13 @@ def source_root(build):
 
 
 def git(root, *args):
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True).stdout.strip()
+    try:
+        done = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+    except OSError as error:
+        raise SystemExit(f"cannot run git {' '.join(args)} in {root}: {error}")
+    if done.returncode:
+        raise SystemExit(f"git {' '.join(args)} failed in {root} (exit {done.returncode}): {done.stderr.strip()}")
+    return done.stdout.strip()
 
 
 def positive(text):

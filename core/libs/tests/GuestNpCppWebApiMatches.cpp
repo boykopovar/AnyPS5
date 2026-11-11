@@ -159,8 +159,29 @@ void RunFactoryOwnershipChecks() {
 
 }
 
+void TestBookkeepingSurface() {
+    std::uint64_t context = 1;
+    IntrusivePtr response{};
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V119CreateMatchResponseEEC1Ev(&response);
+    Require(response.object == nullptr && response.deleter == nullptr && response.libContext == nullptr);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V119CreateMatchResponseEED1Ev(&response);
+
+    alignas(8) std::array<std::uint8_t, 0x50> vectorBody{};
+    Write<std::uint64_t>(vectorBody.data(), 0x00, 0x434e507056656342ULL);
+    Write<std::uint64_t>(vectorBody.data(), 0x40, 3);
+    IntrusivePtr statistics{};
+    statistics.object = vectorBody.data();
+    statistics.libContext = &context;
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V119AdditionalStatisticEEEE4sizeEv(&statistics) == 3);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V122RequestPlayerStatisticEEEE4sizeEv(&statistics) == 3);
+
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_7Matches2V119CreateMatchResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv(nullptr) == 0);
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_7Matches2V119CreateMatchResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_(nullptr, nullptr) == static_cast<int>(0x80552907u));
+}
+
 int main(int argc, char** argv) {
     RunFactoryOwnershipChecks();
+    TestBookkeepingSurface();
     if (argc == 2 && std::strcmp(argv[1], "factory-ownership") == 0) return 0;
     alignas(8) std::array<std::uint8_t, 0x200> request{};
     std::memset(request.data(), 0, request.size());
@@ -476,6 +497,101 @@ int main(int argc, char** argv) {
     Require(_ZN3sce2Np9CppWebApi7Matches2V125CreateMatchRequestFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_18CreateMatchRequestEEE(&context, "room", &created) == 0);
     Require(Read<const void*>(static_cast<const std::uint8_t*>(created.object), 0x08) == &context);
     Require(_ZN3sce2Np9CppWebApi7Matches2V118CreateMatchRequest15setInGameRosterERKNS1_6Common12IntrusivePtrINS3_19RequestInGameRosterEEE(created.object, &rosterHandle) == 0);
+    Require(Read<std::int32_t>(rosterObject.data(), 0) == 2);
+    created.deleter(created.object);
+    Require(Read<std::int32_t>(rosterObject.data(), 0) == 1);
+    created = {};
+
+    Require(_ZN3sce2Np9CppWebApi7Matches2V126AdditionalStatisticFactory6createEPNS1_6Common10LibContextEPKcS9_PNS5_12IntrusivePtrINS3_19AdditionalStatisticEEE(&context, "wins", "42", &created) == 0);
+    Require(created.object != nullptr);
+    Require(std::strcmp(Read<const char*>(static_cast<std::uint8_t*>(created.object), 16 + 0x08), "wins") == 0);
+    Require(std::strcmp(Read<const char*>(static_cast<std::uint8_t*>(created.object), 48 + 0x08), "42") == 0);
+    created.deleter(created.object);
+    created = {};
+
+    Require(_ZN3sce2Np9CppWebApi7Matches2V130RequestTeamMemberResultFactory6createEPNS1_6Common10LibContextEPKcdPNS5_12IntrusivePtrINS3_23RequestTeamMemberResultEEE(&context, "member", 3.5, &created) == 0);
+    Require(Read<const char*>(static_cast<std::uint8_t*>(created.object), 16 + 0x08) != nullptr && std::strcmp(Read<const char*>(static_cast<std::uint8_t*>(created.object), 16 + 0x08), "member") == 0);
+    Require(Read<double>(static_cast<std::uint8_t*>(created.object), 0x30) == 3.5);
+    created.deleter(created.object);
+    created = {};
+
+    Require(_ZN3sce2Np9CppWebApi7Matches2V127RequestPlayerResultsFactory6createEPNS1_6Common10LibContextEPKciPNS5_12IntrusivePtrINS3_20RequestPlayerResultsEEE(&context, "player", 11, &created) == 0);
+    Require(Read<std::int32_t>(static_cast<std::uint8_t*>(created.object), 0x30) == 11);
+    created.deleter(created.object);
+    created = {};
+
+    Require(_ZN3sce2Np9CppWebApi7Matches2V125RequestMatchPlayerFactory6createEPNS1_6Common10LibContextEPKcNS3_10PlayerTypeEPNS5_12IntrusivePtrINS3_18RequestMatchPlayerEEE(&context, "player", 4, &created) == 0);
+    Require(Read<const char*>(static_cast<std::uint8_t*>(created.object), 16 + 0x08) != nullptr && std::strcmp(Read<const char*>(static_cast<std::uint8_t*>(created.object), 16 + 0x08), "player") == 0);
+    Require(Read<std::int32_t>(static_cast<std::uint8_t*>(created.object), 0x30) == 4);
+    Require(_ZN3sce2Np9CppWebApi7Matches2V118RequestMatchPlayer13setPlayerNameEPKc(created.object, "name") == 0);
+    Require(std::strcmp(Read<const char*>(static_cast<std::uint8_t*>(created.object), 56 + 0x08), "name") == 0);
+    created.deleter(created.object);
+    created = {};
+
+    Require(_ZN3sce2Np9CppWebApi7Matches2V125RequestTeamResultsFactory6createEPNS1_6Common10LibContextEPKciPNS5_12IntrusivePtrINS3_18RequestTeamResultsEEE(&context, "team", 9, &created) == 0);
+    Require(Read<std::int32_t>(static_cast<std::uint8_t*>(created.object), 0x30) == 9);
+    created.deleter(created.object);
+    created = {};
+
+    alignas(8) std::array<std::uint8_t, 0x50> statsBody{};
+    Write<std::uint64_t>(statsBody.data(), 0x00, 0x434e507056656342ULL);
+    Write<std::int32_t>(statsBody.data(), 0x30, 1);
+    Write<std::int32_t>(statsBody.data(), 0x34, 1);
+    alignas(8) std::array<std::uint8_t, 0x10> statisticObject{};
+    Write<std::int32_t>(statisticObject.data(), 0, 1);
+    std::array<IntrusivePtr, 1> statisticElements{};
+    statisticElements[0].object = statisticObject.data();
+    statisticElements[0].libContext = &context;
+    Write<void*>(statsBody.data(), 0x38, statisticElements.data());
+    Write<std::uint64_t>(statsBody.data(), 0x40, 1);
+    IntrusivePtr statsVector{};
+    statsVector.object = statsBody.data();
+    statsVector.libContext = &context;
+    Require(_ZN3sce2Np9CppWebApi7Matches2V129RequestPlayerStatisticFactory6createEPNS1_6Common10LibContextEPKcRKNS5_6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEEPNSB_INS3_22RequestPlayerStatisticEEE(&context, "player", &statsVector, &created) == 0);
+    auto* copiedVector = reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(created.object) + 48);
+    Require(copiedVector->object != nullptr && copiedVector->object != statsBody.data());
+    Require(Read<std::int32_t>(statisticObject.data(), 0) == 2);
+    created.deleter(created.object);
+    Require(Read<std::int32_t>(statisticObject.data(), 0) == 1);
+    created = {};
+
+    Require(_ZN3sce2Np9CppWebApi7Matches2V133RequestTeamMemberStatisticFactory6createEPNS1_6Common10LibContextEPKcRKNS5_6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEEPNSB_INS3_26RequestTeamMemberStatisticEEE(&context, "member", &statsVector, &created) == 0);
+    Require(Read<std::int32_t>(statisticObject.data(), 0) == 2);
+    created.deleter(created.object);
+    Require(Read<std::int32_t>(statisticObject.data(), 0) == 1);
+    created = {};
+
+    std::array<IntrusivePtr, 1> nullElements{};
+    Write<void*>(statsBody.data(), 0x38, nullElements.data());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V129RequestPlayerStatisticFactory6createEPNS1_6Common10LibContextEPKcRKNS5_6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEEPNSB_INS3_22RequestPlayerStatisticEEE(&context, "player", &statsVector, &created) == static_cast<int>(0x80553503));
+    created.deleter(created.object);
+    created = {};
+    Write<void*>(statsBody.data(), 0x38, statisticElements.data());
+
+    alignas(8) std::array<std::uint8_t, 0x40> foreignVector{};
+    alignas(8) std::array<std::uint8_t, 0x10> foreignStorage{};
+    Write<void*>(foreignVector.data(), 0x00, foreignStorage.data());
+    Write<void*>(foreignVector.data(), 0x18, statisticElements.data());
+    Write<void*>(foreignVector.data(), 0x28, statisticElements.data() + 1);
+    Require(_ZN3sce2Np9CppWebApi7Matches2V123JoinMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_11AddedPlayerEEEEEPNS9_INS3_16JoinMatchRequestEEE(&context, reinterpret_cast<IntrusivePtr*>(foreignVector.data()), &created) == 0);
+    Require(Read<std::int32_t>(statisticObject.data(), 0) == 2);
+    created.deleter(created.object);
+    Require(Read<std::int32_t>(statisticObject.data(), 0) == 1);
+    created = {};
+
+    Require(_ZN3sce2Np9CppWebApi7Matches2V124LeaveMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_13RemovedPlayerEEEEEPNS9_INS3_17LeaveMatchRequestEEE(&context, &statsVector, &created) == 0);
+    Require(Read<std::int32_t>(statisticObject.data(), 0) == 2);
+    created.deleter(created.object);
+    Require(Read<std::int32_t>(statisticObject.data(), 0) == 1);
+    created = {};
+
+    IntrusivePtr emptyResults{};
+    Require(_ZN3sce2Np9CppWebApi7Matches2V127ReportResultsRequestFactory6createEPNS1_6Common10LibContextENS5_12IntrusivePtrINS3_19RequestMatchResultsEEEPNS8_INS3_20ReportResultsRequestEEE(&context, &emptyResults, &created) == static_cast<int>(0x80553512));
+    created.deleter(created.object);
+    created = {};
+
+    Write<std::int32_t>(rosterObject.data(), 0, 1);
+    Require(_ZN3sce2Np9CppWebApi7Matches2V127ReportResultsRequestFactory6createEPNS1_6Common10LibContextENS5_12IntrusivePtrINS3_19RequestMatchResultsEEEPNS8_INS3_20ReportResultsRequestEEE(&context, &rosterHandle, &created) == 0);
     Require(Read<std::int32_t>(rosterObject.data(), 0) == 2);
     created.deleter(created.object);
     Require(Read<std::int32_t>(rosterObject.data(), 0) == 1);
