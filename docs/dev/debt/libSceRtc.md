@@ -24,5 +24,6 @@
 
 ### Functional
 
+- [sceRtcCheckValid](../../../core/libs/prx/libSceRtc/Export.cpp) (libSceRtc) - returning SCE_RTC_ERROR_INVALID_POINTER (0x80B50002) for unmapped or unreadable parameter pointers is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
 - [sceRtcParseRFC3339, sceRtcParseDateTime](../../../core/libs/prx/libSceRtc/Export.cpp) (libSceRtc) - when `second == 60`, both functions return 0 (success) but do not write the tick for the leap second; they still subtract the timezone offset from the existing output tick. `sceRtcParseDateTime` has the same behavior for digit-led (RFC 3339 style) input. Measured on PS5 firmware 13.60; see PR #1397.
 - The process-local clocks set by [sceRtcSetCurrentTick, sceRtcSetCurrentNetworkTick, sceRtcSetCurrentAdNetworkTick and sceRtcSetCurrentDebugNetworkTick](../../../core/libs/prx/libSceRtc/Export.cpp) are visible only through libSceRtc. The system clock and libkernel clock APIs keep reporting host time; cross-library clock consistency is not modelled. The console's clock interactions are not measured
