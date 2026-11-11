@@ -102,6 +102,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         requests.append((path, self.headers.get("Range")))
         targets.append(self.path)
+        if path.startswith("/chunk-extensions/"):
+            self.chunk_extensions(path)
+            return
         if path.startswith("/client-unsupported/"):
             location = {"https": "https://{authority}/payload.bin", "scheme": "ftp://{authority}/payload.bin", "userinfo": "http://user@{authority}/payload.bin"}[path.removeprefix("/client-unsupported/")]
             self.send_response(307)
@@ -194,6 +197,76 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b"0\r\nX-Trailer: yes\r\n\r\n")
         else:
             self.wfile.write(body)
+
+    def chunk_extensions(self, path):
+        _, _, mode, name, _ = path.split("/")
+        suffixes = {
+            "none": b"",
+            "flag": b";flag",
+            "token": b";foo=bar",
+            "bws": b" \t; \tfoo \t= \tbar \t; flag",
+            "quoted": b';foo="bar baz"',
+            "empty-quoted": b';foo=""',
+            "quoted-delimiters": b';foo="a;b=c"',
+            "escaped": b';foo="a\\"b\\\\c\\\t\\ \\\xff"',
+            "obs-text": b';foo="x\x80\xff"',
+            "quoted-tab": b';foo=" \tx\t "',
+            "punctuation": b";!#$%&'*+-.^_`|~=!#$%&'*+-.^_`|~",
+            "repeat": b";foo=a;foo=b",
+            "multiple": b';a;b=c;d="e;f";g',
+            "quoted-boundaries": b';foo="!#[]~\x80\xff"',
+            "quoted-pairs": b';foo="\\!\\[\\]\\~\\\x80"',
+            "case": b";FoO=BaR",
+            "missing-name": b";",
+            "missing-name-space": b"; \t",
+            "empty-name-value": b";=x",
+            "quoted-name": b';"foo"=x',
+            "name-separator": b";na/me=x",
+            "missing-value": b";foo=",
+            "missing-ows-value": b";foo= \t",
+            "unclosed-quote": b';foo="bar',
+            "escaped-end": b';foo="bar\\',
+            "bad-token": b";foo=bar/baz",
+            "name-control": b";f\x00=x",
+            "name-high-byte": b";\xff=x",
+            "quote-control": b';foo="x\x01y"',
+            "quote-del": b';foo="x\x7fy"',
+            "quoted-pair-control": b';foo="x\\\x01y"',
+            "quoted-pair-del": b';foo="x\\\x7fy"',
+            "junk-after-quote": b';foo="x"junk',
+            "doubled-semicolon": b";foo;;bar",
+            "extra-equals": b";foo==x",
+            "bare-bws": b" ",
+            "trailing-name-bws": b";foo ",
+            "trailing-token-bws": b";foo=x ",
+            "trailing-quote-bws": b';foo="x"\t',
+            "newline": b';foo="x\ny"',
+            "bare-backslash": b";foo=x\\y",
+        }
+        terminal = name.startswith("terminal-")
+        suffix = suffixes[name.removeprefix("terminal-")]
+        content = pathlib.Path("app0", "payload.bin").read_bytes() if mode != "empty" else b""
+        start = 0
+        end = len(content)
+        if mode == "range":
+            match = re.fullmatch(r"bytes=(\d+)-(\d+)", self.headers.get("Range", ""))
+            assert match is not None
+            start, last = map(int, match.groups())
+            end = min(start + 512, last + 1, len(content))
+            if start:
+                assert self.headers.get("If-Range") == '"chunk-v1"'
+        body = content[start:end]
+        self.send_response(206 if mode == "range" else 200)
+        if mode == "range":
+            self.send_header("Content-Range", f"bytes {start}-{end - 1}/{len(content)}")
+        self.send_header("ETag", '"chunk-v1"')
+        self.send_header("Transfer-Encoding", "chunked")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        late = name == "terminal-unclosed-quote" and mode == "range" and start == 0
+        if body:
+            self.wfile.write(f"{len(body):X}".encode() + (b"" if terminal or late else suffix) + b"\r\n" + body + b"\r\n")
+        self.wfile.write(b"0" + (b"" if late else suffix) + b"\r\nX-Trailer: yes\r\n\r\n")
 
     def identity(self, path):
         name = path.split("/")[2]

@@ -87,18 +87,71 @@ bool StrongEtag(std::string_view text) {
     return true;
 }
 
+bool IsToken(unsigned char byte) {
+    constexpr std::string_view punctuation = "!#$%&'*+-.^_`|~";
+    return (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
+        (byte >= '0' && byte <= '9') || punctuation.find(byte) != std::string_view::npos;
+}
+
 std::pair<std::string, std::string> Field(const std::string& text) {
     const auto colon = text.find(':');
     if (colon == std::string::npos || colon == 0) throw HttpFailure("invalid HTTP field");
     auto name = Lower(text.substr(0, colon));
-    constexpr std::string_view punctuation = "!#$%&'*+-.^_`|~";
     for (const unsigned char byte : name)
-        if (!(byte >= 'a' && byte <= 'z') && !(byte >= '0' && byte <= '9') && punctuation.find(byte) == std::string_view::npos)
-            throw HttpFailure("invalid HTTP field name");
+        if (!IsToken(byte)) throw HttpFailure("invalid HTTP field name");
     std::string value(Trim(std::string_view(text).substr(colon + 1)));
     for (const unsigned char byte : value)
         if ((byte < 0x20 && byte != '\t') || byte == 0x7f) throw HttpFailure("invalid HTTP field value");
     return {std::move(name), std::move(value)};
+}
+
+std::uint64_t ChunkSize(std::string_view text) {
+    auto index = text.find_first_of("; \t");
+    const auto count = Number(text.substr(0, index), 16);
+    if (index == std::string_view::npos) return count;
+    const auto whitespace = [&] {
+        while (index < text.size() && (text[index] == ' ' || text[index] == '\t')) ++index;
+    };
+    const auto token = [&] {
+        const auto start = index;
+        while (index < text.size() && IsToken(static_cast<unsigned char>(text[index]))) ++index;
+        if (index == start) throw HttpFailure("invalid HTTP chunk extension token");
+    };
+    while (index < text.size()) {
+        whitespace();
+        if (index == text.size() || text[index++] != ';') throw HttpFailure("invalid HTTP chunk extension separator");
+        whitespace();
+        token();
+        const auto nameEnd = index;
+        whitespace();
+        if (index == text.size() || text[index] != '=') {
+            index = nameEnd;
+            continue;
+        }
+        ++index;
+        whitespace();
+        if (index == text.size()) throw HttpFailure("missing HTTP chunk extension value");
+        if (text[index] != '"') {
+            token();
+            continue;
+        }
+        ++index;
+        bool closed = false;
+        while (index < text.size()) {
+            auto byte = static_cast<unsigned char>(text[index++]);
+            if (byte == '"') {
+                closed = true;
+                break;
+            }
+            if (byte == '\\') {
+                if (index == text.size()) throw HttpFailure("truncated HTTP chunk extension escape");
+                byte = static_cast<unsigned char>(text[index++]);
+            }
+            if ((byte < 0x20 && byte != '\t') || byte == 0x7f) throw HttpFailure("invalid HTTP chunk extension quoted byte");
+        }
+        if (!closed) throw HttpFailure("unclosed HTTP chunk extension quote");
+    }
+    return count;
 }
 
 struct Url {
@@ -429,7 +482,7 @@ struct HttpClientState : Aps5HttpClient {
                 if (Lower(headers.at("transfer-encoding")) != "chunked") NotImplemented_nid_no_patch("HTTP client HTTP transfer coding");
                 for (;;) {
                     const auto chunk = connection.Line();
-                    const auto count = Number(Trim(std::string_view(chunk).substr(0, chunk.find(';'))), 16);
+                    const auto count = ChunkSize(chunk);
                     if (count == 0) {
                         for (;;) {
                             const auto field = connection.Line();
