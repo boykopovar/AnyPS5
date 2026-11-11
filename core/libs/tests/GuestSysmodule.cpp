@@ -312,7 +312,7 @@ void CheckAcceptedIdSet(bool ps4) {
     if (ps4) {
         for (const std::uint16_t id : kPs4Accepted) {
             Require(accepted(id));
-            Require(kModuleTable.find(id) == kModuleTable.end());
+            Require(kModuleTable.find(id) != kModuleTable.end());
             Require(sceSysmoduleIsLoaded(id) == kModuleUnloaded);
             Require(sceSysmoduleLoadModule(id) == 0);
             Require(sceSysmoduleIsLoaded(id) == 0);
