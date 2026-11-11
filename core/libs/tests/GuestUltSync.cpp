@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -312,6 +313,12 @@ void Ulthreads() {
     UlthreadObject first{};
     std::uint8_t context[4096];
     CHECK(sceUltUlthreadCreate(&first, "exits", ExitingEntry, 42, context, sizeof(context), &runtime, nullptr, 0) == Ok);
+    UltUlthreadInfo threadQueryInfo{};
+    CHECK(sceUltGetUlthreadInfo(&first, &threadQueryInfo) == Ok);
+    CHECK(std::strcmp(threadQueryInfo.name, "exits") == 0);
+    errno = 71;
+    CHECK(sceUltGetUlthreadInfo(&first, reinterpret_cast<UltUlthreadInfo*>(0x10)) == Null);
+    CHECK(errno == 71);
     std::int32_t status = 0;
     CHECK(sceUltUlthreadJoin(&first, &status) == Ok);
     CHECK(status == 42 && gSelf.load() == &first && gYield.load() == Ok && !gPastExit.load());
@@ -556,6 +563,9 @@ void GetInfoTests() {
     CHECK(sceUltUlthreadRuntimeCreate(rtObj, "test-rt", 2, 1, nullptr, nullptr, 0) == Ok);
     void* activeThreads[4]{};
     CHECK(sceUltGetUlthreadRuntimeInfo(rtObj, &rtInfo, activeThreads, 4, nullptr, 0) == Ok);
+    errno = 71;
+    CHECK(sceUltGetUlthreadRuntimeInfo(rtObj, reinterpret_cast<UltUlthreadRuntimeInfo*>(0x10), nullptr, 0, nullptr, 0) == Null);
+    CHECK(errno == 71);
     CHECK(rtInfo.size == sizeof(UltUlthreadRuntimeInfo));
     CHECK(rtInfo.object == rtObj);
     CHECK(std::strcmp(rtInfo.name, "test-rt") == 0);
