@@ -1,9 +1,17 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
 
@@ -12,7 +20,9 @@ struct TestSslInternal {
     int rwstate;
     unsigned char beforeShutdown[8];
     int shutdown;
-    unsigned char rest[260];
+    unsigned char beforeExData[100];
+    LibreSslExData exData;
+    unsigned char afterExData[152];
 };
 
 struct TestSsl {
@@ -31,11 +41,12 @@ struct TestSsl {
 };
 
 static_assert(sizeof(TestSslInternal) == 432 && offsetof(TestSslInternal, rwstate) == 156 && offsetof(TestSslInternal, shutdown) == 168);
+static_assert(offsetof(TestSslInternal, exData) == 272);
 static_assert(sizeof(TestSsl) == 232 && offsetof(TestSsl, session) == 128 && offsetof(TestSsl, ctx) == 152);
 static_assert(offsetof(TestSsl, verifyResult) == 160 && offsetof(TestSsl, internal) == 224);
 
-static const LibreSslSsl* Ssl(const TestSsl* ssl) {
-    return reinterpret_cast<const LibreSslSsl*>(ssl);
+static LibreSslSsl* Ssl(TestSsl* ssl) {
+    return reinterpret_cast<LibreSslSsl*>(ssl);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -58,6 +69,28 @@ static void TestGetSslCtx() {
     ssl.ctx = &context;
     ssl.session = &session;
     Require(SSL_get_SSL_CTX_nid_postfix(Ssl(&ssl)) == &context);
+}
+
+static void TestGet1Session() {
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(1, 2, 3);
+    LibreSslPutError_nid_no_patch(4, 5, 6);
+    constexpr std::uint64_t firstError = (std::uint64_t{1} << 24) | (std::uint64_t{2} << 12) | 3;
+    constexpr std::uint64_t secondError = (std::uint64_t{4} << 24) | (std::uint64_t{5} << 12) | 6;
+    TestSsl ssl {};
+    std::array<unsigned char, sizeof(TestSsl)> before {};
+    std::memcpy(before.data(), &ssl, sizeof(ssl));
+    RequireThrows([] { SSL_get1_session_nid_postfix(nullptr); });
+    Require(std::memcmp(&ssl, before.data(), sizeof(ssl)) == 0);
+    Require(ERR_peek_error_nid_postfix() == firstError);
+    Require(LibreSslPeekLastError_nid_no_patch() == secondError);
+    Require(SSL_get1_session_nid_postfix(reinterpret_cast<LibreSslSsl*>(&ssl)) == nullptr);
+    Require(std::memcmp(&ssl, before.data(), sizeof(ssl)) == 0);
+    Require(ERR_peek_error_nid_postfix() == firstError);
+    Require(LibreSslPeekLastError_nid_no_patch() == secondError);
+    Require(ERR_get_error_nid_postfix() == firstError);
+    Require(ERR_get_error_nid_postfix() == secondError);
+    Require(ERR_get_error_nid_postfix() == 0);
 }
 
 static void TestGetRbio() {
@@ -106,6 +139,21 @@ static void TestVerifyResult() {
     Require(SSL_get_verify_result_nid_postfix(Ssl(&ssl)) == -1);
 }
 
+static void TestGetPeerCertificateNullPaths() {
+    LibreSslPutError_nid_no_patch(1, 2, 3);
+    LibreSslPutError_nid_no_patch(4, 5, 6);
+    TestSsl ssl {};
+    unsigned char before[sizeof(ssl)];
+    std::memcpy(before, &ssl, sizeof(ssl));
+    Require(SSL_get_peer_certificate_nid_postfix(nullptr) == nullptr);
+    Require(SSL_get_peer_certificate_nid_postfix(Ssl(&ssl)) == nullptr);
+    Require(std::memcmp(&ssl, before, sizeof(ssl)) == 0);
+    Require(ERR_peek_error_nid_postfix() == ((std::uint64_t{1} << 24) | (std::uint64_t{2} << 12) | 3));
+    Require(ERR_get_error_nid_postfix() == ((std::uint64_t{1} << 24) | (std::uint64_t{2} << 12) | 3));
+    Require(ERR_get_error_nid_postfix() == ((std::uint64_t{4} << 24) | (std::uint64_t{5} << 12) | 6));
+    Require(ERR_get_error_nid_postfix() == 0);
+}
+
 static void TestGetShutdown() {
     TestSslInternal internal {};
     TestSsl ssl {};
@@ -134,13 +182,78 @@ static void TestWant() {
     Require(SSL_want_nid_postfix(Ssl(&ssl)) == 3);
 }
 
+static void FreeExData(TestSslInternal& internal) {
+    auto* const stack = static_cast<LibreSslStack*>(internal.exData.stack);
+    if (!stack) return;
+    CRYPTO_free_nid_postfix(stack->data);
+    CRYPTO_free_nid_postfix(stack);
+    internal.exData.stack = nullptr;
+}
+
+static void TestSetExData() {
+    TestSslInternal internal {};
+    std::memset(internal.beforeExData, 0xa5, sizeof(internal.beforeExData));
+    std::memset(internal.afterExData, 0x5a, sizeof(internal.afterExData));
+    TestSsl ssl {};
+    int first = 1;
+    int replacement = 2;
+    RequireThrows([] { SSL_set_ex_data_nid_postfix(nullptr, 0, nullptr); });
+    RequireThrows([&] { SSL_set_ex_data_nid_postfix(Ssl(&ssl), 0, nullptr); });
+    ssl.internal = &internal;
+    Require(SSL_set_ex_data_nid_postfix(Ssl(&ssl), -1, &first) == 1);
+    auto* stack = static_cast<LibreSslStack*>(internal.exData.stack);
+    Require(stack && stack->num == 0 && stack->numAlloc == 4);
+    Require(SSL_set_ex_data_nid_postfix(Ssl(&ssl), 2, &first) == 1);
+    Require(stack->num == 3 && stack->data[0] == nullptr && stack->data[1] == nullptr && stack->data[2] == reinterpret_cast<char*>(&first));
+    Require(SSL_set_ex_data_nid_postfix(Ssl(&ssl), 2, &replacement) == 1);
+    Require(stack->data[2] == reinterpret_cast<char*>(&replacement));
+    Require(SSL_set_ex_data_nid_postfix(Ssl(&ssl), 5, nullptr) == 1);
+    Require(stack->num == 6 && stack->data[3] == nullptr && stack->data[4] == nullptr && stack->data[5] == nullptr);
+    Require(internal.rwstate == 0 && internal.shutdown == 0);
+    for (unsigned char byte : internal.beforeExData) Require(byte == 0xa5);
+    for (unsigned char byte : internal.afterExData) Require(byte == 0x5a);
+    FreeExData(internal);
+}
+
+static void TestSetExDataPrefilledStack() {
+    TestSslInternal internal {};
+    TestSsl ssl {};
+    ssl.internal = &internal;
+    auto* stack = static_cast<LibreSslStack*>(CRYPTO_malloc_nid_postfix(sizeof(LibreSslStack), nullptr, 0));
+    Require(stack != nullptr);
+    stack->data = static_cast<char**>(CRYPTO_malloc_nid_postfix(4 * sizeof(char*), nullptr, 0));
+    Require(stack->data != nullptr);
+    int original = 1;
+    int updated = 2;
+    stack->num = 1;
+    stack->data[0] = reinterpret_cast<char*>(&original);
+    stack->data[1] = nullptr;
+    stack->data[2] = nullptr;
+    stack->data[3] = nullptr;
+    stack->sorted = 1;
+    stack->numAlloc = 4;
+    stack->comp = nullptr;
+    internal.exData.stack = stack;
+    Require(SSL_set_ex_data_nid_postfix(Ssl(&ssl), 0, &updated) == 1);
+    Require(stack->num == 1 && stack->data[0] == reinterpret_cast<char*>(&updated) && stack->sorted == 1);
+    Require(SSL_set_ex_data_nid_postfix(Ssl(&ssl), 2, &original) == 1);
+    Require(stack->num == 3 && stack->data[1] == nullptr && stack->data[2] == reinterpret_cast<char*>(&original) && stack->sorted == 0);
+    FreeExData(internal);
+}
+
 int main() {
+    void* heap[10] {};
+    ApplicationHeapRegister_nid_no_patch(heap);
+    TestGet1Session();
     TestGetSslCtx();
     TestGetRbio();
     TestGetWbio();
     TestVersion();
     TestVerifyResult();
+    TestGetPeerCertificateNullPaths();
     TestGetShutdown();
     TestWant();
+    TestSetExData();
+    TestSetExDataPrefilledStack();
     return 0;
 }
