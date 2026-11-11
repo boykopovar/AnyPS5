@@ -66,6 +66,7 @@ public:
         std::uint64_t waits = 0;
         std::uint64_t waitNs = 0;
         std::uint64_t encodeNs = 0;
+        std::uint64_t parks = 0;
     };
     Statistics Counts() const;
     static void SetDelayForTesting(std::function<void()> delay);
@@ -125,6 +126,7 @@ private:
     std::thread worker;
     std::atomic<std::thread::id> owner{};
     std::atomic<std::uint64_t> postCount{0};
+    std::atomic<std::uint64_t> parkCount{0};
     std::atomic<std::uint64_t> commandCount{0};
     std::atomic<std::uint64_t> waitCount{0};
     std::atomic<std::uint64_t> waitNs{0};

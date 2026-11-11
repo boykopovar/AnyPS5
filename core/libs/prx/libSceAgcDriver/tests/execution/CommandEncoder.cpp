@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iostream>
@@ -761,6 +762,38 @@ void PostingNeverAllocates() {
     Require(Recorded(commands) == 13, "the encoder recorded " + std::to_string(Recorded(commands)) + " of 13 commands posted without allocating");
 }
 
+void PostOne(CommandEncoder& encoder, DeviceFunctions& table, VkCommandBuffer commands, std::uint32_t index) {
+    encoder.Open(commands, RecordingOf(commands));
+    table.cmdDraw(commands, index, 1, 0, 0);
+    encoder.Close();
+}
+
+void BusyFor(std::chrono::nanoseconds span) {
+    const auto until = std::chrono::steady_clock::now() + span;
+    while (std::chrono::steady_clock::now() < until) {}
+}
+
+void EncoderParksBetweenSpacedPosts() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x52);
+    const auto commands = Handle<VkCommandBuffer>(0x1500);
+    constexpr std::uint32_t Posts = 400;
+    CommandEncoder::Statistics counts{};
+    {
+        const auto attached = Attached(device, table);
+        auto& encoder = *attached;
+        for (std::uint32_t index = 0; index < Posts; ++index) {
+            PostOne(encoder, table, commands, index);
+            encoder.Quiesce();
+            BusyFor(std::chrono::microseconds(30));
+        }
+        counts = encoder.Counts();
+    }
+    Require(Recorded(commands) == Posts, "the encoder recorded " + std::to_string(Recorded(commands)) + " of " + std::to_string(Posts) + " spaced posts");
+    Require(counts.parks * 2 >= Posts, "the encoder parked " + std::to_string(counts.parks) + " times between " + std::to_string(Posts) + " posts 30 us apart instead of after each one");
+}
+
 void ProducerAheadOfTheChunkPoolWaits() {
     Reset();
     auto table = FakeTable();
@@ -829,6 +862,11 @@ void ReplayFailureNeedsNoAllocation() {
 
 int main() {
     try {
+#ifdef _WIN32
+        _putenv_s("APS5_HANDOFF_SPIN_US", "150");
+#else
+        setenv("APS5_HANDOFF_SPIN_US", "150", 1);
+#endif
         for (std::uint32_t seed = 1; seed <= 6; ++seed) RandomProgramRecordsWhatInlineRecords(seed, seed % 2 == 0);
         OtherThreadsRecordDirectlyWhileAWindowIsOpen();
         HookDuringUnencodedOpsWaits();
@@ -847,6 +885,7 @@ int main() {
         DevicesPastTheSlotsRecordInline();
         PostingNeverAllocates();
         ProducerAheadOfTheChunkPoolWaits();
+        EncoderParksBetweenSpacedPosts();
         ReplayFailureNeedsNoAllocation();
         std::cout << "command encoder tests passed\n";
         return 0;

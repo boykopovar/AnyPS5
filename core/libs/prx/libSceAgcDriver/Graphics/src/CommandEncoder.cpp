@@ -16,6 +16,16 @@ namespace {
 
 constexpr std::size_t ChunkBytes = 64 * 1024;
 constexpr std::size_t PooledChunks = 16;
+constexpr long long LongestIdleSpinUs = 10000;
+
+std::chrono::nanoseconds EncoderIdleSpin() {
+    static const auto spin = [] {
+        const char* configured = std::getenv("APS5_ENCODER_IDLE_SPIN_US");
+        if (configured == nullptr) return std::chrono::nanoseconds::zero();
+        return std::chrono::nanoseconds(std::chrono::microseconds(std::clamp<long long>(std::strtoll(configured, nullptr, 10), 0, LongestIdleSpinUs)));
+    }();
+    return spin;
+}
 constexpr std::size_t RecordAlign = 16;
 
 struct Record {
@@ -402,6 +412,7 @@ std::unique_ptr<CommandEncoder> CommandEncoder::Attach(VkDevice device, DeviceFu
 
 CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot) : table(table), real(table), device(device), slot(slot) {
     static_cast<void>(HandoffSpinWindow());
+    static_cast<void>(EncoderIdleSpin());
     try {
         for (; chunkCount < PooledChunks; ++chunkCount) {
             auto chunk = std::make_unique<Chunk>();
@@ -579,7 +590,8 @@ void CommandEncoder::run() {
     std::uint64_t taken = 0;
     for (;;) {
         if (posted.load(std::memory_order_acquire) == taken) {
-            if (!SpinUntil(HandoffSpinWindow(), [&] { return posted.load(std::memory_order_acquire) != taken; })) {
+            if (!SpinUntil(EncoderIdleSpin(), [&] { return posted.load(std::memory_order_acquire) != taken; })) {
+                parkCount.fetch_add(1, std::memory_order_relaxed);
                 sleeping.store(true, std::memory_order_seq_cst);
                 if (posted.load(std::memory_order_seq_cst) == taken) posted.wait(taken, std::memory_order_acquire);
                 sleeping.store(false, std::memory_order_relaxed);
@@ -618,7 +630,7 @@ void CommandEncoder::run() {
 }
 
 CommandEncoder::Statistics CommandEncoder::Counts() const {
-    return {postCount.load(std::memory_order_relaxed), commandCount.load(std::memory_order_relaxed), waitCount.load(std::memory_order_relaxed), waitNs.load(std::memory_order_relaxed), encodeNs.load(std::memory_order_relaxed)};
+    return {postCount.load(std::memory_order_relaxed), commandCount.load(std::memory_order_relaxed), waitCount.load(std::memory_order_relaxed), waitNs.load(std::memory_order_relaxed), encodeNs.load(std::memory_order_relaxed), parkCount.load(std::memory_order_relaxed)};
 }
 
 void CommandEncoder::SetDelayForTesting(std::function<void()> delay) {
