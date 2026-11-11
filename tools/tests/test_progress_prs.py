@@ -120,6 +120,11 @@ class OpenPrProgressTests(unittest.TestCase):
         self.assertEqual(order, [])
         self.assertEqual(excluded, {1: "dependency_cycle", 2: "dependency_cycle"})
 
+    def test_unavailable_estimate_keeps_failure_reason(self):
+        with patch.object(progress_prs, "collect_open_prs", side_effect=RuntimeError("API unavailable")):
+            result = progress_prs.estimate("boykopovar/AnyPS5", self.root)
+        self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "API unavailable")
 
 if __name__ == "__main__":
     unittest.main()
