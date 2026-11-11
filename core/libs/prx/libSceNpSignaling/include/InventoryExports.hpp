@@ -4,6 +4,4 @@
 
 extern "C" {
 
-int APS5_VABI sceNpSignalingGetMemoryInfo();
-
 }
