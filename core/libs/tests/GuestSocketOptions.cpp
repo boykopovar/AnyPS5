@@ -131,6 +131,22 @@ void ReportsAndClearsTheConnectError() {
     Require(close_nid_postfix(failing) == 0, "close failed");
 }
 
+void ReconnectAfterARefusalFails() {
+    int closed = -1;
+    auto refused = Listen(&closed);
+    Require(close_nid_postfix(closed) == 0, "close failed");
+    const int failing = socket_nid_postfix(2, Stream, 0);
+    Require(failing >= 0 && fcntl_nid_postfix(failing, 4, 4) == 0, "nonblocking socket setup failed");
+    const int attempt = connect_nid_postfix(failing, refused.data(), refused.size());
+    Require(attempt == -1, "a connect to a closed port must not succeed");
+    if (*__error_nid_postfix() == 36) {
+        WaitUntilSettled(failing);
+        Require(connect_nid_postfix(failing, refused.data(), refused.size()) == -1 && *__error_nid_postfix() == ErrorConnectionRefused,
+            "a connect after a refused nonblocking one must fail with ECONNREFUSED (61), not start another attempt");
+    }
+    Require(close_nid_postfix(failing) == 0, "close failed");
+}
+
 void BooleanOptionsReportTheirBit() {
     const int stream = socket_nid_postfix(2, Stream, 0);
     const int datagram = socket_nid_postfix(2, Datagram, 0);
@@ -368,7 +384,7 @@ void MulticastMembership() {
     Require(close_nid_postfix(datagram) == 0 && close_nid_postfix(stream) == 0, "close failed");
 }
 
-void MulticastOnTheHost() {
+bool MulticastOnTheHost() {
     constexpr int IpMulticastInterface = 9;
     constexpr int IpAddMembership = 12;
     constexpr int IpDropMembership = 13;
@@ -377,7 +393,12 @@ void MulticastOnTheHost() {
     const int datagram = socket_nid_postfix(2, Datagram, 0);
     Require(datagram >= 0, "socket failed");
     const std::array<std::uint8_t, 8> group{224, 0, 0, 251, 0, 0, 0, 0};
-    Require(setsockopt_nid_postfix(datagram, 0, IpAddMembership, group.data(), group.size()) == 0, "joining 224.0.0.251 through INADDR_ANY failed");
+    if (setsockopt_nid_postfix(datagram, 0, IpAddMembership, group.data(), group.size()) != 0) {
+        Require(*__error_nid_postfix() == ErrorAddressNotAvailable, "a join no host interface can take must fail with EADDRNOTAVAIL (49)");
+        Require(close_nid_postfix(datagram) == 0, "close failed");
+        std::puts("skipped, the host has no interface that can join 224.0.0.251");
+        return false;
+    }
     Require(SetFails(datagram, 0, IpAddMembership, group.data(), group.size(), ErrorAddressInUse), "joining twice must fail with EADDRINUSE (48)");
     Require(setsockopt_nid_postfix(datagram, 0, IpDropMembership, group.data(), group.size()) == 0, "drop failed");
     Require(SetFails(datagram, 0, IpDropMembership, group.data(), group.size(), ErrorAddressNotAvailable), "dropping twice must fail with EADDRNOTAVAIL (49)");
@@ -396,6 +417,7 @@ void MulticastOnTheHost() {
     size = address.size();
     Require(getsockopt_nid_postfix(datagram, 0, IpMulticastInterface, address.data(), &size) == 0 && address == std::array<std::uint8_t, 4>{}, "the default interface reads back as INADDR_ANY");
     Require(close_nid_postfix(datagram) == 0, "close failed");
+    return true;
 }
 
 void UnknownRequestsFail() {
@@ -503,11 +525,11 @@ void BadPointersFail() {
 
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "multicast") == 0) {
-        MulticastOnTheHost();
-        return 0;
+        return MulticastOnTheHost() ? 0 : 77;
     }
     ReportsTypeAndListening();
     ReportsAndClearsTheConnectError();
+    ReconnectAfterARefusalFails();
     BooleanOptionsReportTheirBit();
     ReusePortSharesAPort();
     LingerFollowsFreeBsd();

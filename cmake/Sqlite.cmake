@@ -17,10 +17,27 @@ endif()
 set_target_properties(sqlite_jimsh PROPERTIES OUTPUT_NAME jimsh RUNTIME_OUTPUT_DIRECTORY ${sqliteGen})
 set(sqliteTcl $<TARGET_FILE:sqlite_jimsh>)
 
+file(RELATIVE_PATH sqliteTop ${sqliteGen} ${SQLITE_SOURCE_DIR})
+set(sqliteHeaderDeps ${SQLITE_SOURCE_DIR}/src/sqlite.h.in ${SQLITE_SOURCE_DIR}/VERSION)
+if(sqliteTop MATCHES " ")
+    set(sqliteTop top)
+    set(sqliteHeaderInputs VERSION manifest manifest.uuid manifest.tags src/sqlite.h.in ext/rtree/sqlite3rtree.h ext/session/sqlite3session.h ext/fts5/fts5.h)
+    set(sqliteHeaderDeps)
+    foreach(input IN LISTS sqliteHeaderInputs)
+        if(EXISTS ${SQLITE_SOURCE_DIR}/${input})
+            get_filename_component(inputDir ${input} DIRECTORY)
+            file(MAKE_DIRECTORY ${sqliteGen}/top/${inputDir})
+            add_custom_command(OUTPUT ${sqliteGen}/top/${input}
+                COMMAND ${CMAKE_COMMAND} -E copy ${SQLITE_SOURCE_DIR}/${input} ${sqliteGen}/top/${input}
+                DEPENDS ${SQLITE_SOURCE_DIR}/${input})
+            list(APPEND sqliteHeaderDeps ${sqliteGen}/top/${input})
+        endif()
+    endforeach()
+endif()
 add_custom_command(OUTPUT ${sqliteGen}/sqlite3.h
-    COMMAND ${sqliteTcl} ${SQLITE_SOURCE_DIR}/tool/mksqlite3h.tcl ${SQLITE_SOURCE_DIR} -o ${sqliteGen}/sqlite3.h
+    COMMAND ${sqliteTcl} ${SQLITE_SOURCE_DIR}/tool/mksqlite3h.tcl ${sqliteTop} -o ${sqliteGen}/sqlite3.h
     WORKING_DIRECTORY ${sqliteGen}
-    DEPENDS sqlite_jimsh sqlite_mksourceid ${SQLITE_SOURCE_DIR}/src/sqlite.h.in ${SQLITE_SOURCE_DIR}/VERSION)
+    DEPENDS sqlite_jimsh sqlite_mksourceid ${sqliteHeaderDeps})
 add_custom_command(OUTPUT ${sqliteGen}/parse.c ${sqliteGen}/parse.h
     COMMAND ${CMAKE_COMMAND} -E copy ${SQLITE_SOURCE_DIR}/src/parse.y ${SQLITE_SOURCE_DIR}/tool/lempar.c ${sqliteGen}
     COMMAND $<TARGET_FILE:sqlite_lemon> -S parse.y

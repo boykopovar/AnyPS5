@@ -9,6 +9,15 @@
 #include <string>
 #include <string_view>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <array>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <system_error>
+#endif
+
 namespace {
 
 constexpr const char* GuestHooksKey = "anyps5.guest";
@@ -97,10 +106,59 @@ void DestroyFunction(void* function) {
     delete static_cast<GuestFunction*>(function);
 }
 
-bool SpecialDestructor(NKWebKit::GuestSqliteDestructor destructor) {
-    const auto value = reinterpret_cast<std::intptr_t>(destructor);
-    return value == 0 || value == -1;
+#ifdef _WIN32
+
+void CallBindingDestructor(void* data, NKWebKit::GuestSqliteDestructor destructor) {
+    destructor(data);
 }
+
+struct BindingDestructor {
+    void* code = nullptr;
+
+    ~BindingDestructor() {
+        if (code) VirtualFree(code, 0, MEM_RELEASE);
+    }
+};
+
+sqlite3_destructor_type HostDestructor(NKWebKit::GuestSqliteDestructor destructor) {
+    if (!destructor) return SQLITE_STATIC;
+    if (reinterpret_cast<std::intptr_t>(destructor) == -1) return SQLITE_TRANSIENT;
+    static std::mutex mutex;
+    static std::map<NKWebKit::GuestSqliteDestructor, std::unique_ptr<BindingDestructor>> destructors;
+    std::lock_guard lock(mutex);
+    if (const auto found = destructors.find(destructor); found != destructors.end()) {
+        return reinterpret_cast<sqlite3_destructor_type>(found->second->code);
+    }
+    std::array<unsigned char, 26> bytes{
+        0xF3, 0x0F, 0x1E, 0xFA, 0x48, 0xBA, 0, 0, 0, 0, 0, 0, 0, 0,
+        0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xE0
+    };
+    const auto guest = reinterpret_cast<std::uintptr_t>(destructor);
+    const auto host = reinterpret_cast<std::uintptr_t>(&CallBindingDestructor);
+    static_assert(sizeof(guest) == 8);
+    std::memcpy(bytes.data() + 6, &guest, sizeof(guest));
+    std::memcpy(bytes.data() + 16, &host, sizeof(host));
+    auto thunk = std::make_unique<BindingDestructor>();
+    thunk->code = VirtualAlloc(nullptr, bytes.size(), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!thunk->code) throw std::bad_alloc();
+    std::memcpy(thunk->code, bytes.data(), bytes.size());
+    DWORD previous;
+    if (!VirtualProtect(thunk->code, bytes.size(), PAGE_EXECUTE_READ, &previous) ||
+        !FlushInstructionCache(GetCurrentProcess(), thunk->code, bytes.size())) {
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category());
+    }
+    const auto result = reinterpret_cast<sqlite3_destructor_type>(thunk->code);
+    destructors.emplace(destructor, std::move(thunk));
+    return result;
+}
+
+#else
+
+sqlite3_destructor_type HostDestructor(NKWebKit::GuestSqliteDestructor destructor) {
+    return destructor;
+}
+
+#endif
 
 }
 
@@ -108,13 +166,7 @@ extern "C" {
 
 int APS5_VABI sqlite3_bind_blob_nid_postfix(sqlite3_stmt* statement, int index, const void* data, int size,
     NKWebKit::GuestSqliteDestructor destructor) {
-    const bool owned = !SpecialDestructor(destructor);
-    const int result = sqlite3_bind_blob(statement, index, data, size,
-        owned || destructor ? SQLITE_TRANSIENT : SQLITE_STATIC);
-    if (owned && data) {
-        destructor(const_cast<void*>(data));
-    }
-    return result;
+    return sqlite3_bind_blob(statement, index, data, size, HostDestructor(destructor));
 }
 
 int APS5_VABI sqlite3_bind_double_nid_postfix(sqlite3_stmt* statement, int index, double value) {
@@ -139,13 +191,7 @@ int APS5_VABI sqlite3_bind_parameter_count_nid_postfix(sqlite3_stmt* statement) 
 
 int APS5_VABI sqlite3_bind_text16_nid_postfix(sqlite3_stmt* statement, int index, const void* text, int size,
     NKWebKit::GuestSqliteDestructor destructor) {
-    const bool owned = !SpecialDestructor(destructor);
-    const int result = sqlite3_bind_text16(statement, index, text, size,
-        owned || destructor ? SQLITE_TRANSIENT : SQLITE_STATIC);
-    if (owned && text) {
-        destructor(const_cast<void*>(text));
-    }
-    return result;
+    return sqlite3_bind_text16(statement, index, text, size, HostDestructor(destructor));
 }
 
 int APS5_VABI sqlite3_busy_handler_nid_postfix(sqlite3* db, NKWebKit::GuestSqliteBusy handler, void* argument) {
