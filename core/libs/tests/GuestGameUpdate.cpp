@@ -1,4 +1,5 @@
 #include "prx/libSceGameUpdate/include/Api.hpp"
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
@@ -59,6 +60,7 @@ static void TestRequestArguments(int notInitialized, int invalidArgument, int in
 }
 
 static void TestRequestLifecycle(int notFound) {
+    constexpr int invalidArgument = static_cast<int>(0x80412803);
     constexpr int tooManyRequests = static_cast<int>(0x80412806);
     constexpr int aborted = static_cast<int>(0x80412807);
     GameUpdateCheckParam param{};
@@ -75,6 +77,10 @@ static void TestRequestLifecycle(int notFound) {
     }
     Require(ids[0] != ids[1]);
     Require(sceGameUpdateCreateRequest() == tooManyRequests);
+
+    errno = 71;
+    Require(sceGameUpdateCheck(ids[0], &param, reinterpret_cast<GameUpdateCheckResult*>(0x10)) == invalidArgument);
+    Require(errno == 71);
 
     Require(sceGameUpdateCheck(ids[0], &param, &result) == 0);
     Require(!result.found && !result.addcont_found);
