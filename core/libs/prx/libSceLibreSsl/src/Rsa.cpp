@@ -342,6 +342,19 @@ std::vector<unsigned char> ToBytes(const Words& words) {
     return bytes;
 }
 
+Words SubtractFromModulus(const LibreSslBignum& modulus, const Words& value) {
+    Words difference(modulus.d, modulus.d + modulus.top);
+    std::uint64_t borrow = 0;
+    for (std::size_t index = 0; index < difference.size(); ++index) {
+        const std::uint64_t subtrahend = index < value.size() ? value[index] : 0;
+        const std::uint64_t word = difference[index];
+        difference[index] = word - subtrahend - borrow;
+        borrow = word < subtrahend || (word == subtrahend && borrow) ? 1 : 0;
+    }
+    while (!difference.empty() && !difference.back()) difference.pop_back();
+    return difference;
+}
+
 bool ModExp(const Words& base, const LibreSslBignum& exponent, const LibreSslBignum& modulus, Words& result) {
     if (!modulus.top || !(modulus.d[0] & 1)) return false;
     if (!Bits(exponent)) {
@@ -431,6 +444,41 @@ int AddNone(unsigned char* to, int size, const unsigned char* from, int length, 
     RequireBuffer(from, length, function, "input");
     std::memcpy(to, from, static_cast<std::size_t>(length));
     return 1;
+}
+
+int CheckX931(unsigned char* to, const unsigned char* from, int length, int modulusLength, const char* function) {
+    if (modulusLength != length || (from[0] != 0x6A && from[0] != 0x6B)) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 137, __FILE__, __LINE__);
+        return -1;
+    }
+    const unsigned char* data = from + 1;
+    int remaining;
+    if (from[0] == 0x6B) {
+        remaining = length - 3;
+        int index = 0;
+        for (; index < remaining; ++index) {
+            const unsigned char byte = *data++;
+            if (byte == 0xBA) break;
+            if (byte != 0xBB) {
+                LibreSslPutError_nid_no_patch(4, 0xfff, 138, __FILE__, __LINE__);
+                return -1;
+            }
+        }
+        if (index == 0) {
+            LibreSslPutError_nid_no_patch(4, 0xfff, 138, __FILE__, __LINE__);
+            return -1;
+        }
+        remaining -= index;
+    } else {
+        remaining = length - 2;
+    }
+    if (remaining < 0 || data[remaining] != 0xCC) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 139, __FILE__, __LINE__);
+        return -1;
+    }
+    RequireBuffer(to, remaining, function, "output");
+    if (remaining) std::memcpy(to, data, static_cast<std::size_t>(remaining));
+    return remaining;
 }
 
 int CheckPkcs1Type1(unsigned char* to, int size, const unsigned char* from, int length, int modulusLength, const char* function) {
@@ -554,11 +602,14 @@ int APS5_VABI DefaultPublicDecrypt(int length, const unsigned char* from, unsign
     }
     Words result;
     if (!PublicOperation(*rsa, value, *exponent, *modulus, result, function)) return -1;
-    if (padding == PaddingX931) NotImplemented_nid_no_patch("RSA_padding_check_X931");
+    if (padding == PaddingX931 && ((result.empty() ? 0 : result[0]) & 0xf) != 12) result = SubtractFromModulus(*modulus, result);
     const auto bytes = ToBytes(result);
     switch (padding) {
     case PaddingPkcs1:
         if (const int pkcs1 = CheckPkcs1Type1(to, size, bytes.data(), static_cast<int>(bytes.size()), size, function); pkcs1 >= 0) return pkcs1;
+        break;
+    case PaddingX931:
+        if (const int x931 = CheckX931(to, bytes.data(), static_cast<int>(bytes.size()), size, function); x931 >= 0) return x931;
         break;
     case PaddingNone:
         if (const int none = CheckNone(to, size, bytes.data(), static_cast<int>(bytes.size()), function); none >= 0) return none;
