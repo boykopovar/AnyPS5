@@ -51,6 +51,7 @@ struct MacOsImageInput {
     bool Executable = true;
     bool FunctionSymbolRoots = false;
     std::string InstallName;
+    std::string Identifier;
     const std::vector<std::uint8_t>* Source = nullptr;
     const std::vector<Domain::ProgramHeader>* Headers = nullptr;
     Windows::WindowsLoadImage* Image = nullptr;
