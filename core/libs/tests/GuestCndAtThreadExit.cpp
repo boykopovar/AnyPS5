@@ -14,6 +14,11 @@ void* operator new(std::size_t size) {
     throw std::bad_alloc();
 }
 
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
+    if (failAllocations) return nullptr;
+    return std::malloc(size ? size : 1);
+}
+
 void operator delete(void* memory) noexcept { std::free(memory); }
 void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
 
@@ -104,7 +109,7 @@ struct HostPadThread {
     void* result = nullptr;
 };
 
-static int APS5_VABI HostPthreadCreate(void** thread, const void*, void* (APS5_VABI* entry)(void*), void* argument) {
+static int APS5_VABI HostPthreadCreate(void** thread, const void*, void* (APS5_VABI* entry)(void*), void* argument, const char*) {
     auto* handle = new HostPadThread{};
     handle->worker = std::thread([handle, entry, argument] { handle->result = entry(argument); });
     *thread = handle;

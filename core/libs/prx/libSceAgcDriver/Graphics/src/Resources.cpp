@@ -15,6 +15,7 @@
 #endif
 
 namespace AgcDriver::Graphics {
+void WriteCheckpointSentinel(const Context& context, VkCommandBuffer commands);
 
 namespace {
 
@@ -279,6 +280,7 @@ void FillDeviceFunctions(const Context& context, DeviceFunctions& functions) {
     functions.cmdEndRenderPass = context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass");
     functions.cmdSetViewport = context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport");
     functions.cmdSetScissor = context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor");
+    if (context.dynamicColorWriteMask) functions.cmdSetColorWriteMask = context.Function<PFN_vkCmdSetColorWriteMaskEXT>("vkCmdSetColorWriteMaskEXT");
     functions.cmdSetDepthBounds = context.Function<PFN_vkCmdSetDepthBounds>("vkCmdSetDepthBounds");
     functions.cmdSetDepthBias = context.Function<PFN_vkCmdSetDepthBias>("vkCmdSetDepthBias");
     if (context.graphicsPipelineLibrary) {
@@ -391,6 +393,7 @@ CommandBatch::CommandBatch(const Context& context) : context(context) {
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         Check(context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(commands, &begin), "vkBeginCommandBuffer");
+        WriteCheckpointSentinel(context, commands);
         // Work recorded so far goes first in queue order, so this batch sees its results.
         if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Recording()) recorder->Submit();
     } catch (...) {
