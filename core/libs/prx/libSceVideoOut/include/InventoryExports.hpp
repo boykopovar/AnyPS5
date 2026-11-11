@@ -113,7 +113,7 @@ int APS5_VABI sceVideoOutSysGetVblankStatus();
 int APS5_VABI sceVideoOutSysGetVideoOutModeByBusSpecifier();
 int APS5_VABI sceVideoOutSysHdmiMonitorInfoIsMorpheus();
 void APS5_VABI sceVideoOutSysInitMode(void* mode);
-int APS5_VABI sceVideoOutSysIsModeS3d();
+int APS5_VABI sceVideoOutSysIsModeS3d(const void* mode);
 int APS5_VABI sceVideoOutSysIsOutputSupported();
 int APS5_VABI sceVideoOutSysIsSupportedByMonitorInfo_();
 int APS5_VABI sceVideoOutSysIsUserStatusHdr();
