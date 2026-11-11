@@ -620,6 +620,10 @@ StringImpl* EmptyStringImpl() {
     return EmptyImpl();
 }
 
+StringImpl* CreateUninitialized(unsigned length, bool is8Bit, void*& characters) {
+    return NewImpl(length, is8Bit, characters);
+}
+
 StringImpl* TryCreateUninitialized(unsigned length, bool is8Bit, void*& characters) {
     if (!length) {
         characters = nullptr;
