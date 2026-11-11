@@ -160,11 +160,34 @@ void CheckReplacement() {
     Require(Convert(context, "\x82\xA0", out, sizeof(out), produced) == 0 && produced == 3);
 }
 
+void CheckIso2022() {
+    Sheet sheet{};
+    Require(sceCesUcsProfileInitIso2022JpRfc1468(sheet.bytes) == sheet.bytes);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileAscii()) == 0);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileJisX0201Roman()) == 0);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileJisX0201()) == invalidProfile);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileKsX1003()) == invalidProfile);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileGbT1988()) == invalidProfile);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(sheet.bytes, nullptr) == invalidProfile);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(nullptr, sceCesRefersUcsProfileAscii()) == invalidProfile);
+    Require(sceCesEucJpUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileAscii()) == invalidProfile);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(sheet.bytes, sheet.bytes) == invalidProfile);
+    Require(sceCesUcsProfileInitIso2022JpCp50221(sheet.bytes) == sheet.bytes);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileAscii()) == 0);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileJisX0201Roman()) == 0);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileJisX0201()) == invalidProfile);
+    Require(sceCesUcsProfileInitIso2022JpCp50222(sheet.bytes) == sheet.bytes);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileAscii()) == 0);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileJisX0201Roman()) == 0);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileJisX0201()) == invalidProfile);
+}
+
 }
 
 int main() {
     CheckShiftJis();
     CheckEucFamilies();
     CheckReplacement();
+    CheckIso2022();
     return 0;
 }

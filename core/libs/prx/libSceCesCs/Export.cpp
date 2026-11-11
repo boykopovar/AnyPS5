@@ -705,8 +705,10 @@ bool isMbcs(const void* profile) {
     return isEucJp(profile) || isSjis(profile) || isJis2004(profile) || isSbc(profile) || isEucCn(profile) || isGb(profile) || isEucKr(profile) || isUhc(profile) || isBig5(profile);
 }
 
+bool isIso2022(const void* profile);
+
 bool isSheet(const void* profile) {
-    return isEucJp(profile) || isSjis(profile) || isEucCn(profile) || isGb(profile) || isEucKr(profile) || isUhc(profile) || isBig5(profile);
+    return isEucJp(profile) || isSjis(profile) || isEucCn(profile) || isGb(profile) || isEucKr(profile) || isUhc(profile) || isBig5(profile) || isIso2022(profile);
 }
 
 uint8_t sbcProfileIndex(const void* sbcs) {
@@ -1364,15 +1366,19 @@ constexpr uint8_t ISO2022_CP50222_TAG[8] = {'I', 'S', 'O', '2', '0', '2', '2', '
 constexpr uint32_t ISO2022_NO_CHARACTER = 0xFFFFFFFFu;
 
 bool isIso2022(const void* profile) {
-    return hasTag(profile, ISO2022_RFC1468_TAG) || hasTag(profile, ISO2022_CP50221_TAG) || hasTag(profile, ISO2022_CP50222_TAG);
+    return profile != nullptr && std::memcmp(profile, "ISO2022", 7) == 0;
 }
 
 bool iso2022Katakana(const void* profile) {
-    return hasTag(profile, ISO2022_CP50221_TAG) || hasTag(profile, ISO2022_CP50222_TAG);
+    if (!isIso2022(profile)) return false;
+    const auto* p = static_cast<const uint8_t*>(profile);
+    return p[7] == '1' || p[7] == '2' || p[8] == '1' || p[8] == '2';
 }
 
 bool iso2022ShiftsKatakana(const void* profile) {
-    return hasTag(profile, ISO2022_CP50222_TAG);
+    if (!isIso2022(profile)) return false;
+    const auto* p = static_cast<const uint8_t*>(profile);
+    return p[7] == '2' || p[8] == '2';
 }
 
 enum class Iso2022Set : uint8_t { Ascii, Roman, Jis0208, Katakana, Other };
@@ -1383,12 +1389,19 @@ struct Iso2022State {
 };
 
 bool isIso2022Rfc1468(const void* profile) {
-    return hasTag(profile, ISO2022_RFC1468_TAG);
+    if (!isIso2022(profile)) return false;
+    const auto* p = static_cast<const uint8_t*>(profile);
+    return p[7] == 'R' || p[8] == 'R';
 }
 
 Iso2022State iso2022Start(const void* profile) {
     Iso2022State state;
-    state.set = isIso2022Rfc1468(profile) ? Iso2022Set::Roman : Iso2022Set::Ascii;
+    const uint8_t* sbcs = sheetSbcs(profile);
+    if (sbcs != nullptr) {
+        state.set = sbcs == singleByteProfile(SingleByte::JisX0201Roman) ? Iso2022Set::Roman : Iso2022Set::Ascii;
+    } else {
+        state.set = isIso2022Rfc1468(profile) ? Iso2022Set::Roman : Iso2022Set::Ascii;
+    }
     return state;
 }
 
@@ -2209,6 +2222,10 @@ int APS5_VABI sceCesSJisUcsProfileSetSbcs(void* p, const void* sbcs) {
 
 int APS5_VABI sceCesEucJpUcsProfileSetSbcs(void* p, const void* sbcs) {
     return setSheetSbcs(p, sbcs, isEucJp(p), {singleByteProfile(SingleByte::Ascii), singleByteProfile(SingleByte::JisX0201Roman)});
+}
+
+int APS5_VABI sceCesIso2022JpUcsProfileSetSbcs(void* p, const void* sbcs) {
+    return setSheetSbcs(p, sbcs, isIso2022(p), {singleByteProfile(SingleByte::Ascii), singleByteProfile(SingleByte::JisX0201Roman)});
 }
 
 int APS5_VABI sceCesEucKrUcsProfileSetSbcs(void* p, const void* sbcs) {
@@ -3142,18 +3159,21 @@ int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jisc
 void* APS5_VABI sceCesUcsProfileInitIso2022JpRfc1468(void* sheet) {
     if (!sheet) return nullptr;
     std::memcpy(sheet, ISO2022_RFC1468_TAG, sizeof(ISO2022_RFC1468_TAG));
+    static_cast<uint8_t*>(sheet)[8] = 'R';
     return sheet;
 }
 
 void* APS5_VABI sceCesUcsProfileInitIso2022JpCp50221(void* sheet) {
     if (!sheet) return nullptr;
     std::memcpy(sheet, ISO2022_CP50221_TAG, sizeof(ISO2022_CP50221_TAG));
+    static_cast<uint8_t*>(sheet)[8] = '1';
     return sheet;
 }
 
 void* APS5_VABI sceCesUcsProfileInitIso2022JpCp50222(void* sheet) {
     if (!sheet) return nullptr;
     std::memcpy(sheet, ISO2022_CP50222_TAG, sizeof(ISO2022_CP50222_TAG));
+    static_cast<uint8_t*>(sheet)[8] = '2';
     return sheet;
 }
 
