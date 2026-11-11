@@ -159,11 +159,6 @@ int APS5_VABI OCSP_BASICRESP_free_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI OCSP_basic_add1_cert_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI OCSP_basic_verify_nid_postfix(LibreSslOcspBasicResponse* response, LibreSslStack* certificates, LibreSslX509Store* store, std::uint64_t flags) {
     constexpr int responderIdName = 0;
     constexpr int sha1DigestLength = 20;
