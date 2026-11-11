@@ -220,7 +220,16 @@ bool ExpectQsortSConstraints() {
     correct &= ExpectConstraint("qsort_s: bad argument", &element, 2, sizeof(Element), false);
     int direction = 1;
     const int calls = constraintCalls;
-    qsort_s_nid_postfix(&element, aboveLimit - 1, 0, CompareKeysWithDirection, &direction);
+    bool zeroSizeThrew = false;
+    try {
+        qsort_s_nid_postfix(&element, aboveLimit - 1, 0, CompareKeysWithDirection, &direction);
+    } catch (const std::invalid_argument&) {
+        zeroSizeThrew = true;
+    }
+    if (!zeroSizeThrew) {
+        std::fprintf(stderr, "qsort_s accepted a zero element size for SIZE_MAX >> 3 elements\n");
+        correct = false;
+    }
     correct &= qsort_s_nid_postfix(&element, 1, aboveLimit - 1, CompareKeysWithDirection, &direction) == 0;
     if (constraintCalls != calls) {
         std::fprintf(stderr, "qsort_s reported a count or size of SIZE_MAX >> 3\n");

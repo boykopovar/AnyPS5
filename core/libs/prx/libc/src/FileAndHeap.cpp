@@ -1075,10 +1075,10 @@ int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestCo
         SonyInvokeConstraintHandler("qsort_s: bad argument", nullptr, 22);
         return 22;
     }
-    if (count > 1 && size != 0) {
-        auto withContext = [compare, context](const void* left, const void* right) { return compare(left, right, context); };
-        SortElements(static_cast<unsigned char*>(base), count, count, size, withContext);
-    }
+    if (count == 0) return 0;
+    if (size == 0 && count >= 33) throw std::invalid_argument("qsort_s: zero element size");
+    auto withContext = [compare, context](const void* left, const void* right) { return compare(left, right, context); };
+    SortElements(static_cast<unsigned char*>(base), count, count, size, withContext);
     return 0;
 }
 
