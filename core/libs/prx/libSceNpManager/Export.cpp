@@ -126,9 +126,16 @@ struct StateCallback {
     bool pending = false;
 };
 
+struct ToolkitStateCallback {
+    NpStateCallbackForToolkit callback = nullptr;
+    void* userdata = nullptr;
+    bool pending = false;
+};
+
 std::mutex stateMutex;
 std::array<StateCallbackA, NP_STATE_CALLBACK_MAX> stateCallbacksA;
 StateCallback stateCallback;
+ToolkitStateCallback toolkitStateCallback;
 
 constexpr int NP_GAME_PRESENCE_CALLBACK_MAX = 8;
 
@@ -142,9 +149,6 @@ struct GamePresenceCallbackEntry {
 std::mutex gamePresenceMutex;
 std::array<GamePresenceCallbackEntry, NP_GAME_PRESENCE_CALLBACK_MAX> gamePresenceCallbacksA{};
 int nextGamePresenceHandle = 0;
-
-NpStateCallbackForToolkit toolkitCallback = nullptr;
-void* toolkitUserdata = nullptr;
 }
 
 extern "C" {
@@ -856,17 +860,21 @@ int APS5_VABI sceNpAbortRequest(int req_id) {
 int APS5_VABI sceNpCheckCallback(void) {
     std::array<StateCallbackA, NP_STATE_CALLBACK_MAX> callbacksA;
     StateCallback legacy;
+    ToolkitStateCallback toolkit;
     {
         std::lock_guard lock(stateMutex);
         callbacksA = stateCallbacksA;
         legacy = stateCallback;
+        toolkit = toolkitStateCallback;
         for (auto& entry : stateCallbacksA) entry.pending = false;
         stateCallback.pending = false;
+        toolkitStateCallback.pending = false;
     }
     if (legacy.pending) legacy.callback(USER_SERVICE_INITIAL_USER_ID, NP_STATE_SIGNED_OUT, nullptr, legacy.userdata);
     for (const auto& entry : callbacksA) {
         if (entry.pending) entry.callback(USER_SERVICE_INITIAL_USER_ID, NP_STATE_SIGNED_OUT, entry.userdata);
     }
+    if (toolkit.pending && toolkit.callback) toolkit.callback(USER_SERVICE_INITIAL_USER_ID, NP_STATE_SIGNED_OUT, toolkit.userdata);
     return 0;
 }
 
@@ -1150,16 +1158,14 @@ int APS5_VABI sceNpUnregisterStateCallback(void) {
 
 int APS5_VABI sceNpRegisterStateCallbackForToolkit(NpStateCallbackForToolkit callback, void* userdata) {
     std::lock_guard lock(stateMutex);
-    toolkitCallback = callback;
-    toolkitUserdata = userdata;
+    toolkitStateCallback = {callback, userdata, true};
     return 0;
 }
 
 int APS5_VABI sceNpUnregisterStateCallbackForToolkit(void) {
     std::lock_guard lock(stateMutex);
-    if (!toolkitCallback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
-    toolkitCallback = nullptr;
-    toolkitUserdata = nullptr;
+    if (!toolkitStateCallback.callback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
+    toolkitStateCallback = {};
     return 0;
 }
 
