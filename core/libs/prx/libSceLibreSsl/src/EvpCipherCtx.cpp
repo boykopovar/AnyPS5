@@ -240,17 +240,18 @@ int APS5_VABI EVP_CipherInit_ex_nid_postfix(LibreSslEvpCipherCtx* ctx, const Lib
         ctx->cipher = cipher;
         ctx->cipherData = nullptr;
         if (cipher->contextSize) {
-            ctx->cipherData = malloc_nid_postfix(static_cast<std::size_t>(cipher->contextSize));
+            ctx->cipherData = calloc_nid_postfix(1, static_cast<std::size_t>(cipher->contextSize));
             if (!ctx->cipherData) return 0;
         }
         ctx->keyLen = cipher->keyLength;
-        ctx->flags = 0;
+        ctx->flags &= CipherCtxFlagWrapAllow;
         if ((cipher->flags & CipherFlagCtrlInit) && !EVP_CIPHER_CTX_ctrl_nid_postfix(ctx, CipherControlInit, 0, nullptr)) return 0;
     } else if (!engineCipher && !ctx->cipher) {
         return 0;
     }
     const auto& active = *ctx->cipher;
     if (active.blockSize != 1 && active.blockSize != 8 && active.blockSize != 16) return 0;
+    if ((active.flags & CipherModeMask) == CipherModeWrap && !(ctx->flags & CipherCtxFlagWrapAllow)) return 0;
     if (!(active.flags & CipherFlagCustomIv)) {
         const auto ivLength = static_cast<std::size_t>(active.ivLength);
         switch (active.flags & CipherModeMask) {

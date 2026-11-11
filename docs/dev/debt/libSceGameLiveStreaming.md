@@ -10,6 +10,7 @@
 
 ### Silent stubs
 
+- [sceGameLiveStreamingGetSocialFeedbackMessages, sceGameLiveStreamingGetSocialFeedbackMessagesCount](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) - returning `0x80A00002` for unwritable output pointers is a host-safety fallback with console behavior unmeasured.
 - [sceGameLiveStreamingPermitLiveStreaming](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) - this and fifteen related setting, feedback and message calls (see `Api.hpp`) validate their arguments and store nothing, as no broadcast is ever on air. The checks (not initialized, null pointers, feedback type 1-3, string lengths 240/720/45/360, at most 16 spoiler tags and 5 preset commands, zero reserved tails in the 224-byte spoiler tag, 228-byte preset command and camera setting) come from a report on #9524 that ran each function of the firmware 13.42 module with the service call stubbed. The order between argument checks, the camera setting size and the other struct fields are not measured, nor what the service returns after validation: the calls return 0 and queries report zero messages.
 
 ### Unknown function info
@@ -25,8 +26,7 @@
 - [sceGameLiveStreamingSetDefaultServiceProviderPermission](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
 - [sceGameLiveStreamingStartGenerateStandbyScreenResource](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
 - [sceGameLiveStreamingStopGenerateStandbyScreenResource](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingRegisterCallback](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingUnregisterCallback](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
+- [sceGameLiveStreamingRegisterCallback and sceGameLiveStreamingUnregisterCallback](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) - decoded from firmware 4.03's libSceGameLiveStreaming.sprx: `RegisterCallback` takes a callback and a user-data pointer, returns `0x80A00004` before `sceGameLiveStreamingInitialize`, registers the pair as a session event listener and stores both pointers under the module mutex (zeroed instead on a failed registration); `UnregisterCallback` takes no arguments, returns `0x80A00004` uninitialized, clears the stored pair before dropping the listener and returns the listener result. Here both store or clear the pair and return 0 once initialized, since the session event machinery the native bodies register into does not exist — no stored callback is ever invoked, and the callback's own signature is unresolved
 - [sceGameLiveStreamingCheckCallback](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
 - [sceGameLiveStreamingSetStandbyScreenResource](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
 - [sceGameLiveStreamingGetCurrentBroadcastScreenLayout](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
