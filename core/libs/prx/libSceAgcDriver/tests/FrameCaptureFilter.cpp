@@ -251,6 +251,13 @@ void testNegativePlanIndex(const std::filesystem::path& root) {
     checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted a negative index");
 }
 
+
+void testOverflowPlanIndex(const std::filesystem::path& root) {
+    const auto path = root / "overflow-index.plan";
+    { std::ofstream output(path); output << "aps5-frame-filter 1\nchunk 18446744073709551616\n"; }
+    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted an overflowing index");
+}
+
 }
 
 int main() {
@@ -268,6 +275,7 @@ int main() {
     testDuplicateChunk(root);
     testMissingPlanIndex(root);
     testNegativePlanIndex(root);
+    testOverflowPlanIndex(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
