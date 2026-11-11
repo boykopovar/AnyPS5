@@ -1,3 +1,5 @@
+#include "prx/libSceNpTrophy2/include/LegacyExports.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNpTrophy2/include/InventoryExports.hpp"
 #include "prx/libSceNpTrophy2/include/Api.hpp"
 #include <cstdint>
@@ -183,6 +185,32 @@ int APS5_VABI sceNpTrophy2SystemUnregisterTitleSyncedCallback() {
 }
 
 int APS5_VABI sceNpTrophy2SystemUnregisterTitleUpdateCallback() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI npTrophy2LegacyUnknown_1nbnAo_minus_VuLw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("1nbnAo-VuLw", npTrophy2LegacyUnknown_1nbnAo_minus_VuLw_nid_no_patch);
+
+int APS5_VABI sceNpTrophy2SystemDbgCtl() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophy2SystemGetDbgParam() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI npTrophy2LegacyUnknown_cKAQ579AuCc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("cKAQ579AuCc", npTrophy2LegacyUnknown_cKAQ579AuCc_nid_no_patch);
+
+int APS5_VABI sceNpTrophy2SystemSetDbgParam() {
     NotImplemented_nid_no_patch(__func__);
 }
 

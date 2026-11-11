@@ -24,9 +24,16 @@ extern "C" void* APS5_VABI fdopendir_nid_postfix(int fd) {
 }
 
 extern "C" void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags) {
-    constexpr int HideWhiteouts = 0x1;
-    constexpr int NoDuplicates = 0x2;
-    constexpr int Rewind = 0x4;
-    if ((flags & ~(HideWhiteouts | NoDuplicates | Rewind)) != 0) NotImplemented_nid_no_patch("__opendir2: flags other than DTF_HIDEW, DTF_NODUP and DTF_REWIND");
+    constexpr int ReadAll = 0x8;
+    constexpr int SkipRead = 0x10;
+    if ((flags & (ReadAll | SkipRead)) != 0) return nullptr;
     return opendir_nid_postfix(name);
+}
+
+extern "C" GuestDirectoryEntry* APS5_VABI _readdir_unlocked_nid_postfix(void* handle, int skip) {
+    return ReadDirectoryUnlocked_nid_no_patch(handle, skip);
+}
+
+extern "C" void APS5_VABI _seekdir_nid_postfix(void* handle, std::int64_t location) {
+    SeekDirectoryUnlocked_nid_no_patch(handle, location);
 }

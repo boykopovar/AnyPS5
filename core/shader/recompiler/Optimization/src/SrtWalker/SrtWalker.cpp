@@ -3,10 +3,21 @@
 #include "Optimization/SrtWalker/SrtEvaluator.hpp"
 #include "Optimization/SrtWalker/SrtPlanBuilder.hpp"
 #include "Optimization/SrtWalker/SrtRuntimeValidator.hpp"
+#include "prx/libc/include/HostThreadSlot.hpp"
 
 #include <stdexcept>
 
 namespace ShaderRecompiler {
+
+struct SrtEvaluatingBranchSlot {};
+
+bool SrtEvaluatingBranch() {
+    return HostThreadSlot<bool, SrtEvaluatingBranchSlot>::Get();
+}
+
+void SetSrtEvaluatingBranch(bool evaluating) {
+    HostThreadSlot<bool, SrtEvaluatingBranchSlot>::Set(evaluating);
+}
 
 void SrtWalker::BuildPlan(IrProgram& program) const {
     if (program.Resources().resourceTrackingComplete) {

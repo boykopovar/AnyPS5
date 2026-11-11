@@ -60,6 +60,7 @@ constexpr int ErrorCallbackCheck = static_cast<int>(0x8095f0fd);
 constexpr int ErrorInvalidValue = static_cast<int>(0x8095f007);
 constexpr int ErrorBadLength = static_cast<int>(0x80951773);
 constexpr int ErrorBadRecord = static_cast<int>(0x80951d55);
+constexpr int ErrorNotTls = static_cast<int>(0x80951d78);
 constexpr int ErrorNetBadDescriptor = static_cast<int>(0x80410109);
 constexpr int ErrorNetPipe = static_cast<int>(0x80410120);
 constexpr int ErrorNetReset = static_cast<int>(0x80410136);
@@ -498,9 +499,9 @@ struct Session {
             case MBEDTLS_ERR_NET_CONN_RESET:
                 reset = true;
                 if (operation == Operation::Write) return ErrorNetPipe;
-                if (operation == Operation::Connect) return ErrorSocketClosed;
                 return ErrorNetReset;
             case MBEDTLS_ERR_SSL_CONN_EOF: return operation == Operation::Connect ? ErrorSocketClosed : 0;
+            case MBEDTLS_ERR_SSL_INVALID_RECORD: return operation == Operation::Connect ? ErrorNotTls : 0;
             case MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE: return ErrorFatalAlert;
             case MBEDTLS_ERR_SSL_INVALID_MAC: return operation == Operation::Read ? ErrorBadRecord : 0;
             default: return 0;
@@ -1311,8 +1312,9 @@ void* APS5_VABI sceSslGetSubjectName(int sslCtxId, void* sslCert) {
     return ExtractCertName(__func__, sslCtxId, sslCert, true);
 }
 
-int APS5_VABI CA_MGMT_extractKeyBlobEx() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI CA_MGMT_extractKeyBlobEx(int, const void* keyBlob, std::uint32_t, void* key) {
+    if (key == nullptr || keyBlob == nullptr) return ErrorInvalidArg;
+    std::memcpy(static_cast<unsigned char*>(key) + 8, &keyBlob, sizeof(keyBlob));
     return 0;
 }
 
@@ -1326,8 +1328,9 @@ int APS5_VABI CA_MGMT_freeKeyBlob() {
     return 0;
 }
 
-int APS5_VABI CRYPTO_initAsymmetricKey() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI CRYPTO_initAsymmetricKey(void* key) {
+    const std::uint32_t initialized = 1;
+    std::memcpy(key, &initialized, sizeof(initialized));
     return 0;
 }
 
@@ -1384,8 +1387,8 @@ int APS5_VABI sceSslEnableOptionInternal() {
     return 0;
 }
 
-int APS5_VABI sceSslGetNanoSSLModuleId() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceSslGetNanoSSLModuleId(int sslCtxId, int* moduleId) {
+    if (moduleId != nullptr) *moduleId = sslCtxId;
     return 0;
 }
 
