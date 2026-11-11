@@ -3,7 +3,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -24,16 +23,6 @@ void ExpectName(const char* actual, const char* expected, const char* what) {
     if (expected ? actual && std::strcmp(actual, expected) == 0 : !actual) return;
     std::fprintf(stderr, "%s returned %s, expected %s\n", what, actual ? actual : "null", expected ? expected : "null");
     std::abort();
-}
-
-template <typename Function>
-void ExpectNotImplemented(Function function, const char* what) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    Expect(false, what);
 }
 
 struct Range {
@@ -172,15 +161,12 @@ void TestPropertyValues() {
     ExpectInt(u_getIntPropertyMaxValue_nid_postfix(0x1005), 29, "u_getIntPropertyMaxValue(gc)");
     ExpectInt(u_getIntPropertyMaxValue_nid_postfix(0x100f), 2, "u_getIntPropertyMaxValue(NFKC_QC)");
     ExpectInt(u_getIntPropertyMaxValue_nid_postfix(0x6000), -1, "u_getIntPropertyMaxValue(0x6000)");
-    ExpectNotImplemented([] { u_getIntPropertyMaxValue_nid_postfix(0x1016); }, "u_getIntPropertyMaxValue(InPC)");
 
     Expect(u_hasBinaryProperty_nid_postfix(0x41, 0) && !u_hasBinaryProperty_nid_postfix(0x31, 0), "u_hasBinaryProperty(Alphabetic)");
     Expect(u_hasBinaryProperty_nid_postfix(0x2ffe, 72), "u_hasBinaryProperty(IDS_Unary_Operator)");
     Expect(u_hasBinaryProperty_nid_postfix(0xc5, 9) == 0 && u_hasBinaryProperty_nid_postfix(0x340, 9), "u_hasBinaryProperty(Full_Composition_Exclusion)");
     Expect(u_hasBinaryProperty_nid_postfix(0x41, 54) && !u_hasBinaryProperty_nid_postfix(0x61, 54), "u_hasBinaryProperty(Changes_When_Casefolded)");
     Expect(!u_hasBinaryProperty_nid_postfix(0x41, 0x100f) && !u_hasBinaryProperty_nid_postfix(0x41, -1), "u_hasBinaryProperty outside binary properties");
-    ExpectNotImplemented([] { u_hasBinaryProperty_nid_postfix(0x1f600, 57); }, "u_hasBinaryProperty(Emoji)");
-    ExpectNotImplemented([] { u_hasBinaryProperty_nid_postfix(0x41, 40); }, "u_hasBinaryProperty(NFKC_Inert)");
 
     ExpectInt(u_getIntPropertyValue_nid_postfix(0x41, 0x1005), 1, "u_getIntPropertyValue(A, gc)");
     ExpectInt(u_getIntPropertyValue_nid_postfix(0x41, 0x100a), 25, "u_getIntPropertyValue(A, sc)");
@@ -189,8 +175,6 @@ void TestPropertyValues() {
     ExpectInt(u_getIntPropertyValue_nid_postfix(0x301, 0x100e), 2, "u_getIntPropertyValue(U+0301, NFC_QC)");
     ExpectInt(u_getIntPropertyValue_nid_postfix(0x41, 0), 1, "u_getIntPropertyValue(A, Alphabetic)");
     ExpectInt(u_getIntPropertyValue_nid_postfix(0x41, 0x6000), 0, "u_getIntPropertyValue(A, 0x6000)");
-    ExpectNotImplemented([] { u_getIntPropertyValue_nid_postfix(0x41, 0x1018); }, "u_getIntPropertyValue(vo)");
-    ExpectNotImplemented([] { u_getIntPropertyValue_nid_postfix(0x41, 0x100f); }, "u_getIntPropertyValue(NFKC_QC)");
 }
 
 }

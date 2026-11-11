@@ -2,16 +2,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 extern "C" {
-int APS5_VABI ubidi_close_nid_postfix();
-int APS5_VABI ubidi_countRuns_nid_postfix();
-int APS5_VABI ubidi_getBaseDirection_nid_postfix();
-int APS5_VABI ubidi_getLogicalRun_nid_postfix();
-int APS5_VABI ubidi_getParaLevel_nid_postfix();
-int APS5_VABI ubidi_getVisualRun_nid_postfix();
-int APS5_VABI ubidi_open_nid_postfix();
-int APS5_VABI ubidi_reorderVisual_nid_postfix();
-int APS5_VABI ubidi_setClassCallback_nid_postfix();
-int APS5_VABI ubidi_setPara_nid_postfix();
 int APS5_VABI ucal_clone_nid_postfix();
 int APS5_VABI ucal_close_nid_postfix();
 int APS5_VABI ucal_get_nid_postfix();
@@ -43,13 +33,6 @@ int APS5_VABI ucol_setStrength_nid_postfix();
 int APS5_VABI ucol_strcoll_nid_postfix();
 int APS5_VABI ucol_strcollIter_nid_postfix();
 int APS5_VABI ucol_strcollUTF8_nid_postfix();
-int APS5_VABI ucsdet_close_nid_postfix();
-int APS5_VABI ucsdet_detectAll_nid_postfix();
-int APS5_VABI ucsdet_enableInputFilter_nid_postfix();
-int APS5_VABI ucsdet_getConfidence_nid_postfix();
-int APS5_VABI ucsdet_getName_nid_postfix();
-int APS5_VABI ucsdet_open_nid_postfix();
-int APS5_VABI ucsdet_setText_nid_postfix();
 int APS5_VABI udat_close_nid_postfix();
 int APS5_VABI udat_countSymbols_nid_postfix();
 int APS5_VABI udat_format_nid_postfix();
