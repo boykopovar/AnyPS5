@@ -70,6 +70,10 @@ void RequirePosixNormalisation() {
         {"pt_BR", "pt-BR"},
         {"zh_TW", "zh-TW"},
         {"zh_Hant_TW", "zh-Hant-TW"},
+        {"zh_cmn_Hant_TW.UTF-8@latin", "zh-cmn-Hant-TW"},
+        {"zh_cmn_Hant_TW.UTF-8@cyrillic", "zh-cmn-Hant-TW"},
+        {"zh_cmn_TW@latin", "zh-cmn-Latn-TW"},
+        {"ar_aao_DZ@latin", "ar-aao-Latn-DZ"},
         {"ca_ES@valencia", "ca-ES"},
         {"sr_RS@latin", "sr-Latn-RS"},
         {"sr@latin", "sr-Latn"},
@@ -178,6 +182,7 @@ void RequireChineseRows() {
         {"cmn-Hans-TW", ChineseSimplified},
         {"yue", ChineseTraditional}, {"yue-HK", ChineseTraditional}, {"yue-Hans-CN", ChineseSimplified},
         {"zh-cmn-Hant", ChineseTraditional}, {"zh_cmn_Hant_TW.UTF-8", ChineseTraditional},
+        {"zh_cmn_Hant_TW.UTF-8@latin", ChineseTraditional}, {"zh_yue_Hant_HK.UTF-8@cyrillic", ChineseTraditional},
         {"zh-cmn-Hans-TW", ChineseSimplified}, {"zh-cmn-TW", ChineseTraditional},
         {"zh-yue", ChineseTraditional}, {"zh-yue-HK", ChineseTraditional}, {"zh-yue-Hans", ChineseSimplified},
     };
@@ -287,6 +292,7 @@ void RequireHostResolution() {
     Require(Resolve({"en-GB", "fr"}, notices) == EnglishUk && notices.empty(), "first entry before later ones");
     Require(Resolve({"zh-Hant-TW"}, notices) == ChineseTraditional && notices.empty(), "zh-Hant-TW");
     Require(Resolve({"zh-cmn-Hant"}, notices) == ChineseTraditional && notices.empty(), "Mandarin extlang keeps its script");
+    Require(Resolve({"zh_cmn_Hant_TW.UTF-8@latin"}, notices) == ChineseTraditional && notices.empty(), "an explicit script wins over a modifier after extlang");
     Require(Resolve({"zh-yue", "en-US"}, notices) == ChineseTraditional && notices.empty(), "Cantonese extlang uses its language mapping");
     Require(Resolve({"zh-yue-Hans"}, notices) == ChineseSimplified && notices.empty(), "Cantonese extlang keeps its script");
     Require(Resolve({"lt_LT.UTF-8"}, notices) == EnglishUs && notices.size() == 1, "unlisted language");
