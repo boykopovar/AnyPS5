@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -38,9 +39,11 @@ int main() {
     Require(sceAppContentGetRegion(nullptr) == notInitialized);
     Require(sceAppContentRequestPatchInstall(nullptr) == notInitialized);
     AppContentMountPoint uninitializedMount{};
+    auto* const unwritableMount = reinterpret_cast<AppContentMountPoint*>(std::uintptr_t{0x10});
     Require(sceAppContentTemporaryDataMount(nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataMount(&uninitializedMount) == notInitialized);
     Require(sceAppContentTemporaryDataMount2(0, nullptr) == notInitialized);
+    Require(sceAppContentTemporaryDataMount2(1, unwritableMount) == notInitialized);
     Require(sceAppContentTemporaryDataUnmount(nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataFormat(nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataGetAvailableSpaceKb(nullptr, nullptr) == notInitialized);
@@ -223,16 +226,30 @@ int main() {
     Require(sceAppContentTemporaryDataUnmount(nullptr) == ErrorParameter);
     Require(sceAppContentTemporaryDataUnmount(&mountPoint) == ErrorNotMounted);
     Require(sceAppContentTemporaryDataMount2(0, nullptr) == ErrorParameter);
+    Require(sceAppContentTemporaryDataMount2(2, unwritableMount) == ErrorParameter);
+    const auto notImplemented = NotImplementedCalls_nid_no_patch();
+    bool mountThrew = false;
+    try {
+        sceAppContentTemporaryDataMount2(1, unwritableMount);
+    } catch (const std::runtime_error& error) {
+        mountThrew = std::strcmp(error.what(), "sceAppContentTemporaryDataMount2 not implemented") == 0;
+    }
+    Require(mountThrew && NotImplementedCalls_nid_no_patch() == notImplemented + 1);
+    Require(std::filesystem::exists(directory / "temp0" / "old.txt"));
+    Require(access_nid_postfix("/temp0/old.txt", 0) == -1);
+    Require(sceAppContentTemporaryDataUnmount(&mountPoint) == ErrorNotMounted);
     std::memset(&mountPoint, 0x5a, sizeof(mountPoint));
     Require(sceAppContentTemporaryDataMount2(2, &mountPoint) == ErrorParameter);
     Require(std::memcmp(&mountPoint, &untouched, sizeof(mountPoint)) == 0);
     Require(sceAppContentTemporaryDataMount2(0, &mountPoint) == 0);
     Require(std::strcmp(mountPoint.data, "/temp0") == 0);
     const auto backing = ResolvePath_nid_no_patch("/temp0");
+    Require(std::filesystem::exists(backing / "old.txt"));
     { std::ofstream file(backing / "keep.txt"); file << "retained"; }
     { std::ofstream file(directory / "temp01"); file << "unrelated"; }
     AppContentMountPoint second = untouched;
     Require(sceAppContentTemporaryDataMount2(1, &second) == ErrorBusy);
+    Require(sceAppContentTemporaryDataMount2(1, unwritableMount) == ErrorBusy);
     Require(std::memcmp(&second, &untouched, sizeof(second)) == 0);
     Require(std::filesystem::exists(backing / "keep.txt"));
     Require(sceAppContentTemporaryDataUnmount(&second) == ErrorNotMounted);
