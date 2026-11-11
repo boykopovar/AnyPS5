@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include <chrono>
@@ -7,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <string>
 
 namespace {
 
@@ -56,7 +58,11 @@ void ExpectCompression(int fd, std::int64_t sceError, int guestErrno, std::sourc
 
 int main() {
     const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
-    const auto path = (std::filesystem::temp_directory_path() / ("anyps5-lwfs-" + std::to_string(unique))).string();
+    const auto root = std::filesystem::temp_directory_path() / ("anyps5-lwfs-" + std::to_string(unique));
+    Require(std::filesystem::create_directory(root));
+    const auto host = root.string();
+    AddPathAlias_nid_no_patch("/lwfs-test", host.c_str());
+    const std::string path = "/lwfs-test/file";
     const int file = open_nid_postfix(path.c_str(), 0x602, 0600);
     Require(file >= 0);
     ExpectAll(file, SceEnotty, 25);
@@ -68,6 +74,7 @@ int main() {
     }
     Require(close_nid_postfix(file) == 0);
     Require(unlink_nid_postfix(path.c_str()) == 0);
+    std::filesystem::remove_all(root);
 
     ExpectAll(-1, SceEbadf, 9);
     ExpectAll(100000, SceEbadf, 9);
