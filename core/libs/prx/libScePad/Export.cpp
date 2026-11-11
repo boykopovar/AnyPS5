@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <array>
@@ -308,8 +309,13 @@ int APS5_VABI scePadGetContainerIdInformation(int handle, PadContainerIdInformat
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
  const int device = DeviceOf(handle);
  if (device != PAD_OK) return device;
- info->size = 0;
- info->id[0] = '\0';
+ PadContainerIdInformation localInfo{};
+ localInfo.size = 0;
+ localInfo.id[0] = '\0';
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
 
