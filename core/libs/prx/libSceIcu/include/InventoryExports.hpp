@@ -1,6 +1,9 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
+
+struct UEnumeration;
 
 extern "C" {
 
@@ -48,9 +51,11 @@ std::int32_t APS5_VABI uloc_getCountry(const char* locale, char* result, std::in
 int APS5_VABI uloc_getDefault();
 std::int32_t APS5_VABI uloc_getKeywordValue(const char* locale, const char* keyword, char* result,
                                           std::int32_t capacity, std::int32_t* status);
+std::int32_t APS5_VABI uloc_getName(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 std::int32_t APS5_VABI uloc_getLanguage(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 std::int32_t APS5_VABI uloc_getScript(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 int APS5_VABI uloc_minimizeSubtags();
+UEnumeration* APS5_VABI uloc_openKeywords(const char* locale, std::int32_t* status);
 int APS5_VABI uloc_setKeywordValue();
 int APS5_VABI uloc_toLanguageTag();
 int APS5_VABI uloc_toUnicodeLocaleType();

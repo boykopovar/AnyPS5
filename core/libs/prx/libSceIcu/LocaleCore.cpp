@@ -1,11 +1,17 @@
 #include "prx/libSceIcu/include/InventoryExports.hpp"
+#include "prx/libSceIcu/Enumeration.hpp"
+#include "prx/libSceIcu/Status.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <new>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -155,6 +161,154 @@ std::int32_t Component(const char* locale, char* result, std::int32_t capacity,
     return Write(value, result, capacity, status, true);
 }
 
+constexpr std::int32_t kInvalidFormat = 3;
+constexpr std::int32_t kInternalProgramError = 5;
+constexpr std::int32_t kMemoryAllocation = 7;
+constexpr std::int32_t kFullNameCapacity = 157;
+constexpr std::size_t kKeywordBufferLength = 25;
+constexpr std::size_t kMaximumKeywords = 25;
+
+struct Keyword {
+    std::string name;
+    std::string_view value;
+};
+
+std::int32_t ParseKeywords(std::string_view list, std::vector<Keyword>& keywords) {
+    std::size_t position = 0;
+    while (true) {
+        while (position < list.size() && list[position] == ' ') ++position;
+        if (position == list.size()) break;
+        if (keywords.size() == kMaximumKeywords) return kInternalProgramError;
+        const auto equal = list.find('=', position);
+        const auto semicolon = list.find(';', position);
+        if (equal == std::string_view::npos || (semicolon != std::string_view::npos && semicolon < equal))
+            return kInvalidFormat;
+        if (equal - position >= kKeywordBufferLength) return kInternalProgramError;
+        Keyword keyword;
+        for (std::size_t index = position; index < equal; ++index) {
+            if (list[index] != ' ') keyword.name.push_back(Lower(list[index]));
+        }
+        if (keyword.name.empty()) return kInvalidFormat;
+        std::size_t valueStart = equal + 1;
+        while (valueStart < list.size() && list[valueStart] == ' ') ++valueStart;
+        if (valueStart == list.size() || valueStart == semicolon) return kInvalidFormat;
+        std::size_t valueEnd = semicolon == std::string_view::npos ? list.size() : semicolon;
+        while (valueEnd > valueStart && list[valueEnd - 1] == ' ') --valueEnd;
+        keyword.value = list.substr(valueStart, valueEnd - valueStart);
+        const bool duplicate = std::any_of(keywords.begin(), keywords.end(), [&](const Keyword& existing) {
+            return existing.name == keyword.name;
+        });
+        if (!duplicate) keywords.push_back(std::move(keyword));
+        if (semicolon == std::string_view::npos) break;
+        position = semicolon + 1;
+    }
+    std::sort(keywords.begin(), keywords.end(), [](const Keyword& left, const Keyword& right) {
+        return left.name < right.name;
+    });
+    return 0;
+}
+
+bool HasLanguageTagExtension(std::string_view id) {
+    if (id.find('@') != std::string_view::npos) return false;
+    std::size_t shortest = id.size();
+    std::size_t current = 0;
+    bool reset = true;
+    for (const char value : id) {
+        if (value != '_' && value != '-') {
+            if (reset) {
+                current = 0;
+                reset = false;
+            }
+            ++current;
+        } else {
+            if (current != 0 && current < shortest) shortest = current;
+            reset = true;
+        }
+    }
+    return shortest == 1;
+}
+
+bool Resolve(const char* locale, std::string& id, std::int32_t* status) {
+    id = locale;
+    if (!HasLanguageTagExtension(id)) return true;
+    std::array<char, kFullNameCapacity> buffer{};
+    const std::int32_t length = uloc_forLanguageTag(locale, buffer.data(), kFullNameCapacity, nullptr, status);
+    if (length <= 0 || *status > 0 || *status == kStringNotTerminated) {
+        if (*status == kStringNotTerminated) *status = kBufferOverflow;
+        return *status <= 0;
+    }
+    id.assign(buffer.data(), static_cast<std::size_t>(length));
+    return true;
+}
+
+bool NamesDefaultLocale(std::string_view id) {
+    constexpr std::string_view alias = "i-default";
+    if (id.substr(0, alias.size()) != alias) return false;
+    return id.size() == alias.size() || std::string_view("._-@").find(id[alias.size()]) != std::string_view::npos;
+}
+
+std::int32_t Emit(std::string_view value, char* destination, std::int32_t capacity, std::int32_t* status) {
+    const std::int32_t length = Icu::Checked(static_cast<std::int64_t>(value.size()));
+    const std::int32_t room = std::max(capacity, 0);
+    const std::int32_t copied = std::min(length, room);
+    if (copied > 0) std::memcpy(destination, value.data(), static_cast<std::size_t>(copied));
+    if (*status > 0) return length;
+    if (length > room) {
+        *status = kBufferOverflow;
+        return length;
+    }
+    Icu::Terminate(destination, capacity, length, status);
+    return length;
+}
+
+struct KeywordList {
+    UEnumeration enumeration;
+    std::string names;
+    std::size_t current;
+    std::u16string unicode;
+};
+
+KeywordList& ListOf(UEnumeration* enumeration) {
+    return *static_cast<KeywordList*>(enumeration->context);
+}
+
+void APS5_VABI CloseKeywords(UEnumeration* enumeration) {
+    delete &ListOf(enumeration);
+}
+
+std::int32_t APS5_VABI CountKeywords(UEnumeration* enumeration, std::int32_t*) {
+    const std::string& names = ListOf(enumeration).names;
+    return Icu::Checked(static_cast<std::int64_t>(std::count(names.begin(), names.end(), '\0')));
+}
+
+const char* APS5_VABI NextKeyword(UEnumeration* enumeration, std::int32_t* resultLength, std::int32_t*) {
+    KeywordList& list = ListOf(enumeration);
+    if (list.current >= list.names.size()) {
+        if (resultLength) *resultLength = 0;
+        return nullptr;
+    }
+    const char* result = list.names.c_str() + list.current;
+    const std::size_t length = std::strlen(result);
+    list.current += length + 1;
+    if (resultLength) *resultLength = Icu::Checked(static_cast<std::int64_t>(length));
+    return result;
+}
+
+const char16_t* APS5_VABI NextUnicodeKeyword(UEnumeration* enumeration, std::int32_t* resultLength,
+                                             std::int32_t* status) {
+    std::int32_t length = 0;
+    const char* name = NextKeyword(enumeration, &length, status);
+    if (resultLength) *resultLength = length;
+    if (!name) return nullptr;
+    std::u16string& unicode = ListOf(enumeration).unicode;
+    unicode.assign(name, name + length);
+    return unicode.c_str();
+}
+
+void APS5_VABI ResetKeywords(UEnumeration* enumeration, std::int32_t*) {
+    ListOf(enumeration).current = 0;
+}
+
 }
 
 extern "C" {
@@ -243,6 +397,65 @@ std::int32_t APS5_VABI uloc_canonicalize(const char* locale, char* result,
             canonical += std::string(canonical.find('@') == std::string::npos ? "@" : ";") + keyword;
     }
     return Write(canonical, result, capacity, status, false);
+}
+
+std::int32_t APS5_VABI uloc_getName(const char* locale, char* result,
+                                   std::int32_t capacity, std::int32_t* status) {
+    if (Icu::Failure(status)) return 0;
+    if (!locale) NotImplemented_nid_no_patch("uloc_getName with a null locale, which names the default locale");
+    if (capacity > 0 && !result) APS5_INVALID_ARG_EX;
+    std::string id;
+    if (!Resolve(locale, id, status)) return 0;
+    if (NamesDefaultLocale(id)) NotImplemented_nid_no_patch("uloc_getName of i-default, which names the default locale");
+    std::string name = BaseName(Parse(id.c_str()));
+    const auto at = id.find('@');
+    if (at != std::string::npos) {
+        const auto assign = id.find('=', at);
+        const auto separator = id.find(';', at);
+        if (assign == std::string::npos) {
+            name += id.substr(at);
+        } else if (separator == std::string::npos || separator > assign) {
+            name += '@';
+            std::vector<Keyword> keywords;
+            if (const std::int32_t error = ParseKeywords(std::string_view(id).substr(at + 1), keywords)) {
+                *status = error;
+                return Emit(name, result, capacity, status);
+            }
+            for (std::size_t index = 0; index < keywords.size(); ++index) {
+                if (index) name += ';';
+                name += keywords[index].name;
+                name += '=';
+                name += keywords[index].value;
+            }
+        }
+    }
+    return Emit(name, result, capacity, status);
+}
+
+UEnumeration* APS5_VABI uloc_openKeywords(const char* locale, std::int32_t* status) {
+    if (!status || *status > 0) return nullptr;
+    if (!locale) NotImplemented_nid_no_patch("uloc_openKeywords with a null locale, which names the default locale");
+    std::string id;
+    if (!Resolve(locale, id, status)) return nullptr;
+    const auto at = id.find('@');
+    if (at == std::string::npos) return nullptr;
+    std::vector<Keyword> keywords;
+    if (const std::int32_t error = ParseKeywords(std::string_view(id).substr(at + 1), keywords)) {
+        *status = error;
+        return nullptr;
+    }
+    auto* list = new (std::nothrow) KeywordList{};
+    if (!list) {
+        *status = kMemoryAllocation;
+        return nullptr;
+    }
+    for (const auto& keyword : keywords) {
+        list->names += keyword.name;
+        list->names += '\0';
+    }
+    list->enumeration = UEnumeration{nullptr, list, CloseKeywords, CountKeywords, NextUnicodeKeyword,
+                                     NextKeyword, ResetKeywords};
+    return &list->enumeration;
 }
 
 }
