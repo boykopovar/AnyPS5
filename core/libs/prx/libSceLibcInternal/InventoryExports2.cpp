@@ -76,36 +76,6 @@ int APS5_VABI _Tgamma_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Thrd_abort_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Thrd_create_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Thrd_start_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Thrd_start_with_attr_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Thrd_start_with_name_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Thrd_start_with_name_attr_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Ttotm_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
