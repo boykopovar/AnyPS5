@@ -131,16 +131,24 @@ def statements(body):
     return parts
 
 
+def template_open(tokens, index):
+    before = tokens[index - 1] if index else ""
+    after = tokens[index + 1] if index + 1 < len(tokens) else ""
+    return bool(re.fullmatch(r"[A-Za-z_]\w*", before)) and after not in ("<", "=")
+
+
 def inert_parameters(signature):
     parameters, nesting, default = set(), [], False
     text = signature.partition("(")[2].rpartition(")")[0]
-    for match in CPP_TOKEN.finditer(text):
-        token = match.group()
+    tokens = [match.group() for match in CPP_TOKEN.finditer(text)]
+    for index, token in enumerate(tokens):
         if token == "," and not nesting:
             default = False
         elif token == "=" and not nesting:
             default = True
-        elif token in ("(", "[", "{", "<") and (not default or token != "<"):
+        elif token == "<" and default and not template_open(tokens, index):
+            continue
+        elif token in ("(", "[", "{", "<"):
             nesting.append(token)
         elif token in (")", "]", "}", ">") and nesting:
             if nesting[-1] == {")": "(", "]": "[", "}": "{", ">": "<"}[token]:

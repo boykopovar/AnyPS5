@@ -906,6 +906,25 @@ class ProgressConstantReturnTests(unittest.TestCase):
                     f"int APS5_VABI Constant({declaration}) {{ return Failure; }}\n")
                 self.assertEqual(group["inert_names"], ["Constant"])
 
+    def test_template_defaults_do_not_add_parameters(self):
+        for declaration in ("std::array<int, Failure> value = std::array<int, Failure>()",
+                            "Array<Array<int, Failure>, 2> value = Array<Array<int, Failure>, 2>()",
+                            "int value = Pick<int, Failure>()"):
+            with self.subTest(declaration=declaration):
+                group = self.scan(
+                    "#include <array>\n"
+                    "constexpr int Failure = 2;\n"
+                    f"int APS5_VABI Constant({declaration}) {{\n"
+                    "    return Failure;\n"
+                    "}\n")
+                self.assertEqual(group["inert_names"], ["Constant"])
+
+    def test_parameters_after_operator_defaults_are_parameters(self):
+        for default in ("1 << 2", "Shift << 2", "1 < 2", "Limit <= 2"):
+            with self.subTest(default=default):
+                group = self.scan(f"int APS5_VABI Echo(int flags = {default}, int value) {{ return value; }}\n")
+                self.assertEqual(group["inert_names"], [])
+
     def test_pointer_and_function_pointer_parameters_are_not_constants(self):
         for declaration in ("const void* value", "int (*value)(int)", "Array<int, 2>& value"):
             with self.subTest(declaration=declaration):
