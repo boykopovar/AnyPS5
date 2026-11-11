@@ -451,3 +451,30 @@ class CliEntrypointTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("known-good commit", result.stdout)
         self.assertIn("known-bad commit", result.stdout)
+
+
+class FirstParentMergeTests(GitHistoryTests):
+    def test_excludes_side_branch_commits_and_keeps_the_merge_commit(self):
+        default_branch = performance_bisect.git(self.repo, "symbolic-ref", "--short", "HEAD")
+        performance_bisect.git(self.repo, "switch", "-c", "bisect-side")
+        (self.repo / "side.txt").write_text("side-only change", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "side.txt"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "test: side branch"], check=True)
+        side_commit = performance_bisect.git(self.repo, "rev-parse", "HEAD")
+        performance_bisect.git(self.repo, "switch", default_branch)
+        (self.repo / "main.txt").write_text("first-parent change", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "main.txt"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "test: first parent"], check=True)
+        first_parent_change = performance_bisect.git(self.repo, "rev-parse", "HEAD")
+        subprocess.run(["git", "-C", str(self.repo), "merge", "--no-ff", "bisect-side",
+                        "-m", "merge: side branch"], check=True, capture_output=True)
+        merge_commit = performance_bisect.git(self.repo, "rev-parse", "HEAD")
+
+        good, bad, commits = performance_bisect.first_parent_commits(self.repo, self.good, merge_commit)
+
+        self.assertEqual(good, self.good)
+        self.assertEqual(bad, merge_commit)
+        self.assertIn(first_parent_change, commits)
+        self.assertIn(merge_commit, commits)
+        self.assertNotIn(side_commit, commits)
+        self.assertEqual(len(commits), len(set(commits)))
