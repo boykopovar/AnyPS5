@@ -128,10 +128,20 @@ void testPlanReader(const std::filesystem::path& root) {
     checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted a non-numeric index");
 }
 
+
+void testOutOfRangeChunk(const std::filesystem::path& root) {
+    const auto source = root / "source";
+    writeCapture(source);
+    AgcDriverTools::FrameCaptureFilterPlan plan;
+    plan.chunks.insert(99);
+    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, root / "bad-chunk", plan); }, "filtering accepted an out-of-range chunk index");
+}
+
 }
 
 int main() {
     const auto root = std::filesystem::temp_directory_path() / ("aps5-frame-capture-filter-test-" + std::to_string(getpid()));
+    testOutOfRangeChunk(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
