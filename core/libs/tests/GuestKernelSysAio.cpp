@@ -15,6 +15,12 @@
 #include <source_location>
 #include <string>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -61,6 +67,77 @@ void Require(bool condition, std::source_location location = std::source_locatio
 int Error() {
     return *__error_nid_postfix();
 }
+
+class GuardedMemory {
+public:
+    GuardedMemory() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        page = static_cast<std::size_t>(size);
+        memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+        Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedMemory() {
+#ifdef _WIN32
+        Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(memory, 2 * page) == 0);
+#endif
+    }
+
+    void ProtectReadOnly(bool readOnly) {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, page, readOnly ? PAGE_READONLY : PAGE_READWRITE, &previous) != 0);
+#else
+        Require(mprotect(memory, page, readOnly ? PROT_READ : PROT_READ | PROT_WRITE) == 0);
+#endif
+    }
+
+    const KernelTimespec* UnreadableTimeout() const {
+        return reinterpret_cast<const KernelTimespec*>(memory + page);
+    }
+
+    const KernelTimespec* CrossingTimeout() const {
+        return reinterpret_cast<const KernelTimespec*>(memory + page - sizeof(std::int64_t));
+    }
+
+    const KernelTimespec* UnalignedCrossingTimeout() const {
+        return reinterpret_cast<const KernelTimespec*>(memory + page - 1);
+    }
+
+    GuestAiocb** UnreadableResult() const {
+        return reinterpret_cast<GuestAiocb**>(memory + page);
+    }
+
+    GuestAiocb** CrossingResult() const {
+        return reinterpret_cast<GuestAiocb**>(memory + page - sizeof(void*) / 2);
+    }
+
+    GuestAiocb** UnalignedCrossingResult() const {
+        return reinterpret_cast<GuestAiocb**>(memory + page - 1);
+    }
+
+    GuestAiocb** WritableResult() const {
+        return reinterpret_cast<GuestAiocb**>(memory);
+    }
+
+private:
+    char* memory = nullptr;
+    std::size_t page = 0;
+};
 
 GuestAiocb Request(int descriptor, void* buffer, std::uint64_t bytes, std::int64_t offset = 0) {
     GuestAiocb request{};
@@ -244,7 +321,54 @@ void SyncOrder(int file) {
     const KernelTimespec brief{0, 5000000};
     Require(aio_waitcomplete_nid_postfix(&done, &brief) == -1 && Error() == Eagain);
     const KernelTimespec badTime{0, -1};
-    Require(aio_waitcomplete_nid_postfix(&done, &badTime) == -1 && Error() == Einval);
+    done = &sync;
+    Require(aio_waitcomplete_nid_postfix(&done, &badTime) == -1 && Error() == Einval && done == nullptr);
+    Require(aio_waitcomplete_nid_postfix(reinterpret_cast<GuestAiocb**>(std::uintptr_t{0x10}), nullptr) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(reinterpret_cast<GuestAiocb**>(std::uintptr_t{0x10}), &zero) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(reinterpret_cast<GuestAiocb**>(std::uintptr_t{0x10}), &badTime) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(reinterpret_cast<GuestAiocb**>(std::uintptr_t{0x11}), nullptr) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(reinterpret_cast<GuestAiocb**>(std::uintptr_t{0x10}), reinterpret_cast<const KernelTimespec*>(std::uintptr_t{0x10})) == -1 && Error() == Efault);
+    GuardedMemory guarded;
+    Require(aio_waitcomplete_nid_postfix(guarded.UnreadableResult(), nullptr) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(guarded.UnreadableResult(), &zero) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(guarded.UnreadableResult(), &badTime) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(guarded.CrossingResult(), nullptr) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(guarded.CrossingResult(), &zero) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(guarded.CrossingResult(), &badTime) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(guarded.UnalignedCrossingResult(), nullptr) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(guarded.UnalignedCrossingResult(), &zero) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(guarded.UnreadableResult(), guarded.UnreadableTimeout()) == -1 && Error() == Efault);
+    guarded.ProtectReadOnly(true);
+    Require(aio_waitcomplete_nid_postfix(guarded.WritableResult(), nullptr) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(guarded.WritableResult(), &zero) == -1 && Error() == Efault);
+    guarded.ProtectReadOnly(false);
+    done = &sync;
+    Require(aio_waitcomplete_nid_postfix(&done, reinterpret_cast<const KernelTimespec*>(std::uintptr_t{0x10})) == -1 && Error() == Efault && done == &sync);
+    Require(aio_waitcomplete_nid_postfix(&done, reinterpret_cast<const KernelTimespec*>(std::uintptr_t{0x11})) == -1 && Error() == Efault && done == &sync);
+    Require(aio_waitcomplete_nid_postfix(&done, guarded.UnreadableTimeout()) == -1 && Error() == Efault && done == &sync);
+    Require(aio_waitcomplete_nid_postfix(&done, guarded.CrossingTimeout()) == -1 && Error() == Efault && done == &sync);
+    Require(aio_waitcomplete_nid_postfix(&done, guarded.UnalignedCrossingTimeout()) == -1 && Error() == Efault && done == &sync);
+    Require(aio_waitcomplete_nid_postfix(nullptr, &zero) == -1 && Error() == Eagain);
+    Require(aio_waitcomplete_nid_postfix(nullptr, &badTime) == -1 && Error() == Einval);
+    Require(aio_waitcomplete_nid_postfix(nullptr, reinterpret_cast<const KernelTimespec*>(std::uintptr_t{0x10})) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(nullptr, guarded.UnreadableTimeout()) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(nullptr, guarded.CrossingTimeout()) == -1 && Error() == Efault);
+
+    AioHoldWorkerForTest_nid_no_patch(true);
+    auto extra = Request(file, text, 7, 0);
+    Require(aio_write_nid_postfix(&extra) == 0);
+    AioHoldWorkerForTest_nid_no_patch(false);
+    while (aio_error_nid_postfix(&extra) == Einprogress) std::this_thread::yield();
+
+    done = &sync;
+    Require(aio_waitcomplete_nid_postfix(&done, guarded.UnreadableTimeout()) == -1 && Error() == Efault && done == &sync);
+    Require(aio_waitcomplete_nid_postfix(&done, guarded.CrossingTimeout()) == -1 && Error() == Efault && done == &sync);
+    Require(aio_waitcomplete_nid_postfix(&done, guarded.UnalignedCrossingTimeout()) == -1 && Error() == Efault && done == &sync);
+    Require(aio_waitcomplete_nid_postfix(guarded.UnreadableResult(), nullptr) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(guarded.CrossingResult(), nullptr) == -1 && Error() == Efault);
+    Require(aio_waitcomplete_nid_postfix(&done, &badTime) == -1 && Error() == Einval && done == nullptr);
+    Require(aio_waitcomplete_nid_postfix(nullptr, nullptr) == 7 && extra.status == 7 && extra.error == 0);
+    Require(aio_waitcomplete_nid_postfix(&done, &zero) == -1 && Error() == Eagain && done == nullptr);
 }
 
 void TimedWaits(int file) {

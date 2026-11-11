@@ -73,12 +73,15 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) {
  if (param == nullptr) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
+ const int savedErrno = errno;
  SaveDataDialogParam p{};
  if (!GuestCopyIn_nid_no_patch(&p, param, sizeof(p))) {
+  errno = savedErrno;
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
  SaveDataDialogItems items{};
  if (p.items != nullptr && !GuestCopyIn_nid_no_patch(&items, p.items, sizeof(items))) {
+  errno = savedErrno;
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
  char dir_name[sizeof(g_dir_name)] = {};
@@ -86,10 +89,12 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) {
   for (std::uint32_t i = 0; i < items.dir_names_num; i++) {
    SaveDataDirName name{};
    if (!GuestCopyIn_nid_no_patch(&name, &items.dir_names[i], sizeof(name))) {
+    errno = savedErrno;
     return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
    }
    if (name.data[0] != '\0') {
     if (std::memchr(name.data, '\0', sizeof(name.data)) == nullptr) {
+     errno = savedErrno;
      return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
     }
     std::snprintf(dir_name, sizeof(dir_name), "%s", name.data);
@@ -97,6 +102,7 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) {
    }
   }
  }
+ errno = savedErrno;
  g_mode = p.mode;
  g_user_data = p.user_data;
  std::memcpy(g_dir_name, dir_name, sizeof(g_dir_name));
