@@ -665,12 +665,25 @@ bool materializeGcnCmaskClear(const ColorTarget& color, const std::shared_ptr<St
     if (cmaskProved(color.cmaskAddress, bytes)) return false;
     const auto collected = GuestMemory::CollectWrites(color.cmaskAddress, bytes);
     const auto mask = readCmaskBytes(color.cmaskAddress, bytes, cmaskAlignment);
-    const auto uniform = [&](std::byte value) { return std::all_of(mask.begin(), mask.end(), [&](std::byte entry) { return entry == value; }); };
-    if (uniform(std::byte{0xff})) {
+    const bool oneFragment = color.coverageSamples > color.samples;
+    std::size_t clearedTiles = 0;
+    for (const auto entry : mask) {
+        for (const auto shift : {0u, 4u}) {
+            const auto code = (std::to_integer<std::uint32_t>(entry) >> shift) & 0xfu;
+            if (code == 0u) {
+                ++clearedTiles;
+            } else if (oneFragment && (code >> 2u) != 3u) {
+                char text[128];
+                std::snprintf(text, sizeof(text), "AGC graphics: CMASK code 0x%x of a one-fragment GCN color target is not implemented", code);
+                throw std::runtime_error(text);
+            }
+        }
+    }
+    if (clearedTiles == 0) {
         proveCmask(color.cmaskAddress, bytes, collected);
         return false;
     }
-    Require(uniform(std::byte{0}), "a GCN CMASK that fast clears only some tiles of its color target is not implemented (the GCN CMASK tile order is not modeled)");
+    Require(clearedTiles == mask.size() * 2u, "a GCN CMASK that fast clears only some tiles of its color target is not implemented (the GCN CMASK tile order is not modeled)");
     const auto texel = clearTexel(color, DccKeys::ClearRegister);
     const char* refusal = nullptr;
     const bool filled = color.mipCount == 1 && resident != nullptr && clearToTexel(*resident, texel, color.elementBytes, refusal);

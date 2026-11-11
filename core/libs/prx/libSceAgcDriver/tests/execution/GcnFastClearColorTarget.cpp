@@ -43,12 +43,15 @@ constexpr std::uint32_t Height = 64;
 constexpr std::uint32_t Format8888 = 10u;
 constexpr std::uint32_t BlendClamp = 1u << 15u;
 constexpr std::uint32_t FastClear = 1u << 13u;
+constexpr std::uint32_t Compression = 1u << 14u;
+constexpr std::uint32_t OneFragmentSamples = 4;
 constexpr std::uint32_t Thin1D = 13u;
 constexpr std::size_t ColorBytes = Width * Height * 4u;
 constexpr std::size_t CmaskBytes = 128u;
 constexpr std::size_t Slot = 0x10000;
-constexpr std::size_t BlockBytes = 16u * Slot;
-constexpr std::size_t Vertices = 15u * Slot;
+constexpr std::size_t FmaskBytes = Width * Height;
+constexpr std::size_t BlockBytes = 24u * Slot;
+constexpr std::size_t Vertices = 23u * Slot;
 constexpr std::uint64_t GcnAddressLimit = std::uint64_t{1} << 40u;
 constexpr std::uint32_t RedClear = 0xff0000ffu;
 constexpr Texel Red{0xff, 0x00, 0x00, 0xff};
@@ -131,12 +134,16 @@ private:
 struct Case {
     std::size_t color;
     std::size_t cmask;
+    std::size_t fmask = 0;
 };
 
 constexpr Case Cleared{0u * Slot, 1u * Slot};
 constexpr Case Expanded{2u * Slot, 3u * Slot};
 constexpr Case Mixed{4u * Slot, 5u * Slot};
 constexpr Case Eliminated{6u * Slot, 7u * Slot};
+constexpr Case OneCleared{8u * Slot, 9u * Slot, 10u * Slot};
+constexpr Case OneExpanded{11u * Slot, 12u * Slot, 13u * Slot};
+constexpr Case OneUnknownCode{14u * Slot, 15u * Slot, 16u * Slot};
 
 AgcDriver::Graphics::ColorTarget DecodeTarget(const LowBlock& block, const Case& at) {
     AgcDriver::Registers cx;
@@ -144,14 +151,18 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const LowBlock& block, const Case&
     cx[0x319] = Width / 8u - 1u;
     cx[0x31a] = Width * Height / 64u - 1u;
     cx[0x31b] = 0u;
-    cx[0x31c] = (Format8888 << 2u) | BlendClamp | FastClear;
-    cx[0x31d] = Thin1D;
+    const bool oneFragment = at.fmask != 0u;
+    cx[0x31c] = (Format8888 << 2u) | BlendClamp | FastClear | (oneFragment ? Compression : 0u);
+    cx[0x31d] = Thin1D | (oneFragment ? static_cast<std::uint32_t>(std::countr_zero(OneFragmentSamples)) << 12u : 0u);
     cx[0x31f] = static_cast<std::uint32_t>(block.At(at.cmask) >> 8u);
     cx[0x320] = static_cast<std::uint32_t>(CmaskBytes / 128u - 1u);
+    cx[0x321] = oneFragment ? static_cast<std::uint32_t>(block.At(at.fmask) >> 8u) : 0u;
+    cx[0x322] = Width * Height / 64u - 1u;
     cx[0x323] = RedClear;
     cx[0x324] = 0u;
     const auto target = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
     Require(target.samples == 1u && target.cmaskFastClear && target.cmaskAddress == block.At(at.cmask) && target.cmaskBytes == CmaskBytes, "the fast-cleared GCN target did not decode with its CMASK");
+    Require(!oneFragment || (target.coverageSamples == OneFragmentSamples && target.fmaskAddress == block.At(at.fmask) && target.gcnFmaskBytes == FmaskBytes), "the fast-cleared 4-sample 1-fragment GCN target did not decode with its coverage samples and FMASK");
     Require(target.format == VK_FORMAT_R8G8B8A8_UNORM && target.bytes == ColorBytes && target.tileMode == AgcDriver::Graphics::ColorTileMode::GcnThin1D, "the 8_8_8_8 unorm GCN target did not decode as a thin 1D RGBA8 target");
     return target;
 }
@@ -286,6 +297,18 @@ int main() {
         Require(Count(Stored(block.At(Eliminated.color), ColorBytes), Red) == texels, "the fast clear eliminate of a GCN target did not store the clear color in every texel");
         Require(AllBytes(Stored(block.At(Eliminated.cmask), CmaskBytes), 0xffu), "the fast clear eliminate of a GCN target did not expand its CMASK");
 
+        Fill(block.At(OneCleared.cmask), CmaskBytes, std::array<std::uint8_t, 1>{0x00});
+        Draw(*device, block, DecodeTarget(block, OneCleared), green);
+        const auto oneCleared = Stored(block.At(OneCleared.color), ColorBytes);
+        Require(Count(oneCleared, Red) + Count(oneCleared, Green) == texels && Count(oneCleared, Green) == clearedGreen, "a draw over a 4-sample 1-fragment GCN target whose CMASK holds the fast clear code did not land on the clear color everywhere else");
+        Require(AllBytes(Stored(block.At(OneCleared.cmask), CmaskBytes), 0xffu), "the CMASK of the materialized one-fragment GCN fast clear was not expanded");
+
+        Fill(block.At(OneExpanded.cmask), CmaskBytes, std::array<std::uint8_t, 1>{0xcc});
+        Fill(block.At(OneExpanded.color), ColorBytes, Blue);
+        Draw(*device, block, DecodeTarget(block, OneExpanded), green);
+        const auto oneExpanded = Stored(block.At(OneExpanded.color), ColorBytes);
+        Require(Count(oneExpanded, Blue) + Count(oneExpanded, Green) == texels && Count(oneExpanded, Red) == 0u, "a draw over a 4-sample 1-fragment GCN target whose CMASK holds code 0xc on every tile did not keep its texels");
+
         std::array<std::uint8_t, CmaskBytes> mixed{};
         mixed[CmaskBytes / 2u] = 0x0fu;
         Fill(block.At(Mixed.cmask), CmaskBytes, mixed);
@@ -297,7 +320,16 @@ int main() {
         }
         Require(refusal.find("fast clears only some tiles") != std::string::npos, "a GCN CMASK with mixed codes was not refused by name: " + refusal);
 
-        std::printf("GCN single-sample fast clear tests passed: a cleared CMASK materializes the clear color under a draw (%zu clear, %zu drawn texels), an expanded CMASK keeps the texels, mixed codes are refused, and an eliminate stores the clear color\n", clearedRed, clearedGreen);
+        Fill(block.At(OneUnknownCode.cmask), CmaskBytes, std::array<std::uint8_t, 1>{0x55});
+        std::string unknown;
+        try {
+            Draw(*device, block, DecodeTarget(block, OneUnknownCode), green);
+        } catch (const std::runtime_error& error) {
+            unknown = error.what();
+        }
+        Require(unknown.find("CMASK code 0x5 of a one-fragment GCN color target is not implemented") != std::string::npos, "an unknown CMASK code of a one-fragment GCN target was not refused by name: " + unknown);
+
+        std::printf("GCN single-sample fast clear tests passed: a cleared CMASK materializes the clear color under a draw (%zu clear, %zu drawn texels), an expanded CMASK keeps the texels, mixed codes are refused, an eliminate stores the clear color, and a 4-sample 1-fragment target clears under code 0, keeps its texels under code 0xc and refuses code 0x5\n", clearedRed, clearedGreen);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
