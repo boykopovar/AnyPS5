@@ -12429,13 +12429,6 @@ int APS5_VABI WKSendDisplayConfigurationChangedMessageForTesting() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKSerializedScriptValueCreate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKSerializedScriptValueDeserialize() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 
 int APS5_VABI WKTextCheckerSetTestingMode() {

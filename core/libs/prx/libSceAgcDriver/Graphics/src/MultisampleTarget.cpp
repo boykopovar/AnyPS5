@@ -5,10 +5,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/FirstSampleCopy.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuardSpans.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -16,14 +18,18 @@
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTextureLayout.hpp"
 #include "IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libc/include/PrimedSharedMutex.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -942,6 +948,39 @@ std::atomic<std::uint64_t>& guardedGeneration() {
     return generation;
 }
 
+std::atomic<std::uint64_t>& guardSpansGeneration() {
+    static std::atomic<std::uint64_t> generation{0};
+    return generation;
+}
+
+void moveGuardSpans() {
+    guardSpansGeneration().fetch_add(1, std::memory_order_release);
+}
+
+bool mayOverlapGuarded(std::uint64_t address, std::uint64_t bytes) {
+    if (RuntimeSwitches::Set(RuntimeSwitch::NoGuardSpans)) return true;
+    struct SpansStorage {};
+    auto& spans = HostThreadLocal<GuardSpans, SpansStorage>();
+    if (spans.Generation() != guardSpansGeneration().load(std::memory_order_acquire)) {
+        std::shared_lock lock(guardedMutex());
+        spans.Fill(guardSpansGeneration().load(std::memory_order_relaxed), guarded());
+        NoteGuardSpans(GuardSpanEvent::Refill);
+    }
+    if (spans.Overlaps(address, bytes)) {
+        NoteGuardSpans(GuardSpanEvent::Overlap);
+        return true;
+    }
+    NoteGuardSpans(GuardSpanEvent::Clear);
+    if (!VerifyGuardSpans()) return false;
+    std::shared_lock lock(guardedMutex());
+    const bool overlapped = std::ranges::any_of(guarded(), [&](const auto& range) { return address < range.address + range.bytes && range.address < address + bytes; });
+    const auto generation = guardSpansGeneration().load(std::memory_order_relaxed);
+    if (overlapped && generation != spans.Generation()) spans.Fill(generation, guarded());
+    if (overlapped && !spans.Overlaps(address, bytes)) ReportGuardSpanMiss("multisample", address, bytes);
+    else NoteGuardSpans(GuardSpanEvent::Verified);
+    return overlapped;
+}
+
 void guardReads(std::uint64_t address, std::size_t bytes) {
     RequireNoMultisampleTarget(address, bytes, "a CPU read");
 }
@@ -991,7 +1030,10 @@ void retireUnmapped(std::uintptr_t address, std::size_t bytes) {
         return true;
     });
     const auto stale = std::erase_if(guarded(), [](const auto& range) { return !range.active->load(std::memory_order_acquire); });
-    if (metadataChanged || invalidated != 0 || stale != 0) guardedGeneration().fetch_add(1, std::memory_order_release);
+    if (metadataChanged || invalidated != 0 || stale != 0) {
+        guardedGeneration().fetch_add(1, std::memory_order_release);
+        moveGuardSpans();
+    }
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
 
@@ -1028,6 +1070,7 @@ void guard(const Context& context, const ColorTarget& target, const std::shared_
         if (target.samples == 8u && target.fmaskAddress != 0u && target.cmaskAddress != 0u) guarded().push_back({context.device, target.fmaskAddress, DescribeSurface(fmaskResource(target)).guestBytes, target.samples, active, metadataValid, use});
     }
     guardedGeneration().fetch_add(1, std::memory_order_release);
+    moveGuardSpans();
     anyGuarded().store(true, std::memory_order_release);
     InstallResidentImageReadGuard_nid_no_patch();
 }
@@ -1093,6 +1136,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
                 std::erase_if(guarded(), [&](const auto& range) { return range.active == target->active && range.plane == fmaskPlane; });
                 guarded().push_back({context.device, use.fmaskAddress, fmaskBytes(use), use.samples, target->active, nullptr, target->use, false, fmaskPlane});
                 guardedGeneration().fetch_add(1, std::memory_order_release);
+                moveGuardSpans();
                 target->target.fmaskAddress = use.fmaskAddress;
                 target->target.fmaskPipeBankXor = use.fmaskPipeBankXor;
             }
@@ -1699,13 +1743,16 @@ void ClearMultisampleTargets(VkDevice device) {
     std::erase_if(targets(), [&](const auto& target) { return target->context.device == device; });
     std::unique_lock guardLock(guardedMutex());
     const auto removed = std::erase_if(guarded(), [&](const auto& range) { return range.device == device; });
-    if (removed != 0) guardedGeneration().fetch_add(1, std::memory_order_release);
+    if (removed != 0) {
+        guardedGeneration().fetch_add(1, std::memory_order_release);
+        moveGuardSpans();
+    }
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
     UpdateResidentImageUnmapObserver_nid_no_patch();
 }
 
 void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes) {
-    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return;
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire) || !mayOverlapGuarded(address, bytes)) return;
     std::shared_lock lock(guardedMutex());
     claimOverlapping(address, bytes, nullptr);
 }
@@ -1715,7 +1762,10 @@ void GuardOneFragmentFmask(const Context& context, const ColorTarget& target) {
     const auto bytes = std::max<std::uint64_t>((bits / 8u + 0xffffu) & ~0xffffull, 0x10000u);
     std::unique_lock lock(guardedMutex());
     const bool known = std::ranges::any_of(guarded(), [&](const auto& range) { return range.fmask && range.device == context.device && range.address == target.fmaskAddress && range.bytes == bytes; });
-    if (!known) guarded().push_back({context.device, target.fmaskAddress, bytes, target.coverageSamples, std::make_shared<std::atomic<bool>>(true), nullptr, std::make_shared<TargetUse>(), true});
+    if (!known) {
+        guarded().push_back({context.device, target.fmaskAddress, bytes, target.coverageSamples, std::make_shared<std::atomic<bool>>(true), nullptr, std::make_shared<TargetUse>(), true});
+        moveGuardSpans();
+    }
     anyGuarded().store(true, std::memory_order_release);
     lock.unlock();
     InstallResidentImageReadGuard_nid_no_patch();
@@ -1795,8 +1845,43 @@ void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const 
     RequireNoMultisampleColorTarget(address, bytes, access);
 }
 
+void NoteGuardSpans(GuardSpanEvent event) {
+    static const bool stats = std::getenv("APS5_PROFILE_DRAW") != nullptr || VerifyGuardSpans();
+    if (!stats) return;
+    struct Tally {
+        std::array<std::uint64_t, static_cast<std::size_t>(GuardSpanEvent::Count)> counts{};
+        std::uint32_t events = 0;
+    };
+    struct TallyStorage {};
+    auto& tally = HostThreadLocal<Tally, TallyStorage>();
+    ++tally.counts[static_cast<std::size_t>(event)];
+    if ((++tally.events & 0x3ffu) != 0 && event != GuardSpanEvent::Refill && event != GuardSpanEvent::Missed) return;
+    static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(GuardSpanEvent::Count)> counts{};
+    static std::atomic<std::int64_t> reportedAt{0};
+    for (std::size_t index = 0; index < counts.size(); ++index) {
+        if (tally.counts[index] != 0) counts[index].fetch_add(tally.counts[index], std::memory_order_relaxed);
+        tally.counts[index] = 0;
+    }
+    const auto tenSeconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10;
+    if (reportedAt.exchange(tenSeconds, std::memory_order_relaxed) == tenSeconds) return;
+    std::array<unsigned long long, static_cast<std::size_t>(GuardSpanEvent::Count)> taken{};
+    for (std::size_t index = 0; index < taken.size(); ++index) taken[index] = counts[index].exchange(0, std::memory_order_relaxed);
+    AgcDriver::ProfilePrint_nid_no_patch("[guard-spans] 10 s: %llu clear without the lock, %llu refills, %llu overlaps; verify %llu checked, %llu missed\n", taken[0], taken[1], taken[2], taken[3], taken[4]);
+}
+
+bool VerifyGuardSpans() {
+    static const bool verify = std::getenv("APS5_VERIFY_GUARD_SPANS") != nullptr;
+    return verify;
+}
+
+void ReportGuardSpanMiss(const char* list, std::uint64_t address, std::uint64_t bytes) {
+    static std::atomic<unsigned> reports{0};
+    if (reports.fetch_add(1, std::memory_order_relaxed) < 20) std::fprintf(stderr, "[guard-spans] verify: the %s copy answered no overlap for 0x%llx+0x%llx, but a listed guard overlaps it\n", list, static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes));
+    NoteGuardSpans(GuardSpanEvent::Missed);
+}
+
 void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access) {
-    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return;
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire) || !mayOverlapGuarded(address, bytes)) return;
     const auto overlaps = [&](const GuardedRange& range) { return address < range.address + range.bytes && range.address < address + bytes; };
     const auto refuse = [&](const GuardedRange& range) {
         char text[320];
@@ -1834,6 +1919,14 @@ void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, c
     }
     for (const auto& active : retired) active->store(false, std::memory_order_release);
     std::erase_if(guarded(), [&](const auto& range) { return std::find(retired.begin(), retired.end(), range.active) != retired.end(); });
+    if (!retired.empty()) moveGuardSpans();
+    anyGuarded().store(!guarded().empty(), std::memory_order_release);
+}
+
+void RetireMultisampleColorTarget(const std::shared_ptr<std::atomic<bool>>& active) {
+    std::unique_lock lock(guardedMutex());
+    active->store(false, std::memory_order_release);
+    if (std::erase_if(guarded(), [&](const auto& range) { return range.active == active; }) != 0u) guardedGeneration().fetch_add(1, std::memory_order_release);
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
 
@@ -1858,7 +1951,7 @@ std::optional<MultisampleColorAlias> MultisampleColorTargetOver(std::uint64_t ad
 
 std::vector<MultisampleColorAlias> MultisampleColorTargetsOver(std::uint64_t address, std::size_t bytes) {
     std::vector<MultisampleColorAlias> aliases;
-    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return aliases;
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire) || !mayOverlapGuarded(address, bytes)) return aliases;
     TargetsLock lock;
     std::shared_lock guardLock(guardedMutex());
     for (const auto& range : guarded()) {
