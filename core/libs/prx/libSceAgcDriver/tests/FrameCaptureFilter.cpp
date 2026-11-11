@@ -237,6 +237,13 @@ void testDuplicateChunkPlanIndex(const std::filesystem::path& root) {
     checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted duplicate chunk indexes");
 }
 
+
+void testMissingPlanIndex(const std::filesystem::path& root) {
+    const auto path = root / "missing-index.plan";
+    { std::ofstream output(path); output << "aps5-frame-filter 1\ncall\n"; }
+    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted a missing index");
+}
+
 }
 
 int main() {
@@ -252,6 +259,7 @@ int main() {
     testUnknownEntry(root);
     testDuplicateCall(root);
     testDuplicateChunk(root);
+    testMissingPlanIndex(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
