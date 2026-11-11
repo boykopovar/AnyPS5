@@ -90,3 +90,27 @@ def sample_summary(path, title_id, commit):
     if any(not identity[key] for key in ("os", "gpu", "driver", "title")):
         raise ValueError(f"{path}: measurement is missing machine, title, or content identity")
     return {"commit": commit, "fps": float(fps), "identity": identity, "outcome": run["outcome"]}
+
+
+def summarize(samples, max_spread_pct):
+    values = [sample["fps"] for sample in samples]
+    if not values:
+        raise ValueError("no FPS samples were collected")
+    median = statistics.median(values)
+    spread_pct = (max(values) - min(values)) / median * 100 if median else math.inf
+    if spread_pct > max_spread_pct:
+        raise ValueError(f"measurement spread {spread_pct:.2f}% exceeds the {max_spread_pct:.2f}% limit")
+    identity = samples[0]["identity"]
+    if any(sample["identity"] != identity for sample in samples[1:]):
+        raise ValueError("machine, title, or content identity changed between repeated measurements")
+    return {"median_fps": median, "spread_pct": spread_pct, "samples": samples, "identity": identity}
+
+
+def is_regression(fps, baseline_fps, threshold_pct):
+    return fps <= baseline_fps * (1 - threshold_pct / 100)
+
+
+def require_same_identity(baseline, measured):
+    if baseline["identity"] != measured["identity"]:
+        raise ValueError("machine, title, or content identity changed during the bisect")
+
