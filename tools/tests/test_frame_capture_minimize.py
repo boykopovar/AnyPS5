@@ -224,5 +224,18 @@ if command == 'inspect':
             self.assertEqual(result, 0)
             self.assertTrue(output.is_dir())
 
+    def test_replay_timeout_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            replay = root / "slow.py"
+            replay.write_text("import time\ntime.sleep(1)\n", encoding="utf-8")
+            workdir = root / "run"
+            workdir.mkdir()
+            args = SimpleNamespace(replay=replay, replay_arg=[], replay_timeout=0.01, expect_exit_code=0)
+            minimizer = frame_capture_minimize.Minimizer(args, re.compile("failure"))
+            matched, detail = minimizer.replay_once(root / "capture", workdir)
+            self.assertFalse(matched)
+            self.assertIn("timed out", detail)
+
 if __name__ == "__main__":
     unittest.main()
