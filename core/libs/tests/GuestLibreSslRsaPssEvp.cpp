@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/PkeyContext.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -82,6 +83,9 @@ static void TestControlValidation(void* pkey) {
 }
 
 int main() {
+    void* const api[10] {};
+    ApplicationHeapRegister_nid_no_patch(api);
+
     void* pkey = BuildKey();
 
     Require(VerifyPss(pkey, kMessage, sizeof(kMessage), kSignature, sizeof(kSignature), SaltLength) == 1);
