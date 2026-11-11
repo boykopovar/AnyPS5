@@ -210,3 +210,24 @@ def validate_regression_endpoints(baseline, endpoint, threshold_pct):
     if not is_regression(endpoint["median_fps"], baseline["median_fps"], threshold_pct):
         raise ValueError(f"bad endpoint is not at least {threshold_pct:.2f}% slower than the good endpoint")
 
+
+
+def find_first_bad_commit(repo, worktree, results, recipe, good_sha, baseline, bad_sha, commits):
+    low, high = 0, len(commits)
+    measurements = {good_sha: baseline}
+    while high - low > 1:
+        middle = (low + high) // 2
+        commit = commits[middle - 1]
+        measured = measure_commit(repo, worktree, results, recipe, commit)
+        require_same_identity(baseline, measured)
+        measurements[commit] = measured
+        if is_regression(measured["median_fps"], baseline["median_fps"], recipe["regression_pct"]):
+            high = middle
+        else:
+            low = middle
+    first_bad = commits[high - 1]
+    previous_good = good_sha if high == 1 else commits[high - 2]
+    if previous_good not in measurements:
+        measurements[previous_good] = measure_commit(repo, worktree, results, recipe, previous_good)
+        require_same_identity(baseline, measurements[previous_good])
+    return first_bad, previous_good, measurements
