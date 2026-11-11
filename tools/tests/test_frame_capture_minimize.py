@@ -294,5 +294,17 @@ if command == 'inspect':
             self.assertEqual(result, 0)
             self.assertEqual(counter.read_text(encoding="utf-8"), "4")
 
+    def test_failed_final_confirmation_removes_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            replay = "import pathlib, sys\nif pathlib.Path(sys.argv[1]).name == 'result': print('normal') ; raise SystemExit(0)\nprint('failure')\nraise SystemExit(7)\n"
+            arguments, _, _, output = self.empty_cli(root, replay_source=replay)
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+                result = frame_capture_minimize.main(arguments)
+            self.assertEqual(result, 1)
+            self.assertIn("final capture failed confirmation", stderr.getvalue())
+            self.assertFalse(output.exists())
+
 if __name__ == "__main__":
     unittest.main()
