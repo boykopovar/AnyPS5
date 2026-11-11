@@ -5,6 +5,7 @@
 #include "prx/libwebrtc/include/VideoSinkWants.hpp"
 #include "prx/libwebrtc/include/CallbackListReceivers.hpp"
 #include "prx/libwebrtc/include/RateTracker.hpp"
+#include "prx/libwebrtc/include/SmoothingFilterImpl.hpp"
 #include "prx/libwebrtc/include/AudioCodecInfo.hpp"
 #include "prx/libwebrtc/include/CodecSpecificInfo.hpp"
 #include "prx/libwebrtc/include/Buffer.hpp"
@@ -398,7 +399,7 @@ void APS5_VABI _ZN6webrtc13PushResamplerIsED1Ev_nid_postfix(WebRtcPushResampler1
 int APS5_VABI _ZN6webrtc13PushResamplerIsE8ResampleENS_15InterleavedViewIKsEENS2_IsEE_nid_postfix(WebRtcPushResampler16* resampler, WebRtcInterleavedView source, WebRtcMutableInterleavedView16 destination);
 int APS5_VABI _ZN6webrtc13PushResamplerIsE8ResampleEN3rtc9ArrayViewIKsLln4711EEENS3_IsLln4711EEE_nid_postfix(WebRtcPushResampler16* resampler, WebRtcConstMonoView16 source, WebRtcMonoView16 destination);
 void APS5_VABI _ZN6webrtc17PushSincResamplerD1Ev_nid_postfix(WebRtcPushSincResampler* push);
-int APS5_VABI _ZN6webrtc19SmoothingFilterImplC1Ei_nid_postfix(void);
+void APS5_VABI _ZN6webrtc19SmoothingFilterImplC1Ei_nid_postfix(WebRtcSmoothingFilterImpl* filter, int initTimeMilliseconds);
 void APS5_VABI _ZN6webrtc19SmoothingFilterImplD1Ev_nid_postfix(void* object);
 void APS5_VABI _ZN6webrtc9WavReader5ResetEv_nid_postfix(WebRtcWavReader* reader);
 std::size_t APS5_VABI _ZN6webrtc9WavReader11ReadSamplesEmPs_nid_postfix(WebRtcWavReader* reader, std::size_t numSamples, std::int16_t* samples);
