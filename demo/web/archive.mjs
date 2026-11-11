@@ -19,7 +19,7 @@ class BoundedBlobReader extends BlobReader {
 export function validPath(name) {
   if (!name || name.includes("\\") || /[\x00-\x1f<>:"|?*]/u.test(name)) throw new Error(`Unsafe ZIP path: ${name}`);
   const parts = name.replace(/\/$/u, "").split("/");
-  if (parts.some(part => !part || part === "." || part === ".." || /[. ]$/u.test(part) || /^(con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\.|$)/iu.test(part))) throw new Error(`Unsafe ZIP path: ${name}`);
+  if (parts.some(part => !part || part === "." || part === ".." || /[. ]$/u.test(part) || /^(con|conin\$|conout\$|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\.|$)/iu.test(part))) throw new Error(`Unsafe ZIP path: ${name}`);
   return name;
 }
 
