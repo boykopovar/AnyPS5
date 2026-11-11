@@ -313,6 +313,19 @@ void StagingChunkTests(AgcDriver::VulkanDevice& device) {
     }
 }
 
+void StorageImageZeroStoreTests(AgcDriver::VulkanDevice& device) {
+    GuestHeap heap(true);
+    GuestHeap written(true);
+    const OutputBlock output;
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    Dispatch(device, heap, written, output);
+    StoreImage(device, heap.Address() + UnreadBlock);
+    heap.Store(UnreadBlock, 0u);
+    std::uint32_t texel = 1u;
+    AgcDriver::GuestMemory::Read(heap.Address() + UnreadBlock, std::as_writable_bytes(std::span(&texel, 1)));
+    Require(texel == 0u, "resident heap mirror: a CPU store of zero after an image store into a never-written block read " + Hex(texel));
+}
+
 void StorageImageTests(AgcDriver::VulkanDevice& device) {
     GuestHeap heap(true);
     GuestHeap written(true);
@@ -605,6 +618,7 @@ int main() {
         CopiedTests(*device);
         BudgetEvictionTests(*device, sparse);
         StorageImageTests(*device);
+        StorageImageZeroStoreTests(*device);
         for (const bool copied : {false, true}) {
             if (!copied && !sparse) continue;
             for (const bool readFirst : {false, true}) PartialImportTests(*device, copied, readFirst);

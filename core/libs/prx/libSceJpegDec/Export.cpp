@@ -286,7 +286,13 @@ void pull(InputStream& stream, std::uint32_t size) {
             stream.chunkSize = chunk.size;
         }
         const std::uint32_t count = std::min(size, stream.chunkSize);
-        stream.data.insert(stream.data.end(), stream.chunk, stream.chunk + count);
+        const std::size_t old = stream.data.size();
+        stream.data.resize(old + count);
+        if (!GuestCopyIn_nid_no_patch(stream.data.data() + old, stream.chunk, count)) {
+            stream.data.resize(old);
+            stream.status = SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+            return;
+        }
         stream.chunk += count;
         stream.chunkSize -= count;
         size -= count;
