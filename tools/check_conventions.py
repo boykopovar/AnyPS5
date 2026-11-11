@@ -83,7 +83,11 @@ NAMESPACE = re.compile(r"\bnamespace\s+((?:[A-Za-z_][A-Za-z0-9_]*\s*::\s*(?:inli
 LINKAGE = re.compile(r'\bextern\s*""\s*$')
 ALIGNMENT_LIMIT = 8192
 LINK = re.compile(r"\[[^\]]+\]\((<[^<>\r\n]*>|(?!<)[^)\s]+)")
-FENCE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1[ \t]*\r?$|^ {0,3}(?:```|~~~).*\Z", re.S | re.M)
+FENCE = re.compile(
+    r"^ {0,3}(?P<backticks>`{3,})(?!`)[^`\n]*(?:\n|\Z).*?"
+    r"(?:^ {0,3}(?P=backticks)`*[ \t]*\r?$|\Z)"
+    r"|^ {0,3}(?P<tildes>~{3,})(?!~)[^\n]*(?:\n|\Z).*?"
+    r"(?:^ {0,3}(?P=tildes)~*[ \t]*\r?$|\Z)", re.S | re.M)
 INLINE = re.compile(r"`[^`\n]*`")
 SECTION = re.compile(r"^###(?!#)\s*(.+?)\s*$", re.M)
 KEY = re.compile(r"^( *)([A-Za-z0-9_-]+|'[^']*'|\"[^\"]*\"):(?:\s+(.*?))?\s*$")

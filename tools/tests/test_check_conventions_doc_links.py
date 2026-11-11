@@ -1,11 +1,114 @@
 from pathlib import Path
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_conventions
 
 FENCE = "`" * 3
+
+
+class FenceRunTests(unittest.TestCase):
+    def test_equal_and_longer_closers_keep_outside_links(self):
+        for marker in ("`", "~"):
+            for width in (3, 4, 8):
+                for extra in (0, 1, 4):
+                    for indent in range(4):
+                        for ending in ("\n", "\r\n"):
+                            with self.subTest(marker=marker, width=width, extra=extra, indent=indent, ending=ending):
+                                text = ending.join(("intro", " " * indent + marker * width + "text",
+                                                    "[inside](missing-inside.md)", " " * (3 - indent) + marker * (width + extra),
+                                                    "[outside](../README.md)", ""))
+                                self.assertEqual(check_conventions.links("docs/x.md", text), [("../README.md", "README.md")])
+                                self.assertEqual(check_conventions.fenced_lines(text), {2, 3, 4})
+
+    def test_shorter_and_different_markers_do_not_close_a_block(self):
+        for marker in ("`", "~"):
+            for width in (4, 8):
+                for fake in (marker * 3, ("~" if marker == "`" else "`") * width):
+                    with self.subTest(marker=marker, width=width, fake=fake):
+                        text = "\n".join(("intro", marker * width, fake, "[inside](missing-inside.md)",
+                                           marker * (width + 2), "[outside](../README.md)", ""))
+                        self.assertEqual(check_conventions.links("docs/x.md", text), [("../README.md", "README.md")])
+                        self.assertEqual(check_conventions.fenced_lines(text), {2, 3, 4, 5})
+
+    def test_backticks_in_info_disallow_only_backtick_openers(self):
+        text = "```lang`invalid\n[visible](missing.md)\n"
+        self.assertEqual(check_conventions.links("docs/x.md", text), [("missing.md", "docs/missing.md")])
+        self.assertEqual(check_conventions.fenced_lines(text), set())
+        text = "~~~lang`valid\n[inside](missing.md)\n~~~~\n[outside](../README.md)\n"
+        self.assertEqual(check_conventions.links("docs/x.md", text), [("../README.md", "README.md")])
+
+    def test_unclosed_runs_keep_the_rest_as_code(self):
+        for marker in ("`", "~"):
+            for width in (3, 4, 8):
+                with self.subTest(marker=marker, width=width):
+                    text = marker * width + "\n[inside](missing.md)"
+                    self.assertEqual(check_conventions.links("docs/x.md", text), [])
+                    self.assertEqual(check_conventions.fenced_lines(text), {1, 2})
+
+    def test_separate_blocks_preserve_each_outside_link(self):
+        text = "```\n[inside](missing-a.md)\n````\n[first](first.md)\n~~~~\n[inside](missing-b.md)\n~~~~~\n[second](second.md)\n"
+        self.assertEqual(check_conventions.links("docs/x.md", text), [("first.md", "docs/first.md"), ("second.md", "docs/second.md")])
+        self.assertEqual(check_conventions.fenced_lines(text), {1, 2, 3, 5, 6, 7})
+
+
+class FenceCliTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.addCleanup(self.temporary.cleanup)
+        self.git("init", "-q", "-b", "main")
+        (self.root / "docs").mkdir()
+        (self.root / "README.md").write_text("# Example\n", encoding="utf-8")
+        (self.root / "docs" / "guide.md").write_text("# Guide\n", encoding="utf-8")
+        self.base = self.commit()
+
+    def git(self, *args):
+        return subprocess.run(["git", "-c", "user.name=Fence Test", "-c", "user.email=test@example.com",
+                               "-c", "commit.gpgsign=false", *args], cwd=self.root, capture_output=True,
+                              encoding="utf-8", check=True).stdout.strip()
+
+    def commit(self):
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "docs: exercise fence checks")
+        return self.git("rev-parse", "HEAD")
+
+    def check(self):
+        environment = {k: v for k, v in os.environ.items() if k not in
+                       {"GITHUB_ACTIONS", "GITHUB_EVENT_PATH", "GITHUB_STEP_SUMMARY"}}
+        return subprocess.run([sys.executable, str(Path(check_conventions.__file__).resolve()), "--base", self.base],
+                              cwd=self.root, env=environment, capture_output=True, text=True, encoding="utf-8", timeout=20)
+
+    def test_missing_link_after_longer_closer_is_reported(self):
+        (self.root / "docs" / "guide.md").write_text("````text\n[inside](ignored.md)\n`````\n[outside](missing.md)\n", encoding="utf-8")
+        self.commit()
+        result = self.check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("docs/guide.md:4: error: [doc-link]", result.stdout)
+        self.assertIn(": missing.md", result.stdout)
+        self.assertNotIn("ignored.md", result.stdout)
+
+    def test_shorter_marker_leaves_code_links_ignored(self):
+        (self.root / "docs" / "guide.md").write_text("````text\n```\n[inside](ignored.md)\n`````\n[outside](../README.md)\n", encoding="utf-8")
+        self.commit()
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_deleted_target_after_longer_closer_is_reported(self):
+        (self.root / "docs" / "guide.md").write_text("~~~text\n[inside](ignored.md)\n~~~~\n[outside](gone.md)\n", encoding="utf-8")
+        (self.root / "docs" / "gone.md").write_text("# Target\n", encoding="utf-8")
+        self.base = self.commit()
+        self.git("rm", "docs/gone.md")
+        self.commit()
+        result = self.check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("docs/guide.md:4: error: [doc-link]", result.stdout)
+        self.assertIn(": gone.md", result.stdout)
+        self.assertNotIn("ignored.md", result.stdout)
 
 
 class DocLinkTests(unittest.TestCase):
