@@ -9,6 +9,7 @@
 
 namespace {
 
+constexpr int InvalidAddress = static_cast<int>(0x80290002u);
 constexpr int InvalidEvent = static_cast<int>(0x8029000Du);
 constexpr int FlipEvent = 0;
 constexpr std::int16_t GraphicsCoreFilter = -14;
@@ -39,7 +40,8 @@ bool RejectsEventOfAnotherFilter(const std::string& what, const KernelEvent& eve
     std::int64_t data = Unwritten;
     bool passed = Returns("sceVideoOutGetEventId of " + what, [&] { return sceVideoOutGetEventId(&event); }, InvalidEvent);
     passed = Returns("sceVideoOutGetEventData of " + what, [&] { return sceVideoOutGetEventData(&event, &data); }, InvalidEvent) && passed;
-    passed = Returns("sceVideoOutGetEventCount of " + what, [&] { return sceVideoOutGetEventCount(&event); }, InvalidEvent) && passed;
+    const int count = static_cast<int>((static_cast<std::uint64_t>(event.data) >> 12) & 0xf);
+    passed = Returns("sceVideoOutGetEventCount of " + what, [&] { return sceVideoOutGetEventCount(&event); }, count) && passed;
     if (data == Unwritten) return passed;
     std::fprintf(stderr, "sceVideoOutGetEventData of %s wrote 0x%llx\n", what.c_str(), static_cast<unsigned long long>(data));
     return false;
@@ -52,7 +54,7 @@ int main() {
     user.filter = EVFILT_USER;
     KernelEvent graphics{};
     graphics.filter = GraphicsCoreFilter;
-    graphics.data = 1;
+    graphics.data = 0x5001;
     KernelEvent unknown{};
     unknown.ident = 0x77;
     unknown.filter = EVFILT_VIDEO_OUT;
@@ -78,9 +80,14 @@ int main() {
         passed = false;
     }
 
-    passed = Throws("sceVideoOutGetEventId of a null event", [] { return sceVideoOutGetEventId(nullptr); }) && passed;
-    passed = Throws("sceVideoOutGetEventData of a null event", [&] { return sceVideoOutGetEventData(nullptr, &data); }) && passed;
-    passed = Throws("sceVideoOutGetEventData with a null data pointer", [&] { return sceVideoOutGetEventData(&flip, nullptr); }) && passed;
+    data = Unwritten;
+    passed = Returns("sceVideoOutGetEventId of a null event", [] { return sceVideoOutGetEventId(nullptr); }, InvalidAddress) && passed;
+    passed = Returns("sceVideoOutGetEventData of a null event", [&] { return sceVideoOutGetEventData(nullptr, &data); }, InvalidAddress) && passed;
+    passed = Returns("sceVideoOutGetEventData with a null data pointer", [&] { return sceVideoOutGetEventData(&flip, nullptr); }, InvalidAddress) && passed;
+    if (data != Unwritten) {
+        std::fprintf(stderr, "sceVideoOutGetEventData of a null event wrote 0x%llx\n", static_cast<unsigned long long>(data));
+        passed = false;
+    }
     passed = Throws("sceVideoOutGetEventCount of a null event", [] { return sceVideoOutGetEventCount(nullptr); }) && passed;
     if (!passed) return 1;
     std::printf("guest VideoOut event getter tests passed\n");
