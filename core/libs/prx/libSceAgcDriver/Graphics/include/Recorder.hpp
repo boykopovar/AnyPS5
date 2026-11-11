@@ -70,6 +70,7 @@ public:
     bool Known(Slot slot) const { return (valid & Mask(slot)) != 0; }
     VkPipeline BoundPipeline() const { return pipelineKnown ? pipeline : VK_NULL_HANDLE; }
     void BindPipeline(const Context& context, VkPipeline pipeline, std::uint32_t dynamicSlots);
+    void ExecuteCommands(const Context& context, std::uint32_t count, const VkCommandBuffer* buffers);
     void SetViewport(const Context& context, const VkViewport& viewport);
     void SetScissor(const Context& context, const VkRect2D& scissor);
     void SetViewports(const Context& context, std::span<const VkViewport> viewports, std::span<const VkRect2D> scissors);
@@ -191,9 +192,14 @@ public:
         bool barrier = true;
         PassBreak reason = PassBreak::Continued;
     };
+<<<<<<< HEAD
     DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access);
     void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass = {});
     void AfterRenderPass(std::function<void(Recorder&)> work);
+=======
+    DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access, bool secondaryContents = false);
+    void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass = {}, bool secondaryContents = false);
+>>>>>>> 967a12dc60 (feat(agc): record depth-only draws on a recording pool behind APS5_PARALLEL_ATLAS)
     void SealPassWriteOnly();
     // DCC "uncompressed" key stores (DccMetadata.cpp StoreUncompressedOnGpu): queued on the open
     // batch and recorded as one run (one barrier pair for every queued fill) at Submit, before a
@@ -893,6 +899,7 @@ private:
         struct RenderPass {
             bool open = false;
             bool fenced = false;
+            bool secondaryContents = false;
             std::uint64_t key = 0;
             std::uint32_t timing = NoTiming;
             std::function<void(CommandState&)> afterPass;
