@@ -140,17 +140,29 @@ static void CheckFlexibleMappingIgnoresFlag8000() {
     Require(static_cast<volatile unsigned char*>(again)[length - 1] == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(again), length) == 0);
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
-    bool rejected = false;
-    void* unknown = nullptr;
-    try { sceKernelMapFlexibleMemory(&unknown, length, 3, 0x20000); } catch (const std::exception&) { rejected = true; }
-    Require(rejected && unknown == nullptr);
-    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
     Require(sceKernelAvailableFlexibleMemorySize(nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelAvailableFlexibleMemorySize(reinterpret_cast<std::size_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     std::size_t configured = 0;
     Require(sceKernelConfiguredFlexibleMemorySize(&configured) == 0 && configured > 0);
     Require(sceKernelConfiguredFlexibleMemorySize(nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelConfiguredFlexibleMemorySize(reinterpret_cast<std::size_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+}
+
+static void CheckFlexibleMappingRefusesMeasuredFlags() {
+    constexpr std::size_t length = 0x10000;
+    std::size_t before = 0;
+    std::size_t available = 0;
+    Require(sceKernelAvailableFlexibleMemorySize(&before) == 0);
+    for (const int flag : {0x1, 0x2, 0x4, 0x8, 0x20, 0x40, 0x100, 0x200, 0x400, 0x800, 0x1000, 0x2000, 0x4000, 0x10000, 0x20000, 0x40000, 0x80000, 0x100000}) {
+        void* mapped = nullptr;
+        Require(sceKernelMapFlexibleMemory(&mapped, length, 3, flag) == SCE_KERNEL_ERROR_EINVAL && mapped == nullptr);
+        void* sentinel = reinterpret_cast<void*>(0x1000);
+        Require(sceKernelMapFlexibleMemory(&sentinel, length, 3, flag) == SCE_KERNEL_ERROR_EINVAL && sentinel == reinterpret_cast<void*>(0x1000));
+        Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
+    }
+    void* named = nullptr;
+    Require(sceKernelMapNamedFlexibleMemory(&named, length, 3, 0x8000, "flag 8000") == SCE_KERNEL_ERROR_EINVAL && named == nullptr);
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
 }
 
 static void CheckPageTableStats() {
@@ -947,6 +959,29 @@ static void CheckFixedMappingReplacesPartialOverlap() {
     Require(static_cast<unsigned char*>(fixed)[page * 2 + 7] == 0x5c);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(fixed), page * 3) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
+}
+
+static void CheckFixedDirectMapRejectsAlignmentBeforeReplacing() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
+    void* flexible = nullptr;
+    Require(sceKernelMapFlexibleMemory(&flexible, page * 2, 3, 0) == 0);
+    auto* survivor = static_cast<volatile unsigned char*>(flexible) + page;
+    survivor[7] = 0x3e;
+    void* fixed = static_cast<unsigned char*>(flexible) + page;
+    bool threw = false;
+    try {
+        sceKernelMapDirectMemory(&fixed, page * 2, 3, 0x10, phys, 0x5000);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && fixed == static_cast<unsigned char*>(flexible) + page);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(const_cast<unsigned char*>(survivor), 0, &info, sizeof(info)) == 0 && info.protection == 3);
+    Require(survivor[7] == 0x3e);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(flexible), page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
 }
 
 static void CheckFixedMappingOverHoleInsideAllocation() {
@@ -4356,6 +4391,7 @@ int main(int argc, char** argv) {
     CheckMemoryPoolBlockStats();
     CheckReleaseFlexibleMemory();
     CheckFlexibleMappingIgnoresFlag8000();
+    CheckFlexibleMappingRefusesMeasuredFlags();
     CheckPrtApertures();
     CheckSceKernelMmap();
     CheckInternalMemoryAvailableSize();
@@ -4393,6 +4429,7 @@ int main(int argc, char** argv) {
     CheckReleaseDirectMemoryClearsMappings();
     CheckReleaseDirectMemoryRejectsInvalidRanges();
     CheckFixedMappingReplacesPartialOverlap();
+    CheckFixedDirectMapRejectsAlignmentBeforeReplacing();
     CheckFixedMappingOverHoleInsideAllocation();
     CheckDirectMemoryGpuProtBits();
     CheckSplitPrivateCollect();

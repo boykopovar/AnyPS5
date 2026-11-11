@@ -419,7 +419,7 @@ int APS5_VABI sceAppContentDownload1Expand(size_t size) {
     if (size == 0) return SCE_APP_CONTENT_ERROR_PARAMETER;
     const auto directory = ResolvePath_nid_no_patch("/download1");
     if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
-    size_t current = download1QuotaBytes.load();
+    std::uint64_t current = download1QuotaBytes.load();
     while (size > current && !download1QuotaBytes.compare_exchange_weak(current, size)) {}
     return 0;
 }

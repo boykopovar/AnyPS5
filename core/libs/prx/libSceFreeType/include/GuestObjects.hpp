@@ -5,6 +5,7 @@
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_SYSTEM_H
 
 #include <list>
 #include <memory>
@@ -33,6 +34,12 @@ struct RasterTargetSpan {
 
 RasterTargetSpan RasterTargetSpan_nid_no_patch(const GuestBitmap& target);
 
+struct GuestStreamBridge {
+    GuestStreamRec* guest = nullptr;
+    FT_StreamRec_ host{};
+    bool closed = false;
+};
+
 struct GuestFace {
     GuestFaceRec rec{};
     GuestGlyphSlotRec slot{};
@@ -48,6 +55,7 @@ struct GuestFace {
     std::vector<GuestCharMapRec> charmaps;
     std::vector<GuestCharMapRec*> charmapPointers;
     std::vector<GuestVector> outlinePoints;
+    std::unique_ptr<GuestStreamBridge> stream;
 
     ~GuestFace() { UnregisterBitmap_nid_no_patch(&slot.bitmap); }
 };
