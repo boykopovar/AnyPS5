@@ -147,6 +147,7 @@ struct Segment {
     std::vector<std::uint8_t> Data;
     std::vector<Section> Sections;
     std::uint64_t FileOffset = 0;
+    bool PatchedAtStartup = false;
 };
 
 std::uint64_t AlignUp(const std::uint64_t value, const std::uint64_t alignment) {
@@ -545,6 +546,43 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         }
     }
 
+    std::map<std::uint64_t, std::uint32_t> startupPages;
+    const auto patchAtStartup = [&](const std::uint32_t rva) {
+        for (auto index = guestSegments; index < segments.size(); ++index) {
+            auto& segment = segments[index];
+            if (rva < segment.Rva || rva - segment.Rva >= segment.MemorySize || segment.MemorySize - (rva - segment.Rva) < 8) continue;
+            if ((segment.Protection & (VmProtWrite | VmProtExecute)) != (VmProtWrite | VmProtExecute)) return false;
+            segment.PatchedAtStartup = true;
+            startupPages[rva & ~(PageSize - 1)] = segment.Protection;
+            startupPages[(static_cast<std::uint64_t>(rva) + 7) & ~(PageSize - 1)] = segment.Protection;
+            return true;
+        }
+        return false;
+    };
+    std::set<std::uint32_t> startupRebases;
+    std::erase_if(input.Rebases, [&](const std::uint32_t rva) {
+        if (!patchAtStartup(rva)) return false;
+        startupRebases.insert(rva);
+        return true;
+    });
+    if (hasTls)
+        for (const auto slot : input.TlsModuleSlots)
+            if (patchAtStartup(slot)) startupRebases.insert(slot);
+    std::vector<MacOsBind> startupBinds;
+    std::erase_if(input.Binds, [&](const MacOsBind& item) {
+        if (!patchAtStartup(item.Rva)) return false;
+        startupBinds.push_back(item);
+        return true;
+    });
+    for (const auto& import : input.TlsImports) patchAtStartup(import.Rva);
+    std::vector<ProtectedRange> startupRanges;
+    for (const auto& [page, protection] : startupPages) {
+        if (!startupRanges.empty() && startupRanges.back().Rva + startupRanges.back().Size == page && startupPages.at(startupRanges.back().Rva) == protection)
+            startupRanges.back().Size += static_cast<std::uint32_t>(PageSize);
+        else
+            startupRanges.push_back({static_cast<std::uint32_t>(page), static_cast<std::uint32_t>(PageSize)});
+    }
+
     const auto metaRva = static_cast<std::uint32_t>(AlignUp(guestEnd, PageSize));
     const auto metaSize = MetaHeaders + headers.size() * 56;
     std::vector<std::uint8_t> meta(metaSize, 0);
@@ -589,10 +627,15 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         input.Binds.push_back({"___aps5_set_module_init_result_nid_no_patch", metaRva + static_cast<std::uint32_t>(moduleResultSlot)});
     }
     std::uint64_t mprotectSlot = 0;
-    if (!relro.empty()) {
+    if (!relro.empty() || !startupRanges.empty()) {
         mprotectSlot = metaEnd;
         metaEnd += 8;
         input.Binds.push_back({"_mprotect", metaRva + static_cast<std::uint32_t>(mprotectSlot)});
+    }
+    const auto startupBindSlots = metaEnd;
+    for (const auto& item : startupBinds) {
+        input.Binds.push_back({item.Symbol, metaRva + static_cast<std::uint32_t>(metaEnd), item.Addend, item.Weak});
+        metaEnd += 8;
     }
     meta.resize(metaEnd, 0);
     for (std::size_t index = 0; index < input.TlsExports.size(); ++index) {
@@ -606,15 +649,17 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     }
     const auto codeRva = static_cast<std::uint32_t>(AlignUp(metaRva + metaEnd, PageSize));
     Windows::WindowsStubEmitter code(codeRva);
+    const auto protect = [&](const ProtectedRange& range, const std::uint32_t protection) {
+        code.Rip({0x48, 0x8d, 0x3d}, range.Rva);
+        code.Emit({0xbe});
+        code.U32(range.Size);
+        code.Emit({0xba});
+        code.U32(protection);
+        code.Rip({0xff, 0x15}, metaRva + static_cast<std::uint32_t>(mprotectSlot));
+        code.Emit({0x85, 0xc0, 0x74, 0x02, 0x0f, 0x0b});
+    };
     const auto protectRelro = [&] {
-        for (const auto& range : relro) {
-            code.Rip({0x48, 0x8d, 0x3d}, range.Rva);
-            code.Emit({0xbe});
-            code.U32(range.Size);
-            code.Emit({0xba, 0x01, 0x00, 0x00, 0x00});
-            code.Rip({0xff, 0x15}, metaRva + static_cast<std::uint32_t>(mprotectSlot));
-            code.Emit({0x85, 0xc0, 0x74, 0x02, 0x0f, 0x0b});
-        }
+        for (const auto& range : relro) protect(range, VmProtRead);
     };
 
     if (hasTls) {
@@ -640,7 +685,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         for (const auto slot : input.TlsModuleSlots) {
             auto& segment = SegmentAt(segments, slot, 8);
             Io::WriteU64(segment.Data, slot - segment.Rva, imageBase + descriptor);
-            input.Rebases.push_back(slot);
+            if (!startupRebases.contains(slot)) input.Rebases.push_back(slot);
         }
 
         for (const auto& access : tls.Accesses) {
@@ -720,11 +765,23 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     }
 
     const bool protectInInit = !input.Executable && !relro.empty();
-    const bool hasInit = hasTls || !input.TlsImports.empty() || input.InitRva != 0 || !input.InitArrayRvas.empty() || hasFini || protectInInit;
+    const bool hasInit = hasTls || !input.TlsImports.empty() || input.InitRva != 0 || !input.InitArrayRvas.empty() || hasFini || protectInInit || !startupRanges.empty();
     std::vector<Section> dataSections{{"__meta", 0, metaSize, 0, 3}};
     if (hasInit) {
         const auto initStub = code.GetRva();
         code.Emit({0x55, 0x48, 0x89, 0xe5});
+        for (const auto& range : startupRanges) protect(range, VmProtRead | VmProtWrite);
+        if (!startupRebases.empty()) {
+            code.Rip({0x48, 0x8d, 0x05}, metaRva);
+            code.Emit({0x48, 0xb9});
+            code.U64(imageBase + metaRva);
+            code.Emit({0x48, 0x29, 0xc8});
+            for (const auto rva : startupRebases) code.Rip({0x48, 0x01, 0x05}, rva);
+        }
+        for (std::size_t index = 0; index < startupBinds.size(); ++index) {
+            code.Rip({0x48, 0x8b, 0x05}, metaRva + static_cast<std::uint32_t>(startupBindSlots + index * 8));
+            code.Rip({0x48, 0x89, 0x05}, startupBinds[index].Rva);
+        }
         if (hasTls) {
             code.Rip({0x48, 0x8d, 0x3d}, descriptor);
             code.Rip({0xff, 0x15}, metaRva + static_cast<std::uint32_t>(MetaRegisterSlot));
@@ -740,6 +797,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
             }
             code.Rip({0x48, 0x89, 0x05}, import.Rva);
         }
+        for (const auto& range : startupRanges) protect(range, startupPages.at(range.Rva));
         if (protectInInit) protectRelro();
         if (input.InitRva != 0) {
             code.Rip({0xff, 0x15}, metaRva + static_cast<std::uint32_t>(moduleArgsSlot));
@@ -870,7 +928,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         AppendName16(commands, segment.Name);
         for (int field = 0; field < 4; ++field) Io::AppendU64(commands, 0);
         Io::AppendU32(commands, segment.Protection);
-        Io::AppendU32(commands, segment.Protection);
+        Io::AppendU32(commands, segment.PatchedAtStartup ? segment.Protection & ~VmProtWrite : segment.Protection);
         Io::AppendU32(commands, static_cast<std::uint32_t>(segment.Sections.size()));
         Io::AppendU32(commands, 0);
         for (const auto& section : segment.Sections) {
