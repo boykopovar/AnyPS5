@@ -34,3 +34,20 @@ Replace the example title ID, game directory, and build options with values for 
 Optional recipe fields are `build_dir` (default `build`), `titles` (default `tools/titles.json`), and `content` (directory for title data files referenced by the catalog). `seconds` defaults to 60 and must be at least 20; `repetitions` defaults to 3 and must be at least 3. `regression_pct` defaults to 5 and `max_spread_pct` to 3. Both percentages must be greater than 0 and less than 100.
 
 Only use build commands from a recipe you trust: the tool does not invoke a shell, but it does execute the listed programs and arguments on your machine.
+
+## Run a search
+
+From the repository, run:
+
+```sh
+python3 tools/performance_bisect.py \
+  --repo /path/to/AnyPS5 \
+  --good <known-good-commit> \
+  --bad <known-bad-commit> \
+  --recipe /path/to/performance-recipe.json \
+  --output /path/to/performance-bisect.json
+```
+
+The known-good revision must be an ancestor of the known-bad revision. The tool creates an isolated temporary Git worktree, builds and samples the endpoints, then uses binary search on first-parent commits. It builds each tested revision from a clean build directory and removes the temporary worktree and measurements when finished. Use `--temp-dir` to select an existing disk location with enough room for a worktree and a full build.
+
+Each tested revision runs `title_run.py` repeatedly with one measured run per invocation. The median FPS is compared with the good endpoint. A search stops instead of guessing if the bad endpoint is not slow enough, a run fails to render, the machine/title/content identity changes, or sample spread exceeds `max_spread_pct`.
