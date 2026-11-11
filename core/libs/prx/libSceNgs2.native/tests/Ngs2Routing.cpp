@@ -21,6 +21,7 @@ static Ngs2CustomSubmixerRackOption RackOption(std::uint32_t count, std::uint32_
     custom.rack_option.max_matrices = 1;
     custom.rack_option.max_ports = count;
     custom.num_buffers = count;
+    custom.state_size = 16;
     for (std::uint32_t port = 0; port < count; port++) custom.port[port].source_buffer_id = port;
     option.max_channels = channels;
     option.max_inputs = count == 1 ? 1 : 2;

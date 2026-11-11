@@ -116,6 +116,7 @@ static int CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption* option,
         (rackId == SCE_NGS2_RACK_ID_SUBMIXER && (options.submixer.num_peak_meter_blocks < 1 || options.submixer.num_peak_meter_blocks > 256))) {
         return SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS;
     }
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER && options.customSubmixer.max_inputs == 0) return SCE_NGS2_ERROR_INVALID_MAX_INPUTS;
     if ((rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) && (options.customSubmixer.max_inputs == 0 || options.customSubmixer.max_inputs > SCE_NGS2_CUSTOM_SUBMIXER_MAX_INPUTS)) {
         throw std::runtime_error("NGS2: custom submixer racks with " + std::to_string(options.customSubmixer.max_inputs) + " inputs are not implemented");
     }
