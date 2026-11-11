@@ -20,10 +20,6 @@ namespace {
 
 constexpr std::size_t DesScheduleBytes = 128;
 constexpr int CryptoNumLocks = 41;
-constexpr int EvpLibrary = 6;
-constexpr int EvpAnyFunction = 0xfff;
-constexpr int EvpExpectingEcKey = 142;
-constexpr int EvpEcKeyType = 408;
 
 static_assert(sizeof(CryptoThreadId) == 16);
 
@@ -148,17 +144,6 @@ int APS5_VABI ENGINE_get_id_nid_postfix(void) {
 int APS5_VABI ENGINE_set_default_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
-}
-
-EcKey* APS5_VABI EVP_PKEY_get1_EC_KEY_nid_postfix(void* pkey) {
-    if (!pkey) NotImplemented_nid_no_patch(__func__);
-    int type;
-    std::memcpy(&type, pkey, sizeof(type));
-    if (type != EvpEcKeyType) {
-        LibreSslPutError_nid_no_patch(EvpLibrary, EvpAnyFunction, EvpExpectingEcKey);
-        return nullptr;
-    }
-    NotImplemented_nid_no_patch(__func__);
 }
 
 
