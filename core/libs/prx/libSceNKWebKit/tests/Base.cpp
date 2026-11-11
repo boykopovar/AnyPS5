@@ -1260,6 +1260,18 @@ static void TestDownload() {
         threw = true;
     }
     Require(threw);
+
+    Require(!download->isCancelled);
+    WKDownloadCancel(ref);
+    Require(download->isCancelled);
+
+    threw = false;
+    try {
+        WKDownloadCancel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }
 
 static void TestAXObject() {

@@ -425,8 +425,90 @@ static void TestLeaderboardEntryAccessors() {
     }
 }
 
+
+static void TestSessionManagerRemaining() {
+    constexpr int kNotSignedIn = static_cast<int>(0x80552907);
+    constexpr int kTransactionNotStarted = static_cast<int>(0x80553508);
+
+    TestParameterLifecycle(
+        {_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi40ParameterToGetJoinedPlayerSessionsByUserC1Ev, _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi40ParameterToGetJoinedPlayerSessionsByUserD1Ev, _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi40ParameterToGetJoinedPlayerSessionsByUser9terminateEv, nullptr},
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi40ParameterToGetJoinedPlayerSessionsByUser10initializeEPNS1_6Common10LibContextEPKc(parameter, context, present ? "account" : nullptr);
+        });
+    TestParameterLifecycle(
+        {_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi52ParameterToDeletePlayerSessionJoinableSpecifiedUsersC1Ev, _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi52ParameterToDeletePlayerSessionJoinableSpecifiedUsersD1Ev, _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi52ParameterToDeletePlayerSessionJoinableSpecifiedUsers9terminateEv, nullptr},
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi52ParameterToDeletePlayerSessionJoinableSpecifiedUsers10initializeEPNS1_6Common10LibContextEPKcSA_(parameter, context, "session", present ? "user" : nullptr);
+        });
+    TestParameterLifecycle(
+        {_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToSetPlayerSessionMemberSystemPropertiesC1Ev, _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToSetPlayerSessionMemberSystemPropertiesD1Ev, _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToSetPlayerSessionMemberSystemProperties9terminateEv, nullptr},
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            const auto initialize = _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToSetPlayerSessionMemberSystemProperties10initializeEPNS1_6Common10LibContextEPKcSA_NS6_12IntrusivePtrINS3_55PatchPlayerSessionsSessionIdMembersAccountIdRequestBodyEEE;
+            const int result = initialize(parameter, context, "session", "user", present ? &body : &missingBody);
+            if (present || result != ParameterBodyMissing) return result;
+            return ParameterInvalidArgument;
+        });
+
+    alignas(8) unsigned char player[0x170]{};
+    *reinterpret_cast<std::uint32_t*>(player + 0x5c) = 8;
+    player[0x60] = 1;
+    *reinterpret_cast<std::uint32_t*>(player + 0x64) = 4;
+    player[0x68] = 1;
+    player[0x88] = 1;
+    player[0x89] = 1;
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead13getMaxPlayersEv(player) == 8, "the max player count is wrong");
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead15maxPlayersIsSetEv(player), "the max player flag is clear");
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead16getMaxSpectatorsEv(player) == 4, "the max spectator count is wrong");
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead18maxSpectatorsIsSetEv(player), "the max spectator flag is clear");
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead15getJoinDisabledEv(player), "the join-disabled flag is clear");
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead11memberIsSetEv(player), "the member flag is clear");
+    IntrusivePtr member{};
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead9getMemberEv(&member, player) == &member && member.object == nullptr, "the member handle is not empty");
+
+    alignas(8) unsigned char sessionPlayer[0xa0]{};
+    sessionPlayer[0x98] = 1;
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V117GameSessionPlayer16customData1IsSetEv(sessionPlayer), "the game custom data flag is clear");
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V117GameSessionPlayer14getCustomData1Ev(sessionPlayer) == sessionPlayer + 0x80, "the game custom data pointer is wrong");
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V117GameSessionPlayer16getJoinTimestampEv(sessionPlayer) == sessionPlayer + 0x50, "the game join timestamp pointer is wrong");
+
+    alignas(8) unsigned char memberObject[0x50]{};
+    memberObject[0x28] = 1;
+    memberObject[0x48] = 1;
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V126PlayerSessionMemberForRead12playersIsSetEv(memberObject), "the players flag is clear");
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V126PlayerSessionMemberForRead15spectatorsIsSetEv(memberObject), "the spectators flag is clear");
+    IntrusivePtr players{};
+    IntrusivePtr spectators{};
+    Require(_ZN3sce2Np9CppWebApi14SessionManager2V126PlayerSessionMemberForRead10getPlayersEv(&players, memberObject) == &players && players.object == nullptr, "the players handle is not empty");
+    Require(_ZN3sce2Np9CppWebApi14SessionManager2V126PlayerSessionMemberForRead13getSpectatorsEv(&spectators, memberObject) == &spectators && spectators.object == nullptr, "the spectators handle is not empty");
+
+    alignas(8) unsigned char joined[0x20]{};
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V131JoinedPlayerSessionWithPlatform12getSessionIdEv(joined) == joined + 0x10, "the joined session id pointer is wrong");
+
+    alignas(8) unsigned char response[0x50]{};
+    IntrusivePtr sessions{};
+    Require(_ZN3sce2Np9CppWebApi14SessionManager2V143GetUsersAccountIdPlayerSessionsResponseBody17getPlayerSessionsEv(&sessions, response) == &sessions && sessions.object == nullptr, "the response sessions handle is not empty");
+
+    IntrusivePtr vector{};
+    CommonIterator first{}, last{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V119PlayerSessionPlayerEEEE5beginEv(&first, &vector);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V119PlayerSessionPlayerEEEE3endEv(&last, &vector);
+    Require(first.element == nullptr && last.element == nullptr, "the empty player vector iterators are wrong");
+    Require(!_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V119PlayerSessionPlayerEEEEneERKS9_(&first, &last), "the empty player vector iterators differ");
+
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_14SessionManager2V143GetUsersAccountIdPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() == 0, "the transaction reports a response");
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V143GetUsersAccountIdPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE6finishEv() == kTransactionNotStarted, "the transaction finish did not answer not-started");
+    Require(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi29getJoinedPlayerSessionsByUserEiRKNS4_40ParameterToGetJoinedPlayerSessionsByUserERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_43GetUsersAccountIdPlayerSessionsResponseBodyEEENSA_INS8_18ResponseHeaderBaseEEEEE(nullptr) == kNotSignedIn, "getJoinedPlayerSessionsByUser is not signed out");
+    Require(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi38setPlayerSessionMemberSystemPropertiesEiRKNS4_49ParameterToSetPlayerSessionMemberSystemPropertiesERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE(nullptr) == kNotSignedIn, "setPlayerSessionMemberSystemProperties is not signed out");
+    Require(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi41deletePlayerSessionJoinableSpecifiedUsersEiRKNS4_52ParameterToDeletePlayerSessionJoinableSpecifiedUsersERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE(nullptr) == kNotSignedIn, "deletePlayerSessionJoinableSpecifiedUsers is not signed out");
+    Require(_ZN3sce2Np9CppWebApi14SessionManager2V150PutPlayerSessionsSessionIdLeaderRequestBodyFactory6createEPNS1_6Common10LibContextERKmPKcPNS5_12IntrusivePtrINS3_43PutPlayerSessionsSessionIdLeaderRequestBodyEEE(nullptr) == kNotSignedIn, "the leader request factory is not signed out");
+
+    _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession15setJoinDisabledERKb(nullptr, nullptr);
+    _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody13setMaxPlayersERKi(nullptr, nullptr);
+}
+
 int main() {
     TestLeaderboardEntryAccessors();
+    TestSessionManagerRemaining();
     TestParameterLifecycles();
     TestSessionManagerParameterLifecycles();
     TestLeaderboardsParameterLifecycles();
