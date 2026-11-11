@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstddef>
+#include <new>
 #include <type_traits>
 #include <utility>
 
@@ -51,6 +52,59 @@ struct ASCIILiteral {
     const char* characters;
 };
 
+struct CStringBuffer {
+    unsigned refCount;
+    std::size_t length;
+};
+
+struct CString {
+    CStringBuffer* buffer;
+    explicit CString(CStringBuffer* value = nullptr) noexcept : buffer(value) {}
+    CString(CString&& other) noexcept : buffer(std::exchange(other.buffer, nullptr)) {}
+    CString(const CString&) = delete;
+    CString& operator=(const CString&) = delete;
+    CString& operator=(CString&&) = delete;
+    ~CString();
+};
+
+enum ConversionMode : int {
+    LenientConversion,
+    StrictConversion,
+    StrictConversionReplacingUnpairedSurrogatesWithFFFD,
+};
+
+enum class UTF8ConversionError : int {
+    None,
+    OutOfMemory,
+    IllegalSource,
+    SourceExhausted,
+};
+
+struct ExpectedCString {
+    union {
+        CString value;
+        UTF8ConversionError error;
+    };
+    bool hasValue;
+    ExpectedCString(CString&& string) noexcept : value(std::move(string)), hasValue(true) {}
+    explicit ExpectedCString(UTF8ConversionError failure) noexcept : error(failure), hasValue(false) {}
+    ExpectedCString(ExpectedCString&& other) noexcept : hasValue(other.hasValue) {
+        if (hasValue) new (&value) CString(std::move(other.value));
+        else error = other.error;
+    }
+    ExpectedCString(const ExpectedCString&) = delete;
+    ExpectedCString& operator=(const ExpectedCString&) = delete;
+    ExpectedCString& operator=(ExpectedCString&&) = delete;
+    ~ExpectedCString() {
+        if (hasValue) value.~CString();
+    }
+};
+
+void* AllocateBlock(std::size_t size);
+void FreeBlock(void* pointer);
+StringImpl* RefString(StringImpl& impl);
+void DerefString(StringImpl* impl);
+
 inline constexpr unsigned StringImplFlag8Bit = 1u << 2;
 inline constexpr unsigned StringImplFlagDidReportCost = 1u << 3;
 inline constexpr unsigned StringImplFlagAtom = 1u << 4;
@@ -76,6 +130,21 @@ static_assert(offsetof(StringVector, size) == 12);
 static_assert(!std::is_trivially_destructible_v<StringVector>);
 static_assert(sizeof(ASCIILiteral) == 8);
 static_assert(std::is_trivially_copyable_v<ASCIILiteral>);
+static_assert(sizeof(CStringBuffer) == 16);
+static_assert(alignof(CStringBuffer) == 8);
+static_assert(offsetof(CStringBuffer, refCount) == 0);
+static_assert(offsetof(CStringBuffer, length) == 8);
+static_assert(sizeof(CString) == 8);
+static_assert(offsetof(CString, buffer) == 0);
+static_assert(!std::is_trivially_destructible_v<CString>);
+static_assert(sizeof(ConversionMode) == 4);
+static_assert(sizeof(UTF8ConversionError) == 4);
+static_assert(sizeof(ExpectedCString) == 16);
+static_assert(alignof(ExpectedCString) == 8);
+static_assert(offsetof(ExpectedCString, value) == 0);
+static_assert(offsetof(ExpectedCString, error) == 0);
+static_assert(offsetof(ExpectedCString, hasValue) == 8);
+static_assert(!std::is_trivially_destructible_v<ExpectedCString>);
 static_assert(std::is_trivially_copyable_v<StringView>);
 static_assert(std::is_trivially_destructible_v<StringView>);
 

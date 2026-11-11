@@ -506,6 +506,22 @@ StringVector::~StringVector() {
     Deallocate(buffer);
 }
 
+void* AllocateBlock(std::size_t size) {
+    return Allocate(size);
+}
+
+void FreeBlock(void* pointer) {
+    Deallocate(pointer);
+}
+
+StringImpl* RefString(StringImpl& impl) {
+    return Ref(impl);
+}
+
+void DerefString(StringImpl* impl) {
+    Deref(impl);
+}
+
 }  // namespace Jsc::WtfAbi
 
 extern "C" {

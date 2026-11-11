@@ -52,10 +52,6 @@ int APS5_VABI _ZN9Inspector24RuntimeBackendDispatcher12awaitPromiseElON3WTF6RefP
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3WTF8JSONImpl5Value9asBooleanERb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector20DOMBackendDispatcher11setNodeNameElON3WTF6RefPtrINS1_8JSONImpl6ObjectENS1_13DumbPtrTraitsIS4_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -105,10 +101,6 @@ int APS5_VABI _ZN9Inspector20DOMBackendDispatcher19setAttributesAsTextElON3WTF6R
 }
 
 int APS5_VABI _ZN9Inspector27DOMStorageBackendDispatcher6enableElON3WTF6RefPtrINS1_8JSONImpl6ObjectENS1_13DumbPtrTraitsIS4_EEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF8JSONImpl5Value7asValueERNS_6RefPtrIS1_NS_13DumbPtrTraitsIS1_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
