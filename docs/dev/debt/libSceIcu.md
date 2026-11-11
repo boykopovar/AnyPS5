@@ -6,7 +6,7 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 56 remaining throwing functions match NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Their prototypes and behavior are unverified and retain `NotImplemented_nid_no_patch`. The six locale functions described above have been removed from this throwing inventory, `u_tolower`, `u_toupper`, `u_totitle` and `ublock_getCode` are in [CodePoints.cpp](../../../core/libs/prx/libSceIcu/CodePoints.cpp) and six `unorm2_*` in [Normalization.cpp](../../../core/libs/prx/libSceIcu/Normalization.cpp).
+- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 46 remaining throwing functions match NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Their prototypes and behavior are unverified and retain `NotImplemented_nid_no_patch`. The six locale functions described above have been removed from this throwing inventory, `u_tolower`, `u_toupper`, `u_totitle` and `ublock_getCode` are in [CodePoints.cpp](../../../core/libs/prx/libSceIcu/CodePoints.cpp) and six `unorm2_*` in [Normalization.cpp](../../../core/libs/prx/libSceIcu/Normalization.cpp).
 
 - [Per-image ELF records](https://gist.github.com/kyon-eth/a8e9ce3fc8802f48d30cd94c413904b7/211c546f6f8e79a23b5ec6ea8fd0610527beabee) describe the module, library, raw names, type, values and sizes for the declarations in [Export.cpp](../../../core/libs/prx/libSceIcu/Export.cpp). The metadata SHA-256 is `551b2d4f646b934cb7eae6a2f2f3bf58e4fb2ba53644d2d1af40f133fda15eb9`; image provenance and labels are not authenticated.
 
@@ -32,19 +32,9 @@
 | `ubrk_setText` | `NtjY-lZG4ss` |
 | `ubrk_setUText` | `qQMUbG5L6oE` |
 | `ucnv_cbFromUWriteBytes` | `qjWeIkH81-Y` |
-| `ucnv_close` | `JTIHqYZFMQE` |
-| `ucnv_convertEx` | `lPKKDtEmEgM` |
-| `ucnv_fromUnicode` | `6ZIjQAWKeRs` |
 | `ucnv_getCanonicalName` | `0GnpUt-BVlE` |
-| `ucnv_getName` | `7pCOClUrUmM` |
-| `ucnv_open` | `AKenFQbXGE0` |
-| `ucnv_reset` | `5O8bmW45o0U` |
-| `ucnv_setFallback` | `iEe61PaW1pg` |
 | `ucnv_setFromUCallBack` | `E0yB1UHl4VI` |
-| `ucnv_setSubstChars` | `Ku0Rs703XaI` |
 | `ucnv_setToUCallBack` | `UIU5m-5O68c` |
-| `ucnv_toUChars` | `LvSzmTZ0Mss` |
-| `ucnv_toUnicode` | `O1eMKYxVlTs` |
 | `ucurr_getName` | `T7jc4xaLMKo` |
 | `ucurr_openISOCurrencies` | `BFt6nFM3lbc` |
 | `udata_setCommonData` | `wHZwCpZVcGI` |
@@ -98,7 +88,7 @@
 
 ### Functional
 
-- [Older callable exports](../../../core/libs/prx/libSceIcu/LegacyExports.cpp) - 1691 of the 2347 3.20 callable NIDs are declared under ICU 68 names: each NID is the `tools/nid_names.py` hash of a dynamic symbol of `libicuuc`, `libicui18n` or `libicuio` in the [ICU 68.2 Ubuntu 20.04 build](https://github.com/unicode-org/icu/releases/download/release-68-2/icu4c-68_2-Ubuntu20.04-x64.tgz), with the `_68` renaming suffix removed from C names; 1293 of them are C++ names in the `icu_68` namespace. A name match does not show that the console function has ICU 68's prototype or behavior. `ubidi_getClass` and ten `unorm2_*` are implemented (see bidirectional text and normalization); the others throw. The other 656 keep placeholder names; 652 of them match no ICU 68.2 symbol. These NIDs do not appear in the later version-labelled module inventory; no cross-version identity or compatibility is claimed.
+- [Older callable exports](../../../core/libs/prx/libSceIcu/LegacyExports.cpp) - 1691 of the 2347 3.20 callable NIDs are declared under ICU 68 names: each NID is the `tools/nid_names.py` hash of a dynamic symbol of `libicuuc`, `libicui18n` or `libicuio` in the [ICU 68.2 Ubuntu 20.04 build](https://github.com/unicode-org/icu/releases/download/release-68-2/icu4c-68_2-Ubuntu20.04-x64.tgz), with the `_68` renaming suffix removed from C names; 1293 of them are C++ names in the `icu_68` namespace. A name match does not show that the console function has ICU 68's prototype or behavior. `ubidi_getClass`, ten `unorm2_*` and 23 `ucnv_*` are implemented (see bidirectional text, normalization and converters); the others throw. The other 656 keep placeholder names; 652 of them match no ICU 68.2 symbol. These NIDs do not appear in the later version-labelled module inventory; no cross-version identity or compatibility is claimed.
 
 - [UTF-8 macro helpers](../../../core/libs/prx/libSceIcu/Utf8.cpp) have no console ABI or behavior verification. Their names and NIDs are in the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceIcu.c); behavior follows ICU 78.1 [utf_impl.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/utf_impl.cpp). These are macro bodies, not complete UTF-8 operations: append encodes ASCII with two bytes, and null-error-pointer failures write the legacy length-dependent error characters. Null index pointers, negative positions, reversed bounds, overflowing index or capacity arithmetic, and null buffers when accessed throw instead of reproducing undefined behavior. Negative forward lengths denote NUL-terminated input. Cross-firmware export availability and native behavior outside the macros' preconditions remain unverified.
 
@@ -154,6 +144,8 @@
 - [Charset detection](../../../core/libs/prx/libSceIcu/CharsetDetection.cpp) is unverified on a console. `ucsdet_open`, `ucsdet_close`, `ucsdet_setText`, `ucsdet_detectAll`, `ucsdet_getName`, `ucsdet_getConfidence` and `ucsdet_enableInputFilter` call the ICU 78.1 [detector](https://github.com/unicode-org/icu/tree/049e0d6a4206/icu4c/source/i18n/csdetect.cpp) built from the submodule; confidences and match order may differ from the console's ICU 68. Detectors and matches are host objects, names point to host string constants and the detector keeps a pointer to the guest text, as ICU does. A null `UErrorCode`, detector, match or match count, and a null text with length -1, throw where ICU dereferences them. Closes when: compared with the console.
 
 - [Normalization](../../../core/libs/prx/libSceIcu/Normalization.cpp) is unverified on a console. Sixteen `unorm2_*` exports call ICU 78.1 with its compiled-in NFC data (Unicode 17; the console's ICU 68 has Unicode 13): the NFC and NFD instances, `unorm2_getInstance` for `nfc` without a package, normalization, appending, quick checks, decompositions, composition, combining classes and boundaries. Other names or packages need a `.nrm` data file this build lacks and throw, as do the NFKC, NFKD and NFKC_Casefold instance getters. `unorm2_openFiltered` and `unorm2_close` throw because the guest `uset_*` sets are not ICU objects. A null `UErrorCode`, and a null normalizer where ICU dereferences it, throw. Closes when: compared with the console and the data files are available.
+
+- [Converters](../../../core/libs/prx/libSceIcu/Converter.cpp) are unverified on a console and open only what ICU 78.1 builds without data: the UTF-8/16/32 forms, UTF-7, CESU-8, IMAP-mailbox-name, SCSU, BOCU-1, ISCII, ISO-8859-1 and US-ASCII, by their stripped canonical names. Aliases (`latin1`), table charsets, HZ, ISO-2022, LMBCS and compound text need data files this build lacks; the exports throw where ICU reports `U_FILE_ACCESS_ERROR` or `U_MISSING_RESOURCE_ERROR` (so `ucnv_getCCSID` throws for UTF-7, IMAP and ISCII), for a null (default) name and for a non-ASCII `ucnv_openU` name. Behaviour is ICU 78.1's: `UBool` results are 0 or 1. Custom error callbacks, their getters, the `ucnv_cb*` writers and the ESCAPE and SUBSTITUTE callbacks throw. Closes when: compared with the console and the converter data is available.
 
 - [Simple case mapping and blocks](../../../core/libs/prx/libSceIcu/CodePoints.cpp) are unverified on a console. `u_tolower`, `u_toupper`, `u_totitle` and `ublock_getCode` call ICU 78.1 over its compiled-in case and property tables (Unicode 17; the console's ICU 68 has Unicode 13, so later characters and blocks may differ). They were declared without the `_nid_postfix` suffix, which the NID ignores. Closes when: compared with the console.
 
