@@ -184,6 +184,15 @@ if command == 'inspect':
             self.assertIn("must be a JSON object", stderr.getvalue())
             self.assertFalse(output.exists())
 
+    def test_inspection_entries_require_objects_with_indexes_and_kinds(self):
+        invalid_entries = ([None], [{"index": 0}], [{"index": -1, "kind": "submit"}], [{"index": True, "kind": "submit"}], [{"index": 0, "kind": 3}])
+        for entries in invalid_entries:
+            with self.subTest(entries=entries), self.assertRaises(RuntimeError):
+                frame_capture_minimize.Minimizer.validate_entries(entries, "calls")
+
+    def test_inspection_entries_accept_nonnegative_integer_indexes(self):
+        frame_capture_minimize.Minimizer.validate_entries([{"index": 0, "kind": "submit"}], "calls")
+
     def test_inspection_requires_calls_list(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

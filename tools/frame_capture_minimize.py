@@ -26,6 +26,17 @@ class Minimizer:
     def command(path):
         return [sys.executable, str(path)] if path.suffix == ".py" else [str(path)]
 
+    @staticmethod
+    def validate_entries(entries, label):
+        for position, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                raise RuntimeError(f"capture inspection {label}[{position}] must be an object")
+            index = entry.get("index")
+            if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+                raise RuntimeError(f"capture inspection {label}[{position}] has an invalid index")
+            if not isinstance(entry.get("kind"), str):
+                raise RuntimeError(f"capture inspection {label}[{position}] is missing a kind")
+
     def inspect(self):
         result = subprocess.run([*self.command(self.filter), "inspect", str(self.capture)], capture_output=True, text=True, encoding="utf-8", errors="replace")
         if result.returncode != 0:
@@ -38,6 +49,8 @@ class Minimizer:
             raise RuntimeError("capture inspection must be a JSON object")
         if not isinstance(description.get("calls"), list) or not isinstance(description.get("chunks"), list):
             raise RuntimeError("capture inspection is missing calls or chunks")
+        self.validate_entries(description["calls"], "calls")
+        self.validate_entries(description["chunks"], "chunks")
         return description
 
     @staticmethod
