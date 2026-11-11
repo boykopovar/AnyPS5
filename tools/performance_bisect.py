@@ -170,3 +170,18 @@ def run_sample(worktree, build_dir, result_dir, recipe, commit):
     if len(summaries) != 1:
         raise RuntimeError(f"title run for {commit} produced {len(summaries)} summary files; expected exactly one")
     return sample_summary(summaries[0], recipe["title_id"], commit)
+
+
+def measure_commit(repo, worktree, results_root, recipe, commit):
+    git(worktree, "checkout", "--detach", "--force", commit)
+    commit_results = results_root / commit
+    commit_results.mkdir()
+    build_dir = run_build_commands(worktree, recipe, commit, commit_results)
+    samples = []
+    for sample_number in range(1, recipe["repetitions"] + 1):
+        sample = run_sample(worktree, build_dir, commit_results / f"sample-{sample_number}", recipe, commit)
+        samples.append(sample)
+        print(f"{commit[:12]} sample {sample_number}: {sample['fps']:.2f} FPS", file=sys.stderr, flush=True)
+    result = summarize(samples, recipe["max_spread_pct"])
+    print(f"{commit[:12]} median: {result['median_fps']:.2f} FPS; spread {result['spread_pct']:.2f}%", file=sys.stderr, flush=True)
+    return result
