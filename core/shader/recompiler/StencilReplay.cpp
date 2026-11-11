@@ -529,7 +529,7 @@ private:
     bool sameValue(const IrValue* left, const IrValue* right) const {
         left = left->Resolve();
         right = right->Resolve();
-        return left == right || (left->HasImmediate() && right->HasImmediate() && left->Type() == IrType::U32 && right->Type() == IrType::U32 && left->ImmediateU32() == right->ImmediateU32());
+        return left == right || (left->HasImmediate() && right->HasImmediate() && left->Type() == right->Type() && left->ImmediateU64() == right->ImmediateU64());
     }
 
     bool inactiveEquals(const IrValue* value, const IrValue* other, const IrValue* predicate, const std::set<const IrBlock*>& region, unsigned depth = 0) {
@@ -542,10 +542,9 @@ private:
             if (!ballot) continue;
             const IrValue* lanes = ballot->Argument(0)->Resolve();
             if (lanes->Opcode() == IrOpcode::LogicalAnd && lanes->ArgumentCount() == 2u) {
-                const auto inactiveOnly = [&](const IrValue* side) { side = side->Resolve(); return side->Opcode() == IrOpcode::LogicalNot && side->ArgumentCount() == 1u && side->Argument(0)->Resolve() == predicate->Resolve(); };
-                if (inactiveOnly(lanes->Argument(1))) lanes = lanes->Argument(0)->Resolve();
-                else if (inactiveOnly(lanes->Argument(0))) lanes = lanes->Argument(1)->Resolve();
-                else continue;
+                const IrValue* stripped = exclusionLanes(lanes, predicate);
+                if (stripped == lanes) continue;
+                lanes = stripped;
             }
             if (const auto mask = own(lanes); mask && sameValue(half == 0u ? mask->low : mask->high, other)) return true;
             if (ballotOfLanes(other, lanes, half)) return true;
@@ -692,10 +691,24 @@ private:
         }
     }
 
+    bool zeroOnInactiveLanes(const IrValue* value, const IrValue* predicate, unsigned depth = 0) const {
+        if (depth > 8u) return false;
+        value = value->Resolve();
+        predicate = predicate->Resolve();
+        if (value == predicate) return true;
+        if (value->Opcode() == IrOpcode::LogicalAnd && value->ArgumentCount() == 2u) {
+            return zeroOnInactiveLanes(value->Argument(0), predicate, depth + 1u) || zeroOnInactiveLanes(value->Argument(1), predicate, depth + 1u);
+        }
+        if (const auto recognized = recognizeOwn(value)) {
+            return ballotOfLanes(recognized->mask.low, predicate, 0u) && (waveSize == 32u || ballotOfLanes(recognized->mask.high, predicate, 1u));
+        }
+        return false;
+    }
+
     const IrValue* exclusionLanes(const IrValue* lanes, const IrValue* predicate) const {
         lanes = lanes->Resolve();
         if (lanes->Opcode() != IrOpcode::LogicalAnd || lanes->ArgumentCount() != 2u) return lanes;
-        const auto inactiveOnly = [&](const IrValue* side) { side = side->Resolve(); return side->Opcode() == IrOpcode::LogicalNot && side->ArgumentCount() == 1u && side->Argument(0)->Resolve() == predicate->Resolve(); };
+        const auto inactiveOnly = [&](const IrValue* side) { side = side->Resolve(); return side->Opcode() == IrOpcode::LogicalNot && side->ArgumentCount() == 1u && zeroOnInactiveLanes(side->Argument(0), predicate); };
         if (inactiveOnly(lanes->Argument(1))) return lanes->Argument(0)->Resolve();
         if (inactiveOnly(lanes->Argument(0))) return lanes->Argument(1)->Resolve();
         return lanes;
@@ -732,94 +745,136 @@ private:
         return lanes == predicate->Resolve() || GuardImplies(program, predicate, lanes);
     }
 
-    bool relatedMaskWord(const IrValue* left, const IrValue* right, const IrValue* predicate, const std::set<const IrBlock*>& region, const IrBlock* skipPred, std::uint32_t half, unsigned depth) {
-        if (depth > 8u) return false;
+    const IrBlock* skipEntryPred(const IrValue* phi, const std::map<const IrBlock*, const IrBlock*>& skipEntries) const {
+        const auto found = skipEntries.find(phi->Parent());
+        return found == skipEntries.end() ? nullptr : found->second;
+    }
+
+    bool relatedMaskWord(const IrValue* left, const IrValue* right, const IrValue* predicate, const std::set<const IrBlock*>& region, const std::map<const IrBlock*, const IrBlock*>& skipEntries, std::uint32_t half, unsigned depth) {
+        if (depth > 24u) return false;
         left = left->Resolve();
         right = right->Resolve();
         if (sameValue(left, right)) return true;
-        if (right->IsPhi() && skipPred != nullptr) {
-            for (std::size_t index = 0; index < right->PhiBlockCount(); ++index) {
-                if (right->PhiBlock(index) == skipPred) return relatedMaskWord(left, right->Argument(index), predicate, region, nullptr, half, depth + 1u);
+        if (right->IsPhi()) {
+            if (const IrBlock* skipPred = skipEntryPred(right, skipEntries)) {
+                for (std::size_t index = 0; index < right->PhiBlockCount(); ++index) {
+                    if (right->PhiBlock(index) == skipPred) return relatedMaskWord(left, right->Argument(index), predicate, region, skipEntries, half, depth + 1u);
+                }
+                return false;
             }
-            return false;
         }
         const IrValue* leftBallot = ballotWord(left, half);
         const IrValue* rightBallot = ballotWord(right, half);
         if (leftBallot && rightBallot && relatedLanes(leftBallot->Argument(0), rightBallot->Argument(0), predicate, region)) return true;
         if (clearedOnActiveLanes(left, half, predicate) && clearedOnActiveLanes(right, half, predicate)) return true;
         if (left->Opcode() == IrOpcode::BitwiseAnd32 && left->ArgumentCount() == 2u) {
-            if ((setOnActiveLanes(left->Argument(1), half, predicate) && relatedMaskWord(left->Argument(0), right, predicate, region, skipPred, half, depth + 1u)) ||
-                (setOnActiveLanes(left->Argument(0), half, predicate) && relatedMaskWord(left->Argument(1), right, predicate, region, skipPred, half, depth + 1u))) return true;
+            if ((setOnActiveLanes(left->Argument(1), half, predicate) && relatedMaskWord(left->Argument(0), right, predicate, region, skipEntries, half, depth + 1u)) ||
+                (setOnActiveLanes(left->Argument(0), half, predicate) && relatedMaskWord(left->Argument(1), right, predicate, region, skipEntries, half, depth + 1u))) return true;
         }
         if (right->Opcode() == IrOpcode::BitwiseAnd32 && right->ArgumentCount() == 2u) {
-            if ((setOnActiveLanes(right->Argument(1), half, predicate) && relatedMaskWord(left, right->Argument(0), predicate, region, skipPred, half, depth + 1u)) ||
-                (setOnActiveLanes(right->Argument(0), half, predicate) && relatedMaskWord(left, right->Argument(1), predicate, region, skipPred, half, depth + 1u))) return true;
+            if ((setOnActiveLanes(right->Argument(1), half, predicate) && relatedMaskWord(left, right->Argument(0), predicate, region, skipEntries, half, depth + 1u)) ||
+                (setOnActiveLanes(right->Argument(0), half, predicate) && relatedMaskWord(left, right->Argument(1), predicate, region, skipEntries, half, depth + 1u))) return true;
         }
         if (left->Opcode() == IrOpcode::BitwiseAnd32 && left->ArgumentCount() == 2u) {
-            if ((everyLaneWord(left->Argument(1), half) && relatedMaskWord(left->Argument(0), right, predicate, region, skipPred, half, depth + 1u)) ||
-                (everyLaneWord(left->Argument(0), half) && relatedMaskWord(left->Argument(1), right, predicate, region, skipPred, half, depth + 1u))) return true;
+            if ((everyLaneWord(left->Argument(1), half) && relatedMaskWord(left->Argument(0), right, predicate, region, skipEntries, half, depth + 1u)) ||
+                (everyLaneWord(left->Argument(0), half) && relatedMaskWord(left->Argument(1), right, predicate, region, skipEntries, half, depth + 1u))) return true;
         }
         if (right->Opcode() == IrOpcode::BitwiseAnd32 && right->ArgumentCount() == 2u) {
-            if ((everyLaneWord(right->Argument(1), half) && relatedMaskWord(left, right->Argument(0), predicate, region, skipPred, half, depth + 1u)) ||
-                (everyLaneWord(right->Argument(0), half) && relatedMaskWord(left, right->Argument(1), predicate, region, skipPred, half, depth + 1u))) return true;
+            if ((everyLaneWord(right->Argument(1), half) && relatedMaskWord(left, right->Argument(0), predicate, region, skipEntries, half, depth + 1u)) ||
+                (everyLaneWord(right->Argument(0), half) && relatedMaskWord(left, right->Argument(1), predicate, region, skipEntries, half, depth + 1u))) return true;
         }
         return false;
     }
 
-    bool relatedMaskWords(const IrValue* left, const IrValue* right, const IrValue* predicate, const std::set<const IrBlock*>& region, const IrBlock* skipPred, unsigned depth) {
-        if (relatedMaskWord(left, right, predicate, region, skipPred, 0u, depth)) return true;
-        return waveSize != 32u && relatedMaskWord(left, right, predicate, region, skipPred, 1u, depth);
+    bool relatedMaskWords(const IrValue* left, const IrValue* right, const IrValue* predicate, const std::set<const IrBlock*>& region, const std::map<const IrBlock*, const IrBlock*>& skipEntries, unsigned depth) {
+        if (relatedMaskWord(left, right, predicate, region, skipEntries, 0u, depth)) return true;
+        return waveSize != 32u && relatedMaskWord(left, right, predicate, region, skipEntries, 1u, depth);
     }
 
-    bool relatedValue(const IrValue* left, const IrValue* right, const IrValue* predicate, const std::set<const IrBlock*>& region, const IrBlock* skipPred, unsigned depth = 0) {
-        if (depth > 8u) return false;
+    bool relatedValue(const IrValue* left, const IrValue* right, const IrValue* predicate, const std::set<const IrBlock*>& region, const std::map<const IrBlock*, const IrBlock*>& skipEntries, unsigned depth = 0) {
+        if (depth > 24u) return false;
         left = left->Resolve();
         right = right->Resolve();
         if (sameValue(left, right)) return true;
         if (inactiveEquals(left, right, predicate, region) || inactiveEquals(right, left, predicate, region)) return true;
-        if (left->Type() == IrType::U32 && right->Type() == IrType::U32 && relatedMaskWords(left, right, predicate, region, skipPred, depth + 1u)) return true;
+        if (left->Type() == IrType::Bool && right->Type() == IrType::Bool) {
+            const IrValue* strippedLeft = exclusionLanes(left, predicate);
+            const IrValue* strippedRight = exclusionLanes(right, predicate);
+            if ((strippedLeft != left || strippedRight != right) && relatedValue(strippedLeft, strippedRight, predicate, region, skipEntries, depth + 1u)) return true;
+        }
+        if (left->Type() == IrType::U32 && right->Type() == IrType::U32 && relatedMaskWords(left, right, predicate, region, skipEntries, depth + 1u)) return true;
         if (left->Opcode() == IrOpcode::Ballot && right->Opcode() == IrOpcode::Ballot && left->ArgumentCount() == 1u && right->ArgumentCount() == 1u) {
-            if (relatedLanes(left->Argument(0), right->Argument(0), predicate, region)) return true;
+            if (relatedLanes(left->Argument(0), right->Argument(0), predicate, region) || relatedValue(left->Argument(0), right->Argument(0), predicate, region, skipEntries, depth + 1u)) return true;
         }
         if (left->Type() == IrType::U32 && right->Type() == IrType::U32) {
             if (left->Opcode() == IrOpcode::BitwiseAnd32 && left->ArgumentCount() == 2u) {
                 for (std::uint32_t half = 0; half < 2u; ++half) {
-                    if ((everyLaneWord(left->Argument(1), half) && relatedValue(left->Argument(0), right, predicate, region, skipPred, depth + 1u)) ||
-                        (everyLaneWord(left->Argument(0), half) && relatedValue(left->Argument(1), right, predicate, region, skipPred, depth + 1u))) return true;
+                    if ((everyLaneWord(left->Argument(1), half) && relatedValue(left->Argument(0), right, predicate, region, skipEntries, depth + 1u)) ||
+                        (everyLaneWord(left->Argument(0), half) && relatedValue(left->Argument(1), right, predicate, region, skipEntries, depth + 1u))) return true;
                 }
             }
             if (right->Opcode() == IrOpcode::BitwiseAnd32 && right->ArgumentCount() == 2u) {
                 for (std::uint32_t half = 0; half < 2u; ++half) {
-                    if ((everyLaneWord(right->Argument(1), half) && relatedValue(left, right->Argument(0), predicate, region, skipPred, depth + 1u)) ||
-                        (everyLaneWord(right->Argument(0), half) && relatedValue(left, right->Argument(1), predicate, region, skipPred, depth + 1u))) return true;
+                    if ((everyLaneWord(right->Argument(1), half) && relatedValue(left, right->Argument(0), predicate, region, skipEntries, depth + 1u)) ||
+                        (everyLaneWord(right->Argument(0), half) && relatedValue(left, right->Argument(1), predicate, region, skipEntries, depth + 1u))) return true;
                 }
             }
         }
         if (const auto leftOwn = recognizeOwn(left)) {
             if (const auto rightOwn = recognizeOwn(right)) {
-                if (relatedMaskWord(leftOwn->mask.low, rightOwn->mask.low, predicate, region, skipPred, 0u, 0u) && (waveSize == 32u || relatedMaskWord(leftOwn->mask.high, rightOwn->mask.high, predicate, region, skipPred, 1u, 0u))) return true;
+                if (relatedMaskWord(leftOwn->mask.low, rightOwn->mask.low, predicate, region, skipEntries, 0u, 0u) && (waveSize == 32u || relatedMaskWord(leftOwn->mask.high, rightOwn->mask.high, predicate, region, skipEntries, 1u, 0u))) return true;
             }
         }
-        if (right->IsPhi() && skipPred != nullptr) {
-            for (std::size_t index = 0; index < right->PhiBlockCount(); ++index) {
-                if (right->PhiBlock(index) == skipPred) return relatedValue(left, right->Argument(index), predicate, region, nullptr, depth + 1u);
+        if (right->IsPhi()) {
+            if (const IrBlock* skipPred = skipEntryPred(right, skipEntries)) {
+                for (std::size_t index = 0; index < right->PhiBlockCount(); ++index) {
+                    if (right->PhiBlock(index) == skipPred) return relatedValue(left, right->Argument(index), predicate, region, skipEntries, depth + 1u);
+                }
+                return false;
             }
-            return false;
         }
         if (left->MayHaveSideEffects() || right->MayHaveSideEffects()) return false;
         if (left->Opcode() != right->Opcode() || left->Type() != right->Type() || left->ArgumentCount() != right->ArgumentCount() || left->Flags<std::uint64_t>() != right->Flags<std::uint64_t>()) return false;
         if (left->ArgumentCount() == 0u) return left->Opcode() == IrOpcode::LaneId;
         if (lateralValue(left->Opcode())) return false;
         for (std::size_t operand = 0; operand < left->ArgumentCount(); ++operand) {
-            if (!relatedValue(left->Argument(operand), right->Argument(operand), predicate, region, skipPred, depth + 1u)) return false;
+            if (!relatedValue(left->Argument(operand), right->Argument(operand), predicate, region, skipEntries, depth + 1u)) return false;
         }
         return true;
     }
 
-    bool tailPairs(const IrBlock* bodyBlock, const IrBlock* skipBlock, const IrValue* predicate, const std::set<const IrBlock*>& region, std::map<const IrBlock*, const IrBlock*>& touched, const IrBlock* skipPred, unsigned depth = 0) {
+    const IrBlock* followBody(const IrBlock* block) const {
+        for (unsigned guard = 0; guard < 64u; ++guard) {
+            const auto& info = program.Metadata().blockInfo[blockIndices.at(block)];
+            if (info.terminator.kind != TerminatorKind::Branch) return block;
+            if (std::ranges::any_of(block->Instructions(), [](const IrValue* instruction) { return !instruction->IsPhi(); })) return block;
+            block = program.BlockOrder()[indices.at(info.terminator.trueBlock)];
+        }
+        return block;
+    }
+
+    const IrBlock* followSkip(const IrBlock* block, std::map<const IrBlock*, const IrBlock*>& skipEntries) const {
+        for (unsigned guard = 0; guard < 64u; ++guard) {
+            const auto& info = program.Metadata().blockInfo[blockIndices.at(block)];
+            if (info.terminator.kind != TerminatorKind::Branch) return block;
+            if (std::ranges::any_of(block->Instructions(), [](const IrValue* instruction) { return !instruction->IsPhi(); })) return block;
+            const IrBlock* next = program.BlockOrder()[indices.at(info.terminator.trueBlock)];
+            skipEntries.emplace(next, block);
+            block = next;
+        }
+        return block;
+    }
+
+    bool tailPairs(const IrBlock* bodyBlock, const IrBlock* skipBlock, const IrValue* predicate, const std::set<const IrBlock*>& region, std::map<const IrBlock*, const IrBlock*>& touched, std::map<const IrBlock*, const IrBlock*>& skipEntries, const IrBlock* skipPred, unsigned depth = 0) {
         if (depth > 32u) return false;
         if (const auto found = touched.find(bodyBlock); found != touched.end()) return found->second == skipBlock;
         touched.emplace(bodyBlock, skipBlock);
+        skipEntries.emplace(skipBlock, skipPred);
+        const IrBlock* forwardedBody = followBody(bodyBlock);
+        const IrBlock* forwardedSkip = followSkip(skipBlock, skipEntries);
+        if (forwardedBody != bodyBlock || forwardedSkip != skipBlock) {
+            return tailPairs(forwardedBody, forwardedSkip, predicate, region, touched, skipEntries, skipBlock, depth + 1u);
+        }
         const auto& bodyInstructions = bodyBlock->Instructions();
         const auto& skipInstructions = skipBlock->Instructions();
         auto bodyIt = bodyInstructions.begin();
@@ -838,7 +893,7 @@ private:
                 if (!(bodyExport == skipExport)) return false;
             }
             for (std::size_t operand = 0; operand < bodyInstruction->ArgumentCount(); ++operand) {
-                if (!relatedValue(bodyInstruction->Argument(operand), skipInstruction->Argument(operand), predicate, region, skipPred)) return false;
+                if (!relatedValue(bodyInstruction->Argument(operand), skipInstruction->Argument(operand), predicate, region, skipEntries)) return false;
             }
         }
         const auto& bodyInfo = program.Metadata().blockInfo[blockIndices.at(bodyBlock)];
@@ -846,13 +901,13 @@ private:
         if (bodyInfo.terminator.kind != skipInfo.terminator.kind) return false;
         if (bodyInfo.terminator.kind == TerminatorKind::Return) return true;
         if (bodyInfo.terminator.kind == TerminatorKind::Branch) {
-            return tailPairs(program.BlockOrder()[indices.at(bodyInfo.terminator.trueBlock)], program.BlockOrder()[indices.at(skipInfo.terminator.trueBlock)], predicate, region, touched, skipBlock, depth + 1u);
+            return tailPairs(program.BlockOrder()[indices.at(bodyInfo.terminator.trueBlock)], program.BlockOrder()[indices.at(skipInfo.terminator.trueBlock)], predicate, region, touched, skipEntries, skipBlock, depth + 1u);
         }
         if (bodyInfo.terminator.kind != TerminatorKind::ConditionalBranch) return false;
         if (bodyInfo.terminator.condition != skipInfo.terminator.condition || !bodyInfo.condition || !skipInfo.condition) return false;
-        if (!relatedValue(bodyInfo.condition, skipInfo.condition, predicate, region, skipPred)) return false;
-        return tailPairs(program.BlockOrder()[indices.at(bodyInfo.terminator.trueBlock)], program.BlockOrder()[indices.at(skipInfo.terminator.trueBlock)], predicate, region, touched, skipBlock, depth + 1u)
-            && tailPairs(program.BlockOrder()[indices.at(bodyInfo.terminator.falseBlock)], program.BlockOrder()[indices.at(skipInfo.terminator.falseBlock)], predicate, region, touched, skipBlock, depth + 1u);
+        if (!relatedValue(bodyInfo.condition, skipInfo.condition, predicate, region, skipEntries)) return false;
+        return tailPairs(program.BlockOrder()[indices.at(bodyInfo.terminator.trueBlock)], program.BlockOrder()[indices.at(skipInfo.terminator.trueBlock)], predicate, region, touched, skipEntries, skipBlock, depth + 1u)
+            && tailPairs(program.BlockOrder()[indices.at(bodyInfo.terminator.falseBlock)], program.BlockOrder()[indices.at(skipInfo.terminator.falseBlock)], predicate, region, touched, skipEntries, skipBlock, depth + 1u);
     }
 
     bool optionalBody(const IrBlock* branch, const IrBlock* body, const IrBlock* merge, const IrValue* predicate) {
@@ -928,7 +983,8 @@ private:
                 if (candidates.empty()) candidates.push_back(nullptr);
                 for (const auto* skipPred : candidates) {
                     std::map<const IrBlock*, const IrBlock*> touched;
-                    if (tailPairs(block, found->second, predicate, region, touched, skipPred)) {
+                    std::map<const IrBlock*, const IrBlock*> skipEntries;
+                    if (tailPairs(block, found->second, predicate, region, touched, skipEntries, skipPred)) {
                         for (const auto& [pairedBlock, skipBlock] : touched) paired.insert(pairedBlock);
                         break;
                     }
