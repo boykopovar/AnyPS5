@@ -695,7 +695,7 @@ void TestVectorCopyFromResolvesDirectBodies() {
     std::memcpy(targetBody + kBodyElementKindOffset, &kindTwo, sizeof(kindTwo));
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8copyFromERKS5_(targetBody, self) == 0);
     Require(LoadBody<std::uint64_t>(targetBody, kBodySizeOffset) == 1);
-    Require(LoadBody<void*>(targetBody, 0x08) == targetContext.value());
+    Require(LoadBody<void*>(targetBody, kBodyLibContextOffset) == nullptr);
     auto* directCopied = LoadBody<unsigned char*>(targetBody, kBodyElementsOffset);
     Require(std::strcmp(LoadBody<char*>(directCopied, kBufferOffset), payload) == 0);
     Require(LoadBody<unsigned char*>(targetBody, kBodyElementsOffset) != directElements);
@@ -708,8 +708,8 @@ void TestVectorCopyFromResolvesDirectBodies() {
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE3endEv(lastIterator, reinterpret_cast<IntrusivePtr*>(targetBody));
     Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEneERKS5_(firstIterator, lastIterator));
 
-    NpCppWebApiContextDeallocate(targetContext.value(), LoadBody<char*>(directCopied, kBufferOffset));
-    NpCppWebApiContextDeallocate(targetContext.value(), directCopied);
+    std::free(LoadBody<char*>(directCopied, kBufferOffset));
+    std::free(directCopied);
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(self);
     std::free(directBuffer);
     std::free(directElements);

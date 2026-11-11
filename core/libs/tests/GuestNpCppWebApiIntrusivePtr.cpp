@@ -409,6 +409,17 @@ static void TestVectorCopyFromIntoUnresolvedContext() {
     Require(ReadCount(object, 0) == 2);
     Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE4sizeEv(&target) == 1);
 
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE8copyFromERKS9_(target.object, &source) == 0);
+    std::memcpy(&bodyContext, static_cast<const unsigned char*>(target.object) + 0x08, sizeof(bodyContext));
+    Require(bodyContext == nullptr);
+    Require(target.libContext == context.value());
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE4sizeEv(target.object) == 1);
+
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEE8pushBackERKS8_(static_cast<IntrusivePtr*>(target.object), sourceElements) == 0);
+    std::memcpy(&bodyContext, static_cast<const unsigned char*>(target.object) + 0x08, sizeof(bodyContext));
+    Require(bodyContext == nullptr);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE4sizeEv(target.object) == 2);
+
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEED1Ev(&target);
     Require(target.object == nullptr);
     Require(ReadCount(object, 0) == 1);
