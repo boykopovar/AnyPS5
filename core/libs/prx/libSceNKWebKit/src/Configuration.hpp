@@ -23,6 +23,7 @@ public:
     SizeValue fixedLayoutSize{ 0.0, 0.0 };
     std::uint32_t paginationMode = 0;
     bool paginationBehavesLikeColumns = false;
+    bool paginationLineGridEnabled = false;
     double gapBetweenPages = 0.0;
     double pageLength = 0.0;
 };

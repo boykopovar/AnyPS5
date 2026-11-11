@@ -486,14 +486,11 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageGetContentsAsString` | `wyMkX6F1ijI` |
 | `WKPageGetContext` | `fLfh+wZ12vQ` |
 | `WKPageGetEstimatedProgress` | `EEXgOrxJ1go` |
-| `WKPageGetFocusedFrame` | `a0SVtiDOBgM` |
 | `WKPageGetImageForFindMatch` | `KPPJLasPz+o` |
 | `WKPageGetInspector` | `QUMw9Z2Ia1I` |
 | `WKPageGetIsControlledByAutomation` | `+uRH8ci2Zu8` |
 | `WKPageGetMediaCaptureEnabled` | `c4qOBt1+nO8` |
 | `WKPageGetMediaState` | `F4AnS9A-OSc` |
-| `WKPageGetPageCount` | `SnlaglxT1-4` |
-| `WKPageGetPageGroup` | `hNDMuB-dgfE` |
 | `WKPageGetPageZoomFactor` | `fPJ3h4AHMkU` |
 | `WKPageGetProcessIdentifier` | `llISO4CgRb8` |
 | `WKPageGetSamplingProfilerOutput` | `tnytRb-rZp4` |

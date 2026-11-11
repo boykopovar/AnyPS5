@@ -1,8 +1,6 @@
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/src/Configuration.hpp"
 
-#include <algorithm>
-
 extern "C" {
 
 bool APS5_VABI WKPageAreScrollbarAnimationsSuppressed(const void* pageRef) {
@@ -57,7 +55,7 @@ NKWebKit::SizeValue APS5_VABI WKPageFixedLayoutSize(const void* pageRef) {
 
 void APS5_VABI WKPageSetFixedLayoutSize(const void* pageRef, NKWebKit::SizeValue size) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
-    page->fixedLayoutSize = { std::max(0.0, size.width), std::max(0.0, size.height) };
+    page->fixedLayoutSize = size;
 }
 
 std::uint32_t APS5_VABI WKPageGetPaginationMode(const void* pageRef) {
@@ -81,8 +79,8 @@ void APS5_VABI WKPageSetPaginationBehavesLikeColumns(const void* pageRef, bool b
 }
 
 void APS5_VABI WKPageSetPaginationLineGridEnabled(const void* pageRef, bool lineGridEnabled) {
-    NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
-    (void)lineGridEnabled;
+    auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    page->paginationLineGridEnabled = lineGridEnabled;
 }
 
 double APS5_VABI WKPageGetGapBetweenPages(const void* pageRef) {
@@ -92,7 +90,7 @@ double APS5_VABI WKPageGetGapBetweenPages(const void* pageRef) {
 
 void APS5_VABI WKPageSetGapBetweenPages(const void* pageRef, double gap) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
-    page->gapBetweenPages = std::max(0.0, gap);
+    page->gapBetweenPages = gap;
 }
 
 double APS5_VABI WKPageGetPageLength(const void* pageRef) {
@@ -102,7 +100,7 @@ double APS5_VABI WKPageGetPageLength(const void* pageRef) {
 
 void APS5_VABI WKPageSetPageLength(const void* pageRef, double length) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
-    page->pageLength = std::max(0.0, length);
+    page->pageLength = length;
 }
 
 }
