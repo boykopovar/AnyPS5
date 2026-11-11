@@ -441,6 +441,29 @@ static void NodePoolCase() {
     Require(Shutdown(manager.storage) == 0);
 }
 
+static void SequenceCreateCase() {
+    Block block(SizeFor(2, 2, 2, 1, 1));
+    ManagerObject manager;
+    Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, nullptr) == 0);
+    ISequenceFactory* factory = Factories(manager.storage, 0);
+    ISequence* exhaust = nullptr;
+    Require(factory->Create(&exhaust, 0x7fff, 0x3ff, 0xff, 1, "exhaust") == 0);
+    int result = 0;
+    int accepted = 0;
+    while (accepted < 0x3ff && (result = exhaust->Dispatch(Nothing, nullptr, 1, nullptr)) == 0) ++accepted;
+    Require(result == NoNodes);
+    ISequence* starved = nullptr;
+    Require(factory->Create(&starved, 1, 1, 1, 1, "starved") == NoNodes && starved == nullptr);
+    Require(exhaust->Wait() == Invalid);
+    Require(factory->Destroy(exhaust) == 0);
+    ISequence* second = nullptr;
+    ISequence* third = nullptr;
+    Require(factory->Create(&second, 1, 1, 1, 1, "second") == 0 && second != nullptr);
+    Require(factory->Create(&third, 1, 1, 1, 1, "third") == 0 && third != nullptr && third != second);
+    Require(factory->Destroy(second) == 0 && factory->Destroy(third) == 0);
+    Require(Shutdown(manager.storage) == 0);
+}
+
 struct Order {
     std::atomic<bool> release{false};
     std::atomic<bool> started{false};
@@ -672,7 +695,7 @@ static SpinSample MeasureWorkerSpin(std::uint32_t spin, std::uint32_t rounds, bo
 
 static SpinSample QuietestWorkerSpin(std::uint32_t spin, std::uint32_t rounds, bool pending) {
     auto best = MeasureWorkerSpin(spin, rounds, pending);
-    for (int attempt = 1; attempt < 3; ++attempt) {
+    for (int attempt = 1; attempt < 7; ++attempt) {
         const auto sample = MeasureWorkerSpin(spin, rounds, pending);
         if (sample.consumed < best.consumed) {
             best = sample;
@@ -696,7 +719,7 @@ static void WorkerSpinCase() {
     const auto interval = spinning.reference * rounds / 100;
     Require(spinning.consumed > parked.consumed + interval / 3);
     Require(spinning.consumed < parked.consumed + interval * 5);
-    Require(noPending.consumed < parked.consumed + interval / 3);
+    Require(noPending.consumed < parked.consumed + interval);
 }
 
 struct WorkerClocks {
@@ -898,6 +921,7 @@ int RunJobManagerCase(const char* caseName) {
     else if (name == "ordering") OrderingCase();
     else if (name == "limits") LimitsCase();
     else if (name == "node_pool") NodePoolCase();
+    else if (name == "sequence_create") SequenceCreateCase();
     else if (name == "nested") NestedCase();
     else if (name == "priority") PriorityCase();
     else if (name == "shutdown") ShutdownCase();

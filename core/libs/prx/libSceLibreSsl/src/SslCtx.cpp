@@ -31,6 +31,7 @@ static_assert(offsetof(LibreSslCtxInternal, tlsextTicketKeyCb) == 144);
 static_assert(offsetof(LibreSslCtxInternal, tlsextStatusCb) == 152);
 static_assert(offsetof(LibreSslCtxInternal, tlsextStatusArg) == 160);
 static_assert(offsetof(LibreSslCtxInternal, sessionCacheSize) == 176);
+static_assert(offsetof(LibreSslCtxInternal, cert) == 264);
 static_assert(offsetof(LibreSslCtxInternal, sessionCacheMode) == 200);
 static_assert(offsetof(LibreSslCtxInternal, sessConnect) == 204);
 static_assert(offsetof(LibreSslCtxInternal, sessConnectRenegotiate) == 208);
@@ -108,6 +109,7 @@ constexpr int ErrFunctionNone = 0xfff;
 constexpr int ShouldNotHaveBeenCalled = 66;
 constexpr int SessionIdContextTooLong = 273;
 constexpr int InvalidTicketKeysLength = 325;
+constexpr int NoCertificateAssigned = 177;
 constexpr std::int64_t TicketKeysLength = 48;
 constexpr std::int64_t MinSendFragment = 512;
 constexpr std::int64_t MaxPlainLength = 16384;
@@ -247,6 +249,19 @@ std::int64_t APS5_VABI SSL_CTX_callback_ctrl_nid_postfix(LibreSslCtx* ctx, int c
     case SetTlsextTicketKeyCb: internal.tlsextTicketKeyCb = callback; return 1;
     default: return 0;
     }
+}
+
+int APS5_VABI SSL_CTX_check_private_key_nid_postfix(const LibreSslCtx* ctx) {
+    if (!ctx) {
+        PutSslError(NoCertificateAssigned);
+        return 0;
+    }
+    if (!ctx->internal) throw std::invalid_argument(std::string(__func__) + ": null internal state");
+    if (!ctx->internal->cert) {
+        PutSslError(NoCertificateAssigned);
+        return 0;
+    }
+    NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI SSL_CTX_set_msg_callback_nid_postfix(LibreSslCtx* ctx, void* callback) {
