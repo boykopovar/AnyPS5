@@ -32,6 +32,14 @@ static int APS5_VABI FormatStream(FileStream* stream, const char* format, ...) {
     return result;
 }
 
+static int APS5_VABI FormatStandardOutput(const char* format, ...) {
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+    const int result = curl_mvprintf_nid_postfix(format, reinterpret_cast<VaList*>(args));
+    __builtin_sysv_va_end(args);
+    return result;
+}
+
 static std::string ReadAll(const std::string& path) {
     std::ifstream input(path, std::ios::binary);
     return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
@@ -56,8 +64,20 @@ static void TestFileStreams() {
     std::filesystem::remove(path);
 }
 
+static void TestStandardOutput() {
+    const auto path = (std::filesystem::temp_directory_path() / "anyps5_curl_format_stdout.txt").string();
+    Require(freopen_nid_postfix(path.c_str(), "w", &_Stdout_nid_postfix) == &_Stdout_nid_postfix);
+    Require(curl_mprintf_nid_postfix("%s=%03d;", "mprintf", 7) == 12);
+    Require(FormatStandardOutput("%c%c", 'o', 'k') == 2);
+    Require(fflush_nid_postfix(&_Stdout_nid_postfix) == 0);
+    Require(ReadAll(path) == "mprintf=007;ok");
+    Require(fclose_nid_postfix(&_Stdout_nid_postfix) == 0);
+    std::filesystem::remove(path);
+}
+
 int main() {
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     TestFileStreams();
+    TestStandardOutput();
     return 0;
 }
