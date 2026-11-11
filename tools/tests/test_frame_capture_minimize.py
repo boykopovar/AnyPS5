@@ -282,5 +282,17 @@ if command == 'inspect':
             self.assertEqual(result, 0)
             self.assertTrue(output.is_dir())
 
+    def test_baseline_and_final_confirmation_counts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            counter = root / "runs"
+            replay = "import pathlib, sys\np = pathlib.Path(sys.argv[2])\np.write_text(str(int(p.read_text()) + 1) if p.exists() else '1')\nprint('failure')\nraise SystemExit(7)\n"
+            arguments, _, _, _ = self.empty_cli(root, replay_source=replay)
+            arguments.extend(["--replay-arg", str(counter)])
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                result = frame_capture_minimize.main(arguments)
+            self.assertEqual(result, 0)
+            self.assertEqual(counter.read_text(encoding="utf-8"), "4")
+
 if __name__ == "__main__":
     unittest.main()
