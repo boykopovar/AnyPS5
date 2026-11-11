@@ -1904,11 +1904,15 @@ static void TestFrame() {
     Require(caught);
 
     Require(WKFrameCopyURL(ref) == nullptr);
-    Require(WKFrameCopyTitle(ref) == nullptr);
-    Require(WKFrameCopyMIMEType(ref) == nullptr);
+    auto* defaultTitle = WKFrameCopyTitle(ref);
+    Require(defaultTitle != nullptr && WKGetTypeID(defaultTitle) == WKStringGetTypeID() && WKStringGetLength(defaultTitle) == 0);
+    WKRelease(defaultTitle);
+    auto* defaultMime = WKFrameCopyMIMEType(ref);
+    Require(defaultMime != nullptr && WKGetTypeID(defaultMime) == WKStringGetTypeID() && WKStringGetLength(defaultMime) == 0);
+    WKRelease(defaultMime);
     Require(WKFrameCopyProvisionalURL(ref) == nullptr);
     Require(WKFrameCopyUnreachableURL(ref) == nullptr);
-    Require(WKFrameGetFrameLoadState(ref) == 0);
+    Require(WKFrameGetFrameLoadState(ref) == 2);
 
     auto* defaultHandle = WKFrameCreateFrameHandle(ref);
     Require(defaultHandle != nullptr);
@@ -1917,14 +1921,14 @@ static void TestFrame() {
     WKRelease(defaultHandle);
 
     frame->frameID = 1001;
-    frame->loadState = 2;
+    frame->loadState = 1;
     frame->url = NKWebKit::Make<NKWebKit::URL>("https://anyps5.org/index.html");
     frame->title = NKWebKit::String::FromUtf8("AnyPS5 Main Frame");
     frame->mimeType = NKWebKit::String::FromUtf8("text/html");
     frame->provisionalURL = NKWebKit::Make<NKWebKit::URL>("https://anyps5.org/provisional");
     frame->unreachableURL = NKWebKit::Make<NKWebKit::URL>("https://anyps5.org/unreachable");
 
-    Require(WKFrameGetFrameLoadState(ref) == 2);
+    Require(WKFrameGetFrameLoadState(ref) == 1);
 
     auto* handle = WKFrameCreateFrameHandle(ref);
     Require(handle != nullptr);

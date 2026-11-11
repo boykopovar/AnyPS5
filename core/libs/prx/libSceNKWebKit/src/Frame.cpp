@@ -29,12 +29,12 @@ const void* APS5_VABI WKFrameCopyURL(const void* frame) {
 
 const void* APS5_VABI WKFrameCopyTitle(const void* frame) {
     const auto* f = NKWebKit::Cast<NKWebKit::Frame>(frame, __func__);
-    return f->title ? NKWebKit::ToRef(f->title) : nullptr;
+    return NKWebKit::ToRef(f->title ? f->title : NKWebKit::String::FromUtf8(""));
 }
 
 const void* APS5_VABI WKFrameCopyMIMEType(const void* frame) {
     const auto* f = NKWebKit::Cast<NKWebKit::Frame>(frame, __func__);
-    return f->mimeType ? NKWebKit::ToRef(f->mimeType) : nullptr;
+    return NKWebKit::ToRef(f->mimeType ? f->mimeType : NKWebKit::String::FromUtf8(""));
 }
 
 const void* APS5_VABI WKFrameCopyProvisionalURL(const void* frame) {
