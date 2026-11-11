@@ -432,9 +432,9 @@ void TestDefaultErrorExitThrows() {
 
 int main() {
     TestBadStructSize();
+    TestSamplingAlignment();
     TestGuestErrorExit();
     TestDefaultErrorExitThrows();
-    TestSamplingAlignment();
     std::vector<uint8_t> baselineJpeg;
     const uint8_t app1Data[] = "EXIF_TEST_MARKER_PAYLOAD";
     GenerateJpeg(baselineJpeg, 16, 16, 3, JCS_RGB, false, 0, app1Data, sizeof(app1Data));
