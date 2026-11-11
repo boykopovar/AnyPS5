@@ -137,11 +137,20 @@ void testOutOfRangeChunk(const std::filesystem::path& root) {
     checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, root / "bad-chunk", plan); }, "filtering accepted an out-of-range chunk index");
 }
 
+
+void testNestedDestination(const std::filesystem::path& root) {
+    const auto source = root / "source";
+    writeCapture(source);
+    AgcDriverTools::FrameCaptureFilterPlan plan;
+    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, source / "nested", plan); }, "filtering accepted an output nested under its source");
+}
+
 }
 
 int main() {
     const auto root = std::filesystem::temp_directory_path() / ("aps5-frame-capture-filter-test-" + std::to_string(getpid()));
     testOutOfRangeChunk(root);
+    testNestedDestination(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
