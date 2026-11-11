@@ -153,6 +153,20 @@ void testParentDestination(const std::filesystem::path& root) {
     checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, root, plan); }, "filtering accepted an output parent of its source");
 }
 
+
+void testEmptyPlan(const std::filesystem::path& root) {
+    const auto source = root / "source";
+    const auto output = root / "empty-plan";
+    writeCapture(source);
+    AgcDriverTools::FilterFrameCapturePlan plan;
+    AgcDriverTools::FilterFrameCapture(source, output, plan);
+    const AgcDriver::FrameCaptureReader original(source);
+    const AgcDriver::FrameCaptureReader filtered(output);
+    check(filtered.Header() == original.Header(), "empty plan changed capture header");
+    check(filtered.Calls().size() == original.Calls().size(), "empty plan changed call count");
+    check(filtered.Chunks().size() == original.Chunks().size(), "empty plan changed chunk count");
+}
+
 }
 
 int main() {
@@ -160,6 +174,7 @@ int main() {
     testOutOfRangeChunk(root);
     testNestedDestination(root);
     testParentDestination(root);
+    testEmptyPlan(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
