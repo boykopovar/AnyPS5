@@ -121,6 +121,13 @@ int main() {
     Require(sceRazorCpuWorkloadSubmit() == 0);
     Require(sceRazorCpuWorkloadRunBegin() == 0);
     Require(sceRazorCpuWorkloadRunEnd() == 0);
+    Require(sceRazorCpuWorkloadRunBeginEx() == 0);
+    Require(sceRazorCpuUserSignalPost() == 0);
+    Require(sceRazorCpuUserSignalPostEx() == 0);
+    Require(sceRazorCpuUserSignalWaitBegin() == 0);
+    Require(sceRazorCpuUserSignalWaitBeginEx() == 0);
+    Require(sceRazorCpuUserSignalWaitEnd() == 0);
+    Require(sceRazorCpuWriteBookmarkEnd() == 0);
     Require(sceRazorCpuStartCaptureInternal() == static_cast<int>(0x80580000));
     Require(sceRazorCpuStopCaptureInternal() == static_cast<int>(0x80580000));
     Require(sceRazorCpuIsCapturing() == 0);
