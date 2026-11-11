@@ -266,6 +266,11 @@ void testBlankPlanLines(const std::filesystem::path& root) {
     check(plan.calls == std::set<std::uint64_t>{3}, "plan reader did not ignore blank lines");
 }
 
+
+void testMissingPlanFile(const std::filesystem::path& root) {
+    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(root / "missing.plan"); }, "plan reader accepted a missing file");
+}
+
 }
 
 int main() {
@@ -285,6 +290,7 @@ int main() {
     testNegativePlanIndex(root);
     testOverflowPlanIndex(root);
     testBlankPlanLines(root);
+    testMissingPlanFile(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
