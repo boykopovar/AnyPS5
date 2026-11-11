@@ -139,12 +139,14 @@ struct CpuStore {
     std::uint64_t block = 0;
     std::uint64_t generation = 0;
     bool reached = false;
+    bool watched = false;
 };
 
 CpuStore cpuStore;
 
 void StoreBeforePendingCollect(std::uint64_t address, std::size_t bytes) {
     if (cpuStore.reached || cpuStore.block < address || cpuStore.block + BlockBytes > address + bytes) return;
+    cpuStore.watched = AgcDriver::GuestMemory::Watched(cpuStore.block, BlockBytes);
     std::fill_n(reinterpret_cast<std::uint32_t*>(cpuStore.block), BlockWords, Cpu);
     cpuStore.generation = AgcDriver::GuestMemory::TrackerGeneration();
     cpuStore.reached = true;
@@ -187,8 +189,12 @@ bool Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, bool noMemo) {
     const auto cpuWords = Count(words + BlockWords, Cpu);
     AgcDriver::Graphics::ClearCachedTextures(device.Device());
     Require(cpuStore.reached && pending, "memo pending collect: the second store did not make its results pending through a collect of the surface");
-    Require(walked || memoized, "memo pending collect: APS5_NO_MEMO_PENDING_COLLECT did not walk the units again when their results became pending");
-    Require(!walked || !memoized, "memo pending collect: the collect that made the results pending walked the units again after the storage refresh had walked them in the same epoch");
+    if (cpuStore.watched) {
+        Require(walked || memoized, "memo pending collect " + mode + ": APS5_NO_MEMO_PENDING_COLLECT did not walk the units again when their results became pending");
+        Require(!walked || !memoized, "memo pending collect " + mode + ": the collect that made the results pending walked the units again after the storage refresh had walked them in the same epoch");
+    } else {
+        std::puts("the host import of the surface is compared, not watched: only the results are checked");
+    }
     Require(gpuWords == BlockWords, "memo pending collect " + mode + ": the results did not reach the block the CPU left alone (" + std::to_string(gpuWords) + " of " + std::to_string(BlockWords) + " words)");
     Require(cpuWords == BlockWords, "memo pending collect " + mode + ": the write-back stored the results over " + std::to_string(BlockWords - cpuWords) + " words of a block the CPU wrote between the storage refresh and the collect that made the results pending");
     return true;
