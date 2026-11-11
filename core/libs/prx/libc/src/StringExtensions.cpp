@@ -132,6 +132,46 @@ std::size_t APS5_VABI strcspn_nid_postfix(const char* text, const char* reject) 
     return std::strcspn(text, reject);
 }
 
+void APS5_VABI strmode_nid_postfix(int mode, char* buffer) {
+    switch (mode & 0170000) {
+        case 0040000: buffer[0] = 'd'; break;
+        case 0020000: buffer[0] = 'c'; break;
+        case 0060000: buffer[0] = 'b'; break;
+        case 0100000: buffer[0] = '-'; break;
+        case 0120000: buffer[0] = 'l'; break;
+        case 0140000: buffer[0] = 's'; break;
+        case 0010000: buffer[0] = 'p'; break;
+        case 0160000: buffer[0] = 'w'; break;
+        default:      buffer[0] = '?'; break;
+    }
+    buffer[1] = (mode & 0000400) ? 'r' : '-';
+    buffer[2] = (mode & 0000200) ? 'w' : '-';
+    switch (mode & (0000100 | 0004000)) {
+        case 0:                      buffer[3] = '-'; break;
+        case 0000100:                buffer[3] = 'x'; break;
+        case 0004000:                buffer[3] = 'S'; break;
+        case 0000100 | 0004000:      buffer[3] = 's'; break;
+    }
+    buffer[4] = (mode & 0000040) ? 'r' : '-';
+    buffer[5] = (mode & 0000020) ? 'w' : '-';
+    switch (mode & (0000010 | 0002000)) {
+        case 0:                      buffer[6] = '-'; break;
+        case 0000010:                buffer[6] = 'x'; break;
+        case 0002000:                buffer[6] = 'S'; break;
+        case 0000010 | 0002000:      buffer[6] = 's'; break;
+    }
+    buffer[7] = (mode & 0000004) ? 'r' : '-';
+    buffer[8] = (mode & 0000002) ? 'w' : '-';
+    switch (mode & (0000001 | 0001000)) {
+        case 0:                      buffer[9] = '-'; break;
+        case 0000001:                buffer[9] = 'x'; break;
+        case 0001000:                buffer[9] = 'T'; break;
+        case 0000001 | 0001000:      buffer[9] = 't'; break;
+    }
+    buffer[10] = ' ';
+    buffer[11] = '\0';
+}
+
 std::size_t APS5_VABI strlcat_nid_postfix(char* destination, const char* source, std::size_t capacity) {
     const auto destinationLength = strnlen_nid_postfix(destination, capacity);
     const auto sourceLength = std::strlen(source);

@@ -23,6 +23,7 @@
 #include "prx/libSceVideoOut/include/DialogInput.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
@@ -38,6 +39,10 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libc/include/RunReport.hpp"
+#include "prx/libc/include/RunReportComponent.hpp"
+
+APS5_RUN_REPORT_COMPONENT("libSceVideoOut")
 
 namespace {
 
@@ -609,6 +614,7 @@ void VideoOutDriver::vblankEnd(std::uint64_t tick) {
         ++cfg->vblankStatus.count;
         cfg->vblankStatus.processTime = sceKernelGetProcessTime();
         cfg->vblankStatus.processTimeCounter = sceKernelGetProcessTimeCounter();
+        cfg->vblankStatus.reserved = sceKernelReadTsc();
         triggerEvents(*cfg, VIDEO_OUT_EVENT_VBLANK, reinterpret_cast<void*>(cfg->vblankStatus.count));
         cfg->vblankCond.notify_all();
     }
@@ -805,6 +811,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 return false;
             });
             if (quit) {
+                LibcRunReportQuitRequested_nid_no_patch();
                 LibcRequestExit_nid_postfix(0);
                 throw ProcessShutdown{};
             }

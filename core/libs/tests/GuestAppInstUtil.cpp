@@ -1,5 +1,6 @@
 #include "prx/libSceAppInstUtil/include/Api.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -16,8 +17,24 @@ void Require(bool condition, const char* message) {
 }
 
 int main() {
-    Require(sceAppInstUtilInitialize() == 0, "initialization failed");
+    constexpr int nullArgument = static_cast<int>(0x80A30003u);
+    constexpr int notInitialized = static_cast<int>(0x80A31000u);
+    std::int32_t untouched = 7;
+    Require(sceAppInstUtilAppExists("PPSA00000", &untouched) == notInitialized && untouched == 7, "a query before initialization was answered");
+    Require(sceAppInstUtilAppExists(nullptr, &untouched) == nullArgument && untouched == 7, "a null title id was not refused before the initialization check");
+    Require(sceAppInstUtilAppExists("PPSA00000", nullptr) == nullArgument, "a null output was not refused before the initialization check");
 
+    Require(sceAppInstUtilTerminate() == 0, "an unbalanced termination failed");
+    Require(sceAppInstUtilInitialize() == 0, "initialization after an unbalanced termination failed");
+    Require(sceAppInstUtilAppExists("PPSA00000", &untouched) == notInitialized && untouched == 7, "one initialization undid an unbalanced termination");
+    Require(sceAppInstUtilInitialize() == 0, "initialization failed");
+    Require(sceAppInstUtilInitialize() == 0, "a nested initialization failed");
+    Require(sceAppInstUtilTerminate() == 0, "the nested termination failed");
+    Require(sceAppInstUtilAppExists(nullptr, &untouched) == nullArgument && untouched == 7, "a null title id was not refused");
+
+    errno = 71;
+    Require(sceAppInstUtilAppExists("PPSA00000", reinterpret_cast<std::int32_t*>(0x10)) == nullArgument, "unwritable exists rejected");
+    Require(errno == 71, "errno preserved");
     std::int32_t exists = 0;
     Require(sceAppInstUtilAppExists("PPSA00000", &exists) == 0 && exists == 1, "the running title is not installed");
     exists = 7;

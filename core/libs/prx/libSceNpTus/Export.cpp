@@ -229,9 +229,9 @@ int APS5_VABI sceNpTssCreateNpTitleCtxA(std::uint32_t serviceLabel, int userId) 
     return sceNpTusCreateNpTitleCtxA(serviceLabel, userId);
 }
 
-int APS5_VABI sceNpTusCreateTitleCtx(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTusCreateTitleCtx(const void* titleId, const void* titleSecret, const void* selfNpId) {
+    if (!titleId || !titleSecret || !selfNpId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    return CreateTitleContext();
 }
 
 int APS5_VABI sceNpTusSetTimeout(void) {
@@ -348,9 +348,17 @@ int APS5_VABI sceNpTusDeleteMultiSlotVariableVUser(int reqId, const NpOnlineId* 
 }
 
 int APS5_VABI sceNpTusDeleteMultiSlotDataVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, int arrayLen, void* option) {
-    if (!targetVirtualUserId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
-    if (const int error = ValidateNonEmptySlots(slotIds, arrayLen, option)) return error;
-    if (IsEmpty(targetVirtualUserId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!slotIds) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    if (option || arrayLen == 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_SLOTID;
+    for (int index = 0; index < arrayLen; ++index) {
+        if (slotIds[index] < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
+    if (!targetVirtualUserId) {
+        std::lock_guard lock(tusMutex);
+        if (requests.find(reqId) == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+        return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    }
     return StartOffline(reqId);
 }
 
@@ -369,11 +377,12 @@ int APS5_VABI sceNpTssGetStorageAsync(void) {
 }
 
 int APS5_VABI sceNpTusGetDataForCrossSaveVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, std::int32_t slotId, void* dataStatus, std::uint64_t dataStatusSize, void* data, std::uint64_t recvSize, void* option) {
+    (void)dataStatus;
     (void)data;
     (void)recvSize;
+    if (!targetVirtualUserId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option || slotId < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    if (!targetVirtualUserId || !dataStatus || dataStatusSize == 0) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
-    if (IsEmpty(targetVirtualUserId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (dataStatusSize != 0x1F0 && dataStatusSize != 0x210) return SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
     return StartOffline(reqId);
 }
 

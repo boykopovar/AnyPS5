@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstring>
 #include <cstdint>
+#include <cerrno>
 #include <cstdlib>
 #include <initializer_list>
 #include <stdexcept>
@@ -131,6 +132,9 @@ int main() {
 
     std::uint16_t virtualKey = 0xABCD;
     Require(sceConvertKeycodeGetVirtualKeycode(4, 0, nullptr) == invalidAddress);
+    errno = 71;
+    Require(sceConvertKeycodeGetVirtualKeycode(4, 4, reinterpret_cast<std::uint16_t*>(0x10)) == invalidAddress);
+    Require(errno == 71);
     Require(sceConvertKeycodeGetVirtualKeycode(4, 0, &virtualKey) == static_cast<int>(0x80BC001Du));
     Require(virtualKey == 0xABCD);
     Require(sceConvertKeycodeGetVirtualKeycode(4, 40, &virtualKey) == static_cast<int>(0x80BC001Du));
@@ -218,6 +222,9 @@ int main() {
 
     RequireImeKeyboardTypeMapping();
     Require(sceConvertKeycodeGetCharacter(4, 0, 0, nullptr) == invalidAddress);
+    errno = 71;
+    Require(sceConvertKeycodeGetCharacter(4, 0, 4, reinterpret_cast<char16_t*>(0x10)) == invalidAddress);
+    Require(errno == 71);
     char16_t character = u'?';
     Require(sceConvertKeycodeGetCharacter(4, 0, 0, &character) == static_cast<int>(0x80BC001Du));
     Require(character == u'?');
@@ -249,6 +256,24 @@ int main() {
     Require(sceConvertKeycodeGetCharacter(33, 0x4000300, 30, &character) == 0 && character == 0x200F);
     Require(sceConvertKeycodeGetCharacter(28, 0, 31, &character) == 0 && character == u'y');
     Require(sceConvertKeycodeGetCharacter(29, 0, 39, &character) == 0 && character == u'z');
+    Require(sceConvertKeycodeGetCharacter(4, 0, 23, &character) == 0 && character == u'a');
+    Require(sceConvertKeycodeGetCharacter(4, 0x10000000, 23, &character) == 0 && character == 0xFF41);
+    Require(sceConvertKeycodeGetCharacter(4, 0x4000000, 23, &character) == 0 && character == 0x3061);
+    Require(sceConvertKeycodeGetCharacter(4, 0xC000000, 23, &character) == 0 && character == 0xFF81);
+    Require(sceConvertKeycodeGetCharacter(4, 0x1C000000, 23, &character) == 0 && character == 0x30C1);
+    Require(sceConvertKeycodeGetCharacter(4, 0x4000000, 26, &character) == 0 && character == 0x3107);
+    Require(sceConvertKeycodeGetCharacter(4, 0x10000000, 26, &character) == 0 && character == 0xFF41);
+    for (const std::uint32_t type : {29u, 39u}) {
+        Require(sceConvertKeycodeGetCharacter(4, 0, type, &character) == 0 && character == u'a');
+        Require(sceConvertKeycodeGetCharacter(4, 0x4000000, type, &character) == 0 && character == 0x65E5);
+        Require(sceConvertKeycodeGetCharacter(5, 0x4000000, type, &character) == 0 && character == 0x6708);
+    }
+    Require(sceConvertKeycodeGetCharacter(52, 0x20000, 3, &character) == 0 && character == 196);
+    Require(sceConvertKeycodeGetCharacter(52, 0x20200, 3, &character) == 0 && character == 192);
+    Require(sceConvertKeycodeGetCharacter(51, 0x20000, 3, &character) == 0 && character == 214);
+    Require(sceConvertKeycodeGetCharacter(51, 0x20200, 3, &character) == 0 && character == 201);
+    Require(sceConvertKeycodeGetCharacter(99, 0, 4, &character) == 0 && character == 0);
+    Require(sceConvertKeycodeGetCharacter(99, 0x10000, 4, &character) == 0 && character == u'.');
     for (std::uint32_t layout = 1; layout <= 30; ++layout) {
         for (std::uint16_t key : {83, 224, 225, 226, 227, 228, 229, 230, 231}) {
             Require(sceConvertKeycodeGetCharacter(key, 0xFFFFFFFFu, layout, &character) == 0 && character == 0);
@@ -261,6 +286,12 @@ int main() {
     Require(sceConvertKeycodeGetCharacterFromKeyboardData(nullptr, 0, 0, 4, &kbdChar) == static_cast<int>(0x80BC0031u));
     Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, 0, 0, 4, nullptr) == static_cast<int>(0x80BC0031u));
     constexpr int invalidParameter = static_cast<int>(0x80BC0030u);
+    errno = 71;
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, 0, 0, 4, reinterpret_cast<char16_t*>(0x10)) == static_cast<int>(0x80BC0031u));
+    Require(errno == 71);
+    errno = 71;
+    Require(sceConvertKeycodeGetCharacter(keyData.key_code[0], 0, 4, reinterpret_cast<char16_t*>(0x10)) == static_cast<int>(0x80BC0031u));
+    Require(errno == 71);
     for (std::int32_t badIndex : {-1, 1, 16}) {
         kbdChar = u'?';
         Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, badIndex, 0, 4, &kbdChar) == invalidParameter && kbdChar == u'?');
