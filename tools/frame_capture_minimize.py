@@ -38,6 +38,8 @@ class Minimizer:
             if index in indexes:
                 raise RuntimeError(f"capture inspection {label} contains duplicate index {index}")
             indexes.add(index)
+            if index != position:
+                raise RuntimeError(f"capture inspection {label}[{position}] has a non-sequential index")
             kind = entry.get("kind")
             if not isinstance(kind, str):
                 raise RuntimeError(f"capture inspection {label}[{position}] is missing a kind")
