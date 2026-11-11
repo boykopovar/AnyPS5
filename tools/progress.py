@@ -758,6 +758,45 @@ def write_site(output, libraries, shaders, shader_source=None, open_pr_progress=
     (output / "progress.html").write_text(summary(libraries, shaders, shader_source, open_pr_progress), encoding="utf-8")
 
 
+def validate_open_pr_progress(estimate):
+    if not isinstance(estimate, dict) or type(estimate.get("available")) is not bool:
+        raise ValueError("open_pr_progress must be an object with a boolean available field")
+    if not isinstance(estimate.get("generated_at"), str):
+        raise ValueError("open_pr_progress.generated_at must be a string")
+    if not estimate["available"]:
+        if not isinstance(estimate.get("reason"), str):
+            raise ValueError("unavailable open_pr_progress must include a reason")
+        return
+    for name in ("baseline", "potential"):
+        data = estimate.get(name)
+        if not isinstance(data, dict):
+            raise ValueError(f"open_pr_progress.{name} must be an object")
+        for field in ("done", "total"):
+            if type(data.get(field)) is not int or data[field] < 0:
+                raise ValueError(f"open_pr_progress.{name}.{field} must be a non-negative integer")
+        if data["done"] > data["total"]:
+            raise ValueError(f"open_pr_progress.{name}.done must not exceed total")
+        if isinstance(data.get("percent"), bool) or not isinstance(data.get("percent"), (int, float)) or not 0 <= data["percent"] <= 100:
+            raise ValueError(f"open_pr_progress.{name}.percent must be between 0 and 100")
+        expected = round(100 * data["done"] / data["total"], 2) if data["total"] else 0
+        if data["percent"] != expected:
+            raise ValueError(f"open_pr_progress.{name}.percent does not match its counts")
+    prs = estimate.get("pull_requests")
+    if not isinstance(prs, dict):
+        raise ValueError("open_pr_progress.pull_requests must be an object")
+    for field in ("open", "included", "excluded"):
+        if type(prs.get(field)) is not int or prs[field] < 0:
+            raise ValueError(f"open_pr_progress.pull_requests.{field} must be a non-negative integer")
+    if prs["included"] + prs["excluded"] != prs["open"]:
+        raise ValueError("open_pr_progress included and excluded counts must match the open count")
+    reasons = estimate.get("excluded_reasons", {})
+    if not isinstance(reasons, dict) or any(not isinstance(key, str) or type(value) is not int or value < 0
+                                            for key, value in reasons.items()):
+        raise ValueError("open_pr_progress.excluded_reasons must map strings to non-negative integers")
+    if sum(reasons.values()) != prs["excluded"]:
+        raise ValueError("open_pr_progress excluded reason counts must match the excluded count")
+
+
 def validate_snapshot(snapshot):
     if not isinstance(snapshot, dict):
         raise ValueError("snapshot must be an object")
@@ -815,6 +854,8 @@ def main(argv=None):
                         help="limit library counts to these core/libs/prx directories; repeat to include several. Shader counts stay complete")
     parser.add_argument("--require-shader-source", action="store_true",
                         help="fail when the shader source scan cannot read the recompiler, instead of leaving its numbers out (the Pages workflow uses this)")
+    parser.add_argument("--open-pr-estimate", type=Path,
+                        help="include a JSON estimate from tools/progress_prs.py in progress.json and progress.html")
     parser.add_argument("--regenerate-isa-forms", type=Path, metavar="XML",
                         help="rewrite tools/rdna2_isa_forms.txt from AMD's amdgpu_isa_rdna2.xml (machine-readable ISA, MIT) and exit")
     parser.add_argument("--json", action="store_true",
@@ -845,6 +886,13 @@ def main(argv=None):
         if args.root:
             PRX = args.root / "core" / "libs" / "prx"
             OPCODES = args.root / previous[1].relative_to(ROOT)
+        open_pr_progress = None
+        if args.open_pr_estimate:
+            try:
+                open_pr_progress = json.loads(args.open_pr_estimate.read_text(encoding="utf-8-sig"))
+                validate_open_pr_progress(open_pr_progress)
+            except (OSError, ValueError, RecursionError) as error:
+                parser.error(f"{args.open_pr_estimate}: {error}")
         try:
             libraries, shaders = collect_libraries(), collect_shaders()
         except FileNotFoundError as error:
@@ -862,13 +910,13 @@ def main(argv=None):
             parser.error(str(error))
         if args.output:
             try:
-                write_site(args.output, libraries, shaders, shader_source)
+                write_site(args.output, libraries, shaders, shader_source, open_pr_progress)
             except ValueError as error:
                 parser.error(str(error))
             except OSError as error:
                 parser.error(f"{args.output}: {error.strerror or error}")
         if args.json:
-            print(json.dumps(site_data(libraries, shaders, shader_source), indent=2))
+            print(json.dumps(site_data(libraries, shaders, shader_source, open_pr_progress), indent=2))
         else:
             print(f'libraries {libraries["done"]}/{libraries["total"]} ({libraries["percent"]}%)')
             print(f'shader opcode names declared {shaders["done"]}/{shaders["total"]} ({shaders["percent"]}%)')

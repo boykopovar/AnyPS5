@@ -27,5 +27,14 @@ class OpenPrProgressPageTests(unittest.TestCase):
         self.assertIn("Estimate unavailable", html)
         self.assertIn("current progress above is unchanged", html)
 
+    def test_estimate_validation_rejects_inconsistent_counts(self):
+        estimate = {"available": True, "generated_at": "now",
+                    "baseline": {"done": 2, "total": 1, "percent": 50},
+                    "potential": {"done": 0, "total": 0, "percent": 0},
+                    "pull_requests": {"open": 1, "included": 2, "excluded": 0}}
+        with self.assertRaisesRegex(ValueError, "done must not exceed total"):
+            progress.validate_open_pr_progress(estimate)
+
+
 if __name__ == "__main__":
     unittest.main()
