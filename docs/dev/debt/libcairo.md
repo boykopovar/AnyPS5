@@ -26,7 +26,7 @@
 
 ### Functional glyphs
 
-- [Glyph.cpp](../../../core/libs/prx/libcairo/Glyph.cpp) implements `cairo_glyph_free` as Cairo does: it frees the array with the C allocator the library uses for its own objects. No export allocates glyph arrays yet, so arrays freed here come from the caller or from a future `cairo_scaled_font_text_to_glyphs`. Unverified on a console.
+- [Glyph.cpp](../../../core/libs/prx/libcairo/Glyph.cpp) implements `cairo_glyph_free` for null, which Cairo ignores. No export here allocates glyph arrays yet, and `cairo_glyph_allocate` is not in the catalogue, so a non-null array comes from outside this library and still throws through `NotImplemented_nid_no_patch` instead of reaching `free`. Freeing must follow the allocator once `cairo_scaled_font_text_to_glyphs` returns arrays. Unverified on a console.
 
 ### Callable exports
 
