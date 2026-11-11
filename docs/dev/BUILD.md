@@ -54,6 +54,7 @@ python3 tools/select_tests.py ctest build --output-on-failure
 ## Requirements
 
 - x86-64, Git, CMake 3.21 or newer (the test build's CMake scripts use `file(COPY_FILE)`, added in CMake 3.21; `CMakeLists.txt` declares 3.20), Ninja, C++20.
+- Python 3, which runs ICU 78.1's data builder ([IcuData.cmake](../../cmake/IcuData.cmake)) and glslang's scripts. ICU's data tools are built for the build host, so a cross build also needs `-DANYPS5_ICU_HOST_C_COMPILER` and `-DANYPS5_ICU_HOST_CXX_COMPILER` (see [CMake flags](#cmake-flags)).
 - Linux display refresh queries require SDL's XRandR support (`libxrandr-dev` on Debian/Ubuntu; `libXrandr-devel` on Fedora). Bundled SDL configuration fails without it. Keep `SDL_X11_XRANDR` enabled.
 - Linux: GCC, G++, binutils. SDL's X11 backend requires X11 and Xext development headers (`libx11-dev` and `libxext-dev` on Debian/Ubuntu). SDL's Wayland backend requires the Wayland, xkbcommon and EGL development files (`libwayland-dev`, `libxkbcommon-dev` and `libegl-dev` on Debian/Ubuntu; `wayland-devel`, `libxkbcommon-devel` and `mesa-libEGL-devel` on Fedora), and `libdecor-0-dev` (`libdecor-devel`) for window decorations on GNOME. SDL loads both backends at run time and prefers Wayland when `WAYLAND_DISPLAY` is set; `SDL_VIDEODRIVER=x11` selects X11 (XWayland). Titles that bundle their own SDL read `SDL_VIDEODRIVER` too, and some of them fail to start with `x11`. Without the Wayland files configuration still succeeds, and the build uses X11 only. Audio output needs SDL's PipeWire, PulseAudio or ALSA backend, built from their development files (`libpipewire-0.3-dev`, `libpulse-dev` and `libasound2-dev` on Debian/Ubuntu; `pipewire-devel`, `pulseaudio-libs-devel` and `alsa-lib-devel` on Fedora). SDL loads them at run time. Without any of them SDL keeps only its silent dummy and disk drivers, so configuration fails.
 - Fedora: if CMake reports `Could NOT find Threads`, install `glibc-static` and `libstdc++-static` with `sudo dnf install glibc-static libstdc++-static`, then rerun configuration. The project enables static executable linking, and FFmpeg's thread check needs these libraries.
@@ -94,7 +95,7 @@ therefore tests the previous binaries and can show no effect at all.
 
 ## Windows setup and troubleshooting
 
-The full build also requires Python 3 for glslang and Git for Windows with Bash for libusb's version-header generation. A minimal Git installation without Bash is insufficient for the full build.
+The full build also requires Python 3 for glslang and ICU's data, and Git for Windows with Bash for libusb's version-header generation. A minimal Git installation without Bash is insufficient for the full build.
 
 For MSYS2, install `mingw-w64-ucrt-x86_64-gcc` with `pacman -S mingw-w64-ucrt-x86_64-gcc` and use `C:\msys64\ucrt64\bin` in PowerShell. Adjust the prefix for a Scoop installation of MSYS2. Use a separate build directory for each toolchain, and select both `gcc` and `g++` from the same installation.
 
@@ -167,6 +168,8 @@ Build configuration parameters:
 | `-DCMAKE_C_COMPILER_LAUNCHER=ccache`   | Optional C compiler cache; requires `ccache`.                      |
 | `-DCMAKE_CXX_COMPILER_LAUNCHER=ccache` | Optional C++ compiler cache; requires `ccache`.                    |
 | `-DFFMPEG_PREBUILT_DIR=<path>`         | Unpacked FFmpeg package for the target platform; empty by default. |
+| `-DANYPS5_ICU_HOST_C_COMPILER=<path>`  | Native C compiler for ICU's data tools; required when cross compiling; a native build uses `CMAKE_C_COMPILER`. |
+| `-DANYPS5_ICU_HOST_CXX_COMPILER=<path>` | Native C++ compiler for ICU's data tools; required when cross compiling; a native build uses `CMAKE_CXX_COMPILER`. |
 | `-DANYPS5_NODE=<path>`                 | Node.js 26 or newer that runs the memory64 Emscripten tests `guest_long_double` and `emscripten_module_unwind`; `node` by default, Emscripten builds only. |
 | `-DANYPS5_VIDEO_OUT_TEST_DRIVER=<driver>` | SDL video driver for the VideoOut flip tests; `windows` on Windows and `offscreen` elsewhere. |
 | `-DANYPS5_AGC_EXECUTION_TESTS=<names>` | Semicolon-separated file names, without `.cpp`, of the `core/libs/prx/libSceAgcDriver/tests/execution` tests to build. Every other execution test is built from a stub that prints `skipped, this build leaves the test out with ANYPS5_AGC_EXECUTION_TESTS` and exits 77. A name with no source there fails the configure. Empty by default, which builds them all. |
