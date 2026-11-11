@@ -326,3 +326,7 @@ def main(argv=None):
         print(f"report written to {args.output}")
     return 0
 
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -415,3 +415,12 @@ class BuildSymlinkSafetyTests(unittest.TestCase):
                 performance_bisect.reset_build_dir(repo, repo / "build")
             self.assertEqual(marker.read_text(encoding="utf-8"), "outside data")
             self.assertTrue((repo / "build").is_symlink())
+
+
+class CliEntrypointTests(unittest.TestCase):
+    def test_script_help_runs_without_a_recipe_or_title_data(self):
+        result = subprocess.run([sys.executable, str(Path(performance_bisect.__file__)), "--help"],
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("known-good commit", result.stdout)
+        self.assertIn("known-bad commit", result.stdout)
