@@ -97,4 +97,8 @@ int main(int argc, char** argv) {
     Require(sceNpTrophy2CreateHandle(&handle) == SCE_NP_TROPHY2_OK);
     Require(handle == NP_TROPHY2_HANDLE_DEFAULT);
     Require(sceNpTrophy2DestroyHandle(handle) == SCE_NP_TROPHY2_OK);
+    Require(sceNpTrophy2RegisterContext(0, handle, 0) == SCE_NP_TROPHY2_OK);
+    Require(sceNpTrophy2RegisterContext(-1, -1, ~0ull) == SCE_NP_TROPHY2_OK);
+    Require(sceNpTrophy2AbortHandle(handle) == SCE_NP_TROPHY2_OK);
+    Require(sceNpTrophy2AbortHandle(0) == SCE_NP_TROPHY2_OK);
 }

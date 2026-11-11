@@ -31,7 +31,7 @@ function(add_test_executable target)
     endif()
     if(WIN32 AND NOT CMAKE_VERSION VERSION_LESS 3.21 AND NOT ATE_NO_RUNTIME_DLL_STAGING)
         add_custom_command(TARGET ${target} POST_BUILD
-                COMMAND "${CMAKE_COMMAND}" -E copy_if_different $<TARGET_RUNTIME_DLLS:${target}> "$<TARGET_FILE:${target}>" "$<TARGET_FILE_DIR:${target}>/"
+                COMMAND "${CMAKE_COMMAND}" "-DDEST_DIR=$<TARGET_FILE_DIR:${target}>" -P "${CMAKE_SOURCE_DIR}/cmake/CopyRuntimeFiles.cmake" $<TARGET_RUNTIME_DLLS:${target}> "$<TARGET_FILE:${target}>"
                 COMMAND_EXPAND_LISTS
                 VERBATIM
         )
@@ -256,6 +256,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_ready.py)
         add_test(NAME progress_history COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py ProgressHistoryTests)
+        add_test(NAME progress_history_csv COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryCsvTests)
+        set_tests_properties(progress_history_csv PROPERTIES TIMEOUT 20)
         add_test(NAME progress_history_output COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryReportOutputTests)
         set_tests_properties(progress_history_output PROPERTIES TIMEOUT 20)
