@@ -2270,6 +2270,7 @@ static std::array<std::uint8_t, 0xa0> RequireSockInfo(int socket, int type, int 
     std::array<std::uint8_t, 0xa0> expected{};
     std::memcpy(expected.data() + 0x24, &socket, sizeof(socket));
     expected[0x28] = static_cast<std::uint8_t>(type);
+    expected[0x2a] = 0x10;
     std::memcpy(expected.data() + 0x34, local.data() + 4, 4);
     std::memcpy(expected.data() + 0x38, remote.data() + 4, 4);
     std::memcpy(expected.data() + 0x3c, local.data() + 2, 2);
@@ -2382,6 +2383,7 @@ static void CheckSockInfo() {
     std::array<std::uint8_t, 0xa0> kernelExpected{};
     std::memcpy(kernelExpected.data() + 0x24, &kernel, sizeof(kernel));
     kernelExpected[0x28] = 2;
+    kernelExpected[0x2a] = 0x10;
     std::memcpy(kernelExpected.data() + 0x34, kernelAddress.data() + 4, 4);
     std::memcpy(kernelExpected.data() + 0x3c, kernelAddress.data() + 2, 2);
     kernelExpected[0x48] = 1;
@@ -2745,6 +2747,9 @@ int main() {
     std::uint32_t address_size = address.size();
     Require(sceNetGetsockname(listener, address.data(), &address_size) == 0 && address_size == 16);
     Require(address[2] != 0 || address[3] != 0);
+    Require(Failed(sceNetConnect(listener, address.data(), address.size()), 45));
+    const std::array<std::uint8_t, 28> other_family{28, 28};
+    Require(Failed(sceNetConnect(listener, other_family.data(), other_family.size()), 45));
 
     const int client = sceNetSocket(nullptr, 2, 1, 6);
     Require(client >= 0);

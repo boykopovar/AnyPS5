@@ -80,6 +80,7 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     const auto getRoomDataInternal = Resolve<RequestFn>("sceNpMatching2GetRoomDataInternal");
     const auto getPingInfo = Resolve<RequestFn>("sceNpMatching2SignalingGetPingInfo");
     const auto leaveRoom = Resolve<RequestFn>("sceNpMatching2LeaveRoom");
+    const auto sendRoomMessage = Resolve<RequestFn>("sceNpMatching2SendRoomMessage");
     const auto getServerId = Resolve<GetServerIdFn>("sceNpMatching2GetServerId");
     const auto getSlotMask = Resolve<SlotMaskFn>("sceNpMatching2GetRoomJoinedSlotMaskLocal");
     const auto getWorldIds = Resolve<WorldIdsFn>("sceNpMatching2GetWorldIdArrayForAllServers");
@@ -133,6 +134,8 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     }
     Require(requestId == 77, "request", "a refused request wrote a request id");
     Require(leaveRoom(context, roomRequest, nullptr, &requestId) == SessionNotFound && leaveRoom(contextA, roomRequest, nullptr, &requestId) == SessionNotFound && requestId == 77, "sceNpMatching2LeaveRoom", "leaving with no room joined did not return SESSION_NOT_FOUND");
+    Require(sendRoomMessage(context, nullptr, nullptr, &requestId) == InvalidArgument && requestId == 77, "sceNpMatching2SendRoomMessage", "a null request on a created context did not return INVALID_ARGUMENT");
+    Require(sendRoomMessage(99, nullptr, nullptr, &requestId) == InvalidArgument, "sceNpMatching2SendRoomMessage", "a null request on an unknown context did not return INVALID_ARGUMENT");
 
     std::uint16_t serverId = 0xA5A5;
     Require(getServerId(99, nullptr) == InvalidArgument, "sceNpMatching2GetServerId", "a null output was not refused before the context");
@@ -196,6 +199,12 @@ int main() {
     Require(sceNpMatching2RegisterRoomEventCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterRoomEventCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2RegisterRoomMessageCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterRoomMessageCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2RegisterSignalingCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterSignalingCallback", "a call before initialization did not return NOT_INITIALIZED");
+    unsigned char sendRoomMessageRequest[48] = {};
+    std::uint32_t sendRoomMessageRequestId = 77;
+    const auto sendRoomMessage = Resolve<RequestFn>("sceNpMatching2SendRoomMessage");
+    Require(sendRoomMessage(1, nullptr, nullptr, &sendRoomMessageRequestId) == InvalidArgument && sendRoomMessageRequestId == 77, "sceNpMatching2SendRoomMessage", "a null request before initialization did not return INVALID_ARGUMENT");
+    Require(sendRoomMessage(1, nullptr, nullptr, nullptr) == InvalidArgument, "sceNpMatching2SendRoomMessage", "a null request before initialization did not return INVALID_ARGUMENT even with a null request id");
+    Require(sendRoomMessage(1, sendRoomMessageRequest, nullptr, &sendRoomMessageRequestId) == NotInitialized, "sceNpMatching2SendRoomMessage", "a non-null request before initialization did not return NOT_INITIALIZED");
     Require(createContextA(nullptr, nullptr) == NotInitialized, "sceNpMatching2CreateContextA", "a call before initialization did not return NOT_INITIALIZED first");
     Require(registerLobbyEvent(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterLobbyEventCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(registerLobbyMessage(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterLobbyMessageCallback", "a call before initialization did not return NOT_INITIALIZED");
@@ -320,6 +329,9 @@ int main() {
     Require(sceNpMatching2Terminate() == NotInitialized, "sceNpMatching2Terminate", "the third termination did not return NOT_INITIALIZED");
     Require(sceNpMatching2ContextStart(1, 0) == NotInitialized, "sceNpMatching2ContextStart", "a call after termination did not return NOT_INITIALIZED");
     Require(sceNpMatching2ContextStop(1) == NotInitialized, "sceNpMatching2ContextStop", "a call after termination did not return NOT_INITIALIZED");
+    unsigned char messageRequest[48] = {};
+    std::uint32_t postTerminateRequestId = 77;
+    Require(sendRoomMessage(1, messageRequest, nullptr, &postTerminateRequestId) == NotInitialized, "sceNpMatching2SendRoomMessage", "a call with non-null request after termination did not return NOT_INITIALIZED");
     Require(sceNpMatching2RegisterContextCallback(nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterContextCallback", "a call after termination did not return NOT_INITIALIZED");
     Require(sceNpMatching2RegisterSignalingCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterSignalingCallback", "a call after termination did not return NOT_INITIALIZED");
     Require(registerLobbyEvent(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterLobbyEventCallback", "a call after termination did not return NOT_INITIALIZED");

@@ -212,7 +212,7 @@ void CheckIgnoredModifiers(const std::string& name, std::uint32_t opcode, RdnaOp
 
 int main() {
     try {
-        CheckIgnoredModifiers("v_cvt_f32_f64", 0x18fu, RdnaOpcode::VCvtF32F64, 0x40u, false);
+        CheckIgnoredModifiers("v_cvt_f32_f64", 0x18fu, RdnaOpcode::VCvtF32F64, 0xe0u, false);
 
         CheckScaledF16("v_add_f16 mul:2", 0x132u, RdnaOpcode::VAddF16, 1u);
         CheckScaledF16("v_add_f16 mul:4", 0x132u, RdnaOpcode::VAddF16, 2u);
