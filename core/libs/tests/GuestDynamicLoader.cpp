@@ -136,6 +136,7 @@ int main(int argc, char** argv) {
     Require(mainResult == 0 && mainSymbol != nullptr);
     using MainFunction = int (APS5_VABI *)(int, int);
     Require(reinterpret_cast<MainFunction>(mainSymbol)(6, 7) == 42);
+    Require(sceKernelDlsym(0, "GuestDefaultScopeOnly", reinterpret_cast<void**>(static_cast<std::uintptr_t>(0x10))) == static_cast<int>(0x8002000eu));
     Require(sceKernelDlsym(0, "anyps5_missing_main_symbol", &mainSymbol) == static_cast<int>(0x80020003u));
     dlerror_nid_postfix();
 
