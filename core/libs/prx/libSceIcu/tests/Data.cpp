@@ -34,6 +34,8 @@ void* APS5_VABI Allocate(const void* context, std::size_t size) {
 
 void* APS5_VABI Reallocate(const void* context, void* pointer, std::size_t size) {
     if (!pointer) return Allocate(context, size);
+    auto& memory = *static_cast<Memory*>(const_cast<void*>(context));
+    if (size > memory.largest) memory.largest = size;
     return std::realloc(pointer, size);
 }
 
