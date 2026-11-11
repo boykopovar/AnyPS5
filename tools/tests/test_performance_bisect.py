@@ -200,3 +200,24 @@ target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'mach
             self.assertEqual(sample["identity"]["gpu"], "GPU")
             self.assertTrue((result_dir / "run" / "summary.json").is_file())
 
+
+
+class CommitMeasurementTests(unittest.TestCase):
+    def test_measures_every_configured_run_at_the_requested_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            worktree = root / "worktree"
+            worktree.mkdir()
+            results = root / "results"
+            results.mkdir()
+            recipe = {"repetitions": 3, "max_spread_pct": 5}
+            sample = {"fps": 60.0, "identity": IDENTITY}
+            with patch.object(performance_bisect, "git") as git, \
+                    patch.object(performance_bisect, "run_build_commands", return_value=worktree / "build") as build, \
+                    patch.object(performance_bisect, "run_sample", return_value=sample) as run:
+                measurement = performance_bisect.measure_commit("repo", worktree, results, recipe, GOOD)
+            git.assert_called_once_with(worktree, "checkout", "--detach", "--force", GOOD)
+            build.assert_called_once_with(worktree, recipe, GOOD, results / GOOD)
+            self.assertEqual(run.call_count, 3)
+            self.assertEqual(measurement["median_fps"], 60.0)
+            self.assertTrue((results / GOOD).is_dir())
