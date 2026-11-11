@@ -86,8 +86,9 @@ InGameMessageContext* FindInGameMessageContext(std::int32_t libCtxId) {
 
 namespace {
 std::mutex reachabilityMutex;
-void* reachabilityCallback = nullptr;
+NpReachabilityStateCallback reachabilityCallback = nullptr;
 void* reachabilityUserdata = nullptr;
+bool reachabilityPending = false;
 std::mutex requestMutex;
 std::unordered_set<int> liveRequests;
 
@@ -864,6 +865,17 @@ int APS5_VABI sceNpCheckCallback(void) {
     for (const auto& entry : callbacksA) {
         if (entry.pending) entry.callback(USER_SERVICE_INITIAL_USER_ID, NP_STATE_SIGNED_OUT, entry.userdata);
     }
+    NpReachabilityStateCallback reachability = nullptr;
+    void* reachabilityArgument = nullptr;
+    {
+        std::lock_guard lock(reachabilityMutex);
+        if (reachabilityPending) {
+            reachability = reachabilityCallback;
+            reachabilityArgument = reachabilityUserdata;
+            reachabilityPending = false;
+        }
+    }
+    if (reachability) reachability(USER_SERVICE_INITIAL_USER_ID, NP_REACHABILITY_STATE_UNAVAILABLE, reachabilityArgument);
     return 0;
 }
 
@@ -1066,8 +1078,9 @@ int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void* callback, void* use
     if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(reachabilityMutex);
     if (reachabilityCallback) return SCE_NP_ERROR_CALLBACK_ALREADY_REGISTERED;
-    reachabilityCallback = callback;
+    reachabilityCallback = reinterpret_cast<NpReachabilityStateCallback>(callback);
     reachabilityUserdata = userdata;
+    reachabilityPending = true;
     return 0;
 }
 
@@ -1076,6 +1089,7 @@ int APS5_VABI sceNpUnregisterNpReachabilityStateCallback(void) {
     if (!reachabilityCallback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
     reachabilityCallback = nullptr;
     reachabilityUserdata = nullptr;
+    reachabilityPending = false;
     return 0;
 }
 

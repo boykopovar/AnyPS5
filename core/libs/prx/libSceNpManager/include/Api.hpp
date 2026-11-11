@@ -5,6 +5,7 @@
 using NpStateCallback = void (APS5_VABI *)(int userId, uint32_t state, NpId* npId, void* userdata);
 
 using NpStateCallbackA = void (APS5_VABI *)(int userId, uint32_t state, void* userdata);
+using NpReachabilityStateCallback = void (APS5_VABI *)(int userId, uint32_t state, void* userdata);
 
 struct SceNpOnlineId {
     char data[16];

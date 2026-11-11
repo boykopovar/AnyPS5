@@ -8,7 +8,21 @@ static constexpr int ErrorNotRegistered = static_cast<int>(0x80550009);
 static constexpr int ErrorUserNotFound = static_cast<int>(0x80550007);
 static constexpr int ErrorInvalidId = static_cast<int>(0x80550015);
 static void Require(bool value) { if (!value) std::abort(); }
-static void APS5_VABI Callback(int, uint32_t, void*) { std::abort(); }
+static constexpr int InitialUserId = 0x10000000;
+static int g_calls = 0;
+static int g_userId = -1;
+static uint32_t g_state = 99;
+static void* g_userdata = nullptr;
+static void APS5_VABI Callback(int userId, uint32_t state, void* userdata) {
+    ++g_calls;
+    g_userId = userId;
+    g_state = state;
+    g_userdata = userdata;
+}
+static void APS5_VABI UnregisteringCallback(int, uint32_t, void*) {
+    ++g_calls;
+    Require(sceNpUnregisterNpReachabilityStateCallback() == 0);
+}
 
 int main() {
     int userdata = 0;
@@ -21,11 +35,24 @@ int main() {
     uint32_t state = 99;
     Require(sceNpGetNpReachabilityState(0, &state) == 0 && state == 0);
     Require(sceNpGetNpReachabilityState(0, nullptr) == ErrorArgument);
+    Require(g_calls == 0);
     Require(sceNpCheckCallback() == 0);
+    Require(g_calls == 1 && g_userId == InitialUserId && g_state == 0 && g_userdata == &userdata);
+    Require(sceNpCheckCallback() == 0 && sceNpCheckCallbackForLib() == 0);
+    Require(g_calls == 1);
     Require(sceNpUnregisterNpReachabilityStateCallback() == 0);
     Require(sceNpUnregisterNpReachabilityStateCallback() == ErrorNotRegistered);
     Require(sceNpRegisterNpReachabilityStateCallback(callback, nullptr) == 0);
     Require(sceNpUnregisterNpReachabilityStateCallback() == 0);
+    Require(sceNpCheckCallback() == 0 && g_calls == 1);
+    Require(sceNpRegisterNpReachabilityStateCallback(callback, nullptr) == 0);
+    Require(sceNpCheckCallbackForLib() == 0);
+    Require(g_calls == 2 && g_userdata == nullptr);
+    Require(sceNpUnregisterNpReachabilityStateCallback() == 0);
+    Require(sceNpRegisterNpReachabilityStateCallback(reinterpret_cast<void*>(&UnregisteringCallback), nullptr) == 0);
+    Require(sceNpCheckCallback() == 0);
+    Require(g_calls == 3);
+    Require(sceNpUnregisterNpReachabilityStateCallback() == ErrorNotRegistered);
     Require(sceNpRegisterPlusEventCallback(nullptr, nullptr) == ErrorArgument);
     Require(sceNpRegisterPremiumEventCallback(nullptr, nullptr) == ErrorArgument);
     Require(sceNpRegisterStateCallback(nullptr, nullptr) == ErrorArgument);

@@ -70,9 +70,14 @@ void APS5_VABI AbortingGamePresenceCallback(const void*, const void*, void*) {
     std::abort();
 }
 
-void APS5_VABI AbortingReachabilityCallback(int, std::uint32_t, void*) {
-    std::fprintf(stderr, "NpManager: the reachability callback was called\n");
-    std::abort();
+int reachabilityCalls = 0;
+int reachabilityUserId = 0;
+std::uint32_t reachabilityState = 99;
+
+void APS5_VABI CountingReachabilityCallback(int userId, std::uint32_t state, void*) {
+    ++reachabilityCalls;
+    reachabilityUserId = userId;
+    reachabilityState = state;
 }
 
 struct SelfUnregister {
@@ -103,13 +108,14 @@ void CheckStateCallbacksA() {
     Require(ids[0] >= 1 && ids[0] <= 8, "state callback id outside 1..8");
     Require(sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(callbacks[0]), &userdata[1]) == AlreadyRegistered, "duplicate state callback");
     Require(stateCallsA[0].calls == 0, "registering calls the state callback");
-    Require(sceNpRegisterNpReachabilityStateCallback(reinterpret_cast<void*>(&AbortingReachabilityCallback), nullptr) == 0,
+    Require(sceNpRegisterNpReachabilityStateCallback(reinterpret_cast<void*>(&CountingReachabilityCallback), nullptr) == 0,
         "registering the reachability callback");
     sceNpRegisterGamePresenceCallback(nullptr, nullptr);
     sceNpRegisterGamePresenceCallback(reinterpret_cast<void*>(&AbortingGamePresenceCallback), &userdata[0]);
 
     Require(sceNpCheckCallback() == 0, "sceNpCheckCallback failed");
     Require(SignedOutOnce(stateCallsA[0], &userdata[0]), "sceNpCheckCallback must deliver SIGNED_OUT once");
+    Require(reachabilityCalls == 1 && reachabilityUserId == InitialUserId && reachabilityState == 0, "sceNpCheckCallback must deliver UNAVAILABLE reachability once");
     Require(sceNpUnregisterNpReachabilityStateCallback() == 0, "unregistering the reachability callback");
     Require(sceNpCheckCallback() == 0, "second sceNpCheckCallback failed");
     Require(stateCallsA[0].calls == 1, "the second sceNpCheckCallback delivered the state again");
