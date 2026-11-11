@@ -315,7 +315,7 @@ void APS5_VABI FT_Done_Glyph_nid_postfix(GuestGlyphRec* glyph) {
 
 }
 
-extern "C" int FreeType::FreeTypeGlyphMutationToBitmapHost(GuestGlyphRec** glyph, std::int32_t renderMode, const GuestVector* origin,
+extern "C" int FreeType::FreeTypeGlyphMutationToBitmapHost_nid_no_patch(GuestGlyphRec** glyph, std::int32_t renderMode, const GuestVector* origin,
                                                            std::uint8_t destroy, const char* function) {
     FT_Vector nativeOrigin{};
     const FT_Vector* nativeOriginPointer = nullptr;
@@ -328,7 +328,7 @@ extern "C" int FreeType::FreeTypeGlyphMutationToBitmapHost(GuestGlyphRec** glyph
     });
 }
 
-extern "C" int FreeType::FreeTypeGlyphMutationTransformHost(GuestGlyphRec* glyph, const GuestMatrix* matrix, const GuestVector* delta,
+extern "C" int FreeType::FreeTypeGlyphMutationTransformHost_nid_no_patch(GuestGlyphRec* glyph, const GuestMatrix* matrix, const GuestVector* delta,
                                                              const char* function) {
     if (!glyph) return FT_Glyph_Transform(nullptr, nullptr, nullptr);
     FT_Matrix nativeMatrix{};
@@ -352,13 +352,13 @@ extern "C" int FreeType::FreeTypeGlyphMutationTransformHost(GuestGlyphRec* glyph
     return error;
 }
 
-extern "C" int FreeType::FreeTypeGlyphMutationStrokeHost(GuestGlyphRec** glyph, void* stroker, std::uint8_t destroy, const char* function) {
+extern "C" int FreeType::FreeTypeGlyphMutationStrokeHost_nid_no_patch(GuestGlyphRec** glyph, void* stroker, std::uint8_t destroy, const char* function) {
     return Replace(glyph, destroy != 0, function, [&](FT_Glyph* native) {
         return FT_Glyph_Stroke(native, static_cast<FT_Stroker>(stroker), 0);
     });
 }
 
-extern "C" int FreeType::FreeTypeGlyphMutationStrokeBorderHost(GuestGlyphRec** glyph, void* stroker, std::uint8_t inside,
+extern "C" int FreeType::FreeTypeGlyphMutationStrokeBorderHost_nid_no_patch(GuestGlyphRec** glyph, void* stroker, std::uint8_t inside,
                                                                std::uint8_t destroy, const char* function) {
     return Replace(glyph, destroy != 0, function, [&](FT_Glyph* native) {
         return FT_Glyph_StrokeBorder(native, static_cast<FT_Stroker>(stroker), static_cast<FT_Bool>(inside), 0);
