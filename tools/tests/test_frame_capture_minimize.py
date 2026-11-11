@@ -149,5 +149,17 @@ if command == 'inspect':
             self.assertEqual(result, 2)
             self.assertEqual(output.read_text(encoding="utf-8"), "keep")
 
+    def test_invalid_match_regex_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arguments, _, _, output = self.empty_cli(root)
+            arguments[arguments.index("failure")] = "["
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+                result = frame_capture_minimize.main(arguments)
+            self.assertEqual(result, 2)
+            self.assertIn("invalid --match-regex", stderr.getvalue())
+            self.assertFalse(output.exists())
+
 if __name__ == "__main__":
     unittest.main()
