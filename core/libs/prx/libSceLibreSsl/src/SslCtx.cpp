@@ -351,6 +351,12 @@ void APS5_VABI SSL_CTX_set_verify_nid_postfix(LibreSslCtx* ctx, int mode, void* 
     internal.defaultVerifyCallback = callback;
 }
 
+int APS5_VABI SSL_CTX_add_client_CA_nid_postfix(LibreSslCtx* ctx, void* certificate) {
+    Internal(ctx, __func__);
+    if (!certificate) return 0;
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI SSL_CTX_set_session_id_context_nid_postfix(LibreSslCtx* ctx, const unsigned char* sidCtx, unsigned int length) {
     LibreSslCtx& context = Context(ctx, __func__);
     if (length > sizeof context.sidCtx) {

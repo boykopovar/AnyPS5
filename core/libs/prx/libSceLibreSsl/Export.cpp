@@ -253,11 +253,6 @@ int APS5_VABI RSA_generate_key_ex_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_CTX_add_client_CA_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_CTX_free_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
