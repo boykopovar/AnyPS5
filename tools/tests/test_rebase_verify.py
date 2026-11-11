@@ -55,6 +55,13 @@ class RebaseVerifyTests(unittest.TestCase):
         problems = self.verify()
         self.assertTrue(any("an added line is missing" in problem and "NEW" in problem for problem in problems), problems)
 
+    def test_a_missing_line_is_reported_when_diff_noprefix_is_set(self):
+        self.git("config", "diff.noprefix", "true")
+        self.write("f.txt", "a\nb\nc\ntail\n")
+        self.git("commit", "-q", "-a", "--amend", "--no-edit")
+        problems = self.verify()
+        self.assertTrue(any("an added line is missing" in problem and "NEW" in problem for problem in problems), problems)
+
     def test_a_line_added_twice_is_reported(self):
         self.write("f.txt", "a\nNEW\nNEW\nb\nc\ntail\n")
         self.git("commit", "-q", "-a", "--amend", "--no-edit")

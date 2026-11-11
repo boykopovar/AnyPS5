@@ -37,7 +37,8 @@ def commits(root, base, tip):
 def added(root, base, tip):
     found = collections.defaultdict(collections.Counter)
     path, header = None, False
-    for line in git(root, "diff", "-U0", "--no-renames", "--no-color", base, tip).splitlines():
+    for line in git(root, "diff", "-U0", "--no-renames", "--no-color", "--no-ext-diff", "--no-textconv",
+                    "--src-prefix=a/", "--dst-prefix=b/", base, tip).splitlines():
         if line.startswith("diff --git "):
             path, header = None, True
         elif header and line.startswith("+++ "):
