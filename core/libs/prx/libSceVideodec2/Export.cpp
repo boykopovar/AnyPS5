@@ -54,6 +54,7 @@ constexpr int Videodec2ErrorFrameBufferSize = static_cast<int>(0x811D0106u);
 constexpr int Videodec2ErrorFrameBufferPointer = static_cast<int>(0x811D0107u);
 constexpr int Videodec2ErrorFrameBufferAlignment = static_cast<int>(0x811D0108u);
 constexpr int Videodec2ErrorPictureCount = static_cast<int>(0x811D010Fu);
+constexpr int Videodec2ErrorRefusedComputeQueue = static_cast<int>(0x811D0110u);
 
 static_assert(sizeof(Vp9PictureInfo) == 88);
 static_assert(offsetof(Vp9PictureInfo, colorSpace) == 60);
@@ -483,7 +484,8 @@ void EmitDecoded(std::uint64_t handle, Decoder& decoder, FrameBuffer* frame, Out
 extern "C" {
 
 int APS5_VABI sceVideodec2QueryComputeMemoryInfo_nid_postfix(ComputeMemoryInfo* info) {
-    if (!info) throw std::runtime_error("Videodec2: invalid argument pointer");
+    if (!info) return Videodec2ErrorArgumentPointer;
+    if (info->thisSize != sizeof(ComputeMemoryInfo)) return Videodec2ErrorStructureSize;
     if (Trace()) std::fprintf(stderr, "[videodec2] QueryComputeMemoryInfo size=%llu\n", static_cast<unsigned long long>(info->thisSize));
     info->cpuGpuMemorySize = WorkMemoryBytes;
     return 0;
@@ -498,7 +500,7 @@ int APS5_VABI sceVideodec2AllocateComputeQueue_nid_postfix(const ComputeConfigIn
 }
 
 int APS5_VABI sceVideodec2ReleaseComputeQueue_nid_postfix(std::uint64_t queue) {
-    (void)queue;
+    if (queue == 0) return Videodec2ErrorRefusedComputeQueue;
     return 0;
 }
 

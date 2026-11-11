@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import json
 import os
+import posixpath
 import re
 import struct
 import subprocess
@@ -444,11 +445,11 @@ def audit_host_dependencies(direct, libraries, modules, windows=()):
                     raise AuditError(f"ambiguous Windows host library {name}: {', '.join(sorted(matches))}")
                 name = next(iter(matches), name)
                 chain[-1] = name
-            if name not in available:
+            if origin_name(name) not in available:
                 missing.append({"importer": root, "chain": chain})
-            elif name in direct and name not in expanded and name not in chain[1:-1]:
-                expanded.add(name)
-                for dependency in reversed(direct[name]):
+            elif origin_name(name) in direct and origin_name(name) not in expanded and name not in chain[1:-1]:
+                expanded.add(origin_name(name))
+                for dependency in reversed(direct[origin_name(name)]):
                     if dependency in chain:
                         continue
                     stack.append((dependency, chain + [dependency]))
@@ -760,6 +761,12 @@ def check_conservation(references, records):
         raise AuditError(f"conservation failed: {references} references in, {classified} classified, unknown classes {unknown}")
 
 
+def origin_name(name):
+    if isinstance(name, str) and name.startswith(("$ORIGIN/", "${ORIGIN}/")):
+        return posixpath.basename(posixpath.normpath(name.split("/", 1)[1]))
+    return name
+
+
 MODULE_FILE_SUFFIXES = (".debug_prx", ".suprx", ".sprx", ".prx")
 
 
@@ -785,6 +792,7 @@ class ModuleNames(set):
     def __contains__(self, library):
         if not isinstance(library, str):
             return False
+        library = origin_name(library)
         filename = library.lower() if self.fold else library
         return filename in self.files or module_stem(library, self.fold) in self.stems
 
@@ -834,6 +842,7 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         guest_names[provider] = ModuleNames(names, fold=getattr(modules, "fold", False))
 
     def guest_matches(name):
+        name = origin_name(name)
         filename = name.lower() if getattr(modules, "fold", False) else name
         exact = {provider for provider, names in guest_names.items() if filename in names.files}
         return exact or {provider for provider, names in guest_names.items() if name in names}
