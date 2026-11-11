@@ -114,8 +114,8 @@ std::int32_t APS5_VABI sceZlibGetResult(std::uint64_t requestId, std::uint32_t* 
     const GuestArena::HostWrite guardLength(destinationLength, sizeof(found->second.produced));
     const GuestArena::HostWrite guardStatus(status, sizeof(found->second.status));
     if (!guardLength.Open() || !guardStatus.Open() ||
-        !GuestCanWrite_nid_no_patch(destinationLength, sizeof(found->second.produced)) ||
-        !GuestCanWrite_nid_no_patch(status, sizeof(found->second.status))) {
+        !GuestWritable_nid_no_patch(destinationLength, sizeof(found->second.produced)) ||
+        !GuestWritable_nid_no_patch(status, sizeof(found->second.status))) {
         errno = savedErrno;
         return INVALID_ARGUMENT;
     }

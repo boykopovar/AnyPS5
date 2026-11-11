@@ -824,12 +824,14 @@ extern "C" std::filesystem::path ResolveArchivedPath_nid_no_patch(const char* pa
     return ResolveLocked(path, module, true);
 }
 
-extern "C" bool GuestCanWrite_nid_no_patch(void* destination, std::size_t bytes) {
+extern "C" bool GuestWritable_nid_no_patch(void* destination, std::size_t bytes) {
+    struct RestoreErrno {
+        int value = errno;
+        ~RestoreErrno() { errno = value; }
+    } restore;
     if (bytes == 0) return true;
     const auto start = reinterpret_cast<std::uintptr_t>(destination);
     if (start == 0 || bytes > UINTPTR_MAX - start) return false;
-    const GuestArena::HostWrite guard(destination, bytes);
-    if (!guard.Open()) return false;
     for (auto address = start; address < start + bytes;) {
 #ifdef _WIN32
         MEMORY_BASIC_INFORMATION memory{};
@@ -838,22 +840,22 @@ extern "C" bool GuestCanWrite_nid_no_patch(void* destination, std::size_t bytes)
             (memory.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) == 0) return false;
         address = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
 #elif defined(__linux__)
-        const auto memory = HostMapping::Find(address, "GuestCanWrite");
-        if (!memory || memory->start > address || memory->end <= address || !memory->writable) return false;
-        address = memory->end;
+        const auto mapping = HostMapping::Find(address, "GuestWritable");
+        if (!mapping || !mapping->writable) return false;
+        address = mapping->end;
 #elif defined(__APPLE__)
         mach_vm_address_t region = address;
         mach_vm_size_t size = 0;
         vm_region_basic_info_data_64_t info{};
         mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
         mach_port_t object = MACH_PORT_NULL;
-        const kern_return_t result = mach_vm_region(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64,
+        const auto result = mach_vm_region(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64,
             reinterpret_cast<vm_region_info_t>(&info), &count, &object);
         if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);
-        if (result != KERN_SUCCESS || region > address || size > UINTPTR_MAX - region || region + size <= address || (info.protection & VM_PROT_WRITE) == 0) return false;
+        if (result != KERN_SUCCESS || region > address || (info.protection & VM_PROT_WRITE) == 0) return false;
         address = region + size;
 #else
-        throw std::runtime_error("GuestCanWrite: no checked write is available on this host");
+        throw std::runtime_error("GuestWritable: no checked write is available on this host");
 #endif
     }
     return true;
