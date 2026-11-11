@@ -196,6 +196,19 @@ void testSharedMemoryGroup(const std::filesystem::path& root) {
     check(filtered.Calls().size() == 1 && filtered.Chunks().size() == 1 && filtered.Chunks()[0].kind == AgcDriver::FrameMemoryKind::Delta, "removing one call discarded a shared memory group");
 }
 
+
+void testAllMemoryGroupCallsRemoved(const std::filesystem::path& root) {
+    const auto source = root / "all-group-source";
+    const auto output = root / "all-group-output";
+    AgcDriver::FrameCaptureWriter writer(source);
+    for (std::uint64_t value = 0; value < 2; ++value) { AgcDriver::FrameCall call; call.kind = AgcDriver::FrameCallKind::Memory; call.values = {9, value}; writer.WriteCall(call); }
+    const std::vector<std::byte> bytes(8, std::byte{0x42}); writer.WriteDelta(9, 1, 0x30000, bytes); writer.Finish("{}\n");
+    AgcDriverTools::FrameCaptureFilterPlan plan; plan.calls = {0, 1};
+    AgcDriverTools::FilterFrameCapture(source, output, plan);
+    const AgcDriver::FrameCaptureReader filtered(output);
+    check(filtered.Calls().empty() && filtered.Chunks().empty(), "removing every call in a memory group retained its deltas");
+}
+
 }
 
 int main() {
@@ -206,6 +219,7 @@ int main() {
     testEmptyPlan(root);
     testReferenceChunk(root);
     testSharedGroup(root);
+    testAllGroupCallsRemoved(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
