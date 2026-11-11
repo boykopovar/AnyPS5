@@ -1,0 +1,4 @@
+# libkernel
+
+## change Id 15 may count more than process CPU time
+- [clock_gettime](../../../core/libs/prx/libkernel/Time/Time.cpp) (libkernel). Id 21 shares the process CPU clock and microsecond precision measured in a firmware 13.590.001 payload in [#15725](https://github.com/boykopovar/AnyPS5/issues/15725). Its retail export behavior is unverified. Ids 3, 6 and 22 to 31 fail with `EINVAL` and 16 to 19 with `EIO` through both exports, the time left unwritten, as measured there; the raw system call also failed 3, 6 and 22 to 31 with `EINVAL` ([#15725](https://github.com/boykopovar/AnyPS5/issues/15725)). Id 15 measures elapsed time from libkernel initialization. Firmware 13.590.001 payload measurements in [#15725](https://github.com/boykopovar/AnyPS5/issues/15725) showed elapsed wall time since process start, both idle and under load. Closes when: the retail export and exact initialization boundary are measured.
