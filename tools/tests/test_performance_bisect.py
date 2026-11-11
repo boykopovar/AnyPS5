@@ -507,3 +507,22 @@ class AtomicReportRaceTests(unittest.TestCase):
                 performance_bisect.write_report(path, {"result": "bisect report"})
             self.assertEqual(path.read_text(encoding="utf-8"), "owner report")
             self.assertEqual(list(Path(directory).iterdir()), [path])
+
+
+class FirstParentEndpointTests(GitHistoryTests):
+    def test_rejects_good_endpoint_reachable_only_through_a_merge_parent(self):
+        default_branch = performance_bisect.git(self.repo, "symbolic-ref", "--short", "HEAD")
+        performance_bisect.git(self.repo, "switch", "-c", "endpoint-side")
+        (self.repo / "side-endpoint.txt").write_text("side", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "side-endpoint.txt"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "test: side endpoint"], check=True)
+        side_good = performance_bisect.git(self.repo, "rev-parse", "HEAD")
+        performance_bisect.git(self.repo, "switch", default_branch)
+        (self.repo / "first-parent.txt").write_text("main", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "first-parent.txt"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "test: first parent"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "merge", "--no-ff", "endpoint-side",
+                        "-m", "merge: side endpoint"], check=True, capture_output=True)
+        bad = performance_bisect.git(self.repo, "rev-parse", "HEAD")
+        with self.assertRaisesRegex(ValueError, "first-parent history"):
+            performance_bisect.first_parent_commits(self.repo, side_good, bad)
