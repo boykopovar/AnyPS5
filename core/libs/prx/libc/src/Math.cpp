@@ -161,7 +161,6 @@
  */
 #include "prx/libc/include/Api.hpp"
 #include <mutex>
-#include <optional>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -174,6 +173,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -4060,17 +4060,18 @@ static PowlLog2Parts PowlBase2Log(long double x, int e) {
     x -= PowlA[i];
     x -= PowlB[i / 2];
     x /= PowlA[i];
-    volatile long double z = x * x;
+    const volatile long double square = x * x;
+    const long double z = square;
     long double w = x * (z * PowlPolynomial(x, PowlLogP, 3) / PowlMonicPolynomial(x, PowlLogQ, 3));
     w = w - std::ldexp(z, -1);
-    z = PowlLog2eMinusOne * w;
-    z += w;
-    z += PowlLog2eMinusOne * x;
-    z += x;
+    long double fraction = PowlLog2eMinusOne * w;
+    fraction += w;
+    fraction += PowlLog2eMinusOne * x;
+    fraction += x;
     w = -i;
     w = std::ldexp(w, -PowlTableShift);
     w += e;
-    return {w, z};
+    return {w, fraction};
 }
 
 static long double PowlExponential(PowlLog2Parts log2, long double y, bool negativeBase) {
