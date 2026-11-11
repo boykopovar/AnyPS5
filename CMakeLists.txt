@@ -349,6 +349,7 @@ if(BUILD_TESTING)
             set_tests_properties(tools_catalog_json PROPERTIES TIMEOUT 20)
             add_test(NAME validate_patch_catalog COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_validate_patch_catalog.py)
+            set_tests_properties(validate_patch_catalog PROPERTIES TIMEOUT 20)
         endif()
         add_test(NAME annotation_symbols_ghidra COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotation_symbols_ghidra.py)
