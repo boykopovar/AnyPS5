@@ -45,5 +45,42 @@ int main() {
     Require(waiterPending == 0, "the waiting caller sees the initialization done");
     Require(reinterpret_cast<std::uintptr_t>(once) == 2, "a completed initialization marks the object");
     Require(Begin(&once) == 0, "a later caller does not run the initialization");
+
+    alignas(8) void* second = nullptr;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        Require(Begin(&second) == 1, "caller acquires initialization before failure");
+        Require(__std_init_once_complete_clr_nid_postfix(&second, InitFailed, nullptr) == 1, "complete failed attempt");
+        Require(second == nullptr, "repeated InitFailed resets the object");
+    }
+    Require(Begin(&second) == 1, "caller retries after repeated failures");
+    Require(__std_init_once_complete_clr_nid_postfix(&second, 1, nullptr) == 1, "complete with flag 1");
+    Require(reinterpret_cast<std::uintptr_t>(second) == 2, "flag 1 marks the object done");
+    Require(Begin(&second) == 0, "done object skips re-initialization");
+
+    alignas(8) void* groupOnce = nullptr;
+    Require(Begin(&groupOnce) == 1, "leader begins group initialization");
+    std::atomic<int> completedWaiters{0};
+    int pendingResults[3] = {-1, -1, -1};
+    std::thread waiters[3]{
+        std::thread([&] {
+            pendingResults[0] = Begin(&groupOnce);
+            completedWaiters.fetch_add(1);
+        }),
+        std::thread([&] {
+            pendingResults[1] = Begin(&groupOnce);
+            completedWaiters.fetch_add(1);
+        }),
+        std::thread([&] {
+            pendingResults[2] = Begin(&groupOnce);
+            completedWaiters.fetch_add(1);
+        }),
+    };
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    Require(completedWaiters.load() == 0, "all group waiters block while initialization runs");
+    Require(__std_init_once_complete_clr_nid_postfix(&groupOnce, 0x10, nullptr) == 1, "complete group initialization with non-zero flag");
+    for (auto& thread : waiters) thread.join();
+    Require(completedWaiters.load() == 3, "single completion wakes all waiters");
+    for (const int pending : pendingResults) Require(pending == 0, "every group waiter sees initialization done");
+    Require(reinterpret_cast<std::uintptr_t>(groupOnce) == 2, "group object stays marked done");
     return 0;
 }
