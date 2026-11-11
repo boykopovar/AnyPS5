@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iterator>
 #include <fstream>
+#include <initializer_list>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -132,7 +133,10 @@ void* APS5_VABI Realign(void*, std::size_t, std::size_t) { throw std::logic_erro
 int APS5_VABI PosixAlign(void**, std::size_t, std::size_t) { throw std::logic_error("unexpected BIO aligned allocation"); }
 
 void* APS5_VABI Calloc(std::size_t count, std::size_t size) {
-    if (allocationsUntilFailure == 0) return nullptr;
+    if (allocationsUntilFailure == 0) {
+        allocationsUntilFailure = -1;
+        return nullptr;
+    }
     if (allocationsUntilFailure > 0) --allocationsUntilFailure;
     void* result = std::calloc(count, size);
     if (result) ++allocations;
@@ -593,6 +597,81 @@ void TestPkcs12BioReadErrors() {
 
 }
 
+int passwordCallbackCalls = 0;
+std::array<int, 32> bioCallbackEvents{};
+std::size_t bioCallbackEventCount = 0;
+
+std::int64_t APS5_VABI ObserveBioCallback(Bio*, int operation, const char*, int, std::int64_t, std::int64_t result) {
+    bioCallbackEvents[bioCallbackEventCount++] = operation;
+    return result;
+}
+
+int APS5_VABI RejectBioGets(Bio*, char*, int) { return -1; }
+
+int APS5_VABI ObservePasswordCallback(char*, int, int, void*) {
+    ++passwordCallbackCalls;
+    return 0;
+}
+
+void RequirePemQueue(std::initializer_list<std::uint64_t> expected) {
+    for (const auto error : expected) Require(ERR_get_error_nid_postfix() == error, "PEM error order");
+    Require(ERR_get_error_nid_postfix() == 0, "PEM path queues no additional errors");
+}
+
+void TestPemReadBioX509NoStartLine() {
+    constexpr std::uint64_t pemNoStartLine = 0x09fff06c;
+    constexpr std::uint64_t bufferMallocFailure = 0x07fff041;
+    constexpr std::uint64_t pemMallocFailure = 0x09fff041;
+    auto* output = reinterpret_cast<LibreSslX509*>(std::uintptr_t{0x12345678});
+    passwordCallbackCalls = 0;
+
+    ERR_clear_error_nid_postfix();
+    Bio* bio = BIO_new_mem_buf_nid_postfix("", 0);
+    Require(bio != nullptr, "empty PEM input BIO");
+    bio->callback = &ObserveBioCallback;
+    bioCallbackEventCount = 0;
+    const int baseline = allocations;
+    Require(PEM_read_bio_X509_nid_postfix(bio, &output, &ObservePasswordCallback, bio) == nullptr,
+        "empty PEM input returns null");
+    Require(output == reinterpret_cast<LibreSslX509*>(std::uintptr_t{0x12345678}), "empty PEM preserves output");
+    Require(passwordCallbackCalls == 0, "empty PEM does not call password callback");
+    Require(bioCallbackEventCount == 2 && bioCallbackEvents[0] == 5 && bioCallbackEvents[1] == 0x85,
+        "empty PEM BIO callback order");
+    RequirePemQueue({pemNoStartLine});
+    Require(allocations == baseline, "empty PEM frees all three BUF_MEM objects");
+    Require(BIO_free_nid_postfix(bio) == 1, "free empty PEM BIO");
+
+    constexpr char preamble[] = "unrelated text\n";
+    ERR_clear_error_nid_postfix();
+    bio = BIO_new_mem_buf_nid_postfix(preamble, sizeof(preamble) - 1);
+    Require(bio != nullptr, "PEM preamble BIO");
+    bio->callback = &ObserveBioCallback;
+    bioCallbackEventCount = 0;
+    const int preambleBaseline = allocations;
+    Require(PEM_read_bio_X509_nid_postfix(bio, &output, nullptr, nullptr) == nullptr,
+        "EOF before a BEGIN line returns null");
+    Require(bioCallbackEventCount == 4, "PEM reader scans preamble and EOF");
+    RequirePemQueue({pemNoStartLine});
+    Require(allocations == preambleBaseline, "EOF after preamble frees all three BUF_MEM objects");
+    Require(BIO_free_nid_postfix(bio) == 1, "free PEM preamble BIO");
+
+    constexpr char beginOnly[] = "-----BEGIN CERTIFICATE-----\n";
+    for (int failAt = 0; failAt < 5; ++failAt) {
+        ERR_clear_error_nid_postfix();
+        bio = BIO_new_mem_buf_nid_postfix(failAt < 3 ? "" : beginOnly,
+            failAt < 3 ? 0 : sizeof(beginOnly) - 1);
+        Require(bio != nullptr, "PEM allocation failure BIO");
+        const int allocationBaseline = allocations;
+        allocationsUntilFailure = failAt;
+        const auto result = PEM_read_bio_X509_nid_postfix(bio, &output, nullptr, nullptr);
+        Require(result == nullptr, "BUF_MEM allocation or growth failure returns null");
+        RequirePemQueue({bufferMallocFailure, pemMallocFailure});
+        Require(allocations == allocationBaseline, "BUF_MEM allocation failure frees partial allocations");
+        Require(BIO_free_nid_postfix(bio) == 1, "free PEM allocation failure BIO");
+    }
+    allocationsUntilFailure = -1;
+}
+
 void TestFileAndSocket() {
     const BioMethod* fileMethod = BIO_s_file_nid_postfix();
     Require(fileMethod && fileMethod->type == 0x402, "file BIO method descriptor");
@@ -940,6 +1019,7 @@ int main(int argc, char** argv) {
     TestUnsupported();
 #ifndef ANYPS5_BIO_DYNAMIC
     TestPkcs12BioReadErrors();
+    TestPemReadBioX509NoStartLine();
     TestFileAndSocket();
     TestPrivateKeyFileErrorPaths();
     TestCertificateChainFileErrorPaths();
