@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
+#include <cerrno>
 #include <string>
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceUserService/UserService.hpp"
@@ -80,6 +81,9 @@ int main() {
     Require(sceNpAuthAuthorizedAppDialogTerminate() == kErrNotInitialized);
     Require(sceNpAuthAuthorizedAppDialogClose() == kErrNotInitialized);
     Require(sceNpAuthAuthorizedAppDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpAuthAuthorizedAppDialogOpen(reinterpret_cast<const NpAuthAuthorizedAppDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceNpAuthAuthorizedAppDialogOpen(&param) == kErrNotInitialized);
     Require(sceNpAuthAuthorizedAppDialogGetResult(nullptr) == kErrArgNull);
     Require(sceNpAuthAuthorizedAppDialogGetResult(result) == kErrNotInitialized);
@@ -101,12 +105,20 @@ int main() {
     param.userId = USER_SERVICE_INITIAL_USER_ID;
     param.application = nullptr;
     Require(sceNpAuthAuthorizedAppDialogOpen(&param) == invalidArgument);
+    errno = 71;
+    param.application = reinterpret_cast<const char*>(0x10);
+    Require(sceNpAuthAuthorizedAppDialogOpen(&param) == invalidArgument);
+    Require(errno == 71);
     application[0] = 0;
     param.application = application;
     Require(sceNpAuthAuthorizedAppDialogOpen(&param) == invalidArgument);
     application[0] = 't';
     param.text = nullptr;
     Require(sceNpAuthAuthorizedAppDialogOpen(&param) == invalidArgument);
+    errno = 71;
+    param.text = reinterpret_cast<const char*>(0x10);
+    Require(sceNpAuthAuthorizedAppDialogOpen(&param) == invalidArgument);
+    Require(errno == 71);
     param.text = "";
     Require(sceNpAuthAuthorizedAppDialogOpen(&param) == invalidArgument);
     text.push_back('a');
@@ -128,6 +140,9 @@ int main() {
     Require(sceNpAuthAuthorizedAppDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceNpAuthAuthorizedAppDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpAuthAuthorizedAppDialogOpen(reinterpret_cast<const NpAuthAuthorizedAppDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceNpAuthAuthorizedAppDialogGetResult(result) == kErrNotFinished);
 
     param.size = 119;
@@ -138,7 +153,15 @@ int main() {
     param.userId = USER_SERVICE_INITIAL_USER_ID;
     param.application = nullptr;
     Require(sceNpAuthAuthorizedAppDialogOpen(&param) == invalidArgument);
+    errno = 71;
+    param.application = reinterpret_cast<const char*>(0x10);
+    Require(sceNpAuthAuthorizedAppDialogOpen(&param) == invalidArgument);
+    Require(errno == 71);
     param.application = application;
+    errno = 71;
+    param.text = reinterpret_cast<const char*>(0x10);
+    Require(sceNpAuthAuthorizedAppDialogOpen(&param) == invalidArgument);
+    Require(errno == 71);
     param.text = "";
     Require(sceNpAuthAuthorizedAppDialogOpen(&param) == invalidArgument);
     text.push_back('a');
@@ -167,6 +190,9 @@ int main() {
     Require(sceNpAuthAuthorizedAppDialogTerminate() == kErrNotInitialized);
     Require(sceNpAuthAuthorizedAppDialogClose() == kErrNotInitialized);
     Require(sceNpAuthAuthorizedAppDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpAuthAuthorizedAppDialogOpen(reinterpret_cast<const NpAuthAuthorizedAppDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceNpAuthAuthorizedAppDialogOpen(&param) == kErrNotInitialized);
     Require(sceNpAuthAuthorizedAppDialogGetResult(nullptr) == kErrArgNull);
     Require(sceNpAuthAuthorizedAppDialogGetResult(result) == kErrNotInitialized);

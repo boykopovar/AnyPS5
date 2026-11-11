@@ -68,6 +68,7 @@ void Shown() {
     Require(ModalDialogReadView_nid_postfix(view) && view.message == u"Continue?" && view.buttons.size() == 2, "the shown dialog is not the message");
     for (int poll = 0; poll < 5; ++poll) Require(sceMsgDialogGetStatus() == StatusRunning && sceMsgDialogUpdateStatus() == StatusRunning, "a shown dialog finished before it was answered");
     Require(sceMsgDialogOpen(&param) == ErrBusy, "a second open was accepted while the dialog ran");
+    Require(sceMsgDialogOpen(nullptr) == ErrArgNull, "a null param was not refused before the busy check");
     Require(sceMsgDialogProgressBarInc(0, 10) == ErrNotRunning, "progress bar inc during running user message dialog");
     Require(sceMsgDialogProgressBarSetValue(0, 50) == ErrNotRunning, "progress bar set value during running user message dialog");
     Require(sceMsgDialogProgressBarSetMsg(0, "test") == ErrNotRunning, "progress bar set msg during running user message dialog");
@@ -86,6 +87,7 @@ void Shown() {
 }
 
 void NotPresented() {
+    Require(sceMsgDialogOpen(nullptr) == ErrArgNull && sceMsgDialogGetStatus() == 0, "a null param was not refused");
     UserMessage none{MsgDialog::ButtonTypeNone, 0, "Wait"};
     Param withoutButtons(MsgDialog::ModeUserMsg, &none);
     Require(sceMsgDialogOpen(&withoutButtons) == 0 && Session() == ModalDialogState::Idle, "a dialog without buttons was shown");
@@ -98,6 +100,7 @@ void NotPresented() {
     Require(sceMsgDialogOpen(&progress) == 0 && Session() == ModalDialogState::Idle, "a progress bar was shown");
     Require(sceMsgDialogProgressBarSetValue(1, 50) == ErrParam, "ProgressBarSetValue invalid target");
     Require(sceMsgDialogProgressBarSetValue(0, 101) == ErrParam, "ProgressBarSetValue rate > 100");
+    Require(sceMsgDialogProgressBarSetValue(0, 100) == 0, "ProgressBarSetValue rate == 100");
     Require(sceMsgDialogProgressBarSetValue(0, 50) == 0, "ProgressBarSetValue valid");
     Require(sceMsgDialogProgressBarInc(1, 10) == ErrParam, "ProgressBarInc invalid target");
     Require(sceMsgDialogProgressBarInc(0, 10) == 0, "ProgressBarInc valid");
