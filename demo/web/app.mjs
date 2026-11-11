@@ -390,6 +390,22 @@ $("drop").ondrop = event => {
 };
 for (const id of ["save", "target", "acknowledge"]) $(id).addEventListener("change", update);
 $("cancel").onclick = () => fail(() => translate(locale, "cancelled"));
+async function createZipSink(name, current) {
+  try {
+    const handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: "ZIP archive", accept: { "application/zip": [".zip"] } }] });
+    if (!current()) return null;
+    const writable = await handle.createWritable();
+    if (!current()) {
+      await writable.abort().catch(() => {});
+      return null;
+    }
+    return writable;
+  } catch (error) {
+    if (error.name === "AbortError") throw error;
+    if (error.name === "NotAllowedError" || error.name === "SecurityError") throw localizedError(() => translate(locale, "zipDirectDenied"));
+    throw error;
+  }
+}
 $("convert").onclick = async () => {
   if ($("convert").disabled) return;
   const currentWorker = worker;
@@ -400,14 +416,8 @@ $("convert").onclick = async () => {
     const target = document.querySelector('input[name="target"]:checked').value;
     if ($("save").value === "zip") {
       const name = selectedInputs.length > 1 ? `anyps5-${target}-apps.zip` : `${selectedInputs[0].name.replace(/\.zip$/iu, "")}-${target}.zip`;
-      const handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: "ZIP archive", accept: { "application/zip": [".zip"] } }] });
-      if (currentWorker !== worker) return;
-      const writable = await handle.createWritable();
-      if (currentWorker !== worker) {
-        await writable.abort().catch(() => {});
-        return;
-      }
-      sink = writable;
+      sink = await createZipSink(name, () => currentWorker === worker);
+      if (sink === null) return;
     } else if ($("save").value === "disk") {
       const name = selectedInputs[0].name.replace(/\.zip$/iu, "") + "-" + target;
       const parent = await window.showDirectoryPicker({ mode: "readwrite" });
