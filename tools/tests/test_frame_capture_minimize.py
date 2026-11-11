@@ -260,5 +260,17 @@ if command == 'inspect':
         with self.assertRaises(frame_capture_minimize.TrialLimitReached):
             minimizer.predicate(set(), set())
 
+    def test_filter_apply_failure_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = "import json, sys\nif sys.argv[1] == 'inspect': print('{\"calls\": [], \"chunks\": []}')\nelse: print('filter failed', file=sys.stderr); raise SystemExit(4)\n"
+            arguments, _, _, output = self.empty_cli(root, filter_source=script)
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+                result = frame_capture_minimize.main(arguments)
+            self.assertEqual(result, 2)
+            self.assertIn("filter failed", stderr.getvalue())
+            self.assertFalse(output.exists())
+
 if __name__ == "__main__":
     unittest.main()
