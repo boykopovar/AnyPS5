@@ -40,7 +40,7 @@ struct Base64Block {
 
 int DecodeLastBlock(const char* src, std::size_t length, const char* alphabet, Base64Block* block) {
     char c[4] = {BASE64_PAD, BASE64_PAD, BASE64_PAD, BASE64_PAD};
-    std::memcpy(c, src, length);
+    if (length != 0) std::memcpy(c, src, length);
     const int v0 = Base64Value(c[0], alphabet);
     const int v1 = Base64Value(c[1], alphabet);
     if (v0 < 0 || v1 < 0) return NP_ERROR_INVALID_CHARACTER;
@@ -493,11 +493,13 @@ int APS5_VABI sceNpStrnParseHex(const char* hex, std::size_t length, void* out, 
 }
 
 int APS5_VABI sceNpStrcpyToBuf(char* dst, std::size_t size, const char* src) {
+    if (src == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return CopyToBuffer(dst, size, src, std::strlen(src));
 }
 
 int APS5_VABI sceNpStrncpyToBuf(char* dst, std::size_t size, const char* src, std::size_t maxLength) {
     if (src == nullptr && maxLength == 0) return CopyToBuffer(dst, size, "", 0);
+    if (src == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return CopyToBuffer(dst, size, src, strnlen(src, maxLength));
 }
 

@@ -1,3 +1,6 @@
+#include <cstdlib>
+#include <optional>
+
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TraceFile.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
@@ -186,6 +189,20 @@ void TotalsOverflow() {
     const auto snapshot = thread.Collect();
     Check(snapshot.totalsFull && snapshot.dropped && snapshot.eventsLost == 0 && !snapshot.eventsFullAt, "a full totals table was not reported apart from the event buffer");
     Check(snapshot.totals.size() == 512 && snapshot.slices.size() == 600, "a full totals table stopped the event buffer or kept more than its entries");
+    TraceThread weighted("weighted", presents, 1);
+    weighted.Count("OwnedDraw.blocks", 17);
+    weighted.Count("OwnedDraw.blocks", 3);
+    weighted.Count("OwnedDraw.zero", 0);
+    const auto weightedSnapshot = weighted.Collect();
+    Check(weightedSnapshot.totals.size() == 1 && weightedSnapshot.totals[0].count == 20 && weightedSnapshot.slices.empty(), "weighted counts were not accumulated without trace slices");
+    TraceThread countThread("count worker", presents, 1);
+    for (std::size_t index = 0; index < 512; ++index) countThread.Count(&scopes[index]);
+    countThread.Count("OwnedDraw.arm_attempt");
+    countThread.Count("OwnedDraw.arm_blocks_requested", 17);
+    const auto counts = countThread.Collect();
+    Check(counts.totalsFull && counts.dropped && counts.slices.empty(), "a lost owned counter did not mark the totals full");
+    const auto line = TraceFormat::Summary(AgcDriver::TraceSummary{}, std::vector<TraceThread::Snapshot>{counts}, {});
+    Check(line.find("\"trace_dropped\":true") != std::string::npos && line.find("\"totals_full\":true") != std::string::npos, "the summary hid a lost owned counter");
 }
 
 void CapacitySettings() {
@@ -337,8 +354,23 @@ void SummaryFields() {
         "\"frame_ms\":{\"p50\":24.000,\"p90\":24.000,\"p99\":24.000,\"max\":24.000},\"gpu_busy_ms_per_present\":10.000,"
         "\"worker_busy_pct\":{\"queue worker 0x0\":35.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000,\"Driver.Packet.draw\":5.000,\"Driver.Present\":3.000,\"Driver.Present.inflight_wait\":2.000,\"Driver.Completion\":1.000},"
-        "\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
+        "\"owned_draw_counts\":{},\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
     Check(line == expected, "summary line changed");
+    auto unboundSummary = summary;
+    unboundSummary.ownedDrawUnbound = 3;
+    const auto unboundLine = TraceFormat::Summary(unboundSummary, threads, presents);
+    Check(unboundLine.find("\"owned_draw_counts\":{\"OwnedDraw.unbound\":3},\"trace_dropped\":true") != std::string::npos, "unbound draw counts were not marked as incomplete");
+    auto counted = threads;
+    counted[0].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 5});
+    counted[1].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 3});
+    counted[1].totals.push_back({"OwnedDraw.reused", nullptr, {}, 2});
+    counted[0].totals.push_back({"OwnedDraw.arm_blocks_requested", nullptr, {}, 17});
+    const auto countedLine = TraceFormat::Summary(summary, counted, presents);
+    Check(countedLine.find("\"owned_draw_counts\":{\"OwnedDraw.arm_attempt\":8,\"OwnedDraw.arm_blocks_requested\":17,\"OwnedDraw.reused\":2}") != std::string::npos, "named owned counts were not summed across threads");
+    const std::vector<TraceThread::Total> before{{"OwnedDraw.arm_attempt", nullptr, {}, 2}};
+    const std::vector<TraceThread::Total> after{{"OwnedDraw.arm_attempt", nullptr, {}, 5}};
+    const auto countDelta = TraceFormat::Since(after, before);
+    Check(countDelta.size() == 1 && countDelta[0].count == 3, "interval owned count was not reduced by its previous total");
     auto dropped = threads;
     dropped[1].dropped = true;
     Check(TraceFormat::Summary(summary, dropped, presents).find("\"trace_dropped\":true") != std::string::npos, "a dropped thread did not mark the summary");
@@ -443,7 +475,7 @@ void IntervalSummaryFields() {
         "\"frame_ms\":{\"p50\":24.000,\"p90\":24.000,\"p99\":24.000,\"max\":24.000},\"gpu_busy_ms_per_present\":10.000,"
         "\"worker_busy_pct\":{\"queue worker 0x0\":30.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000},"
-        "\"trace_dropped\":false,\"trace\":\"\"}\n";
+        "\"owned_draw_counts\":{},\"trace_dropped\":false,\"trace\":\"\"}\n";
     Check(line == expected, "interval summary line changed");
 }
 
@@ -746,6 +778,35 @@ void GzipFile() {
     Check(word(bytes.size() - 4) == text.size(), "the size is wrong");
 }
 
+void Directory() {
+#ifdef _WIN32
+    const auto* previous = _wgetenv(L"APS5_TRACE_DIR");
+    struct Restore {
+        std::optional<std::wstring> value;
+        ~Restore() { _wputenv_s(L"APS5_TRACE_DIR", value ? value->c_str() : L""); }
+    } restore{previous != nullptr ? std::optional<std::wstring>(previous) : std::nullopt};
+    Check(_wputenv_s(L"APS5_TRACE_DIR", L"") == 0, "clearing the trace directory failed");
+    Check(AgcDriver::TraceFile::Directory() == std::filesystem::path(L"."), "the default trace directory changed");
+    Check(_wputenv_s(L"APS5_TRACE_DIR", L"trace-output") == 0, "setting an ASCII trace directory failed");
+    Check(AgcDriver::TraceFile::Directory() == std::filesystem::path(L"trace-output"), "the ASCII trace directory changed");
+    const auto expected = std::filesystem::temp_directory_path() / (L"aps5-trace-\u2122-\u65e5\u672c\u8a9e-" + std::to_wstring(Clock::now().time_since_epoch().count()));
+    Check(_wputenv_s(L"APS5_TRACE_DIR", expected.c_str()) == 0, "setting a Unicode trace directory failed");
+    const auto directory = AgcDriver::TraceFile::Directory();
+    Check(directory == expected, "the Unicode trace directory was not preserved");
+    std::filesystem::create_directories(directory);
+    struct Remove {
+        std::filesystem::path path;
+        ~Remove() { std::error_code error; std::filesystem::remove_all(path, error); }
+    } remove{directory};
+    AgcDriver::TraceFile::AppendLine(directory / "aps5-summary.jsonl", "{\"presents\":1}\n");
+    AgcDriver::TraceFile::WriteGzip(directory / "aps5-trace.json.gz", "{\"traceEvents\":[]}");
+    std::ifstream summary(expected / "aps5-summary.jsonl", std::ios::binary);
+    const std::string written((std::istreambuf_iterator<char>(summary)), std::istreambuf_iterator<char>());
+    Check(written == "{\"presents\":1}\n", "the summary was not written in the Unicode directory");
+    Check(std::filesystem::file_size(expected / "aps5-trace.json.gz") > 18, "the trace was not written in the Unicode directory");
+#endif
+}
+
 void AppendLines() {
     const auto path = std::filesystem::temp_directory_path() / ("aps5-summary-test-" + std::to_string(Clock::now().time_since_epoch().count()) + ".jsonl");
     AgcDriver::TraceFile::AppendLine(path, "{\"presents\":1}\n");
@@ -761,6 +822,7 @@ void AppendLines() {
 
 int main() {
     try {
+        Directory();
         WindowByFrames();
         WindowBySeconds();
         WindowRejects();

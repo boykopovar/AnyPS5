@@ -41,10 +41,12 @@ private:
         std::uint32_t outputSequence = 0;
         PadOutputState outputState{};
         bool outputPending = false;
+        bool rumbleLive = false;
         std::chrono::steady_clock::time_point nextRumbleRefresh{};
         LightBarPacer lightBar;
         TriggerEffectCache triggerEffect;
         std::uint32_t heldThroughCapture = 0;
+        SDL_hid_device* statusHid = nullptr;
         Pad::IdentifyScheduler identify;
         AgcDriver::PadKind kind = AgcDriver::PadKind::Unknown;
         std::string name;
@@ -61,6 +63,9 @@ private:
     PadInputState handOff(int slot, PadInputState state);
     void applyOutput();
     void enableSensors(int slot);
+    void openStatus(int slot);
+    void pollStatus(int slot);
+    void closeStatus(int slot);
     AgcDriver::PadStatusSnapshot statusSnapshot() const;
     void reportStatus();
     void updatePort0();

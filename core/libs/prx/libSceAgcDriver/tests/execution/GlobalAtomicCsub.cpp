@@ -218,6 +218,12 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveS
     }
 }
 
+void CheckNoReturnAccepted(const AgcDriver::VulkanDevice& device, GuestBlock& guest) {
+    const auto userData = UserData(guest.Data());
+    const auto recompiled = Recompile(device, NoReturnCode, 32, userData);
+    Require(!recompiled.spirv.empty(), "global atomic csub: expected valid SPIR-V for instruction without glc");
+}
+
 void CheckRejected(const AgcDriver::VulkanDevice& device, GuestBlock& guest, std::span<const std::uint32_t> code, const std::string& reason) {
     const auto userData = UserData(guest.Data());
     std::string failure;
@@ -238,7 +244,7 @@ int main() {
         GuestBlock guest;
         Run(*device, guest, 32);
         Run(*device, guest, 64);
-        CheckRejected(*device, guest, NoReturnCode, "global_atomic_csub without glc is not supported");
+        CheckNoReturnAccepted(*device, guest);
         CheckRejected(*device, guest, FlatSegmentCode, "global_atomic_csub is available only in the global segment");
         std::puts("global atomic csub tests passed");
         return 0;

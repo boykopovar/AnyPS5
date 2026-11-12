@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -223,6 +224,9 @@ int main() {
     Require(AllEqual(requirement.data() + 12, requirement.data() + 32, 0) && AllEqual(requirement.data() + 32, requirement.data() + 40, 0xAA), "query writes 32 bytes");
     Require(sceVrTracker2QueryMemory(nullptr, reinterpret_cast<VrTracker2MemoryRequirement*>(requirement.data())) == InvalidArgument, "query null parameter");
     Require(sceVrTracker2QueryMemory(reinterpret_cast<const VrTracker2MemoryParameter*>(parameter.data()), nullptr) == InvalidArgument, "query null requirement");
+    errno = 71;
+    Require(sceVrTracker2QueryMemory(reinterpret_cast<const VrTracker2MemoryParameter*>(parameter.data()), reinterpret_cast<VrTracker2MemoryRequirement*>(0x10)) == InvalidArgument, "query unwritable requirement");
+    Require(errno == 71, "errno modified by unwritable requirement check");
     for (std::size_t offset = 4; offset < 32; ++offset) {
         auto rejected = parameter;
         rejected[offset] = 1;
@@ -256,6 +260,13 @@ int main() {
     }
     parameter[0] = 0x21;
     Require(sceVrTracker2QueryMemory(reinterpret_cast<const VrTracker2MemoryParameter*>(parameter.data()), reinterpret_cast<VrTracker2MemoryRequirement*>(requirement.data())) == InvalidArgument, "query size");
+
+    auto rawMeshReq = Filled();
+    Require(sceVrTracker2GetRawCameraMeshSize(nullptr, 0) == NotInitialized, "raw camera mesh size null");
+    Require(sceVrTracker2GetRawCameraMeshSize(reinterpret_cast<VrTracker2MeshRequirement*>(rawMeshReq.data()), 0) == NotInitialized, "raw camera mesh size return");
+    Require(AllEqual(rawMeshReq.data(), rawMeshReq.data() + rawMeshReq.size(), 0xAA), "raw camera mesh size untouched");
+    Require(sceVrTracker2GetRawCameraMeshSize(reinterpret_cast<VrTracker2MeshRequirement*>(rawMeshReq.data()), 1) == NotInitialized, "raw camera mesh size format");
+    Require(AllEqual(rawMeshReq.data(), rawMeshReq.data() + sizeof(VrTracker2MeshRequirement), 0xAA), "raw camera mesh size preserves struct");
 
     std::vector<std::uint8_t> memory(TrackerMemory + WorkMemoryTail);
     CheckInitializeValidation(memory);

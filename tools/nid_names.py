@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import shutil
 import hashlib
 import json
 import os
@@ -50,6 +51,9 @@ def read_db(path):
     return db
 
 
+DOWNLOAD_TIMEOUT = 30
+
+
 def load_db(path):
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -57,7 +61,11 @@ def load_db(path):
         with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".nid-db-", suffix=".tmp", delete=False) as download:
             temporary = Path(download.name)
         try:
-            urllib.request.urlretrieve(DB_URL, str(temporary))
+            with urllib.request.urlopen(DB_URL, timeout=DOWNLOAD_TIMEOUT) as response, temporary.open("wb") as target:
+                shutil.copyfileobj(response, target)
+                expected = response.headers.get("Content-Length")
+                if expected is not None and target.tell() < int(expected):
+                    raise OSError("incomplete NID database download")
             db = read_db(temporary)
             if not any(re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) for nid in db):
                 raise ValueError(f"{path}: downloaded database contains no valid NID records")
@@ -75,8 +83,10 @@ def source_files(root):
 
 
 def source_aliases(text):
-    tokens = [match.group() for match in CPP_TOKEN.finditer(text.replace("\\\n", "").replace("\\\r\n", ""))
-              if match.group("comment") is None]
+    text = text.replace("\\\n", "").replace("\\\r\n", "")
+    if "APS5_EXPORT" not in text:
+        return
+    tokens = [match.group() for match in CPP_TOKEN.finditer(text) if match.group("comment") is None]
     for index, token in enumerate(tokens):
         if token != "APS5_EXPORT" or index + 5 >= len(tokens):
             continue
@@ -93,12 +103,17 @@ def source_definitions(text):
     def mask(match):
         return match.group() if match.group("code") is not None else re.sub(r"[^\n]", " ", match.group())
 
-    return DEFINITION.finditer(CPP_TOKEN.sub(mask, text.replace("\\\n", "").replace("\\\r\n", "")))
+    text = text.replace("\\\n", "").replace("\\\r\n", "")
+    if "APS5_VABI" not in text:
+        return iter(())
+    return DEFINITION.finditer(CPP_TOKEN.sub(mask, text))
 
 
 def source_assembly_definitions(text):
-    tokens = [match for match in CPP_TOKEN.finditer(text.replace("\\\n", "").replace("\\\r\n", ""))
-              if match.group("comment") is None]
+    text = text.replace("\\\n", "").replace("\\\r\n", "")
+    if not any(macro in text for macro in ASM_FUNCTION_MACROS):
+        return
+    tokens = [match for match in CPP_TOKEN.finditer(text) if match.group("comment") is None]
     for index, token in enumerate(tokens):
         if token.group("code") is None or token.group() not in ASM_FUNCTION_MACROS:
             continue
@@ -314,7 +329,7 @@ def symbol_file(path):
         text = sys.stdin.buffer.read().decode("utf-8-sig") if hasattr(sys.stdin, "buffer") else sys.stdin.read().removeprefix("\ufeff")
     else:
         text = Path(path).read_text(encoding="utf-8-sig")
-    return [line for raw in text.split("\n") if (line := raw.removesuffix("\r"))]
+    return [line for raw in text.split("\n") if (line := raw.removesuffix("\r")).strip()]
 
 
 def main(argv=None):
