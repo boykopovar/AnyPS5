@@ -3,6 +3,7 @@
 
 #include "prx/libc/include/General.hpp"
 #include <cstddef>
+#include <limits>
 #include <type_traits>
 
 template <typename T>
@@ -21,7 +22,8 @@ public:
     }
 
     bool CopyIn(Value* values, std::size_t count) const {
-        return address != nullptr && count != 0 && GuestCopyIn_nid_no_patch(values, address, count * sizeof(Value));
+        return address != nullptr && count != 0 && count <= std::numeric_limits<std::size_t>::max() / sizeof(Value) &&
+               GuestCopyIn_nid_no_patch(values, address, count * sizeof(Value));
     }
 
     bool CopyOut(const Value& value) const {
@@ -31,7 +33,8 @@ public:
 
     bool CopyOut(const Value* values, std::size_t count) const {
         static_assert(!std::is_const_v<T>, "a const guest pointer cannot be written");
-        return address != nullptr && count != 0 && GuestCopyOut_nid_no_patch(const_cast<void*>(address), values, count * sizeof(Value));
+        return address != nullptr && count != 0 && count <= std::numeric_limits<std::size_t>::max() / sizeof(Value) &&
+               GuestCopyOut_nid_no_patch(const_cast<void*>(address), values, count * sizeof(Value));
     }
 
 private:

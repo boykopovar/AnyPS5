@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 namespace {
 
@@ -61,6 +62,8 @@ void CheckFaults() {
     Require(!empty.CopyIn(value), "an empty guest pointer was copied in");
     Require(empty.Address() == nullptr, "an empty guest pointer has an address");
     Require(!GuestBytes().CopyOut(&value, sizeof(value)), "an empty guest byte range was copied out");
+    Require(!GuestPtr<Payload>(&value).CopyIn(&value, std::numeric_limits<std::size_t>::max()), "an overflowing guest array was copied in");
+    Require(!GuestPtr<Payload>(&value).CopyOut(&value, std::numeric_limits<std::size_t>::max()), "an overflowing guest array was copied out");
 }
 
 }  // namespace
