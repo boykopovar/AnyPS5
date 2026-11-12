@@ -215,6 +215,10 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         Io::WriteU32(symbols, index * 24, static_cast<std::uint32_t>(strings.size()));
         Io::AppendString(strings, name + GuestSymbolSuffix);
     };
+    const auto bindingName = [&](const std::string& name, const std::size_t provider) {
+        if (windows || macos || !sharedExports.contains(name)) return name;
+        return name + "#module" + std::to_string(provider);
+    };
     const auto declaresHost = [&](const std::string& library) { return !windows && !library.empty() && findGuest(library) == guestNames.end(); };
     if (dynamic.DynSymData.size() % 24 != 0) throw Domain::RelinkerException("Invalid executable symbol table");
     std::vector<std::string> executableModules(dynamic.DynSymData.size() / 24);
@@ -253,16 +257,31 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 if (++needed > 1) break;
             }
         }
-        if (needed != 1) rejectSharedImport(base, Io::Utf8Path(inputPath));
-        const auto found = exports.find(name);
         const auto declared = windows || executableModules[offset / 24].empty() ? guestNames.end() : findGuest(executableModules[offset / 24]);
-        if (!windows && found != exports.end() && (declared == guestNames.end() || std::any_of(found->second.begin(), found->second.end(), [&](const auto& candidate) { return candidate.Provider == declared->second; }))) {
-            rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, name);
-            if (executableReferences[offset / 24] && found->second.size() == 1) executableProviders.insert(found->second.front().Provider);
+        const auto found = exports.find(name);
+        const GuestExport* declaredProvider = nullptr;
+        if (declared != guestNames.end() && found != exports.end()) {
+            const auto candidate = std::find_if(found->second.begin(), found->second.end(), [&](const auto& entry) { return entry.Provider == declared->second; });
+            if (candidate != found->second.end()) declaredProvider = &*candidate;
+        }
+        if (needed != 1 && (macos || declaredProvider == nullptr)) rejectSharedImport(base, Io::Utf8Path(inputPath));
+        if (!windows && found != exports.end() && (declared == guestNames.end() || declaredProvider != nullptr)) {
+            if (!macos && declaredProvider != nullptr) {
+                const auto type = dynamic.DynSymData[offset + 4] & 15;
+                const auto exportType = declaredProvider->Type;
+                if (type != 0 && type != exportType && (exportType != 0 || type == 6)) throw Domain::RelinkerException("Guest import/export type mismatch: " + name);
+                if (declaredProvider->Type == 6 && type == 0 && executableReferences[offset / 24]) throw Domain::RelinkerException("Non-TLS relocation against guest TLS export: " + name);
+            }
+            rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, declaredProvider != nullptr ? bindingName(name, declared->second) : name);
+            if (executableReferences[offset / 24]) {
+                if (!macos && declaredProvider != nullptr) executableProviders.insert(declared->second);
+                else if (found->second.size() == 1) executableProviders.insert(found->second.front().Provider);
+            }
         }
     }
     std::vector<std::set<std::size_t>> dependencies(images.size());
     std::vector<std::set<std::size_t>> systemImports(images.size());
+    std::vector<std::map<std::size_t, std::string>> importBindings(images.size());
     for (auto& image : images) {
         image.UsePlatformTlsResolver = !windows ? !exports.contains("vNe1w4diLCs") : std::none_of(image.Symbols.begin(), image.Symbols.end(), [](const auto& symbol) {
             return symbol.Name == "vNe1w4diLCs" && symbol.Section != 0 && symbol.Section != AbsoluteSection && (symbol.Info >> 4) != 0 && symbol.Visibility != 1 && symbol.Visibility != 2;
@@ -304,6 +323,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 if ((symbol.Info & 15) != 0 && (symbol.Info & 15) != provider->Type) throw Domain::RelinkerException("Guest import/export type mismatch: " + symbol.Name);
                 if (provider->Type == 6 && (symbol.Info & 15) == 0 && referencedSymbols.contains(symbolIndex)) throw Domain::RelinkerException("Non-TLS relocation against guest TLS export: " + symbol.Name);
                 if (provider->Provider != index && referencedSymbols.contains(symbolIndex)) dependencies[index].insert(provider->Provider);
+                if (!windows && !macos && declared != guestNames.end() && sharedExports.contains(symbol.Name))
+                    importBindings[index].emplace(symbolIndex, bindingName(symbol.Name, provider->Provider));
             } else if (windows && (symbol.Info & 15) == 6) throw Domain::RelinkerException("Windows guest TLS import requires a guest TLS export: " + symbol.Name);
             if (provider == nullptr) systemImports[index].insert(symbolIndex);
         }
@@ -351,7 +372,13 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             for (std::size_t index = 1; index < image.Symbols.size(); ++index) {
                 const auto& symbol = image.Symbols[index];
                 const bool exported = symbol.Section != 0 && (symbol.Info >> 4) != 0 && symbol.Visibility != 1 && symbol.Visibility != 2;
-                if (((symbol.Section == 0 && !declaresHost(symbol.Library) && !systemImports[module].contains(index)) || exported) && exports.contains(symbol.Name)) rename(image.Dynamic.DynSymData, image.Dynamic.DynStrData, index, symbol.Name);
+                if (((symbol.Section == 0 && !declaresHost(symbol.Library) && !systemImports[module].contains(index)) || exported) && exports.contains(symbol.Name)) {
+                    const auto bound = importBindings[module].find(index);
+                    rename(image.Dynamic.DynSymData, image.Dynamic.DynStrData, index, bound == importBindings[module].end() ? symbol.Name : bound->second);
+                }
+                const auto shared = sharedExports.find(symbol.Name);
+                if (!macos && exported && shared != sharedExports.end() && shared->second.contains(module))
+                    image.BindingAliases.emplace_back(index, symbol.Name + "#module" + std::to_string(module) + GuestSymbolSuffix);
             }
             if (!macos) BindNamedImportsByNid(image, executableExports);
         }

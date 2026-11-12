@@ -10,6 +10,18 @@ import urllib.parse
 
 identity_requests = {}
 identity_targets = []
+legacy_dates = {
+    "date-rfc850": ("Wednesday, 01-Jan-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-asctime": ("Wed Jan  1 00:00:00 2020", "Wed, 01 Jan 2020 00:02:00 GMT", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-legacy-rfc850-date": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wednesday, 01-Jan-20 00:02:00 GMT", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-legacy-asctime-date": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wed Jan  1 00:02:00 2020", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-legacy-rfc850-both": ("Wednesday, 01-Jan-20 00:00:00 GMT", "Wednesday, 01-Jan-20 00:02:00 GMT", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-legacy-asctime-both": ("Wed Jan  1 00:00:00 2020", "Wed Jan  1 00:02:00 2020", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-legacy-asctime-two-digit": ("Wed Jan 01 00:00:00 2020", "Wed Jan 01 00:02:00 2020", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-legacy-century": ("Friday, 31-Dec-99 00:00:00 GMT", "Fri, 31 Dec 1999 00:02:00 GMT", "Fri, 31 Dec 1999 00:00:00 GMT"),
+    "date-legacy-200-match": ("Wednesday, 01-Jan-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-legacy-206-omit": ("Wednesday, 01-Jan-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT", "Wed, 01 Jan 2020 00:00:00 GMT"),
+}
 date_snapshots = {
     "date-short-year": ("Wed, 01 Jan 20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
     "date-short-day": ("Wed, 1 Jan 2020 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
@@ -22,14 +34,23 @@ date_snapshots = {
     "date-short-response-time": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wed, 01 Jan 2020 0:02:00 GMT"),
     "date-wrong-response-weekday": ("Wed, 01 Jan 2020 00:00:00 GMT", "Thu, 01 Jan 2020 00:02:00 GMT"),
     "date-extra-response-space": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wed,  01 Jan 2020 00:02:00 GMT"),
-    "date-rfc850": ("Wednesday, 01-Jan-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
-    "date-asctime": ("Wed Jan  1 00:00:00 2020", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-rfc850-weekday": ("Thursday, 01-Jan-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-asctime-weekday": ("Thu Jan  1 00:00:00 2020", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-rfc850-month": ("Wednesday, 01-Jax-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-asctime-month": ("Wed Jax  1 00:00:00 2020", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-rfc850-recent": ("Wednesday, 01-Jan-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:00:59 GMT"),
+    "date-legacy-asctime-recent": ("Wed Jan  1 00:00:00 2020", "Wed, 01 Jan 2020 00:00:59 GMT"),
+    "date-legacy-rfc850-short-year": ("Wednesday, 01-Jan-2 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-asctime-short-year": ("Wed Jan  1 00:00:00 20", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-rfc850-time": ("Wednesday, 01-Jan-20 24:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-asctime-day": ("Mon Feb 31 00:00:00 2020", "Wed, 01 Jan 2020 00:02:00 GMT"),
     "date-trailer-only": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wed, 01 Jan 2020 00:00:59 GMT"),
     "weak-trailer-date": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
 }
 date_validators = {
     "date-leap-second": "Sat, 31 Dec 2016 23:59:60 GMT",
     "date-minimum-year": "Mon, 01 Jan 1900 00:00:00 GMT",
+    **{name: fields[2] for name, fields in legacy_dates.items()},
 }
 trailer_full_responses = {"etag-200-trailer", "etag-200-mixed-trailer"}
 trailer_responses = {
@@ -55,6 +76,7 @@ invalid_responses = {
     "etag-200-trailer-changed", "etag-200-trailer-weak", "etag-200-trailer-conflict",
     "etag-206-trailer-conflict", "etag-206-trailer-changed", "etag-200-trailer-duplicate", "etag-200-trailer-malformed",
     "etag-200-trailer-name", "date-200-trailer-only",
+    "date-legacy-206-changed",
 }
 requests = []
 targets = []
@@ -295,6 +317,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             date = "Sun, 01 Jan 2017 00:02:00 GMT"
         if name in date_snapshots:
             modified, date = date_snapshots[name]
+        elif name in legacy_dates:
+            modified, date = legacy_dates[name][:2]
         if name in fallbacks:
             etag = {
                 "weak": 'W/"identity-v1"', "weak-date": 'W/"identity-v1"', "invalid-tag": "identity-v1",
@@ -318,6 +342,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 etag = 'W/"identity-v1"'
             elif name.endswith("invalid"):
                 etag = '"identity v1"'
+        if name == "date-legacy-200-match" and not initial:
+            modified = "Wed Jan  1 00:00:00 2020"
+        elif name == "date-legacy-206-changed":
+            modified = "Wed Jan  1 00:00:01 2020" if failed else "Wednesday, 01-Jan-20 00:00:00 GMT"
         trailers = []
         trailer_response = name == "etag-initial-trailer" or not initial and name in trailer_responses and (name in validated_responses or failed)
         if name == "etag-initial-trailer" or not initial and name in {"etag-206-trailer", "etag-200-trailer"}:

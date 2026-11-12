@@ -57,7 +57,7 @@ def check_formats(relinker, root):
         command = [*options, "--skip-sce-module", "--registry", source, output]
         expected = [output, output.with_suffix(".registry.json"), output.with_suffix(".needed.json")]
         if target == "windows":
-            expected.append(case / "windows-diagnostics-imports.txt")
+            expected.append(output.parent / "windows-diagnostics-imports.txt")
         result = run(relinker, case, command)
         check_plan(result, expected)
         assert "Converted executables: 1" in result.stdout and "Converted modules: 0" in result.stdout
@@ -68,6 +68,7 @@ def check_formats(relinker, root):
         run(relinker, case, command, dry=False)
         magic = b"MZ" if target == "windows" else b"\xcf\xfa\xed\xfe" if target == "macos" else b"\x7fELF"
         assert output.read_bytes().startswith(magic)
+        assert not (case / "windows-diagnostics-imports.txt").exists()
         run(relinker, case, command)
         assert not list(case.rglob(".anyps5-output-identity-*"))
 

@@ -170,6 +170,11 @@ int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t s
 
 }
 
+int SendBufferSize(SocketOptionState& state, int family, int type) {
+    EnsureBuffers(state, family, type);
+    return state.sendBuffer;
+}
+
 int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, const void* value, std::uint32_t length) {
     const auto handle = static_cast<NativeHandle>(native);
     if (option == GuestAcceptFilter) {
