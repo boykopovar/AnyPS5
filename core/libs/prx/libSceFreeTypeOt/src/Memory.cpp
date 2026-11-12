@@ -1,4 +1,5 @@
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -100,5 +101,21 @@ std::int32_t APS5_VABI ft_mem_strcpyn_nid_postfix(char* destination, const char*
     *destination = 0;
     return *source != 0;
 }
+
+std::int32_t APS5_VABI sceFreeTypeOtRealloc_nid_no_patch(FreeType::GuestMemoryRec* memory, std::int64_t current, std::int64_t size, void** block) {
+    if (!memory || !block) NotImplemented_nid_no_patch(__func__);
+    std::int32_t error = 0;
+    *block = ft_mem_realloc_nid_postfix(memory, 1, current, size, *block, &error);
+    return error;
+}
+APS5_EXPORT("HVSaZbxYi2s", sceFreeTypeOtRealloc_nid_no_patch);
+
+std::int32_t APS5_VABI sceFreeTypeOtQRealloc_nid_no_patch(FreeType::GuestMemoryRec* memory, std::int64_t current, std::int64_t size, void** block) {
+    if (!memory || !block) NotImplemented_nid_no_patch(__func__);
+    std::int32_t error = 0;
+    *block = ft_mem_qrealloc_nid_postfix(memory, 1, current, size, *block, &error);
+    return error;
+}
+APS5_EXPORT("KVbmKCGGowg", sceFreeTypeOtQRealloc_nid_no_patch);
 
 }

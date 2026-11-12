@@ -197,6 +197,61 @@ void ClearedReallocation() {
     ft_mem_free_nid_postfix(&recorder.memory, shrunk);
 }
 
+void LegacyReallocation() {
+    Recorder recorder;
+    Reset(recorder);
+    void* block = nullptr;
+    Require(sceFreeTypeOtRealloc_nid_no_patch(&recorder.memory, 0, 12, &block) == 0 && block, "FT_Realloc from an empty block allocates");
+    Require(recorder.allocs == 1 && recorder.lastSize == 12 && recorder.reallocs == 0 && Filled(block, 12, 0), "FT_Realloc from an empty block clears the allocation");
+    std::memset(block, 0x33, 12);
+    void* const first = block;
+    Require(sceFreeTypeOtRealloc_nid_no_patch(&recorder.memory, 12, 20, &block) == 0 && block, "FT_Realloc grows a live block");
+    Require(recorder.reallocs == 1 && recorder.lastCurrent == 12 && recorder.lastNew == 20 && recorder.lastBlock == first, "FT_Realloc passes byte sizes and the old block to realloc");
+    Require(Filled(block, 12, 0x33) && Filled(static_cast<char*>(block) + 12, 8, 0), "FT_Realloc keeps the old bytes and clears the grown tail");
+
+    void* const kept = block;
+    const int callbacks = recorder.allocs + recorder.frees + recorder.reallocs;
+    Require(sceFreeTypeOtRealloc_nid_no_patch(&recorder.memory, -1, 8, &block) == 0x06 && block == kept, "FT_Realloc of a negative current size is Invalid_Argument and keeps the block");
+    Require(sceFreeTypeOtRealloc_nid_no_patch(&recorder.memory, 20, -1, &block) == 0x06 && block == kept, "FT_Realloc of a negative size is Invalid_Argument and keeps the block");
+    Require(sceFreeTypeOtRealloc_nid_no_patch(&recorder.memory, 20, 0x80000000ll, &block) == 0x0A && block == kept, "FT_Realloc above FT_INT_MAX is Array_Too_Large and keeps the block");
+    Require(recorder.allocs + recorder.frees + recorder.reallocs == callbacks, "rejected FT_Realloc calls make no memory callback");
+    recorder.fail = true;
+    Require(sceFreeTypeOtRealloc_nid_no_patch(&recorder.memory, 20, 40, &block) == 0x40 && block == kept, "FT_Realloc keeps the block when realloc fails");
+    Require(recorder.lastNew == 40 && Filled(block, 12, 0x33), "a failed FT_Realloc leaves the block unchanged");
+    recorder.fail = false;
+
+    Require(sceFreeTypeOtRealloc_nid_no_patch(&recorder.memory, 20, 0, &block) == 0 && !block, "FT_Realloc to size 0 releases the block");
+    Require(recorder.frees == 1 && recorder.lastBlock == kept, "FT_Realloc to size 0 passes the block to free");
+    Require(sceFreeTypeOtRealloc_nid_no_patch(&recorder.memory, 0, 0, &block) == 0 && !block && recorder.frees == 1, "FT_Realloc of an empty block to size 0 makes no callback");
+
+    Reset(recorder);
+    recorder.fail = true;
+    block = nullptr;
+    Require(sceFreeTypeOtRealloc_nid_no_patch(&recorder.memory, 0, 0x7FFFFFFF, &block) == 0x40 && !block, "FT_Realloc allocates up to FT_INT_MAX");
+    Require(recorder.lastSize == 0x7FFFFFFF, "the boundary FT_Realloc asks for the whole size");
+}
+
+void LegacyQuickReallocation() {
+    Recorder recorder;
+    Reset(recorder);
+    void* block = nullptr;
+    Require(sceFreeTypeOtQRealloc_nid_no_patch(&recorder.memory, 0, 8, &block) == 0 && block, "FT_QRealloc from an empty block allocates");
+    Require(recorder.allocs == 1 && recorder.lastSize == 8 && Filled(block, 8, 0), "FT_QRealloc from an empty block clears it, as ft_mem_alloc does");
+    std::memset(block, 0x44, 8);
+    void* const first = block;
+    Require(sceFreeTypeOtQRealloc_nid_no_patch(&recorder.memory, 8, 24, &block) == 0 && block, "FT_QRealloc grows a live block");
+    Require(recorder.reallocs == 1 && recorder.lastCurrent == 8 && recorder.lastNew == 24 && recorder.lastBlock == first, "FT_QRealloc passes byte sizes and the old block to realloc");
+    Require(Filled(block, 8, 0x44) && Filled(static_cast<char*>(block) + 8, 16, 0xAA), "FT_QRealloc does not clear the grown tail");
+
+    void* const kept = block;
+    Require(sceFreeTypeOtQRealloc_nid_no_patch(&recorder.memory, 24, -2, &block) == 0x06 && block == kept, "FT_QRealloc of a negative size is Invalid_Argument");
+    Require(sceFreeTypeOtQRealloc_nid_no_patch(&recorder.memory, 24, 0x80000000ll, &block) == 0x0A && block == kept, "FT_QRealloc above FT_INT_MAX is Array_Too_Large");
+    recorder.fail = true;
+    Require(sceFreeTypeOtQRealloc_nid_no_patch(&recorder.memory, 24, 48, &block) == 0x40 && block == kept, "FT_QRealloc keeps the block when realloc fails");
+    recorder.fail = false;
+    Require(sceFreeTypeOtQRealloc_nid_no_patch(&recorder.memory, 24, 0, &block) == 0 && !block && recorder.frees == 1 && recorder.lastBlock == kept, "FT_QRealloc to size 0 releases the block");
+}
+
 void Duplication() {
     Recorder recorder;
     Reset(recorder);
@@ -251,6 +306,8 @@ int main() {
     ClearedAllocation();
     QuickReallocation();
     ClearedReallocation();
+    LegacyReallocation();
+    LegacyQuickReallocation();
     Duplication();
     BoundedCopy();
     std::puts("Guest FreeType Ot memory tests passed");
