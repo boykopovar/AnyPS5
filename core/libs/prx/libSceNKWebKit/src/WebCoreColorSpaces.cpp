@@ -1,6 +1,11 @@
 /*
  * Copyright (C) 2017-2020 Apple Inc. All rights reserved.
  *
+ * Derived from Source/WebCore/platform/graphics/ColorConversion.cpp@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/ColorSerialization.cpp@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/ColorTypes.h@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/ColorMatrix.h@c55364d53f971f63a709976f168d932d558b8909
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
