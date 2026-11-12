@@ -685,6 +685,7 @@ public:
         bool firstWorker = true;
         std::map<std::string, Clock::duration> phases;
         std::map<std::string, std::uint64_t> ownedCounts;
+        std::map<std::string, std::uint64_t> graphicsCounts;
         bool dropped = summary.ownedDrawUnbound != 0;
         if (summary.ownedDrawUnbound != 0) ownedCounts["OwnedDraw.unbound"] = summary.ownedDrawUnbound;
         struct DroppedThread {
@@ -707,7 +708,8 @@ public:
             for (const auto& total : thread.totals) {
                 const std::string_view scope = total.scope;
                 if (total.stage == nullptr && std::find(WorkerBusyScopes.begin(), WorkerBusyScopes.end(), scope) != WorkerBusyScopes.end()) busy += total.length;
-                if (scope.starts_with("OwnedDraw.") && total.stage == nullptr) ownedCounts[std::string(scope)] += total.count;
+                if (scope.starts_with("Graphics.") && total.stage == nullptr) graphicsCounts[std::string(scope)] += total.count;
+                else if (scope.starts_with("OwnedDraw.") && total.stage == nullptr) ownedCounts[std::string(scope)] += total.count;
                 else if (scope != WorkerWaitScope) phases[Name(total.scope, total.stage)] += total.length;
             }
             if (!thread.name.starts_with(WorkerPrefix)) continue;
@@ -738,6 +740,15 @@ public:
         for (const auto& [name, value] : ownedCounts) {
             if (!firstCount) output += ',';
             firstCount = false;
+            AppendString(output, name);
+            output += ':' + std::to_string(value);
+        }
+        output += '}';
+        output += ",\"graphics_track\":{";
+        bool firstGraphics = true;
+        for (const auto& [name, value] : graphicsCounts) {
+            if (!firstGraphics) output += ',';
+            firstGraphics = false;
             AppendString(output, name);
             output += ':' + std::to_string(value);
         }
@@ -909,6 +920,11 @@ public:
 
     static void Count(const char* scope) {
         if (Recording()) AgcDriverTraceCount_nid_postfix(scope);
+    }
+
+    static void Amount(const char* scope, std::uint64_t amount) {
+        if (amount == 0 || !Recording()) return;
+        if (auto* thread = Thread()) thread->Count(scope, amount);
     }
 
     static void CountOwnedDraw(const char* scope, std::uint64_t amount = 1);
