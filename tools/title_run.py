@@ -234,7 +234,7 @@ def render_markdown(summary, previous=None):
     return "\n".join(lines + [""])
 
 
-def discover(directories):
+def discover(directories, wanted=()):
     found = {}
     for directory in directories:
         for param in sorted(Path(directory).glob("**/sce_sys/param.json")):
@@ -247,6 +247,8 @@ def discover(directories):
                 raise ValueError(f"{param}: no titleId")
             if not TITLE_ID.fullmatch(title_id):
                 raise ValueError(f"{param}: titleId {title_id!r} is not a title ID")
+            if wanted and title_id not in wanted:
+                continue
             if title_id in found:
                 raise ValueError(f"{title_id} found more than once: {found[title_id]['package']} and {package}")
             localized = data.get("localizedParameters", {})
@@ -622,7 +624,7 @@ def main(argv=None):
     previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
     titles = load_titles(args.titles)
-    found = discover(args.games)
+    found = discover(args.games, args.ids)
     ids = args.ids or sorted(found)
     missing = [title_id for title_id in ids if title_id not in found]
     if missing:
