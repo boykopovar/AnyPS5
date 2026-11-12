@@ -28,6 +28,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -184,6 +185,82 @@ bool WriteCallCounts(const std::filesystem::path& path) {
     std::stable_sort(called.begin(), called.end(), [](const auto& left, const auto& right) { return left.first > right.first; });
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     for (const auto& [calls, record] : called) file << calls << ' ' << record->library << ' ' << record->name << '\n';
+    file.flush();
+    return static_cast<bool>(file);
+}
+
+std::string HexValue(const std::uint64_t value) {
+    char buffer[16];
+    const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value, 16);
+    return "0x" + std::string(buffer, result.ptr);
+}
+
+void WriteJsonString(std::ostream& output, std::string_view value) {
+    constexpr char digits[] = "0123456789abcdef";
+    output.put('"');
+    for (const unsigned char character : value) {
+        if (character == '"' || character == '\\') {
+            output.put('\\');
+            output.put(static_cast<char>(character));
+        } else if (character < 0x20) {
+            output << "\\u00" << digits[character >> 4] << digits[character & 0xf];
+        } else {
+            output.put(static_cast<char>(character));
+        }
+    }
+    output.put('"');
+}
+
+bool WriteCallGraph(const std::filesystem::path& path) {
+    const auto* sites = g_callSites.load(std::memory_order_acquire);
+    if (sites == nullptr) return false;
+    struct Entry {
+        std::uint64_t calls;
+        const ImportRecord* imported;
+        std::uint64_t returnAddress;
+        const CallSiteRecord* site;
+    };
+    std::vector<Entry> entries;
+    entries.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(g_callSiteCount.load(std::memory_order_acquire), CallSiteCapacity)));
+    for (std::size_t index = 0; index < CallSiteCapacity; ++index) {
+        const auto& site = sites[index];
+        if (site.state.load(std::memory_order_acquire) != 2) continue;
+        const auto calls = site.calls.load(std::memory_order_relaxed);
+        if (calls != 0) entries.push_back({calls, site.import, site.returnAddress, &site});
+    }
+    std::stable_sort(entries.begin(), entries.end(), [](const Entry& left, const Entry& right) {
+        if (left.calls != right.calls) return left.calls > right.calls;
+        if (left.site->consumerModule != right.site->consumerModule) return left.site->consumerModule < right.site->consumerModule;
+        if (left.site->consumerOffset != right.site->consumerOffset) return left.site->consumerOffset < right.site->consumerOffset;
+        if (left.imported->library != right.imported->library) return left.imported->library < right.imported->library;
+        return left.imported->name < right.imported->name;
+    });
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file << "{\n  \"version\": 1,\n  \"total_calls\": " << g_sequence.load(std::memory_order_acquire)
+         << ",\n  \"dropped_callsite_events\": " << g_callSiteOverflow.load(std::memory_order_relaxed)
+         << ",\n  \"edges\": [";
+    for (std::size_t index = 0; index < entries.size(); ++index) {
+        const auto& entry = entries[index];
+        const auto& site = *entry.site;
+        const auto& imported = *entry.imported;
+        file << (index == 0 ? "\n" : ",\n") << "    {\"calls\": " << entry.calls << ", \"consumer\": {\"module\": ";
+        if (site.consumerResolved) WriteJsonString(file, site.consumerModule); else file << "null";
+        file << ", \"offset\": ";
+        if (site.consumerResolved) WriteJsonString(file, HexValue(site.consumerOffset)); else file << "null";
+        file << ", \"address\": ";
+        WriteJsonString(file, HexValue(entry.returnAddress));
+        file << "}, \"import\": {\"library\": ";
+        WriteJsonString(file, imported.library);
+        file << ", \"name\": ";
+        WriteJsonString(file, imported.name);
+        file << "}, \"provider\": {\"module\": ";
+        if (imported.providerResolved) WriteJsonString(file, imported.providerModule); else file << "null";
+        file << ", \"offset\": ";
+        if (imported.providerResolved) WriteJsonString(file, HexValue(imported.providerOffset)); else file << "null";
+        file << "}}";
+    }
+    if (!entries.empty()) file << '\n';
+    file << "  ]\n}\n";
     file.flush();
     return static_cast<bool>(file);
 }
@@ -646,6 +723,11 @@ std::size_t CopyThreadCallTrace_nid_no_patch(std::uint64_t thread, CallTraceEntr
 bool WriteCallCounts_nid_no_patch(const char* path) {
     if (path == nullptr || *path == '\0') return false;
     return WriteCallCounts(std::filesystem::path(reinterpret_cast<const char8_t*>(path)));
+}
+
+bool WriteCallGraph_nid_no_patch(const char* path) {
+    if (path == nullptr || *path == '\0') return false;
+    return WriteCallGraph(std::filesystem::path(reinterpret_cast<const char8_t*>(path)));
 }
 
 std::size_t CopyCallCounts_nid_no_patch(CallTraceCount* entries, std::size_t capacity, std::uint64_t* total) {
