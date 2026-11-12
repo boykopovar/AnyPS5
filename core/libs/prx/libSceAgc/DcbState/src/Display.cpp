@@ -21,8 +21,8 @@ uint32_t* APS5_VABI sceAgcDcbSetFlip(CommandBuffer* buf, uint32_t video_out_hand
     return packet;
 }
 
-uint32_t* APS5_VABI sceAgcDcbPrimeUtcl2(CommandBuffer* buf, const volatile void* address, uint32_t size_in_bytes) {
-    return Agc::Command::WritePrimeUtcl2(buf, address, size_in_bytes, __func__);
+uint32_t* APS5_VABI sceAgcDcbPrimeUtcl2(CommandBuffer* buf, std::uint32_t cachePermission, std::uint32_t primeMode, const volatile void* address, std::uint32_t pageCount) {
+    return Agc::Command::WritePrimeUtcl2(buf, false, cachePermission, primeMode, address, pageCount, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcDcbPrimeUtcl2GetSize() {

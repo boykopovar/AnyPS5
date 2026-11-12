@@ -102,6 +102,19 @@ void testCatalog() {
     }
 }
 
+void testPrimeUtcl2() {
+    AgcDriver::QueueState state;
+    state.context[0x318u] = 0x12345678u;
+    state.shader[0x240u] = 0xabcdef01u;
+    state.markers.emplace_back("before prime");
+    for (const auto control : {0u, 15u, 0x40000000u, 0x4000000fu}) {
+        const auto packet = makePacket(0x5d, {control, 0xffffc000u, 0x1122u, 0x3fffu});
+        AgcDriver::Pm4::Validate(packet, 0);
+        AgcDriver::Pm4::Execute(packet, state);
+        check(state.context.at(0x318u) == 0x12345678u && state.shader.at(0x240u) == 0xabcdef01u && state.markers.size() == 1, "translation prefetch changed queue state");
+    }
+}
+
 void testNopPad() {
     check(AgcDriver::Pm4::PacketWords(0xffff1000u) == 1, "the one-dword NOP is not one dword");
     for (const auto queue : {0u, 0x20u}) AgcDriver::Pm4::Validate(std::vector<std::uint32_t>{0xffff1000u}, queue);
@@ -2832,6 +2845,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         testCatalog();
+        testPrimeUtcl2();
         testNopPad();
         testWorkloadNopPayloadsIgnored();
         testRewindPayloadBits();

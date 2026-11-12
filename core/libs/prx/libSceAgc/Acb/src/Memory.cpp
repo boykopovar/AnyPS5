@@ -46,8 +46,8 @@ std::uint32_t APS5_VABI sceAgcAcbAtomicGdsGetSize() {
     return 44;
 }
 
-std::uint32_t* APS5_VABI sceAgcAcbPrimeUtcl2(CommandBuffer* buf, const volatile void* address, std::uint32_t sizeInBytes) {
-    return Agc::Command::WritePrimeUtcl2(buf, address, sizeInBytes, __func__);
+std::uint32_t* APS5_VABI sceAgcAcbPrimeUtcl2(CommandBuffer* buf, std::uint32_t cachePermission, std::uint32_t primeMode, const volatile void* address, std::uint32_t pageCount) {
+    return Agc::Command::WritePrimeUtcl2(buf, true, cachePermission, primeMode, address, pageCount, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcAcbPrimeUtcl2GetSize() {
