@@ -136,9 +136,36 @@ static void CheckReportedCodeBelongsToConsumedSignal() {
         Require(sigtimedwait_nid_postfix(&interrupt, &first, &patience) == 2);
         while (sender.sent.load() != round) std::this_thread::yield();
         const bool twice = sigtimedwait_nid_postfix(&interrupt, &second, &poll) == 2;
-        Require(twice ? first.code != second.code : first.code == 0x10007);
+        Require(twice && first.code != second.code && (first.code == 0x10007 || first.code == 0x10001));
     }
     Require(scePthreadJoin(thread, nullptr) == 0);
+    Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
+}
+static std::atomic<int> queuedHandlerRuns{0};
+static void APS5_VABI CountQueuedRun(int) { queuedHandlerRuns.fetch_add(1); }
+static void CheckEverySendIsQueued() {
+    const GuestSignalSet third{{1u << 29, 0, 0, 0}};
+    const KernelTimespec poll{0, 0};
+    GuestSignalSet previous{};
+    GuestSiginfo info{};
+    Require(_sigprocmask_nid_postfix(1, &third, &previous) == 0);
+    for (int index = 0; index < 5; ++index) Require(kill_nid_postfix(getpid_nid_postfix(), 30) == 0);
+    for (int index = 0; index < 5; ++index) Require(sigtimedwait_nid_postfix(&third, &info, &poll) == 30 && info.code == 0x10001);
+    Require(sigtimedwait_nid_postfix(&third, &info, &poll) == -1);
+    Require(kill_nid_postfix(getpid_nid_postfix(), 30) == 0);
+    Require(pthread_kill_nid_postfix(scePthreadSelf(), 30) == 0);
+    Require(kill_nid_postfix(getpid_nid_postfix(), 30) == 0);
+    Require(sigtimedwait_nid_postfix(&third, &info, &poll) == 30 && info.code == 0x10007);
+    Require(sigtimedwait_nid_postfix(&third, &info, &poll) == 30 && info.code == 0x10001);
+    Require(sigtimedwait_nid_postfix(&third, &info, &poll) == 30 && info.code == 0x10001);
+    Require(sigtimedwait_nid_postfix(&third, &info, &poll) == -1);
+    queuedHandlerRuns.store(0);
+    signal_nid_postfix(30, CountQueuedRun);
+    for (int index = 0; index < 3; ++index) Require(kill_nid_postfix(getpid_nid_postfix(), 30) == 0);
+    Require(queuedHandlerRuns.load() == 0);
+    Require(_sigprocmask_nid_postfix(2, &third, nullptr) == 0);
+    Require(queuedHandlerRuns.load() == 3);
+    signal_nid_postfix(30, nullptr);
     Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
 }
 static std::jmp_buf handlerExit;
@@ -313,5 +340,6 @@ int main() {
     CheckTimeoutWithUnrelatedSignals();
     CheckReportedCodeBelongsToConsumedSignal();
     CheckRaiseInsideKillHandlerIsFromThread();
+    CheckEverySendIsQueued();
     CheckShortTimeouts();
 }

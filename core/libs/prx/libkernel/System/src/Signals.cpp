@@ -8,6 +8,7 @@
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -125,8 +127,10 @@ struct PendingSignals {
     std::mutex lock;
     TimedWait::Condition changed;
     std::atomic<std::uint32_t> words[4]{};
-    std::atomic<std::int32_t> codes[MaxSignal + 1]{};
+    std::deque<std::int32_t> queued[MaxSignal + 1];
 };
+
+constexpr std::size_t MaxQueuedPerSignal = 1024;
 
 PendingSignals& Pending() {
     static auto* state = new PendingSignals();
@@ -139,29 +143,47 @@ void MarkPending(int guest, std::int32_t code) {
         // under the same lock the waits check the set with: without it a signal raised
         // between the check and the wait is lost and the wait never returns
         std::lock_guard lock(pending.lock);
-        pending.codes[guest].store(code, std::memory_order_relaxed);
+        auto& queued = pending.queued[guest];
+        const bool merged = code == GuestSiKernel && std::find(queued.begin(), queued.end(), GuestSiKernel) != queued.end();
+        if (!merged && queued.size() < MaxQueuedPerSignal) {
+            const auto firstOther = std::find_if(queued.begin(), queued.end(), [](std::int32_t entry) { return entry != GuestSiLwp; });
+            queued.insert(code == GuestSiLwp ? firstOther : queued.end(), code);
+        }
         pending.words[SignalWord(guest)].fetch_or(SignalBit(guest), std::memory_order_relaxed);
     }
     pending.changed.NotifyAll();
 }
 
-bool TakePending(int guest) {
+bool TakePendingLocked(int guest, std::int32_t* code = nullptr) {
     auto& pending = Pending();
+    auto& queued = pending.queued[guest];
     auto& word = pending.words[SignalWord(guest)];
     const std::uint32_t bit = SignalBit(guest);
     if ((word.load(std::memory_order_relaxed) & bit) == 0) return false;
-    return (word.fetch_and(~bit, std::memory_order_relaxed) & bit) != 0;
+    if (code != nullptr) *code = queued.empty() ? 0 : queued.front();
+    if (!queued.empty()) queued.pop_front();
+    if (queued.empty()) word.fetch_and(~bit, std::memory_order_relaxed);
+    return true;
+}
+
+bool TakePending(int guest, std::int32_t* code = nullptr) {
+    auto& pending = Pending();
+    std::lock_guard lock(pending.lock);
+    return TakePendingLocked(guest, code);
 }
 
 void DiscardPendingIfIgnored(int guest, const GuestSigaction& action) {
-    if (action.handler == 1 || (action.handler == 0 && IgnoredByDefault(guest))) TakePending(guest);
+    if (action.handler != 1 && !(action.handler == 0 && IgnoredByDefault(guest))) return;
+    auto& pending = Pending();
+    std::lock_guard lock(pending.lock);
+    pending.queued[guest].clear();
+    pending.words[SignalWord(guest)].fetch_and(~SignalBit(guest), std::memory_order_relaxed);
 }
 
 bool PendingInSet(const GuestSignalSet& set, int* guest, std::int32_t* code) {
     for (int candidate = 1; candidate <= MaxSignal; ++candidate) {
-        if (!SignalInSet(set, candidate) || !TakePending(candidate)) continue;
+        if (!SignalInSet(set, candidate) || !TakePendingLocked(candidate, code)) continue;
         *guest = candidate;
-        *code = Pending().codes[candidate].load(std::memory_order_relaxed);
         return true;
     }
     return false;
@@ -295,7 +317,7 @@ bool Deliverable(int guest) {
 bool TakePendingUnblocked(int* guest) {
     for (int candidate = 1; candidate <= MaxSignal; ++candidate) {
         if (SignalBlocked(candidate) || !Deliverable(candidate)) continue;
-        if (!TakePending(candidate)) continue;
+        if (!TakePendingLocked(candidate)) continue;
         *guest = candidate;
         return true;
     }
@@ -322,8 +344,9 @@ bool DeliverPendingSignal(int guest) {
 bool DeliverUnblockedPending() {
     bool caught = false;
     for (int guest = 1; guest <= MaxSignal; ++guest) {
-        if (SignalBlocked(guest) || !Deliverable(guest) || !TakePending(guest)) continue;
-        if (DeliverPendingSignal(guest)) caught = true;
+        while (!SignalBlocked(guest) && Deliverable(guest) && TakePending(guest)) {
+            if (DeliverPendingSignal(guest)) caught = true;
+        }
     }
     return caught;
 }
