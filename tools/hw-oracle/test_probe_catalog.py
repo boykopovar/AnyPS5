@@ -129,5 +129,47 @@ class CatalogLoadingTests(unittest.TestCase):
                 probe_catalog.read_catalog(path)
 
 
+class ProbeGenerationTests(unittest.TestCase):
+    def setUp(self):
+        self.catalog, self.digest = probe_catalog.read_catalog()
+
+    def test_generation_writes_assembly_rows_and_catalog_metadata(self):
+        probe = self.catalog["probes"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = probe_catalog.generate([probe], self.digest, Path(temporary) / "generated")
+            case = generated[0]
+            self.assertEqual(case.name, probe["id"])
+            self.assertEqual((case / "body.s").read_text(encoding="utf-8"), probe["body"] + "\n")
+            rows = (case / "rows.txt").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(rows), len(probe["rows"]))
+            self.assertEqual(rows[0], "0x00000000 0x00000000 0x00000000 0x00000000")
+            metadata = json.loads((case / "probe.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["catalog_sha256"], self.digest)
+            self.assertEqual(metadata["rows"], probe["rows"])
+
+    def test_selection_rejects_unknown_and_repeated_probe_ids(self):
+        with self.assertRaisesRegex(ValueError, "unknown probe id"):
+            probe_catalog.select_probes(self.catalog["probes"], ["missing-probe"])
+        identifier = self.catalog["probes"][0]["id"]
+        with self.assertRaisesRegex(ValueError, "selected more than once"):
+            probe_catalog.select_probes(self.catalog["probes"], [identifier, identifier])
+
+    def test_generation_does_not_replace_existing_case_directories(self):
+        probe = self.catalog["probes"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "generated"
+            case = output / probe["id"]
+            case.mkdir(parents=True)
+            marker = case / "keep.txt"
+            marker.write_text("existing", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "refusing to replace generated probe directories"):
+                probe_catalog.generate([probe], self.digest, output)
+            self.assertEqual(marker.read_text(encoding="utf-8"), "existing")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
 if __name__ == "__main__":
     unittest.main()
