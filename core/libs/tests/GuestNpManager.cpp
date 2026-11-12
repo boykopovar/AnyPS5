@@ -5,6 +5,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -1145,6 +1146,9 @@ int main() {
             "sceNpUnknown_WxLcN76q19o threw");
     }
     std::uint32_t state = 0x5a5a;
+    errno = 71;
+    Require(sceNpGetState(0x10000, reinterpret_cast<uint32_t*>(0x10)) == InvalidArgument, "sceNpGetState must reject an unmapped state");
+    Require(errno == 71, "sceNpGetState must preserve errno");
     Require(sceNpGetState(0x10000, &state) == 0 && state == StateSignedOut, "sceNpGetState must report the user as signed out");
     Require(sceNpGetState(0x10000, nullptr) == InvalidArgument, "sceNpGetState must reject a null state");
     bool hasSignedUp = true;
