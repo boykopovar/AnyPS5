@@ -731,3 +731,18 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with patch.object(performance_bisect, "TOOLS_DIR", root),                     patch.object(performance_bisect.subprocess, "run", side_effect=fake_runner),                     self.assertRaisesRegex(RuntimeError, "produced 2 summary files"):
                 performance_bisect.run_sample(root, root / "build", result, recipe, GOOD)
 
+
+    def test_run_sample_reports_title_runner_failure(self):
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            game = root / "game"
+            game.mkdir()
+            recipe = {"title_id": "PPSA00000", "games": [str(game)], "content": None,
+                      "titles": str(root / "titles.json"), "seconds": 20}
+            with patch.object(performance_bisect.subprocess, "run",
+                              return_value=SimpleNamespace(returncode=3, stdout="", stderr="runner failed")), \
+                    self.assertRaisesRegex(RuntimeError, "title run failed.*runner failed"):
+                performance_bisect.run_sample(root, root / "build", root / "result", recipe, GOOD)
+
