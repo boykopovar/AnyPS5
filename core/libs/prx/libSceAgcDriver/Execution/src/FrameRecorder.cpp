@@ -179,7 +179,7 @@ void FrameRecorder::noteDriverStore(std::uint64_t begin, std::uint64_t end, std:
     }
 }
 
-std::uint32_t FrameRecorder::holdMask(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks) {
+std::uint32_t FrameRecorder::holdMask(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks, std::uint64_t& checked) {
     std::uint32_t mask = 0;
     auto& driver = DriverDetail::Driver::Get();
     for (const auto& wait : driver.AwaitedWaits()) {
@@ -191,6 +191,7 @@ std::uint32_t FrameRecorder::holdMask(std::span<const std::pair<std::uint64_t, s
     }
     {
         std::lock_guard lock(storeMutex);
+        checked = driverStores;
         for (const auto& [begin, end] : blocks) {
             for (auto page = begin & ~std::uint64_t{HostPageBytes - 1}; page < end && (mask & (1u << 14)) == 0; page += HostPageBytes) {
                 const auto found = driverPages.find(page);
@@ -249,11 +250,18 @@ void FrameRecorder::recordUnwatched(std::uint64_t address, std::span<const std::
     }
 }
 
-void FrameRecorder::arm(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks, std::uint64_t group, std::uint64_t accepted) {
+bool FrameRecorder::arm(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks, std::uint64_t group, std::uint64_t accepted, std::uint64_t checked) {
     std::lock_guard lock(storeMutex);
+    for (const auto& [begin, end] : blocks) {
+        for (auto page = begin & ~std::uint64_t{HostPageBytes - 1}; page < end; page += HostPageBytes) {
+            const auto found = driverPages.find(page);
+            if (found != driverPages.end() && found->second > checked) return false;
+        }
+    }
     for (const auto& [begin, end] : blocks) {
         for (auto page = begin & ~std::uint64_t{HostPageBytes - 1}; page < end; page += HostPageBytes) storeOwners[page] = {group, accepted};
     }
+    return true;
 }
 
 bool FrameRecorder::stopOnHazard() {
@@ -701,7 +709,9 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
             return std::any_of(waits.begin(), waits.end(), [&](const auto& wait) { return std::any_of(blocks.begin(), blocks.end(), [&](const auto& block) { return wait.first < block.second && block.first < wait.second; }); });
         };
         const auto awaitsTitle = (awaited.title ? 1u << 15 : 0u) | (holdsWait(awaited.unfinished) || holdsWait(finishedWaitDwords) ? 1u << 16 : 0u);
-        const auto mask = holdMask(blocks) | (unwatched.empty() ? 0u : 1u << 1) | (!added.empty() || !hostPages.empty() ? 1u << 2 : 0u) | (callThreads.size() > 1 ? 1u << 3 : 0u) | (entry.queued != 0 ? 1u << 11 : 0u) | (awaitsTitle != 0 ? awaitsTitle | (1u << 12) : 0u);
+        std::uint64_t checked = 0;
+        auto mask = holdMask(blocks, checked) | (unwatched.empty() ? 0u : 1u << 1) | (!added.empty() || !hostPages.empty() ? 1u << 2 : 0u) | (callThreads.size() > 1 ? 1u << 3 : 0u) | (entry.queued != 0 ? 1u << 11 : 0u) | (awaitsTitle != 0 ? awaitsTitle | (1u << 12) : 0u);
+        if (mask == 0 && !arm(blocks, group, accepted, checked)) mask = (1u << 5) | (1u << 14);
         ++holdMasks[mask];
         for (std::size_t reason = 1; reason < holdReasons.size(); ++reason) holdReasons[reason] += (mask >> reason) & 1u;
         if (mask != 0) {
@@ -714,7 +724,6 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
             ++heldDeltas;
             collect();
         } else {
-            arm(blocks, group, accepted);
             started = entry.started;
             inFlightRead = true;
             ++inFlightDeltas;
