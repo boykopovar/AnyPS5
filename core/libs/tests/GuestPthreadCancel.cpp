@@ -14,7 +14,6 @@
 #include <thread>
 
 static constexpr int SCE_OK = 0;
-static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int CANCEL_ENABLE = 0;
 static constexpr int CANCEL_DISABLE = 1;
@@ -207,8 +206,8 @@ static void JoinCanceled(Pthread thread) {
 }
 
 int main() {
-    Require(scePthreadCancel(nullptr) == SCE_KERNEL_ERROR_ESRCH);
-    Require(pthread_cancel_nid_postfix(nullptr) == GUEST_ESRCH);
+    Require(scePthreadCancel(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_cancel_nid_postfix(nullptr) == GUEST_EINVAL);
     Require(scePthreadSetcancelstate(7, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadSetcanceltype(1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_setcanceltype_nid_postfix(1, nullptr) == GUEST_EINVAL);
