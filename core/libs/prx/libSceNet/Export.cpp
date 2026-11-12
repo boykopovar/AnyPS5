@@ -2158,6 +2158,17 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
     return 0;
 }
 
+static int CopyGuestSocketAddress(const sockaddr_storage& native, void* address, std::uint32_t* length) {
+    std::uint32_t capacity = 0;
+    if (!GuestCopyIn_nid_no_patch(&capacity, length, sizeof(capacity)) ||
+        !GuestCopyOut_nid_no_patch(length, &capacity, sizeof(capacity))) return fail(NET_EFAULT);
+    std::array<std::uint8_t, 28> bytes{};
+    if (!native_to_guest_address(native, bytes.data(), &capacity)) return fail(NET_EAFNOSUPPORT);
+    if (!GuestCopyOut_nid_no_patch(address, bytes.data(), capacity) ||
+        !GuestCopyOut_nid_no_patch(length, &capacity, sizeof(capacity))) return fail(NET_EFAULT);
+    return 0;
+}
+
 int APS5_VABI sceNetGetsockname(int s, void* addr, uint32_t* addrlen) {
     Sock socket;
     {
@@ -2178,7 +2189,7 @@ int APS5_VABI sceNetGetsockname(int s, void* addr, uint32_t* addrlen) {
         return fail(native_error());
 #endif
     }
-    return native_to_guest_address(native, addr, addrlen) ? 0 : fail(NET_EAFNOSUPPORT);
+    return CopyGuestSocketAddress(native, addr, addrlen);
 }
 
 int APS5_VABI sceNetGetpeername(int s, void* addr, uint32_t* addrlen) {
@@ -2194,7 +2205,7 @@ int APS5_VABI sceNetGetpeername(int s, void* addr, uint32_t* addrlen) {
     NativeLength native_length = sizeof(native);
     if (::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&native), &native_length) != 0)
         return fail(native_error());
-    return native_to_guest_address(native, addr, addrlen) ? 0 : fail(NET_EAFNOSUPPORT);
+    return CopyGuestSocketAddress(native, addr, addrlen);
 }
 
 constexpr int NET_SOCKINFO_F_SELF = 0x1;
