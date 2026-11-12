@@ -1,8 +1,10 @@
 #include "prx/libSceUrlConfigResolver/libSceUrlConfigResolver.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -28,7 +30,25 @@ void CheckAppConfigWithoutKey(std::size_t capacity, std::uint32_t size) {
 int main() {
     for (int call = 0; call < 2; ++call) {
         Require(sceUrlConfigResolverUpdate(nullptr) == invalidArgument());
+        errno = 71;
+        bool threwUpdate = false;
+        try {
+            sceUrlConfigResolverUpdate(reinterpret_cast<const char*>(0x10));
+        } catch (const std::invalid_argument&) {
+            threwUpdate = true;
+        }
+        Require(threwUpdate);
+        Require(errno == 71);
         Require(sceUrlConfigResolverGetJscHeapSizeSoftLimit(nullptr) == invalidArgument());
+        errno = 71;
+        bool threwLimit = false;
+        try {
+            sceUrlConfigResolverGetJscHeapSizeSoftLimit(reinterpret_cast<std::uint32_t*>(0x10));
+        } catch (const std::invalid_argument&) {
+            threwLimit = true;
+        }
+        Require(threwLimit);
+        Require(errno == 71);
         Require(!sceUrlConfigResolverIsUpdated());
         CheckAppConfigWithoutKey(64, 48);
         CheckAppConfigWithoutKey(16, 0);

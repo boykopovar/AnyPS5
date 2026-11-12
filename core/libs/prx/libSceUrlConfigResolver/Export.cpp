@@ -1,4 +1,5 @@
 #include "prx/libSceUrlConfigResolver/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -29,8 +30,12 @@ void ZeroGuest(void* destination, std::uint32_t size, const char* function) {
 }
 
 void StoreGuest(std::uint32_t* destination, std::uint32_t value, const char* function) {
-    if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value)))
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value))) {
+        errno = savedErrno;
         throw std::invalid_argument(std::string(function) + ": unwritable output");
+    }
+    errno = savedErrno;
 }
 
 } // namespace
@@ -57,6 +62,7 @@ int APS5_VABI sceUrlConfigResolverGetDeviceId() {
 
 int APS5_VABI sceUrlConfigResolverGetJscHeapSizeSoftLimit(std::uint32_t* limit) {
     if (limit == nullptr) return kInvalidArgument;
+    StoreGuest(limit, 0, __func__);
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -78,6 +84,13 @@ bool APS5_VABI sceUrlConfigResolverIsUpdated() {
 
 int APS5_VABI sceUrlConfigResolverUpdate(const char* parameter) {
     if (parameter == nullptr) return kInvalidArgument;
+    char probe = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&probe, parameter, sizeof(probe))) {
+        errno = savedErrno;
+        throw std::invalid_argument(std::string(__func__) + ": unreadable parameter");
+    }
+    errno = savedErrno;
     NotImplemented_nid_no_patch(__func__);
 }
 
