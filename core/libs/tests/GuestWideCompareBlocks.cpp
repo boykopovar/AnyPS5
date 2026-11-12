@@ -74,8 +74,8 @@ int main() {
     const char16_t alphabet[] = {1, 0x41, 0xff, 0x100, 0x7fff, 0x8000, 0xd800, 0xffff};
     for (int round = 0; round < 40000; ++round) {
         const std::size_t length = random() % 3 == 0 ? random() % 24 : random() % 600;
-        const std::size_t gap1 = random() % 2 == 0 ? 0 : random() % 64 * 2 + random() % 2;
-        const std::size_t gap2 = random() % 2 == 0 ? 0 : random() % 64 * 2 + random() % 2;
+        const std::size_t gap1 = random() % 2 == 0 ? 0 : random() % 64 * 2;
+        const std::size_t gap2 = random() % 2 == 0 ? 0 : random() % 64 * 2;
         char16_t* left = first.End(length + 1, gap1);
         char16_t* right = second.End(length + 1, gap2);
         for (std::size_t index = 0; index < length; ++index) left[index] = alphabet[random() % 8];

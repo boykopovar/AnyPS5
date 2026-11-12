@@ -349,6 +349,24 @@ class CheckMainSyncGitTests(CheckMainSyncFixture):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("merge: clean", result.stdout)
 
+    def test_fetch_refreshes_base_excluded_from_remote_fetch_mapping(self):
+        with tempfile.TemporaryDirectory() as other:
+            subprocess.run(["git", "clone", "-q", self.directory.name, other], check=True, capture_output=True)
+            (Path(other) / "upstream.txt").write_text("new upstream commit\n", encoding="utf-8")
+            subprocess.run(["git", "-C", other, "add", "upstream.txt"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", other, "commit", "-qm", "upstream change"], check=True, capture_output=True,
+                           env={**os.environ, **IDENTITY})
+            self.repo.git("remote", "add", "-t", "other", "upstream", other)
+            for options in ((), ("--base", "upstream/main")):
+                with self.subTest(options=options):
+                    self.repo.git("update-ref", "refs/remotes/upstream/main", "HEAD")
+                    result = subprocess.run(
+                        [sys.executable, str(TOOL), "--repo", self.directory.name, "--fetch", "--strict", *options],
+                        capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("0 ahead and 1 behind upstream/main", result.stdout)
+
 
     def test_missing_git_executable_reports_usage_error_without_traceback(self):
         def missing_run(*args, **kwargs):
