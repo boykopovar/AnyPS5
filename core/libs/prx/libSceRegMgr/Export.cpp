@@ -42,7 +42,8 @@ public:
         auto it = entries_.find(key);
         if (it == entries_.end()) return SCE_REG_MGR_ERROR_NOT_FOUND;
         if (it->second.type != TypeInt) return SCE_REG_MGR_ERROR_INVALID_TYPE;
-        *out = it->second.intVal;
+        const int32_t val = it->second.intVal;
+        if (!GuestCopyOut_nid_no_patch(out, &val, sizeof(val))) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         return 0;
     }
 

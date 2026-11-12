@@ -37,30 +37,41 @@ set(MINI_OPTION "value" CACHE STRING "An option, not a check result")
 
 
 class ConfigureSeedStdoutTests(unittest.TestCase):
-    def test_stdout_round_trip_and_no_mutation(self):
+    def stdout_seed(self, root):
+        import contextlib
+        import io
+        cache = root / "CMakeCache.txt"
+        cache.write_text('//Test KEEP\nKEEP:INTERNAL=semi;quote"dollar$\\path\n'
+                         '//Test KDROP\nKDROP:INTERNAL=1\n//Test DROP\nDROP:INTERNAL=1\n', encoding="utf-8")
+        original = cache.read_bytes()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(configure_seed.main([str(cache), "--stdout", "--include", "K*", "--exclude", "KDROP"]), 0)
+        self.assertEqual(cache.read_bytes(), original)
+        self.assertEqual(list(root.iterdir()), [cache])
+        return cache, output.getvalue()
+
+    def test_stdout_no_mutation(self):
         import contextlib
         import io
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            cache = root / "CMakeCache.txt"
-            cache.write_text('//Test KEEP\nKEEP:INTERNAL=semi;quote"dollar$\\path\n'
-                             '//Test KDROP\nKDROP:INTERNAL=1\n//Test DROP\nDROP:INTERNAL=1\n', encoding="utf-8")
-            original = cache.read_bytes()
-            output = io.StringIO()
-            with contextlib.redirect_stdout(output):
-                self.assertEqual(configure_seed.main([str(cache), "--stdout", "--include", "K*", "--exclude", "KDROP"]), 0)
-            self.assertEqual(output.getvalue(), 'set("KEEP" "semi;quote\\"dollar\\$\\\\path" CACHE INTERNAL "Test KEEP")\n')
-            self.assertEqual(cache.read_bytes(), original)
-            self.assertEqual(list(root.iterdir()), [cache])
-            seed = root / "seed.cmake"
-            seed.write_text(output.getvalue(), encoding="utf-8")
-            (root / "CMakeLists.txt").write_text('cmake_minimum_required(VERSION 3.20)\nproject(seed NONE)\nfile(WRITE "${CMAKE_BINARY_DIR}/value" "${KEEP}")\n')
-            subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build"), "-C", str(seed)], check=True, capture_output=True)
-            self.assertEqual((root / "build/value").read_text(), 'semi;quote"dollar$\\path')
-            for args in ([str(cache)], [str(cache), str(seed), "--stdout"]):
+            cache, text = self.stdout_seed(root)
+            self.assertEqual(text, 'set("KEEP" "semi;quote\\"dollar\\$\\\\path" CACHE INTERNAL "Test KEEP")\n')
+            for args in ([str(cache)], [str(cache), str(root / "seed.cmake"), "--stdout"]):
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
                     configure_seed.main(args)
                 self.assertEqual(error.exception.code, 2)
+
+    @unittest.skipUnless(shutil.which("cmake"), "CMake is required for the seed round trip")
+    def test_stdout_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed = root / "seed.cmake"
+            seed.write_text(self.stdout_seed(root)[1], encoding="utf-8")
+            (root / "CMakeLists.txt").write_text('cmake_minimum_required(VERSION 3.20)\nproject(seed NONE)\nfile(WRITE "${CMAKE_BINARY_DIR}/value" "${KEEP}")\n')
+            subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build"), "-C", str(seed)], check=True, capture_output=True)
+            self.assertEqual((root / "build/value").read_text(), 'semi;quote"dollar$\\path')
 
     def test_stdout_include_and_exclude_are_applied_independently(self):
         import contextlib

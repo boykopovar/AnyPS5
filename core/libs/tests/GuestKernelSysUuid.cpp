@@ -1,4 +1,6 @@
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel_sys/include/AdditionalExports.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
@@ -44,7 +46,7 @@ int main() {
     for (const auto& uuid : first) {
         Require((uuid.timeHiAndVersion >> 12) == 1);
         Require((uuid.clockSeqHiAndReserved & 0xc0) == 0x80);
-        Require((uuid.node[0] & 0x01) != 0);
+        Require((uuid.node[0] & 0x01) == 0);
         Require(std::memcmp(uuid.node, first[0].node, sizeof(uuid.node)) == 0);
         Require(Sequence(uuid) == Sequence(first[0]));
     }
@@ -58,4 +60,13 @@ int main() {
     const auto gregorianTicks = unixTicks + 0x01B21DD213814000ULL;
     const auto stamp = Timestamp(first[0]);
     Require(stamp + 600000000ULL > gregorianTicks && stamp < gregorianTicks + 600000000ULL);
+
+    Require(sceKernelCreateUuidV1(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateUuidV1(reinterpret_cast<std::uint8_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    std::array<std::uint8_t, 16> kernelUuidBytes{};
+    Require(sceKernelCreateUuidV1(kernelUuidBytes.data()) == 0);
+    Require((kernelUuidBytes[6] >> 4) == 1);
+    Require((kernelUuidBytes[8] & 0xc0) == 0x80);
+    Require((kernelUuidBytes[10] & 0x01) == 0);
+    Require(std::memcmp(&kernelUuidBytes[10], first[0].node, sizeof(first[0].node)) == 0);
 }

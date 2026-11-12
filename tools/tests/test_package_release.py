@@ -151,6 +151,41 @@ class PublicHeaderPackageTests(unittest.TestCase):
             self.assertEqual(package_release.main(["--platform", "headers", "--version", "v1", "--output", str(self.output)]), 0)
         self.assertTrue((self.output / "prx-headers-v1.zip").is_file())
 
+    def test_digraph_include_directives_packaged_with_byte_parity(self):
+        digraph_nested = self.umbrella.with_name("DigraphNested.hpp")
+        digraph_nested.write_text('\t%: \tinclude <Common.hpp>\n%:include <vector>\n', encoding="utf-8")
+        self.api.write_text('  %:   include "DigraphNested.hpp"\n%:include <Common.hpp>\n#include "Windows.hpp"\n', encoding="utf-8")
+        expected = {"include/anyps5/" + path.relative_to(self.libs).as_posix(): path.read_bytes() for path in (self.umbrella, self.api, digraph_nested, self.umbrella.with_name("Windows.hpp"), self.libs / "Common.hpp")}
+        expected["LICENSE"] = (self.source / "LICENSE").read_bytes()
+        package_headers.package(self.source, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
+            self.assertEqual({name: archive.read(name) for name in archive.namelist()}, expected)
+            self.assertEqual(len(archive.namelist()), len(expected))
+        with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
+            self.assertEqual({name: archive.extractfile(name).read() for name in archive.getnames()}, expected)
+
+    def test_digraph_forbidden_or_missing_dependencies_preserve_existing_archives(self):
+        self.output.mkdir()
+        previous = self.output / "prx-headers-v1.zip"
+        previous.write_bytes(b"previous")
+        for directive in ('%:include "Missing.hpp"', '%: include <vendor.h>', '  %:  include "../../../3rdparty/vendor.hpp"', '%:include MACRO_HEADER', '%:include "invalid:name"', '%:include "c:\\invalid.hpp"'):
+            with self.subTest(directive=directive):
+                self.api.write_text(directive + "\n", encoding="utf-8")
+                with self.assertRaises(RuntimeError):
+                    package_headers.package(self.source, self.output, "v1")
+                self.assertEqual(list(self.output.iterdir()), [previous])
+                self.assertEqual(previous.read_bytes(), b"previous")
+
+    def test_digraph_in_comments_and_strings_do_not_add_dependencies(self):
+        self.api.write_text('// %:include "Missing.hpp"\n/*\n%:include "Missing.hpp"\n*/\nconst char* text = R"test(\n%:include "AlsoMissing.hpp"\n)test";\nconst char* str = "%:include <Missing.hpp>";\n', encoding="utf-8")
+        self.assertEqual(len(package_headers.public_headers(self.source)), 3)
+
+    def test_digraph_include_next_is_rejected(self):
+        self.api.write_text('%:include_next <vendor.h>\n', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "Unsupported include_next"):
+            package_headers.package(self.source, self.output, "v1")
+        self.assertFalse(self.output.exists())
+
     def test_archive_promotion_failure_restores_the_pair(self):
         names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
         original_replace = Path.replace
@@ -1247,6 +1282,39 @@ class ReleaseNotesTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "distinct files"):
                         prepare_release_notes.prepare_notes(*paths)
                     self.assertEqual([path.read_bytes() for path in paths], previous)
+
+    @unittest.skipUnless(os.name == "nt", "Windows case-insensitive output paths")
+    def test_missing_case_aliases_are_rejected_before_creating_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "notes.json"
+            body, full = root / "output/Notes.md", root / "output/notes.md"
+            notes = "Intro\n\n## What's Changed\n" + "- entry\n" * 20000 + "\n**Full Changelog**: link\n"
+            source.write_text(json.dumps({"body": notes}), encoding="utf-8")
+            original = source.read_bytes()
+            with self.assertRaisesRegex(ValueError, "distinct files"):
+                prepare_release_notes.prepare_notes(source, body, full)
+            self.assertEqual(source.read_bytes(), original)
+            self.assertFalse(body.parent.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows case-insensitive output paths")
+    def test_cli_missing_case_aliases_preserve_input_in_write_and_check_modes(self):
+        for flags in ([], ["--check"]):
+            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "notes.json"
+                source.write_text(json.dumps({"body": "Release notes"}), encoding="utf-8")
+                original = source.read_bytes()
+                result = subprocess.run([sys.executable, str(Path(prepare_release_notes.__file__)),
+                                         "--input", str(source), "--body", str(root / "output/Notes.md"),
+                                         "--full", str(root / "output/notes.md"), *flags],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=10)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("distinct files", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(source.read_bytes(), original)
+                self.assertFalse((root / "output").exists())
 
     def test_symlink_loop_output_is_reported_without_traceback(self):
         notes = json.dumps({"body": "release notes"})
