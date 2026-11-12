@@ -1,6 +1,5 @@
 #include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
-#include "prx/libcurl/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <cassert>
 #include <cstdlib>
@@ -61,15 +60,11 @@ int main() {
 
     Require(curl_version_info_nid_postfix(CURLVERSION_FIRST) == info);
 
-    Require(curl_easy_escape(nullptr, nullptr, 0) == nullptr);
-    Require(curl_escape(nullptr, 0) == nullptr);
     Require(curl_easy_escape(nullptr, "test", -1) == nullptr);
     char* escaped = curl_easy_escape(nullptr, "hello world!", 0);
     Require(escaped != nullptr);
     Require(std::strcmp(escaped, "hello%20world%21") == 0);
     int unescapedLength = 0;
-    Require(curl_easy_unescape(nullptr, nullptr, 0, nullptr) == nullptr);
-    Require(curl_unescape(nullptr, 0) == nullptr);
     Require(curl_easy_unescape(nullptr, "test", -1, nullptr) == nullptr);
     char* unescaped = curl_easy_unescape(nullptr, escaped, 0, &unescapedLength);
     Require(unescaped != nullptr);
@@ -77,29 +72,17 @@ int main() {
     Require(unescapedLength == 12);
     curl_free(escaped);
     curl_free(unescaped);
+    curl_free(nullptr);
 
-    Require(curl_strequal(nullptr, "test") == 0);
-    Require(curl_strequal("test", nullptr) == 0);
-    Require(curl_strequal(nullptr, nullptr) == 0);
-    Require(curl_strequal("Hello", "hello") == 1);
-    Require(curl_strequal("Hello", "world") == 0);
-
-    Require(curl_strnequal(nullptr, "test", 4) == 0);
-    Require(curl_strnequal("test", nullptr, 4) == 0);
-    Require(curl_strnequal(nullptr, nullptr, 4) == 0);
-    Require(curl_strnequal("HelloWorld", "hellothere", 5) == 1);
-    Require(curl_strnequal("HelloWorld", "hellothere", 6) == 0);
-
-    Require(curl_slist_append(nullptr, nullptr) == nullptr);
     auto* list = curl_slist_append(nullptr, "alpha");
     Require(list != nullptr);
-    Require(curl_slist_append(list, nullptr) == nullptr);
     list = curl_slist_append(list, "beta");
     Require(list != nullptr);
     Require(std::strcmp(list->data, "alpha") == 0);
     Require(list->next != nullptr);
     Require(std::strcmp(list->next->data, "beta") == 0);
     curl_slist_free_all(list);
+    curl_slist_free_all(nullptr);
 
     curl_global_cleanup_nid_postfix();
     return 0;

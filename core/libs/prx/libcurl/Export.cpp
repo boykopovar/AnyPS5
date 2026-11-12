@@ -1429,7 +1429,8 @@ char* APS5_VABI curl_escape(const char* string, int length) {
 
 char* APS5_VABI curl_easy_escape(void* handle, const char* string, int length) {
     (void)handle;
-    if (string == nullptr || length < 0) return nullptr;
+    if (length < 0) return nullptr;
+    if (string == nullptr) NotImplemented_nid_no_patch(__func__);
     const auto size = length == 0 ? std::strlen(string) : static_cast<std::size_t>(length);
     if (size > (std::numeric_limits<std::size_t>::max() - 1) / 3) return nullptr;
     auto* output = static_cast<char*>(malloc_nid_postfix(size * 3 + 1));
@@ -1456,7 +1457,7 @@ void APS5_VABI curl_free(void* pointer) {
 }
 
 int APS5_VABI curl_strequal(const char* first, const char* second) {
-    if (!first || !second) return 0;
+    if (!first || !second) NotImplemented_nid_no_patch(__func__);
     while (*first && *second && RawUpper(*first) == RawUpper(*second)) {
         ++first;
         ++second;
@@ -1465,7 +1466,7 @@ int APS5_VABI curl_strequal(const char* first, const char* second) {
 }
 
 CurlSlist* APS5_VABI curl_slist_append(CurlSlist* list, const char* string) {
-    if (string == nullptr) return nullptr;
+    if (string == nullptr) NotImplemented_nid_no_patch(__func__);
     const auto size = std::strlen(string);
     if (size == std::numeric_limits<std::size_t>::max()) return nullptr;
     auto* copy = static_cast<char*>(malloc_nid_postfix(size + 1));
@@ -1486,7 +1487,7 @@ CurlSlist* APS5_VABI curl_slist_append(CurlSlist* list, const char* string) {
 }
 
 int APS5_VABI curl_strnequal(const char* first, const char* second, size_t max) {
-    if (!first || !second) return 0;
+    if (!first || !second) NotImplemented_nid_no_patch(__func__);
     while (*first && *second && max && RawUpper(*first) == RawUpper(*second)) {
         --max;
         ++first;
@@ -1511,7 +1512,8 @@ void APS5_VABI curl_slist_free_all(CurlSlist* list) {
 
 char* APS5_VABI curl_easy_unescape(void* handle, const char* string, int length, int* outputLength) {
     (void)handle;
-    if (string == nullptr || length < 0) return nullptr;
+    if (length < 0) return nullptr;
+    if (string == nullptr) NotImplemented_nid_no_patch(__func__);
     const auto size = length == 0 ? std::strlen(string) : static_cast<std::size_t>(length);
     if (size == std::numeric_limits<std::size_t>::max()) return nullptr;
     auto* output = static_cast<char*>(malloc_nid_postfix(size + 1));
