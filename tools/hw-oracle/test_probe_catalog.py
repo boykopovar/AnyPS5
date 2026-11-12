@@ -164,6 +164,27 @@ class ProbeGenerationTests(unittest.TestCase):
             self.assertEqual(metadata["catalog_sha256"], self.digest)
             self.assertEqual(metadata["rows"], probe["rows"])
 
+    def test_every_curated_input_bundle_passes_the_existing_oracle_validator(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            for probe in self.catalog["probes"]:
+                with self.subTest(probe=probe["id"]):
+                    case = probe_catalog.generate([probe], self.digest, Path(temporary) / probe["id"])[0]
+                    argv = ["hw_oracle.py", str(case / "body.s"), str(case / "rows.txt"),
+                            "--validate-only", "--json", "--outs", str(probe["output_registers"])]
+                    argv.extend(argument for name, value in probe["floating_point_modes"].items()
+                                for argument in ("--" + name.replace("_", "-"), str(value)))
+                    if probe["wave_size"] == 64:
+                        argv.append("--wave64")
+                    if probe["memory"] == "coarse":
+                        argv.append("--coarse")
+                    argv.extend(("--lds", str(probe["lds_bytes"])))
+                    output = io.StringIO()
+                    with patch.object(sys, "argv", argv), contextlib.redirect_stdout(output):
+                        self.assertEqual(probe_catalog.hw_oracle.main(), 0)
+                    report = json.loads(output.getvalue())
+                    self.assertEqual(report["rows"], len(probe["rows"]))
+                    self.assertEqual(report["wave_size"], probe["wave_size"])
+
     def test_selection_rejects_unknown_and_repeated_probe_ids(self):
         with self.assertRaisesRegex(ValueError, "unknown probe id"):
             probe_catalog.select_probes(self.catalog["probes"], ["missing-probe"])
