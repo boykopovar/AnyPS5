@@ -4,6 +4,7 @@
 #include "prx/libSceCommonDialog/include/Api.hpp"
 #include "prx/libSceCommonDialog/include/DialogUse.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cerrno>
 #include <cstdint>
@@ -66,6 +67,9 @@ void TestBeforeInitialize() {
     const InvitationDialogParam param = MakeParam(ModeSend, nullptr);
     RequireUnsettled([&] { sceInvitationDialogOpen(&param); }, "open before initialization");
     RequireUnsettled([] { sceInvitationDialogOpen(nullptr); }, "null open before initialization");
+    errno = 71;
+    RequireUnsettled([] { sceInvitationDialogOpen(reinterpret_cast<const InvitationDialogParam*>(0x10)); }, "unmapped open before initialization");
+    Require(errno == 71, "errno preserved before initialization");
 }
 
 void TestCommonDialogPreconditions() {
@@ -94,6 +98,9 @@ void TestOpenChecks() {
     RequireUnsettled([] { sceInvitationDialogClose(); }, "close of a dialog that is not running");
 
     Require(sceInvitationDialogOpen(nullptr) == ArgNull, "open without a param");
+    errno = 71;
+    Require(sceInvitationDialogOpen(reinterpret_cast<const InvitationDialogParam*>(0x10)) == ArgNull, "open with unmapped memory");
+    Require(errno == 71, "errno preserved when rejecting unmapped memory");
     InvitationDialogParam param = MakeParam(ModeSend, nullptr);
     param.size = sizeof(InvitationDialogParam) - 8;
     RequireUnsettled([&] { sceInvitationDialogOpen(&param); }, "open with another param size");
@@ -150,6 +157,9 @@ void TestCanceled() {
     Require(sceInvitationDialogClose() == NotInitialized, "close after termination");
     RequireUnsettled([&] { sceInvitationDialogOpen(&send); }, "open after termination");
     RequireUnsettled([] { sceInvitationDialogOpen(nullptr); }, "null open after termination");
+    errno = 71;
+    RequireUnsettled([] { sceInvitationDialogOpen(reinterpret_cast<const InvitationDialogParam*>(0x10)); }, "unmapped open after termination");
+    Require(errno == 71, "errno preserved after termination");
     Require(sceInvitationDialogInitialize() == 0 && sceInvitationDialogGetResult(&result) == NotFinished, "a new initialization forgets the result");
     Require(sceInvitationDialogTerminate() == 0, "terminate again");
 }

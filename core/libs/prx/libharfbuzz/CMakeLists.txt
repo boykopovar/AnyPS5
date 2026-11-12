@@ -89,3 +89,5 @@ if(BUILD_TESTING)
             "LD_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR};LD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_harfbuzz_font_tests>;LD_LIBRARY_PATH=path_list_prepend:${harfbuzzFontModuleDir}")
     endif()
 endif()
+
+include(Shaping.cmake)

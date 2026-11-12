@@ -259,6 +259,30 @@ def check_output(data, system, rela, plt, initial, addend=FUNCTION):
         assert value == (code["vmaddr"] + addend - FUNCTION if relocated else initial), hex(value)
 
 
+def valid_cases(sce):
+    for addend in (FUNCTION, 0x1100, 0x1800, 0x2000, 0x2800):
+        for encoding in ("rela", "repeated", "relr"):
+            image, initial = relative_module(addend, sce, encoding)
+            yield f"relative-{encoding}-{addend:x}", image, [(TARGET, 8, addend)], [], initial, addend
+    cases = (("baseline", [RELATIVE], [], False, UNCHANGED),
+             ("relative-defined-symbol", [RELATIVE_DEFINED], [], False, UNCHANGED),
+             ("relative-defined-object", [RELATIVE_DEFINED], [], False, UNCHANGED),
+             ("mixed", [NOOP, OVERLAP, RELATIVE, IGNORED, (TARGET, 0, -1)], [], False, UNCHANGED),
+             ("only-none", [NOOP, IGNORED, OVERLAP], [], False, UNCHANGED),
+             ("plt-mixed", [], [NOOP, OVERLAP, JUMP_SLOT, IGNORED], False, UNCHANGED),
+             ("plt-only-none", [], [NOOP, IGNORED, OVERLAP], False, UNCHANGED),
+             ("lifecycle-zero", [(TARGET, 0xffffffff00000000, -1)], [], True, 0),
+             ("lifecycle-relative", [(TARGET, 0, -1), RELATIVE, OVERLAP], [], True, 0))
+    for name, rela, plt, lifecycle, initial in cases:
+        symbol_info = 0x11 if name == "relative-defined-object" else 0x12
+        yield name, module(rela, plt, sce, lifecycle, initial, symbol_info=symbol_info), rela, plt, initial, FUNCTION
+    for name, rela in (("relative-repeated", [RELATIVE, RELATIVE]), ("relative-rewritten", [EARLIER_RELATIVE, NOOP, RELATIVE])):
+        yield name, module(rela, sce=sce), [RELATIVE], [], UNCHANGED, FUNCTION
+    for name, rela, initial in (("unsized-lifecycle", [RELATIVE], UNCHANGED),
+                                ("unsized-lifecycle-unread", [(TARGET, 0, FUNCTION)], FUNCTION)):
+        yield name, unsized_lifecycle(rela, sce, initial), rela, [], initial, FUNCTION
+
+
 def invalid_cases(sce):
     for encoding in ("rela", "relr"):
         for addend in (FUNCTION - 1, 0x2801):
@@ -339,68 +363,47 @@ def main():
     if group not in ("all", "linux", "windows", "macos", "rejected"):
         raise ValueError(group)
     systems = ("linux", "windows", "macos") if group == "all" else () if group == "rejected" else (group,)
-    cases = (("baseline", [RELATIVE], [], False, UNCHANGED),
-             ("relative-defined-symbol", [RELATIVE_DEFINED], [], False, UNCHANGED),
-             ("relative-defined-object", [RELATIVE_DEFINED], [], False, UNCHANGED),
-             ("mixed", [NOOP, OVERLAP, RELATIVE, IGNORED, (TARGET, 0, -1)], [], False, UNCHANGED),
-             ("only-none", [NOOP, IGNORED, OVERLAP], [], False, UNCHANGED),
-             ("plt-mixed", [], [NOOP, OVERLAP, JUMP_SLOT, IGNORED], False, UNCHANGED),
-             ("plt-only-none", [], [NOOP, IGNORED, OVERLAP], False, UNCHANGED),
-             ("lifecycle-zero", [(TARGET, 0xffffffff00000000, -1)], [], True, 0),
-             ("lifecycle-relative", [(TARGET, 0, -1), RELATIVE, OVERLAP], [], True, 0))
     with tempfile.TemporaryDirectory(prefix="anyps5-guest-none-") as directory:
         work = Path(directory)
 
-        def convert(name, system, image):
+        def convert_modules(name, system, images):
             case = work / name / system
             modules = case / "sce_module"
             modules.mkdir(parents=True)
-            guest = modules / "module.prx"
-            guest.write_bytes(image)
+            for stem, image in images.items():
+                (modules / f"{stem}.prx").write_bytes(image)
             source = case / "input.elf"
             source.write_bytes(main_fixture())
             output = case / ("output.exe" if system == "windows" else "output.elf")
             flags = {"linux": [], "windows": ["--windows"], "macos": ["--macos"]}[system]
             result = subprocess.run([str(relinker), *flags, str(source), str(output)],
                                     capture_output=True, text=True, timeout=10)
-            assert guest.read_bytes() == image
-            return result, case / "app0" / "sce_module" / "module.prx.guest.prx", output
+            for stem, image in images.items():
+                assert (modules / f"{stem}.prx").read_bytes() == image, stem
+            return result, case / "app0" / "sce_module", output
+
+        def convert(name, system, image):
+            result, artifacts, output = convert_modules(name, system, {"module": image})
+            return result, artifacts / "module.prx.guest.prx", output
 
         for sce in modes:
-            for addend in (FUNCTION, 0x1100, 0x1800, 0x2000, 0x2800):
-                for encoding in ("rela", "repeated", "relr"):
-                    entries = [(TARGET, 8, addend)]
-                    image, initial = relative_module(addend, sce, encoding)
-                    for system in systems:
-                        result, artifact, output = convert(f"{sce}-relative-{encoding}-{addend:x}", system, image)
-                        assert result.returncode == 0, (sce, encoding, addend, system, result.stderr)
-                        check_output(artifact.read_bytes(), system, entries, [], initial, addend=addend)
-            for name, rela, plt, lifecycle, initial in cases:
-                symbol_info = 0x11 if name == "relative-defined-object" else 0x12
-                image = module(rela, plt, sce, lifecycle, initial, symbol_info=symbol_info)
-                for system in systems:
-                    result, artifact, output = convert(f"{sce}-{name}", system, image)
-                    assert result.returncode == 0, (sce, name, system, result.stdout, result.stderr)
-                    check_output(artifact.read_bytes(), system, rela, plt, initial)
+            cases = list(valid_cases(sce))
+            assert len({name for name, *_ in cases}) == len(cases)
+            for system in systems:
+                result, artifacts, output = convert_modules(f"{sce}-valid", system, {name: image for name, image, *_ in cases})
+                assert result.returncode == 0, (sce, system, result.stdout, result.stderr)
+                for name, image, rela, plt, initial, addend in cases:
+                    artifact = artifacts / f"{name}.prx.guest.prx"
+                    try:
+                        check_output(artifact.read_bytes(), system, rela, plt, initial, addend=addend)
+                    except AssertionError as error:
+                        raise AssertionError((sce, name, system, *error.args)) from error
                     if name in ("mixed", "plt-mixed"):
                         if system == "linux" and sys.platform == "linux" and platform.machine() == "x86_64":
                             executed = subprocess.run([sys.executable, __file__, "--load", str(artifact)],
                                                       capture_output=True, text=True, timeout=10)
                             assert executed.returncode == 0, (executed.stdout, executed.stderr)
-            for name, rela in (("relative-repeated", [RELATIVE, RELATIVE]), ("relative-rewritten", [EARLIER_RELATIVE, NOOP, RELATIVE])):
-                image = module(rela, sce=sce)
-                for system in systems:
-                    result, artifact, output = convert(f"{sce}-{name}", system, image)
-                    assert result.returncode == 0, (sce, name, system, result.stdout, result.stderr)
-                    check_output(artifact.read_bytes(), system, [RELATIVE], [], UNCHANGED)
-            for name, rela, initial in (("unsized-lifecycle", [RELATIVE], UNCHANGED),
-                                        ("unsized-lifecycle-unread", [(TARGET, 0, FUNCTION)], FUNCTION)):
-                image = unsized_lifecycle(rela, sce, initial)
-                for system in systems:
-                    result, artifact, output = convert(f"{sce}-{name}", system, image)
-                    assert result.returncode == 0, (sce, name, system, result.stdout, result.stderr)
-                    check_output(artifact.read_bytes(), system, rela, [], initial)
-                    if system == "linux":
+                    if name.startswith("unsized-lifecycle") and system == "linux":
                         assert not {25, 26, 27, 28} & set(dynamic_tags(artifact.read_bytes())), name
             if group in ("all", "rejected"):
                 for name, image, error in invalid_cases(sce):

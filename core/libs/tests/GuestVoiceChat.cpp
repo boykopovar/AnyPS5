@@ -19,6 +19,7 @@ int main() {
     Require(sceVoiceChatProcessEvent() == 0, "event processing failed");
     Require(sceVoiceChatRegisterHandlers(nullptr, nullptr) == 0, "register handlers failed");
     Require(sceVoiceChatRegisterMicEventHandler(0, nullptr, nullptr) == 0, "register mic event handler failed");
+    Require(sceVoiceChatRegisterMicEventHandler2() == 0, "register mic event handler 2 failed");
     Require(sceVoiceChatRegisterChannelEventHandler(nullptr, nullptr) == 0, "register channel event handler failed");
     Require(sceVoiceChatRegisterDaemonEventHandler(nullptr, nullptr) == 0, "register daemon event handler failed");
     Require(sceVoiceChatRegisterMemberEventHandler(nullptr, nullptr) == 0, "register member event handler failed");

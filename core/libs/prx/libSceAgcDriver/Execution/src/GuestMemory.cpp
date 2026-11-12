@@ -7,10 +7,12 @@
 #include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
+#include <cerrno>
 #include <mutex>
 #include <array>
 #include <chrono>
@@ -49,7 +51,6 @@
 #endif
 #include <windows.h>
 #else
-#include <cerrno>
 #include <cstdint>
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -1258,10 +1259,36 @@ std::vector<std::uint64_t> PagesOf(std::span<const std::pair<std::uint64_t, std:
     return pages;
 }
 
-void HashPages(std::uint64_t first, std::span<const std::pair<std::uint64_t, std::uint64_t>> spans, std::vector<std::uint64_t>& hashes) {
+std::vector<std::uint8_t> TrappedPages(std::span<const std::uint64_t> pages) {
+    std::vector<std::uint8_t> trapped(pages.size(), 0);
+#ifdef __APPLE__
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
+    for (std::size_t from = 0; from < pages.size();) {
+        auto to = from + 1;
+        while (to < pages.size() && pages[to] == pages[to - 1] + WritePageBytes) ++to;
+        GuestWriteWatch::GuestWriteWatchReadTraps_nid_postfix(static_cast<std::uintptr_t>(pages[from]), (to - from) * WritePageBytes, +[](void* context, std::uintptr_t begin, std::uintptr_t end) { static_cast<std::vector<std::pair<std::uintptr_t, std::uintptr_t>>*>(context)->emplace_back(begin, end); }, &runs);
+        from = to;
+    }
+    if (runs.empty()) return trapped;
+    std::sort(runs.begin(), runs.end());
+    for (std::size_t index = 0; index < pages.size(); ++index) {
+        const auto page = static_cast<std::uintptr_t>(pages[index]);
+        const auto run = std::partition_point(runs.begin(), runs.end(), [&](const auto& candidate) { return candidate.second <= page; });
+        trapped[index] = run != runs.end() && run->first < page + WritePageBytes;
+    }
+#endif
+    return trapped;
+}
+
+void HashPages(std::uint64_t first, std::span<const std::pair<std::uint64_t, std::uint64_t>> spans, std::vector<std::uint64_t>& hashes, std::vector<std::uint8_t>& unknown) {
     const auto pages = PagesOf(spans);
+    const auto trapped = TrappedPages(pages);
     SplitPages(pages.size(), [&](std::size_t from, std::size_t to) {
-        for (auto index = from; index < to; ++index) hashes[static_cast<std::size_t>((pages[index] - first) / WritePageBytes)] = HashPage(reinterpret_cast<const std::byte*>(pages[index]));
+        for (auto index = from; index < to; ++index) {
+            const auto at = static_cast<std::size_t>((pages[index] - first) / WritePageBytes);
+            if (trapped[index] != 0) unknown[at] = 1;
+            else hashes[at] = HashPage(reinterpret_cast<const std::byte*>(pages[index]));
+        }
     });
 }
 
@@ -1270,11 +1297,13 @@ struct WindowCopy {
     std::span<const std::uint64_t> hashes;
     std::span<const std::byte> image;
     StampKind held = StampKind::ImportWindow;
+    std::span<const std::uint8_t> unknown;
 
     bool Holds(std::uintptr_t page) const {
         if (held == StampKind::Driver) return page >= first && page - first <= image.size() && image.size() - (page - first) >= WritePageBytes && CompareMapped(page, image.subspan(page - first, WritePageBytes)) == Compare::Equal;
         if (page < first || (page - first) / WritePageBytes >= hashes.size()) return false;
-        return HashPage(reinterpret_cast<const std::byte*>(page)) == hashes[(page - first) / WritePageBytes];
+        const auto at = (page - first) / WritePageBytes;
+        return (at >= unknown.size() || unknown[at] == 0) && HashPage(reinterpret_cast<const std::byte*>(page)) == hashes[at];
     }
 };
 
@@ -1899,9 +1928,10 @@ void stampWrittenRun(void* context, std::uintptr_t begin, std::uintptr_t end) {
 
 void stampWindowRuns(StampRuns& runs) {
     const auto pages = PagesOf(runs.windowRuns);
+    const auto trapped = TrappedPages(pages);
     std::vector<std::uint8_t> held(pages.size(), 0);
     SplitPages(pages.size(), [&](std::size_t from, std::size_t to) {
-        for (auto index = from; index < to; ++index) held[index] = runs.window->Holds(static_cast<std::uintptr_t>(pages[index]));
+        for (auto index = from; index < to; ++index) held[index] = trapped[index] == 0 && runs.window->Holds(static_cast<std::uintptr_t>(pages[index]));
     });
     auto& tracker = runs.tracker;
     const auto generation = tracker.generation.load(std::memory_order_relaxed);
@@ -2376,7 +2406,8 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     }
     std::vector<std::uint64_t> hashes(static_cast<std::size_t>((stop - first) / page), 0);
     for (const auto& [begin, end] : spans) CheckRange(reinterpret_cast<const void*>(begin), static_cast<std::size_t>(end - begin), 1, false);
-    HashPages(first, spans, hashes);
+    std::vector<std::uint8_t> unknown(hashes.size(), 0);
+    HashPages(first, spans, hashes, unknown);
     const auto failWalk = importWalkFailureForTest.load(std::memory_order_acquire);
     const auto failSpan = importWalkFailureSpanForTest.load(std::memory_order_acquire);
     const auto failsWalk = [&](int walk, std::uint64_t begin, std::uint64_t end) {
@@ -2396,7 +2427,7 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     leave(leaving);
     if (!runImport()) return false;
     bumpSubscriptions(first, stop - first, WriteBumpSource::Import);
-    const WindowCopy window{first, hashes};
+    const WindowCopy window{first, hashes, {}, StampKind::ImportWindow, unknown};
     leaving.clear();
     std::erase_if(spans, [&](const auto& span) {
         if (failsWalk(2, span.first, span.second) || !walkWrites(tracker, span.first, span.second, StampKind::Cpu, true, &window)) {
@@ -3535,6 +3566,12 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
 Compare CopyMapped(std::uint64_t address, std::span<std::byte> out) {
     if (out.empty()) return Compare::Equal;
     if (address == 0 || out.size() > std::numeric_limits<std::uintptr_t>::max() - address) return Compare::Unmapped;
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
+    const int savedErrno = errno;
+    const bool copied = GuestCopyInUnsynced_nid_no_patch(out.data(), reinterpret_cast<const void*>(address), out.size());
+    errno = savedErrno;
+    return copied ? Compare::Equal : Compare::Unmapped;
+#else
     auto outcome = Compare::Equal;
     const bool queried = describePages(static_cast<std::uintptr_t>(address), out.size(), [&](const PageRun& run) {
         if (!run.readable) outcome = Compare::Unmapped;
@@ -3542,6 +3579,7 @@ Compare CopyMapped(std::uint64_t address, std::span<std::byte> out) {
         return outcome == Compare::Equal;
     });
     return queried ? outcome : Compare::Unmapped;
+#endif
 }
 
 void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
