@@ -87,11 +87,16 @@ constexpr std::size_t PAD_LEONARDO_UNIQUE_DATA_SIZE = 0x18;
 constexpr std::uint32_t PAD_HISTORY_BUFFER_SIZE = 0x960;
 constexpr std::int32_t PAD_OPEN_EXT2_PARAM_SIZE = 0x10;
 
+void WriteDefaultData(PadData* data) {
+    std::memset(data, 0, sizeof(*data));
+    data->left_stick_x = data->left_stick_y = data->right_stick_x = data->right_stick_y = 0x80;
+    data->orientation_w = 1.0f;
+    data->acceleration_y = 1.0f;
+}
+
 PadData SpecialData() {
-    PadData data{};
-    data.left_stick_x = data.left_stick_y = data.right_stick_x = data.right_stick_y = 0x80;
-    data.orientation_w = 1.0f;
-    data.acceleration_y = 1.0f;
+    PadData data;
+    WriteDefaultData(&data);
     return data;
 }
 
@@ -358,8 +363,8 @@ int APS5_VABI scePadOutputReport(std::int32_t handle, std::uint8_t reportId, con
 
 int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
  if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+ if (data == nullptr || num < 1 || num > 64) return PAD_ERROR_INVALID_ARG;
  if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
- if (data == nullptr || num <= 0) return PAD_ERROR_INVALID_ARG;
  if (RemoteHandle(handle)) {
   data[0] = PadData{};
   return 1;
@@ -373,6 +378,7 @@ int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
 
 int APS5_VABI scePadReadState(int handle, PadData* data) {
  if (data == nullptr) return PAD_ERROR_INVALID_ARG;
+ WriteDefaultData(data);
  if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
 
@@ -573,8 +579,9 @@ int APS5_VABI scePadLastLotusButtonData(std::int32_t handle, std::uint32_t param
 }
 
 int APS5_VABI scePadReadStateExt(std::int32_t handle, PadDataExtended* data) {
-    if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     if (data == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     NotImplemented_nid_no_patch(__func__);
 }
 

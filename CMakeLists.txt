@@ -111,6 +111,15 @@ if(NOT ANYPS5_CXX_LINKS_STANDARD_LIBRARY)
         "Supported toolchains are listed in docs/dev/BUILD.md.")
 endif()
 
+if(MINGW)
+    check_cxx_source_compiles("#include <memory>\n#if defined(__GLIBCXX__) && !defined(_GLIBCXX_ATOMIC_WORD_BUILTINS) && !defined(_GLIBCXX_ATOMIC_BUILTINS)\nstatic_assert(__gnu_cxx::__default_lock_policy != __gnu_cxx::_S_atomic);\n#endif\nint main() { return 0; }" ANYPS5_CXX_HAS_COMPATIBLE_SHARED_PTR_ATOMICS)
+    if(NOT ANYPS5_CXX_HAS_COMPATIBLE_SHARED_PTR_ATOMICS)
+        message(FATAL_ERROR "The MinGW C++ standard library selected by ${CMAKE_CXX_COMPILER} uses incompatible shared_ptr reference-count operations (GCC PR125312). "
+            "Select a corrected MinGW toolchain and configure in a new build directory. "
+            "Supported toolchains are listed in docs/dev/BUILD.md.")
+    endif()
+endif()
+
 if(ANYPS5_ENABLE_ASAN AND ANYPS5_ENABLE_TSAN)
     message(FATAL_ERROR "ANYPS5_ENABLE_ASAN and ANYPS5_ENABLE_TSAN cannot be combined")
 endif()
