@@ -317,6 +317,14 @@ Set `APS5_NO_PAD_INPUT` to any value, an empty one included, to make the window 
 
 On Windows, set `APS5_NO_WGI` to any value to turn off SDL's Windows Gaming Input controller backend. AnyPS5 turns off DirectInput there in every case, and this variable is read once when the video output driver is created.
 
+### Host microphone selection
+
+By default, `libSceAudioIn` captures from SDL's default host input device. Set `ANYPS5_AUDIO_IN_DEVICE` to an exact capture-device name reported by SDL to select another microphone. An unset or empty value, or `default`, keeps SDL's default. If the selected name is missing, appears more than once, or cannot be opened, the game's AudioIn open call fails with `SCE_AUDIO_IN_ERROR_INVALID_DEVICE`; AnyPS5 does not silently switch to another microphone. SDL2 identifies capture devices by name, so duplicate names cannot be selected individually. The setting is read each time the game opens an AudioIn port.
+
+```sh
+ANYPS5_AUDIO_IN_DEVICE="USB Microphone" ./app.elf
+```
+
 ### Controller vibration strength
 
 Set `ANYPS5_RUMBLE` to a whole number from `0` to `100` to scale how strongly the game's vibration reaches your controller. `100`, which is also the value when the variable is unset, passes the vibration exactly as the game asks. `0` turns vibration off: the motors never receive a nonzero request, and a rumble that was running is stopped. Values in between scale the motor strength by that percentage and apply to every connected controller.
