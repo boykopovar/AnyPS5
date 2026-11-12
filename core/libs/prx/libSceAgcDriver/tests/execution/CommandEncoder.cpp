@@ -828,7 +828,7 @@ void AppendFailureKeepsTheWindow() {
     try {
         AgcDriver::Tests::SetAllocationFailureCountdown(0);
         encoder.Emplace([](const std::byte*, VkCommandBuffer, const DeviceFunctions&) {}, std::uint32_t{0}, std::span<const std::byte>(oversized));
-    } catch (const std::exception&) {
+    } catch (const std::bad_alloc&) {
         refused = true;
     }
     AgcDriver::Tests::SetAllocationFailureCountdown(-1);
