@@ -206,6 +206,9 @@ int main() {
     Require(sceWebBrowserDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
     Require(sceWebBrowserDialogUpdateStatus() == COMMON_DIALOG_STATUS_NONE);
+    Require(sceWebBrowserDialogGetEvent() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogNavigate() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogSetZoom() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     RequireNotices(param);
     return 0;
 }
