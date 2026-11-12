@@ -93,6 +93,40 @@ def read_program_headers(path):
 
 
 class UnwrapTest(unittest.TestCase):
+    def test_tls_zero_fill_cannot_hide_a_truncated_load(self):
+        directory = Path(self.directory)
+        source, output = directory / "input.self", directory / "output.elf"
+        for mapping in ("indexed", "legacy", "unrecorded"):
+            for stored in (0x60, 0x7F):
+                for tls_first in (False, True):
+                    load = (PT_LOAD, 5, 0x800 if mapping == "unrecorded" else 0x1234,
+                            0x1000, 0x80, 1)
+                    tls = (PT_TLS, 4, 0x880, 0x1080, 0x40, 1)
+                    segments = [tls, load] if tls_first else [load, tls]
+                    load_index = segments.index(load)
+                    flags = (load_index << unwrap_self.RECORD_SEGMENT_SHIFT) | 0x800
+                    records = [] if mapping == "unrecorded" else [
+                        (flags if mapping == "indexed" else 0, 0x800, 0x80)]
+                    container = bytearray(build_container(segments, records, {0x800: b"A" * stored}))
+                    struct.pack_into("<Q", container,
+                                     ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + load_index * 56 + 40, 0x100)
+                    source.write_bytes(container)
+                    for previous in (None, b"previous output"):
+                        with self.subTest(mapping=mapping, stored=stored, tls_first=tls_first, previous=previous):
+                            output.unlink(missing_ok=True)
+                            if previous is not None:
+                                output.write_bytes(previous)
+                            before = set(directory.iterdir())
+                            stdout, stderr = io.StringIO(), io.StringIO()
+                            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                                status = unwrap_self.main([str(source), str(output)])
+                            self.assertEqual(status, 2)
+                            self.assertEqual(stdout.getvalue(), "")
+                            self.assertIn(f"segment {load_index} does not fit the file", stderr.getvalue())
+                            self.assertEqual(source.read_bytes(), container)
+                            self.assertEqual(output.read_bytes() if output.exists() else None, previous)
+                            self.assertEqual(set(directory.iterdir()), before)
+
     def test_interpreter_without_an_address_uses_its_load_file_range(self):
         payload = b"/libexec/ld-elf.so.1\0" + pattern(3, 0x20) * 8
         for delta, address in ((0, 0), (0x20, 0), (len(payload) - 0x10, 0),
