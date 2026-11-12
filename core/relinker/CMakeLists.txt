@@ -425,6 +425,20 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/io/include
     )
     add_test(NAME program_layout_ranges COMMAND program_layout_ranges_tests)
+    add_test_executable(windows_load_image_relocation_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/WindowsLoadImageRelocationTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsLoadImage.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsPeFormat.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
+    )
+    target_include_directories(windows_load_image_relocation_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+    )
+    add_test(NAME windows_load_image_relocation COMMAND windows_load_image_relocation_tests)
     set_tests_properties(program_layout_ranges PROPERTIES TIMEOUT 20)
 
     add_test_executable(buffer_bounds_tests
@@ -879,6 +893,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_module_identity.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_symbolic_modules COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_symbolic_modules.py $<TARGET_FILE:relinker>)
+        add_test(NAME linux_guest_qualified_imports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_qualified_imports.py $<TARGET_FILE:relinker>)
+        set_property(TEST linux_guest_qualified_imports APPEND PROPERTY LABELS relinker)
+        set_tests_properties(linux_guest_qualified_imports PROPERTIES TIMEOUT 30)
+        add_asan_test_options(linux_guest_qualified_imports verify_asan_link_order=0)
         add_test(NAME linux_guest_zero_address_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_zero_address_exports.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)

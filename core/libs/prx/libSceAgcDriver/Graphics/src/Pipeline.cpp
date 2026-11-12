@@ -57,7 +57,7 @@ bool LogicOpFormat(VkFormat format) {
 
 }
 
-void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipeline) {
+void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipeline, std::span<const CompiledShader> shaders) {
     if (!context.pipelineExecutableInfo) return;
     const auto getProperties = context.Function<PFN_vkGetPipelineExecutablePropertiesKHR>("vkGetPipelineExecutablePropertiesKHR");
     const auto getStatistics = context.Function<PFN_vkGetPipelineExecutableStatisticsKHR>("vkGetPipelineExecutableStatisticsKHR");
@@ -74,6 +74,11 @@ void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipel
         std::snprintf(line.data(), line.size(), format, values...);
         report += line.data();
     };
+    for (const auto& shader : shaders) {
+        if (shader.program == nullptr) continue;
+        const auto identity = shader.program->Identity();
+        append("[pipeline-source] stage=0x%x variant=0x%llx pipelineVariant=0x%llx identity=%016llx%016llx\n", VulkanStage(shader.stage), static_cast<unsigned long long>(shader.program->variantId), static_cast<unsigned long long>(shader.program->PipelineVariantId()), static_cast<unsigned long long>(identity.high), static_cast<unsigned long long>(identity.low));
+    }
     for (std::uint32_t index = 0; index < properties.size(); ++index) {
         VkPipelineExecutableInfoKHR executable{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR};
         executable.pipeline = pipeline;
@@ -812,7 +817,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         _modules.clear();
         timing.Mark("create");
         PerformanceCounters::CountPipeline();
-        LogPipelineStatistics_nid_no_patch(context, pipeline);
+        LogPipelineStatistics_nid_no_patch(context, pipeline, shaders);
     } catch (...) {
         release();
         throw;
