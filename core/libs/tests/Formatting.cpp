@@ -105,6 +105,28 @@ static void CheckCharacterScanLengths() {
     }
 }
 
+static void CheckScanIgnoredLengths() {
+    for (const auto scan : {sscanf_s_nid_postfix, ScanListS}) {
+        for (const char* format : {"%Ld", "%Li", "%Lu", "%Lx", "%Lo", "%LX"}) {
+            std::array<unsigned char, 8> stored;
+            stored.fill(0x55);
+            Require(scan("17", format, stored.data()) == 1 && stored[4] == 0x55 && stored[7] == 0x55);
+        }
+        for (const char* format : {"%llf", "%jf", "%zf", "%tf", "%lla", "%hhe", "%hg"}) {
+            std::array<unsigned char, 16> stored;
+            stored.fill(0x55);
+            float value = 0.0f;
+            Require(scan("1.5", format, stored.data()) == 1 && stored[4] == 0x55);
+            std::memcpy(&value, stored.data(), sizeof(value));
+            Require(value == 1.5f);
+        }
+        int value = 0;
+        std::array<unsigned char, 8> count;
+        count.fill(0x55);
+        Require(scan("12345", "%d%Ln", &value, count.data()) == 1 && value == 12345 && count[0] == 5 && count[3] == 0 && count[4] == 0x55);
+    }
+}
+
 static int APS5_VABI PrintList(const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
@@ -862,4 +884,4 @@ static void CheckLongDoubleHexFloat() {
     }
 }
 
-int main() { CheckPositionalUnknownConversion(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { CheckPositionalUnknownConversion(); CheckScanIgnoredLengths(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
