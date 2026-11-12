@@ -7,6 +7,7 @@
 - [`X509_set_version`](../../../core/libs/prx/libSceLibreSsl3/src/X509.cpp) follows LibreSSL 4.0.0 `crypto/x509/x509_set.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_set.c) and the `X509_CINF` layout in its `x509_local.h`. Versions outside 0 to 2 return 0 without mutation; a missing version integer is allocated from the guest heap, the encoding is marked modified, and the value is set through `ASN1_INTEGER_set`. A null certificate returns 0 and null certificate info, undefined upstream, throws. The 104-byte `X509_CINF` layout and the `enc.modified` offset 96 are not measured on the console.
 ### Functional
 
+- [X509_get0_pubkey](../../../core/libs/prx/libSceLibreSsl3/src/X509PublicKeyAccessors.cpp) - reads the cached public key from the certificate-info key structure; a null certificate, info or key returns null, and a null cached key with encoded SPKI data throws `NotImplemented_nid_no_patch` until SPKI decoding exists. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
 - [AES_wrap_key](../../../core/libs/prx/libSceLibreSsl3/src/AesWrap.cpp) - follows [RFC 3394](https://www.rfc-editor.org/rfc/rfc3394) with the default IV `A6A6A6A6A6A6A6A6`, six rounds and the 64-bit counter XORed into the A block; it encrypts through libSceLibreSsl's `AES_encrypt`. Inputs below 16 bytes or not a multiple of 8 return -1 as LibreSSL does (OpenSSL 1.1 returns 0); null key, input or output throws where LibreSSL dereferences it. The PS5 ABI, custom-IV handling and console behaviour are unverified. Closes when: compared with the console.
 - [EVP_EncryptInit](../../../core/libs/prx/libSceLibreSsl3/src/EvpCipherInit.cpp) forwards the four-argument LibreSSL entry point to libSceLibreSsl's `EVP_CipherInit_ex` with encrypt set, so the legacy cipher and context layouts are shared rather than duplicated. A null context throws through the parent, a null cipher on an uninitialised context returns 0, and the parent's cipher checks and callbacks decide the rest. The PS5 ABI and console behaviour are unverified. Closes when: compared with the console.
 - [SSL_get_version](../../../core/libs/prx/libSceLibreSsl3/src/Ssl.cpp) - maps the SSL version field to the LibreSSL strings `TLSv1`, `TLSv1.1`, `TLSv1.2`, `TLSv1.3`, `DTLSv1`, `DTLSv1.2` or `unknown`; a null SSL throws. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
@@ -101,7 +102,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 71 still-unimplemented callable exports: 67 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 70 still-unimplemented callable exports: 66 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -172,7 +173,6 @@
 | `X509_EXTENSION_free` | `wbJDMMsje6s` |
 | `OBJ_obj2txt` | `xZ1BME5qDv0` |
 | `SSL_set_quic_transport_params` | `xf6anoZpWRM` |
-| `X509_get0_pubkey` | `xj7cFYOV4+Y` |
 | `SSL_is_quic` | `xpB+BNkO2Z0` |
 
 - The formerly NID-only exports named in the inventory above and in [API declarations](../../../core/libs/prx/libSceLibreSsl3/include/Api.hpp) use LibreSSL names whose `tools/nid_names.py` hash equals the NID; the names were taken from the identifiers of the LibreSSL 3.8.4 and 4.0.0 `include`, `crypto`, `ssl` and `tls` sources. A name match does not show that the console function has LibreSSL's prototype or behavior. Unimplemented entries keep the no-parameter import-resolution convention and throw through `NotImplemented_nid_no_patch`; the implemented contracts and remaining gaps are listed above. `AES_wrap_key`, `ECDSA_SIG_free`, `ECDSA_do_verify`, `ERR_load_ERR_strings`, `ERR_print_errors_fp` and `i2d_PUBKEY` also hash to the NIDs of six `unknown` rows, which keep their NID names; `PBYz0kpXwg8` hashes to no identifier of those sources.

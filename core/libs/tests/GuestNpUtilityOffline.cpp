@@ -248,6 +248,8 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntInitialize() == 0, "sceNpServiceChecker2IntInitialize", "initialization failed");
     Require(sceNpServiceChecker2IntInitialize() == AlreadyInitialized, "sceNpServiceChecker2IntInitialize", "a second initialization was taken");
     Require(sceNpServiceChecker2IntCreateRequest(nullptr) == CheckerInvalidArgument, "sceNpServiceChecker2IntCreateRequest", "a null output was taken");
+    Require(sceNpServiceChecker2IntCreateRequest(reinterpret_cast<int*>(1)) == CheckerInvalidArgument, "sceNpServiceChecker2IntCreateRequest", "an unmapped low output was taken");
+    Require(sceNpServiceChecker2IntCreateRequest(reinterpret_cast<int*>(~0xFu)) == CheckerInvalidArgument, "sceNpServiceChecker2IntCreateRequest", "an unmapped high output was taken");
     Require(sceNpServiceChecker2IntCreateRequest(&request) == 0 && request == 1, "sceNpServiceChecker2IntCreateRequest", "the first request is not id 1");
     std::uint32_t availability = 0xA5A5A5A5;
     Require(sceNpServiceChecker2IntGetServiceAvailability(request, nullptr, &availability) == CheckerInvalidArgument, "sceNpServiceChecker2IntGetServiceAvailability", "a null NpId was taken");

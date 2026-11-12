@@ -82,6 +82,12 @@ void CheckInstanceSize() {
     Require(sceVdecCoreQueryInstanceSize(&config, &instance, &compute, &reserved) == 0, "instance size");
     Require(instance == 0x40000 && compute == 0x10000 && reserved == 0, "instance, compute and reserved sizes");
     Require(sceVdecCoreQueryInstanceSize(&config, nullptr, nullptr, nullptr) == 0, "instance size with no outputs");
+    errno = 71;
+    Require(sceVdecCoreQueryInstanceSize(reinterpret_cast<const VdecCoreConfigInfo*>(0x10), &instance, &compute, &reserved) == InvalidArgument, "unmapped config");
+    Require(sceVdecCoreQueryInstanceSize(&config, reinterpret_cast<std::uint64_t*>(0x10), &compute, &reserved) == InvalidArgument, "unmapped instance");
+    Require(sceVdecCoreQueryInstanceSize(&config, &instance, reinterpret_cast<std::uint64_t*>(0x10), &reserved) == InvalidArgument, "unmapped compute");
+    Require(sceVdecCoreQueryInstanceSize(&config, &instance, &compute, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument, "unmapped reserved");
+    Require(errno == 71, "errno modified by unmapped instance size query");
 }
 
 void RequireFrameBuffer(const VdecCoreConfigInfo& config, std::uint32_t size, std::uint32_t minCount, std::uint32_t align, std::uint32_t width, std::uint32_t height, const char* message) {

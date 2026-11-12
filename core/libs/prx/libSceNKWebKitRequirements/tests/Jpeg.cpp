@@ -120,6 +120,117 @@ static void APS5_VABI GuestTermSource(NKWebKit::GuestDecompressPtr cinfo) {
     (void)cinfo;
 }
 
+struct Diagnostic {
+    int code;
+    int64_t warnings;
+    bool operator==(const Diagnostic&) const = default;
+};
+
+void HostDiagnostic(j_common_ptr cinfo) {
+    auto& messages = *static_cast<std::vector<Diagnostic>*>(cinfo->client_data);
+    messages.push_back({cinfo->err->msg_code, cinfo->err->num_warnings});
+}
+
+void APS5_VABI GuestDiagnostic(NKWebKit::GuestCommonPtr cinfo) {
+    auto& messages = *static_cast<std::vector<Diagnostic>*>(cinfo->client_data);
+    messages.push_back({cinfo->err->msg_code, cinfo->err->num_warnings});
+}
+
+void HostPromotingDiagnostic(j_common_ptr cinfo) {
+    HostDiagnostic(cinfo);
+    if (cinfo->err->msg_code == JWRN_EXTRANEOUS_DATA) cinfo->err->trace_level = 3;
+}
+
+void APS5_VABI GuestPromotingDiagnostic(NKWebKit::GuestCommonPtr cinfo) {
+    GuestDiagnostic(cinfo);
+    if (cinfo->err->msg_code == JWRN_EXTRANEOUS_DATA) cinfo->err->trace_level = 3;
+}
+
+void TestDiagnosticDispatch() {
+    bool matched = true;
+    for (const int traceLevel : {-1, 0, 1, 2, 3, 6}) {
+        std::vector<Diagnostic> hostMessages;
+        std::vector<Diagnostic> guestMessages;
+        jpeg_error_mgr hostError{};
+        jpeg_std_error(&hostError);
+        hostError.output_message = HostDiagnostic;
+        hostError.trace_level = traceLevel;
+        jpeg_common_struct host{};
+        host.err = &hostError;
+        host.client_data = &hostMessages;
+        NKWebKit::GuestJpegErrorMgr guestError{};
+        jpeg_std_error_nid_postfix(&guestError);
+        guestError.output_message = GuestDiagnostic;
+        guestError.trace_level = traceLevel;
+        NKWebKit::GuestJpegCommon guest{};
+        guest.err = &guestError;
+        guest.client_data = &guestMessages;
+        for (const int messageLevel : {-2, -1, 0, 1, 2, 3, 7, -1, -2, 0}) {
+            hostError.msg_code = guestError.msg_code = messageLevel < 0 ? JWRN_EXTRANEOUS_DATA : JTRC_SOI;
+            hostError.emit_message(&host, messageLevel);
+            guestError.emit_message(&guest, messageLevel);
+            AssertTrue(guestError.num_warnings == hostError.num_warnings, "diagnostic warning counts differ from libjpeg");
+        }
+        if (guestMessages != hostMessages) {
+            std::fprintf(stderr, "JPEG trace level %d: expected %zu messages, observed %zu\n", traceLevel, hostMessages.size(), guestMessages.size());
+            matched = false;
+        }
+        hostError.reset_error_mgr(&host);
+        guestError.reset_error_mgr(&guest);
+        AssertTrue(guestError.num_warnings == hostError.num_warnings && guestError.msg_code == hostError.msg_code,
+            "diagnostic reset differs from libjpeg");
+        AssertTrue(guestError.trace_level == hostError.trace_level, "diagnostic reset changed the trace level");
+    }
+    AssertTrue(matched, "JPEG warning and trace dispatch differs from libjpeg");
+}
+
+void TestHeaderDiagnostics(int traceLevel, bool defaultOutput, bool promote = false) {
+    std::vector<uint8_t> jpeg;
+    GenerateJpeg(jpeg, 16, 16, 3, JCS_RGB, false, 0, nullptr, 0);
+    jpeg.insert(jpeg.begin() + 2, 0x42);
+    std::vector<Diagnostic> hostMessages;
+    jpeg_error_mgr hostError{};
+    jpeg_decompress_struct host{};
+    host.err = jpeg_std_error(&hostError);
+    jpeg_create_decompress(&host);
+    host.client_data = &hostMessages;
+    hostError.output_message = promote ? HostPromotingDiagnostic : HostDiagnostic;
+    hostError.trace_level = traceLevel;
+    jpeg_mem_src(&host, jpeg.data(), jpeg.size());
+    AssertTrue(jpeg_read_header(&host, TRUE) == JPEG_HEADER_OK, "host warning fixture header failed");
+
+    std::vector<Diagnostic> guestMessages;
+    NKWebKit::GuestJpegErrorMgr guestError{};
+    jpeg_std_error_nid_postfix(&guestError);
+    NKWebKit::GuestJpegDecompress guest{};
+    guest.err = &guestError;
+    jpeg_CreateDecompress_nid_postfix(&guest, 62, sizeof(guest));
+    guest.client_data = &guestMessages;
+    guestError.trace_level = traceLevel;
+    if (!defaultOutput) guestError.output_message = promote ? GuestPromotingDiagnostic : GuestDiagnostic;
+    NKWebKit::GuestJpegSourceMgr source{};
+    source.next_input_byte = jpeg.data();
+    source.bytes_in_buffer = jpeg.size();
+    source.init_source = GuestInitSource;
+    source.fill_input_buffer = GuestFillInputBuffer;
+    source.skip_input_data = GuestSkipInputData;
+    source.resync_to_restart = GuestResyncToRestart;
+    source.term_source = GuestTermSource;
+    guest.src = &source;
+    AssertTrue(jpeg_read_header_nid_postfix(&guest, 1) == JPEG_HEADER_OK, "guest warning fixture header failed");
+    AssertTrue(guest.image_width == host.image_width && guest.image_height == host.image_height,
+        "warning fixture dimensions differ from libjpeg");
+    AssertTrue(hostError.num_warnings == 1 && guestError.num_warnings == hostError.num_warnings,
+        "warning fixture did not count its extraneous header byte");
+    AssertTrue(guestError.trace_level == hostError.trace_level, "header diagnostic callback trace levels differ");
+    if (!defaultOutput && guestMessages != hostMessages) {
+        std::fprintf(stderr, "JPEG header trace level %d: expected %zu messages, observed %zu\n", traceLevel, hostMessages.size(), guestMessages.size());
+        AssertTrue(false, "header diagnostics differ from libjpeg");
+    }
+    jpeg_destroy_decompress_nid_postfix(&guest);
+    jpeg_destroy_decompress(&host);
+}
+
 void TestDecode(const std::vector<uint8_t>& jpegData, const uint8_t* expectedMarkerData, size_t expectedMarkerLen) {
     int hostWidth = 0;
     int hostHeight = 0;
@@ -408,7 +519,15 @@ void TestDefaultErrorExitThrows() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--diagnostic-output") == 0) {
+        TestHeaderDiagnostics(0, true);
+        std::puts("JPEG diagnostic output path passed");
+        return 0;
+    }
+    TestDiagnosticDispatch();
+    for (const int traceLevel : {0, 1, 3}) TestHeaderDiagnostics(traceLevel, false);
+    TestHeaderDiagnostics(0, false, true);
     TestBadStructSize();
     TestGuestErrorExit();
     TestDefaultErrorExitThrows();
