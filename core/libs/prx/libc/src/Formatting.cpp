@@ -53,6 +53,7 @@ bool RequiresGuestFormatting(const char* format) {
         const std::string length(lengthStart, format);
         if (*format && LibcDetail::ApplicableLength(length, *format) != length) return true;
         if (*format && std::strchr("aAeEfFgG", *format)) return true;
+        if (*format == 'n') return true;
         if (precision && *format == 's') return true;
         if (*format) ++format;
     }
