@@ -112,6 +112,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [Resource response time and filename getters](../../../core/libs/prx/libSceNKWebKit/src/ResourceResponse.cpp) - the six legacy time returns are unverified on console. [Historical WTF::Optional](https://github.com/WebKit/WebKit/blob/e12a212a531a/Source/WTF/wtf/Optional.h) returns indirectly with engagement at byte 0 and seconds at byte 8. [PlayStation's filename parser](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/HTTPParsers.cpp) matches filename keys case-sensitively, splits at semicolons inside quotes and returns an empty string for an empty parameter.
 - [URL port filtering](../../../core/libs/prx/libSceNKWebKit/src/WtfString.cpp) (libSceNKWebKit) - `WTF::portAllowed` and `URLPort` adapt [URL.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URL.cpp#L952-L1051) and [URL::port](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URL.cpp#L158-L161) from the pinned PS5 11.x WebKit source. The blocked-port table, scheme exceptions for `ftp` (21, 22) and `file`, and port parsing via `parseInteger<uint16_t>` follow upstream semantics; unparseable ports yield `std::nullopt` in `URL::port()` and evaluate to allowed (`true`). Verified on Windows against synthetic `URL` layouts; physical console execution and Linux behavior are unverified.
 - [WKURLResponse getters](../../../core/libs/prx/libSceNKWebKit/src/URLResponse.cpp) (libSceNKWebKit) - `WKURLResponseCopyURL`, `WKURLResponseCopyMIMEType`, `WKURLResponseHTTPStatusCode`, `WKURLResponseCopySuggestedFilename`, `WKURLResponseIsAttachment` and `WKURLResponseGetExpectedContentLength` read a host `URLResponse` object and follow [WKURLResponse.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/c/WKURLResponse.cpp). An unset URL returns null and an unset MIME type or filename returns an empty string, as `toCopiedURLAPI` and `toCopiedAPI` do; the expected length is stored in 64 bits and returned as the `uint32_t` of [WKURLResponse.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/c/WKURLResponse.h#L47). None of the six is measured on a console.
+- [WKRenderLayer and WKRenderObject property accessors](../../../core/libs/prx/libSceNKWebKit/src/RenderTree.cpp) (libSceNKWebKit) - the 24 `WKRenderLayer` and `WKRenderObject` getters and copy helpers read from in-memory `RenderLayer` and `RenderObject` instances following WebKit C API conventions. A null or mismatched object handle throws `std::invalid_argument`. Retained string and array copies transfer ownership to the caller. Geometry, layout metrics, compositing layer types, and render tree associations are stored on host objects and not validated against live WebCore rendering trees.
 
 - [Media and playback engine stubs](../../../core/libs/prx/libSceNKWebKit/src/Media.cpp) (libSceNKWebKit) - WebCore::MediaPlayer, HTMLMediaElement::fastSeek, TextTrackCueGeneric::create, MediaTime::toJSONObject, MediaTime::toJSONString, MediaTime::toString, MediaTimeRange::toJSONString, and dump(PrintStream&) exports remain throwing stubs in Export.cpp because they require the WebCore playback pipeline, DOM/engine objects, JSON object model, or PrintStream runtime.
 - [WebCore MIME type cache and media queries](../../../core/libs/prx/libSceNKWebKit/src/Mime.cpp) (libSceNKWebKit) - WebCore::MIMETypeCache and WebCore::MIMETypeRegistry exports (supportedMediaMIMETypes, isSupportedMediaMIMEType, supportedNonImageMIMETypes, canShowMIMEType, extensionsForMIMEType, allowedFileExtensions) throw through NotImplemented_nid_no_patch; media decoding capabilities and container support require the PlayStation media player library (mediaplayer.sprx), extensionsForMIMEType is unimplemented upstream on PlayStation (ASSERT_NOT_IMPLEMENTED_YET), and unpinned WTF hash table runtime structures.
@@ -644,30 +645,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageVerticalRubberBandingIsEnabled` | `p-jMGxCpEF4` |
 | `WKPageWillHandleHorizontalScrollEvents` | `pYHt5lL67G8` |
 | `WKRegistrableDomainCreate` | `BjwTHxBa4gc` |
-| `WKRenderLayerCopyElementID` | `lRlQXPSYfTI` |
-| `WKRenderLayerCopyElementTagName` | `mtWy8+9VNV4` |
-| `WKRenderLayerCopyRendererName` | `AG7ICWq3N8w` |
-| `WKRenderLayerGetAbsoluteBounds` | `8glOPCWDXVo` |
-| `WKRenderLayerGetBackingStoreMemoryEstimate` | `NjhW50dNxss` |
-| `WKRenderLayerGetCompositingLayerType` | `T3gLp2xSZis` |
-| `WKRenderLayerGetElementClassNames` | `egi+cPsL7jc` |
-| `WKRenderLayerGetFrameContentsLayer` | `vMQPol5T6DY` |
-| `WKRenderLayerGetNegativeZOrderList` | `pYwJJhTpTSY` |
-| `WKRenderLayerGetNormalFlowList` | `mFGaMlruNv4` |
-| `WKRenderLayerGetPositiveZOrderList` | `AKduh-C7Ukw` |
-| `WKRenderLayerGetRenderer` | `FgHJrrJSptw` |
-| `WKRenderLayerIsClipped` | `qnVSx0dMIj4` |
-| `WKRenderLayerIsClipping` | `TTHhexfjJ1E` |
-| `WKRenderLayerIsReflection` | `AIOn++bTCGY` |
-| `WKRenderObjectCopyElementID` | `BcSL9PGBRzg` |
-| `WKRenderObjectCopyElementTagName` | `laUc7-fpK-M` |
-| `WKRenderObjectCopyName` | `yorRU1THn4M` |
-| `WKRenderObjectCopyTextSnippet` | `jbZom6ZMBR8` |
-| `WKRenderObjectGetAbsolutePosition` | `yrWwBt9NZPY` |
-| `WKRenderObjectGetChildren` | `ajyl7RSiYH4` |
-| `WKRenderObjectGetElementClassNames` | `NkEITXscsR4` |
-| `WKRenderObjectGetFrameRect` | `CvLd+zsiNGM` |
-| `WKRenderObjectGetTextLength` | `QQwtijo98qI` |
 | `WKResourceCacheManagerClearCacheForAllOrigins` | `g-SjvruXQtc` |
 | `WKResourceCacheManagerClearCacheForOrigin` | `Sq7E7Dwlq0w` |
 | `WKResourceCacheManagerGetCacheOrigins` | `v+SAyXDkOCI` |
