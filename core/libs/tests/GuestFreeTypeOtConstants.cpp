@@ -1,6 +1,7 @@
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 namespace {
 
@@ -13,12 +14,17 @@ void Require(bool condition, const char* message) {
 }
 
 int main() {
-    Require(FT_Trace_Get_Count_nid_no_patch() == 0, "FT_Trace_Get_Count returns zero");
-    Require(FT_Trace_Get_Name_nid_no_patch(-1) == nullptr, "FT_Trace_Get_Name returns null for negative index");
-    Require(FT_Trace_Get_Name_nid_no_patch(0) == nullptr, "FT_Trace_Get_Name returns null for zero index");
-    Require(FT_Trace_Get_Name_nid_no_patch(128) == nullptr, "FT_Trace_Get_Name returns null for positive index");
-    Require(sceFreeTypeOtLibrarySetLcdFilter_nid_no_patch() == 7, "VW4GD-TaIUc returns 7");
-    Require(sceFreeTypeOtLibrarySetLcdFilterWeights_nid_no_patch() == 7, "GiuNQjoj4fs returns 7");
+    for (int call = 0; call < 2; ++call) {
+        Require(FT_Trace_Get_Count_nid_no_patch() == 0, "FT_Trace_Get_Count returns zero");
+        Require(FT_Trace_Get_Name_nid_no_patch(std::numeric_limits<int>::min()) == nullptr, "FT_Trace_Get_Name returns null for minimum index");
+        Require(FT_Trace_Get_Name_nid_no_patch(-1) == nullptr, "FT_Trace_Get_Name returns null for negative index");
+        Require(FT_Trace_Get_Name_nid_no_patch(0) == nullptr, "FT_Trace_Get_Name returns null for zero index");
+        Require(FT_Trace_Get_Name_nid_no_patch(1) == nullptr, "FT_Trace_Get_Name returns null for first positive index");
+        Require(FT_Trace_Get_Name_nid_no_patch(128) == nullptr, "FT_Trace_Get_Name returns null for positive index");
+        Require(FT_Trace_Get_Name_nid_no_patch(std::numeric_limits<int>::max()) == nullptr, "FT_Trace_Get_Name returns null for maximum index");
+        Require(sceFreeTypeOtLibrarySetLcdFilter_nid_no_patch() == 7, "VW4GD-TaIUc returns 7");
+        Require(sceFreeTypeOtLibrarySetLcdFilterWeights_nid_no_patch() == 7, "GiuNQjoj4fs returns 7");
+    }
     std::puts("Guest FreeType OpenType constant tests passed");
     return 0;
 }
