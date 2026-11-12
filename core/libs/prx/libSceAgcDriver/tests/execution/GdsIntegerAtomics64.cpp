@@ -539,6 +539,17 @@ void CheckAliasedView(std::span<const std::uint32_t> words) {
     Require(found, "GDS qword view does not share the dword view's descriptor binding");
 }
 
+void CheckRefusal(AgcDriver::VulkanDevice& device) {
+    auto code = OperationCode(Threads, false);
+    bool refused = false;
+    try {
+        static_cast<void>(Compile(device, code, 32, Threads, false, false));
+    } catch (const std::exception& error) {
+        refused = std::string(error.what()).find("64-bit GDS atomics need shaderBufferInt64Atomics") != std::string::npos;
+    }
+    Require(refused, "GDS qword atomics did not reject a target without shaderBufferInt64Atomics");
+}
+
 void CheckRequirements(AgcDriver::VulkanDevice& device) {
     auto code = OperationCode(Threads, false);
     const auto result = Compile(device, code, 32);
@@ -570,13 +581,8 @@ void CheckRequirements(AgcDriver::VulkanDevice& device) {
     }
     Require(capability, "GDS qword atomics omitted Int64Atomics");
     Require(std::ranges::all_of(seen, [](bool value) { return value; }), "GDS qword atomics omitted a native opcode or CAS loop");
+    CheckRefusal(device);
     bool refused = false;
-    try {
-        static_cast<void>(Compile(device, code, 32, Threads, false, false));
-    } catch (const std::exception& error) {
-        refused = std::string(error.what()).find("64-bit GDS atomics need shaderBufferInt64Atomics") != std::string::npos;
-    }
-    Require(refused, "GDS qword atomics did not reject a target without shaderBufferInt64Atomics");
     for (const auto opcode : {0x51u, 0x52u, 0x53u, 0x71u, 0x72u, 0x73u}) {
         std::vector<std::uint32_t> floating{0x7e040280, 0x7e0c0280, 0x7e0e0280, 0x7e100280, 0x7e120280};
         Ds(floating, opcode, 0);
@@ -704,6 +710,15 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         AgcDriver::QueueState queue;
         const std::string mode = argc > 1 ? argv[1] : "operations";
+        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics)) {
+            if (mode != "requirements") {
+                std::puts("skipped, the device has no shaderBufferInt64Atomics");
+                return VulkanTestSkipped;
+            }
+            CheckRefusal(*device);
+            std::puts("GDS qword atomics refuse a target without shaderBufferInt64Atomics");
+            return 0;
+        }
         for (const auto wave : {32u, 64u}) {
             if (mode == "operations") {
                 CheckOperations(*device, queue, wave, Threads, false);
