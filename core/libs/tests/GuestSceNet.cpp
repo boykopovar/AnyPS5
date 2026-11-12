@@ -2003,6 +2003,15 @@ static void CheckDatagramAddressLengths(int family) {
     size = source.size();
     Require(sceNetGetsockname(sender, source.data(), &size) == 0 && size == addressSize);
     const char payload[] = "address length";
+    Require(sceNetSend(sender, payload, sizeof(payload), 0) == sizeof(payload));
+    std::array<std::uint8_t, 28> faultAddress{};
+    char first[sizeof(payload)]{};
+    Require(Failed(sceNetRecvfrom(receiver, first, sizeof(first), 0, faultAddress.data(), reinterpret_cast<std::uint32_t*>(0x10)), 14));
+    size = addressSize;
+    Require(Failed(sceNetRecvfrom(receiver, first, sizeof(first), 2, reinterpret_cast<void*>(0x10), &size), 14));
+    Require(size == addressSize);
+    Require(sceNetRecvfrom(receiver, first, sizeof(first), 0, faultAddress.data(), &size) == sizeof(payload));
+    Require(std::memcmp(first, payload, sizeof(payload)) == 0);
     for (const std::uint32_t capacity : {0u, 1u, 2u, addressSize - 1, addressSize, 32u, UINT32_MAX}) {
         const auto copied = std::min(capacity, addressSize);
         std::array<std::uint8_t, 32> address;

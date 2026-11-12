@@ -1646,17 +1646,19 @@ int64_t APS5_VABI sceNetRecvfrom(int s, void* buf, size_t len, int flags, void* 
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
     }
-    const GuestArena::HostWrite lengthOutput(from == nullptr ? nullptr : fromlen, from == nullptr ? 0 : sizeof(*fromlen));
-    if (!lengthOutput.Open()) return fail(NET_EFAULT);
+    std::uint32_t capacity = 0;
+    if (from && (!GuestCopyIn_nid_no_patch(&capacity, fromlen, sizeof(capacity)) ||
+        !GuestCopyOut_nid_no_patch(fromlen, &capacity, sizeof(capacity)))) return fail(NET_EFAULT);
 #if defined(_WIN32) || defined(__APPLE__)
     if (const int wait = wait_for_local_address(s, socket, len == 0, flags)) {
         if (wait != RECEIVE_NOTHING) return fail(wait);
-        if (from) *fromlen = 0;
+        constexpr std::uint32_t empty = 0;
+        if (from && !GuestCopyOut_nid_no_patch(fromlen, &empty, sizeof(empty))) return fail(NET_EFAULT);
         return 0;
     }
 #endif
     const auto addressBytes = from != nullptr && socket.type == NET_SOCK_DGRAM ?
-        std::min<std::uint32_t>(*fromlen, socket.family == NET_AF_INET ? 16u : 28u) : 0u;
+        std::min<std::uint32_t>(capacity, socket.family == NET_AF_INET ? 16u : 28u) : 0u;
     const GuestArena::HostWrite addressOutput(addressBytes == 0 ? nullptr : from, addressBytes);
     if (!addressOutput.Open()) return fail(NET_EFAULT);
     const GuestArena::HostWrite destination(len == 0 ? nullptr : buf, len);
@@ -1673,7 +1675,12 @@ int64_t APS5_VABI sceNetRecvfrom(int s, void* buf, size_t len, int flags, void* 
     if (result < 0 && socket.type == NET_SOCK_DGRAM && WSAGetLastError() == WSAEMSGSIZE) result = static_cast<int>(len);
 #endif
     if (result < 0) return fail(native_error());
-    if (from && !native_to_guest_address(peer, from, fromlen)) return fail(NET_EAFNOSUPPORT);
+    if (from) {
+        std::array<std::uint8_t, 28> bytes{};
+        if (!native_to_guest_address(peer, bytes.data(), &capacity)) return fail(NET_EAFNOSUPPORT);
+        if (!GuestCopyOut_nid_no_patch(from, bytes.data(), capacity) ||
+            !GuestCopyOut_nid_no_patch(fromlen, &capacity, sizeof(capacity))) return fail(NET_EFAULT);
+    }
     return result;
 }
 
