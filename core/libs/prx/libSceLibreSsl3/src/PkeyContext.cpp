@@ -191,7 +191,7 @@ int APS5_VABI RsaSign(LibreSsl3PkeyContext* context, unsigned char* signature, s
     }
 }
 
-int APS5_VABI RsaVerify(LibreSsl3PkeyContext* context, const unsigned char* signature, std::size_t signatureLength,
+int APS5_VABI PkeyRsaVerify(LibreSsl3PkeyContext* context, const unsigned char* signature, std::size_t signatureLength,
     const unsigned char* content, std::size_t contentLength) {
     auto* keyContext = RsaContextData(context);
     auto* rsa = RsaKeyOf(context);
@@ -250,7 +250,7 @@ int APS5_VABI RsaContextInitialize(LibreSsl3PkeyContext* context) {
     return 1;
 }
 
-int APS5_VABI RsaContextCopy(LibreSsl3PkeyContext* destination, LibreSsl3PkeyContext* source) {
+int APS5_VABI PkeyRsaContextCopy(LibreSsl3PkeyContext* destination, LibreSsl3PkeyContext* source) {
     if (RsaContextInitialize(destination) <= 0) return 0;
     const auto* from = RsaContextData(source);
     auto* to = RsaContextData(destination);
@@ -328,7 +328,7 @@ int APS5_VABI RsaDecryption(LibreSsl3PkeyContext* context, unsigned char* output
     return 1;
 }
 
-int APS5_VABI RsaControl(LibreSsl3PkeyContext* context, int type, int first, void* second) {
+int APS5_VABI PkeyRsaControl(LibreSsl3PkeyContext* context, int type, int first, void* second) {
     auto* keyContext = RsaContextData(context);
     const auto* method = MethodOf(context);
     switch (type) {
@@ -532,14 +532,14 @@ const LibreSsl3PkeyMethod RsaMethod {
     LibreSsl3PkeyRsa,
     LibreSsl3PkeyMethodFlagAutomaticArgumentLength,
     &RsaContextInitialize,
-    &RsaContextCopy,
+    &PkeyRsaContextCopy,
     &RsaContextClear,
     nullptr,
     nullptr,
     nullptr,
     &RsaSign,
     nullptr,
-    &RsaVerify,
+    &PkeyRsaVerify,
     nullptr,
     nullptr,
     nullptr,
@@ -547,7 +547,7 @@ const LibreSsl3PkeyMethod RsaMethod {
     &RsaDecryption,
     nullptr,
     nullptr,
-    &RsaControl,
+    &PkeyRsaControl,
     nullptr,
     nullptr,
     nullptr,
@@ -557,14 +557,14 @@ const LibreSsl3PkeyMethod RsaPssMethod {
     LibreSsl3PkeyRsaPss,
     LibreSsl3PkeyMethodFlagAutomaticArgumentLength,
     &RsaContextInitialize,
-    &RsaContextCopy,
+    &PkeyRsaContextCopy,
     &RsaContextClear,
     nullptr,
     nullptr,
     &RsaPssInitialize,
     &RsaSign,
     &RsaPssInitialize,
-    &RsaVerify,
+    &PkeyRsaVerify,
     nullptr,
     nullptr,
     nullptr,
@@ -572,7 +572,7 @@ const LibreSsl3PkeyMethod RsaPssMethod {
     nullptr,
     nullptr,
     nullptr,
-    &RsaControl,
+    &PkeyRsaControl,
     nullptr,
     nullptr,
     nullptr,
