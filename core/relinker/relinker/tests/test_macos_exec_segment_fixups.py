@@ -41,6 +41,9 @@ def executable_fixture(layout):
         program_header(image, 2, (PT_LOAD, 6, 0x4A00, 0x4A00, 0x4A00, 0x600, 0x600, 0x1000))
     elif layout == "rx":
         struct.pack_into("<I", image, 68, 5)
+    elif layout == "rwx-two-pages":
+        struct.pack_into("<Q", image, 64 + 40, 0x2000)
+        image[0x4000:0x4007] = b"\xc6\x05" + rip(0x4000, 7, 0x5008) + b"\x01"
     return image
 
 
@@ -137,7 +140,7 @@ def check_executables(relinker, work, native):
     libraries = {}
     if native:
         libraries = {name: library(work, name, code) for name, code in (("a", PROVIDER), ("plain", PLAIN), ("start", START))}
-    for layout, segment in (("rwx", "__ELF0"), ("shared", "__ELF0"), ("rx", None)):
+    for layout, segment in (("rwx", "__ELF0"), ("rwx-two-pages", "__ELF0"), ("shared", "__ELF0"), ("rx", None)):
         case = work / f"executable-{layout}"
         case.mkdir()
         source = case / "input.elf"

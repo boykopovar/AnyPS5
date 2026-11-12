@@ -552,9 +552,11 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
             auto& segment = segments[index];
             if (rva < segment.Rva || rva - segment.Rva >= segment.MemorySize || segment.MemorySize - (rva - segment.Rva) < 8) continue;
             if ((segment.Protection & (VmProtWrite | VmProtExecute)) != (VmProtWrite | VmProtExecute)) return false;
-            segment.PatchedAtStartup = true;
-            startupPages[rva & ~(PageSize - 1)] = segment.Protection;
-            startupPages[(static_cast<std::uint64_t>(rva) + 7) & ~(PageSize - 1)] = segment.Protection;
+            if (!segment.PatchedAtStartup) {
+                segment.PatchedAtStartup = true;
+                for (std::uint64_t page = segment.Rva & ~(PageSize - 1); page < segment.Rva + AlignUp(segment.MemorySize, PageSize); page += PageSize)
+                    startupPages[page] = segment.Protection;
+            }
             return true;
         }
         return false;
