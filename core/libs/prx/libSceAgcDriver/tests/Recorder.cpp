@@ -11721,7 +11721,6 @@ void endPassWaitsNameTheirCaller(Recorder& recorder) {
     static_cast<void>(recorder.Commands());
 }
 
-// A null value removes the variable. Windows has no setenv; _putenv_s with an empty value removes it.
 bool setProfileEncoder(const char* value) {
 #ifdef _WIN32
     return _putenv_s("APS5_PROFILE_ENCODER", value != nullptr ? value : "") == 0;
