@@ -124,7 +124,7 @@ std::vector<CpuTopology::CpuSet> SystemCpuSets() {
     const auto& layout = CpuTopology::Get();
     cpu_set_t allowed;
     CPU_ZERO(&allowed);
-    if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0 || CPU_COUNT(&allowed) != __builtin_popcountll(layout.process)) return {};
+    if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0 || CPU_COUNT(&allowed) > __builtin_popcountll(layout.process)) return {};
     return CpuTopology::SysfsCpuSets("/sys/devices/system/cpu", layout.process, layout.hybrid ? layout.efficient : 0);
 }
 
