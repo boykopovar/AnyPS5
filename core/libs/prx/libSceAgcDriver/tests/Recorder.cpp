@@ -8113,7 +8113,7 @@ bool pendingAfterLeavingWatchTests(const Device& device, Recorder& recorder) {
                 throw;
             }
             if (refused) {
-                const std::string unitCause = "(unit " + std::to_string(write == Write::PendingWithoutHook ? 0 : lastUnit) + " of " + std::to_string(units) + ": " + cause;
+                const std::string unitCause = "(unit " + std::to_string(lastUnit) + " of " + std::to_string(units) + ": " + cause;
                 Require(refusal.find(unitCause) != std::string::npos, "(p) " + what + ": the refusal does not name the cause '" + unitCause + "': " + refusal);
             }
             if (unhashed && refused) {
