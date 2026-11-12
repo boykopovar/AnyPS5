@@ -555,7 +555,6 @@ int APS5_VABI _ZN7WebCore13GraphicsLayer13addChildBelowEON3WTF3RefIS0_NS1_13Dumb
 int APS5_VABI WKViewSetViewScaleFactor();
 int APS5_VABI _ZN7WebCore17FrameLoaderClient23dispatchDidExplicitOpenERKN3WTF3URLERKNS1_6StringE();
 int APS5_VABI _ZNK7WebCore24RotateTransformOperation27isAffectedByTransformOriginEv();
-int APS5_VABI _ZN7WebCore9FloatSizeC1ERKNS_7IntSizeE();
 int APS5_VABI _ZN7WebCore15SQLiteStatement15getColumnDoubleEi();
 int APS5_VABI _ZN7WebCore4PathaSEOS0_();
 int APS5_VABI _ZNK7WebCore5Frame24isAlwaysOnLoggingAllowedEv();
@@ -784,7 +783,6 @@ int APS5_VABI _ZN7WebCore15HitTestLocationC2ERKNS_10FloatPointE();
 int APS5_VABI libSceNKWebKitLegacyUnknown_J7ZwIjC_minus_NF4_nid_no_patch();
 int APS5_VABI _ZN7WebCore11DisplayList18DrawFocusRingRectsC2ERKN3WTF6VectorINS_9FloatRectELm0ENS2_15CrashOnOverflowELm16ENS2_10FastMallocEEEffRKNS_5ColorE();
 int APS5_VABI libSceNKWebKitLegacyUnknown_J9u8UeS_plus_3ZU_nid_no_patch();
-int APS5_VABI _ZN7WebCore9FloatSizeC2ERKNS_7IntSizeE();
 int APS5_VABI _ZN7WebCore15SQLiteStatement12getColumnIntEi();
 int APS5_VABI _ZN7Nicosia5SceneC2Ev();
 int APS5_VABI libSceNKWebKitLegacyUnknown_JEcmyPMu0mU_nid_no_patch();
