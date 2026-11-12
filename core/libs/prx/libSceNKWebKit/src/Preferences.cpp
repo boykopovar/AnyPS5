@@ -889,6 +889,14 @@ bool APS5_VABI WKPreferencesGetTabsToLinks(const void* preferencesRef) {
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"TabsToLinks");
 }
 
+void APS5_VABI WKPreferencesSetTabToLinksEnabled(const void* preferencesRef, bool enabled) {
+    WKPreferencesSetTabsToLinks(preferencesRef, enabled);
+}
+
+bool APS5_VABI WKPreferencesGetTabToLinksEnabled(const void* preferencesRef) {
+    return WKPreferencesGetTabsToLinks(preferencesRef);
+}
+
 void APS5_VABI WKPreferencesSetDNSPrefetchingEnabled(const void* preferencesRef, bool enabled) {
     PreferencesFromRef(preferencesRef, __func__)->Set(u"DNSPrefetchingEnabled", enabled);
 }
