@@ -392,7 +392,8 @@ void hdrComponentSwapTests() {
         state = DecodeState(queue);
         Require(state.color.componentMapping == 0xe4u && state.blendConstants == std::array<float, 4>{0.125f, 0.25f, 0.375f, 0.5f}, "standard color mapping changed");
         queue.context[0x31c] |= 2u << 11u;
-        expectFailure([&] { DecodeState(queue); }, "reversed component order");
+        if (number == 0u || number == 7u) Require(DecodeState(queue).blendConstants == std::array<float, 4>{0.5f, 0.375f, 0.25f, 0.125f}, "reversed color blend constants were not swizzled with the export");
+        else expectFailure([&] { DecodeState(queue); }, "reversed component order");
     }
     auto queue = makeState();
     queue.context[0x31c] = (queue.context[0x31c] & ~0x1f7cu) | (12u << 2u) | (7u << 8u) | (1u << 11u);
@@ -2255,8 +2256,8 @@ void ReversedComponentOrderBlendTests() {
         {0x61000008u, "with factors the host blend cannot form from copies of the export is not implemented"},
         {0x61000501u, "with factors the host blend cannot form from copies of the export is not implemented"},
         {0x65050302u, "with factors the host blend cannot form from copies of the export is not implemented"},
-        {0x4000000du, "with a constant blend factor"},
-        {0x40000013u, "with a constant blend factor"},
+        {0x6004000du, "with a constant blend factor beside a factor of the export or the destination in the same operand"},
+        {0x40000513u, "with a constant blend factor and factors the host blend forms through a changed export"},
         {0x4000000fu, "with a second-source factor is not implemented, as dual-source blending into a component-swapped color target is unsupported"},
         {0x65240504u, "with different color and alpha operations"},
         {0x40000544u, "with a MIN or MAX operation whose factors are not ONE"},
@@ -2275,7 +2276,7 @@ void ReversedComponentOrderBlendTests() {
                 Require(blend.blendEnable && blend.srcColorBlendFactor == test.source && blend.dstColorBlendFactor == test.destination && blend.srcAlphaBlendFactor == test.sourceAlpha && blend.dstAlphaBlendFactor == test.destinationAlpha && blend.colorBlendOp == test.operation && blend.alphaBlendOp == test.operation && blend.colorWriteMask == 0xfu, std::string(what) + ": wrong Vulkan blend state");
                 Require(state.reversedBlend == code && !state.dualSourceBlend, std::string(what) + ": wrong pixel shader blend code " + std::to_string(state.reversedBlend));
                 Require(AgcDriver::Graphics::DecodePixelStageInfo(queue.context, AgcDriver::Graphics::ExportMappings(state)).targetExportMapping[0] == mapping, std::string(what) + ": the export mapping changed");
-                const auto direct = AgcDriver::Graphics::TranslateReversedBlend(test.control, mapping, target.vkFormat, test.opaqueDestination);
+                const auto direct = AgcDriver::Graphics::TranslateReversedBlend(test.control, mapping, target.vkFormat, test.opaqueDestination, {});
                 Require(direct.shaderCode == code && direct.blend.srcColorBlendFactor == blend.srcColorBlendFactor && direct.blend.dstColorBlendFactor == blend.dstColorBlendFactor && direct.blend.srcAlphaBlendFactor == blend.srcAlphaBlendFactor && direct.blend.dstAlphaBlendFactor == blend.dstAlphaBlendFactor && direct.blend.colorBlendOp == blend.colorBlendOp && direct.blend.alphaBlendOp == blend.alphaBlendOp, std::string(what) + ": TranslateReversedBlend disagrees with DecodeState");
             }
         }
@@ -2283,6 +2284,24 @@ void ReversedComponentOrderBlendTests() {
             const auto queue = reversedBlendQueue(10u, 0u, swap, control);
             expectFailure([&] { DecodeState(queue); }, std::string("blending into a color target with a reversed component order ") + reason);
         }
+        const std::array<float, 4> constants{0.125f, 0.25f, 0.75f, 0.625f};
+        const auto constantQueue = [&](std::uint32_t control) {
+            auto queue = reversedBlendQueue(10u, 0u, swap, control);
+            for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = std::bit_cast<std::uint32_t>(constants[i]);
+            return queue;
+        };
+        const auto constantOf = [&](std::uint32_t component) { return constants[(mapping >> (2u * component)) & 3u]; };
+        const auto separate = DecodeState(constantQueue(0x60130001u));
+        Require(separate.reversedBlend == 0u && separate.blends.at(0).srcColorBlendFactor == VK_BLEND_FACTOR_CONSTANT_COLOR && separate.blends.at(0).dstColorBlendFactor == VK_BLEND_FACTOR_ZERO && separate.blends.at(0).srcAlphaBlendFactor == VK_BLEND_FACTOR_ONE && separate.blends.at(0).dstAlphaBlendFactor == VK_BLEND_FACTOR_ZERO, "a constant alpha factor of the alpha equation did not reach the host color equation of the reversed target");
+        Require(separate.blendConstants[0] == constants[3] && separate.blendConstants[1] == 1.0f && separate.blendConstants[2] == 1.0f, "the host blend constants of a constant alpha factor do not weigh the alpha channel alone");
+        const auto colored = DecodeState(constantQueue(0x40000e0du));
+        Require(colored.blends.at(0).srcColorBlendFactor == VK_BLEND_FACTOR_CONSTANT_COLOR && colored.blends.at(0).dstColorBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR && colored.blends.at(0).srcAlphaBlendFactor == VK_BLEND_FACTOR_CONSTANT_ALPHA && colored.blends.at(0).dstAlphaBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA, "a constant color factor and its complement did not share the host blend constants");
+        for (std::uint32_t component = 0; component < 4; ++component) Require(colored.blendConstants[component] == constantOf(component), "the blend constants of a reversed target did not follow its component mapping");
+        expectFailure([&] { DecodeState(constantQueue(0x40000d13u)); }, "with two constant blend factors that one set of host blend constants cannot form");
+        const auto unit = DecodeState(reversedBlendQueue(10u, 0u, swap, 0x4000010du));
+        Require(unit.blends.at(0).srcColorBlendFactor == VK_BLEND_FACTOR_ZERO && unit.blends.at(0).dstColorBlendFactor == VK_BLEND_FACTOR_ONE, "constants of zero did not become a ZERO factor");
+        const auto over = AgcDriver::Graphics::TranslateReversedBlend(0x4000000eu, mapping, VK_FORMAT_R8G8B8A8_UNORM, false, {2.0f, 2.0f, 2.0f, 2.0f});
+        Require(over.blend.srcColorBlendFactor == VK_BLEND_FACTOR_ZERO, "a constant above one was not clamped for a normalized target");
         char registers[96];
         std::snprintf(registers, sizeof(registers), "(CB_BLEND_CONTROL 0x65010504, component mapping 0x%02x, VkFormat %d)", mapping, static_cast<int>(VK_FORMAT_R8G8B8A8_SRGB));
         expectFailure([&] { DecodeState(reversedBlendQueue(10u, 6u, swap, 0x65010504u)); }, std::string("reversed component order is not implemented for sRGB targets ") + registers);
@@ -2308,6 +2327,20 @@ void ReversedComponentOrderBlendTests() {
         twoTargets.context[0x1e0] = 0x65010504u;
         twoTargets.context[0x1e1] = 0x40000101u;
         expectFailure([&] { DecodeState(twoTargets); }, "reversed component order through a second source color needs that target to be the shader's only color export");
+        auto alphaReader = twoTargets;
+        alphaReader.context[0x31c + 0xfu] &= ~(3u << 11u);
+        alphaReader.context[0x1e0] = 0x40000e0du;
+        alphaReader.context[0x1e1] = 0x60130001u;
+        for (std::uint32_t i = 0; i < 4; ++i) alphaReader.context[0x105 + i] = std::bit_cast<std::uint32_t>(constants[i]);
+        expectFailure([&] { DecodeState(alphaReader); }, "conflicting blend constants");
+        alphaReader.context[0x1e1] = 0x40000013u;
+        expectFailure([&] { DecodeState(alphaReader); }, "conflicting blend constants");
+        alphaReader.context[0x1e1] = 0x40000001u;
+        Require(DecodeState(alphaReader).colors.size() == 2, "a standard target that reads no blend constant was refused beside a reversed target with constants");
+        alphaReader.context[0x1e1] = 0x60130001u;
+        alphaReader.context[0x108] = std::bit_cast<std::uint32_t>(constantOf(3));
+        const auto shared = DecodeState(alphaReader);
+        Require(shared.colors.size() == 2 && shared.blendConstants[3] == constantOf(3), "a standard target that reads the alpha constant was refused although the reversed target keeps its value");
     }
 }
 
@@ -2350,7 +2383,7 @@ void ReversedBlendRoutingTests() {
         const auto control = guestFactors[0] | (guestFactors[1] << 8u) | (guestFactors[2] << 16u) | (guestFactors[3] << 24u) | 0x20000000u;
         std::optional<AgcDriver::Graphics::ReversedBlend> translated;
         try {
-            translated = AgcDriver::Graphics::TranslateReversedBlend(control, 0x1bu, VK_FORMAT_R8G8B8A8_UNORM, false);
+            translated = AgcDriver::Graphics::TranslateReversedBlend(control, 0x1bu, VK_FORMAT_R8G8B8A8_UNORM, false, {});
         } catch (const std::runtime_error& error) {
             Require(std::string(error.what()).find("reversed component order with") != std::string::npos, std::string("an unexpected reversed-order blend refusal: ") + error.what());
             continue;

@@ -736,8 +736,13 @@ SidebandAt9CodecInfo At9CodecInfo(const Instance& instance) {
 void WriteRunSideband(const JobHeader& job, const Instance& instance, std::int32_t result, std::size_t consumed, std::size_t produced, std::uint32_t frames, const SidebandFormat& format) {
     auto* sideband = static_cast<std::uint8_t*>(job.sideband);
     std::size_t offset = 0;
+    bool stopped = false;
     const auto write = [&](const void* value, std::size_t size) {
-        if (!sideband || offset + size > job.sidebandSize) return;
+        if (stopped || !sideband) return;
+        if (offset + size > job.sidebandSize) {
+            stopped = true;
+            return;
+        }
         std::memcpy(sideband + offset, value, size);
         offset += size;
     };
@@ -2258,7 +2263,7 @@ void* APS5_VABI sceAjmBatchJobInlineBuffer(void* position, const void* data_inpu
     std::memcpy(at, words, sizeof(words));
     at += sizeof(words);
     if (data_input_size) std::memcpy(at, data_input, data_input_size);
-    *batch_address = at;
+    if (batch_address) *batch_address = at;
     return at + size;
 }
 

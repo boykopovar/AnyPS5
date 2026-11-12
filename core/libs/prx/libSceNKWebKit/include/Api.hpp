@@ -2,6 +2,8 @@
 
 #include "SceTypes.hpp"
 
+#include <cstddef>
+
 namespace WebCore {
 class DOMWrapperWorld;
 }
@@ -24,7 +26,7 @@ int APS5_VABI _ZN7WebCore18JSHTMLInputElementC2ERKS0_();
 int APS5_VABI _ZN9Inspector21InspectorConsoleAgent5resetEv();
 int APS5_VABI _ZN7WebCore4Node16addEventListenerERKN3WTF10AtomStringEONS1_3RefINS_13EventListenerENS1_13DumbPtrTraitsIS6_EEEERKNS_11EventTarget23AddEventListenerOptionsE();
 int APS5_VABI _ZN7WebCore18TextureMapperLayer14paintRecursiveERKNS_25TextureMapperPaintOptionsE();
-int APS5_VABI _ZN7WebCore9GLContextnwEm();
+void* APS5_VABI _ZN7WebCore9GLContextnwEm(std::size_t size);
 int APS5_VABI _ZN7WebCore18HTMLMarqueeElement14setScrollDelayEj();
 int APS5_VABI _ZN3JSC9Structure40addPropertyTransitionToExistingStructureEPS0_NS_12PropertyNameEjRi();
 int APS5_VABI _ZN7WebCore9GLContextD0Ev();
