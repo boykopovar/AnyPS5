@@ -1,4 +1,5 @@
 #include "prx/libSceDiscId/include/Api.hpp"
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -27,7 +28,13 @@ int main() {
     std::filesystem::current_path(directory);
 
     Require(sceDiscIdGet(nullptr) == ErrorInvalidArgument, "Get null output");
+    errno = 71;
+    Require(sceDiscIdGet(reinterpret_cast<DiscId*>(0x10)) == ErrorInvalidArgument, "Get unwritable output");
+    Require(errno == 71, "Get preserves errno");
     Require(sceDiscIdGet2(nullptr, 0) == ErrorInvalidArgument, "Get2 null output");
+    errno = 71;
+    Require(sceDiscIdGet2(reinterpret_cast<DiscId2*>(0x10), 0) == ErrorInvalidArgument, "Get2 unwritable output");
+    Require(errno == 71, "Get2 preserves errno");
     Require(sceDiscIdGet2(nullptr, 1) == ErrorInvalidArgument, "Get2 null output and nonzero flags");
 
     std::uint8_t buffer[64];

@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -36,6 +37,14 @@ extern "C" {
 
 int APS5_VABI sceDiscIdGet(DiscId* discId) {
     if (discId == nullptr) return ErrorInvalidArgument;
+    std::uint8_t probe = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&probe, discId, sizeof(probe)) ||
+        !GuestCopyOut_nid_no_patch(discId, &probe, sizeof(probe))) {
+        errno = savedErrno;
+        return ErrorInvalidArgument;
+    }
+    errno = savedErrno;
     Request request{discId, 0, 0};
     const int status = Send(GetCommand, request);
     return status == 0 ? static_cast<int>(request.value) : status;
@@ -43,6 +52,14 @@ int APS5_VABI sceDiscIdGet(DiscId* discId) {
 
 int APS5_VABI sceDiscIdGet2(DiscId2* discId, std::uint32_t flags) {
     if (discId == nullptr || flags != 0) return ErrorInvalidArgument;
+    std::uint8_t probe = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&probe, discId, sizeof(probe)) ||
+        !GuestCopyOut_nid_no_patch(discId, &probe, sizeof(probe))) {
+        errno = savedErrno;
+        return ErrorInvalidArgument;
+    }
+    errno = savedErrno;
     Request request{discId, 0, 0};
     const int status = Send(Get2Command, request);
     return status == 0 ? static_cast<int>(request.result) : status;
