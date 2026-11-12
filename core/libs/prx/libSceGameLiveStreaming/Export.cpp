@@ -1,4 +1,5 @@
 #include "prx/libSceGameLiveStreaming/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -141,7 +142,11 @@ int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessagesCount(int type, std::
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     if (count == nullptr || !ValidFeedbackType(type)) return ErrorInvalidArgument;
-    *count = 0;
+    const std::uint32_t zero = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(count, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidArgument;
     return 0;
 }
 
@@ -149,7 +154,11 @@ int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessages(int type, size_t cap
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     if (messages == nullptr || acquired == nullptr || !ValidFeedbackType(type)) return ErrorInvalidArgument;
-    *acquired = 0;
+    const size_t zero = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(acquired, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidArgument;
     return 0;
 }
 
