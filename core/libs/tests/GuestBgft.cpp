@@ -1,5 +1,6 @@
 #include "prx/libSceBgft/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -55,6 +56,9 @@ int main() {
     Require(sceBgftServiceIntDownloadRegisterTaskByStorage(valid.AsParams(), &taskId) == notInitialized);
     Require(sceBgftServiceIntDownloadRegisterTaskByStorage(nullptr, &taskId) == invalidArgument);
     Require(sceBgftServiceIntInit(nullptr) == invalidArgument);
+    errno = 71;
+    Require(sceBgftServiceIntInit(reinterpret_cast<const BgftInitParam*>(0x10)) == invalidArgument);
+    Require(errno == 71);
 
     std::byte heap[1024]{};
     const BgftInitParam initialized{heap, sizeof(heap)};
