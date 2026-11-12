@@ -188,11 +188,17 @@ int main() {
     Require(VrTracker2ClearWideResult(wide.data()) == NotInitialized, "wide result return");
     Require(AllEqual(wide.data(), wide.data() + 24, 0) && AllEqual(wide.data() + 24, wide.data() + 32, 0xAA), "wide result clears 24 bytes");
     Require(VrTracker2ClearWideResult(nullptr) == InvalidArgument, "wide result null");
+    errno = 73;
+    Require(VrTracker2ClearWideResult(reinterpret_cast<void*>(0x10)) == InvalidArgument, "wide result unwritable");
+    Require(errno == 73, "wide result unwritable errno");
 
     auto narrow = Filled();
     Require(VrTracker2ClearNarrowResult(narrow.data()) == NotInitialized, "narrow result return");
     Require(AllEqual(narrow.data(), narrow.data() + 16, 0) && AllEqual(narrow.data() + 16, narrow.data() + 32, 0xAA), "narrow result clears 16 bytes");
     Require(VrTracker2ClearNarrowResult(nullptr) == InvalidArgument, "narrow result null");
+    errno = 74;
+    Require(VrTracker2ClearNarrowResult(reinterpret_cast<void*>(0x10)) == InvalidArgument, "narrow result unwritable");
+    Require(errno == 74, "narrow result unwritable errno");
 
     auto second = Filled();
     Require(VrTracker2CheckSecondThenReportNotInitialized(nullptr, second.data()) == NotInitialized, "second checked, first null");

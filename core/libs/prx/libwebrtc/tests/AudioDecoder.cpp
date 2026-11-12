@@ -92,10 +92,51 @@ void TestParseResultDestructor() {
     RequireThrows<std::invalid_argument>([] { _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(nullptr); });
 }
 
+struct FakeFrame {
+    const void* const* vtable;
+    int deleted = 0;
+};
+
+int g_firstDeleted = 0;
+int g_secondDeleted = 0;
+const void* g_firstVtable[4];
+const void* g_secondVtable[4];
+
+void APS5_VABI DeleteFirst(void* frame) {
+    ++g_firstDeleted;
+    ++static_cast<FakeFrame*>(frame)->deleted;
+}
+
+void APS5_VABI DeleteSecond(void* frame) {
+    ++g_secondDeleted;
+    ++static_cast<FakeFrame*>(frame)->deleted;
+}
+
+void TestParseResultDestructorDeletesFrame() {
+    g_firstVtable[1] = reinterpret_cast<const void*>(DeleteFirst);
+    g_secondVtable[1] = reinterpret_cast<const void*>(DeleteSecond);
+    FakeFrame first{g_firstVtable};
+    FakeFrame second{g_secondVtable};
+    WebRtcAudioDecoderParseResult owner {5, 1, &first};
+    _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(&owner);
+    Require(g_firstDeleted == 1 && g_secondDeleted == 0 && first.deleted == 1 && second.deleted == 0);
+    WebRtcAudioDecoderParseResult other {6, 2, &second};
+    _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(&other);
+    Require(g_firstDeleted == 1 && g_secondDeleted == 1 && second.deleted == 1);
+    WebRtcAudioDecoderParseResult moved;
+    WebRtcAudioDecoderParseResult source {7, 3, &first};
+    _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(&moved, &source);
+    _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(&source);
+    Require(g_firstDeleted == 1);
+    _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(&moved);
+    Require(g_firstDeleted == 2 && first.deleted == 2);
+}
+
 int main() {
     TestPlc();
     TestErrorCode();
     TestParseResultMove();
     TestParseResultDestructor();
+    TestParseResultDestructorDeletesFrame();
     return 0;
 }

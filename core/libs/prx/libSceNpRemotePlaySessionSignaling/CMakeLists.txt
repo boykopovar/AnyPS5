@@ -1,0 +1,15 @@
+add_library(libSceNpRemotePlaySessionSignaling SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNpRemotePlaySessionSignaling PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceNpRemotePlaySessionSignaling PRIVATE libSceNpSessionSignaling)
+configure_windows_unwind(libSceNpRemotePlaySessionSignaling)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_remote_play_session_signaling_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpRemotePlaySessionSignaling.cpp)
+    target_include_directories(guest_np_remote_play_session_signaling_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_remote_play_session_signaling_tests PRIVATE libSceNpRemotePlaySessionSignaling libSceNpSessionSignaling)
+    add_test(NAME guest_np_remote_play_session_signaling COMMAND guest_np_remote_play_session_signaling_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_remote_play_session_signaling PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpRemotePlaySessionSignaling>")
+    endif()
+endif()
