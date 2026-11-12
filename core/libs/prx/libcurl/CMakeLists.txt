@@ -81,6 +81,7 @@ endif()
 add_library(libcurl SHARED EXCLUDE_FROM_ALL
     Export.cpp
     src/FormFree.cpp
+    src/Printf.cpp
 )
 target_include_directories(libcurl PUBLIC ${curlSourceDir}/include PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libcurl PRIVATE libc libkernel anyps5_curl_backend)
@@ -113,7 +114,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcurl>")
     endif()
 
-    foreach(test_topic IN ITEMS Utility Url SlistMime Options Handles Transfers MimeCallback)
+    foreach(test_topic IN ITEMS Utility Url SlistMime Options Handles Transfers MimeCallback Printf)
         set(test_name guest_curl_${test_topic}_tests)
         string(TOLOWER "${test_topic}" test_slug)
         add_test_executable(${test_name} tests/Curl${test_topic}.cpp)

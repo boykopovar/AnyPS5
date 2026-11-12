@@ -854,46 +854,6 @@ void APS5_VABI curl_mime_free_nid_postfix(curl_mime* mime) {
 
 
 
-int APS5_VABI curl_mvfprintf_nid_postfix(std::FILE* whereto, const char* format, VaList* args) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mfprintf_nid_postfix(std::FILE* whereto, const char* format, ...) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mvsprintf_nid_postfix(char* buffer, const char* format, VaList* args) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_msprintf_nid_postfix(char* buffer, const char* format, ...) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mvsnprintf_nid_postfix(char* buffer, size_t maxlength, const char* format, VaList* args) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_msnprintf_nid_postfix(char* buffer, size_t maxlength, const char* format, ...) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mvprintf_nid_postfix(const char* format, VaList* args) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mprintf_nid_postfix(const char* format, ...) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-char* APS5_VABI curl_mvaprintf_nid_postfix(const char* format, VaList* args) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-char* APS5_VABI curl_maprintf_nid_postfix(const char* format, ...) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 std::int32_t APS5_VABI curl_share_cleanup_nid_postfix(CURLSH* share_handle) {
     auto context = FindShare(share_handle);
     const auto result = ::curl_share_cleanup(share_handle);
