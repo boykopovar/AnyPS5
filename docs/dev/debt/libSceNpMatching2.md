@@ -8,6 +8,8 @@
 
 ### Functional
 
+- [sceNpMatching2SignalingGetPort](../../../core/libs/prx/libSceNpMatching2/Export.cpp) (libSceNpMatching2) - returning `0x80550E15` (`SCE_NP_MATCHING2_SIGNALING_ERROR_INVALID_ARGUMENT`) when the `port` pointer is null or unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+
 - [sceNpMatching2CreateContext, sceNpMatching2CreateContextA](../../../core/libs/prx/libSceNpMatching2/Export.cpp) (libSceNpMatching2) - returning 0x80550C0A (SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT) for unmapped parameter or unwritable context ID pointers is a host-safety fallback; console fault behavior is unmeasured.
 - [sceNpMatching2SignalingGetLocalNetInfo](../../../core/libs/prx/libSceNpMatching2/SignalingLocalNetInfo.cpp) (libSceNpMatching2) - a valid initialized query still throws: no NAT status or local/mapped address is retrieved and no console measurements were taken. The 24-byte layout and input validation (returning NOT_INITIALIZED 0x80550C03 before initialization without reading info, and INVALID_ARGUMENT 0x80550C0A for a null pointer or a size other than 0x18) are adapted from [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/2183807e592b36d4440384878165b43d930c1dee/src/core/libraries/np/np_matching2/np_matching2.cpp#L1149-L1156). Unimplemented paths leave output fields unchanged.
 

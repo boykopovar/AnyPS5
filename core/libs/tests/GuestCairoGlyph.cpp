@@ -14,6 +14,20 @@ static_assert(std::is_same_v<decltype(cairo_glyph_free(nullptr)), void>);
 
 int main() {
     cairo_glyph_free(nullptr);
+    cairo_glyph_free(nullptr);
+
+    cairo_glyph_t single{42, -1.0, 3.5};
+    bool singleThrew = false;
+    try {
+        cairo_glyph_free(&single);
+    } catch (const std::runtime_error&) {
+        singleThrew = true;
+    }
+    if (!singleThrew || single.index != 42 || single.x != -1.0 || single.y != 3.5) {
+        std::fprintf(stderr, "cairo glyph: single foreign glyph check failed\n");
+        return 1;
+    }
+
     cairo_glyph_t glyphs[3] = {{0, 0.0, 2.0}, {1, 1.5, 2.0}, {2, 3.0, 2.0}};
     try {
         cairo_glyph_free(glyphs);

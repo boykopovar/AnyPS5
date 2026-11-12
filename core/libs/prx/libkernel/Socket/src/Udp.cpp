@@ -1674,6 +1674,10 @@ static int NoteConnectError(Socket& socket) {
 #endif
 int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
     if (const int error = AddressLengthError(address, length)) return Fail(error);
+    if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
+        if (const int error = forwards->connect(descriptor, address, length)) return Fail(error);
+        return 0;
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (socket->family != GuestUnix && socket->type == 2 && address && length >= 2 && static_cast<const unsigned char*>(address)[1] == 0
@@ -1940,13 +1944,20 @@ int APS5_VABI getsockname_nid_postfix(int descriptor, void* address, std::uint32
 int APS5_VABI getpeername_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
     std::uint32_t capacity = 0;
     if (!GuestCopyIn_nid_no_patch(&capacity, length, sizeof(capacity))) return Fail(14);
-    const auto socket = Lookup(descriptor);
-    if (!socket) return -1;
-    if (socket->family == GuestUnix && socket->peer.expired()) return Fail(57);
-    if (socket->family == GuestUnix) return CopyAddressOut({}, true, address, length, capacity);
+    std::shared_ptr<void> owner;
+    std::uintptr_t foreign = 0;
+    const bool forwarded = !GuestSockets::IsOpen(descriptor)
+        && KernelFindSocketNative_nid_no_patch(descriptor, &owner, &foreign);
+    const auto socket = forwarded ? nullptr : Lookup(descriptor);
+    if (!forwarded && !socket) return -1;
+    if (socket && socket->family == GuestUnix) {
+        if (socket->peer.expired()) return Fail(57);
+        return CopyAddressOut({}, true, address, length, capacity);
+    }
+    const auto nativeSocket = forwarded ? static_cast<decltype(Socket::value)>(foreign) : socket->value;
     sockaddr_storage native{};
     socklen_t size = sizeof(native);
-    if (::getpeername(socket->value, reinterpret_cast<sockaddr*>(&native), &size)) return Fail(NativeError());
+    if (::getpeername(nativeSocket, reinterpret_cast<sockaddr*>(&native), &size)) return Fail(NativeError());
     return CopyAddressOut(native, false, address, length, capacity);
 }
 int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* argument) {
