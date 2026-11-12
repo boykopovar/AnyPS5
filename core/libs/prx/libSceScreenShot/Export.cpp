@@ -1,6 +1,8 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceScreenShot/include/Api.hpp"
+#include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -31,7 +33,33 @@ T Field(const void* block, std::size_t offset) {
 }
 
 bool StringFits(const char* text, std::size_t maxLength) {
-    return text == nullptr || strnlen(text, maxLength + 1) <= maxLength;
+    if (!text) return true;
+    const int savedErrno = errno;
+    std::size_t copied = 0;
+    while (copied <= maxLength) {
+        const auto base = reinterpret_cast<std::uintptr_t>(text);
+        if (base == 0 || copied > UINTPTR_MAX - base) {
+            errno = savedErrno;
+            return false;
+        }
+        const auto addr = base + copied;
+        const std::size_t pageOffset = addr & 0xFFF;
+        const std::size_t bytesToPageEnd = 0x1000 - pageOffset;
+        char chunk[512];
+        const std::size_t chunkSize = std::min({bytesToPageEnd, maxLength + 1 - copied, sizeof(chunk)});
+        if (!GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(addr), chunkSize)) {
+            errno = savedErrno;
+            return false;
+        }
+        const void* const nullPos = std::memchr(chunk, '\0', chunkSize);
+        if (nullPos) {
+            errno = savedErrno;
+            return true;
+        }
+        copied += chunkSize;
+    }
+    errno = savedErrno;
+    return false;
 }
 
 [[noreturn]] void ScreenShotService(const char* function) {
@@ -119,14 +147,28 @@ int APS5_VABI sceScreenShotIsVshScreenCaptureDisabled(int* isDisabled) {
     ScreenShotService(__func__);
 }
 int APS5_VABI sceScreenShotSetDrcParam(const void* param) {
-    if (!param || Field<std::uint64_t>(param, 0x28) != 0 || Field<std::uint32_t>(param, 0x00) != 0x30) return ErrorArgument;
-    if (!Field<const void*>(param, 0x08) || !Field<const void*>(param, 0x18)) return ErrorArgument;
-    if (Field<std::uint32_t>(param, 0x10) != 0x400 || Field<std::uint32_t>(param, 0x20) != 0x8000) return ErrorArgument;
+    std::byte buffer[0x30];
+    const int savedErrno = errno;
+    if (!param || !GuestCopyIn_nid_no_patch(buffer, param, sizeof(buffer))) {
+        errno = savedErrno;
+        return ErrorArgument;
+    }
+    errno = savedErrno;
+    if (Field<std::uint64_t>(buffer, 0x28) != 0 || Field<std::uint32_t>(buffer, 0x00) != 0x30) return ErrorArgument;
+    if (!Field<const void*>(buffer, 0x08) || !Field<const void*>(buffer, 0x18)) return ErrorArgument;
+    if (Field<std::uint32_t>(buffer, 0x10) != 0x400 || Field<std::uint32_t>(buffer, 0x20) != 0x8000) return ErrorArgument;
     ScreenShotService(__func__);
 }
 int APS5_VABI sceScreenShotSetParam(const void* param) {
-    if (!param || Field<std::uint64_t>(param, 0x20) != 0 || Field<std::uint32_t>(param, 0x00) != 0x28) return ErrorArgument;
-    if (!StringFits(Field<const char*>(param, 0x08), 255) || !StringFits(Field<const char*>(param, 0x10), 255) || !StringFits(Field<const char*>(param, 0x18), 511)) return ErrorArgument;
+    std::byte buffer[0x28];
+    const int savedErrno = errno;
+    if (!param || !GuestCopyIn_nid_no_patch(buffer, param, sizeof(buffer))) {
+        errno = savedErrno;
+        return ErrorArgument;
+    }
+    errno = savedErrno;
+    if (Field<std::uint64_t>(buffer, 0x20) != 0 || Field<std::uint32_t>(buffer, 0x00) != 0x28) return ErrorArgument;
+    if (!StringFits(Field<const char*>(buffer, 0x08), 255) || !StringFits(Field<const char*>(buffer, 0x10), 255) || !StringFits(Field<const char*>(buffer, 0x18), 511)) return ErrorArgument;
     ScreenShotService(__func__);
 }
 
