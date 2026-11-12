@@ -11,6 +11,7 @@
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <bit>
+#include <exception>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -523,7 +524,6 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         }
     }
     std::size_t previousRoots = 0;
-    std::vector<std::vector<bool>> decodedInstructions(codeHeaders.size());
     std::vector<std::vector<std::uint8_t>> sectionReachable(codeHeaders.size());
     do {
         previousRoots = roots.size();
@@ -535,17 +535,10 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
             for (const auto root : roots) if (root >= header.MappedAddress && root - header.MappedAddress < header.FileSize) entries.push_back(root);
             if (entries.empty()) continue;
             const std::span<const std::uint8_t> text(bytes.data() + header.Offset, header.FileSize);
-            auto& decoded = decodedInstructions[i];
-            if (decoded.empty()) decoded.resize(header.FileSize);
             auto& reached = sectionReachable[i];
             if (reached.empty()) reached.resize(header.FileSize);
-            for (const auto address : UnusedNidFilter::ExtendControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty(), reached, [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable, functionSymbolRoots)) {
+            const auto analyzeInstruction = [&](Domain::VirtualAddress address, const Codegen::DecodedInstructionInfo& info) {
                 const auto offset = address - header.MappedAddress;
-                if (offset >= decoded.size()) throw Domain::RelinkerException("Code analysis: reachable address outside its section", address);
-                if (decoded[offset]) continue;
-                decoded[offset] = true;
-                instructionList.push_back(address);
-                const auto info = decoder.DecodeInstruction(text.data() + offset, text.size() - offset);
                 addAddressTakenRoot(address, text.data() + offset, info);
                 if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
                     const auto target = address + info.Length + static_cast<std::uint64_t>(info.BranchDisp);
@@ -569,7 +562,22 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                         throw Domain::RelinkerException("Code analysis: fall-through is not executable and file-backed", next);
                     if (next - header.MappedAddress >= header.FileSize) addRoot(next);
                 }
-            }
+            };
+            std::exception_ptr analysisFailure;
+            Domain::VirtualAddress firstFailedAddress = 0;
+            const auto visitDecoded = [&](Domain::VirtualAddress address, const Codegen::DecodedInstructionInfo& info) {
+                if (analysisFailure && address >= firstFailedAddress) return;
+                try {
+                    analyzeInstruction(address, info);
+                } catch (...) {
+                    firstFailedAddress = address;
+                    analysisFailure = std::current_exception();
+                }
+            };
+            auto added = UnusedNidFilter::ExtendControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty(), reached, [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable, functionSymbolRoots, visitDecoded);
+            if (analysisFailure) std::rethrow_exception(analysisFailure);
+            if (instructionList.empty()) instructionList = std::move(added);
+            else instructionList.insert(instructionList.end(), added.begin(), added.end());
         }
     } while (roots.size() != previousRoots);
     report(8500);
