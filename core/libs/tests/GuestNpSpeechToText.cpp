@@ -12,7 +12,7 @@ void Require(bool value) {
 
 int main() {
     constexpr int notInitialized = static_cast<int>(0x8193F000u);
-    for (int call = 0; call < 2; ++call) {
+    for (int call = 0; call < 4; ++call) {
         Require(sceNpSpeechToTextCreateContext() == notInitialized);
         Require(sceNpSpeechToTextDestroyContext() == notInitialized);
         Require(sceNpSpeechToTextGetEvent() == notInitialized);
