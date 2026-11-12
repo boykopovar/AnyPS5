@@ -265,6 +265,15 @@ int APS5_VABI sceFaceTrackerGetUserFeature(int userId, void **feature, int *feat
     if (userId <= 0 || !feature || !featureSize) {
         return kErrInvalid;
     }
+    const int savedErrno = errno;
+    void *probeFeature = nullptr;
+    int probeSize = 0;
+    const bool probedFeature = GuestCopyIn_nid_no_patch(&probeFeature, feature, sizeof(probeFeature));
+    const bool probedSize = GuestCopyIn_nid_no_patch(&probeSize, featureSize, sizeof(probeSize));
+    errno = savedErrno;
+    if (!probedFeature || !probedSize) {
+        return kErrInvalid;
+    }
     const int32_t count = userDbCount(context);
     if (count <= 0) {
         return kErrNotFound;
