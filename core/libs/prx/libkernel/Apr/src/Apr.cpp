@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include "prx/libc/include/HostThread.hpp"
 #include <optional>
 #include <deque>
 #include <condition_variable>
@@ -776,7 +777,7 @@ void _complete(bool amm, std::uint32_t id) {
 
 AprQueue* _startQueue(bool amm) {
     auto* created = new AprQueue();
-    std::thread([created, amm] {
+    Libc::StartHostThread([created, amm] {
         for (;;) {
             AprQueue::Work work;
             {
