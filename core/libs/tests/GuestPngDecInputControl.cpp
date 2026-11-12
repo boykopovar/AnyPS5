@@ -214,9 +214,91 @@ void CheckGuestMemory(const std::vector<std::uint8_t>& png, const std::vector<st
     Require(image == expectedImage);
 }
 
+std::vector<std::uint8_t> WithBoundaryChunk(const std::vector<std::uint8_t>& png) {
+    std::vector<std::uint8_t> data(2048, 0xA5);
+    const std::uint8_t trailer[] = {0, 0, 0, 0, 'I', 'E', 'N', 'D', 0xAE, 0x42, 0x60, 0x82};
+    std::copy(std::begin(trailer), std::end(trailer), data.begin());
+    std::vector<std::uint8_t> chunk;
+    const auto append32 = [&chunk](std::uint32_t value) {
+        for (int shift = 24; shift >= 0; shift -= 8) chunk.push_back(static_cast<std::uint8_t>(value >> shift));
+    };
+    append32(static_cast<std::uint32_t>(data.size()));
+    chunk.insert(chunk.end(), {'t', 'e', 'S', 't'});
+    chunk.insert(chunk.end(), data.begin(), data.end());
+    std::uint32_t crc = 0xFFFFFFFFu;
+    for (std::size_t offset = 4; offset < chunk.size(); ++offset) {
+        crc ^= chunk[offset];
+        for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1) != 0 ? 0xEDB88320u : 0u);
+    }
+    append32(~crc);
+    std::vector<std::uint8_t> result;
+    result.reserve(png.size() + chunk.size());
+    result.insert(result.end(), png.begin(), png.end() - 12);
+    result.insert(result.end(), chunk.begin(), chunk.end());
+    result.insert(result.end(), png.end() - 12, png.end());
+    return result;
+}
+
+void CheckImageBoundary(const std::vector<std::uint8_t>& png, std::size_t chunkSize, bool trailingBytes = false) {
+    TestDecoder decoder(2);
+    std::vector<std::uint8_t> input = png;
+    if (trailingBytes) input.insert(input.end(), 29, 0xA5);
+    Source source{&input};
+    source.chunkSize = chunkSize;
+    source.errorAt = static_cast<std::int32_t>(png.size());
+    PngDecInputControlParam param{};
+    param.input = &ReadChunk;
+    param.input_argument = &source;
+    param.operation = 0x10;
+    PngDecImageInfo info{};
+    Require(scePngDecDecodeWithInputControl(decoder.handle, &param, &info) == 0);
+    Require(info.image_width == 2 && info.image_height == 2 && info.color_space == 4 && info.image_flag == 2);
+    alignas(4) std::uint8_t image[16] = {};
+    param.operation = 0x20;
+    param.image_mem_addr = image;
+    param.image_mem_size = sizeof(image);
+    Require(scePngDecDecodeWithInputControl(decoder.handle, &param, &info) == (2 << 16 | 2));
+    const std::uint8_t expected[] = {255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 255, 255, 255, 0, 128};
+    Require(std::equal(std::begin(image), std::end(image), std::begin(expected)));
+    Require(source.calls == (png.size() + chunkSize - 1) / chunkSize);
+    const std::size_t calls = source.calls;
+    Require(scePngDecDecodeWithInputControl(decoder.handle, &param, &info) == (2 << 16 | 2));
+    Require(source.calls == calls);
+    Require(std::equal(std::begin(image), std::end(image), std::begin(expected)));
+}
+
+void CheckIncompleteBoundary(const std::vector<std::uint8_t>& png, bool callbackError) {
+    const std::vector<std::uint8_t> truncated(png.begin(), png.end() - 1);
+    TestDecoder decoder(2);
+    Source source{&truncated};
+    source.chunkSize = 1;
+    if (callbackError) source.errorAt = static_cast<std::int32_t>(truncated.size());
+    PngDecInputControlParam param{};
+    param.input = &ReadChunk;
+    param.input_argument = &source;
+    param.operation = 0x10;
+    PngDecImageInfo info{};
+    Require(scePngDecDecodeWithInputControl(decoder.handle, &param, &info) == 0);
+    alignas(4) std::uint8_t image[16] = {};
+    param.operation = 0x20;
+    param.image_mem_addr = image;
+    param.image_mem_size = sizeof(image);
+    Require(scePngDecDecodeWithInputControl(decoder.handle, &param, &info)
+        == (callbackError ? -123 : static_cast<std::int32_t>(0x80690012)));
+}
+
 }
 
 int main() {
+    const std::vector<std::uint8_t> boundaryPng(std::begin(PALETTE_TRNS), std::end(PALETTE_TRNS));
+    for (const std::size_t chunkSize : {std::size_t{1}, std::size_t{3}, std::size_t{7}, std::size_t{12}, std::size_t{1024}}) {
+        CheckImageBoundary(boundaryPng, chunkSize);
+        CheckImageBoundary(WithBoundaryChunk(boundaryPng), chunkSize);
+    }
+    CheckImageBoundary(boundaryPng, boundaryPng.size() + 29, true);
+    CheckIncompleteBoundary(boundaryPng, false);
+    CheckIncompleteBoundary(boundaryPng, true);
+
     const std::vector<std::uint8_t> png = RgbPng();
     constexpr std::uint32_t width = IMAGE_WIDTH;
     constexpr std::uint32_t height = IMAGE_HEIGHT;

@@ -8,7 +8,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <istream>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -60,7 +62,8 @@ constexpr auto actions = std::array{
     InputAction{"ShowPadStatus", Pad::InputControl::ShowPadStatus, Pad::PadButton::None},
     InputAction{"VolumeUp", Pad::InputControl::VolumeUp, Pad::PadButton::None},
     InputAction{"VolumeDown", Pad::InputControl::VolumeDown, Pad::PadButton::None},
-    InputAction{"ToggleMute", Pad::InputControl::ToggleMute, Pad::PadButton::None}
+    InputAction{"ToggleMute", Pad::InputControl::ToggleMute, Pad::PadButton::None},
+    InputAction{"ReloadInputMapping", Pad::InputControl::ReloadInputMapping, Pad::PadButton::None}
 };
 
 std::string upper(std::string_view value) {
@@ -102,6 +105,55 @@ Pad::MouseButton parseMouseButton(std::string_view name) {
     throw std::runtime_error("unknown mouse button '" + std::string(name) + "'");
 }
 
+bool isEmulatorAction(Pad::InputControl control) {
+    switch (control) {
+        case Pad::InputControl::ToggleFullscreen:
+        case Pad::InputControl::TogglePerformanceOverlay:
+        case Pad::InputControl::Screenshot:
+        case Pad::InputControl::ShowPadStatus:
+        case Pad::InputControl::VolumeUp:
+        case Pad::InputControl::VolumeDown:
+        case Pad::InputControl::ToggleMute:
+        case Pad::InputControl::ReloadInputMapping: return true;
+        default: return false;
+    }
+}
+
+Pad::PadButton parsePadButton(std::string_view name) {
+    const auto normalized = upper(name);
+    if (normalized == "CROSS") return Pad::PadButton::Cross;
+    if (normalized == "CIRCLE") return Pad::PadButton::Circle;
+    if (normalized == "TRIANGLE") return Pad::PadButton::Triangle;
+    if (normalized == "SQUARE") return Pad::PadButton::Square;
+    if (normalized == "L1") return Pad::PadButton::L1;
+    if (normalized == "R1") return Pad::PadButton::R1;
+    if (normalized == "L2") return Pad::PadButton::L2;
+    if (normalized == "R2") return Pad::PadButton::R2;
+    if (normalized == "L3") return Pad::PadButton::L3;
+    if (normalized == "R3") return Pad::PadButton::R3;
+    if (normalized == "OPTIONS") return Pad::PadButton::Options;
+    if (normalized == "UP") return Pad::PadButton::Up;
+    if (normalized == "RIGHT") return Pad::PadButton::Right;
+    if (normalized == "DOWN") return Pad::PadButton::Down;
+    if (normalized == "LEFT") return Pad::PadButton::Left;
+    if (normalized == "TOUCHPAD") return Pad::PadButton::TouchPad;
+    throw std::runtime_error("unknown pad button '" + std::string(name) + "'");
+}
+
+std::uint32_t parsePadChord(std::string_view value) {
+    std::uint32_t mask = 0;
+    std::size_t start = 0;
+    while (true) {
+        const auto plus = value.find('+', start);
+        const auto part = trim(value.substr(start, plus == std::string_view::npos ? std::string_view::npos : plus - start));
+        if (part.empty()) throw std::runtime_error("pad chord has an empty button");
+        mask |= static_cast<std::uint32_t>(parsePadButton(part));
+        if (plus == std::string_view::npos) break;
+        start = plus + 1;
+    }
+    return mask;
+}
+
 Pad::InputBinding parseBinding(const InputAction& action, std::string_view source) {
     const auto separator = source.find(':');
     if (separator == std::string_view::npos) throw std::runtime_error("source must use TYPE:VALUE format");
@@ -137,16 +189,25 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
         if (action.control == Pad::InputControl::ToggleMute) {
             throw std::runtime_error("ToggleMute can only use a keyboard key");
         }
+        if (action.control == Pad::InputControl::ReloadInputMapping) {
+            throw std::runtime_error("ReloadInputMapping can only use a keyboard key");
+        }
         return {SDL_SCANCODE_UNKNOWN, parseMouseButton(value), action.control, action.button, 0};
+    }
+    if (type == "PAD") {
+        if (!isEmulatorAction(action.control)) throw std::runtime_error("PAD chords can only trigger emulator actions");
+        return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, 0, 0, parsePadChord(value)};
     }
     if (type == "WHEEL") {
         if (action.control != Pad::InputControl::Button) throw std::runtime_error("mouse wheel can only map to a pad button");
         const auto direction = upper(value);
         if (direction == "UP") return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, 1};
         if (direction == "DOWN") return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, -1};
-        throw std::runtime_error("mouse wheel direction must be UP or DOWN");
+        if (direction == "RIGHT") return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, 0, 1};
+        if (direction == "LEFT") return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, 0, -1};
+        throw std::runtime_error("mouse wheel direction must be UP, DOWN, LEFT or RIGHT");
     }
-    throw std::runtime_error("source type must be KEY, MOUSE or WHEEL");
+    throw std::runtime_error("source type must be KEY, MOUSE, WHEEL or PAD");
 }
 
 enum class InputSetting {
@@ -278,8 +339,8 @@ std::filesystem::path configuredPath() {
 #endif
 }
 
-[[noreturn]] void invalidLine(const std::filesystem::path& path, std::size_t line, const std::string& reason) {
-    throw std::runtime_error("Pad: invalid input mapping " + pathToUtf8(path) + ":" + std::to_string(line) + ": " + reason);
+[[noreturn]] void invalidLine(std::string_view source, std::size_t line, const std::string& reason) {
+    throw std::runtime_error("Pad: invalid input mapping " + std::string(source) + ":" + std::to_string(line) + ": " + reason);
 }
 
 std::filesystem::path defaultConfigPath() {
@@ -288,9 +349,7 @@ std::filesystem::path defaultConfigPath() {
     return "anyps5-input.ini";
 }
 
-void loadInputFile(Pad::InputConfiguration& configuration, const std::filesystem::path& path) {
-    std::ifstream file(path);
-    if (!file) throw std::runtime_error("Pad: cannot read input mapping '" + pathToUtf8(path) + "'");
+void applyInputStream(Pad::InputConfiguration& configuration, std::istream& file, std::string_view source) {
     auto& bindings = configuration.bindings;
     std::unordered_set<std::string> overriddenActions;
     std::array<bool, settingNames.size()> configuredSettings{};
@@ -303,27 +362,27 @@ void loadInputFile(Pad::InputConfiguration& configuration, const std::filesystem
         const std::string_view content = trim(std::string_view(line).substr(0, comment));
         if (content.empty()) continue;
         const auto separator = content.find('=');
-        if (separator == std::string_view::npos) invalidLine(path, lineNumber, "expected Action = TYPE:VALUE");
+        if (separator == std::string_view::npos) invalidLine(source, lineNumber, "expected Action = TYPE:VALUE");
 
         const auto actionName = trim(content.substr(0, separator));
-        const auto source = trim(content.substr(separator + 1));
+        const auto value = trim(content.substr(separator + 1));
         if (const auto* setting = findSetting(actionName)) {
             auto& configured = configuredSettings[static_cast<std::size_t>(setting->setting)];
-            if (configured) invalidLine(path, lineNumber, std::string(setting->name) + " is set more than once");
+            if (configured) invalidLine(source, lineNumber, std::string(setting->name) + " is set more than once");
             configured = true;
             try {
-                applySetting(configuration.settings, setting->setting, source);
+                applySetting(configuration.settings, setting->setting, value);
             } catch (const std::runtime_error& error) {
-                invalidLine(path, lineNumber, error.what());
+                invalidLine(source, lineNumber, error.what());
             }
             continue;
         }
         const auto* action = findAction(actionName);
-        if (action == nullptr) invalidLine(path, lineNumber, "unknown action '" + std::string(actionName) + "'");
-        if (source.empty()) invalidLine(path, lineNumber, "source is empty");
+        if (action == nullptr) invalidLine(source, lineNumber, "unknown action '" + std::string(actionName) + "'");
+        if (value.empty()) invalidLine(source, lineNumber, "source is empty");
 
         try {
-            auto binding = parseBinding(*action, source);
+            auto binding = parseBinding(*action, value);
             const auto normalizedAction = upper(action->name);
             if (overriddenActions.insert(normalizedAction).second) {
                 std::erase_if(bindings, [action](const Pad::InputBinding& existing) { return matchesAction(existing, *action); });
@@ -331,16 +390,56 @@ void loadInputFile(Pad::InputConfiguration& configuration, const std::filesystem
             const bool duplicate = std::any_of(bindings.begin(), bindings.end(), [&binding](const Pad::InputBinding& existing) {
                 return existing.key == binding.key && existing.mouseButton == binding.mouseButton &&
                     existing.control == binding.control && existing.button == binding.button &&
-                    existing.wheelDirection == binding.wheelDirection;
+                    existing.wheelDirection == binding.wheelDirection && existing.wheelTilt == binding.wheelTilt &&
+                    existing.padButtons == binding.padButtons;
             });
             if (!duplicate) bindings.push_back(binding);
         } catch (const std::runtime_error& error) {
-            invalidLine(path, lineNumber, error.what());
+            invalidLine(source, lineNumber, error.what());
         }
     }
-    if (file.bad()) throw std::runtime_error("Pad: cannot read input mapping '" + pathToUtf8(path) + "'");
+    if (file.bad()) throw std::runtime_error("Pad: cannot read input mapping '" + std::string(source) + "'");
 }
 
+void loadInputFile(Pad::InputConfiguration& configuration, const std::filesystem::path& path) {
+    std::ifstream file(path);
+    if (!file) throw std::runtime_error("Pad: cannot read input mapping '" + pathToUtf8(path) + "'");
+    applyInputStream(configuration, file, pathToUtf8(path));
+}
+
+}
+
+void Pad::ApplyInputMapping(InputConfiguration& configuration, std::istream& input, std::string_view source) {
+    applyInputStream(configuration, input, source);
+}
+
+Pad::InputMappingStore::InputMappingStore(InputConfiguration initial) : current(std::make_shared<const InputConfiguration>(std::move(initial))) {}
+
+std::shared_ptr<const Pad::InputConfiguration> Pad::InputMappingStore::Snapshot() const {
+    const std::lock_guard lock(mutex);
+    return current;
+}
+
+std::uint64_t Pad::InputMappingStore::Generation() const {
+    const std::lock_guard lock(mutex);
+    return generation;
+}
+
+void Pad::InputMappingStore::Publish(InputConfiguration configuration) {
+    auto next = std::make_shared<const InputConfiguration>(std::move(configuration));
+    const std::lock_guard lock(mutex);
+    current = std::move(next);
+    ++generation;
+}
+
+bool Pad::TryLoadInputMapping(std::string_view titleId, InputConfiguration& configuration, std::string& error) {
+    try {
+        configuration = LoadInputMapping(titleId);
+    } catch (const std::runtime_error& failure) {
+        error = failure.what();
+        return false;
+    }
+    return true;
 }
 
 std::array<std::uint8_t, 2> Pad::StickWithDeadzone(std::int16_t x, std::int16_t y, int deadzonePercent) {
