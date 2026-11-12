@@ -1,5 +1,6 @@
 #include "prx/libSceNpRemotePlaySessionSignaling/libSceNpRemotePlaySessionSignaling.hpp"
 #include "prx/libSceNpSessionSignaling/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -49,6 +50,10 @@ void CheckInitialized() {
     Require(sceNpSessionSignalingInitialize(&param) == AlreadyInitialized, "the session signaling library is initialized");
 
     SessionSignalingMemoryInfo memory{Stale, Stale, Stale};
+    errno = 71;
+    Require(sceNpRemotePlaySessionSignalingGetMemoryInfo(reinterpret_cast<SessionSignalingMemoryInfo*>(0x10)) == InvalidArgument,
+        "GetMemoryInfo: unmapped pointer");
+    Require(errno == 71, "GetMemoryInfo: preserves errno");
     Require(sceNpRemotePlaySessionSignalingGetMemoryInfo(&memory) == 0, "GetMemoryInfo");
     Require(memory.poolSize == 0x40000 && memory.usedSize == 0 && memory.peakUsedSize == 0, "GetMemoryInfo: values");
 

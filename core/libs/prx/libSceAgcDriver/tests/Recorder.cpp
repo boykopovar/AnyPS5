@@ -3430,6 +3430,13 @@ void remappedImportTests(const Device& device) {
     HostImportFor(context, address, bytes);
 }
 
+void promoteThroughBuild(const Context& context) {
+    GuestBufferMemory promoting(context);
+    promoting.AcquireRegistered();
+    promoting.Upload(true);
+    promoting.WriteBack();
+}
+
 bool windowedImportRefreshTests(const Device& device) {
     const auto& context = device.GetContext();
     constexpr std::size_t window = 131072;
@@ -3495,10 +3502,11 @@ bool windowedImportRefreshTests(const Device& device) {
     Require(serial(a) == firstA && serial(b) == firstB, "a range added in another import window retired an import");
     add(neighbour);
     Require(serial(b) == firstB, "a range added in another import window retired an import");
-    Require(serial(a) == 0, "an import whose window gained a continuing range was kept");
-    Require(HostImportFor(context, first, unit) != nullptr, "the grown run was not imported again");
+    Require(serial(a) == firstA, "an import whose window gained a continuing range was retired before a larger import replaced it");
+    promoteThroughBuild(context);
+    Require(HostImportCovers(context, first, 2 * unit), "the next build did not import the grown run");
     const auto secondA = serial(a);
-    Require(secondA != 0 && serial(neighbour) == secondA, "the grown run was not imported as one");
+    Require(secondA != 0 && secondA != firstA && serial(neighbour) == secondA, "the grown run was not imported as one replacing the first");
     remove(b);
     add(b);
     Require(serial(a) == secondA, "a range mapped again in another import window retired an import");
@@ -3939,6 +3947,7 @@ int hostImportCutTests(const Device& device) {
             backing.holeBytes = 0;
             gpu.lock();
             const auto from = reinterpret_cast<std::uint64_t>(cut);
+            promoteThroughBuild(context);
             const auto* remapped = HostImportFor(context, address, bytes);
             Require(remapped != nullptr && remapped->base == address && remapped->bytes == bytes, name + ": the range mapped again is not imported whole");
             Require(remapped->memoryBase == address && remapped->pinnedBytes == bytes, "after " + name + " the pages mapped again are served from the import that pinned the old ones");
