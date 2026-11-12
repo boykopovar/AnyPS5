@@ -728,7 +728,10 @@ std::int32_t APS5_VABI sceUsbdGetConfiguration(void* deviceHandle, std::int32_t*
     if (deviceHandle == nullptr || configuration == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
     int host = 0;
     const int result = libusb_get_configuration(KnownHandle(deviceHandle, __func__), &host);
-    if (result == 0) *configuration = host;
+    if (result == 0) {
+        const std::int32_t localConfig = host;
+        if (!GuestCopyOut_nid_no_patch(configuration, &localConfig, sizeof(localConfig))) return SCE_USBD_ERROR_INVALID_ARG;
+    }
     return ToGuestError(result);
 }
 

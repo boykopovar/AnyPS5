@@ -2,6 +2,8 @@
 
 #include "SceTypes.hpp"
 
+#include <cstddef>
+
 extern "C" {
 
 int APS5_VABI libSceNKWebKitLegacyUnknown__plus__plus_v_plus_KlCLFK8_nid_no_patch();
@@ -26,7 +28,7 @@ int APS5_VABI _ZN7WebCore26HTMLTextFormControlElement12setRangeTextERKN3WTF6Stri
 int APS5_VABI _ZN7WebCore16BlobRegistryImpl26writeBlobsToTemporaryFilesERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEEONS1_17CompletionHandlerIFvOS6_EEE();
 int APS5_VABI _ZNK7WebCore12SharedBuffereqERKS0_();
 int APS5_VABI libSceNKWebKitLegacyUnknown__minus_MlTHMZSyok_nid_no_patch();
-int APS5_VABI _ZN7WebCore9GLContextnwEmPv();
+void* APS5_VABI _ZN7WebCore9GLContextnwEmPv(std::size_t size, void* location);
 int APS5_VABI _ZN7WebCore8Document10setBgColorERKN3WTF6StringE();
 int APS5_VABI WKBundleSetFrameFlatteningEnabled();
 int APS5_VABI _ZN7WebCore17JSDOMGlobalObject10structuresERKN3WTF14AbstractLockerE();
@@ -1491,7 +1493,7 @@ int APS5_VABI _ZN7WebCore18JSHTMLVideoElement14finishCreationERN3JSC2VME();
 int APS5_VABI _ZNK7WebCore11JSDOMWindow12openDatabaseERN3JSC14JSGlobalObjectE();
 int APS5_VABI WKPreferencesSetModernMediaControlsEnabled();
 int APS5_VABI WKBundleSetAllowStorageAccessFromFileURLS();
-int APS5_VABI _ZN7WebCore9GLContextdaEPv();
+void APS5_VABI _ZN7WebCore9GLContextdaEPv(void* ptr);
 int APS5_VABI _ZN7WebCore5Frame6createEPNS_4PageEPNS_21HTMLFrameOwnerElementEON3WTF9UniqueRefINS_17FrameLoaderClientEEE();
 int APS5_VABI _ZN7WebCore24CoordinatedGraphicsLayer8addChildEON3WTF3RefINS_13GraphicsLayerENS1_13DumbPtrTraitsIS3_EEEE();
 int APS5_VABI _ZN7WebCore15JSEventListener6createEN3JSC7JSValueERNS1_8JSObjectEbRNS_15DOMWrapperWorldE();
@@ -1524,7 +1526,7 @@ int APS5_VABI _ZN7WebCore11DisplayList22ApplyDeviceScaleFactorD0Ev();
 int APS5_VABI _ZN7WebCore9JSDOMRect6createEPN3JSC9StructureEPNS_17JSDOMGlobalObjectEON3WTF3RefINS_7DOMRectENS6_13DumbPtrTraitsIS8_EEEE();
 int APS5_VABI _ZN7WebCore11DisplayList9DrawImageD2Ev();
 int APS5_VABI _ZN7WebCore11DisplayList11DrawingItemD0Ev();
-int APS5_VABI _ZN7WebCore9GLContextnaEm();
+void* APS5_VABI _ZN7WebCore9GLContextnaEm(std::size_t size);
 int APS5_VABI _ZN7WebCore11DisplayList12PutImageDataD2Ev();
 int APS5_VABI _ZN7WebCore12PrintContext12pagePropertyEPNS_5FrameEPKci();
 int APS5_VABI _ZNK7WebCore15HTMLFormElement24unsafeAssociatedElementsEv();
@@ -1834,7 +1836,7 @@ int APS5_VABI _ZNK7WebCore22SkewTransformOperation6angleXEv();
 int APS5_VABI libSceNKWebKitLegacyUnknown_lOuJRYKbSug_nid_no_patch();
 int APS5_VABI _ZN7WebCore9CaretBase17computeCaretColorERKNS_11RenderStyleEPKNS_4NodeE();
 int APS5_VABI _ZN7WebCore11MessagePort37isExistingMessagePortLocallyReachableERKNS_21MessagePortIdentifierE();
-int APS5_VABI _ZN7WebCore9GLContextdlEPv();
+void APS5_VABI _ZN7WebCore9GLContextdlEPv(void* ptr);
 int APS5_VABI _ZN7WebCore24DeprecatedGlobalSettings38setLowPowerVideoAudioBufferSizeEnabledEb();
 int APS5_VABI _ZN7WebCore23CoordinatedBackingStore10drawBorderERNS_13TextureMapperERKNS_5ColorEfRKNS_9FloatRectERKNS_20TransformationMatrixE();
 int APS5_VABI _ZN7WebCore22makeRangeSelectingNodeERNS_4NodeE();
@@ -1909,7 +1911,7 @@ int APS5_VABI _ZN7WebCore9FrameView18setViewExposedRectEN3WTF8OptionalINS_9Float
 int APS5_VABI _ZNK7WebCore30InvertLightnessFilterOperation14transformColorERNS_5SRGBAIfEE();
 int APS5_VABI _ZNK7WebCore12ISOWebVTTCue2idEv();
 int APS5_VABI WKCookieManagerSetCookieForHostname();
-int APS5_VABI _ZN7WebCore9GLContextnaEmPv();
+void* APS5_VABI _ZN7WebCore9GLContextnaEmPv(std::size_t size, void* location);
 int APS5_VABI _ZN7WebCore25WebSocketChannelInspector29didReceiveWebSocketFrameErrorEPNS_8DocumentERKN3WTF6StringE();
 int APS5_VABI _ZNK7WebCore23CoordinatedBackingStore4rectEv();
 int APS5_VABI libSceNKWebKitLegacyUnknown_ncAUU4JtF60_nid_no_patch();

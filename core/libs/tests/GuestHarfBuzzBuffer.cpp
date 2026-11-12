@@ -58,6 +58,11 @@ struct BufferPair {
         hb_buffer_set_script(native, script);
     }
 
+    void UnicodeFuncs(hb_unicode_funcs_t* funcs) {
+        hb_buffer_set_unicode_funcs_nid_postfix(guest, funcs);
+        hb_buffer_set_unicode_funcs(native, funcs);
+    }
+
     void Compare(bool comparePositions = false) {
         Require(hb_buffer_get_length_nid_postfix(guest) == hb_buffer_get_length(native));
         Require(hb_buffer_get_direction_nid_postfix(guest) == hb_buffer_get_direction(native));
@@ -201,6 +206,11 @@ static void Properties() {
     Require(hb_buffer_get_direction_nid_postfix(pair.guest) == HB_DIRECTION_INVALID);
     Require(hb_buffer_get_script(pair.guest) == HB_SCRIPT_INVALID);
     Require(hb_buffer_get_language(pair.guest) == HB_LANGUAGE_INVALID);
+    pair.Compare();
+    hb_unicode_funcs_t* funcs = hb_unicode_funcs_get_default();
+    pair.UnicodeFuncs(funcs);
+    Require(hb_buffer_get_unicode_funcs(pair.guest) == funcs);
+    Require(hb_buffer_get_unicode_funcs(pair.guest) == hb_buffer_get_unicode_funcs(pair.native));
     pair.Compare();
 }
 
