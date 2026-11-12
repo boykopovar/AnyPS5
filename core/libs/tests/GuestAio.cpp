@@ -438,6 +438,7 @@ int main(int argc, char** argv) {
     Check(sceKernelAioPollRequests(unreadable, 2, kept) == SCE_KERNEL_ERROR_EFAULT);
     Check(sceKernelAioCancelRequests(unreadable, 2, kept) == SCE_KERNEL_ERROR_EFAULT);
     Check(sceKernelAioDeleteRequests(unreadable, 2, kept) == SCE_KERNEL_ERROR_EFAULT);
+    Check(sceKernelAioWaitRequests(unreadable, 2, kept, 1, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Check(kept[0] == 7 && kept[1] == 7);
     void* readOnly = MapReadOnlyPage();
     for (void* bad : {static_cast<void*>(unreadable), readOnly}) {
@@ -452,6 +453,14 @@ int main(int argc, char** argv) {
         Check(sceKernelAioDeleteRequest(deleteId, badState) == SCE_KERNEL_ERROR_EFAULT);
         std::int32_t removed = 7;
         Check(sceKernelAioDeleteRequest(deleteId, &removed) == 0 && removed == SCE_KERNEL_ERROR_ESRCH);
+        const std::int32_t waitId = finished();
+        Check(sceKernelAioWaitRequest(waitId, badState, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+        Check(sceKernelAioPollRequest(waitId, &polled) == 0 && polled == 0x10003);
+        std::int32_t waitIds[2] = {finished(), finished()};
+        std::int32_t waitStates[2] = {7, 7};
+        Check(sceKernelAioWaitRequests(waitIds, 2, badState, 1, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+        Check(sceKernelAioPollRequests(waitIds, 2, waitStates) == 0 && waitStates[0] == 0x10003 && waitStates[1] == 0x10003);
+        Check(sceKernelAioDeleteRequests(waitIds, 2, waitStates) == 0 && waitStates[0] == 0 && waitStates[1] == 0);
         std::int32_t batchIds[2] = {finished(), finished()};
         std::int32_t batchStates[2] = {7, 7};
         Check(sceKernelAioPollRequests(batchIds, 2, badState) == SCE_KERNEL_ERROR_EFAULT);
@@ -462,6 +471,7 @@ int main(int argc, char** argv) {
         Check(batchStates[0] == SCE_KERNEL_ERROR_ESRCH && batchStates[1] == SCE_KERNEL_ERROR_ESRCH);
         DeleteAio(pollId);
         DeleteAio(cancelId);
+        DeleteAio(waitId);
     }
     Check(*static_cast<std::int32_t*>(readOnly) == 0);
     UnmapReadOnlyPage(readOnly);

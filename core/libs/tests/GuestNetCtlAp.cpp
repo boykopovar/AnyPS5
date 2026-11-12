@@ -84,6 +84,8 @@ int main() {
     Require(sceNetCtlApGetConnectInfo("12345678", connect) == kErrNotStarted);
     Require(sceNetCtlApGetConnectInfo("123456789", nullptr) == static_cast<int>(0x80412901u));
     Require(sceNetCtlApGetConnectInfo("123456789", connect) == static_cast<int>(0x80412901u));
+    Require(sceNetCtlApGetConnectInfo("1234567890", connect) == static_cast<int>(0x80412901u));
+    Require(sceNetCtlApGetConnectInfo("1234567890123456", connect) == static_cast<int>(0x80412901u));
     for (std::size_t i = sizeof(connectSize); i < sizeof(connect); ++i) Require(connect[i] == 0x5a);
     Require(sceNetCtlApGetConnectInfo(option, nullptr) == kErrInvalidAddr);
     errno = 71;
@@ -92,6 +94,10 @@ int main() {
     const std::uint64_t wrongConnectSize = sizeof(info);
     std::memcpy(connect, &wrongConnectSize, sizeof(wrongConnectSize));
     Require(sceNetCtlApGetConnectInfo(option, connect) == kErrInvalidSize);
+    errno = 71;
+    Require(sceNetCtlApGetConnectInfo(reinterpret_cast<const char*>(0x10), connect) == kErrInvalidAddr);
+    Require(sceNetCtlApGetConnectInfo(reinterpret_cast<const char*>(0x10), nullptr) == kErrInvalidAddr);
+    Require(errno == 71);
 
     Require(sceNetCtlApStop() == kErrNotStarted);
 
@@ -128,8 +134,18 @@ int main() {
     Require(sceNetCtlApUnregisterCallback(3) == 0);
     Require(sceNetCtlApUnregisterCallback(3) == kErrIdNotFound);
     Require(sceNetCtlApUnregisterCallback(-1) == kErrInvalidId);
+    Require(sceNetCtlApUnregisterCallback(-100) == kErrInvalidId);
     Require(sceNetCtlApUnregisterCallback(8) == kErrInvalidId);
+    Require(sceNetCtlApUnregisterCallback(9) == kErrInvalidId);
+    Require(sceNetCtlApUnregisterCallback(100) == kErrInvalidId);
     Require(sceNetCtlApRegisterCallback(Callback, nullptr, &extra) == 0 && extra == 3);
+
+    Require(sceNetCtlApUnregisterCallback(1) == 0);
+    Require(sceNetCtlApUnregisterCallback(5) == 0);
+    int reusedFirst = -1;
+    int reusedSecond = -1;
+    Require(sceNetCtlApRegisterCallback(Callback, nullptr, &reusedFirst) == 0 && reusedFirst == 1);
+    Require(sceNetCtlApRegisterCallback(Callback, nullptr, &reusedSecond) == 0 && reusedSecond == 5);
 
     bool threw = false;
     try {

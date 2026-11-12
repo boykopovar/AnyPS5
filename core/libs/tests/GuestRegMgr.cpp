@@ -1,4 +1,5 @@
 #include "prx/libSceRegMgr/include/Api.hpp"
+#include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
@@ -24,6 +25,7 @@ int main() {
     uint8_t binBuf[32] = {};
 
     Require(sceRegMgrGetInt(0x1000, nullptr) == static_cast<int>(0x80820001));
+    Require(sceRegMgrGetInt(0x1000, reinterpret_cast<int32_t*>(0x10)) == static_cast<int>(0x80820002));
     Require(sceRegMgrGetStr(0x1001, nullptr, 10) == static_cast<int>(0x80820001));
     Require(sceRegMgrGetStr(0x1001, strBuf, -1) == static_cast<int>(0x80820001));
     Require(sceRegMgrGetBin(0x1002, nullptr, 10) == static_cast<int>(0x80820001));
@@ -54,6 +56,9 @@ int main() {
     Require(sceRegMgrGetInt(0x2000, &intVal) == 0 && intVal == 0x12345678);
     Require(sceRegMgrSetInt(0x2000, -7) == 0);
     Require(sceRegMgrGetInt(0x2000, &intVal) == 0 && intVal == -7);
+    errno = 71;
+    Require(sceRegMgrGetInt(0x2000, reinterpret_cast<int32_t*>(0x10)) == static_cast<int>(0x80820001));
+    Require(errno == 71);
     Require(sceRegMgrSetStr(0x2001, "hello", 6) == 0);
     std::memset(strBuf, 0, sizeof(strBuf));
     Require(sceRegMgrGetStr(0x2001, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "hello") == 0);
