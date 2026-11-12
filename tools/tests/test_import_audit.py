@@ -2782,6 +2782,34 @@ class ImportAuditTests(unittest.TestCase):
             {"importer": "libSceB.prx", "chain": ["libSceB.prx", "LIBSCEMISSING.PRX"]},
         ])
 
+    def test_pe_origin_host_dependency_keeps_case_and_transitive_gaps(self):
+        work = self.work
+        (work.libs / "libSceB.prx").write_bytes(build_pe_with_imports(["LIBSCEMISSING.PRX"]))
+        registry, report = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [])
+        for prefix in ("$ORIGIN/", "${ORIGIN}/", "$ORIGIN/../Plugins/"):
+            with self.subTest(prefix=prefix):
+                (work.libs / "libSceA.prx").write_bytes(build_pe_with_imports([prefix + "LIBSCEB.PRX"]))
+                code, _, err = work.run(registry, "--json", str(report))
+                self.assertEqual((code, err), (1, ""))
+                self.assertEqual(json.loads(report.read_text())["missing_host_dependencies"], [
+                    {"importer": "libSceA.prx", "chain": ["libSceA.prx", "libSceB.prx", "LIBSCEMISSING.PRX"]},
+                    {"importer": "libSceB.prx", "chain": ["libSceB.prx", "LIBSCEMISSING.PRX"]},
+                ])
+
+    def test_elf_origin_host_dependency_keeps_pe_child_case(self):
+        work = self.work
+        (work.libs / "libSceB.prx").write_bytes(build_pe_with_imports(["LIBSCEC.PRX"]))
+        (work.libs / "libSceC.prx").write_bytes(exporting())
+        registry, report = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [])
+        for prefix in ("$ORIGIN/", "${ORIGIN}/", "$ORIGIN/../Plugins/"):
+            with self.subTest(prefix=prefix):
+                (work.libs / "libSceA.prx").write_bytes(build_elf([], [prefix + "libSceB.prx"]))
+                code, out, err = work.run(registry, "--json", str(report))
+                self.assertEqual((code, err), (0, ""), out)
+                self.assertEqual(json.loads(report.read_text())["missing_host_dependencies"], [])
+
     def test_pe_host_dependency_can_find_a_module_with_different_case(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(build_pe_with_imports(["LIBSCEIME.PRX"]))
