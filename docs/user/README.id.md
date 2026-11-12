@@ -1,4 +1,4 @@
-[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md) | [Italiano](README.it.md) | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | **Bahasa Indonesia**
+[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md) | [Català](README.ca.md) | [Italiano](README.it.md) | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | **Bahasa Indonesia** | [Polski](README.pl.md) | [日本語](README.ja.md)
 
 # Tentang
 
@@ -12,7 +12,7 @@ Build khusus relinker berjalan di macOS, termasuk Apple silicon.
 
 Berisi [relinker](../../core/relinker) yang mengubah executable ke format asli sistem tujuan, serta implementasi [library prx sistem](../../core/libs/prx) yang dapat ditautkan secara dinamis. Tanpa emulasi dan tanpa proses runtime terpisah.
 
-[**Discord**](https://discord.gg/BHFztBPUe), [Penggunaan](USAGE.md), [Petunjuk build](../dev/BUILD.md), [Arsitektur](../dev/ARCHITECTURE.md), [Technical debt proyek](../dev/TechnicalDebt.md), [konvensi gaya kode](../dev/CONVENTIONS.md), [cara berkontribusi](../../CONTRIBUTING.md)
+[**Discord**](https://discord.gg/x9naWVzC6A), [Penggunaan](USAGE.md), [Petunjuk build](../dev/BUILD.md), [Arsitektur](../dev/ARCHITECTURE.md), [Technical debt proyek](../dev/TechnicalDebt.md), [konvensi gaya kode](../dev/CONVENTIONS.md), [cara berkontribusi](../../CONTRIBUTING.md)
 
 ## Status
 

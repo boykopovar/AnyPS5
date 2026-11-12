@@ -233,7 +233,7 @@ void ShaderMemory::SetWaitedMsProvider(WaitedMsProvider provider) {
     waitedMsProvider.store(provider, std::memory_order_release);
 }
 
-ShaderMemory::ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> regions, PendingWriteQuery pendingWrite, PendingWriteObserver observe, HookWaitCounter hookWaits, PendingWriteQuery pendingSpan) : pendingWrite(pendingWrite), observe(observe), hookWaits(hookWaits), pendingSpan(pendingSpan != nullptr ? pendingSpan : pendingWrite) {
+ShaderMemory::ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> regions, PendingWriteQuery pendingWrite, PendingWriteObserver observe, HookWaitCounter hookWaits, PendingWriteQuery pendingSpan) : pendingWrite(pendingWrite), observe(observe), hookWaits(hookWaits), pendingSpan(pendingSpan != nullptr ? pendingSpan : pendingWrite), spanQuery(pendingSpan != nullptr) {
     const ShaderRecompiler::RequestMemoryView validated(regions);
     initial.reserve(regions.size());
     for (const auto& region : regions) initial.emplace_back(region.guestAddress, region.bytes);
@@ -662,12 +662,23 @@ ShaderRecompiler::SrtWriteStamp ShaderMemory::stampWrites(void* context, std::ui
     const auto& self = *static_cast<const ShaderMemory*>(context);
     if (bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes || self.overlapsInitial(address, address + bytes)) return {};
     const auto fetched = self.pageAtOrAfter(address & ~static_cast<std::uint64_t>(PageBytes - 1));
-    if (fetched != self.pages.size() && self.pages[fetched].first < address + bytes) return {};
+    const bool anyFetched = fetched != self.pages.size() && self.pages[fetched].first < address + bytes;
+    if (anyFetched && !self.spanQuery) return {};
     GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
     const auto layout = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const auto generation = GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes));
     if (generation == 0) return {};
     if (self.pendingSpan != nullptr && self.pendingSpan(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return {};
+    if (anyFetched) {
+        std::array<std::uint32_t, PageWords> current{};
+        for (auto index = fetched; index < self.pages.size() && self.pages[index].first < address + bytes; ++index) {
+            const auto& page = *self.pages[index].second;
+            if (page.wordwise || GuestMemory::CopyMapped(self.pages[index].first, std::as_writable_bytes(std::span(current))) != GuestMemory::Compare::Equal) return {};
+            for (std::size_t word = 0; word < PageWords; ++word) {
+                if (page.valid.Test(word) && page.words[word] != current[word]) return {};
+            }
+        }
+    }
     return {generation, layout};
 }
 

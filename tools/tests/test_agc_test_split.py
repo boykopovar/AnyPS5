@@ -148,6 +148,7 @@ class ResolveTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
         self.git("init", "-q", "-b", "main")
+        self.git("config", "core.safecrlf", "false")
         self.write(LISTS, original())
         self.write(agc_test_split.EXECUTION + "/Image.cpp", "")
         self.commit("build: register tests")

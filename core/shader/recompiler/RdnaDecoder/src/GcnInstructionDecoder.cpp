@@ -30,7 +30,7 @@ std::optional<std::uint32_t> mapOpcode(const std::array<std::pair<std::uint16_t,
 }
 
 [[noreturn]] void unsupported(const char* family, std::uint32_t opcode, std::uint32_t programCounter) {
-    throw UnsupportedInstructionError(std::string("GCN ") + family + " opcode " + std::to_string(opcode) + " at program counter " + std::to_string(programCounter) + " is not implemented");
+    throw UnsupportedInstructionError(std::string("GCN ") + family + " opcode " + std::to_string(opcode) + " at program counter " + std::to_string(programCounter) + " is not implemented", family, opcode, __FILE__, __LINE__);
 }
 
 std::uint32_t replaceBits(std::uint32_t word, std::uint32_t shift, std::uint32_t width, std::uint32_t value) {
@@ -178,7 +178,7 @@ Encoded encodeVop3(std::span<const std::uint32_t> code, std::uint32_t index, std
     const auto word0 = code[index];
     const auto opcode = (word0 >> 17u) & 0x1ffu;
     if (const auto shift = reversedShift(opcode)) return encodeVop3Words(swapAbsolute(word0), swapSources(code[index + 1]), *shift, false);
-    const auto mapped = mapOpcode(GcnTables::Vop3, opcode);
+    const auto mapped = opcode < 0x40u ? mapOpcode(GcnTables::Vopc, opcode) : mapOpcode(GcnTables::Vop3, opcode);
     if (!mapped) unsupported("VOP3", opcode, programCounter);
     auto out = encodeVop3Words(word0, code[index + 1], *mapped, gcnVop3bCarryOut(opcode));
     if (compareWritesExec(opcode)) out.compareDestination = word0 & 0xffu;

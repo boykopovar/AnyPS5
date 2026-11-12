@@ -86,6 +86,8 @@ static void SortByKey() {
     Require(std::string(secondNames[0].data) == "SORT_A" && std::string(secondNames[1].data) == "SORT_C" && std::string(secondNames[2].data) == "SORT_B", "the second search must sort like the first");
     second.key = 6;
     Require(sceSaveDataDirNameSearch2(&second, &secondResult) == SaveDataErrorParameter, "the second search must reject an unknown sort key");
+    Require(sceSaveDataDirNameSearch2(nullptr, &secondResult) == SaveDataErrorParameter, "null condition must be rejected in search2");
+    Require(sceSaveDataDirNameSearch2(&second, nullptr) == SaveDataErrorParameter, "null result must be rejected in search2");
     SaveDataDirNameSearchCond cond{};
     cond.user_id = 1;
     cond.key = 6;
@@ -94,6 +96,11 @@ static void SortByKey() {
     cond.key = 0;
     cond.order = 2;
     Require(sceSaveDataDirNameSearch(&cond, &result) == SaveDataErrorParameter, "an unknown sort order must be rejected");
+    Require(sceSaveDataDirNameSearch(nullptr, &result) == SaveDataErrorParameter, "null condition must be rejected in search");
+    Require(sceSaveDataDirNameSearch(&cond, nullptr) == SaveDataErrorParameter, "null result must be rejected in search");
+    Require(sceSaveDataDirNameSearchPs4(nullptr, &result) == SaveDataErrorParameter, "null condition must be rejected in ps4 search");
+    Require(sceSaveDataDirNameSearchPs4(&cond, nullptr) == SaveDataErrorParameter, "null result must be rejected in ps4 search");
+    Require(sceSaveDataDirNameSearchPs4(&cond, &result) == 0 && result.hit_num == 0 && result.set_num == 0, "ps4 search succeeds with zero hits");
 }
 
 static std::vector<std::string> SearchPattern(const char* text) {
@@ -282,6 +289,16 @@ static void CheckNullArguments() {
     Require(sceSaveDataDirNameSearch2(&cond, nullptr) == SaveDataErrorParameter, "null result returns PARAMETER in sceSaveDataDirNameSearch2");
     cond.order = 2;
     Require(sceSaveDataDirNameSearch2(&cond, &result) == SaveDataErrorParameter, "invalid order must be rejected in sceSaveDataDirNameSearch2");
+    char unterminatedPattern[sizeof(SceSaveDataDirName::data)];
+    std::memset(unterminatedPattern, 'a', sizeof(unterminatedPattern));
+    SaveDataDirNameSearchCond unterminatedCond{};
+    unterminatedCond.user_id = 1;
+    unterminatedCond.dir_name = reinterpret_cast<const SceSaveDataDirName*>(unterminatedPattern);
+    Require(sceSaveDataDirNameSearch(&unterminatedCond, &result) == SaveDataErrorParameter, "unterminated dir_name in sceSaveDataDirNameSearch returns PARAMETER");
+    Require(sceSaveDataDirNameSearch2(&unterminatedCond, &result) == SaveDataErrorParameter, "unterminated dir_name in sceSaveDataDirNameSearch2 returns PARAMETER");
+    unterminatedPattern[sizeof(unterminatedPattern) - 1] = '\0';
+    Require(sceSaveDataDirNameSearch(&unterminatedCond, &result) == 0, "a dir_name ending in its last byte is accepted by sceSaveDataDirNameSearch");
+    Require(sceSaveDataDirNameSearch2(&unterminatedCond, &result) == 0, "a dir_name ending in its last byte is accepted by sceSaveDataDirNameSearch2");
     Require(sceSaveDataGetConvertProgress(nullptr) == SaveDataErrorParameter, "null progress returns PARAMETER in sceSaveDataGetConvertProgress");
     float progress = 0.0f;
     Require(sceSaveDataGetConvertProgress(&progress) == -2137063423, "uninitialized convert progress returns NOT_INITIALIZED");

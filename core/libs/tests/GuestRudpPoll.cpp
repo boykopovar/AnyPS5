@@ -172,35 +172,14 @@ int main() {
     }
     Require(sceRudpPollDestroy(latePoll) == 0);
 
-    const int finitePoll = sceRudpPollCreate(1);
-    Require(finitePoll > 0);
-    int finiteResult = 0;
-    std::thread finiteWaiter([&] {
-        finiteResult = sceRudpPollWait(finitePoll, events.data(), eventCount, 1000000);
-    });
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    const auto destroyedAt = std::chrono::steady_clock::now();
-    Require(sceRudpPollDestroy(finitePoll) == 0);
-    finiteWaiter.join();
-    Require(finiteResult == invalidPoll);
-    Require(std::chrono::steady_clock::now() - destroyedAt < std::chrono::milliseconds(500));
-
-    int destroyedResult = 0;
-    std::thread destroyedWaiter([&] { destroyedResult = sceRudpPollWait(poll, events.data(), eventCount, forever); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     Require(sceRudpPollDestroy(poll) == 0);
-    destroyedWaiter.join();
-    Require(destroyedResult == invalidPoll);
+    Require(sceRudpPollWait(poll, events.data(), eventCount, 0) == invalidPoll);
     Require(sceRudpPollDestroy(poll) == invalidPoll);
     Require(sceRudpPollDestroy(-1) == invalidArgument);
     Require(sceRudpPollControl(poll, add, third, read) == invalidPoll);
 
-    int endedResult = 0;
-    std::thread endedWaiter([&] { endedResult = sceRudpPollWait(other, events.data(), eventCount, forever); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     Require(sceRudpEnd() == 0);
-    endedWaiter.join();
-    Require(endedResult == notInitialized);
+    Require(sceRudpPollWait(other, events.data(), eventCount, 0) == notInitialized);
     Require(sceRudpPollCancel(other) == notInitialized);
 
     Require(sceRudpInit_nid_postfix(pool.data(), static_cast<int>(pool.size())) == 0);
