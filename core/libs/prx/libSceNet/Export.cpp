@@ -1773,11 +1773,17 @@ int64_t APS5_VABI sceNetSendmsg(int s, const NetMsghdr* msg, int flags) {
 }
 
 int64_t APS5_VABI sceNetRecvmsg(int s, NetMsghdr* msg, int flags) {
-    const auto total = message_length(msg);
-    if (total < 0) return total;
-    NetMsghdr header = *msg;
+    NetMsghdr header{};
+    if (!GuestCopyIn_nid_no_patch(&header, msg, sizeof(header))) return fail(NET_EFAULT);
     std::vector<NetIovec> vectors;
-    if (header.iov_length > 0) vectors.assign(header.iov, header.iov + header.iov_length);
+    auto validated = header;
+    if (header.iov && header.iov_length > 0 && header.iov_length <= NET_UIO_MAXIOV) {
+        vectors.resize(static_cast<std::size_t>(header.iov_length));
+        if (!GuestCopyIn_nid_no_patch(vectors.data(), header.iov, vectors.size() * sizeof(NetIovec))) return fail(NET_EFAULT);
+        validated.iov = vectors.data();
+    }
+    const auto total = message_length(&validated);
+    if (total < 0) return total;
     if (!message_flags_supported(flags, NET_MSG_PEEK | NET_MSG_DONTWAIT)) return fail(NET_EOPNOTSUPP);
     Sock socket;
     {
