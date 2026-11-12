@@ -17,5 +17,8 @@ static bool ReportsNotImplemented(int noChdir, int noClose) {
 int main() {
     Require(ReportsNotImplemented(1, 0));
     Require(ReportsNotImplemented(0, 0));
+    Require(ReportsNotImplemented(0, 1));
     Require(ReportsNotImplemented(1, 1));
+    Require(ReportsNotImplemented(-1, -1));
+    Require(ReportsNotImplemented(2, -2));
 }
