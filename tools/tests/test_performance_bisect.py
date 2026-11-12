@@ -590,3 +590,10 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "not an existing directory"):
                 performance_bisect.load_recipe(path)
 
+
+    def test_recipe_rejects_boolean_duration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.recipe_path(Path(directory), seconds=True)
+            with self.assertRaisesRegex(ValueError, "integer of at least 20"):
+                performance_bisect.load_recipe(path)
+
