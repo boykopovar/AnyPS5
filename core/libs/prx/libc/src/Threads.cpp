@@ -10,6 +10,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <list>
 #include <mutex>
@@ -844,6 +845,96 @@ int APS5_VABI _ZNSt8__sce_v211_Cnd_signalEPP12pthread_cond_nid_postfix(void** co
 int APS5_VABI _ZNSt8__sce_v214_Cnd_broadcastEPP12pthread_cond_nid_postfix(void** condition) {
     PthreadSync(__func__).condBroadcast(condition);
     return threadSuccess;
+}
+
+struct SceV2AtThreadExitEntry {
+    void* thread;
+    void** mutex;
+    void** condition;
+    int* ready;
+};
+
+struct SceV2AtThreadExitBlock {
+    SceV2AtThreadExitEntry entries[20];
+    std::int32_t count;
+    SceV2AtThreadExitBlock* next;
+};
+
+static_assert(sizeof(SceV2AtThreadExitEntry) == 0x20);
+static_assert(offsetof(SceV2AtThreadExitBlock, count) == 0x280 && offsetof(SceV2AtThreadExitBlock, next) == 0x288 && sizeof(SceV2AtThreadExitBlock) == 0x290);
+
+static SceV2AtThreadExitBlock sceV2AtThreadExitEntries {};
+static void* sceV2AtThreadExitMutex = nullptr;
+static std::once_flag sceV2AtThreadExitInit;
+
+static void** SceV2AtThreadExitMutex() {
+    std::call_once(sceV2AtThreadExitInit, [] {
+        static_cast<void>(_ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(&sceV2AtThreadExitMutex, 0x102, "SceLibc_V2AtThreadExit"));
+    });
+    return &sceV2AtThreadExitMutex;
+}
+
+void APS5_VABI _ZNSt8__sce_v226_Lock_at_thread_exit_mutexEv_nid_postfix() {
+    if (_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(SceV2AtThreadExitMutex()) != threadSuccess) _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(5);
+}
+
+void APS5_VABI _ZNSt8__sce_v228_Unlock_at_thread_exit_mutexEv_nid_postfix() {
+    _ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(SceV2AtThreadExitMutex());
+}
+
+void APS5_VABI _ZNSt8__sce_v228_Cnd_register_at_thread_exitEPP12pthread_condPP13pthread_mutexPi_nid_postfix(void** condition, void** mutex, int* ready) {
+    _ZNSt8__sce_v226_Lock_at_thread_exit_mutexEv_nid_postfix();
+    auto* block = &sceV2AtThreadExitEntries;
+    while (block != nullptr && block->count == 20) {
+        if (block->next == nullptr) block->next = static_cast<SceV2AtThreadExitBlock*>(std::calloc(1, sizeof(SceV2AtThreadExitBlock)));
+        block = block->next;
+    }
+    if (block != nullptr) {
+        for (auto& entry : block->entries) {
+            if (entry.mutex != nullptr) continue;
+            entry = {_ZNSt8__sce_v28_Thrd_idEv_nid_postfix(), mutex, condition, ready};
+            ++block->count;
+            break;
+        }
+    }
+    _ZNSt8__sce_v228_Unlock_at_thread_exit_mutexEv_nid_postfix();
+}
+
+void APS5_VABI _ZNSt8__sce_v230_Cnd_unregister_at_thread_exitEPP13pthread_mutex_nid_postfix(void** mutex) {
+    _ZNSt8__sce_v226_Lock_at_thread_exit_mutexEv_nid_postfix();
+    for (auto* block = &sceV2AtThreadExitEntries; block != nullptr; block = block->next) {
+        if (block->count == 0) continue;
+        for (auto& entry : block->entries) {
+            if (entry.mutex == mutex) {
+                entry.mutex = nullptr;
+                --block->count;
+            }
+            if (block->count == 0) break;
+        }
+    }
+    _ZNSt8__sce_v228_Unlock_at_thread_exit_mutexEv_nid_postfix();
+}
+
+void APS5_VABI _ZNSt8__sce_v232_Cnd_do_broadcast_at_thread_exitEv_nid_postfix() {
+    void* const thread = _ZNSt8__sce_v28_Thrd_idEv_nid_postfix();
+    _ZNSt8__sce_v226_Lock_at_thread_exit_mutexEv_nid_postfix();
+    for (auto* block = &sceV2AtThreadExitEntries; block != nullptr; block = block->next) {
+        if (block->count == 0) continue;
+        for (auto& entry : block->entries) {
+            if (entry.mutex != nullptr && entry.thread == thread) {
+                if (entry.ready != nullptr) {
+                    static_cast<void>(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(entry.mutex));
+                    *entry.ready = 1;
+                }
+                _ZNSt8__sce_v214_Cnd_broadcastEPP12pthread_cond_nid_postfix(entry.condition);
+                _ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(entry.mutex);
+                entry.mutex = nullptr;
+                --block->count;
+            }
+            if (block->count == 0) break;
+        }
+    }
+    _ZNSt8__sce_v228_Unlock_at_thread_exit_mutexEv_nid_postfix();
 }
 
 int APS5_VABI _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(const Xtime* target) {
