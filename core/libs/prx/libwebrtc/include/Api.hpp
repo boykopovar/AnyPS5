@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libwebrtc/include/VideoSinkWants.hpp"
 #include "prx/libwebrtc/include/RateTracker.hpp"
 #include "prx/libwebrtc/include/AudioCodecInfo.hpp"
 #include "prx/libwebrtc/include/Buffer.hpp"
@@ -169,9 +170,9 @@ void APS5_VABI _ZN6webrtc10VideoFrame7BuilderC1Ev_nid_postfix(WebRtcVideoFrameBu
 void APS5_VABI _ZN6webrtc10VideoFrame7BuilderD1Ev_nid_postfix(WebRtcVideoFrameBuilder* builder);
 int APS5_VABI _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10VideoFrameD1Ev_nid_postfix(void);
-int APS5_VABI _ZN3rtc14VideoSinkWantsC1Ev_nid_postfix(void);
-int APS5_VABI _ZN3rtc14VideoSinkWantsC1ERKS0__nid_postfix(void);
-int APS5_VABI _ZN3rtc14VideoSinkWantsD1Ev_nid_postfix(void);
+void APS5_VABI _ZN3rtc14VideoSinkWantsC1Ev_nid_postfix(WebRtcVideoSinkWants* wants);
+void APS5_VABI _ZN3rtc14VideoSinkWantsC1ERKS0__nid_postfix(WebRtcVideoSinkWants* wants, const WebRtcVideoSinkWants* other);
+void APS5_VABI _ZN3rtc14VideoSinkWantsD1Ev_nid_postfix(WebRtcVideoSinkWants* wants);
 int APS5_VABI _ZN3rtc10LogMessage6streamEv_nid_postfix(void);
 int APS5_VABI _ZN3rtc10LogMessage17GetMinLogSeverityEv_nid_postfix(void);
 std::int32_t APS5_VABI _ZN3rtc10LogMessage13GetLogToDebugEv_nid_postfix(void);
