@@ -965,6 +965,31 @@ void TestCallouts() {
         "the later callout is still pending after the rejected start");
     Require(sceNpCalloutStopOnCtx(&context, &queuedFirst, &wasPending) == 0 && wasPending == 1, "the earlier callout is still pending");
 
+    NpCalloutContext wide {};
+    NpCallout sixtyFirst {};
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyFirst, 0, RecordFirst, nullptr) == NpNotInitialized,
+        "the 64-bit start needs an initialised context");
+    Require(sceNpCalloutInitCtx(&wide, "np-callout-64", 0x4000, 0, 0) == 0, "a second callout context starts");
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyFirst, 60ull * 1000000ull, RecordUnexpected, nullptr) == 0,
+        "the 64-bit start queues a distant callout");
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyFirst, 60ull * 1000000ull, RecordUnexpected, nullptr) == NpAlreadyQueued,
+        "the 64-bit start rejects a queued callout");
+    Require(sixtyFirst.handler == RecordUnexpected && sixtyFirst.arg == nullptr,
+        "a rejected 64-bit start leaves the callout unchanged");
+    NpCallout sixtyTail {};
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyTail, 1ull << 32, RecordUnexpected, nullptr) == 0,
+        "a 64-bit deadline beyond the 32-bit range is queued");
+    Require(sixtyFirst.next == &sixtyTail, "the 64-bit queue keeps its order");
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyFirst, 1000, RecordFirst, &wide) == NpAlreadyQueued,
+        "a rejected 64-bit restart reports the queued answer for the earlier callout");
+    Require(sixtyFirst.handler == RecordUnexpected && sixtyFirst.arg == nullptr && sixtyFirst.next == &sixtyTail,
+        "the rejected 64-bit restart leaves the entry and the queue unchanged");
+    Require(sceNpCalloutStopOnCtx(&wide, &sixtyTail, &wasPending) == 0 && wasPending == 1,
+        "the later callout is still pending after the rejected 64-bit restart");
+    Require(sceNpCalloutStopOnCtx(&wide, &sixtyFirst, &wasPending) == 0 && wasPending == 1,
+        "the earlier callout is still pending after the rejected 64-bit restart");
+    sceNpCalloutTermCtx(&wide);
+
     NpCallout later {};
     Require(sceNpCalloutStartOnCtx(&context, &later, 20000, RecordSecond, nullptr) == 0, "a later callout is queued");
     Require(sceNpCalloutStartOnCtx(&context, &callout, 1000, RecordFirst, nullptr) == 0, "an earlier callout is queued");
@@ -980,6 +1005,7 @@ void TestCallouts() {
 struct SelfTermination {
     NpCalloutContext* context {};
     std::atomic<int> finished {0};
+    std::atomic<int> reused {0};
     std::string message;
 };
 
@@ -994,6 +1020,10 @@ void APS5_VABI TerminateOwnContext(void*) {
     g_selfTermination.finished.store(1, std::memory_order_release);
 }
 
+void APS5_VABI MarkReused(void*) {
+    g_selfTermination.reused.store(1, std::memory_order_release);
+}
+
 void TestCalloutSelfTermination() {
     NpCalloutContext context {};
     NpCallout callout {};
@@ -1003,12 +1033,19 @@ void TestCalloutSelfTermination() {
     for (int i = 0; i < 2000 && g_selfTermination.finished.load(std::memory_order_acquire) == 0; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     Require(g_selfTermination.finished.load(std::memory_order_acquire) == 1, "the terminating callout returns");
-    Require(g_selfTermination.message.find("sceNpCalloutTermCtx") == 0, "terminating a context from its own callout is refused");
-    Require(context.initialized == 1, "a refused termination leaves the context running");
-
+    Require(g_selfTermination.message.empty(), "terminating a context from its own callout returns");
+    Require(context.initialized == 0, "a callout's termination of its own context clears it");
     sceNpCalloutTermCtx(&context);
 
-    Require(context.initialized == 0, "the context terminates from another thread");
+    NpCallout again {};
+    Require(sceNpCalloutInitCtx(&context, "np-self-term-again", 0x4000, 0, 0) == 0, "the context starts again");
+    Require(sceNpCalloutStartOnCtx(&context, &again, 0, MarkReused, nullptr) == 0, "a callout is queued on the restarted context");
+    for (int i = 0; i < 2000 && g_selfTermination.reused.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(g_selfTermination.reused.load(std::memory_order_acquire) == 1, "a callout runs on the restarted context");
+    sceNpCalloutTermCtx(&context);
+
+    Require(context.initialized == 0, "the restarted context terminates from another thread");
 }
 
 bool Equals(const char* actual, const char* expected) {

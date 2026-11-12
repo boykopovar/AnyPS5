@@ -10,7 +10,7 @@
 
 namespace NKWebKit::MediaAbi {
 
-struct NotNullTag {};
+enum NotNullTag { NotNull };
 
 class MediaTime {
 public:

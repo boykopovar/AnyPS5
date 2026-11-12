@@ -5,6 +5,7 @@
 #include "prx/libSceVdecCore/include/Decoder.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <condition_variable>
 #include <cstdint>
 #include <cstddef>
@@ -490,24 +491,38 @@ int APS5_VABI sceVdecCoreMapMemoryBlock(void* decoder, const VdecCoreMemoryBlock
 
 int APS5_VABI sceVdecCoreQueryComputeResourceInfo(VdecCoreComputeResourceInfo* info) {
     if (info == nullptr) return VdecCoreErrorInvalidArgument;
-    info->memoryType = 0;
-    info->size = ComputeSize;
-    info->alignment = ComputeAlignment;
-    info->reserved = 0;
+    VdecCoreComputeResourceInfo localInfo{};
+    localInfo.memoryType = 0;
+    localInfo.size = ComputeSize;
+    localInfo.alignment = ComputeAlignment;
+    localInfo.reserved = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return VdecCoreErrorInvalidArgument;
     return 0;
 }
 
 int APS5_VABI sceVdecCoreQueryFrameBufferInfo(const VdecCoreConfigInfo* config, VdecCoreFrameBufferInfo* info) {
     if (info == nullptr || config == nullptr) return VdecCoreErrorInvalidArgument;
-    if (config->codecType > MaxCodecType) return VdecCoreErrorInvalidCodecType;
-    if (config->maxDpbFrameCount < -1 || config->maxDpbFrameCount > MaxDpbFrameCount) return VdecCoreErrorInvalidArgument;
-    const Geometry geometry = FrameGeometry(*config);
-    info->frameBufferSize = geometry.frameBufferSize;
-    info->frameBufferAlignment = FrameBufferAlignment;
-    info->minFrameBufferCount = geometry.dpb + 1;
-    info->horizontalAlignment = geometry.horizontalAlign;
-    info->frameWidth = geometry.width;
-    info->frameHeight = geometry.height;
+    VdecCoreConfigInfo localConfig{};
+    const int savedErrno = errno;
+    const bool readConfig = GuestCopyIn_nid_no_patch(&localConfig, config, sizeof(localConfig));
+    errno = savedErrno;
+    if (!readConfig) return VdecCoreErrorInvalidArgument;
+    if (localConfig.codecType > MaxCodecType) return VdecCoreErrorInvalidCodecType;
+    if (localConfig.maxDpbFrameCount < -1 || localConfig.maxDpbFrameCount > MaxDpbFrameCount) return VdecCoreErrorInvalidArgument;
+    const Geometry geometry = FrameGeometry(localConfig);
+    VdecCoreFrameBufferInfo localInfo{};
+    localInfo.frameBufferSize = geometry.frameBufferSize;
+    localInfo.frameBufferAlignment = FrameBufferAlignment;
+    localInfo.minFrameBufferCount = geometry.dpb + 1;
+    localInfo.horizontalAlignment = geometry.horizontalAlign;
+    localInfo.frameWidth = geometry.width;
+    localInfo.frameHeight = geometry.height;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return VdecCoreErrorInvalidArgument;
     return 0;
 }
 

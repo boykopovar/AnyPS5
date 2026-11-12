@@ -12,6 +12,7 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/edits.cpp
     ${ICU_SOURCE_DIR}/common/emojiprops.cpp
     ${ICU_SOURCE_DIR}/common/loadednormalizer2impl.cpp
+    ${ICU_SOURCE_DIR}/common/locmap.cpp
     ${ICU_SOURCE_DIR}/common/normalizer2.cpp
     ${ICU_SOURCE_DIR}/common/normalizer2impl.cpp
     ${ICU_SOURCE_DIR}/common/patternprops.cpp
@@ -89,7 +90,6 @@ if(WIN32)
         ${ICU_SOURCE_DIR}/common/locid.cpp
         ${ICU_SOURCE_DIR}/common/loclikely.cpp
         ${ICU_SOURCE_DIR}/common/loclikelysubtags.cpp
-        ${ICU_SOURCE_DIR}/common/locmap.cpp
         ${ICU_SOURCE_DIR}/common/lsr.cpp
         ${ICU_SOURCE_DIR}/common/resource.cpp
         ${ICU_SOURCE_DIR}/common/ucol_swp.cpp
@@ -104,7 +104,7 @@ if(WIN32)
         ${ICU_SOURCE_DIR}/common/wintz.cpp)
 endif()
 target_include_directories(icu_common SYSTEM PUBLIC ${ICU_SOURCE_DIR}/common)
-target_compile_definitions(icu_common PUBLIC U_STATIC_IMPLEMENTATION PRIVATE U_COMMON_IMPLEMENTATION UCONFIG_NO_FILE_IO=1)
+target_compile_definitions(icu_common PUBLIC U_STATIC_IMPLEMENTATION PRIVATE U_COMMON_IMPLEMENTATION UCONFIG_NO_FILE_IO=1 UCONFIG_USE_WINDOWS_LCID_MAPPING_API=0)
 target_compile_features(icu_common PUBLIC cxx_std_17)
 set_target_properties(icu_common PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
