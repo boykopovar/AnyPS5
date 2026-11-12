@@ -10,6 +10,7 @@
 #include <cerrno>
 #include <atomic>
 #include <array>
+#include <cerrno>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -3362,7 +3363,12 @@ int APS5_VABI sceUserServiceGetUserGroupNum(std::int32_t* count) {
     while (groupCount < 128 && UserGroupSlotExists(groupCount)) {
         ++groupCount;
     }
-    *count = groupCount;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(count, &groupCount, sizeof(groupCount));
+    errno = savedErrno;
+    if (!copied) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
     return USER_SERVICE_OK;
 }
 
