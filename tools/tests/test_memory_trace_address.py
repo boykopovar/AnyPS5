@@ -40,5 +40,30 @@ class RangeTests(unittest.TestCase):
                 trace.parse_range(address, size)
 
 
+class SelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.events = trace.parse_events([
+            "[memory] map anon 0x1000+0x1000 prot=0x3 flags=0x0\n",
+            "[memory] protect 0x1800+0x100 prot=0x1\n",
+            "[memory] unmap 0x2000+0x1000\n",
+        ])
+
+    def test_selects_ranges_that_intersect_at_one_byte(self):
+        self.assertEqual([event.line for event in trace.select_events(self.events, 0x1fff, 2)], [1, 3])
+
+    def test_excludes_ranges_that_only_touch_at_the_boundary(self):
+        self.assertEqual(trace.select_events(self.events, 0x3000, 1), [])
+
+    def test_render_limits_to_the_latest_matches_and_keeps_line_numbers(self):
+        output = trace.render_events(self.events, "run.log", 0x1000, 0x2000, 2)
+        self.assertIn("Showing the last 2 of 3 matching events", output)
+        self.assertNotIn("line 1:", output)
+        self.assertIn("line 3: unmap 0x2000+0x1000", output)
+
+    def test_render_does_not_claim_unrecorded_mappings_are_unmapped(self):
+        output = trace.render_events(self.events, "run.log", 0x4000, 1, 40)
+        self.assertIn("No traced mapping operations overlap", output)
+
+
 if __name__ == "__main__":
     unittest.main()
