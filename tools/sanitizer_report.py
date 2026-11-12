@@ -1,4 +1,5 @@
 import argparse
+import html
 import json
 import re
 import sys
@@ -83,7 +84,9 @@ def load_known(path, sanitizers):
 
 
 def cell(text):
-    return " ".join(text.split()).replace("|", "\\|")
+    literal = html.escape(" ".join(text.split()), quote=False)
+    literal = re.sub(r"\\+(?=\|)", lambda match: "&#92;" * len(match[0]), literal)
+    return literal.replace("|", "\\|")
 
 
 def test_name(text):
