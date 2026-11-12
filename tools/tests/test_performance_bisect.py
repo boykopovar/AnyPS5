@@ -669,3 +669,10 @@ class FocusedInputEdgeTests(unittest.TestCase):
         result = performance_bisect.summarize(samples, spread)
         self.assertAlmostEqual(result["spread_pct"], spread)
 
+
+    def test_summary_rejects_content_version_drift(self):
+        samples = [{"fps": 60.0, "identity": IDENTITY},
+                   {"fps": 60.0, "identity": dict(IDENTITY, content_version="02.00")}]
+        with self.assertRaisesRegex(ValueError, "identity changed"):
+            performance_bisect.summarize(samples, 5)
+
