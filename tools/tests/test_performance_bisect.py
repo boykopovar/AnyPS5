@@ -562,3 +562,10 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "requested clean commit"):
                 performance_bisect.sample_summary(path, "PPSA00000", GOOD)
 
+
+    def test_recipe_rejects_empty_build_arguments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.recipe_path(Path(directory), build_commands=[["cmake", ""]])
+            with self.assertRaisesRegex(ValueError, "argument list"):
+                performance_bisect.load_recipe(path)
+
