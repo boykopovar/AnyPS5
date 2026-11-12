@@ -714,7 +714,7 @@ std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0, 
         cached.read = now;
         sampled = SampledTextureMemory();
         storage = storageCacheBytes();
-        const auto owned = UsageWithoutHostImports(context.memory, *reported, HostImportLiveBytes());
+        const auto owned = UsageWithoutHostImports(context.memory, *reported, HostImportLiveBytes(), context.hostImportsInHeapUsage);
         cached.budget = StorageTextureBudget(context.memory, &owned, sampled, storage);
         cached.ceiling = StorageTextureCeiling(context.memory, &owned);
         cached.calculatedAt = std::chrono::steady_clock::now();
@@ -748,7 +748,7 @@ std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
     context.memoryProperties2(context.physical, &properties);
     const auto sampled = SampledTextureMemory();
     const auto storage = storageCacheBytes();
-    const auto owned = UsageWithoutHostImports(context.memory, reported, HostImportLiveBytes());
+    const auto owned = UsageWithoutHostImports(context.memory, reported, HostImportLiveBytes(), context.hostImportsInHeapUsage);
     const auto budget = SampledTextureBudget(context.memory, &owned, sampled + storage, storage);
     const bool fresh = cache.budgetDevice != context.physical;
     std::optional<std::chrono::steady_clock::time_point> storageCalculatedAt;
