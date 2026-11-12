@@ -272,7 +272,7 @@ def write_outputs(outputs):
                     backups.append((None, path))
         try:
             for index, (temporary, path) in enumerate(staged):
-                temporary.replace(path)
+                os.replace(temporary, path)
                 committed.append(index)
         except OSError as error:
             failures = []
@@ -282,7 +282,7 @@ def write_outputs(outputs):
                     if backup is None:
                         path.unlink()
                     else:
-                        backup.replace(path)
+                        os.replace(backup, path)
                 except OSError as restore_error:
                     if backup is not None:
                         preserve.add(backup)
