@@ -35,6 +35,14 @@ void Forward(const ImeHostPad& pad) {
     forwarded.push_back(pad);
 }
 
+void ConfiguredControllerUsesItsPlayerSlot() {
+    Pad::ControllerSerials configured{};
+    configured[1] = "player-two-serial";
+    Pad::ControllerAssignment assignment(configured);
+    std::array<bool, Pad::ControllerAssignmentSlots> occupied{};
+    Require(assignment.SelectSlot("player-two-serial", occupied) == 1);
+}
+
 void HandOff(PadInput& padInput, const DisplayWindow& window, int device) {
     constexpr std::uint32_t Cross = 0x4000;
     constexpr std::uint32_t R2 = 0x0200;
@@ -208,6 +216,7 @@ void InjectedPressAfterUnreadRelease(PadInput& padInput, const DisplayWindow& wi
 }
 
 int main() {
+    ConfiguredControllerUsesItsPlayerSlot();
 #ifdef SDL_JOYSTICK_HIDAPI
     std::puts("pad_sdl: SDL drives controllers through HIDAPI");
 #else
