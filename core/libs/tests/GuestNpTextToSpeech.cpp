@@ -23,6 +23,8 @@ int main() {
         Require(libSceNpTextToSpeechUnknown_i3MidGD_minus_Zfk_nid_no_patch() == notInitialized);
         Require(libSceNpTextToSpeechUnknown_oIMRm6q4pUM_nid_no_patch() == notInitialized);
         Require(libSceNpTextToSpeechUnknown_rIXr2WILhUE_nid_no_patch() == notInitialized);
+        Require(sceNpTextToSpeechInitialize() == 0);
+        Require(sceNpTextToSpeechCreateContext() == notInitialized);
     }
     return 0;
 }
