@@ -1,27 +1,35 @@
 #include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <stdexcept>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
 
 int APS5_VABI physhm_open_nid_postfix(void) {
-    NotImplemented_nid_no_patch("physhm_open");
+    throw std::runtime_error("physhm_open: physical shared memory not supported");
     return 0;
 }
 
 int APS5_VABI physhm_unlink_nid_postfix(void) {
-    NotImplemented_nid_no_patch("physhm_unlink");
+    throw std::runtime_error("physhm_unlink: physical shared memory not supported");
     return 0;
 }
 
 int APS5_VABI rfork_thread_nid_postfix(int flags, void* stack, int (APS5_VABI* function)(void*), void* argument) {
-    NotImplemented_nid_no_patch("rfork_thread");
+    (void)flags;
+    (void)stack;
+    (void)function;
+    (void)argument;
+    throw std::runtime_error("rfork_thread: threading fork not supported");
     return 0;
 }
 
 int APS5_VABI sceKernelRdup(int pid, int fd) {
+    (void)pid;
+    (void)fd;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

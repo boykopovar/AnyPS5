@@ -5,6 +5,7 @@
 #include <cstring>
 #include <filesystem>
 #include <source_location>
+#include <stdexcept>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -54,6 +55,8 @@ int main(int argc, char** argv) {
         {"cpuset_setid_nid_postfix", "BiHHifIvX88"},
         {"rfork_thread_nid_postfix", "bSDxEpGzmUE"},
         {"sceKernelRdup", "LxIacrWiJ3w"},
+        {"physhm_open_nid_postfix", "n371J5cP+uo"},
+        {"physhm_unlink_nid_postfix", "AUqJNkobQ1c"},
     };
     bool found = true;
     for (const auto& entry : exports) found = FindSymbol(kernel, patched ? entry.nid : entry.name) != nullptr && found;
@@ -66,5 +69,34 @@ int main(int argc, char** argv) {
     int setid = -1;
     Require(getId(LevelRoot, WhichProcess, -1, &setid) == 0 && setid == 0);
     Require(getId(LevelCpuset, WhichProcess, -1, &setid) == 0 && setid == 1);
+    using Rfork = int (APS5_VABI*)(int, void*, int (APS5_VABI*)(void*), void*);
+    const auto rfork = reinterpret_cast<Rfork>(FindSymbol(kernel, patched ? "bSDxEpGzmUE" : "rfork_thread_nid_postfix"));
+    Require(rfork != nullptr);
+    bool rforkThrew = false;
+    try {
+        rfork(0, nullptr, nullptr, nullptr);
+    } catch (const std::runtime_error&) {
+        rforkThrew = true;
+    }
+    Require(rforkThrew);
+    using Physhm = int (APS5_VABI*)(void);
+    const auto physhmOpen = reinterpret_cast<Physhm>(FindSymbol(kernel, patched ? "n371J5cP+uo" : "physhm_open_nid_postfix"));
+    Require(physhmOpen != nullptr);
+    bool physhmOpenThrew = false;
+    try {
+        physhmOpen();
+    } catch (const std::runtime_error&) {
+        physhmOpenThrew = true;
+    }
+    Require(physhmOpenThrew);
+    const auto physhmUnlink = reinterpret_cast<Physhm>(FindSymbol(kernel, patched ? "AUqJNkobQ1c" : "physhm_unlink_nid_postfix"));
+    Require(physhmUnlink != nullptr);
+    bool physhmUnlinkThrew = false;
+    try {
+        physhmUnlink();
+    } catch (const std::runtime_error&) {
+        physhmUnlinkThrew = true;
+    }
+    Require(physhmUnlinkThrew);
     return 0;
 }
