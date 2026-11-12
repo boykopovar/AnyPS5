@@ -107,6 +107,16 @@ def mask_code(text):
     return nid_names.CPP_TOKEN.sub(blank, text)
 
 
+def mask_directives(text):
+    lines = []
+    continued = False
+    for line in text.splitlines(keepends=True):
+        directive = continued or line.lstrip().startswith("#")
+        continued = directive and line.rstrip("\r\n").endswith("\\")
+        lines.append(re.sub(r"[^\n]", " ", line) if directive else line)
+    return "".join(lines)
+
+
 def joined_lines(text):
     return text.replace("\\\r\n", "").replace("\\\n", "")
 
@@ -193,29 +203,25 @@ def collect_provided(module_dir):
                 provided[nid] = f"bound with APS5_EXPORT as {helper}"
     for macro in sorted(macros):
         call = re.compile(r"\b" + re.escape(macro) + r"\s*\(\s*(?:::)?(?:\w+::)*(\w+)\s*\)")
-        for path, text in texts:
-            masked = mask_code(text).split("\n")
-            originals = text.split("\n")
-            for index in range(len(masked)):
-                if originals[index].lstrip().startswith("#"):
+        for _, text in texts:
+            masked = mask_code(mask_directives(text))
+            for match in call.finditer(masked):
+                symbol = match.group(1)
+                base, postfix = base_of(symbol)
+                if postfix == "_nid_no_patch_cut":
+                    if base not in provided:
+                        provided[base] = f"through macro {macro} literally as {base} under {symbol}"
                     continue
-                for match in call.finditer(masked[index]):
-                    symbol = match.group(1)
-                    base, postfix = base_of(symbol)
-                    if postfix == "_nid_no_patch_cut":
-                        if base not in provided:
-                            provided[base] = f"through macro {macro} literally as {base} under {symbol}"
-                        continue
-                    if postfix == "_nid_no_patch":
-                        if symbol not in provided:
-                            provided[symbol] = f"through macro {macro} literally as {symbol}"
-                        continue
-                    if postfix is not None and postfix != "_nid_postfix":
-                        continue
-                    base = strip_disambig(base)
-                    nid = nid_names.compute_nid(base)
-                    if nid not in provided:
-                        provided[nid] = f"through macro {macro} as {symbol}"
+                if postfix == "_nid_no_patch":
+                    if symbol not in provided:
+                        provided[symbol] = f"through macro {macro} literally as {symbol}"
+                    continue
+                if postfix is not None and postfix != "_nid_postfix":
+                    continue
+                base = strip_disambig(base)
+                nid = nid_names.compute_nid(base)
+                if nid not in provided:
+                    provided[nid] = f"through macro {macro} as {symbol}"
     return provided
 
 
