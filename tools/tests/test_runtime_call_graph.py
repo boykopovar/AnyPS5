@@ -6,7 +6,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import runtime_call_graph
+try:
+    import runtime_call_graph
+except ModuleNotFoundError:
+    runtime_call_graph = None
 
 
 def edge(calls=1, consumer="game.guest.prx", consumer_offset="0x120", address="0x1120",
@@ -25,6 +28,11 @@ def document(edges=None):
 
 
 class RuntimeCallGraphTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if runtime_call_graph is None:
+            raise AssertionError("runtime_call_graph.py must be available to its test suite")
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
