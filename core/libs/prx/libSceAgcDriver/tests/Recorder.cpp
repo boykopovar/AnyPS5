@@ -5152,6 +5152,13 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
         void* block;
         ~Release() { ReleaseWatched(block, bytes); }
     } release{block};
+    const auto decidedWatch = PrepareImportWatch(context);
+    SetImportWatch(context, ImportWatch::Watch);
+    struct RestoreWatch {
+        const Context& context;
+        ImportWatch decided;
+        ~RestoreWatch() { SetImportWatch(context, decided); }
+    } restoreWatch{context, decidedWatch};
     std::memset(block, 0x11, bytes);
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
@@ -5223,12 +5230,14 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
         const auto tail = resources.PrepareDrawBindings(snapshotRecorder);
         Require(tail != nullptr && tail->snapshots.size() == 1 && tail->snapshots[0].buffer != afterStore && tail->snapshots[0].buffer->Bytes()[elementBytes - 1] == std::byte{0x34}, "a draw snapshot outlived a store that changed its last byte");
         std::memset(reinterpret_cast<void*>(element), 0x33, elementBytes);
+        const auto restored = snapshot(std::byte{0x33});
+        Require(restored != tail->snapshots[0].buffer, "a draw snapshot outlived a store that restored its last byte");
         {
             GuestAllocations::Mutation mutation;
         }
-        Require(snapshot(std::byte{0x33}) == afterStore, "a registry mutation that changed no range made the draw input copy again");
+        Require(snapshot(std::byte{0x33}) == restored, "a registry mutation that changed no range made the draw input copy again");
         GuestAllocations::GuestAllocationsInvalidate_nid_postfix(element, elementBytes);
-        Require(snapshot(std::byte{0x33}) != afterStore, "a draw snapshot outlived a decommit of its range");
+        Require(snapshot(std::byte{0x33}) != restored, "a draw snapshot outlived a decommit of its range");
         snapshotRecorder.Sync();
     }
     recorder.Activate();
