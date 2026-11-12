@@ -154,6 +154,13 @@ int main(int argc, char** argv) {
     Check(initParam[2].schedulingWindowSize == 32 && initParam[2].delayedCountLimit == 32 && initParam[2].enableSplit == 0 &&
         initParam[2].splitSize == 0 && initParam[2].splitChunkSize == 0);
     Check(initParam[3].schedulingWindowSize == 7 && initParam[3].splitChunkSize == 7);
+    for (const auto submit : {sceKernelAioSubmitReadCommands, sceKernelAioSubmitWriteCommands,
+                             sceKernelAioSubmitReadCommandsMultiple, sceKernelAioSubmitWriteCommandsMultiple}) {
+        auto* const unreadable = reinterpret_cast<KernelAioRwRequest*>(1);
+        std::int32_t untouchedId = -1;
+        Check(submit(unreadable, 0, 1, &untouchedId) == SCE_KERNEL_ERROR_EINVAL && untouchedId == -1);
+        Check(submit(unreadable, 1, 1, &untouchedId) == SCE_KERNEL_ERROR_EFAULT && untouchedId == -1);
+    }
     const int fd = sceKernelOpen(file.string().c_str(), SCE_KERNEL_O_RDONLY, 0);
     Check(fd >= 0);
     std::array<char, 16> first{};

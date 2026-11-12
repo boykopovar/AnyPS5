@@ -1,9 +1,11 @@
 #include <cstddef>
+#include "prx/libc/include/General.hpp"
 #include <cstdint>
 #include <array>
 #include <atomic>
 #include <cerrno>
 #include <cstring>
+#include <cerrno>
 #include <stdexcept>
 #include <chrono>
 #include <thread>
@@ -172,8 +174,12 @@ int APS5_VABI scePadVrControllerReadCombinedState(std::int32_t leftHandle, std::
 int APS5_VABI scePadDeviceClassGetExtendedInformation(int handle, PadDeviceClassExtendedInformation* info) {
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
- std::memset(info, 0, sizeof(*info));
- info->deviceClass = SpecialHandle(handle) ? -1 : PAD_DEVICE_CLASS_STANDARD;
+ PadDeviceClassExtendedInformation localInfo{};
+ localInfo.deviceClass = SpecialHandle(handle) ? -1 : PAD_DEVICE_CLASS_STANDARD;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
 
