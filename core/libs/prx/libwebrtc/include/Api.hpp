@@ -37,6 +37,7 @@
 #include "prx/libwebrtc/include/KeyParams.hpp"
 #include "prx/libwebrtc/include/ColorSpace.hpp"
 #include "prx/libwebrtc/include/SentPacket.hpp"
+#include "prx/libwebrtc/include/VideoEncoderInitEncode.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "prx/libwebrtc/include/VideoFrameDimensions.hpp"
@@ -210,7 +211,7 @@ int APS5_VABI _ZN6webrtc14SdpVideoFormatD1Ev_nid_postfix(void);
 int APS5_VABI _ZNK6webrtc12VideoDecoder14GetDecoderInfoEv_nid_postfix(void);
 int APS5_VABI _ZNK6webrtc19VideoDecoderFactory17QueryCodecSupportERKNS_14SdpVideoFormatEb_nid_postfix(void);
 void APS5_VABI _ZN6webrtc12VideoEncoder24SetFecControllerOverrideEPNS_21FecControllerOverrideE_nid_postfix(void* encoder, void* fecControllerOverride);
-int APS5_VABI _ZN6webrtc12VideoEncoder10InitEncodeEPKNS_10VideoCodecEim_nid_postfix(void);
+int APS5_VABI _ZN6webrtc12VideoEncoder10InitEncodeEPKNS_10VideoCodecEim_nid_postfix(WebRtcVideoEncoder* encoder, const WebRtcVideoCodec* codecSettings, int numberOfCores, std::size_t maxPayloadSize);
 int APS5_VABI _ZN6webrtc12VideoEncoder11EncoderInfoC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc12VideoEncoder11EncoderInfoD1Ev_nid_postfix(void);
 void APS5_VABI _ZN6webrtc12VideoEncoder21RateControlParametersD1Ev_nid_postfix(void* object);
