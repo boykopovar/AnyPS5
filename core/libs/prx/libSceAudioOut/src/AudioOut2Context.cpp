@@ -503,11 +503,14 @@ int APS5_VABI sceAudioOut2ContextQueryMemory(const AudioOut2ContextParam* params
 
 int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam* params) {
     if (!params) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
-    std::memset(params, 0, sizeof(*params));
-    params->max_ports = DEFAULT_MAX_PORTS;
-    params->queue_depth = 1;
-    params->num_grains = AUDIO_OUT2_DEFAULT_GRAIN;
-    return 0;
+    AudioOut2ContextParam defaults{};
+    defaults.max_ports = DEFAULT_MAX_PORTS;
+    defaults.queue_depth = 1;
+    defaults.num_grains = AUDIO_OUT2_DEFAULT_GRAIN;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(params, &defaults, sizeof(defaults));
+    errno = savedErrno;
+    return copied ? 0 : SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceAudioOut2ContextSetAttributes(AudioOut2ContextHandle ctx, const AudioOut2Attribute* attributes, uint32_t num) {
