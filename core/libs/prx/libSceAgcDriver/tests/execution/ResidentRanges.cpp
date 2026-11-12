@@ -35,6 +35,7 @@ constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t PromoteAfter = 8;
 
 std::uint32_t* Data = nullptr;
+std::atomic<std::uint32_t> RacedStores = 0;
 
 alignas(256) constexpr std::array<std::uint32_t, 7> CopySelfCode{0x34020082u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0xe0701100u, 0x80000201u, 0xbf810000u};
 
@@ -90,6 +91,15 @@ void SetInputs(std::uint32_t value) {
     AgcDriver::GuestMemory::MarkWritten(reinterpret_cast<std::uintptr_t>(Data), Lanes * 4u);
 }
 
+AgcDriver::Graphics::ResidentStatistics Submit(std::vector<std::uint32_t> words, const std::string& what) {
+    const auto before = AgcDriver::Graphics::ResidentCounts();
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, what + ": submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    const auto after = AgcDriver::Graphics::ResidentCounts();
+    return AgcDriver::Graphics::ResidentStatistics{after.resident, Delta(before.promoted, after.promoted), Delta(before.bound, after.bound), Delta(before.skipped, after.skipped), Delta(before.copied, after.copied), Delta(before.invalidated, after.invalidated)};
+}
+
 AgcDriver::Graphics::ResidentStatistics Build(std::uint32_t expected, const std::string& what) {
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(CopySelfCode.data());
     const auto data = reinterpret_cast<std::uintptr_t>(Data);
@@ -100,20 +110,22 @@ AgcDriver::Graphics::ResidentStatistics Build(std::uint32_t expected, const std:
         0xc0047600u, 0x240u, static_cast<std::uint32_t>(data), static_cast<std::uint32_t>((data >> 32u) & 0xffffu), static_cast<std::uint32_t>(BlockBytes), 0x31016facu,
         0xc0031500u, 1u, 1u, 1u, 0x8041u,
     };
-    const auto before = AgcDriver::Graphics::ResidentCounts();
-    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, what + ": submission failed");
-    AgcDriverWaitIdle_nid_postfix();
-    const auto after = AgcDriver::Graphics::ResidentCounts();
-    AgcDriver::GuestMemory::FlushGpuWrites(data, BlockBytes);
+    const auto counts = Submit(std::move(words), what);
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Data), BlockBytes);
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
         const auto value = std::atomic_ref<std::uint32_t>(Data[OutputLane + lane]).load(std::memory_order_acquire);
         check(value == expected + lane, what + ": output lane " + std::to_string(lane) + " is " + std::to_string(value) + ", expected " + std::to_string(expected + lane));
     }
-    return AgcDriver::Graphics::ResidentStatistics{after.resident, Delta(before.promoted, after.promoted), Delta(before.bound, after.bound), Delta(before.skipped, after.skipped), Delta(before.copied, after.copied), Delta(before.invalidated, after.invalidated)};
+    return counts;
 }
 
+void StoreAfterStamp(std::uint64_t begin, std::uint64_t end) {
+    if (begin != reinterpret_cast<std::uintptr_t>(Data) || end != begin + BlockBytes) return;
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) std::atomic_ref<std::uint32_t>(Data[lane]).store(400 + lane, std::memory_order_relaxed);
+    RacedStores.fetch_add(1, std::memory_order_relaxed);
 }
+
+}  // namespace
 
 int main() {
     try {
@@ -158,8 +170,20 @@ int main() {
         check(counts.skipped == 1 && counts.copied == 0, "the build after the re-copy reported skipped " + std::to_string(counts.skipped) + ", copied " + std::to_string(counts.copied) + ", expected 1 / 0");
         std::puts("resident ranges: a CPU store invalidated the resident copy and the next build copied the new bytes in");
 
+        SetInputs(300);
+        AgcDriver::Graphics::SetResidentCopyHookForTests(StoreAfterStamp);
+        counts = Build(400, "the build whose copy-in raced a store");
+        AgcDriver::Graphics::SetResidentCopyHookForTests(nullptr);
+        check(RacedStores.load() == 1, "the resident copy hook ran " + std::to_string(RacedStores.load()) + " times, expected 1");
+        check(counts.copied == 1 && counts.skipped == 0, "the build whose copy-in raced a store reported copied " + std::to_string(counts.copied) + ", skipped " + std::to_string(counts.skipped) + ", expected 1 / 0");
+        counts = Build(400, "the build after the raced store");
+        check(counts.resident == 1 && counts.copied + counts.skipped == 1, "the build after the raced store reported resident " + std::to_string(counts.resident) + ", copied " + std::to_string(counts.copied) + ", skipped " + std::to_string(counts.skipped) + ", expected 1 resident and one copy-in or one skip");
+        counts = Build(400, "the second build after the raced store");
+        check(counts.skipped == 1 && counts.copied == 0, "the second build after the raced store reported skipped " + std::to_string(counts.skipped) + ", copied " + std::to_string(counts.copied) + ", expected 1 / 0");
+        std::puts("resident ranges: a store landing after the stamp and before the copy executed reached the GPU and never left stale bytes in the resident buffer");
+
         GuestAllocations::GuestAllocationsInvalidate_nid_postfix(reinterpret_cast<std::uintptr_t>(Data), BlockBytes);
-        counts = Build(200, "the build after the pages were forgotten");
+        counts = Build(400, "the build after the pages were forgotten");
         check(counts.skipped == 0 && counts.promoted == 1 && counts.copied == 1, "the build after ForgetPages reported skipped " + std::to_string(counts.skipped) + ", promoted " + std::to_string(counts.promoted) + ", copied " + std::to_string(counts.copied) + ", expected 0 / 1 / 1");
         std::puts("resident ranges: forgetting the range's pages dropped the resident copy");
 
