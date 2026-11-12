@@ -451,6 +451,9 @@ void GetInfoTests() {
 
     CHECK(sceUltMutexCreate(mutexObj, "test-mutex", poolObj, nullptr, 0) == Ok);
     CHECK(sceUltGetMutexInfo(mutexObj, &mutexInfo, waitThreads, 4) == Ok);
+    errno = 71;
+    CHECK(sceUltGetMutexInfo(mutexObj, reinterpret_cast<UltMutexInfo*>(0x10), waitThreads, 4) == Null);
+    CHECK(errno == 71);
     CHECK(mutexInfo.size == sizeof(UltMutexInfo));
     CHECK(mutexInfo.object == mutexObj);
     CHECK(std::strcmp(mutexInfo.name, "test-mutex") == 0);
