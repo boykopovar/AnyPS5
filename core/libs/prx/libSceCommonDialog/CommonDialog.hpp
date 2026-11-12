@@ -243,8 +243,9 @@ static_assert(sizeof(G2PDialogParam) == 128);
 static_assert(sizeof(PlayerReviewDialogParam) == 168);
 static_assert(offsetof(CommonDialogResultPrefix, result) == 8);
 
-inline bool ValidateCommonDialogBaseParam(const CommonDialogBaseParam& param) {
-    return param.size == sizeof(param) && param.magic == static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param)) - 1060003575u && std::all_of(std::begin(param.reserved), std::end(param.reserved), [](std::uint8_t value) { return value == 0; });
+inline bool ValidateCommonDialogBaseParam(const CommonDialogBaseParam& param, std::uintptr_t guestAddress = 0) {
+    const auto address = guestAddress != 0 ? guestAddress : reinterpret_cast<std::uintptr_t>(&param);
+    return param.size == sizeof(param) && param.magic == static_cast<std::uint32_t>(address) - 1060003575u && std::all_of(std::begin(param.reserved), std::end(param.reserved), [](std::uint8_t value) { return value == 0; });
 }
 
 constexpr int COMMON_DIALOG_OK = 0;

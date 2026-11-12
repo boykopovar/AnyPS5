@@ -196,8 +196,9 @@ bool Pad::KeyboardMouse::Advance(Clock::time_point now) {
     }
     bool changed = advanceAxes(now);
     for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
-        if (pressed[index] && configuration.bindings[index].control == InputControl::Shake) changed = true;
-        if (configuration.bindings[index].wheelDirection == 0 || !pressed[index] || now < wheelReleaseTimes[index]) continue;
+        const auto& binding = configuration.bindings[index];
+        if (pressed[index] && binding.control == InputControl::Shake) changed = true;
+        if ((binding.wheelDirection == 0 && binding.wheelTilt == 0) || !pressed[index] || now < wheelReleaseTimes[index]) continue;
         pressed[index] = false;
         wheelReleaseTimes[index] = {};
         changed = true;
@@ -236,14 +237,19 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
     if (event.type == SDL_MOUSEWHEEL) {
         if (titleReadsMouse) return requests;
         int direction = (event.wheel.y > 0) - (event.wheel.y < 0);
-        if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) direction = -direction;
-        if (direction == 0) return requests;
+        int tilt = (event.wheel.x > 0) - (event.wheel.x < 0);
+        if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
+            direction = -direction;
+            tilt = -tilt;
+        }
+        if (direction == 0 && tilt == 0) return requests;
         advanceAxes(now);
         const auto releaseTime = now + std::chrono::milliseconds(WheelPressDurationMs);
         for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
             const auto& binding = configuration.bindings[index];
-            if (binding.wheelDirection == 0) continue;
-            pressed[index] = binding.wheelDirection == direction;
+            if (binding.wheelDirection != 0 && direction != 0) pressed[index] = binding.wheelDirection == direction;
+            else if (binding.wheelTilt != 0 && tilt != 0) pressed[index] = binding.wheelTilt == tilt;
+            else continue;
             wheelReleaseTimes[index] = pressed[index] ? releaseTime : Clock::time_point{};
         }
         return requests;

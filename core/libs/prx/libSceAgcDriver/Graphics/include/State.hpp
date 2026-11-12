@@ -64,6 +64,7 @@ struct ColorTarget {
     std::uint64_t cmaskAddress = 0;
     std::size_t cmaskBytes = 0;
     bool cmaskFastClear = false;
+    std::uint32_t eqaaFragments = 0;
     std::uint64_t surfaceAddress = 0;
     VkExtent2D surfaceExtent{};
     std::uint32_t mipCount = 1;
@@ -86,7 +87,11 @@ struct ColorTarget {
     std::uint32_t dccControl = 0;
     std::uint64_t fmaskAddress = 0;
     std::uint32_t fmaskPipeBankXor = 0;
-    std::uint16_t partialWriteMask = 0;
+    std::uint32_t partialWriteMask = 0;
+    std::uint32_t mergeBlend = 0;
+    bool staged = false;
+    std::uint16_t stagedMask = 0;
+    VkFormat stagedFormat = VK_FORMAT_UNDEFINED;
 
     std::uint64_t MemoryAddress() const {
         return volume && tileMode != ColorTileMode::Linear ? surfaceAddress : address;
@@ -111,6 +116,9 @@ struct DepthTarget {
     bool htilePipeAligned = false;
     std::uint32_t htileVrsEncoding = 0;
     bool htileDepthOnly = false;
+    bool gcn = false;
+    bool depthPartiallyResident = false;
+    bool stencilPartiallyResident = false;
 };
 
 struct State {
@@ -146,6 +154,8 @@ struct State {
     std::uint32_t reversedBlend = 0;
     VkExtent2D renderExtent;
     std::uint32_t renderLayers = 1;
+    std::uint32_t meshLayerBase = 0;
+    std::uint32_t meshLayerCount = 0xffffffffu;
     std::uint32_t layerExports = 0;
     VkPrimitiveTopology topology;
     bool primitiveRestart = false;
@@ -172,6 +182,7 @@ struct State {
     VkRect2D scissor;
     VkCullModeFlags cullMode;
     VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
+    float lineWidth = 1.0f;
     VkFrontFace frontFace;
     VkProvokingVertexModeEXT provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
     VkPipelineColorBlendAttachmentState blend;
@@ -220,8 +231,11 @@ bool SampleMaskFollowsOrder(const State& state, const SampleOrder& order);
 std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order);
 std::array<std::uint8_t, 8> ExportMappings(const State& state);
 std::array<ShaderRecompiler::ColorExportPacking, 8> ExportPackings(const State& state);
-std::uint16_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t exportedMask);
+std::uint32_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t exportedMask);
+std::uint32_t PackedWriteMask(ShaderRecompiler::ColorExportPacking packing, std::uint8_t componentMapping, std::uint32_t exportedMask);
+std::uint32_t PackedBlendControl(std::uint32_t blendControl);
 GuestTextureResource TargetMergeSurface(const ColorTarget& color);
+ColorTarget StagedMergeTarget(const ColorTarget& staged);
 bool DepthStencilWrites(const State& state);
 bool DepthStencilTests(const State& state);
 std::vector<ShaderRecompiler::TargetMerge> ExportTargetMerges(const State& state);
@@ -235,11 +249,14 @@ ColorTarget DecodeColorBuffer(const Registers& context, std::uint32_t slot, bool
 struct ReversedBlend {
     VkPipelineColorBlendAttachmentState blend;
     std::uint32_t shaderCode;
+    std::array<float, 4> constants{};
+    std::uint32_t constantMask = 0;
 };
-ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne);
+ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne, const std::array<float, 4>& constants);
 std::size_t CmaskBytes(std::uint32_t width, std::uint32_t height);
 std::uint32_t ColorWriteMask(const Registers& context);
 GuestTextureResource SurfaceForTarget(const ColorTarget& color);
+GuestTextureResource ArraySurfaceForTarget(const ColorTarget& color);
 
 struct ColorMetadataPass {
     enum class Mode { EliminateFastClear, DccDecompress, Resolve, FmaskDecompress };
@@ -256,6 +273,12 @@ struct DepthCopyPass {
 std::optional<DepthCopyPass> DecodeDepthCopyPass(const QueueState& queue);
 std::string DepthMaintenanceRejection(const QueueState& queue);
 bool DepthResummarizeDrawsNothing(const QueueState& queue);
+struct DepthRenderControl {
+    std::uint64_t address;
+    std::uint32_t samples;
+    std::uint32_t control;
+};
+std::optional<DepthRenderControl> DecodeDepthRenderControl(const QueueState& queue);
 // The message DecodeState (or the pixel stage decode after it) would throw for the register rules
 // this precheck covers, evaluated without exceptions before the draw is decoded; empty when they
 // pass (DecodeState still checks everything). A register a rule needs that is absent is no verdict.
