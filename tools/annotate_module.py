@@ -45,7 +45,7 @@ LINE_ADDRESS = re.compile(r"^\s*([0-9a-f]+):")
 STUB = re.compile(r"^\s*([0-9a-f]+):\s+(?:\w+\s+)*jmpq?\s+\*(?:-?0x[0-9a-f]+)?\(%(?:rip|eip)\)\s+# 0x([0-9a-f]+)")
 BRANCH = re.compile(r"\b(?:call|jmp)q?\s+0x([0-9a-f]+)")
 REFERENCE = re.compile(r"# 0x([0-9a-f]+)")
-LEA = re.compile(r"^\s*[0-9a-f]+:\s+(?:\w+\s+)*lea[wlq]?\s")
+LEA = re.compile(r"^\s*[0-9a-f]+:\s+(?:\w+\s+)*lea[wlq]?\s+[^#]*,\s*%(\w+)")
 
 
 class ModuleError(Exception):
@@ -300,12 +300,19 @@ def disassemble(code, vaddr):
 
 
 def referenced_address(line):
-    if ("%fs:" in line or "%gs:" in line) and not LEA.match(line):
+    lea = LEA.match(line)
+    if ("%fs:" in line or "%gs:" in line) and not lea:
         return None
     reference = REFERENCE.search(line)
     if reference is None:
         return None
     address = int(reference.group(1), 16)
+    if lea:
+        destination = lea.group(1)
+        if destination.startswith("e") or destination.endswith("d"):
+            return address & 0xFFFFFFFF
+        if not destination.startswith("r") or destination.endswith("w"):
+            return None
     return address & 0xFFFFFFFF if "(%eip)" in line else address
 
 

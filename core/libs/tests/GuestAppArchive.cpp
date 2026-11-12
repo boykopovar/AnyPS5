@@ -106,6 +106,24 @@ void Present(const std::filesystem::path& root) {
     Require(AppArchiveDescriptorRead_nid_no_patch(Descriptor, single, 1, nullptr, &done) && done == 0, "a read past the end returned bytes");
     Require(AppArchiveDescriptorSeek_nid_no_patch(Descriptor, -1, 0, &sought) && sought == -1, "a negative seek was accepted");
     Require(AppArchiveDescriptorSeek_nid_no_patch(Descriptor, 10, 1, &sought) && sought == static_cast<std::int64_t>(BigSize + 10), "seeking past the end failed");
+    Require(!AppArchiveDescriptorRead_nid_no_patch(99999, single, 1, nullptr, &done), "unattached descriptor read succeeded");
+    Require(!AppArchiveDescriptorSeek_nid_no_patch(99999, 0, 0, &sought), "unattached descriptor seek succeeded");
+    rejected = false;
+    try { (void)AppArchiveDescriptorRead_nid_no_patch(Descriptor, single, -1, nullptr, &done); } catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected, "negative buffer count was accepted");
+    rejected = false;
+    try { (void)AppArchiveDescriptorRead_nid_no_patch(Descriptor, single, 1, nullptr, nullptr); } catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected, "null read pointer was accepted");
+    rejected = false;
+    const std::int64_t negativeOffset = -10;
+    try { (void)AppArchiveDescriptorRead_nid_no_patch(Descriptor, single, 1, &negativeOffset, &done); } catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected, "negative read offset was accepted");
+    rejected = false;
+    try { (void)AppArchiveDescriptorSeek_nid_no_patch(Descriptor, 0, 0, nullptr); } catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected, "null seek position was accepted");
+    rejected = false;
+    try { (void)AppArchiveDescriptorSeek_nid_no_patch(Descriptor, 0, 9, &sought); } catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected, "invalid whence was accepted");
     AppArchiveDetach_nid_no_patch(Descriptor);
     Require(!AppArchiveDescriptor_nid_no_patch(Descriptor, nullptr, nullptr) && AppArchiveDescriptor_nid_no_patch(Shared, nullptr, nullptr), "detaching one descriptor detached its duplicate");
     AppArchiveShare_nid_no_patch(Descriptor, Shared);
