@@ -94,6 +94,17 @@ static void CheckArguments(bool net) {
     std::uint32_t size = 16;
     Require(Failed(getsockname_nid_postfix(socket, nullptr, &size), 14));
     Require(Failed(getsockname_nid_postfix(socket, local.data(), nullptr), 14));
+    if (net) {
+        constexpr int SocketLevel = 0xffff;
+        constexpr int SocketType = 0x1008;
+        int type = 0;
+        size = sizeof(type);
+        Require(Failed(getsockopt_nid_postfix(socket, SocketLevel, SocketType, unreadable, &size), 14));
+        Require(size == sizeof(type));
+        Require(getsockopt_nid_postfix(socket, SocketLevel, SocketType, &type, &size) == 0);
+        Require(size == sizeof(type) && type == 2);
+        size = 16;
+    }
     Require(Failed(sendto_nid_postfix(socket, nullptr, 1, 0, local.data(), 16), 14));
     Require(Failed(sendto_nid_postfix(socket, "x", 1, 0, local.data(), 1), 22));
     Require(Failed(sendto_nid_postfix(socket, "x", 1, 0, local.data(), 17), 22));
