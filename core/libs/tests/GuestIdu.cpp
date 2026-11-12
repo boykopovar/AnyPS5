@@ -1,9 +1,21 @@
 #include "prx/libSceIdu/libSceIdu.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -19,6 +31,33 @@ std::array<unsigned char, 0x40> Block(std::uint32_t firstWord) {
     block.fill(0x5A);
     std::memcpy(block.data(), &firstWord, sizeof(firstWord));
     return block;
+}
+
+char* UnreadablePage() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    auto* page = static_cast<char*>(VirtualAlloc(nullptr, info.dwPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS));
+    Require(page != nullptr);
+    return page;
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0);
+    void* page = mmap(nullptr, static_cast<std::size_t>(pageSize), PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+    return static_cast<char*>(page);
+#endif
+}
+
+template <typename Call>
+void RequireFault(Call call) {
+    bool threw = false;
+    try {
+        static_cast<void>(call());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }
 
 } // namespace
@@ -98,6 +137,18 @@ int main() {
         Require(sceIduStartTitle(any.data(), -1, nullptr, startParam.data()) == notInitialized);
         Require(sceIduStartTitle(any.data(), 2, any.data(), startParam.data()) == notInitialized);
     }
+
+    char* unreadable = UnreadablePage();
+    RequireFault([&] { return sceIduInit(unreadable); });
+    RequireFault([&] { return sceIduGetFsStats(unreadable); });
+    RequireFault([&] { return sceIduNotificationHide(unreadable); });
+    RequireFault([&] { return sceIduIsRifInstalled(unreadable); });
+    RequireFault([&] { return sceIduInstallRif(unreadable, any.data(), 1); });
+    RequireFault([&] { return sceIduStartTitle(any.data(), 0, nullptr, unreadable); });
+    Require(sceIduInstallRif(name, unreadable, 1) == notInitialized);
+    Require(sceIduStartTitle(unreadable, 0, nullptr, startParam.data()) == notInitialized);
+    Require(sceIduStartTitle(any.data(), 1, unreadable, startParam.data()) == notInitialized);
+    Require(sceIduGetHardwareId(unreadable) == notInitialized);
 
     Require(any == anyBefore);
     Require(fsStats == fsStatsBefore);
