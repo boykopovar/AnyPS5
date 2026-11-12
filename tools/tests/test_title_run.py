@@ -40,8 +40,14 @@ class TitlesTests(unittest.TestCase):
             title_run.load_titles(self.write({"PPSA00001": {"rlink": []}}))
 
     def test_wrong_type_is_refused(self):
-        with self.assertRaisesRegex(ValueError, "PPSA00001: seconds must be int"):
+        with self.assertRaisesRegex(ValueError, "PPSA00001: seconds must be a positive integer"):
             title_run.load_titles(self.write({"PPSA00001": {"seconds": "60"}}))
+
+    def test_catalog_seconds_must_be_a_positive_integer(self):
+        for value in (True, False, 0, -1):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "PPSA00001: seconds must be a positive integer"):
+                title_run.load_titles(self.write({"PPSA00001": {"seconds": value}}))
+        self.assertEqual(title_run.load_titles(self.write({"PPSA00001": {"seconds": 30}}))["PPSA00001"]["seconds"], 30)
 
     def test_non_string_items_are_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: env must hold strings"):
