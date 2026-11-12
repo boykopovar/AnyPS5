@@ -12,6 +12,8 @@ static void Require(bool condition, int line) {
 #define Check(value) Require((value), __LINE__)
 
 static void CheckEqual() {
+    const char* same = "MixedCaseHeader";
+    Check(curl_strequal(same, same) == 1);
     Check(curl_strequal("", "") == 1);
     Check(curl_strequal("Content-Type", "content-TYPE") == 1);
     Check(curl_strequal("azAZ", "AZaz") == 1);
@@ -30,6 +32,7 @@ static void CheckEqual() {
 static void CheckBounded() {
     Check(curl_strnequal("abc", "xyz", 0) == 1);
     Check(curl_strnequal("", "a", 0) == 1);
+    Check(curl_strnequal("ab", "ax", 1) == 1);
     Check(curl_strnequal("abcX", "ABCy", 3) == 1);
     Check(curl_strnequal("abcX", "ABCy", 4) == 0);
     Check(curl_strnequal("abc", "ab", 2) == 1);
@@ -37,6 +40,7 @@ static void CheckBounded() {
     Check(curl_strnequal("ab", "abc", 3) == 0);
     Check(curl_strnequal("ab", "AB", 2) == 1);
     Check(curl_strnequal("ab", "AB", 100) == 1);
+    Check(curl_strnequal("a\0x", "a\0y", 3) == 1);
     Check(curl_strnequal("ab\0x", "ab\0y", 4) == 1);
     Check(curl_strnequal("", "", 5) == 1);
     Check(curl_strnequal("\xE9", "\xC9", 1) == 0);
