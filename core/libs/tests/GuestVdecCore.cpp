@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -81,6 +82,12 @@ void CheckInstanceSize() {
     Require(sceVdecCoreQueryInstanceSize(&config, &instance, &compute, &reserved) == 0, "instance size");
     Require(instance == 0x40000 && compute == 0x10000 && reserved == 0, "instance, compute and reserved sizes");
     Require(sceVdecCoreQueryInstanceSize(&config, nullptr, nullptr, nullptr) == 0, "instance size with no outputs");
+    errno = 71;
+    Require(sceVdecCoreQueryInstanceSize(reinterpret_cast<const VdecCoreConfigInfo*>(0x10), &instance, &compute, &reserved) == InvalidArgument, "unmapped config");
+    Require(sceVdecCoreQueryInstanceSize(&config, reinterpret_cast<std::uint64_t*>(0x10), &compute, &reserved) == InvalidArgument, "unmapped instance");
+    Require(sceVdecCoreQueryInstanceSize(&config, &instance, reinterpret_cast<std::uint64_t*>(0x10), &reserved) == InvalidArgument, "unmapped compute");
+    Require(sceVdecCoreQueryInstanceSize(&config, &instance, &compute, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument, "unmapped reserved");
+    Require(errno == 71, "errno modified by unmapped instance size query");
 }
 
 void RequireFrameBuffer(const VdecCoreConfigInfo& config, std::uint32_t size, std::uint32_t minCount, std::uint32_t align, std::uint32_t width, std::uint32_t height, const char* message) {
@@ -109,6 +116,10 @@ void CheckFrameBufferInfo() {
     config.maxDpbFrameCount = -2;
     Require(sceVdecCoreQueryFrameBufferInfo(&config, &info) == InvalidArgument, "DPB count -2");
     Require(std::memcmp(&info, &untouched, sizeof(info)) == 0, "a refused frame buffer query leaves the output alone");
+    errno = 71;
+    Require(sceVdecCoreQueryFrameBufferInfo(reinterpret_cast<const VdecCoreConfigInfo*>(0x10), &info) == InvalidArgument, "frame buffer info unmapped config");
+    Require(sceVdecCoreQueryFrameBufferInfo(&config, reinterpret_cast<VdecCoreFrameBufferInfo*>(0x10)) == InvalidArgument, "frame buffer info unmapped output");
+    Require(errno == 71, "frame buffer info preserved errno");
 
     RequireFrameBuffer(Config(0, 0, 0, 0), 0x340000, 17, 256, 1920, 1080, "1920x1080 defaults");
     RequireFrameBuffer(Config(64, 40, 256, 0), 0x10000, 17, 256, 64, 40, "64x40, DPB 0");
@@ -121,6 +132,9 @@ void CheckFrameBufferInfo() {
 
 void CheckComputeResourceInfo() {
     Require(sceVdecCoreQueryComputeResourceInfo(nullptr) == InvalidArgument, "compute resource info without an output");
+    errno = 71;
+    Require(sceVdecCoreQueryComputeResourceInfo(reinterpret_cast<VdecCoreComputeResourceInfo*>(0x10)) == InvalidArgument, "compute resource info with unmapped output");
+    Require(errno == 71, "compute resource info preserved errno");
     VdecCoreComputeResourceInfo info{7, 7, 7, 7};
     Require(sceVdecCoreQueryComputeResourceInfo(&info) == 0, "compute resource info");
     Require(info.memoryType == 0 && info.size == 0x10000 && info.alignment == 0x10000 && info.reserved == 0, "compute resource sizes");

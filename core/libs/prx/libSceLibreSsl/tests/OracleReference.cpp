@@ -8,6 +8,7 @@
 #include <openssl/objects.h>
 #include <openssl/ocsp.h>
 #include <openssl/sha.h>
+#include <openssl/rsa.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <cstddef>
@@ -89,5 +90,41 @@ void ConfModulesFree() { CONF_modules_free(); }
 int I2tAsn1Object(char* buffer, int length, const void* object) { return i2t_ASN1_OBJECT(buffer, length, const_cast<ASN1_OBJECT*>(static_cast<const ASN1_OBJECT*>(object))); }
 unsigned long ErrGetError() { return ERR_get_error(); }
 void ErrClearError() { ERR_clear_error(); }
+
+std::size_t MdContextSize() { return sizeof(EVP_MD_CTX); }
+void MdContextInit(void* context) { EVP_MD_CTX_init(static_cast<EVP_MD_CTX*>(context)); }
+int MdContextCleanup(void* context) { return EVP_MD_CTX_cleanup(static_cast<EVP_MD_CTX*>(context)); }
+
+void* DigestMethod(int kind) {
+    switch (kind) {
+    case 1: return const_cast<EVP_MD*>(EVP_md5());
+    case 2: return const_cast<EVP_MD*>(EVP_sha1());
+    case 3: return const_cast<EVP_MD*>(EVP_sha224());
+    case 4: return const_cast<EVP_MD*>(EVP_sha256());
+    case 5: return const_cast<EVP_MD*>(EVP_sha384());
+    default: return const_cast<EVP_MD*>(EVP_sha512());
+    }
+}
+
+void* GenerateRsa(int bits) { return RSA_generate_key(bits, 65537, nullptr, nullptr); }
+void RsaFree(void* rsa) { RSA_free(static_cast<RSA*>(rsa)); }
+int RsaSign(int type, const unsigned char* message, unsigned int messageLength, unsigned char* signature, unsigned int* signatureLength, void* rsa) {
+    return RSA_sign(type, message, messageLength, signature, signatureLength, static_cast<RSA*>(rsa));
+}
+int I2dRsaPubKey(void* rsa, unsigned char** output) { return i2d_RSA_PUBKEY(static_cast<RSA*>(rsa), output); }
+void ReferenceFree(void* pointer) { OPENSSL_free(pointer); }
+
+void* PkeyNew() { return EVP_PKEY_new(); }
+int PkeySet1Rsa(void* pkey, void* rsa) { return EVP_PKEY_set1_RSA(static_cast<EVP_PKEY*>(pkey), static_cast<RSA*>(rsa)); }
+void PkeyFree(void* pkey) { EVP_PKEY_free(static_cast<EVP_PKEY*>(pkey)); }
+
+int DigestUpdateContext(void* context, const void* data, std::size_t length) { return EVP_DigestUpdate(static_cast<EVP_MD_CTX*>(context), data, length); }
+int DigestVerifyInit(void* context, void** pctx, const void* digest, void* pkey) {
+    return EVP_DigestVerifyInit(static_cast<EVP_MD_CTX*>(context), reinterpret_cast<EVP_PKEY_CTX**>(pctx),
+        static_cast<const EVP_MD*>(digest), nullptr, static_cast<EVP_PKEY*>(pkey));
+}
+int DigestVerifyFinal(void* context, unsigned char* signature, std::size_t signatureLength) {
+    return EVP_DigestVerifyFinal(static_cast<EVP_MD_CTX*>(context), signature, signatureLength);
+}
 
 }

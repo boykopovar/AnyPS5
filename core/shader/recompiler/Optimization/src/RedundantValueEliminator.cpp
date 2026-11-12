@@ -42,6 +42,16 @@ bool Recomputable(IrOpcode opcode) {
         case IrOpcode::FPAbs32:
         case IrOpcode::FPNeg32:
         case IrOpcode::FPSaturate32:
+        case IrOpcode::IAdd16x2:
+        case IrOpcode::ISub16x2:
+        case IrOpcode::IMul16x2:
+        case IrOpcode::ShiftLeftLogical16x2:
+        case IrOpcode::ShiftRightLogical16x2:
+        case IrOpcode::ShiftRightArithmetic16x2:
+        case IrOpcode::SMin16x2:
+        case IrOpcode::SMax16x2:
+        case IrOpcode::UMin16x2:
+        case IrOpcode::UMax16x2:
         case IrOpcode::BitFieldInsert:
         case IrOpcode::BitFieldUExtract:
         case IrOpcode::BitFieldSExtract:
@@ -162,6 +172,46 @@ IrValue* NanSource(IrValue* query) {
     return source != nullptr ? BitsOf(source) : nullptr;
 }
 
+bool AlwaysNanBits(IrValue* value) {
+    value = BitsOf(value);
+    while (value->Opcode() == IrOpcode::SelectU32 && value->ArgumentCount() == 3u && value->Flags<std::uint64_t>() == 0u) {
+        IrValue* source = NanSource(value->Argument(0)->Resolve());
+        if (source == nullptr) return false;
+        IrValue* selected = BitsOf(value->Argument(1));
+        if (IrValue* quieted = MaskedOperand(selected, IrOpcode::BitwiseOr32, 0x00400000u)) selected = BitsOf(quieted);
+        if (selected != source) return false;
+        value = BitsOf(value->Argument(2));
+    }
+    return value->HasImmediate() && value->Type() == IrType::U32 && (value->ImmediateU32() & 0x7fffffffu) > 0x7f800000u;
+}
+
+IrValue* LiftNanPredicate(IrProgram& program, IrValue* query) {
+    IrValue* repaired = NanSource(query);
+    std::vector<IrValue*> predicates;
+    while (repaired != nullptr && repaired->Opcode() == IrOpcode::SelectU32 && repaired->ArgumentCount() == 3u && repaired->Flags<std::uint64_t>() == 0u) {
+        IrValue* predicate = repaired->Argument(0)->Resolve();
+        IrValue* source = NanSource(predicate);
+        if (source == nullptr) return nullptr;
+        if (source == BitsOf(repaired->Argument(2)) && AlwaysNanBits(repaired->Argument(1))) {
+            IrValue* result = predicate;
+            for (IrValue* condition : predicates) {
+                IrValue& combined = program.CreateValue(IrOpcode::LogicalOr, IrType::Bool);
+                combined.AddArgument(result);
+                combined.AddArgument(condition);
+                query->Parent()->InsertInstructionBefore(query, &combined);
+                result = &combined;
+            }
+            return result;
+        }
+        IrValue* selected = BitsOf(repaired->Argument(1));
+        if (IrValue* quieted = MaskedOperand(selected, IrOpcode::BitwiseOr32, 0x00400000u)) selected = BitsOf(quieted);
+        if (selected != source) return nullptr;
+        predicates.push_back(predicate);
+        repaired = BitsOf(repaired->Argument(2));
+    }
+    return nullptr;
+}
+
 IrValue* NormalProductNanPredicate(IrValue* query) {
     IrValue* repaired = NanSource(query);
     if (repaired == nullptr || repaired->Opcode() != IrOpcode::SelectU32 || repaired->ArgumentCount() != 3u || repaired->Flags<std::uint64_t>() != 0u) return nullptr;
@@ -278,6 +328,22 @@ std::vector<std::vector<IrBlock*>> DominatorChildren(const std::vector<IrBlock*>
 RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& program) const {
     RedundantValueEliminationStats stats;
     if (program.BlockOrder().empty()) return stats;
+    std::unordered_map<const IrValue*, IrValue*> replacements;
+    std::vector<std::pair<IrValue*, IrValue*>> lifted;
+    for (const auto& block : program.Blocks()) {
+        for (IrValue* inst : block->Instructions()) {
+            if (!inst->HasUses()) continue;
+            if (IrValue* predicate = LiftNanPredicate(program, inst)) {
+                lifted.emplace_back(inst, predicate);
+            }
+        }
+    }
+    for (const auto& [inst, predicate] : lifted) {
+        inst->ReplaceAllUsesWith(predicate);
+        replacements.emplace(inst, predicate);
+        ++stats.replacedValues;
+    }
+
     const auto order = ReversePostOrder(*program.BlockOrder().front());
     std::unordered_map<const IrBlock*, std::size_t> index;
     const auto children = DominatorChildren(order, index);
@@ -325,7 +391,6 @@ RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& pr
     }
     std::unordered_map<ValueKey, IrValue*, ValueKeyHash> available;
     std::vector<const ValueKey*> added;
-    std::unordered_map<const IrValue*, IrValue*> replacements;
     const auto visit = [&](std::size_t position) {
         std::uint64_t epoch = entryEpoch[position];
         std::uint64_t nextClobber = firstClobber[position];
@@ -376,7 +441,9 @@ RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& pr
     }
     const auto replaced = [&](IrValue*& value) {
         if (value == nullptr) return;
-        if (const auto found = replacements.find(value->Resolve()); found != replacements.end()) value = found->second;
+        for (auto found = replacements.find(value->Resolve()); found != replacements.end(); found = replacements.find(value->Resolve())) {
+            value = found->second;
+        }
     };
     for (auto& info : program.Metadata().blockInfo) {
         replaced(info.condition);

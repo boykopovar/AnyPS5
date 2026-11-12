@@ -53,6 +53,8 @@ int main() {
     expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Running));
     expect_nid_no_patch(scePlayerInvitationDialogGetResult(&result), notFinished);
     expect_nid_no_patch(scePlayerInvitationDialogUpdateStatus(), static_cast<std::int32_t>(Finished));
+    expect_nid_no_patch(scePlayerInvitationDialogGetResult(reinterpret_cast<ScePlayerInvitationDialogResult*>(0x10)), argNull);
+    expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Finished));
     std::memset(&result, 0xFF, sizeof(result));
     expect_nid_no_patch(scePlayerInvitationDialogGetResult(&result), 0);
     expect_nid_no_patch(result.errorCode, 0);

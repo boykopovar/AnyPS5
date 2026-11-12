@@ -2,6 +2,7 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "prx/libSceAudio3d/include/Audio3d.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <atomic>
 #include <cmath>
 #include <cstdarg>
@@ -214,7 +215,7 @@ std::uint32_t QueueLevel() {
 int CheckFloatAttribute(const void* attribute, std::size_t attribute_size, float minimum, float maximum) {
     if (attribute == nullptr || attribute_size != sizeof(float)) return AUDIO3D_ERROR_INVALID_PARAMETER;
     float value = 0.0f;
-    std::memcpy(&value, attribute, sizeof(value));
+    if (!GuestCopyIn_nid_no_patch(&value, attribute, sizeof(value))) return AUDIO3D_ERROR_INVALID_PARAMETER;
     if (!std::isfinite(value) || value < minimum || value > maximum) return AUDIO3D_ERROR_INVALID_PARAMETER;
     return 0;
 }
@@ -702,12 +703,22 @@ int APS5_VABI sceAudio3dPortGetStatus(uint32_t port_id, uint32_t* status, char* 
     const int result = [&] {
         std::lock_guard lock(g_mutex);
         if (!PortIsOpen(port_id)) return AUDIO3D_ERROR_INVALID_PORT;
-        if (status != nullptr) *status = AUDIO3D_STATUS_DOWNMIX;
+        const int savedErrno = errno;
+        if (status != nullptr) {
+            const uint32_t val = AUDIO3D_STATUS_DOWNMIX;
+            const bool copied = GuestCopyOut_nid_no_patch(status, &val, sizeof(val));
+            errno = savedErrno;
+            if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
+        }
         if (description != nullptr && description_size != 0) {
             constexpr char text[] = "Downmix ()";
             const std::size_t length = std::min(description_size - 1, sizeof(text) - 1);
-            std::memcpy(description, text, length);
-            description[length] = '\0';
+            char localDesc[sizeof(text)]{};
+            std::memcpy(localDesc, text, length);
+            localDesc[length] = '\0';
+            const bool copied = GuestCopyOut_nid_no_patch(description, localDesc, length + 1);
+            errno = savedErrno;
+            if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
         }
         return 0;
     }();
