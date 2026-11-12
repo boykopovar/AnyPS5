@@ -443,20 +443,35 @@ void FrameRecorder::writeReferenceFrames() {
 
 void FrameRecorder::record(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders, const std::function<void()>& accept) {
     std::lock_guard lock(mutex);
-    recordLocked(std::move(call), prologueCall, shaders);
-    if (accept) accept();
+    if (!recordLocked(call, prologueCall, shaders)) {
+        if (accept) accept();
+        return;
+    }
+    if (accept) {
+        auto& driver = DriverDetail::Driver::Get();
+        const auto before = driver.SerialProgress().first;
+        accept();
+        const auto after = driver.SerialProgress().first;
+        if (after - before != 1 && (call.kind != FrameCallKind::Flip || after != before)) {
+            stop(("stopped: recorded call " + std::to_string(call.ordinal) + " (" + std::string(FrameCallName(call.kind)) + ") moved the driver's accepted serial from " + std::to_string(before) + " to " + std::to_string(after) + ", so the serials of later calls cannot be mapped").c_str());
+            return;
+        }
+        call.values.push_back(after == before ? 0 : after);
+    }
+    writer->WriteCall(call);
+    ++recordedCalls;
 }
 
-void FrameRecorder::recordLocked(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders) {
+bool FrameRecorder::recordLocked(FrameCall& call, bool prologueCall, std::span<const Shader* const> shaders) {
     if (state == State::Waiting) {
-        if (!prologueCall) return;
+        if (!prologueCall) return false;
         std::set<std::uint64_t> blocks;
         collectShaderPages(shaders, blocks, prologueHostPages);
         call.ordinal = ++ordinal;
         prologue.push_back(std::move(call));
-        return;
+        return false;
     }
-    if (state != State::Recording || stopOnHazard()) return;
+    if (state != State::Recording || stopOnHazard()) return false;
     callThreads.insert(call.thread);
     const auto entry = DriverDetail::Driver::Get().StartedProgress();
     const struct Released {
@@ -465,13 +480,12 @@ void FrameRecorder::recordLocked(FrameCall call, bool prologueCall, std::span<co
     } released;
     if (prologueCall) emitShaderDelta(shaders, &entry);
     else emitDelta(&entry);
-    if (state != State::Recording) return;
+    if (state != State::Recording) return false;
     call.ordinal = ++ordinal;
     call.accepted = entry.accepted;
     call.completed = entry.completed;
     if (call.kind == FrameCallKind::Submit) ++submitDepths[static_cast<std::size_t>(std::min<std::uint64_t>(entry.accepted - entry.completed, submitDepths.size() - 1))];
-    writer->WriteCall(call);
-    ++recordedCalls;
+    return true;
 }
 
 void FrameRecorder::FrameBoundary() {

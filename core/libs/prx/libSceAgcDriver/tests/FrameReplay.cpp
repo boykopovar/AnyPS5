@@ -30,6 +30,7 @@
 #include <filesystem>
 #include <functional>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -477,6 +478,24 @@ std::filesystem::path checkCapture(std::uint64_t inFlight) {
     const bool parked = std::any_of(reader.Calls().begin(), reader.Calls().end(), [&](const auto& call) { return call.kind == FrameCallKind::Memory && call.accepted - call.completed == inFlight; });
     check(parked, "no memory delta was read while " + std::to_string(inFlight) + " submissions waited for the CPU");
     return capture;
+}
+
+void checkCallSerials(const FrameCaptureReader& reader, bool flipWithoutSerial) {
+    for (const auto& call : reader.Calls()) {
+        if (call.kind == FrameCallKind::Submit || call.kind == FrameCallKind::Suspend) check(call.values == std::vector<std::uint64_t>{call.accepted + 1}, "the capture did not record the serial that call " + std::to_string(call.ordinal) + " took: " + reader.Header());
+        if (call.kind == FrameCallKind::Flip) check(call.values.size() == 5 && (call.values.back() == 0 || call.values.back() == call.accepted + 1), "the capture did not record the serial that flip " + std::to_string(call.ordinal) + " took, or 0 for none: " + reader.Header());
+    }
+    if (flipWithoutSerial) check(std::any_of(reader.Calls().begin(), reader.Calls().end(), [](const auto& call) { return call.kind == FrameCallKind::Flip && call.values.size() == 5 && call.values.back() == 0; }), "the capture did not record 0 for the CPU flip that took no serial: " + reader.Header());
+}
+
+void checkTakenSerials(const FrameCaptureReader& reader, std::size_t flips, std::size_t suspends) {
+    checkCallSerials(reader, false);
+    const auto& calls = reader.Calls();
+    for (const auto& call : calls) {
+        if (call.kind == FrameCallKind::Flip) check(call.values.back() == call.accepted + 1, "the capture did not record the serial that flip " + std::to_string(call.ordinal) + " took: " + reader.Header());
+    }
+    const auto count = [&](FrameCallKind kind) { return static_cast<std::size_t>(std::count_if(calls.begin(), calls.end(), [&](const auto& call) { return call.kind == kind; })); };
+    check(count(FrameCallKind::Flip) == flips && count(FrameCallKind::Suspend) == suspends, "the capture's counts of flips and suspend points are not " + std::to_string(flips) + " and " + std::to_string(suspends) + ": " + reader.Header());
 }
 
 std::vector<std::byte> replayed(const std::filesystem::path& tool, const std::filesystem::path& capture, const void* address, std::size_t bytes, const std::string& options = "") {
@@ -963,7 +982,11 @@ void testGpuFillRestoredToCachedValue(const std::filesystem::path& tool) {
     std::memset(bulk.base, 0, FillBytes);
     flip();
     AgcDriverWaitIdle_nid_postfix();
-    const auto dumped = replayed(tool, checkCapture(0), word, 4);
+    const auto capture = checkCapture(0);
+    const char* dump = std::getenv("APS5_DUMP_SUBMITS");
+    const bool cpuFlipsUnordered = !APS5_ENABLE_TIMING_LOG && std::getenv("APS5_CPU_FLIP_IN_ORDER") == nullptr && std::getenv("APS5_SYNC_FLIP") == nullptr && (dump == nullptr || *dump == '\0');
+    checkCallSerials(FrameCaptureReader(capture), cpuFlipsUnordered);
+    const auto dumped = replayed(tool, capture, word, 4);
     std::uint32_t value = 0;
     std::memcpy(&value, dumped.data(), sizeof(value));
     check(value == 0, "the replay lost a CPU restore matching the cached bytes after an intervening GPU fill");
@@ -1167,6 +1190,8 @@ void testDeltaReadInFlight(const std::filesystem::path& tool) {
 
     flip();
     AgcDriverWaitIdle_nid_postfix();
+    AgcDriverSuspendPoint_nid_postfix();
+    AgcDriverWaitIdle_nid_postfix();
     settleDeltas(warming);
     check(sceAgcDriverSubmitDcb(&running) == 0, "the busy submission failed");
     awaitStarted();
@@ -1183,7 +1208,76 @@ void testDeltaReadInFlight(const std::filesystem::path& tool) {
     const FrameCaptureReader reader(directory);
     deltaReadInFlight(reader, layout.secondCommands);
     check(reader.Header().find("\"read_depths\":[0,1,0,") != std::string::npos, "the capture header does not count the one delta read in flight behind one running submission: " + reader.Header());
+    checkTakenSerials(reader, 2, 1);
     check(replayed(tool, checkCapture(1), layout.firstTarget, DataBytes) == stored, "the replay did not copy the page the title stored while the busy submission ran");
+}
+
+void testFlipSerialAtStart(const std::filesystem::path& tool) {
+    if (APS5_ENABLE_TIMING_LOG) throw Inconclusive("a build with the timing log orders every CPU flip, so no CPU flip of the test can take the path without a serial");
+    const char* submitDump = std::getenv("APS5_DUMP_SUBMITS");
+    check(std::getenv("APS5_CPU_FLIP_IN_ORDER") == nullptr && std::getenv("APS5_SYNC_FLIP") == nullptr && (submitDump == nullptr || *submitDump == '\0'), "the environment orders CPU flips or captures submissions, so no CPU flip of the test can take the path without a serial");
+    const auto layout = allocate();
+    const auto written = allocate();
+    const auto busy = allocate();
+    for (const auto* touched : {&layout, &written, &busy}) std::memset(touched->base, 0, BlockBytes);
+    const auto running = busyPacket(busy);
+    auto second = commands(layout.secondCommands);
+    sceAgcDcbDmaData(&second, 0, DmaMemory, 0, at(layout.firstTarget), DmaMemory, 0, at(written.source), DataBytes, 0, 1, 0);
+    const Packet reading{layout.secondCommands, static_cast<std::uint32_t>(second.cursor_up - layout.secondCommands), 0, {}};
+    const auto warming = labelPacket(layout.firstCommands, layout.label);
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+    std::async(std::launch::async, [&] {
+        check(sceAgcDriverSubmitDcb(&running) == 0 && sceAgcDriverSubmitDcb(&reading) == 0, "the submissions warming the imports failed");
+        AgcDriverWaitIdle_nid_postfix();
+    }).get();
+
+    flip();
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    settleDeltas(warming);
+    check(sceAgcDriverSubmitDcb(&running) == 0, "the busy submission failed");
+    awaitStarted();
+    const auto stored = pattern(43);
+    std::memcpy(written.source, stored.data(), stored.size());
+    check(sceAgcDriverSubmitDcb(&reading) == 0, "the reading submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(equal(layout.firstTarget, stored), "the driver did not copy the title's store");
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    const char* directory = std::getenv("APS5_FRAME_CAPTURE");
+    check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
+    const std::filesystem::path capture(directory);
+    const FrameCaptureReader reader(capture);
+    check(!reader.Truncated() && reader.Header().find("stopped") == std::string::npos && reader.Header().find("\"frames\":2") != std::string::npos, "the capture of two frames did not end normally: " + reader.Header());
+    const auto& calls = reader.Calls();
+    const auto start = std::find_if(calls.begin(), calls.end(), [](const auto& call) { return call.kind == FrameCallKind::FrameStart; });
+    check(start != calls.end() && start->accepted != 0, "the capture did not start after the driver had accepted the submissions that warmed the imports: " + reader.Header());
+    const auto first = std::find_if(start, calls.end(), [](const auto& call) { return call.kind == FrameCallKind::Flip; });
+    check(first != calls.end() && first->values.size() == 5 && first->values.back() == 0, "the first CPU flip after the frame start, from a thread without graphics submissions, took a serial in the capture: " + reader.Header());
+    deltaReadInFlight(reader, layout.secondCommands);
+    checkCallSerials(reader, true);
+    const auto serialFlips = static_cast<std::size_t>(std::count_if(start, calls.end(), [](const auto& call) { return call.kind == FrameCallKind::Flip && call.values.size() == 5 && call.values.back() != 0; }));
+    const auto dump = capture / "dump.bin";
+    const auto log = capture / "replay.log";
+#ifdef _WIN32
+    _putenv_s("APS5_TRACE_GPU", "1");
+#else
+    setenv("APS5_TRACE_GPU", "1", 1);
+#endif
+    auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --dump " + std::to_string(at(layout.firstTarget)) + ":" + std::to_string(DataBytes) + ":\"" + dump.string() + "\" > \"" + (capture / "replay.json").string() + "\" 2> \"" + log.string() + "\"";
+#ifdef _WIN32
+    command = "\"" + command + "\"";
+#endif
+    const auto code = std::system(command.c_str());
+    const auto logged = readFile(log);
+    const std::string text(reinterpret_cast<const char*>(logged.data()), logged.size());
+    const auto refusal = text.find("agc_frame_replay: ");
+    check(code == 0, "agc_frame_replay exited with " + std::to_string(code) + (refusal == std::string::npos ? std::string() : ": " + text.substr(refusal, text.find('\n', refusal) - refusal)));
+    check(readFile(dump) == stored, "the replay did not copy the page the title stored while the busy submission ran");
+    std::size_t ordered = 0;
+    for (auto found = text.find(" (cpu flip)"); found != std::string::npos; found = text.find(" (cpu flip)", found + 1)) ++ordered;
+    check(ordered == serialFlips, "the replay's CPU flips took " + std::to_string(ordered) + " serials, by the driver's accepted-serial trace, where the capture's took " + std::to_string(serialFlips) + ", so the replay did not start with an accepted serial as the capture's frame start did");
 }
 
 void testStoreIntoDeltaReadInFlight(const std::filesystem::path& tool) {
@@ -2116,9 +2210,9 @@ void testCarriedLabelKeepsSerial(const std::filesystem::path&) {
 int main(int argc, char** argv) {
     const std::string mode = argc == 3 ? argv[2] : "";
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
-        {"rewind_store", testStoreAfterGatedCopy}, {"store_idle", testStoreAfterGatedCopyIdle}, {"store_idle_rewind", testStoreAfterRewoundCopyIdle}, {"store_idle_unwatched", testUnwatchedStoreBeforeReservation}, {"store_second_wait", testStoreBeforeSecondWaitOnGate}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"gpu_store", testGpuStoreBehindRewind}, {"gpu_fill", testFillRewrittenByTitle}, {"gpu_restore_cached", testGpuFillRestoredToCachedValue}, {"unwatched_start", testInitiallyUnwatchedTitleStores}, {"unwatched_late", testLaterUnwatchedTitleStores}, {"unwatched_shared", testSharedTitleStores}, {"gpu_cleared", testFillClearedBeforeRange}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"allocation_ranges", testRegisteredRangeBoundaries}, {"in_flight_delta", testDeltaReadInFlight}, {"in_flight_store", testStoreIntoDeltaReadInFlight}, {"hold_diagnostics", testHoldDiagnostics}, {"late_store", testStoreAfterLastFrame}, {"wait_before_read", testWaitBeforeRead}, {"wait_after_read", testWaitAfterRead}, {"unwatched_in_flight", testUnwatchedLeftInFlight}, {"unwatched_restored", testUnwatchedRestoredInFlight}, {"host_page_restored", testHostPageRestoredInFlight}, {"in_flight_gate", testDeltaGatedOnStartedCopy}, {"wait64_after_read", testWait64AfterRead}, {"semaphore_after_read", testSemaphoreAfterRead}, {"rewind_after_read", testRewindAfterRead}, {"late_wait", testWaitAfterLastFrame}, {"wait_labelled_after", testWaitLabelledAfter}, {"wait_labelled_before", testWaitLabelledBefore}, {"wait_labelled_skipped", testWaitLabelledSkipped}, {"wait_labelled_elsewhere", testWaitLabelledElsewhere}, {"carried_label", testCarriedLabelKeepsSerial}, {"wait_labelled_rewind", testWaitLabelledRewind}, {"wait_labelled_rewind_chain", testWaitLabelledRewindChain}};
+        {"rewind_store", testStoreAfterGatedCopy}, {"store_idle", testStoreAfterGatedCopyIdle}, {"store_idle_rewind", testStoreAfterRewoundCopyIdle}, {"store_idle_unwatched", testUnwatchedStoreBeforeReservation}, {"store_second_wait", testStoreBeforeSecondWaitOnGate}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"gpu_store", testGpuStoreBehindRewind}, {"gpu_fill", testFillRewrittenByTitle}, {"gpu_restore_cached", testGpuFillRestoredToCachedValue}, {"unwatched_start", testInitiallyUnwatchedTitleStores}, {"unwatched_late", testLaterUnwatchedTitleStores}, {"unwatched_shared", testSharedTitleStores}, {"gpu_cleared", testFillClearedBeforeRange}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"allocation_ranges", testRegisteredRangeBoundaries}, {"in_flight_delta", testDeltaReadInFlight}, {"in_flight_store", testStoreIntoDeltaReadInFlight}, {"hold_diagnostics", testHoldDiagnostics}, {"late_store", testStoreAfterLastFrame}, {"wait_before_read", testWaitBeforeRead}, {"wait_after_read", testWaitAfterRead}, {"unwatched_in_flight", testUnwatchedLeftInFlight}, {"unwatched_restored", testUnwatchedRestoredInFlight}, {"host_page_restored", testHostPageRestoredInFlight}, {"in_flight_gate", testDeltaGatedOnStartedCopy}, {"wait64_after_read", testWait64AfterRead}, {"semaphore_after_read", testSemaphoreAfterRead}, {"rewind_after_read", testRewindAfterRead}, {"late_wait", testWaitAfterLastFrame}, {"wait_labelled_after", testWaitLabelledAfter}, {"wait_labelled_before", testWaitLabelledBefore}, {"wait_labelled_skipped", testWaitLabelledSkipped}, {"wait_labelled_elsewhere", testWaitLabelledElsewhere}, {"carried_label", testCarriedLabelKeepsSerial}, {"wait_labelled_rewind", testWaitLabelledRewind}, {"wait_labelled_rewind_chain", testWaitLabelledRewindChain}, {"flip_serial_start", testFlipSerialAtStart}};
     if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || rewound.contains(mode)))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|store_idle|store_idle_rewind|store_idle_unwatched|store_second_wait|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|gpu_store|gpu_fill|gpu_restore_cached|unwatched_start|unwatched_late|unwatched_shared|gpu_cleared|fence_reuse|busy_queue|allocation_ranges|in_flight_delta|in_flight_store|hold_diagnostics|late_store|wait_after_read|wait_before_read|unwatched_in_flight|unwatched_restored|host_page_restored|in_flight_gate|wait64_after_read|semaphore_after_read|rewind_after_read|late_wait|wait_labelled_after|wait_labelled_before|wait_labelled_skipped|wait_labelled_elsewhere|carried_label|wait_labelled_rewind|wait_labelled_rewind_chain]\n");
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|store_idle|store_idle_rewind|store_idle_unwatched|store_second_wait|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|gpu_store|gpu_fill|gpu_restore_cached|unwatched_start|unwatched_late|unwatched_shared|gpu_cleared|fence_reuse|busy_queue|allocation_ranges|in_flight_delta|in_flight_store|hold_diagnostics|late_store|wait_after_read|wait_before_read|unwatched_in_flight|unwatched_restored|host_page_restored|in_flight_gate|wait64_after_read|semaphore_after_read|rewind_after_read|late_wait|wait_labelled_after|wait_labelled_before|wait_labelled_skipped|wait_labelled_elsewhere|carried_label|wait_labelled_rewind|wait_labelled_rewind_chain|flip_serial_start]\n");
         return 2;
     }
     int status = 0;
