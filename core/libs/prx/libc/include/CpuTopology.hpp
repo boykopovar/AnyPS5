@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -143,6 +144,55 @@ inline std::optional<CoreReservation> ChooseReservedCore(const std::vector<CpuSe
     if (result.others.empty()) return std::nullopt;
     return result;
 }
+
+inline std::vector<std::uint32_t> PipelineCacheSet(const std::vector<CpuSet>& sets, const std::vector<CpuSet>& reserved) {
+    if (reserved.empty()) return {};
+    const auto& home = reserved.front();
+    bool split = false;
+    for (const auto& set : sets) split = split || set.group != home.group || set.lastLevelCache != home.lastLevelCache;
+    if (!split) return {};
+    std::vector<std::uint32_t> ids;
+    for (const auto& set : sets) {
+        bool held = false;
+        for (const auto& other : reserved) held = held || (other.group == set.group && other.core == set.core);
+        if (!held && set.group == home.group && set.lastLevelCache == home.lastLevelCache) ids.push_back(set.id);
+    }
+    return ids;
+}
+
+#ifdef __linux__
+inline std::optional<unsigned long> ReadSysfsNumber(const std::string& path) {
+    std::ifstream file(path);
+    unsigned long value = 0;
+    if (file >> value) return value;
+    return std::nullopt;
+}
+
+inline std::vector<CpuSet> SysfsCpuSets(const std::string& root, std::uint64_t process, std::uint64_t efficient) {
+    std::vector<CpuSet> sets;
+    std::vector<std::pair<unsigned long, unsigned long>> cores;
+    std::vector<unsigned long> caches;
+    const auto indexOf = [](auto& seen, const auto& key) {
+        std::size_t index = 0;
+        while (index < seen.size() && seen[index] != key) ++index;
+        if (index == seen.size()) seen.push_back(key);
+        return index;
+    };
+    for (unsigned cpu = 0; cpu < 64; ++cpu) {
+        if (((process >> cpu) & 1u) == 0) continue;
+        const auto base = root + "/cpu" + std::to_string(cpu);
+        const auto core = ReadSysfsNumber(base + "/topology/core_id");
+        const auto package = ReadSysfsNumber(base + "/topology/physical_package_id");
+        if (!core.has_value() || !package.has_value()) return {};
+        const auto coreIndex = indexOf(cores, std::pair{*package, *core});
+        const auto cacheIndex = indexOf(caches, ReadSysfsNumber(base + "/cache/index3/id").value_or(0));
+        if (coreIndex > 0xffu || cacheIndex > 0xffu) return {};
+        const bool efficientCore = ((efficient >> cpu) & 1u) != 0;
+        sets.push_back({cpu, 0, static_cast<std::uint8_t>(cpu), static_cast<std::uint8_t>(coreIndex), static_cast<std::uint8_t>(efficientCore ? 0u : 1u), static_cast<std::uint8_t>(cacheIndex), false});
+    }
+    return sets;
+}
+#endif
 
 inline const Layout& Get() {
     static const Layout layout = [] {

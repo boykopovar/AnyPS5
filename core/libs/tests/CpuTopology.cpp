@@ -129,6 +129,60 @@ static void ReservedCoreTests() {
     const auto requestedGroup = ChooseReservedCore(groupZeroFirst, {}, 3u);
     Require(requestedGroup.has_value() && requestedGroup->chosen.group == 0 && requestedGroup->chosen.logical == 3, "a requested logical processor is one of group 0");
 }
+static void WriteNumber(const std::filesystem::path& path, unsigned long value) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream(path, std::ios::trunc) << value << "\n";
+}
+
+static std::filesystem::path FakeSysfs(unsigned packages, unsigned cachesPerPackage, unsigned coresPerCache, bool smt) {
+    const auto root = std::filesystem::temp_directory_path() / ("anyps5_cpu_topology_sysfs-" + std::to_string(std::random_device{}()));
+    const unsigned cores = packages * cachesPerPackage * coresPerCache;
+    const unsigned logicals = smt ? cores * 2 : cores;
+    for (unsigned cpu = 0; cpu < logicals; ++cpu) {
+        const unsigned core = cpu % cores;
+        const auto base = root / ("cpu" + std::to_string(cpu));
+        WriteNumber(base / "topology" / "core_id", core % (cachesPerPackage * coresPerCache));
+        WriteNumber(base / "topology" / "physical_package_id", core / (cachesPerPackage * coresPerCache));
+        WriteNumber(base / "cache" / "index3" / "id", 100 + core / coresPerCache);
+    }
+    return root;
+}
+
+static void SysfsTests() {
+    const auto single = FakeSysfs(1, 1, 8, true);
+    const auto sets = CpuTopology::SysfsCpuSets(single.string(), 0xffffull, 0);
+    Require(sets.size() == 16, "every logical processor of the process is listed");
+    Require(sets[3].id == 3 && sets[3].logical == 3 && sets[3].core == 3 && sets[11].core == 3, "SMT siblings share a core");
+    Require(sets[0].lastLevelCache == 0 && sets[15].lastLevelCache == 0 && sets[0].efficiencyClass == 1, "one cache, one class");
+    const auto committer = CpuTopology::ChooseReservedCore(sets, {}, std::nullopt);
+    Require(committer.has_value() && committer->chosen.logical == 7 && committer->others.size() == 14, "the committer takes the highest core and leaves its sibling idle");
+    const auto finisher = CpuTopology::ChooseReservedCore(sets, {committer->chosen}, std::nullopt);
+    Require(finisher.has_value() && finisher->chosen.logical == 6 && finisher->others.size() == 12, "the finisher takes the next core");
+    Require(CpuTopology::PipelineCacheSet(sets, {committer->chosen, finisher->chosen}).empty(), "one last-level cache leaves the queue workers alone");
+    const auto masked = CpuTopology::SysfsCpuSets(single.string(), 0x7f7full, 0);
+    Require(masked.size() == 14 && masked.back().id == 14, "processors outside the process are left out");
+    const auto hybrid = CpuTopology::SysfsCpuSets(single.string(), 0xffffull, 0xf0f0ull);
+    Require(hybrid[4].efficiencyClass == 0 && hybrid[3].efficiencyClass == 1, "efficient processors get the lower class");
+    std::filesystem::remove(single / "cpu5" / "topology" / "core_id");
+    Require(CpuTopology::SysfsCpuSets(single.string(), 0xffffull, 0).empty(), "a processor without a core id lists nothing");
+    std::filesystem::remove_all(single);
+
+    const auto dual = FakeSysfs(1, 2, 8, true);
+    const auto dualSets = CpuTopology::SysfsCpuSets(dual.string(), 0xffffffffull, 0);
+    Require(dualSets.size() == 32 && dualSets[8].lastLevelCache == 1 && dualSets[16].lastLevelCache == 0, "two caches are told apart");
+    const auto first = CpuTopology::ChooseReservedCore(dualSets, {}, std::nullopt);
+    Require(first.has_value() && first->chosen.logical == 7 && first->chosen.lastLevelCache == 0, "two caches reserve in the cache of processor 0");
+    const auto second = CpuTopology::ChooseReservedCore(dualSets, {first->chosen}, std::nullopt);
+    Require(second.has_value() && second->chosen.logical == 6, "the finisher stays in the same cache");
+    const auto workers = CpuTopology::PipelineCacheSet(dualSets, {first->chosen, second->chosen});
+    Require(workers == std::vector<std::uint32_t>{0, 1, 2, 3, 4, 5, 16, 17, 18, 19, 20, 21}, "queue workers keep the other processors of the reserved cache");
+    std::filesystem::remove_all(dual);
+
+    const auto sockets = FakeSysfs(2, 1, 8, false);
+    const auto socketSets = CpuTopology::SysfsCpuSets(sockets.string(), 0xffffull, 0);
+    Require(socketSets[0].core != socketSets[8].core, "equal core ids in two packages are different cores");
+    std::filesystem::remove_all(sockets);
+}
 
 int main() {
     Require(Parse("0-15\n") == 0xffffull, "range");
@@ -165,6 +219,7 @@ int main() {
     }
 
     ReservedCoreTests();
+    SysfsTests();
 
     const auto& layout = CpuTopology::Get();
     Require(layout.process != 0, "process affinity read");
