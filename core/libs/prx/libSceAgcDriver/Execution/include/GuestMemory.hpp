@@ -113,6 +113,21 @@ bool WrittenSince(std::uint64_t address, std::size_t bytes, std::uint64_t genera
 bool UnchangedSinceAll(std::span<const UnchangedQuery> queries);
 std::uint64_t CollectCommittedWrites(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
 std::uint64_t WriteGeneration();
+inline constexpr std::uint64_t TitleCallStoreSerial = ~std::uint64_t{0};
+std::uint64_t CurrentStoreSerial();
+class StoreSerialScope {
+public:
+    explicit StoreSerialScope(std::uint64_t serial);
+    ~StoreSerialScope();
+    StoreSerialScope(const StoreSerialScope&) = delete;
+    StoreSerialScope& operator=(const StoreSerialScope&) = delete;
+
+private:
+    std::uint64_t previous;
+};
+using DriverStoreObserver = void (*)(std::uint64_t begin, std::uint64_t end, std::uint64_t serial);
+void SetDriverStoreObserver(DriverStoreObserver observer);
+bool DriverStoreObserved();
 std::uint64_t CollectWrittenBlocks(std::uint64_t address, std::size_t bytes, std::uint64_t since, std::vector<std::pair<std::uint64_t, std::uint64_t>>& written);
 bool UnchangedCommittedSince(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t generation);
 // Returns the generation the blocks were stamped with (0 when the arena is not write-watched):

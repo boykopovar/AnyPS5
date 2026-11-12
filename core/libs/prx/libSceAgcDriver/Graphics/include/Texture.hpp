@@ -807,6 +807,7 @@ private:
     std::vector<std::uint64_t> layerPendingSince;
     std::vector<std::uint64_t> completionKept;
     UnitFlags layerPending;
+    std::vector<std::uint64_t> unitWriters;
     std::vector<bool> layerBehind;
     bool blockUnits = false;
     // Write-back hysteresis (block units, see writeBack): partial stores in the current window of

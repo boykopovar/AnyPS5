@@ -123,6 +123,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 entry.address = label->address;
                 entry.size = bytes.size();
                 std::memcpy(entry.bytes.data(), bytes.data(), bytes.size());
+                entry.serial = GuestMemory::CurrentStoreSerial();
                 ++queuedLabels;
                 wroteOnGpu = true;
             } else {
