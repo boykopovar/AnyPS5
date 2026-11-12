@@ -428,6 +428,7 @@ void CheckBackups() {
     Check(sceSaveDataRestoreBackupData(nullptr) == SaveDataErrorParameter, "restoreBackupData null block is PARAMETER");
     Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorParameter, "restoreBackupData null dir_name is PARAMETER");
     Check(sceSaveDataUmountWithBackup(nullptr) == SaveDataErrorParameter, "umountWithBackup null point is PARAMETER");
+    Check(sceSaveDataUmountWithBackup(reinterpret_cast<const SaveDataMountPoint*>(0x10)) == SaveDataErrorParameter, "umountWithBackup unmapped point is PARAMETER");
     check.dir_name = &fresh;
     restore.dir_name = &fresh;
     Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotFound, "checkBackupData without a backup is NOT_FOUND");
