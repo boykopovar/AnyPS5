@@ -1,11 +1,13 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -25,8 +27,9 @@
 
 using Clock = std::chrono::steady_clock;
 
-static constexpr std::size_t CONTEXT_MEMORY = 0x10000;
-static constexpr std::uint32_t DEFAULT_MAX_PORTS = 16;
+static constexpr std::size_t CONTEXT_MEMORY_BASE = 61196;
+static constexpr std::size_t CONTEXT_MEMORY_PER_PORT = 2912;
+static constexpr std::uint32_t DEFAULT_MAX_PORTS = 8;
 // Pushes, polls and advances traced individually before the trace falls back to the per-second summary.
 static constexpr std::uint64_t CALL_TRACE_FULL = 16;
 // Grains the device waits for before it starts playing (and again whenever it ran dry), so the
@@ -35,6 +38,7 @@ static constexpr std::uint64_t CALL_TRACE_FULL = 16;
 static constexpr std::uint32_t CUSHION_MS = 40;
 // Grains the device has not played are not allowed to run further ahead than this; newer ones are dropped.
 static constexpr std::uint32_t MAX_QUEUED_MS = 250;
+static constexpr std::uint32_t MAX_GRAIN = AUDIO_OUT2_SAMPLE_RATE * MAX_QUEUED_MS / 1000;
 // A blocking push on a full queue gives up after this long.
 static constexpr std::chrono::milliseconds FULL_WAIT_TIMEOUT{200};
 static constexpr std::chrono::milliseconds FULL_WAIT_STEP{1};
@@ -70,6 +74,18 @@ AudioOut2Context* AudioOut2FindContext(AudioOut2ContextHandle ctx) {
     std::lock_guard lock(g_contextsLock);
     const auto found = g_contexts.find(reinterpret_cast<AudioOut2Context*>(ctx));
     return found == g_contexts.end() ? nullptr : *found;
+}
+
+void AudioOut2DestroyAllContexts() {
+    for (;;) {
+        AudioOut2ContextHandle handle = 0;
+        {
+            std::lock_guard lock(g_contextsLock);
+            if (g_contexts.empty()) return;
+            handle = reinterpret_cast<AudioOut2ContextHandle>(*g_contexts.begin());
+        }
+        sceAudioOut2ContextDestroy(handle);
+    }
 }
 
 static Clock::duration GrainDuration(const AudioOut2Context& context) {
@@ -336,23 +352,36 @@ int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle ctx) try {
 
 int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam* params, void* buffer, size_t buffer_size, AudioOut2ContextHandle* ctx) {
     if (!params || !ctx) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    AudioOut2ContextParam guestParams{};
+    if (!GuestCopyIn_nid_no_patch(&guestParams, params, sizeof(guestParams))) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    if (guestParams.num_grains > MAX_GRAIN) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     const float padSpeakerFallbackGain = AudioPadSpeakerFallbackGain();
-    auto* context = new AudioOut2Context();
+    const auto destroyUnpublished = [](AudioOut2Context* unpublished) {
+        CloseDevice(unpublished->device);
+        delete unpublished;
+    };
+    std::unique_ptr<AudioOut2Context, decltype(destroyUnpublished)> context(new AudioOut2Context(), destroyUnpublished);
     context->padSpeakerFallbackGain = padSpeakerFallbackGain;
-    context->grain = params->num_grains ? params->num_grains : AUDIO_OUT2_DEFAULT_GRAIN;
-    context->queueDepth = params->queue_depth ? params->queue_depth : 1;
+    context->grain = guestParams.num_grains ? guestParams.num_grains : AUDIO_OUT2_DEFAULT_GRAIN;
+    context->queueDepth = guestParams.queue_depth ? guestParams.queue_depth : 1;
     context->playHead = Clock::now();
     context->mix.assign(static_cast<std::size_t>(context->grain) * AUDIO_OUT2_OUTPUT_CHANNELS, 0.0f);
     AUDIOOUT2_TRACE("t=%.3f ContextCreate: max_ports=%u max_object_ports=%u guarantee_object_ports=%u queue_depth=%u num_grains=%u flags=0x%x buffer=%p size=%zu -> ctx %p: %u-sample grains (%.2f ms), %u queued, %u Hz stereo float output\n",
-        AudioOut2TraceSeconds(), params->max_ports, params->max_object_ports, params->guarantee_object_ports, params->queue_depth, params->num_grains, params->flags, buffer, buffer_size,
-        static_cast<void*>(context), context->grain, 1000.0 * context->grain / AUDIO_OUT2_SAMPLE_RATE, context->queueDepth, AUDIO_OUT2_SAMPLE_RATE);
+        AudioOut2TraceSeconds(), guestParams.max_ports, guestParams.max_object_ports, guestParams.guarantee_object_ports, guestParams.queue_depth, guestParams.num_grains, guestParams.flags, buffer, buffer_size,
+        static_cast<void*>(context.get()), context->grain, 1000.0 * context->grain / AUDIO_OUT2_SAMPLE_RATE, context->queueDepth, AUDIO_OUT2_SAMPLE_RATE);
     OpenDevice(*context);
     context->deviceBacked = context->device != 0;
     {
         std::lock_guard lock(g_contextsLock);
-        g_contexts.insert(context);
+        g_contexts.insert(context.get());
     }
-    *ctx = reinterpret_cast<AudioOut2ContextHandle>(context);
+    auto handle = reinterpret_cast<AudioOut2ContextHandle>(context.get());
+    if (!GuestCopyOut_nid_no_patch(ctx, &handle, sizeof(handle))) {
+        std::lock_guard lock(g_contextsLock);
+        g_contexts.erase(context.get());
+        return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    }
+    context.release();
     return 0;
 }
 
@@ -465,18 +494,25 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
 }
 
 int APS5_VABI sceAudioOut2ContextQueryMemory(const AudioOut2ContextParam* params, size_t* memory_size) {
-    if (!params || !memory_size) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
-    *memory_size = CONTEXT_MEMORY;
-    return 0;
+    if (!params) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    if (!memory_size) return static_cast<int>(0x80268001);
+    const std::size_t size = CONTEXT_MEMORY_BASE + CONTEXT_MEMORY_PER_PORT * params->max_ports;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(memory_size, &size, sizeof(size));
+    errno = savedErrno;
+    return copied ? 0 : SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam* params) {
     if (!params) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
-    std::memset(params, 0, sizeof(*params));
-    params->max_ports = DEFAULT_MAX_PORTS;
-    params->queue_depth = 1;
-    params->num_grains = AUDIO_OUT2_DEFAULT_GRAIN;
-    return 0;
+    AudioOut2ContextParam defaults{};
+    defaults.max_ports = DEFAULT_MAX_PORTS;
+    defaults.queue_depth = 1;
+    defaults.num_grains = AUDIO_OUT2_DEFAULT_GRAIN;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(params, &defaults, sizeof(defaults));
+    errno = savedErrno;
+    return copied ? 0 : SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceAudioOut2ContextSetAttributes(AudioOut2ContextHandle ctx, const AudioOut2Attribute* attributes, uint32_t num) {
@@ -486,6 +522,14 @@ int APS5_VABI sceAudioOut2ContextSetAttributes(AudioOut2ContextHandle ctx, const
     for (uint32_t index = 0; index < num; index++) {
         AUDIOOUT2_TRACE("t=%.3f ContextSetAttributes ctx %p: id=0x%x size=%zu value=%p (ignored)\n", AudioOut2TraceSeconds(), static_cast<void*>(context), attributes[index].attribute_id, attributes[index].value_size, attributes[index].value);
     }
+    return 0;
+}
+
+int APS5_VABI sceAudioOut2ContextBedWrite(AudioOut2ContextHandle ctx, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint32_t layout, uint8_t flag) {
+    constexpr int ErrorInvalidParam = static_cast<int>(0x80268001);
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)layout; (void)flag;
+    if (!AudioOut2FindContext(ctx)) return ErrorInvalidParam;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

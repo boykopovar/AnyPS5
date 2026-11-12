@@ -241,7 +241,15 @@ if(WIN32)
     target_include_directories(windows_dependency_diagnostics_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include)
     if(BUILD_TESTING)
         set_target_properties(windows_dependency_diagnostics_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
-        add_test(NAME windows_dependency_diagnostics COMMAND windows_dependency_diagnostics_tests)
+        foreach(diagnosticScenario IN ITEMS
+                runtime_dependencies missing_symbol_diamond ordinal_missing ordinal_present
+                forwarded_missing forwarded_present forward_cycle_capacity mutual_cycle_resolved
+                mutual_cycle_missing module_not_found apiset_module_not_found real_export_present
+                real_module_fake_export corrupted_import_table not_a_pe_garbage not_a_pe_elf_magic
+                missing_root root_is_directory nested_not_a_pe)
+            add_test(NAME windows_dependency_diagnostics_${diagnosticScenario}
+                COMMAND windows_dependency_diagnostics_tests ${diagnosticScenario})
+        endforeach()
     endif()
 
     if(NOT ANYPS5_RELINKER_ONLY)
@@ -787,6 +795,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_intel_trampolines.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_syscall_trap COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_syscall_trap.py $<TARGET_FILE:relinker>)
+        add_test(NAME code_analysis_address_data COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_code_analysis_address_data.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_tls COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_tls.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_tls_export_references COMMAND ${Python3_EXECUTABLE}
@@ -800,6 +810,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_module_directories.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_trailing_note COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_trailing_note.py $<TARGET_FILE:relinker>)
+        add_test(NAME guest_null_headers COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_null_headers.py $<TARGET_FILE:relinker>)
         add_test(NAME relinker_executables COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executables.py $<TARGET_FILE:relinker>)
         add_test(NAME game_patches COMMAND ${Python3_EXECUTABLE}
@@ -809,6 +821,12 @@ if(BUILD_TESTING)
         if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
             add_test(NAME patch_advisor_unit COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_SOURCE_DIR}/tools/tests/test_suggest_patches.py)
+            add_test(NAME patch_advisor_json_integration
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_patch_advisor_json_integration.py $<TARGET_FILE:relinker>)
+            set_tests_properties(patch_advisor_json_integration PROPERTIES TIMEOUT 20)
+            add_test(NAME patch_advisor_json COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/tools/tests/test_patch_advisor_json.py)
+            set_tests_properties(patch_advisor_json PROPERTIES TIMEOUT 20)
             add_test(NAME patch_advisor_integration COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_patch_advisor.py $<TARGET_FILE:relinker>)
             set_tests_properties(patch_advisor_integration PROPERTIES TIMEOUT 40)
@@ -875,6 +893,9 @@ if(BUILD_TESTING)
         add_test(NAME guest_export_lookup COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_export_lookup.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_export_lookup PROPERTIES TIMEOUT 30)
+        add_test(NAME guest_load_start_module_defer COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_load_start_module_defer.py $<TARGET_FILE:relinker>)
+        set_tests_properties(guest_load_start_module_defer PROPERTIES TIMEOUT 60)
         add_test(NAME guest_zero_finalizer COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_zero_finalizer.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host> ${CMAKE_CXX_COMPILER})
@@ -1017,7 +1038,7 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_copy_relocations.py $<TARGET_FILE:relinker>)
         if(WIN32)
             add_test(NAME windows_diagnostic_fixture_isolation COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/test_windows_diagnostic_fixture_isolation.py $<TARGET_FILE:windows_dependency_diagnostics_tests>)
+                ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/test_windows_diagnostic_fixture_isolation.py $<TARGET_FILE:windows_dependency_diagnostics_tests> missing_root)
             set_tests_properties(windows_diagnostic_fixture_isolation PROPERTIES TIMEOUT 30)
         endif()
         add_test(NAME entry_point_bounds COMMAND ${Python3_EXECUTABLE}
@@ -1060,6 +1081,21 @@ if(BUILD_TESTING)
     )
     add_test(NAME unwind_record_bounds COMMAND unwind_record_bounds_tests)
     set_tests_properties(unwind_record_bounds PROPERTIES TIMEOUT 20)
+
+    add_test_executable(leb128_bounds_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/Leb128BoundsTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/EhFrameReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
+    )
+    target_include_directories(leb128_bounds_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+    )
+    add_test(NAME leb128_bounds COMMAND leb128_bounds_tests)
+    set_tests_properties(leb128_bounds PROPERTIES TIMEOUT 20)
 
     add_test_executable(windows_icon_resource_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/WindowsIconResourceTests.cpp
@@ -1175,6 +1211,10 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     add_test(NAME macos_guest_weak_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_weak_imports.py $<TARGET_FILE:relinker>)
     set_property(TEST macos_guest_weak_imports APPEND PROPERTY LABELS relinker)
+    if(APPLE)
+        set_tests_properties(macos_trace_imports macos_guest_weak_exports macos_executable_exports macos_guest_weak_imports
+            PROPERTIES RUN_SERIAL TRUE)
+    endif()
 endif()
 
 if(BUILD_TESTING)

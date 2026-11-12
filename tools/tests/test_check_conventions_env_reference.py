@@ -129,6 +129,18 @@ class EnvReferenceDiffTests(unittest.TestCase):
         self.assertEqual(self.run_case(base, head), [("env-reference", DOC, 0,
                                                     "APS5_DOCUMENTED is still read by the code but this pull request removes its row")])
 
+    def test_a_new_mebibyte_read_is_reported_at_its_line(self):
+        base = {DOC: DOC_TEXT, SAMPLE: "int unrelated;\n"}
+        head = {SAMPLE: base[SAMPLE] + 'auto bytes = MebibytesFromEnvironment("APS5_NEW_READ", 64);\n'}
+        self.assertEqual(self.run_case(base, head), [("env-reference", SAMPLE, 2,
+                                                    f"APS5_NEW_READ is read here but has no row in {DOC}")])
+
+    def test_a_removed_row_is_reported_when_a_mebibyte_read_remains(self):
+        base = {DOC: DOC_TEXT, SAMPLE: 'auto bytes = MebibytesFromEnvironment("APS5_DOCUMENTED", 64);\n'}
+        head = {DOC: "| `APS5_GONE` | presence |\n"}
+        self.assertEqual(self.run_case(base, head), [("env-reference", DOC, 0,
+                                                    "APS5_DOCUMENTED is still read by the code but this pull request removes its row")])
+
     def test_only_a_name_the_pull_request_adds_is_reported_at_its_line(self):
         base = {
             DOC: DOC_TEXT,

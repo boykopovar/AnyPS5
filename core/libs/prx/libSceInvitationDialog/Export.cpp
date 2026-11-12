@@ -1,9 +1,12 @@
 #include "prx/libSceInvitationDialog/include/Api.hpp"
+#include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceCommonDialog/include/DialogUse.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
+#include <cerrno>
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <iterator>
 #include <mutex>
@@ -12,15 +15,7 @@
 
 namespace {
 
-constexpr int COMMON_DIALOG_STATUS_NONE = 0;
-constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
-constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
-constexpr int COMMON_DIALOG_ERROR_NOT_SYSTEM_INITIALIZED = static_cast<int>(0x80B80001u);
-constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
 constexpr int COMMON_DIALOG_ERROR_BUSY = static_cast<int>(0x80B80008u);
-constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
-constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
-constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 
 constexpr std::int32_t INVITATION_DIALOG_MODE_SEND = 1;
 constexpr std::int32_t INVITATION_DIALOG_MODE_RECV = 2;
@@ -78,13 +73,18 @@ int APS5_VABI sceInvitationDialogOpen(const InvitationDialogParam* param) {
         Unsettled(__func__, "status " + std::to_string(dialog.status) + " is neither INITIALIZED nor FINISHED, and the error for it is unsettled");
     }
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    if (param->size != sizeof(InvitationDialogParam)) {
-        Unsettled(__func__, "param size " + std::to_string(param->size) + " is not the " + std::to_string(sizeof(InvitationDialogParam)) + "-byte layout this library reads");
+    InvitationDialogParam localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (localParam.size != sizeof(InvitationDialogParam)) {
+        Unsettled(__func__, "param size " + std::to_string(localParam.size) + " is not the " + std::to_string(sizeof(InvitationDialogParam)) + "-byte layout this library reads");
     }
-    if (param->mode != INVITATION_DIALOG_MODE_SEND && param->mode != INVITATION_DIALOG_MODE_RECV) {
-        Unsettled(__func__, "mode " + std::to_string(param->mode) + " is neither SEND nor RECV, and the error for it is unsettled");
+    if (localParam.mode != INVITATION_DIALOG_MODE_SEND && localParam.mode != INVITATION_DIALOG_MODE_RECV) {
+        Unsettled(__func__, "mode " + std::to_string(localParam.mode) + " is neither SEND nor RECV, and the error for it is unsettled");
     }
-    dialog.callbackArg = param->callbackArg;
+    dialog.callbackArg = localParam.callbackArg;
     dialog.status = COMMON_DIALOG_STATUS_FINISHED;
     PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
     return COMMON_DIALOG_OK;
@@ -103,13 +103,33 @@ int APS5_VABI sceInvitationDialogGetResult(InvitationDialogResult* result) {
     if (dialog.status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (dialog.status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    if (std::any_of(std::begin(result->reserved), std::end(result->reserved), [](std::uint8_t value) { return value != 0; })) {
+    InvitationDialogResult localResult{};
+    const int savedErrnoIn = errno;
+    const bool inCopied = GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult));
+    errno = savedErrnoIn;
+    if (!inCopied) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (std::any_of(std::begin(localResult.reserved), std::end(localResult.reserved), [](std::uint8_t value) { return value != 0; })) {
         Unsettled(__func__, "the module checks the reserved bytes 0x18..0x37 of the result, and the error for a non-zero one is unsettled");
     }
-    result->callbackArg = dialog.callbackArg;
-    result->errorCode = COMMON_DIALOG_OK;
-    result->result = COMMON_DIALOG_RESULT_USER_CANCELED;
-    if (result->recipients != nullptr) result->recipients->count = 0;
+    localResult.callbackArg = dialog.callbackArg;
+    localResult.errorCode = COMMON_DIALOG_OK;
+    localResult.result = COMMON_DIALOG_RESULT_USER_CANCELED;
+    if (localResult.recipients != nullptr) {
+        InvitationDialogRecipients recipients{};
+        const int savedErrnoRecv = errno;
+        const bool recvInCopied = GuestCopyIn_nid_no_patch(&recipients, localResult.recipients, sizeof(recipients));
+        errno = savedErrnoRecv;
+        if (!recvInCopied) return COMMON_DIALOG_ERROR_ARG_NULL;
+        recipients.count = 0;
+        const int savedErrnoRecvOut = errno;
+        const bool recvOutCopied = GuestCopyOut_nid_no_patch(localResult.recipients, &recipients, sizeof(recipients));
+        errno = savedErrnoRecvOut;
+        if (!recvOutCopied) return COMMON_DIALOG_ERROR_ARG_NULL;
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
     return COMMON_DIALOG_OK;
 }
 

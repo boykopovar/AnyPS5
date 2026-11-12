@@ -1,6 +1,7 @@
 #include "prx/libSceKeyboard/include/KeyboardState.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 
 #include <algorithm>
 #include <array>
@@ -24,6 +25,12 @@ constexpr char US_SHIFTED[] = "!@#$%^&*()\n\0\b\t _+{}||:\"~<>?";
 constexpr char JIS_NORMAL[] = "1234567890\n\0\b\t -^@[]];:\0,./";
 constexpr char JIS_SHIFTED[] = "!\"#$%&'()\0\n\0\b\t =~`{}}+*\0<>?";
 constexpr char KEYPAD_DIGITS[] = "1234567890.";
+
+bool registered(int userId) {
+    UserServiceRegisteredUserIdList users{};
+    return sceUserServiceGetRegisteredUserIdList(&users) == USER_SERVICE_OK &&
+        std::find(std::begin(users.user_id), std::end(users.user_id), userId) != std::end(users.user_id);
+}
 
 KeyboardData snapshot() {
     KeyboardData data{};
@@ -115,7 +122,10 @@ int Initialize() {
 int Open(int userId, std::int32_t type, std::int32_t index) {
     std::lock_guard lock(keyboardMutex);
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
-    if (userId < 0 || type != 0 || index != 0) return KEYBOARD_ERROR_INVALID_ARG;
+    if (type != 0 || index != 0) return KEYBOARD_ERROR_INVALID_ARG;
+    if (userId == USER_SERVICE_USER_ID_INVALID) return KEYBOARD_ERROR_INVALID_USER_ID;
+    if (userId < 0) return KEYBOARD_ERROR_INVALID_ARG;
+    if (!registered(userId)) return KEYBOARD_ERROR_UNKNOWN_USER;
     if (opened) return KEYBOARD_ERROR_ALREADY_OPENED;
     opened = true;
     clearKeys();

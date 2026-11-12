@@ -29,6 +29,9 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <SDL.h>
+#endif
 
 #undef main
 
@@ -430,7 +433,11 @@ void testUnregisteredBuffer() {
     VideoOutBuffers buffer{storage.data(), nullptr, {nullptr, nullptr}};
     VideoOutBufferAttribute2 attribute{};
     sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 64, 64, 0, 0, 0);
+    check(sceVideoOutRegisterBuffers2(-1, 0, 0, &buffer, 1, &attribute, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "registration on an invalid handle was accepted");
     check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffer registration failed");
+    check(sceVideoOutUnregisterBuffers(-1, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "unregistration on an invalid handle was accepted");
+    check(sceVideoOutUnregisterBuffers(handle, -1) == VIDEO_OUT_ERROR_INVALID_VALUE, "a negative set was unregistered");
+    check(sceVideoOutUnregisterBuffers(handle, 1) == VIDEO_OUT_ERROR_INVALID_VALUE, "an unused set was unregistered");
     check(sceVideoOutUnregisterBuffers(handle, 0) == 0, "buffer unregistration failed");
     std::array<uint32_t, 6> flip{0xc004105c, static_cast<uint32_t>(handle), 0, 1, 7, 0};
     Packet flipPacket{flip.data(), 6, 0, {}};
@@ -585,12 +592,16 @@ void testControls() {
     check(sceVideoOutIsOutputSupported(handle, 0xd000000aull, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE, "unknown output mode is supported");
     check(sceVideoOutConfigureOutput(handle, 0xd000000aull, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE, "unknown output mode was configured");
     check(sceVideoOutConfigureOutput(handle, VIDEO_OUT_OUTPUT_MODE_DEFAULT, nullptr, nullptr, 0) == 0, "default output mode was rejected");
-    for (int rate = 0; rate <= 2; ++rate) {
+    for (int rate = 0; rate <= 3; ++rate) {
         check(sceVideoOutSetFlipRate(handle, rate) == 0 && cfg->flipRate == rate, "flip rate was not applied");
     }
-    for (const int rate : {3, 60, -1}) {
-        check(sceVideoOutSetFlipRate(handle, rate) == VIDEO_OUT_ERROR_INVALID_VALUE, "flip rate outside 0..2 was accepted");
-        check(cfg->flipRate == 2, "a rejected flip rate changed the stored rate");
+    for (const int rate : {30, 60, -1, std::numeric_limits<int>::max()}) {
+        check(sceVideoOutSetFlipRate(handle, rate) == VIDEO_OUT_ERROR_INVALID_VALUE, "flip rate outside 0..3 was accepted");
+        check(cfg->flipRate == 3, "a rejected flip rate changed the stored rate");
+    }
+    check(sceVideoOutSetFlipRate(handle, 2) == 0 && cfg->flipRate == 2, "flip rate was not restored");
+    for (const int unopened : {-1, 99}) {
+        check(sceVideoOutSetFlipRate(unopened, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip rate on an invalid handle was not refused");
     }
     VideoOutColorSettings settings{};
     expectFailure([&] { sceVideoOutColorSettingsSetGamma(&settings, std::numeric_limits<float>::quiet_NaN()); });
@@ -692,6 +703,7 @@ void testControls() {
     sceVideoOutClose(handle);
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 0); });
     expectFailure([&] { sceVideoOutVrrUnpegFromFixedRate(handle); });
+    check(sceVideoOutSetFlipRate(handle, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip rate on a closed handle was not refused");
     check(owner->GetTriggeredEvents(&event, 1) == 0, "closed port retained pending events");
     check(sceKernelDeleteEqueue(queue) == 0, "event queue deletion failed");
     LibcRunShutdown_nid_postfix();
@@ -1440,6 +1452,21 @@ extern "C" [[noreturn]] void Aps5StartGuest_nid_no_patch(void (*entry)(void*, vo
 
 int runTests(int argc, char** argv) {
     VideoOutTestEnvironment environment;
+#ifdef _WIN32
+    const bool wantsDisplay = !(argc == 2 && std::string(argv[1]) == "unavailable");
+    if (wantsDisplay && std::getenv("ANYPS5_REQUIRE_DISPLAY") == nullptr) {
+        if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+            std::printf("skipped, no display or Vulkan device: SDL video driver: %s\n", SDL_GetError());
+            return 77;
+        }
+        SDL_Window* probe = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 64, 64, SDL_WINDOW_VULKAN);
+        if (probe == nullptr) {
+            std::printf("skipped, no display or Vulkan device: %s\n", SDL_GetError());
+            return 77;
+        }
+        SDL_DestroyWindow(probe);
+    }
+#endif
     try {
         if (argc == 2 && std::string(argv[1]) == "decode") testDecode();
         else if (argc == 2 && std::string(argv[1]) == "controls") testControls();
@@ -1474,7 +1501,9 @@ int runTests(int argc, char** argv) {
         try { LibcRunShutdown_nid_postfix(); }
         catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
         const std::string what = error.what();
-        const bool noVulkanWindow = what.find("Vulkan support") != std::string::npos || (what.starts_with("DisplayWindow: ") && what.find("Vulkan") != std::string::npos);
+        const bool noVulkanDevice = dynamic_cast<const AgcDriver::VulkanUnavailable*>(&error) != nullptr ||
+            what.rfind("Vulkan: no Vulkan 1.1", 0) == 0 || what.rfind("Vulkan loader: ", 0) == 0;
+        const bool noVulkanWindow = noVulkanDevice || what.find("Vulkan support") != std::string::npos || (what.starts_with("DisplayWindow: ") && what.find("Vulkan") != std::string::npos);
         if (noVulkanWindow && !std::getenv("ANYPS5_REQUIRE_DISPLAY")) {
             std::printf("skipped, no display or Vulkan device: %s\n", error.what());
             return 77;

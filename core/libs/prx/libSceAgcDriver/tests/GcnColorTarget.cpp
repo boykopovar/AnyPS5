@@ -58,8 +58,18 @@ std::byte* LowMemory(std::size_t bytes) {
     auto* block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
     if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
     return block;
+#elif defined(__APPLE__)
+    constexpr std::uint32_t ReadWriteProtection = 0x04;
+    auto* block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
+    if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, bytes, ReadWriteProtection, bytes);
+    return block;
 #else
-    for (std::uintptr_t hint = std::uintptr_t{1} << 32u; hint < (std::uintptr_t{1} << 40u); hint += std::uintptr_t{1} << 32u) {
+#ifdef ANYPS5_ENABLE_ASAN
+    constexpr std::uintptr_t FirstHint = 0x60000000;
+#else
+    constexpr std::uintptr_t FirstHint = std::uintptr_t{1} << 32u;
+#endif
+    for (std::uintptr_t hint = FirstHint; hint < (std::uintptr_t{1} << 40u); hint += std::uintptr_t{1} << 32u) {
         void* mapped = mmap(reinterpret_cast<void*>(hint), bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
         if (mapped != MAP_FAILED) return static_cast<std::byte*>(mapped);
     }
