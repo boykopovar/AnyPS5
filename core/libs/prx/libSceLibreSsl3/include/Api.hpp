@@ -308,7 +308,7 @@ std::int64_t APS5_VABI SSL_SESSION_set_time_nid_postfix(void* session, std::int6
 std::uint64_t APS5_VABI SSL_SESSION_get_master_key_nid_postfix(const void* session, unsigned char* out, std::uint64_t outLength);
 int APS5_VABI SSL_do_handshake_nid_postfix();
 const char* APS5_VABI SSL_get_version_nid_postfix(const LibreSsl3Ssl* ssl);
-void APS5_VABI SSL_set_accept_state_nid_postfix(LibreSsl3Ssl* ssl);
+
 int APS5_VABI SSL_set_alpn_protos_nid_postfix();
 int APS5_VABI SSL_set_info_callback_nid_postfix();
 const LibreSsl3SslMethod* APS5_VABI TLS_method_nid_postfix();

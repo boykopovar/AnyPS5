@@ -249,6 +249,44 @@ static void TestSetConnectState() {
     Require(connection.ssl.server == 1);
 }
 
+static void TestSetAcceptState() {
+    int accept = 0;
+    int connect = 0;
+    TestMethodInternal methodInternal {};
+    TestMethod method {};
+    Fill(methodInternal, 0x30);
+    methodInternal.accept = &accept;
+    methodInternal.connect = &connect;
+    method.internal = &methodInternal;
+    Connection connection;
+    connection.ssl.method = &method;
+    connection.ssl.server = 0;
+    connection.internal.shutdown = 3;
+    connection.internal.state = 0x1234;
+    Connection expected = connection;
+    RequireThrows([] { SSL_set_accept_state_nid_postfix(nullptr); });
+    SSL_set_accept_state_nid_postfix(connection.Ssl());
+    expected.ssl.server = 1;
+    expected.internal.shutdown = 0;
+    expected.internal.state = 0x6000;
+    expected.internal.handshakeFunc = &accept;
+    Require(Same(connection.ssl, expected.ssl) && Same(connection.internal, expected.internal));
+    methodInternal.accept = nullptr;
+    connection.internal.handshakeFunc = &connect;
+    SSL_set_accept_state_nid_postfix(connection.Ssl());
+    Require(connection.internal.handshakeFunc == nullptr);
+    connection.ssl.server = 0;
+    method.internal = nullptr;
+    RequireThrows([&] { SSL_set_accept_state_nid_postfix(connection.Ssl()); });
+    connection.ssl.method = nullptr;
+    RequireThrows([&] { SSL_set_accept_state_nid_postfix(connection.Ssl()); });
+    connection.ssl.method = &method;
+    method.internal = &methodInternal;
+    connection.ssl.internal = nullptr;
+    RequireThrows([&] { SSL_set_accept_state_nid_postfix(connection.Ssl()); });
+    Require(connection.ssl.server == 0);
+}
+
 static void TestControlReadAhead() {
     Connection connection;
     Connection expected = connection;
@@ -415,6 +453,7 @@ int main() {
     TestSetVerify();
     TestGetAlpnSelected();
     TestSetConnectState();
+    TestSetAcceptState();
     TestControlReadAhead();
     TestControlMessageCallbackArgument();
     TestControlOptionsAndMode();

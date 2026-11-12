@@ -82,7 +82,8 @@ struct Dtls1State {
 
 struct SslMethodInternal {
     int version;
-    unsigned char beforeConnect[36];
+    unsigned char beforeAccept[28];
+    void* accept;
     void* connect;
     unsigned char rest[112];
 };
@@ -100,6 +101,7 @@ static_assert(sizeof(Ssl3State) == 144);
 static_assert(offsetof(Dtls1StateInternal, mtu) == 636);
 static_assert(sizeof(Dtls1State) == 40);
 static_assert(sizeof(SslMethodInternal) == 160);
+static_assert(offsetof(SslMethodInternal, accept) == 32);
 static_assert(offsetof(SslMethodInternal, connect) == 40);
 static_assert(sizeof(SslMethod) == 48);
 
@@ -117,6 +119,7 @@ constexpr int ControlClearOptions = 77;
 constexpr int ControlClearMode = 78;
 constexpr int Dtls1Version = 0xFEFF;
 constexpr int StateConnectBefore = 0x5000;
+constexpr int StateAcceptBefore = 0x6000;
 constexpr std::int64_t DtlsMinimumMtu = 228;
 constexpr std::int64_t MinimumSendFragment = 512;
 constexpr std::int64_t MaximumPlainLength = 16384;
@@ -251,6 +254,18 @@ void APS5_VABI SSL_set_connect_state_nid_postfix(LibreSslSsl* ssl) {
     internal.shutdown = 0;
     internal.state = StateConnectBefore;
     internal.handshakeFunc = method.connect;
+}
+
+void APS5_VABI SSL_set_accept_state_nid_postfix(LibreSslSsl* ssl) {
+    LibreSslSsl& connection = Connection(ssl, __func__);
+    LibreSslSslInternal& internal = Internal(ssl, __func__);
+    const SslMethodInternal& method = Method(connection, __func__);
+    if (connection.encReadCtx || connection.readHash || internal.encWriteCtx || internal.aeadReadCtx || internal.aeadWriteCtx || internal.writeHash)
+        NotImplemented_nid_no_patch("SSL_set_accept_state: freeing a live cipher or hash context");
+    connection.server = 1;
+    internal.shutdown = 0;
+    internal.state = StateAcceptBefore;
+    internal.handshakeFunc = method.accept;
 }
 
 std::int64_t APS5_VABI SSL_ctrl_nid_postfix(LibreSslSsl* ssl, int command, std::int64_t argument, void* pointer) {

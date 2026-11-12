@@ -91,6 +91,9 @@ __asm__(APS5_ASM_FUNCTION("libreSsl3Forward_X509_INFO_free_nid_no_patch") "jmp *
 APS5_EXPORT("5+U+mGZV+SM", libreSsl3Forward_X509_INFO_free_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("libreSsl3Forward_RAND_load_file_nid_no_patch") "jmp *__imp_RAND_load_file_nid_postfix(%rip)\n");
+__asm__(APS5_ASM_FUNCTION("libreSsl3Forward_SSL_set_accept_state_nid_no_patch") "jmp *__imp_SSL_set_accept_state_nid_postfix(%rip)\n");
+APS5_EXPORT("5BoCLZK9mGk", libreSsl3Forward_SSL_set_accept_state_nid_no_patch);
+
 APS5_EXPORT("5KUuEEmBTpo", libreSsl3Forward_RAND_load_file_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("libreSsl3Forward_EVP_MD_size_nid_no_patch") "jmp *__imp_EVP_MD_size_nid_postfix(%rip)\n");
