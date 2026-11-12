@@ -7,6 +7,7 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <atomic>
 #include <array>
 #include <cstring>
@@ -405,13 +406,20 @@ int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* user_
  if (user_id_list == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
+ UserServiceLoginUserIdList localList{};
  std::lock_guard lock(userMutex);
  for (int i = 0; i < 4; ++i) {
   if (i < USER_SERVICE_MAX_USERS && userConnected[i]) {
-   user_id_list->user_id[i] = USER_SERVICE_INITIAL_USER_ID + i;
+   localList.user_id[i] = USER_SERVICE_INITIAL_USER_ID + i;
   } else {
-   user_id_list->user_id[i] = USER_SERVICE_USER_ID_INVALID;
+   localList.user_id[i] = USER_SERVICE_USER_ID_INVALID;
   }
+ }
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(user_id_list, &localList, sizeof(localList));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
  return USER_SERVICE_OK;
 }
