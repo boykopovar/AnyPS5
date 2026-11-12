@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceBgft/include/InventoryExports.hpp"
 #include "prx/libSceBgft/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -147,7 +148,12 @@ int APS5_VABI sceBgftServiceIntDownloadUnregisterTask(int32_t taskId) {
 int APS5_VABI sceBgftServiceIntInit(const BgftInitParam* params) {
     if (g_initialized) return SCE_BGFT_ERROR_ALREADY_INITIALIZED;
     if (params == nullptr) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
-    if (params->heapSize == 0) NotImplemented_nid_no_patch(__func__);
+    BgftInitParam localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, params, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
+    if (localParam.heapSize == 0) NotImplemented_nid_no_patch(__func__);
     g_initialized = true;
     return 0;
 }

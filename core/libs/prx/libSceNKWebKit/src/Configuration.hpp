@@ -34,11 +34,13 @@ public:
     std::optional<std::u16string> injectedBundlePath;
     std::optional<std::u16string> webProcessPath;
     std::optional<std::u16string> networkProcessPath;
+    std::optional<std::u16string> cookieStoragePath;
     std::int32_t userId = -1;
     bool fullySynchronousModeIsAllowedForTesting = false;
     bool ignoreSynchronousMessagingTimeoutsForTesting = false;
     std::optional<bool> processSwapsOnNavigationFromClient;
     bool processSwapsOnNavigationFromExperimentalFeatures = false;
+    bool processSwapsOnWindowOpenWithOpener = false;
     bool alwaysKeepAndReuseSwappedProcesses = false;
     std::optional<bool> isAutomaticProcessWarmingEnabledByClient;
     bool clientWouldBenefitFromAutomaticProcessPrewarming = false;
