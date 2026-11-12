@@ -40,7 +40,7 @@ static std::filesystem::path FollowedPath(const std::filesystem::path& path) {
 }
 #endif
 
-extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
+extern "C" int GuestAccess_nid_no_patch(const char* path, int mode) {
     if (mode < 0 || (mode & ~7)) { errno = 22; return -1; }
     if (!path) { errno = 14; return -1; }
     std::string copy;
@@ -102,6 +102,10 @@ extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
       catch (const std::filesystem::filesystem_error& error) {
         errno = FilesystemError(error.code()); return -1;
     }
+}
+
+extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
+    return GuestAccess_nid_no_patch(path, mode);
 }
 
 extern "C" bool ExecutePermission_nid_no_patch(const std::filesystem::path& native) {

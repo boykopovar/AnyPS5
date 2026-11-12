@@ -28,10 +28,6 @@
 
 extern "C" {
 
-[[noreturn]] void APS5_VABI __stack_chk_fail_nid_postfix();
-
-
-
 int APS5_VABI __Ux86_64_setcontext_nid_no_patch(void) {
     return __Ux86_64_setcontext();
 }
@@ -41,7 +37,7 @@ int APS5_VABI __elf_phdr_match_addr_nid_no_patch(dl_phdr_info* phdrInfo, void* a
 }
 
 int* APS5_VABI __error_nid_no_patch(void) {
-    return __error_nid_postfix();
+    return GuestError_nid_no_patch();
 }
 
 const char* APS5_VABI __inet_ntop_nid_no_patch(int family, const void* source, char* destination, std::uint32_t capacity) {
@@ -65,7 +61,7 @@ void APS5_VABI __pthread_cxa_finalize_nid_no_patch(void* argument) {
 }
 
 [[noreturn]] void APS5_VABI __stack_chk_fail_nid_no_patch(void) {
-    __stack_chk_fail_nid_postfix();
+    GuestStackChkFail_nid_no_patch();
 }
 
 int APS5_VABI __sys_socketex_nid_no_patch(const char* name, int family, int type, int protocol) {
@@ -225,7 +221,7 @@ int APS5_VABI accept_nid_no_patch(int descriptor, void* address, std::uint32_t* 
 }
 
 int APS5_VABI access_nid_no_patch(const char* path, int mode) {
-    return access_nid_postfix(path, mode);
+    return GuestAccess_nid_no_patch(path, mode);
 }
 
 int APS5_VABI bind_nid_no_patch(int descriptor, const void* address, std::uint32_t length) {
@@ -237,7 +233,7 @@ int APS5_VABI cfsetspeed_nid_no_patch(void* attributes, std::uint32_t speed) {
 }
 
 int APS5_VABI chdir_nid_no_patch(const char* path) {
-    return chdir_nid_postfix(path);
+    return GuestChdir_nid_no_patch(path);
 }
 
 int APS5_VABI chflags_nid_no_patch(const char* path, std::uint64_t flags) {
@@ -2898,13 +2894,11 @@ int64_t APS5_VABI fstat_nid_no_patch(int d, FileStat* sb) {
 
 #if defined(__ELF__)
 __asm__(".hidden __elf_phdr_match_addr_nid_postfix");
-__asm__(".hidden __error_nid_postfix");
 __asm__(".hidden __inet_ntop_nid_postfix");
 __asm__(".hidden __inet_pton_nid_postfix");
 __asm__(".hidden __pthread_cleanup_pop_imp_nid_postfix");
 __asm__(".hidden __pthread_cleanup_push_imp_nid_postfix");
 __asm__(".hidden __pthread_cxa_finalize_nid_postfix");
-__asm__(".hidden __stack_chk_fail_nid_postfix");
 __asm__(".hidden __sys_socketex_nid_postfix");
 __asm__(".hidden __tls_get_addr_nid_postfix");
 __asm__(".hidden _accept_nid_postfix");
@@ -2944,10 +2938,8 @@ __asm__(".hidden _umtx_op_nid_postfix");
 __asm__(".hidden _write_nid_postfix");
 __asm__(".hidden _writev_nid_postfix");
 __asm__(".hidden accept_nid_postfix");
-__asm__(".hidden access_nid_postfix");
 __asm__(".hidden bind_nid_postfix");
 __asm__(".hidden cfsetspeed_nid_postfix");
-__asm__(".hidden chdir_nid_postfix");
 __asm__(".hidden chflags_nid_postfix");
 __asm__(".hidden chmod_nid_postfix");
 __asm__(".hidden clock_getres_nid_postfix");
