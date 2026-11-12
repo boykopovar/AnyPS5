@@ -27,7 +27,7 @@ const char* Usage() {
            "  --rpath <path>                 System library search path. Default: $ORIGIN/libs.\n"
            "  --omit-unavailable-dependencies Linux: leave out a module dependency that no module provides, no import uses\n"
            "                                 and no run path directory holds at conversion time.\n"
-           "  --registry                     Write <output-stem>.registry.json beside the output.\n"
+           "  --registry                     Write the registry, needed-library and hook-table JSON files beside the output.\n"
            "  --autorun                      Run the output after conversion and print its exit code.\n"
            "  --dry-run                      Convert in memory and list planned outputs without writing them.\n"
            "\n"

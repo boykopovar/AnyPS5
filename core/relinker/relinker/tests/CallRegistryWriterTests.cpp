@@ -4,6 +4,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -67,6 +68,70 @@ void RegistryOffsets() {
         Require(writer.WriteNeededLibraries({entry.Library}) == libraries, "needed libraries depend on the host locale");
         Require(std::use_facet<std::numpunct<char>>(std::locale()).thousands_sep() == separator, "registry writer changed the global locale");
     }
+}
+
+void HookTable() {
+    Relinker::CallRegistryWriter writer;
+    Relinker::CallRegistryEntry first{};
+    first.Nid = "bNid";
+    first.Library = "a.prx";
+    first.TargetOffset = 0x20;
+    first.CallSites = {0x300, 0x100};
+    first.CallSitesResolved = true;
+    Relinker::CallRegistryEntry second = first;
+    second.TargetOffset = 0x10;
+    second.CallSites = {0x100, 0x200};
+    second.CallSitesResolved = false;
+    second.Weak = true;
+    Relinker::CallRegistryEntry other{};
+    other.Nid = "aNid";
+    other.Library = "a.prx";
+    other.TargetOffset = 0x30;
+    other.CallSitesResolved = true;
+    std::string table;
+    {
+        const ScopedLocale classic(std::locale::classic());
+        table = writer.WriteHookTable({first, other, second});
+    }
+    const std::string expected =
+        "[\n"
+        "  {\n"
+        "    \"hook\": 0,\n"
+        "    \"nid\": \"aNid\",\n"
+        "    \"library\": \"a.prx\",\n"
+        "    \"targetOffsets\": [\"0x30\"],\n"
+        "    \"callSites\": [],\n"
+        "    \"callSitesResolved\": true,\n"
+        "    \"weak\": false\n"
+        "  },\n"
+        "  {\n"
+        "    \"hook\": 1,\n"
+        "    \"nid\": \"bNid\",\n"
+        "    \"library\": \"a.prx\",\n"
+        "    \"targetOffsets\": [\"0x20\", \"0x10\"],\n"
+        "    \"callSites\": [\"0x100\", \"0x200\", \"0x300\"],\n"
+        "    \"callSitesResolved\": false,\n"
+        "    \"weak\": true\n"
+        "  }\n"
+        "]\n";
+    Require(table == expected, "hook table format differs");
+
+    std::vector<Relinker::CallRegistryEntry> many;
+    for (unsigned index = 0; index <= 1000; ++index) {
+        Relinker::CallRegistryEntry entry{};
+        entry.Nid = "n" + std::to_string(1000 + index);
+        entry.Library = "many.prx";
+        entry.TargetOffset = index;
+        entry.CallSitesResolved = true;
+        many.push_back(entry);
+    }
+    std::string grouped;
+    {
+        const ScopedLocale locale(std::locale(std::locale::classic(), new GroupedPunctuation(',')));
+        grouped = writer.WriteHookTable(many);
+    }
+    Require(grouped.find("\"hook\": 1000,\n") != std::string::npos, "hook index is not written in decimal");
+    Require(grouped.find("1,000") == std::string::npos, "hook table depends on the host locale");
 }
 
 void RequireUtf8Failure(const std::string& input, const std::string& expectedMessage) {
@@ -206,6 +271,7 @@ int main() {
     try {
         RegistryOffsets();
         Utf8ValidationAndJsonEscaping();
+        HookTable();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

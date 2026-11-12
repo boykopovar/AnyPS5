@@ -55,7 +55,7 @@ def check_formats(relinker, root):
         output = case / "absent" / "nested" / "output"
         options = ["--windows", "--windows-diagnostics"] if target == "windows" else ["--macos"] if target == "macos" else []
         command = [*options, "--skip-sce-module", "--registry", source, output]
-        expected = [output, output.with_suffix(".registry.json"), output.with_suffix(".needed.json")]
+        expected = [output, output.with_suffix(".registry.json"), output.with_suffix(".needed.json"), output.with_suffix(".hooks.json")]
         if target == "windows":
             expected.append(case / "windows-diagnostics-imports.txt")
         result = run(relinker, case, command)
