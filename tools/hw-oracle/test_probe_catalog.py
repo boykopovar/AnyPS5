@@ -201,6 +201,76 @@ class ProbeRunTests(unittest.TestCase):
                     probe_catalog.run_probes([probe], self.digest, temporary, "rx-6750-xt")
                 run.assert_not_called()
 
+    def test_run_rejects_incomplete_gpu_output_without_writing_a_report(self):
+        probe = self.catalog["probes"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(probe_catalog.hw_oracle, "runtime", return_value="hsa"), \
+                    patch.object(probe_catalog.hw_oracle, "target", return_value="gfx1036"), \
+                    patch.object(probe_catalog.hw_oracle, "run", return_value=[]):
+                with self.assertRaisesRegex(ValueError, "incomplete result"):
+                    probe_catalog.run_probes([probe], self.digest, temporary, "rx-6750-xt")
+            self.assertEqual(list((Path(temporary) / "rx-6750-xt").glob("*.json")), [])
+
+
+class ProbeCoverageTests(unittest.TestCase):
+    def setUp(self):
+        self.catalog, self.digest = probe_catalog.read_catalog()
+
+    def write_report(self, root, probe, digest=None, device_label="rx-6750-xt"):
+        destination = Path(root) / device_label / f"{probe['id']}.json"
+        report = probe_catalog.make_result(
+            probe, self.digest if digest is None else digest, device_label, "gfx1036", "hsa",
+            [(0x3f800000,) * 16 for _ in probe["rows"]],
+        )
+        probe_catalog.write_atomic(destination, json.dumps(report, indent=2) + "\n")
+        return destination
+
+    def test_coverage_distinguishes_missing_probe_reports(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            results = probe_catalog.coverage(self.catalog["probes"], self.digest, temporary, "rx-6750-xt")
+            self.assertEqual([item["status"] for item in results], ["missing"] * len(self.catalog["probes"]))
+
+    def test_coverage_accepts_a_report_from_the_exact_catalog(self):
+        probe = self.catalog["probes"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            self.write_report(temporary, probe)
+            results = probe_catalog.coverage([probe], self.digest, temporary, "rx-6750-xt")
+            self.assertEqual(results, [{"id": probe["id"], "status": "measured", "detail": ""}])
+
+    def test_coverage_marks_reports_from_an_older_catalog_stale(self):
+        probe = self.catalog["probes"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            self.write_report(temporary, probe, digest="0" * 64)
+            results = probe_catalog.coverage([probe], self.digest, temporary, "rx-6750-xt")
+            self.assertEqual(results[0]["status"], "stale")
+
+    def test_coverage_rejects_reports_for_different_inputs_or_settings(self):
+        probe = self.catalog["probes"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self.write_report(temporary, probe)
+            report = json.loads(path.read_text(encoding="utf-8"))
+            report["rows"][0]["input"][0] ^= 1
+            path.write_text(json.dumps(report), encoding="utf-8")
+            result = probe_catalog.coverage([probe], self.digest, temporary, "rx-6750-xt")[0]
+            self.assertEqual(result["status"], "invalid")
+            self.assertIn("input rows differ", result["detail"])
+            report["rows"][0]["input"] = probe["rows"][0]["input"]
+            report["wave_size"] = 64
+            path.write_text(json.dumps(report), encoding="utf-8")
+            result = probe_catalog.coverage([probe], self.digest, temporary, "rx-6750-xt")[0]
+            self.assertEqual(result["status"], "invalid")
+            self.assertIn("wave_size differs", result["detail"])
+
+    def test_coverage_reports_unreadable_json_as_invalid(self):
+        probe = self.catalog["probes"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "rx-6750-xt" / f"{probe['id']}.json"
+            path.parent.mkdir()
+            path.write_text("{", encoding="utf-8")
+            result = probe_catalog.coverage([probe], self.digest, temporary, "rx-6750-xt")[0]
+            self.assertEqual(result["status"], "invalid")
+            self.assertTrue(result["detail"])
+
     def test_run_rejects_unsafe_device_labels_before_creating_paths(self):
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(ValueError, "device label must contain"):
