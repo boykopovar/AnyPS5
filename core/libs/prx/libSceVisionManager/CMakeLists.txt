@@ -1,0 +1,15 @@
+add_library(libSceVisionManager SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVisionManager PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceVisionManager)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_vision_manager_tests ${LIBS_INCLUDE_DIR}/tests/GuestVisionManager.cpp)
+    target_include_directories(guest_vision_manager_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_vision_manager_tests PRIVATE libSceVisionManager libc)
+    configure_windows_unwind(guest_vision_manager_tests)
+    add_test(NAME guest_vision_manager COMMAND guest_vision_manager_tests)
+    if(WIN32)
+        set_tests_properties(guest_vision_manager PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVisionManager>")
+    endif()
+endif()

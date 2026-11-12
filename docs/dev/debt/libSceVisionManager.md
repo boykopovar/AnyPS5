@@ -8,6 +8,7 @@
 ### Functional
 
 - [sceVisionManagerGetWorkingMemorySize](../../../core/libs/prx/libSceVisionManager/Export.cpp) (libSceVisionManager) - returns `0x80E70000` when output pointers are null or unwritable via `GuestCopyOut_nid_no_patch`, preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceVisionManagerRequestClose, sceVisionManagerRequestCalibrateHmd, sceVisionManagerRequestCalibrateStereoCamera, sceVisionManagerRequestCalibrateTrackingLed and sceVisionManagerRequestRecogUtility](../../../core/libs/prx/libSceVisionManager/Export.cpp) (libSceVisionManager) - they return `0x80E70025` and nothing else. In firmware 13.42 each first tests the library's open count and returns `0x80E70025` while it is 0; only `sceVisionManagerRequestOpen` raises it, and it still throws here, so the count stays 0. Once it is implemented, these must test the count and implement the open case. Read from the module's disassembly, not measured on a console.
 
 ### Additional callable exports
 
