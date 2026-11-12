@@ -194,7 +194,6 @@ std::int32_t checkTarget(const Context& context, const Decoder::Jpeg::Header& he
     if (((outputWidth + 31) & ~std::uint32_t{31}) > context.maxImageWidth || rowBufferSize(header, downScale) > context.rowBufferCapacity) return SCE_JPEG_DEC_ERROR_IMAGE_TOO_WIDE;
     return 0;
 }
-}
 
 std::int32_t writeImage(const Decoder::Jpeg::Header& header, std::span<const std::uint8_t> jpeg, const DecodeTarget& target, JpegDecImageInfo* imageInfo) {
     const std::uint32_t downScale = target.downScale;
