@@ -3535,13 +3535,24 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto& targets = prepared.targets;
     targets.resize(state.colors.size());
     auto& targetViews = prepared.targetViews;
-    static_cast<void>(ownsTargetMemo(ThreadTargetMemo()));
-    const auto targetProof = currentTargetProof(context);
-    auto admissionProof = targetProof;
-    bool repeatedColors = repeatColors(context, state, targetProof, targets, targetViews);
+    const bool memoActive = TargetMemoEnabled();
+    bool targetsUsed = false;
+    TargetProof targetProof;
+    TargetProof admissionProof;
+    bool repeatedColors = false;
+    if (memoActive) {
+        static_cast<void>(ownsTargetMemo(ThreadTargetMemo()));
+        targetProof = currentTargetProof(context);
+        admissionProof = targetProof;
+        targetsUsed = true;
+        repeatedColors = repeatColors(context, state, targetProof, targets, targetViews);
+    }
     const auto prepareColors = [&] {
-        targets.clear();
-        targets.resize(state.colors.size());
+        if (targetsUsed) {
+            targets.clear();
+            targets.resize(state.colors.size());
+        }
+        targetsUsed = true;
         targetViews.clear();
         for (std::size_t index = 0; index < state.colors.size(); ++index) {
             auto& binding = targets[index];
@@ -3676,7 +3687,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         noteColorMemo(ColorMemoEvent::DepthFallback);
         return DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state), overwrittenStencil(state));
     };
-    auto depthView = repeatDepth(context, state, repeatedColors ? &targetProof : nullptr);
+    auto depthView = memoActive ? repeatDepth(context, state, repeatedColors ? &targetProof : nullptr) : VkImageView{VK_NULL_HANDLE};
     bool repeatedDepth = state.depth && depthView != VK_NULL_HANDLE;
     if (state.depth && !repeatedDepth) depthView = prepareDepth();
     if (repeatedColors && (targetMemoOwner.load(std::memory_order_relaxed) != &ThreadTargetMemo() || !colorProofMatches(targetProof, currentTargetProof(context)) || !std::ranges::all_of(targets, [](const TargetBinding& binding) { return binding.resident->Cached(); }))) {
@@ -3720,16 +3731,18 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         Require(moved == nullptr, std::string("APS5_VERIFY_TARGET_MEMO: a repeated target's lookup moved ") + (moved != nullptr ? moved : ""));
     }
     if (state.depth) targetViews.push_back(depthView);
-    const bool retainedOwner = ownsTargetMemo(ThreadTargetMemo());
-    const auto preparedProof = currentTargetProof(context);
-    const bool unchangedDepth = (ThreadTargetMemo().depth.valid && ThreadTargetMemo().depth.proof == preparedProof &&
-        (repeatedDepth || (!state.depth && !ThreadTargetMemo().depth.descriptor))) ||
-        (state.depth && state.depth->samples != 1u && !ThreadTargetMemo().depth.valid);
-    const bool unchanged = retainedOwner && repeatedColors && ThreadTargetMemo().colors.valid &&
-        ThreadTargetMemo().colors.proof == preparedProof && unchangedDepth;
-    if (admissionProof == preparedProof) {
-        if (!unchanged) rememberTargets(state, targets, targetViews, preparedProof);
-    } else ThreadTargetMemo().Invalidate();
+    if (memoActive) {
+        const bool retainedOwner = ownsTargetMemo(ThreadTargetMemo());
+        const auto preparedProof = currentTargetProof(context);
+        const bool unchangedDepth = (ThreadTargetMemo().depth.valid && ThreadTargetMemo().depth.proof == preparedProof &&
+            (repeatedDepth || (!state.depth && !ThreadTargetMemo().depth.descriptor))) ||
+            (state.depth && state.depth->samples != 1u && !ThreadTargetMemo().depth.valid);
+        const bool unchanged = retainedOwner && repeatedColors && ThreadTargetMemo().colors.valid &&
+            ThreadTargetMemo().colors.proof == preparedProof && unchangedDepth;
+        if (admissionProof == preparedProof) {
+            if (!unchanged) rememberTargets(state, targets, targetViews, preparedProof);
+        } else ThreadTargetMemo().Invalidate();
+    }
     timer.phase(PhasePrepare);
     const bool recordDraws = RecordDraws();
     auto* recorder = prepared.recorder = Recorder::Active();
