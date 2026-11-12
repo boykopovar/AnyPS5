@@ -299,6 +299,13 @@ int main() {
         if (untouched != &failures) report(check.what, "touched the output");
     }
 
+    void* empty = &failures;
+    *__error_nid_postfix() = Untouched;
+    if (posix_memalign_nid_postfix(&empty, 16, 0) != 0) report("posix_memalign(16, 0)", "returned an error number");
+    else if (empty == nullptr || empty == &failures) report("posix_memalign(16, 0)", "returned no block");
+    if (*__error_nid_postfix() != Untouched) report("posix_memalign(16, 0)", "changed errno");
+    if (empty != &failures) free_nid_postfix(empty);
+
     free_nid_postfix(expectBlock("calloc(3, 5)", [] { return calloc_nid_postfix(3, 5); }));
     free_nid_postfix(expectBlock("calloc(0, 5)", [] { return calloc_nid_postfix(0, 5); }));
     CheckCallocAndReallocContents();

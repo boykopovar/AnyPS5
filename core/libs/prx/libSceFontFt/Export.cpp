@@ -41,8 +41,7 @@ int APS5_VABI sceFontFtSupportCid(FontLibrary library) {
 }
 
 int APS5_VABI sceFontFtSupportFontFormats(FontLibrary library, std::uint32_t formats) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return FontFt::SupportFontFormats(library, formats);
 }
 
 int APS5_VABI sceFontFtSupportOpenType(FontLibrary library) {
