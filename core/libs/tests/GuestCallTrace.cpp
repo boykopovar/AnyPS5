@@ -139,8 +139,9 @@ int main(int argc, char** argv) {
     const auto mixed = Traced(&Mixed, "Mixed", "libOther.prx");
     const auto variadic = Traced(&Variadic, "Variadic", "libOther");
     const auto blocks = Traced(&Blocks, "Blocks", "libTraced.prx");
+    const auto alias = Traced(&Integers, "Alias", "libOther.prx");
     Require(integers != &Integers && doubles != &Doubles && mixed != &Mixed && variadic != &Variadic && blocks != &Blocks);
-    Require(Traced(&Integers, "Alias", "libOther.prx") == integers);
+    Require(alias != integers);
 
     Require(integers(1, 2, 3, 4, 5, 6, 7, 8) == Integers(1, 2, 3, 4, 5, 6, 7, 8));
     Require(doubles(1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5) == Doubles(1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5));
@@ -219,6 +220,8 @@ int main(int argc, char** argv) {
     Require(!WriteCallCounts_nid_no_patch(reinterpret_cast<const char*>(unwritable.c_str())));
     Require(!WriteCallCounts_nid_no_patch(nullptr) && !WriteCallCounts_nid_no_patch(""));
     std::filesystem::remove(path);
+
+    Require(alias(1, 2, 3, 4, 5, 6, 7, 8) == Integers(1, 2, 3, 4, 5, 6, 7, 8));
 
     Require(Traced(&Unlabeled, "Unlabeled", "") == &Unlabeled);
     const auto executable = std::filesystem::path(argv[0]).filename().string();
