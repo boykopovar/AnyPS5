@@ -249,6 +249,54 @@
           ]
         }
       ]
+    },
+    {
+      "id": "v-add-f32-denorm-flush-input-output",
+      "instruction": "v_add_f32",
+      "description": "Subnormal additions with input and output denormal handling both set to flush.",
+      "body": "v_add_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "two-smallest-subnormals",
+          "input": [
+            "0x00000001",
+            "0x00000001",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "largest-plus-smallest-subnormal",
+          "input": [
+            "0x007fffff",
+            "0x00000001",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "normal-cancels-subnormal-gap",
+          "input": [
+            "0x00800000",
+            "0x807fffff",
+            0,
+            0
+          ]
+        }
+      ]
     }
   ]
 }
