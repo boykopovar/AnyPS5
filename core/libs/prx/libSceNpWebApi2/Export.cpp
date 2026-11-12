@@ -86,7 +86,7 @@ int APS5_VABI sceNpWebApi2CreateRequest(int user_context_id, const char* api_gro
         const bool firstCopied = GuestCopyIn_nid_no_patch(&first, &fields[0], sizeof(first));
         const bool secondCopied = !firstCopied || first == 0 || GuestCopyIn_nid_no_patch(&second, &fields[1], sizeof(second));
         errno = savedErrno;
-        if (!firstCopied || !secondCopied) NotImplemented_nid_no_patch(__func__);
+        if (!firstCopied || !secondCopied) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
         if (first != 0 && second == 0) return SCE_NP_WEBAPI2_ERROR_INVALID_CONTENT_PARAMETER;
     }
     if (!request_id) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;

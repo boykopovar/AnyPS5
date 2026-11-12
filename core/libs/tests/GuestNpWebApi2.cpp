@@ -60,6 +60,9 @@ int main() {
     const std::uint64_t emptyContent[2] = {0x1000, 0};
     Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", emptyContent, &requestSentinel) == static_cast<int>(0x80553408));
     Require(sceNpWebApi2CreateRequest(user, nullptr, "/v1/sessions", "GET", emptyContent, &requestSentinel) == static_cast<int>(0x80553402));
+    errno = 71;
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", reinterpret_cast<const void*>(0x10), &requestSentinel) == static_cast<int>(0x80553402));
+    Require(errno == 71);
     Require(requestSentinel == 0x5a5a5a5a5a5a5a5a);
     const std::uint64_t noContent[2] = {0, 0};
     std::int64_t createdRequest = 0;
