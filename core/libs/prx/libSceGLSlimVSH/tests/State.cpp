@@ -72,6 +72,10 @@ static void Defaults() {
     glGetIntegerv_nid_postfix(0xffffffff, &untouched);
     Require(untouched == 55);
     Error(0x0500);
+    glGetIntegerv_nid_postfix(0x80c9, nullptr);
+    glGetIntegerv_nid_postfix(0x0b74, nullptr);
+    glGetIntegerv_nid_postfix(0xffffffff, nullptr);
+    Error(0);
 }
 
 static void Buffers() {
