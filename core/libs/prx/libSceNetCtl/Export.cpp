@@ -98,6 +98,7 @@ static constexpr int NET_CTL_INFO_HTTP_PROXY_CONFIG = 19;
 static constexpr int NET_CTL_INFO_HTTP_PROXY_SERVER = 20;
 static constexpr int NET_CTL_INFO_HTTP_PROXY_PORT = 21;
 static constexpr int NET_CTL_INFO_V6_IP_ADDRESS = 1;
+static constexpr int NET_CTL_INFO_V6_LINK_LOCAL = 2;
 static constexpr int NET_CTL_INFO_V6_SECONDARY_DNS = 5;
 static constexpr std::uint32_t NET_CTL_DEVICE_WIRED = 0;
 static constexpr std::uint32_t NET_CTL_LINK_CONNECTED = 1;
@@ -854,6 +855,114 @@ static void WriteInfoAddress(NetCtlInfo* info, in_addr address) {
     std::memcpy(info->opaque, text, sizeof(text));
 }
 
+static constexpr std::size_t NET_CTL_IPV6_ADDR_STR_LEN = 46;
+
+static unsigned Ipv6PrefixBits(const in6_addr& mask) {
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(&mask);
+    unsigned bits = 0;
+    for (unsigned index = 0; index < sizeof(mask); ++index) {
+        for (unsigned bit = 0; bit < 8; ++bit) {
+            if ((bytes[index] >> bit) & 1u) ++bits;
+        }
+    }
+    return bits;
+}
+
+static bool Ipv6IsGlobal(const in6_addr& address) {
+    return !IN6_IS_ADDR_UNSPECIFIED(&address) && !IN6_IS_ADDR_LOOPBACK(&address) && !IN6_IS_ADDR_LINKLOCAL(&address);
+}
+
+struct HostIpv6Address {
+    in6_addr address{};
+    unsigned prefix = 0;
+    bool valid = false;
+};
+
+struct HostIpv6Selection {
+    HostIpv6Address global;
+    HostIpv6Address linkLocalOfGlobal;
+    HostIpv6Address linkLocal;
+};
+
+#ifdef _WIN32
+static HostIpv6Selection QueryHostIpv6Selection() {
+    HostIpv6Selection found;
+    ULONG size = 0;
+    const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    if (GetAdaptersAddresses(AF_INET6, flags, nullptr, nullptr, &size) != ERROR_BUFFER_OVERFLOW) return found;
+    std::vector<std::uint8_t> storage(size);
+    auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data());
+    if (GetAdaptersAddresses(AF_INET6, flags, nullptr, adapters, &size) != NO_ERROR) return found;
+    for (auto* adapter = adapters; adapter; adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+        HostIpv6Address adapterGlobal;
+        HostIpv6Address adapterLinkLocal;
+        for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
+            if (!unicast->Address.lpSockaddr || unicast->Address.lpSockaddr->sa_family != AF_INET6) continue;
+            const auto* address = reinterpret_cast<const sockaddr_in6*>(unicast->Address.lpSockaddr);
+            HostIpv6Address candidate;
+            candidate.address = address->sin6_addr;
+            candidate.prefix = unicast->OnLinkPrefixLength;
+            candidate.valid = true;
+            if (Ipv6IsGlobal(address->sin6_addr)) {
+                if (!adapterGlobal.valid) adapterGlobal = candidate;
+            } else if (IN6_IS_ADDR_LINKLOCAL(&address->sin6_addr)) {
+                if (!adapterLinkLocal.valid) adapterLinkLocal = candidate;
+            }
+        }
+        if (adapterGlobal.valid && !found.global.valid) {
+            found.global = adapterGlobal;
+            found.linkLocalOfGlobal = adapterLinkLocal;
+        }
+        if (!found.linkLocal.valid && adapterLinkLocal.valid) found.linkLocal = adapterLinkLocal;
+    }
+    return found;
+}
+#else
+static HostIpv6Address ReadHostIpv6Address(const ifaddrs* item) {
+    HostIpv6Address address;
+    address.address = reinterpret_cast<const sockaddr_in6*>(item->ifa_addr)->sin6_addr;
+    address.prefix = item->ifa_netmask && item->ifa_netmask->sa_family == AF_INET6
+                         ? Ipv6PrefixBits(reinterpret_cast<const sockaddr_in6*>(item->ifa_netmask)->sin6_addr)
+                         : 0;
+    address.valid = true;
+    return address;
+}
+
+static HostIpv6Selection QueryHostIpv6Selection() {
+    HostIpv6Selection found;
+    ifaddrs* list = nullptr;
+    if (getifaddrs(&list) != 0) return found;
+    const std::unique_ptr<ifaddrs, void (*)(ifaddrs*)> interfaces(list, freeifaddrs);
+    std::string globalInterface;
+    for (auto* item = list; item; item = item->ifa_next) {
+        if (!item->ifa_addr || item->ifa_addr->sa_family != AF_INET6) continue;
+        if (!(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK)) continue;
+        if (found.global.valid || !Ipv6IsGlobal(reinterpret_cast<const sockaddr_in6*>(item->ifa_addr)->sin6_addr)) continue;
+        found.global = ReadHostIpv6Address(item);
+        globalInterface = item->ifa_name;
+    }
+    for (auto* item = list; item; item = item->ifa_next) {
+        if (!item->ifa_addr || item->ifa_addr->sa_family != AF_INET6) continue;
+        if (!(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK)) continue;
+        if (!IN6_IS_ADDR_LINKLOCAL(&reinterpret_cast<const sockaddr_in6*>(item->ifa_addr)->sin6_addr)) continue;
+        const HostIpv6Address candidate = ReadHostIpv6Address(item);
+        if (!found.linkLocal.valid) found.linkLocal = candidate;
+        if (!found.linkLocalOfGlobal.valid && !globalInterface.empty() && globalInterface == item->ifa_name) {
+            found.linkLocalOfGlobal = candidate;
+        }
+    }
+    return found;
+}
+#endif
+
+static void WriteInfoV6Address(NetCtlInfoV6* info, const HostIpv6Address& address) {
+    char text[NET_CTL_IPV6_ADDR_STR_LEN] = {};
+    inet_ntop(AF_INET6, &address.address, text, sizeof(text));
+    std::memcpy(info->opaque, text, sizeof(text));
+    info->opaque[NET_CTL_IPV6_ADDR_STR_LEN] = static_cast<std::uint8_t>(address.prefix);
+}
+
 extern "C" std::uint64_t NetCtlReadByteCounter_nid_no_patch(const char* path) {
     std::ifstream file(path);
     std::uint64_t value = 0;
@@ -1004,25 +1113,27 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
 
 int APS5_VABI sceNetCtlGetResult(int event, int* result) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
-    if (!result) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    const int val = 0;
+    if (!result || !GuestCopyOut_nid_no_patch(result, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (event < NET_CTL_EVENT_DISCONNECTED || event > NET_CTL_EVENT_IPOBTAINED) {
         throw std::runtime_error("sceNetCtlGetResult: event type " + std::to_string(event) + " is not implemented");
     }
-    *result = 0;
     return 0;
 }
 
 int APS5_VABI sceNetCtlGetState(int* state) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!state) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    *state = HostHasAddress(AF_UNSPEC) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
+    const int val = HostHasAddress(AF_UNSPEC) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
+    if (!GuestCopyOut_nid_no_patch(state, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
 int APS5_VABI sceNetCtlGetStateV6(int* state) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!state) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    *state = HostHasAddress(AF_INET6) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
+    const int val = HostHasAddress(AF_INET6) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
+    if (!GuestCopyOut_nid_no_patch(state, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
@@ -1040,11 +1151,25 @@ int APS5_VABI sceNetCtlRegisterCallbackV6(NetCtlCallback func, void* arg, int* c
 }
 
 int APS5_VABI sceNetCtlGetInfoV6(std::uint32_t code, NetCtlInfoV6* info) {
+    if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!info) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (code < NET_CTL_INFO_V6_IP_ADDRESS || code > NET_CTL_INFO_V6_SECONDARY_DNS) return SCE_NET_CTL_ERROR_INVALID_CODE;
     if (!HostHasAddress(AF_INET6)) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (code == NET_CTL_INFO_V6_IP_ADDRESS || code == NET_CTL_INFO_V6_LINK_LOCAL) {
+        const HostIpv6Selection selection = QueryHostIpv6Selection();
+        HostIpv6Address chosen;
+        if (code == NET_CTL_INFO_V6_IP_ADDRESS) {
+            chosen = selection.global;
+        } else if (selection.linkLocalOfGlobal.valid) {
+            chosen = selection.linkLocalOfGlobal;
+        } else {
+            chosen = selection.linkLocal;
+        }
+        if (!chosen.valid) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
+        WriteInfoV6Address(info, chosen);
+        return 0;
+    }
+    throw std::runtime_error("sceNetCtlGetInfoV6: info code " + std::to_string(code) + " is not implemented");
 }
 
 void APS5_VABI sceNetCtlTerm(void) {
@@ -1123,11 +1248,15 @@ int APS5_VABI sceNetCtlGetInfoIpcInt(std::uint32_t code, NetCtlInfo* info) {
 }
 
 int APS5_VABI sceNetCtlGetEtherLinkMode(int* mode) {
+    const int val = 0;
+    if (!GuestCopyOut_nid_no_patch(mode, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNetCtlGetWifiType(int* type) {
+    const int val = 0;
+    if (!GuestCopyOut_nid_no_patch(type, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

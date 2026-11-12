@@ -335,6 +335,10 @@ def main():
         return
     relinker = Path(sys.argv[1]).resolve()
     modes = {"plain": (False,), "sce": (True,), "all": (False, True)}[sys.argv[2] if len(sys.argv) > 2 else "all"]
+    group = sys.argv[3] if len(sys.argv) > 3 else "all"
+    if group not in ("all", "linux", "windows", "macos", "rejected"):
+        raise ValueError(group)
+    systems = ("linux", "windows", "macos") if group == "all" else () if group == "rejected" else (group,)
     cases = (("baseline", [RELATIVE], [], False, UNCHANGED),
              ("relative-defined-symbol", [RELATIVE_DEFINED], [], False, UNCHANGED),
              ("relative-defined-object", [RELATIVE_DEFINED], [], False, UNCHANGED),
@@ -367,14 +371,14 @@ def main():
                 for encoding in ("rela", "repeated", "relr"):
                     entries = [(TARGET, 8, addend)]
                     image, initial = relative_module(addend, sce, encoding)
-                    for system in ("linux", "windows", "macos"):
+                    for system in systems:
                         result, artifact, output = convert(f"{sce}-relative-{encoding}-{addend:x}", system, image)
                         assert result.returncode == 0, (sce, encoding, addend, system, result.stderr)
                         check_output(artifact.read_bytes(), system, entries, [], initial, addend=addend)
             for name, rela, plt, lifecycle, initial in cases:
                 symbol_info = 0x11 if name == "relative-defined-object" else 0x12
                 image = module(rela, plt, sce, lifecycle, initial, symbol_info=symbol_info)
-                for system in ("linux", "windows", "macos"):
+                for system in systems:
                     result, artifact, output = convert(f"{sce}-{name}", system, image)
                     assert result.returncode == 0, (sce, name, system, result.stdout, result.stderr)
                     check_output(artifact.read_bytes(), system, rela, plt, initial)
@@ -385,32 +389,33 @@ def main():
                             assert executed.returncode == 0, (executed.stdout, executed.stderr)
             for name, rela in (("relative-repeated", [RELATIVE, RELATIVE]), ("relative-rewritten", [EARLIER_RELATIVE, NOOP, RELATIVE])):
                 image = module(rela, sce=sce)
-                for system in ("linux", "windows", "macos"):
+                for system in systems:
                     result, artifact, output = convert(f"{sce}-{name}", system, image)
                     assert result.returncode == 0, (sce, name, system, result.stdout, result.stderr)
                     check_output(artifact.read_bytes(), system, [RELATIVE], [], UNCHANGED)
             for name, rela, initial in (("unsized-lifecycle", [RELATIVE], UNCHANGED),
                                         ("unsized-lifecycle-unread", [(TARGET, 0, FUNCTION)], FUNCTION)):
                 image = unsized_lifecycle(rela, sce, initial)
-                for system in ("linux", "windows", "macos"):
+                for system in systems:
                     result, artifact, output = convert(f"{sce}-{name}", system, image)
                     assert result.returncode == 0, (sce, name, system, result.stdout, result.stderr)
                     check_output(artifact.read_bytes(), system, rela, [], initial)
                     if system == "linux":
                         assert not {25, 26, 27, 28} & set(dynamic_tags(artifact.read_bytes())), name
-            for name, image, error in invalid_cases(sce):
-                result, artifact, output = convert(f"{sce}-{name}", "linux", image)
-                assert result.returncode == 2 and error in result.stderr, (sce, name, result.stderr)
-                assert not artifact.exists() and not output.exists(), name
-            for name, image, error in invalid_cases_macos(sce):
-                result, artifact, output = convert(f"{sce}-{name}", "macos", image)
-                assert result.returncode == 2 and error in result.stderr, ("macos", sce, name, result.stderr)
-                assert not artifact.exists() and not output.exists(), ("macos", sce, name)
-            for name, image, error in invalid_cases_windows(sce):
-                result, artifact, output = convert(f"{sce}-{name}", "windows", image)
-                assert result.returncode == 2 and error in result.stderr, (sce, name, result.stderr)
-                assert not artifact.exists() and not output.exists(), name
-    print("Guest no-op relocation tests passed")
+            if group in ("all", "rejected"):
+                for name, image, error in invalid_cases(sce):
+                    result, artifact, output = convert(f"{sce}-{name}", "linux", image)
+                    assert result.returncode == 2 and error in result.stderr, (sce, name, result.stderr)
+                    assert not artifact.exists() and not output.exists(), name
+                for name, image, error in invalid_cases_macos(sce):
+                    result, artifact, output = convert(f"{sce}-{name}", "macos", image)
+                    assert result.returncode == 2 and error in result.stderr, ("macos", sce, name, result.stderr)
+                    assert not artifact.exists() and not output.exists(), ("macos", sce, name)
+                for name, image, error in invalid_cases_windows(sce):
+                    result, artifact, output = convert(f"{sce}-{name}", "windows", image)
+                    assert result.returncode == 2 and error in result.stderr, (sce, name, result.stderr)
+                    assert not artifact.exists() and not output.exists(), name
+    print(f"Guest no-op relocation {group} tests passed")
 
 
 if __name__ == "__main__":

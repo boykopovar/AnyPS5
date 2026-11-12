@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#include <stdexcept>
 
 namespace {
 
@@ -55,8 +56,46 @@ void TestErrorCode() {
 
 }
 
+template<typename TException, typename TAction> void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
+    try {
+        action();
+    } catch (const TException&) {
+        return;
+    }
+    Require(false, location);
+}
+
+void TestParseResultMove() {
+    int frame = 0;
+    WebRtcAudioDecoderParseResult source {0x12345678u, -3, &frame};
+    WebRtcAudioDecoderParseResult moved;
+    std::memset(&moved, 0xA5, sizeof(moved));
+    _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(&moved, &source);
+    Require(moved.timestamp == 0x12345678u && moved.priority == -3 && moved.frame == &frame);
+    Require(source.frame == nullptr && source.timestamp == 0x12345678u && source.priority == -3);
+
+    WebRtcAudioDecoderParseResult empty {7, 1, nullptr};
+    _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(&moved, &empty);
+    Require(moved.timestamp == 7 && moved.priority == 1 && moved.frame == nullptr);
+
+    WebRtcAudioDecoderParseResult self {9, 2, &frame};
+    _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(&self, &self);
+    Require(self.timestamp == 9 && self.priority == 2 && self.frame == &frame);
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(nullptr, &empty); });
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(&moved, nullptr); });
+}
+
+void TestParseResultDestructor() {
+    WebRtcAudioDecoderParseResult empty {1, 2, nullptr};
+    _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(&empty);
+    Require(empty.timestamp == 1 && empty.priority == 2 && empty.frame == nullptr);
+    RequireThrows<std::invalid_argument>([] { _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(nullptr); });
+}
+
 int main() {
     TestPlc();
     TestErrorCode();
+    TestParseResultMove();
+    TestParseResultDestructor();
     return 0;
 }
