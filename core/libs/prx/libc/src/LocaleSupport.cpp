@@ -1160,7 +1160,6 @@ constexpr char g_sceV2Days[] = ":Sun:Sunday:Mon:Monday:Tue:Tuesday:Wed:Wednesday
 constexpr char g_sceV2Months[] = ":Jan:January:Feb:February:Mar:March:Apr:April:May:May:Jun:June:Jul:July:Aug:August:Sep:September:Oct:October:Nov:November:Dec:December";
 constexpr char g_sceV2AmPm[] = ":AM:am:PM:pm";
 constexpr char g_sceV2DefaultMoneyPattern[] = "$+xv";
-constexpr char g_sceV2MoneyPatterns[] = "+v$x+v$xv$+xv+$xv$+x+$vx+$vx$v+x+$vx$+vx+v $+v $v $+v +$v $++$ v+$ v$ v++$ v$+ v+xv$+ v$v$ +v+ $v$ ++x$v+ $v$v ++ $v$ +v";
 constexpr auto g_sceV2WideEmpty = WidenSceV2Text(g_sceV2Empty);
 constexpr auto g_sceV2WideFalseName = WidenSceV2Text(g_sceV2FalseName);
 constexpr auto g_sceV2WideTrueName = WidenSceV2Text(g_sceV2TrueName);
@@ -1168,7 +1167,27 @@ constexpr auto g_sceV2WideMinus = WidenSceV2Text(g_sceV2Minus);
 constexpr auto g_sceV2WideDays = WidenSceV2Text(g_sceV2Days);
 constexpr auto g_sceV2WideMonths = WidenSceV2Text(g_sceV2Months);
 constexpr auto g_sceV2WideAmPm = WidenSceV2Text(g_sceV2AmPm);
-static_assert(sizeof(g_sceV2MoneyPatterns) == 121);
+
+constexpr std::array<char, 4> MakeSceV2MoneyPattern(unsigned csPrecedes, unsigned sepBySpace, unsigned signPosn) {
+    const char first = csPrecedes ? '$' : 'v';
+    const char second = csPrecedes ? 'v' : '$';
+    std::array<char, 3> items{};
+    if (signPosn < 2) items = {'+', first, second};
+    else if (signPosn == 2) items = {first, second, '+'};
+    else if (signPosn == 3) items = csPrecedes ? std::array<char, 3>{'+', '$', 'v'} : std::array<char, 3>{'v', '+', '$'};
+    else items = csPrecedes ? std::array<char, 3>{'$', '+', 'v'} : std::array<char, 3>{'v', '$', '+'};
+    std::size_t anchor = 0;
+    std::size_t symbol = 0;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        if (items[i] == (sepBySpace == 1 ? 'v' : '+')) anchor = i;
+        if (items[i] == '$') symbol = i;
+    }
+    const std::size_t gap = sepBySpace == 0 ? items.size() : anchor < symbol ? anchor + 1 : anchor;
+    const char filler = sepBySpace == 0 || (sepBySpace == 2 && signPosn == 0) ? 'x' : ' ';
+    std::array<char, 4> pattern{};
+    for (std::size_t i = 0, j = 0; i < pattern.size(); ++i) pattern[i] = i == gap ? filler : items[j++];
+    return pattern;
+}
 
 }
 
@@ -1759,12 +1778,10 @@ template<typename Text> void SetSceV2MoneyFormats(SceV2MoneypunctFacet<Text>* fa
     facet->conversion = SceV2ClassicCvtvec;
     const unsigned char digits = chars[facet->international ? 7 : 0];
     facet->fractionDigits = digits < CHAR_MAX ? digits : 0;
-    const char* positive = g_sceV2DefaultMoneyPattern;
-    if (!facet->international && chars[6] < 5 && chars[5] < 3 && chars[4] < 2) positive = g_sceV2MoneyPatterns + chars[4] * 20 + chars[5] * 40 + chars[6] * 4;
-    std::memcpy(facet->positivePattern, positive, sizeof(facet->positivePattern));
-    const char* negative = g_sceV2DefaultMoneyPattern;
-    if (!facet->international && chars[3] < 5 && chars[1] < 2 && chars[2] < 3) negative = g_sceV2MoneyPatterns + chars[1] * 20 + chars[2] * 40 + chars[3] * 4;
-    std::memcpy(facet->negativePattern, negative, sizeof(facet->negativePattern));
+    std::memcpy(facet->positivePattern, g_sceV2DefaultMoneyPattern, sizeof(facet->positivePattern));
+    if (!facet->international && chars[6] < 5 && chars[5] < 3 && chars[4] < 2) std::memcpy(facet->positivePattern, MakeSceV2MoneyPattern(chars[4], chars[5], chars[6]).data(), sizeof(facet->positivePattern));
+    std::memcpy(facet->negativePattern, g_sceV2DefaultMoneyPattern, sizeof(facet->negativePattern));
+    if (!facet->international && chars[3] < 5 && chars[1] < 2 && chars[2] < 3) std::memcpy(facet->negativePattern, MakeSceV2MoneyPattern(chars[1], chars[2], chars[3]).data(), sizeof(facet->negativePattern));
     if (isDefault) {
         std::memcpy(facet->positivePattern, g_sceV2DefaultMoneyPattern, sizeof(facet->positivePattern));
         std::memcpy(facet->negativePattern, g_sceV2DefaultMoneyPattern, sizeof(facet->negativePattern));
