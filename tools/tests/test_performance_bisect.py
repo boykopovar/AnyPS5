@@ -576,3 +576,10 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "relative path"):
                 performance_bisect.load_recipe(path)
 
+
+    def test_recipe_rejects_worktree_root_build_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.recipe_path(Path(directory), build_dir=".")
+            with self.assertRaisesRegex(ValueError, "non-root"):
+                performance_bisect.load_recipe(path)
+
