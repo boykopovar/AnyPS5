@@ -654,6 +654,54 @@
           ]
         }
       ]
+    },
+    {
+      "id": "v-add-f16-overflow-clamp",
+      "instruction": "v_add_f16",
+      "description": "Half-precision additions at the finite overflow boundary with FP16_OVFL enabled.",
+      "body": "v_add_f16 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 1
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "largest-plus-largest",
+          "input": [
+            "0x00007bff",
+            "0x00007bff",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "largest-plus-one",
+          "input": [
+            "0x00007bff",
+            "0x0003c00",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "infinity-plus-zero",
+          "input": [
+            "0x00007c00",
+            "0x00000000",
+            0,
+            0
+          ]
+        }
+      ]
     }
   ]
 }
