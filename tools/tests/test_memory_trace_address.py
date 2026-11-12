@@ -1,4 +1,6 @@
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -63,6 +65,33 @@ class SelectionTests(unittest.TestCase):
     def test_render_does_not_claim_unrecorded_mappings_are_unmapped(self):
         output = trace.render_events(self.events, "run.log", 0x4000, 1, 40)
         self.assertIn("No traced mapping operations overlap", output)
+
+
+class CliTests(unittest.TestCase):
+    def test_cli_prints_only_operations_overlapping_the_requested_range(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.log"
+            path.write_text("[memory] map anon 0x1000+0x1000 prot=0x3 flags=0x0\n"
+                            "[memory] allocate physical 0x1000+0x1000\n"
+                            "[memory] protect 0x3000+0x100 prot=0x1\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, trace.__file__, str(path), "--address", "0x1fff", "--length", "2"],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("line 1: map anon", result.stdout)
+            self.assertNotIn("protect", result.stdout)
+            self.assertNotIn("allocate physical", result.stdout)
+
+    def test_cli_reports_bad_ranges_and_missing_files_without_tracebacks(self):
+        for path, address, length in (("missing.log", "0x1000", "1"),
+                                      ("missing.log", "0xffffffffffffffff", "2")):
+            with self.subTest(address=address, length=length), tempfile.TemporaryDirectory() as directory:
+                result = subprocess.run([sys.executable, trace.__file__, str(Path(directory) / path),
+                                         "--address", address, "--length", length],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=10)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("error:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
 
 
 if __name__ == "__main__":
