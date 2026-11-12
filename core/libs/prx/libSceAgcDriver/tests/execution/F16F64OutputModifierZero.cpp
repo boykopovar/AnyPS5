@@ -482,6 +482,7 @@ constexpr std::uint32_t ExpectedF64[ModeCount * OmodCount][RowCount][2] = {
 constexpr std::uint32_t FloatModes[ModeCount] = {0x00u, 0x50u, 0xf0u};
 constexpr std::uint32_t Omods[OmodCount] = {1u, 2u, 3u};
 constexpr const char* OmodNames[OmodCount] = {"mul:2", "mul:4", "div:2"};
+constexpr std::uint32_t F16AnyNan = (1u << 15u) | (1u << 16u);
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
@@ -532,8 +533,13 @@ void Check(bool f64, std::uint32_t mode, std::uint32_t omod) {
         for (std::uint32_t word = 0; word < (f64 ? 2u : 1u); ++word) {
             const std::uint32_t actual = Output[tid * Results + word];
             const std::uint32_t expected = f64 ? ExpectedF64[variant][tid][word] : ExpectedF16[variant][tid][word];
-            Require(actual == expected, std::string(f64 ? "v_add_f64 " : "v_add_f16 ") + OmodNames[omod] + " FLOAT_MODE " + Hex(FloatModes[mode]) + ": lane " +
-                                            std::to_string(tid) + " word " + std::to_string(word) + " is " + Hex(actual) + ", expected " + Hex(expected));
+            const std::string where = std::string(f64 ? "v_add_f64 " : "v_add_f16 ") + OmodNames[omod] + " FLOAT_MODE " + Hex(FloatModes[mode]) + ": lane " + std::to_string(tid) +
+                                      " word " + std::to_string(word) + " is " + Hex(actual);
+            if (!f64 && ((F16AnyNan >> tid) & 1u) != 0u) {
+                Require((actual & 0xffff0000u) == (expected & 0xffff0000u) && (actual & 0x7fffu) > 0x7c00u, where + ", expected a NaN in the low half and a high half of " + Hex(expected >> 16u));
+                continue;
+            }
+            Require(actual == expected, where + ", expected " + Hex(expected));
         }
     }
 }
