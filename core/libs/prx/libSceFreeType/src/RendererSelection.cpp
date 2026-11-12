@@ -15,6 +15,10 @@ using namespace FreeType;
 extern "C" {
 
 int APS5_VABI FT_Set_Renderer_nid_postfix(GuestLibrary* library, void* renderer, std::uint32_t count, const GuestParameter* parameters) {
+    auto hostLibrary = library ? library->host : nullptr;
+    auto hostRenderer = static_cast<FT_Renderer>(renderer);
+    const int validation = FT_Set_Renderer(hostLibrary, hostRenderer, 0, nullptr);
+    if (validation != 0) return validation;
     std::vector<FT_Parameter> native;
     if (parameters) {
         native.reserve(count);
@@ -25,7 +29,7 @@ int APS5_VABI FT_Set_Renderer_nid_postfix(GuestLibrary* library, void* renderer,
             native.push_back({static_cast<FT_ULong>(parameters[index].tag), parameters[index].data});
         }
     }
-    return FT_Set_Renderer(library ? library->host : nullptr, static_cast<FT_Renderer>(renderer), count, parameters ? native.data() : nullptr);
+    return FT_Set_Renderer(hostLibrary, hostRenderer, count, parameters ? native.data() : nullptr);
 }
 
 }
