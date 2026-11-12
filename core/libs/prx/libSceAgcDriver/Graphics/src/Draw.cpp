@@ -660,7 +660,7 @@ void recordCmaskClear(const Context& context, Recorder& recorder, const HostImpo
 }
 
 bool materializeGcnCmaskClear(const ColorTarget& color, const std::shared_ptr<StorageTexture>& resident) {
-    constexpr std::size_t cmaskAlignment = 256;
+    constexpr std::size_t cmaskAlignment = 128;
     const auto bytes = color.cmaskBytes;
     if (cmaskProved(color.cmaskAddress, bytes)) return false;
     const auto collected = GuestMemory::CollectWrites(color.cmaskAddress, bytes);

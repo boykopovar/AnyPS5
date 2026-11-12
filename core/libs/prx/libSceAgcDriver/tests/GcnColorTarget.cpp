@@ -178,6 +178,21 @@ void MultisampledSlicesDecode() {
     Check(first.address == base && first.fmaskAddress == fmask && first.cmaskAddress == cmask, "slice 0 of a 4-sample 2-fragment GCN array does not start at the array, FMASK and CMASK bases");
 }
 
+void FastClearedSlicesDecode() {
+    static std::byte* const memory = LowMemory(MultisampledSliceMemoryBytes);
+    const auto base = AddressOf(memory);
+    if (memory == nullptr || base + MultisampledSliceMemoryBytes > (std::uint64_t{1} << 40u)) {
+        Check(false, "cannot allocate fast-cleared array slice test memory below 1 TiB");
+        return;
+    }
+    const auto cmask = AddressOf(cmaskMemory);
+    const auto single = DecodeMultisampledSlice(base, 1u, 1u, FastClear, 2u);
+    Check(single.address == base + 2u * ColorBytes && single.cmaskFastClear && single.cmaskBytes == CmaskBytes && single.cmaskAddress == cmask + 2u * CmaskBytes, "the CMASK of slice 2 of a fast-cleared single-sample GCN array does not start two CMASK slices past the CMASK base");
+    const auto oneFragment = DecodeMultisampledSlice(base, 4u, 1u, FastClear | Compression, 1u);
+    Check(oneFragment.address == base + ColorBytes && oneFragment.cmaskFastClear && oneFragment.cmaskAddress == cmask + CmaskBytes, "the CMASK of slice 1 of a fast-cleared 4-sample 1-fragment GCN array does not start one CMASK slice past the CMASK base");
+    Check(oneFragment.fmaskAddress == AddressOf(fmaskMemory) + oneFragment.gcnFmaskBytes, "the FMASK of slice 1 of a fast-cleared 4-sample 1-fragment GCN array does not start one FMASK slice past the FMASK base");
+}
+
 std::string FmaskDecompress(std::uint32_t visibleHeight) {
     AgcDriver::QueueState queue;
     auto& cx = queue.context;
@@ -222,6 +237,7 @@ int main() {
         SingleSampleFastClearDecode();
         FewerFragmentsDecode();
         MultisampledSlicesDecode();
+        FastClearedSlicesDecode();
         PaddedTargetsAreCovered();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
