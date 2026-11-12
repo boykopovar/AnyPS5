@@ -15,6 +15,8 @@ using JSContextRef = const OpaqueJSContext*;
 using JSValueRef = const OpaqueJSValue*;
 }
 
+struct WKGeolocationProviderBase;
+
 extern "C" {
 
 std::uint32_t APS5_VABI WKAXObjectGetTypeID();
@@ -95,6 +97,7 @@ std::uint32_t APS5_VABI WKConnectionGetTypeID();
 const void* APS5_VABI WKContextCreate();
 const void* APS5_VABI WKContextCreateWithConfiguration(const void* configurationRef);
 const void* APS5_VABI WKContextCreateWithInjectedBundlePath(const void* pathRef);
+const void* APS5_VABI WKContextGetGeolocationManager(const void* contextRef);
 std::uint32_t APS5_VABI WKContextGetTypeID();
 bool APS5_VABI WKContextGetUsesSingleWebProcess(const void* contextRef);
 std::uint32_t APS5_VABI WKContextMenuItemGetTypeID();
@@ -132,6 +135,10 @@ std::uint32_t APS5_VABI WKFrameHandleGetTypeID();
 std::uint32_t APS5_VABI WKFrameInfoGetTypeID();
 std::uint32_t APS5_VABI WKFramePolicyListenerGetTypeID();
 std::uint32_t APS5_VABI WKGeolocationManagerGetTypeID();
+void APS5_VABI WKGeolocationManagerProviderDidChangePosition(const void* managerRef, const void* positionRef);
+void APS5_VABI WKGeolocationManagerProviderDidFailToDeterminePosition(const void* managerRef);
+void APS5_VABI WKGeolocationManagerProviderDidFailToDeterminePositionWithErrorMessage(const void* managerRef, const void* errorMessageRef);
+void APS5_VABI WKGeolocationManagerSetProvider(const void* managerRef, const WKGeolocationProviderBase* provider);
 void APS5_VABI WKGeolocationPermissionRequestAllow(const void* permissionRequestRef);
 void APS5_VABI WKGeolocationPermissionRequestDeny(const void* permissionRequestRef);
 std::uint32_t APS5_VABI WKGeolocationPermissionRequestGetTypeID();
