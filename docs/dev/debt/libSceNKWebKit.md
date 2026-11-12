@@ -32,6 +32,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [WTF language exports](../../../core/libs/prx/libSceNKWebKit/src/WtfLanguage.cpp) call language change observers in registration order; the console iterates a `HashMap` keyed by context in hash-table order. The 16-byte `Vector<String>` layout and the rest of the behavior follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/Language.cpp) and have no console verification. Null and `-1` contexts and null observers throw instead of reproducing undefined behavior. Closes when: compared with a console module.
 
+- [Inspector::FrontendRouter](../../../core/libs/prx/libSceNKWebKit/src/InspectorFrontendRouter.cpp) and [AgentRegistry](../../../core/libs/prx/libSceNKWebKit/src/InspectorAgentRegistry.cpp) exports have no console verification. They call guest `FrontendChannel` and `InspectorAgentBase` vtables with the slots from the [PS5 11.x WebKit headers](https://github.com/neonmodder123/PS5-WebKit-11.x/tree/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/JavaScriptCore/inspector) (destructor pair first, then declaration order), and use the 40- and 16-byte layouts and the `Vector` growth and clear rules of that source. The refcount is a relaxed atomic in the same 4 bytes; the pinned `RefCounted` is not. A null channel or agent throws before any callback; one that connects or disconnects during dispatch iterates the vector as the console does, which is undefined when it reallocates. Closes when: compared with a console module.
+
 - [WTF::Logger exports](../../../core/libs/prx/libSceNKWebKit/src/WtfLogger.cpp) have no console ABI or behavior verification. They follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/Logger.cpp). A null `self`, a null method name or an oversized string throws instead of reproducing the upstream crash. Closes when: compared with a console module.
 
 - [WebCore::Process identifier](../../../core/libs/prx/libSceNKWebKit/src/WebCoreProcess.cpp) (libSceNKWebKit) - the generation-protection check is not modelled: in firmware 13.42 `identifier()` (`0x207100`) crashes before generating when the byte at `0x3369ef8` is 1, and no store to that byte by address was found in the module's code, so what sets it is unknown. The object-identifier counter it draws from is shared in the module with the `HistoryItem` constructors, seven other exports and internal code, none of which is implemented, so identifiers are unique only among implemented callers. The rest follows `system_ex/common_ex/lib/libSceNKWebKit.sprx` 13.42 (SHA-256 `e63acdc164592330a287cf6914c265336b27a357098a449c1609f8f82e104409`; `setIdentifier` at `0x2e3bb0`), read from disassembly, not run. Closes when: measured on a console.
@@ -124,7 +126,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
 - [WebCore text dumps](../../../core/libs/prx/libSceNKWebKit/src/WebCoreDump.cpp) (libSceNKWebKit) - the `operator<<(TextStream&, ...)` overloads for geometry, transforms, `ScrollAlignment` and scrolling and graphics enums follow the pinned [`FloatPoint.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatPoint.cpp), [`GraphicsTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/GraphicsTypes.cpp) and [`ScrollTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/ScrollTypes.cpp); expectations are hand-derived and not checked against console binaries. They rely on the `TextStream` exports and layout of the WTF text change. `XYZ_D65` prints `XYZ-D50`, as in that source; a `CompositeOperator` or `BlendMode` outside its name table throws.
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5994 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5975 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -4341,12 +4343,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7bmalloc9Allocator12allocateImplEmmNS_13FailureActionE` | `CYJC0YsH4u4` |
 | `_ZN7bmalloc9Scavenger29scheduleIfUnderMemoryPressureEm` | `e6cCjttumPM` |
 | `_ZN7bmalloc9Scavenger8scheduleEm` | `KYfHQoyY9Uc` |
-| `_ZN9Inspector13AgentRegistry13discardValuesEv` | `BGd4bkSC3gA` |
-| `_ZN9Inspector13AgentRegistry27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE` | `HQayaNjjt4w` |
-| `_ZN9Inspector13AgentRegistry29willDestroyFrontendAndBackendENS_16DisconnectReasonE` | `MxGDaM0UkSY` |
-| `_ZN9Inspector13AgentRegistryC2Ev` | `U2-E1yYvnxw` |
-| `_ZN9Inspector13AgentRegistryD1Ev` | `2+U7T3s-8fw` |
-| `_ZN9Inspector13AgentRegistryD2Ev` | `IPKTmjbeQ6M` |
 | `_ZN9Inspector14ConsoleMessage13addToFrontendERNS_25ConsoleFrontendDispatcherERNS_21InjectedScriptManagerEb` | `qO-gljTv7Dk` |
 | `_ZN9Inspector14ConsoleMessage14incrementCountEv` | `uIIZREKsTQU` |
 | `_ZN9Inspector14ConsoleMessage20autogenerateMetadataEPN3JSC14JSGlobalObjectE` | `v6I4XZYurCw` |
@@ -4354,14 +4350,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector14ConsoleMessage5clearEv` | `FjP4ZsLHhpI` |
 | `_ZN9Inspector14ConsoleMessageD1Ev` | `iC8g+ZWxbFE` |
 | `_ZN9Inspector14ConsoleMessageD2Ev` | `JHSSw7eLWAg` |
-| `_ZN9Inspector14FrontendRouter15connectFrontendERNS_15FrontendChannelE` | `Q4f93lSW0lk` |
-| `_ZN9Inspector14FrontendRouter18disconnectFrontendERNS_15FrontendChannelE` | `9Z0gNNdVsQo` |
-| `_ZN9Inspector14FrontendRouter22disconnectAllFrontendsEv` | `PbJcgQdU4CY` |
-| `_ZN9Inspector14FrontendRouter6createEv` | `qyzUBXXLwfw` |
-| `_ZN9Inspector14FrontendRouterC1Ev` | `uffEeeP+lNU` |
-| `_ZN9Inspector14FrontendRouterC2Ev` | `yMsrqRsZRLs` |
-| `_ZN9Inspector14FrontendRouterD1Ev` | `KLHGwPPGQEA` |
-| `_ZN9Inspector14FrontendRouterD2Ev` | `EbP8tz9rbWs` |
 | `_ZN9Inspector14InjectedScript13inspectObjectEN3JSC7JSValueE` | `WCV0pmdA2pI` |
 | `_ZN9Inspector14InjectedScript13releaseObjectERKN3WTF6StringE` | `7+XbDOTe2S0` |
 | `_ZN9Inspector14InjectedScript13setEventValueEN3JSC7JSValueE` | `m-aLrxrcxzA` |
@@ -5775,11 +5763,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK9Inspector14ConsoleMessage5levelEv` | `gD32LzUw9AQ` |
 | `_ZNK9Inspector14ConsoleMessage6sourceEv` | `tRhekl227Io` |
 | `_ZNK9Inspector14ConsoleMessage7isEqualEPS0_` | `86w9gD5145M` |
-| `_ZNK9Inspector14FrontendRouter12hasFrontendsEv` | `lcLx31xx-4M` |
-| `_ZNK9Inspector14FrontendRouter12sendResponseERKN3WTF6StringE` | `qKUojuHYhw8` |
-| `_ZNK9Inspector14FrontendRouter16hasLocalFrontendEv` | `85Dwu5xralY` |
-| `_ZNK9Inspector14FrontendRouter17hasRemoteFrontendEv` | `vfj-qG-ZQx8` |
-| `_ZNK9Inspector14FrontendRouter9sendEventERKN3WTF6StringE` | `wtSeaM-ASQM` |
 | `_ZNK9Inspector14InjectedScript10wrapObjectEN3JSC7JSValueERKN3WTF6StringEb` | `1n43cN8DP6E` |
 | `_ZNK9Inspector14InjectedScript12previewValueEN3JSC7JSValueE` | `y7LneQXMe7E` |
 | `_ZNK9Inspector14InjectedScript14findObjectByIdERKN3WTF6StringE` | `cFOaAP9V4YE` |
