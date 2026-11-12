@@ -29,5 +29,7 @@ int main() {
     Require(sceFontFtTermAliases(nullptr) == invalidParam);
     Require(sceFontFtSetAliasFont(nullptr, 1) == invalidParam);
     Require(sceFontFtSetAliasPath(nullptr, nullptr) == invalidParam);
+    Require(sceFontFtSetAliasPath("alias", nullptr) == invalidParam);
+    Require(sceFontFtSetAliasPath(nullptr, "path") == invalidParam);
     return 0;
 }
