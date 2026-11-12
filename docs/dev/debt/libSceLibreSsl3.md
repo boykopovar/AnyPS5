@@ -7,6 +7,7 @@
 - [`X509_set_version`](../../../core/libs/prx/libSceLibreSsl3/src/X509.cpp) follows LibreSSL 4.0.0 `crypto/x509/x509_set.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_set.c) and the `X509_CINF` layout in its `x509_local.h`. Versions outside 0 to 2 return 0 without mutation; a missing version integer is allocated from the guest heap, the encoding is marked modified, and the value is set through `ASN1_INTEGER_set`. A null certificate returns 0 and null certificate info, undefined upstream, throws. The 104-byte `X509_CINF` layout and the `enc.modified` offset 96 are not measured on the console.
 ### Functional
 
+- [EC_POINT_dup](../../../core/libs/prx/libSceLibreSsl3/src/EcPointDup.cpp) - follows LibreSSL 4.0.0 `ec_lib.c` `EC_POINT_dup`: a null source returns null, a null group throws, a source point of another curve returns null, and the copy is a new mbedtls point on the group curve. The point wrapper is not the native PS5 layout, allocation failure throws instead of returning null, and the console behaviour is unverified. Closes when: compared with the console.
 - [X509_get0_pubkey](../../../core/libs/prx/libSceLibreSsl3/src/X509PublicKeyAccessors.cpp) - reads the cached public key from the certificate-info key structure; a null certificate, info or key returns null, and a null cached key with encoded SPKI data throws `NotImplemented_nid_no_patch` until SPKI decoding exists. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
 - [AES_wrap_key](../../../core/libs/prx/libSceLibreSsl3/src/AesWrap.cpp) - follows [RFC 3394](https://www.rfc-editor.org/rfc/rfc3394) with the default IV `A6A6A6A6A6A6A6A6`, six rounds and the 64-bit counter XORed into the A block; it encrypts through libSceLibreSsl's `AES_encrypt`. Inputs below 16 bytes or not a multiple of 8 return -1 as LibreSSL does (OpenSSL 1.1 returns 0); null key, input or output throws where LibreSSL dereferences it. The PS5 ABI, custom-IV handling and console behaviour are unverified. Closes when: compared with the console.
 - [EVP_EncryptInit](../../../core/libs/prx/libSceLibreSsl3/src/EvpCipherInit.cpp) forwards the four-argument LibreSSL entry point to libSceLibreSsl's `EVP_CipherInit_ex` with encrypt set, so the legacy cipher and context layouts are shared rather than duplicated. A null context throws through the parent, a null cipher on an uninitialised context returns 0, and the parent's cipher checks and callbacks decide the rest. The PS5 ABI and console behaviour are unverified. Closes when: compared with the console.
@@ -102,7 +103,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 76 still-unimplemented callable exports: 72 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 75 still-unimplemented callable exports: 71 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -173,7 +174,6 @@
 | `EC_GROUP_cmp` | `sENJFZ7WbLU` |
 | `SSL_do_handshake` | `tJsbVTdWjT4` |
 | `EVP_PKEY_sign_init` | `tZG2VIefbX0` |
-| `EC_POINT_dup` | `uITUdhDDAg8` |
 | `EVP_PKEY_CTX_free` | `ulzAPWCIBkw` |
 | `d2i_ASN1_SEQUENCE_ANY` | `vR0po3nBkBs` |
 | `X509_EXTENSION_free` | `wbJDMMsje6s` |
