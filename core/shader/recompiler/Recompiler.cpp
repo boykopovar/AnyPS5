@@ -322,7 +322,9 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         constantFolder.Fold(program);
         deadCodeEliminator.RemoveIdentities(program);
         deadCodeEliminator.Eliminate(program);
-        if (NanFlagPruner{}.Prune(program).removedChecks != 0u) {
+        const auto pruned = NanFlagPruner{}.Prune(program);
+        program.Metadata().nanSpeculationPrunedChecks += pruned.removedChecks;
+        if (pruned.removedChecks != 0u) {
             constantFolder.Fold(program);
             deadCodeEliminator.RemoveIdentities(program);
             deadCodeEliminator.Eliminate(program);
@@ -370,7 +372,10 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         simplify();
     }
 
-    if (program.Metadata().nanSpeculationDeclines != 0u) std::fprintf(stderr, "[recompile] nan speculation declined %u region(s) in 0x%llx\n", program.Metadata().nanSpeculationDeclines, static_cast<unsigned long long>(request.shader.codeAddress));
+    if (NanSpeculation().enabled) {
+        const auto& metadata = program.Metadata();
+        std::fprintf(stderr, "[recompile] nan speculation 0x%llx stage=%d candidates=%u speculated=%u clean=%u declined=%u checks_pruned=%u f32_fast_ops=%u f32_repaired_ops=%u\n", static_cast<unsigned long long>(request.shader.codeAddress), static_cast<int>(stageKind), metadata.nanSpeculationCandidates, metadata.nanSpeculationKept, metadata.nanSpeculationClean, metadata.nanSpeculationDeclines, metadata.nanSpeculationPrunedChecks, metadata.nanSpeculationFastOps, metadata.nanSpeculationRepairedOps);
+    }
 
     constexpr DenormalFlushEliminator denormalFlushEliminator;
     if (denormalFlushEliminator.Eliminate(program).removedFlushes != 0u) {

@@ -1059,6 +1059,7 @@ void SetDebugProbeActive(bool active);
 [[nodiscard]] bool ExactF32Arithmetic();
 struct NanSpeculationConfig {
     bool enabled = false;
+    std::uint32_t stageMask = 0x3bu;
     std::uint32_t minimumVectorInstructions = 32u;
     std::uint32_t maximumVectorInstructions = 256u;
 };

@@ -1,11 +1,15 @@
+#include "Translation/InstructionTranslator.hpp"
 #include "Translation/TranslationContext.hpp"
 #include "Recompiler.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 
 namespace ShaderRecompiler {
 
@@ -115,6 +119,19 @@ const NanSpeculationConfig& NanSpeculation() {
             const auto value = std::strtoul(text, &end, 10);
             return end != text && *end == '\0' && value > 0u && value <= 4096u ? static_cast<std::uint32_t>(value) : fallback;
         };
+        if (const char* stages = std::getenv("APS5_NAN_SPECULATION_STAGES"); stages != nullptr && *stages != '\0') {
+            constexpr std::array<std::pair<std::string_view, ShaderStageKind>, 6> names{{{"compute", ShaderStageKind::Compute}, {"vertex", ShaderStageKind::Vertex}, {"pixel", ShaderStageKind::Pixel}, {"fetch", ShaderStageKind::Fetch}, {"mesh", ShaderStageKind::Mesh}, {"unknown", ShaderStageKind::Unknown}}};
+            result.stageMask = 0u;
+            std::string_view rest(stages);
+            while (!rest.empty()) {
+                const auto comma = rest.find(',');
+                const auto name = rest.substr(0u, comma);
+                rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1u);
+                for (const auto& [text, kind] : names) {
+                    if (name == text || name == "all") result.stageMask |= 1u << static_cast<std::uint32_t>(kind);
+                }
+            }
+        }
         result.minimumVectorInstructions = number("APS5_NAN_SPECULATION_MIN", result.minimumVectorInstructions);
         result.maximumVectorInstructions = std::max(result.minimumVectorInstructions, number("APS5_NAN_SPECULATION_MAX", result.maximumVectorInstructions));
         return result;

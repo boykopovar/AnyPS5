@@ -1928,6 +1928,7 @@ std::uint64_t SourceVersion() {
     auto version = ExactF32Arithmetic() ? Generated::SourceVersion : Generated::SourceVersion ^ 0x9e3779b97f4a7c15ull;
     const auto& speculation = NanSpeculation();
     if (speculation.enabled) version ^= 0x6a09e667f3bcc909ull ^ (static_cast<std::uint64_t>(speculation.minimumVectorInstructions) << 32u) ^ speculation.maximumVectorInstructions;
+    if (speculation.enabled && speculation.stageMask != NanSpeculationConfig{}.stageMask) version ^= 0xbb67ae8584caa73bull * speculation.stageMask;
     return version;
 }
 

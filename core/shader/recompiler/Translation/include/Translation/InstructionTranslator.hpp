@@ -52,6 +52,7 @@ struct TranslateOptions {
 };
 
 [[nodiscard]] bool NanSpeculationRestorable(const IrBlock& block, std::size_t firstInstruction);
+[[nodiscard]] bool NanSpeculationLaneLocal(const IrBlock& block, std::size_t firstInstruction);
 
 class InstructionTranslator {
 public:
