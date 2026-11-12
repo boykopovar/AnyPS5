@@ -12,11 +12,21 @@ from unittest.mock import patch
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import probe_catalog
+try:
+    import probe_catalog
+except ModuleNotFoundError as error:
+    if error.name != "probe_catalog":
+        raise
+    probe_catalog = None
+
+
+def require_probe_catalog(test):
+    test.assertIsNotNone(probe_catalog, "probe_catalog.py is required by these regression tests")
 
 
 class CatalogLoadingTests(unittest.TestCase):
     def setUp(self):
+        require_probe_catalog(self)
         self.catalog, self.digest = probe_catalog.read_catalog()
 
     def test_catalog_has_unique_curated_probes_and_a_content_digest(self):
@@ -159,6 +169,7 @@ class CatalogLoadingTests(unittest.TestCase):
 
 class ProbeGenerationTests(unittest.TestCase):
     def setUp(self):
+        require_probe_catalog(self)
         self.catalog, self.digest = probe_catalog.read_catalog()
 
     def test_generation_writes_assembly_rows_and_catalog_metadata(self):
@@ -219,6 +230,7 @@ class ProbeGenerationTests(unittest.TestCase):
 
 class ProbeRunTests(unittest.TestCase):
     def setUp(self):
+        require_probe_catalog(self)
         self.catalog, self.digest = probe_catalog.read_catalog()
 
     def test_run_saves_results_with_oracle_settings_and_device_label(self):
@@ -280,6 +292,7 @@ class ProbeRunTests(unittest.TestCase):
 
 class ProbeCoverageTests(unittest.TestCase):
     def setUp(self):
+        require_probe_catalog(self)
         self.catalog, self.digest = probe_catalog.read_catalog()
 
     def write_report(self, root, probe, digest=None, device_label="rx-6750-xt"):
@@ -377,6 +390,9 @@ class ProbeCoverageTests(unittest.TestCase):
 
 
 class ProbeCatalogCliTests(unittest.TestCase):
+    def setUp(self):
+        require_probe_catalog(self)
+
     def test_list_and_generate_commands_run_without_a_gpu(self):
         listing = io.StringIO()
         with contextlib.redirect_stdout(listing):
