@@ -583,3 +583,10 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "non-root"):
                 performance_bisect.load_recipe(path)
 
+
+    def test_recipe_rejects_missing_game_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.recipe_path(Path(directory), games=["missing-game"])
+            with self.assertRaisesRegex(ValueError, "not an existing directory"):
+                performance_bisect.load_recipe(path)
+
