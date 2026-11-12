@@ -196,6 +196,12 @@ public:
     Retained<URL> absolutePDFURL;
     Retained<String> linkLabel;
     Retained<String> linkTitle;
+    Retained<String> linkSuggestedFilename;
+    bool isSelected = false;
+    bool isDownloadableMedia = false;
+    bool mediaHasAudio = false;
+    bool mediaIsInFullscreen = false;
+    std::uint32_t mediaType = 0;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {

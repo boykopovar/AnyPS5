@@ -215,17 +215,11 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleGetApplicationConnection` | `L4ZuA2XEwzw` |
 | `WKBundleGetJavaScriptObjectsCount` | `IzxyWmghAig` |
 | `WKBundleHitTestResultCopyImage` | `SKZ7PFisSuc` |
-| `WKBundleHitTestResultCopyLinkSuggestedFilename` | `mf6n1uCzOY8` |
 | `WKBundleHitTestResultCopyNodeHandle` | `y-ZCGGbJyUU` |
 | `WKBundleHitTestResultCopyURLElementHandle` | `S2Sb-NajDeo` |
 | `WKBundleHitTestResultGetFrame` | `mGM-NRBuZvE` |
 | `WKBundleHitTestResultGetImageRect` | `CHPZFRIZO7o` |
-| `WKBundleHitTestResultGetIsSelected` | `-tEPJ84QOzw` |
-| `WKBundleHitTestResultGetMediaType` | `YaGMXGYIWJ0` |
 | `WKBundleHitTestResultGetTargetFrame` | `w32pxSSQ4Rs` |
-| `WKBundleHitTestResultIsDownloadableMedia` | `moAKVLhGVOQ` |
-| `WKBundleHitTestResultMediaHasAudio` | `Oe33uOtx7sI` |
-| `WKBundleHitTestResultMediaIsInFullscreen` | `W6+fHPVq9Sc` |
 | `WKBundleInspectorClose` | `xTfnxYXtinY` |
 | `WKBundleInspectorEvaluateScriptForTest` | `b6+hAoAkJl8` |
 | `WKBundleInspectorSetPageProfilingEnabled` | `-r23ePSw30o` |
@@ -6126,7 +6120,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WTF decimal parsing limits](../../../core/libs/prx/libSceNKWebKit/CharactersToNumber.cpp) - inputs of about 1 GiB or more whose decimal exponent leaves the range of WebKit's [`int` exponent](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/dtoa/double-conversion.cc#L488-L490) throw, where WebKit overflows. A UTF-16 `charactersTo*` length above `UINT32_MAX` after leading spaces throws where WebKit's [conversion Vector](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/Vector.h#L291-L293) crashes.
 - [WTF StringBuilder](../../../core/libs/prx/libSceNKWebKit/src/StringBuilder.cpp) (libSceNKWebKit) - throws where WebKit crashes: an overflow of a builder that crashes on overflow, a length sum above `UINT32_MAX`, `toString` after an overflow, and null characters with a nonzero length. It also throws where a debug assertion guards memory WebKit would corrupt: `reserveCapacity` on an empty 16-bit builder without a buffer, and [`appendQuotedJSONString`](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/StringBuilderJSON.cpp#L127-L128) of a 16-bit string into an 8-bit builder that holds an adopted string and no buffer. A capacity above the tree's `StringImpl` limit records an overflow, as a failed allocation does. Growing or shrinking a buffer with one reference copies it instead of calling `fastRealloc`, so its address always changes.
 - [WTF TextStream pointers](../../../core/libs/prx/libSceNKWebKit/src/TextStream.cpp) (libSceNKWebKit) - `operator<<(const void*)` formats the pointer as the tree's libc formats `%p` ([`snprintf`](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/TextStream.cpp#L114-L119) in WebKit); the console libc's output is unverified.
-- [WKBundleHitTestResult property getters](../../../core/libs/prx/libSceNKWebKit/src/BundleHitTestResult.cpp) (libSceNKWebKit) - hit test results are test-driven until injected bundle hit testing produces them.
+- [WKBundleHitTestResult property getters](../../../core/libs/prx/libSceNKWebKit/src/BundleHitTestResult.cpp) (libSceNKWebKit) - `WKBundleHitTestResultCopyAbsoluteImageURL`, `WKBundleHitTestResultCopyAbsoluteLinkURL`, `WKBundleHitTestResultCopyAbsoluteMediaURL`, `WKBundleHitTestResultCopyAbsolutePDFURL`, `WKBundleHitTestResultCopyLinkLabel`, `WKBundleHitTestResultCopyLinkTitle`, `WKBundleHitTestResultCopyLinkSuggestedFilename`, `WKBundleHitTestResultGetIsSelected`, `WKBundleHitTestResultGetMediaType`, `WKBundleHitTestResultIsDownloadableMedia`, `WKBundleHitTestResultMediaHasAudio` and `WKBundleHitTestResultMediaIsInFullscreen` inspect hit test results test-driven until injected bundle hit testing produces them.
 - [WKBundleDOMWindowExtension creation and property accessors](../../../core/libs/prx/libSceNKWebKit/src/BundleDOMWindowExtension.cpp) (libSceNKWebKit) - DOM window extensions follow WebKit's Injected Bundle C API, retaining the frame and script world references; DOM window execution is test-driven.
 - [WKDownload property queries and cancellation](../../../core/libs/prx/libSceNKWebKit/src/Download.cpp) (libSceNKWebKit) - download properties and cancellation reflect host state until downloads are connected to network transfers.
 - [WKAXObject property getters](../../../core/libs/prx/libSceNKWebKit/src/AccessibilityObject.cpp) (libSceNKWebKit) - accessibility objects are test-driven until accessibility tree queries produce them.
