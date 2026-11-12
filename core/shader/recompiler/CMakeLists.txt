@@ -162,6 +162,13 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/DummyShaders.cpp
     )
 
+    set_source_files_properties(
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Translation/src/VectorInstructions.cpp
+            TARGET_DIRECTORY ${target}
+            PROPERTIES COMPILE_OPTIONS
+            "$<$<AND:$<CXX_COMPILER_ID:GNU>,$<VERSION_GREATER_EQUAL:$<CXX_COMPILER_VERSION>,14>,$<VERSION_LESS:$<CXX_COMPILER_VERSION>,15>>:-fno-tree-pre>"
+    )
+
     target_include_directories(${target} PUBLIC
             ${PROJECT_SOURCE_DIR}/core/libs
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/
