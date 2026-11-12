@@ -1,5 +1,9 @@
 # libSceIme technical debt
 
+### Functional
+
+- [sceImeOpen and sceImeSetCaret](../../../core/libs/prx/libSceIme/Export.cpp) (libSceIme) - validate guest parameter, extended parameter and caret pointers via GuestCopyIn_nid_no_patch preserving host errno, returning `0x80BC0031` (`ErrorInvalidAddress`) on unmapped or unreadable guest memory as host-safety fallbacks. Console fault behaviour on bad memory is unmeasured.
+
 ### Additional callable exports
 
 - [Additional callable exports](../../../core/libs/prx/libSceIme/Export.cpp) - 2 entries observed in the 3.20 export inventory and present in the later 13.60-labelled inventory are import-resolution declarations only. The later inventory label does not authenticate a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented.
