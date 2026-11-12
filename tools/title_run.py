@@ -414,7 +414,9 @@ def discover(directories, wanted=()):
 
 def unwrap_or_copy(source, target):
     target.parent.mkdir(parents=True, exist_ok=True)
-    if source.read_bytes()[:4] == b"\x7fELF":
+    with source.open("rb") as stream:
+        magic = stream.read(4)
+    if magic == b"\x7fELF":
         shutil.copyfile(source, target)
     else:
         unwrap_self.unwrap(source, target)
