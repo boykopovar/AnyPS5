@@ -5,13 +5,20 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/RenameDot.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "tests/TemporaryFile.hpp"
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -78,7 +85,7 @@ static bool FchflagsThrows(int descriptor, std::uint64_t flags, const char* name
 }
 
 static std::string CaptureStderr(const std::function<void()>& action) {
-    std::FILE* capture = std::tmpfile();
+    std::FILE* capture = TemporaryFile::Open();
     Require(capture != nullptr);
     std::fflush(stderr);
 #ifdef _WIN32
@@ -169,6 +176,29 @@ static void TestParentTraversal() {
     checkInvalid("/" + root.generic_string() + "/missing/..", 2);
     checkInvalid(root.generic_string() + "/missing/../../" + root.generic_string(), 2);
     AddPathAlias_nid_no_patch("parent-test-mount", std::filesystem::absolute(root).string().c_str());
+    const auto missingCreate = root.generic_string() + "/missing-create/";
+    const int creates[] = {SCE_KERNEL_O_CREAT, SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC};
+    for (const char* name : {"/parent-test-mount/missing-create/", missingCreate.c_str()}) {
+        for (const int create : creates) {
+            Require(sceKernelOpen(name, SCE_KERNEL_O_WRONLY | create, 0600) == SCE_KERNEL_ERROR_ENOENT);
+            Require(open_nid_postfix(name, SCE_KERNEL_O_WRONLY | create, 0600) == -1 && *__error_nid_postfix() == 2);
+        }
+    }
+    Require(!std::filesystem::exists(root / "missing-create"));
+#ifdef _WIN32
+    const auto nativeRoot = std::filesystem::absolute(root).generic_string();
+    const auto nativeMissing = nativeRoot + "/missing-create/";
+    const auto nativePresent = nativeRoot + "/present.txt/";
+    const auto nativeBelowFile = nativeRoot + "/present.txt/child/";
+    for (const int create : creates) {
+        Require(sceKernelOpen(nativeMissing.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == SCE_KERNEL_ERROR_ENOENT);
+        Require(open_nid_postfix(nativeMissing.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == -1 && *__error_nid_postfix() == 2);
+        Require(sceKernelOpen(nativePresent.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == SCE_KERNEL_ERROR_ENOTDIR);
+        Require(open_nid_postfix(nativePresent.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == -1 && *__error_nid_postfix() == 20);
+        Require(sceKernelOpen(nativeBelowFile.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == SCE_KERNEL_ERROR_ENOTDIR);
+    }
+    Require(!std::filesystem::exists(root / "missing-create") && std::filesystem::file_size(root / "present.txt") == 9);
+#endif
     checkInvalid("/PARENT-TEST-MOUNT/missing/..", 2);
     checkInvalid("/parent-test-mount/present.txt/..", 20);
     FileStat status{};
@@ -349,11 +379,13 @@ static void TestLongHostPathStat() {
     root /= L"anyps5-stat-long-" + std::to_wstring(std::chrono::steady_clock::now().time_since_epoch().count());
     auto deep = root;
     while (deep.native().size() < MAX_PATH + 24) deep /= std::wstring(40, L'd');
+    std::vector<std::filesystem::path> directories{root};
     Require(::CreateDirectoryW(ExtendedPath(root).c_str(), nullptr) != 0);
     auto directory = root;
     for (const auto& component : std::filesystem::path(deep).lexically_relative(root)) {
         directory /= component;
         Require(::CreateDirectoryW(ExtendedPath(directory).c_str(), nullptr) != 0);
+        directories.push_back(directory);
     }
     const auto file = deep / L"payload.bin";
     const auto handle = ::CreateFileW(ExtendedPath(file).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -367,22 +399,362 @@ static void TestLongHostPathStat() {
     FileStat status{};
     Require(ResolvePath_nid_no_patch("/long-stat-host/payload.bin").native().size() > MAX_PATH);
     Require(sceKernelStat("/long-stat-host/payload.bin", &status) == 0 && status.st_size == 8);
+    Require(lstat_nid_postfix("/long-stat-host/payload.bin", &status) == 0 && status.st_size == 8 &&
+        (status.st_mode & 0170000) == 0100000);
     Require(sceKernelStat("/long-stat-host/missing.bin", &status) == static_cast<int>(0x80020002u));
+    Require(lstat_nid_postfix("/long-stat-host/missing.bin", &status) == -1 && *__error_nid_postfix() == 2);
     Require(sceKernelStat("/long-stat-host/", &status) == 0 && (status.st_mode & 0170000) == 0040000);
+    const int opened = sceKernelOpen("/long-stat-host/payload.bin", 0, 0);
+    char content[8]{};
+    Require(opened >= 0 && sceKernelRead(opened, content, sizeof content) == 8 && std::memcmp(content, "metadata", 8) == 0 && sceKernelClose(opened) == 0);
+    const int listed = sceKernelOpen("/long-stat-host/", 0x20000, 0);
+    Require(listed >= 0);
+    std::vector<char> longListing(4096);
+    std::vector<std::string> longNames;
+    for (int count = sceKernelGetdents(listed, longListing.data(), static_cast<int>(longListing.size())); count > 0;
+         count = sceKernelGetdents(listed, longListing.data(), static_cast<int>(longListing.size()))) {
+        for (int offset = 0; offset < count;) {
+            std::uint16_t length = 0;
+            std::memcpy(&length, longListing.data() + offset + 4, sizeof length);
+            Require(length >= 8);
+            longNames.emplace_back(longListing.data() + offset + 8);
+            offset += length;
+        }
+    }
+    std::sort(longNames.begin(), longNames.end());
+    Require((longNames == std::vector<std::string>{".", "..", "payload.bin"}));
+    Require(sceKernelClose(listed) == 0);
     RemovePathAlias_nid_no_patch("/long-stat-host");
     const auto extendedHost = ExtendedPath(deep).string();
     AddPathAlias_nid_no_patch("/long-stat-extended", extendedHost.c_str());
     Require(ResolvePath_nid_no_patch("/long-stat-extended/payload.bin").native().starts_with(L"\\\\?\\"));
     Require(sceKernelStat("/long-stat-extended/payload.bin", &status) == 0 && status.st_size == 8);
+    Require(lstat_nid_postfix("/long-stat-extended/payload.bin", &status) == 0 && status.st_size == 8 &&
+        (status.st_mode & 0170000) == 0100000);
     Require(sceKernelStat("/long-stat-extended/missing.bin", &status) == static_cast<int>(0x80020002u));
+    Require(lstat_nid_postfix("/long-stat-extended/missing.bin", &status) == -1 && *__error_nid_postfix() == 2);
     RemovePathAlias_nid_no_patch("/long-stat-extended");
-    ::DeleteFileW(ExtendedPath(file).c_str());
-    for (auto path = deep; ; path = path.parent_path()) {
-        ::RemoveDirectoryW(ExtendedPath(path).c_str());
-        if (path == root) break;
+    Require(::DeleteFileW(ExtendedPath(file).c_str()) != 0);
+    for (auto path = directories.rbegin(); path != directories.rend(); ++path)
+        Require(::RemoveDirectoryW(ExtendedPath(*path).c_str()) != 0);
+}
+
+static void TestWindowsVerbatimPathLive() {
+    auto root = std::filesystem::absolute(std::filesystem::temp_directory_path()).lexically_normal();
+    if (root.filename().empty()) root = root.parent_path();
+    root /= L"anyps5-verbatim-" + std::to_wstring(std::chrono::steady_clock::now().time_since_epoch().count());
+    Require(::CreateDirectoryW(root.c_str(), nullptr) != 0);
+    const auto host = root.string();
+    AddPathAlias_nid_no_patch("/verbatim-test", host.c_str());
+
+    std::error_code error;
+    const auto dosPath = NativeVerbatimPath_nid_no_patch(root / L"nul.txt", error);
+    Require(!error);
+    Require(dosPath.native().starts_with(L"\\\\?\\"));
+
+    const auto dotPath = NativeVerbatimPath_nid_no_patch(root / L"file.", error);
+    Require(!error);
+    Require(dotPath.native().starts_with(L"\\\\?\\"));
+
+    const auto spacePath = NativeVerbatimPath_nid_no_patch(root / L"file ", error);
+    Require(!error);
+    Require(spacePath.native().starts_with(L"\\\\?\\"));
+
+    const auto normalPath = NativeVerbatimPath_nid_no_patch(root / L"regular.txt", error);
+    Require(!error);
+    Require(!normalPath.native().starts_with(L"\\\\?\\"));
+
+    const auto alreadyVerbatim = NativeVerbatimPath_nid_no_patch(dosPath, error);
+    Require(!error);
+    Require(alreadyVerbatim == dosPath);
+
+    const int fdDot = sceKernelOpen("/verbatim-test/file.", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0666);
+    Require(fdDot >= 0);
+    sceKernelClose(fdDot);
+
+    FileStat sbDot{};
+    Require(sceKernelStat("/verbatim-test/file.", &sbDot) == 0);
+    Require(sceKernelUnlink("/verbatim-test/file.") == 0);
+    Require(sceKernelStat("/verbatim-test/file.", &sbDot) == static_cast<int>(0x80020002u));
+
+    const int fdNul = sceKernelOpen("/verbatim-test/nul", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0666);
+    Require(fdNul >= 0);
+    sceKernelClose(fdNul);
+
+    FileStat sbNul{};
+    Require(sceKernelStat("/verbatim-test/nul", &sbNul) == 0);
+    Require(sceKernelUnlink("/verbatim-test/nul") == 0);
+    Require(sceKernelStat("/verbatim-test/nul", &sbNul) == static_cast<int>(0x80020002u));
+
+    const int fdPlain = sceKernelOpen("/verbatim-test/file", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0666);
+    Require(fdPlain >= 0);
+    Require(sceKernelWrite(fdPlain, "A", 1) == 1);
+    sceKernelClose(fdPlain);
+
+    const int fdSibling = sceKernelOpen("/verbatim-test/file.", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0666);
+    Require(fdSibling >= 0);
+    Require(sceKernelWrite(fdSibling, "BB", 2) == 2);
+    sceKernelClose(fdSibling);
+
+    FileStat sbPlain{}, sbSibling{};
+    Require(sceKernelStat("/verbatim-test/file", &sbPlain) == 0);
+    Require(sceKernelStat("/verbatim-test/file.", &sbSibling) == 0);
+    Require(sbPlain.st_size == 1);
+    Require(sbSibling.st_size == 2);
+    Require(sceKernelUnlink("/verbatim-test/file") == 0);
+    Require(sceKernelUnlink("/verbatim-test/file.") == 0);
+
+    Require(sceKernelMkdir("/verbatim-test/d.", 0777) == 0);
+    const int fdSave = sceKernelOpen("/verbatim-test/d./save", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0666);
+    Require(fdSave >= 0);
+    sceKernelClose(fdSave);
+    FileStat sbSave{};
+    Require(sceKernelStat("/verbatim-test/d./save", &sbSave) == 0);
+    Require(sceKernelUnlink("/verbatim-test/d./save") == 0);
+    Require(sceKernelRmdir("/verbatim-test/d.") == 0);
+
+    Require(mkdir_nid_postfix("/verbatim-test/posix_d.", 0777) == 0);
+    const int fdPosixSave = open_nid_postfix("/verbatim-test/posix_d./save", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0666);
+    Require(fdPosixSave >= 0);
+    close_nid_postfix(fdPosixSave);
+    FileStat sbPosixSave{};
+    Require(sceKernelStat("/verbatim-test/posix_d./save", &sbPosixSave) == 0);
+    Require(unlink_nid_postfix("/verbatim-test/posix_d./save") == 0);
+    Require(rmdir_nid_postfix("/verbatim-test/posix_d.") == 0);
+
+    const int fdOrig = sceKernelOpen("/verbatim-test/orig.", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0666);
+    Require(fdOrig >= 0);
+    sceKernelClose(fdOrig);
+    Require(rename_nid_postfix("/verbatim-test/orig.", "/verbatim-test/renamed.") == 0);
+    FileStat sbRename{};
+    Require(sceKernelStat("/verbatim-test/orig.", &sbRename) == static_cast<int>(0x80020002u));
+    Require(sceKernelStat("/verbatim-test/renamed.", &sbRename) == 0);
+    Require(sceKernelRename("/verbatim-test/renamed.", "/verbatim-test/kernel_renamed.") == 0);
+    Require(sceKernelStat("/verbatim-test/renamed.", &sbRename) == static_cast<int>(0x80020002u));
+    Require(sceKernelStat("/verbatim-test/kernel_renamed.", &sbRename) == 0);
+    Require(sceKernelUnlink("/verbatim-test/kernel_renamed.") == 0);
+
+    const int fdReach = sceKernelOpen("/verbatim-test/reach.", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0666);
+    Require(fdReach >= 0);
+    sceKernelClose(fdReach);
+    Require(sceKernelCheckReachability("/verbatim-test/reach.") == 0);
+    Require(sceKernelUnlink("/verbatim-test/reach.") == 0);
+    Require(sceKernelCheckReachability("/verbatim-test/reach.") == static_cast<int>(0x80020002u));
+
+    const int fdTrunc = sceKernelOpen("/verbatim-test/trunc.", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0666);
+    Require(fdTrunc >= 0);
+    Require(sceKernelWrite(fdTrunc, "12345678", 8) == 8);
+    sceKernelClose(fdTrunc);
+    Require(sceKernelTruncate_nid_postfix("/verbatim-test/trunc.", 4) == 0);
+    FileStat sbTrunc{};
+    Require(sceKernelStat("/verbatim-test/trunc.", &sbTrunc) == 0);
+    Require(sbTrunc.st_size == 4);
+    Require(sceKernelChmod_nid_postfix("/verbatim-test/trunc.", 0644) == 0);
+    Require(sceKernelUnlink("/verbatim-test/trunc.") == 0);
+
+    Require(sceKernelMkdir("/verbatim-test/aux.dir", 0777) == 0);
+    const int fdAux = sceKernelOpen("/verbatim-test/aux.dir/file", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0666);
+    Require(fdAux >= 0);
+    sceKernelClose(fdAux);
+    Require(sceKernelUnlink("/verbatim-test/aux.dir/file") == 0);
+    Require(sceKernelRmdir("/verbatim-test/aux.dir") == 0);
+
+    const auto rootLength = root.native().size();
+    if (rootLength + 2 <= 250) {
+        const std::string dir250Name(250 - rootLength - 1, 'd');
+        const std::string dir250Guest = "/verbatim-test/" + dir250Name;
+        Require(sceKernelMkdir(dir250Guest.c_str(), 0777) == 0);
+        Require(sceKernelRmdir(dir250Guest.c_str()) == 0);
     }
+
+    RemovePathAlias_nid_no_patch("/verbatim-test");
+    ::RemoveDirectoryW(root.c_str());
 }
 #endif
+
+static void TestWindowsVerbatimPath() {
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("nul")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("NUL")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("con")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("CON")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("prn")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("PRN")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("aux")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("AUX")));
+    for (char digit = '1'; digit <= '9'; ++digit) {
+        Require(IsDosDeviceStem_nid_no_patch(std::string("com") + digit));
+        Require(IsDosDeviceStem_nid_no_patch(std::string("COM") + digit));
+        Require(IsDosDeviceStem_nid_no_patch(std::string("lpt") + digit));
+        Require(IsDosDeviceStem_nid_no_patch(std::string("LPT") + digit));
+    }
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("com\xC2\xB9")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("COM\xC2\xB9")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("com\xC2\xB2")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("COM\xC2\xB2")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("com\xC2\xB3")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("COM\xC2\xB3")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("lpt\xC2\xB9")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("LPT\xC2\xB9")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("lpt\xC2\xB2")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("LPT\xC2\xB2")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("lpt\xC2\xB3")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("LPT\xC2\xB3")));
+    Require(IsDosDeviceStem_nid_no_patch(std::wstring_view(L"com\u00b9")));
+    Require(IsDosDeviceStem_nid_no_patch(std::wstring_view(L"COM\u00b9")));
+    Require(IsDosDeviceStem_nid_no_patch(std::wstring_view(L"com\u00b2")));
+    Require(IsDosDeviceStem_nid_no_patch(std::wstring_view(L"COM\u00b2")));
+    Require(IsDosDeviceStem_nid_no_patch(std::wstring_view(L"com\u00b3")));
+    Require(IsDosDeviceStem_nid_no_patch(std::wstring_view(L"COM\u00b3")));
+    Require(IsDosDeviceStem_nid_no_patch(std::wstring_view(L"lpt\u00b9")));
+    Require(IsDosDeviceStem_nid_no_patch(std::wstring_view(L"LPT\u00b9")));
+    Require(IsDosDeviceStem_nid_no_patch(std::wstring_view(L"lpt\u00b2")));
+    Require(IsDosDeviceStem_nid_no_patch(std::wstring_view(L"LPT\u00b2")));
+    Require(IsDosDeviceStem_nid_no_patch(std::wstring_view(L"lpt\u00b3")));
+    Require(IsDosDeviceStem_nid_no_patch(std::wstring_view(L"LPT\u00b3")));
+    Require(!IsDosDeviceStem_nid_no_patch(std::string_view("com\xC2\xB4")));
+    Require(!IsDosDeviceStem_nid_no_patch(std::wstring_view(L"com\u00b4")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("conin$")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("CONIN$")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("conout$")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("CONOUT$")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("con. ")));
+    Require(IsDosDeviceStem_nid_no_patch(std::string_view("nul  ")));
+    Require(!IsDosDeviceStem_nid_no_patch(std::string_view("")));
+    Require(!IsDosDeviceStem_nid_no_patch(std::string_view("null")));
+    Require(!IsDosDeviceStem_nid_no_patch(std::string_view("conflict")));
+    Require(!IsDosDeviceStem_nid_no_patch(std::string_view("auxiliary")));
+    Require(!IsDosDeviceStem_nid_no_patch(std::string_view("com10")));
+    Require(!IsDosDeviceStem_nid_no_patch(std::string_view("lpt10")));
+    Require(!IsDosDeviceStem_nid_no_patch(std::string_view("regular")));
+    Require(!IsDosDeviceStem_nid_no_patch(std::string_view("clock$")));
+
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("nul")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("nul.txt")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("NUL.TXT")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("con.dat")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("aux.bin")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("com1.log")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("lpt9.out")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("conin$.txt")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("CONOUT$.dat")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("con .txt")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("file.")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("file ")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("name.txt.")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("name.txt ")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("...")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("com\xC2\xB9.txt")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("LPT\xC2\xB3.out")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::wstring_view(L"COM\u00b9.txt")));
+    Require(ComponentNeedsVerbatimPrefix_nid_no_patch(std::wstring_view(L"LPT\u00b3.log")));
+
+    Require(!ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("")));
+    Require(!ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view(".")));
+    Require(!ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("..")));
+    Require(!ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("regular.txt")));
+    Require(!ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("file.nul")));
+    Require(!ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view(".nul")));
+    Require(!ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("null.txt")));
+    Require(!ComponentNeedsVerbatimPrefix_nid_no_patch(std::string_view("conflict.dat")));
+
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view(R"(C:\games\title\nul)")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view(R"(C:\games\title\nul.txt)")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view(R"(C:\games\title\file.)")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view(R"(C:\games\title\file )")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view(R"(C:\games\nul\save.dat)")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view(R"(C:\games\dir.\save.dat)")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view(R"(C:\games\dir \save.dat)")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view(R"(\\server\share\nul)")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view(R"(\\server\share\file.)")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view("C:/games/title/nul")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view("C:/games/title/file.")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view("//server/share/nul")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view("C:nul")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view("C:file.")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view("C:file ")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::wstring_view(L"COM\u00b9.txt")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::wstring_view(L"LPT\u00b3.log")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::string_view("C:/games/title/com\xC2\xB9.txt")));
+    Require(PathNeedsVerbatimPrefix_nid_no_patch(std::wstring_view(L"C:/games/title/COM\u00b9.txt")));
+    Require(!PathNeedsVerbatimPrefix_nid_no_patch(std::string_view(R"(C:\games\title\file.txt)")));
+    Require(!PathNeedsVerbatimPrefix_nid_no_patch(std::string_view(R"(\\server\share\file.txt)")));
+    Require(!PathNeedsVerbatimPrefix_nid_no_patch(std::string_view("C:/games/title/file.txt")));
+    Require(!PathNeedsVerbatimPrefix_nid_no_patch(std::string_view("//server/share/file.txt")));
+    Require(!PathNeedsVerbatimPrefix_nid_no_patch(std::string_view("C:file.txt")));
+    Require(!PathNeedsVerbatimPrefix_nid_no_patch(std::string_view("C:/games/title/com10.txt")));
+    Require(!PathNeedsVerbatimPrefix_nid_no_patch(std::wstring_view(L"C:/games/title/COM10.txt")));
+    Require(!PathNeedsVerbatimPrefix_nid_no_patch(std::string_view(R"(\\?\C:\games\title\nul)")));
+    Require(!PathNeedsVerbatimPrefix_nid_no_patch(std::string_view(R"(\\.\C:\games\title\nul)")));
+    Require(!PathNeedsVerbatimPrefix_nid_no_patch(std::string_view("//?/C:/games/title/nul")));
+
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::string(R"(C:\games\title\nul)")) == R"(\\?\C:\games\title\nul)");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::string("C:/games/title/nul")) == R"(\\?\C:\games\title\nul)");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::string(R"(C:\games\title\file.)")) == R"(\\?\C:\games\title\file.)");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::string("C:/games/title/file.")) == R"(\\?\C:\games\title\file.)");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::string(R"(C:\games\title\file )")) == R"(\\?\C:\games\title\file )");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::string(R"(\\server\share\nul)")) == R"(\\?\UNC\server\share\nul)");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::string("//server/share/nul")) == R"(\\?\UNC\server\share\nul)");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::string(R"(\\server\share\file.)")) == R"(\\?\UNC\server\share\file.)");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::string(R"(\\?\C:\games\title\nul)")) == R"(\\?\C:\games\title\nul)");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::string(R"(\\?\UNC\server\share\nul)")) == R"(\\?\UNC\server\share\nul)");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::string("//?/C:/games/title/nul")) == R"(\\?\C:\games\title\nul)");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::wstring(L"C:\\games\\title\\nul")) == L"\\\\?\\C:\\games\\title\\nul");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::wstring(L"C:/games/title/nul")) == L"\\\\?\\C:\\games\\title\\nul");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::wstring(L"\\\\server\\share\\nul")) == L"\\\\?\\UNC\\server\\share\\nul");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::wstring(L"//server/share/nul")) == L"\\\\?\\UNC\\server\\share\\nul");
+    Require(FormatVerbatimWindowsPath_nid_no_patch(std::wstring(L"\\\\?\\C:\\games\\title\\nul")) == L"\\\\?\\C:\\games\\title\\nul");
+
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(C:\games\title\file.txt)")) == R"(C:\games\title\file.txt)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(C:\games\title\nul)")) == R"(\\?\C:\games\title\nul)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view("C:/games/title/nul")) == R"(\\?\C:\games\title\nul)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(C:\games\title\con.dat)")) == R"(\\?\C:\games\title\con.dat)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(C:\games\title\aux.bin)")) == R"(\\?\C:\games\title\aux.bin)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(C:\games\title\com1.log)")) == R"(\\?\C:\games\title\com1.log)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(C:\games\title\lpt9.out)")) == R"(\\?\C:\games\title\lpt9.out)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(C:\games\title\file.)")) == R"(\\?\C:\games\title\file.)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view("C:/games/title/file.")) == R"(\\?\C:\games\title\file.)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(C:\games\title\file )")) == R"(\\?\C:\games\title\file )");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(\\server\share\nul)")) == R"(\\?\UNC\server\share\nul)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view("//server/share/nul")) == R"(\\?\UNC\server\share\nul)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(\\server\share\file.)")) == R"(\\?\UNC\server\share\file.)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view("C:nul")) == R"(\\?\C:nul)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view("C:file.")) == R"(\\?\C:file.)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::wstring_view(L"COM\u00b9.txt")) == L"\\\\?\\COM\u00b9.txt");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::wstring_view(L"LPT\u00b3.log")) == L"\\\\?\\LPT\u00b3.log");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view("C:/games/title/com\xC2\xB9.txt")) == R"(\\?\C:\games\title\com)" "\xC2\xB9.txt");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::wstring_view(L"C:/games/title/COM\u00b9.txt")) == L"\\\\?\\C:\\games\\title\\COM\u00b9.txt");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(C:\games\title\null.txt)")) == R"(C:\games\title\null.txt)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(C:\games\title\file.nul)")) == R"(C:\games\title\file.nul)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(C:\games\title\com10.txt)")) == R"(C:\games\title\com10.txt)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(\\?\C:\games\title\nul)")) == R"(\\?\C:\games\title\nul)");
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(R"(\\?\UNC\server\share\nul)")) == R"(\\?\UNC\server\share\nul)");
+    const std::string path247 = "C:\\" + std::string(232, 'a') + "\\regular.txt";
+    Require(path247.size() == 247);
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(path247)) == path247);
+    const std::string path248 = "C:\\" + std::string(233, 'a') + "\\regular.txt";
+    Require(path248.size() == 248);
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(path248)) == R"(\\?\)" + path248);
+    const std::string path259 = "C:\\" + std::string(244, 'a') + "\\regular.txt";
+    Require(path259.size() == 259);
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(path259)) == R"(\\?\)" + path259);
+    const std::string path260 = "C:\\" + std::string(245, 'a') + "\\regular.txt";
+    Require(path260.size() == 260);
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(path260)) == R"(\\?\)" + path260);
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(path248), WindowsMaxPathLength) == path248);
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(path260), WindowsMaxPathLength) == R"(\\?\)" + path260);
+    const std::wstring wPath247 = L"C:\\" + std::wstring(232, L'a') + L"\\regular.txt";
+    Require(wPath247.size() == 247);
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::wstring_view(wPath247)) == wPath247);
+    const std::wstring wPath248 = L"C:\\" + std::wstring(233, L'a') + L"\\regular.txt";
+    Require(wPath248.size() == 248);
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::wstring_view(wPath248)) == L"\\\\?\\" + wPath248);
+    const std::string longPath = "C:\\" + std::string(300, 'a') + "\\regular.txt";
+    Require(MakeVerbatimWindowsPathForTest_nid_no_patch(std::string_view(longPath)) == R"(\\?\)" + longPath);
+
+#ifdef _WIN32
+    TestWindowsVerbatimPathLive();
+#endif
+}
 
 #ifdef __linux__
 static int DirectoryOpens(int watch) {
@@ -426,6 +798,7 @@ int main() {
     TestParentTraversal();
     TestRelinkedModuleNames();
     TestRelinkedModuleNameCase();
+    TestWindowsVerbatimPath();
 #ifdef _WIN32
     TestCaseSensitiveHostDirectory();
     TestLongHostPathStat();
@@ -444,9 +817,10 @@ int main() {
     std::uint64_t throttling[4] = {1, 2, 3, 4};
     Require(sceKernelWriteThrottlingStatus(throttling) == 0);
     Require(throttling[0] == 0xffffffffu && throttling[1] == 0 && throttling[2] == 0 && throttling[3] == 0);
-    Require(sceKernelWriteThrottlingStatus(nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelWriteThrottlingStatus(nullptr) == static_cast<int>(0x80020016u));
+    Require(sceKernelWriteThrottlingStatus(reinterpret_cast<std::uint64_t*>(0x10)) == static_cast<int>(0x8002000eu));
     Require(sceKernelDebugOutText(0, nullptr) == static_cast<int>(0x8002000eu));
-    auto* captured = std::tmpfile();
+    auto* captured = TemporaryFile::Open();
     Require(captured != nullptr);
 #ifdef _WIN32
     const int saved = ::_dup(::_fileno(stderr));
@@ -517,7 +891,7 @@ int main() {
         }
     }
     Require(close_nid_postfix(descriptors[0]) == 0);
-    auto* hostCapture = std::tmpfile();
+    auto* hostCapture = TemporaryFile::Open();
     Require(hostCapture != nullptr && pipe_nid_postfix(descriptors) == 0);
 #ifdef _WIN32
     const int hostError = ::_dup(2);
@@ -542,7 +916,7 @@ int main() {
     Require(std::fclose(hostCapture) == 0);
 #ifdef _WIN32
     for (const bool reopen : {false, true}) {
-        auto* hostCapture = std::tmpfile();
+        auto* hostCapture = TemporaryFile::Open();
         const int hostError = ::_dup(2);
         Require(hostCapture != nullptr && hostError >= 0);
         int redirect[2] = {-1, -1};
@@ -625,6 +999,29 @@ int main() {
             Require(close_nid_postfix(reused) == 0);
 #endif
         }
+        auto* reopened = fopen_nid_postfix(listed.string().c_str(), "r");
+        Require(reopened != nullptr && freopen_nid_postfix(root.string().c_str(), "r", reopened) == reopened);
+        FileStat reopenedStatus{};
+        Require(sceKernelFstat(fileno_nid_postfix(reopened), &reopenedStatus) == 0 && (reopenedStatus.st_mode & 0170000) == 0040000);
+        char reopenedText[8] = {};
+        *__error_nid_postfix() = 0;
+        Require(fread_nid_postfix(reopenedText, 1, sizeof(reopenedText), reopened) == 0 && *__error_nid_postfix() == 21 && ferror_nid_postfix(reopened) != 0);
+        Require(freopen_nid_postfix(listed.string().c_str(), "rb", reopened) == reopened && ferror_nid_postfix(reopened) == 0);
+        Require(sceKernelFstat(fileno_nid_postfix(reopened), &reopenedStatus) == 0 && (reopenedStatus.st_mode & 0170000) == 0100000);
+        Require(fread_nid_postfix(reopenedText, 1, sizeof(reopenedText), reopened) == 6 && std::memcmp(reopenedText, "listed", 6) == 0);
+        Require(freopen_nid_postfix(root.string().c_str(), "re", reopened) == reopened);
+        const int reopenedDescriptor = fileno_nid_postfix(reopened);
+        Require(reopenedDescriptor >= 0 && fclose_nid_postfix(reopened) == 0);
+#ifdef _WIN32
+        {
+            const int reused = open_nid_postfix(listed.string().c_str(), 0, 0);
+            char text[6]{};
+            Require(reused == reopenedDescriptor && read_nid_postfix(reused, text, sizeof(text)) == 6 && std::memcmp(text, "listed", 6) == 0);
+            Require(close_nid_postfix(reused) == 0);
+        }
+#endif
+        auto* updated = fopen_nid_postfix(listed.string().c_str(), "r");
+        Require(updated != nullptr && freopen_nid_postfix(root.string().c_str(), "r+", updated) == nullptr && *__error_nid_postfix() == 21);
         Require(std::filesystem::remove(listed));
     }
     Require(mkdir_nid_postfix((root / "missing" / "child").string().c_str(), 0700) == -1 && *__error_nid_postfix() == 2);
@@ -643,8 +1040,15 @@ int main() {
     Require(chflags_nid_postfix(file.string().c_str(), 1ULL << 32) == -1 && *__error_nid_postfix() == 45);
     Require(chflags_nid_postfix(file.string().c_str(), ~0ULL) == -1 && *__error_nid_postfix() == 45);
     Require(chflags_nid_postfix(file.string().c_str(), 0x200000) == -1 && *__error_nid_postfix() == 1);
+    Require(chflags_nid_postfix(file.string().c_str(), 0x1) == -1 && *__error_nid_postfix() == 45);
+    Require(chflags_nid_postfix(file.string().c_str(), 0x8) == -1 && *__error_nid_postfix() == 45);
+    Require(ChflagsThrows(file, 0x9, "UF_NODUMP|UF_OPAQUE"));
     Require(ChflagsThrows(file, 0x2, "UF_IMMUTABLE"));
-    Require(ChflagsThrows(file, 0x1000 | 0x40000, "UF_READONLY|SF_APPEND"));
+    for (const std::uint64_t system : {0x10000ULL, 0x20000ULL, 0x40000ULL, 0x100000ULL, 0x200000ULL, 0x370000ULL, 0x1000ULL | 0x40000ULL, 0x2ULL | 0x20000ULL})
+        Require(chflags_nid_postfix(file.string().c_str(), system) == -1 && *__error_nid_postfix() == 1);
+    Require(chflags_nid_postfix(file.string().c_str(), 0x40000 | 0x20) == -1 && *__error_nid_postfix() == 45);
+    Require(chflags_nid_postfix(root.string().c_str(), 0x20000) == -1 && *__error_nid_postfix() == 1);
+    Require(chflags_nid_postfix((root / "missing").string().c_str(), 0x20000) == -1 && *__error_nid_postfix() == 2);
     const auto chflagsDangling = root / "dangling.link";
     const auto chflagsPointing = root / "file.link";
 #ifdef _WIN32
@@ -672,8 +1076,13 @@ int main() {
     Require(fchflags_nid_postfix(flagged, 1ULL << 32) == -1 && *__error_nid_postfix() == 45);
     Require(fchflags_nid_postfix(flagged, ~0ULL) == -1 && *__error_nid_postfix() == 45);
     Require(fchflags_nid_postfix(flagged, 0x200000) == -1 && *__error_nid_postfix() == 1);
+    Require(fchflags_nid_postfix(flagged, 0x1) == -1 && *__error_nid_postfix() == 45);
+    Require(fchflags_nid_postfix(flagged, 0x8) == -1 && *__error_nid_postfix() == 45);
     Require(FchflagsThrows(flagged, 0x2, "UF_IMMUTABLE"));
-    Require(FchflagsThrows(flagged, 0x1000 | 0x40000, "UF_READONLY|SF_APPEND"));
+    for (const std::uint64_t system : {0x10000ULL, 0x20000ULL, 0x40000ULL, 0x100000ULL, 0x200000ULL, 0x1000ULL | 0x40000ULL, 0x2ULL | 0x20000ULL})
+        Require(fchflags_nid_postfix(flagged, system) == -1 && *__error_nid_postfix() == 1);
+    Require(fchflags_nid_postfix(flagged, 0x370000) == -1 && *__error_nid_postfix() == 1);
+    Require(fchflags_nid_postfix(flagged, 0x40000 | 0x20) == -1 && *__error_nid_postfix() == 45);
     Require(close_nid_postfix(flagged) == 0);
     Require(fchflags_nid_postfix(flagged, 0) == -1 && *__error_nid_postfix() == 9);
     Require(fchflags_nid_postfix(flagged, ~0ULL) == -1 && *__error_nid_postfix() == 9);
@@ -748,6 +1157,76 @@ int main() {
     Require(rename_nid_postfix(file.string().c_str(), renamed.string().c_str()) == -1);
     Require(*__error_nid_postfix() == 2);
     Require(rename_nid_postfix(renamed.string().c_str(), file.string().c_str()) == 0);
+    {
+        const auto linkedDirectory = root / "rename-linked-directory";
+        const auto emptyDirectory = root / "rename-empty-directory";
+        const auto directoryLink = root / "rename-directory.link";
+        const auto movingLink = root / "rename-moving.link";
+        const auto movingFile = root / "rename-moving.txt";
+        const auto occupiedFile = root / "rename-occupied.txt";
+        Require(std::filesystem::create_directory(linkedDirectory) && std::filesystem::create_directory(emptyDirectory));
+        { std::ofstream stream(linkedDirectory / "kept.txt"); stream << "kept"; }
+        { std::ofstream stream(movingFile); stream << "moved"; }
+        { std::ofstream stream(occupiedFile); stream << "occupied"; }
+#ifdef _WIN32
+        const DWORD directoryLinkFlags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE | SYMBOLIC_LINK_FLAG_DIRECTORY;
+        const bool renameLinked = CreateSymbolicLinkW(directoryLink.wstring().c_str(), L"rename-linked-directory", directoryLinkFlags) &&
+            CreateSymbolicLinkW(movingLink.wstring().c_str(), L"rename-linked-directory", directoryLinkFlags);
+#else
+        std::error_code renameLinkError;
+        std::filesystem::create_directory_symlink("rename-linked-directory", directoryLink, renameLinkError);
+        if (!renameLinkError) std::filesystem::create_directory_symlink("rename-linked-directory", movingLink, renameLinkError);
+        const bool renameLinked = !renameLinkError;
+#endif
+        if (renameLinked) {
+            Require(rename_nid_postfix(movingLink.string().c_str(), emptyDirectory.string().c_str()) == -1 && *__error_nid_postfix() == 21);
+            Require(std::filesystem::is_directory(emptyDirectory) && std::filesystem::is_empty(emptyDirectory));
+            Require(rename_nid_postfix(movingLink.string().c_str(), occupiedFile.string().c_str()) == 0);
+            Require(!std::filesystem::exists(movingLink) && std::filesystem::is_regular_file(occupiedFile / "kept.txt"));
+            Require(rename_nid_postfix(movingFile.string().c_str(), directoryLink.string().c_str()) == 0);
+            Require(!std::filesystem::exists(movingFile) && std::filesystem::is_regular_file(directoryLink));
+            { std::ifstream stream(directoryLink); std::string contents; std::getline(stream, contents); Require(contents == "moved"); }
+            Require(std::filesystem::is_regular_file(linkedDirectory / "kept.txt"));
+            Require(unlink_nid_postfix(directoryLink.string().c_str()) == 0);
+#ifdef _WIN32
+            Require(RemoveDirectoryW(occupiedFile.wstring().c_str()) != 0);
+#else
+            Require(unlink_nid_postfix(occupiedFile.string().c_str()) == 0);
+#endif
+        } else {
+#ifdef _WIN32
+            RemoveDirectoryW(movingLink.wstring().c_str());
+            RemoveDirectoryW(directoryLink.wstring().c_str());
+#else
+            unlink_nid_postfix(movingLink.string().c_str());
+            unlink_nid_postfix(directoryLink.string().c_str());
+#endif
+            unlink_nid_postfix(occupiedFile.string().c_str());
+            unlink_nid_postfix(movingFile.string().c_str());
+            std::fprintf(stderr, "symbolic links unavailable: the rename link cases not tested\n");
+        }
+#ifdef _WIN32
+        const auto directoryJunction = root / "rename-directory.junction";
+        const auto movingJunction = root / "rename-moving.junction";
+        const auto junctionFile = root / "rename-junction-moving.txt";
+        const auto junctionOccupied = root / "rename-junction-occupied.txt";
+        { std::ofstream stream(junctionFile); stream << "moved"; }
+        { std::ofstream stream(junctionOccupied); stream << "occupied"; }
+        const auto junctionTargetPath = std::filesystem::absolute(linkedDirectory).wstring();
+        for (const auto& made : {directoryJunction, movingJunction})
+            Require(_wsystem((L"cmd /c mklink /J \"" + made.wstring() + L"\" \"" + junctionTargetPath + L"\" >nul").c_str()) == 0);
+        Require(rename_nid_postfix(movingJunction.string().c_str(), emptyDirectory.string().c_str()) == -1 && *__error_nid_postfix() == 21);
+        Require(std::filesystem::is_directory(emptyDirectory) && std::filesystem::is_empty(emptyDirectory));
+        Require(rename_nid_postfix(movingJunction.string().c_str(), junctionOccupied.string().c_str()) == 0);
+        Require(!std::filesystem::exists(movingJunction) && std::filesystem::is_regular_file(junctionOccupied / "kept.txt"));
+        Require(rename_nid_postfix(junctionFile.string().c_str(), directoryJunction.string().c_str()) == 0);
+        Require(!std::filesystem::exists(junctionFile) && std::filesystem::is_regular_file(directoryJunction));
+        Require(std::filesystem::is_regular_file(linkedDirectory / "kept.txt"));
+        Require(RemoveDirectoryW(junctionOccupied.wstring().c_str()) && unlink_nid_postfix(directoryJunction.string().c_str()) == 0);
+#endif
+        std::filesystem::remove_all(linkedDirectory);
+        std::filesystem::remove(emptyDirectory);
+    }
     {
         const auto area = root / "libc_rename";
         const auto sourceFile = area / "source.txt";
@@ -958,6 +1437,9 @@ int main() {
     Require(futimes_nid_postfix(descriptor, negative) == -1 && *__error_nid_postfix() == 22);
     Require(std::fclose(native) == 0);
     Require(std::filesystem::file_size(sized) == 3);
+#ifdef _WIN32
+    const auto fileParameterHandler = _set_invalid_parameter_handler(RecordInvalidParameter);
+#endif
     Require(sceKernelFchmod(descriptor, 0600) == static_cast<int>(0x80020009u));
     Require(fchmod_nid_postfix(descriptor, 0600) == -1 && *__error_nid_postfix() == 9);
     Require(sceKernelFutimes(descriptor, nullptr) == static_cast<int>(0x80020009u));
@@ -966,6 +1448,12 @@ int main() {
     Require(sceKernelFdatasync(descriptor) == static_cast<int>(0x80020009u));
     Require(fsync_nid_postfix(descriptor) == -1 && *__error_nid_postfix() == 9);
     Require(sceKernelFsync(descriptor) == static_cast<int>(0x80020009u));
+    Require(sceKernelFchmod(0x7fffffff, 0600) == static_cast<int>(0x80020009u));
+    Require(sceKernelFutimes(0x7fffffff, nullptr) == static_cast<int>(0x80020009u));
+#ifdef _WIN32
+    _set_invalid_parameter_handler(fileParameterHandler);
+    Require(!g_invalidParameter);
+#endif
     const int socket = socket_nid_postfix(2, 2, 0);
     Require(socket >= 0);
     Require(sceKernelFchmod(socket, 0600) == static_cast<int>(0x80020016u));
@@ -986,6 +1474,9 @@ int main() {
     }
     Require(close_nid_postfix(syncPipe[0]) == 0 && close_nid_postfix(syncPipe[1]) == 0);
     Require(close_nid_postfix(socket) == 0);
+#ifdef _WIN32
+    const auto previousParameterHandler = _set_invalid_parameter_handler(RecordInvalidParameter);
+#endif
     Require(fchmod_nid_postfix(socket, 0600) == -1 && *__error_nid_postfix() == 9);
     Require(futimes_nid_postfix(socket, nullptr) == -1 && *__error_nid_postfix() == 9);
     Require(fdatasync_nid_postfix(socket) == -1 && *__error_nid_postfix() == 9);
@@ -994,9 +1485,6 @@ int main() {
     Require(sceKernelFsync(socket) == static_cast<int>(0x80020009u));
     Require(sceKernelFdatasync(0x7fffffff) == static_cast<int>(0x80020009u));
     Require(sceKernelFsync(0x7fffffff) == static_cast<int>(0x80020009u));
-#ifdef _WIN32
-    const auto previousParameterHandler = _set_invalid_parameter_handler(RecordInvalidParameter);
-#endif
     FileStat closedStatus{};
     Require(sceKernelFstat(descriptor, &closedStatus) == static_cast<int>(0x80020009u));
     Require(sceKernelFstat(socket, &closedStatus) == static_cast<int>(0x80020009u));
@@ -1131,6 +1619,10 @@ int main() {
         Require(checkRelativeLink(fileLink, 11));
         Require(checkRelativeLink(directoryLink, 16));
         Require(checkRelativeLink(danglingLink, 11));
+        const auto movedLink = root / "moved-dangling-link";
+        Require(rename_nid_postfix(danglingLink.string().c_str(), movedLink.string().c_str()) == 0 && checkRelativeLink(movedLink, 11));
+        Require(!std::filesystem::exists(root / "missing.txt"));
+        Require(rename_nid_postfix(movedLink.string().c_str(), danglingLink.string().c_str()) == 0 && checkRelativeLink(danglingLink, 11));
         const auto belowStatLoop = statLoop.string() + "\\inside";
         Require(sceKernelUnlink(belowStatLoop.c_str()) == static_cast<int>(0x8002003eu));
         Require(unlink_nid_postfix(belowStatLoop.c_str()) == -1 && *__error_nid_postfix() == 62);
@@ -1198,6 +1690,12 @@ int main() {
     const int followedJunction = sceKernelOpen(junction.string().c_str(), 0, 0);
     Require(followedJunction >= 0 && sceKernelClose(followedJunction) == 0);
     Require(std::filesystem::remove(junction) && std::filesystem::remove(junctionTarget));
+    const auto danglingJunctionTarget = root / "dangling-junction-target";
+    const auto danglingJunction = root / "dangling-junction";
+    Require(std::filesystem::create_directory(danglingJunctionTarget));
+    const auto danglingJunctionCommand = L"cmd /c mklink /J \"" + danglingJunction.wstring() + L"\" \"" + danglingJunctionTarget.wstring() + L"\"";
+    Require(_wsystem(danglingJunctionCommand.c_str()) == 0 && std::filesystem::remove(danglingJunctionTarget));
+    Require(unlink_nid_postfix(danglingJunction.string().c_str()) == 0 && GetFileAttributesW(danglingJunction.c_str()) == INVALID_FILE_ATTRIBUTES);
     const auto tagged = root / "tagged.bin";
     { std::ofstream stream(tagged, std::ios::binary); stream << std::string(1u << 18, 'a'); }
     const HANDLE taggedHandle = CreateFileW(tagged.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
@@ -1291,6 +1789,22 @@ int main() {
     Require(flock_nid_postfix(locked, 8) == 0);
     Require(flock_nid_postfix(other, 2 | 4) == 0);
     Require(flock_nid_postfix(other, 8) == 0);
+#ifndef _WIN32
+    {
+        const int third = open_nid_postfix(presentName.c_str(), 0, 0);
+        Require(third >= 0);
+        Require(flock_nid_postfix(locked, 1 | 4) == 0);
+        Require(flock_nid_postfix(other, 1 | 4) == 0);
+        Require(flock_nid_postfix(locked, 2 | 4) == -1 && *__error_nid_postfix() == 35);
+        Require(flock_nid_postfix(other, 8) == 0);
+        Require(flock_nid_postfix(third, 2 | 4) == -1 && *__error_nid_postfix() == 35);
+        Require(flock_nid_postfix(third, 1 | 4) == 0 && flock_nid_postfix(third, 8) == 0);
+        Require(flock_nid_postfix(locked, 2 | 4) == 0);
+        Require(flock_nid_postfix(third, 1 | 4) == -1 && *__error_nid_postfix() == 35);
+        Require(flock_nid_postfix(locked, 8) == 0);
+        Require(close_nid_postfix(third) == 0);
+    }
+#endif
     Require(flock_nid_postfix(locked, 2 | 4) == 0);
     Require(lseek_nid_postfix(-1, 0, 7) == -1 && *__error_nid_postfix() == 9);
     Require(lseek_nid_postfix(0x7fffffff, 0, -1) == -1 && *__error_nid_postfix() == 9);
@@ -1399,7 +1913,18 @@ int main() {
     Require(close_nid_postfix(plainFile) == 0);
     Require(close_nid_postfix(directoryDescriptor) == 0);
     const int flaggedDirectory = sceKernelOpen(rootName.c_str(), 0x20000, 0);
-    Require(flaggedDirectory >= 0 && sceKernelClose(flaggedDirectory) == 0);
+    FileStat directoryStatus{};
+    Require(flaggedDirectory >= 0 && sceKernelFstat(flaggedDirectory, &directoryStatus) == 0 && directoryStatus.st_blksize == 0x10000);
+    Require(sceKernelStat(rootName.c_str(), &directoryStatus) == 0 && directoryStatus.st_blksize == 0x10000);
+    FileStat fileStatus{};
+#ifdef _WIN32
+    Require(sceKernelStat(presentName.c_str(), &fileStatus) == 0 && fileStatus.st_blksize == 512);
+#else
+    struct stat presentHostStat {};
+    Require(::stat(presentName.c_str(), &presentHostStat) == 0);
+    Require(sceKernelStat(presentName.c_str(), &fileStatus) == 0 && fileStatus.st_blksize == static_cast<decltype(fileStatus.st_blksize)>(presentHostStat.st_blksize));
+#endif
+    Require(sceKernelClose(flaggedDirectory) == 0);
     std::vector<char> entries(4096);
     for (const auto& directoryName : {std::string("/"), std::string("."), rootName + "/", rootName + "/.."}) {
         const int listed = sceKernelOpen(directoryName.c_str(), 0x20000, 0);
@@ -1519,6 +2044,7 @@ int main() {
         Require(sceKernelRmdir(directoryLink.string().c_str()) == static_cast<int>(0x80020014u));
         Require(rmdir_nid_postfix(danglingDirectoryLink.string().c_str()) == -1 && *__error_nid_postfix() == 20);
         Require((GetFileAttributesW(directoryLink.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && std::filesystem::is_directory(linkedDirectory));
+        Require(unlink_nid_postfix((root / "directory-li*").string().c_str()) == -1 && *__error_nid_postfix() != 5 && (GetFileAttributesW(directoryLink.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) != 0);
         Require(unlink_nid_postfix(directoryLink.string().c_str()) == 0 && unlink_nid_postfix(danglingDirectoryLink.string().c_str()) == 0);
     }
 #else
@@ -1647,6 +2173,17 @@ int main() {
             }
             Require(rejected);
         }
+        auto* reopened = fopen_nid_postfix(presentName.c_str(), "rb");
+        Require(reopened != nullptr && freopen_nid_postfix(device, "r", reopened) == reopened);
+        std::memset(first, 0, sizeof(first));
+        std::memset(second, 0, sizeof(second));
+        Require(fread_nid_postfix(first, 1, sizeof(first), reopened) == sizeof(first));
+        Require(fread_nid_postfix(second, 1, sizeof(second), reopened) == sizeof(second));
+        Require(std::memcmp(first, second, sizeof(first)) != 0);
+        Require(feof_nid_postfix(reopened) == 0 && ferror_nid_postfix(reopened) == 0);
+        Require(freopen_nid_postfix(presentName.c_str(), "rb", reopened) == reopened);
+        Require(fread_nid_postfix(first, 1, sizeof(first), reopened) == std::filesystem::file_size(present) && fgetc_nid_postfix(reopened) == -1);
+        Require(freopen_nid_postfix(device, "rb", reopened) == reopened && fclose_nid_postfix(reopened) == 0);
     }
     Require(unlink_nid_postfix(presentName.c_str()) == 0 && !std::filesystem::exists(present));
     const auto empty = root / "empty";

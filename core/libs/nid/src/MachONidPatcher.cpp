@@ -188,7 +188,10 @@ std::optional<TrieLocation> FindTrie(const std::vector<std::uint8_t>& binary, co
     return found;
 }
 
-void ParseTrieNode(const std::vector<std::uint8_t>& data, std::size_t start, std::size_t end, std::size_t node, std::string& prefix, std::set<std::size_t>& visited, std::vector<MachOExport>& out) {
+constexpr std::size_t kMaxExportTrieDepth = 1024;
+
+void ParseTrieNode(const std::vector<std::uint8_t>& data, std::size_t start, std::size_t end, std::size_t node, std::string& prefix, std::set<std::size_t>& visited, std::vector<MachOExport>& out, std::size_t depth) {
+    if (depth > kMaxExportTrieDepth) throw std::runtime_error("export trie nesting too deep");
     if (node >= end - start) throw std::runtime_error("export trie node out of bounds");
     if (!visited.insert(node).second) throw std::runtime_error("export trie has a cycle");
     std::size_t cursor = start + node;
@@ -216,7 +219,7 @@ void ParseTrieNode(const std::vector<std::uint8_t>& data, std::size_t start, std
         const auto child = ReadUleb(data, cursor, end);
         const auto length = prefix.size();
         prefix += label;
-        ParseTrieNode(data, start, end, static_cast<std::size_t>(child), prefix, visited, out);
+        ParseTrieNode(data, start, end, static_cast<std::size_t>(child), prefix, visited, out, depth + 1);
         prefix.resize(length);
     }
 }
@@ -227,7 +230,7 @@ std::vector<MachOExport> ParseTrie(const std::vector<std::uint8_t>& binary, std:
     if (size == 0) return exports;
     std::string prefix;
     std::set<std::size_t> visited;
-    ParseTrieNode(binary, offset, std::size_t{offset} + size, 0, prefix, visited, exports);
+    ParseTrieNode(binary, offset, std::size_t{offset} + size, 0, prefix, visited, exports, 0);
     return exports;
 }
 
@@ -304,7 +307,12 @@ private:
                 rest = {};
             }
         }
-        if (node->Entry) throw std::runtime_error("duplicate patched export name: " + entry.Name);
+        if (node->Entry) {
+            const bool existingReexport = (node->Entry->Flags & kExportReexport) != 0;
+            const bool incomingReexport = (entry.Flags & kExportReexport) != 0;
+            if (existingReexport == incomingReexport) throw std::runtime_error("duplicate patched export name: " + entry.Name);
+            if (incomingReexport) return;
+        }
         node->Entry = entry;
     }
 
@@ -444,7 +452,10 @@ void PatchChainedImports(std::vector<std::uint8_t>& binary, const Image& image, 
         if (eligible) names.push_back(bare);
     }
     const auto mapping = ResolveImportNids(names, excluded, options);
-    if (!options.executable) {
+    bool grows = false;
+    for (std::size_t index = 0; index < imports.size(); ++index)
+        grows = grows || (selected[index] && mapping.at(StripUnderscore(originalNames[index])).size() + 1 > originalNames[index].size());
+    if (!options.executable && !grows) {
         std::set<std::uint32_t> nameOffsets;
         for (const auto& item : imports) nameOffsets.insert(item.NameOffset);
         std::set<std::uint32_t> rewritten;
@@ -459,7 +470,6 @@ void PatchChainedImports(std::vector<std::uint8_t>& binary, const Image& image, 
             const auto bare = StripUnderscore(name);
             if (bare == name) continue;
             const auto patched = "_" + mapping.at(bare);
-            if (patched.size() > name.size()) throw std::runtime_error("import NID longer than original name: " + name);
             const auto inside = nameOffsets.upper_bound(item.NameOffset);
             if (inside != nameOffsets.end() && *inside <= item.NameOffset + name.size()) throw std::runtime_error("chained import names share storage: " + name);
             std::memcpy(binary.data() + at, patched.data(), patched.size());

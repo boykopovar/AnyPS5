@@ -8,6 +8,7 @@
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
@@ -27,7 +28,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
-#include <x86intrin.h>
+#include "prx/libc/include/GuestCpu.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -45,12 +46,14 @@
 #elif defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <pthread.h>
 #endif
 #endif
 
+static constexpr int GUEST_EPERM = 1;
+static constexpr int GUEST_EIO = 5;
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
-static constexpr int GUEST_CLOCK_REALTIME = 0;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
 static constexpr int GUEST_CLOCK_PROCESS_CPUTIME_ID = 15;
 
@@ -65,8 +68,10 @@ static bool ReadGuestTime(void* destination, const void* source, std::size_t byt
 #elif defined(__linux__)
     iovec local{destination, bytes};
     iovec remote{const_cast<void*>(source), bytes};
+    const int saved = errno;
     const auto copied = ::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0 && errno != EFAULT) throw std::runtime_error("time: process_vm_readv failed with errno " + std::to_string(errno));
+    errno = saved;
     return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
 #elif defined(__APPLE__)
     mach_vm_size_t copied = 0;
@@ -300,8 +305,7 @@ static void TraceSleep(const void* caller, std::uint64_t microseconds) {
 }
 
 void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint64_t waitedNanos, bool timedOut) {
-    static const bool enabled = std::getenv("APS5_TRACE_WAITS") != nullptr;
-    if (!enabled) return;
+    if (!KernelTraceWaitEnabled()) return;
     struct Site { std::uint64_t calls = 0; std::uint64_t timeouts = 0; std::uint64_t nanos = 0; std::uint64_t longest = 0; unsigned long lastThread = 0; };
     static std::mutex mutex;
     static std::unordered_map<std::string, Site> sites;
@@ -324,6 +328,7 @@ void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint
     if (now - lastReport < 3000000000ULL) return;
     lastReport = now;
     std::vector<std::pair<std::string, Site>> hot(sites.begin(), sites.end());
+    std::erase_if(hot, [](const auto& item) { return item.second.calls == 0; });
     std::sort(hot.begin(), hot.end(), [](const auto& a, const auto& b) { return a.second.nanos > b.second.nanos; });
     std::fprintf(stderr, "[waits]");
     for (std::size_t i = 0; i < hot.size() && i < 8; ++i) {
@@ -368,7 +373,12 @@ int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds) {
 static int SleepForRequest(const KernelTimespec* rqtp, bool cancellable) {
     constexpr int guestFault = 14;
     constexpr int guestInvalid = 22;
-    if (rqtp == nullptr) return guestFault;
+    KernelTimespec request{};
+    const int savedErrno = errno;
+    const bool readable = ReadGuestTime(&request, rqtp, sizeof(request));
+    errno = savedErrno;
+    if (!readable) return guestFault;
+    rqtp = &request;
     if (rqtp->tv_nsec < 0 || rqtp->tv_nsec >= 1000000000LL) return guestInvalid;
     constexpr std::int64_t longestSleepSeconds = INT32_MAX / 2;
     if (rqtp->tv_sec >= 0) {
@@ -403,9 +413,6 @@ int APS5_VABI usleep_nid_postfix(KernelUseconds microseconds) {
 }
 
 #ifdef _WIN32
-static constexpr int GUEST_EIO = 5;
-static constexpr int GUEST_EPERM = 1;
-
 int APS5_VABI ClockTimeWin32ErrorToGuestErrno_nid_no_patch(std::uint32_t error) {
     if (error == ERROR_NOACCESS) return GUEST_EFAULT;
     if (error == ERROR_ACCESS_DENIED) return GUEST_EPERM;
@@ -460,6 +467,18 @@ static std::uint64_t ClockTicksPerSecond() {
     return static_cast<std::uint64_t>(rate);
 }
 
+#ifdef __APPLE__
+static std::uint64_t CurrentThreadCpuNanos() {
+    thread_basic_info_data_t info{};
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    if (thread_info(pthread_mach_thread_np(pthread_self()), THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info), &count) != KERN_SUCCESS)
+        throw std::runtime_error("clock_gettime: thread_info failed");
+    const auto microseconds = (static_cast<std::uint64_t>(info.user_time.seconds) + static_cast<std::uint64_t>(info.system_time.seconds)) * 1000000ULL +
+        static_cast<std::uint64_t>(info.user_time.microseconds) + static_cast<std::uint64_t>(info.system_time.microseconds);
+    return microseconds * 1000ULL;
+}
+#endif
+
 static std::uint64_t ProcessCpuNanos(bool countSystem) {
     struct tms usage{};
     errno = 0;
@@ -478,6 +497,11 @@ static bool ProcessCpuResolutionNanos(std::uint64_t* nanos) {
 #endif
 
 static int ReadClock(int clockId, KernelTimespec* tp) {
+    if (clockId == 21) {
+        if (ReadClock(2, tp) != 0) return -1;
+        tp->tv_nsec -= tp->tv_nsec % 1000;
+        return 0;
+    }
     if (IsCpuClock(clockId)) {
         const int id = static_cast<int>(static_cast<std::uint32_t>(clockId) & CPU_CLOCK_ID_MASK);
         const bool process = (static_cast<std::uint32_t>(clockId) & CPU_CLOCK_PROCESS_BIT) != 0;
@@ -571,6 +595,14 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
         default:
             throw std::runtime_error(std::string("clock_gettime") + ": unsupported clock_id " + std::to_string(clockId));
     }
+#ifdef __APPLE__
+    if (clockId == 14) {
+        const std::uint64_t nanos = CurrentThreadCpuNanos();
+        tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
+        tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
+        return 0;
+    }
+#endif
     struct timespec ts{};
     if (clock_gettime(nativeId, &ts) != 0) {
         return -1;
@@ -581,7 +613,23 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
 #endif
 }
 
+static bool MeasuredInvalidClock(int clockId) {
+    return clockId == 3 || clockId == 6 || (clockId >= 22 && clockId < 32);
+}
+
+static bool MeasuredIoErrorClock(int clockId) {
+    return clockId >= 16 && clockId <= 19;
+}
+
 int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
+    if (!IsCpuClock(clockId) && (clockId < 0 || clockId >= 32 || MeasuredInvalidClock(clockId))) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
+    if (MeasuredIoErrorClock(clockId)) {
+        *__error_nid_postfix() = GUEST_EIO;
+        return -1;
+    }
     KernelTimespec value{};
     if (ReadClock(clockId, &value) != 0) return -1;
     if (tp == nullptr) {
@@ -592,14 +640,10 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
     return 0;
 }
 
-static std::mutex guestTimezoneMutex;
-static KernelTimezone guestTimezone{0, 0};
-
 int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* output, KernelTimezone* zoneOutput) {
     KernelTimeval current{};
     auto* tv = &current;
     KernelTimezone zone{};
-    auto* tz = zoneOutput == nullptr ? nullptr : &zone;
 #ifdef _WIN32
     FILETIME ft{};
     GetSystemTimePreciseAsFileTime(&ft);
@@ -615,10 +659,6 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* output, KernelTimezone* zo
     tv->tv_sec = static_cast<std::int64_t>(native.tv_sec);
     tv->tv_usec = static_cast<std::int64_t>(native.tv_usec);
 #endif
-    if (tz != nullptr) {
-        std::lock_guard lock(guestTimezoneMutex);
-        *tz = guestTimezone;
-    }
     if (output != nullptr && !GuestCopyOut_nid_no_patch(output, &current, sizeof(current))) {
         *__error_nid_postfix() = 14;
         return -1;
@@ -720,13 +760,9 @@ int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
         *__error_nid_postfix() = GUEST_EFAULT;
         return -1;
     }
-    if (clockId != GUEST_CLOCK_REALTIME || time.tv_nsec < 0 || time.tv_nsec >= 1000000000 || time.tv_sec < 0) {
-        *__error_nid_postfix() = GUEST_EINVAL;
-        return -1;
-    }
-    char requested[48];
-    std::snprintf(requested, sizeof(requested), "%lld.%09lld", static_cast<long long>(time.tv_sec), static_cast<long long>(time.tv_nsec));
-    throw std::runtime_error(std::string("clock_settime: setting CLOCK_REALTIME to ") + requested + " is not supported, the host clock is not changed");
+    static_cast<void>(clockId);
+    *__error_nid_postfix() = GUEST_EPERM;
+    return -1;
 }
 
 int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz) {
@@ -740,20 +776,8 @@ int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz)
         *__error_nid_postfix() = GUEST_EFAULT;
         return -1;
     }
-    if (tv != nullptr && (time.tv_usec < 0 || time.tv_usec >= 1000000 || time.tv_sec < 0)) {
-        *__error_nid_postfix() = GUEST_EINVAL;
-        return -1;
-    }
-    if (tv != nullptr) {
-        char requested[48];
-        std::snprintf(requested, sizeof(requested), "%lld.%06lld", static_cast<long long>(time.tv_sec), static_cast<long long>(time.tv_usec));
-        throw std::runtime_error(std::string("settimeofday: setting the time to ") + requested + " is not supported, the host clock is not changed");
-    }
-    if (tz != nullptr) {
-        std::lock_guard lock(guestTimezoneMutex);
-        guestTimezone = zone;
-    }
-    return 0;
+    *__error_nid_postfix() = GUEST_EPERM;
+    return -1;
 }
 
 // ---------------------------------------------------------------------------
@@ -762,43 +786,14 @@ int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz)
 
 static constexpr int SceKernelErrorEfault = static_cast<int>(0x8002000e);
 
-struct HostZone {
-    std::int64_t standardEast;
-    std::int64_t daylight;
-};
+using HostZone = SonyHostTimeZone;
 
 static HostZone HostZoneAt(std::int64_t utcTime) {
-    std::tm local{};
-#ifdef _WIN32
-    constexpr std::int64_t cycleSeconds = 146097LL * 86400LL;
-    constexpr std::int64_t lastHostSecond = 32535215999LL;
-    const std::int64_t cycles = utcTime >= 0 && utcTime <= lastHostSecond ? 0 : (utcTime >= 0 ? utcTime / cycleSeconds : -((-(utcTime + 1)) / cycleSeconds + 1));
-    const std::time_t t = static_cast<std::time_t>(utcTime - cycles * cycleSeconds);
-    _tzset();
-    if (localtime_s(&local, &t) != 0) throw std::runtime_error(std::string(__func__) + ": no host local time for " + std::to_string(utcTime));
-    long standardBias = 0;
-    long daylightBias = 0;
-    _get_timezone(&standardBias);
-    _get_dstbias(&daylightBias);
-    return {-static_cast<std::int64_t>(standardBias), local.tm_isdst > 0 ? -static_cast<std::int64_t>(daylightBias) : 0};
-#else
-    const std::time_t t = static_cast<std::time_t>(utcTime);
-    ::tzset();
-    if (localtime_r(&t, &local) == nullptr) throw std::runtime_error(std::string(__func__) + ": no host local time for " + std::to_string(utcTime));
-    const std::int64_t daylight = local.tm_isdst > 0 ? static_cast<std::int64_t>(local.tm_gmtoff) + ::timezone : 0;
-    return {static_cast<std::int64_t>(local.tm_gmtoff) - daylight, daylight};
-#endif
+    return SonyHostZoneAt_nid_no_patch(utcTime);
 }
 
 static std::int64_t HostDaylightAmount(std::int64_t utcTime) {
-    constexpr std::int64_t monthSeconds = 2629746;
-    for (int month = 0; month <= 11; ++month) {
-        for (const int direction : {1, -1}) {
-            const HostZone zone = HostZoneAt(utcTime + direction * month * monthSeconds);
-            if (zone.daylight != 0) return zone.daylight;
-        }
-    }
-    return 0;
+    return SonyHostDaylightAmount_nid_no_patch(utcTime);
 }
 
 static KernelTimesec ZoneState(std::int64_t time, const HostZone& zone) {
@@ -821,17 +816,35 @@ int APS5_VABI sceKernelConvertLocaltimeToUtc(int64_t local_time, int64_t reserve
     (void)reserved;
     const HostZone guess = HostZoneAt(local_time);
     const HostZone zone = HostZoneAt(local_time - guess.standardEast - guess.daylight);
-    if (utc_time != nullptr) *utc_time = local_time - zone.standardEast - zone.daylight;
-    if (timezone != nullptr) *timezone = ZoneState(local_time, zone);
-    if (dst_seconds != nullptr) *dst_seconds = static_cast<int32_t>(HostDaylightAmount(local_time - zone.standardEast - zone.daylight));
+    if (utc_time != nullptr) {
+        const int64_t converted = local_time - zone.standardEast - zone.daylight;
+        if (!GuestCopyOut_nid_no_patch(utc_time, &converted, sizeof(converted))) return SceKernelErrorEfault;
+    }
+    if (timezone != nullptr) {
+        const KernelTimesec state = ZoneState(local_time, zone);
+        if (!GuestCopyOut_nid_no_patch(timezone, &state, sizeof(state))) return SceKernelErrorEfault;
+    }
+    if (dst_seconds != nullptr) {
+        const int32_t daylight = static_cast<int32_t>(HostDaylightAmount(local_time - zone.standardEast - zone.daylight));
+        if (!GuestCopyOut_nid_no_patch(dst_seconds, &daylight, sizeof(daylight))) return SceKernelErrorEfault;
+    }
     return 0;
 }
 
 int APS5_VABI sceKernelConvertUtcToLocaltime(int64_t utc_time, int64_t* local_time, KernelTimesec* st, int32_t* dst_sec) {
     const HostZone zone = HostZoneAt(utc_time);
-    if (local_time != nullptr) *local_time = utc_time + zone.standardEast + zone.daylight;
-    if (st != nullptr) *st = ZoneState(utc_time, zone);
-    if (dst_sec != nullptr) *dst_sec = static_cast<int32_t>(zone.daylight);
+    if (local_time != nullptr) {
+        const int64_t converted = utc_time + zone.standardEast + zone.daylight;
+        if (!GuestCopyOut_nid_no_patch(local_time, &converted, sizeof(converted))) return SceKernelErrorEfault;
+    }
+    if (st != nullptr) {
+        const KernelTimesec state = ZoneState(utc_time, zone);
+        if (!GuestCopyOut_nid_no_patch(st, &state, sizeof(state))) return SceKernelErrorEfault;
+    }
+    if (dst_sec != nullptr) {
+        const int32_t daylight = static_cast<int32_t>(zone.daylight);
+        if (!GuestCopyOut_nid_no_patch(dst_sec, &daylight, sizeof(daylight))) return SceKernelErrorEfault;
+    }
     return 0;
 }
 
@@ -842,28 +855,31 @@ int APS5_VABI sceKernelGettimeofday(KernelTimeval* tp) {
 }
 
 int APS5_VABI sceKernelGettimezone(KernelTimezone* tz) {
-    if (tz == nullptr) return SceKernelErrorEfault;
+    if (tz == nullptr) return 0;
     const auto now = static_cast<std::int64_t>(std::time(nullptr));
     const KernelTimezone zone{static_cast<std::int32_t>(HostZoneAt(now).standardEast / 60), static_cast<std::int32_t>(HostDaylightAmount(now) / 60)};
     return GuestCopyOut_nid_no_patch(tz, &zone, sizeof(zone)) ? 0 : SceKernelErrorEfault;
 }
 
 uint64_t APS5_VABI sceKernelReadTsc(void) {
-    if (TimeScale() == 1.0) return __rdtsc();
-    static const std::uint64_t origin = __rdtsc();
-    return origin + static_cast<std::uint64_t>(static_cast<double>(__rdtsc() - origin) * TimeScale());
+    return GuestCpu::ReadTsc();
 }
 
-uint64_t APS5_VABI sceKernelGetTscFrequency(void) {
+std::uint64_t APS5_VABI HostTscFrequency_nid_no_patch() {
     static const std::uint64_t frequency = [] {
         const CurrentCpuPin pin;
         const std::uint64_t startNanos = RawMonotonicNanos();
-        const std::uint64_t startTicks = __rdtsc();
+        const std::uint64_t startTicks = GuestCpu::ReadTsc();
         TimedWait::SleepNanos(20000000ULL);
         const std::uint64_t elapsedNanos = RawMonotonicNanos() - startNanos;
-        const std::uint64_t elapsedTicks = __rdtsc() - startTicks;
+        const std::uint64_t elapsedTicks = GuestCpu::ReadTsc() - startTicks;
         return static_cast<std::uint64_t>(static_cast<long double>(elapsedTicks) * 1000000000.0L / static_cast<long double>(elapsedNanos));
     }();
+    return frequency;
+}
+
+uint64_t APS5_VABI sceKernelGetTscFrequency(void) {
+    static const std::uint64_t frequency = static_cast<std::uint64_t>(static_cast<double>(HostTscFrequency_nid_no_patch()) / TimeScale());
     return frequency;
 }
 
@@ -876,4 +892,8 @@ unsigned int APS5_VABI sceKernelSleep(unsigned int seconds) {
     return 0;
 }
 
+}
+
+namespace {
+const bool clockResolutionRegistered = (RegisterClockGetres_nid_no_patch(&sceKernelClockGetres), true);
 }

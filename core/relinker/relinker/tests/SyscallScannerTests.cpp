@@ -38,6 +38,26 @@ const Bytes kInt80Stub = {
     0xC3,
 };
 
+const Bytes kInterruptTable = {
+    0xCD, 0x7E, 0xC3,
+    0xCD, 0x7F, 0xC3,
+    0xCD, 0x80, 0xC3,
+    0xCD, 0x81, 0xC3,
+    0xCD, 0x82, 0xC3,
+};
+
+const Bytes kInt80AfterOneEntry = {
+    0xCD, 0x7F, 0xC3,
+    0xCD, 0x80, 0xC3,
+    0x90, 0xC3,
+};
+
+const Bytes kInterruptTableInsideImmediate = {
+    0xB0, 0xCD, 0x7F, 0xC3,
+    0xCD, 0x80, 0xC3,
+    0xCD, 0x81, 0xC3,
+};
+
 const Bytes kSysenterStub = {
     0x0F, 0x34,
     0xC3,
@@ -198,6 +218,16 @@ void RequireNoNumber(const std::string& binary, const Bytes& code, const std::st
             "Relinker reported a syscall number for the " + description + ":\n" + output);
 }
 
+const std::string kStubHint = "; it is a ps5-payload-dev SDK syscall stub, which --trap-sdk-syscall-stubs replaces with UD2";
+
+void RequireHint(const std::string& binary, const Bytes& code, const bool expected, const std::string& description) {
+    const auto output = RunScanner(binary, code);
+    require(output.find("Forbidden syscall instruction at code offset 0x") != std::string::npos,
+            "Relinker did not report the " + description + " as forbidden:\n" + output);
+    require((output.find(kStubHint) != std::string::npos) == expected,
+            std::string("Relinker ") + (expected ? "did not name" : "named") + " --trap-sdk-syscall-stubs for the " + description + ":\n" + output);
+}
+
 void RequireSdkStubsAreTrapped(const std::string& binary) {
     Bytes code = kConstantStub;
     const auto numberedOffset = code.size() - 3u;
@@ -214,6 +244,28 @@ void RequireSdkStubsAreTrapped(const std::string& binary) {
             "Relinker did not replace the numbered SDK syscall with UD2");
     require(Read<std::uint16_t>(relinked, kCodeOffset + genericOffset) == 0x0B0Fu,
             "Relinker did not replace the generic SDK syscall with UD2");
+}
+
+void RequireInterruptTableIsTrapped(const std::string& binary) {
+    const TempDirectory directory;
+    const auto input = directory.Path() / "input.elf";
+    const auto output = directory.Path() / "output.elf";
+    WriteFile(input, MakeExecutable(kInterruptTable));
+    const auto run = RunRelinker(binary, {"--skip-sce-module", input.string(), output.string()}, directory.Path() / "relinker.log");
+    require(run.ExitCode == 0, "Relinker refused int 0x80 in a software interrupt table:\n" + run.Output);
+    require(run.Output.find("Trapping int 0x80 in a software interrupt table at code offset 0x") != std::string::npos,
+            "Relinker did not report the trapped interrupt table entry:\n" + run.Output);
+    const auto relinked = ReadFile(output);
+    require(Read<std::uint16_t>(relinked, kCodeOffset + 6) == 0x0B0Fu,
+            "Relinker did not replace the interrupt table's int 0x80 with UD2");
+    require(Read<std::uint16_t>(relinked, kCodeOffset + 3) == 0x7FCDu && Read<std::uint16_t>(relinked, kCodeOffset + 9) == 0x81CDu,
+            "Relinker changed the neighbouring interrupt table entries");
+}
+
+void RequireForbidden(const std::string& binary, const Bytes& code, const std::string& description) {
+    const auto output = RunScanner(binary, code);
+    require(output.find("Forbidden syscall instruction at code offset 0x") != std::string::npos,
+            "Relinker did not report the " + description + " as forbidden:\n" + output);
 }
 
 void RequireUnknownSyscallsStillFail(const std::string& binary) {
@@ -261,8 +313,17 @@ int main(const int argc, char** argv) {
         RequireNumber(binary, kPrefixedConstantStub, "syscall number 9", "prefixed constant stub");
         RequireNoNumber(binary, kPrefixedClobberedStub, "prefixed stub whose intervening instruction writes rax");
 
+        RequireHint(binary, kConstantStub, true, "numbered SDK stub");
+        RequireHint(binary, kSdkGenericStub, true, "generic SDK stub");
+        for (const auto* bare : {&kUnsignedStub, &kRegisterStub, &kInt80Stub, &kSysenterStub, &kSysretStub, &kClobberedStub, &kPrefixedConstantStub})
+            RequireHint(binary, *bare, false, "bare syscall");
+
         RequireSdkStubsAreTrapped(binary);
         RequireUnknownSyscallsStillFail(binary);
+
+        RequireInterruptTableIsTrapped(binary);
+        RequireForbidden(binary, kInt80AfterOneEntry, "int 0x80 after a single interrupt table entry");
+        RequireForbidden(binary, kInterruptTableInsideImmediate, "int 0x80 after interrupt table bytes that start inside an immediate");
 
         std::cout << "syscall scanner tests passed\n";
         return 0;

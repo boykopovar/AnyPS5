@@ -3,6 +3,7 @@
 #include "prx/libSceNpTrophy2/include/TitleTrophies.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/TemporaryFile.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -91,7 +92,7 @@ class StderrCapture {
 public:
     StderrCapture() {
         std::fflush(stderr);
-        file = std::tmpfile();
+        file = TemporaryFile::Open();
         check(file != nullptr, "cannot open a temporary file for stderr");
 #ifdef _WIN32
         saved = _dup(_fileno(stderr));
@@ -216,6 +217,8 @@ void testQueries() {
     check(NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 0, 12), "trophy 12 was not recorded");
     check(!NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 0, 12), "trophy 12 was recorded twice");
     check(NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 0, 0), "trophy 0 was not recorded");
+    check(!throws([] { NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 0, -1); }), "a negative trophy id threw across the C ABI");
+    check(!NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 0, -1), "a negative trophy id was recorded");
     const auto after = NpTrophy2::CurrentTick();
     NpTrophy2RemoveUnlockListener_nid_no_patch(listener);
     check(NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 0, 5) && seen.unlocks.size() == 2, "the listener did not see each new unlock once");
@@ -235,7 +238,7 @@ void testQueries() {
     check(!trophyData(other, 12).unlocked && unlockedTrophies(other) == 0, "another user sees the unlocks");
     check(read("_trophy/268435456_0.txt").find("12 ") != std::string::npos, "the unlock was not stored in the title folder");
     check(throws([] { NpTrophy2AddUnlockListener_nid_no_patch(nullptr, nullptr); }), "a null listener was added");
-    check(throws([listener] { NpTrophy2RemoveUnlockListener_nid_no_patch(listener); }), "a removed listener was removed again");
+    check(!throws([listener] { NpTrophy2RemoveUnlockListener_nid_no_patch(listener); }), "removing a listener twice threw across the C ABI");
     check(sceNpTrophy2DestroyContext(context) == 0 && sceNpTrophy2DestroyContext(other) == 0, "contexts were not destroyed");
 }
 

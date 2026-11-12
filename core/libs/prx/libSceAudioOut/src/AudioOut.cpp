@@ -1,5 +1,7 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
+#include "prx/libSceAudioOut/include/OutputDevice.hpp"
 #include <algorithm>
+#include <cstdlib>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -17,9 +19,12 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
+#include "prx/libSceAudioOut/include/HostGain.hpp"
+#include "prx/libScePad/include/HostVolumeControl.hpp"
 #include "AudioOutShutdown.hpp"
 #include "AudioOut2PadMix.hpp"
 #include "prx/libScePad/include/PadState.hpp"
+#include "prx/libScePad/include/PadRumbleIntensity.hpp"
 
 static constexpr int PORT_TYPE_MAIN = 0;
 static constexpr int PORT_TYPE_BGM = 1;
@@ -123,6 +128,7 @@ struct Port {
     AudioOut2PadLayout padLayout;
     SDL_AudioDeviceID device = 0;
     SDL_AudioSpec spec = {};
+    HostGainRamp hostGain;
 };
 
 static std::mutex g_mutex;
@@ -141,6 +147,21 @@ static bool ensureSdlAudio() {
     return true;
 }
 
+static const char* selectedOutputDevice(const char* requested) {
+    if (requested == nullptr || *requested == '\0') return nullptr;
+    const int count = SDL_GetNumAudioDevices(0);
+    std::vector<std::string> names;
+    for (int index = 0; index < count; ++index) {
+        const char* name = SDL_GetAudioDeviceName(index, 0);
+        if (name != nullptr) names.emplace_back(name);
+    }
+    if (FindOutputDevice(names, requested)) return requested;
+    std::string listed;
+    for (const auto& name : names) listed += "\n  " + name;
+    APS5_LOG_OUT("AudioOut: ANYPS5_AUDIO_DEVICE '%s' is not an output device; using the default. Output devices:%s\n", requested, listed.c_str());
+    return nullptr;
+}
+
 static bool openDevice(Port& port) {
     if (!ensureSdlAudio() || SdlAudioReportsNoOutputEndpoint(SDL_GetCurrentAudioDriver(), SDL_GetNumAudioDevices(0))) {
         return false;
@@ -152,7 +173,7 @@ static bool openDevice(Port& port) {
     desired.samples = static_cast<Uint16>(port.samplesNum);
     desired.callback = nullptr;
     SDL_AudioSpec obtained{};
-    port.device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
+    port.device = SDL_OpenAudioDevice(selectedOutputDevice(std::getenv("ANYPS5_AUDIO_DEVICE")), 0, &desired, &obtained, 0);
     if (port.device == 0) {
         return false;
     }
@@ -192,6 +213,21 @@ static void closeDevice(Port& port) {
     }
     port.device = 0;
     port.spec = {};
+}
+
+static void reopenStoppedDevice(Port& port) {
+    if (port.device == 0 || SDL_GetAudioDeviceStatus(port.device) != SDL_AUDIO_STOPPED) return;
+    closeDevice(port);
+    if (port.type == PORT_TYPE_VIBRATION) {
+        try {
+            openVibrationDevice(port);
+        } catch (const std::runtime_error&) {
+            port.device = 0;
+            port.spec = {};
+        }
+    } else {
+        openDevice(port);
+    }
 }
 
 static constexpr std::uint32_t STD_8CH_MAP[8] = {0, 1, 2, 3, 6, 7, 4, 5};
@@ -247,6 +283,7 @@ static const void* prepareBuffer(const Port& port, const void* data, std::vector
 }
 
 static std::vector<float> prepareVibration(const Port& port, const void* data) {
+    checkedBufferSize(port.samplesNum, AUDIO_OUT2_PAD_CHANNELS, sizeof(float));
     std::vector<std::uint8_t> prepared;
     const auto* samples = prepareBuffer(port, data, prepared);
     std::vector<float> pad(static_cast<std::size_t>(port.samplesNum) * AUDIO_OUT2_PAD_CHANNELS, 0.0f);
@@ -290,10 +327,11 @@ static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex
         queueSize = checkedBufferSize(port.samplesNum, port.padLayout.channels, sizeof(float));
         const auto pad = prepareVibration(port, data);
         padFrames.resize(static_cast<std::size_t>(port.samplesNum) * port.padLayout.channels);
-        AudioOut2WritePadFrames(pad.data(), port.padLayout, padFrames.data(), port.samplesNum);
+        AudioOut2WritePadFrames(pad.data(), port.padLayout, padFrames.data(), port.samplesNum, Pad::RumblePercent());
         queueData = padFrames.data();
     } else {
         queueData = prepareBuffer(port, data, prepareBuf);
+        queueData = HostGainFilter(port.hostGain, HostVolumeGain_nid_no_patch(), queueData, formatIsFloat(port.format), port.samplesNum, static_cast<unsigned>(port.channels), prepareBuf);
         queueSize = checkedBufferSize(port.samplesNum, static_cast<std::uint32_t>(port.channels), bytesPerSample(port.format));
     }
 
@@ -333,11 +371,16 @@ static void paceVirtualPort(Port& port, bool hasData, std::unique_lock<std::mute
 }
 
 static void outputVirtualPort(Port& port, const void* data, std::unique_lock<std::mutex>& lock) {
+    if (data != nullptr) {
+        checkedBufferSize(port.samplesNum, static_cast<std::uint32_t>(port.channels), bytesPerSample(port.format));
+    }
     const auto pad = port.type == PORT_TYPE_VIBRATION && data != nullptr ? prepareVibration(port, data) : std::vector<float>{};
     paceVirtualPort(port, data != nullptr, lock);
     const auto source = static_cast<int>(&port - g_ports) + 1;
     if (port.type == PORT_TYPE_VIBRATION && data == nullptr) PadClearLegacyAudioHaptics_nid_postfix(source);
-    if (!pad.empty()) {
+    if (!pad.empty() && PadHapticStreamOpen_nid_postfix()) {
+        PadSubmitHapticFrames_nid_postfix(pad.data() + AUDIO_OUT2_PAD_VIBRATION_LEFT, pad.data() + AUDIO_OUT2_PAD_VIBRATION_RIGHT, AUDIO_OUT2_PAD_CHANNELS, port.samplesNum, port.freq);
+    } else if (!pad.empty()) {
         constexpr std::uint32_t grainFrames = 256;
         const auto begin = port.virtualQueueEnd - (1000000ULL * port.samplesNum) / port.freq;
         for (std::uint32_t frame = 0; frame < port.samplesNum;) {
@@ -359,8 +402,9 @@ static bool portTypeValid(int type) {
 }
 
 static Port* getPort(int handle) {
+    if (handle <= 0 || handle > PORTS_MAX) return nullptr;
     const int idx = handle - 1;
-    if (idx < 0 || idx >= PORTS_MAX || !g_ports[idx].used) {
+    if (!g_ports[idx].used) {
         return nullptr;
     }
     return &g_ports[idx];
@@ -378,6 +422,7 @@ static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format 
             port.format = format;
             port.channels = channelsForFormat(format);
             port.lastDataOutputTime = 0;
+            port.hostGain = HostGainRamp(freq / 100);
             port.virtualQueueEnd = sceKernelGetProcessTime();
             port.mixLevel = type == PORT_TYPE_PADSPK ? DEFAULT_PADSPK_MIX_LEVEL : DEFAULT_VOLUME;
             if (type == PORT_TYPE_VIBRATION) {
@@ -406,6 +451,7 @@ static std::atomic<bool> g_audioOut2Initialized{false};
 static std::atomic<bool> g_audioOutInitialized{false};
 static constexpr int SCE_AUDIO_OUT2_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80268004);
 static constexpr int SCE_AUDIO_OUT_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8026000e);
+static constexpr int SCE_AUDIO_OUT_ERROR_INVALID_FORMAT = static_cast<int>(0x80260007);
 
 bool AudioOut2IsInitialized_nid_no_patch() {
     return g_audioOut2Initialized.load();
@@ -413,6 +459,10 @@ bool AudioOut2IsInitialized_nid_no_patch() {
 
 void AudioOut2MarkInitialized_nid_no_patch() {
     g_audioOut2Initialized.store(true);
+}
+
+bool AudioOut2TryInitialize_nid_no_patch() {
+    return !g_audioOut2Initialized.exchange(true);
 }
 
 extern "C" {
@@ -430,6 +480,7 @@ int APS5_VABI sceAudioOutInit() {
 int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len,
     std::uint32_t freq, std::uint32_t param) {
     (void)userId;
+    (void)index;
     if (!portTypeValid(type)) {
         return -2144993270;
     }
@@ -438,9 +489,6 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
     }
     if (freq == 0) {
         return -2144993272;
-    }
-    if (index != 0) {
-        throw std::runtime_error("sceAudioOutOpen: index != 0 not supported");
     }
 
     Format format = Format::Unknown;
@@ -454,7 +502,7 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
         case 6: format = Format::S16_8ChStd; break;
         case 7: format = Format::F32_8ChStd; break;
         default:
-            throw std::runtime_error("sceAudioOutOpen: unknown format param");
+            return SCE_AUDIO_OUT_ERROR_INVALID_FORMAT;
     }
 
     if (type == PORT_TYPE_VIBRATION && channelsForFormat(format) > 2) throw std::runtime_error("sceAudioOutOpen: vibration layouts above stereo are not implemented");
@@ -485,6 +533,7 @@ int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) try {
         return -2144993277;
     }
 
+    reopenStoppedDevice(*port);
     if (port->device == 0) {
         outputVirtualPort(*port, ptr, lock);
     } else {
@@ -522,6 +571,7 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     Port& first = *getPort(param[0].handle);
     for (std::uint32_t i = 0; i < num; i++) {
         Port& port = *getPort(param[i].handle);
+        reopenStoppedDevice(port);
         if (port.device == 0) {
             outputVirtualPort(port, param[i].ptr, lock);
         } else {

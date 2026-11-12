@@ -2,6 +2,7 @@
 #include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <cstring>
 
 #include "prx/libc/include/FileStream.hpp"
@@ -53,8 +54,12 @@ void* APS5_VABI bsearch_s_nid_postfix(const void* key, const void* base, std::si
         violation("bsearch_s: bad argument", guestEinval);
         return nullptr;
     }
+    if (size != 0 && count > std::numeric_limits<std::size_t>::max() / size) {
+        violation("bsearch_s: bad argument", guestEinval);
+        return nullptr;
+    }
     if (count == 0) return nullptr;
-    if (!key || !base || !compare || size == 0) {
+    if (!key || !base || !compare) {
         violation("bsearch_s: bad argument", guestEinval);
         return nullptr;
     }

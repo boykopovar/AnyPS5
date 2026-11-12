@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -83,16 +84,18 @@ std::size_t HostPageSize() {
     return size;
 }
 
-bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
-    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
+bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes, bool prepare = true) {
+    if (prepare) GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
 #ifdef _WIN32
     SIZE_T copied = 0;
     return ReadProcessMemory(GetCurrentProcess(), source, destination, bytes, &copied) != 0 && copied == bytes;
 #elif defined(__linux__)
     iovec local{destination, bytes};
     iovec remote{const_cast<void*>(source), bytes};
+    const int saved = errno;
     const auto copied = process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0 && errno != EFAULT) throw std::runtime_error("guest path: process_vm_readv failed with errno " + std::to_string(errno));
+    errno = saved;
     return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
 #elif defined(__APPLE__)
     mach_vm_size_t copied = 0;
@@ -581,6 +584,9 @@ std::atomic<int> g_hostStandardError{-1};
 }
 
 extern "C" int KeepHostStandardError_nid_no_patch() {
+#ifdef __EMSCRIPTEN__
+    return 2;
+#else
     const std::lock_guard lock(g_hostStandardErrorMutex);
     if (const int kept = g_hostStandardError.load(); kept >= 0) return kept;
     const int kept = ::fcntl(2, F_DUPFD_CLOEXEC, 3);
@@ -599,6 +605,7 @@ extern "C" int KeepHostStandardError_nid_no_patch() {
     stderr = stream;
     g_hostStandardError.store(kept);
     return kept;
+#endif
 }
 
 extern "C" int HostStandardError_nid_no_patch() {
@@ -611,6 +618,9 @@ std::atomic<int> g_hostStandardOutput{-1};
 }
 
 extern "C" int KeepHostStandardOutput_nid_no_patch() {
+#ifdef __EMSCRIPTEN__
+    NotImplemented_nid_no_patch(__func__);
+#else
     const std::lock_guard lock(g_hostStandardOutputMutex);
     if (const int kept = g_hostStandardOutput.load(); kept >= 0) return kept;
     const int kept = ::fcntl(1, F_DUPFD_CLOEXEC, 3);
@@ -629,6 +639,7 @@ extern "C" int KeepHostStandardOutput_nid_no_patch() {
     stdout = stream;
     g_hostStandardOutput.store(kept);
     return kept;
+#endif
 }
 
 extern "C" int DuplicateHostDescriptor_nid_no_patch(int descriptor) {
@@ -831,9 +842,13 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
 #elif defined(__linux__)
     iovec local{const_cast<void*>(source), bytes};
     iovec remote{destination, bytes};
+    const int saved = errno;
     const ssize_t copied = ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0) {
-        if (errno == EFAULT) return false;
+        if (errno == EFAULT) {
+            errno = saved;
+            return false;
+        }
         throw std::runtime_error("GuestCopyOut: process_vm_writev failed with errno " + std::to_string(errno));
     }
     return static_cast<std::size_t>(copied) == bytes;
@@ -843,6 +858,13 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
 #else
     throw std::runtime_error("GuestCopyOut: no checked write is available on this host");
 #endif
+}
+
+extern "C" bool GuestCopyInUnsynced_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(source);
+    if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+    return CopyGuestBytes(destination, source, bytes, false);
 }
 
 extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
@@ -903,13 +925,15 @@ extern "C" bool FinalPathComponentIsDot_nid_no_patch(const char* path) {
 
 extern "C" int APS5_VABI chdir_nid_postfix(const char* path) {
     if (!path) { errno = 14; return -1; }
-    if (!*path) { errno = 2; return -1; }
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) { errno = error; return -1; }
+    if (copy.empty()) { errno = 2; return -1; }
     try {
         AppArchiveReady_nid_no_patch();
         auto& state = Directories();
         std::lock_guard lock(state.mutex);
-        const auto resolved = Resolve(state, path, false, true);
-        AppArchiveRefuseOnly_nid_no_patch(resolved, path, "changing the working directory to");
+        const auto resolved = Resolve(state, copy.c_str(), false, true);
+        AppArchiveRefuseOnly_nid_no_patch(resolved, copy.c_str(), "changing the working directory to");
         const int error = SetWorkingDirectory(state, resolved);
         if (error) { errno = error == 2 ? NotFoundError_nid_no_patch(resolved) : error; return -1; }
         return 0;
@@ -919,6 +943,7 @@ extern "C" int APS5_VABI chdir_nid_postfix(const char* path) {
 
 extern "C" char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size) {
     if (buffer && size == 0) { errno = 22; return nullptr; }
+    if (buffer && size == 1) { errno = 34; return nullptr; }
     try {
         auto& state = Directories();
         std::lock_guard lock(state.mutex);
@@ -1009,8 +1034,13 @@ std::atomic<std::uint64_t> notImplementedCalls{0};
 
 }
 
-extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName) {
+extern "C" [[noreturn]] void (NotImplemented_nid_no_patch)(const char* funcName) {
+    NotImplementedAt_nid_no_patch(funcName, "", 0);
+}
+
+extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* funcName, const char* file, int line) {
     notImplementedCalls.fetch_add(1, std::memory_order_relaxed);
+    LibcRunReportMissingFunction_nid_no_patch(funcName, file, line);
     throw std::runtime_error(std::string(funcName) + " not implemented");
 }
 

@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
+#include "prx/libc/include/HostThread.hpp"
+#include "prx/libSceAvPlayer/include/HttpStream.hpp"
+#include "prx/libSceAvPlayer/include/FileReplacementStream.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 
@@ -34,10 +37,10 @@ constexpr std::uint32_t AudioBufferAlignment = 0x10;
 constexpr std::uint32_t AudioChunkSamples = 1024;
 constexpr std::uint32_t AudioMaxChannels = 8;
 constexpr std::uint32_t VideoDecodeAheadFrames = 4;
+constexpr std::uint32_t UnsyncedVideoDecodeAheadFrames = 12;
 constexpr std::size_t VideoPacketLimit = 30;
 constexpr std::size_t AudioPacketLimit = 8;
 constexpr std::size_t AudioOnlyPacketLimit = 30;
-constexpr int AvioBufferSize = 64 * 1024;
 
 std::uint32_t AlignUp(std::uint32_t value, std::uint32_t alignment) {
     return (value + alignment - 1) / alignment * alignment;
@@ -66,73 +69,13 @@ bool IsStreamSupported(const AVStream& stream) {
     return codec == AV_CODEC_ID_H264 || codec == AV_CODEC_ID_HEVC || codec == AV_CODEC_ID_AAC || codec == AV_CODEC_ID_VP9 || codec == AV_CODEC_ID_OPUS;
 }
 
-float DisplayAspect(int width, int height, AVRational sampleAspect) {
-    if (width <= 0 || height <= 0) return 0.0f;
-    const double pixel = sampleAspect.num > 0 && sampleAspect.den > 0 ? av_q2d(sampleAspect) : 1.0;
-    return static_cast<float>(width * pixel / height);
+bool HasAspect(AVRational sampleAspect) {
+    return sampleAspect.num > 0 && sampleAspect.den > 0;
 }
 
-class FileReplacementStream {
-public:
-    explicit FileReplacementStream(const AvPlayerFileReplacement& callbacks) : file(callbacks) {}
-
-    ~FileReplacementStream() {
-        if (context) {
-            av_freep(&context->buffer);
-            avio_context_free(&context);
-        }
-        if (opened) file.close(file.object_ptr);
-    }
-
-    FileReplacementStream(const FileReplacementStream&) = delete;
-    FileReplacementStream& operator=(const FileReplacementStream&) = delete;
-
-    bool Open(const std::string& path) {
-        if (file.open(file.object_ptr, path.c_str()) < 0) return false;
-        opened = true;
-        size = file.size(file.object_ptr);
-        auto* buffer = static_cast<std::uint8_t*>(av_malloc(AvioBufferSize));
-        if (!buffer) return false;
-        context = avio_alloc_context(buffer, AvioBufferSize, 0, this, &FileReplacementStream::read, nullptr, &FileReplacementStream::seek);
-        if (!context) av_free(buffer);
-        return context != nullptr;
-    }
-
-    AVIOContext* Context() const { return context; }
-
-private:
-    static int read(void* opaque, std::uint8_t* buffer, int size) {
-        auto* self = static_cast<FileReplacementStream*>(opaque);
-        if (self->position >= self->size) return AVERROR_EOF;
-        const auto length = static_cast<std::uint32_t>(std::min<std::uint64_t>(static_cast<std::uint64_t>(size), self->size - self->position));
-        const auto read = self->file.read_offset(self->file.object_ptr, buffer, self->position, length);
-        if (read < 0) return AVERROR(EIO);
-        if (read == 0) return AVERROR_EOF;
-        self->position += static_cast<std::uint64_t>(read);
-        return read;
-    }
-
-    static std::int64_t seek(void* opaque, std::int64_t offset, int whence) {
-        auto* self = static_cast<FileReplacementStream*>(opaque);
-        if (whence & AVSEEK_SIZE) return static_cast<std::int64_t>(self->size);
-        std::int64_t base = 0;
-        switch (whence & ~AVSEEK_FORCE) {
-        case SEEK_SET: base = 0; break;
-        case SEEK_CUR: base = static_cast<std::int64_t>(self->position); break;
-        case SEEK_END: base = static_cast<std::int64_t>(self->size); break;
-        default: return -1;
-        }
-        const auto target = std::clamp<std::int64_t>(base + offset, 0, static_cast<std::int64_t>(self->size));
-        self->position = static_cast<std::uint64_t>(target);
-        return target;
-    }
-
-    AvPlayerFileReplacement file;
-    bool opened = false;
-    std::uint64_t size = 0;
-    std::uint64_t position = 0;
-    AVIOContext* context = nullptr;
-};
+float SampleAspect(AVRational sampleAspect) {
+    return HasAspect(sampleAspect) ? static_cast<float>(av_q2d(sampleAspect)) : 0.0f;
+}
 
 class Clock {
 public:
@@ -251,19 +194,31 @@ public:
             }
             format->pb = replacement->Context();
             format->flags |= AVFMT_FLAG_CUSTOM_IO;
+        } else if (path.find("://") != std::string::npos) {
+            std::string scheme = path.substr(0, path.find(':'));
+            for (char& byte : scheme) if (byte >= 'A' && byte <= 'Z') byte += 'a' - 'A';
+            if (scheme != "http" && scheme != "https") NotImplemented_nid_no_patch("AvPlayer source URI scheme");
+            remote = std::make_unique<HttpStream>();
+            if (!remote->Open(path)) return false;
+            format->pb = remote->Context();
+            format->flags |= AVFMT_FLAG_CUSTOM_IO;
         } else {
             std::filesystem::path hostPath;
             if (ResolvePathError_nid_no_patch(path.c_str(), hostPath) != 0) return false;
             const auto resolved = hostPath.u8string();
             url = "file:" + std::string(resolved.begin(), resolved.end());
         }
-        if (const int error = avformat_open_input(&format, replacement ? nullptr : url.c_str(), nullptr, nullptr); error < 0) {
+        const int error = avformat_open_input(&format, replacement || remote ? nullptr : url.c_str(), nullptr, nullptr);
+        if (remote) remote->Rethrow();
+        if (error < 0) {
             char reason[AV_ERROR_MAX_STRING_SIZE]{};
             av_strerror(error, reason, sizeof(reason));
             APS5_LOG_ERR("Could not open %s: %s", path.c_str(), reason);
             return false;
         }
-        if (avformat_find_stream_info(format, nullptr) < 0) return true;
+        const int streamResult = avformat_find_stream_info(format, nullptr);
+        if (remote) remote->Rethrow();
+        if (streamResult < 0) return true;
         for (unsigned index = 0; index < format->nb_streams; ++index) {
             const auto* stream = format->streams[index];
             if (!IsStreamSupported(*stream)) continue;
@@ -331,6 +286,7 @@ public:
     int Start(std::uint64_t startTime) override {
         if (duration != 0 && startTime > duration) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
         if (video.stream < 0 && audio.stream < 0) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+        if (remote) remote->Start();
         for (auto* decoder : {&video, &audio}) {
             if (decoder->stream < 0) continue;
             const int result = openDecoder(*decoder);
@@ -369,9 +325,9 @@ public:
         }
         started = true;
         for (auto* decoder : {&video, &audio}) {
-            if (decoder->stream >= 0) decoder->thread = std::thread([this, decoder] { decodeLoop(*decoder); });
+            if (decoder->stream >= 0) decoder->thread = Libc::StartHostThread([this, decoder] { decodeLoop(*decoder); });
         }
-        demuxer = std::thread([this] { demuxLoop(); });
+        demuxer = Libc::StartHostThread([this] { demuxLoop(); });
         return SCE_OK;
     }
 
@@ -382,6 +338,7 @@ public:
             stopping = true;
         }
         condition.notify_all();
+        if (remote) remote->Stop();
         demuxer.join();
         for (auto* decoder : {&video, &audio}) {
             if (decoder->thread.joinable()) decoder->thread.join();
@@ -539,7 +496,9 @@ private:
 
     std::uint64_t clockMillis() const {
         if (!started) return 0;
-        const auto milliseconds = static_cast<std::uint64_t>(presentationClock.Now());
+        const auto now = presentationClock.Now();
+        constexpr auto latest = std::numeric_limits<std::uint64_t>::max();
+        const auto milliseconds = now < static_cast<double>(latest) ? static_cast<std::uint64_t>(now) : latest;
         return duration != 0 ? std::min(milliseconds, duration) : milliseconds;
     }
 
@@ -608,12 +567,13 @@ private:
             return false;
         }
         const auto epoch = frames.front().epoch;
+        const bool unsynced = syncMode != SyncModeDefault;
         present(audio, info);
         const auto currentClock = presentationClock.Now();
         const auto timestamp = static_cast<double>(info.timestamp);
         lastAudioTimestamp = timestamp;
         audioHasTimestamp = true;
-        const bool drifted = currentClock > timestamp + 50.0 || timestamp > currentClock + 50.0;
+        const bool drifted = currentClock > timestamp + 50.0 || (!unsynced && timestamp > currentClock + 50.0);
         const bool exhausted = audioExhausted() && !audioClockReconciled();
         const bool shouldRebase = !audioDriving || epoch > clockEpoch || drifted || exhausted;
         audioDriving = true;
@@ -633,7 +593,7 @@ private:
         if (info.type == StreamTypeVideo) {
             info.details.video.width = AlignUp(static_cast<std::uint32_t>(parameters->width), VideoHeightAlignment);
             info.details.video.height = AlignUp(static_cast<std::uint32_t>(parameters->height), VideoHeightAlignment);
-            info.details.video.aspect_ratio = DisplayAspect(parameters->width, parameters->height, parameters->sample_aspect_ratio);
+            info.details.video.aspect_ratio = SampleAspect(parameters->sample_aspect_ratio);
             std::memcpy(info.details.video.language_code, language, sizeof(language));
         } else {
             info.details.audio.channel_count = static_cast<std::uint16_t>(parameters->ch_layout.nb_channels);
@@ -721,16 +681,20 @@ private:
 
     void addVideoDecodeAheadBuffers() {
         if (video.stream < 0) return;
+        if (syncMode != SyncModeDefault && addVideoBuffers(UnsyncedVideoDecodeAheadFrames)) return;
+        addVideoBuffers(VideoDecodeAheadFrames);
+    }
 
+    bool addVideoBuffers(std::uint32_t count) {
         const auto& memory = settings.memory;
         std::vector<std::uint8_t*> extra;
-        extra.reserve(VideoDecodeAheadFrames);
-        for (std::uint32_t index = 0; index < VideoDecodeAheadFrames; ++index) {
+        extra.reserve(count);
+        for (std::uint32_t index = 0; index < count; ++index) {
             auto* buffer = static_cast<std::uint8_t*>(memory.allocate_texture(
                 memory.object_ptr, VideoBufferAlignment, video.bufferSize));
             if (!buffer) {
                 for (auto* allocated : extra) memory.deallocate_texture(memory.object_ptr, allocated);
-                return;
+                return false;
             }
             extra.push_back(buffer);
         }
@@ -738,6 +702,7 @@ private:
             video.allocated.push_back(buffer);
             video.free.push_back(buffer);
         }
+        return true;
     }
 
     void releaseDecoders() {
@@ -1068,7 +1033,7 @@ private:
         info.timestamp = timestamp;
         info.details.video.width = alignedWidth;
         info.details.video.height = alignedHeight;
-        info.details.video.aspect_ratio = DisplayAspect(frame.width, frame.height, frame.sample_aspect_ratio);
+        info.details.video.aspect_ratio = SampleAspect(HasAspect(frame.sample_aspect_ratio) ? frame.sample_aspect_ratio : format->streams[index]->codecpar->sample_aspect_ratio);
         std::memcpy(info.details.video.language_code, streamLanguage(index), sizeof(info.details.video.language_code));
         info.details.video.crop_left_offset = static_cast<std::uint32_t>(frame.crop_left);
         info.details.video.crop_right_offset = static_cast<std::uint32_t>(frame.crop_right) + pitch - width;
@@ -1149,6 +1114,7 @@ private:
     SourceSettings settings;
     ISourceEvents& events;
     std::unique_ptr<FileReplacementStream> replacement;
+    std::unique_ptr<HttpStream> remote;
     AVFormatContext* format = nullptr;
     std::vector<StreamEntry> streams;
     std::uint64_t duration = 0;

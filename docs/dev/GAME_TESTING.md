@@ -44,6 +44,7 @@ cmd /c '.\app.exe > run.log 2>&1'
 - `APS5_NO_PAD_INPUT=1` ignores keyboard and mouse, so a stray press doesn't move a measurement run.
 - `setarch x86_64 -R` (Linux only) turns off address randomisation so addresses match between runs.
 - On Windows, a `--windows-gui` build started without a console writes its output to `anyps5.log` beside the executable, replacing the previous run's file.
+- Some homebrew reopen stdout and stderr into their own storage before `main`, so the title's own output, including the reason it exits, is not in `run.log`. Titles built on ps5-homebrew-ui, such as CD Player (PPSA98427), Afterglow (PPSA47770) and Surround Sound Studio (PPSA99051), write `download0/hui/dev/app.log` beside the executable and keep the previous run's log as `app.prev.log`. Read that file before reporting a hang or a silent exit.
 - On Windows the title needs a signed-in desktop. Started from an SSH session (session 0) it has no usable window. Start it inside the user's session instead, for example with a scheduled task that runs interactively. A newly created task does not start on battery power by default and fails silently; allow that in its settings.
 
 ## Check the GPU and the caches
@@ -80,7 +81,7 @@ cmd /c '.\app.exe > run.log 2>&1'
 - **Slowdown:** presents per 10 s far below earlier runs of the same scene. Record the scene (save file or level), since it changes the numbers, and check power and caches first.
 - **Crash on Linux:** take the `ip` from `dmesg` and its offset in the image. Repeat the run under `gdb` (launched by gdb, not attached) for registers, the faulting instructions and all thread stacks.
 - **Crash on Windows:** the `FATAL: unhandled exception ...` report in the log lists the faulting `rip` (for example `app.exe+0x...`), the registers and a stack scan. `APS5_CRASH_INDIRECT_MEMORY=1` adds up to 64 bytes from each pointer in the register dump. `APS5_HANG_DUMP_SECS=<n>` (Windows) prints the crash report with every thread n seconds after start-up and then aborts the title, so set it to a time after the title has stopped. `APS5_TRACE_EXIT=1` reports the process exit point.
-- **Traces (heavy):** `APS5_TRACE_FRAMES=<n>:<m>` or `APS5_TRACE_SECONDS=<s>:<len>` writes a capture for `tools/trace_digest.py`. Traces slow the title and can move the crash; say so when reporting.
+- **Traces (heavy):** `APS5_TRACE_FRAMES=<n>:<m>` or `APS5_TRACE_SECONDS=<s>:<len>` writes a capture for `tools/trace_digest.py`. `python tools/trace_timeline.py capture.json.gz -o timeline.html` writes one HTML page with a bar per traced slice on a time axis, one row per thread; `--from-ms`, `--to-ms`, `--thread` and `--max-slices` narrow it. Traces slow the title and can move the crash; say so when reporting.
 
 ## Measuring performance
 
@@ -88,13 +89,13 @@ cmd /c '.\app.exe > run.log 2>&1'
 - Use the title's default settings, and say so. A changed graphics mode makes a number incomparable with everyone else's.
 - Measure the same spot every time: load a save, wait for the scene to settle, then measure a fixed window with no input.
 - Compare builds on the same machine, alternating them (A, B, A, B), at least two runs each. Throw away a run that was disturbed (another program, a sleeping display) and say so.
-- `APS5_TRACE_SUMMARY_EVERY=10` writes one line per 10 s to `aps5-summary.jsonl` without slowing the title; `tools/trace_digest.py` turns it into a table, and `tools/performance_compare.py` compares two captures ([BUILD](BUILD.md#performance-trace)). Pull requests labelled `perf` need a capture of `main` and one with the change.
+- `APS5_TRACE_SUMMARY_EVERY=10` writes one line per 10 s to `aps5-summary.jsonl` without slowing the title; `tools/trace_digest.py` turns it into a table, and `tools/performance_compare.py` compares two captures ([BUILD](BUILD.md#performance-trace)). Pull requests labelled `perf` need a capture of `main` and one with the change, except `perf(tools)`, `perf(ci)` and `perf(build)`.
 - `APS5_DUMP_FRAMES=<n>` with `APS5_DUMP_FRAMES_EVERY=<k>` saves frames as `frame_<index>.bmp` to check what was on screen. A second process of the same title writes to the same names and overwrites the first one's frames. While 64 MiB of frames wait to be written, the presenter waits for the
   writer, so a slow disk or `APS5_DUMP_SCALE=1` slows the title down instead of stopping it.
 
 ## Title notes
 
-- **PlayGo:** dumps without PlayGo metadata stop at start unless `APS5_PLAYGO_UNLISTED_CHUNKS` is set; report the value used.
+- **PlayGo:** dumps without PlayGo metadata stop at start unless `APS5_PLAYGO_UNLISTED_CHUNKS` is set (installed, absent, or a comma-separated list of installed chunk ids); report the value used.
 - **UE4 titles:** keep the startup movies in place. Renaming them to skip the intro has made a level render without its 3D view, which looked like an emulator bug and wasn't.
 
 ## Input
@@ -111,7 +112,7 @@ Include, in this order:
 
 1. The build: the `main` commit, each PR applied on top with its head, and any local change. A result from an integration branch should stay distinguishable after one of its PRs merges.
 2. Title ID and content version, not only the game name.
-3. Host: CPU, OS (and kernel on Linux), the GPU as the `Selected GPU name=` line names it, the driver version, AC or battery, and the display refresh rate.
+3. Host: CPU, OS (and kernel on Linux), the GPU as the `Selected GPU name=` line names it, the driver version, AC or battery, and the display refresh rate. Start with `ANYPS5_HOST_REPORT=1` and paste the [host report](../user/USAGE.md#host-report) for the CPU, OS, GPU, driver and Vulkan items; AC or battery and the refresh rate are not in it.
 4. The exact command and every `APS5_*` / `ANYPS5_*` variable, the in-game settings if they differ from the defaults, and whether the caches were empty or warm.
 5. How far the title got (menu, a save, a scene) and what stopped it: the exit code and the last 200 log lines, plus the kernel line (Linux) or crash report (Windows) for a crash.
 6. Presents per 10 s, and the storage-image and budget lines (`[gpu] host import budget`, `[gpu] sampled texture cache budget`, `[texture-cache]`) if memory is involved.

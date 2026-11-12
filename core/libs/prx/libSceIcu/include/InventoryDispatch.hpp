@@ -1,0 +1,12 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI _ZN6icu_6813BreakIterator23createCharacterInstanceERKNS_6LocaleER10UErrorCode_nid_postfix();
+int APS5_VABI _ZN6icu_6813BreakIterator18createWordInstanceERKNS_6LocaleER10UErrorCode_nid_postfix();
+int APS5_VABI _ZN6icu_6813BreakIterator18createLineInstanceERKNS_6LocaleER10UErrorCode_nid_postfix();
+int APS5_VABI _ZN6icu_6813BreakIterator22createSentenceInstanceERKNS_6LocaleER10UErrorCode_nid_postfix();
+
+}

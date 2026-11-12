@@ -29,7 +29,7 @@ std::uint64_t elapsed(Clock::time_point start) {
 }
 
 std::array<std::uint64_t, 2> PackKeyHash(std::span<const std::byte> key) {
-    return {HashBytes(key, 0x5eed0001ull), HashBytes(key, 0x5eed0002ull)};
+    return HashBytes<2>(key, {0x5eed0001ull, 0x5eed0002ull});
 }
 
 std::vector<std::filesystem::path> PrebuiltCachePaths(const std::filesystem::path& cacheRoot) {

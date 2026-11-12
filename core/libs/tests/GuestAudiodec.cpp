@@ -196,10 +196,12 @@ constexpr std::int32_t errorInvalidType = static_cast<std::int32_t>(0x807F0001);
 constexpr std::int32_t errorArg = static_cast<std::int32_t>(0x807F0002);
 constexpr std::int32_t errorInvalidParamSize = static_cast<std::int32_t>(0x807F0004);
 constexpr std::int32_t errorInvalidBsiInfoSize = static_cast<std::int32_t>(0x807F0005);
+constexpr std::int32_t errorInvalidAuInfoSize = static_cast<std::int32_t>(0x807F0006);
 constexpr std::int32_t errorInvalidCtrlPointer = static_cast<std::int32_t>(0x807F0008);
 constexpr std::int32_t errorInvalidParamPointer = static_cast<std::int32_t>(0x807F0009);
 constexpr std::int32_t errorInvalidBsiInfoPointer = static_cast<std::int32_t>(0x807F000A);
 constexpr std::int32_t errorInvalidAuInfoPointer = static_cast<std::int32_t>(0x807F000B);
+constexpr std::int32_t errorInvalidAuPointer = static_cast<std::int32_t>(0x807F000D);
 constexpr std::int32_t errorInvalidHandle = static_cast<std::int32_t>(0x807F000F);
 constexpr std::int32_t errorInvalidWordLength = static_cast<std::int32_t>(0x807F0010);
 constexpr std::int32_t errorInvalidAuSize = static_cast<std::int32_t>(0x807F0011);
@@ -233,8 +235,14 @@ std::size_t AdtsLength(const std::uint8_t* frame) {
     return static_cast<std::size_t>((frame[3] & 3) << 11 | frame[4] << 3 | frame[5] >> 5);
 }
 
-void TestAac(bool adts, std::uint32_t maxChannels = 2) {
-    AudiodecParamM4aac param{sizeof(param), 1, adts ? 1u : 2u, 3, maxChannels, 0};
+struct M4aacExtendedParam {
+    AudiodecParamM4aac base;
+    std::uint32_t enableNondelayOutput;
+    std::uint32_t surroundChannelInterleaveOrder;
+};
+
+void TestAac(bool adts, std::uint32_t maxChannels = 2, std::uint32_t paramSize = sizeof(AudiodecParamM4aac), std::uint32_t enableNondelayOutput = 0, std::uint32_t surroundChannelInterleaveOrder = 0) {
+    M4aacExtendedParam param{{paramSize, 1, adts ? 1u : 2u, 3, maxChannels, 0}, enableNondelayOutput, surroundChannelInterleaveOrder};
     AudiodecM4aacInfo info{sizeof(info), 0, 0, 0, 0};
     AudiodecCtrl ctrl{&param, &info, nullptr, nullptr};
     const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, 3);
@@ -258,6 +266,25 @@ void TestAac(bool adts, std::uint32_t maxChannels = 2) {
         Require(Decode(handle, ctrl, streams, AAC_ADTS + 1, 50) == errorApiFail && info.i_result == -4);
     }
     Require(sceAudiodecClearContext(handle) == 0);
+    Require(sceAudiodecDeleteDecoder(handle) == 0);
+}
+
+void TestAacUnopenableLayout() {
+    AudiodecParamM4aac param{sizeof(param), 1, 1, 3, 2, 0};
+    AudiodecM4aacInfo info{sizeof(info), 0, 0, 0, 0};
+    AudiodecCtrl ctrl{&param, &info, nullptr, nullptr};
+    const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, 3);
+    Require(handle > 0);
+    Streams streams;
+    const std::size_t length = AdtsLength(AAC_ADTS);
+    std::vector<std::uint8_t> reserved(AAC_ADTS, AAC_ADTS + length);
+    reserved[2] = static_cast<std::uint8_t>((reserved[2] & 0xC3) | 13 << 2);
+    Require(Decode(handle, ctrl, streams, reserved.data(), reserved.size()) == errorApiFail && info.i_result == -4);
+    Require(streams.au.ui_au_size == 0 && streams.pcm.ui_pcm_size == 0);
+    Require(Decode(handle, ctrl, streams, reserved.data(), reserved.size()) == errorApiFail && info.i_result == -4);
+    Require(sceAudiodecClearContext(handle) == 0);
+    Require(Decode(handle, ctrl, streams, AAC_ADTS, length) == 0);
+    Require(streams.au.ui_au_size == length && streams.pcm.ui_pcm_size == 1024 * 2 * 2 && info.i_result == 0);
     Require(sceAudiodecDeleteDecoder(handle) == 0);
 }
 
@@ -368,6 +395,36 @@ void TestAt9() {
     Require(sceAudiodecCreateDecoder(&ctrl, 1) == errorInvalidAt9Config);
 }
 
+void TestDecodeCheckOrder() {
+    AudiodecParamMp3 param{sizeof(param), 1};
+    AudiodecMp3Info info{};
+    info.ui_size = sizeof(info);
+    AudiodecCtrl ctrl{&param, &info, nullptr, nullptr};
+    const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, 2);
+    Require(handle > 0);
+    Streams streams;
+    Require(Decode(0, ctrl, streams, MP3_MONO, 0) == errorInvalidAuSize);
+    Require(Decode(handle + 1, ctrl, streams, MP3_MONO, sizeof(MP3_MONO), 0) == errorInvalidPcmSize);
+    Require(Decode(handle, ctrl, streams, MP3_MONO, UINT32_MAX) == errorInvalidAuSize);
+    Require(Decode(handle, ctrl, streams, MP3_MONO, sizeof(MP3_MONO), UINT32_MAX) == errorInvalidPcmSize);
+    streams.au.ui_size = 16;
+    Require(Decode(handle, ctrl, streams, MP3_MONO, 0) == errorInvalidAuSize);
+    Require(Decode(handle, ctrl, streams, MP3_MONO, sizeof(MP3_MONO)) == errorInvalidAuInfoSize);
+    streams.au.ui_size = sizeof(AudiodecAuInfo);
+    AudiodecAuInfo noAddress{sizeof(AudiodecAuInfo), nullptr, sizeof(MP3_MONO)};
+    AudiodecCtrl noPcmItem{&param, &info, &noAddress, nullptr};
+    Require(sceAudiodecDecode(handle, &noPcmItem) == errorInvalidAuPointer);
+    info.ui_size = 16;
+    Require(Decode(handle + 1, ctrl, streams, MP3_MONO, sizeof(MP3_MONO)) == errorInvalidHandle);
+    Require(Decode(handle, ctrl, streams, MP3_MONO, sizeof(MP3_MONO)) == errorInvalidBsiInfoSize);
+    info.ui_size = sizeof(info);
+    param.ui_size = 12;
+    param.i_bw_pcm = 0;
+    Require(Decode(handle, ctrl, streams, MP3_MONO, sizeof(MP3_MONO)) == 0);
+    Require(streams.pcm.ui_pcm_size == 1152 * 2);
+    Require(sceAudiodecDeleteDecoder(handle) == 0);
+}
+
 }
 
 int main() {
@@ -379,8 +436,8 @@ int main() {
     Require(sceAudiodecDeleteDecoder(-1) == errorInvalidHandle);
     Require(sceAudiodecClearContext(0) == errorInvalidHandle);
     Require(sceAudiodecClearContext(-1) == errorInvalidHandle);
-    Require(sceAudiodecDecode(0, nullptr) == errorInvalidHandle);
-    Require(sceAudiodecDecode(-1, nullptr) == errorInvalidHandle);
+    Require(sceAudiodecDecode(0, nullptr) == errorInvalidCtrlPointer);
+    Require(sceAudiodecDecode(-1, nullptr) == errorInvalidCtrlPointer);
 
     AudiodecParamMp3 mp3{sizeof(mp3), 1};
     AudiodecMp3Info mp3Info{};
@@ -425,11 +482,7 @@ int main() {
     aac.ui_max_channels = 6;
     aac.ui_enable_heaac = 1;
     Require(sceAudiodecCreateDecoder(&aacCtrl, 3) == static_cast<std::int32_t>(0x807F0302));
-    struct ExtendedParam {
-        AudiodecParamM4aac base;
-        std::uint32_t extensionMode;
-        std::uint32_t outputMode;
-    } extended{{32, 1, 1, 3, 2, 0}, 0, 0};
+    M4aacExtendedParam extended{{32, 1, 1, 3, 2, 0}, 0, 0};
     aacCtrl.pParam = &extended;
     for (const std::uint32_t size : {25u, 27u, 29u, 31u, 33u}) {
         extended.base.ui_size = size;
@@ -437,19 +490,17 @@ int main() {
     }
     for (const std::uint32_t size : {28u, 32u}) {
         extended.base.ui_size = size;
-        extended.extensionMode = 2;
+        extended.enableNondelayOutput = 2;
         Require(sceAudiodecCreateDecoder(&aacCtrl, 3) == static_cast<std::int32_t>(0x807F0305));
-        extended.extensionMode = 1;
-        bool threw = false;
-        try { sceAudiodecCreateDecoder(&aacCtrl, 3); }
-        catch (const std::runtime_error&) { threw = true; }
-        Require(threw);
-        extended.extensionMode = 0;
-        const auto extendedHandle = sceAudiodecCreateDecoder(&aacCtrl, 3);
-        Require(extendedHandle > 0);
-        Require(sceAudiodecDeleteDecoder(extendedHandle) == 0);
+        for (const std::uint32_t enableNondelayOutput : {0u, 1u}) {
+            extended.enableNondelayOutput = enableNondelayOutput;
+            const auto extendedHandle = sceAudiodecCreateDecoder(&aacCtrl, 3);
+            Require(extendedHandle > 0);
+            Require(sceAudiodecDeleteDecoder(extendedHandle) == 0);
+        }
+        extended.enableNondelayOutput = 0;
     }
-    extended.outputMode = 3;
+    extended.surroundChannelInterleaveOrder = 3;
     Require(sceAudiodecCreateDecoder(&aacCtrl, 3) == static_cast<std::int32_t>(0x807F0306));
 
     const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, 2);
@@ -470,6 +521,11 @@ int main() {
     TestAac(false);
     TestAac(false, 6);
     TestAac(false, 8);
+    TestAac(true, 2, 28, 1);
+    TestAac(false, 2, 32, 1);
+    TestAac(false, 8, 28, 1);
+    TestAac(false, 8, 32, 0, 2);
+    TestAac(true, 2, 32, 1, 1);
     TestAacRaw51(6);
     TestAacRaw51(8);
     for (const bool adts : {true, false}) {
@@ -478,7 +534,9 @@ int main() {
             TestHeAac(HEAAC_STEREO, sizeof(HEAAC_STEREO), 2, adts, highEfficiency);
         }
     }
+    TestAacUnopenableLayout();
     TestMp3();
     TestAt9();
+    TestDecodeCheckOrder();
     for (std::uint32_t type = 1; type <= 3; ++type) Require(sceAudiodecTermLibrary(type) == 0);
 }

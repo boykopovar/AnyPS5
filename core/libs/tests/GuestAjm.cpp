@@ -851,6 +851,23 @@ void TestGetInfo(std::uint32_t context) {
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
+void TestGetStatistics(std::uint32_t context) {
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
+    std::vector<std::uint8_t> batch(4096);
+    AjmBatchInfo info{};
+    std::vector<std::uint8_t> statistics(32, 0xaa);
+    FormatSideband format{-1, -1, 0xaaaaaaaau, 0xaaaaaaaau, 0xaaaaaaaau, 0xaaaaaaaau, 0xaaaaaaaau, 0xaaaaaaaau};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobGetStatistics(&info, 1.0f, statistics.data()) == 0);
+    Require(sceAjmBatchJobGetInfo(&info, instance, &format) == 0);
+    Submit(context, info);
+    Require(std::all_of(statistics.begin(), statistics.begin() + 24, [](std::uint8_t value) { return value == 0; }));
+    Require(std::all_of(statistics.begin() + 24, statistics.end(), [](std::uint8_t value) { return value == 0xaa; }));
+    Require(format.result == 1 && format.numChannels == 0xaaaaaaaau);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
 void TestBatchBounds(std::uint32_t context) {
     constexpr int invalidParameter = static_cast<int>(0x80930005);
     std::vector<std::uint8_t> storage(128);
@@ -914,6 +931,49 @@ void TestBatchBounds(std::uint32_t context) {
 #endif
 }
 
+void TestBatchJobCountRange(std::uint32_t context) {
+    (void)context;
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+    std::vector<std::uint8_t> storage(256);
+    AjmBatchInfo info{};
+    Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
+    const AjmBuffer buffer{storage.data(), 16};
+    const std::size_t wrapped = (std::size_t{1} << 32) + 1;
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, wrapped, &buffer, 1, nullptr, 0) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, &buffer, wrapped, nullptr, 0) == invalidParameter);
+    Require(info.offset == 0);
+}
+
+void TestBatchJobRunSplitChecks() {
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+    constexpr int outOfResources = static_cast<int>(0x80930007);
+    constexpr int jobCreation = static_cast<int>(0x80930012);
+    std::vector<std::uint8_t> storage(256);
+    AjmBatchInfo info{};
+    Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
+    const AjmBuffer buffer{storage.data(), 16};
+    const AjmBuffer five[5]{buffer, buffer, buffer, buffer, buffer};
+    std::int64_t result = -1;
+    const std::size_t wrapped = (std::size_t{1} << 32) + 1;
+    Require(sceAjmBatchJobRunSplit(nullptr, 0, 0, &buffer, 1, &buffer, 1, &result, sizeof(result)) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, &buffer, 1, &result, 7) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 0, nullptr, 0, nullptr, 0) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 1, &buffer, 1, &result, sizeof(result)) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, nullptr, 1, &result, sizeof(result)) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 1, nullptr, 0, nullptr, 0) == invalidParameter);
+    Require(info.offset == 0);
+    const auto refusedFor = [&](std::size_t inputs, std::size_t outputs) {
+        AjmBatchInfo fresh{};
+        Require(sceAjmBatchInitialize(storage.data(), storage.size(), &fresh) == 0);
+        return sceAjmBatchJobRunSplit(&fresh, 0, 0, &buffer, inputs, &buffer, outputs, &result, sizeof(result)) == jobCreation && fresh.offset == 0x20 + (inputs + outputs) * 16;
+    };
+    Require(refusedFor(wrapped, 1) && refusedFor(1, wrapped) && refusedFor(300, 0) && refusedFor(15, 0));
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, &buffer, 1, &result, sizeof(result)) == 0 && info.offset == 64);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, five, 5, five, 5, &result, sizeof(result)) == 0 && info.offset == storage.size());
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 0, nullptr, 0, &result, sizeof(result)) == jobCreation && info.offset == storage.size() + 0x20);
+    Require(sceAjmBatchJobClearContext(&info, 0, &result) == outOfResources && info.offset == storage.size() + 0x20);
+}
+
 void TestBatchWaitRelease(std::uint32_t context) {
     constexpr int invalidBatch = static_cast<int>(0x80930004);
     std::vector<std::uint8_t> batch(64);
@@ -951,11 +1011,45 @@ void TestBatchCancel(std::uint32_t context) {
     Require(sceAjmBatchCancel(context, id + 1) == invalidBatch);
 }
 
+void TestInstanceContextOwnership(std::uint32_t context) {
+    constexpr int invalidContext = static_cast<int>(0x80930002);
+    constexpr int invalidInstance = static_cast<int>(0x80930003);
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+    std::uint32_t untouched = 0xfeedu;
+    Require(sceAjmInstanceCreate(0, 24, 0, &untouched) == invalidContext);
+    Require(untouched == 0xfeedu);
+    Require(sceAjmInstanceCreate(0xffffffffu, 24, 0, &untouched) == invalidContext);
+    Require(untouched == 0xfeedu);
+    Require(sceAjmInstanceCreate(0, 24, 0, nullptr) == invalidContext);
+    Require(sceAjmInstanceCreate(context, 24, 0, nullptr) == invalidParameter);
+    std::uint32_t other = 0;
+    Require(sceAjmInitialize(0, &other) == 0 && other != context);
+    std::uint32_t first = 0;
+    std::uint32_t second = 0;
+    Require(sceAjmInstanceCreate(context, 24, 0, &first) == 0);
+    Require(sceAjmInstanceCreate(other, 24, 0, &second) == 0);
+    Require(sceAjmInstanceDestroy(0, first) == invalidContext);
+    Require(sceAjmInstanceDestroy(0xffffffffu, first) == invalidContext);
+    Require(sceAjmInstanceDestroy(other, first) == invalidInstance);
+    Require(sceAjmInstanceDestroy(context, second) == invalidInstance);
+    Require(sceAjmInstanceDestroy(context, 0) == invalidInstance);
+    Require(sceAjmInstanceDestroy(other, 0xffffffffu) == invalidInstance);
+    Require(sceAjmInstanceDestroy(context, first) == 0);
+    Require(sceAjmInstanceDestroy(context, first) == invalidInstance);
+    Require(sceAjmInstanceDestroy(other, second) == 0);
+    Require(sceAjmInstanceDestroy(other, second) == invalidInstance);
+    Require(sceAjmFinalize(other) == 0);
+}
+
 void TestBatchContextOwnership(std::uint32_t context) {
     constexpr int invalidContext = static_cast<int>(0x80930002);
     constexpr int invalidBatch = static_cast<int>(0x80930004);
     std::uint32_t other = 0;
     Require(sceAjmInitialize(0, &other) == 0 && other != context);
+    std::uint32_t lowValue = 0;
+    Require(sceAjmInitialize(0x20, &lowValue) == 0 && lowValue != other && lowValue != context);
+    std::uint32_t highHalf = 0;
+    Require(sceAjmInitialize(0x300000000, &highHalf) == 0 && highHalf != lowValue && highHalf != other && highHalf != context);
     std::vector<std::uint8_t> storage(256);
     AjmBatchInfo info{};
     Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
@@ -969,7 +1063,7 @@ void TestBatchContextOwnership(std::uint32_t context) {
     Require(sceAjmBatchCancel(context, second) == invalidBatch);
     Require(sceAjmBatchWait(context, second, 0, &error) == invalidBatch);
     Require(sceAjmBatchWait(0, first, 0, &error) == invalidContext);
-    Require(sceAjmBatchWait(other + 1, first, 0, &error) == invalidContext);
+    Require(sceAjmBatchWait(highHalf + 1, first, 0, &error) == invalidContext);
     Require(sceAjmBatchCancel(context, first) == 0);
     Require(sceAjmBatchWait(context, first, 0, &error) == 0);
     Require(sceAjmBatchWait(other, second, 0, &error) == 0);
@@ -977,9 +1071,11 @@ void TestBatchContextOwnership(std::uint32_t context) {
     Require(sceAjmBatchWait(other, second, 0, &error) == invalidBatch);
     std::uint32_t untouched = 0xfeedu;
     Require(sceAjmBatchStart(0, &info, 0, &error, &untouched) == invalidContext);
-    Require(sceAjmBatchStart(other + 1, &info, 0, &error, &untouched) == invalidContext);
+    Require(sceAjmBatchStart(highHalf + 1, &info, 0, &error, &untouched) == invalidContext);
     Require(untouched == 0xfeedu);
     Require(sceAjmFinalize(other) == 0);
+    Require(sceAjmFinalize(lowValue) == 0);
+    Require(sceAjmFinalize(highHalf) == 0);
 }
 
 constexpr std::uint64_t CONTROL_RESET = 1ull << 13;
@@ -1592,19 +1688,15 @@ void TestBuildersWithoutBuffers(std::uint32_t context) {
     Require(std::all_of(std::begin(results), std::end(results), [](std::int64_t result) { return result == 0; }));
     Require(resample.result == 0 && resample.internalResult == 0 && resample.ratio == 1.0f && resample.samples == 0);
 
-    const auto nullListThrows = [&](std::size_t inputs, std::size_t outputs) {
+    std::int64_t runResult = -1;
+    const auto nullListRefused = [&](std::size_t inputs, std::size_t outputs) {
         const auto before = info.offset;
-        try {
-            sceAjmBatchJobRunSplit(&info, instance, 0, nullptr, inputs, nullptr, outputs, nullptr, 0);
-        } catch (const std::runtime_error&) {
-            return info.offset == before;
-        }
-        return false;
+        return sceAjmBatchJobRunSplit(&info, instance, 0, nullptr, inputs, nullptr, outputs, &runResult, sizeof(runResult)) == static_cast<int>(0x80930005) && info.offset == before;
     };
     Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
-    Require(nullListThrows(1, 0) && nullListThrows(0, 1) && nullListThrows(2, 3));
+    Require(nullListRefused(1, 0) && nullListRefused(0, 1) && nullListRefused(2, 3));
     offset = 0;
-    Require(built(sceAjmBatchJobRunSplit(&info, instance, 0, nullptr, 0, nullptr, 0, nullptr, 0)));
+    Require(built(sceAjmBatchJobRunSplit(&info, instance, 0, nullptr, 0, nullptr, 0, &runResult, sizeof(runResult))));
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
@@ -1883,6 +1975,40 @@ void TestAt9GaplessSegments(std::uint32_t context) {
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
+void TestAt9GaplessResetRestartsTotal(std::uint32_t context) {
+    constexpr std::uint64_t runMultipleFrames = 1ull << 12;
+    std::vector<std::uint8_t> stream(1024, 0);
+    std::memcpy(stream.data(), AT9_MONO_SILENT_SUPERFRAME, sizeof(AT9_MONO_SILENT_SUPERFRAME));
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
+    const At9Control start{{0, 0, 0}, {0xFE, 0x70, 0x1F, 0xF0}, 0};
+    std::int32_t result[2] = {-1, -1};
+    RunControl(context, instance, CONTROL_START, &start, sizeof(start), result);
+    Require(result[0] == 0);
+    const auto first = RunAt9Job(context, instance, runMultipleFrames, stream.data(), stream.size());
+    Require(first.stream.outputWritten == 1024 * 2 && first.stream.totalDecodedSamples == 1024);
+
+    std::vector<std::uint8_t> batch(4096);
+    AjmBatchInfo info{};
+    const GaplessDecode seek{512, 0, 0};
+    std::int32_t setResult[2] = {-1, -1};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobSetGaplessDecode(&info, instance, &seek, 1, setResult) == 0);
+    Submit(context, info);
+    Require(setResult[0] == 0);
+    const auto second = RunAt9Job(context, instance, runMultipleFrames, stream.data(), stream.size());
+    Require(second.stream.outputWritten == 512 * 2 && second.stream.totalDecodedSamples == 512);
+
+    const GaplessDecode longer{1024, 0, 0};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobSetGaplessDecode(&info, instance, &longer, 0, setResult) == 0);
+    Submit(context, info);
+    Require(setResult[0] == 0);
+    const auto third = RunAt9Job(context, instance, runMultipleFrames, stream.data() + second.stream.inputConsumed, stream.size() - static_cast<std::size_t>(second.stream.inputConsumed));
+    Require(third.stream.totalDecodedSamples == 512 + static_cast<std::uint64_t>(third.stream.outputWritten) / 2);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
 void TestAt9RunDecodesWholeInput(std::uint32_t context) {
     std::vector<std::uint8_t> stream(1024, 0);
     std::memcpy(stream.data(), AT9_MONO_SILENT_SUPERFRAME, sizeof(AT9_MONO_SILENT_SUPERFRAME));
@@ -1895,6 +2021,31 @@ void TestAt9RunDecodesWholeInput(std::uint32_t context) {
     const auto run = RunAt9Job(context, instance, 0, stream.data(), stream.size());
     Require(run.stream.result == 0x18 && static_cast<std::size_t>(run.stream.inputConsumed) == stream.size() && run.stream.outputWritten == 1024 * 2);
     Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
+void TestStrError() {
+    const char* const expected[] = {
+        "context does not exist", "instance does not exist", "batch does not exist", "invalid parameter",
+        "not enough memory", "not enough resources", "codec is not supported",
+        "codec is already registered in the context", "codec is not registered in the context",
+        "wrong revision in the flags", "flag is not supported", "busy", "priority is invalid", "in progress",
+        "operation cannot be performed at the moment", "malformed batch", "error at job creation",
+        "invalid opcode", "priority violation", "buffer is too big", "invalid address", "batch was cancelled",
+        "specified memory area is already registered", "specified memory area is not registered",
+    };
+    static_assert(sizeof(expected) / sizeof(expected[0]) == 24);
+    for (std::uint32_t i = 0; i < 24; ++i) {
+        const int code = static_cast<int>(0x80930002u + i);
+        const char* text = sceAjmStrError(code);
+        Require(text != nullptr && std::strcmp(text, expected[i]) == 0);
+        Require(sceAjmStrError(code) == text);
+    }
+    const char* ok = sceAjmStrError(0);
+    Require(ok != nullptr && std::strcmp(ok, "ok") == 0);
+    for (std::uint32_t code : {0x80930000u, 0x80930001u, 0x8093001au, 0x8093001bu, 0x8092ffffu, 1u, 0xffffffffu, 0x80020001u, 0x8a6e0001u, 0x7fffffffu}) {
+        const char* text = sceAjmStrError(static_cast<int>(code));
+        Require(text != nullptr && std::strcmp(text, "(unknown)") == 0);
+    }
 }
 
 void TestAt9FlagRules(std::uint32_t context) {
@@ -2102,6 +2253,22 @@ void TestInlineBufferLayout(InlineBuffer inlineBuffer) {
     Require(BatchWord(batch, 24) == 0xCDCDCDC7 && BatchWord(batch, 28) == 0 && address == batch.data() + 32);
 }
 
+void TestInlineBufferRejectsOversize(InlineBuffer inlineBuffer) {
+    std::vector<std::uint8_t> batch(64, 0xCD);
+    const auto before = batch;
+    const void* address = nullptr;
+    for (const std::size_t size : {std::size_t{0x100000008}, std::numeric_limits<std::size_t>::max() - 3}) {
+        bool thrown = false;
+        try {
+            inlineBuffer(batch.data(), batch.data(), size, &address);
+        } catch (const std::invalid_argument&) {
+            thrown = true;
+        }
+        Require(thrown);
+        Require(batch == before && address == nullptr);
+    }
+}
+
 void TestConsoleInlineBuffer(std::uint32_t context, const char* ajmiLibrary) {
 #ifdef _WIN32
     const char* nativeLibrary = "libSceAjm.native.prx";
@@ -2110,7 +2277,9 @@ void TestConsoleInlineBuffer(std::uint32_t context, const char* ajmiLibrary) {
 #endif
     const InlineBuffer inlineBuffer = reinterpret_cast<InlineBuffer>(ResolveExport(nativeLibrary, "sceAjmBatchJobInlineBuffer"));
     TestInlineBufferLayout(inlineBuffer);
-    TestInlineBufferLayout(reinterpret_cast<InlineBuffer>(ResolveExport(ajmiLibrary, "sceAjmBatchJobInlineBuffer_nid_disambig1")));
+    const auto ajmiInlineBuffer = reinterpret_cast<InlineBuffer>(ResolveExport(ajmiLibrary, "sceAjmBatchJobInlineBuffer_nid_disambig1"));
+    TestInlineBufferLayout(ajmiInlineBuffer);
+    TestInlineBufferRejectsOversize(ajmiInlineBuffer);
     const void* address = nullptr;
 
     std::vector<std::uint8_t> stream(1024, 0);
@@ -2441,7 +2610,7 @@ void TestOpusGaplessReset(std::uint32_t context, std::size_t outputFrames, float
         DecodeSideband baseline{};
         RunDecode(context, reference, OPUS_STEREO + offset, packetBytes, expected.data(), expected.size() * sizeof(std::int16_t), baseline);
         Require(baseline.result == 0 && static_cast<std::size_t>(baseline.inputConsumed) == packetBytes);
-        Require(baseline.totalDecodedSamples == static_cast<std::uint64_t>(segment + 1) * 860 + (ratio == 0 ? segment * 960 : 0));
+        Require(baseline.totalDecodedSamples == 860);
         const std::size_t expectedBytes = ratio > 0 ? static_cast<std::size_t>(baseline.outputWritten) : totalSamples * 2 * sizeof(std::int16_t);
         Require(expectedBytes > 0);
         std::size_t produced = 0;
@@ -2451,7 +2620,7 @@ void TestOpusGaplessReset(std::uint32_t context, std::size_t outputFrames, float
             RunDecode(context, instance, OPUS_STEREO + offset, drain == 0 ? packetBytes : 0, pcm.data(), outputFrames * 2 * sizeof(std::int16_t), decoded);
             if (decoded.outputWritten <= 0) throw std::runtime_error("Opus gapless segment " + std::to_string(segment) + " wrote " + std::to_string(decoded.outputWritten) + " bytes with " + std::to_string(expectedBytes - produced) + " still expected");
             Require(decoded.result == 0 && static_cast<std::size_t>(decoded.inputConsumed) == (drain == 0 ? packetBytes : 0));
-            Require(decoded.totalDecodedSamples == static_cast<std::uint64_t>(segment + 1) * totalSamples);
+            Require(decoded.totalDecodedSamples == totalSamples);
             const auto samples = static_cast<std::size_t>(decoded.outputWritten) / sizeof(std::int16_t);
             Require(samples <= outputFrames * 2 && produced + static_cast<std::size_t>(decoded.outputWritten) <= expectedBytes);
             Require(std::equal(pcm.begin(), pcm.begin() + samples, expected.begin() + produced / sizeof(std::int16_t)));
@@ -2470,7 +2639,7 @@ void TestOpusGaplessReset(std::uint32_t context, std::size_t outputFrames, float
             RunDecode(context, instance, OPUS_STEREO + offset, packetBytes, pcm.data(), outputFrames * 2 * sizeof(std::int16_t), decoded);
             RunDecode(context, reference, OPUS_STEREO + offset, packetBytes, expected.data(), expected.size() * sizeof(std::int16_t), baseline);
             Require(decoded.result == 0 && static_cast<std::size_t>(decoded.inputConsumed) == packetBytes && decoded.outputWritten == 0);
-            Require(decoded.totalDecodedSamples == static_cast<std::uint64_t>(segment + 1) * totalSamples);
+            Require(decoded.totalDecodedSamples == totalSamples);
             Require(std::all_of(pcm.begin(), pcm.end(), [](auto sample) { return sample == -12345; }));
         }
         offset = (offset + packetBytes) % sizeof(OPUS_STEREO);
@@ -2585,6 +2754,48 @@ void TestPcmResample(std::uint32_t context) {
     Require(sceAjmInstanceDestroy(context, invalid) == 0);
 }
 
+void TestRunSidebandStopsAtOversizedField(std::uint32_t context) {
+    constexpr std::uint64_t runMultipleFrames = 1ull << 12;
+    constexpr std::uint64_t sidebandStream = 1ull << 47;
+    std::vector<std::uint8_t> stream(1024, 0);
+    std::memcpy(stream.data(), AT9_MONO_SILENT_SUPERFRAME, sizeof(AT9_MONO_SILENT_SUPERFRAME));
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
+    const At9Control start{{512, 0, 0}, {0xFE, 0x70, 0x1F, 0xF0}, 0};
+    std::int32_t result[2] = {-1, -1};
+    RunControl(context, instance, CONTROL_START, &start, sizeof(start), result);
+    Require(result[0] == 0);
+
+    std::vector<std::uint8_t> batch(4096);
+    std::vector<std::int16_t> pcm(1024);
+    std::uint8_t sideband[32];
+    std::memset(sideband, 0xCD, sizeof(sideband));
+    AjmBatchInfo info{};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobRun(&info, instance, sidebandStream | runMultipleFrames, stream.data(), stream.size(), pcm.data(), pcm.size() * sizeof(std::int16_t), sideband, 16) == 0);
+    Submit(context, info);
+    Require(std::all_of(sideband + 8, sideband + sizeof(sideband), [](std::uint8_t byte) { return byte == 0xCD; }));
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
+void TestInlineBufferNullAddress(const char* ajmiLibrary) {
+#ifdef _WIN32
+    const char* nativeLibrary = "libSceAjm.native.prx";
+#else
+    const char* nativeLibrary = nullptr;
+#endif
+    const InlineBuffer nativeInline = reinterpret_cast<InlineBuffer>(ResolveExport(nativeLibrary, "sceAjmBatchJobInlineBuffer"));
+    const InlineBuffer ajmiInline = reinterpret_cast<InlineBuffer>(ResolveExport(ajmiLibrary, "sceAjmBatchJobInlineBuffer_nid_disambig1"));
+    for (const InlineBuffer inlineBuffer : {nativeInline, ajmiInline}) {
+        std::uint8_t data[13];
+        std::memset(data, 0x5A, sizeof(data));
+        std::vector<std::uint8_t> batch(64, 0xCD);
+        Require(inlineBuffer(batch.data(), data, sizeof(data), nullptr) == batch.data() + 24);
+        Require(BatchWord(batch, 0) == 0xCDCDCDC7 && BatchWord(batch, 4) == 16);
+        Require(std::memcmp(batch.data() + 8, data, sizeof(data)) == 0);
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -2593,6 +2804,10 @@ int main(int argc, char** argv) {
     std::uint32_t context = 0;
     Require(sceAjmInitialize(0, nullptr) == invalidParameter);
     Require(sceAjmInitialize(0, &context) == 0 && context != 0);
+    Require(sceAjmModuleRegister(context, 0, 1) == invalidParameter);
+    Require(sceAjmModuleRegister(context, 0, -1) == invalidParameter);
+    Require(sceAjmModuleRegister(context, 0, 0) == 0);
+    Require(sceAjmModuleUnregister(context, 0) == 0);
 
     const std::uint8_t stereo48k[4] = {0xFE, 0x72, 0x1F, 0xF0};
     AjmDecAt9ConfigDataInfo info{};
@@ -2605,14 +2820,8 @@ int main(int argc, char** argv) {
     std::vector<std::uint8_t> batch(4096);
     AjmBatchInfo batchInfo{};
     Require(sceAjmBatchInitialize(batch.data(), batch.size(), &batchInfo) == 0);
-    bool nullBuffersThrow = false;
-    try {
-        sceAjmBatchJobRunSplit(&batchInfo, 0, 0, nullptr, 1, nullptr, 0, nullptr, 0);
-
-    } catch (const std::runtime_error&) {
-        nullBuffersThrow = true;
-    }
-    Require(nullBuffersThrow && batchInfo.offset == 0);
+    std::int64_t runResult = -1;
+    Require(sceAjmBatchJobRunSplit(&batchInfo, 0, 0, nullptr, 1, nullptr, 0, &runResult, sizeof(runResult)) == invalidParameter && batchInfo.offset == 0);
     TestMp3ParseFrame();
     TestMp3ParseOfl();
     TestMp3MetadataBounds();
@@ -2639,10 +2848,14 @@ int main(int argc, char** argv) {
     TestGaplessDecode(context);
     TestCodecInfo(context);
     TestGetInfo(context);
+    TestGetStatistics(context);
     TestBatchBounds(context);
+    TestBatchJobCountRange(context);
+    TestBatchJobRunSplitChecks();
     TestBatchWaitRelease(context);
     TestInstanceHandleLifetime(context);
     TestBatchCancel(context);
+    TestInstanceContextOwnership(context);
     TestBatchContextOwnership(context);
     TestControlAt9(context);
     TestMultichannelAt9(context);
@@ -2661,7 +2874,9 @@ int main(int argc, char** argv) {
     TestBuildersWithoutBuffers(context);
     TestResampleAt9(context);
     TestAt9GaplessSegments(context);
+    TestAt9GaplessResetRestartsTotal(context);
     TestAt9RunDecodesWholeInput(context);
+    TestStrError();
     TestAt9FlagRules(context);
     TestPcmResample(context);
     TestConsoleBufferJobs(context);
@@ -2672,6 +2887,8 @@ int main(int argc, char** argv) {
     TestConsoleEmptyBatch(context);
     TestConsoleSingleFrameRun(context);
     TestConsoleStaleHeaderBits(context);
+    TestRunSidebandStopsAtOversizedField(context);
+    TestInlineBufferNullAddress(argv[1]);
     Require(sceAjmDecWVorbisCreateHeaderPacket(nullptr) == static_cast<int>(0x8A6E0001));
     Require(sceAjmFinalize(context) == 0);
 }

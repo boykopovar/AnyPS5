@@ -80,8 +80,32 @@ void CheckBsearch() {
     before = constraintCalls;
     Require(bsearch_s_nid_postfix(&key, values, 0, tooLarge, CompareInts, &calls) == nullptr, "bsearch_s accepted an oversized element");
     RequireViolation(before, "bsearch_s: bad argument", 22);
+    struct ZeroStrideCase { std::size_t count; int lessCalls; int greaterCalls; };
+    const ZeroStrideCase zeroStrideCases[] = {{0, 0, 0}, {1, 1, 1}, {2, 2, 1}, {3, 2, 2}, {4, 3, 2}, {7, 3, 3}, {8, 4, 3}, {15, 4, 4}, {16, 5, 4}, {1023, 10, 10}, {1024, 11, 10}, {tooLarge - 1, 61, 61}};
+    for (const auto& entry : zeroStrideCases) for (const int zeroKey : {0, 1, 2}) {
+        before = constraintCalls;
+        calls = 0;
+        *__error_nid_postfix() = 97;
+        void* result = bsearch_s_nid_postfix(&zeroKey, values, entry.count, 0, CompareInts, &calls);
+        const void* expected = entry.count != 0 && zeroKey == 1 ? values : nullptr;
+        const int expectedCalls = zeroKey == 0 ? entry.lessCalls : zeroKey == 2 ? entry.greaterCalls : entry.count != 0;
+        Require(result == expected && calls == expectedCalls, "bsearch_s zero stride result or comparison count");
+        Require(constraintCalls == before && *__error_nid_postfix() == 97, "bsearch_s zero stride invoked a constraint or changed errno");
+    }
     before = constraintCalls;
-    Require(bsearch_s_nid_postfix(&key, values, 7, 0, CompareInts, &calls) == nullptr, "bsearch_s accepted a zero element size");
+    calls = 0;
+    Require(bsearch_s_nid_postfix(&key, values, tooLarge, 0, CompareInts, &calls) == nullptr && calls == 0, "bsearch_s searched an oversized count");
+    RequireViolation(before, "bsearch_s: bad argument", 22);
+    calls = 0;
+    Require(bsearch_s_nid_postfix(&values[0], values, 1, tooLarge - 1, CompareInts, &calls) == values && calls == 1, "bsearch_s rejected an RSIZE_MAX element size");
+    before = constraintCalls;
+    Require(bsearch_s_nid_postfix(nullptr, values, 7, 0, CompareInts, &calls) == nullptr, "bsearch_s zero stride accepted a null key");
+    RequireViolation(before, "bsearch_s: bad argument", 22);
+    before = constraintCalls;
+    calls = 0;
+    constexpr std::size_t twoToThe32 = std::size_t{1} << 32;
+    Require(bsearch_s_nid_postfix(&key, values, twoToThe32, twoToThe32, CompareInts, &calls) == nullptr && calls == 0,
+        "bsearch_s searched a count times size product past SIZE_MAX");
     RequireViolation(before, "bsearch_s: bad argument", 22);
 }
 
@@ -117,6 +141,84 @@ void CheckWcstok() {
     remaining = 4;
     Require(wcstok_s_nid_postfix(nullptr, &remaining, delimiters.c_str(), &context) == nullptr, "wcstok_s accepted a null context string");
     RequireViolation(before, "wcstok_s: bad argument", 22);
+}
+
+void CheckMemset() {
+    unsigned char bytes[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    Require(memset_s_nid_postfix(bytes, sizeof(bytes), 9, 4) == 0 && bytes[0] == 9 && bytes[3] == 9 && bytes[4] == 5, "memset_s did not fill count bytes");
+    Require(memset_s_nid_postfix(bytes, 0, 7, 0) == 0 && bytes[0] == 9, "memset_s rejected an empty fill");
+    Require(memset_s_nid_postfix(bytes, tooLarge - 1, 6, 1) == 0 && bytes[0] == 6 && bytes[1] == 9, "memset_s rejected the largest size");
+    struct Violation {
+        bool null;
+        std::size_t size;
+        std::size_t count;
+    };
+    constexpr Violation violations[] = {{false, 4, 8}, {false, 0, 1}, {true, 8, 4}, {true, 0, 0}, {false, tooLarge, 4}, {false, 8, tooLarge}, {false, SIZE_MAX, 0}};
+    for (const auto& violation : violations) {
+        unsigned char sentinel[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+        const int before = constraintCalls;
+        Require(memset_s_nid_postfix(violation.null ? nullptr : sentinel, violation.size, 0, violation.count) == 34, "memset_s accepted a violation");
+        RequireViolation(before, "memset_s: bad destination argument", 34);
+        Require(sentinel[0] == 1 && sentinel[7] == 8, "memset_s wrote on a violation");
+    }
+}
+
+void CheckStrtok() {
+    char text[] = ",,ab;c,,;";
+    std::size_t remaining = sizeof(text);
+    char* context = nullptr;
+    char* token = strtok_s_nid_postfix(text, &remaining, ",;", &context);
+    Require(token == text + 2 && std::strcmp(token, "ab") == 0 && remaining == 5 && context == text + 5, "strtok_s did not return the first token");
+    token = strtok_s_nid_postfix(nullptr, &remaining, ",;", &context);
+    Require(token == text + 5 && std::strcmp(token, "c") == 0 && remaining == 3 && context == text + 7, "strtok_s did not return the second token");
+    token = strtok_s_nid_postfix(nullptr, &remaining, ",;", &context);
+    Require(token == nullptr && remaining == 1 && context == text + 9, "strtok_s did not stop at the end of the string");
+
+    int before = constraintCalls;
+    char unterminated[] = "abc";
+    remaining = 2;
+    Require(strtok_s_nid_postfix(unterminated, &remaining, ",;", &context) == nullptr, "strtok_s read past s1max");
+    RequireViolation(before, "strtok_s: missing delimiter", 22);
+    before = constraintCalls;
+    char separators[] = ",,,x";
+    remaining = 3;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", &context) == nullptr, "strtok_s skipped past s1max");
+    RequireViolation(before, "strtok_s: missing token", 22);
+    before = constraintCalls;
+    remaining = 0;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", &context) == nullptr, "strtok_s accepted a zero s1max");
+    RequireViolation(before, "strtok_s: missing token", 22);
+    before = constraintCalls;
+    remaining = tooLarge;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", &context) == nullptr, "strtok_s accepted an oversized s1max");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    context = nullptr;
+    remaining = 4;
+    Require(strtok_s_nid_postfix(nullptr, &remaining, ",;", &context) == nullptr, "strtok_s accepted a null context string");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    Require(strtok_s_nid_postfix(separators, &remaining, nullptr, &context) == nullptr, "strtok_s accepted null delimiters");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    Require(strtok_s_nid_postfix(separators, nullptr, ",;", &context) == nullptr, "strtok_s accepted a null s1max");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", nullptr) == nullptr && remaining == 4, "strtok_s accepted a null ptr");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    char exact[] = "ab,";
+    remaining = 2;
+    context = nullptr;
+    Require(strtok_s_nid_postfix(exact, &remaining, ",;", &context) == nullptr && remaining == 2 && context == nullptr, "strtok_s accepted a token that fills s1max");
+    RequireViolation(before, "strtok_s: missing delimiter", 22);
+    before = constraintCalls;
+    char largest[] = ",x";
+    remaining = tooLarge - 1;
+    Require(strtok_s_nid_postfix(largest, &remaining, ",;", &context) == largest + 1 && remaining == tooLarge - 3 && context == largest + 2 && constraintCalls == before, "strtok_s rejected the largest s1max");
+    remaining = 3;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", &context) == nullptr && remaining == 3 && context == largest + 2, "strtok_s changed its state on a missing token");
+    RequireViolation(before, "strtok_s: missing token", 22);
 }
 
 void CheckWideToMultibyte() {
@@ -243,6 +345,8 @@ int main(int argc, char** argv) {
 
     CheckBsearch();
     CheckWcstok();
+    CheckMemset();
+    CheckStrtok();
     CheckWideToMultibyte();
     CheckMultibyteToWide();
     CheckGets(argv[1]);

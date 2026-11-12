@@ -84,6 +84,56 @@ void* expectBlock(const char* what, TCall call) {
 
 }
 
+static void CheckCallocAndReallocContents() {
+    auto* dirty = static_cast<unsigned char*>(malloc_nid_postfix(64));
+    if (dirty == nullptr) {
+        report("malloc(64)", "returned NULL");
+        return;
+    }
+    std::memset(dirty, 0xab, 64);
+    free_nid_postfix(dirty);
+    const auto zeroed = [](const char* what, std::size_t count, std::size_t size) {
+        auto* block = static_cast<unsigned char*>(calloc_nid_postfix(count, size));
+        if (block == nullptr) {
+            report(what, "returned NULL");
+            return;
+        }
+        if (std::any_of(block, block + count * size, [](unsigned char byte) { return byte != 0; })) report(what, "returned bytes that are not zero");
+        free_nid_postfix(block);
+    };
+    zeroed("calloc(8, 8)", 8, 8);
+    zeroed("calloc(16, 4)", 16, 4);
+
+    auto* block = static_cast<unsigned char*>(malloc_nid_postfix(24));
+    if (block == nullptr) {
+        report("malloc(24)", "returned NULL");
+        return;
+    }
+    for (std::size_t index = 0; index < 24; ++index) block[index] = static_cast<unsigned char>(index + 1);
+    auto* grown = static_cast<unsigned char*>(realloc_nid_postfix(block, 200));
+    if (grown == nullptr) {
+        report("realloc(block, 200)", "returned NULL");
+        free_nid_postfix(block);
+        return;
+    }
+    for (std::size_t index = 0; index < 24; ++index) {
+        if (grown[index] != index + 1) report("realloc(block, 200)", "did not keep the first 24 bytes");
+    }
+    auto* shrunk = static_cast<unsigned char*>(realloc_nid_postfix(grown, 8));
+    if (shrunk == nullptr) {
+        report("realloc(block, 8)", "returned NULL");
+        free_nid_postfix(grown);
+        return;
+    }
+    for (std::size_t index = 0; index < 8; ++index) {
+        if (shrunk[index] != index + 1) report("realloc(block, 8)", "did not keep the first 8 bytes");
+    }
+    free_nid_postfix(shrunk);
+    void* fresh = realloc_nid_postfix(nullptr, 32);
+    if (fresh == nullptr || malloc_usable_size_nid_postfix(fresh) < 32) report("realloc(NULL, 32)", "did not return a block of at least 32 bytes");
+    free_nid_postfix(fresh);
+}
+
 int main() {
     void* api[10]{};
     ApplicationHeapRegister_nid_no_patch(api);
@@ -92,8 +142,9 @@ int main() {
     expectNull("malloc(SIZE_MAX - 0x1008e)", Untouched, [] { return malloc_nid_postfix(LastPlainFailure + 1); });
     expectNull("malloc(SIZE_MAX - 0x1008f)", InvalidArgument, [] { return malloc_nid_postfix(LastPlainFailure); });
     expectNull("malloc(PTRDIFF_MAX + 1)", InvalidArgument, [] { return malloc_nid_postfix(HalfPlusOne); });
-    expectNull("calloc(SIZE_MAX, 2)", Untouched, [] { return calloc_nid_postfix(Max, 2); });
-    expectNull("calloc(2^33, 2^33)", Untouched, [] { return calloc_nid_postfix(std::size_t{1} << 33, std::size_t{1} << 33); });
+    expectNull("calloc(SIZE_MAX, 2)", NoMemory, [] { return calloc_nid_postfix(Max, 2); });
+    expectNull("calloc(2^33, 2^33)", NoMemory, [] { return calloc_nid_postfix(std::size_t{1} << 33, std::size_t{1} << 33); });
+    expectNull("calloc(SIZE_MAX / 2 + 1, 2)", NoMemory, [] { return calloc_nid_postfix(HalfPlusOne, 2); });
     expectNull("calloc(1, SIZE_MAX - 0x1008e)", Untouched, [] { return calloc_nid_postfix(1, LastPlainFailure + 1); });
     expectNull("calloc(PTRDIFF_MAX + 1, 1)", InvalidArgument, [] { return calloc_nid_postfix(HalfPlusOne, 1); });
     expectNull("realloc(NULL, SIZE_MAX)", Untouched, [] { return realloc_nid_postfix(nullptr, Max); });
@@ -248,8 +299,16 @@ int main() {
         if (untouched != &failures) report(check.what, "touched the output");
     }
 
+    void* empty = &failures;
+    *__error_nid_postfix() = Untouched;
+    if (posix_memalign_nid_postfix(&empty, 16, 0) != 0) report("posix_memalign(16, 0)", "returned an error number");
+    else if (empty == nullptr || empty == &failures) report("posix_memalign(16, 0)", "returned no block");
+    if (*__error_nid_postfix() != Untouched) report("posix_memalign(16, 0)", "changed errno");
+    if (empty != &failures) free_nid_postfix(empty);
+
     free_nid_postfix(expectBlock("calloc(3, 5)", [] { return calloc_nid_postfix(3, 5); }));
     free_nid_postfix(expectBlock("calloc(0, 5)", [] { return calloc_nid_postfix(0, 5); }));
+    CheckCallocAndReallocContents();
     free_nid_postfix(expectBlock("aligned_alloc(128, 1)", [] { return aligned_alloc_nid_postfix(128, 1); }));
     free_nid_postfix(expectBlock("memalign(4096, 1)", [] { return memalign_nid_postfix(4096, 1); }));
     void* first = expectBlock("malloc(0)", [] { return malloc_nid_postfix(0); });

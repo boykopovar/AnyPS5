@@ -1,8 +1,12 @@
 #include "prx/libSceInvitationDialog/include/Api.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
+#include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include "prx/libSceCommonDialog/include/Api.hpp"
 #include "prx/libSceCommonDialog/include/DialogUse.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -62,6 +66,10 @@ void TestBeforeInitialize() {
     Require(sceInvitationDialogTerminate() == NotInitialized, "terminate before initialization");
     const InvitationDialogParam param = MakeParam(ModeSend, nullptr);
     RequireUnsettled([&] { sceInvitationDialogOpen(&param); }, "open before initialization");
+    RequireUnsettled([] { sceInvitationDialogOpen(nullptr); }, "null open before initialization");
+    errno = 71;
+    RequireUnsettled([] { sceInvitationDialogOpen(reinterpret_cast<const InvitationDialogParam*>(0x10)); }, "unmapped open before initialization");
+    Require(errno == 71, "errno preserved before initialization");
 }
 
 void TestCommonDialogPreconditions() {
@@ -90,6 +98,9 @@ void TestOpenChecks() {
     RequireUnsettled([] { sceInvitationDialogClose(); }, "close of a dialog that is not running");
 
     Require(sceInvitationDialogOpen(nullptr) == ArgNull, "open without a param");
+    errno = 71;
+    Require(sceInvitationDialogOpen(reinterpret_cast<const InvitationDialogParam*>(0x10)) == ArgNull, "open with unmapped memory");
+    Require(errno == 71, "errno preserved when rejecting unmapped memory");
     InvitationDialogParam param = MakeParam(ModeSend, nullptr);
     param.size = sizeof(InvitationDialogParam) - 8;
     RequireUnsettled([&] { sceInvitationDialogOpen(&param); }, "open with another param size");
@@ -129,6 +140,9 @@ void TestCanceled() {
 
     result = InvitationDialogResult{};
     Require(sceInvitationDialogGetResult(&result) == 0 && result.recipients == nullptr, "result without a recipient list");
+    errno = 71;
+    Require(sceInvitationDialogGetResult(reinterpret_cast<InvitationDialogResult*>(0x10)) == ArgNull, "unwritable result pointer");
+    Require(errno == 71, "errno preserved");
 
     const InvitationDialogParam receive = MakeParam(ModeRecv, &second);
     Require(sceInvitationDialogOpen(&receive) == 0, "open again to receive");
@@ -136,28 +150,25 @@ void TestCanceled() {
     Require(sceInvitationDialogGetResult(&result) == 0 && result.callbackArg == &second, "the second open carries its own callback argument");
 
     Require(sceInvitationDialogTerminate() == 0 && !sceCommonDialogIsUsed(), "terminate");
+    Require(sceInvitationDialogTerminate() == NotInitialized, "terminate after termination");
     Require(sceInvitationDialogUpdateStatus() == StatusNone, "status after termination");
     Require(sceInvitationDialogGetResult(&result) == NotInitialized, "result after termination");
+    Require(sceInvitationDialogGetResult(nullptr) == NotInitialized, "null result after termination");
+    Require(sceInvitationDialogClose() == NotInitialized, "close after termination");
+    RequireUnsettled([&] { sceInvitationDialogOpen(&send); }, "open after termination");
+    RequireUnsettled([] { sceInvitationDialogOpen(nullptr); }, "null open after termination");
+    errno = 71;
+    RequireUnsettled([] { sceInvitationDialogOpen(reinterpret_cast<const InvitationDialogParam*>(0x10)); }, "unmapped open after termination");
+    Require(errno == 71, "errno preserved after termination");
     Require(sceInvitationDialogInitialize() == 0 && sceInvitationDialogGetResult(&result) == NotFinished, "a new initialization forgets the result");
     Require(sceInvitationDialogTerminate() == 0, "terminate again");
-}
-
-template <typename TCall>
-void RequireNotImplemented(TCall call, const char* message) {
-    bool threw = false;
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        threw = std::string(error.what()).find("not implemented") != std::string::npos;
-    }
-    Require(threw, message);
 }
 
 void TestStatusAndPending() {
     int callbackArg = 0;
     Require(sceInvitationDialogGetStatus_nid_postfix() == StatusNone, "get status before initialization");
-    RequireNotImplemented([] { sceInvitationDialogOpenA_nid_postfix(); }, "openA is not implemented");
-    RequireNotImplemented([] { sceInvitationDialogGetResultA_nid_postfix(); }, "getResultA is not implemented");
+    Require(sceInvitationDialogOpenA_nid_postfix() == NotInitialized, "openA before initialization");
+    Require(sceInvitationDialogGetResultA_nid_postfix() == NotInitialized, "getResultA before initialization");
     Require(sceInvitationDialogInitialize() == 0, "initialize for status check");
     Require(sceInvitationDialogGetStatus_nid_postfix() == StatusInitialized, "status after initialize");
     const InvitationDialogParam send = MakeParam(ModeSend, &callbackArg);
@@ -165,6 +176,38 @@ void TestStatusAndPending() {
     Require(sceInvitationDialogGetStatus_nid_postfix() == StatusFinished, "status after open");
     Require(sceInvitationDialogTerminate() == 0, "terminate after status check");
     Require(sceInvitationDialogGetStatus_nid_postfix() == StatusNone, "status after terminate");
+    Require(sceInvitationDialogOpenA_nid_postfix() == NotInitialized, "openA after termination");
+    Require(sceInvitationDialogGetResultA_nid_postfix() == NotInitialized, "getResultA after termination");
+}
+
+
+bool PsnNoticeShown() {
+    ModalDialogView view;
+    if (!ModalDialogReadView_nid_postfix(view)) return false;
+    return view.message == PsnDialogNoticeRequest(PsnDialogNoticeKind::PsnFeature).message;
+}
+
+void RequireNotices() {
+    const InvitationDialogParam send = MakeParam(ModeSend, nullptr);
+    ModalDialogSetPresenter_nid_postfix(true);
+    Require(sceInvitationDialogInitialize() == 0, "initialize for the notice check");
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceInvitationDialogOpen(&send) == 0, "silent open");
+    Require(!PsnNoticeShown() && !ModalDialogCapturesInput_nid_postfix(), "silent mode showed a notice");
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceInvitationDialogOpen(nullptr) == ArgNull, "null open");
+    Require(!PsnNoticeShown(), "a refused open showed the notice");
+    Require(sceInvitationDialogOpen(&send) == 0, "show open");
+    Require(PsnNoticeShown(), "open did not show the PSN notice");
+
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    ModalDialogSetPresenter_nid_postfix(false);
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    Require(sceInvitationDialogTerminate() == 0, "terminate after the notice check");
 }
 
 }
@@ -175,5 +218,6 @@ int main() {
     TestOpenChecks();
     TestCanceled();
     TestStatusAndPending();
+    RequireNotices();
     return 0;
 }

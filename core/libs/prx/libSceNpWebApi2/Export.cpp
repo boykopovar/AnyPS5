@@ -1,4 +1,6 @@
+#include "prx/libSceNpWebApi2/include/InventoryExports.hpp"
 #include "prx/libSceNpWebApi2/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -8,6 +10,8 @@
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNpWebApi2/include/Firmware320Exports.hpp"
 
 // The PSN web API has no service behind it: handles can be created, but requests fail.
 static constexpr int SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80553402);
@@ -40,6 +44,15 @@ static std::unordered_map<int, PushHandle> pushHandles;
 
 extern "C" {
 
+int APS5_VABI sceNpWebApi2IntGlobalPush2Initialize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpWebApi2IntGlobalPush2Terminate() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+
 int APS5_VABI sceNpWebApi2AbortRequest(int64_t request_id) {
     (void)request_id;
     return 0;
@@ -68,7 +81,8 @@ int APS5_VABI sceNpWebApi2CreateRequest(int user_context_id, const char* api_gro
     (void)method;
     (void)content_parameter;
     if (!request_id) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
-    *request_id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
+    const int64_t created = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(request_id, &created, sizeof(created))) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -113,8 +127,12 @@ int APS5_VABI sceNpWebApi2GetMemoryPoolStats(int libraryContextId, NpWebApi2Memo
     const auto pool = g_pools.find(libraryContextId);
     if (pool == g_pools.end()) return SCE_NP_WEBAPI2_ERROR_INVALID_CONTEXT;
     if (!stats) return 0;
-    std::memset(stats, 0, sizeof(*stats));
-    stats->pool_size = pool->second;
+    NpWebApi2MemoryPoolStats localStats{};
+    localStats.pool_size = pool->second;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stats, &localStats, sizeof(localStats));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -163,8 +181,8 @@ int APS5_VABI sceNpWebApi2PushEventDeletePushContext(int user_context_id, const 
 int APS5_VABI sceNpWebApi2PushEventRegisterCallback(int user_context_id, int filter_id, void* callback, void* user_arg) {
     (void)user_context_id;
     (void)filter_id;
-    (void)callback;
     (void)user_arg;
+    if (!callback) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return g_nextHandle.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -185,6 +203,7 @@ int APS5_VABI sceNpWebApi2SendRequest(int64_t request_id, const void* data, size
 
 int APS5_VABI sceNpWebApi2Terminate(int lib_ctx_id) {
     std::lock_guard lock(g_poolsMutex);
+    if (!g_pools.contains(lib_ctx_id)) return SCE_NP_WEBAPI2_ERROR_INVALID_CONTEXT;
     std::erase_if(pushHandles, [lib_ctx_id](const auto& item) { return item.second.libraryContextId == lib_ctx_id; });
     g_pools.erase(lib_ctx_id);
     return 0;
@@ -208,6 +227,7 @@ int APS5_VABI sceNpWebApi2PushEventSetHandleTimeout(int libraryContextId, int ha
 }
 
 int APS5_VABI sceNpWebApi2PushEventRegisterPushContextCallback(std::int32_t userContextId, std::int32_t filterId, void* callback, void* userArg) {
+    if (!callback) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return g_nextHandle.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -238,7 +258,7 @@ int APS5_VABI sceNpWebApi2CreateMultipartRequest(int user_ctx_id, const char* ap
     (void)user_ctx_id;
     if (!api_group || !path || !method) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     const int64_t created = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
-    if (request_id) *request_id = created;
+    if (request_id && !GuestCopyOut_nid_no_patch(request_id, &created, sizeof(created))) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -283,5 +303,29 @@ int APS5_VABI sceNpWebApi2SetMultipartContentType() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceNpWebApi2Unknown_4N85o28Ifbk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("4N85o28Ifbk", libSceNpWebApi2Unknown_4N85o28Ifbk_nid_no_patch);
+
+int APS5_VABI libSceNpWebApi2Unknown_A9IoYzANK3M_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("A9IoYzANK3M", libSceNpWebApi2Unknown_A9IoYzANK3M_nid_no_patch);
+
+int APS5_VABI libSceNpWebApi2Unknown_lylvdXiq1UE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lylvdXiq1UE", libSceNpWebApi2Unknown_lylvdXiq1UE_nid_no_patch);
+
+int APS5_VABI libSceNpWebApi2Unknown_qaMcX2_plus_6ZiA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qaMcX2+6ZiA", libSceNpWebApi2Unknown_qaMcX2_plus_6ZiA_nid_no_patch);
 
 }

@@ -1,13 +1,14 @@
 #include "prx/libSceFreeType/libSceFreeType.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
-#include "prx/libc/include/General.hpp"
 
 #include FT_ADVANCES_H
 #include FT_FONT_FORMATS_H
 #include FT_TRUETYPE_TABLES_H
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <vector>
 
 using namespace FreeType;
@@ -33,28 +34,52 @@ int GetAdvances(GuestFaceRec* face, std::uint32_t start, std::uint32_t count, st
     if (count == 0) return 0;
 
     std::vector<FT_Fixed> values(count);
+    std::vector<FT_Fixed> repeat;
     if constexpr (sizeof(FT_Fixed) == sizeof(std::int64_t)) {
         std::memcpy(values.data(), advances, values.size() * sizeof(FT_Fixed));
     }
     const auto query = [&](std::int32_t loadFlags) {
-        return single ? FT_Get_Advance(owner->host, start, loadFlags, values.data())
-                      : FT_Get_Advances(owner->host, start, count, loadFlags, values.data());
+        const auto run = [&](FT_Fixed* output) {
+            return single ? FT_Get_Advance(owner->host, start, loadFlags, output)
+                          : FT_Get_Advances(owner->host, start, count, loadFlags, output);
+        };
+        if constexpr (sizeof(FT_Fixed) == sizeof(std::int64_t)) {
+            return run(values.data());
+        } else {
+            values.assign(count, 0);
+            repeat.assign(count, 1);
+            const FT_Error result = run(values.data());
+            if (run(repeat.data()) != result) throw std::runtime_error("FreeType advance query: native query is not repeatable");
+            return result;
+        }
     };
     FT_Error error = query(flags | FT_ADVANCE_FLAG_FAST_ONLY);
     bool syncSlot = error != FT_Err_Unimplemented_Feature && FastQueryLoadsGlyph(owner->host, flags);
     if (error == FT_Err_Unimplemented_Feature && !(flags & FT_ADVANCE_FLAG_FAST_ONLY)) {
-        error = query(flags);
-        syncSlot = true;
+        if constexpr (sizeof(FT_Fixed) == sizeof(std::int64_t)) {
+            error = query(flags);
+            syncSlot = true;
+        } else {
+            std::vector<std::int64_t> loaded(count);
+            const std::int64_t factor = (flags & FT_LOAD_NO_SCALE) ? 1 : 1024;
+            std::uint32_t written = 0;
+            for (; written < count; ++written) {
+                error = FT_Load_Glyph(owner->host, start + written, flags | FT_LOAD_ADVANCE_ONLY);
+                if (error) break;
+                const FT_Vector advance = owner->host->glyph->advance;
+                loaded[written] = static_cast<std::int64_t>((flags & FT_LOAD_VERTICAL_LAYOUT) ? advance.y : advance.x) * factor;
+            }
+            SyncSlot(*owner);
+            std::copy_n(loaded.data(), written, advances);
+            return error;
+        }
     }
     if (syncSlot) SyncSlot(*owner);
     if constexpr (sizeof(FT_Fixed) == sizeof(std::int64_t)) {
         std::memcpy(advances, values.data(), values.size() * sizeof(FT_Fixed));
     } else {
-        if (error != 0 && error != FT_Err_Unimplemented_Feature) {
-            NotImplemented_nid_no_patch("FreeType advance query: partial output after a native backend error with 32-bit FT_Fixed");
-        }
-        if (error == 0) {
-            for (std::uint32_t index = 0; index < count; ++index) advances[index] = values[index];
+        for (std::uint32_t index = 0; index < count; ++index) {
+            if (values[index] == repeat[index]) advances[index] = values[index];
         }
     }
     return error;

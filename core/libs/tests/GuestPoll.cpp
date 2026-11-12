@@ -12,11 +12,13 @@
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -31,6 +33,19 @@ constexpr NativeSocket NativeInvalid = -1;
 static void CloseNative(NativeSocket socket) { close(socket); }
 #endif
 static void Require(bool value) { if (!value) std::abort(); }
+#ifndef _WIN32
+static std::atomic<std::size_t> failAllocationOfSize{0};
+void* operator new(std::size_t bytes) {
+    if (bytes != 0 && failAllocationOfSize.load() == bytes) {
+        failAllocationOfSize = 0;
+        throw std::bad_alloc();
+    }
+    if (void* pointer = std::malloc(bytes != 0 ? bytes : 1)) return pointer;
+    throw std::bad_alloc();
+}
+void operator delete(void* pointer) noexcept { std::free(pointer); }
+void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+#endif
 constexpr short In = 0x1;
 constexpr short Priority = 0x2;
 constexpr short ReadBand = 0x80;
@@ -51,6 +66,45 @@ static KernelEvent UserEvent(std::uint16_t flags, std::uint32_t fflags) {
     change.fflags = fflags;
     return change;
 }
+static void PollsSocketsShutForReading() {
+    constexpr int UnixDomain = 1, Stream = 1;
+    for (const bool queued : {true, false}) {
+        int pair[2];
+        Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+        if (queued) Require(send_nid_postfix(pair[1], "abc", 3, 0) == 3);
+        Require(shutdown_nid_postfix(pair[0], 0) == 0);
+        GuestPollDescriptor entry{pair[0], static_cast<short>(In | ReadNormal), -1};
+        Require(poll_nid_postfix(&entry, 1, 0) == 1 && (entry.revents & (In | ReadNormal)) == (In | ReadNormal));
+        if (!queued) Require(entry.revents == (In | ReadNormal));
+        Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    }
+    for (const bool duplicated : {false, true}) {
+        int pair[2];
+        Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+        const int watched = duplicated ? dup_nid_postfix(pair[0]) : pair[0];
+        Require(watched >= 0);
+        GuestPollDescriptor entry{watched, In, -1};
+        const auto start = std::chrono::steady_clock::now();
+        std::thread shutter([&pair] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            Require(shutdown_nid_postfix(pair[0], 0) == 0);
+        });
+        const int ready = poll_nid_postfix(&entry, 1, 5000);
+        const auto waited = std::chrono::steady_clock::now() - start;
+        shutter.join();
+        Require(ready == 1 && entry.revents == In);
+        Require(waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(4));
+        if (duplicated) Require(close_nid_postfix(watched) == 0);
+        Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    }
+    int pair[2];
+    Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+    Require(shutdown_nid_postfix(pair[0], 2) == 0);
+    GuestPollDescriptor both{pair[0], static_cast<short>(In | Out), -1};
+    Require(poll_nid_postfix(&both, 1, 0) == 1 && both.revents == (In | Hup));
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+}
+
 static void PollsKqueues(int socket) {
     const int queue = kqueue_nid_postfix();
     Require(queue >= 0);
@@ -312,10 +366,87 @@ static void PollsAHungUpSocketWithoutPollout() {
 }
 #endif
 
+static void PollsAPipeClosedDuringTheWait() {
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        int pair[2]{-1, -1};
+        Require(pipe_nid_postfix(pair) == 0);
+        int result = 0;
+        short revents = 0;
+        std::atomic<bool> started{false};
+        std::thread waiter([&] {
+            GuestPollDescriptor entry{pair[0], In, 0};
+            started = true;
+            result = poll_nid_postfix(&entry, 1, 20);
+            revents = entry.revents;
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::microseconds(1000 + (attempt % 20) * 100));
+        Require(close_nid_postfix(pair[0]) == 0);
+        waiter.join();
+        Require(close_nid_postfix(pair[1]) == 0);
+        Require(result == 0 || (result == 1 && (revents & Invalid) != 0));
+    }
+}
+
+static void PollsASocketClosedDuringTheWait() {
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        const int socket = socket_nid_postfix(2, 2, 0);
+        Require(socket >= 0);
+        int result = 0;
+        short revents = 0;
+        std::atomic<bool> started{false};
+        std::thread waiter([&] {
+            GuestPollDescriptor entry{socket, In, 0};
+            started = true;
+            result = poll_nid_postfix(&entry, 1, 200);
+            revents = entry.revents;
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::microseconds(1000 + attempt * 100));
+        Require(close_nid_postfix(socket) == 0);
+        waiter.join();
+        Require(result == 1 && revents == Invalid);
+    }
+}
+
+static void RejectsReadinessAfterSocketClose() {
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        const int receiver = socket_nid_postfix(2, 2, 0);
+        Require(receiver >= 0);
+        std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+        Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+        std::uint32_t size = address.size();
+        Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0);
+        const int alias = dup_nid_postfix(receiver);
+        Require(alias >= 0);
+        const NativeSocket sender = ::socket(AF_INET, SOCK_DGRAM, 0);
+        Require(sender != NativeInvalid);
+        sockaddr_in destination{};
+        destination.sin_family = AF_INET;
+        std::memcpy(&destination.sin_port, address.data() + 2, 2);
+        std::memcpy(&destination.sin_addr, address.data() + 4, 4);
+        GuestPollDescriptor entry{receiver, In, 0};
+        std::atomic<bool> started{false};
+        int result = -1;
+        std::thread waiter([&] {
+            started = true;
+            result = poll_nid_postfix(&entry, 1, 200);
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        Require(close_nid_postfix(receiver) == 0);
+        Require(::sendto(sender, "x", 1, 0, reinterpret_cast<const sockaddr*>(&destination), sizeof(destination)) == 1);
+        waiter.join();
+        CloseNative(sender);
+        Require(close_nid_postfix(alias) == 0);
+        Require(result == 1 && entry.revents == Invalid);
+    }
+}
 int main() {
     for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
     PollsUrgentData();
     PollsAStreamWhosePeerClosed();
+    PollsAPipeClosedDuringTheWait();
 #ifndef _WIN32
     PollsAHungUpSocketWithoutPollout();
 #endif
@@ -357,6 +488,42 @@ int main() {
     Require(shortWait >= std::chrono::milliseconds(20) && shortWait < std::chrono::milliseconds(200));
     Require(poll_nid_postfix(nullptr, 1, 0) == -1 && *__error_nid_postfix() == 14);
     Require(poll_nid_postfix(&single, 1, -2) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(poll_nid_postfix(reinterpret_cast<GuestPollDescriptor*>(std::uintptr_t{0x10}), 1, 0) == -1 && *__error_nid_postfix() == 14);
+    GuestResourceLimit fileLimit{};
+    Require(getrlimit_nid_postfix(8, &fileLimit) == 0);
+    if (fileLimit.rlim_max < 0xffffffff) {
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(&single, 0xffffffffu, 0) == -1 && *__error_nid_postfix() == 22);
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(nullptr, 0xffffffffu, 0) == -1 && *__error_nid_postfix() == 22);
+    }
+    if (fileLimit.rlim_max >= 1024 && fileLimit.rlim_max < 100000) {
+        const auto atLimit = static_cast<std::uint32_t>(fileLimit.rlim_max);
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(nullptr, atLimit, 0) == -1 && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(nullptr, atLimit + 1, 0) == -1 && *__error_nid_postfix() == 22);
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(reinterpret_cast<GuestPollDescriptor*>(std::uintptr_t{0x10}), atLimit + 1, 0) == -1 && *__error_nid_postfix() == 22);
+    }
+#ifndef _WIN32
+    GuestPollDescriptor allocated[3]{{-1, In, 5}, {-1, In, 6}, {-1, In, 7}};
+    failAllocationOfSize = sizeof(allocated);
+    *__error_nid_postfix() = 0;
+    Require(poll_nid_postfix(allocated, 3, 0) == -1 && *__error_nid_postfix() == 12);
+    Require(failAllocationOfSize == 0);
+    Require(allocated[0].revents == 5 && allocated[1].revents == 6 && allocated[2].revents == 7);
+    Require(poll_nid_postfix(allocated, 3, 0) == 0 && allocated[0].revents == 0);
+#endif
+    void* page = nullptr;
+    Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
+    auto* readOnly = static_cast<GuestPollDescriptor*>(page);
+    *readOnly = {-1, In, 7};
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    *__error_nid_postfix() = 0;
+    Require(poll_nid_postfix(readOnly, 1, 0) == -1 && *__error_nid_postfix() == 14);
+    Require(readOnly->descriptor == -1 && readOnly->revents == 7);
     TestPipes(listener);
     PollsFilesAndDirectories(listener);
     Require(close_nid_postfix(server) == 0);
@@ -382,4 +549,7 @@ int main() {
     Require(std::chrono::steady_clock::now() - inputStart >= std::chrono::milliseconds(25));
     PollsKqueues(listener);
     Require(close_nid_postfix(listener) == 0);
+    PollsASocketClosedDuringTheWait();
+    RejectsReadinessAfterSocketClose();
+    PollsSocketsShutForReading();
 }
