@@ -569,3 +569,10 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "argument list"):
                 performance_bisect.load_recipe(path)
 
+
+    def test_recipe_rejects_absolute_build_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.recipe_path(Path(directory), build_dir="/tmp/unsafe-build")
+            with self.assertRaisesRegex(ValueError, "relative path"):
+                performance_bisect.load_recipe(path)
+
