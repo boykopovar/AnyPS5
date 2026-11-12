@@ -260,6 +260,17 @@ class ProbeRunTests(unittest.TestCase):
                     probe_catalog.run_probes([probe], self.digest, temporary, "rx-6750-xt")
             self.assertEqual(list((Path(temporary) / "rx-6750-xt").glob("*.json")), [])
 
+    def test_run_rejects_non_dword_gpu_results_without_writing_a_report(self):
+        probe = self.catalog["probes"][0]
+        outputs = [(-1,) * 16 for _ in probe["rows"]]
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(probe_catalog.hw_oracle, "runtime", return_value="hsa"), \
+                    patch.object(probe_catalog.hw_oracle, "target", return_value="gfx1036"), \
+                    patch.object(probe_catalog.hw_oracle, "run", return_value=outputs):
+                with self.assertRaisesRegex(ValueError, "non-dword result"):
+                    probe_catalog.run_probes([probe], self.digest, temporary, "rx-6750-xt")
+            self.assertEqual(list((Path(temporary) / "rx-6750-xt").glob("*.json")), [])
+
     def test_run_rejects_unsafe_device_labels_before_creating_paths(self):
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(ValueError, "device label must contain"):
