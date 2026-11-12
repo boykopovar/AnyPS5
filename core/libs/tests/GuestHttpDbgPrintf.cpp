@@ -12,10 +12,12 @@ void Require(bool value, const char* what) {
     std::abort();
 }
 
-} // namespace
+}
 
 int main() {
-    Require(sceHttpDbgSetPrintf() == 0, "sceHttpDbgSetPrintf did not answer success");
-    Require(sceHttpDbgSetPrintf() == 0, "sceHttpDbgSetPrintf did not repeat success");
+    for (int call = 0; call < 3; ++call) {
+        Require(sceHttpDbgSetPrintf() == 0, "sceHttpDbgSetPrintf did not answer success");
+        Require(sceHttpDbgEnableProfile() == 0, "sceHttpDbgEnableProfile did not answer success");
+    }
     return 0;
 }
