@@ -52,7 +52,31 @@ struct ImportRecord {
     void* target = nullptr;
     std::string name;
     std::string library;
+    std::string providerModule;
+    std::uint64_t providerOffset = 0;
+    bool providerResolved = false;
     mutable std::atomic<std::uint64_t> calls{0};
+};
+
+struct CallSiteRecord {
+    std::atomic<unsigned char> state{0};
+    const ImportRecord* import = nullptr;
+    std::uint64_t returnAddress = 0;
+    std::string consumerModule;
+    std::uint64_t consumerOffset = 0;
+    bool consumerResolved = false;
+    std::atomic<std::uint64_t> calls{0};
+};
+
+struct ImageLocation {
+    std::string module;
+    std::uint64_t offset = 0;
+    bool resolved = false;
+};
+
+struct TracedTarget {
+    const ImportRecord* record = nullptr;
+    void* thunk = nullptr;
 };
 
 struct RingSlot {
@@ -63,18 +87,49 @@ struct RingSlot {
 };
 
 constexpr std::size_t RingCapacity = 65536;
+constexpr std::size_t CallSiteCapacity = 65536;
+constexpr std::size_t CallSiteProbeLimit = 256;
 constexpr std::size_t ThunkBytes = 24;
 constexpr std::size_t ThunkAreaBytes = 1024 * 1024;
 constexpr std::size_t RecordCapacity = ThunkAreaBytes / ThunkBytes;
 
 std::mutex g_mutex;
-std::unordered_map<void*, void*> g_thunkByTarget;
+std::unordered_map<void*, std::vector<TracedTarget>> g_thunksByTarget;
 std::atomic<ImportRecord*> g_records{nullptr};
 std::atomic<std::size_t> g_recordCount{0};
 std::atomic<RingSlot*> g_ring{nullptr};
+std::atomic<CallSiteRecord*> g_callSites{nullptr};
+std::atomic<std::uint64_t> g_callSiteCount{0};
+std::atomic<std::uint64_t> g_callSiteOverflow{0};
 std::atomic<std::uint64_t> g_sequence{0};
 std::uint8_t* g_writable = nullptr;
 std::uint8_t* g_executable = nullptr;
+
+ImageLocation LocateImage(const void* address) {
+    if (address == nullptr) return {};
+#ifdef _WIN32
+    MEMORY_BASIC_INFORMATION memory{};
+    if (VirtualQuery(address, &memory, sizeof(memory)) != sizeof(memory) || memory.AllocationBase == nullptr) return {};
+    std::wstring path(32768, L'\0');
+    const auto length = GetModuleFileNameW(static_cast<HMODULE>(memory.AllocationBase), path.data(), static_cast<DWORD>(path.size()));
+    if (length == 0 || length >= path.size()) return {};
+    path.resize(length);
+    const auto filename = std::filesystem::path(path).filename().u8string();
+    ImageLocation image;
+    image.module.assign(reinterpret_cast<const char*>(filename.data()), filename.size());
+    image.offset = reinterpret_cast<std::uintptr_t>(address) - reinterpret_cast<std::uintptr_t>(memory.AllocationBase);
+    image.resolved = true;
+    return image;
+#else
+    Dl_info info{};
+    if (::dladdr(address, &info) == 0 || info.dli_fname == nullptr || info.dli_fbase == nullptr) return {};
+    const auto filename = std::filesystem::path(info.dli_fname).filename().string();
+    const auto base = reinterpret_cast<std::uintptr_t>(info.dli_fbase);
+    const auto value = reinterpret_cast<std::uintptr_t>(address);
+    if (value < base) return {};
+    return {filename, value - base, true};
+#endif
+}
 
 bool Selected(std::string_view library) {
     const char* value = std::getenv("APS5_TRACE_CALLS");
@@ -470,15 +525,22 @@ void* TraceImport_nid_no_patch(void* target, const char* name, const char* libra
 #if defined(__linux__) || defined(__APPLE__)
     SnapshotModules();
 #endif
-    if (const auto existing = g_thunkByTarget.find(target); existing != g_thunkByTarget.end()) return existing->second;
+    auto& targetThunks = g_thunksByTarget[target];
+    for (const auto& existing : targetThunks) {
+        if (existing.record->name == name && existing.record->library == library) return existing.thunk;
+    }
     const std::size_t index = g_recordCount.load(std::memory_order_relaxed);
     if (index == RecordCapacity) throw std::runtime_error("call trace: thunk area exhausted");
     ImportRecord& record = g_records.load(std::memory_order_relaxed)[index];
     record.target = target;
     record.name = name;
     record.library = library;
+    const auto provider = LocateImage(target);
+    record.providerModule = provider.module;
+    record.providerOffset = provider.offset;
+    record.providerResolved = provider.resolved;
     void* thunk = WriteThunk(record, index);
-    g_thunkByTarget.emplace(target, thunk);
+    targetThunks.push_back({&record, thunk});
     g_recordCount.store(index + 1, std::memory_order_release);
     return thunk;
 }
