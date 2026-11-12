@@ -11,7 +11,7 @@ void Require(bool value) {
 } // namespace
 
 int main() {
-    for (int call = 0; call < 2; ++call) {
+    for (int call = 0; call < 4; ++call) {
         Require(_ZNK15AbstractStorage12LocalContent13GetCapabilityEv() == 0x37C5A);
         Require(_ZNK15AbstractStorage12LocalContent10GetServiceEv() == 0);
         Require(_ZN15AbstractStorage12LocalContent8SeekTimeElPl() == static_cast<int>(0x809E0005u));
