@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <utility>
+#include <tuple>
 #include <iterator>
 #include <climits>
 #include <cmath>
@@ -124,6 +125,15 @@ static void CheckScanIgnoredLengths() {
         std::array<unsigned char, 8> count;
         count.fill(0x55);
         Require(scan("12345", "%d%Ln", &value, count.data()) == 1 && value == 12345 && count[0] == 5 && count[3] == 0 && count[4] == 0x55);
+    }    using Scanner = int (APS5_VABI*)(const char*, const char*, ...);
+    for (const Scanner scan : {Scanner{sscanf_nid_postfix}, Scanner{ScanList}}) {
+        for (const auto& [input, format, expected] : {std::tuple{"12z", "%Ld%c%n", 0x555555550000000cull}, std::tuple{"1.5z", "%llf%c%n", 0x555555553fc00000ull},
+                 std::tuple{"1.5z", "%jf%c%n", 0x555555553fc00000ull}}) {
+            std::uint64_t stored = 0x5555555555555555ull;
+            char next = '?';
+            int count = -7;
+            Require(scan(input, format, &stored, &next, &count) == 2 && stored == expected && next == 'z');
+        }
     }
 }
 
