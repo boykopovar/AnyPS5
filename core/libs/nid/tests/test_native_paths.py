@@ -70,7 +70,8 @@ class NativePathTests(unittest.TestCase):
                 result = subprocess.run([str(PATCHER), "libtest", str(file)], capture_output=True,
                                         encoding="utf-8", errors="replace", timeout=10,
                                         preexec_fn=restrict_output)
-                self.assertEqual(file.stat().st_size, limit)
+                self.assertEqual(file.read_bytes(), original)
+                self.assertEqual(sorted(entry.name for entry in file.parent.iterdir()), [file.name])
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertIn("cannot write", result.stderr)
                 self.assertIn(str(file), result.stderr)
