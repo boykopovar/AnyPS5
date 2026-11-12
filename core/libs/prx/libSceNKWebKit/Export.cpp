@@ -10129,18 +10129,6 @@ int APS5_VABI WKAccessibilityRootObject() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKApplicationCacheManagerDeleteAllEntries() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKApplicationCacheManagerDeleteEntriesForOrigin() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKApplicationCacheManagerGetApplicationCacheOrigins() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKAuthenticationChallengCopyRequestURL() {
     NotImplemented_nid_no_patch(__func__);
 }
