@@ -24,12 +24,14 @@ CATALOG_KEYS = {"schema_version", "probes"}
 ROW_KEYS = {"name", "input"}
 IDENTIFIER = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 INSTRUCTION = re.compile(r"[a-z][a-z0-9_]*\Z")
+DECIMAL_WORD = re.compile(r"[0-9]+\Z")
+HEX_WORD = re.compile(r"0[xX][0-9a-fA-F]+\Z")
 
 
 def parse_word(value, context):
     if type(value) is int:
         number = value
-    elif isinstance(value, str):
+    elif isinstance(value, str) and (DECIMAL_WORD.fullmatch(value) or HEX_WORD.fullmatch(value)):
         try:
             number = int(value, 0)
         except ValueError as error:
