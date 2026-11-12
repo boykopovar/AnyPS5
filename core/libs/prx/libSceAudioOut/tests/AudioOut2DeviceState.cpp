@@ -162,7 +162,12 @@ void SystemStateIsSilentAndRejectsNull() {
     std::memset(&state, 0xAB, sizeof(state));
     Require(sceAudioOut2GetSystemState(&state) == 0);
     Require(state.loudness == 0.0f);
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&state);
+    for (std::size_t index = sizeof(state.loudness); index < sizeof(state); ++index) Require(bytes[index] == 0xAB);
     Require(sceAudioOut2GetSystemState(nullptr) == errorInvalidArgument);
+    errno = 73;
+    Require(sceAudioOut2GetSystemState(reinterpret_cast<AudioOut2SystemState*>(0x10)) == errorInvalidArgument);
+    Require(errno == 73);
 }
 
 }
