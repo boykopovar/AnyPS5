@@ -605,8 +605,10 @@ void RecordCallSite(const ImportRecord* record, const std::uint64_t returnAddres
             continue;
         }
         if (state == 1) {
-            for (unsigned attempt = 0; attempt < 32 && state == 1; ++attempt)
+            while (state == 1) {
+                std::this_thread::yield();
                 state = site.state.load(std::memory_order_acquire);
+            }
             if (state == 2 && site.import == record && site.returnAddress == returnAddress) {
                 site.calls.fetch_add(1, std::memory_order_relaxed);
                 return;
