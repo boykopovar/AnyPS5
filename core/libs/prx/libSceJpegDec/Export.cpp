@@ -192,8 +192,8 @@ std::int32_t checkTarget(const Context& context, const Decoder::Jpeg::Header& he
         return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
     }
     if (((outputWidth + 31) & ~std::uint32_t{31}) > context.maxImageWidth || rowBufferSize(header, downScale) > context.rowBufferCapacity) return SCE_JPEG_DEC_ERROR_IMAGE_TOO_WIDE;
-int32_t APS5_VABI sceJpegDecCreate(const JpegDecCreateParam* param, void* memoryAddress, uint32_t memorySize, void** handle) {
-    const std::int32_t result = validateCreateParam(param);
+    return 0;
+}
     if (result != 0) return result;
     if (!memoryAddress) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     if (memorySize < workMemorySize(*param)) return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
