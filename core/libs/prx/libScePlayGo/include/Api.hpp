@@ -27,6 +27,6 @@ int APS5_VABI scePlayGoTerminate(void);
 int APS5_VABI scePlayGoRequestNextChunk(int handle, const void* reserved);
 int APS5_VABI scePlayGoRequestOptionalChunk(int handle, std::uint32_t type, const PlayGoOptionalChunk* option);
 int APS5_VABI scePlayGoSetLanguageMask(int handle, uint64_t languageMask);
-int APS5_VABI scePlayGoSnapshot();
+int APS5_VABI scePlayGoSnapshot(int handle, const char* filename);
 
 }
