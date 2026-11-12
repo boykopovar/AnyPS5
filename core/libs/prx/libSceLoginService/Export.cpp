@@ -32,7 +32,6 @@ int APS5_VABI sceLoginServiceRequestDevices(const LoginServiceDeviceRequest* par
     if (!g_initialized.load()) {
         return SCE_LOGIN_SERVICE_ERROR_NOT_INITIALIZED;
     }
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
