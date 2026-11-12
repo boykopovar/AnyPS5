@@ -14,6 +14,7 @@ int head = 0;
 int count = 0;
 bool initialized = false;
 bool opened = false;
+int openedUser = 0;
 bool connected = true;
 std::uint32_t led = 0;
 std::uint32_t modifiers = 0;
@@ -128,6 +129,7 @@ int Open(int userId, std::int32_t type, std::int32_t index) {
     if (!registered(userId)) return KEYBOARD_ERROR_UNKNOWN_USER;
     if (opened) return KEYBOARD_ERROR_ALREADY_OPENED;
     opened = true;
+    openedUser = userId;
     clearKeys();
     head = 0;
     count = 0;
@@ -140,10 +142,17 @@ int Close(std::int32_t handle) {
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
     if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
     opened = false;
+    openedUser = 0;
     clearKeys();
     head = 0;
     count = 0;
     return KEYBOARD_OK;
+}
+
+int GetHandle(std::int32_t userId, std::int32_t type, std::int32_t index) {
+    std::lock_guard lock(keyboardMutex);
+    if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    return opened && openedUser == userId && type == 0 && index == 0 ? KEYBOARD_HANDLE : KEYBOARD_ERROR_NO_HANDLE;
 }
 
 int Read(std::int32_t handle, KeyboardData* data, std::int32_t num) {
