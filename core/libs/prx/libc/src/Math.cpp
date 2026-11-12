@@ -1880,7 +1880,7 @@ double APS5_VABI erfc_nid_postfix(double x) {
         return 1.0 + (erx + ratio);
     }
     if (ix >= 0x403c0000) {
-        return hx > 0 ? tiny * tiny : 2.0 - tiny;
+        return hx > 0 ? 0.0 : 2.0 - tiny;
     }
     if (hx < 0 && ix >= 0x40180000) {
         return 2.0 - tiny;
