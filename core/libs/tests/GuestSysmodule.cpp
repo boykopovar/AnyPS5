@@ -450,6 +450,7 @@ int main() {
     Require(sceSysmoduleLoadModule(kFiberModuleId) == 0);
     Require(sceSysmoduleGetModuleHandleInternal(kFiberModuleId, &handle) == 0);
     Require(handle >= 0);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleHandleInternal(kFiberModuleId, reinterpret_cast<std::int32_t*>(0x10)); }));
     std::int32_t again = -1;
     Require(sceSysmoduleGetModuleHandleInternal(kFiberModuleId, &again) == 0);
     Require(again == handle);
