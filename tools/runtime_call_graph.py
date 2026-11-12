@@ -87,11 +87,12 @@ def _cell(value):
     return " ".join(str(value).split()).replace("|", r"\|")
 
 
-def report(graph, limit=None, consumer=None, provider=None, library=None):
+def report(graph, limit=None, consumer=None, provider=None, library=None, unresolved_only=False):
     edges = [edge for edge in graph["edges"]
              if (consumer is None or edge["consumer"]["module"] == consumer)
              and (provider is None or edge["provider"]["module"] == provider)
-             and (library is None or edge["import"]["library"] == library)]
+             and (library is None or edge["import"]["library"] == library)
+             and (not unresolved_only or edge["consumer"]["module"] is None or edge["provider"]["module"] is None)]
     if limit is not None:
         edges = edges[:limit]
     calls = sum(edge["calls"] for edge in edges)
@@ -113,6 +114,7 @@ def main(argv=None):
     parser.add_argument("--provider", help="keep edges resolved in this host provider module")
     parser.add_argument("--library", help="keep imports from this guest library")
     parser.add_argument("--limit", type=int, help="show at most this many edges")
+    parser.add_argument("--unresolved", action="store_true", help="show edges with an unresolved consumer or provider image")
     parser.add_argument("--json", action="store_true", help="write the validated, aggregated graph as JSON")
     args = parser.parse_args(argv)
     if args.limit is not None and args.limit < 0:
@@ -122,7 +124,7 @@ def main(argv=None):
         if args.json:
             sys.stdout.write(json.dumps(graph, ensure_ascii=False, indent=2) + "\n")
         else:
-            sys.stdout.write(report(graph, args.limit, args.consumer, args.provider, args.library))
+            sys.stdout.write(report(graph, args.limit, args.consumer, args.provider, args.library, args.unresolved))
     except (OSError, ValueError) as error:
         print(f"runtime_call_graph: {error}", file=sys.stderr)
         return 2
