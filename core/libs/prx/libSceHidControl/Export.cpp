@@ -4,6 +4,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -592,12 +593,20 @@ int APS5_VABI sceHidControlSetForceAdvancedVibrationMode(std::uint8_t enable) {
 int APS5_VABI sceHidControlPswUpdateIsUpdateNeeded(std::uint32_t device, const void* image, std::uint16_t* result) {
     if (!Initialized()) return ErrorNotInitialized;
     if (result == nullptr) return ErrorInvalidArgument;
-    *result = 0;
+    std::uint16_t initialResult = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &initialResult, sizeof(initialResult));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidArgument;
     if (image == nullptr) return ErrorInvalidArgument;
     std::uint16_t reply = 0;
     UpdateCheck request{device, 0, image, UpdateImageSize, &reply, nullptr};
     const int status = Control<UpdateCheckCommand>(request);
-    if (status == 0) *result = reply;
+    if (status == 0) {
+        const int savedErrnoReply = errno;
+        GuestCopyOut_nid_no_patch(result, &reply, sizeof(reply));
+        errno = savedErrnoReply;
+    }
     return status;
 }
 
