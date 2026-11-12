@@ -1012,14 +1012,22 @@ int APS5_VABI sceNpGetOnlineId(int user_id, NpOnlineId* online_id) {
 int APS5_VABI sceNpGetState(int user_id, uint32_t* state) {
     (void)user_id;
     if (!state) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    *state = NP_STATE_SIGNED_OUT;
+    const uint32_t localState = NP_STATE_SIGNED_OUT;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &localState, sizeof(localState));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
 int APS5_VABI sceNpHasSignedUp(int user_id, bool* has_signed_up) {
     (void)user_id;
     if (!has_signed_up) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    *has_signed_up = false;
+    const bool localSignedUp = false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(has_signed_up, &localSignedUp, sizeof(localSignedUp));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
