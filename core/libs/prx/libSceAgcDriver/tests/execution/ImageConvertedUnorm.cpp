@@ -732,6 +732,30 @@ void CheckPacked16(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::u
     }
 }
 
+bool SameDepth24(std::uint32_t bits, std::uint32_t depth) {
+    const auto actual = StoreField(bits, 0xffffffu);
+    return actual + 1u >= depth && actual <= depth + 1u;
+}
+
+void CheckDepth24(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+    for (std::uint32_t index = 0; index < LoadWidth; ++index) {
+        const auto texel = LoadTexel(index);
+        std::memcpy(texels + index * 4u, &texel, 4u);
+    }
+    Run(device, LoadXyzw, TextureDescriptor(texels, 141u, SwizzleXYZW, LoadWidth), {}, LoadGroups);
+    for (std::uint32_t index = 0; index < LoadWidth; ++index) {
+        const auto depth = LoadTexel(index) & 0xffffffu;
+        Require(SameDepth24(Output[index * 4u], depth), "image_load of 8_24_UNORM reads the wrong depth for format 141: " + Hex(Output[index * 4u]) + " for texel " + Hex(LoadTexel(index)));
+        Require(Output[index * 4u + 1u] == 0u && Output[index * 4u + 2u] == 0u && Output[index * 4u + 3u] == 0x3f800000u, "image_load of 8_24_UNORM must give G=0 B=0 A=1 for format 141");
+    }
+    Run(device, SampleLz, TextureDescriptor(texels, 141u, SwizzleXYZW, LoadWidth), PointSampler, 1);
+    const auto depth = LoadTexel(0) & 0xffffffu;
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        Require(SameDepth24(Output[tid * 4u], depth), "image_sample_lz of 8_24_UNORM reads the wrong depth for format 141");
+        Require(Output[tid * 4u + 1u] == 0u && Output[tid * 4u + 2u] == 0u && Output[tid * 4u + 3u] == 0x3f800000u, "image_sample_lz of 8_24_UNORM must give G=0 B=0 A=1 for format 141");
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -745,6 +769,11 @@ int main(int argc, char** argv) {
             Require(format == 133u || format == 134u || format == 136u, "unsupported packed storage test format");
             CheckPacked16(*device, texels, format);
             std::cout << "Packed 16-bit storage image tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string(argv[1]) == "--depth24") {
+            CheckDepth24(*device, texels);
+            std::cout << "Depth-stencil format tests passed\n";
             return 0;
         }
         for (std::uint32_t index = 0; index < LoadWidth; ++index) {
