@@ -317,8 +317,9 @@ int APS5_VABI sceKernelStopUnloadModule(KernelModule handle, size_t args, const 
  (void)args;
  (void)argp;
  if (flags != 0 || opt != nullptr || handle == 0) return SCE_KERNEL_ERROR_EINVAL;
+ if (dlclose_nid_postfix(reinterpret_cast<void*>(static_cast<intptr_t>(handle))) != 0) return SCE_KERNEL_ERROR_ESRCH;
  if (res) *res = 0;
- return dlclose_nid_postfix(reinterpret_cast<void*>(static_cast<intptr_t>(handle))) == 0 ? 0 : SCE_KERNEL_ERROR_ESRCH;
+ return 0;
 }
 
 }
