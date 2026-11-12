@@ -144,6 +144,27 @@ def default_replay(build):
     raise SystemExit(f"no library_oracle_replay under {build}; build it with: cmake --build {build} --target library_oracle_replay")
 
 
+def required_modules(binary, run=subprocess.run):
+    try:
+        done = run([str(binary), "--required-modules"], capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    names = [line.split("\t", 1)[1].strip() for line in text(done.stdout).splitlines() if line.startswith("MODULE\t")]
+    return names or None
+
+
+def absent_modules(modules, names):
+    return [name for name in names if not (Path(modules) / name).is_file()]
+
+
+def module_warning(absent, modules):
+    if not absent:
+        return None
+    return f"warning: {', '.join(absent)} is not in {modules}; a MISSING case that needs one of them is a build gap, not a missing export"
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="replay prosper's PS5 console measurements against the built AnyPS5 modules")
     parser.add_argument("families", nargs="*", metavar="FAMILY", help=f"measurement families to replay (default: all of {', '.join(sorted(FAMILIES))})")
@@ -163,6 +184,8 @@ def main(argv=None):
     known = load_known(args.known)
     skip = {case for case, (kind, _) in known.items() if kind == "skip"}
     cache = cache_directory(os.environ)
+    names = required_modules(binary)
+    absent = absent_modules(modules, names) if names else []
     findings, ran_cases, failed = {}, set(), False
     for family in families:
         golden = fetch(family, cache)
@@ -170,6 +193,10 @@ def main(argv=None):
         print(f"{family}: {summary}")
         findings.update(found)
         ran_cases |= case_ids(golden) - skip
+    if any(kind == "missing" for kind, _ in findings.values()):
+        note = module_warning(absent, modules)
+        if note:
+            print(note)
     if args.write_known:
         write_known(args.known, known, findings)
         print(f"wrote {len(findings)} findings to {args.known}")

@@ -118,5 +118,34 @@ class FetchTests(unittest.TestCase):
             library_oracle.FAMILIES.update(original)
 
 
+class ModuleTests(unittest.TestCase):
+    def test_required_modules_asks_the_replay_for_the_chain_it_resolves_through(self):
+        run = Script(Done(0, "MODULE\tlibc.prx\nMODULE\tlibkernel.prx\n", ""))
+        self.assertEqual(library_oracle.required_modules("replay", run), ["libc.prx", "libkernel.prx"])
+        self.assertEqual(run.commands, [["replay", "--required-modules"]])
+
+    def test_required_modules_stays_quiet_about_a_replay_that_does_not_answer(self):
+        run = Script(Done(2, "", "usage: replay MODULE_DIRECTORY ...\n"))
+        self.assertIsNone(library_oracle.required_modules("replay", run))
+
+    def test_required_modules_stays_quiet_when_the_replay_cannot_be_started(self):
+        run = Script(FileNotFoundError(2, "No such file or directory"))
+        self.assertIsNone(library_oracle.required_modules("replay", run))
+
+    def test_absent_modules_names_the_chain_files_the_directory_lacks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "libc.prx").write_bytes(b"")
+            (Path(directory) / "libScePosix.prx").mkdir()
+            absent = library_oracle.absent_modules(directory, ["libc.prx", "libkernel_sys.prx", "libScePosix.prx"])
+            self.assertEqual(absent, ["libkernel_sys.prx", "libScePosix.prx"])
+
+    def test_the_warning_names_the_absent_files_and_the_directory(self):
+        note = library_oracle.module_warning(["libkernel_sys.prx"], "/m/unpatched") or ""
+        self.assertIn("libkernel_sys.prx is not in /m/unpatched", note)
+
+    def test_there_is_no_warning_without_an_absent_file(self):
+        self.assertIsNone(library_oracle.module_warning([], "/m/unpatched"))
+
+
 if __name__ == "__main__":
     unittest.main()
