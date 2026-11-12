@@ -176,6 +176,14 @@ std::uint64_t RegisteredReadableEnd(std::uint64_t address);
 // imported); see GuestBufferMemory.cpp.
 struct ImageMirror;
 class Recorder;
+class StorageTexture;
+
+struct MirrorPublishEntry {
+    std::shared_ptr<StorageTexture> image;
+    std::uint64_t base = 0;
+    std::uint64_t serial = 0;
+    std::uint64_t since = 0;
+};
 
 template<typename TRange>
 void OverlappedRanges(std::span<const TRange> sorted, std::size_t first, std::span<const std::pair<std::uint64_t, std::uint64_t>> writes, std::vector<std::size_t>& indices) {
@@ -584,6 +592,8 @@ private:
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);
     void takeHeapReferences();
     void releaseHeapReferences() noexcept;
+    void publishIntoMirrors();
+    std::vector<MirrorPublishEntry> mirrorPublishes;
     Context context;
     bool stagingAllowed = false;
     bool addressStaging = true;

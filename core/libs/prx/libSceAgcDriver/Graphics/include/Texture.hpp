@@ -397,6 +397,47 @@ public:
     // does when it lists no image, and all an access AccessKeptByCpu approved needs): whether any
     // unit was published.
     static bool PublishShadowsOnly(std::uint64_t address, std::size_t bytes, PublishScope scope, const char* reason = "memory access", bool waited = false);
+    class MirrorPublishScope {
+    public:
+        MirrorPublishScope(std::vector<std::shared_ptr<StorageTexture>>& deferred, std::uint64_t address, std::size_t bytes);
+        ~MirrorPublishScope();
+        MirrorPublishScope(const MirrorPublishScope&) = delete;
+        MirrorPublishScope& operator=(const MirrorPublishScope&) = delete;
+
+    private:
+        MirrorPublishScope* previous;
+        std::vector<std::shared_ptr<StorageTexture>>& deferred;
+        std::uint64_t address;
+        std::size_t bytes;
+        friend class StorageTexture;
+    };
+    static bool MirrorPublishEnabled();
+    static bool DeferToMirror(std::uint64_t address, std::size_t bytes);
+    std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> MirrorPublishRanges(std::uint64_t begin, std::uint64_t end) const;
+    struct MirrorTarget {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        std::uint64_t origin = 0;
+        std::uint64_t serial = 0;
+        std::uint64_t uploads = 0;
+        std::shared_ptr<void> keep;
+    };
+    bool MirrorPublishCurrent(const MirrorTarget& target, std::uint64_t begin, std::uint64_t end) const;
+    std::uint64_t PublishIntoMirror(const MirrorTarget& target, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t begin, std::uint64_t end);
+    enum class MirrorFallback : std::uint8_t { ReadTrap, DccKeys, DrawnRect, Unwatched, NoGeneration, Copied, Written, Untracked, NoRecorder, Count };
+    static constexpr std::size_t MirrorFallbackReasons = static_cast<std::size_t>(MirrorFallback::Count);
+    static const char* MirrorFallbackName(MirrorFallback reason);
+    struct MirrorPublishCounts {
+        std::uint64_t published = 0;
+        std::uint64_t bytes = 0;
+        std::uint64_t skipped = 0;
+        std::uint64_t fallbacks = 0;
+        std::uint64_t refreshed = 0;
+        std::array<std::uint64_t, MirrorFallbackReasons> reasons{};
+        std::array<std::uint64_t, MirrorFallbackReasons> reasonBytes{};
+    };
+    static MirrorPublishCounts MirrorPublishTotals();
+    static void NoteMirrorPublishFallback(MirrorFallback reason, std::uint64_t bytes);
+    static void NoteMirrorPublishRefresh();
     // For the [hooksync] recorded-store line: images a FlushPending stored after a hook skip of
     // theirs (AccessKeptByCpu), of which by the hook for the same read site as the last skip; 10 s deltas.
     struct HookSkipCounts {
@@ -746,6 +787,16 @@ private:
     // saying whether any live image overlaps the fill (see Texture.cpp).
     bool keysFillMatches(std::uint64_t address, std::size_t bytes, bool overlapped) const;
     bool pendingUnitInside(std::uint64_t address, std::size_t bytes) const;
+    std::optional<MirrorFallback> mirrorPublishRefusal() const;
+    struct MirrorPublishMemo {
+        std::uint64_t mirror = 0;
+        std::uint64_t begin = 0;
+        std::uint64_t end = 0;
+        std::uint64_t version = 0;
+        std::uint64_t uploads = 0;
+        std::uint64_t tracker = 0;
+    };
+    std::vector<MirrorPublishMemo> mirrorMemos;
     bool storesWhole() const;
     void appendStoredLayers(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) const;
     VkImageView createView(std::uint32_t mip, bool firstLayer, VkFormat format) const;

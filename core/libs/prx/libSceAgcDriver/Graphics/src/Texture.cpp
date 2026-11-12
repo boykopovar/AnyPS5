@@ -5906,6 +5906,227 @@ bool StorageTexture::AccessKeptByCpu(std::uint64_t address, std::size_t bytes, s
     return true;
 }
 
+namespace {
+
+thread_local StorageTexture::MirrorPublishScope* mirrorPublishScope = nullptr;
+std::atomic<std::uint64_t> mirrorPublished{0};
+std::atomic<std::uint64_t> mirrorPublishedBytes{0};
+std::atomic<std::uint64_t> mirrorPublishSkipped{0};
+std::atomic<std::uint64_t> mirrorPublishFallbacks{0};
+std::atomic<std::uint64_t> mirrorPublishRefreshes{0};
+std::array<std::atomic<std::uint64_t>, StorageTexture::MirrorFallbackReasons> mirrorFallbackReasons{};
+std::array<std::atomic<std::uint64_t>, StorageTexture::MirrorFallbackReasons> mirrorFallbackBytes{};
+
+}
+
+StorageTexture::MirrorPublishScope::MirrorPublishScope(std::vector<std::shared_ptr<StorageTexture>>& deferred, std::uint64_t address, std::size_t bytes) : previous(std::exchange(mirrorPublishScope, this)), deferred(deferred), address(address), bytes(bytes) {}
+
+StorageTexture::MirrorPublishScope::~MirrorPublishScope() {
+    mirrorPublishScope = previous;
+}
+
+bool StorageTexture::MirrorPublishEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_MIRROR_PUBLISH") == nullptr;
+    return enabled;
+}
+
+const char* StorageTexture::MirrorFallbackName(MirrorFallback reason) {
+    constexpr std::array<const char*, MirrorFallbackReasons> names{"read trap", "dcc keys", "drawn rect", "unwatched", "no generation", "copied mirror", "written by the build", "untracked", "no recorder"};
+    return names[static_cast<std::size_t>(reason)];
+}
+
+std::optional<StorageTexture::MirrorFallback> StorageTexture::mirrorPublishRefusal() const {
+    if (readTrapped.load(std::memory_order_acquire)) return MirrorFallback::ReadTrap;
+    if (descriptor.dccAddress != 0 && uploadedKeys != DccKeys::Uncompressed) return MirrorFallback::DccKeys;
+    if (drawnArea().rect) return MirrorFallback::DrawnRect;
+    if (!GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) return MirrorFallback::Unwatched;
+    for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+        if (layerPending[layer] && layerGeneration[layer] == 0) return MirrorFallback::NoGeneration;
+    }
+    return std::nullopt;
+}
+
+bool StorageTexture::DeferToMirror(std::uint64_t address, std::size_t bytes) {
+    auto* scope = mirrorPublishScope;
+    if (scope == nullptr || scope->address != address || scope->bytes != bytes || !MirrorPublishEnabled() || Recorder::Active() == nullptr) return false;
+    const auto overlapping = overlappingPending(address, bytes);
+    if (overlapping.empty()) return false;
+    {
+        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Hook);
+        std::lock_guard gpu(GuestMemory::GpuMutex());
+        bool refused = false;
+        for (const auto& texture : overlapping) {
+            if (const auto reason = texture->mirrorPublishRefusal()) {
+                NoteMirrorPublishFallback(*reason, texture->guestBytes);
+                refused = true;
+            }
+        }
+        if (refused) return false;
+    }
+    static_cast<void>(FlushDepthPlanes(address, bytes));
+    for (const auto& texture : overlapping) {
+        if (std::find(scope->deferred.begin(), scope->deferred.end(), texture) == scope->deferred.end()) scope->deferred.push_back(texture);
+    }
+    return true;
+}
+
+std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> StorageTexture::MirrorPublishRanges(std::uint64_t begin, std::uint64_t end) const {
+    GuestMemory::AssertGpuLockHeld("StorageTexture::MirrorPublishRanges");
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    const auto first = std::max(begin, descriptor.baseAddress);
+    const auto last = std::min(end, descriptor.baseAddress + guestBytes);
+    if (first >= last || !anyLayerPending()) return ranges;
+    if (const auto reason = mirrorPublishRefusal()) {
+        NoteMirrorPublishFallback(*reason, last - first);
+        return std::nullopt;
+    }
+    constexpr std::uint64_t block = 65536;
+    const auto spanBegin = first & ~(block - 1);
+    const auto spanBlocks = static_cast<std::size_t>((last - spanBegin + block - 1) / block);
+    GuestMemory::CollectWritesUncached(first, static_cast<std::size_t>(last - first));
+    std::vector<std::uint64_t> generations(spanBlocks, 0);
+    for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+        if (!layerPending[layer]) continue;
+        const auto from = std::max(first, layerBegin(layer));
+        const auto to = std::min(last, layerBegin(layer) + layerBytes(layer));
+        for (auto at = from & ~(block - 1); at < to; at += block) generations[static_cast<std::size_t>((at - spanBegin) / block)] = unitBlockGeneration(layer, at);
+    }
+    std::vector<std::uint8_t> changed(spanBlocks);
+    if (!GuestMemory::ChangedBlocks(first, static_cast<std::size_t>(last - first), generations, changed)) {
+        NoteMirrorPublishFallback(MirrorFallback::Untracked, last - first);
+        return std::nullopt;
+    }
+    for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+        if (!layerPending[layer]) continue;
+        const auto unitBegin = layerBegin(layer);
+        const auto unitEnd = unitBegin + layerBytes(layer);
+        if (unitEnd <= first || last <= unitBegin) continue;
+        for (auto at = std::max(first, unitBegin) & ~(block - 1); at < std::min(last, unitEnd); at += block) {
+            const auto from = std::max(at, unitBegin);
+            const auto to = std::min(at + block, unitEnd);
+            if (from >= to) continue;
+            const bool edge = from != at || to != at + block;
+            const auto index = static_cast<std::size_t>((at - spanBegin) / block);
+            const bool written = keptAtUnwatchHolds(from, layer) || (changed[index] == GuestMemory::BlockWritten && (!edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), unitBlockGeneration(layer, at))) && !cpuLeftUnchanged(layer, from, to, edge));
+            if (written) continue;
+            const auto keepBegin = std::max(from, first);
+            const auto keepEnd = std::min(to, last);
+            if (keepBegin >= keepEnd) continue;
+            if (!ranges.empty() && ranges.back().second == keepBegin) ranges.back().second = keepEnd;
+            else ranges.emplace_back(keepBegin, keepEnd);
+        }
+    }
+    return ranges;
+}
+
+bool StorageTexture::MirrorPublishCurrent(const MirrorTarget& target, std::uint64_t begin, std::uint64_t end) const {
+    const bool current = std::any_of(mirrorMemos.begin(), mirrorMemos.end(), [&](const MirrorPublishMemo& memo) { return memo.mirror == target.serial && memo.begin == begin && memo.end == end && memo.version == version && memo.uploads == target.uploads && GuestMemory::UnchangedSince(begin, static_cast<std::size_t>(end - begin), memo.tracker); });
+    if (current) mirrorPublishSkipped.fetch_add(1, std::memory_order_relaxed);
+    return current;
+}
+
+std::uint64_t StorageTexture::PublishIntoMirror(const MirrorTarget& target, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t begin, std::uint64_t end) {
+    GuestMemory::AssertGpuLockHeld("StorageTexture::PublishIntoMirror");
+    auto* recorder = recorderFor(context);
+    Require(recorder != nullptr, "a storage image publish into a heap mirror needs the active recorder");
+    const auto tracker = GuestMemory::TrackerGeneration();
+    const auto remember = [&] {
+        const MirrorPublishMemo memo{target.serial, begin, end, version, target.uploads, tracker};
+        const auto found = std::find_if(mirrorMemos.begin(), mirrorMemos.end(), [&](const MirrorPublishMemo& entry) { return entry.mirror == target.serial && entry.begin == begin && entry.end == end; });
+        if (found != mirrorMemos.end()) *found = memo;
+        else if (mirrorMemos.size() < 8) mirrorMemos.push_back(memo);
+        else mirrorMemos[static_cast<std::size_t>(version % mirrorMemos.size())] = memo;
+    };
+    if (ranges.empty()) {
+        remember();
+        return 0;
+    }
+    const auto elementBytes = BytesPerElement(descriptor.format);
+    std::vector<bool> layers(trackedLayers, false);
+    for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+        const auto unitBegin = layerBegin(layer);
+        const auto unitEnd = unitBegin + layerBytes(layer);
+        layers[layer] = std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.first < unitEnd && unitBegin < range.second; });
+    }
+    const auto* storedLayers = trackedLayers == arrayLayers && trackedLayers > 1 ? &layers : nullptr;
+    const auto hullBegin = ranges.front().first;
+    const auto hullEnd = ranges.back().second;
+    std::uint64_t publishedBytes = 0;
+    for (const auto& [from, to] : ranges) publishedBytes += to - from;
+    auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(sliceLinearBytes * arrayLayers), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto scratch = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    detiler.BeginBatch();
+    const auto commands = recorder->Commands();
+    const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::MirrorPublish);
+    recorder->Keep(linear, linear->Size());
+    recorder->Keep(scratch, scratch->Size());
+    if (target.keep != nullptr) recorder->Keep(target.keep);
+    if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
+    Recorder::CountBarriers(Recorder::CommandClass::MirrorPublish, 5);
+    VkImageMemoryBarrier toSource{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    toSource.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    toSource.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    toSource.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    toSource.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    toSource.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toSource.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toSource.image = image;
+    toSource.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
+    const VkMemoryBarrier seedReady{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &seedReady, 0, nullptr, 1, &toSource);
+    const VkBufferCopy seed{hullBegin - target.origin, hullBegin - descriptor.baseAddress, hullEnd - hullBegin};
+    context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, target.buffer, scratch->Handle(), 1, &seed);
+    const auto regions = CopyRegions(storedLayers);
+    context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, linear->Handle(), static_cast<std::uint32_t>(regions.size()), regions.data());
+    const VkMemoryBarrier retileReady{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT};
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &retileReady, 0, nullptr, 0, nullptr);
+    for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
+        if (storedLayers != nullptr && !(*storedLayers)[layer]) continue;
+        for (std::uint32_t level = 0; level < mips.size(); ++level) {
+            if (!geometry.HasLayer(level, layer)) continue;
+            const auto& mip = mips[level];
+            detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, scratch->Handle(), geometry.GuestOffset(layer, mip), mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+        }
+    }
+    const auto scratchDone = WholeBufferBarrier(scratch->Handle(), VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &scratchDone, 0, nullptr);
+    std::vector<VkBufferCopy> copies;
+    copies.reserve(ranges.size());
+    for (const auto& [from, to] : ranges) copies.push_back({from - descriptor.baseAddress, from - target.origin, to - from});
+    context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, scratch->Handle(), target.buffer, static_cast<std::uint32_t>(copies.size()), copies.data());
+    VkImageMemoryBarrier backToGeneral = toSource;
+    backToGeneral.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    backToGeneral.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    backToGeneral.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    backToGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    const VkMemoryBarrier published{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &published, 0, nullptr, 1, &backToGeneral);
+    recorder->EndGpuTiming(timing, publishedBytes);
+    mirrorPublished.fetch_add(1, std::memory_order_relaxed);
+    mirrorPublishedBytes.fetch_add(publishedBytes, std::memory_order_relaxed);
+    remember();
+    return publishedBytes;
+}
+
+StorageTexture::MirrorPublishCounts StorageTexture::MirrorPublishTotals() {
+    MirrorPublishCounts counts{mirrorPublished.load(std::memory_order_relaxed), mirrorPublishedBytes.load(std::memory_order_relaxed), mirrorPublishSkipped.load(std::memory_order_relaxed), mirrorPublishFallbacks.load(std::memory_order_relaxed), mirrorPublishRefreshes.load(std::memory_order_relaxed)};
+    for (std::size_t reason = 0; reason < MirrorFallbackReasons; ++reason) {
+        counts.reasons[reason] = mirrorFallbackReasons[reason].load(std::memory_order_relaxed);
+        counts.reasonBytes[reason] = mirrorFallbackBytes[reason].load(std::memory_order_relaxed);
+    }
+    return counts;
+}
+
+void StorageTexture::NoteMirrorPublishFallback(MirrorFallback reason, std::uint64_t bytes) {
+    mirrorPublishFallbacks.fetch_add(1, std::memory_order_relaxed);
+    mirrorFallbackReasons[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
+    mirrorFallbackBytes[static_cast<std::size_t>(reason)].fetch_add(bytes, std::memory_order_relaxed);
+}
+
+void StorageTexture::NoteMirrorPublishRefresh() {
+    mirrorPublishRefreshes.fetch_add(1, std::memory_order_relaxed);
+}
+
 bool StorageTexture::evictStale(std::uint64_t address, std::size_t bytes, std::size_t& dropped) {
     static const bool staleEvict = std::getenv("APS5_STALE_EVICT") != nullptr;
     constexpr std::uint64_t block = 65536;

@@ -180,6 +180,7 @@ namespace {
 struct RefreshBlock;
 static thread_local GuestBufferMemory* buildingBufferMemory = nullptr;
 static thread_local std::vector<RefreshBlock>* buildingBlocks = nullptr;
+static thread_local std::vector<MirrorPublishEntry>* publishing = nullptr;
 
 std::atomic<std::uint64_t> importSetGeneration{1};
 
@@ -3086,6 +3087,33 @@ void prepareRange(std::uint64_t address, std::uint64_t bytes) {
     syncRange(address, bytes);
 }
 
+void syncHeapRange(std::uint64_t address, std::uint64_t bytes, std::span<ImageMirror* const> mirrors) {
+    const bool resident = !mirrors.empty() && std::all_of(mirrors.begin(), mirrors.end(), [](const ImageMirror* mirror) { return mirror->resident != nullptr; });
+    if (publishing == nullptr || !resident || !StorageTexture::MirrorPublishEnabled()) {
+        if (publishing != nullptr && !resident && StorageTexture::MirrorPublishEnabled() && StorageTexture::AnyPendingOverlaps(std::array<std::pair<std::uint64_t, std::uint64_t>, 1>{{{address, address + bytes}}})) StorageTexture::NoteMirrorPublishFallback(StorageTexture::MirrorFallback::Copied, bytes);
+        syncRange(address, bytes);
+        return;
+    }
+    std::vector<std::shared_ptr<StorageTexture>> deferred;
+    const auto since = GuestMemory::TrackerGeneration();
+    {
+        const StorageTexture::MirrorPublishScope scope(deferred, address, static_cast<std::size_t>(bytes));
+        syncRange(address, bytes);
+    }
+    for (auto& image : deferred) {
+        const auto imageBegin = image->Descriptor().baseAddress;
+        const auto imageEnd = imageBegin + image->GuestBytes();
+        for (auto* mirror : mirrors) {
+            if (imageBegin < mirror->base + mirror->bytes && mirror->base < imageEnd) publishing->push_back({image, mirror->base, mirror->serial, since});
+        }
+    }
+}
+
+void prepareHeapRange(std::uint64_t address, std::uint64_t bytes, std::span<ImageMirror* const> mirrors) {
+    Require(GuestMemory::Accessible(reinterpret_cast<const void*>(address), static_cast<std::size_t>(bytes)), "image mirror range became inaccessible");
+    syncHeapRange(address, bytes, mirrors);
+}
+
 bool prepareRefresh(ImageMirror& mirror, std::uint64_t address, std::uint64_t bytes) {
     if ((!mirror.writable && !mirror.heap) || bytes == 0) return false;
     prepareRange(address, bytes);
@@ -3190,7 +3218,7 @@ void refreshHeapMirrors(std::vector<ImageMirror*>& mirrors, std::vector<RefreshB
         while (last < mirrors.size() && mirrors[last]->base == mirrors[last - 1]->base + mirrors[last - 1]->bytes) ++last;
         const auto begin = mirrors[first]->base;
         const auto bytes = mirrors[last - 1]->base + mirrors[last - 1]->bytes - begin;
-        prepareRange(begin, bytes);
+        prepareHeapRange(begin, bytes, std::span<ImageMirror* const>(mirrors).subspan(first, last - first));
         const auto generation = GuestMemory::CollectWrites(begin, static_cast<std::size_t>(bytes));
         appendHeapRun(std::span<ImageMirror* const>(mirrors).subspan(first, last - first), generation, blocks);
         first = last;
@@ -3291,7 +3319,8 @@ Pieces clipPieces(const Pieces& pieces, std::uint64_t begin, std::uint64_t end) 
 bool refreshSparseMirror(ImageMirror& mirror, std::vector<RefreshBlock>& blocks) {
     auto pieces = GuestMemory::DescribeCommitted(mirror.base, static_cast<std::size_t>(mirror.reserved)).ranges;
     if (!pieces.empty() && pieces.back().second > mirror.base + mirror.bytes) return false;
-    syncRange(mirror.base, mirror.bytes);
+    ImageMirror* const heap[1]{&mirror};
+    syncHeapRange(mirror.base, mirror.bytes, heap);
     const auto generation = collectPieces(pieces);
     if (generation == 0) markUnwatched(mirror);
     appendSparseBlocks(mirror, std::move(pieces), generation, blocks);
@@ -3326,7 +3355,7 @@ std::vector<std::pair<std::size_t, std::uint64_t>> refreshHeapRuns(const GuestBu
     checked.reserve(space.heapRuns.size());
     for (std::size_t index = 0; index < space.heapRuns.size(); ++index) {
         const auto& run = space.heapRuns[index];
-        prepareRange(run.begin, run.bytes);
+        prepareHeapRange(run.begin, run.bytes, std::span<ImageMirror* const>(space.heapMirrors).subspan(run.first, run.last - run.first));
         const auto generation = GuestMemory::CollectWrites(run.begin, static_cast<std::size_t>(run.bytes));
         const auto since = space.verified[index].load(std::memory_order_relaxed);
         if (since == 0 || !GuestMemory::UnchangedSince(run.begin, static_cast<std::size_t>(run.bytes), since)) appendHeapRun(std::span<ImageMirror* const>(space.heapMirrors).subspan(run.first, run.last - run.first), generation, blocks);
@@ -4768,6 +4797,18 @@ void GuestBufferMemory::CountAddressBuild(double snapshotsUs) {
     const auto space = AddressSpaceCounters();
     const auto& spaceSeen = totals.spaceSeen;
     AgcDriver::ProfilePrint_nid_no_patch("[address] %llu address-based builds (10 s), us per build: lease %.0f, imports pass %.0f, mirror prepare %.0f, compare %.0f (%.0f blocks, %.1f copied), snapshots %.0f; space hits %llu (patched after an import change %llu) / rebuilds: generation %llu, epoch %llu, device %llu, waiter drop %llu, first %llu; unpublished %llu, dissolved: overlap %llu, imports %llu%s; [bda-table] hits %llu / misses %llu (space tables %llu), first entry: expired %llu, hash differs low %llu / heap %llu, same hash %llu, none held %llu\n", static_cast<unsigned long long>(totals.builds), per(totals.sums.leaseUs), per(totals.sums.importsUs), per(totals.sums.mirrorsUs), per(totals.sums.compareUs), per(static_cast<double>(totals.sums.blocksCompared)), per(static_cast<double>(totals.sums.blocksCopied)), per(totals.snapshotsUs), delta(space.hits, spaceSeen.hits), delta(space.patchedEpoch, spaceSeen.patchedEpoch), delta(space.rebuiltGeneration, spaceSeen.rebuiltGeneration), delta(space.rebuiltEpoch, spaceSeen.rebuiltEpoch), delta(space.rebuiltDevice, spaceSeen.rebuiltDevice), delta(space.rebuiltWaiterDrop, spaceSeen.rebuiltWaiterDrop), delta(space.rebuiltFirst, spaceSeen.rebuiltFirst), delta(space.unpublished, spaceSeen.unpublished), delta(space.dissolvedOverlap, spaceSeen.dissolvedOverlap), delta(space.dissolvedImports, spaceSeen.dissolvedImports), space.enabled ? "" : " (cache off)", delta(table.hits, seen.hits), delta(table.misses, seen.misses), delta(table.spaceTables, seen.spaceTables), delta(table.firstExpired, seen.firstExpired), delta(table.firstDiffersLow, seen.firstDiffersLow), delta(table.firstDiffersHeap, seen.firstDiffersHeap), delta(table.firstSameHash, seen.firstSameHash), delta(table.firstEmpty, seen.firstEmpty));
+    static StorageTexture::MirrorPublishCounts publishSeen{};
+    const auto publish = StorageTexture::MirrorPublishTotals();
+    std::string fallbackReasons;
+    for (std::size_t reason = 0; reason < StorageTexture::MirrorFallbackReasons; ++reason) {
+        const auto count = publish.reasons[reason] - publishSeen.reasons[reason];
+        if (count == 0) continue;
+        char text[96];
+        std::snprintf(text, sizeof(text), "%s%s %llu/%.1f MiB", fallbackReasons.empty() ? "" : ", ", StorageTexture::MirrorFallbackName(static_cast<StorageTexture::MirrorFallback>(reason)), static_cast<unsigned long long>(count), static_cast<double>(publish.reasonBytes[reason] - publishSeen.reasonBytes[reason]) / 1048576.0);
+        fallbackReasons += text;
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[address] mirror publish (10 s): published %llu (%.1f MiB), skipped unchanged %llu, fallbacks %llu (%s), refreshes %llu%s\n", delta(publish.published, publishSeen.published), static_cast<double>(publish.bytes - publishSeen.bytes) / 1048576.0, delta(publish.skipped, publishSeen.skipped), delta(publish.fallbacks, publishSeen.fallbacks), fallbackReasons.empty() ? "none" : fallbackReasons.c_str(), delta(publish.refreshed, publishSeen.refreshed), StorageTexture::MirrorPublishEnabled() ? "" : " (off)");
+    publishSeen = publish;
     totals.tableSeen = table;
     totals.spaceSeen = space;
     totals.builds = 0;
@@ -4812,10 +4853,15 @@ void GuestBufferMemory::RecordEvicted(std::uint64_t address) {
 
 void GuestBufferMemory::AcquireRegistered() {
     struct BuildingScope {
-        explicit BuildingScope(GuestBufferMemory* self) { buildingBufferMemory = self; }
+        explicit BuildingScope(GuestBufferMemory* self) {
+            buildingBufferMemory = self;
+            self->mirrorPublishes.clear();
+            publishing = &self->mirrorPublishes;
+        }
         ~BuildingScope() {
             buildingBufferMemory = nullptr;
             buildingBlocks = nullptr;
+            publishing = nullptr;
         }
     };
     const BuildingScope buildingScope(this);
@@ -5449,6 +5495,7 @@ bool GuestBufferMemory::ReleaseCompletedSpace(std::uint64_t recorder, std::uint6
 
 std::shared_ptr<const void> GuestBufferMemory::ReleaseSpace() {
     GuestMemory::AssertGpuLockHeld("GuestBufferMemory::ReleaseSpace");
+    mirrorPublishes.clear();
     if (space == nullptr) return {};
     spaceHeldThrough = 0;
     spaceHeldBy = 0;
@@ -5550,6 +5597,12 @@ bool GuestBufferMemory::RetakeSpace() {
         }
         if (epochMirrors()) noteEpochMirrors(false, *space);
     }
+    mirrorPublishes.clear();
+    struct PublishingScope {
+        explicit PublishingScope(std::vector<MirrorPublishEntry>& entries) { publishing = &entries; }
+        ~PublishingScope() { publishing = nullptr; }
+    };
+    const PublishingScope publishingScope(mirrorPublishes);
     const auto checked = refreshHeapRuns(*space, blocks);
     compareBlocks(blocks);
     for (const auto& [run, collected] : checked) space->verified[run].store(collected, std::memory_order_relaxed);
@@ -5563,6 +5616,7 @@ bool GuestBufferMemory::RetakeSpace() {
         if (space->importsEpoch != state.epoch) {
             releasedSpace = space;
             space.reset();
+            mirrorPublishes.clear();
             return false;
         }
     }
@@ -6428,6 +6482,7 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
     }
     if (heapsEnd > heapsBegin) StorageTexture::PublishShadowsOnly(heapsBegin, static_cast<std::size_t>(heapsEnd - heapsBegin), PublishScope::Whole, "address-based heaps");
     if (!gpuCopies.empty()) recordGpuCopies(gpuCopies, addressable);
+    publishIntoMirrors();
     takeHeapReferences();
     ResidentBuffer::FlushChanged(context);
     if (!profile) return;
@@ -7132,6 +7187,98 @@ void GuestBufferMemory::releaseHeapReferences() noexcept {
     heapReadbacks.clear();
 }
 
+namespace {
+
+void refreshResidentRange(ImageMirror& mirror, std::uint64_t begin, std::uint64_t end) {
+    constexpr std::uint64_t block = 65536;
+    const auto from = std::max(mirror.base, begin / block * block);
+    const auto to = std::min(mirror.base + mirror.bytes, (end + block - 1) / block * block);
+    if (from >= to) return;
+    std::vector<RefreshBlock> blocks;
+    appendBlocks(blocks, mirror, from, to - from);
+    const auto generation = GuestMemory::CollectWrites(from, static_cast<std::size_t>(to - from));
+    for (auto& entry : blocks) entry.generation = generation;
+    compareBlocks(blocks);
+    StorageTexture::NoteMirrorPublishRefresh();
+}
+
+}
+
+void GuestBufferMemory::publishIntoMirrors() {
+    if (mirrorPublishes.empty()) return;
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::publishIntoMirrors");
+    auto entries = std::move(mirrorPublishes);
+    mirrorPublishes.clear();
+    struct Work {
+        StorageTexture* image;
+        std::shared_ptr<ImageMirror> mirror;
+        std::uint64_t begin;
+        std::uint64_t end;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    };
+    auto& state = Mirrors();
+    const auto store = [](std::uint64_t begin, std::size_t bytes) {
+        StorageTexture::NoteMirrorPublishFallback(StorageTexture::MirrorFallback::Copied, bytes);
+        StorageTexture::FlushPending(begin, bytes, nullptr, "memory access");
+    };
+    std::vector<std::shared_ptr<ImageMirror>> held(entries.size());
+    {
+        std::lock_guard lock(state.mutex);
+        for (std::size_t index = 0; index < entries.size(); ++index) {
+            const auto found = state.entries.find(entries[index].base);
+            if (found != state.entries.end() && found->second->serial == entries[index].serial && found->second->listed && found->second->resident != nullptr) held[index] = found->second;
+        }
+    }
+    std::vector<Work> work;
+    const auto* active = Recorder::Active();
+    const bool recording = active != nullptr && active->Device() == context.device;
+    for (std::size_t index = 0; index < entries.size(); ++index) {
+        const auto& entry = entries[index];
+        if (held[index] == nullptr) {
+            store(entry.image->Descriptor().baseAddress, static_cast<std::size_t>(entry.image->GuestBytes()));
+            continue;
+        }
+        auto& mirror = *held[index];
+        const auto begin = std::max(entry.image->Descriptor().baseAddress, mirror.base);
+        const auto end = std::min(entry.image->Descriptor().baseAddress + entry.image->GuestBytes(), mirror.base + mirror.bytes);
+        if (begin >= end) continue;
+        const auto bytes = static_cast<std::size_t>(end - begin);
+        std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> ranges;
+        const bool written = mirror.writable && WritesOverlap(begin, bytes);
+        if (!recording) StorageTexture::NoteMirrorPublishFallback(StorageTexture::MirrorFallback::NoRecorder, bytes);
+        else if (written) StorageTexture::NoteMirrorPublishFallback(StorageTexture::MirrorFallback::Written, bytes);
+        else ranges = entry.image->MirrorPublishRanges(begin, end);
+        if (!ranges.has_value() || ranges->empty()) {
+            if (!ranges.has_value()) StorageTexture::FlushPending(begin, bytes, nullptr, "memory access");
+            if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->PendingWriteOverlaps(begin, bytes)) {
+                Recorder::CountSync(4);
+                ++state.syncs;
+                recorder->Sync();
+            }
+            refreshResidentRange(mirror, begin, end);
+            continue;
+        }
+        if (!GuestMemory::UnchangedSince(begin, bytes, entry.since)) refreshResidentRange(mirror, begin, end);
+        growResident(mirror, *ranges);
+        work.push_back({entry.image.get(), held[index], begin, end, std::move(*ranges)});
+    }
+    ResidentBuffer::FlushChanged(context);
+    for (auto& item : work) {
+        std::shared_ptr<ResidentBuffer> resident;
+        {
+            std::lock_guard lock(state.mutex);
+            if (item.mirror->listed) resident = item.mirror->resident;
+        }
+        if (resident == nullptr) {
+            store(item.begin, static_cast<std::size_t>(item.end - item.begin));
+            continue;
+        }
+        const StorageTexture::MirrorTarget target{resident->Handle(), resident->Origin(), item.mirror->serial, resident->UploadSerial(item.begin, item.end), resident};
+        if (item.image->MirrorPublishCurrent(target, item.begin, item.end)) continue;
+        static_cast<void>(item.image->PublishIntoMirror(target, item.ranges, item.begin, item.end));
+    }
+}
+
 void GuestBufferMemory::takeHeapReferences() {
     releaseHeapReferences();
     for (const auto& [begin, end] : mergeWrites(writes)) {
@@ -7376,6 +7523,7 @@ void GuestBufferMemory::AddressStores(std::vector<std::pair<std::uint64_t, std::
 
 void GuestBufferMemory::RecordStagingCopies(Recorder& recorder) {
     ResidentBuffer::FlushChanged(context);
+    publishIntoMirrors();
     if (!uploaded || committed) return;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     std::vector<Region*> copies;

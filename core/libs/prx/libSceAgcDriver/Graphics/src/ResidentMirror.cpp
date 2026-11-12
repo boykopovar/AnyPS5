@@ -402,6 +402,7 @@ ResidentBuffer::ResidentBuffer(const Context& context, std::uint64_t base, std::
         type = context.DeviceMemoryType(requirements.memoryTypeBits, SlabBytes, "a resident heap mirror slab");
         memory = residentMemory(context, type);
         slots.resize(static_cast<std::size_t>(size / BlockSize));
+        uploads.assign(slots.size(), 0);
         std::vector<bool> wanted(slots.size(), false);
         for (const auto& [first, last] : backed) {
             if (first >= last) continue;
@@ -528,6 +529,13 @@ void ResidentBuffer::Read(std::uint64_t guest, std::span<std::byte> out) const {
     }
 }
 
+std::uint64_t ResidentBuffer::UploadSerial(std::uint64_t begin, std::uint64_t end) const {
+    std::uint64_t serial = 0;
+    if (begin >= end) return serial;
+    for (auto index = blockIndex(begin); index <= blockIndex(end - 1); ++index) serial = std::max(serial, uploads[index]);
+    return serial;
+}
+
 void ResidentBuffer::Store(std::uint64_t guest, std::span<const std::byte> bytes) {
     std::size_t done = 0;
     while (done < bytes.size()) {
@@ -579,6 +587,7 @@ void ResidentBuffer::flush() {
             for (auto at = std::max(first, cursor); at < last;) {
                 const auto next = std::min(last, (at / BlockSize + 1) * BlockSize);
                 if (slots[blockIndex(at)].host != nullptr) {
+                    uploads[blockIndex(at)] = ++uploadCounter;
                     if (!regions.empty() && regions.back().dstOffset + regions.back().size == at - origin) regions.back().size += next - at;
                     else regions.push_back({total, at - origin, next - at});
                     total += next - at;
