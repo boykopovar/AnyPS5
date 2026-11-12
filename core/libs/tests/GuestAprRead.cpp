@@ -17,6 +17,7 @@
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
+#include <winioctl.h>
 #else
 #include <sys/mman.h>
 #endif
@@ -374,6 +375,117 @@ void TestSubmitOrder() {
     Require(LoadValue(&idSlot) == written, "APR wrote the submission id after the commands that write the same memory ran");
 }
 
+void TestNativeReads() {
+    constexpr std::uint64_t wideOffset = (std::uint64_t{1} << 32u) + 2u;
+    constexpr std::array<char, 7> widePayload{'n', 'a', 't', 'i', 'v', 'e', '!'};
+#ifdef _WIN32
+    const auto sparseFile = CreateFileW(std::filesystem::path(FilePath).c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr, OPEN_EXISTING, 0, nullptr);
+    Require(sparseFile != INVALID_HANDLE_VALUE, "cannot open the native read sparse fixture");
+    DWORD returned = 0;
+    const bool sparse = DeviceIoControl(sparseFile, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr) != FALSE;
+    const bool closed = CloseHandle(sparseFile) != FALSE;
+    Require(sparse && closed, "cannot make the native read fixture sparse");
+#endif
+    {
+        std::fstream stream(FilePath, std::ios::binary | std::ios::in | std::ios::out);
+        stream.seekp(static_cast<std::streamoff>(wideOffset));
+        stream.write(widePayload.data(), widePayload.size());
+        stream.close();
+        Require(!stream.fail(), "cannot write the native read sparse payload");
+    }
+    const char* path = FilePath;
+    std::uint32_t fileId = 0;
+    std::uint32_t failed = 0;
+    Require(sceKernelAprResolveFilepathsToIds(&path, 1, &fileId, &failed) == 0, "cannot resolve the native read fixture");
+    std::array<std::uint8_t, 80> output;
+    output.fill(0xCC);
+    alignas(8) std::uint64_t release = 0;
+    const auto firstAddress = reinterpret_cast<std::uintptr_t>(output.data() + 1);
+    const auto wideAddress = reinterpret_cast<std::uintptr_t>(output.data() + 40);
+    const auto lastAddress = reinterpret_cast<std::uintptr_t>(output.data() + 56);
+    const std::array<std::uint32_t, 5> first{
+        0x3fffd428u, 6u, fileId, static_cast<std::uint32_t>(firstAddress), static_cast<std::uint32_t>(firstAddress >> 32u)};
+    const std::array<std::uint32_t, 6> wide{
+        0x00002528u, 6u, fileId, static_cast<std::uint32_t>(wideAddress), static_cast<std::uint32_t>(wideAddress >> 32u), 1u};
+    const std::array<std::uint32_t, 5> last{
+        0x00002428u, 4u, fileId, static_cast<std::uint32_t>(lastAddress), static_cast<std::uint32_t>(lastAddress >> 32u) | 0x40000u};
+    std::vector<std::uint8_t> memory(1, 0xA5);
+    Append(memory, first);
+    Append(memory, WaitAtLeast(&release, 1));
+    Append(memory, Apr::ReadFileCommand{{Apr::Opcode::ReadFileGather, sizeof(Apr::ReadFileCommand)}, 0, 0, 0, 5, 0x40004});
+    Append(memory, Apr::ReadFileCommand{{Apr::Opcode::ReadFileScatter, sizeof(Apr::ReadFileCommand)}, 0, 0,
+        reinterpret_cast<std::uint64_t>(output.data() + 20), 6, 0});
+    Append(memory, Apr::ReadFileCommand{{Apr::Opcode::ReadFile, sizeof(Apr::ReadFileCommand)}, fileId, 0,
+        reinterpret_cast<std::uint64_t>(output.data() + 32), 4, 0x201});
+    Append(memory, wide);
+    Append(memory, last);
+    const auto bytes = static_cast<std::uint32_t>(memory.size() - 1);
+    const Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, bytes, 7, bytes, memory.data() + 1};
+    std::uint32_t result = 0xFFFFFFFFu;
+    std::uint32_t id = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 7, &result, &id) == 0 && result == 0 && id != 0,
+        "native read stream submission failed");
+    for (std::size_t index = 0; index < 7; ++index) Require(output[index + 1] == FileByte(0x3fffd + index), "native short read returned incorrect bytes");
+    Require(output[8] == 0xCC && output[20] == 0xCC, "native read stream ran past its wait");
+    std::fill(memory.begin(), memory.end(), 0x19);
+    std::atomic_ref<std::uint64_t>(release).store(1, std::memory_order_release);
+    Require(sceKernelAprWaitCommandBuffer(id) == 0, "native read stream did not complete");
+    auto expected = output;
+    expected.fill(0xCC);
+    for (std::size_t index = 0; index < 12; ++index) expected[index + 1] = FileByte(0x3fffd + index);
+    for (std::size_t index = 0; index < 6; ++index) expected[index + 20] = FileByte(0x40009 + index);
+    for (std::size_t index = 0; index < 4; ++index) expected[index + 32] = FileByte(0x201 + index);
+    for (std::size_t index = 0; index < widePayload.size(); ++index) expected[index + 40] = static_cast<std::uint8_t>(widePayload[index]);
+    for (std::size_t index = 0; index < 5; ++index) expected[index + 56] = FileByte(0x40002 + index);
+    Require(output == expected, "mixed native and host reads lost their cursor, copied commands, or destination bounds");
+
+    const auto address = reinterpret_cast<std::uintptr_t>(output.data() + 1);
+    const std::array<std::uint32_t, 6> valid{
+        0x00001428u, 0u, fileId, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 0u};
+    const auto reject = [&](std::array<std::uint32_t, 6> words, std::uint32_t count) {
+        output.fill(0xCC);
+        std::array<std::uint8_t, sizeof(words) + 1> storage{};
+        std::memcpy(storage.data() + 1, words.data(), sizeof(words));
+        const Apr::CommandBufferObject malformed{Apr::BufferType::Generic, 0, count, 1, count, storage.data() + 1};
+        bool rejected = false;
+        try {
+            sceKernelAprSubmitCommandBuffer(&malformed, 8);
+        } catch (const std::runtime_error&) {
+            rejected = true;
+        }
+        Require(rejected, "APR accepted an unsupported or truncated native read packet");
+        Require(std::all_of(output.begin(), output.end(), [](std::uint8_t byte) { return byte == 0xCC; }),
+            "a malformed native read packet changed its destination");
+    };
+    for (std::uint32_t bytes = 1; bytes < 20; ++bytes) reject(valid, bytes);
+    auto malformed = valid;
+    malformed[0] = 0x00001528u;
+    for (std::uint32_t bytes = 20; bytes < 24; ++bytes) reject(malformed, bytes);
+    for (const auto header : {0x00001328u, 0x00001628u, 0x40001428u, 0x80001428u}) {
+        malformed = valid;
+        malformed[0] = header;
+        reject(malformed, 20);
+    }
+    malformed = valid;
+    malformed[2] |= 0x80000000u;
+    reject(malformed, 20);
+    malformed = valid;
+    malformed[4] |= 0x10000u;
+    reject(malformed, 20);
+    malformed = valid;
+    malformed[4] |= 0x20000u;
+    reject(malformed, 20);
+    malformed = valid;
+    malformed[0] = 0x00001528u;
+    malformed[5] = 0x100u;
+    reject(malformed, 24);
+    malformed = valid;
+    malformed[3] = 0;
+    malformed[4] = 0xF000u;
+    reject(malformed, 20);
+}
+
 #ifdef _WIN32
 std::uintptr_t faultBegin = 0;
 std::size_t faultBytes = 0;
@@ -474,6 +586,8 @@ int main(int argc, char** argv) {
             TestPriorities();
         } else if (mode == "order") {
             TestSubmitOrder();
+        } else if (mode == "native") {
+            TestNativeReads();
 #ifdef _WIN32
         } else if (mode == "fault") {
             const FaultBuffer storage;
