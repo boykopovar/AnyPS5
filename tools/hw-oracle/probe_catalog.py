@@ -1,10 +1,13 @@
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
+import subprocess
 from pathlib import Path
 
 import compare_results
@@ -203,13 +206,189 @@ def generate(probes, catalog_digest, output_dir):
         for probe, destination in zip(probes, destinations):
             os.replace(stage / probe["id"], destination)
     finally:
-        try:
-            stage.rmdir()
-        except OSError:
-            pass
+        shutil.rmtree(stage, ignore_errors=True)
     return destinations
 
 
 def list_probes(probes):
     for probe in probes:
         print(f"{probe['id']}\t{probe['instruction']}\t{len(probe['rows'])} rows\t{probe['description']}")
+
+
+def validate_device_label(value):
+    if not isinstance(value, str) or not IDENTIFIER.fullmatch(value):
+        raise ValueError("device label must contain lowercase letters, digits and single hyphens")
+    return value
+
+
+def make_result(probe, digest, device_label, target, runtime, outputs):
+    modes = probe["floating_point_modes"]
+    return {
+        "schema_version": 1,
+        "runtime": runtime,
+        "assembly_target": target,
+        "wave_size": probe["wave_size"],
+        "floating_point_modes": modes,
+        "lds_bytes": probe["lds_bytes"],
+        "memory": probe["memory"],
+        "body": probe["body"],
+        "extra_bytes": 0,
+        "extra_sha256": hashlib.sha256(b"").hexdigest(),
+        "output_registers": [f"v{10 + index}" for index in range(probe["output_registers"])],
+        "rows": [
+            {"input": row["input"], "output": list(output[:probe["output_registers"]])}
+            for row, output in zip(probe["rows"], outputs)
+        ],
+        "probe_id": probe["id"],
+        "probe_instruction": probe["instruction"],
+        "probe_description": probe["description"],
+        "probe_catalog_sha256": digest,
+        "device_label": device_label,
+        "measured_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def run_probes(probes, digest, output_dir, device_label):
+    device_label = validate_device_label(device_label)
+    directory = Path(output_dir) / device_label
+    destinations = [directory / f"{probe['id']}.json" for probe in probes]
+    existing = [str(path) for path in destinations if path.exists()]
+    if existing:
+        raise ValueError("refusing to replace existing measurement reports: " + ", ".join(existing))
+    directory.mkdir(parents=True, exist_ok=True)
+    runtime = hw_oracle.runtime()
+    target = hw_oracle.target()
+    for probe, destination in zip(probes, destinations):
+        rows = [tuple(row["input"]) for row in probe["rows"]]
+        outputs = hw_oracle.run(
+            probe["body"], rows, wave64=probe["wave_size"] == 64,
+            coarse=probe["memory"] == "coarse", **probe["floating_point_modes"],
+            lds=probe["lds_bytes"],
+        )
+        if len(outputs) != len(rows) or any(len(row) < probe["output_registers"] for row in outputs):
+            raise ValueError(f"hardware oracle returned an incomplete result for {probe['id']}")
+        report = make_result(probe, digest, device_label, target, runtime, outputs)
+        write_atomic(destination, json.dumps(report, indent=2) + "\n")
+        print(f"Measured {probe['id']}: {destination}")
+    return destinations
+
+
+def read_measurement(path, probe, digest, device_label):
+    try:
+        report = compare_results.read_report(path)
+    except (OSError, UnicodeError, ValueError) as error:
+        return "invalid", str(error)
+    if report.get("probe_catalog_sha256") != digest:
+        return "stale", "catalog digest differs"
+    expected = {
+        "probe_id": probe["id"],
+        "probe_instruction": probe["instruction"],
+        "probe_description": probe["description"],
+        "device_label": device_label,
+        "body": probe["body"],
+        "wave_size": probe["wave_size"],
+        "floating_point_modes": probe["floating_point_modes"],
+        "lds_bytes": probe["lds_bytes"],
+        "memory": probe["memory"],
+        "extra_bytes": 0,
+        "extra_sha256": hashlib.sha256(b"").hexdigest(),
+        "output_registers": [f"v{10 + index}" for index in range(probe["output_registers"])],
+    }
+    for name, value in expected.items():
+        if report.get(name) != value:
+            return "invalid", f"{name} differs from the curated probe"
+    expected_inputs = [row["input"] for row in probe["rows"]]
+    observed_inputs = [row["input"] for row in report["rows"]]
+    if observed_inputs != expected_inputs:
+        return "invalid", "input rows differ from the curated probe"
+    if report.get("device_label") != device_label:
+        return "invalid", "device label differs from the selected label"
+    if not isinstance(report.get("runtime"), str) or not isinstance(report.get("assembly_target"), str):
+        return "invalid", "runtime or assembly target is missing"
+    return "measured", ""
+
+
+def coverage(probes, digest, results_dir, device_label):
+    device_label = validate_device_label(device_label)
+    result = []
+    for probe in probes:
+        path = Path(results_dir) / device_label / f"{probe['id']}.json"
+        if not path.exists():
+            result.append({"id": probe["id"], "status": "missing", "detail": "no report"})
+            continue
+        status, detail = read_measurement(path, probe, digest, device_label)
+        result.append({"id": probe["id"], "status": status, "detail": detail})
+    return result
+
+
+def print_coverage(probes, digest, results, device_label, as_json=False):
+    measured = sum(item["status"] == "measured" for item in results)
+    if as_json:
+        print(json.dumps({
+            "device_label": device_label,
+            "catalog_sha256": digest,
+            "measured": measured,
+            "total": len(probes),
+            "percent": round(100 * measured / len(probes), 1),
+            "probes": results,
+        }, indent=2))
+        return
+    percent = 100 * measured / len(probes)
+    print(f"Device label: {device_label} (user-supplied; physical identity is not verified)")
+    print(f"Measured coverage: {measured}/{len(probes)} ({percent:.1f}%)")
+    print(f"Catalog SHA-256: {digest}")
+    for item in results:
+        suffix = f" — {item['detail']}" if item["detail"] else ""
+        print(f"{item['status']}: {item['id']}{suffix}")
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        description="Generate and run only the instruction probes explicitly listed in a curated catalog.")
+    commands = parser.add_subparsers(dest="command", required=True)
+    listing = commands.add_parser("list", help="list the curated instruction probes")
+    listing.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
+    for name, help_text in (("generate", "write reproducible assembly and input files"),
+                            ("run", "measure selected probes on the configured hardware oracle"),
+                            ("coverage", "report measured and missing probes for a device label")):
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
+        command.add_argument("--probe", action="append", dest="probe_ids",
+                             help="select a probe id; repeat to select more than one (default: all)")
+        if name == "generate":
+            command.add_argument("--output-dir", type=Path, required=True)
+        else:
+            command.add_argument("--results-dir", type=Path, required=True)
+            command.add_argument("--device-label", required=True,
+                                 help="user label for the measurement set; not checked against physical hardware")
+            if name == "coverage":
+                command.add_argument("--json", action="store_true", help="print machine-readable coverage data")
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        catalog, digest = read_catalog(args.catalog)
+        probes = catalog["probes"]
+        if args.command == "list":
+            list_probes(probes)
+            return 0
+        selected = select_probes(probes, args.probe_ids)
+        if args.command == "generate":
+            for path in generate(selected, digest, args.output_dir):
+                print(path)
+            return 0
+        if args.command == "run":
+            run_probes(selected, digest, args.results_dir, args.device_label)
+            return 0
+        states = coverage(selected, digest, args.results_dir, args.device_label)
+        print_coverage(selected, digest, states, args.device_label, as_json=args.json)
+        return int(any(item["status"] != "measured" for item in states))
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        parser.error(str(error))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
