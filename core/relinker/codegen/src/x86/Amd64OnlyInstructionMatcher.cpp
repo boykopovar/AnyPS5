@@ -28,6 +28,7 @@
 #include <codegen/x86/Avx2TwinLowering.hpp>
 #include <codegen/x86/LaneSplitLowering.hpp>
 #include <codegen/x86/PermuteLowering.hpp>
+#include <codegen/x86/WidenBroadcastLowering.hpp>
 #include <codegen/CodegenException.hpp>
 #include <algorithm>
 #include <cstring>
@@ -316,6 +317,10 @@ const char* Amd64OnlyInstructionMatcher::_emitOutOfLine(StubBodyBuilder& body, c
         EmitPermute(body, *permute);
         return permute->Name;
     }
+    if (const auto widen = _target == Amd64OnlyTarget::Avx ? DecodeWidenBroadcast(instr.Data, instr.Length) : std::nullopt) {
+        EmitWidenBroadcast(body, *widen);
+        return widen->Name;
+    }
     if (instr.IsExtrq() || instr.IsInsertq()) {
         const auto operands = DecodeSse4a(instr.Data, instr.Length);
         _lowering.EmitOutOfLine(body, operands);
@@ -519,6 +524,9 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
 
     if (const auto permute = _target == Amd64OnlyTarget::Avx ? DecodePermute(data, length) : std::nullopt)
         return _trampoline(permute->Name, length, _outOfLine(length, trailing, [&](StubBodyBuilder& body) { EmitPermute(body, *permute); }), false, true);
+
+    if (const auto widen = _target == Amd64OnlyTarget::Avx ? DecodeWidenBroadcast(data, length) : std::nullopt)
+        return _trampoline(widen->Name, length, _outOfLine(length, trailing, [&](StubBodyBuilder& body) { EmitWidenBroadcast(body, *widen); }), false, true);
 
     return _matchRosetta(instr, trailing);
 }
