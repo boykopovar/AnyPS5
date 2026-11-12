@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 HERE = Path(__file__).resolve().parent
@@ -165,6 +166,46 @@ class ProbeGenerationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "refusing to replace generated probe directories"):
                 probe_catalog.generate([probe], self.digest, output)
             self.assertEqual(marker.read_text(encoding="utf-8"), "existing")
+
+
+class ProbeRunTests(unittest.TestCase):
+    def setUp(self):
+        self.catalog, self.digest = probe_catalog.read_catalog()
+
+    def test_run_saves_results_with_oracle_settings_and_device_label(self):
+        probe = self.catalog["probes"][0]
+        outputs = [(index,) * 16 for index in range(len(probe["rows"]))]
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(probe_catalog.hw_oracle, "runtime", return_value="hsa"), \
+                    patch.object(probe_catalog.hw_oracle, "target", return_value="gfx1036"), \
+                    patch.object(probe_catalog.hw_oracle, "run", return_value=outputs) as run:
+                paths = probe_catalog.run_probes([probe], self.digest, temporary, "rx-6750-xt")
+            run.assert_called_once_with(
+                probe["body"], [tuple(row["input"]) for row in probe["rows"]],
+                wave64=False, coarse=False, **probe["floating_point_modes"], lds=4096,
+            )
+            report = probe_catalog.compare_results.read_report(paths[0])
+            self.assertEqual(report["probe_id"], probe["id"])
+            self.assertEqual(report["device_label"], "rx-6750-xt")
+            self.assertEqual(report["assembly_target"], "gfx1036")
+            self.assertEqual(report["rows"][0]["output"], [0])
+
+    def test_run_rejects_existing_measurements_instead_of_overwriting(self):
+        probe = self.catalog["probes"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "rx-6750-xt" / f"{probe['id']}.json"
+            destination.parent.mkdir()
+            destination.write_text("keep", encoding="utf-8")
+            with patch.object(probe_catalog.hw_oracle, "run") as run:
+                with self.assertRaisesRegex(ValueError, "refusing to replace existing measurement"):
+                    probe_catalog.run_probes([probe], self.digest, temporary, "rx-6750-xt")
+                run.assert_not_called()
+
+    def test_run_rejects_unsafe_device_labels_before_creating_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(ValueError, "device label must contain"):
+                probe_catalog.run_probes(self.catalog["probes"][:1], self.digest, temporary, "../gpu")
+            self.assertEqual(list(Path(temporary).iterdir()), [])
 
 
 if __name__ == "__main__":
