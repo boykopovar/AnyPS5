@@ -3892,15 +3892,7 @@ int APS5_VABI _ZN7WebCore27TranslateTransformOperationD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15AffineTransformC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKViewSetPageScaleFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15AffineTransformC2Edddddd() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -5492,10 +5484,6 @@ int APS5_VABI _ZThn112_N7WebCore9DOMWindowD1Ev() {
 }
 
 int APS5_VABI _ZN7WebCore17FrameLoaderClient29dispatchGlobalObjectAvailableERNS_15DOMWrapperWorldE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore15AffineTransform7inverseEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7431,10 +7419,6 @@ int APS5_VABI _ZN7WebCore13GraphicsLayer17distributeOpacityEf() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15AffineTransformC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore13JSHTMLElement6createEPN3JSC9StructureEPNS_17JSDOMGlobalObjectEON3WTF3RefINS_11HTMLElementENS6_13DumbPtrTraitsIS8_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8983,10 +8967,6 @@ int APS5_VABI _ZNK7WebCore16HTMLMediaElement19isVisibleInViewportEv() {
 }
 
 int APS5_VABI _ZN7WebCore20TransformationMatrix6blend4ERKS0_d() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15AffineTransformC1Edddddd() {
     NotImplemented_nid_no_patch(__func__);
 }
 
