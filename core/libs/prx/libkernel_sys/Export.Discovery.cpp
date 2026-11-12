@@ -334,9 +334,9 @@ int APS5_VABI ptrace_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI reboot_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI reboot_nid_postfix(int) {
+    *__error_nid_postfix() = 1;
+    return -1;
 }
 
 int APS5_VABI revoke_nid_postfix(const char* path) {

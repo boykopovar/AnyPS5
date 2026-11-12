@@ -407,7 +407,10 @@ static void VerifyInvalidQueueAttributes() {
     Require(sceKernelCreateEqueue(&untouched, "0123456789012345678901234567890") == SCE_OK && untouched != 0x1234);
     Require(sceKernelDeleteEqueue(untouched) == SCE_OK);
 
+    Require(sceKernelCreateEqueue(&eq, reinterpret_cast<const char*>(1)) == SCE_KERNEL_ERROR_EFAULT && eq == 0);
+    Require(sceKernelCreateEqueue(reinterpret_cast<KernelEqueue*>(1), "bad output") == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelCreateEqueue(&eq, "bounds") == SCE_OK);
+    Require(static_cast<std::uint32_t>(eq) == static_cast<std::uint32_t>(untouched));
     KernelEvent event{};
     int count = -1;
     const KernelUseconds timeout = 0;

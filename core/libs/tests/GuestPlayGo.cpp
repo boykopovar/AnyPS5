@@ -1,6 +1,7 @@
 #include "prx/libScePlayGo/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
@@ -150,6 +151,9 @@ static int CheckNoPlayGoFile(const char* root) {
     PlayGoToDo todo[2] = {{0, 3, 0}, {0, 0, 0}};
     Require(scePlayGoSetToDoList(handle + 1, todo, 2) == badHandle);
     Require(scePlayGoSetToDoList(handle, nullptr, 2) == badPointer);
+    errno = 71;
+    Require(scePlayGoSetToDoList(handle, reinterpret_cast<const PlayGoToDo*>(0x10), 2) == badPointer);
+    Require(errno == 71);
     Require(scePlayGoSetToDoList(handle, todo, 0) == badSize);
     Require(scePlayGoSetToDoList(handle, todo, 2) == 0);
     todo[1].locus = 1;
@@ -217,6 +221,9 @@ static int CheckNoPlayGoFile(const char* root) {
     Require(scePlayGoRequestOptionalChunk(handle + 1, 0, &request) == badHandle);
     Require(scePlayGoRequestOptionalChunk(handle + 1, 3, nullptr) == badHandle);
     Require(scePlayGoRequestOptionalChunk(handle, 0, nullptr) == badPointer);
+    errno = 71;
+    Require(scePlayGoRequestOptionalChunk(handle, 0, reinterpret_cast<const PlayGoOptionalChunk*>(0x10)) == badPointer);
+    Require(errno == 71);
     Require(scePlayGoRequestOptionalChunk(handle, 3, nullptr) == badPointer);
     Require(scePlayGoRequestOptionalChunk(handle, 3, &request) == badOptionalType);
     Require(scePlayGoRequestOptionalChunk(handle, 0xFFFFFFFF, &request) == badOptionalType);
