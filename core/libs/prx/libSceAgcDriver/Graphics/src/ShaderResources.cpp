@@ -4036,6 +4036,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         }
         return true;
     };
+    const ResidentPublishExemption residentExemption(guestMemory);
     if (EpochRevalidate()) {
         if ((!directRegions.empty() || !guestMemory.Writes().empty()) && !(pendingSerialSeen != 0 && pendingSerialSeen == StorageTexture::PendingSerial())) {
             struct RegionsTag {};

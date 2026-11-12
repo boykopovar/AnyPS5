@@ -1033,6 +1033,20 @@ private:
     std::chrono::steady_clock::time_point start;
 };
 
+struct HookSyncTag {};
+
+bool& HookSyncActive() {
+    return HostThreadLocal<bool, HookSyncTag>();
+}
+
+struct HookSyncScopeFlag {
+    HookSyncScopeFlag() : previous(std::exchange(HookSyncActive(), true)) {}
+    HookSyncScopeFlag(const HookSyncScopeFlag&) = delete;
+    HookSyncScopeFlag& operator=(const HookSyncScopeFlag&) = delete;
+    ~HookSyncScopeFlag() { HookSyncActive() = previous; }
+    bool previous;
+};
+
 // GuestMemory flush hook: a CPU access to memory that recorded GPU work will write waits for that
 // work first; then storage image results pending for the range are stored. The recorder is only
 // dereferenced under the GpuMutex (it is destroyed with its device under that lock).
@@ -1059,6 +1073,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
         std::lock_guard gpu(GuestMemory::GpuMutex());
         if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->PendingWriteOverlaps(address, bytes)) {
             const HookSyncScope attribution(*recorder, address, bytes);
+            const HookSyncScopeFlag cpuSync;
             Recorder::CountSync(1);
             // The wait runs without the mutex when this acquisition is the outermost one (a stage-A
             // read, a game thread); the recorder is not dereferenced after the call.
@@ -1098,6 +1113,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
         std::lock_guard gpu(GuestMemory::GpuMutex());
         if (auto* recorder = Recorder::Active(); recorder != nullptr) {
             const RecordedStoreSyncScope attribution(*recorder, address, bytes, classification, stored, HookSyncProfiled() ? RecordedStoreKey() : HookSyncKey{});
+            const HookSyncScopeFlag cpuSync;
             Recorder::CountSync(2);
             if (HookFullSync() || completionDepth() != 0) recorder->Sync();
             else recorder->SyncThrough(address, bytes, true);
@@ -2007,6 +2023,7 @@ void Recorder::RecordStore(VkBuffer buffer, VkDeviceSize offset, std::span<const
     if (bytes.empty()) return;
     ensureOpen();
     flushDeferredDispatch();
+    FlushWrittenResidencies(*this);
     auto& run = open->run;
     const VkDeviceSize end = offset + bytes.size();
     storeCount.fetch_add(1, std::memory_order_relaxed);
@@ -3005,9 +3022,8 @@ bool Recorder::RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress rec
     return true;
 }
 
-bool Recorder::RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress result, VkDeviceAddress snapshot, VkDeviceAddress target, std::uint32_t dwords, VkDeviceAddress counter) {
+bool Recorder::ChangedCopyAvailable() {
     constexpr std::uint32_t PushBytes = 40;
-    constexpr std::uint32_t GroupSize = 64;
     if (changedCopyState == 0) {
         changedCopyState = -1;
         VkShaderModule module = VK_NULL_HANDLE;
@@ -3035,7 +3051,13 @@ bool Recorder::RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress resul
             std::fprintf(stderr, "[gpu] staged write-backs copy their whole ranges: %s\n", error.what());
         }
     }
-    if (changedCopyState < 0) return false;
+    return changedCopyState > 0;
+}
+
+bool Recorder::RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress result, VkDeviceAddress snapshot, VkDeviceAddress target, std::uint32_t dwords, VkDeviceAddress counter) {
+    constexpr std::uint32_t PushBytes = 40;
+    constexpr std::uint32_t GroupSize = 64;
+    if (!ChangedCopyAvailable()) return false;
     static const bool alwaysCopy = std::getenv("APS5_CHANGED_COPY_ALWAYS") != nullptr;
     function(cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, changedCopyPipeline);
     const auto perDispatch = static_cast<std::uint32_t>(std::min<std::uint64_t>(std::uint64_t{context.limits.maxComputeWorkGroupCount[0]} * GroupSize, std::numeric_limits<std::uint32_t>::max() - GroupSize));
@@ -4134,6 +4156,7 @@ void Recorder::Submit() {
     flushDeferredDispatch();
     if (!open->keyStores.empty()) recordKeyStores(false);
     if (open->renderPass.open) endOpenRenderPass(PassBreak::NewBatch);
+    FlushWrittenResidencies(*this, HookSyncActive());
     const bool segments = segmentMode();
     if (!segments) {
         endSamples(*open);

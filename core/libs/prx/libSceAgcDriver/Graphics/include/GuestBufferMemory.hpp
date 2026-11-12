@@ -92,8 +92,21 @@ struct BufferResidencyCounts {
     std::uint64_t inPlaceWritten = 0;
     std::uint64_t inPlaceDirty = 0;
     std::uint64_t inPlaceOther = 0;
+    std::uint64_t inPlaceUnprofitable = 0;
     std::uint64_t heldBytes = 0;
     std::uint64_t heldRanges = 0;
+    std::uint64_t heldWrittenRanges = 0;
+    std::uint64_t dirtyBytes = 0;
+    std::uint64_t writtenUses = 0;
+    std::uint64_t writtenCopiedInBytes = 0;
+    std::uint64_t writtenBackBytes = 0;
+    std::uint64_t writtenFlushes = 0;
+    std::uint64_t writtenMergedBytes = 0;
+    std::uint64_t flushCpu = 0;
+    std::uint64_t flushGpu = 0;
+    std::uint64_t flushEvict = 0;
+    std::uint64_t flushBatch = 0;
+    std::uint64_t unprofitableWindows = 0;
 };
 
 struct SegmentedBufferCounts {
@@ -256,6 +269,18 @@ BufferResidencyCounts BufferResidencyStats();
 std::string BufferResidencyReport();
 void ClearBufferResidencies(VkDevice device);
 void SetBufferResidencyForTests(std::uint64_t capBytes, std::int64_t minIdleMs);
+void FlushWrittenResidencies(Recorder& recorder, bool cpuSync = false);
+
+class ResidentPublishExemption {
+public:
+    explicit ResidentPublishExemption(const class GuestBufferMemory& memory);
+    ResidentPublishExemption(const ResidentPublishExemption&) = delete;
+    ResidentPublishExemption& operator=(const ResidentPublishExemption&) = delete;
+    ~ResidentPublishExemption();
+
+private:
+    std::size_t count;
+};
 
 // Identity of the read-only image mirror serving [address, address + bytes) (the counterpart of
 // HostImportSerial for main-image ranges, which no import serves): a serial unique for the life of
@@ -406,6 +431,9 @@ public:
     bool HasResidentBuffers() const {
         for (const auto& region : regions) if (region.residency != nullptr) return true;
         return false;
+    }
+    void CollectResidents(std::vector<const BufferResidency*>& out) const {
+        for (const auto& region : regions) if (region.residency != nullptr) out.push_back(region.residency.get());
     }
     void DisallowAddressStaging() { addressStaging = false; }
     void AllowAdjustedRegions() { adjustedRegions = true; }

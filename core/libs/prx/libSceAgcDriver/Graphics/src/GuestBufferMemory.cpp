@@ -121,7 +121,7 @@ struct ImageMirror {
     std::uint64_t lastDispatch = 0;
 };
 
-struct BufferResidency {
+struct BufferResidency : std::enable_shared_from_this<BufferResidency> {
     struct Window {
         std::uint32_t uses = 0;
         std::uint32_t writtenUses = 0;
@@ -134,18 +134,36 @@ struct BufferResidency {
         std::uint32_t otherFallbacks = 0;
         std::uint32_t refreshes = 0;
         std::uint64_t refreshedBytes = 0;
+        std::uint32_t writtenResidentUses = 0;
+        std::uint32_t unprofitableFallbacks = 0;
+        std::uint64_t writtenCopiedInBytes = 0;
+        std::uint64_t writtenBackBytes = 0;
     };
     std::uint64_t begin = 0;
     std::uint64_t end = 0;
     std::shared_ptr<Buffer> buffer;
+    std::shared_ptr<Buffer> baseline;
     std::vector<std::uint64_t> generations;
+    std::vector<std::uint64_t> own;
+    std::vector<std::uint8_t> dirty;
+    std::vector<std::uint8_t> conflict;
+    std::uint64_t dirtyBlocks = 0;
+    bool baselineValid = false;
+    bool writtenSeen = false;
+    bool evicted = false;
     bool primed = false;
     bool suspended = false;
     bool listed = false;
+    VkBuffer importBuffer = VK_NULL_HANDLE;
+    std::uint64_t importBase = 0;
+    VkDeviceAddress importAddress = 0;
     std::uint32_t heavyStreak = 0;
     std::uint32_t calmStreak = 0;
+    std::uint32_t profitUses = 0;
+    std::uint32_t profitFlushes = 0;
     std::int64_t lastUseMs = 0;
     std::int64_t retryMs = 0;
+    std::int64_t unprofitableUntilMs = 0;
     Window window;
 };
 
@@ -6003,12 +6021,24 @@ constexpr std::int64_t ResidencyDefaultMinIdleMs = 1000;
 constexpr std::size_t ResidencyMaxEntries = 16384;
 constexpr std::uint32_t ResidencyHeavyStreak = 3;
 constexpr std::uint32_t ResidencyCalmStreak = 2;
+constexpr std::uint32_t WrittenProfitWindow = 8;
+constexpr std::int64_t WrittenUnprofitableMs = 2000;
 
-enum class ResidencyReason : std::uint8_t { Resident, Written, Budget, Dirty, Other };
+enum class ResidencyReason : std::uint8_t { Resident, Written, Budget, Dirty, Other, Unprofitable };
+enum class FlushTrigger : std::uint8_t { Cpu, Gpu, Evict, Batch };
 
-bool bufferResidencyEnabled() {
+bool readResidencyEnabled() {
     static const bool disabled = std::getenv("APS5_NO_BUFFER_RESIDENCY") != nullptr;
     return !disabled && !DrawPipelineEnabled();
+}
+
+bool writtenResidencyEnabled() {
+    static const bool disabled = std::getenv("APS5_NO_WRITTEN_RESIDENCY") != nullptr;
+    return !disabled && !DrawPipelineEnabled();
+}
+
+bool bufferResidencyEnabled() {
+    return readResidencyEnabled() || writtenResidencyEnabled();
 }
 
 bool presentReportEnabled() {
@@ -6039,15 +6069,19 @@ std::int64_t residencyClockMs() {
 
 using ResidencyKey = std::pair<std::uint64_t, std::uint64_t>;
 using ResidencyMap = std::map<ResidencyKey, std::shared_ptr<BufferResidency>>;
+using ByteRange = std::pair<std::uint64_t, std::uint64_t>;
 
 struct BufferResidencies {
     AgcDriver::Mutex mutex;
     VkDevice device = VK_NULL_HANDLE;
     ResidencyMap entries;
     std::vector<std::weak_ptr<BufferResidency>> orphans;
+    std::vector<std::shared_ptr<BufferResidency>> dirtyEntries;
+    std::atomic<std::uint64_t> dirtyCount{0};
     std::uint64_t heldBytes = 0;
     std::int64_t sweptMs = 0;
     BufferResidencyCounts totals;
+    BufferResidencyCounts windowBase;
 };
 
 BufferResidencies& Residencies() {
@@ -6059,6 +6093,11 @@ std::uint64_t residencyBytes(const BufferResidency& entry) {
     return entry.end - entry.begin;
 }
 
+std::uint64_t residencyHeld(const BufferResidency& entry) {
+    const auto bytes = residencyBytes(entry);
+    return (entry.buffer != nullptr ? bytes : 0u) + (entry.baseline != nullptr ? bytes : 0u);
+}
+
 std::uint64_t orphanBytes(BufferResidencies& registry) {
     std::uint64_t bytes = 0;
     for (auto it = registry.orphans.begin(); it != registry.orphans.end();) {
@@ -6067,23 +6106,82 @@ std::uint64_t orphanBytes(BufferResidencies& registry) {
             it = registry.orphans.erase(it);
             continue;
         }
-        bytes += residencyBytes(*entry);
+        bytes += residencyHeld(*entry);
         ++it;
     }
     return bytes;
 }
 
+struct ExemptStorage {};
+
+std::vector<const BufferResidency*>& exemptResidencies() {
+    return HostThreadLocal<std::vector<const BufferResidency*>, ExemptStorage>();
+}
+
+bool residencyExempt(const BufferResidency& entry) {
+    const auto& exempt = exemptResidencies();
+    return !exempt.empty() && std::find(exempt.begin(), exempt.end(), &entry) != exempt.end();
+}
+
+struct ExemptScope {
+    explicit ExemptScope(const BufferResidency* entry) : count(exemptResidencies().size()) {
+        if (entry != nullptr) exemptResidencies().push_back(entry);
+    }
+    ExemptScope(const ExemptScope&) = delete;
+    ExemptScope& operator=(const ExemptScope&) = delete;
+    ~ExemptScope() { exemptResidencies().resize(count); }
+    std::size_t count;
+};
+
+struct ExemptListScope {
+    explicit ExemptListScope(const std::vector<const BufferResidency*>& entries) : count(exemptResidencies().size()) {
+        exemptResidencies().insert(exemptResidencies().end(), entries.begin(), entries.end());
+    }
+    ExemptListScope(const ExemptListScope&) = delete;
+    ExemptListScope& operator=(const ExemptListScope&) = delete;
+    ~ExemptListScope() { exemptResidencies().resize(count); }
+    std::size_t count;
+};
+
+void residenciesForRanges(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::vector<const BufferResidency*>& out) {
+    auto& registry = Residencies();
+    if (registry.dirtyCount.load(std::memory_order_acquire) == 0) return;
+    std::lock_guard lock(registry.mutex);
+    for (const auto& range : ranges) {
+        if (const auto found = registry.entries.find(range); found != registry.entries.end()) out.push_back(found->second.get());
+    }
+}
+
+void setBlockDirty(BufferResidencies& registry, BufferResidency& entry, std::size_t block, bool on) {
+    if ((entry.dirty[block] != 0) == on) return;
+    entry.dirty[block] = on ? 1 : 0;
+    if (on) {
+        if (entry.dirtyBlocks++ == 0) {
+            registry.dirtyEntries.push_back(entry.shared_from_this());
+            registry.dirtyCount.store(registry.dirtyEntries.size(), std::memory_order_release);
+        }
+        return;
+    }
+    if (--entry.dirtyBlocks != 0) return;
+    std::erase_if(registry.dirtyEntries, [&](const std::shared_ptr<BufferResidency>& held) { return held.get() == &entry; });
+    registry.dirtyCount.store(registry.dirtyEntries.size(), std::memory_order_release);
+}
+
 ResidencyMap::iterator evictResidency(BufferResidencies& registry, ResidencyMap::iterator it) {
     auto entry = std::move(it->second);
     const auto next = registry.entries.erase(it);
+    entry->evicted = true;
     if (entry->listed) {
-        registry.heldBytes -= residencyBytes(*entry);
+        registry.heldBytes -= residencyHeld(*entry);
         entry->listed = false;
         ++registry.totals.evicted;
     }
     if (entry->buffer == nullptr) return next;
     if (entry.use_count() > 1) registry.orphans.push_back(entry);
-    else entry->buffer.reset();
+    else {
+        entry->buffer.reset();
+        entry->baseline.reset();
+    }
     return next;
 }
 
@@ -6091,20 +6189,20 @@ void sweepResidencies(BufferResidencies& registry, std::int64_t now, std::int64_
     for (auto it = registry.entries.begin(); it != registry.entries.end();) {
         const auto& entry = *it->second;
         const auto idle = now - entry.lastUseMs;
-        if (entry.buffer != nullptr && idle >= idleMs) it = evictResidency(registry, it);
+        if (entry.buffer != nullptr && entry.dirtyBlocks == 0 && idle >= idleMs) it = evictResidency(registry, it);
         else if (entry.buffer == nullptr && idle >= ResidencyForgetIdleMs) it = registry.entries.erase(it);
         else ++it;
     }
 }
 
-bool makeResidencyRoom(BufferResidencies& registry, std::uint64_t bytes, std::int64_t now) {
+bool makeResidencyRoom(BufferResidencies& registry, std::uint64_t bytes, std::int64_t now, const BufferResidency* keep) {
     const auto cap = bufferResidencyCap();
     if (bytes > cap) return false;
     const auto idle = residencyMinIdleMs();
     while (registry.heldBytes + orphanBytes(registry) + bytes > cap) {
         auto victim = registry.entries.end();
         for (auto it = registry.entries.begin(); it != registry.entries.end(); ++it) {
-            if (it->second->buffer == nullptr || now - it->second->lastUseMs < idle) continue;
+            if (it->second->buffer == nullptr || it->second->dirtyBlocks != 0 || it->second.get() == keep || now - it->second->lastUseMs < idle) continue;
             if (victim == registry.entries.end() || it->second->lastUseMs < victim->second->lastUseMs) victim = it;
         }
         if (victim == registry.entries.end()) return false;
@@ -6113,28 +6211,65 @@ bool makeResidencyRoom(BufferResidencies& registry, std::uint64_t bytes, std::in
     return true;
 }
 
-bool admitResidency(const Context& context, BufferResidencies& registry, BufferResidency& entry, std::int64_t now) {
+void sizeResidency(BufferResidency& entry) {
+    const auto blocks = entry.generations.size();
+    entry.own.assign(blocks, 0);
+    entry.dirty.assign(blocks, 0);
+    entry.conflict.assign(blocks, 0);
+}
+
+bool allocateResidentBuffer(const Context& context, std::uint64_t bytes, bool addressable, std::shared_ptr<Buffer>& out) {
+    try {
+        out = Buffer::WithinDeviceLocalHeadroom(context, static_cast<std::size_t>(bytes), gpuCopyUsage(context, addressable));
+    } catch (const std::exception& error) {
+        static std::atomic<int> reported{0};
+        if (reported.fetch_add(1, std::memory_order_relaxed) < 4) std::fprintf(stderr, "[buffers] residency copy of %llu bytes refused: %s\n", static_cast<unsigned long long>(bytes), error.what());
+        out.reset();
+        return false;
+    }
+    if (out == nullptr) return false;
+    if (addressable && out->DeviceAddress() == 0) {
+        out.reset();
+        return false;
+    }
+    return true;
+}
+
+bool admitResidency(const Context& context, BufferResidencies& registry, BufferResidency& entry, std::int64_t now, bool written) {
     const auto bytes = residencyBytes(entry);
-    if (!makeResidencyRoom(registry, bytes, now)) return false;
-    if (!deviceLocalHasRoom(context, static_cast<std::size_t>(bytes))) {
+    const auto need = written ? bytes * 2u : bytes;
+    if (!makeResidencyRoom(registry, need, now, &entry)) return false;
+    if (!deviceLocalHasRoom(context, static_cast<std::size_t>(need))) {
         sweepResidencies(registry, now, residencyMinIdleMs());
         return false;
     }
     std::shared_ptr<Buffer> buffer;
-    try {
-        buffer = Buffer::WithinDeviceLocalHeadroom(context, static_cast<std::size_t>(bytes), gpuCopyUsage(context, false));
-    } catch (const std::exception& error) {
-        static std::atomic<int> reported{0};
-        if (reported.fetch_add(1, std::memory_order_relaxed) < 4) std::fprintf(stderr, "[buffers] residency copy of %llu bytes refused: %s\n", static_cast<unsigned long long>(bytes), error.what());
-        return false;
-    }
-    if (buffer == nullptr) return false;
+    std::shared_ptr<Buffer> baseline;
+    if (!allocateResidentBuffer(context, bytes, written, buffer)) return false;
+    if (written && !allocateResidentBuffer(context, bytes, true, baseline)) return false;
     entry.buffer = std::move(buffer);
+    entry.baseline = std::move(baseline);
+    entry.baselineValid = false;
     entry.listed = true;
     entry.primed = false;
     entry.generations.assign(entry.generations.size(), 0);
-    registry.heldBytes += bytes;
+    sizeResidency(entry);
+    registry.heldBytes += residencyHeld(entry);
     ++registry.totals.admitted;
+    return true;
+}
+
+bool admitBaseline(const Context& context, BufferResidencies& registry, BufferResidency& entry, std::int64_t now) {
+    if (entry.baseline != nullptr) return true;
+    const auto bytes = residencyBytes(entry);
+    if (entry.buffer == nullptr || entry.buffer->DeviceAddress() == 0) return false;
+    if (!makeResidencyRoom(registry, bytes, now, &entry)) return false;
+    if (!deviceLocalHasRoom(context, static_cast<std::size_t>(bytes))) return false;
+    std::shared_ptr<Buffer> baseline;
+    if (!allocateResidentBuffer(context, bytes, true, baseline)) return false;
+    entry.baseline = std::move(baseline);
+    entry.baselineValid = false;
+    registry.heldBytes += bytes;
     return true;
 }
 
@@ -6143,34 +6278,84 @@ struct ResidencyPlan {
     bool tracked = false;
     bool cpuDirty = false;
     std::uint64_t dirtyBytes = 0;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
+    std::uint64_t cpuBytes = 0;
+    std::vector<ByteRange> runs;
+    std::vector<ByteRange> mergeRuns;
+    std::vector<std::size_t> refreshBlocks;
+    std::vector<std::size_t> mergeBlocks;
+    std::vector<std::size_t> writeBlocks;
 };
 
-ResidencyPlan planResidency(const BufferResidency& entry) {
+void appendBlockRun(const BufferResidency& entry, std::size_t block, std::vector<ByteRange>& runs) {
+    const auto first = entry.begin / ResidencyBlockBytes;
+    const auto from = std::max(entry.begin, (first + block) * ResidencyBlockBytes);
+    const auto to = std::min(entry.end, (first + block + 1) * ResidencyBlockBytes);
+    if (!runs.empty() && runs.back().second == from) runs.back().second = to;
+    else runs.emplace_back(from, to);
+}
+
+std::uint64_t blockThreshold(const BufferResidency& entry, std::size_t block) {
+    const auto generation = entry.generations[block];
+    return generation == 0 ? 0 : std::max(generation, entry.own[block]);
+}
+
+ResidencyPlan planResidency(BufferResidency& entry, std::span<const ByteRange> writes = {}, bool registryHeld = false) {
     ResidencyPlan plan;
+    auto& registry = Residencies();
     const auto bytes = static_cast<std::size_t>(residencyBytes(entry));
     plan.generation = GuestMemory::CollectWrites(entry.begin, bytes);
+    const auto count = entry.generations.size();
     thread_local std::vector<std::uint8_t> changed;
     thread_local std::vector<std::uint8_t> cpu;
-    changed.assign(entry.generations.size(), 0);
-    cpu.assign(entry.generations.size(), 0);
-    plan.tracked = plan.generation != 0 && GuestMemory::ChangedBlocks(entry.begin, bytes, entry.generations, changed, cpu);
-    if (!plan.tracked) {
-        plan.runs.emplace_back(entry.begin, entry.end);
-        plan.dirtyBytes = bytes;
-        return plan;
+    thread_local std::vector<std::uint64_t> thresholds;
+    changed.assign(count, 0);
+    cpu.assign(count, 0);
+    thresholds.assign(count, 0);
+    std::unique_lock lock(registry.mutex, std::defer_lock);
+    if (!registryHeld) lock.lock();
+    for (std::size_t block = 0; block < count; ++block) thresholds[block] = blockThreshold(entry, block);
+    plan.tracked = plan.generation != 0 && GuestMemory::ChangedBlocks(entry.begin, bytes, thresholds, changed, cpu);
+    {
+        for (std::size_t block = 0; block < count; ++block) {
+            const bool foreign = !plan.tracked || changed[block] != 0;
+            if (entry.dirty[block] != 0) {
+                if (!foreign && entry.conflict[block] == 0) continue;
+                plan.mergeBlocks.push_back(block);
+            } else if (!foreign) {
+                continue;
+            }
+            plan.refreshBlocks.push_back(block);
+            if (plan.tracked && cpu[block] != 0 && entry.primed) plan.cpuDirty = true;
+        }
+        for (std::size_t block = 0; block < count; ++block) {
+            if (!plan.tracked || cpu[block] != 0) {
+                std::vector<ByteRange> one;
+                appendBlockRun(entry, block, one);
+                plan.cpuBytes += one.front().second - one.front().first;
+            }
+        }
     }
+    for (const auto block : plan.refreshBlocks) appendBlockRun(entry, block, plan.runs);
+    for (const auto block : plan.mergeBlocks) appendBlockRun(entry, block, plan.mergeRuns);
+    for (const auto& [from, to] : plan.runs) plan.dirtyBytes += to - from;
+    if (entry.baseline == nullptr || writes.empty()) return plan;
     const auto first = entry.begin / ResidencyBlockBytes;
-    for (std::size_t block = 0; block < changed.size(); ++block) {
-        if (changed[block] == 0) continue;
-        const auto from = std::max(entry.begin, (first + block) * ResidencyBlockBytes);
-        const auto to = std::min(entry.end, (first + block + 1) * ResidencyBlockBytes);
-        if (!plan.runs.empty() && plan.runs.back().second == from) plan.runs.back().second = to;
-        else plan.runs.emplace_back(from, to);
-        plan.dirtyBytes += to - from;
-        if (cpu[block] != 0 && entry.primed) plan.cpuDirty = true;
+    thread_local std::vector<std::uint8_t> marked;
+    marked.assign(count, 0);
+    for (const auto& [writeBegin, writeEnd] : writes) {
+        const auto from = std::max(writeBegin, entry.begin);
+        const auto to = std::min(writeEnd, entry.end);
+        if (from >= to) continue;
+        for (auto block = from / ResidencyBlockBytes - first; block <= (to - 1) / ResidencyBlockBytes - first; ++block) marked[static_cast<std::size_t>(block)] = 1;
+    }
+    for (std::size_t block = 0; block < count; ++block) {
+        if (marked[block] != 0) plan.writeBlocks.push_back(block);
     }
     return plan;
+}
+
+std::uint64_t changedBytes(const BufferResidency& entry, const ResidencyPlan& plan) {
+    return entry.writtenSeen ? plan.cpuBytes : plan.dirtyBytes;
 }
 
 void notePlannedResidency(BufferResidency& entry, const ResidencyPlan& plan) {
@@ -6179,7 +6364,7 @@ void notePlannedResidency(BufferResidency& entry, const ResidencyPlan& plan) {
         ++Residencies().totals.cpuModifiedUses;
     }
     if (!entry.primed) return;
-    if (plan.dirtyBytes * 2 >= residencyBytes(entry)) {
+    if (changedBytes(entry, plan) * 2 >= residencyBytes(entry)) {
         entry.calmStreak = 0;
         if (++entry.heavyStreak >= ResidencyHeavyStreak) entry.suspended = true;
         return;
@@ -6194,18 +6379,22 @@ void notePlannedResidency(BufferResidency& entry, const ResidencyPlan& plan) {
 
 void commitPlannedResidency(BufferResidency& entry, const ResidencyPlan& plan) {
     if (plan.tracked) {
-        std::fill(entry.generations.begin(), entry.generations.end(), plan.generation);
+        for (std::size_t block = 0; block < entry.generations.size(); ++block) {
+            if (entry.dirty[block] == 0) entry.generations[block] = plan.generation;
+        }
         entry.primed = true;
         return;
     }
-    std::fill(entry.generations.begin(), entry.generations.end(), 0);
+    for (std::size_t block = 0; block < entry.generations.size(); ++block) {
+        if (entry.dirty[block] == 0) entry.generations[block] = 0;
+    }
     entry.primed = false;
 }
 
 bool observeResidency(BufferResidency& entry) {
     const bool baseline = entry.buffer == nullptr || entry.suspended;
     if (!baseline && !presentReportEnabled()) return false;
-    const auto plan = planResidency(entry);
+    const auto plan = planResidency(entry, {}, true);
     if (!baseline) {
         if (plan.cpuDirty) {
             ++entry.window.cpuDirtyUses;
@@ -6213,7 +6402,7 @@ bool observeResidency(BufferResidency& entry) {
         }
         return false;
     }
-    const bool heavy = entry.primed && plan.dirtyBytes * 2 >= residencyBytes(entry);
+    const bool heavy = entry.primed && changedBytes(entry, plan) * 2 >= residencyBytes(entry);
     const bool wasSuspended = entry.suspended;
     notePlannedResidency(entry, plan);
     if (wasSuspended && !entry.suspended) return heavy;
@@ -6221,16 +6410,33 @@ bool observeResidency(BufferResidency& entry) {
     return heavy;
 }
 
-ResidencyReason chooseResidency(const Context& context, std::uint64_t begin, std::uint64_t end, ResidencyReason ineligible, bool pendingWriter, std::shared_ptr<BufferResidency>& held) {
+void noteWrittenUse(BufferResidencies& registry, BufferResidency& entry, std::int64_t now) {
+    ++registry.totals.writtenUses;
+    ++entry.window.writtenResidentUses;
+    if (++entry.profitUses < WrittenProfitWindow) return;
+    if (entry.profitFlushes * 2u > entry.profitUses) {
+        entry.unprofitableUntilMs = now + WrittenUnprofitableMs;
+        ++registry.totals.unprofitableWindows;
+    }
+    entry.profitUses = 0;
+    entry.profitFlushes = 0;
+}
+
+void flushIdleDirty(std::int64_t now);
+
+ResidencyReason chooseResidency(const Context& context, std::uint64_t begin, std::uint64_t end, ResidencyReason ineligible, bool pendingWriter, bool written, std::shared_ptr<BufferResidency>& held) {
     const bool eligible = ineligible == ResidencyReason::Resident;
     const bool reporting = presentReportEnabled();
     const bool watched = eligible && WatchedAfterSettle(context, begin, static_cast<std::size_t>(end - begin));
     const auto now = residencyClockMs();
     auto& registry = Residencies();
+    if (registry.dirtyCount.load(std::memory_order_acquire) != 0) flushIdleDirty(now);
     std::lock_guard lock(registry.mutex);
     if (registry.device != context.device) {
         registry.entries.clear();
         registry.orphans.clear();
+        registry.dirtyEntries.clear();
+        registry.dirtyCount.store(0, std::memory_order_release);
         registry.heldBytes = 0;
         registry.device = context.device;
     }
@@ -6245,6 +6451,7 @@ ResidencyReason chooseResidency(const Context& context, std::uint64_t begin, std
             case ResidencyReason::Written: ++totals.inPlaceWritten; break;
             case ResidencyReason::Budget: ++totals.inPlaceBudget; break;
             case ResidencyReason::Dirty: ++totals.inPlaceDirty; break;
+            case ResidencyReason::Unprofitable: ++totals.inPlaceUnprofitable; break;
             default: ++totals.inPlaceOther; break;
         }
         return reason;
@@ -6256,18 +6463,23 @@ ResidencyReason chooseResidency(const Context& context, std::uint64_t begin, std
         entry->begin = begin;
         entry->end = end;
         entry->generations.assign(static_cast<std::size_t>((end + ResidencyBlockBytes - 1) / ResidencyBlockBytes - begin / ResidencyBlockBytes), 0);
+        sizeResidency(*entry);
         found = registry.entries.emplace(ResidencyKey{begin, end}, std::move(entry)).first;
     }
     auto& entry = *found->second;
     entry.lastUseMs = now;
     ++entry.window.uses;
-    if (ineligible == ResidencyReason::Written) ++entry.window.writtenUses;
+    if (written) {
+        ++entry.window.writtenUses;
+        entry.writtenSeen = true;
+    }
     if (pendingWriter) ++entry.window.pendingWriterUses;
     const auto note = [&](ResidencyReason reason) {
         switch (reason) {
             case ResidencyReason::Written: ++entry.window.writtenFallbacks; break;
             case ResidencyReason::Budget: ++entry.window.budgetUses; break;
             case ResidencyReason::Dirty: ++entry.window.dirtyFallbacks; break;
+            case ResidencyReason::Unprofitable: ++entry.window.unprofitableFallbacks; break;
             default: ++entry.window.otherFallbacks; break;
         }
         return fallback(reason);
@@ -6281,43 +6493,246 @@ ResidencyReason chooseResidency(const Context& context, std::uint64_t begin, std
         observeResidency(entry);
         return note(ResidencyReason::Dirty);
     }
+    if (written && now < entry.unprofitableUntilMs) return note(ResidencyReason::Unprofitable);
     if (entry.buffer == nullptr) {
         if (now < entry.retryMs) return note(ResidencyReason::Budget);
         const bool known = entry.primed;
         const bool heavy = observeResidency(entry);
         if (!known) return note(ResidencyReason::Other);
         if (heavy) return note(ResidencyReason::Dirty);
-        if (!admitResidency(context, registry, entry, now)) {
+        if (!admitResidency(context, registry, entry, now, written)) {
             entry.retryMs = now + 500;
             return note(ResidencyReason::Budget);
         }
+    } else if (written && !admitBaseline(context, registry, entry, now)) {
+        entry.retryMs = now + 500;
+        return note(ResidencyReason::Budget);
     }
     ++entry.window.residentUses;
     ++totals.residentUses;
+    if (written) noteWrittenUse(registry, entry, now);
     held = found->second;
     return ResidencyReason::Resident;
 }
 
-void countResidentReuse(BufferResidency& entry) {
+bool writtenResidencyUsable(const Context& context, Recorder& recorder, std::uint64_t begin, std::uint64_t end, bool writable, std::uint64_t sourceBase, VkDeviceAddress sourceAddress) {
+    return writtenResidencyEnabled() && writable && changedCopyBacks(context) && sourceAddress != 0 && begin % 4u == 0 && end % 4u == 0 && sourceBase % 4u == 0 && recorder.ChangedCopyAvailable();
+}
+
+void countResidentReuse(BufferResidency& entry, bool written) {
     auto& registry = Residencies();
     std::lock_guard lock(registry.mutex);
-    entry.lastUseMs = residencyClockMs();
+    const auto now = residencyClockMs();
+    entry.lastUseMs = now;
     ++entry.window.uses;
     ++entry.window.residentUses;
     ++registry.totals.uses;
     ++registry.totals.residentUses;
+    if (written) noteWrittenUse(registry, entry, now);
 }
 
 void commitRefreshedResidency(BufferResidency& entry, const ResidencyPlan& plan, std::uint64_t copiedBytes) {
     auto& registry = Residencies();
     std::lock_guard lock(registry.mutex);
     notePlannedResidency(entry, plan);
+    for (const auto block : plan.mergeBlocks) {
+        setBlockDirty(registry, entry, block, false);
+        entry.conflict[block] = 0;
+    }
+    for (const auto& [from, to] : plan.mergeRuns) registry.totals.writtenMergedBytes += to - from;
     commitPlannedResidency(entry, plan);
+    for (const auto block : plan.writeBlocks) {
+        entry.conflict[block] = 0;
+        setBlockDirty(registry, entry, block, true);
+    }
+    if (entry.baseline != nullptr) entry.baselineValid = true;
     if (copiedBytes == 0) return;
     ++entry.window.refreshes;
     entry.window.refreshedBytes += copiedBytes;
     ++registry.totals.refreshes;
     registry.totals.refreshedBytes += copiedBytes;
+    if (entry.baseline != nullptr) {
+        entry.window.writtenCopiedInBytes += copiedBytes;
+        registry.totals.writtenCopiedInBytes += copiedBytes;
+    }
+}
+
+struct FlushWork {
+    std::shared_ptr<BufferResidency> entry;
+    std::vector<std::size_t> blocks;
+    std::vector<ByteRange> runs;
+    std::vector<std::uint8_t> bad;
+    std::uint64_t generation = 0;
+};
+
+void countFlush(BufferResidencies& registry, FlushTrigger trigger, std::uint64_t bytes) {
+    ++registry.totals.writtenFlushes;
+    registry.totals.writtenBackBytes += bytes;
+    switch (trigger) {
+        case FlushTrigger::Cpu: ++registry.totals.flushCpu; break;
+        case FlushTrigger::Gpu: ++registry.totals.flushGpu; break;
+        case FlushTrigger::Evict: ++registry.totals.flushEvict; break;
+        case FlushTrigger::Batch: ++registry.totals.flushBatch; break;
+    }
+}
+
+std::size_t flushWritten(Recorder& recorder, std::span<const std::shared_ptr<BufferResidency>> entries, std::uint64_t from, std::uint64_t to, FlushTrigger trigger) {
+    auto& registry = Residencies();
+    std::vector<FlushWork> work;
+    {
+        std::lock_guard lock(registry.mutex);
+        if (registry.device != VK_NULL_HANDLE && recorder.Device() != registry.device) return 0;
+        for (const auto& entry : entries) {
+            if (entry->dirtyBlocks == 0 || entry->begin >= to || from >= entry->end || entry->baseline == nullptr || entry->buffer == nullptr) continue;
+            FlushWork item;
+            item.entry = entry;
+            const auto first = entry->begin / ResidencyBlockBytes;
+            for (std::size_t block = 0; block < entry->dirty.size(); ++block) {
+                if (entry->dirty[block] == 0) continue;
+                const auto blockBegin = std::max(entry->begin, (first + block) * ResidencyBlockBytes);
+                const auto blockEnd = std::min(entry->end, (first + block + 1) * ResidencyBlockBytes);
+                if (blockBegin >= to || from >= blockEnd) continue;
+                item.blocks.push_back(block);
+                appendBlockRun(*entry, block, item.runs);
+            }
+            if (!item.blocks.empty()) work.push_back(std::move(item));
+        }
+    }
+    if (work.empty()) return 0;
+    for (auto& item : work) {
+        const auto& entry = *item.entry;
+        const auto spanBegin = item.runs.front().first;
+        const auto spanBytes = static_cast<std::size_t>(item.runs.back().second - spanBegin);
+        item.generation = GuestMemory::CollectWrites(spanBegin, spanBytes);
+        const auto count = entry.generations.size();
+        thread_local std::vector<std::uint8_t> changed;
+        thread_local std::vector<std::uint8_t> cpu;
+        thread_local std::vector<std::uint64_t> thresholds;
+        changed.assign(count, 0);
+        cpu.assign(count, 0);
+        thresholds.assign(count, 0);
+        {
+            std::lock_guard lock(registry.mutex);
+            for (std::size_t block = 0; block < count; ++block) thresholds[block] = blockThreshold(entry, block);
+        }
+        const bool tracked = item.generation != 0 && GuestMemory::ChangedBlocks(entry.begin, static_cast<std::size_t>(residencyBytes(entry)), thresholds, changed, cpu);
+        item.bad.assign(item.blocks.size(), 0);
+        std::lock_guard lock(registry.mutex);
+        for (std::size_t index = 0; index < item.blocks.size(); ++index) {
+            const auto block = item.blocks[index];
+            item.bad[index] = !tracked || changed[block] != 0 || entry.conflict[block] != 0 ? 1 : 0;
+        }
+    }
+    const auto commands = recorder.Commands();
+    const auto timing = recorder.BeginGpuTiming(StagingCopyBackKey);
+    constexpr VkAccessFlags everything = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    RecordMemoryBarrier(recorder.DeviceContext(), commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, everything, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    Recorder::CountBarriers(Recorder::CommandClass::StagingOut);
+    std::uint64_t bytes = 0;
+    std::vector<ByteRange> ranges;
+    for (const auto& item : work) {
+        const auto& entry = *item.entry;
+        for (const auto& [runFrom, runTo] : item.runs) {
+            const auto offset = runFrom - entry.begin;
+            Require(entry.importAddress != 0, "a written resident buffer has no import to be written back into");
+            Require(recorder.RecordChangedCopy(commands, entry.buffer->DeviceAddress() + offset, entry.baseline->DeviceAddress() + offset, entry.importAddress + (runFrom - entry.importBase), static_cast<std::uint32_t>((runTo - runFrom) / 4u)), "a written resident buffer cannot be written back without the changed-copy pipeline");
+            bytes += runTo - runFrom;
+            ranges.emplace_back(runFrom, runTo);
+        }
+        recorder.Keep(entry.buffer);
+        recorder.Keep(entry.baseline);
+    }
+    RecordMemoryBarrier(recorder.DeviceContext(), commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    Recorder::CountBarriers(Recorder::CommandClass::StagingOut);
+    for (const auto& item : work) {
+        const auto& entry = *item.entry;
+        for (const auto& [runFrom, runTo] : item.runs) CopyBuffer(recorder.DeviceContext(), commands, entry.buffer->Handle(), runFrom - entry.begin, entry.baseline->Handle(), runFrom - entry.begin, runTo - runFrom);
+    }
+    if (Recorder::BarrierValidate()) recorder.NoteAccess(Recorder::CommandClass::StagingOut, Recorder::Access{{}, ranges, {}, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
+    constexpr VkAccessFlags published = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_HOST_READ_BIT;
+    RecordMemoryBarrier(recorder.DeviceContext(), commands, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, published);
+    Recorder::CountBarriers(Recorder::CommandClass::StagingOut);
+    recorder.MarkCovered(published);
+    recorder.EndGpuTiming(timing, bytes);
+    recorder.NotePendingWrites(ranges);
+    std::size_t blocks = 0;
+    std::lock_guard lock(registry.mutex);
+    for (auto& item : work) {
+        auto& entry = *item.entry;
+        std::uint64_t entryBytes = 0;
+        for (std::size_t index = 0; index < item.blocks.size(); ++index) {
+            const auto block = item.blocks[index];
+            setBlockDirty(registry, entry, block, false);
+            entry.conflict[block] = 0;
+            entry.generations[block] = item.bad[index] != 0 ? 0 : item.generation;
+            ++blocks;
+        }
+        for (const auto& [runFrom, runTo] : item.runs) entryBytes += runTo - runFrom;
+        ++entry.profitFlushes;
+        entry.window.writtenBackBytes += entryBytes;
+        countFlush(registry, trigger, entryBytes);
+    }
+    return blocks;
+}
+
+void flushIdleDirty(std::int64_t now) {
+    auto& registry = Residencies();
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr) return;
+    std::vector<std::shared_ptr<BufferResidency>> idle;
+    {
+        std::lock_guard lock(registry.mutex);
+        const auto threshold = std::min(residencyMinIdleMs(), ResidencyReleaseIdleMs);
+        for (const auto& entry : registry.dirtyEntries) {
+            if (now - entry->lastUseMs >= threshold) idle.push_back(entry);
+        }
+    }
+    if (!idle.empty()) flushWritten(*recorder, idle, 0, std::numeric_limits<std::uint64_t>::max(), FlushTrigger::Evict);
+}
+
+std::vector<std::shared_ptr<BufferResidency>> dirtyOverlapping(BufferResidencies& registry, std::uint64_t from, std::uint64_t to, const BufferResidency* except, bool honourExemption) {
+    std::vector<std::shared_ptr<BufferResidency>> overlapping;
+    std::lock_guard lock(registry.mutex);
+    for (const auto& entry : registry.dirtyEntries) {
+        if (entry.get() == except || entry->begin >= to || from >= entry->end || (honourExemption && residencyExempt(*entry))) continue;
+        const auto first = entry->begin / ResidencyBlockBytes;
+        const auto low = static_cast<std::size_t>(std::max(from, entry->begin) / ResidencyBlockBytes - first);
+        const auto high = static_cast<std::size_t>((std::min(to, entry->end) - 1) / ResidencyBlockBytes - first);
+        bool any = false;
+        for (auto block = low; block <= high && block < entry->dirty.size() && !any; ++block) any = entry->dirty[block] != 0;
+        if (any) overlapping.push_back(entry);
+    }
+    return overlapping;
+}
+
+std::size_t publishOtherWritten(Recorder& recorder, const BufferResidency& entry) {
+    auto& registry = Residencies();
+    if (registry.dirtyCount.load(std::memory_order_acquire) == 0) return 0;
+    const auto others = dirtyOverlapping(registry, entry.begin, entry.end, &entry, false);
+    if (others.empty()) return 0;
+    return flushWritten(recorder, others, entry.begin, entry.end, FlushTrigger::Gpu);
+}
+
+std::uint64_t stampResidentWrites(BufferResidency& entry, std::uint64_t begin, std::uint64_t end) {
+    auto& registry = Residencies();
+    const auto first = begin / ResidencyBlockBytes;
+    const auto blocks = static_cast<std::size_t>((end - 1) / ResidencyBlockBytes - first + 1);
+    const auto base = static_cast<std::size_t>(first - entry.begin / ResidencyBlockBytes);
+    std::vector<std::uint64_t> thresholds(blocks, 0);
+    std::vector<std::uint8_t> changed(blocks, 0);
+    {
+        std::lock_guard lock(registry.mutex);
+        for (std::size_t block = 0; block < blocks && base + block < entry.generations.size(); ++block) thresholds[block] = blockThreshold(entry, base + block);
+    }
+    std::uint64_t order = 0;
+    GuestMemory::MarkPossiblyWrittenChecked(begin, static_cast<std::size_t>(end - begin), GuestMemory::StampCheck{thresholds, changed}, order);
+    std::lock_guard lock(registry.mutex);
+    for (std::size_t block = 0; block < blocks && base + block < entry.generations.size(); ++block) {
+        if (changed[block] != 0) entry.conflict[base + block] = 1;
+        entry.own[base + block] = std::max(entry.own[base + block], order);
+        setBlockDirty(registry, entry, base + block, true);
+    }
+    return order;
 }
 
 }
@@ -6328,7 +6743,13 @@ BufferResidencyCounts BufferResidencyStats() {
     auto counts = registry.totals;
     counts.heldBytes = registry.heldBytes;
     counts.heldRanges = 0;
-    for (const auto& [key, entry] : registry.entries) counts.heldRanges += entry->buffer != nullptr ? 1u : 0u;
+    counts.heldWrittenRanges = 0;
+    counts.dirtyBytes = 0;
+    for (const auto& [key, entry] : registry.entries) {
+        counts.heldRanges += entry->buffer != nullptr ? 1u : 0u;
+        counts.heldWrittenRanges += entry->buffer != nullptr && entry->baseline != nullptr ? 1u : 0u;
+        counts.dirtyBytes += entry->dirtyBlocks * ResidencyBlockBytes;
+    }
     return counts;
 }
 
@@ -6337,6 +6758,7 @@ std::string BufferResidencyReport() {
     std::lock_guard lock(registry.mutex);
     std::uint64_t ranges = 0, rangeBytes = 0, readOnly = 0, written = 0, pending = 0, cpuRanges = 0, cpuUses = 0, resident = 0, residentUses = 0, refreshes = 0, refreshedBytes = 0;
     std::uint64_t budgetRanges = 0, writtenRanges = 0, dirtyRanges = 0, otherRanges = 0, budgetUses = 0, writtenUses = 0, dirtyUses = 0, otherUses = 0, uses = 0;
+    std::uint64_t writtenResidentRanges = 0, writtenResidentUses = 0, writtenCopiedIn = 0, writtenBack = 0, unprofitableRanges = 0, unprofitableUses = 0;
     for (auto& [key, pointer] : registry.entries) {
         auto& window = pointer->window;
         if (window.uses != 0) {
@@ -6359,14 +6781,29 @@ std::string BufferResidencyReport() {
             writtenUses += window.writtenFallbacks;
             dirtyUses += window.dirtyFallbacks;
             otherUses += window.otherFallbacks;
+            writtenResidentRanges += window.writtenResidentUses != 0 ? 1u : 0u;
+            writtenResidentUses += window.writtenResidentUses;
+            writtenCopiedIn += window.writtenCopiedInBytes;
+            writtenBack += window.writtenBackBytes;
+            unprofitableRanges += window.unprofitableFallbacks != 0 ? 1u : 0u;
+            unprofitableUses += window.unprofitableFallbacks;
         }
         window = {};
     }
     if (registry.totals.uses == 0) return {};
-    char text[1024];
-    std::snprintf(text, sizeof(text), "[present] buffer residency over 10 s%s: %llu distinct joined in-place ranges (%.1f MiB, %llu uses): %llu read-only, %llu written by the dispatch that binds them (%llu with a pending writer); %llu ranges CPU-modified between uses (%llu uses); resident in VRAM: %llu ranges, %llu uses, %llu refreshes copying %.1f MiB; in place instead: budget %llu uses (%llu ranges), written %llu (%llu), CPU-dirty %llu (%llu), other %llu (%llu); holding %.1f MiB in %llu ranges of %.0f MiB, %llu admitted and %llu evicted since start\n",
-                  bufferResidencyEnabled() ? "" : " (off)", static_cast<unsigned long long>(ranges), static_cast<double>(rangeBytes) / 1048576.0, static_cast<unsigned long long>(uses), static_cast<unsigned long long>(readOnly), static_cast<unsigned long long>(written), static_cast<unsigned long long>(pending), static_cast<unsigned long long>(cpuRanges), static_cast<unsigned long long>(cpuUses), static_cast<unsigned long long>(resident), static_cast<unsigned long long>(residentUses), static_cast<unsigned long long>(refreshes), static_cast<double>(refreshedBytes) / 1048576.0,
-                  static_cast<unsigned long long>(budgetUses), static_cast<unsigned long long>(budgetRanges), static_cast<unsigned long long>(writtenUses), static_cast<unsigned long long>(writtenRanges), static_cast<unsigned long long>(dirtyUses), static_cast<unsigned long long>(dirtyRanges), static_cast<unsigned long long>(otherUses), static_cast<unsigned long long>(otherRanges), static_cast<double>(registry.heldBytes) / 1048576.0, static_cast<unsigned long long>(std::count_if(registry.entries.begin(), registry.entries.end(), [](const auto& item) { return item.second->buffer != nullptr; })), static_cast<double>(bufferResidencyCap()) / 1048576.0, static_cast<unsigned long long>(registry.totals.admitted), static_cast<unsigned long long>(registry.totals.evicted));
+    const auto windowTotals = registry.totals;
+    auto& previous = Residencies().windowBase;
+    const auto flushes = windowTotals.writtenFlushes - previous.writtenFlushes;
+    const auto cpu = windowTotals.flushCpu - previous.flushCpu;
+    const auto gpu = windowTotals.flushGpu - previous.flushGpu;
+    const auto evict = windowTotals.flushEvict - previous.flushEvict;
+    const auto batch = windowTotals.flushBatch - previous.flushBatch;
+    previous = windowTotals;
+    char text[2048];
+    std::snprintf(text, sizeof(text), "[present] buffer residency over 10 s%s: %llu distinct joined in-place ranges (%.1f MiB, %llu uses): %llu read-only, %llu written by the dispatch that binds them (%llu with a pending writer); %llu ranges CPU-modified between uses (%llu uses); resident in VRAM: %llu ranges, %llu uses, %llu refreshes copying %.1f MiB; in place instead: budget %llu uses (%llu ranges), written %llu (%llu), CPU-dirty %llu (%llu), unprofitable %llu (%llu), other %llu (%llu); holding %.1f MiB in %llu ranges of %.0f MiB, %llu admitted and %llu evicted since start; written residency%s: %llu ranges resident, %llu uses, %.1f MiB copied in, %.1f MiB written back in %llu flushes (CPU sync %llu, other GPU path %llu, eviction %llu, flip/batch %llu), %.1f MiB still dirty\n",
+                  readResidencyEnabled() ? "" : " (read-only off)", static_cast<unsigned long long>(ranges), static_cast<double>(rangeBytes) / 1048576.0, static_cast<unsigned long long>(uses), static_cast<unsigned long long>(readOnly), static_cast<unsigned long long>(written), static_cast<unsigned long long>(pending), static_cast<unsigned long long>(cpuRanges), static_cast<unsigned long long>(cpuUses), static_cast<unsigned long long>(resident), static_cast<unsigned long long>(residentUses), static_cast<unsigned long long>(refreshes), static_cast<double>(refreshedBytes) / 1048576.0,
+                  static_cast<unsigned long long>(budgetUses), static_cast<unsigned long long>(budgetRanges), static_cast<unsigned long long>(writtenUses), static_cast<unsigned long long>(writtenRanges), static_cast<unsigned long long>(dirtyUses), static_cast<unsigned long long>(dirtyRanges), static_cast<unsigned long long>(unprofitableUses), static_cast<unsigned long long>(unprofitableRanges), static_cast<unsigned long long>(otherUses), static_cast<unsigned long long>(otherRanges), static_cast<double>(registry.heldBytes) / 1048576.0, static_cast<unsigned long long>(std::count_if(registry.entries.begin(), registry.entries.end(), [](const auto& item) { return item.second->buffer != nullptr; })), static_cast<double>(bufferResidencyCap()) / 1048576.0, static_cast<unsigned long long>(registry.totals.admitted), static_cast<unsigned long long>(registry.totals.evicted),
+                  writtenResidencyEnabled() ? "" : " (off)", static_cast<unsigned long long>(writtenResidentRanges), static_cast<unsigned long long>(writtenResidentUses), static_cast<double>(writtenCopiedIn) / 1048576.0, static_cast<double>(writtenBack) / 1048576.0, static_cast<unsigned long long>(flushes), static_cast<unsigned long long>(cpu), static_cast<unsigned long long>(gpu), static_cast<unsigned long long>(evict), static_cast<unsigned long long>(batch), static_cast<double>(std::accumulate(registry.entries.begin(), registry.entries.end(), std::uint64_t{0}, [](std::uint64_t sum, const auto& item) { return sum + item.second->dirtyBlocks * ResidencyBlockBytes; })) / 1048576.0);
     return text;
 }
 
@@ -6374,21 +6811,120 @@ void ClearBufferResidencies(VkDevice device) {
     auto& registry = Residencies();
     ResidencyMap entries;
     std::vector<std::weak_ptr<BufferResidency>> orphans;
+    std::vector<std::shared_ptr<BufferResidency>> dirtyEntries;
     {
         std::lock_guard lock(registry.mutex);
         if (device != VK_NULL_HANDLE && registry.device != device) return;
         entries = std::move(registry.entries);
         orphans = std::move(registry.orphans);
+        dirtyEntries = std::move(registry.dirtyEntries);
         registry.entries.clear();
         registry.orphans.clear();
+        registry.dirtyEntries.clear();
+        registry.dirtyCount.store(0, std::memory_order_release);
         registry.heldBytes = 0;
         registry.device = VK_NULL_HANDLE;
+        for (auto& dirtied : dirtyEntries) {
+            std::fill(dirtied->dirty.begin(), dirtied->dirty.end(), 0);
+            dirtied->dirtyBlocks = 0;
+        }
     }
 }
 
 void SetBufferResidencyForTests(std::uint64_t capBytes, std::int64_t minIdleMs) {
     residencyCapForTests.store(capBytes, std::memory_order_relaxed);
     residencyIdleForTests.store(minIdleMs, std::memory_order_relaxed);
+}
+
+void FlushWrittenResidencies(Recorder& recorder, bool cpuSync) {
+    auto& registry = Residencies();
+    if (registry.dirtyCount.load(std::memory_order_acquire) == 0) return;
+    std::vector<std::shared_ptr<BufferResidency>> dirty;
+    {
+        std::lock_guard lock(registry.mutex);
+        dirty = registry.dirtyEntries;
+    }
+    flushWritten(recorder, dirty, 0, std::numeric_limits<std::uint64_t>::max(), cpuSync ? FlushTrigger::Cpu : FlushTrigger::Batch);
+}
+
+std::size_t PublishWrittenResidency(std::uint64_t address, std::size_t bytes, PublishScope scope, PublishReason reason, bool waited) {
+    auto& registry = Residencies();
+    if (scope == PublishScope::None || bytes == 0 || registry.dirtyCount.load(std::memory_order_acquire) == 0) return 0;
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr) return 0;
+    if (!waited && Recorder::InCompletion() && GuestMemory::CurrentReadSite() == GuestMemory::ReadSite::Store) return 0;
+    const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
+    const auto overlapping = dirtyOverlapping(registry, address, end, nullptr, true);
+    if (overlapping.empty()) return 0;
+    auto trigger = FlushTrigger::Gpu;
+    if (reason == PublishReason::Hook || reason == PublishReason::Scanout) trigger = FlushTrigger::Cpu;
+    else if (reason == PublishReason::Evict || reason == PublishReason::Retire || reason == PublishReason::Teardown) trigger = FlushTrigger::Evict;
+    return flushWritten(*recorder, overlapping, address, end, trigger);
+}
+
+bool WrittenResidencyDirty(std::uint64_t address, std::size_t bytes) {
+    auto& registry = Residencies();
+    if (bytes == 0 || registry.dirtyCount.load(std::memory_order_acquire) == 0) return false;
+    const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
+    return !dirtyOverlapping(registry, address, end, nullptr, true).empty();
+}
+
+bool WrittenResidencyDirty(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    auto& registry = Residencies();
+    if (registry.dirtyCount.load(std::memory_order_acquire) == 0) return false;
+    return std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.second > range.first && !dirtyOverlapping(registry, range.first, range.second, nullptr, true).empty(); });
+}
+
+void RetireWrittenResidency(VkDevice device, const HostImport& import, const std::function<bool(std::uint64_t, std::uint64_t)>& registered) {
+    auto& registry = Residencies();
+    if (registry.dirtyCount.load(std::memory_order_acquire) == 0) return;
+    std::vector<std::shared_ptr<BufferResidency>> affected;
+    {
+        std::lock_guard lock(registry.mutex);
+        if (registry.device != device) return;
+        for (const auto& entry : registry.dirtyEntries) {
+            if (entry->importBuffer == import.buffer) affected.push_back(entry);
+        }
+        for (const auto& entry : affected) {
+            const auto first = entry->begin / ResidencyBlockBytes;
+            for (std::size_t block = 0; block < entry->dirty.size(); ++block) {
+                if (entry->dirty[block] == 0) continue;
+                const auto blockBegin = std::max(entry->begin, (first + block) * ResidencyBlockBytes);
+                const auto blockEnd = std::min(entry->end, (first + block + 1) * ResidencyBlockBytes);
+                if (registered(blockBegin, blockEnd)) continue;
+                setBlockDirty(registry, *entry, block, false);
+                entry->generations[block] = 0;
+            }
+        }
+    }
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr || !GuestMemory::GpuMutex().HeldByThisThread()) {
+        static std::atomic<int> reports{0};
+        if (reports.fetch_add(1) < 4) std::fprintf(stderr, "[buffers] import 0x%llx+0x%llx retired outside the device lock: written resident blocks lost\n", static_cast<unsigned long long>(import.base), static_cast<unsigned long long>(import.bytes));
+        return;
+    }
+    flushWritten(*recorder, affected, 0, std::numeric_limits<std::uint64_t>::max(), FlushTrigger::Evict);
+}
+
+void PublishAllWrittenResidencies(const Context& context, PublishReason reason) {
+    auto& registry = Residencies();
+    if (registry.dirtyCount.load(std::memory_order_acquire) == 0) return;
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr || recorder->Device() != context.device) return;
+    std::vector<std::shared_ptr<BufferResidency>> dirty;
+    {
+        std::lock_guard lock(registry.mutex);
+        dirty = registry.dirtyEntries;
+    }
+    flushWritten(*recorder, dirty, 0, std::numeric_limits<std::uint64_t>::max(), reason == PublishReason::Teardown || reason == PublishReason::Retire || reason == PublishReason::Evict ? FlushTrigger::Evict : FlushTrigger::Gpu);
+}
+
+ResidentPublishExemption::ResidentPublishExemption(const GuestBufferMemory& memory) : count(exemptResidencies().size()) {
+    memory.CollectResidents(exemptResidencies());
+}
+
+ResidentPublishExemption::~ResidentPublishExemption() {
+    exemptResidencies().resize(count);
 }
 
 void ShutdownGuestBufferWorkers() {
@@ -6433,8 +6969,12 @@ bool GuestBufferMemory::adaptiveInPlace(const Region& region, bool use) const {
 }
 
 bool GuestBufferMemory::StagingDecisionsCurrent() const {
+    const auto now = residencyClockMs();
     for (const auto& region : regions) {
-        if (region.residency != nullptr && (!bufferResidencyEnabled() || region.residency->suspended)) return false;
+        if (region.residency == nullptr) continue;
+        const bool written = WritesOverlap(region.begin, static_cast<std::size_t>(region.end - region.begin));
+        if (region.residency->suspended || region.residency->evicted || !(written ? writtenResidencyEnabled() : readResidencyEnabled())) return false;
+        if (written && now < region.residency->unprofitableUntilMs) return false;
     }
     if (!AdaptiveStagingGate::Enabled()) return true;
     for (const auto& region : regions) {
@@ -6726,7 +7266,15 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
     }
     for (const auto& region : regions) static_cast<void>(FlushDepthPlanes(region.begin, static_cast<std::size_t>(region.end - region.begin)));
     for (const auto& [begin, end] : writes) RequireNoResidentDepthRead_nid_no_patch(begin, static_cast<std::size_t>(end - begin), htileClear);
-    for (const auto& [begin, end] : writes) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "written buffer range");
+    {
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> regionRanges;
+        regionRanges.reserve(regions.size());
+        for (const auto& region : regions) regionRanges.emplace_back(region.begin, region.end);
+        std::vector<const BufferResidency*> own;
+        residenciesForRanges(regionRanges, own);
+        const ExemptListScope exempt(own);
+        for (const auto& [begin, end] : writes) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "written buffer range");
+    }
     if (context.hostImportAlignment != 0) {
         auto& state = Imports();
         std::lock_guard lock(state.mutex);
@@ -6883,7 +7431,7 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
             const bool staged = recorder != nullptr && stagingEligible(region, addressable);
             if (entry != nullptr && !staged && bindableInPlace(HostImportOffset(*entry, region.begin), addressable)) {
                 straddling = entry->joined && crossesImportWindow(region.begin, region.end);
-                if (straddling && !runImport && (bufferResidencyEnabled() || presentReportEnabled())) {
+                if (straddling && !runImport && ((WritesOverlap(region.begin, static_cast<std::size_t>(bytes)) ? writtenResidencyEnabled() : readResidencyEnabled()) || presentReportEnabled())) {
                     residentCandidate = true;
                     region.copySource = entry->buffer;
                     const auto start = HostImportBufferStart(*entry);
@@ -6914,11 +7462,15 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
         if (residentCandidate && region.direct != nullptr) {
             const bool written = WritesOverlap(region.begin, static_cast<std::size_t>(bytes));
             auto ineligible = ResidencyReason::Resident;
-            if (written) ineligible = ResidencyReason::Written;
-            else if (!bufferResidencyEnabled() || !residencyAllowed || recorder == nullptr || addressable || space != nullptr || region.sparse || region.overlay || region.mirror != nullptr || bytes < ResidencyMinBytes || !gpuCopiesEnabled()) ineligible = ResidencyReason::Other;
+            const bool unusable = recorder == nullptr || !residencyAllowed || addressable || space != nullptr || region.sparse || region.overlay || region.mirror != nullptr || bytes < ResidencyMinBytes || !gpuCopiesEnabled();
+            if (written) {
+                if (unusable || !writtenResidencyUsable(context, *recorder, region.begin, region.end, region.writable, region.copySourceBase, region.copySourceAddress)) ineligible = ResidencyReason::Written;
+            } else if (!readResidencyEnabled() || unusable) {
+                ineligible = ResidencyReason::Other;
+            }
             const bool pendingWriter = recorder != nullptr && presentReportEnabled() && recorder->PendingWriteOverlaps(region.begin, static_cast<std::size_t>(bytes));
             std::shared_ptr<BufferResidency> held;
-            if (chooseResidency(context, region.begin, region.end, ineligible, pendingWriter, held) == ResidencyReason::Resident) {
+            if (chooseResidency(context, region.begin, region.end, ineligible, pendingWriter, written, held) == ResidencyReason::Resident) {
                 region.residency = std::move(held);
                 region.buffer = region.residency->buffer;
                 region.direct = nullptr;
@@ -6926,7 +7478,10 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
                 region.deviceLocal = false;
                 region.snapshot.clear();
                 recorder->OpenBatch();
-                StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(bytes), nullptr, "resident buffer region");
+                {
+                    const ExemptScope exempt(region.residency.get());
+                    StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(bytes), nullptr, "resident buffer region");
+                }
                 residents.push_back(&region);
                 continue;
             }
@@ -7245,20 +7800,37 @@ void GuestBufferMemory::refreshResident(std::span<Region* const> resident) {
     struct Refresh {
         Region* region;
         ResidencyPlan plan;
+        bool seedBaseline;
     };
     std::vector<Refresh> refreshes;
     refreshes.reserve(resident.size());
     std::uint64_t copiedBytes = 0;
+    bool anyWritten = false;
+    bool anyWork = false;
     for (auto* region : resident) {
+        auto& entry = *region->residency;
         const auto bytes = static_cast<std::size_t>(region->end - region->begin);
         recorder->FlushKeyStoresOverlapping(region->begin, bytes);
         recorder->FlushStoresOverlapping(region->begin, bytes);
-        auto plan = planResidency(*region->residency);
+        publishOtherWritten(*recorder, entry);
+        {
+            std::lock_guard lock(Residencies().mutex);
+            entry.importBuffer = region->copySource;
+            entry.importBase = region->copySourceBase;
+            entry.importAddress = region->copySourceAddress;
+        }
+        auto plan = planResidency(entry, writes);
         recorder->Keep(region->buffer);
+        if (entry.baseline != nullptr) {
+            recorder->Keep(entry.baseline);
+            anyWritten = true;
+        }
+        const bool seedBaseline = entry.baseline != nullptr && !entry.baselineValid;
         copiedBytes += plan.dirtyBytes;
-        refreshes.push_back({region, std::move(plan)});
+        anyWork = anyWork || !plan.runs.empty() || !plan.mergeRuns.empty() || seedBaseline;
+        refreshes.push_back({region, std::move(plan), seedBaseline});
     }
-    if (copiedBytes == 0) {
+    if (!anyWork) {
         for (const auto& refresh : refreshes) commitRefreshedResidency(*refresh.region->residency, refresh.plan, 0);
         return;
     }
@@ -7270,25 +7842,60 @@ void GuestBufferMemory::refreshResident(std::span<Region* const> resident) {
         for (const auto& refresh : refreshes) reads.insert(reads.end(), refresh.plan.runs.begin(), refresh.plan.runs.end());
         recorder->NoteAccess(Recorder::CommandClass::StagingIn, Recorder::Access{reads, {}, {}, VK_PIPELINE_STAGE_TRANSFER_BIT});
     }
-    constexpr BarrierMask leading{VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT};
-    if (!Recorder::ElideCovered(Recorder::CommandClass::StagingIn, leading, covered)) {
-        RecordMemoryBarrier(context, commands, leading.srcStage, leading.dstStage, leading.srcAccess, leading.dstAccess);
+    if (anyWritten) {
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
         Recorder::CountBarriers(Recorder::CommandClass::StagingIn);
+    } else {
+        constexpr BarrierMask leading{VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT};
+        if (!Recorder::ElideCovered(Recorder::CommandClass::StagingIn, leading, covered)) {
+            RecordMemoryBarrier(context, commands, leading.srcStage, leading.dstStage, leading.srcAccess, leading.dstAccess);
+            Recorder::CountBarriers(Recorder::CommandClass::StagingIn);
+        }
     }
+    bool merged = false;
     for (const auto& refresh : refreshes) {
         const auto& region = *refresh.region;
-        std::uint64_t regionBytes = 0;
-        for (const auto& [from, to] : refresh.plan.runs) {
+        const auto& entry = *region.residency;
+        for (const auto& [from, to] : refresh.plan.mergeRuns) {
+            const auto offset = from - region.begin;
+            Require(recorder->RecordChangedCopy(commands, region.buffer->DeviceAddress() + offset, entry.baseline->DeviceAddress() + offset, region.copySourceAddress + (from - region.copySourceBase), static_cast<std::uint32_t>((to - from) / 4u)), "a written resident buffer cannot be merged without the changed-copy pipeline");
+            merged = true;
+        }
+        if (!refresh.plan.mergeRuns.empty()) recorder->NotePendingWrites(refresh.plan.mergeRuns);
+    }
+    if (merged) {
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        Recorder::CountBarriers(Recorder::CommandClass::StagingIn);
+    }
+    std::vector<std::uint64_t> regionBytes(refreshes.size(), 0);
+    for (std::size_t index = 0; index < refreshes.size(); ++index) {
+        const auto& region = *refreshes[index].region;
+        for (const auto& [from, to] : refreshes[index].plan.runs) {
             CopyBuffer(context, commands, region.copySource, from - region.copySourceBase, region.buffer->Handle(), from - region.begin, to - from);
             recorder->NotePendingRead(from, static_cast<std::size_t>(to - from), Recorder::ReadKind::GpuCopy);
-            regionBytes += to - from;
+            regionBytes[index] += to - from;
         }
-        commitRefreshedResidency(*region.residency, refresh.plan, regionBytes);
     }
-    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    const bool baselines = std::any_of(refreshes.begin(), refreshes.end(), [](const Refresh& refresh) { return refresh.region->residency->baseline != nullptr && (refresh.seedBaseline || !refresh.plan.runs.empty()); });
+    if (baselines) {
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        Recorder::CountBarriers(Recorder::CommandClass::StagingIn);
+        for (const auto& refresh : refreshes) {
+            const auto& region = *refresh.region;
+            const auto& entry = *region.residency;
+            if (entry.baseline == nullptr) continue;
+            if (refresh.seedBaseline) {
+                CopyBuffer(context, commands, region.buffer->Handle(), 0, entry.baseline->Handle(), 0, region.end - region.begin);
+                continue;
+            }
+            for (const auto& [from, to] : refresh.plan.runs) CopyBuffer(context, commands, region.buffer->Handle(), from - region.begin, entry.baseline->Handle(), from - region.begin, to - from);
+        }
+    }
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     Recorder::CountBarriers(Recorder::CommandClass::StagingIn);
     recorder->MarkCovered(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     recorder->EndGpuTiming(timing, copiedBytes);
+    for (std::size_t index = 0; index < refreshes.size(); ++index) commitRefreshedResidency(*refreshes[index].region->residency, refreshes[index].plan, regionBytes[index]);
 }
 
 void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
@@ -7643,6 +8250,7 @@ bool GuestBufferMemory::HasCopiedWrites() const {
         // A staged copy never counts: its use always records the copy-back (AllowDeviceStaging),
         // and nothing could be stored from it by the CPU.
         if (region.gpuCopy && (region.copiedBack || region.deviceLocal)) continue;
+        if (region.residency != nullptr) continue;
         // Writes into a read-only image mirror are never stored (its pages could not take them).
         if (region.mirror != nullptr && !region.mirror->writable) continue;
         return true;
@@ -7659,6 +8267,7 @@ bool GuestBufferMemory::CopiedWritesOverlap(std::uint64_t address, std::size_t b
         const auto& region = *found;
         if (region.direct != nullptr) continue;
         if (region.gpuCopy && (region.copiedBack || region.deviceLocal)) continue;
+        if (region.residency != nullptr) continue;
         if (region.mirror != nullptr && !region.mirror->writable) continue;
         return true;
     }
@@ -7683,6 +8292,10 @@ void GuestBufferMemory::MarkDirectWrites() const {
         const auto* found = owner(begin, end);
         if (found == nullptr) continue;
         const auto& region = *found;
+        if (region.residency != nullptr) {
+            directWritesGeneration = std::max(directWritesGeneration, stampResidentWrites(*region.residency, begin, end));
+            continue;
+        }
         if (region.direct != nullptr || (region.gpuCopy && region.copiedBack)) {
             std::uint64_t order = 0;
             static_cast<void>(GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin), order));
@@ -7790,6 +8403,7 @@ void GuestBufferMemory::WriteBack() {
         Require(found != nullptr, "write-back range has no GPU owner");
         const auto& region = *found;
         // Every branch below but the direct, copied-back and staged ones stores from the CPU.
+        if (region.residency != nullptr) continue;
         if (region.direct == nullptr && !(region.gpuCopy && (region.copiedBack || region.deviceLocal)) && !(region.mirror != nullptr && !region.mirror->writable)) Recorder::NoteWrittenBack(begin, static_cast<std::size_t>(end - begin));
         if (region.direct != nullptr) {
             // The GPU wrote imported guest memory directly; page write watching did not see it.
@@ -8003,7 +8617,7 @@ void GuestBufferMemory::RecordStagingCopies(Recorder& recorder) {
     }
     if (!resident.empty()) {
         Require(Recorder::Active() == &recorder, "resident buffer copies recorded into a recorder that is not the device's");
-        for (const auto* region : resident) countResidentReuse(*region->residency);
+        for (const auto* region : resident) countResidentReuse(*region->residency, WritesOverlap(region->begin, static_cast<std::size_t>(region->end - region->begin)));
         refreshResident(resident);
     }
     if (copies.empty()) return;

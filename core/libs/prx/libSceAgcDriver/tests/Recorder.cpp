@@ -9477,7 +9477,8 @@ void bufferResidencyTests(const Device& device, Recorder& recorder) {
             writer.AddWritable(beginA, lengthA);
             writer.Upload(false);
             const auto writtenAfter = BufferResidencyStats();
-            expect(!writer.HasResidentBuffers() && writtenAfter.inPlaceWritten - writtenBefore.inPlaceWritten == 1, "a range its own dispatch writes was kept resident");
+            if (std::getenv("APS5_NO_WRITTEN_RESIDENCY") != nullptr) expect(!writer.HasResidentBuffers() && writtenAfter.writtenUses == writtenBefore.writtenUses, "a range its own dispatch writes was kept resident with APS5_NO_WRITTEN_RESIDENCY");
+            else expect(writer.HasResidentBuffers() && writtenAfter.inPlaceWritten == writtenBefore.inPlaceWritten, "a range its own dispatch writes, seen twice, was not served from a resident copy");
             writer.WriteBack();
             settle();
         }
@@ -9548,6 +9549,457 @@ void bufferResidencyTests(const Device& device, Recorder& recorder) {
     }
     if (!failures.empty()) throw std::runtime_error("buffer residency:\n" + failures);
     std::cout << "buffer residency: ok\n";
+}
+
+void writtenBufferResidencyTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    if (context.hostImportAlignment == 0 || 65536 % context.hostImportAlignment != 0) {
+        std::cout << "host imports unavailable: written buffer residency not tested\n";
+        return;
+    }
+    if (!AgcDriver::GuestMemory::WriteWatched()) {
+        std::cout << "guest memory is not write-watched: written buffer residency not tested\n";
+        return;
+    }
+    if (!context.bufferDeviceAddress) {
+        std::cout << "buffer device addresses unavailable: written buffer residency not tested\n";
+        return;
+    }
+    static const bool optedOut = std::getenv("APS5_NO_WRITTEN_RESIDENCY") != nullptr;
+    static const bool reporting = std::getenv("APS5_PRESENT_REPORT") != nullptr;
+    constexpr std::size_t piece = std::size_t{512} << 10u;
+    constexpr std::size_t window = std::size_t{512} << 10u;
+    constexpr std::size_t pieces = 4;
+    constexpr std::size_t span = pieces * piece;
+    recorder.Activate();
+    SetHostImportWindow(window);
+    struct Restore {
+        ~Restore() {
+            SetHostImportWindow(0);
+            SetHostImportMaxBytes(0);
+            SetBufferResidencyForTests(0, -1);
+            SetDeviceLocalFullForTests(false);
+        }
+    } restore;
+    auto* guest = static_cast<std::uint8_t*>(AllocateWatched(span + window, window));
+    Require(guest != nullptr, "the watched block of the written buffer residency test could not be made");
+    const auto first = reinterpret_cast<std::uint64_t>(guest);
+    const auto pattern = [](std::size_t i) { return static_cast<std::uint8_t>(i * 131u + 7u); };
+    std::vector<std::uint8_t> expected(span);
+    const auto resetGuest = [&] {
+        for (std::size_t i = 0; i < span; ++i) guest[i] = expected[i] = pattern(i);
+    };
+    resetGuest();
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < pieces; ++index) mutation.Add(guest + index * piece, piece, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        std::uint8_t* guest;
+        std::uint64_t first;
+        ~Unregister() {
+            ClearBufferResidencies(context.device);
+            {
+                std::unique_lock gpu(GpuMutex());
+                WatchedAfterSettle(context, first, span);
+            }
+            {
+                GuestAllocations::Mutation mutation;
+                for (std::size_t index = 0; index < pieces; ++index) mutation.Remove(guest + index * piece);
+            }
+            HostImportFor(context, first, span);
+            ReleaseWatched(guest, span + window);
+        }
+    } unregister{context, guest, first};
+    const auto settle = [&] {
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    };
+    const std::uint64_t beginA = first + window - 200000;
+    const std::uint64_t endA = first + window + 150000;
+    const std::uint64_t beginC = first + 3 * window - 200000;
+    const std::uint64_t endC = first + 3 * window + 150000;
+    const auto lengthA = static_cast<std::size_t>(endA - beginA);
+    const auto lengthC = static_cast<std::size_t>(endC - beginC);
+    std::string failures;
+    const auto expect = [&](bool condition, const std::string& what) {
+        if (!condition) failures += what + "\n";
+    };
+    const auto matchesGuest = [&](const std::string& what) {
+        if (std::memcmp(guest, expected.data(), span) != 0) {
+            std::size_t at = 0;
+            while (guest[at] == expected[at]) ++at;
+            failures += what + ": guest memory differs from what the GPU and CPU wrote, first at +" + std::to_string(at) + "\n";
+        }
+    };
+    const auto fill = [&](std::uint64_t at, std::size_t bytes, std::uint32_t word) {
+        const auto offset = static_cast<std::size_t>(at - first);
+        for (std::size_t i = 0; i < bytes; i += 4) std::memcpy(expected.data() + offset + i, &word, 4);
+    };
+    const auto recordFill = [&](GuestBufferMemory& use, std::uint64_t begin, std::uint64_t end, std::uint64_t fillFrom, std::size_t fillBytes, std::uint32_t word) {
+        std::uint32_t adjustment = 0;
+        const auto view = use.Descriptor(begin, static_cast<std::size_t>(end - begin), adjustment);
+        {
+            std::unique_lock gpu(GpuMutex());
+            const auto commands = recorder.Commands();
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, view.buffer, view.offset + adjustment + (fillFrom - begin), fillBytes, word);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            use.RecordCopyBacks(recorder);
+            recorder.NotePendingWrites(use.Writes());
+            use.MarkDirectWrites();
+        }
+        fill(fillFrom, fillBytes, word);
+    };
+    const auto writeUse = [&](std::uint64_t begin, std::uint64_t end, std::uint64_t fillFrom, std::size_t fillBytes, std::uint32_t word) {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        auto memory = std::make_unique<GuestBufferMemory>(context);
+        memory->AllowBufferResidency();
+        memory->AddWritable(begin, static_cast<std::size_t>(end - begin));
+        memory->Upload(false);
+        recordFill(*memory, begin, end, fillFrom, fillBytes, word);
+        return memory;
+    };
+    const auto readBack = [&](GuestBufferMemory& memory, std::uint64_t begin, std::uint64_t end, std::vector<std::uint8_t>& out) {
+        const auto length = static_cast<std::size_t>(end - begin);
+        std::uint32_t adjustment = 0;
+        const auto view = memory.Descriptor(begin, length, adjustment);
+        Buffer readback(context, length, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        {
+            std::unique_lock gpu(GpuMutex());
+            const auto commands = recorder.Commands();
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            CopyBuffer(context, commands, view.buffer, view.offset + adjustment, readback.Handle(), 0, length);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        }
+        settle();
+        readback.Invalidate();
+        out.resize(length);
+        std::memcpy(out.data(), readback.Bytes().data(), length);
+    };
+    const auto bytesOf = [&](std::uint64_t begin, std::uint64_t end) {
+        const auto offset = static_cast<std::size_t>(begin - first);
+        return std::vector<std::uint8_t>(expected.begin() + static_cast<std::ptrdiff_t>(offset), expected.begin() + static_cast<std::ptrdiff_t>(offset + (end - begin)));
+    };
+    const auto ready = [&](std::uint64_t begin, std::uint64_t end) {
+        for (int use = 0; use < 2; ++use) {
+            auto memory = writeUse(begin, end, begin, 4096, 0x11111111u);
+            settle();
+            memory->WriteBack();
+            settle();
+        }
+        resetGuest();
+    };
+    ClearBufferResidencies(context.device);
+    const std::uint64_t fillOffsetA = beginA + 65536 + 4096;
+    const std::size_t fillBytesA = 100000;
+    if (optedOut) {
+        const auto before = BufferResidencyStats();
+        for (int use = 0; use < 3; ++use) {
+            auto memory = writeUse(beginA, endA, fillOffsetA, fillBytesA, 0xa1a1a1a1u + use);
+            expect(!memory->HasResidentBuffers(), "a written range was kept resident with APS5_NO_WRITTEN_RESIDENCY");
+            settle();
+            memory->WriteBack();
+            settle();
+        }
+        matchesGuest("written uses with the residency off");
+        const auto after = BufferResidencyStats();
+        expect(after.uses == before.uses && after.heldBytes == 0 && after.writtenUses == before.writtenUses && after.writtenFlushes == before.writtenFlushes && after.admitted == before.admitted, "the written residency counters moved with APS5_NO_WRITTEN_RESIDENCY");
+        if (!failures.empty()) throw std::runtime_error("written buffer residency:\n" + failures);
+        std::cout << "written buffer residency (off): ok\n";
+        return;
+    }
+    {
+        auto before = BufferResidencyStats();
+        auto memory = writeUse(beginA, endA, beginA, 4096, 0x11111111u);
+        expect(!memory->HasResidentBuffers() && BufferResidencyStats().writtenUses == before.writtenUses, "first written use: a range seen once was kept resident");
+        settle();
+        memory->WriteBack();
+        settle();
+        matchesGuest("first written use");
+        before = BufferResidencyStats();
+        memory = writeUse(beginA, endA, fillOffsetA, fillBytesA, 0x22222222u);
+        auto after = BufferResidencyStats();
+        expect(memory->HasResidentBuffers() && !memory->HasGpuCopies(), "second written use: the range was not served from a resident copy");
+        expect(after.admitted - before.admitted == 1 && after.heldWrittenRanges == 1 && after.writtenUses - before.writtenUses == 1, "second written use: the range was not admitted as a written resident copy");
+        expect(after.writtenCopiedInBytes - before.writtenCopiedInBytes == lengthA && after.heldBytes - before.heldBytes == 2 * lengthA, "second written use: the copy in and the baseline are not accounted");
+        expect(after.dirtyBytes >= lengthA && after.writtenBackBytes == before.writtenBackBytes && after.writtenFlushes == before.writtenFlushes, "second written use: the GPU write was written back at once");
+        expect(AnyShadowedOverlaps(beginA, 16) && AnyShadowedOverlaps(endA - 16, 16), "second written use: the dirty range is not reported to the readers of guest memory");
+        const auto dispatchBefore = BufferResidencyStats();
+        auto third = writeUse(beginA, endA, fillOffsetA + 8192, 20000, 0x33333333u);
+        auto fourth = writeUse(beginA, endA, beginA + 100, 4000, 0x44444444u);
+        const auto dispatchAfter = BufferResidencyStats();
+        expect(third->HasResidentBuffers() && fourth->HasResidentBuffers(), "reuse: the later uses were not served from the resident copy");
+        expect(dispatchAfter.refreshes == dispatchBefore.refreshes && dispatchAfter.writtenCopiedInBytes == dispatchBefore.writtenCopiedInBytes, "reuse: a use copied the range in again");
+        expect(dispatchAfter.writtenBackBytes == dispatchBefore.writtenBackBytes && dispatchAfter.writtenFlushes == dispatchBefore.writtenFlushes, "reuse: a use wrote the range back before a CPU read, another path or the end of the batch needed it");
+        expect(dispatchAfter.writtenUses - dispatchBefore.writtenUses == 2, "reuse: the uses are not counted");
+        const auto syncBefore = BufferResidencyStats();
+        AgcDriver::GuestMemory::FlushGpuWrites(beginA + 64, 64);
+        const auto syncAfter = BufferResidencyStats();
+        expect(syncAfter.flushCpu - syncBefore.flushCpu == 1 && syncAfter.dirtyBytes == 0 && syncAfter.writtenBackBytes > syncBefore.writtenBackBytes, "CPU sync: the dirty blocks were not written back for the CPU read");
+        matchesGuest("CPU sync");
+        for (auto* held : {&memory, &third, &fourth}) (*held)->WriteBack();
+        settle();
+        matchesGuest("after the CPU sync");
+        std::vector<std::uint8_t> resident;
+        auto reader = writeUse(beginA, endA, beginA + 200, 400, 0x55555555u);
+        readBack(*reader, beginA, endA, resident);
+        expect(resident == bytesOf(beginA, endA), "the resident copy does not hold what the GPU wrote");
+        reader->WriteBack();
+        settle();
+        matchesGuest("after the read back of the resident copy");
+    }
+    {
+        const auto before = BufferResidencyStats();
+        auto memory = writeUse(beginA, endA, fillOffsetA + 1024, 40000, 0x66666666u);
+        const auto used = BufferResidencyStats();
+        expect(used.dirtyBytes >= lengthA, "batch end: the use left nothing dirty");
+        settle();
+        const auto after = BufferResidencyStats();
+        expect(after.flushBatch - before.flushBatch == 1 && after.dirtyBytes == 0, "batch end: the dirty blocks were not written back by the submit");
+        matchesGuest("batch end");
+        memory->WriteBack();
+        settle();
+        const auto reuse = BufferResidencyStats();
+        auto next = writeUse(beginA, endA, fillOffsetA + 2048, 8000, 0x77777777u);
+        const auto reused = BufferResidencyStats();
+        expect(reused.refreshes == reuse.refreshes && reused.refreshedBytes == reuse.refreshedBytes, "after a batch end: the written back range was copied in again");
+        settle();
+        next->WriteBack();
+        settle();
+        matchesGuest("use after a batch end");
+    }
+    {
+        auto memory = writeUse(beginA, endA, fillOffsetA, 12000, 0x88888888u);
+        const std::size_t cpuOnly = static_cast<std::size_t>(beginA - first) + 300000;
+        const std::size_t cpuConflict = static_cast<std::size_t>(fillOffsetA - first) + 4000;
+        guest[cpuOnly] = expected[cpuOnly] = static_cast<std::uint8_t>(guest[cpuOnly] ^ 0x5au);
+        guest[cpuConflict] = expected[cpuConflict] = static_cast<std::uint8_t>(guest[cpuConflict] ^ 0xa5u);
+        const auto before = BufferResidencyStats();
+        auto later = writeUse(beginA, endA, beginA + 64, 256, 0x99999999u);
+        const auto merged = BufferResidencyStats();
+        expect(later->HasResidentBuffers() && merged.refreshedBytes > before.refreshedBytes && merged.refreshedBytes - before.refreshedBytes <= 2 * 65536, "CPU write between uses: the changed blocks were not merged and copied in once");
+        AgcDriver::GuestMemory::FlushGpuWrites(beginA, 64);
+        for (auto* held : {&memory, &later}) (*held)->WriteBack();
+        settle();
+        matchesGuest("CPU write between uses");
+        std::vector<std::uint8_t> resident;
+        auto reader = writeUse(beginA, endA, beginA + 400, 64, 0xabababbbu);
+        readBack(*reader, beginA, endA, resident);
+        expect(resident == bytesOf(beginA, endA), "CPU write between uses: the resident copy lost the CPU's bytes");
+        reader->WriteBack();
+        settle();
+        matchesGuest("after the read back of the merged copy");
+    }
+    {
+        resetGuest();
+        ClearBufferResidencies(context.device);
+        ready(beginA, endA);
+        auto memory = writeUse(beginA, endA, fillOffsetA, 50000, 0xc1c1c1c1u);
+        const auto dirty = BufferResidencyStats();
+        expect(memory->HasResidentBuffers() && dirty.dirtyBytes >= lengthA, "overlapping reader: the writer was not served from the resident copy");
+        const std::uint64_t smallBegin = fillOffsetA + 4096;
+        const std::uint64_t smallEnd = smallBegin + 65536;
+        const auto before = BufferResidencyStats();
+        GuestBufferMemory reader(context);
+        reader.AllowBufferResidency();
+        reader.AddReadable(smallBegin, static_cast<std::size_t>(smallEnd - smallBegin));
+        reader.Upload(false);
+        const auto after = BufferResidencyStats();
+        expect(after.flushGpu - before.flushGpu == 1 && after.writtenBackBytes > before.writtenBackBytes, "overlapping reader: the dirty blocks were not written back for the in-place read");
+        std::vector<std::uint8_t> seen;
+        readBack(reader, smallBegin, smallEnd, seen);
+        expect(seen == bytesOf(smallBegin, smallEnd), "overlapping reader: the in-place read did not see the GPU write");
+        reader.WriteBack();
+        memory->WriteBack();
+        settle();
+        matchesGuest("overlapping reader");
+    }
+    {
+        resetGuest();
+        ClearBufferResidencies(context.device);
+        SetBufferResidencyForTests(2 * std::max(lengthA, lengthC) + 8192, 0);
+        ready(beginA, endA);
+        auto dirty = writeUse(beginA, endA, fillOffsetA, 60000, 0xd1d1d1d1u);
+        const auto before = BufferResidencyStats();
+        expect(before.dirtyBytes >= lengthA && before.heldWrittenRanges == 1, "eviction: range A is not a dirty written copy");
+        dirty->WriteBack();
+        dirty.reset();
+        auto seen = writeUse(beginC, endC, beginC + 1000, 4000, 0xd2d2d2d2u);
+        expect(!seen->HasResidentBuffers(), "eviction: range C was resident on its first use");
+        auto admitted = writeUse(beginC, endC, beginC + 2000, 4000, 0xd3d3d3d3u);
+        const auto after = BufferResidencyStats();
+        expect(admitted->HasResidentBuffers() && after.evicted - before.evicted == 1 && after.heldWrittenRanges == 1, "eviction: range C did not take the place of range A");
+        expect(after.flushEvict - before.flushEvict == 1 && after.writtenBackBytes > before.writtenBackBytes, "eviction: a dirty copy was evicted without being written back");
+        settle();
+        for (auto* held : {&seen, &admitted}) (*held)->WriteBack();
+        settle();
+        matchesGuest("eviction");
+        SetBufferResidencyForTests(0, -1);
+    }
+    {
+        resetGuest();
+        ClearBufferResidencies(context.device);
+        ready(beginA, endA);
+        auto memory = writeUse(beginA, endA, fillOffsetA, 8000, 0xe1e1e1e1u);
+        expect(memory->HasResidentBuffers(), "reused build: the first use was not resident");
+        const auto before = BufferResidencyStats();
+        for (int reuse = 0; reuse < 3; ++reuse) {
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            {
+                std::unique_lock gpu(GpuMutex());
+                expect(memory->StagingDecisionsCurrent(), "reused build: the resident decision went stale");
+                memory->RecordStagingCopies(recorder);
+            }
+            recordFill(*memory, beginA, endA, fillOffsetA + 4096 * (reuse + 1), 4000, 0xe2e2e2e2u + reuse);
+        }
+        const auto reused = BufferResidencyStats();
+        expect(reused.refreshes == before.refreshes && reused.writtenFlushes == before.writtenFlushes && reused.writtenUses - before.writtenUses == 3, "reused build: a reuse copied the range in or wrote it back early");
+        AgcDriver::GuestMemory::FlushGpuWrites(beginA, 64);
+        matchesGuest("reused build in one batch");
+        settle();
+        const auto later = BufferResidencyStats();
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        {
+            std::unique_lock gpu(GpuMutex());
+            expect(memory->StagingDecisionsCurrent(), "reused build: the resident decision went stale after a batch");
+            memory->RecordStagingCopies(recorder);
+        }
+        recordFill(*memory, beginA, endA, fillOffsetA + 30000, 6000, 0xe9e9e9e9u);
+        const auto next = BufferResidencyStats();
+        expect(next.refreshes == later.refreshes && next.refreshedBytes == later.refreshedBytes, "reused build: a reuse after a batch copied the written back range in again");
+        settle();
+        matchesGuest("reused build across batches");
+    }
+    {
+        resetGuest();
+        ClearBufferResidencies(context.device);
+        ready(beginA, endA);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        auto memory = std::make_unique<GuestBufferMemory>(context);
+        memory->AllowBufferResidency();
+        memory->AddReadable(beginA, lengthA);
+        const std::uint64_t writtenBegin = beginA + 100000;
+        memory->AddWritable(writtenBegin, 20000);
+        memory->Upload(false);
+        expect(memory->HasResidentBuffers(), "read outside the written elements: the region was not resident");
+        recordFill(*memory, beginA, endA, writtenBegin + 400, 8000, 0xf1f1f1f1u);
+        const std::uint64_t blockBegin = (writtenBegin / 65536) * 65536;
+        const auto before = BufferResidencyStats();
+        expect(before.dirtyBytes != 0 && before.dirtyBytes < lengthA, "read outside the written elements: more than the blocks of the written elements are dirty");
+        AgcDriver::GuestMemory::FlushGpuWrites(blockBegin + 8, 16);
+        const auto after = BufferResidencyStats();
+        expect(after.writtenBackBytes > before.writtenBackBytes && after.dirtyBytes == 0, "read outside the written elements: the dirty block was not written back");
+        const auto offset = static_cast<std::size_t>(blockBegin - first);
+        if (std::memcmp(guest + offset, expected.data() + offset, 65536) != 0) failures += "read outside the written elements: the CPU read did not see the GPU write of its block\n";
+        memory->WriteBack();
+        settle();
+        matchesGuest("read outside the written elements");
+    }
+    {
+        resetGuest();
+        ClearBufferResidencies(context.device);
+        ready(beginA, endA);
+        auto memory = writeUse(beginA, endA, fillOffsetA, 30000, 0xb1b1b1b1u);
+        const auto before = BufferResidencyStats();
+        expect(memory->HasResidentBuffers() && before.dirtyBytes >= lengthA, "label store: the writer was not served from the resident copy");
+        const std::uint64_t labelAddress = first + span - 4096;
+        const std::uint32_t stored = 0x5a5a5a5au;
+        const auto labelBytes = std::as_bytes(std::span(&stored, 1));
+        const auto* import = HostImportFor(context, labelAddress, sizeof(stored));
+        Require(import != nullptr, "import the label memory");
+        {
+            std::unique_lock gpu(GpuMutex());
+            recorder.RecordStore(import->buffer, HostImportOffset(*import, labelAddress), labelBytes, labelAddress);
+        }
+        std::memcpy(expected.data() + (labelAddress - first), &stored, sizeof(stored));
+        const auto after = BufferResidencyStats();
+        expect(after.flushBatch - before.flushBatch == 1 && after.dirtyBytes == 0, "label store: the dirty blocks were still in VRAM when the label was recorded");
+        settle();
+        memory->WriteBack();
+        settle();
+        matchesGuest("label store");
+    }
+    std::uint64_t merged = 0;
+    for (std::uint64_t seed = 1; seed <= 8; ++seed) {
+        resetGuest();
+        ClearBufferResidencies(context.device);
+        std::mt19937_64 random(0x77725f31u * seed);
+        std::vector<std::uint8_t> touched(span, 0);
+        std::vector<std::unique_ptr<GuestBufferMemory>> live;
+        struct Range {
+            std::uint64_t begin;
+            std::uint64_t end;
+        };
+        const std::vector<Range> ranges{{beginA, endA}, {beginA - 40000, beginA + 330000}, {beginC, endC}, {beginC + 30000, beginC + 110000}, {beginA + 100000, beginA + 160000}};
+        const auto pick = [&](std::uint64_t bound) { return static_cast<std::uint64_t>(random() % bound); };
+        const auto checkAll = [&](const std::string& what) { matchesGuest(what); };
+        const auto endBatch = [&] {
+            settle();
+            for (auto& memory : live) memory->WriteBack();
+            live.clear();
+            settle();
+            std::fill(touched.begin(), touched.end(), std::uint8_t{0});
+        };
+        const auto before = BufferResidencyStats();
+        for (int step = 0; step < 240 && failures.empty(); ++step) {
+            const auto& range = ranges[pick(ranges.size())];
+            const auto length = static_cast<std::size_t>(range.end - range.begin);
+            const auto kind = pick(8);
+            const std::string label = "stress step " + std::to_string(step) + " kind " + std::to_string(kind);
+            if (kind <= 2) {
+                const auto bytes = static_cast<std::size_t>((4 + pick(std::min<std::size_t>(length - 4, 90000))) & ~std::uint64_t{3});
+                const auto from = range.begin + ((pick(length - bytes)) & ~std::uint64_t{3});
+                const auto word = static_cast<std::uint32_t>(random());
+                live.push_back(writeUse(range.begin, range.end, from, bytes, word));
+                std::fill(touched.begin() + static_cast<std::ptrdiff_t>(from - first), touched.begin() + static_cast<std::ptrdiff_t>(from - first + bytes), std::uint8_t{1});
+            } else if (kind == 3 || kind == 4) {
+                const auto bytes = static_cast<std::size_t>(1 + pick(300));
+                const auto from = first + pick(span - bytes);
+                const auto offset = static_cast<std::size_t>(from - first);
+                if (std::any_of(touched.begin() + static_cast<std::ptrdiff_t>(offset), touched.begin() + static_cast<std::ptrdiff_t>(offset + bytes), [](std::uint8_t value) { return value != 0; })) continue;
+                for (std::size_t i = 0; i < bytes; ++i) guest[offset + i] = expected[offset + i] = static_cast<std::uint8_t>(random());
+            } else if (kind == 5) {
+                const auto bytes = static_cast<std::size_t>(16 + pick(70000));
+                const auto from = first + pick(span - bytes);
+                AgcDriver::GuestMemory::FlushGpuWrites(from, bytes);
+                const auto offset = static_cast<std::size_t>(from - first);
+                if (std::memcmp(guest + offset, expected.data() + offset, bytes) != 0) failures += label + ": a CPU access did not see the GPU writes over its range\n";
+            } else if (kind == 6) {
+                GuestBufferMemory reader(context);
+                reader.AllowBufferResidency();
+                reader.AddReadable(range.begin, length);
+                reader.Upload(false);
+                std::vector<std::uint8_t> seen;
+                readBack(reader, range.begin, range.end, seen);
+                if (seen != bytesOf(range.begin, range.end)) failures += label + ": a read of a range did not see the GPU and CPU writes\n";
+                reader.WriteBack();
+                endBatch();
+                checkAll(label);
+            } else {
+                endBatch();
+                checkAll(label);
+            }
+        }
+        endBatch();
+        checkAll("stress end " + std::to_string(seed));
+        const auto after = BufferResidencyStats();
+        expect(after.writtenUses - before.writtenUses >= 10 && after.writtenFlushes > before.writtenFlushes && after.admitted > before.admitted, "stress: the written residency was not exercised");
+        merged += after.writtenMergedBytes - before.writtenMergedBytes;
+        ClearBufferResidencies(context.device);
+    }
+    expect(merged > 0, "stress: no CPU write was ever merged into a dirty block");
+    if (reporting) {
+        const auto report = BufferResidencyReport();
+        expect(report.find("written residency") != std::string::npos && report.find("MiB written back in") != std::string::npos && report.find("CPU sync") != std::string::npos, "the written residency segment of the report line is missing");
+        std::cout << report;
+        const auto quiet = BufferResidencyReport();
+        expect(quiet.empty() || quiet.find(" 0 uses, 0.0 MiB copied in, 0.0 MiB written back in 0 flushes") != std::string::npos, "the written residency report window was not reset");
+    }
+    if (!failures.empty()) throw std::runtime_error("written buffer residency:\n" + failures);
+    std::cout << "written buffer residency: ok\n";
 }
 
 void writeBackBlockTests(const Device& device, Recorder& recorder) {
@@ -16183,6 +16635,14 @@ int main(int argc, char** argv) {
             bufferResidencyTests(device, recorder);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--written-buffer-residency-only") {
+            if (device.GetContext().hostImportAlignment == 0 || !AgcDriver::GuestMemory::WriteWatched()) {
+                std::cout << "skipped, host imports or write watching are unavailable\n";
+                return 77;
+            }
+            writtenBufferResidencyTests(device, recorder);
+            return 0;
+        }
         if (argc == 3 && std::string_view(argv[1]) == "--alias-overwrite-only") {
             if (device.GetContext().hostImportAlignment == 0) {
                 std::cout << "skipped, host imports are unavailable\n";
@@ -16392,6 +16852,7 @@ int main(int argc, char** argv) {
         splitUploadTests(device, recorder);
         splitBufferTests(device, recorder);
         bufferResidencyTests(device, recorder);
+        writtenBufferResidencyTests(device, recorder);
         writeBackBlockTests(device, recorder);
         flushWaitMipChainTests(device, recorder);
         singlePassTests(device, recorder, false);

@@ -2295,12 +2295,24 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> so
     return StoreOwnBytes(address, source.size(), [&] { copyOwnBytes(address, source); });
 }
 
-static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool complete, std::uint64_t* order = nullptr) {
+static void checkStamps(const WriteTracker& tracker, const StampCheck& check, std::uint64_t address, std::size_t bytes) {
+    const auto first = tracker.blockOf(address);
+    const auto last = tracker.blockOf(address + bytes - 1);
+    for (auto block = first; block <= last; ++block) {
+        const auto k = block - first;
+        if (k >= check.changed.size()) break;
+        const auto threshold = k < check.thresholds.size() ? check.thresholds[k] : 0;
+        check.changed[k] = threshold == 0 || tracker.stampOf(block) > threshold ? BlockWritten : BlockUnchanged;
+    }
+}
+
+static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool complete, std::uint64_t* order = nullptr, const StampCheck* check = nullptr) {
     BreakProofs();
     auto& tracker = Tracker();
     auto lock = lockTracker(tracker);
     if (order != nullptr) *order = 0;
     tracker.initialize();
+    if (check != nullptr) std::fill(check->changed.begin(), check->changed.end(), BlockWritten);
     if (bytes == 0) return 0;
     ++tracker.generation;
     if (!tracker.watched || !tracker.covers(address, bytes)) {
@@ -2331,6 +2343,7 @@ static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool 
         }
         if (runs.stamped != 0) ++tracker.generation;
     }
+    if (check != nullptr) checkStamps(tracker, *check, address, bytes);
     const auto first = tracker.blockOf(address);
     const auto last = tracker.blockOf(address + bytes - 1);
     for (auto block = first; block <= last; ++block) {
@@ -2352,6 +2365,10 @@ std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes) {
 
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes, std::uint64_t& order) {
     return markWritten(address, bytes, false, &order);
+}
+
+std::uint64_t MarkPossiblyWrittenChecked(std::uint64_t address, std::size_t bytes, const StampCheck& check, std::uint64_t& order) {
+    return markWritten(address, bytes, false, &order, &check);
 }
 
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {

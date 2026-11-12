@@ -153,6 +153,11 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
 void RetireShadow(VkDevice device, const HostImport& import, const std::function<bool(std::uint64_t, std::uint64_t)>& registered);
 // Teardown: every shadow of the context's device is published; DestroyShadows then drops them.
 void PublishAllShadows(const Context& context, PublishReason reason);
+std::size_t PublishWrittenResidency(std::uint64_t address, std::size_t bytes, PublishScope scope, PublishReason reason, bool waited);
+bool WrittenResidencyDirty(std::uint64_t address, std::size_t bytes);
+bool WrittenResidencyDirty(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+void RetireWrittenResidency(VkDevice device, const HostImport& import, const std::function<bool(std::uint64_t, std::uint64_t)>& registered);
+void PublishAllWrittenResidencies(const Context& context, PublishReason reason);
 void DestroyShadows(VkDevice device);
 // The [storage] line's shadow segment (10 s deltas, live slab totals).
 std::string ShadowReport();
