@@ -2,7 +2,7 @@
 
 ### Functional
 
-- [sceContentDeleteInitialize](../../../core/libs/prx/libSceContentDelete/Export.cpp) (libSceContentDelete) - returning InvalidArgument (0x809D5001) for unmapped parameter pointers is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+- [sceContentDeleteInitialize and sceContentDeleteByPath](../../../core/libs/prx/libSceContentDelete/Export.cpp) (libSceContentDelete) - returning InvalidArgument (0x809D5001) for unmapped parameter pointers is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
 - [sceContentDeleteById](../../../core/libs/prx/libSceContentDelete/Export.cpp) and `sceContentDeleteByPath`: content database access and deletion are not implemented. Calls with valid arguments after initialization go through `NotImplemented_nid_no_patch`: the console's error for content that is not in the library is unknown, and it cannot be inferred from an empty host library. Null paths after initialization throw instead of reproducing the original unchecked string access.
 - [sceContentDeleteInitialize](../../../core/libs/prx/libSceContentDelete/Export.cpp): validates the confirmed 16 KiB heap requirement and lifecycle errors, but does not create the original allocator, mutex and database client. Initialization-parameter fields other than the 64-bit heap size at offset 8 remain unresolved.
 

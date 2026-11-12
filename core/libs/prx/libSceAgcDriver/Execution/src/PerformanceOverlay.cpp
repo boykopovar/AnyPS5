@@ -975,7 +975,7 @@ void PerformanceOverlay::sampleDetails(OverlayStatistics::Clock::time_point at, 
     if (context.hostImportAlignment != 0) {
         const auto imports = Graphics::HostImportCounters();
         detailSample.hostImports = imports.live;
-        detailSample.hostImportBytes = OverlayMemory{imports.liveBytes, imports.liveBytes + Graphics::HostImportBudgetRemaining(context)};
+        detailSample.hostImportBytes = OverlayMemory{imports.liveBytes + imports.retiredPinnedBytes, imports.liveBytes + imports.retiredPinnedBytes + Graphics::HostImportBudgetRemaining(context)};
     }
     detailSample.presentMode = std::string(OverlayPresentModeName(info.presentMode));
     if (info.fpsLimit > 0.0) detailSample.fpsLimit = info.fpsLimit;
