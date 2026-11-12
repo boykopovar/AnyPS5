@@ -740,6 +740,10 @@ int main() {
     errno = 73;
     Require(sceNetCtlGetNatInfo(reinterpret_cast<NetCtlNatInfo*>(0x10)) == kErrInvalidAddr);
     Require(errno == 73);
+    Require(sceNetCtlGetIfStat(nullptr) == kErrInvalidAddr);
+    errno = 71;
+    Require(sceNetCtlGetIfStat(reinterpret_cast<NetCtlIfStat*>(0x10)) == kErrInvalidAddr);
+    Require(errno == 71);
     Require(sceNetCtlRegisterCallback(nullptr, nullptr, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlRegisterCallbackV6(nullptr, nullptr, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlUnregisterCallback(-1) == invalidId);
@@ -765,6 +769,9 @@ int main() {
         Require(sceNetCtlGetResult(eventType, &errorCode) == 0 && errorCode == 0);
     }
     Require(sceNetCtlGetResultV6(kEventIpObtained, nullptr) == kErrInvalidAddr);
+    errno = 71;
+    Require(sceNetCtlGetResultV6(kEventIpObtained, reinterpret_cast<int*>(0x10)) == kErrInvalidAddr);
+    Require(errno == 71);
     for (const int eventType : {kEventDisconnected, 2, kEventIpObtained}) {
         int errorCodeV6 = -1;
         Require(sceNetCtlGetResultV6(eventType, &errorCodeV6) == 0 && errorCodeV6 == 0);
