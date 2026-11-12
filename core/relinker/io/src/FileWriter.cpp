@@ -72,11 +72,11 @@ bool replaceFile(std::filesystem::path target, const std::string& path, const ch
     std::filesystem::path temporary;
     const int descriptor = createTemporary(target, mode, temporary);
     if (descriptor < 0)
-        return false;
+        throw Domain::RelinkerException("Cannot open output file: " + path);
     if (regular && fchmod(descriptor, mode) != 0) {
         close(descriptor);
         std::filesystem::remove(temporary, error);
-        return false;
+        throw Domain::RelinkerException("Cannot open output file: " + path);
     }
     const bool written = writeAll(descriptor, data, size);
     if (close(descriptor) != 0 || !written) {
@@ -87,7 +87,7 @@ bool replaceFile(std::filesystem::path target, const std::string& path, const ch
     if (!error)
         return true;
     std::filesystem::remove(temporary, error);
-    return false;
+    throw Domain::RelinkerException("Cannot replace output file: " + path);
 }
 #endif
 
