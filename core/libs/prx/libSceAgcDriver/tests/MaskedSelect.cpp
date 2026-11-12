@@ -1852,7 +1852,8 @@ int main() {
     passed &= run("an optional wave body may leave through copied tails whose skip block is reached directly on one path and through another predecessor on the other", [&] { return optionalSharedSkipPredecessorTail(false); });
     passed &= run("an optional wave body cannot leave through a copied tail whose own path's predecessor value differs on active lanes", [&] { return !optionalSharedSkipPredecessorTail(true); });
 
-    const auto optionalAnyLaneLeftBallotTail = [&](bool exact) {
+    enum class AnyLaneTail { InactiveZero, InactiveDiffer, ActiveDiffer };
+    const auto optionalAnyLaneLeftBallotTail = [&](AnyLaneTail shape) {
         Builder b;
         b.program.Resources().stage = IrShaderStage::Pixel;
         auto& entry = *b.block;
@@ -1864,11 +1865,18 @@ int main() {
         falseGuard.SetImmediateBool(false);
         IrValue* leftArg = nullptr;
         IrValue* rightArg = nullptr;
-        if (exact) {
+        if (shape == AnyLaneTail::InactiveZero) {
             auto& y1 = b.logicalAnd(predicate, falseGuard);
             auto& notY1 = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&y1});
             leftArg = &b.logicalAnd(predicate, notY1);
             auto& y2 = b.logicalAnd(predicate, falseGuard);
+            auto& notY2 = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&y2});
+            rightArg = &b.logicalAnd(predicate, notY2);
+        } else if (shape == AnyLaneTail::ActiveDiffer) {
+            auto& y1 = b.logicalAnd(predicate, helperPredicate(b, false));
+            auto& notY1 = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&y1});
+            leftArg = &b.logicalAnd(predicate, notY1);
+            auto& y2 = b.logicalAnd(predicate, pixelPredicate(b));
             auto& notY2 = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&y2});
             rightArg = &b.logicalAnd(predicate, notY2);
         } else {
@@ -1942,8 +1950,9 @@ int main() {
         return StencilReplaySafe(b.program);
     };
 
-    passed &= run("an optional wave body may leave through a nested tail whose any-lane-left ballots are both provably zero on inactive lanes", [&] { return optionalAnyLaneLeftBallotTail(true); });
-    passed &= run("an optional wave body cannot leave through a nested tail whose any-lane-left ballots differ on an inactive lane that is not provably zero", [&] { return !optionalAnyLaneLeftBallotTail(false); });
+    passed &= run("an optional wave body may leave through a nested tail whose any-lane-left ballots are both provably zero on inactive lanes", [&] { return optionalAnyLaneLeftBallotTail(AnyLaneTail::InactiveZero); });
+    passed &= run("an optional wave body cannot leave through a nested tail whose any-lane-left ballots differ on an inactive lane that is not provably zero", [&] { return !optionalAnyLaneLeftBallotTail(AnyLaneTail::InactiveDiffer); });
+    passed &= run("an optional wave body cannot leave through a nested tail whose any-lane-left ballots are zero on inactive lanes but differ on an active lane", [&] { return !optionalAnyLaneLeftBallotTail(AnyLaneTail::ActiveDiffer); });
 
     const auto optionalOwnBitBallotTail = [&](bool sameLanes) {
         Builder b;

@@ -532,6 +532,25 @@ private:
         return left == right || (left->HasImmediate() && right->HasImmediate() && left->Type() == right->Type() && left->ImmediateU64() == right->ImmediateU64());
     }
 
+    const IrValue* withoutPredicateFactor(const IrValue* value, const IrValue* predicate) const {
+        value = value->Resolve();
+        if (value->Opcode() != IrOpcode::LogicalAnd || value->ArgumentCount() != 2u) return value;
+        if (value->Argument(0)->Resolve() == predicate->Resolve()) return value->Argument(1)->Resolve();
+        if (value->Argument(1)->Resolve() == predicate->Resolve()) return value->Argument(0)->Resolve();
+        return value;
+    }
+
+    bool equalOnActiveLanes(const IrValue* left, const IrValue* right, const IrValue* predicate, unsigned depth = 0) {
+        if (depth > 8u) return false;
+        left = left->Resolve();
+        right = right->Resolve();
+        if (sameValue(left, right)) return true;
+        const IrValue* leftRest = withoutPredicateFactor(left, predicate);
+        const IrValue* rightRest = withoutPredicateFactor(right, predicate);
+        if (leftRest == left && rightRest == right) return equivalentSource(left, right, 0u);
+        return equalOnActiveLanes(leftRest, rightRest, predicate, depth + 1u);
+    }
+
     bool inactiveEquals(const IrValue* value, const IrValue* other, const IrValue* predicate, const std::set<const IrBlock*>& region, unsigned depth = 0) {
         if (depth > 32u) return false;
         value = value->Resolve();
@@ -765,10 +784,14 @@ private:
         }
         const IrValue* leftBallot = ballotWord(left, half);
         const IrValue* rightBallot = ballotWord(right, half);
-        if (leftBallot && rightBallot && relatedLanes(leftBallot->Argument(0), rightBallot->Argument(0), predicate, region)) {
+        if (leftBallot && rightBallot) {
             const IrValue* leftArg = leftBallot->Argument(0)->Resolve();
             const IrValue* rightArg = rightBallot->Argument(0)->Resolve();
-            if (!exactBallots || sameValue(leftArg, rightArg) || (zeroOnInactiveLanes(leftArg, predicate) && zeroOnInactiveLanes(rightArg, predicate))) return true;
+            if (exactBallots) {
+                if (zeroOnInactiveLanes(leftArg, predicate) && zeroOnInactiveLanes(rightArg, predicate) && equalOnActiveLanes(leftArg, rightArg, predicate)) return true;
+            } else if (relatedLanes(leftArg, rightArg, predicate, region)) {
+                return true;
+            }
         }
         if (exactBallots) return false;
         if (clearedOnActiveLanes(left, half, predicate) && clearedOnActiveLanes(right, half, predicate)) return true;
@@ -801,18 +824,23 @@ private:
         left = left->Resolve();
         right = right->Resolve();
         if (sameValue(left, right)) return true;
-        if (inactiveEquals(left, right, predicate, region) || inactiveEquals(right, left, predicate, region)) return true;
-        if (left->Type() == IrType::Bool && right->Type() == IrType::Bool) {
-            const IrValue* strippedLeft = exclusionLanes(left, predicate);
-            const IrValue* strippedRight = exclusionLanes(right, predicate);
-            if ((strippedLeft != left || strippedRight != right) && relatedValue(strippedLeft, strippedRight, predicate, region, skipEntries, depth + 1u, exactBallots)) return true;
+        if (!exactBallots) {
+            if (inactiveEquals(left, right, predicate, region) || inactiveEquals(right, left, predicate, region)) return true;
+            if (left->Type() == IrType::Bool && right->Type() == IrType::Bool) {
+                const IrValue* strippedLeft = exclusionLanes(left, predicate);
+                const IrValue* strippedRight = exclusionLanes(right, predicate);
+                if ((strippedLeft != left || strippedRight != right) && relatedValue(strippedLeft, strippedRight, predicate, region, skipEntries, depth + 1u, exactBallots)) return true;
+            }
         }
         if (left->Type() == IrType::U32 && right->Type() == IrType::U32 && relatedMaskWords(left, right, predicate, region, skipEntries, depth + 1u, exactBallots)) return true;
         if (left->Opcode() == IrOpcode::Ballot && right->Opcode() == IrOpcode::Ballot && left->ArgumentCount() == 1u && right->ArgumentCount() == 1u) {
             const IrValue* leftLanes = left->Argument(0)->Resolve();
             const IrValue* rightLanes = right->Argument(0)->Resolve();
-            const bool related = relatedLanes(leftLanes, rightLanes, predicate, region) || (!exactBallots && relatedValue(leftLanes, rightLanes, predicate, region, skipEntries, depth + 1u, exactBallots));
-            if (related && (!exactBallots || sameValue(leftLanes, rightLanes) || (zeroOnInactiveLanes(leftLanes, predicate) && zeroOnInactiveLanes(rightLanes, predicate)))) return true;
+            if (exactBallots) {
+                if (zeroOnInactiveLanes(leftLanes, predicate) && zeroOnInactiveLanes(rightLanes, predicate) && equalOnActiveLanes(leftLanes, rightLanes, predicate)) return true;
+            } else if (relatedLanes(leftLanes, rightLanes, predicate, region) || relatedValue(leftLanes, rightLanes, predicate, region, skipEntries, depth + 1u, exactBallots)) {
+                return true;
+            }
         }
         if (left->Type() == IrType::U32 && right->Type() == IrType::U32) {
             if (left->Opcode() == IrOpcode::BitwiseAnd32 && left->ArgumentCount() == 2u) {
@@ -873,7 +901,7 @@ private:
         return block;
     }
 
-    bool tailPairs(const IrBlock* bodyBlock, const IrBlock* skipBlock, const IrValue* predicate, const std::set<const IrBlock*>& region, std::map<const IrBlock*, const IrBlock*>& touched, std::map<const IrBlock*, const IrBlock*> skipEntries, const IrBlock* skipPred, unsigned depth = 0) {
+    bool tailPairs(const IrBlock* bodyBlock, const IrBlock* skipBlock, const IrValue* predicate, const std::set<const IrBlock*>& region, std::map<const IrBlock*, std::pair<const IrBlock*, const IrBlock*>>& touched, std::map<const IrBlock*, const IrBlock*> skipEntries, const IrBlock* skipPred, unsigned depth = 0) {
         if (depth > 32u) return false;
         const IrBlock* forwardedBody = followBody(bodyBlock);
         const IrBlock* forwardedSkip = followSkip(skipBlock, skipEntries);
@@ -881,8 +909,8 @@ private:
         if (forwardedBody != bodyBlock || forwardedSkip != skipBlock) {
             return tailPairs(forwardedBody, forwardedSkip, predicate, region, touched, skipEntries, skipBlock, depth + 1u);
         }
-        if (const auto found = touched.find(bodyBlock); found != touched.end()) return found->second == skipBlock;
-        touched.emplace(bodyBlock, skipBlock);
+        if (const auto found = touched.find(bodyBlock); found != touched.end()) return found->second.first == skipBlock && found->second.second == skipPred;
+        touched.emplace(bodyBlock, std::pair{skipBlock, skipPred});
         const auto& bodyInstructions = bodyBlock->Instructions();
         const auto& skipInstructions = skipBlock->Instructions();
         auto bodyIt = bodyInstructions.begin();
@@ -990,7 +1018,7 @@ private:
                 }
                 if (candidates.empty()) candidates.push_back(nullptr);
                 for (const auto* skipPred : candidates) {
-                    std::map<const IrBlock*, const IrBlock*> touched;
+                    std::map<const IrBlock*, std::pair<const IrBlock*, const IrBlock*>> touched;
                     std::map<const IrBlock*, const IrBlock*> skipEntries;
                     if (tailPairs(block, found->second, predicate, region, touched, skipEntries, skipPred)) {
                         for (const auto& [pairedBlock, skipBlock] : touched) paired.insert(pairedBlock);
