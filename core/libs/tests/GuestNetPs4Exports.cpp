@@ -193,6 +193,7 @@ void CheckValidation() {
     Require(Failed(sceNetBandwidthControlGetDataTraffic(-1, nullptr, 0), kEinval));
     Require(Failed(sceNetBandwidthControlGetDataTraffic(-1, traffic, 1), kEinval));
     Require(Failed(sceNetDumpCreate(nullptr, 0x800, 0), kEinval));
+    Require(Failed(sceNetDumpCreate(reinterpret_cast<const char*>(0x10), 0x800, 0), 14));
     Require(Failed(sceNetDumpCreate("dump", 0x7FF, 0), kEinval));
     Require(Failed(sceNetDumpCreate("dump", 0x800, 3), kEinval));
     Require(Failed(sceNetDumpCreate("dump", 0x800, 5), kEinval));
@@ -200,6 +201,7 @@ void CheckValidation() {
     Require(Failed(sceNetDumpCreate("0123456789abcdef0123456789abcdef", 0, 3), kEnametoolong));
     Require(Failed(sceNetDumpRead(0, nullptr, 0, nullptr), kEinval));
     Require(Failed(sceNetDumpRead(0, g_buffer.data(), -1, nullptr), kEinval));
+    Require(Failed(sceNetDumpRead(0, g_buffer.data(), 1, reinterpret_cast<std::uint32_t*>(0x10)), 14));
     flags = 0x21;
     Require(Failed(sceNetDumpRead(0, g_buffer.data(), 1, &flags), kEinval));
     const std::int32_t small = static_cast<std::int32_t>(g_buffer.size()) - 1;
