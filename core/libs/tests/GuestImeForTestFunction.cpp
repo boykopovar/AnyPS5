@@ -11,12 +11,14 @@ void Require(bool value, const char* what) {
     std::abort();
 }
 
-} // namespace
+}
 
 int main() {
-    const int first = sceImeForTestFunction();
-    const int second = sceImeForTestFunction();
-    Require(first < 0, "sceImeForTestFunction did not answer an error");
-    Require(first == second, "sceImeForTestFunction did not answer the same error on a repeated call");
+    constexpr int expected = static_cast<int>(0x80bc00ffu);
+    for (int call = 0; call < 3; ++call) {
+        const int result = sceImeForTestFunction();
+        Require(result < 0, "sceImeForTestFunction did not answer an error");
+        Require(result == expected, "sceImeForTestFunction did not answer 0x80bc00ff");
+    }
     return 0;
 }
