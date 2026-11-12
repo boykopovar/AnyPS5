@@ -161,24 +161,6 @@ DescriptorImageShape ImageShapeForResource(const ImageResource& image) {
     fail("DescriptorBindingBuilder::Populate image resource dimension has no descriptor image shape");
 }
 
-std::vector<std::uint32_t> GuestBuffersDescriptor(const std::vector<std::uint32_t>& resources, const ResourceSnapshot& snapshot) {
-    std::vector<std::uint32_t> result;
-    result.reserve(resources.size() * 4u);
-    for (const std::uint32_t r : resources) {
-        if (r >= snapshot.buffers.size()) {
-            fail("DescriptorBindingBuilder::Populate guest buffer index is out of range");
-        }
-        const DescriptorValue& value = snapshot.buffers[r];
-        if (value.dwordCount != 4u) {
-            fail("DescriptorBindingBuilder::Populate guest buffer descriptor has an invalid width");
-        }
-        for (std::uint32_t dword = 0; dword < 4u; dword++) {
-            result.push_back(value.dwords[dword]);
-        }
-    }
-    return result;
-}
-
 std::vector<std::uint32_t> GuestSamplersDescriptor(const std::vector<std::uint32_t>& resources, const ResourceSnapshot& snapshot) {
     std::vector<std::uint32_t> result;
     result.reserve(resources.size() * 4u);
@@ -748,6 +730,80 @@ DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPl
     return selected;
 }
 
+namespace {
+
+void guestBindingWords(const PreparedDescriptorBinding& entry, std::vector<std::uint32_t>& words, const ResourceSnapshot& snapshot, const ResolvedImageTables* tables) {
+    switch (entry.descriptor.role) {
+    case DescriptorRole::GuestBuffers:
+        words.clear();
+        words.reserve(entry.resources.size() * 4u);
+        for (const std::uint32_t resource : entry.resources) {
+            if (resource >= snapshot.buffers.size()) fail("DescriptorBindingBuilder::Populate guest buffer index is out of range");
+            const DescriptorValue& value = snapshot.buffers[resource];
+            if (value.dwordCount != 4u) fail("DescriptorBindingBuilder::Populate guest buffer descriptor has an invalid width");
+            words.insert(words.end(), value.dwords.begin(), value.dwords.begin() + 4);
+        }
+        break;
+    case DescriptorRole::GuestImages:
+        words.reserve(words.size() + entry.resources.size() * 8u);
+        for (std::size_t element = 0; element < entry.resources.size(); ++element) {
+            const auto& descriptor = snapshot.images.at(entry.resources[element]);
+            if (descriptor.dwordCount != 8u) fail("invalid runtime image descriptor width");
+            if (!entry.inactive.empty() && entry.inactive[element]) {
+                words.insert(words.end(), 8u, 0u);
+                continue;
+            }
+            const auto offset = words.size();
+            words.insert(words.end(), descriptor.dwords.begin(), descriptor.dwords.begin() + 8);
+            if (entry.identityImageSwizzle[element]) words[offset + 3u] = (words[offset + 3u] & ~0xfffu) | ShaderImageIdentitySwizzle;
+        }
+        break;
+    case DescriptorRole::GuestSamplers:
+        words = GuestSamplersDescriptor(entry.resources, snapshot);
+        for (const auto element : entry.samplerFilterElements) {
+            auto& filter = words.at(element * 4u + 2u);
+            filter = PointFilteredSamplerWord(words.at(element * 4u), filter);
+        }
+        break;
+    case DescriptorRole::ImageTable:
+    case DescriptorRole::ImageStorageTable:
+        if (tables == nullptr) fail("DescriptorBindingBuilder::Populate image table elements were not resolved");
+        words.reserve(words.size() + tables->elements.size() * 8u);
+        for (const auto& element : tables->elements) words.insert(words.end(), element.words.begin(), element.words.end());
+        break;
+    case DescriptorRole::SamplerTable:
+        if (tables == nullptr) fail("DescriptorBindingBuilder::Populate sampler table elements were not resolved");
+        words.reserve(words.size() + tables->samplers.size() * 4u);
+        for (const auto& element : tables->samplers) {
+            const auto first = words.size();
+            words.insert(words.end(), element.words.begin(), element.words.end());
+            if (element.point) words[first + 2u] = PointFilteredSamplerWord(words[first], words[first + 2u]);
+        }
+        break;
+    case DescriptorRole::ImageTableMap:
+        if (tables == nullptr || tables->map.empty()) fail("DescriptorBindingBuilder::Populate image table map was not resolved");
+        words = tables->map;
+        break;
+    case DescriptorRole::FlattenedSrt:
+        if (snapshot.flattenedSrt.empty()) fail("DescriptorBindingBuilder::Populate flattened SRT snapshot is empty");
+        words = snapshot.flattenedSrt;
+        break;
+    case DescriptorRole::ShaderData:
+    case DescriptorRole::Gds:
+    case DescriptorRole::BdaPagetable:
+    case DescriptorRole::FaultBuffer:
+        break;
+    }
+    const auto role = entry.descriptor.role;
+    if (role == DescriptorRole::GuestBuffers || role == DescriptorRole::GuestImages || role == DescriptorRole::GuestSamplers) {
+        if (entry.descriptor.count == 0u || words.size() % entry.descriptor.count != 0u) {
+            fail("DescriptorBindingBuilder::Populate guest descriptor size is not a multiple of the binding count");
+        }
+    }
+}
+
+}
+
 void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, const CompiledBindingLayout& compiled, const DescriptorBindingPlan& plan, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads, const ResolvedImageTables* tables) const {
     const auto& layout = compiled.layout;
     const bool needsShaderData = layout.UsesPushData() || plan.storageData;
@@ -763,39 +819,16 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
     std::size_t readOnlyHere = 0;
     for (const auto& entry : plan.bindings) {
         auto physical = entry.descriptor;
+        if (physical.role == DescriptorRole::ShaderData) physical.guestDescriptor = std::move(shaderData);
+        else guestBindingWords(entry, physical.guestDescriptor, snapshot, tables);
         switch (physical.role) {
         case DescriptorRole::GuestBuffers:
-            physical.guestDescriptor = GuestBuffersDescriptor(entry.resources, snapshot);
             writtenHere += entry.writtenBuffers;
             readOnlyHere += entry.readOnlyBuffers;
             break;
-        case DescriptorRole::GuestImages:
-            physical.guestDescriptor.reserve(entry.resources.size() * 8u);
-            for (std::size_t element = 0; element < entry.resources.size(); ++element) {
-                const auto& descriptor = snapshot.images.at(entry.resources[element]);
-                if (descriptor.dwordCount != 8u) fail("invalid runtime image descriptor width");
-                if (!entry.inactive.empty() && entry.inactive[element]) {
-                    physical.guestDescriptor.insert(physical.guestDescriptor.end(), 8u, 0u);
-                    continue;
-                }
-                const auto offset = physical.guestDescriptor.size();
-                physical.guestDescriptor.insert(physical.guestDescriptor.end(), descriptor.dwords.begin(), descriptor.dwords.begin() + 8);
-                if (entry.identityImageSwizzle[element]) physical.guestDescriptor[offset + 3u] = (physical.guestDescriptor[offset + 3u] & ~0xfffu) | ShaderImageIdentitySwizzle;
-            }
-            break;
-        case DescriptorRole::GuestSamplers:
-            physical.guestDescriptor = GuestSamplersDescriptor(entry.resources, snapshot);
-            for (const auto element : entry.samplerFilterElements) {
-                auto& filter = physical.guestDescriptor.at(element * 4u + 2u);
-                filter = PointFilteredSamplerWord(physical.guestDescriptor.at(element * 4u), filter);
-            }
-            break;
         case DescriptorRole::ImageTable:
         case DescriptorRole::ImageStorageTable:
-            if (tables == nullptr) fail("DescriptorBindingBuilder::Populate image table elements were not resolved");
-            physical.guestDescriptor.reserve(tables->elements.size() * 8u);
             for (const auto& element : tables->elements) {
-                physical.guestDescriptor.insert(physical.guestDescriptor.end(), element.words.begin(), element.words.end());
                 ImageResource shape;
                 shape.dimension = element.dimension;
                 physical.imageShapes.push_back(ImageShapeForResource(shape));
@@ -812,44 +845,14 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             physical.count = static_cast<std::uint32_t>(tables->elements.size());
             break;
         case DescriptorRole::SamplerTable:
-            if (tables == nullptr) fail("DescriptorBindingBuilder::Populate sampler table elements were not resolved");
-            physical.guestDescriptor.reserve(tables->samplers.size() * 4u);
-            for (const auto& element : tables->samplers) {
-                const auto first = physical.guestDescriptor.size();
-                physical.guestDescriptor.insert(physical.guestDescriptor.end(), element.words.begin(), element.words.end());
-                if (element.point) physical.guestDescriptor[first + 2u] = PointFilteredSamplerWord(physical.guestDescriptor[first], physical.guestDescriptor[first + 2u]);
-                physical.samplerDepthCompare.push_back(element.compare);
-            }
+            for (const auto& element : tables->samplers) physical.samplerDepthCompare.push_back(element.compare);
             physical.count = static_cast<std::uint32_t>(tables->samplers.size());
             break;
-        case DescriptorRole::ImageTableMap:
-            if (tables == nullptr || tables->map.empty()) fail("DescriptorBindingBuilder::Populate image table map was not resolved");
-            physical.guestDescriptor = tables->map;
-            break;
-        case DescriptorRole::FlattenedSrt:
-            if (snapshot.flattenedSrt.empty()) {
-                fail("DescriptorBindingBuilder::Populate flattened SRT snapshot is empty");
-            }
-            physical.guestDescriptor = snapshot.flattenedSrt;
-            break;
-        case DescriptorRole::ShaderData:
-            physical.guestDescriptor = std::move(shaderData);
-            break;
-        case DescriptorRole::Gds:
-        case DescriptorRole::BdaPagetable:
-        case DescriptorRole::FaultBuffer:
+        default:
             break;
         }
-
-        if (physical.role == DescriptorRole::GuestBuffers || physical.role == DescriptorRole::GuestImages || physical.role == DescriptorRole::GuestSamplers) {
-            if (physical.count == 0u || physical.guestDescriptor.size() % physical.count != 0u) {
-                fail("DescriptorBindingBuilder::Populate guest descriptor size is not a multiple of the binding count");
-            }
-        }
-
         bindings.push_back(std::move(physical));
     }
-
     if (bufferWrittenTraceEnabled()) {
         // Cumulative counts include every Populate of the process (the replay tool populates
         // each program twice), so the per-call counts are the ones to sum per program.
@@ -862,6 +865,22 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
     if (layout.UsesPushData()) {
         allocation.pushConstants.resize(static_cast<std::size_t>(shaderData.size()) * sizeof(std::uint32_t));
         std::memcpy(allocation.pushConstants.data(), shaderData.data(), allocation.pushConstants.size());
+    }
+}
+
+void DescriptorBindingBuilder::PopulateGuestWords(std::vector<std::vector<std::uint32_t>>& words, const CompiledBindingLayout& compiled, const DescriptorBindingPlan& plan, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads, const ResolvedImageTables* tables) const {
+    const auto& layout = compiled.layout;
+    words.resize(plan.bindings.size());
+    for (std::size_t index = 0; index < plan.bindings.size(); ++index) {
+        const auto& entry = plan.bindings[index];
+        if (entry.descriptor.role != DescriptorRole::ShaderData) {
+            words[index].assign(entry.descriptor.guestDescriptor.begin(), entry.descriptor.guestDescriptor.end());
+            guestBindingWords(entry, words[index], snapshot, tables);
+        } else if (layout.UsesPushData() || plan.storageData) {
+            words[index] = ShaderDataDwordsFor(layout, userDataBase, snapshot, partialThreads, plan.imageMetadata, plan.runtimeState);
+        } else {
+            words[index].clear();
+        }
     }
 }
 

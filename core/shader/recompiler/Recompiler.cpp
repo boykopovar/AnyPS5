@@ -24,6 +24,7 @@
 #include <memory>
 #include <set>
 #include <mutex>
+#include <optional>
 #include <new>
 #include <shared_mutex>
 #include <tuple>
@@ -2494,12 +2495,22 @@ void HeapBindingWords(const RecompileRequest& request, const CompiledVariant& va
         if (AllEmpty(words.bindings)) words.bindings.clear();
         return;
     }
-    const auto tables = ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, variant.artifact.variantId);
-    BindingAllocationResult bindings;
-    DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *shared.plan.plan, variant.info.userDataBase, snapshot, partialThreads(request), &tables);
-    if (bindings.bindings.size() != count) throw std::runtime_error("ShaderRecompiler: a heap stage's per-draw bindings differ from its template");
-    words.bindings.reserve(count);
-    for (auto& binding : bindings.bindings) words.bindings.push_back(std::move(binding.guestDescriptor));
+    const bool tableRoles = std::ranges::any_of(shared.plan.plan->bindings, [](const PreparedDescriptorBinding& entry) {
+        const auto role = entry.descriptor.role;
+        return role == DescriptorRole::ImageTable || role == DescriptorRole::ImageStorageTable || role == DescriptorRole::SamplerTable || role == DescriptorRole::ImageTableMap;
+    });
+    const auto tables = tableRoles ? std::optional(ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, variant.artifact.variantId)) : std::nullopt;
+    DescriptorBindingBuilder{}.PopulateGuestWords(words.bindings, variant.bindings, *shared.plan.plan, variant.info.userDataBase, snapshot, partialThreads(request), tables ? &*tables : nullptr);
+    if (words.bindings.size() != count) throw std::runtime_error("ShaderRecompiler: a heap stage's per-draw bindings differ from its template");
+    static const bool verify = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
+    if (verify) {
+        const auto resolved = ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, variant.artifact.variantId);
+        BindingAllocationResult bindings;
+        DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *shared.plan.plan, variant.info.userDataBase, snapshot, partialThreads(request), &resolved);
+        for (std::size_t index = 0; index < count; ++index) {
+            if (bindings.bindings[index].guestDescriptor != words.bindings[index]) throw std::runtime_error("ShaderRecompiler: a heap stage's per-draw binding " + std::to_string(index) + " words differ from a full populate");
+        }
+    }
     if (variant.artifact.registrationModule && request.shader.stage != ShaderStage::Fragment && layout.runtimeStateDwords != 0u) {
         const auto first = layout.RuntimeStateDword() + RuntimeAbi::StateVertexSelectors;
         for (std::size_t index = 0; index < words.bindings.size(); ++index) {
