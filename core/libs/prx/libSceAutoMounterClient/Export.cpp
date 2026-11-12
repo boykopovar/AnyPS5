@@ -1,6 +1,8 @@
+#include <cerrno>
 #include <cstdio>
 #include <string>
 #include "prx/libSceAutoMounterClient/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -35,6 +37,17 @@ int APS5_VABI sceAutoMounterClientGetUsbDeviceInfo(const char* deviceName, AutoM
 }
 int APS5_VABI sceAutoMounterClientGetUsbDeviceList(char (*deviceNames)[64], std::int32_t* count) {
     if (deviceNames == nullptr || count == nullptr) return AUTOMOUNTER_ERROR_INVALID_ARGUMENT;
+    char probeDev = 0;
+    std::int32_t probeCount = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&probeDev, deviceNames, sizeof(probeDev)) ||
+        !GuestCopyOut_nid_no_patch(deviceNames, &probeDev, sizeof(probeDev)) ||
+        !GuestCopyIn_nid_no_patch(&probeCount, count, sizeof(probeCount)) ||
+        !GuestCopyOut_nid_no_patch(count, &probeCount, sizeof(probeCount))) {
+        errno = savedErrno;
+        return AUTOMOUNTER_ERROR_INVALID_ARGUMENT;
+    }
+    errno = savedErrno;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
