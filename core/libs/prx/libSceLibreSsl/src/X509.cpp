@@ -187,8 +187,9 @@ static_assert(sizeof(LibreSslX509Algorithm) == 16 && offsetof(LibreSslX509Algori
 static_assert(sizeof(LibreSslX509Validity) == 16 && offsetof(LibreSslX509Validity, notAfter) == 8);
 static_assert(sizeof(LibreSslX509PublicKey) == 24 && offsetof(LibreSslX509PublicKey, key) == 16);
 static_assert(sizeof(LibreSslX509Extension) == 24 && offsetof(LibreSslX509Extension, critical) == 8 && offsetof(LibreSslX509Extension, value) == 16);
-static_assert(sizeof(LibreSslAsn1Encoding) == 24 && offsetof(LibreSslAsn1Encoding, length) == 8 && offsetof(LibreSslAsn1Encoding, modified) == 16);
-static_assert(sizeof(LibreSslX509CertificateInfo) == 104 && offsetof(LibreSslX509CertificateInfo, extensions) == 72 && offsetof(LibreSslX509CertificateInfo, encoding) == 80);
+static_assert(sizeof(LibreSslAsn1Encoding) == 24 && offsetof(LibreSslAsn1Encoding, len) == 8 && offsetof(LibreSslAsn1Encoding, modified) == 16);
+static_assert(sizeof(LibreSslX509CertInfo) == 104 && offsetof(LibreSslX509CertInfo, serialNumber) == 8 && offsetof(LibreSslX509CertInfo, issuer) == 24
+    && offsetof(LibreSslX509CertInfo, subject) == 40 && offsetof(LibreSslX509CertInfo, extensions) == 72 && offsetof(LibreSslX509CertInfo, encoding) == 80);
 static_assert(sizeof(LibreSslX509) == 176 && offsetof(LibreSslX509, references) == 28 && offsetof(LibreSslX509, name) == 32);
 static_assert(offsetof(LibreSslX509, exData) == 40 && offsetof(LibreSslX509, pathLength) == 48 && offsetof(LibreSslX509, extensionFlags) == 64);
 static_assert(sizeof(LibreSslGeneralName) == 16 && offsetof(LibreSslGeneralName, value) == 8 && sizeof(LibreSslOtherName) == 16 && sizeof(LibreSslEdiPartyName) == 16);
@@ -803,17 +804,17 @@ LibreSslAsn1Encoding* EncodingOf(Value* value, const Item& item) {
 
 void EncodingInitialize(Value* value, const Item& item) {
     if (auto* encoding = EncodingOf(value, item)) {
-        encoding->data = nullptr;
-        encoding->length = 0;
+        encoding->enc = nullptr;
+        encoding->len = 0;
         encoding->modified = 1;
     }
 }
 
 void EncodingFree(Value* value, const Item& item) {
     if (auto* encoding = EncodingOf(value, item)) {
-        free_nid_postfix(encoding->data);
-        encoding->data = nullptr;
-        encoding->length = 0;
+        free_nid_postfix(encoding->enc);
+        encoding->enc = nullptr;
+        encoding->len = 0;
         encoding->modified = 1;
     }
 }
@@ -821,11 +822,11 @@ void EncodingFree(Value* value, const Item& item) {
 bool EncodingSave(Value* value, const unsigned char* in, int length, const Item& item) {
     auto* encoding = EncodingOf(value, item);
     if (!encoding) return true;
-    free_nid_postfix(encoding->data);
-    encoding->data = static_cast<unsigned char*>(malloc_nid_postfix(static_cast<std::size_t>(length)));
-    if (!encoding->data) return false;
-    std::memcpy(encoding->data, in, static_cast<std::size_t>(length));
-    encoding->length = length;
+    free_nid_postfix(encoding->enc);
+    encoding->enc = static_cast<unsigned char*>(malloc_nid_postfix(static_cast<std::size_t>(length)));
+    if (!encoding->enc) return false;
+    std::memcpy(encoding->enc, in, static_cast<std::size_t>(length));
+    encoding->len = length;
     encoding->modified = 0;
     return true;
 }
@@ -1974,19 +1975,19 @@ const Template ExtensionTemplates[] = {
 const Item ExtensionItem{.kind = Kind::Sequence, .type = Sequence, .templates = ExtensionTemplates, .count = 3, .size = sizeof(LibreSslX509Extension)};
 
 const Template CertificateInfoTemplates[] = {
-    {ExplicitTag | ContextClass | Optional, 0, offsetof(LibreSslX509CertificateInfo, version), &IntegerItem},
-    {0, 0, offsetof(LibreSslX509CertificateInfo, serialNumber), &IntegerItem},
-    {0, 0, offsetof(LibreSslX509CertificateInfo, signature), &AlgorithmItem},
-    {0, 0, offsetof(LibreSslX509CertificateInfo, issuer), &NameItem},
-    {0, 0, offsetof(LibreSslX509CertificateInfo, validity), &ValidityItem},
-    {0, 0, offsetof(LibreSslX509CertificateInfo, subject), &NameItem},
-    {0, 0, offsetof(LibreSslX509CertificateInfo, key), &PublicKeyItem},
-    {ImplicitTag | ContextClass | Optional, 1, offsetof(LibreSslX509CertificateInfo, issuerUid), &BitStringItem},
-    {ImplicitTag | ContextClass | Optional, 2, offsetof(LibreSslX509CertificateInfo, subjectUid), &BitStringItem},
-    {ExplicitTag | ContextClass | SequenceOf | Optional, 3, offsetof(LibreSslX509CertificateInfo, extensions), &ExtensionItem},
+    {ExplicitTag | ContextClass | Optional, 0, offsetof(LibreSslX509CertInfo, version), &IntegerItem},
+    {0, 0, offsetof(LibreSslX509CertInfo, serialNumber), &IntegerItem},
+    {0, 0, offsetof(LibreSslX509CertInfo, signature), &AlgorithmItem},
+    {0, 0, offsetof(LibreSslX509CertInfo, issuer), &NameItem},
+    {0, 0, offsetof(LibreSslX509CertInfo, validity), &ValidityItem},
+    {0, 0, offsetof(LibreSslX509CertInfo, subject), &NameItem},
+    {0, 0, offsetof(LibreSslX509CertInfo, key), &PublicKeyItem},
+    {ImplicitTag | ContextClass | Optional, 1, offsetof(LibreSslX509CertInfo, issuerUid), &BitStringItem},
+    {ImplicitTag | ContextClass | Optional, 2, offsetof(LibreSslX509CertInfo, subjectUid), &BitStringItem},
+    {ExplicitTag | ContextClass | SequenceOf | Optional, 3, offsetof(LibreSslX509CertInfo, extensions), &ExtensionItem},
 };
 const Item CertificateInfoItem{.kind = Kind::Sequence, .type = Sequence, .templates = CertificateInfoTemplates, .count = 10,
-    .size = sizeof(LibreSslX509CertificateInfo), .encodingOffset = offsetof(LibreSslX509CertificateInfo, encoding)};
+    .size = sizeof(LibreSslX509CertInfo), .encodingOffset = offsetof(LibreSslX509CertInfo, encoding)};
 
 const Template CertificateTemplates[] = {
     {0, 0, offsetof(LibreSslX509, certificateInfo), &CertificateInfoItem},
@@ -2248,6 +2249,12 @@ Value ExtensionDecode(const LibreSslX509Extension* extension) {
     return nullptr;
 }
 
+const LibreSslX509CertInfo& CertInfo(const LibreSslX509* certificate, const char* function) {
+    if (!certificate) throw std::invalid_argument(std::string(function) + ": null certificate");
+    if (!certificate->certificateInfo) throw std::invalid_argument(std::string(function) + ": null certificate info");
+    return *certificate->certificateInfo;
+}
+
 } // namespace
 
 extern "C" {
@@ -2265,7 +2272,6 @@ LibreSslX509* APS5_VABI d2i_X509_nid_postfix(LibreSslX509** certificate, const u
 void APS5_VABI X509_free_nid_postfix(LibreSslX509* certificate) {
     FreeValue(certificate, CertificateItem);
 }
-
 
 void* APS5_VABI X509_get_ext_d2i_nid_postfix(const LibreSslX509* certificate, int nid, int* critical, int* index) {
     if (!certificate || !certificate->certificateInfo) throw std::invalid_argument(std::string(__func__) + ": null certificate");
@@ -2299,6 +2305,18 @@ void* APS5_VABI X509_get_ext_d2i_nid_postfix(const LibreSslX509* certificate, in
     }
     if (critical) *critical = found->critical > 0 ? 1 : 0;
     return ExtensionDecode(found);
+}
+
+void* APS5_VABI X509_get_issuer_name_nid_postfix(const LibreSslX509* certificate) {
+    return CertInfo(certificate, __func__).issuer;
+}
+
+void* APS5_VABI X509_get_subject_name_nid_postfix(const LibreSslX509* certificate) {
+    return CertInfo(certificate, __func__).subject;
+}
+
+void* APS5_VABI X509_get_serialNumber_nid_postfix(const LibreSslX509* certificate) {
+    return CertInfo(certificate, __func__).serialNumber;
 }
 
 }

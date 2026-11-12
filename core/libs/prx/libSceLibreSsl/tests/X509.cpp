@@ -159,7 +159,7 @@ void Basics() {
     Require(tbs->extensions && tbs->extensions->num == 2, "both extensions decode");
     Require(ExtensionAt(tbs->extensions, 0)->critical == 0xff && Holds(ExtensionAt(tbs->extensions, 0)->value, 4, {0x30, 0x03, 0x01, 0x01, 0xff}, 0), "a critical extension");
     Require(ExtensionAt(tbs->extensions, 1)->critical == -1 && Holds(ExtensionAt(tbs->extensions, 1)->object, {0x55, 0x1d, 0x0f}), "an extension without a critical flag");
-    Require(tbs->encoding.length == static_cast<std::int64_t>(info.size()) && tbs->encoding.modified == 0 && std::memcmp(tbs->encoding.data, info.data(), info.size()) == 0,
+    Require(tbs->encoding.len == static_cast<std::int64_t>(info.size()) && tbs->encoding.modified == 0 && std::memcmp(tbs->encoding.enc, info.data(), info.size()) == 0,
         "the signed part keeps its encoding");
     Require(Holds(certificate->signature, 3, {0xde, 0xad, 0xb8}, 0x0b), "the signature keeps its unused bit count and clears the unused bits");
     X509_free_nid_postfix(certificate);
@@ -200,7 +200,7 @@ void Ber() {
     Require(std::strcmp(certificate->name, "/CN=Leaf") == 0 && Holds(static_cast<const Asn1String*>(EntryAt(info->subject, 0)->value), 0x0c, Text("Leaf"), 0x40),
         "a constructed string is joined");
     Require(info->extensions->num == 1 && Holds(ExtensionAt(info->extensions, 0)->value, 4, {0xaa, 0xbb}, 0), "nested constructed octet strings are joined");
-    Require(info->encoding.length == static_cast<std::int64_t>(tbs.size()) && std::memcmp(info->encoding.data, tbs.data(), tbs.size()) == 0,
+    Require(info->encoding.len == static_cast<std::int64_t>(tbs.size()) && std::memcmp(info->encoding.enc, tbs.data(), tbs.size()) == 0,
         "an indefinite length part keeps its end of contents octets");
     Require(Holds(certificate->signature, 3, {}, 0x08), "an empty signature has no data");
     X509_free_nid_postfix(certificate);

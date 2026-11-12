@@ -126,6 +126,25 @@ int main(int argc, char** argv) {
 
     stream = open(argv[2], "w+b");
     Require(stream != nullptr, "could not reopen guest stream");
+    Require(wide(stream, -1) == -1, "negative mode should establish byte orientation");
+    Require(wide(stream, 1) == -1, "an established byte orientation must not change to wide");
+    Require(wide(stream, 0) == -1, "querying established byte orientation");
+    Require(close(stream) == 0, "could not close byte-oriented stream");
+
+    stream = open(argv[2], "w+b");
+    Require(stream != nullptr, "could not reopen guest stream");
+    Require(wide(stream, 1000) == 1, "large positive mode should establish wide orientation");
+    Require(wide(stream, -5000) == 1, "large negative mode must not change established wide orientation");
+    Require(close(stream) == 0, "could not close wide-oriented stream");
+
+    stream = open(argv[2], "w+b");
+    Require(stream != nullptr, "could not reopen guest stream");
+    Require(wide(stream, -1000) == -1, "large negative mode should establish byte orientation");
+    Require(wide(stream, 5000) == -1, "large positive mode must not change established byte orientation");
+    Require(close(stream) == 0, "could not close byte-oriented stream");
+
+    stream = open(argv[2], "w+b");
+    Require(stream != nullptr, "could not reopen guest stream");
     Require(putByte('B', stream) == 'B', "byte output failed");
     Require(wide(stream, 0) == -1, "byte output should establish byte orientation");
     Require(seek(stream, 0, SEEK_SET) == 0, "could not rewind byte stream");
@@ -184,7 +203,7 @@ int main(int argc, char** argv) {
     stream = open(argv[2], "w+b");
     Require(stream != nullptr, "could not reopen guest stream");
     Require(getLine(line, 0, stream) == nullptr, "fgets with size 0 should fail");
-    Require(wide(stream, 0) == -1, "fgets should orient the stream even for size 0");
+    Require(wide(stream, 0) == 0, "fgets with a size below 2 should leave the stream unoriented");
     Require(close(stream) == 0, "could not close stream after fgets");
     stream = open(argv[2], "w+b");
     Require(stream != nullptr, "could not reopen guest stream");
