@@ -215,7 +215,7 @@ std::uint32_t QueueLevel() {
 int CheckFloatAttribute(const void* attribute, std::size_t attribute_size, float minimum, float maximum) {
     if (attribute == nullptr || attribute_size != sizeof(float)) return AUDIO3D_ERROR_INVALID_PARAMETER;
     float value = 0.0f;
-    std::memcpy(&value, attribute, sizeof(value));
+    if (!GuestCopyIn_nid_no_patch(&value, attribute, sizeof(value))) return AUDIO3D_ERROR_INVALID_PARAMETER;
     if (!std::isfinite(value) || value < minimum || value > maximum) return AUDIO3D_ERROR_INVALID_PARAMETER;
     return 0;
 }

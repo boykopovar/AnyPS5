@@ -492,7 +492,8 @@ void testStoreAfterGatedCopy(const std::filesystem::path& tool) {
 }
 
 void testCopyInFlightAtDelta(const std::filesystem::path& tool) {
-    constexpr std::size_t CopyBytes = 32u << 20;
+    constexpr std::size_t CopyBytes = 128u << 20;
+    constexpr std::size_t ChunkBytes = CopyBytes / 8;
     constexpr std::size_t Stored = 64;
     const auto layout = allocate();
     const auto big = allocate(2 * CopyBytes);
@@ -504,7 +505,10 @@ void testCopyInFlightAtDelta(const std::filesystem::path& tool) {
 
     flip();
     auto* const control = submitRewound(layout.firstCommands, [&](CommandBuffer& buffer) {
-        sceAgcDcbDmaData(&buffer, 0, DmaMemory, 0, at(target + Stored), DmaMemory, 0, at(source), CopyBytes - Stored, 0, 1, 0);
+        for (std::size_t offset = 0; offset < CopyBytes - Stored; offset += ChunkBytes) {
+            const auto bytes = std::min(ChunkBytes, CopyBytes - Stored - offset);
+            sceAgcDcbDmaData(&buffer, 0, DmaMemory, 0, at(target + Stored + offset), DmaMemory, 0, at(source + offset), bytes, 0, 1, 0);
+        }
     }, [&](CommandBuffer& buffer) { writeDone(buffer, layout.label); });
     std::memset(target, 0x5a, Stored);
     const auto gpuWaits = AgcDriver::Graphics::Recorder::ThreadHookWaits();

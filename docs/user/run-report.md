@@ -2,6 +2,14 @@
 
 `anyps5-report.json` is a structured summary of one run. [`run-report.schema.json`](../run-report.schema.json) is the single source of truth for its shape; the sample reports in [`run-report-fixtures/`](../run-report-fixtures/) all validate against it. This is version 1. Adding a field keeps version 1; renaming or removing a field, or changing what one means, is version 2.
 
+Print a readable summary of a report with:
+
+```sh
+python3 tools/run_report_summary.py path/to/anyps5-report.json
+```
+
+The summary includes the run result, the furthest observed stage, rendering counts, system details, and available missing-function and shader diagnostics. It says when a section was not collected or a list was truncated. It reads the local report and does not upload it.
+
 The file stays on your machine. Nothing is uploaded unless you share it.
 
 ## Switching it off
