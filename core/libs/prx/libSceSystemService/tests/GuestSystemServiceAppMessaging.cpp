@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <source_location>
 
 namespace {
@@ -18,25 +17,20 @@ void Require(bool condition, std::source_location location = std::source_locatio
 int main() {
     AppMessagingMessage message{};
     Require(sceAppMessagingTryReceiveMsg(&message) == static_cast<int>(0x80C50005));
-
-    const char text[] = "abc";
-    Require(sceAppMessagingSendMsg(42, 7, text, 3, 0) == 0);
-    Require(sceAppMessagingTryReceiveMsg(&message) == 0);
-    Require(message.sender == 42 && message.messageType == 7 && message.payloadSize == 3);
-    Require(std::memcmp(message.payload, text, 3) == 0 && message.timestamp != 0);
-
-    Require(sceAppMessagingSendMsgToShellCore(9, nullptr, 0, 0) == 0);
-    Require(sceAppMessagingTryReceiveMsg(&message) == 0);
-    Require(message.sender == 0 && message.messageType == 9 && message.payloadSize == 0);
-
-    Require(sceAppMessagingSendMsgToShellUI(10, text, 3, 0) == 0);
-    Require(sceAppMessagingReceiveMsg(&message) == 0);
-    Require(message.sender == 0 && message.messageType == 10 && message.payloadSize == 3);
     Require(sceAppMessagingReceiveMsg(nullptr) == static_cast<int>(0x80C50004));
     Require(sceAppMessagingTryReceiveMsg(nullptr) == static_cast<int>(0x80C50004));
 
+    const char text[] = "abc";
+    Require(sceAppMessagingSendMsg(42, 7, text, 3, 0) == 0);
+    Require(sceAppMessagingSendMsgToShellCore(9, nullptr, 0, 0) == 0);
+    Require(sceAppMessagingSendMsgToShellUI(10, text, 3, 0) == 0);
+    Require(sceAppMessagingTryReceiveMsg(&message) == static_cast<int>(0x80C50005));
+
     Require(sceAppMessagingSendMsg(1, 1, nullptr, 1, 0) == static_cast<int>(0x80C50001));
     Require(sceAppMessagingSendMsg(1, 1, text, sizeof(AppMessagingMessage::payload) + 1, 0) == static_cast<int>(0x80C50001));
+    Require(sceAppMessagingSendMsgToShellCore(1, nullptr, sizeof(AppMessagingMessage::payload) + 1, 0) == static_cast<int>(0x80C50001));
+    Require(sceAppMessagingSendMsgToShellUI(1, nullptr, sizeof(AppMessagingMessage::payload) + 1, 0) == static_cast<int>(0x80C50001));
+    Require(sceAppMessagingTryReceiveMsg(&message) == static_cast<int>(0x80C50005));
 
     Require(sceAppMessagingSetEventFlag(5, 0x5) == 0);
     Require(sceAppMessagingSetEventFlag(5, 0x2) == 0);
