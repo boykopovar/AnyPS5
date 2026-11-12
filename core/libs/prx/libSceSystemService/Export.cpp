@@ -470,13 +470,25 @@ int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, s
     if (userId != static_cast<std::uint32_t>(USER_SERVICE_INITIAL_USER_ID)) {
         NotImplemented_nid_no_patch("sceShellCoreUtilIsEyeToEyeDistanceAdjusted for a user other than the logged-in user");
     }
-    *adjusted = 0;
+    const std::uint8_t result = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(adjusted, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) {
+        NotImplemented_nid_no_patch("sceShellCoreUtilIsEyeToEyeDistanceAdjusted with an unwritable output");
+    }
     return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
     if (adjusted == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
-    return sceShellCoreUtilIsEyeToEyeDistanceAdjusted(userId, adjusted);
+    std::uint8_t result = 0;
+    const int status = sceShellCoreUtilIsEyeToEyeDistanceAdjusted(userId, &result);
+    if (status != SYSTEM_SERVICE_OK) return status;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(adjusted, &result, sizeof(result));
+    errno = savedErrno;
+    return copied ? SYSTEM_SERVICE_OK : SYSTEM_SERVICE_ERROR_PARAMETER;
 }
 
 bool APS5_VABI sceSystemStateMgrIsBdDriveReady() {
