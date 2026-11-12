@@ -613,3 +613,12 @@ class FocusedInputEdgeTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "between 0 and 100"):
                         performance_bisect.load_recipe(path)
 
+
+    def test_recipe_requires_spread_limit_inside_open_interval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for value in (0, 100):
+                with self.subTest(value=value):
+                    path = self.recipe_path(Path(directory), max_spread_pct=value)
+                    with self.assertRaisesRegex(ValueError, "between 0 and 100"):
+                        performance_bisect.load_recipe(path)
+
