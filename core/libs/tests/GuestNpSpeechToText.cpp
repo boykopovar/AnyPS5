@@ -19,6 +19,8 @@ int main() {
         Require(sceNpSpeechToTextStart() == notInitialized);
         Require(sceNpSpeechToTextStop() == notInitialized);
         Require(sceNpSpeechToTextTerminate() == notInitialized);
+        Require(sceNpSpeechToTextInitialize() == 0);
+        Require(sceNpSpeechToTextCreateContext() == notInitialized);
     }
     return 0;
 }
