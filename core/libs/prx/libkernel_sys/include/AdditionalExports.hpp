@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel_sys/include/CfiCheckFail.hpp"
 
@@ -334,5 +335,67 @@ int APS5_VABI sceKernelTraceAutoCaptureUnmap();
 int APS5_VABI sceKernelUseCronosKura();
 int APS5_VABI sceKernelUseCronosStreaming();
 int APS5_VABI scePthreadRegisterThreadDeathHook();
+std::int64_t APS5_VABI _fpathconf_nid_no_patch(int fd, int name);
+int APS5_VABI _openat_nid_no_patch(int fd, const char* path, int flags, std::uint64_t v0, std::uint64_t v1);
+int APS5_VABI amd64_set_fsbase_nid_no_patch(void);
+int APS5_VABI blockpool_batch_nid_no_patch(void);
+int APS5_VABI blockpool_map_nid_no_patch(void);
+int APS5_VABI blockpool_open_nid_no_patch(void);
+int APS5_VABI blockpool_unmap_nid_no_patch(void);
+int APS5_VABI dynlib_get_obj_member_nid_no_patch(void);
+int APS5_VABI get_authinfo_nid_no_patch(int pid, KernelAuthInfo* info);
+int APS5_VABI get_module_info_list_nid_no_patch(void);
+int APS5_VABI get_page_table_stats_nid_no_patch(void);
+int APS5_VABI get_sdk_compiled_version_nid_no_patch(void);
+int APS5_VABI get_self_auth_info_nid_no_patch(void);
+int APS5_VABI get_vm_map_timestamp_nid_no_patch(void);
+int APS5_VABI ipmimgr_call_nid_no_patch(void);
+int APS5_VABI is_in_sandbox_nid_no_patch(void);
+int APS5_VABI ksem_close_nid_no_patch(void);
+int APS5_VABI ksem_open_nid_no_patch(void);
+int APS5_VABI ksem_unlink_nid_no_patch(void);
+int APS5_VABI mdbg_service_nid_no_patch(void);
+int APS5_VABI openintr_nid_no_patch(void);
+int APS5_VABI profil_nid_no_patch(void* samples, std::size_t size, std::size_t offset, unsigned int scale);
+int APS5_VABI pthread_attr_getaffinity_np_nid_no_patch(void);
+int APS5_VABI pthread_attr_getsolosched_np_nid_no_patch(const PthreadAttr* attr, int* solosched);
+int APS5_VABI pthread_attr_setaffinity_np_nid_no_patch(void);
+int APS5_VABI pthread_attr_setcreatesuspend_np_nid_no_patch(PthreadAttr* attr);
+int APS5_VABI pthread_attr_setstackaddr_nid_no_patch(PthreadAttr* attr, void* stack_addr);
+int APS5_VABI pthread_get_specificarray_np_nid_no_patch(void);
+int APS5_VABI pthread_get_user_context_np_nid_no_patch(void);
+int APS5_VABI pthread_getstack_np_nid_no_patch(void);
+int APS5_VABI pthread_main_np_nid_no_patch(void);
+int APS5_VABI pthread_multi_np_nid_no_patch(void);
+int APS5_VABI pthread_mutex_init_for_mono_nid_no_patch(void);
+int APS5_VABI pthread_mutexattr_getgen_np_nid_no_patch(const PthreadMutexattr* attr, int* generation);
+int APS5_VABI pthread_mutexattr_setgen_np_nid_no_patch(PthreadMutexattr* attr, int generation);
+void APS5_VABI pthread_resume_all_np_nid_no_patch(void);
+int APS5_VABI pthread_resume_np_nid_no_patch(Pthread thread);
+int APS5_VABI pthread_resume_user_context_np_nid_no_patch(void);
+int APS5_VABI pthread_set_defaultstacksize_np_nid_no_patch(std::size_t size);
+int APS5_VABI pthread_set_user_context_np_nid_no_patch(void);
+int APS5_VABI pthread_single_np_nid_no_patch(void);
+int APS5_VABI pthread_suspend_all_np_nid_no_patch(void);
+int APS5_VABI pthread_suspend_np_nid_no_patch(void);
+int APS5_VABI pthread_suspend_user_context_np_nid_no_patch(void);
+int APS5_VABI pthread_switch_add_np_nid_no_patch(void);
+int APS5_VABI pthread_switch_delete_np_nid_no_patch(void);
+int APS5_VABI rtld_printf_nid_no_patch(void);
+int APS5_VABI sched_rr_get_interval_nid_no_patch(int pid, KernelTimespec* interval);
+int APS5_VABI sched_setscheduler_nid_no_patch(int pid, int policy, const KernelSchedParam* param);
+int APS5_VABI set_phys_fmem_limit_nid_no_patch(void);
+int APS5_VABI settimeofday_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz);
+int APS5_VABI sigqueue_nid_no_patch(void);
+int APS5_VABI sigreturn_nid_no_patch(const UserUcontext* context);
+int APS5_VABI sysc_e00_nid_no_patch(void);
+int APS5_VABI sysc_m00_nid_no_patch(void);
+int APS5_VABI sysc_s00_nid_no_patch(void);
+int APS5_VABI tcsetsid_nid_no_patch(int fd, int pid);
+int APS5_VABI uuidgen_nid_no_patch(GuestUuid* store, int count);
+int APS5_VABI wait3_nid_no_patch(void);
+
+
+int APS5_VABI pthread_setschedother_np_nid_no_patch();
 
 }

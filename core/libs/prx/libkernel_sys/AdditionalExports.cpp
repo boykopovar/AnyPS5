@@ -1949,5 +1949,316 @@ int APS5_VABI sceKernelUseCronosStreaming() {
 int APS5_VABI scePthreadRegisterThreadDeathHook() {
     NotImplemented_nid_no_patch(__func__);
 }
+std::int64_t APS5_VABI _fpathconf_nid_no_patch(int fd, int name) {
+    return _fpathconf_nid_postfix(fd, name);
+}
+
+int APS5_VABI _openat_nid_no_patch(int fd, const char* path, int flags, std::uint64_t v0, std::uint64_t v1) {
+    return _openat_nid_postfix(fd, path, flags, v0, v1);
+}
+
+int APS5_VABI amd64_set_fsbase_nid_no_patch(void) {
+    return amd64_set_fsbase_nid_postfix();
+}
+
+int APS5_VABI blockpool_batch_nid_no_patch(void) {
+    return blockpool_batch_nid_postfix();
+}
+
+int APS5_VABI blockpool_map_nid_no_patch(void) {
+    return blockpool_map_nid_postfix();
+}
+
+int APS5_VABI blockpool_open_nid_no_patch(void) {
+    return blockpool_open_nid_postfix();
+}
+
+int APS5_VABI blockpool_unmap_nid_no_patch(void) {
+    return blockpool_unmap_nid_postfix();
+}
+
+int APS5_VABI dynlib_get_obj_member_nid_no_patch(void) {
+    return dynlib_get_obj_member_nid_postfix();
+}
+
+int APS5_VABI get_authinfo_nid_no_patch(int pid, KernelAuthInfo* info) {
+    return get_authinfo_nid_postfix(pid, info);
+}
+
+int APS5_VABI get_module_info_list_nid_no_patch(void) {
+    return get_module_info_list_nid_postfix();
+}
+
+int APS5_VABI get_page_table_stats_nid_no_patch(void) {
+    return get_page_table_stats_nid_postfix();
+}
+
+int APS5_VABI get_sdk_compiled_version_nid_no_patch(void) {
+    return get_sdk_compiled_version_nid_postfix();
+}
+
+int APS5_VABI get_self_auth_info_nid_no_patch(void) {
+    return get_self_auth_info_nid_postfix();
+}
+
+int APS5_VABI get_vm_map_timestamp_nid_no_patch(void) {
+    return get_vm_map_timestamp_nid_postfix();
+}
+
+int APS5_VABI ipmimgr_call_nid_no_patch(void) {
+    return ipmimgr_call_nid_postfix();
+}
+
+int APS5_VABI is_in_sandbox_nid_no_patch(void) {
+    return is_in_sandbox_nid_postfix();
+}
+
+int APS5_VABI ksem_close_nid_no_patch(void) {
+    return ksem_close_nid_postfix();
+}
+
+int APS5_VABI ksem_open_nid_no_patch(void) {
+    return ksem_open_nid_postfix();
+}
+
+int APS5_VABI ksem_unlink_nid_no_patch(void) {
+    return ksem_unlink_nid_postfix();
+}
+
+int APS5_VABI mdbg_service_nid_no_patch(void) {
+    return mdbg_service_nid_postfix();
+}
+
+int APS5_VABI openintr_nid_no_patch(void) {
+    return openintr_nid_postfix();
+}
+
+int APS5_VABI profil_nid_no_patch(void* samples, std::size_t size, std::size_t offset, unsigned int scale) {
+    return profil_nid_postfix(samples, size, offset, scale);
+}
+
+int APS5_VABI pthread_attr_getaffinity_np_nid_no_patch(void) {
+    return pthread_attr_getaffinity_np_nid_postfix();
+}
+
+int APS5_VABI pthread_attr_getsolosched_np_nid_no_patch(const PthreadAttr* attr, int* solosched) {
+    return pthread_attr_getsolosched_np_nid_postfix(attr, solosched);
+}
+
+int APS5_VABI pthread_attr_setaffinity_np_nid_no_patch(void) {
+    return pthread_attr_setaffinity_np_nid_postfix();
+}
+
+int APS5_VABI pthread_attr_setcreatesuspend_np_nid_no_patch(PthreadAttr* attr) {
+    return pthread_attr_setcreatesuspend_np_nid_postfix(attr);
+}
+
+int APS5_VABI pthread_attr_setstackaddr_nid_no_patch(PthreadAttr* attr, void* stack_addr) {
+    return pthread_attr_setstackaddr_nid_postfix(attr, stack_addr);
+}
+
+int APS5_VABI pthread_get_specificarray_np_nid_no_patch(void) {
+    return pthread_get_specificarray_np_nid_postfix();
+}
+
+int APS5_VABI pthread_get_user_context_np_nid_no_patch(void) {
+    return pthread_get_user_context_np_nid_postfix();
+}
+
+int APS5_VABI pthread_getstack_np_nid_no_patch(void) {
+    return pthread_getstack_np_nid_postfix();
+}
+
+int APS5_VABI pthread_main_np_nid_no_patch(void) {
+    return pthread_main_np_nid_postfix();
+}
+
+int APS5_VABI pthread_multi_np_nid_no_patch(void) {
+    return pthread_multi_np_nid_postfix();
+}
+
+int APS5_VABI pthread_mutex_init_for_mono_nid_no_patch(void) {
+    return pthread_mutex_init_for_mono_nid_postfix();
+}
+
+int APS5_VABI pthread_mutexattr_getgen_np_nid_no_patch(const PthreadMutexattr* attr, int* generation) {
+    return pthread_mutexattr_getgen_np_nid_postfix(attr, generation);
+}
+
+int APS5_VABI pthread_mutexattr_setgen_np_nid_no_patch(PthreadMutexattr* attr, int generation) {
+    return pthread_mutexattr_setgen_np_nid_postfix(attr, generation);
+}
+
+void APS5_VABI pthread_resume_all_np_nid_no_patch(void) {
+    pthread_resume_all_np_nid_postfix();
+}
+
+int APS5_VABI pthread_resume_np_nid_no_patch(Pthread thread) {
+    return pthread_resume_np_nid_postfix(thread);
+}
+
+int APS5_VABI pthread_resume_user_context_np_nid_no_patch(void) {
+    return pthread_resume_user_context_np_nid_postfix();
+}
+
+int APS5_VABI pthread_set_defaultstacksize_np_nid_no_patch(std::size_t size) {
+    return pthread_set_defaultstacksize_np_nid_postfix(size);
+}
+
+int APS5_VABI pthread_set_user_context_np_nid_no_patch(void) {
+    return pthread_set_user_context_np_nid_postfix();
+}
+
+int APS5_VABI pthread_single_np_nid_no_patch(void) {
+    return pthread_single_np_nid_postfix();
+}
+
+int APS5_VABI pthread_suspend_all_np_nid_no_patch(void) {
+    return pthread_suspend_all_np_nid_postfix();
+}
+
+int APS5_VABI pthread_suspend_np_nid_no_patch(void) {
+    return pthread_suspend_np_nid_postfix();
+}
+
+int APS5_VABI pthread_suspend_user_context_np_nid_no_patch(void) {
+    return pthread_suspend_user_context_np_nid_postfix();
+}
+
+int APS5_VABI pthread_switch_add_np_nid_no_patch(void) {
+    return pthread_switch_add_np_nid_postfix();
+}
+
+int APS5_VABI pthread_switch_delete_np_nid_no_patch(void) {
+    return pthread_switch_delete_np_nid_postfix();
+}
+
+int APS5_VABI rtld_printf_nid_no_patch(void) {
+    return rtld_printf_nid_postfix();
+}
+
+int APS5_VABI sched_rr_get_interval_nid_no_patch(int pid, KernelTimespec* interval) {
+    return sched_rr_get_interval_nid_postfix(pid, interval);
+}
+
+int APS5_VABI sched_setscheduler_nid_no_patch(int pid, int policy, const KernelSchedParam* param) {
+    return sched_setscheduler_nid_postfix(pid, policy, param);
+}
+
+int APS5_VABI set_phys_fmem_limit_nid_no_patch(void) {
+    return set_phys_fmem_limit_nid_postfix();
+}
+
+int APS5_VABI settimeofday_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz) {
+    return settimeofday_nid_postfix(tv, tz);
+}
+
+int APS5_VABI sigqueue_nid_no_patch(void) {
+    return sigqueue_nid_postfix();
+}
+
+int APS5_VABI sigreturn_nid_no_patch(const UserUcontext* context) {
+    return sigreturn_nid_postfix(context);
+}
+
+int APS5_VABI sysc_e00_nid_no_patch(void) {
+    return sysc_e00_nid_postfix();
+}
+
+int APS5_VABI sysc_m00_nid_no_patch(void) {
+    return sysc_m00_nid_postfix();
+}
+
+int APS5_VABI sysc_s00_nid_no_patch(void) {
+    return sysc_s00_nid_postfix();
+}
+
+int APS5_VABI tcsetsid_nid_no_patch(int fd, int pid) {
+    return tcsetsid_nid_postfix(fd, pid);
+}
+
+int APS5_VABI uuidgen_nid_no_patch(GuestUuid* store, int count) {
+    return uuidgen_nid_postfix(store, count);
+}
+
+int APS5_VABI wait3_nid_no_patch(void) {
+    return wait3_nid_postfix(nullptr, 0, nullptr);
+}
+
+
+int APS5_VABI pthread_setschedother_np_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+
+
+
+
+
+#if defined(__ELF__)
+__asm__(".hidden __error_nid_postfix");
+__asm__(".hidden _fpathconf_nid_postfix");
+__asm__(".hidden _openat_nid_postfix");
+__asm__(".hidden amd64_set_fsbase_nid_postfix");
+__asm__(".hidden blockpool_batch_nid_postfix");
+__asm__(".hidden blockpool_map_nid_postfix");
+__asm__(".hidden blockpool_open_nid_postfix");
+__asm__(".hidden blockpool_unmap_nid_postfix");
+__asm__(".hidden dup2_nid_postfix");
+__asm__(".hidden dynlib_get_obj_member_nid_postfix");
+__asm__(".hidden execve_nid_postfix");
+__asm__(".hidden get_authinfo_nid_postfix");
+__asm__(".hidden get_module_info_list_nid_postfix");
+__asm__(".hidden get_page_table_stats_nid_postfix");
+__asm__(".hidden get_sdk_compiled_version_nid_postfix");
+__asm__(".hidden get_self_auth_info_nid_postfix");
+__asm__(".hidden get_vm_map_timestamp_nid_postfix");
+__asm__(".hidden getpid_nid_postfix");
+__asm__(".hidden ipmimgr_call_nid_postfix");
+__asm__(".hidden is_in_sandbox_nid_postfix");
+__asm__(".hidden ksem_close_nid_postfix");
+__asm__(".hidden ksem_open_nid_postfix");
+__asm__(".hidden ksem_unlink_nid_postfix");
+__asm__(".hidden mdbg_service_nid_postfix");
+__asm__(".hidden openintr_nid_postfix");
+__asm__(".hidden profil_nid_postfix");
+__asm__(".hidden pthread_attr_getaffinity_np_nid_postfix");
+__asm__(".hidden pthread_attr_getsolosched_np_nid_postfix");
+__asm__(".hidden pthread_attr_setaffinity_np_nid_postfix");
+__asm__(".hidden pthread_attr_setcreatesuspend_np_nid_postfix");
+__asm__(".hidden pthread_attr_setstackaddr_nid_postfix");
+__asm__(".hidden pthread_get_specificarray_np_nid_postfix");
+__asm__(".hidden pthread_get_user_context_np_nid_postfix");
+__asm__(".hidden pthread_getstack_np_nid_postfix");
+__asm__(".hidden pthread_main_np_nid_postfix");
+__asm__(".hidden pthread_multi_np_nid_postfix");
+__asm__(".hidden pthread_mutex_init_for_mono_nid_postfix");
+__asm__(".hidden pthread_mutexattr_getgen_np_nid_postfix");
+__asm__(".hidden pthread_mutexattr_setgen_np_nid_postfix");
+__asm__(".hidden pthread_resume_all_np_nid_postfix");
+__asm__(".hidden pthread_resume_np_nid_postfix");
+__asm__(".hidden pthread_resume_user_context_np_nid_postfix");
+__asm__(".hidden pthread_set_defaultstacksize_np_nid_postfix");
+__asm__(".hidden pthread_set_user_context_np_nid_postfix");
+__asm__(".hidden pthread_single_np_nid_postfix");
+__asm__(".hidden pthread_suspend_all_np_nid_postfix");
+__asm__(".hidden pthread_suspend_np_nid_postfix");
+__asm__(".hidden pthread_suspend_user_context_np_nid_postfix");
+__asm__(".hidden pthread_switch_add_np_nid_postfix");
+__asm__(".hidden pthread_switch_delete_np_nid_postfix");
+__asm__(".hidden rtld_printf_nid_postfix");
+__asm__(".hidden sched_rr_get_interval_nid_postfix");
+__asm__(".hidden sched_setscheduler_nid_postfix");
+__asm__(".hidden set_phys_fmem_limit_nid_postfix");
+__asm__(".hidden settimeofday_nid_postfix");
+__asm__(".hidden sigqueue_nid_postfix");
+__asm__(".hidden sigreturn_nid_postfix");
+__asm__(".hidden sysc_e00_nid_postfix");
+__asm__(".hidden sysc_m00_nid_postfix");
+__asm__(".hidden sysc_s00_nid_postfix");
+__asm__(".hidden tcsetsid_nid_postfix");
+__asm__(".hidden uuidgen_nid_postfix");
+__asm__(".hidden wait3_nid_postfix");
+#endif
 
 }

@@ -211,6 +211,12 @@ int APS5_VABI _wait4_nid_disambig1_nid_postfix() {
     return 0;
 }
 
+extern GuestSignalSet _sigintr_nid_postfix;
+
+GuestSignalSet _sigintr_nid_disambig1_nid_postfix{};
+
+std::uintptr_t __stack_chk_guard_nid_disambig1_nid_postfix = 0xDEADBEEFCAFEBABEull;
+
 int APS5_VABI sceKernelGetPrefixVersion() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
