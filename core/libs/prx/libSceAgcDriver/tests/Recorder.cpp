@@ -5882,9 +5882,15 @@ void ownedDrawInputTests(const Device& device, Recorder& recorder) {
     const auto keep = [&](const DrawInputCopy& value, Use use = Use::Index32) {
         KeepDrawInput(&recorder, address, value, use, 189);
     };
+    const std::size_t kept = reusable ? 1 : 0;
+    Require(recorder.OwnedDrawInputEntries() == 0, "the owned draw input fixture started with a kept owned input");
     const auto first = copy();
     Require(!first.reused, "the first owned draw input was reused");
+    Require(first.owned.words.empty() != reusable, "arming an owned draw input waited for a kept one");
     keep(first);
+    Require(recorder.OwnedDrawInputEntries() == kept, "keeping an owned draw input did not count it");
+    keep(first);
+    Require(recorder.OwnedDrawInputEntries() == kept, "keeping an owned draw input twice counted it twice");
     const auto second = copy();
     Require(second.reused == reusable, "an unchanged untracked draw input was copied again");
     if (reusable) Require(second.buffer == first.buffer && second.derived == 189, "an owned index lost its buffer or highest index");
@@ -5893,8 +5899,16 @@ void ownedDrawInputTests(const Device& device, Recorder& recorder) {
     words[5] = 0xdead;
     const auto stored = copy();
     Require(!stored.reused, "an owned input outlived a CPU store");
+    Require(recorder.OwnedDrawInputEntries() == 0, "an invalidated owned input stayed counted");
+    Require(stored.owned.words.empty() != reusable, "arming an owned draw input waited for a kept one after an invalidation");
     keep(stored);
     Require(copy().reused == reusable, "the copy after a CPU store was not kept");
+#ifdef _WIN32
+    recorder.KeepDrawSnapshot(address, size, 1, 1, first.buffer, Use::Index32);
+    Require(recorder.OwnedDrawInputEntries() == 0, "replacing an owned input with a tracked one stayed counted");
+    keep(copy());
+    Require(recorder.OwnedDrawInputEntries() == 1, "an owned input was not kept after a tracked replacement");
+#endif
     MarkWritten(address + 128, 4);
     const auto marked = copy();
     Require(!marked.reused, "an owned input outlived an untracked GPU stamp");
@@ -5975,6 +5989,7 @@ void ownedDrawInputTests(const Device& device, Recorder& recorder) {
         constexpr std::uint64_t fakeBase = 0x1000000000ull;
         for (std::size_t i = 0; i < Recorder::DrawInputEntries; ++i)
             recorder.KeepDrawSnapshot(fakeBase + i * 65536, size, 1, 1, first.buffer, Use::Index32);
+        Require(recorder.OwnedDrawInputEntries() == 0, "evicted owned inputs stayed counted");
         const auto freshOwned = copy();
         Require(!freshOwned.reused && !freshOwned.owned.words.empty(), "eviction fixture did not arm an owned draw input");
         keep(freshOwned);

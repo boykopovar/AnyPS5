@@ -1,4 +1,5 @@
 #include "prx/libScePad/include/Pad.hpp"
+#include <cerrno>
 #include "prx/libScePad/include/PadInputTypes.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/InputCommandFile.hpp"
@@ -570,6 +571,9 @@ static void CheckSpecialPort(int user, int handle) {
     Require(scePadDeviceClassGetExtendedInformation(special, &extended) == PAD_OK);
     Require(extended.deviceClass == -1 && extended.reserved[0] == 0);
     Require(scePadDeviceClassGetExtendedInformation(handle, &extended) == PAD_OK);
+    errno = 71;
+    Require(scePadDeviceClassGetExtendedInformation(handle, reinterpret_cast<PadDeviceClassExtendedInformation*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(extended.deviceClass == 0);
     std::int32_t specialType = -1;
     Require(scePadGetControllerType(special, &specialType) == PAD_OK);
