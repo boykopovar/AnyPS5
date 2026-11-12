@@ -409,10 +409,6 @@ int APS5_VABI _ZN3WTF6StringC2ENS_12ASCIILiteralE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3WTF7SecondsplERKNS_24TimeWithDynamicClockTypeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF3URLC1ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -438,10 +434,6 @@ int APS5_VABI _ZN3WTF14FileSystemImpl12readFromFileEiPci() {
 }
 
 int APS5_VABI _ZNK3JSC14ProtoCallFrame9codeBlockEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypeltERKS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -490,10 +482,6 @@ int APS5_VABI _ZN9Inspector24CanvasFrontendDispatcher17recordingProgressERKN3WTF
 }
 
 int APS5_VABI _ZN9Inspector24RuntimeBackendDispatcher25enableControlFlowProfilerElON3WTF6RefPtrINS1_8JSONImpl6ObjectENS1_13DumbPtrTraitsIS4_EEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF3URL5queryEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1649,10 +1637,6 @@ int APS5_VABI _ZN3WTF21LineBreakIteratorPool10sharedPoolEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF22defaultPortForProtocolENS_10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF23openLatin1UTextProviderEPNS_15UTextWithBufferEPKhjP10UErrorCode() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -2010,26 +1994,6 @@ int APS5_VABI _ZNK3WTF10StringView10tryGetUtf8ENS_14ConversionModeE() {
 }
 
 int APS5_VABI _ZNK3WTF10StringView16GraphemeClusters8IteratorneERKS2_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF13StringBuilder10isAllASCIIEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF3URL11isLocalFileEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF3URL15protocolIsAboutEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF3URL38stringWithoutQueryOrFragmentIdentifierEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF3URL4portEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
