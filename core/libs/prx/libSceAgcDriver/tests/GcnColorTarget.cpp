@@ -51,6 +51,7 @@ constexpr std::size_t ColorBytes = Width * Height * 4u;
 constexpr std::size_t CmaskBytes = 512u;
 constexpr std::size_t MemoryBytes = 65536u;
 constexpr std::size_t FmaskOffset = ColorBytes + 4096u;
+constexpr std::size_t MultisampledSliceMemoryBytes = 8u * ColorBytes;
 std::byte* colorMemory = nullptr;
 std::byte* cmaskMemory = nullptr;
 std::byte* fmaskMemory = nullptr;
@@ -146,6 +147,37 @@ void FewerFragmentsDecode() {
     Check(fastClearedOne.fmaskAddress == fmask && fastClearedOne.gcnFmaskBytes == Width * Height, "a fast-cleared compressed 4-sample 1-fragment GCN color target lost its FMASK");
 }
 
+AgcDriver::Graphics::ColorTarget DecodeMultisampledSlice(std::uint64_t base, std::uint32_t samples, std::uint32_t fragments, std::uint32_t flags, std::uint32_t slice) {
+    AgcDriver::Registers cx;
+    SetTarget(cx, samples, fragments, flags, true, AddressOf(fmaskMemory));
+    cx[0x318] = static_cast<std::uint32_t>(base >> 8u);
+    cx[0x31b] = slice | (slice << 13u);
+    return AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+}
+
+void MultisampledSlicesDecode() {
+    static std::byte* const memory = LowMemory(MultisampledSliceMemoryBytes);
+    const auto base = AddressOf(memory);
+    if (memory == nullptr || base + MultisampledSliceMemoryBytes > (std::uint64_t{1} << 40u)) {
+        Check(false, "cannot allocate multisampled array slice test memory below 1 TiB");
+        return;
+    }
+    const auto cmask = AddressOf(cmaskMemory);
+    const auto fmask = AddressOf(fmaskMemory);
+    const auto msaa = DecodeMultisampledSlice(base, 4u, 4u, FastClear | Compression, 1u);
+    Check(msaa.address == base + 4u * ColorBytes && msaa.surfaceAddress == msaa.address && msaa.bytes == ColorBytes, "slice 1 of a 4x GCN array does not start one slice of its 4 fragments past the array base");
+    Check(msaa.cmaskAddress == cmask + CmaskBytes && msaa.cmaskBytes == CmaskBytes, "the CMASK of slice 1 of a 4x GCN array does not start one CMASK slice past the CMASK base");
+    const auto eqaa = DecodeMultisampledSlice(base, 4u, 2u, Compression, 2u);
+    Check(eqaa.address == base + 2u * 2u * ColorBytes, "slice 2 of a 4-sample 2-fragment GCN array does not start two slices of its 2 fragments past the array base");
+    Check(eqaa.gcnFmaskBytes == Width * Height && eqaa.fmaskAddress == fmask + 2u * eqaa.gcnFmaskBytes, "the FMASK of slice 2 of a 4-sample 2-fragment GCN array does not start two FMASK slices past the FMASK base");
+    Check(eqaa.cmaskAddress == cmask + 2u * CmaskBytes, "the CMASK of slice 2 of a 4-sample 2-fragment GCN array does not start two CMASK slices past the CMASK base");
+    const auto oneFragment = DecodeMultisampledSlice(base, 4u, 1u, Compression, 3u);
+    Check(oneFragment.address == base + 3u * ColorBytes && oneFragment.cmaskAddress == 0u, "slice 3 of a compressed 4-sample 1-fragment GCN array does not start three one-fragment slices past the array base");
+    Check(oneFragment.gcnFmaskBytes == Width * Height && oneFragment.fmaskAddress == fmask + 3u * oneFragment.gcnFmaskBytes, "the FMASK of slice 3 of a compressed 4-sample 1-fragment GCN array does not start three FMASK slices past the FMASK base");
+    const auto first = DecodeMultisampledSlice(base, 4u, 2u, Compression, 0u);
+    Check(first.address == base && first.fmaskAddress == fmask && first.cmaskAddress == cmask, "slice 0 of a 4-sample 2-fragment GCN array does not start at the array, FMASK and CMASK bases");
+}
+
 std::string FmaskDecompress(std::uint32_t visibleHeight) {
     AgcDriver::QueueState queue;
     auto& cx = queue.context;
@@ -189,6 +221,7 @@ int main() {
         MultisampledTargetsDecode();
         SingleSampleFastClearDecode();
         FewerFragmentsDecode();
+        MultisampledSlicesDecode();
         PaddedTargetsAreCovered();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

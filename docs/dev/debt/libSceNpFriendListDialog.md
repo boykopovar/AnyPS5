@@ -8,3 +8,7 @@
 ### Unknown function info
 
 - [sceNpFriendListDialogGetResult and sceNpFriendListDialogOpen](../../../core/libs/prx/libSceNpFriendListDialog/Export.cpp) (libSceNpFriendListDialog) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpFriendListDialog.c), but Orbital has prototypes only for the `A` variants and no credible prototypes were found for these. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+
+### Functional
+
+- [sceNpFriendListDialogOpenA](../../../core/libs/prx/libSceNpFriendListDialog/Export.cpp) (libSceNpFriendListDialog) - returning COMMON_DIALOG_ERROR_ARG_NULL (0x80B8000D) for unmapped or unreadable parameter pointers is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
