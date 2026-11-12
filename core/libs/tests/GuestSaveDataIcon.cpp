@@ -7,6 +7,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iterator>
+#include <limits>
 #include <random>
 #include <source_location>
 #include <stdexcept>
@@ -180,11 +181,49 @@ static void CheckArguments() {
     Require(sceSaveDataSaveIcon(nullptr, &icon) == Parameter);
     Require(sceSaveDataLoadIcon(&point, nullptr) == Parameter);
     Require(sceSaveDataSaveIcon(&point, nullptr) == Parameter);
+    Require(sceSaveDataLoadIcon(&point, reinterpret_cast<SaveDataIcon*>(0x10)) == Parameter);
+    Require(sceSaveDataSaveIcon(&point, reinterpret_cast<const SaveDataIcon*>(0x10)) == Parameter);
+    {
+        SaveDataMountPoint unmounted{};
+        std::memcpy(unmounted.data, "/absent0", sizeof("/absent0"));
+        Require(sceSaveDataLoadIcon(&unmounted, reinterpret_cast<SaveDataIcon*>(0x10)) == Parameter);
+        Require(sceSaveDataSaveIcon(&unmounted, reinterpret_cast<const SaveDataIcon*>(0x10)) == Parameter);
+        const auto target = Mount("unmapped");
+        auto payload = Payload();
+        Save(target, payload.data(), payload.size(), 16);
+        SaveDataIcon badBuf{};
+        badBuf.buf = reinterpret_cast<void*>(0x10);
+        badBuf.buf_size = 16;
+        badBuf.data_size = 0x123456;
+        Require(sceSaveDataLoadIcon(&target, &badBuf) == Parameter);
+        Require(badBuf.data_size == 0x123456);
+        badBuf.data_size = 16;
+        Require(sceSaveDataSaveIcon(&target, &badBuf) == Parameter);
+        badBuf.buf_size = std::numeric_limits<std::size_t>::max();
+        badBuf.data_size = std::numeric_limits<std::size_t>::max();
+        Require(sceSaveDataSaveIcon(&target, &badBuf) == Parameter);
+        Load(target, payload.data(), 16);
+        static unsigned char sentinelBuf[16]{};
+        std::fill(std::begin(sentinelBuf), std::end(sentinelBuf), static_cast<unsigned char>(0xA5));
+        static const SaveDataIcon readOnlyIcon{sentinelBuf, sizeof(sentinelBuf), 7, {}};
+        Require(sceSaveDataLoadIcon(&target, const_cast<SaveDataIcon*>(&readOnlyIcon)) == Parameter);
+        Require(std::all_of(std::begin(sentinelBuf), std::end(sentinelBuf),
+            [](unsigned char byte) { return byte == 0xA5; }));
+        Unmount(target);
+    }
     SaveDataIcon empty{};
     empty.data_size = 0x123456;
     Require(sceSaveDataLoadIcon(&point, &empty) == Parameter);
     Require(sceSaveDataSaveIcon(&point, &empty) == Parameter);
     Require(empty.data_size == 0x123456);
+    SaveDataMountPoint unterminated{};
+    std::memset(unterminated.data, 'X', sizeof(unterminated.data));
+    Require(sceSaveDataLoadIcon(&unterminated, &icon) == Parameter);
+    Require(sceSaveDataSaveIcon(&unterminated, &icon) == Parameter);
+    Require(sceSaveDataSaveIconByPath(nullptr, nullptr) == Parameter);
+    Require(sceSaveDataSaveIconByPath(&unterminated, nullptr) == Parameter);
+    Require(sceSaveDataSaveIconByPath(&point, nullptr) == 0);
+    Require(sceSaveDataSaveIconByPath(&point, "icon.png") == 0);
     Require(sceSaveDataLoadIcon(&point, &icon) == NotFound);
     Require(icon.data_size == 0x123456);
     SaveDataMountPoint absent{};

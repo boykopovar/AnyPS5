@@ -1,6 +1,8 @@
 #pragma once
+#include "prx/libSceFreeType/include/MemoryAllocation.hpp"
 
 #include "prx/libSceFreeType/include/GuestList.hpp"
+#include "prx/libSceFreeType/include/PostScriptPrivate.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "prx/libSceFreeType/include/PostScriptInfo.hpp"
 #include "SceTypes.hpp"
@@ -20,6 +22,9 @@ int APS5_VABI FT_New_Face_nid_postfix(FreeType::GuestLibrary* library, const cha
 int APS5_VABI FT_New_Memory_Face_nid_postfix(FreeType::GuestLibrary* library, const unsigned char* fileBase, std::int64_t fileSize, std::int64_t faceIndex, FreeType::GuestFaceRec** aface);
 int APS5_VABI FT_Reference_Face_nid_postfix(FreeType::GuestFaceRec* face);
 int APS5_VABI FT_Done_Face_nid_postfix(FreeType::GuestFaceRec* face);
+int APS5_VABI FT_Attach_File_nid_postfix(FreeType::GuestFaceRec* face, const char* filepathname);
+std::int64_t APS5_VABI FT_Get_PS_Font_Value_nid_postfix(FreeType::GuestFaceRec* face, std::int32_t key, std::uint32_t index, void* value, std::int64_t valueLength);
+int APS5_VABI FT_Outline_Render_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline, FreeType::GuestRasterParams* params);
 int APS5_VABI FT_Select_Size_nid_postfix(FreeType::GuestFaceRec* face, std::int32_t strikeIndex);
 int APS5_VABI FT_New_Size_nid_postfix(FreeType::GuestFaceRec* face, FreeType::GuestSizeRec** asize);
 int APS5_VABI FT_Activate_Size_nid_postfix(FreeType::GuestSizeRec* size);
@@ -38,6 +43,7 @@ int APS5_VABI FT_Get_Advance_nid_postfix(FreeType::GuestFaceRec* face, std::uint
 int APS5_VABI FT_Get_Advances_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t start, std::uint32_t count, std::int32_t flags, std::int64_t* advances);
 int APS5_VABI FT_Get_Glyph_nid_postfix(FreeType::GuestGlyphSlotRec* slot, FreeType::GuestGlyphRec** target);
 int APS5_VABI FT_Glyph_Copy_nid_postfix(FreeType::GuestGlyphRec* source, FreeType::GuestGlyphRec** target);
+void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(FreeType::GuestGlyphRec* glyph, std::uint32_t mode, FreeType::GuestBBox* box);
 void APS5_VABI FT_Done_Glyph_nid_postfix(FreeType::GuestGlyphRec* glyph);
 int APS5_VABI FT_Get_Gasp_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t ppem);
 int APS5_VABI FT_Get_CID_Registry_Ordering_Supplement_nid_postfix(FreeType::GuestFaceRec* face, const char** registry, const char** ordering, std::int32_t* supplement);
@@ -63,6 +69,7 @@ std::uint64_t APS5_VABI FT_Get_CMap_Language_ID_nid_postfix(FreeType::GuestCharM
 std::int64_t APS5_VABI FT_Get_CMap_Format_nid_postfix(FreeType::GuestCharMapRec* charmap);
 const char* APS5_VABI FT_Get_X11_Font_Format_nid_postfix(FreeType::GuestFaceRec* face);
 std::uint16_t APS5_VABI FT_Get_FSType_Flags_nid_postfix(FreeType::GuestFaceRec* face);
+int APS5_VABI FT_Get_PS_Font_Private_nid_postfix(FreeType::GuestFaceRec* face, FreeType::GuestPSPrivate* privateDictionary);
 FreeType::GuestListNodeRec* APS5_VABI FT_List_Find_nid_postfix(FreeType::GuestListRec* list, void* data);
 void APS5_VABI FT_List_Add_nid_postfix(FreeType::GuestListRec* list, FreeType::GuestListNodeRec* node);
 void APS5_VABI FT_List_Insert_nid_postfix(FreeType::GuestListRec* list, FreeType::GuestListNodeRec* node);
@@ -106,6 +113,9 @@ int APS5_VABI FT_Stroker_GetCounts_nid_postfix(void* stroker, std::uint32_t* poi
 int APS5_VABI FT_Stroker_CubicTo_nid_postfix(void* stroker, const FreeType::GuestVector* control1, const FreeType::GuestVector* control2, const FreeType::GuestVector* to);
 void APS5_VABI FT_Stroker_Done_nid_postfix(void* stroker);
 int APS5_VABI FT_Stroker_GetBorderCounts_nid_postfix(void* stroker, std::int32_t border, std::uint32_t* points, std::uint32_t* contours);
+int APS5_VABI FT_Stroker_ParseOutline_nid_postfix(void* stroker, const FreeType::GuestOutline* outline, std::uint8_t opened);
+void APS5_VABI FT_Stroker_ExportBorder_nid_postfix(void* stroker, std::int32_t border, FreeType::GuestOutline* outline);
+void APS5_VABI FT_Stroker_Export_nid_postfix(void* stroker, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Stroker_EndSubPath_nid_postfix(void* stroker);
 int APS5_VABI FT_Stroker_LineTo_nid_postfix(void* stroker, const FreeType::GuestVector* to);
 int APS5_VABI FT_Stroker_New_nid_postfix(FreeType::GuestLibrary* library, void** stroker);
@@ -115,13 +125,53 @@ int APS5_VABI FT_Stroker_BeginSubPath_nid_postfix(void* stroker, const FreeType:
 int APS5_VABI FT_Stroker_ConicTo_nid_postfix(void* stroker, const FreeType::GuestVector* control, const FreeType::GuestVector* to);
 int APS5_VABI ft_corner_is_flat_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y);
 int APS5_VABI ft_corner_orientation_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y);
+void APS5_VABI FT_Vector_Transform_nid_postfix(FreeType::GuestVector* vector, const FreeType::GuestMatrix* matrix);
+void APS5_VABI FT_Matrix_Multiply_nid_postfix(const FreeType::GuestMatrix* a, FreeType::GuestMatrix* b);
+int APS5_VABI FT_Matrix_Invert_nid_postfix(FreeType::GuestMatrix* matrix);
 const char* APS5_VABI FT_Get_Font_Format_nid_postfix(FreeType::GuestFaceRec* face);
 std::uint8_t APS5_VABI FT_Face_CheckTrueTypePatents_nid_postfix(FreeType::GuestFaceRec* face);
 std::uint8_t APS5_VABI FT_Face_SetUnpatentedHinting_nid_postfix(FreeType::GuestFaceRec* face, std::uint8_t value);
 int APS5_VABI FT_Get_Track_Kerning_nid_postfix(FreeType::GuestFaceRec* face, std::int64_t pointSize, std::int32_t degree, std::int64_t* kerning);
+int APS5_VABI FT_Outline_Get_Bitmap_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline, const FreeType::GuestBitmap* bitmap);
+void* APS5_VABI FT_Get_Sfnt_Table_nid_postfix(FreeType::GuestFaceRec* face, std::int32_t tag);
+void APS5_VABI FT_GlyphSlot_Oblique_nid_postfix(FreeType::GuestGlyphSlotRec* slot);
+void APS5_VABI FT_GlyphSlot_Embolden_nid_postfix(FreeType::GuestGlyphSlotRec* slot);
+int APS5_VABI FT_GlyphSlot_Own_Bitmap_nid_postfix(FreeType::GuestGlyphSlotRec* slot);
+int APS5_VABI FT_Bitmap_Embolden_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestBitmap* bitmap, std::int64_t xStrength, std::int64_t yStrength);
+int APS5_VABI FT_Library_SetLcdFilterWeights_nid_postfix(FreeType::GuestLibrary* library, unsigned char* weights);
+int APS5_VABI FT_Library_SetLcdFilter_nid_postfix(FreeType::GuestLibrary* library, std::int32_t filter);
+void APS5_VABI FT_Outline_Transform_nid_postfix(const FreeType::GuestOutline* outline, const FreeType::GuestMatrix* matrix);
+int APS5_VABI FT_Outline_EmboldenXY_nid_postfix(FreeType::GuestOutline* outline, std::int64_t xStrength, std::int64_t yStrength);
+int APS5_VABI FT_Outline_Embolden_nid_postfix(FreeType::GuestOutline* outline, std::int64_t strength);
+void APS5_VABI FT_Vector_Polarize_nid_postfix(const FreeType::GuestVector* vector, std::int64_t* length, std::int64_t* angle);
+std::int64_t APS5_VABI FT_Vector_Length_nid_postfix(const FreeType::GuestVector* vector);
+void APS5_VABI FT_Vector_Rotate_nid_postfix(FreeType::GuestVector* vector, std::int64_t angle);
+std::int64_t APS5_VABI FT_Atan2_nid_postfix(std::int64_t x, std::int64_t y);
+void APS5_VABI FT_Vector_From_Polar_nid_postfix(FreeType::GuestVector* vector, std::int64_t length, std::int64_t angle);
+int APS5_VABI FT_Open_Face_nid_postfix(FreeType::GuestLibrary* library, const FreeType::GuestOpenArgs* args, std::int64_t faceIndex, FreeType::GuestFaceRec** aface);
+int APS5_VABI FT_Get_Var_Blend_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, std::int64_t* coordinates);
+int APS5_VABI FT_Get_Var_Design_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, std::int64_t* coordinates);
+int APS5_VABI FT_Set_MM_Design_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FT_Set_MM_Blend_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FT_Set_Var_Blend_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FT_Get_MM_Var_nid_postfix(FreeType::GuestFaceRec* face, void** master);
+int APS5_VABI FT_Set_Var_Design_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FT_Get_Multi_Master_nid_postfix(FreeType::GuestFaceRec* face, void* master);
+int APS5_VABI FT_Done_MM_Var_nid_postfix(FreeType::GuestLibrary* library, void* master);
+int APS5_VABI FT_Set_Renderer_nid_postfix(FreeType::GuestLibrary* library, void* renderer, std::uint32_t count, const FreeType::GuestParameter* parameters);
 
 int APS5_VABI FT_Outline_New_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Outline_Done_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline);
 int APS5_VABI sceFreeTypeOtOutlineDone_nid_no_patch();
 int APS5_VABI sceFreeTypeOtOutlineNew_nid_no_patch();
+int APS5_VABI sceFreeTypeOtGlyphSlotEmbolden_nid_no_patch();
+int APS5_VABI sceFreeTypeOtGlyphSlotOblique_nid_no_patch();
+int APS5_VABI sceFreeTypeOtLibrarySetLcdFilter_nid_no_patch();
+int APS5_VABI sceFreeTypeOtLibrarySetLcdFilterWeights_nid_no_patch();
+void* APS5_VABI FT_Get_Module_nid_postfix(FreeType::GuestLibrary* library, const char* moduleName);
+void* APS5_VABI FT_Get_Renderer_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t format);
+int APS5_VABI FT_Remove_Module_nid_postfix(FreeType::GuestLibrary* library, void* module);
+void APS5_VABI FT_Add_Default_Modules_nid_postfix(FreeType::GuestLibrary* library);
+int APS5_VABI sceFreeTypeOtRemoveModule_nid_no_patch();
+int APS5_VABI sceFreeTypeOtOpenFace_nid_no_patch();
 }
