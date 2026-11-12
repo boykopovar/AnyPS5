@@ -215,6 +215,10 @@ int main(int argc, char** argv) {
         Require(sceKernelStopUnloadModule(system, 0, nullptr, 1, nullptr, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
         Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, &unloadOpt, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
         Require(sceKernelStopUnloadModule(0, 0, nullptr, 0, nullptr, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
+        for (const int badHandle : {0x7fffffff, -1, 0x7ffffff0}) {
+            Require(sceKernelStopUnloadModule(badHandle, 0, nullptr, 0, nullptr, &stopped) == static_cast<int>(0x80020003u) && stopped == -1);
+            Require(sceKernelStopUnloadModule(badHandle, 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80020003u));
+        }
         add = reinterpret_cast<Add>(dlsym_nid_postfix(reinterpret_cast<void*>(static_cast<std::intptr_t>(system)), "GuestModuleAdd"));
         Require(add && add(30, 12) == 42);
         Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, nullptr, nullptr) == 0);
