@@ -41,15 +41,15 @@ SVG_STYLE = (
 
 
 def git(*args):
-    return subprocess.run(["git", "-C", str(progress.ROOT), *args], check=True, capture_output=True).stdout
+    try:
+        return subprocess.run(["git", "-C", str(progress.ROOT), *args], check=True, capture_output=True).stdout
+    except subprocess.CalledProcessError as error:
+        reason = error.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(f"git {' '.join(args)} failed: {reason}") from error
 
 
 def daily_commits(ref):
-    try:
-        log = git("log", "--first-parent", "--format=%H %ct", ref)
-    except subprocess.CalledProcessError as error:
-        reason = error.stderr.decode("utf-8", errors="replace").strip()
-        raise ValueError(f"cannot read the history of {ref}: {reason}") from error
+    log = git("log", "--first-parent", "--format=%H %ct", ref)
     seen = {}
     for line in log.decode("utf-8").splitlines():
         sha, timestamp = line.split()
@@ -64,10 +64,7 @@ def measure(sha):
         progress.shader_scan.RECOMPILER.rstrip("/"),
         progress.shader_scan.AGC_DRIVER.rstrip("/"),
     ]
-    try:
-        tree = git("ls-tree", "-r", "--name-only", sha, "--", *candidate_paths).decode("utf-8").splitlines()
-    except subprocess.CalledProcessError:
-        return None
+    tree = git("ls-tree", "-r", "--name-only", sha, "--", *candidate_paths).decode("utf-8").splitlines()
     tree = set(tree)
     required_paths = candidate_paths[:2]
     if any(not any(name == path or name.startswith(path + "/") for name in tree) for path in required_paths):
@@ -78,14 +75,11 @@ def measure(sha):
     ]
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        try:
-            archive = tarfile.open(fileobj=io.BytesIO(git("archive", sha, "--", *paths)))
-            if hasattr(tarfile, "data_filter"):
-                archive.extractall(root, filter="data")
-            else:
-                archive.extractall(root)
-        except subprocess.CalledProcessError:
-            return None
+        archive = tarfile.open(fileobj=io.BytesIO(git("archive", sha, "--", *paths)))
+        if hasattr(tarfile, "data_filter"):
+            archive.extractall(root, filter="data")
+        else:
+            archive.extractall(root)
         saved = progress.PRX, progress.OPCODES
         progress.PRX, progress.OPCODES = root / paths[0], root / paths[1]
         try:
