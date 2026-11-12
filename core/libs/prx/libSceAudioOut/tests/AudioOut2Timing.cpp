@@ -1,4 +1,5 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/include/InventoryExports.hpp"
 #include "prx/libSceAudioOut/src/AudioOut2Internal.hpp"
 #include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
@@ -355,6 +356,10 @@ void TestLowLatencyCallsRejectBadArguments() {
     Require(sceAudioOut2LoContextQueryMemory(&params, nullptr) == 0);
     Require(size == sizeSentinel);
     Require(sceAudioOut2LoContextQueryMemory(&params, &size) == 0);
+    errno = 73;
+    Require(sceAudioOut2LoContextQueryMemory(&params, reinterpret_cast<std::size_t*>(0x10)) == errorInvalidParam);
+    Require(sceAudioOut2LoContextQueryMemoryEx(&params, nullptr, reinterpret_cast<std::size_t*>(0x10)) == errorInvalidParam);
+    Require(errno == 73);
     std::size_t standardSize = sizeSentinel;
     Require(sceAudioOut2ContextQueryMemory(&params, &standardSize) == 0);
     Require(size == 0x5b1c && standardSize == 0x10000);
