@@ -37,12 +37,17 @@ bool StringFits(const char* text, std::size_t maxLength) {
     const int savedErrno = errno;
     std::size_t copied = 0;
     while (copied <= maxLength) {
-        const auto addr = reinterpret_cast<std::uintptr_t>(text + copied);
+        const auto base = reinterpret_cast<std::uintptr_t>(text);
+        if (base == 0 || copied > UINTPTR_MAX - base) {
+            errno = savedErrno;
+            return false;
+        }
+        const auto addr = base + copied;
         const std::size_t pageOffset = addr & 0xFFF;
         const std::size_t bytesToPageEnd = 0x1000 - pageOffset;
-        const std::size_t chunkSize = std::min(bytesToPageEnd, maxLength + 1 - copied);
         char chunk[512];
-        if (!GuestCopyIn_nid_no_patch(chunk, text + copied, chunkSize)) {
+        const std::size_t chunkSize = std::min({bytesToPageEnd, maxLength + 1 - copied, sizeof(chunk)});
+        if (!GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(addr), chunkSize)) {
             errno = savedErrno;
             return false;
         }
