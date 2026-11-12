@@ -1,10 +1,12 @@
 #include <cstdio>
+#include <cerrno>
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cerrno>
@@ -384,9 +386,14 @@ int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event) {
   return USER_SERVICE_ERROR_NO_EVENT;
  }
  const auto item = eventQueue.front();
+ const SceUserServiceEvent output{item.eventType, item.userId};
+ const int savedError = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(event, &output, sizeof(output));
+ errno = savedError;
+ if (!copied) {
+  NotImplemented_nid_no_patch(__func__);
+ }
  eventQueue.pop_front();
- event->event_type = item.eventType;
- event->user_id = item.userId;
  return USER_SERVICE_OK;
 }
 
@@ -493,7 +500,11 @@ static int MarkInitialized() {
 
 int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* params) {
  if (params != nullptr) {
-  if (!ValidThreadPriority(params->priority)) {
+  UserServiceInitParam localParams{};
+  const int savedErrno = errno;
+  const bool copied = GuestCopyIn_nid_no_patch(&localParams, params, sizeof(localParams));
+  errno = savedErrno;
+  if (!copied || !ValidThreadPriority(localParams.priority)) {
    return USER_SERVICE_ERROR_INVALID_ARGUMENT;
   }
  }
