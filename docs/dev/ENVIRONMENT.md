@@ -636,6 +636,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `ANYPS5_PAD_PLAYER_2_SERIAL` | string | `core/libs/prx/libScePad/include/ControllerAssignment.hpp` |  | SDL controller serial assigned to guest player 2; an empty or unset value leaves the slot in sequential assignment |
 | `ANYPS5_PAD_PLAYER_3_SERIAL` | string | `core/libs/prx/libScePad/include/ControllerAssignment.hpp` |  | SDL controller serial assigned to guest player 3; an empty or unset value leaves the slot in sequential assignment |
 | `ANYPS5_PAD_PLAYER_4_SERIAL` | string | `core/libs/prx/libScePad/include/ControllerAssignment.hpp` |  | SDL controller serial assigned to guest player 4; an empty or unset value leaves the slot in sequential assignment |
+| `ANYPS5_PAD_LOG_CONTROLLER_SERIAL` | string | `core/libs/prx/libSceVideoOut/src/PadInput.cpp` | 0 | `1` logs each SDL controller's serial for configuring player assignment; other values leave serial logging off |
 | `APS5_PAD_INPUT_FILE` | string | `core/libs/prx/libScePad/src/PadState.cpp` |  | path of the file polled for injected pad button and stick commands |
 
 ### libScePlayGo
