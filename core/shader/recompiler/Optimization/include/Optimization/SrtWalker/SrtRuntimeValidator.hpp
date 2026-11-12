@@ -23,15 +23,15 @@ private:
     public:
         bool contains(IrValue* value) const {
             for (std::size_t index = 0; index < _inlineSize; ++index) {
-                if (_inline[index] == value) return true;
+                if (_inlineValues[index] == value) return true;
             }
             return _hashed ? _overflowSet.contains(value) : std::find(_overflow.begin(), _overflow.end(), value) != _overflow.end();
         }
 
         bool insert(IrValue* value) {
             if (contains(value)) return false;
-            if (_inlineSize < _inline.size()) {
-                _inline[_inlineSize++] = value;
+            if (_inlineSize < _inlineValues.size()) {
+                _inlineValues[_inlineSize++] = value;
             } else if (_hashed) {
                 _overflowSet.insert(value);
             } else {
@@ -47,11 +47,11 @@ private:
 
         bool erase(IrValue* value) {
             for (std::size_t index = 0; index < _inlineSize; ++index) {
-                if (_inline[index] != value) continue;
+                if (_inlineValues[index] != value) continue;
                 --_inlineSize;
-                _inline[index] = _inline[_inlineSize];
+                _inlineValues[index] = _inlineValues[_inlineSize];
                 if (!_hashed && !_overflow.empty()) {
-                    _inline[_inlineSize++] = _overflow.back();
+                    _inlineValues[_inlineSize++] = _overflow.back();
                     _overflow.pop_back();
                 }
                 return true;
@@ -67,7 +67,7 @@ private:
         }
 
     private:
-        std::array<IrValue*, 8> _inline{};
+        std::array<IrValue*, 8> _inlineValues{};
         std::size_t _inlineSize = 0;
         std::vector<IrValue*> _overflow;
         std::unordered_set<IrValue*> _overflowSet;
