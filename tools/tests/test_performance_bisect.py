@@ -662,3 +662,10 @@ class FocusedInputEdgeTests(unittest.TestCase):
         result = performance_bisect.summarize(samples, 5)
         self.assertEqual(result["median_fps"], 61.0)
 
+
+    def test_summary_accepts_spread_equal_to_limit(self):
+        samples = [{"fps": value, "identity": IDENTITY} for value in (59.0, 61.0)]
+        spread = (61.0 - 59.0) / 60.0 * 100
+        result = performance_bisect.summarize(samples, spread)
+        self.assertAlmostEqual(result["spread_pct"], spread)
+
