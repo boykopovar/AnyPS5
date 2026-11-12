@@ -5,6 +5,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 
 #include <algorithm>
@@ -23,7 +24,6 @@
 
 #ifdef _WIN32
 #include "prx/libc/include/FileStream.hpp"
-#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include <fcntl.h>
 #include <io.h>
@@ -453,17 +453,19 @@ int ReadDirectoryDescriptor(int fd, char* buf, int nbytes, std::int64_t* base) {
     }
     catch (const DirectoryEntryNameTooLong&) { throw; }
     catch (const std::exception&) { return SCE_KERNEL_ERROR_EIO; }
-    if (base != nullptr) *base = static_cast<std::int64_t>(state->cursor);
+    const auto start = static_cast<std::int64_t>(state->cursor);
+    auto cursor = state->cursor;
+    std::string staged;
     std::size_t used = 0;
-    while (state->cursor < state->entries.size()) {
-        const auto& entry = state->entries[state->cursor];
+    while (cursor < state->entries.size()) {
+        const auto& entry = state->entries[cursor];
         const std::size_t record = (8 + entry.name.size() + 1 + 3) & ~std::size_t{3};
         if (used + record > static_cast<std::size_t>(nbytes)) {
             if (used == 0) return SCE_KERNEL_ERROR_EINVAL;
             break;
         }
-        char* out = buf + used;
-        std::memset(out, 0, record);
+        staged.resize(used + record);
+        char* out = staged.data() + used;
         const auto recordLength = static_cast<std::uint16_t>(record);
         const auto nameLength = static_cast<std::uint8_t>(entry.name.size());
         std::memcpy(out, &entry.fileNumber, sizeof(entry.fileNumber));
@@ -472,8 +474,11 @@ int ReadDirectoryDescriptor(int fd, char* buf, int nbytes, std::int64_t* base) {
         out[7] = static_cast<char>(nameLength);
         std::memcpy(out + 8, entry.name.c_str(), entry.name.size() + 1);
         used += record;
-        ++state->cursor;
+        ++cursor;
     }
+    if (used != 0 && !GuestCopyOut_nid_no_patch(buf, staged.data(), used)) return SCE_KERNEL_ERROR_EFAULT;
+    if (base != nullptr && !GuestCopyOut_nid_no_patch(base, &start, sizeof(start))) return SCE_KERNEL_ERROR_EFAULT;
+    state->cursor = cursor;
     return static_cast<int>(used);
 }
 

@@ -66,5 +66,7 @@ static_assert(offsetof(LibreSsl3Ssl3State, clientRandom) == 40);
 static_assert(sizeof(LibreSsl3Ssl) == 184);
 static_assert(offsetof(LibreSsl3Ssl, s3) == 56);
 static_assert(offsetof(LibreSsl3Ssl, references) == 176);
+static_assert(offsetof(LibreSsl3SslSession, masterKeyLength) == 8);
+static_assert(offsetof(LibreSsl3SslSession, masterKey) == 16);
 static_assert(sizeof(LibreSsl3SslSession) == 192);
 static_assert(offsetof(LibreSsl3SslSession, references) == 184);

@@ -63,8 +63,4 @@ std::uint32_t APS5_VABI hb_ot_tag_to_script_nid_postfix(std::uint32_t tag) {
     return tag & ~0x20000000u;
 }
 
-int APS5_VABI hb_shape_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 }

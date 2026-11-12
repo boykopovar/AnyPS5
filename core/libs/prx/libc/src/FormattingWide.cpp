@@ -15,6 +15,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/HostErrno.hpp"
 #include "prx/libc/include/WindowsFormatting.hpp"
 
 #ifdef _WIN32
@@ -478,7 +479,12 @@ int APS5_VABI fputwc_nid_postfix(char16_t value, FileStream* stream) {
         const std::string bytes = ToUtf8(std::u16string(1, value));
         auto* native = GetNativeStream(stream);
         if (!stream->SwitchToWriting()) return -1;
-        if (std::fwrite(bytes.data(), 1, bytes.size(), native) != bytes.size()) throw std::runtime_error("stream write failed");
+        if (std::fwrite(bytes.data(), 1, bytes.size(), native) != bytes.size()) {
+            const int error = GuestErrnoFromHost_nid_no_patch(errno);
+            stream->SyncStatus();
+            errno = error;
+            return -1;
+        }
         stream->SyncStatus();
         return value;
     } catch (const std::exception&) {
@@ -496,7 +502,12 @@ int APS5_VABI fputws_nid_postfix(const char16_t* str, FileStream* stream) {
         const std::string bytes = ToUtf8(text);
         auto* native = GetNativeStream(stream);
         if (!stream->SwitchToWriting()) return -1;
-        if (std::fwrite(bytes.data(), 1, bytes.size(), native) != bytes.size()) throw std::runtime_error("stream write failed");
+        if (std::fwrite(bytes.data(), 1, bytes.size(), native) != bytes.size()) {
+            const int error = GuestErrnoFromHost_nid_no_patch(errno);
+            stream->SyncStatus();
+            errno = error;
+            return -1;
+        }
         stream->SyncStatus();
         return static_cast<int>(text.size());
     } catch (const std::exception&) {
