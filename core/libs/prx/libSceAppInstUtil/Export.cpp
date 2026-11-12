@@ -1,10 +1,13 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAppInstUtil/include/InventoryExports.hpp"
 #include "prx/libSceAppInstUtil/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
 #include <mutex>
+#include <new>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
@@ -13,6 +16,8 @@ static std::mutex g_serviceMutex;
 static int g_serviceReferences = 0;
 static constexpr int ErrorNullArgument = static_cast<int>(0x80A30003);
 static constexpr int ErrorNotInitialized = static_cast<int>(0x80A31000);
+static constexpr int GuestEnomem = 12;
+static constexpr int GuestEfault = 14;
 
 extern "C" {
 
@@ -39,14 +44,36 @@ int APS5_VABI sceAppInstUtilAppIsInInstalling(int32_t* installing) {
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppIsInUpdating(const char* titleId, bool* updating) {
-    NotImplemented_nid_no_patch(__func__);
+    const int savedErrno = errno;
+    if (titleId == nullptr || updating == nullptr) return ErrorNullArgument;
+    std::lock_guard lock(g_serviceMutex);
+    if (g_serviceReferences <= 0) return ErrorNotInitialized;
+    std::string requested;
+    const int copyError = CopyGuestString_nid_no_patch(titleId, std::strlen(GetAppTitleId_nid_postfix().value) + 1, requested);
+    errno = savedErrno;
+    if (copyError == GuestEfault) return ErrorNullArgument;
+    if (copyError == GuestEnomem) throw std::bad_alloc();
+    const bool localUpdating = false;
+    const bool copied = GuestCopyOut_nid_no_patch(updating, &localUpdating, sizeof(localUpdating));
+    errno = savedErrno;
+    if (!copied) return ErrorNullArgument;
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppExists(const char* titleId, int32_t* exists) {
+    const int savedErrno = errno;
     if (titleId == nullptr || exists == nullptr) return ErrorNullArgument;
     std::lock_guard lock(g_serviceMutex);
     if (g_serviceReferences <= 0) return ErrorNotInitialized;
-    *exists = std::strcmp(titleId, GetAppTitleId_nid_postfix().value) == 0 ? 1 : 0;
+    const AppTitleId running = GetAppTitleId_nid_postfix();
+    std::string requested;
+    const int copyError = CopyGuestString_nid_no_patch(titleId, std::strlen(running.value) + 1, requested);
+    errno = savedErrno;
+    if (copyError == GuestEfault) return ErrorNullArgument;
+    if (copyError == GuestEnomem) throw std::bad_alloc();
+    const int32_t localExists = copyError == 0 && requested == running.value ? 1 : 0;
+    const bool copied = GuestCopyOut_nid_no_patch(exists, &localExists, sizeof(localExists));
+    errno = savedErrno;
+    if (!copied) return ErrorNullArgument;
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppGetSize(const char* titleId, std::uint64_t* size) {

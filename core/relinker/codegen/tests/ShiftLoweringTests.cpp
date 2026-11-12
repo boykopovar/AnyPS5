@@ -1,6 +1,7 @@
 #include "LoweringExecution.hpp"
 #include <codegen/x86/ShiftLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
+#include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/CodegenException.hpp>
 #include <array>
 #include <cstring>
@@ -225,6 +226,53 @@ void execution() {
                     state.Output[0] = value;
                     run(execution, operands, state, value);
                 }
+            }
+            for (const std::uint8_t dst : std::array<std::uint8_t, 2>{0, 4}) {
+                for (const std::int32_t displacement : {-176, -168, -167, -160, -152, -151, -144, -136}) {
+                    Bytes tail{static_cast<std::uint8_t>(0x84 | (dst << 3)), 0x24};
+                    for (unsigned s = 0; s < 32; s += 8)
+                        tail.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(displacement) >> s));
+                    constexpr std::uint64_t value = 0xFEDCBA9876543210ull;
+                    const auto site = memorySite(operation, wide, tail, 13);
+                    const auto operands = *Codegen::DecodeShift(site.data(), site.size());
+                    const Execution execution(site, value, false, [&](Codegen::StubBodyBuilder& body, const Bytes&) {
+                        for (int part = 0; part < 2; ++part) {
+                            Bytes store{0xC7, 0x84, 0x24};
+                            const auto slot = static_cast<std::uint32_t>(displacement + part * 4);
+                            const auto word = static_cast<std::uint32_t>(value >> (part * 32));
+                            for (unsigned s = 0; s < 32; s += 8) store.push_back(static_cast<std::uint8_t>(slot >> s));
+                            for (unsigned s = 0; s < 32; s += 8) store.push_back(static_cast<std::uint8_t>(word >> s));
+                            body.Raw(store);
+                        }
+                        Codegen::EmitShift(body, operands);
+                    }, operands.Operation == ShiftOperation::RotateRight ? 1 : 0);
+                    auto state = LoweringExecution::InitialState();
+                    state.Input[1] = 13;
+                    run(execution, operands, state, value);
+                }
+            }
+            const auto stackSite = operation == ShiftOperation::RotateRight ? rotate(wide, 4, 6, 13) : shift(operation, wide, 4, 6, 2);
+            const auto stackOperands = *Codegen::DecodeShift(stackSite.data(), stackSite.size());
+            Codegen::StubBodyBuilder probe;
+            Codegen::EmitShift(probe, stackOperands);
+            const auto built = probe.Finish();
+            const Bytes raw(built.Bytes.begin(), built.Bytes.begin() + static_cast<std::ptrdiff_t>(built.ReturnBranchOffset));
+            Codegen::X64InstructionDecoder decoder;
+            for (std::size_t cut = 0; cut < raw.size(); cut += decoder.Decode(raw.data() + cut, raw.size() - cut)) {
+                const Execution execution(stackSite, 0, false, [&](Codegen::StubBodyBuilder& body, const Bytes&) {
+                    body.Raw(std::span<const std::uint8_t>(raw.data(), cut));
+                    for (std::int32_t disp = -256; disp < -128; disp += 4) {
+                        Bytes clobber{0xC7, 0x84, 0x24};
+                        for (unsigned s = 0; s < 32; s += 8)
+                            clobber.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(disp) >> s));
+                        clobber.insert(clobber.end(), {0xEF, 0xBE, 0xAD, 0xDE});
+                        body.Raw(clobber);
+                    }
+                    body.Raw(std::span<const std::uint8_t>(raw.data() + cut, raw.size() - cut));
+                });
+                auto state = LoweringExecution::InitialState();
+                state.Input[2] = 13;
+                run(execution, stackOperands, state, 0);
             }
         }
     }

@@ -1,0 +1,15 @@
+add_library(libSceTtsEngine SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceTtsEngine PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceTtsEngine)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_tts_engine_tests ${LIBS_INCLUDE_DIR}/tests/GuestTtsEngine.cpp)
+    target_include_directories(guest_tts_engine_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_tts_engine_tests PRIVATE libSceTtsEngine libc)
+    configure_windows_unwind(guest_tts_engine_tests)
+    add_test(NAME guest_tts_engine COMMAND guest_tts_engine_tests)
+    if(WIN32)
+        set_tests_properties(guest_tts_engine PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceTtsEngine>")
+    endif()
+endif()

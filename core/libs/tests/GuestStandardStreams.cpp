@@ -30,6 +30,9 @@ extern FileStream* __stdinp_nid_postfix;
 extern FileStream* __stdoutp_nid_postfix;
 extern FileStream* __stderrp_nid_postfix;
 extern int __isthreaded_nid_postfix;
+extern std::uint32_t Need_sceLibc_nid_postfix;
+extern int _thread_autoinit_dummy_decl_nid_postfix;
+extern int _thread_autoinit_dummy_decl_stub_nid_postfix;
 
 }
 static void Require(bool value) { if (!value) std::abort(); }
@@ -875,6 +878,9 @@ int main(int argc, char** argv) {
     Require(std::strcmp(stringOutput, "1 2 3 4 5 6 7 8 9 10 1.25") == 0);
     Require(FormatString(stringOutput, "") == 0 && stringOutput[0] == '\0');
     Require(__isthreaded_nid_postfix == 1);
+    Require(Need_sceLibc_nid_postfix == 1);
+    Require(_thread_autoinit_dummy_decl_nid_postfix == 0);
+    Require(_thread_autoinit_dummy_decl_stub_nid_postfix == 0);
     Require(__stdoutp_nid_postfix == &_Stdout_nid_postfix);
     Require(__stderrp_nid_postfix == &_Stderr_nid_postfix);
     Require(fileno_nid_postfix(__stdinp_nid_postfix) == 0);
@@ -990,6 +996,32 @@ int main(int argc, char** argv) {
     Require(fgetws_nid_postfix(utfBuf, 16, &roundTrip) == utfBuf);
     Require(utfBuf[0] == u'é' && utfBuf[1] == u'\u20ac' && utfBuf[2] == u'\n' && utfBuf[3] == 0);
     roundTrip.Close();
+
+    FileStream wideIncomplete(TemporaryFile::Open());
+    Require(std::fwrite("\xE2\x82", 1, 2, wideIncomplete.GetHandle()) == 2);
+    Require(fseeko_nid_postfix(&wideIncomplete, 0, SEEK_SET) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fgetwc_nid_postfix(&wideIncomplete) == -1);
+    Require(*__error_nid_postfix() == 86 && feof_nid_postfix(&wideIncomplete) != 0 && ferror_nid_postfix(&wideIncomplete) != 0);
+    wideIncomplete.Close();
+
+    FileStream wideInvalid(TemporaryFile::Open());
+    Require(std::fwrite("\xE2" "A", 1, 2, wideInvalid.GetHandle()) == 2);
+    Require(fseeko_nid_postfix(&wideInvalid, 0, SEEK_SET) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fgetwc_nid_postfix(&wideInvalid) == -1 && *__error_nid_postfix() == 86 && ferror_nid_postfix(&wideInvalid) != 0);
+    clearerr_nid_postfix(&wideInvalid);
+    Require(fseeko_nid_postfix(&wideInvalid, 1, SEEK_SET) == 0);
+    Require(fgetwc_nid_postfix(&wideInvalid) == 'A' && ferror_nid_postfix(&wideInvalid) == 0);
+    wideInvalid.Close();
+
+    FileStream wideFourByte(TemporaryFile::Open());
+    Require(std::fwrite("\xF0\x9F\x98\x80", 1, 4, wideFourByte.GetHandle()) == 4);
+    Require(fseeko_nid_postfix(&wideFourByte, 0, SEEK_SET) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fgetwc_nid_postfix(&wideFourByte) == 0xd83d && fgetwc_nid_postfix(&wideFourByte) == 0xde00);
+    Require(fgetwc_nid_postfix(&wideFourByte) == -1 && ferror_nid_postfix(&wideFourByte) == 0);
+    wideFourByte.Close();
 
     FileStream midErr(TemporaryFile::Open());
     Require(fputc_nid_postfix('A', &midErr) == 'A');
