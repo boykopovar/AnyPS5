@@ -2253,6 +2253,22 @@ void TestInlineBufferLayout(InlineBuffer inlineBuffer) {
     Require(BatchWord(batch, 24) == 0xCDCDCDC7 && BatchWord(batch, 28) == 0 && address == batch.data() + 32);
 }
 
+void TestInlineBufferRejectsOversize(InlineBuffer inlineBuffer) {
+    std::vector<std::uint8_t> batch(64, 0xCD);
+    const auto before = batch;
+    const void* address = nullptr;
+    for (const std::size_t size : {std::size_t{0x100000008}, std::numeric_limits<std::size_t>::max() - 3}) {
+        bool thrown = false;
+        try {
+            inlineBuffer(batch.data(), batch.data(), size, &address);
+        } catch (const std::invalid_argument&) {
+            thrown = true;
+        }
+        Require(thrown);
+        Require(batch == before && address == nullptr);
+    }
+}
+
 void TestConsoleInlineBuffer(std::uint32_t context, const char* ajmiLibrary) {
 #ifdef _WIN32
     const char* nativeLibrary = "libSceAjm.native.prx";
@@ -2261,7 +2277,9 @@ void TestConsoleInlineBuffer(std::uint32_t context, const char* ajmiLibrary) {
 #endif
     const InlineBuffer inlineBuffer = reinterpret_cast<InlineBuffer>(ResolveExport(nativeLibrary, "sceAjmBatchJobInlineBuffer"));
     TestInlineBufferLayout(inlineBuffer);
-    TestInlineBufferLayout(reinterpret_cast<InlineBuffer>(ResolveExport(ajmiLibrary, "sceAjmBatchJobInlineBuffer_nid_disambig1")));
+    const auto ajmiInlineBuffer = reinterpret_cast<InlineBuffer>(ResolveExport(ajmiLibrary, "sceAjmBatchJobInlineBuffer_nid_disambig1"));
+    TestInlineBufferLayout(ajmiInlineBuffer);
+    TestInlineBufferRejectsOversize(ajmiInlineBuffer);
     const void* address = nullptr;
 
     std::vector<std::uint8_t> stream(1024, 0);

@@ -6,7 +6,8 @@ measured rows as expected values in `core/libs/prx/libSceAgcDriver/tests/executi
 
 The PS5 GPU is gfx1013. Other RDNA2 GPUs (gfx103x) share the VALU, SALU, DS, MUBUF and MIMG encodings, apart from ops that
 exist only on gfx10.1 (`v_mad_legacy_f32`, `v_mac_legacy_f32`, `v_mul_lo_i32`, `s_dcache_discard`, ...). RDNA3 also runs
-the tool, but differs from gfx1013 in more places. Say which GPU you measured on in the PR.
+the tool, but differs from gfx1013 in more places ([RDNA3 differences](#rdna3-gfx11-differences)). Say which GPU you
+measured on in the PR.
 
 ## Requirements
 
@@ -124,6 +125,22 @@ The report's `runtime` field says which side produced it.
 - No `coarse`.
 - The assembly target comes from the AMD driver on Windows or from `HW_ORACLE_TARGET`; the recompiler has no target of its
   own, and the encoding assembled is the RDNA2 one.
+
+## RDNA3 (gfx11) differences
+
+Measured on gfx1151 (Radeon 8060S, AMD Windows driver 32.0.22032.6002, HIP runtime). The PS5's gfx1013 is not measured
+here; a result that depends on these differences needs a run on RDNA2.
+
+| gfx10 | gfx11 |
+| --- | --- |
+| `ds_cmpst_b32/f32/b64/f64` and their `_rtn` forms | Not accepted. `ds_cmpstore_*` takes the value to store as `data0` and the comparand as `data1`, the reverse of `ds_cmpst_*`, so renaming alone stores the comparand when memory equals the new value. |
+| `v_fmac_f32_e64`, `v_fmac_f16_e64` with a third source | The assembler takes two sources only, so `src2` modifiers can't be written. Emit the VOP3 words with `.long` (opcode `0x12b`, `0x136`, `src2` = `vdst`); `neg` bit 2 then negates the accumulator as in `v_fma_*`. |
+| `v_mad_f32`, `v_mac_f32`, `v_madak_f32`, `v_madmk_f32`, `v_mad_f16`, `v_mac_f16`, `v_mad_legacy_f32`, `v_mac_legacy_f32`, `v_mul_lo_i32`, `s_dcache_discard` | Not accepted. |
+| SDWA (`_sdwa`) | Not accepted. |
+| `v_interp_p1_f32`, `v_interp_mov_f32` | Not accepted, so the LDS interpolation under [Limits](#limits) is RDNA2 only. |
+
+`v_mul_legacy_f32`, `ds_wrxchg2_rtn_*` and `ds_wrxchg2st64_rtn_*` still assemble under these names and give the same
+results as their gfx11 names `v_mul_dx9_zero_f32`, `ds_storexchg_2addr_rtn_*` and `ds_storexchg_2addr_stride64_rtn_*`.
 
 ## Limits
 

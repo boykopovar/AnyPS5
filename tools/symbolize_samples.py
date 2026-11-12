@@ -352,6 +352,8 @@ def validate_window(later, earlier):
         key = name.lower()
         if key not in later.headers or key not in earlier.headers:
             raise ValueError(f"{name}: matching-window validation needs module records in both captures")
+        if later.headers[key] is False or earlier.headers[key] is False:
+            raise ValueError(f"{name}: multiple sampled modules share this name, so their identities cannot be matched")
         if later.headers[key] != earlier.headers[key]:
             raise ValueError(f"{name}: module identity differs between captures")
     for name in ("stacks", "self_counts", "inclusive", "total"):

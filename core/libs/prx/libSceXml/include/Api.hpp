@@ -183,7 +183,7 @@ void APS5_VABI _ZN3sce3Xml4AttrC2Ev(XmlHandle* self);
 void APS5_VABI _ZN3sce3Xml4AttrD1Ev(XmlHandle* self);
 void APS5_VABI _ZN3sce3Xml4AttrD2Ev(XmlHandle* self);
 XmlHandle* APS5_VABI _ZN3sce3Xml4AttraSERKS1_(XmlHandle* self, const XmlHandle* other);
-int APS5_VABI _ZN3sce3Xml4Util9strResultEi();
+const char* APS5_VABI _ZN3sce3Xml4Util9strResultEi(int result);
 void APS5_VABI _ZN3sce3Xml6StringC1EPKc(XmlString* self, const char* buffer);
 void APS5_VABI _ZN3sce3Xml6StringC1EPKcm(XmlString* self, const char* buffer, std::size_t size);
 void APS5_VABI _ZN3sce3Xml6StringC1ERKS1_(XmlString* self, const XmlString* other);
