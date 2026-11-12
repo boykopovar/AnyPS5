@@ -69,11 +69,11 @@ def default_segments():
     ]
 
 
-def default_records():
+def default_records(read_only_index=1):
     return [
         (0x2804, 0x800, 0x100),
         (0x310004, 0x910, 0x20),
-        (0x102804, 0xA00, 0x80),
+        ((read_only_index << unwrap_self.RECORD_SEGMENT_SHIFT) | 0x2804, 0xA00, 0x80),
     ]
 
 
@@ -226,7 +226,7 @@ class UnwrapTest(unittest.TestCase):
             with self.subTest(align=align, size=size, memory=memory):
                 segments = [default_segments()[0], (PT_TLS, 4, 0x1580, 0x1040, size, align)]
                 segments += default_segments()[1:]
-                container = bytearray(build_container(segments, default_records(), default_payloads()))
+                container = bytearray(build_container(segments, default_records(read_only_index=2), default_payloads()))
                 struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 0x28, memory)
                 source = Path(self.directory) / "input.self"
                 output = Path(self.directory) / "output.elf"
@@ -245,7 +245,7 @@ class UnwrapTest(unittest.TestCase):
             with self.subTest(align=align, size=size, memory=memory):
                 segments = [default_segments()[0], (PT_TLS, 4, 0x1580, 0x1040, size, align)]
                 segments += default_segments()[1:]
-                container = bytearray(build_container(segments, default_records(), default_payloads()))
+                container = bytearray(build_container(segments, default_records(read_only_index=2), default_payloads()))
                 struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 0x28, memory)
                 result, output = self.convert(bytes(container))
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -583,6 +583,28 @@ class UnwrapTest(unittest.TestCase):
         tls = [header for header in headers if header[0] == PT_TLS][0]
         self.assertEqual(tls[2], read_only[2] + 0x80)
         self.assertEqual(tls[5], 0)
+
+    def test_indexed_records_are_not_reused_for_another_load(self):
+        first = pattern(1, 0x80)
+        unrelated = pattern(2, 0x80)
+        second = pattern(3, 0x80)
+        indexed = [(0x800, 0x800, len(first)), (0x800, 0x900, len(unrelated))]
+        for source_offset, records in (
+            (0xA00, indexed),
+            (0x2000, indexed + [(0, 0xA00, len(second))]),
+        ):
+            with self.subTest(source_offset=source_offset):
+                segments = [
+                    (PT_LOAD, 5, 0x1000, 0, len(first), PAGE),
+                    (PT_LOAD, 4, source_offset, PAGE, len(second), PAGE),
+                ]
+                container = build_container(segments, records, {0x800: first, 0x900: unrelated, 0xA00: second})
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                for header, expected in zip(headers, (first, second)):
+                    offset, size = header[2], header[5]
+                    self.assertEqual(data[offset:offset + size], expected)
 
     def test_contained_segments_keep_stronger_alignment_than_their_load(self):
         payload = b"TLS template data" * 16

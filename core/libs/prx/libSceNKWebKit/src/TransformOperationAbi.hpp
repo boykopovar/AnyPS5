@@ -1,15 +1,9 @@
 /*
- * Copyright (C) 1999 Antti Koivisto (koivisto@kde.org)
  * Copyright (C) 2000 Lars Knoll (knoll@kde.org)
+ *           (C) 2000 Antti Koivisto (koivisto@kde.org)
+ *           (C) 2000 Dirk Mueller (mueller@kde.org)
  * Copyright (C) 2003, 2005-2008, 2017 Apple Inc. All rights reserved.
- * Copyright (C) 2004, 2005, 2006, 2007, 2008 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Graham Dennis (graham.dennis@gmail.com)
- *
- * Derived from Source/WebCore/platform/graphics/transforms/TransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
- * Derived from Source/WebCore/platform/graphics/transforms/RotateTransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
- * Derived from Source/WebCore/platform/graphics/transforms/ScaleTransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
- * Derived from Source/WebCore/platform/graphics/transforms/SkewTransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
- * Derived from Source/WebCore/platform/graphics/transforms/MatrixTransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -27,6 +21,14 @@
  * Boston, MA 02110-1301, USA.
  *
  */
+/*
+ * Derived from Source/WebCore/platform/graphics/transforms/TransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/RotateTransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/ScaleTransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/SkewTransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/MatrixTransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
+ */
+
 #pragma once
 
 #include "prx/libc/include/general/VabiMacros.hpp"

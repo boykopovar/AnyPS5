@@ -695,7 +695,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_HANG_DUMP_SECS` | integer | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | on Windows, whole seconds after which a watchdog dumps all threads and aborts; 0 or a value that is not a decimal number is ignored |
 | `APS5_HEAP_CACHE_MIB` | integer | `core/libs/prx/libc/src/GuestHeap.cpp` | 4096 | size in MiB of the cache of freed large blocks before the oldest are decommitted |
 | `APS5_HELPER_AFFINITY_MASK` | integer | `core/libs/prx/libc/include/CpuTopology.hpp` |  | hex core mask that helper threads (deferred release, mirror refresh) are pinned to |
-| `APS5_LOG_TIMESTAMPS` | presence | `core/libs/prx/libc/include/general/LogMacros.hpp` |  | prefixes each log line with `[+S.UUUUUU s]`, the seconds with microsecond digits since the clock started at the first stamped line; on Windows each library has its own clock, started at that library's first stamped line |
+| `APS5_LOG_TIMESTAMPS` | presence | `core/libs/prx/libc/include/general/LogMacros.hpp` |  | prefixes each log line with `[+S.UUUUUU s]`, the seconds with microsecond digits since the clock started at the first stamped line |
 | `APS5_NO_PROCMAP_QUERY` | presence | `core/libs/prx/libc/include/specifics/linux/HostMapping.hpp` |  | skips the /proc/self/maps PROCMAP_QUERY ioctl and scans the maps file instead |
 | `APS5_NO_SSE4A_EMULATION` | presence | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | disables emulation of AMD-only SSE4a instructions, making such a fault fatal |
 | `APS5_NO_WRITE_WATCH` | presence | `core/libs/prx/libc/src/GuestArena.cpp` |  | disables write watching so guest buffers are fully re-read on every use |

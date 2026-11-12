@@ -166,12 +166,11 @@ def place_segments(data, headers, records):
     loads = [header for header in headers if header["type"] == PT_LOAD]
     used = set()
     placed = set()
-    for index, (flags, segment, size) in enumerate(records):
+    for flags, segment, size in records:
         target = flags >> RECORD_SEGMENT_SHIFT
         if flags & RECORD_HAS_SEGMENT and target < len(headers) and target not in placed and headers[target]["size"] == size:
             headers[target]["source"] = segment
             placed.add(target)
-            used.add(index)
     recorded = [header for header in headers if header["index"] in placed and header["vaddr"] == 0 and header["type"] != PT_LOAD]
     if recorded:
         last = max(recorded, key=lambda header: header["offset"])
@@ -192,8 +191,8 @@ def place_segments(data, headers, records):
     for header in loads:
         if header["size"] == 0 or header["index"] in placed:
             continue
-        for index, (_, segment, size) in enumerate(records):
-            if index in used:
+        for index, (flags, segment, size) in enumerate(records):
+            if flags & RECORD_HAS_SEGMENT or index in used:
                 continue
             if size == header["size"]:
                 used.add(index)

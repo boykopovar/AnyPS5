@@ -303,6 +303,14 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(found["PPSA00001"]["version"], "01.000.110")
         self.assertEqual(found["PPSA00001"]["name"], "Light")
 
+    def test_discover_ignores_duplicates_of_titles_not_asked_for(self):
+        package(self.root / "a/PPSA00001", "PPSA00001")
+        package(self.root / "b/PPSA00001", "PPSA00001")
+        package(self.root / "c/PPSA00002", "PPSA00002")
+        self.assertEqual(sorted(title_run.discover([self.root], ["PPSA00002"])), ["PPSA00002"])
+        with self.assertRaisesRegex(ValueError, "PPSA00001 found more than once"):
+            title_run.discover([self.root], ["PPSA00001"])
+
     def test_source_root_follows_the_build(self):
         build = self.root / "build"
         build.mkdir()
