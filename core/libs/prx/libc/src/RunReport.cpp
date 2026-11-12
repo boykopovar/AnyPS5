@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <fstream>
 #include <random>
 #include <regex>
@@ -48,6 +49,10 @@
 #endif
 #endif
 
+#if !defined(_WIN32) && !defined(__APPLE__)
+extern char** environ;
+#endif
+
 #if __has_include("RunReportRevision.hpp")
 #include "RunReportRevision.hpp"
 #endif
@@ -69,6 +74,7 @@ namespace RunReport {
 namespace {
 
 constexpr const char* ReportName = "anyps5-report.json";
+constexpr const char* RecipeName = "anyps5-recipe.json";
 
 const char* KindName(Kind kind) {
     switch (kind) {
@@ -372,6 +378,10 @@ std::optional<std::string> SafeText(std::string_view text, const HostIdentifiers
     return owned;
 }
 
+std::string RedactedValue(std::string_view text, const HostIdentifiers& host) {
+    return SafeText(text, host).value_or("[redacted]");
+}
+
 namespace {
 
 std::string LowerAscii(std::string_view text) {
@@ -583,6 +593,69 @@ std::vector<std::string> CommandLineArguments() {
     return arguments;
 }
 
+bool RecipeVariableAllowed(std::string_view name) {
+    if (!name.starts_with("ANYPS5_")) return false;
+    const auto upper = [&](std::string_view text) {
+        std::string result(text);
+        for (auto& character : result) character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+        return result;
+    }(name);
+    for (const char* secret : {"TOKEN", "KEY", "PASSWORD", "PASSCODE", "SECRET", "CREDENTIAL", "COOKIE", "AUTH", "SESSION", "LOGIN"}) {
+        if (upper.find(secret) != std::string::npos) return false;
+    }
+    return true;
+}
+
+EnvironmentVariables RecipeEnvironment(const EnvironmentVariables& all) {
+    EnvironmentVariables allowed;
+    for (const auto& [name, value] : all) {
+        if (RecipeVariableAllowed(name)) allowed.emplace_back(name, value);
+    }
+    std::ranges::sort(allowed);
+    return allowed;
+}
+
+EnvironmentVariables ProcessEnvironment() {
+    std::vector<std::string> entries;
+#if defined(_WIN32)
+    if (const wchar_t* block = GetEnvironmentStringsW()) {
+        for (const wchar_t* entry = block; *entry != L'\0'; entry += std::wcslen(entry) + 1u) {
+            const int bytes = WideCharToMultiByte(CP_UTF8, 0, entry, -1, nullptr, 0, nullptr, nullptr);
+            if (bytes <= 1) continue;
+            std::string utf8(static_cast<std::size_t>(bytes - 1), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, entry, -1, utf8.data(), bytes, nullptr, nullptr);
+            entries.push_back(std::move(utf8));
+        }
+        FreeEnvironmentStringsW(const_cast<wchar_t*>(block));
+    }
+#else
+#if defined(__APPLE__)
+    char** variables = *_NSGetEnviron();
+#else
+    char** variables = ::environ;
+#endif
+    for (char** entry = variables; entry != nullptr && *entry != nullptr; ++entry) entries.emplace_back(*entry);
+#endif
+    EnvironmentVariables all;
+    for (const auto& entry : entries) {
+        const auto equals = entry.find('=');
+        if (equals == std::string::npos || equals == 0u) continue;
+        const auto name = entry.substr(0, equals);
+        if (RecipeVariableAllowed(name)) all.emplace_back(name, entry.substr(equals + 1u));
+    }
+    return RecipeEnvironment(all);
+}
+
+std::vector<std::string> ConfigFileNames(const EnvironmentVariables& environment) {
+    std::vector<std::string> names;
+    for (const auto& [name, value] : environment) {
+        if (name != "ANYPS5_INPUT_CONFIG" || value.empty()) continue;
+        const auto leaf = fs::path(value).filename().string();
+        if (!leaf.empty()) names.push_back(leaf);
+    }
+    return names;
+}
+
 fs::path ExecutableDirectory() {
     std::error_code error;
 #if defined(_WIN32)
@@ -755,9 +828,14 @@ void NormalizeObservations(Observations& o, const HostIdentifiers& host) {
         o.loaded = o.started = o.firstDraw = o.firstPresent = std::nullopt;
         o.framesPresented = 0;
         o.averageFps = o.fpsWindowSeconds = std::nullopt;
+        o.frameMs.reset();
+    }
+    if (o.frameMs) {
+        const auto valid = [](double value) { return value >= 0.0 && value <= 1.0e9; };
+        if (!valid(o.frameMs->p50) || !valid(o.frameMs->p90) || !valid(o.frameMs->p99)) o.frameMs.reset();
     }
     if (!o.coverage.missing) o.functions.clear(), o.truncated.functions = 0;
-    if (!o.coverage.shaders) o.shadersCompiled = o.shadersFailed = 0, o.cacheHits.reset();
+    if (!o.coverage.shaders) o.shadersCompiled = o.shadersFailed = 0, o.cacheHits.reset(), o.shaderCompileMs.reset(), o.slowCompiles.reset();
     if (!o.coverage.unsupported) o.unsupported.clear(), o.truncated.unsupported = 0;
     if (!o.coverage.imageFormats) o.imageFormats.clear(), o.truncated.imageFormats = 0;
     if (!o.coverage.descriptors) o.descriptors.clear(), o.truncated.descriptors = 0;
@@ -822,6 +900,15 @@ std::string RenderReport(const Report& report) {
     json.Int("framesPresented", o.framesPresented);
     if (o.averageFps) json.Number("averageFps", *o.averageFps); else json.Null("averageFps");
     if (o.fpsWindowSeconds) json.Number("fpsWindowSeconds", *o.fpsWindowSeconds); else json.Null("fpsWindowSeconds");
+    if (o.frameMs) {
+        json.BeginObject("frameMs");
+        json.Number("p50", o.frameMs->p50);
+        json.Number("p90", o.frameMs->p90);
+        json.Number("p99", o.frameMs->p99);
+        json.EndObject();
+    } else {
+        json.Null("frameMs");
+    }
     json.Bool("recovered", report.recovered);
     json.Bool("incomplete", report.incomplete);
     json.EndObject();
@@ -854,6 +941,8 @@ std::string RenderReport(const Report& report) {
     json.Int("compiled", o.shadersCompiled);
     json.Int("failed", o.shadersFailed);
     if (o.cacheHits) json.Int("cacheHits", o.cacheHits);
+    if (o.shaderCompileMs) json.Number("compileMs", *o.shaderCompileMs);
+    if (o.slowCompiles) json.Int("slowCompiles", o.slowCompiles);
     json.BeginArray("unsupported");
     for (const auto& entry : o.unsupported) {
         json.BeginObject();
@@ -903,6 +992,33 @@ std::string RenderReport(const Report& report) {
     return json.Take();
 }
 
+}
+
+std::string SerializeRecipe(const Recipe& recipe, const HostIdentifiers& host) {
+    JsonWriter json;
+    json.BeginObject();
+    json.String("format", std::string_view("anyps5-recipe"));
+    json.Int("version", std::int64_t{1});
+    json.String("generated", std::string_view(recipe.generated));
+    json.BeginObject("run");
+    json.String("id", std::string_view(recipe.runId));
+    json.EndObject();
+    json.BeginObject("anyps5");
+    json.String("commit", recipe.build.commit && std::regex_match(*recipe.build.commit, std::regex("[0-9a-f]{40}")) ? recipe.build.commit : std::nullopt);
+    json.EndObject();
+    json.BeginArray("argv");
+    for (const auto& argument : recipe.arguments) json.String(nullptr, std::string_view(RedactedValue(argument, host)));
+    json.EndArray();
+    json.BeginObject("environment");
+    for (const auto& [name, value] : recipe.environment) {
+        if (RecipeVariableAllowed(name)) json.String(name.c_str(), std::string_view(RedactedValue(value, host)));
+    }
+    json.EndObject();
+    json.BeginArray("configFiles");
+    for (const auto& name : recipe.configFiles) json.String(nullptr, std::string_view(RedactedValue(name, host)));
+    json.EndArray();
+    json.EndObject();
+    return json.Take();
 }
 
 std::string Serialize(const Report& original, const HostIdentifiers& host) {
@@ -1406,12 +1522,29 @@ void Collector::NoteFramePresented() {
         firstFrameNanos = now;
         NoteMilestone(3);
     }
+    std::lock_guard guard(frameMutex);
+    if (lastFrameNanos >= 0) frameTimes.Push(static_cast<double>(now - lastFrameNanos) / 1.0e6);
     lastFrameNanos = now;
+}
+
+std::vector<double> Collector::FrameTimesMilliseconds() const {
+    std::lock_guard guard(frameMutex);
+    return frameTimes.Values();
 }
 
 void Collector::NoteShader(int what) {
     if (!started_) return;
     (what == 0 ? compiled : what == 1 ? failedShaders : cacheHitCount).fetch_add(1, std::memory_order_relaxed);
+}
+
+void Collector::NoteCompileTime(long long nanoseconds) {
+    if (!started_ || nanoseconds < 0) return;
+    compileNanos.fetch_add(nanoseconds, std::memory_order_relaxed);
+    if (nanoseconds > SlowCompileNanoseconds) slowCompileCount.fetch_add(1, std::memory_order_relaxed);
+}
+
+double Collector::CompileMilliseconds() const {
+    return static_cast<double>(compileNanos.load(std::memory_order_relaxed)) / 1.0e6;
 }
 
 void Collector::NoteUnsupportedInstruction(std::optional<std::string> encoding, std::optional<std::string> opcode, std::optional<std::int64_t> opcodeValue, std::string_view) {
@@ -1524,9 +1657,18 @@ Observations Collector::Observe() const {
         o.fpsWindowSeconds = window;
         o.averageFps = static_cast<double>(o.framesPresented - 1) / window;
     }
+    auto intervals = FrameTimesMilliseconds();
+    if (!intervals.empty()) {
+        std::sort(intervals.begin(), intervals.end());
+        o.frameMs = FrameTimes{FramePercentile(intervals, 0.5), FramePercentile(intervals, 0.9), FramePercentile(intervals, 0.99)};
+    }
     o.shadersCompiled = compiled;
     o.shadersFailed = failedShaders;
-    if (settings.coverage.shaders) o.cacheHits = cacheHitCount.load();
+    if (settings.coverage.shaders) {
+        o.cacheHits = cacheHitCount.load();
+        o.shaderCompileMs = CompileMilliseconds();
+        o.slowCompiles = slowCompileCount.load(std::memory_order_relaxed);
+    }
     if (const auto* counters = descriptorCounters.load()) {
         for (int type = 0; type < 7; ++type) {
             for (int usage = 0; usage < 4; ++usage) {
@@ -1579,6 +1721,14 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
         if (exit == Exit::Clean) RefreshGame(true);
         try {
             const auto text = Serialize(Snapshot(exit, std::move(stop), exitCode), host);
+            Recipe recipe;
+            recipe.generated = FormatUtc(std::chrono::system_clock::now());
+            recipe.runId = settings.runId;
+            recipe.build = settings.build;
+            recipe.arguments = settings.arguments;
+            recipe.environment = settings.environment;
+            recipe.configFiles = settings.configFiles;
+            const auto recipeText = SerializeRecipe(recipe, host);
             std::string error;
             bool written = false;
             for (const auto& directory : candidates) {
@@ -1594,6 +1744,10 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
                 if (WriteAtomically(target, text, settings.runId.substr(0, 8), error)) {
                     reportPath = target;
                     written = true;
+                    std::string recipeError;
+                    if (!WriteAtomically(directory / RecipeName, recipeText, settings.runId.substr(0, 8), recipeError)) {
+                        std::fprintf(stderr, "[run-report] could not write %s: %s\n", RecipeName, recipeError.c_str());
+                    }
                     break;
                 }
             }
@@ -1669,6 +1823,9 @@ bool StartRunReport() noexcept {
         settings.game = ProvideGame;
         settings.requiredComponents = {"libkernel", "libSceVideoOut", "libSceAgcDriver"};
         settings.coverage = {true, true, true, true, true, true};
+        settings.arguments = arguments;
+        settings.environment = RunReport::ProcessEnvironment();
+        settings.configFiles = RunReport::ConfigFileNames(settings.environment);
         auto* created = new RunReport::Collector(std::move(settings));
         if (!created->Start()) {
             delete created;
@@ -1751,6 +1908,10 @@ extern "C" void LibcRunReportFramePresented_nid_no_patch() noexcept {
 
 extern "C" void LibcRunReportShader_nid_no_patch(int what) noexcept {
     if (collector != nullptr) collector->NoteShader(what);
+}
+
+extern "C" void LibcRunReportShaderCompileTime_nid_no_patch(long long nanoseconds) noexcept {
+    if (collector != nullptr) collector->NoteCompileTime(nanoseconds);
 }
 
 extern "C" void LibcRunReportUnsupportedInstruction_nid_no_patch(const char* encoding, const char* opcode, long long opcodeValue, const char* file, int line) noexcept {

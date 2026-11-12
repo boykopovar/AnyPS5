@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <condition_variable>
 #include <exception>
+#include "prx/libc/include/RunReport.hpp"
 #include <filesystem>
 #include <functional>
 #include <limits>
@@ -649,7 +650,7 @@ public:
         std::vector<double> frames;
         for (std::size_t index = 1; index < presents.size(); ++index) frames.push_back(milliseconds(presents[index] - presents[index - 1]));
         std::sort(frames.begin(), frames.end());
-        const auto percentile = [&](double fraction) { return frames.empty() ? 0.0 : frames[std::min(frames.size() - 1, static_cast<std::size_t>(fraction * static_cast<double>(frames.size())))]; };
+        const auto percentile = [&](double fraction) { return RunReport::FramePercentile(frames, fraction); };
         const double perPresent = count != 0 ? 1.0 / static_cast<double>(count) : 0.0;
 
         std::string output = "{\"commit\":";
