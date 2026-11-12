@@ -4188,6 +4188,7 @@ static void CheckMemoryPoolBlockStats() {
     KernelMemoryPoolBlockStats stats{-1, -1, -1, -1};
     Require(sceKernelMemoryPoolGetBlockStats(nullptr, sizeof(stats)) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelMemoryPoolGetBlockStats(&stats, sizeof(stats) - 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelMemoryPoolGetBlockStats(reinterpret_cast<KernelMemoryPoolBlockStats*>(1), sizeof(stats)) == SCE_KERNEL_ERROR_EFAULT);
     Require(stats.available_flushed_blocks == -1 && stats.allocated_flushed_blocks == -1);
     Require(sceKernelMemoryPoolGetBlockStats(&stats, sizeof(stats)) == 0);
     Require(stats.available_cached_blocks == 0 && stats.allocated_cached_blocks == 0);

@@ -590,6 +590,11 @@ static void Booleans() {
     glGetBooleanv_nid_postfix(0xffffffff, &untouched);
     Require(untouched == 7);
     Error(0x0500);
+    GLboolean flag = 0;
+    glGetBooleanv_nid_postfix(0x0bd0, nullptr);
+    glGetBooleanv_nid_postfix(0xffffffff, nullptr);
+    glGetBooleanv_nid_postfix(0x0bd0, &flag);
+    Require(flag == 1);
 }
 
 static void VertexAttributes() {
