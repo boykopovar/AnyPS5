@@ -554,6 +554,7 @@ int APS5_VABI sceKernelIsStack(void* addr, void** start, void** end) {
  std::uintptr_t stackEnd = 0;
  if (!GuestThreadStack(reinterpret_cast<std::uintptr_t>(addr), &stackStart, &stackEnd)) {
   VirtualQueryInfo info{};
+  if (reinterpret_cast<std::uintptr_t>(addr) == ~std::uintptr_t{0}) return SCE_KERNEL_ERROR_EINVAL;
   if (sceKernelVirtualQuery(addr, 0, &info, sizeof(info)) != 0) return SCE_KERNEL_ERROR_EACCES;
  }
  const auto startAddress = reinterpret_cast<void*>(stackStart);
