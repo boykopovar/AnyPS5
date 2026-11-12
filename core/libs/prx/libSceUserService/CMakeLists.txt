@@ -62,3 +62,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
     endif()
 endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_user_service_voice_agent_enable_by_button_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceVoiceAgentEnableByButton.cpp)
+    target_include_directories(guest_user_service_voice_agent_enable_by_button_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_user_service_voice_agent_enable_by_button_tests PRIVATE libSceUserService libc)
+    configure_windows_unwind(guest_user_service_voice_agent_enable_by_button_tests)
+    add_test(NAME guest_user_service_voice_agent_enable_by_button COMMAND guest_user_service_voice_agent_enable_by_button_tests)
+    set_tests_properties(guest_user_service_voice_agent_enable_by_button PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_user_service_voice_agent_enable_by_button PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
+    endif()
+endif()
+
