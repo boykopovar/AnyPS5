@@ -17,11 +17,13 @@ class ParseTests(unittest.TestCase):
             "[memory] allocate physical 0x1000+0x2000\n",
             "[memory] protect 0x2000+0x100 prot=0x1\n",
             "[memory] unmap released view 0x3000+0x1000\n",
+            "[memory] map anon 0000000140000000+0x1000 prot=0x3 flags=0x0\n",
         ])
         self.assertEqual([(event.line, event.operation, event.address, event.size) for event in events], [
             (2, "map anon", 0x1000, 0x2000),
             (4, "protect", 0x2000, 0x100),
             (5, "unmap released view", 0x3000, 0x1000),
+            (6, "map anon", 0x140000000, 0x1000),
         ])
 
     def test_rejects_a_truncated_mapping_event(self):
