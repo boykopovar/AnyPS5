@@ -11,12 +11,14 @@ void Require(bool value, const char* what) {
     std::abort();
 }
 
-} // namespace
+}
 
 int main() {
-    const int first = sceHmdDistortionGetCompoundEyeCorrectionCommand();
-    const int second = sceHmdDistortionGetCompoundEyeCorrectionCommand();
-    Require(first < 0, "sceHmdDistortionGetCompoundEyeCorrectionCommand did not answer an error");
-    Require(first == second, "sceHmdDistortionGetCompoundEyeCorrectionCommand did not answer the same error on a repeated call");
+    constexpr int expected = static_cast<int>(0x81110009u);
+    for (int call = 0; call < 3; ++call) {
+        const int result = sceHmdDistortionGetCompoundEyeCorrectionCommand();
+        Require(result < 0, "sceHmdDistortionGetCompoundEyeCorrectionCommand did not answer an error");
+        Require(result == expected, "sceHmdDistortionGetCompoundEyeCorrectionCommand did not answer 0x81110009");
+    }
     return 0;
 }
