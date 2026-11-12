@@ -49,6 +49,10 @@ void CheckOutput() {
     Require(fpurge_nid_postfix(&file.stream) == 0 && errno == 123, "purge preserves errno on success");
     Require(Position(file.native) == 0, "purge does not write or seek");
     Require(fpurge_nid_postfix(&file.stream) == 0, "purge an empty buffer twice");
+    for (int cycle = 0; cycle < 4; ++cycle) {
+        Require(fwrite_nid_postfix("cycle", 1, 5, &file.stream) == 5, "cycle write");
+        Require(fpurge_nid_postfix(&file.stream) == 0, "cycle purge");
+    }
     Require(fwrite_nid_postfix("kept", 1, 4, &file.stream) == 4, "write after purging");
     Require(std::fflush(file.native) == 0 && Position(file.native) == 4, "flush only subsequent output");
     Require(std::fseek(file.native, 0, SEEK_SET) == 0, "rewind subsequent output");
@@ -84,6 +88,22 @@ void CheckUnbuffered() {
     Require(ungetc_nid_postfix('X', &file.stream) == 'X', "push back on an unbuffered stream");
     Require(fpurge_nid_postfix(&file.stream) == 0 && Position(file.native) == position, "purge unbuffered pushback without seeking");
     Require(fgetc_nid_postfix(&file.stream) == (position == 1 ? 'b' : EOF), "resume at the actual descriptor position");
+}
+
+void CheckLineBuffered() {
+    BufferedStream file;
+    std::array<char, 1024> lineBuffer{};
+    Require(std::setvbuf(file.native, lineBuffer.data(), _IOLBF, lineBuffer.size()) == 0, "set line buffering");
+    Require(fwrite_nid_postfix("no_newline", 1, 10, &file.stream) == 10, "buffer line output without newline");
+    Require(Position(file.native) == 0, "line output remains in buffer");
+    Require(fpurge_nid_postfix(&file.stream) == 0, "purge line-buffered output");
+    Require(Position(file.native) == 0, "purge does not flush to disk");
+    Require(fwrite_nid_postfix("flushed\n", 1, 8, &file.stream) == 8, "subsequent write with newline");
+    Require(std::fflush(file.native) == 0, "flush stream");
+    Require(std::fseek(file.native, 0, SEEK_SET) == 0, "rewind stream");
+    char readBuffer[16]{};
+    Require(std::fread(readBuffer, 1, sizeof(readBuffer), file.native) == 8, "only flushed content persisted");
+    Require(std::memcmp(readBuffer, "flushed\n", 8) == 0, "purged line output was discarded");
 }
 
 void CheckPipe() {
@@ -123,6 +143,7 @@ int main() {
     CheckOutput();
     CheckInput();
     CheckUnbuffered();
+    CheckLineBuffered();
     CheckPipe();
     CheckInvalid();
     std::puts("stream purge tests passed");
