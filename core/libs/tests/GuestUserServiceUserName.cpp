@@ -55,7 +55,7 @@ int main() {
         Require(Filled(name, nameLength, SCE_USER_SERVICE_MAX_USER_NAME_LENGTH + 1, 0));
         Require(Filled(name, SCE_USER_SERVICE_MAX_USER_NAME_LENGTH + 1, sizeof(name), 'B'));
 
-        for (std::size_t size : {32, 48, sizeof(name)}) {
+        for (std::size_t size : std::initializer_list<std::size_t>{32, 48, sizeof(name)}) {
             std::memset(name, 'C', sizeof(name));
             Require(sceUserServiceGetUserName(userId, name, size) == USER_SERVICE_OK);
             Require(std::strcmp(name, expectedName) == 0);
