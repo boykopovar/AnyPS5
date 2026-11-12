@@ -995,6 +995,59 @@ void testGateFailure(const std::filesystem::path& directory) {
     check(rethrown, "the injected driver failure was not propagated at shutdown");
 }
 
+void testInFlightBreaker(const std::filesystem::path& directory) {
+    auto* bytes = allocate(FrameCaptureWriter::BlockBytes);
+    auto* commands = reinterpret_cast<std::uint32_t*>(bytes);
+    auto* label = reinterpret_cast<std::uint32_t*>(bytes + 4096);
+    *label = 0;
+    const std::array<std::uint32_t, 7> rewound{0xc0005900u, 0u, 0xc0033700u, 0x00100200u, static_cast<std::uint32_t>(address(label)), static_cast<std::uint32_t>(address(label) >> 32u), 1u};
+    std::copy(rewound.begin(), rewound.end(), commands);
+    auto* const control = commands + 1;
+    const std::uint32_t valid = AgcDriver::Pm4::RewindValid;
+    FrameCaptureWriter writer(directory);
+    writer.WriteDelta(1, 0, address(control), std::as_bytes(std::span(&valid, 1)));
+    writer.Finish("{}");
+    const FrameCaptureReader reader(directory);
+    check(reader.Version() == AgcDriver::InFlightCallsVersion, "the synthetic capture is not of the current calls format");
+    Options options;
+    options.paceTimeout = std::chrono::milliseconds(300);
+    options.busyTimeout = std::chrono::milliseconds(5000);
+    Replay replay{options, reader};
+    replay.recording = true;
+    collectGroups(replay);
+    auto output = std::make_shared<ReplayOutput>(replay.frames);
+    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
+    AgcDriverSubmitGraphics_nid_postfix(commands, static_cast<std::uint32_t>(rewound.size()));
+    const auto parked = [&] {
+        std::array<AgcDriver::AwaitedWait, 64> awaited{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
+        return std::any_of(awaited.begin(), awaited.begin() + static_cast<std::ptrdiff_t>(count), [&](const AgcDriver::AwaitedWait& slot) { return slot.address == address(control); });
+    };
+    const auto deadline = Clock::now() + std::chrono::seconds(10);
+    while (!parked()) {
+        check(Clock::now() < deadline, "the submission did not park at its unreleased REWIND");
+        std::this_thread::yield();
+    }
+    const auto [accepted, completed] = progress();
+    check(accepted == completed + 1, "the REWIND submission was not the only one in flight");
+    auto reservation = reservationCall(AgcDriver::EopFlipTokenBase);
+    reservation.ordinal = 1;
+    reservation.thread = 1;
+    reservation.accepted = accepted;
+    reservation.completed = accepted;
+    auto delta = memoryCall(1, 1);
+    delta.ordinal = 2;
+    delta.flags = AgcDriver::InFlightDeltaFlag;
+    delta.accepted = accepted;
+    delta.completed = completed;
+    const std::array calls{reservation, delta};
+    replay.runWindow(calls);
+    check(replay.earlyReleases.load() == 0 && replay.lateReleases.load() == 0 && replay.syntheticReleases.load() == 0, "the breaker of a replay of the current calls format released the REWIND early with the bytes of a memory delta read in flight, before that delta's record");
+    check(replay.paceTimeouts.load() == 1, "the replay of the current calls format did not give up pacing while its queue waited on the REWIND");
+    check(std::atomic_ref<std::uint32_t>(*label).load() == 1 && replay.unfinished == 0, "the REWIND did not run its tail once its memory delta was restored");
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
+}
+
 void testUnverifiedDeltas(const std::filesystem::path& directory) {
     auto* bytes = allocate(FrameCaptureWriter::BlockBytes);
     const std::uint32_t stored = 7;
@@ -1536,6 +1589,7 @@ int main(int argc, char** argv) {
         else if (mode == "depth_submits") testDepthAfterSubmits(directory);
         else if (mode == "depth_passes") testDepthOfTimedPasses(directory);
         else if (mode == "gate_failure") testGateFailure(directory);
+        else if (mode == "in_flight_breaker") testInFlightBreaker(directory);
         else if (mode == "unverified") testUnverifiedDeltas(directory);
         else if (mode == "environment") testColdPipelines();
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");

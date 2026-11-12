@@ -498,8 +498,8 @@ struct Replay {
                 waited();
                 stalled.store(true);
                 stalledAt.store(completed);
-                std::fprintf(stderr, "[frame-replay] pacing gave up at call %llu (%s): serials %llu/%llu, the capture had %llu in flight\n", static_cast<unsigned long long>(call.ordinal),
-                             std::string(AgcDriver::FrameCallName(call.kind)).c_str(), static_cast<unsigned long long>(completed), static_cast<unsigned long long>(accepted), static_cast<unsigned long long>(inFlight));
+                std::fprintf(stderr, "[frame-replay] pacing gave up at call %llu (%s): serials %llu/%llu, the capture had %llu in flight, blocked on%s\n", static_cast<unsigned long long>(call.ordinal),
+                             std::string(AgcDriver::FrameCallName(call.kind)).c_str(), static_cast<unsigned long long>(completed), static_cast<unsigned long long>(accepted), static_cast<unsigned long long>(inFlight), describeBlocked().c_str());
                 ++paceTimeouts;
                 if (options.strict) throw std::runtime_error("frame replay: call " + std::to_string(call.ordinal) + " waited longer than the pacing timeout");
                 return;
@@ -816,7 +816,7 @@ struct Replay {
             const std::size_t bytes = wait.bytes == 8 ? 8 : 4;
             if (wait.function != 0 && satisfies(wait, load(wait.address, bytes))) continue;
             if (rewindWait(wait)) {
-                for (auto index = from; index < calls.size() && !released; ++index) released = releaseRewind(calls[index], wait);
+                for (auto index = from; reader.Version() < AgcDriver::InFlightCallsVersion && index < calls.size() && !released; ++index) released = releaseRewind(calls[index], wait);
                 if (released) ++earlyReleases;
                 continue;
             }
@@ -971,8 +971,9 @@ int usage() {
                          "  replays the driver calls and guest memory that APS5_FRAME_CAPTURE=<directory> recorded, through this\n"
                          "  build's AGC driver with no title running, and prints one JSON line with the frame times\n"
                          "  --no-pace           issues calls without waiting for the in-flight depth the title had\n"
-                         "  --pace-timeout-ms   milliseconds a call waits for the captured in-flight depth once no queue runs (10000)\n"
-                         "  --no-release        never copies recorded CPU stores early to release a GPU wait\n"
+                         "  --pace-timeout-ms   milliseconds a call waits for the captured in-flight depth once no queue runs (10000); a memory delta\n"
+                         "                      read in flight fails the replay once no queue runs and the serials have not moved for that long\n"
+                         "  --no-release        never copies recorded CPU stores early to release a GPU wait; a capture of the current calls format never applies a later delta early\n"
                          "  --release-after-ms  milliseconds without a completion before awaited dwords are released (3)\n"
                          "  --no-synthesize     releases a wait only with a value the capture recorded, never with its reference value\n"
                          "  --strict            fails on a pacing timeout or a failed registration inside the captured frames\n"
