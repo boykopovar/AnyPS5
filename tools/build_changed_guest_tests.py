@@ -19,6 +19,7 @@ BROAD_CHANGES = {
 }
 LIBRARY_LOAD_TEST = "patched_libraries_tests"
 PUBLIC_HEADER_TESTS = re.compile(r"^public_headers(_compile_\d+)?$")
+NID_TESTS = re.compile(r"^nid_")
 PUBLIC_HEADER_INPUTS = {"core/libs/tests/test_public_headers.py", "tools/nid_names.py"}
 HEADER_SUFFIXES = (".h", ".hpp", ".hh", ".inl")
 
@@ -38,11 +39,30 @@ def checks_public_headers(changed):
     )
 
 
-def script_test_indices(build_dir, pattern):
+def checks_nid(changed):
+    return any(
+        path in BROAD_CHANGES or path.startswith(host_only.BUILD_WIDE_PREFIXES)
+        or path == "core/libs/CMakeLists.txt" or path.startswith("core/libs/nid/")
+        for path in (Path(item).as_posix() for item in changed if item)
+    )
+
+
+def script_test_patterns(changed):
+    return [pattern for check, pattern in ((checks_public_headers, PUBLIC_HEADER_TESTS), (checks_nid, NID_TESTS)) if check(changed)]
+
+
+def script_test_indices(build_dir, patterns):
     result = subprocess.run(
         ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
         capture_output=True, text=True, check=True)
-    return [index for index, test in enumerate(json.loads(result.stdout).get("tests", []), 1) if pattern.match(test["name"])]
+    names = [test["name"] for test in json.loads(result.stdout).get("tests", [])]
+    indices = set()
+    for pattern in patterns:
+        matched = {index for index, name in enumerate(names, 1) if pattern.match(name)}
+        if not matched:
+            raise ValueError("no ctest registration matched " + pattern.pattern)
+        indices |= matched
+    return sorted(indices)
 
 
 def guest_test_targets(source_root, targets, changed_paths=None):
@@ -153,8 +173,6 @@ def run_ctest(build_dir, indices, output_log):
 def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None):
     subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
     scripts = script_test_indices(build_dir, script_tests) if script_tests else []
-    if script_tests and not scripts:
-        raise ValueError("no ctest registration matched " + script_tests.pattern)
     if selected:
         for batch in chunks(selected):
             subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
@@ -182,7 +200,7 @@ def main(argv=None):
     try:
         if args.changed_paths is not None:
             listed = {Path(path).as_posix() for path in args.changed_paths.read_text(encoding="utf-8").splitlines() if path}
-            if not reaches_libs(listed) and not checks_public_headers(listed):
+            if not reaches_libs(listed) and not script_test_patterns(listed):
                 print("No changed guest core/libs tests require a run")
                 return 0
         source_root, targets = host_only.read_reply(Path(os.path.realpath(args.build_dir)))
@@ -199,7 +217,7 @@ def main(argv=None):
             if target.get("type") == "EXECUTABLE":
                 targets_by_name.update(target_artifact_names(target))
                 targets_by_name[name.casefold()] = name
-        script_tests = PUBLIC_HEADER_TESTS if changed_paths is not None and checks_public_headers(changed_paths) else None
+        script_tests = script_test_patterns(changed_paths) if changed_paths is not None else None
         run(args.build_dir, selected, targets_by_name, args.output_log, script_tests)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
         print(f"{parser.prog}: {error}", file=sys.stderr)

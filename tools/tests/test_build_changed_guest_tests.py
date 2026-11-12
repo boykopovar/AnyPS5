@@ -292,6 +292,52 @@ class Main(unittest.TestCase):
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/include/Xml.hpp"]), 1)
 
+    def test_a_nid_change_runs_the_nid_script_tests(self):
+        build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
+        listing = json.dumps({"tests": [
+            {"name": "guest_pad", "command": ["C:/b/tests/guest_pad_tests.exe"]},
+            {"name": "nid_gnu_hash", "command": ["C:/python.exe", "test_gnu_hash.py"]},
+            {"name": "nid_patcher_native_paths", "command": ["C:/python.exe", "test_native_paths.py"]},
+            {"name": "nidx_not_a_nid_test", "command": ["C:/python.exe", "x.py"]},
+        ]})
+        selections = []
+        def execute(cmd, **_):
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            self.assertEqual(self.main(build, ["core/libs/nid/src/main.cpp"]), 0)
+            self.assertEqual(self.main(build, ["core/libs/nid/tests/test_native_paths.py"]), 0)
+        self.assertEqual(selections, ["0,0,0,2,3\n", "0,0,0,2,3\n"])
+
+    def test_a_change_outside_nid_does_not_run_the_nid_script_tests(self):
+        build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
+        listing = json.dumps({"tests": [{"name": "nid_gnu_hash", "command": ["C:/python.exe", "x.py"]}]})
+        selections = []
+        def execute(cmd, **_):
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/src/Xml.cpp"]), 0)
+        self.assertEqual(selections, [])
+
+    def test_a_missing_nid_registration_is_an_error(self):
+        build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
+        listing = json.dumps({"tests": [{"name": "guest_pad", "command": ["C:/b/tests/guest_pad_tests.exe"]}]})
+        def execute(cmd, **_):
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.main(build, ["core/libs/nid/src/main.cpp"]), 1)
+
+    def test_nid_inputs(self):
+        for path in ("core/libs/nid/src/main.cpp", "core/libs/nid/tests/test_gnu_hash.py", "core/libs/CMakeLists.txt", "3rdparty/ZArchive"):
+            with self.subTest(path=path):
+                self.assertTrue(build_changed_guest_tests.checks_nid([path]))
+        for path in ("core/libs/prx/libSceXml/src/Xml.cpp", "core/libs/tests/Guest.cpp", "core/relinker/R.cpp", "README.md"):
+            with self.subTest(path=path):
+                self.assertFalse(build_changed_guest_tests.checks_nid([path]))
+
     def test_public_header_inputs(self):
         for path in ("core/libs/prx/libSceXml/include/Xml.hpp", "core/libs/include/X.h", "core/libs/tests/test_public_headers.py",
                      "tools/nid_names.py", "core/libs/CMakeLists.txt", "3rdparty/ZArchive"):
