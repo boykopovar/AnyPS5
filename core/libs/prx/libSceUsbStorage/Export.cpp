@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include <cerrno>
 #include "prx/libSceUsbStorage/include/InventoryExports.hpp"
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include <algorithm>
@@ -392,7 +393,10 @@ std::int32_t APS5_VABI sceUsbStorageGetDeviceInfo(std::uint32_t device, UsbStora
     record.productLength = CopyString(record.product, volume.product, __func__);
     record.serialNumberLength = CopyString(record.serialNumber, volume.serialNumber, __func__);
     record.flags = Flags(volume);
-    std::memcpy(info, &record, sizeof(record));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &record, sizeof(record));
+    errno = savedErrno;
+    if (!copied) return UsbStorage::InvalidArgument;
     return 0;
 }
 

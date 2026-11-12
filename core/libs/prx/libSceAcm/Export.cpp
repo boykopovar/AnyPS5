@@ -429,11 +429,27 @@ int APS5_VABI sceAcm_Panner(AcmBatchInfo* batch, std::uint32_t sourceCount, cons
 
 int APS5_VABI sceAcmBatchJobPriority(AcmBatchInfo* batch, std::uint32_t priority) {
     if (!batch || priority >= 4) return SCE_ACM_ERROR_BAD_POINTER;
-    const auto offset = batch->offset;
-    if (offset > batch->buffer_size || batch->buffer_size - offset < 8) return static_cast<int>(0x81940009);
+    AcmBatchInfo localBatch{};
+    const int savedErrno = errno;
+    const bool copiedIn = GuestCopyIn_nid_no_patch(&localBatch, batch, sizeof(localBatch));
+    errno = savedErrno;
+    if (!copiedIn) return SCE_ACM_ERROR_BAD_POINTER;
+    const auto offset = localBatch.offset;
+    if (offset > localBatch.buffer_size || localBatch.buffer_size - offset < 8) return static_cast<int>(0x81940009);
+    const int savedErrnoProbe = errno;
+    const bool batchWritable = GuestCopyOut_nid_no_patch(&batch->offset, &localBatch.offset, sizeof(localBatch.offset));
+    errno = savedErrnoProbe;
+    if (!batchWritable) return SCE_ACM_ERROR_BAD_POINTER;
     const std::uint64_t job = 0x10 | (static_cast<std::uint64_t>(priority) << 8);
-    std::memcpy(static_cast<std::byte*>(batch->buffer) + offset, &job, sizeof(job));
-    batch->offset = offset + sizeof(job);
+    const int savedErrno2 = errno;
+    const bool copiedBuf = GuestCopyOut_nid_no_patch(static_cast<std::byte*>(localBatch.buffer) + offset, &job, sizeof(job));
+    errno = savedErrno2;
+    if (!copiedBuf) return SCE_ACM_ERROR_BAD_POINTER;
+    const auto newOffset = offset + sizeof(job);
+    const int savedErrno3 = errno;
+    const bool copiedBack = GuestCopyOut_nid_no_patch(&batch->offset, &newOffset, sizeof(newOffset));
+    errno = savedErrno3;
+    if (!copiedBack) return SCE_ACM_ERROR_BAD_POINTER;
     return 0;
 }
 
