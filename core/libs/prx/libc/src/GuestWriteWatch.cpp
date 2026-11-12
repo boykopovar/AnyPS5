@@ -649,6 +649,10 @@ public:
         return true;
     }
 
+    void SetReadTrapBypass(bool (*bypass)()) {
+        _bypass.store(bypass, std::memory_order_release);
+    }
+
     bool TrapReads(std::uintptr_t begin, std::uintptr_t end) {
         if (!_available || end <= begin || _resolver.load(std::memory_order_acquire) == nullptr) return false;
         const auto first = pageStart(begin);
@@ -840,7 +844,8 @@ private:
             auto* state = pageState(page);
             if (state == nullptr) return false;
             if ((*state & ReadTrapped) == 0) return retryUntrapped(page, *state, write);
-            if (resolvingCovers(page, page + _page, Owner::Self) || pthread_equal(pthread_self(), _resolverThread) || (!trapCovers(page, page + _page) && !resolvingCovers(page, page + _page, Owner::Any))) {
+            const auto bypass = _bypass.load(std::memory_order_acquire);
+            if (resolvingCovers(page, page + _page, Owner::Self) || pthread_equal(pthread_self(), _resolverThread) || (bypass != nullptr && bypass()) || (!trapCovers(page, page + _page) && !resolvingCovers(page, page + _page, Owner::Any))) {
                 *state = static_cast<std::uint8_t>(*state & ~ReadTrapped);
                 ++_untrapGeneration;
                 return ::mprotect(reinterpret_cast<void*>(page), _page, untrappedProtection(*state)) == 0;
@@ -1117,6 +1122,7 @@ private:
     std::uint64_t _untrapGeneration = 0;
     std::atomic<bool> _trapping{false};
     std::atomic<void (*)(std::uintptr_t, std::uintptr_t)> _resolver{nullptr};
+    std::atomic<bool (*)()> _bypass{nullptr};
     std::once_flag _resolverStarted;
     std::atomic<bool> _resolverRunning{false};
     pthread_t _resolverThread{};
@@ -1304,6 +1310,14 @@ bool GuestWriteWatchSetReadTrapResolver_nid_postfix(void (*resolve)(std::uintptr
 #else
     static_cast<void>(resolve);
     return false;
+#endif
+}
+
+void GuestWriteWatchSetReadTrapBypass_nid_postfix(bool (*bypass)()) {
+#if defined(__APPLE__)
+    Watch::Get().SetReadTrapBypass(bypass);
+#else
+    static_cast<void>(bypass);
 #endif
 }
 

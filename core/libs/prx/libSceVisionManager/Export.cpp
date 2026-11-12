@@ -12,6 +12,7 @@ namespace {
 
 constexpr int ErrorInvalidArgument = static_cast<int>(0x80e70000);
 constexpr int ErrorUnavailable = static_cast<int>(0x80e70004);
+constexpr int ErrorNotOpen = static_cast<int>(0x80e70025);
 constexpr std::uint64_t LibraryVersion = 0x1020000214072421;
 constexpr std::uint64_t RegisterUserDataVersion = 0x1017000014043000;
 
@@ -176,23 +177,19 @@ int APS5_VABI sceVisionManagerRegistryClear() {
 }
 
 int APS5_VABI sceVisionManagerRequestCalibrateHmd() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotOpen;
 }
 
 int APS5_VABI sceVisionManagerRequestCalibrateStereoCamera() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotOpen;
 }
 
 int APS5_VABI sceVisionManagerRequestCalibrateTrackingLed() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotOpen;
 }
 
 int APS5_VABI sceVisionManagerRequestClose() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotOpen;
 }
 
 int APS5_VABI sceVisionManagerRequestFindFace() {
@@ -245,8 +242,7 @@ int APS5_VABI sceVisionManagerRequestPadTracking(void* context, const std::int32
 }
 
 int APS5_VABI sceVisionManagerRequestRecogUtility() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotOpen;
 }
 
 int APS5_VABI sceVisionManagerRequestRegisterUserInRegion() {
