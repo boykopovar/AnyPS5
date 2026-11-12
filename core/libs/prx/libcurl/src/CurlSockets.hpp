@@ -25,6 +25,7 @@ CURLMcode SetMulti_nid_no_patch(CURLM* multi, Multi* context, CURLMoption option
 CURLMcode Action_nid_no_patch(CURLM* multi, Multi* context, int descriptor, int events, int* running, bool legacy);
 CURLMcode Assign_nid_no_patch(CURLM* multi, Multi* context, int descriptor, void* value);
 CURLMcode Fdset_nid_no_patch(CURLM* multi, Multi* context, guest_fd_set* read, guest_fd_set* write, guest_fd_set* except, int* maximum);
+bool Add_nid_no_patch(guest_fd_set* set, int descriptor);
 CURLMcode Wait_nid_no_patch(CURLM* multi, guest_curl_waitfd* extra, unsigned count, int timeout, int* ready, bool poll);
 CURLcode Active_nid_no_patch(CURL* easy, CURLINFO info, void* output);
 void Refresh_nid_no_patch(CURLM* multi, Multi* context);

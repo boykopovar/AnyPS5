@@ -320,9 +320,15 @@ bool Contains(const fd_set& set, curl_socket_t descriptor) {
 #endif
 }
 
-void Add(guest_fd_set* set, int descriptor) {
+bool Add(guest_fd_set* set, int descriptor) {
+    if (descriptor < 0 || descriptor >= 1024) return false;
     if (set) set->fds_bits[descriptor / 64] |= std::uint64_t{1} << (descriptor % 64);
+    return true;
 }
+}
+
+bool Add_nid_no_patch(guest_fd_set* set, int descriptor) {
+    return Add(set, descriptor);
 }
 
 int ObserveMode_nid_no_patch(curl_socket_t socket, int nonblocking) {
@@ -402,8 +408,7 @@ CURLMcode Fdset_nid_no_patch(CURLM* multi, Multi* context, guest_fd_set* read, g
             return ForEach(native, [&](curl_socket_t descriptor) {
                 const auto record = View(context, descriptor);
                 if (!record) return false;
-                Add(target, record->descriptor);
-                highest = std::max(highest, record->descriptor);
+                if (Add(target, record->descriptor)) highest = std::max(highest, record->descriptor);
                 return true;
             });
         };
