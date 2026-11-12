@@ -1,3 +1,4 @@
+#include "prx/libSceIme/include/HostMessageBox.hpp"
 #include "prx/libSceMsgDialog.native/libSceMsgDialog.native.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogRequest.hpp"
@@ -5,6 +6,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
+#include <cstdlib>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -13,6 +15,11 @@ std::atomic<int> g_status{0};
 std::atomic<bool> g_presented{false};
 
 constexpr int BUTTON_ID_OK = 1;
+#ifdef __APPLE__
+constexpr bool kAppleBuild = true;
+#else
+constexpr bool kAppleBuild = false;
+#endif
 
 std::atomic<int> g_buttonId{BUTTON_ID_OK};
 
@@ -66,9 +73,21 @@ int APS5_VABI sceMsgDialogOpen(const void* param) {
     if (status == 0) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (g_presented.load()) ModalDialogClose_nid_postfix(ModalDialogOwnerMsgDialog);
+    const MsgDialog::ParsedParam parsed = MsgDialog::ParseParam(param);
     ModalDialogRequest request;
-    bool presented = MsgDialog::BuildRequest(MsgDialog::ParseParam(param), request);
+    bool presented = MsgDialog::BuildRequest(parsed, request);
     request.owner = ModalDialogOwnerMsgDialog;
+    if (presented && HostBox::HostMessageBoxEnabled(std::getenv("ANYPS5_MSG_DIALOG_HOST"), kAppleBuild)) {
+        const auto answer = HostBox::ShowHostMessageBox(parsed.text, request);
+        if (answer) {
+            const std::size_t fallback = request.cancel != ModalDialogNoButton ? request.cancel : 0;
+            g_buttonId = MsgDialog::ButtonIdOf(answer->chosen ? *answer->chosen : fallback);
+            g_presented = false;
+            const int finished = COMMON_DIALOG_STATUS_FINISHED;
+            g_status.store(finished);
+            return 0;
+        }
+    }
     presented = presented && ModalDialogOpen_nid_postfix(request);
     g_buttonId = BUTTON_ID_OK;
     g_presented = presented;
