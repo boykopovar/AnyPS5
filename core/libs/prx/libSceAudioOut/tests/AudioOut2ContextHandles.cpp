@@ -1,6 +1,7 @@
 #include "prx/libSceAudioOut/libSceAudioOut.hpp"
 #include "SceTypes.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -8,6 +9,33 @@
 #include <random>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
+constexpr std::size_t testPageSize = 4096;
+
+void* AllocatePage(bool readable) {
+#ifdef _WIN32
+    return VirtualAlloc(nullptr, testPageSize, MEM_COMMIT | MEM_RESERVE, readable ? PAGE_READONLY : PAGE_NOACCESS);
+#else
+    void* page = mmap(nullptr, testPageSize, readable ? PROT_READ : PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    return page == MAP_FAILED ? nullptr : page;
+#endif
+}
+
+void FreePage(void* page) {
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, testPageSize);
+#endif
+}
+
 
 static void Require(bool value, const char* message) {
     if (value) return;
@@ -80,6 +108,28 @@ void UncreatedContextIsInvalid() {
     std::uint32_t available = 99;
     Require(sceAudioOut2ContextGetQueueLevel(live, &level, &available) == 0 && level + available == 1, "a live context lost its queue level");
     Require(sceAudioOut2ContextDestroy(live) == 0, "a live context was not destroyed");
+}
+
+void ContextMemoryNullSize() {
+    AudioOut2ContextParam params{};
+    Require(sceAudioOut2ContextResetParam(&params) == 0, "the context parameters did not reset");
+    Require(sceAudioOut2ContextQueryMemory(&params, nullptr) == static_cast<int>(0x80268001), "a null size pointer was not refused with the console code");
+}
+
+void ContextMemoryQuery() {
+    constexpr std::size_t consoleSizes[3] = {64108, 84492, 107788};
+    constexpr std::uint32_t ports[3] = {1, 8, 16};
+    for (int i = 0; i < 3; ++i) {
+        AudioOut2ContextParam params{};
+        Require(sceAudioOut2ContextResetParam(&params) == 0, "the context parameters did not reset");
+        params.max_ports = ports[i];
+        std::size_t size = 0;
+        Require(sceAudioOut2ContextQueryMemory(&params, &size) == 0 && size == consoleSizes[i], "the context memory is not the size the console asks for");
+        params.queue_depth = 8;
+        params.num_grains = 1024;
+        size = 0;
+        Require(sceAudioOut2ContextQueryMemory(&params, &size) == 0 && size == consoleSizes[i], "the queue depth or the grain count changed the context memory");
+    }
 }
 
 void FirmwareExSignatures() {
@@ -163,6 +213,21 @@ void FirmwareExSignatures() {
     getVolume.value = readBack;
     getVolume.value_size = sizeof(readBack);
     Require(sceAudioOut2LoPortGetAttributes(exPort, &getVolume, 1) == 0 && readBack[0] == 0.5f && readBack[1] == 0.25f, "the volume attribute did not round trip");
+    auto* unreadableAttributes = reinterpret_cast<AudioOut2Attribute*>(0x10);
+    errno = 73;
+    Require(sceAudioOut2LoPortGetAttributes(exPort, unreadableAttributes, 1) == errorInvalidParam, "an unreadable port attribute record was accepted");
+    Require(errno == 73, "an unreadable port attribute record changed host errno");
+    Require(sceAudioOut2LoPortGetAttributes(portSentinel, unreadableAttributes, 1) == errorInvalidHandle, "an unreadable port attribute record hid an invalid handle");
+    Require(sceAudioOut2LoPortGetAttributes(exPort, unreadableAttributes, 0) == 0, "an empty port attribute read touched its pointer");
+    Require(sceAudioOut2LoPortGetAttributes(exPort, nullptr, 1) == errorInvalidParam, "a null port attribute record was accepted");
+    void* readOnlyValue = AllocatePage(true);
+    Require(readOnlyValue != nullptr, "a read-only port attribute output page was not mapped");
+    getVolume.value = readOnlyValue;
+    errno = 73;
+    Require(sceAudioOut2LoPortGetAttributes(exPort, &getVolume, 1) == errorInvalidParam, "an unwritable port attribute value was accepted");
+    Require(errno == 73, "an unwritable port attribute value changed host errno");
+    FreePage(readOnlyValue);
+    getVolume.value = readBack;
     volume[0] = 0.75f;
     volume[1] = 0.125f;
     Require(sceAudioOut2PortSetAttributesEx(exPort, &setVolume, 1) == 0, "the attribute set through sceAudioOut2PortSetAttributesEx was refused");
@@ -190,12 +255,53 @@ void FirmwareExSignatures() {
 
 }
 
+void BadGuestPointersAreRefused() {
+    constexpr int errorInvalidArgument = static_cast<int>(0x80260502);
+    AudioOut2ContextParam params{};
+    Require(sceAudioOut2ContextResetParam(&params) == 0, "the context parameters did not reset");
+    void* unreadable = AllocatePage(false);
+    Require(unreadable != nullptr, "an unreadable page was not mapped");
+    AudioOut2ContextHandle context = 0x6B6B;
+    Require(sceAudioOut2ContextCreate(static_cast<const AudioOut2ContextParam*>(unreadable), nullptr, 0, &context) == errorInvalidArgument, "unreadable parameters were not refused");
+    Require(context == 0x6B6B, "a refused context creation wrote a handle");
+    FreePage(unreadable);
+
+    void* readOnly = AllocatePage(true);
+    Require(readOnly != nullptr, "a read-only page was not mapped");
+    Require(sceAudioOut2ContextCreate(&params, nullptr, 0, static_cast<AudioOut2ContextHandle*>(readOnly)) == errorInvalidArgument, "an unwritable handle slot was not refused");
+    FreePage(readOnly);
+
+    const auto live = CreateContext();
+    Require(sceAudioOut2ContextDestroy(live) == 0, "a context created after the refusals was not destroyed");
+}
+
+void OversizedGrainIsRefused() {
+    constexpr int errorInvalidArgument = static_cast<int>(0x80260502);
+    AudioOut2ContextParam params{};
+    Require(sceAudioOut2ContextResetParam(&params) == 0, "the context parameters did not reset");
+    constexpr AudioOut2ContextHandle sentinel = 0x6B6B;
+    AudioOut2ContextHandle context = sentinel;
+    params.num_grains = 0xFFFFFFFFu;
+    Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == errorInvalidArgument, "a grain of 4 GiB frames was not refused");
+    Require(context == sentinel, "a refused context creation wrote a handle");
+    params.num_grains = 12001;
+    Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == errorInvalidArgument, "a grain past the queue cap was not refused");
+    Require(context == sentinel, "a refused context creation wrote a handle");
+    params.num_grains = 12000;
+    Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == 0 && context != sentinel, "a grain at the queue cap was refused");
+    Require(sceAudioOut2ContextDestroy(context) == 0, "a context at the queue cap was not destroyed");
+}
+
 int main() {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out2_context_handles-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
     SetEnvironment("SDL_AUDIODRIVER", "disk");
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
     FirmwareExSignatures();
+    ContextMemoryNullSize();
+    ContextMemoryQuery();
+    OversizedGrainIsRefused();
+    BadGuestPointersAreRefused();
     UncreatedContextIsInvalid();
     DestroyedContextIsInvalid();
     std::filesystem::remove(path);

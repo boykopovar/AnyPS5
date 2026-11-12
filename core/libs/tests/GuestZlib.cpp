@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -47,6 +48,11 @@ int main() {
         Require(id == 0);
     }
     Require(sceZlibInflate(nullptr, compressed.size(), output, 8192, &id) == static_cast<std::int32_t>(0x81120016));
+    Require(sceZlibInflate(compressed.data(), 0, output, 8192, &id) == static_cast<std::int32_t>(0x81120016));
+    Require(sceZlibInflate(compressed.data(), compressed.size(), nullptr, 8192, &id) == static_cast<std::int32_t>(0x81120016));
+    errno = 71;
+    Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, reinterpret_cast<std::uint64_t*>(0x10)) == static_cast<std::int32_t>(0x81120016));
+    Require(errno == 71);
     Require(sceZlibWaitForDone(nullptr, nullptr) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibGetResult(0, nullptr, &status) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibGetResult(0, &produced, nullptr) == static_cast<std::int32_t>(0x81120016));
@@ -88,6 +94,9 @@ int main() {
     decode(compressed.data(), compressed.size() - 1, 65536, static_cast<std::int32_t>(0x811200FF));
     decode(compressed.data(), compressed.size() - 4, 8192, static_cast<std::int32_t>(0x811200FF));
     decode(compressed.data(), compressed.size() - 1, 8192, static_cast<std::int32_t>(0x811200FF));
+    auto badHeader = compressed;
+    badHeader.front() = 0;
+    decode(badHeader.data(), badHeader.size(), 8192, static_cast<std::int32_t>(0x811200FF));
     alignas(2048) std::array<std::uint8_t, 3 * 8192> batch{};
     std::array<std::uint64_t, 3> ids{};
     for (std::size_t index = 0; index < ids.size(); ++index)

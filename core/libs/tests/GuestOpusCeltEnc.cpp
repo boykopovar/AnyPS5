@@ -1,4 +1,5 @@
 #include "prx/libSceOpusCeltEnc/include/Api.hpp"
+#include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -125,6 +126,9 @@ int main() {
     constexpr int codecApplication = OPUS_APPLICATION_RESTRICTED_CELT;
     std::uint32_t instanceId = 1;
     Require(sceOpusCeltEncInitialize(nullptr) == static_cast<int>(errorBase + 0x19));
+    errno = 71;
+    Require(sceOpusCeltEncInitialize(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(errorBase + 0x19));
+    Require(errno == 71);
     Require(sceOpusCeltEncDestroy(nullptr) == static_cast<int>(errorBase + 0x01));
     std::uint32_t context = 0;
     Require(sceOpusCeltEncInitialize(&context) == 0);
@@ -237,6 +241,17 @@ int main() {
     ++instanceId;
     Require(sceOpusCeltEncEncode(ToState(retireState), samples.data(), 960, packet, sizeof(packet)) > 2);
     Require(sceOpusCeltEncDestroy(ToState(retireState)) == 0);
+
+    std::array<std::uint8_t, 65536> wideRateState{};
+    Require(sceOpusCeltEncCreateEx(&context, ToState(wideRateState), 48000, 1, callerApplication) == 0);
+    ++instanceId;
+    const std::uint32_t wideRate = 0x40000064u;
+    std::memcpy(wideRateState.data() + 0x14, &wideRate, sizeof wideRate);
+    for (const int wrappedFrame : {1, 2, 4, 6}) {
+        Require(sceOpusCeltEncEncode(ToState(wideRateState), samples.data(), wrappedFrame, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x03));
+        Require(sceOpusCeltEncEncodeFloat(ToState(wideRateState), floatSamples.data(), wrappedFrame, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x03));
+    }
+    Require(sceOpusCeltEncDestroy(ToState(wideRateState)) == 0);
 
     std::array<std::uint8_t, 65536> floatState{};
     floatState.fill(0x5A);

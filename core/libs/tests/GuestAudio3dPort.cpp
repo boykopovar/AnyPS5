@@ -1,4 +1,5 @@
 #include "prx/libSceAudio3d/include/Audio3d.hpp"
+#include <cerrno>
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <chrono>
@@ -203,6 +204,7 @@ void CheckPortWrappers() {
 void CheckAttributes() {
     float value = 0.5f;
     int flag = 1;
+    const void* const unreadable = reinterpret_cast<const void*>(std::uintptr_t{0x10});
     constexpr std::uint32_t supported[]{0x10001, 0x10002, 0x10003};
     std::uint32_t num_attributes = 99;
     Require(sceAudio3dPortGetAttributesSupported(0, nullptr, &num_attributes) == 0 && num_attributes == 3, "null output reports the supported attribute count");
@@ -227,6 +229,12 @@ void CheckAttributes() {
     Require(sceAudio3dPortSetAttribute(0, 0x10003, nullptr, 4) == INVALID_PARAMETER, "height aware needs a value");
     Require(sceAudio3dPortSetAttribute(0, 0x10004, &value, 4) == INVALID_PARAMETER, "unknown attribute");
     Require(sceAudio3dPortSetAttribute(0, 0x10001, &value, 8) == INVALID_PARAMETER, "a float attribute is 4 bytes");
+    Require(sceAudio3dPortSetAttribute(1, 0x10001, unreadable, 4) == INVALID_PORT, "invalid port precedes the float pointer");
+    Require(sceAudio3dPortSetAttribute(0, 0x10004, unreadable, 4) == INVALID_PARAMETER, "unknown attribute precedes the float pointer");
+    Require(sceAudio3dPortSetAttribute(0, 0x10001, unreadable, 8) == INVALID_PARAMETER, "float size precedes the pointer read");
+    Require(sceAudio3dPortSetAttribute(0, 0x10003, unreadable, 4) == 0, "height aware does not read the value");
+    Require(sceAudio3dPortSetAttribute(0, 0x10001, unreadable, 4) == INVALID_PARAMETER, "unreadable reverb value");
+    Require(sceAudio3dPortSetAttribute(0, 0x10002, unreadable, 4) == INVALID_PARAMETER, "unreadable spread radius");
     const auto set_float = [](std::uint32_t attribute_id, float level) {
         return sceAudio3dPortSetAttribute(0, attribute_id, &level, sizeof(level));
     };
@@ -274,6 +282,10 @@ void CheckQueue() {
     Require(Open(parameters, &id) == 0 && id == 0, "open");
     CheckAttributes();
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, nullptr) == INVALID_PARAMETER, "both outputs null");
+    errno = 71;
+    Require(sceAudio3dPortGetQueueLevel(0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == INVALID_PARAMETER, "unwritable level");
+    Require(sceAudio3dPortGetQueueLevel(0, nullptr, reinterpret_cast<std::uint32_t*>(0x10)) == INVALID_PARAMETER, "unwritable available");
+    Require(errno == 71, "errno preserved");
     std::uint32_t available = 0;
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, &available) == 0 && available == 2, "level pointer is optional");
     std::uint32_t level = 99;
