@@ -194,22 +194,6 @@ std::int32_t checkTarget(const Context& context, const Decoder::Jpeg::Header& he
     if (((outputWidth + 31) & ~std::uint32_t{31}) > context.maxImageWidth || rowBufferSize(header, downScale) > context.rowBufferCapacity) return SCE_JPEG_DEC_ERROR_IMAGE_TOO_WIDE;
     return 0;
 }
-    if (result != 0) return result;
-    if (!memoryAddress) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
-    if (memorySize < workMemorySize(*param)) return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
-    if (!handle) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
-    const auto address = reinterpret_cast<std::uintptr_t>(memoryAddress);
-    const std::uintptr_t aligned = (address + HANDLE_ALIGNMENT - 1) & ~(HANDLE_ALIGNMENT - 1);
-    auto* context = new (reinterpret_cast<void*>(aligned)) Context{};
-    context->self = context;
-    context->attribute = param->attribute;
-    context->maxImageWidth = (param->max_image_width + 31) & ~std::uint32_t{31};
-    context->rowBufferCapacity = (context->maxImageWidth + 16) * (param->attribute == ATTRIBUTE_CSC_ORDINARY ? 24 : 80);
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(handle, &context, sizeof(context));
-    errno = savedErrno;
-    if (!copied) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
-    return 0;
 }
 
 std::int32_t writeImage(const Decoder::Jpeg::Header& header, std::span<const std::uint8_t> jpeg, const DecodeTarget& target, JpegDecImageInfo* imageInfo) {
