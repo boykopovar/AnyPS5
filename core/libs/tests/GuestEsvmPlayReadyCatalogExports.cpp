@@ -37,5 +37,6 @@ void ExpectNotImplemented(TFn stub, const char* name, int line) {
 
 int main() {
     RequireNotImplemented(sceEsvmProcessAckResponse);
+    RequireNotImplemented(sceEsvmProcessAckResponse);
     return 0;
 }
