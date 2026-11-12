@@ -36,12 +36,18 @@ std::optional<RuntimeSwitch> Find(std::string_view name);
 
 class AbSchedule {
 public:
+    struct Arm {
+        std::string name;
+        std::vector<RuntimeSwitch> switches;
+    };
+
     struct Config {
         double phaseSeconds = 0;
         double settleSeconds = 2;
         std::uint64_t startPresent = 0;
         std::optional<double> startSeconds;
         std::vector<RuntimeSwitch> switches;
+        std::vector<Arm> arms;
     };
 
     enum class Event { None, Begin, Settled };
@@ -49,7 +55,7 @@ public:
     struct Step {
         Event event = Event::None;
         std::uint64_t phase = 0;
-        bool b = false;
+        std::size_t arm = 0;
     };
 
     static Config Parse(std::string_view ab, std::string_view start, std::string_view settle);
