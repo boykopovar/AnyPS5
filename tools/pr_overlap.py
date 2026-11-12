@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 import nid_names
 
 PARENT = 'if .parent then "\\(.parent.owner.login)/\\(.parent.name)" else .nameWithOwner end'
-EXPORT = re.compile(r"^\+.*\bAPS5_VABI\s+(\w+)\s*\(")
+EXPORT = re.compile(r"^[+-].*\bAPS5_VABI\s+(\w+)\s*\(")
 NID_DISAMBIG = re.compile(r"_nid_disambig[0-9]+$")
 DEPENDS = re.compile(r'Depends on:[ \t]*((?:#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)#\d+\b)*|none\b)?(?:\r?\n[ \t]*[-*][ \t]*#\d+\b[^\r\n]*)*)')
 PLAIN_DEPENDS = re.compile(r'Depends on[ \t]+(#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)#\d+\b)*)')
@@ -453,7 +453,8 @@ def hunks(pr, path):
 
 
 def clashes(a, b, path):
-    ranges = sorted((min(s1, s2), max(e1, e2)) for s1, e1 in hunks(a, path) for s2, e2 in hunks(b, path)
+    left, right = hunks(a, path), hunks(b, path)
+    ranges = sorted((min(s1, s2), max(e1, e2)) for s1, e1 in left for s2, e2 in right
                     if s1 <= e2 + 1 and s2 <= e1 + 1)
     merged = []
     for start, end in ranges:

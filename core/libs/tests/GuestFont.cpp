@@ -625,6 +625,34 @@ int main() {
     }
     Require(foreignDriverRejected && foreignLibrary.lock_word == 5);
 
+    Font::FontLibNative invalidFormatLibrary{};
+    Require(sceFontFtSupportFontFormats(nullptr, 0x52) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontFtSupportFontFormats(nullptr, 0) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontFtSupportFontFormats(&invalidFormatLibrary, 0x52) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontFtSupportFontFormats(library, 0) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x52) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x01) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x08) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x10) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x14) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x20) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x30) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x42) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x50) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x80) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0xFF) == SCE_FONT_OK);
+    Require(sceFontFtSupportFontFormats(library, 0x100) == SCE_FONT_ERROR_NO_SUPPORT_FORMAT);
+    Require(sceFontFtSupportFontFormats(library, 0xffffffffu) == SCE_FONT_ERROR_NO_SUPPORT_FORMAT);
+    Require(nativeLibrary->lock_word == savedLock);
+
+    bool foreignFormatsRejected = false;
+    try {
+        static_cast<void>(sceFontFtSupportFontFormats(&foreignLibrary, 0x52));
+    } catch (const std::runtime_error&) {
+        foreignFormatsRejected = true;
+    }
+    Require(foreignFormatsRejected && foreignLibrary.lock_word == 5);
+
     std::uint32_t subPixelCount = 1;
     Require(sceFontGetPixelResolution(library, &subPixelCount) == SCE_FONT_OK && subPixelCount == 64);
     Require(sceFontGetPixelResolution(library, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
@@ -714,6 +742,11 @@ int main() {
     Require(sceFontGetLibrary(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     FontLibrary fontLibrary = nullptr;
     Require(sceFontGetLibrary(font, &fontLibrary) == SCE_FONT_OK && fontLibrary == library);
+    FontLibrary staleOwner = reinterpret_cast<FontLibrary>(&staleOwner);
+    Require(sceFontGetLibrary(nullptr, &staleOwner) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && staleOwner == nullptr);
+    alignas(16) unsigned char zeroedHandle[0x400]{};
+    staleOwner = reinterpret_cast<FontLibrary>(&staleOwner);
+    Require(sceFontGetLibrary(reinterpret_cast<FontHandle>(zeroedHandle), &staleOwner) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && staleOwner == nullptr);
     Font::FontLibNative invalidLibrary{};
     Require(sceFontSetFontsOpenMode(nullptr, 0) == SCE_FONT_ERROR_INVALID_LIBRARY);
     Require(sceFontSetFontsOpenMode(&invalidLibrary, 0) == SCE_FONT_ERROR_INVALID_LIBRARY);
@@ -1026,9 +1059,11 @@ int main() {
 
     const auto* glyphs0 = sceFontSelectGlyphsFt(0);
     Require(glyphs0 != nullptr);
-    const auto* glyphTable = reinterpret_cast<const std::uint32_t*>(glyphs0);
+    const auto* glyphTable = reinterpret_cast<const std::uint16_t*>(glyphs0);
     Require(glyphTable[0] == 0x0F1F);
-    Require(glyphTable[1] == 0x0F03);
+    Require(glyphTable[1] == 0xF200);
+    Require(glyphTable[2] == 0x0F03);
+    Require(glyphTable[3] == 0xF8F0);
     Require(sceFontSelectGlyphsFt(1) == nullptr);
     Require(sceFontSelectGlyphsFt(-1) == nullptr);
 
