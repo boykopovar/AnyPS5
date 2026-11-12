@@ -11,6 +11,8 @@ import sys
 import zlib
 from pathlib import Path
 
+from performance_compare import unique_json_object
+
 DESCRIPTION = """Digest of an APS5_TRACE_FRAMES / APS5_TRACE_SECONDS capture (aps5-trace-*.json.gz) for an issue or a
 pull request: the summary line, the slowest frames with their largest slices, the busy and wait time of each
 thread, the largest slices per frame, the longest waits, the largest GPU batches with the CPU slices that
@@ -184,11 +186,13 @@ def load_summary_lines(path, numbered=False, label=None):
         if not line.strip():
             continue
         try:
-            record = json.loads(line)
+            record = json.loads(line, object_pairs_hook=unique_json_object)
         except json.JSONDecodeError as error:
             raise ValueError(f"{display}:{number}: invalid JSON: {error.msg}") from error
         except RecursionError as error:
             raise ValueError(f"{display}:{number}: JSON nesting is too deep") from error
+        except ValueError as error:
+            raise ValueError(f"{display}:{number}: {error}") from error
         if not isinstance(record, dict):
             raise ValueError(f"{display}:{number}: summary record must be an object")
         records.append((number, record) if numbered else record)
