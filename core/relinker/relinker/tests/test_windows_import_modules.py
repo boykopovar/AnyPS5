@@ -131,7 +131,7 @@ def provider(value, soname=None, code=None, main_stack_entry=False):
         struct.pack_into('<Q', image, 0x618, len(strings))
         struct.pack_into('<IIIIII', image, 0x840, 1, 3, 1, 0, 2, 0)
         struct.pack_into('<IBBHQQ', image, 0x8b0, 12, 0x12, 0, 1, 0x1040, 2)
-        image[0x440:0x442] = b'\xff\xe1'
+        image[0x440:0x442] = b'\xff\xe6'
     return image
 
 

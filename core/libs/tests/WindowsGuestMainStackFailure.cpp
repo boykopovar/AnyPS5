@@ -62,7 +62,7 @@ void GuestArenaRelease_nid_postfix(const void* pointer, std::size_t bytes) {
 
 }
 
-static void UnexpectedEntry() { std::abort(); }
+static void APS5_VABI UnexpectedEntry(void*) { std::abort(); }
 
 int main() {
     auto* tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
@@ -72,7 +72,7 @@ int main() {
         failure = mode;
         const auto before = releases;
         try {
-            GuestStacks::EnterGuestMainStack_nid_no_patch(UnexpectedEntry);
+            GuestStacks::EnterGuestMainStack_nid_no_patch(nullptr, UnexpectedEntry);
             std::abort();
         } catch (const std::runtime_error&) {
         }

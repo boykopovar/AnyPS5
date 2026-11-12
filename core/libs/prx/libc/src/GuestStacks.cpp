@@ -96,7 +96,7 @@ void APS5_VABI GuestStackSwitch_nid_no_patch(std::uintptr_t stackPointer) {
 }
 
 #ifdef _WIN32
-[[noreturn]] void EnterGuestMainStack_nid_no_patch(void (*entry)()) {
+[[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* arguments, void (APS5_VABI* entry)(void*)) {
     if (entry == nullptr) throw std::invalid_argument("Guest main stack requires an entry point");
     const auto host = CurrentBounds();
     constexpr std::size_t guardBytes = 0x10000;
@@ -126,6 +126,7 @@ void APS5_VABI GuestStackSwitch_nid_no_patch(std::uintptr_t stackPointer) {
     RtlCaptureContext(&context);
     context.Rsp = low + capacity - 40;
     context.Rbp = 0;
+    context.Rdi = reinterpret_cast<DWORD64>(arguments);
     context.Rip = reinterpret_cast<DWORD64>(entry);
     *reinterpret_cast<std::uintptr_t*>(context.Rsp) = 0;
     ApplyBounds({low + capacity, low, reinterpret_cast<std::uintptr_t>(allocation)});

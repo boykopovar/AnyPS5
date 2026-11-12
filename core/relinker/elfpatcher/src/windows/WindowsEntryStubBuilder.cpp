@@ -804,7 +804,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.Rip({0x48, 0x8d, 0x15}, enterMainStack);
         call("GetProcAddress");
         requireNonzero(mainStackError, 0xc0000139u);
-        const auto entry = code.Branch({0x48, 0x8d, 0x0d});
+        code.Emit({0x31, 0xff});
+        const auto entry = code.Branch({0x48, 0x8d, 0x35});
         code.Emit({0xff, 0xd0, 0x0f, 0x0b});
         guestEntryStart = code.GetRva();
         code.PatchBranch(entry, *guestEntryStart);

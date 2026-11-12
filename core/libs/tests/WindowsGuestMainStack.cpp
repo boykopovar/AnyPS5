@@ -16,8 +16,9 @@ static void Require(bool value) {
     if (!value) std::abort();
 }
 
-static void OnGuestStack() {
+static void APS5_VABI OnGuestStack(void* arguments) {
     std::uintptr_t local = 0;
+    Require(arguments == &originalThread);
     Require((reinterpret_cast<std::uintptr_t>(&local) & 0xffffffffc0000000ull) != 0);
     Require(GuestArena::GuestArenaContains_nid_postfix(&local, sizeof(local)));
     Require(GetCurrentThreadId() == originalThread && &tlsValue == originalTls && tlsValue == 0x123456789abcdef0ull);
@@ -49,7 +50,7 @@ static void OnGuestStack() {
         Require(destroyed);
     }
     try {
-        GuestStacks::EnterGuestMainStack_nid_no_patch(OnGuestStack);
+        GuestStacks::EnterGuestMainStack_nid_no_patch(&originalThread, OnGuestStack);
         std::abort();
     } catch (const std::runtime_error&) {
     }
@@ -68,12 +69,12 @@ int main(int argc, char**) {
     const auto base = reinterpret_cast<std::uintptr_t>(tib->StackBase);
     const auto deallocation = *reinterpret_cast<std::uintptr_t*>(reinterpret_cast<unsigned char*>(tib) + 0x1478);
     originalCapacity = base - deallocation;
-    if (argc > 1) OnGuestStack();
+    if (argc > 1) OnGuestStack(&originalThread);
     try {
-        GuestStacks::EnterGuestMainStack_nid_no_patch(nullptr);
+        GuestStacks::EnterGuestMainStack_nid_no_patch(&originalThread, nullptr);
         std::abort();
     } catch (const std::invalid_argument&) {
     }
     Require(reinterpret_cast<std::uintptr_t>(tib->StackBase) == base);
-    GuestStacks::EnterGuestMainStack_nid_no_patch(OnGuestStack);
+    GuestStacks::EnterGuestMainStack_nid_no_patch(&originalThread, OnGuestStack);
 }
