@@ -260,6 +260,16 @@ int APS5_VABI FT_Set_CharmapForward_nid_no_patch(FreeType::GuestFaceRec* face, F
 }
 APS5_EXPORT("Caez01BS2mE", FT_Set_CharmapForward_nid_no_patch);
 
+int APS5_VABI FT_Set_MM_Blend_CoordinatesForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+    return FT_Set_MM_Blend_Coordinates_nid_postfix(face, count, coordinates);
+}
+APS5_EXPORT("zetC8Tp1S8w", FT_Set_MM_Blend_CoordinatesForward_nid_no_patch);
+
+int APS5_VABI FT_Set_MM_Design_CoordinatesForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+    return FT_Set_MM_Design_Coordinates_nid_postfix(face, count, coordinates);
+}
+APS5_EXPORT("DAmwG6U7YIc", FT_Set_MM_Design_CoordinatesForward_nid_no_patch);
+
 int APS5_VABI FT_Set_Pixel_SizesForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t pixelWidth, std::uint32_t pixelHeight) {
     return FT_Set_Pixel_Sizes_nid_postfix(face, pixelWidth, pixelHeight);
 }
@@ -269,6 +279,16 @@ void APS5_VABI FT_Set_TransformForward_nid_no_patch(FreeType::GuestFaceRec* face
     return FT_Set_Transform_nid_postfix(face, matrix, delta);
 }
 APS5_EXPORT("bcM5xfX2SeA", FT_Set_TransformForward_nid_no_patch);
+
+int APS5_VABI FT_Set_Var_Blend_CoordinatesForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+    return FT_Set_Var_Blend_Coordinates_nid_postfix(face, count, coordinates);
+}
+APS5_EXPORT("ihIHD8BTNxI", FT_Set_Var_Blend_CoordinatesForward_nid_no_patch);
+
+int APS5_VABI FT_Set_Var_Design_CoordinatesForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+    return FT_Set_Var_Design_Coordinates_nid_postfix(face, count, coordinates);
+}
+APS5_EXPORT("yCEJIsjIOO8", FT_Set_Var_Design_CoordinatesForward_nid_no_patch);
 
 int APS5_VABI FT_Sfnt_Table_InfoForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t tableIndex, std::uint64_t* tag, std::uint64_t* length) {
     return FT_Sfnt_Table_Info_nid_postfix(face, tableIndex, tag, length);
