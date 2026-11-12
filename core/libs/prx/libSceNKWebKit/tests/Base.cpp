@@ -1179,6 +1179,15 @@ static void TestBundleHitTestResult() {
     Require(unsetTitle != nullptr);
     Require(WKStringIsEqualToUTF8CString(unsetTitle, ""));
     WKRelease(unsetTitle);
+    auto* unsetSuggestedFilename = WKBundleHitTestResultCopyLinkSuggestedFilename(ref);
+    Require(unsetSuggestedFilename != nullptr);
+    Require(WKStringIsEqualToUTF8CString(unsetSuggestedFilename, ""));
+    WKRelease(unsetSuggestedFilename);
+    Require(!WKBundleHitTestResultGetIsSelected(ref));
+    Require(WKBundleHitTestResultGetMediaType(ref) == 0);
+    Require(!WKBundleHitTestResultIsDownloadableMedia(ref));
+    Require(!WKBundleHitTestResultMediaHasAudio(ref));
+    Require(!WKBundleHitTestResultMediaIsInFullscreen(ref));
 
     hit->absoluteImageURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/img.png");
     hit->absoluteLinkURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/link");
@@ -1225,9 +1234,74 @@ static void TestBundleHitTestResult() {
     Require(WKStringIsEqualToUTF8CString(title, "Example Title"));
     WKRelease(title);
 
+    hit->linkSuggestedFilename = NKWebKit::String::FromUtf8("example_file.pdf");
+    hit->isSelected = true;
+    hit->mediaType = 1;
+    hit->isDownloadableMedia = true;
+    hit->mediaHasAudio = true;
+    hit->mediaIsInFullscreen = true;
+
+    auto* suggestedFilename = WKBundleHitTestResultCopyLinkSuggestedFilename(ref);
+    Require(suggestedFilename != nullptr);
+    Require(WKStringIsEqualToUTF8CString(suggestedFilename, "example_file.pdf"));
+    WKRelease(suggestedFilename);
+    Require(WKBundleHitTestResultGetIsSelected(ref));
+    Require(WKBundleHitTestResultGetMediaType(ref) == 1);
+    Require(WKBundleHitTestResultIsDownloadableMedia(ref));
+    Require(WKBundleHitTestResultMediaHasAudio(ref));
+    Require(WKBundleHitTestResultMediaIsInFullscreen(ref));
+
     bool threw = false;
     try {
         WKBundleHitTestResultCopyLinkLabel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultCopyLinkSuggestedFilename(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetIsSelected(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetMediaType(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultIsDownloadableMedia(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultMediaHasAudio(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultMediaIsInFullscreen(nullptr);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -1647,8 +1721,8 @@ static void TestOpenPanelParameters() {
     using Strings = std::vector<NKWebKit::Retained<NKWebKit::String>>;
     auto* parameters = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::OpenPanelParameters>(
         true, true,
-        Strings{NKWebKit::String::FromUtf8("image/png"), NKWebKit::String::FromUtf8("text/*")},
-        Strings{NKWebKit::String::FromUtf8(".txt")},
+        Strings{NKWebKit::String::FromUtf8("Image/PNG"), NKWebKit::String::FromUtf8("image/png"), NKWebKit::String::FromUtf8("TEXT/*")},
+        Strings{NKWebKit::String::FromUtf8(".txt"), NKWebKit::String::FromUtf8("PNG"), NKWebKit::String::FromUtf8(".unknown")},
         Strings{NKWebKit::String::FromUtf8("/tmp/a.txt"), NKWebKit::String::FromUtf8("/tmp/b.txt"), NKWebKit::String::FromUtf8("/tmp/c.txt")}));
     Require(WKGetTypeID(parameters) == WKOpenPanelParametersGetTypeID());
     Require(WKOpenPanelParametersGetAllowsDirectories(parameters));
@@ -1656,14 +1730,25 @@ static void TestOpenPanelParameters() {
 
     auto* mimeTypes = WKOpenPanelParametersCopyAcceptedMIMETypes(parameters);
     Require(WKGetTypeID(mimeTypes) == WKArrayGetTypeID());
-    Require(WKArrayGetSize(mimeTypes) == 2);
-    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 0), "image/png"));
-    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 1), "text/*"));
+    Require(WKArrayGetSize(mimeTypes) == 3);
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 0), "Image/PNG"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 1), "image/png"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(mimeTypes, 2), "TEXT/*"));
     WKRelease(mimeTypes);
 
+    auto* allowedMime = WKOpenPanelParametersCopyAllowedMIMETypes(parameters);
+    Require(WKGetTypeID(allowedMime) == WKArrayGetTypeID());
+    Require(WKArrayGetSize(allowedMime) == 3);
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(allowedMime, 0), "image/png"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(allowedMime, 1), "text/*"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(allowedMime, 2), "text/plain"));
+    WKRelease(allowedMime);
+
     auto* extensions = WKOpenPanelParametersCopyAcceptedFileExtensions(parameters);
-    Require(WKArrayGetSize(extensions) == 1);
+    Require(WKArrayGetSize(extensions) == 3);
     Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(extensions, 0), ".txt"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(extensions, 1), "PNG"));
+    Require(WKStringIsEqualToUTF8CString(WKArrayGetItemAtIndex(extensions, 2), ".unknown"));
     WKRelease(extensions);
 
     auto* selected = WKOpenPanelParametersCopySelectedFileNames(parameters);
@@ -1676,6 +1761,9 @@ static void TestOpenPanelParameters() {
     Require(!WKOpenPanelParametersGetAllowsDirectories(empty));
     Require(!WKOpenPanelParametersGetAllowsMultipleFiles(empty));
     auto* none = WKOpenPanelParametersCopyAcceptedMIMETypes(empty);
+    Require(WKArrayGetSize(none) == 0);
+    WKRelease(none);
+    none = WKOpenPanelParametersCopyAllowedMIMETypes(empty);
     Require(WKArrayGetSize(none) == 0);
     WKRelease(none);
     none = WKOpenPanelParametersCopyAcceptedFileExtensions(empty);
@@ -1697,6 +1785,8 @@ static void TestOpenPanelParameters() {
     Require(ThrowsOpenPanel(WKOpenPanelParametersGetAllowsDirectories, notParameters));
     Require(ThrowsOpenPanel(WKOpenPanelParametersGetAllowsMultipleFiles, nullptr));
     Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAcceptedMIMETypes, notParameters));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAllowedMIMETypes, notParameters));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAllowedMIMETypes, nullptr));
     Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAcceptedFileExtensions, nullptr));
     Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopySelectedFileNames, nullptr));
     WKRelease(notParameters);
@@ -1765,6 +1855,16 @@ static void TestCertificateInfo() {
 
 static void TestEmptyFrameLoaderClient() {
     _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
+    _ZN7WebCore22EmptyFrameLoaderClient14didChangeTitleEPNS_14DocumentLoaderE();
+    _ZN7WebCore22EmptyFrameLoaderClient15finishedLoadingEPNS_14DocumentLoaderE();
+    _ZN7WebCore22EmptyFrameLoaderClient15willChangeTitleEPNS_14DocumentLoaderE();
+    _ZN7WebCore22EmptyFrameLoaderClient20setMainDocumentErrorEPNS_14DocumentLoaderERKNS_13ResourceErrorE();
+    _ZN7WebCore22EmptyFrameLoaderClient24revertToProvisionalStateEPNS_14DocumentLoaderE();
+    _ZN7WebCore22EmptyFrameLoaderClient19saveViewStateToItemERNS_11HistoryItemE();
+    _ZN7WebCore22EmptyFrameLoaderClient20redirectDataToPluginERNS_6WidgetE();
+    _ZN7WebCore22EmptyFrameLoaderClient21didRunInsecureContentERNS_14SecurityOriginERKN3WTF3URLE();
+    _ZN7WebCore22EmptyFrameLoaderClient23dispatchDidReceiveTitleERKNS_19StringWithDirectionE();
+    _ZN7WebCore22EmptyFrameLoaderClient36transitionToCommittedFromCachedFrameEPNS_11CachedFrameE();
 }
 
 static void TestSessionState() {
@@ -1902,6 +2002,50 @@ static void TestFrame() {
         caught = true;
     }
     Require(caught);
+}
+
+static void TestImage() {
+    Require(WKImageGetTypeID() == 12);
+    NKWebKit::SizeValue sz{640.0, 480.0};
+    auto* img = WKImageCreate(sz, 0);
+    Require(img != nullptr);
+    Require(WKGetTypeID(img) == WKImageGetTypeID());
+    auto outSz = WKImageGetSize(img);
+    Require(outSz.width == 640.0);
+    Require(outSz.height == 480.0);
+    WKRelease(img);
+
+    NKWebKit::SizeValue fracSz{640.7, 480.2};
+    auto* fracImg = WKImageCreate(fracSz, 0);
+    Require(fracImg != nullptr);
+    auto fracOut = WKImageGetSize(fracImg);
+    Require(fracOut.width == 640.0);
+    Require(fracOut.height == 480.0);
+    WKRelease(fracImg);
+
+    bool threw = false;
+    try {
+        WKImageGetSize(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    bool threwNan = false;
+    try {
+        WKImageCreate(NKWebKit::SizeValue{std::numeric_limits<double>::quiet_NaN(), 100.0}, 0);
+    } catch (const std::invalid_argument&) {
+        threwNan = true;
+    }
+    Require(threwNan);
+
+    bool threwOutOfRange = false;
+    try {
+        WKImageCreate(NKWebKit::SizeValue{1e15, 100.0}, 0);
+    } catch (const std::invalid_argument&) {
+        threwOutOfRange = true;
+    }
+    Require(threwOutOfRange);
 }
 
 static int s_runLoopCallCount = 0;
@@ -2102,8 +2246,15 @@ int main() {
     TestFrameHandle();
     TestOpenPanelParameters();
     TestNotification();
+    TestImage();
     TestCertificateInfo();
-    TestEmptyFrameLoaderClient();
+    try {
+        TestEmptyFrameLoaderClient();
+    } catch (const std::runtime_error& error) {
+        std::fprintf(stderr, "%s\n", error.what());
+        return 1;
+    }
+
     TestInspector();
     TestContext();
     TestSessionState();
