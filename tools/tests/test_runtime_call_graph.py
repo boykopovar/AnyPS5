@@ -11,11 +11,11 @@ import runtime_call_graph
 
 def edge(calls=1, consumer="game.guest.prx", consumer_offset="0x120", address="0x1120",
          library="libSceAudioOut", name="sceAudioOutOutput", provider="libSceAudioOut.guest.prx",
-         provider_offset="0x80"):
+         provider_offset="0x80", provider_address="0x3080"):
     return {"calls": calls,
             "consumer": {"module": consumer, "offset": consumer_offset, "address": address},
             "import": {"library": library, "name": name},
-            "provider": {"module": provider, "offset": provider_offset}}
+            "provider": {"module": provider, "offset": provider_offset, "address": provider_address}}
 
 
 def document(edges=None):
@@ -41,11 +41,13 @@ class RuntimeCallGraphTests(unittest.TestCase):
         self.assertEqual(graph["edges"][1]["import"]["name"], "sceAudioOutOutput")
 
     def test_unresolved_images_keep_the_runtime_address(self):
-        item = edge(consumer=None, consumer_offset=None, address="0x9980", provider=None, provider_offset=None)
+        item = edge(consumer=None, consumer_offset=None, address="0x9980", provider=None, provider_offset=None,
+                    provider_address="0xabc0")
         graph = runtime_call_graph.load_graph(self.write(document([item])))
         unresolved = next(record for record in graph["edges"] if record["consumer"]["address"] == "0x9980")
         self.assertEqual(unresolved["consumer"], {"module": None, "offset": None, "address": "0x9980"})
         self.assertIsNone(unresolved["provider"]["module"])
+        self.assertEqual(unresolved["provider"]["address"], "0xabc0")
 
     def test_report_filters_and_limits_edges(self):
         graph = runtime_call_graph.load_graph(self.write(document([edge(library="libSceNet")])))
@@ -57,10 +59,12 @@ class RuntimeCallGraphTests(unittest.TestCase):
         self.assertIn("sceAudioOutOutput", runtime_call_graph.report(graph, provider="libSceAudioOut.guest.prx"))
 
     def test_report_can_focus_on_unresolved_images(self):
-        unresolved = edge(consumer=None, consumer_offset=None, address="0x9980", provider=None, provider_offset=None)
+        unresolved = edge(consumer=None, consumer_offset=None, address="0x9980", provider=None, provider_offset=None,
+                          provider_address="0xabc0")
         graph = runtime_call_graph.load_graph(self.write(document([unresolved])))
         text = runtime_call_graph.report(graph, unresolved_only=True)
         self.assertIn("<unresolved> (0x9980)", text)
+        self.assertIn("<unresolved> (0xabc0)", text)
         self.assertNotIn("engine.guest.prx", text)
 
     def test_markdown_cells_escape_pipes_and_newlines(self):
@@ -73,6 +77,15 @@ class RuntimeCallGraphTests(unittest.TestCase):
         value["version"] = 2
         with self.assertRaisesRegex(ValueError, "unsupported graph format"):
             runtime_call_graph.load_graph(self.write(value))
+
+    def test_rejects_invalid_graph_shapes_and_import_names(self):
+        for value, message in (
+                ([], "expected a graph object"),
+                ({**document(), "edges": {}}, "expected an array"),
+                (document([edge(name="")]), "non-empty name"),
+                (document([{**edge(), "import": "bad"}]), "expected an object")):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, message):
+                runtime_call_graph.load_graph(self.write(value))
 
     def test_rejects_non_integer_version(self):
         value = document()
