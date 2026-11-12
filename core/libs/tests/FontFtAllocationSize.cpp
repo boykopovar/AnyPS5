@@ -1,4 +1,5 @@
 #include "prx/libSceFontFt/include/FontFtDriver.hpp"
+#include "prx/libSceFontFt/include/Api.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -23,5 +24,10 @@ int main() {
         Require(!FontFt::FitsGuestSize(boundary));
         Require(!FontFt::FitsGuestSize(boundary + 16));
     }
+    constexpr int invalidParam = static_cast<int>(0x80460002);
+    Require(sceFontFtInitAliases(nullptr) == invalidParam);
+    Require(sceFontFtTermAliases(nullptr) == invalidParam);
+    Require(sceFontFtSetAliasFont(nullptr, 1) == invalidParam);
+    Require(sceFontFtSetAliasPath(nullptr, nullptr) == invalidParam);
     return 0;
 }

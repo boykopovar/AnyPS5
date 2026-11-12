@@ -18,16 +18,21 @@ const Font::RendererSelection* APS5_VABI sceFontSelectRendererFt(int value) {
 }
 
 int APS5_VABI sceFontFtInitAliases(FontFtAliases** aliases) {
+    if (!aliases) return static_cast<int>(0x80460002);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceFontFtSetAliasFont(const char* alias, std::uint32_t fontId) {
+    (void)fontId;
+    if (!alias) return static_cast<int>(0x80460002);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceFontFtSetAliasPath(const char* alias, const char* path) {
+    (void)path;
+    if (!alias || !path) return static_cast<int>(0x80460002);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -89,6 +94,7 @@ int APS5_VABI sceFontFtSupportWinFonts(FontLibrary library) {
 }
 
 int APS5_VABI sceFontFtTermAliases(FontFtAliases** aliases) {
+    if (!aliases) return static_cast<int>(0x80460002);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
