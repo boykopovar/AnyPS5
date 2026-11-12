@@ -1,6 +1,7 @@
 #include "prx/libSceVoice/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -219,6 +220,8 @@ int main() {
     bool muted = false;
     Require(sceVoiceGetVolume(output, &volume) == 0 && volume == 0.25f);
     Require(sceVoiceGetMuteFlag(output, &muted) == 0 && muted);
+    errno = 71;
+    Require(sceVoiceGetMuteFlag(output, reinterpret_cast<bool*>(0x10)) == invalidArgument && errno == 71);
     std::uint8_t data[64]{};
     std::uint32_t size = sizeof(data);
     Require(sceVoiceReadFromOPort(output, nullptr, &size) == invalidArgument);
