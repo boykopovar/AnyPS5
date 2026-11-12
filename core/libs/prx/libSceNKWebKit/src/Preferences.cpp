@@ -132,6 +132,7 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"DefaultTextEncodingName", {Preferences::StringValue{u"ISO-8859-1"}, FeatureKind::None}},
         {u"DeprecateRSAESPKCSWebCryptoEnabled", {true, FeatureKind::Testable}},
         {u"DeprecationReportingEnabled", {false, FeatureKind::Testable}},
+        {u"DeferredCSSParserEnabled", {false, FeatureKind::Boolean}},
         {u"DeveloperExtrasEnabled", {false, FeatureKind::Boolean}},
         {u"DeviceHeight", {std::uint32_t{0}, FeatureKind::None}},
         {u"DeviceWidth", {std::uint32_t{0}, FeatureKind::None}},
@@ -142,6 +143,7 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"DisabledAdaptationsMetaTagEnabled", {false, FeatureKind::Boolean}},
         {u"DisallowSyncXHRDuringPageDismissalEnabled", {true, FeatureKind::Testable}},
         {u"DisplayListDrawingEnabled", {false, FeatureKind::Internal}},
+        {u"DoNotTrackEnabled", {false, FeatureKind::Boolean}},
         {u"EditableLinkBehavior", {std::uint32_t{4}, FeatureKind::None}},
         {u"EmbedElementEnabled", {true, FeatureKind::Testable}},
         {u"EnableInheritURIQueryComponent", {false, FeatureKind::Boolean}},
@@ -197,6 +199,7 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"InspectorWindowFrame", {Preferences::StringValue{u""}, FeatureKind::None}},
         {u"InteractionRegionInlinePadding", {double{4}, FeatureKind::None}},
         {u"InteractionRegionMinimumCornerRadius", {double{8}, FeatureKind::None}},
+        {u"InspectorAdditionsEnabled", {false, FeatureKind::Boolean}},
         {u"InteractiveFormValidationEnabled", {true, FeatureKind::Boolean}},
         {u"IntersectionObserverEnabled", {true, FeatureKind::Testable}},
         {u"InvisibleAutoplayNotPermitted", {false, FeatureKind::Boolean}},
@@ -633,6 +636,14 @@ bool APS5_VABI WKPreferencesGetDatabasesEnabled(const void* preferencesRef) {
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"DatabasesEnabled");
 }
 
+void APS5_VABI WKPreferencesSetDeferredCSSParserEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"DeferredCSSParserEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesGetDeferredCSSParserEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"DeferredCSSParserEnabled");
+}
+
 void APS5_VABI WKPreferencesSetFrameFlatteningEnabled(const void* preferencesRef, bool frameFlatteningEnabled) {
     PreferencesFromRef(preferencesRef, __func__)->Set(u"FrameFlatteningEnabled", frameFlatteningEnabled);
 }
@@ -889,6 +900,29 @@ bool APS5_VABI WKPreferencesGetTabsToLinks(const void* preferencesRef) {
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"TabsToLinks");
 }
 
+void APS5_VABI WKPreferencesSetDoNotTrackEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"DoNotTrackEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesGetDoNotTrackEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"DoNotTrackEnabled");
+}
+
+void APS5_VABI WKPreferencesSetLazyImageLoadingEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"LazyImageLoadingEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesGetLazyImageLoadingEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"LazyImageLoadingEnabled");
+}
+void APS5_VABI WKPreferencesSetTabToLinksEnabled(const void* preferencesRef, bool enabled) {
+    WKPreferencesSetTabsToLinks(preferencesRef, enabled);
+}
+
+bool APS5_VABI WKPreferencesGetTabToLinksEnabled(const void* preferencesRef) {
+    return WKPreferencesGetTabsToLinks(preferencesRef);
+}
+
 void APS5_VABI WKPreferencesSetDNSPrefetchingEnabled(const void* preferencesRef, bool enabled) {
     PreferencesFromRef(preferencesRef, __func__)->Set(u"DNSPrefetchingEnabled", enabled);
 }
@@ -1080,6 +1114,14 @@ bool APS5_VABI WKPreferencesGetInlineMediaPlaybackRequiresPlaysInlineAttribute(c
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"InlineMediaPlaybackRequiresPlaysInlineAttribute");
 }
 
+void APS5_VABI WKPreferencesSetInspectorAdditionsEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"InspectorAdditionsEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesGetInspectorAdditionsEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"InspectorAdditionsEnabled");
+}
+
 void APS5_VABI WKPreferencesSetBeaconAPIEnabled(const void* preferencesRef, bool flag) {
     PreferencesFromRef(preferencesRef, __func__)->Set(u"BeaconAPIEnabled", flag);
 }
@@ -1094,6 +1136,14 @@ void APS5_VABI WKPreferencesSetDirectoryUploadEnabled(const void* preferencesRef
 
 bool APS5_VABI WKPreferencesGetDirectoryUploadEnabled(const void* preferencesRef) {
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"DirectoryUploadEnabled");
+}
+
+void APS5_VABI WKPreferencesSetDialogElementEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"DialogElementEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesGetDialogElementEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"DialogElementEnabled");
 }
 
 void APS5_VABI WKPreferencesSetMediaControlsScaleWithPageZoom(const void* preferencesRef, bool flag) {

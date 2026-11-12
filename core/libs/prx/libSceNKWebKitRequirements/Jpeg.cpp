@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -64,6 +65,7 @@ static void HostEmitMessage(j_common_ptr cinfo, int msg_level) {
     if (gerr->emit_message) {
         gerr->emit_message(reinterpret_cast<NKWebKit::GuestCommonPtr>(b->guest_cinfo), msg_level);
     }
+    b->host_err.trace_level = gerr->trace_level;
 }
 
 static void HostOutputMessage(j_common_ptr cinfo) {
@@ -182,9 +184,12 @@ static void APS5_VABI DefaultGuestErrorExit_nid_no_patch(NKWebKit::GuestCommonPt
 }
 
 static void APS5_VABI DefaultGuestEmitMessage_nid_no_patch(NKWebKit::GuestCommonPtr cinfo, int32_t msg_level) {
-    if (cinfo && cinfo->err && msg_level < 0) {
-        cinfo->err->num_warnings++;
-    }
+    if (!cinfo || !cinfo->err) return;
+    auto* error = cinfo->err;
+    const bool warning = msg_level < 0;
+    const bool output = warning ? error->num_warnings == 0 || error->trace_level >= 3 : error->trace_level >= msg_level;
+    if (output && error->output_message) error->output_message(cinfo);
+    if (warning) ++error->num_warnings;
 }
 
 static void APS5_VABI DefaultGuestOutputMessage_nid_no_patch(NKWebKit::GuestCommonPtr cinfo) {
@@ -192,6 +197,7 @@ static void APS5_VABI DefaultGuestOutputMessage_nid_no_patch(NKWebKit::GuestComm
     char buffer[200];
     if (cinfo->err->format_message) {
         cinfo->err->format_message(cinfo, buffer);
+        std::fprintf(stderr, "%s\n", buffer);
     }
 }
 
@@ -202,10 +208,15 @@ static void APS5_VABI DefaultGuestFormatMessage_nid_no_patch(NKWebKit::GuestComm
     jpeg_std_error(&dummy_err);
     dummy.err = &dummy_err;
     dummy_err.msg_code = cinfo->err->msg_code;
-    for (int i = 0; i < 8; ++i) {
-        dummy_err.msg_parm.i[i] = cinfo->err->msg_parm.i[i];
-    }
+    dummy_err.jpeg_message_table = cinfo->err->jpeg_message_table;
+    dummy_err.last_jpeg_message = cinfo->err->last_jpeg_message;
+    dummy_err.addon_message_table = cinfo->err->addon_message_table;
+    dummy_err.first_addon_message = cinfo->err->first_addon_message;
+    dummy_err.last_addon_message = cinfo->err->last_addon_message;
+    static_assert(sizeof(dummy_err.msg_parm) == sizeof(cinfo->err->msg_parm));
+    std::memcpy(&dummy_err.msg_parm, &cinfo->err->msg_parm, sizeof(dummy_err.msg_parm));
     dummy_err.format_message(reinterpret_cast<j_common_ptr>(&dummy), buffer);
+    std::memcpy(&cinfo->err->msg_parm, &dummy_err.msg_parm, sizeof(dummy_err.msg_parm));
 }
 
 static void APS5_VABI DefaultGuestResetErrorMgr_nid_no_patch(NKWebKit::GuestCommonPtr cinfo) {
@@ -228,6 +239,7 @@ static JpegBinding* FindBinding(NKWebKit::GuestJpegDecompress* cinfo) {
 static void SyncGuestToHost(JpegBinding* b) {
     auto* g = b->guest_cinfo;
     auto* h = &b->host_cinfo;
+    if (g->err) b->host_err.trace_level = g->err->trace_level;
     if (g->src) {
         b->host_src.next_input_byte = g->src->next_input_byte;
         b->host_src.bytes_in_buffer = static_cast<size_t>(g->src->bytes_in_buffer);
@@ -248,6 +260,7 @@ static void SyncGuestToHost(JpegBinding* b) {
     h->enable_1pass_quant = g->enable_1pass_quant ? TRUE : FALSE;
     h->enable_external_quant = g->enable_external_quant ? TRUE : FALSE;
     h->enable_2pass_quant = g->enable_2pass_quant ? TRUE : FALSE;
+    h->actual_number_of_colors = g->actual_number_of_colors;
     h->colormap = reinterpret_cast<JSAMPARRAY>(g->colormap);
 }
 
