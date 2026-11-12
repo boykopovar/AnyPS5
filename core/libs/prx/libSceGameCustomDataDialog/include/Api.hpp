@@ -11,7 +11,7 @@ int APS5_VABI sceGameCustomDataDialogGetStatus(void);
 int APS5_VABI sceGameCustomDataDialogGetResultA(void* result);
 int APS5_VABI sceGameCustomDataDialogClose(void);
 int APS5_VABI sceGameCustomDataDialogTerminate(void);
-int APS5_VABI sceGameCustomDataDialogGetResult();
-int APS5_VABI sceGameCustomDataDialogOpen();
+int APS5_VABI sceGameCustomDataDialogGetResult(void* result);
+int APS5_VABI sceGameCustomDataDialogOpen(const void* param);
 
 }
