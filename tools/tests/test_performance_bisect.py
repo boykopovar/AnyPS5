@@ -609,7 +609,9 @@ class FocusedInputEdgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             for value in (0, 100):
                 with self.subTest(value=value):
-                    path = self.recipe_path(Path(directory), regression_pct=value)
+                    case = Path(directory) / str(value)
+                    case.mkdir()
+                    path = self.recipe_path(case, regression_pct=value)
                     with self.assertRaisesRegex(ValueError, "between 0 and 100"):
                         performance_bisect.load_recipe(path)
 
@@ -618,7 +620,9 @@ class FocusedInputEdgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             for value in (0, 100):
                 with self.subTest(value=value):
-                    path = self.recipe_path(Path(directory), max_spread_pct=value)
+                    case = Path(directory) / str(value)
+                    case.mkdir()
+                    path = self.recipe_path(case, max_spread_pct=value)
                     with self.assertRaisesRegex(ValueError, "between 0 and 100"):
                         performance_bisect.load_recipe(path)
 
@@ -689,7 +693,6 @@ class FocusedInputEdgeTests(unittest.TestCase):
             subprocess.run(["git", "-C", str(repo), "commit", "-qm", "test: base"], check=True)
             good = performance_bisect.git(repo, "rev-parse", "HEAD")
             performance_bisect.git(repo, "switch", "--orphan", "unrelated")
-            performance_bisect.git(repo, "rm", "-rf", ".")
             (repo / "other").write_text("other", encoding="utf-8")
             subprocess.run(["git", "-C", str(repo), "add", "other"], check=True)
             subprocess.run(["git", "-C", str(repo), "commit", "-qm", "test: unrelated"], check=True)
@@ -765,4 +768,3 @@ class FocusedInputEdgeTests(unittest.TestCase):
                     performance_bisect.bisect(directory, "good", "bad", {}, output)
             history.assert_not_called()
             self.assertEqual(output.read_text(encoding="utf-8"), "owned")
-
