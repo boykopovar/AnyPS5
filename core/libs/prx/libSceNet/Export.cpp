@@ -3646,7 +3646,10 @@ const char* APS5_VABI sceNetInetNtopWithScopeId(std::int32_t family, const void*
         set_errno(NET_ENOSPC);
         return nullptr;
     }
-    std::memcpy(text, scoped.c_str(), scoped.size() + 1);
+    if (!GuestCopyOut_nid_no_patch(text, scoped.c_str(), scoped.size() + 1)) {
+        set_errno(NET_EFAULT);
+        return nullptr;
+    }
     return text;
 }
 
@@ -3667,8 +3670,8 @@ int APS5_VABI sceNetInetPtonWithScopeId(std::int32_t family, const char* text, v
     const int converted = sceNetInetPton(family, unscoped.c_str(), parsed.data());
     if (converted != 1) return converted;
     if (address == nullptr) throw std::invalid_argument("sceNetInetPtonWithScopeId: null address");
-    std::memcpy(address, parsed.data(), parsed.size());
-    if (scopeId != nullptr) *scopeId = zone;
+    if (!GuestCopyOut_nid_no_patch(address, parsed.data(), parsed.size()) ||
+        (scopeId != nullptr && !GuestCopyOut_nid_no_patch(scopeId, &zone, sizeof(zone)))) return fail(NET_EFAULT);
     return 1;
 }
 

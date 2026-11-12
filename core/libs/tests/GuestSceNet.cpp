@@ -470,6 +470,9 @@ static void CheckScopeIdText() {
     Require(sceNetInetPtonWithScopeId(28, "fe80::1%lo0", address.data(), nullptr) == 0 && address[0] == 0xa5 && address[15] == 0xa5);
     Require(Failed(sceNetInetPtonWithScopeId(2, "fe80::1", address.data(), &scope), 47));
     Require(Failed(sceNetInetPtonWithScopeId(28, nullptr, address.data(), &scope), 22));
+    Require(Failed(sceNetInetPtonWithScopeId(28, "fe80::1", reinterpret_cast<void*>(0x10), &scope), 14));
+    Require(Failed(sceNetInetPtonWithScopeId(28, "fe80::1", address.data(), reinterpret_cast<std::uint32_t*>(0x10)), 14));
+    Require(sceNetInetNtopWithScopeId(28, plain.data(), reinterpret_cast<char*>(0x10), text.size(), 0) == nullptr && *sceNetErrnoLoc() == 14);
     bool threw = false;
     try {
         sceNetInetPtonWithScopeId(28, "fe80::1", nullptr, &scope);
