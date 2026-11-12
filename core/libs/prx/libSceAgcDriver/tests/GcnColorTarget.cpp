@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -46,6 +47,12 @@ constexpr std::uint32_t BlendClamp = 1u << 15u;
 constexpr std::uint32_t FastClear = 1u << 13u;
 constexpr std::uint32_t Compression = 1u << 14u;
 constexpr std::uint32_t Thin1D = 13u;
+constexpr std::uint32_t Display2D = 10u;
+constexpr std::uint32_t Thin2D = 14u;
+constexpr std::uint32_t TiledWidth = 128;
+constexpr std::uint32_t TiledHeight = 64;
+constexpr std::size_t TiledSliceBytes = TiledWidth * TiledHeight * 4u;
+constexpr std::size_t SliceMemoryBytes = 4u * TiledSliceBytes;
 
 constexpr std::size_t ColorBytes = Width * Height * 4u;
 constexpr std::size_t CmaskBytes = 512u;
@@ -131,6 +138,40 @@ std::string FmaskDecompress(std::uint32_t visibleHeight) {
     });
 }
 
+AgcDriver::Graphics::ColorTarget DecodeSlice(std::uint64_t base, std::uint32_t tileIndex, std::uint32_t slice, std::uint32_t samples) {
+    AgcDriver::Registers cx;
+    cx[0x318] = static_cast<std::uint32_t>(base >> 8u);
+    cx[0x319] = TiledWidth / 8u - 1u;
+    cx[0x31a] = TiledWidth * TiledHeight / 64u - 1u;
+    cx[0x31b] = slice | (slice << 13u);
+    cx[0x31c] = (Format8888 << 2u) | BlendClamp;
+    const auto log2Samples = static_cast<std::uint32_t>(std::countr_zero(samples));
+    cx[0x31d] = tileIndex | (log2Samples << 12u) | (log2Samples << 15u);
+    return AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+}
+
+void LaterSlicesDecode() {
+    using AgcDriver::Graphics::GcnLayerBankXor;
+    using AgcDriver::Graphics::GcnTiling;
+    using AgcDriver::Graphics::TextureTileMode;
+    static std::byte* const sliceMemory = LowMemory(SliceMemoryBytes);
+    const auto base = AddressOf(sliceMemory);
+    if (sliceMemory == nullptr || base + SliceMemoryBytes > (std::uint64_t{1} << 40u)) {
+        Check(false, "cannot allocate array slice test memory below 1 TiB");
+        return;
+    }
+    const auto third = DecodeSlice(base, Thin2D, 3u, 1u);
+    Check(third.surfaceAddress == base + 3u * TiledSliceBytes && third.address == third.surfaceAddress && third.bytes == TiledSliceBytes, "slice 3 of a 2D-tiled GCN array is not at the array base plus three slices");
+    Check(third.pipeBankXor == GcnLayerBankXor(GcnTiling(TextureTileMode::kGcnThin2D, 4u), 3u) && third.pipeBankXor == (5u << 11u), "slice 3 of a 2D-tiled GCN array does not take the bank rotation the texture path gives array layer 3, (16 / 2 - 1) * 3 modulo 16 on the bank bits");
+    const auto display = DecodeSlice(base, Display2D, 1u, 1u);
+    Check(display.surfaceAddress == base + TiledSliceBytes && display.pipeBankXor == GcnLayerBankXor(GcnTiling(TextureTileMode::kGcnDisplay2D, 4u), 1u) && display.pipeBankXor == (7u << 11u), "slice 1 of a display 2D-tiled GCN array does not take the bank rotation of array layer 1");
+    Check(DecodeSlice(base, Thin2D, 0u, 1u).pipeBankXor == 0u, "slice 0 of a 2D-tiled GCN array has a bank XOR");
+    const auto micro = DecodeSlice(base, Thin1D, 2u, 1u);
+    Check(micro.surfaceAddress == base + 2u * TiledSliceBytes && micro.pipeBankXor == 0u, "slice 2 of a 1D-tiled GCN array is not at the base plus two slices without a bank XOR");
+    Check(DecodeSlice(base, Thin2D, 0u, 4u).samples == 4u, "slice 0 of a 2D-tiled 4x GCN array did not decode");
+    Check(Failure([base] { DecodeSlice(base, Thin2D, 1u, 4u); }).find("multisampled color views of a later slice of a 2D-tiled array") != std::string::npos, "slice 1 of a 2D-tiled 4x GCN array was accepted");
+}
+
 void PaddedTargetsAreCovered() {
     Check(FmaskDecompress(Height).empty(), "an FMASK decompress over a whole 4x GCN target was refused");
     const auto padded = FmaskDecompress(Height - 4u);
@@ -151,6 +192,7 @@ int main() {
         cmaskMemory = colorMemory + ColorBytes;
         MultisampledTargetsDecode();
         PaddedTargetsAreCovered();
+        LaterSlicesDecode();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
