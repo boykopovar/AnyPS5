@@ -2,6 +2,7 @@
 #include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -56,14 +57,26 @@ void TestUserAttributes() {
         std::uint32_t value = 0xFFFFFFFFu;
         std::uint32_t after = 0x87654321u;
     } context, port;
+    auto* const invalidOutput = reinterpret_cast<AudioOut2UserHandle*>(0x10);
+    auto* const invalidAttribute = reinterpret_cast<std::uint32_t*>(0x10);
+    errno = 73;
+    Require(sceAudioOut2UserCreate(1, invalidOutput) == static_cast<int>(0x80260502));
+    Require(sceAudioOut2UserCreateEx(1, nullptr, invalidOutput) == static_cast<int>(0x80260502));
+    Require(errno == 73);
     AudioOut2UserHandle first = 0;
     AudioOut2UserHandle second = 0;
-    Require(sceAudioOut2UserCreate(1, &first) == 0);
+    Require(sceAudioOut2UserCreate(1, &first) == 0 && first == 1);
     Require(sceAudioOut2UserCreate(2, &second) == 0 && second != first);
     Require(sceAudioOut2UserGetSupportedAttributes(first, &context.value, &port.value) == 0);
     Require(context.value == 0 && port.value == ((1u << attributeData) | (1u << attributeVolume)));
     Require(context.before == 0x12345678u && context.after == 0x87654321u);
     Require(port.before == 0x12345678u && port.after == 0x87654321u);
+    context.value = port.value = 0xFFFFFFFFu;
+    errno = 73;
+    Require(sceAudioOut2UserGetSupportedAttributes(first, invalidAttribute, &port.value) == static_cast<int>(0x80268001));
+    Require(port.value == 0xFFFFFFFFu && errno == 73);
+    Require(sceAudioOut2UserGetSupportedAttributes(first, &context.value, invalidAttribute) == static_cast<int>(0x80268001));
+    Require(context.value == 0 && errno == 73);
     const auto rejects = [&](AudioOut2UserHandle handle, bool nullContext, bool nullPort) {
         context.value = port.value = 0xFFFFFFFFu;
         bool threw = false;

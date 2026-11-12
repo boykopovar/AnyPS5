@@ -49,7 +49,9 @@ int main() {
     Require(sceNpWebApi2AddWebTraceTag(request, "trace-tag-1") == 0);
     Require(sceNpWebApi2AddWebTraceTag(request, nullptr) == static_cast<int>(0x80553402));
     Require(sceNpWebApi2DeleteRequest(request) == 0);
+    Require(sceNpWebApi2Terminate(-1) == invalidContext);
     Require(sceNpWebApi2Terminate(context) == 0);
+    Require(sceNpWebApi2Terminate(context) == invalidContext);
     Require(sceNpWebApi2GetMemoryPoolStats(context, &stats) == invalidContext);
     Require(sceNpWebApi2PushEventAbortHandle(context, handle) == invalidContext);
     Require(sceNpWebApi2PushEventSetHandleTimeout(context, handle, 30000) == invalidContext);
@@ -109,8 +111,13 @@ int main() {
     const int nextFilter = sceNpWebApi2PushEventCreateFilter(pushLibrary, pushHandle, "sessionManager", 0, nullptr, 0);
     Require(pushHandle > 0 && filter > 0 && nextFilter > 0 && nextFilter != filter);
     int userArg = 0;
-    const int callback = sceNpWebApi2PushEventRegisterCallback(pushUser, filter, nullptr, &userArg);
-    const int contextCallback = sceNpWebApi2PushEventRegisterPushContextCallback(pushUser, nextFilter, nullptr, &userArg);
+    for (const int userContext : {pushUser, 0, 1, -1, 0x7fffffff}) {
+        Require(sceNpWebApi2PushEventRegisterCallback(userContext, 5, nullptr, &userArg) == invalidArgument);
+        Require(sceNpWebApi2PushEventRegisterPushContextCallback(userContext, 5, nullptr, &userArg) == invalidArgument);
+    }
+    void* const nonNullCallback = &userArg;
+    const int callback = sceNpWebApi2PushEventRegisterCallback(pushUser, filter, nonNullCallback, &userArg);
+    const int contextCallback = sceNpWebApi2PushEventRegisterPushContextCallback(pushUser, nextFilter, nonNullCallback, &userArg);
     Require(callback > 0 && contextCallback > 0 && contextCallback != callback);
     NpWebApi2PushContextId pushContext{};
     Require(sceNpWebApi2PushEventCreatePushContext(pushUser, &pushContext) == unavailable);
@@ -122,5 +129,51 @@ int main() {
     Require(sceNpWebApi2PushEventDeleteHandle(pushLibrary, pushHandle) == 0);
     Require(sceNpWebApi2DeleteUserContext(otherUser) == 0 && sceNpWebApi2DeleteUserContext(pushUser) == 0);
     Require(sceNpWebApi2Terminate(pushLibrary) == 0);
+
+    const int unknownUser = 424242;
+    NpWebApi2MemoryPoolStats untouched{};
+    std::memset(&untouched, 0xb7, sizeof(untouched));
+    Require(sceNpWebApi2GetMemoryPoolStats(-1, &untouched) == invalidContext);
+    const auto* untouchedBytes = reinterpret_cast<const unsigned char*>(&untouched);
+    for (std::size_t index = 0; index < sizeof(untouched); ++index) Require(untouchedBytes[index] == 0xb7);
+    Require(sceNpWebApi2DeleteUserContext(-1) == 0 && sceNpWebApi2DeleteUserContext(unknownUser) == 0);
+    Require(sceNpWebApi2PushEventDeleteFilter(-1, -1) == 0 && sceNpWebApi2PushEventDeleteFilter(unknownUser, unknownUser + 7) == 0);
+    Require(sceNpWebApi2PushEventUnregisterCallback(-1, -1) == 0 && sceNpWebApi2PushEventUnregisterCallback(unknownUser, unknownUser + 7) == 0);
+    Require(sceNpWebApi2PushEventUnregisterPushContextCallback(-1, -1) == 0);
+    Require(sceNpWebApi2PushEventUnregisterPushContextCallback(otherUser, callback) == 0 && sceNpWebApi2PushEventUnregisterPushContextCallback(pushUser, contextCallback) == 0);
+    NpWebApi2PushContextId unknownPush{};
+    std::memset(&unknownPush, 0xb7, sizeof(unknownPush));
+    Require(sceNpWebApi2PushEventDeletePushContext(-1, &unknownPush) == 0 && sceNpWebApi2PushEventDeletePushContext(unknownUser, &unknownPush) == 0);
+    int probeUserArg = 0;
+    void* const probeCallback = &probeUserArg;
+    const int unknownCallback = sceNpWebApi2PushEventRegisterCallback(unknownUser, -1, probeCallback, &probeUserArg);
+    Require(unknownCallback > 0 && unknownCallback != callback && unknownCallback != contextCallback);
+    const int unknownContextCallback = sceNpWebApi2PushEventRegisterPushContextCallback(-1, -424243, probeCallback, &probeUserArg);
+    Require(unknownContextCallback > 0 && unknownContextCallback != unknownCallback && unknownContextCallback != callback && unknownContextCallback != contextCallback);
+    const std::int64_t farRequest = static_cast<std::int64_t>(0x7fffffffffffffLL);
+    Require(sceNpWebApi2AbortRequest(-1) == 0 && sceNpWebApi2AbortRequest(farRequest) == 0);
+    Require(sceNpWebApi2AddHttpRequestHeader(-1, "Accept", "*/*") == 0 && sceNpWebApi2AddHttpRequestHeader(farRequest, "Accept", "*/*") == 0);
+    Require(sceNpWebApi2SetRequestTimeout(-1, 5) == 0 && sceNpWebApi2SetRequestTimeout(farRequest, UINT32_MAX) == 0);
+    Require(sceNpWebApi2DeleteRequest(-1) == 0 && sceNpWebApi2DeleteRequest(farRequest) == 0 && sceNpWebApi2DeleteRequest(sent) == 0);
+    const int probeUser = sceNpWebApi2CreateUserContext(-1, -1);
+    Require(probeUser > 0 && probeUser != unknownUser);
+    std::int64_t realRequest = 0;
+    Require(sceNpWebApi2CreateRequest(probeUser, "sessionManager", "/v1/sessions", "GET", nullptr, &realRequest) == 0 && realRequest > 0);
+    char headerValue[8];
+    std::memset(headerValue, 0xb7, sizeof(headerValue));
+    std::size_t headerLength = 12345;
+    for (const std::int64_t probeId : {static_cast<std::int64_t>(-1), farRequest, realRequest}) {
+        Require(sceNpWebApi2GetHttpResponseHeaderValue(probeId, "Accept", headerValue, sizeof(headerValue)) == unavailable);
+        const auto* valueBytes = reinterpret_cast<const unsigned char*>(headerValue);
+        for (std::size_t index = 0; index < sizeof(headerValue); ++index) Require(valueBytes[index] == 0xb7);
+        Require(sceNpWebApi2GetHttpResponseHeaderValueLength(probeId, "Accept", &headerLength) == unavailable && headerLength == 12345);
+    }
+    char readBuffer[12];
+    std::memset(readBuffer, 0xb7, sizeof(readBuffer));
+    for (const std::int64_t probeId : {static_cast<std::int64_t>(-1), farRequest, realRequest}) {
+        Require(sceNpWebApi2ReadData(probeId, readBuffer, sizeof(readBuffer)) == unavailable);
+        const auto* dataBytes = reinterpret_cast<const unsigned char*>(readBuffer);
+        for (std::size_t index = 0; index < sizeof(readBuffer); ++index) Require(dataBytes[index] == 0xb7);
+    }
     return 0;
 }

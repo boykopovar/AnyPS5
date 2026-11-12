@@ -1,4 +1,4 @@
-[English](../../README.md) | **Português (Brasil)** | [Español](README.es.md) | [Italiano](README.it.md) | [简体中文](README.zh-CN.md) | [Русский](README.ru.md)
+[English](../../README.md) | **Português (Brasil)** | [Español](README.es.md) | [Català](README.ca.md) | [Italiano](README.it.md) | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | [Bahasa Indonesia](README.id.md) | [Polski](README.pl.md) | [日本語](README.ja.md)
 
 # Sobre
 
@@ -12,7 +12,7 @@ O build somente do relinker roda no macOS, incluindo Apple silicon.
 
 Inclui um [relinker](../../core/relinker) que converte o executável para o formato nativo do sistema de destino e implementações das [bibliotecas prx do sistema](../../core/libs/prx) adequadas para linkagem dinâmica. Sem emulação nem processo de runtime separado.
 
-[**Discord**](https://discord.gg/BHFztBPUe), [Uso](USAGE.md), [Instruções de build](../dev/BUILD.md), [Arquitetura](../dev/ARCHITECTURE.md), [Dívida técnica do projeto](../dev/TechnicalDebt.md), [convenções de estilo de código](../dev/CONVENTIONS.md), [como contribuir](../../CONTRIBUTING.md)
+[**Discord**](https://discord.gg/x9naWVzC6A), [Uso](USAGE.md), [Instruções de build](../dev/BUILD.md), [Arquitetura](../dev/ARCHITECTURE.md), [Dívida técnica do projeto](../dev/TechnicalDebt.md), [convenções de estilo de código](../dev/CONVENTIONS.md), [como contribuir](../../CONTRIBUTING.md)
 
 ## Status
 

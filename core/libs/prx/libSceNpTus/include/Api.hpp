@@ -17,7 +17,7 @@ int APS5_VABI sceNpTusAddAndGetVariableAAsync(int reqId, std::uint64_t targetAcc
 int APS5_VABI sceNpTusSetThreadParam(void);
 int APS5_VABI sceNpTssCreateNpTitleCtx(std::uint32_t serviceLabel, const NpId* npId);
 int APS5_VABI sceNpTssCreateNpTitleCtxA(std::uint32_t serviceLabel, int userId);
-int APS5_VABI sceNpTusCreateTitleCtx(void);
+int APS5_VABI sceNpTusCreateTitleCtx(const void* titleId, const void* titleSecret, const void* selfNpId);
 int APS5_VABI sceNpTusSetTimeout(void);
 int APS5_VABI sceNpTusChangeModeForOtherSaveDataOwners(void);
 int APS5_VABI sceNpTusWaitAsync(int reqId, int* result);
