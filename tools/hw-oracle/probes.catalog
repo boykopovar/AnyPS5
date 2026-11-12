@@ -702,6 +702,45 @@
           ]
         }
       ]
+    },
+    {
+      "id": "v-fma-f32-round-up",
+      "instruction": "v_fma_f32",
+      "description": "Positive and negative fused multiply-add halfway results rounded toward positive infinity.",
+      "body": "v_fma_f32 v10, v4, v5, v6",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 1,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "positive-halfway-result",
+          "input": [
+            "0x3f800001",
+            "0x3f800001",
+            "0xbf800000",
+            0
+          ]
+        },
+        {
+          "name": "negative-halfway-result",
+          "input": [
+            "0xbf800001",
+            "0x3f800001",
+            "0x3f800000",
+            0
+          ]
+        }
+      ]
     }
   ]
 }
