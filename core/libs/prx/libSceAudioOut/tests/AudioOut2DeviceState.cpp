@@ -57,6 +57,9 @@ AudioOut2PortState StateOfPort(AudioOut2ContextHandle context, std::uint32_t for
     AudioOut2PortState state;
     std::memset(&state, 0xAB, sizeof(state));
     Require(sceAudioOut2PortGetState(port, &state) == 0);
+    errno = 73;
+    Require(sceAudioOut2PortGetState(port, reinterpret_cast<AudioOut2PortState*>(0x10)) == errorInvalidArgument);
+    Require(errno == 73);
     Require(sceAudioOut2PortDestroy(port) == 0);
     return state;
 }
