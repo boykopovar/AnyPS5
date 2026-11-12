@@ -2,7 +2,7 @@
 
 ### Functional
 
-- [sceImeOpen and sceImeSetCaret](../../../core/libs/prx/libSceIme/Export.cpp) (libSceIme) - validate guest parameter, extended parameter and caret pointers via GuestCopyIn_nid_no_patch preserving host errno, returning `0x80BC0031` (`ErrorInvalidAddress`) on unmapped or unreadable guest memory as host-safety fallbacks. Console fault behaviour on bad memory is unmeasured.
+- [sceImeOpen and sceImeSetCaret](../../../core/libs/prx/libSceIme/Export.cpp) (libSceIme) - validate guest parameter, extended parameter, input text buffer and caret pointers via GuestCopyIn_nid_no_patch preserving host errno, returning `0x80BC0031` (`ErrorInvalidAddress`) on unmapped or unreadable guest memory as host-safety fallbacks. Console fault behaviour on bad memory is unmeasured.
 
 ### Additional callable exports
 
