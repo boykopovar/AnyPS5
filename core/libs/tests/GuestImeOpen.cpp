@@ -3,6 +3,7 @@
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -217,6 +218,9 @@ void RequireCaretSteps(const std::vector<Recorded>& events, uint32_t direction, 
 void CheckValidation() {
     Buffers buffers;
     Require(sceImeOpen_nid_postfix(nullptr, nullptr) == InvalidAddress, "null param");
+    errno = 71;
+    Require(sceImeOpen_nid_postfix(reinterpret_cast<const Param*>(0x10), nullptr) == InvalidAddress, "unmapped param");
+    Require(errno == 71, "preserve errno on unmapped param");
     Require(sceImeUpdate(nullptr) == NotOpened, "null handler with nothing open");
     auto expect = [&](auto change, int error, const char* message) {
         Param param = MakeParam(buffers, 16);
@@ -350,6 +354,9 @@ void CheckEditing() {
     Caret caret{};
     caret.index = 6;
     Require(sceImeSetCaret(nullptr) == InvalidAddress, "null caret");
+    errno = 71;
+    Require(sceImeSetCaret(reinterpret_cast<const Caret*>(0x10)) == InvalidAddress, "unmapped caret");
+    Require(errno == 71, "preserve errno on unmapped caret");
     Require(sceImeSetCaret(&caret) == InvalidParam, "caret past the text");
     caret.index = 1;
     Require(sceImeSetCaret(&caret) == 0, "set caret");
