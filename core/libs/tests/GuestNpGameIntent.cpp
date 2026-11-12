@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -35,8 +36,13 @@ int main() {
     constexpr int kLauncherInvalidArgument = -2141898236;
     constexpr int kLauncherNotInitialized = -2141898238;
 
+    Require(sceNpGameIntentInitialize(nullptr) == kInvalidArgument, "initialization with a null parameter must report invalid argument");
     Require(Throws<std::invalid_argument>([] { sceNpGameIntentInitParamInit(nullptr); }),
             "null param init did not throw");
+    errno = 71;
+    Require(Throws<std::invalid_argument>([] { sceNpGameIntentInitParamInit(reinterpret_cast<NpGameIntentInitParam*>(0x10)); }),
+            "unmapped param init did not throw");
+    Require(errno == 71, "errno preserved on unmapped param init");
 
     NpGameIntentInitParam initParam{};
     Require(sceNpGameIntentInitParamInit(&initParam) == 0, "param init failed");
@@ -44,6 +50,10 @@ int main() {
 
     Require(Throws<std::invalid_argument>([] { sceNpGameIntentInfoInit(nullptr); }),
             "null info init did not throw");
+    errno = 71;
+    Require(Throws<std::invalid_argument>([] { sceNpGameIntentInfoInit(reinterpret_cast<NpGameIntentInfo*>(0x10)); }),
+            "unmapped info init did not throw");
+    Require(errno == 71, "errno preserved on unmapped info init");
 
     NpGameIntentInfo info{};
     Require(sceNpGameIntentInfoInit(&info) == 0, "info init failed");
@@ -57,11 +67,26 @@ int main() {
             "uninitialized get property string with valid data must report not-initialized");
     Require(sceNpGameIntentReceiveIntent(nullptr) == kNotInitialized,
             "uninitialized receive intent with null pointer must report not-initialized");
+    errno = 71;
+    Require(sceNpGameIntentReceiveIntent(reinterpret_cast<NpGameIntentInfo*>(0x10)) == kNotInitialized,
+            "uninitialized receive intent with unmapped pointer must report not-initialized");
+    Require(errno == 71, "errno preserved on unmapped receive intent before init");
     Require(sceNpGameIntentReceiveIntent(&info) == kNotInitialized,
             "uninitialized receive intent with valid pointer must report not-initialized");
+    Require(sceNpGameIntentGetUdsNpComId() == kNotInitialized,
+            "uninitialized get uds np com id must report not-initialized");
+    Require(sceNpGameIntentLaunchApp() == kNotInitialized,
+            "uninitialized launch app must report not-initialized");
+    Require(sceNpGameIntentLaunchApp2() == kNotInitialized,
+            "uninitialized launch app 2 must report not-initialized");
+    Require(sceNpGameIntentNotifyAppLaunched() == kNotInitialized,
+            "uninitialized notify app launched must report not-initialized");
 
     Require(sceNpGameIntentInitialize(&initParam) == 0, "initialization failed");
     Require(sceNpGameIntentReceiveIntent(nullptr) == kInvalidArgument, "null receive intent did not fail");
+    errno = 71;
+    Require(sceNpGameIntentReceiveIntent(reinterpret_cast<NpGameIntentInfo*>(0x10)) == kInvalidArgument, "unmapped receive intent did not fail");
+    Require(errno == 71, "errno preserved on unmapped receive intent after init");
     Require(sceNpGameIntentReceiveIntent(&info) == kInvalidArgument, "mismatched struct size must report invalid argument");
     info.size = 0;
     Require(sceNpGameIntentReceiveIntent(&info) == kInvalidArgument, "zero size must report invalid argument");
@@ -115,6 +140,18 @@ int main() {
             "post-terminate get property value must report not-initialized");
     Require(sceNpGameIntentReceiveIntent(&info) == kNotInitialized,
             "post-terminate receive intent must report not-initialized");
+    errno = 71;
+    Require(sceNpGameIntentReceiveIntent(reinterpret_cast<NpGameIntentInfo*>(0x10)) == kNotInitialized,
+            "post-terminate receive intent with unmapped pointer must report not-initialized");
+    Require(errno == 71, "errno preserved on unmapped receive intent after terminate");
+    Require(sceNpGameIntentGetUdsNpComId() == kNotInitialized,
+            "post-terminate get uds np com id must report not-initialized");
+    Require(sceNpGameIntentLaunchApp() == kNotInitialized,
+            "post-terminate launch app must report not-initialized");
+    Require(sceNpGameIntentLaunchApp2() == kNotInitialized,
+            "post-terminate launch app 2 must report not-initialized");
+    Require(sceNpGameIntentNotifyAppLaunched() == kNotInitialized,
+            "post-terminate notify app launched must report not-initialized");
 
     unsigned char appLauncherParam[0x28]{};
     *reinterpret_cast<std::uint64_t*>(appLauncherParam) = 0x28;
@@ -125,9 +162,22 @@ int main() {
             "null launch argument must be invalid");
     Require(sceNpAppLauncherLaunchApp(0, "", nullptr) == kLauncherInvalidArgument,
             "empty launch argument must be invalid");
+    errno = 71;
+    Require(sceNpAppLauncherLaunchApp(0, reinterpret_cast<const char*>(0x10), nullptr) == kLauncherInvalidArgument,
+            "unreadable required launch string must be invalid");
+    Require(sceNpAppLauncherLaunchApp(0, "app", reinterpret_cast<const char*>(0x10)) == kLauncherInvalidArgument,
+            "unreadable optional launch string must be invalid");
+    Require(errno == 71, "invalid launch string changed host errno");
     std::vector<char> unterminated(0x2001, 'x');
     Require(sceNpAppLauncherLaunchApp(0, "app", unterminated.data()) == kLauncherInvalidArgument,
             "non-terminated 0x2001-byte argument must be invalid");
+    unterminated.back() = '\0';
+    Require(sceNpAppLauncherLaunchApp(0, "app", unterminated.data()) == kLauncherNotInitialized,
+            "0x2000-byte optional launch string must be accepted");
+    Require(sceNpAppLauncherLaunchApp(0, "app", "optional") == kLauncherNotInitialized,
+            "terminated optional launch string must pass argument validation");
+    Require(sceNpAppLauncherLaunchApp(0, "app", nullptr) == kLauncherNotInitialized,
+            "launch without a connected service must report not-initialized");
     Require(sceNpAppLauncherTerminate() == 0, "app launcher terminate failed");
     Require(sceNpAppLauncherLaunchApp(0, "app", nullptr) == kLauncherNotInitialized,
             "launch after terminate must report not-initialized");

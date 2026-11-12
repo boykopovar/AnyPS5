@@ -15,6 +15,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 #ifndef _WIN32
 #include <pthread.h>
 #endif
@@ -48,6 +49,8 @@ struct PthreadMutexPrivate {
     int _count;
     std::atomic<int> _spinloops = 0;
     std::atomic<int> _yieldloops = 0;
+    int _protocol = 0;
+    std::atomic<int> _ceiling{0};
     std::string _name;
     bool _named = false;
 
@@ -131,6 +134,7 @@ struct PthreadPrivate {
     std::int64_t tid = nextThreadId.fetch_add(1, std::memory_order_relaxed);
 #ifdef _WIN32
     void* nativeHandle = nullptr;
+    bool hostAdopted = false;
 #else
     pthread_t hostThread{};
 #endif
@@ -152,7 +156,11 @@ struct PthreadPrivate {
     int cpuClockThread = 0;
     std::atomic<bool> initialThread{false};
 #ifndef _WIN32
+#ifdef __APPLE__
+    unsigned hostMachThread = 0;
+#else
     clockid_t hostCpuClock{};
+#endif
     bool hostCpuClockBound = false;
     void* guestStack = nullptr;
     std::size_t guestStackBytes = 0;
@@ -199,6 +207,11 @@ extern "C" void DeliverPendingException_nid_no_patch(PthreadPrivate* thread);
 #endif
 extern "C" void ResumeAllGuestThreads_nid_no_patch();
 bool LiveGuestThreadExists(std::int64_t tid);
+struct LiveGuestThreadName {
+    std::int64_t tid;
+    std::string name;
+};
+std::vector<LiveGuestThreadName> LiveGuestThreadNames();
 bool GetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask& mask);
 bool GetLiveGuestThreadSched_nid_no_patch(std::int64_t tid, int& policy, int& priority);
 bool SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mask);

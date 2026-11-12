@@ -84,7 +84,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
     std::array<PeDirectory, 16> directories{};
     std::uint32_t tlsIndex = 0;
     try {
-        directories[9] = WindowsTlsBuilder().Build(guest.Bytes, guest.Headers, image, sections, relocations, nextRva, &tlsIndex, {}, message);
+        directories[9] = WindowsTlsBuilder().Build(guest.Bytes, guest.Headers, image, sections, relocations, nextRva, &tlsIndex, {}, message, guest.FunctionSymbolRoots);
     } catch (Domain::RelinkerException& error) {
         if (error.InputPath.empty()) error.InputPath = Io::Utf8Path(guest.SourcePath);
         throw;
@@ -140,7 +140,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
             Io::AppendU64(tlsExports.Data, ImageBase + tlsIndex);
             Io::AppendU64(tlsExports.Data, symbol.Value);
             relocations.push_back(rva);
-        } else rva = image.GetRva(symbol.Value, std::max<std::uint64_t>(symbol.Size, 1));
+        } else rva = image.GetRva(symbol.Value, guest.FunctionSymbolRoots && (symbol.Info & 15) == 2 ? 1 : std::max<std::uint64_t>(symbol.Size, 1));
         if (!exports.emplace(symbol.Name, rva).second) throw Domain::RelinkerException("Duplicate guest export: " + symbol.Name);
         if ((symbol.Info & 15) == 2 && returnsZero(symbol.Value)) runtime.ZeroReturnExports.insert(symbol.Name);
     }
@@ -153,6 +153,21 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
         Io::AppendU32(lifecycle.Data, guest.HasInit ? image.GetRva(guest.Init) : 0);
         Io::AppendU32(lifecycle.Data, CheckedRva(guest.InitArray.size()));
         for (const auto slot : guest.InitArray) Io::AppendU32(lifecycle.Data, image.GetRva(slot, 8));
+        if (runtime.DeferredDependencies.size() > Relinker::GuestMaximumDeferredDependencies)
+            throw Domain::RelinkerException("Too many deferred guest dependencies: " + std::to_string(runtime.DeferredDependencies.size()));
+        if (!runtime.DeferredDependencies.empty()) {
+            Io::AppendU32(lifecycle.Data, Relinker::GuestDeferredDependenciesMagic);
+            Io::AppendU32(lifecycle.Data, CheckedRva(runtime.DeferredDependencies.size()));
+            for (const auto& name : runtime.DeferredDependencies) Io::AppendString(lifecycle.Data, name);
+        }
+        if (runtime.DeferredSweep.size() > Relinker::GuestMaximumDeferredDependencies)
+            throw Domain::RelinkerException("Too many deferred guest sweep modules: " + std::to_string(runtime.DeferredSweep.size()));
+        if (!runtime.DeferredSweep.empty()) {
+            Io::AppendU32(lifecycle.Data, Relinker::GuestDeferredSweepMagic);
+            Io::AppendU32(lifecycle.Data, CheckedRva(runtime.DeferredSweep.size()));
+            for (const auto& name : runtime.DeferredSweep) Io::AppendString(lifecycle.Data, name);
+        }
+        if (!runtime.DeferredDependencies.empty() || !runtime.DeferredSweep.empty()) Io::AppendU32(lifecycle.Data, 0);
         if (!exports.emplace(Relinker::GuestInitializeExport, nextRva).second) throw Domain::RelinkerException("Duplicate guest export: " + std::string(Relinker::GuestInitializeExport));
         nextRva = AlignRva(nextRva + lifecycle.Data.size());
         sections.push_back(std::move(lifecycle));

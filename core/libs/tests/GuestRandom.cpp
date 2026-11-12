@@ -1,4 +1,5 @@
 #include "prx/libSceRandom/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +11,7 @@ int main() {
     constexpr int invalid = static_cast<int>(0x817C0016);
     unsigned char buffer[80];
     Require(sceRandomGetRandomNumber(nullptr, 16) == invalid);
+    Require(sceRandomGetRandomNumber(reinterpret_cast<void*>(0x10), 16) == invalid);
     Require(sceRandomGetRandomNumber(nullptr, 0) == invalid);
     Require(sceRandomGetRandomNumber(nullptr, 64) == invalid);
     Require(sceRandomGetRandomNumber(nullptr, 65) == invalid);
@@ -32,4 +34,19 @@ int main() {
     Require(sceRandomGetRandomNumber(first, sizeof(first)) == 0);
     Require(sceRandomGetRandomNumber(second, sizeof(second)) == 0);
     Require(std::memcmp(first, second, sizeof(first)) != 0);
+
+    *__error_nid_postfix() = 61;
+    Require(sceRandomGetRandomNumber(buffer, 0) == 0);
+    Require(*__error_nid_postfix() == 61);
+    Require(sceRandomGetRandomNumber(buffer, 65) == invalid);
+    Require(*__error_nid_postfix() == 61);
+    Require(sceRandomGetRandomNumber(reinterpret_cast<void*>(0x10), 16) == invalid);
+    Require(*__error_nid_postfix() == 61);
+
+    std::memset(buffer, 0xAA, sizeof(buffer));
+    Require(sceRandomGetRandomNumber(buffer, 64) == 0);
+    Require(*__error_nid_postfix() == 61);
+    for (std::size_t index = 64; index < sizeof(buffer); ++index) {
+        Require(buffer[index] == 0xAA);
+    }
 }
