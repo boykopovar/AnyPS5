@@ -26,12 +26,12 @@ def default_onto(root, name=None):
 
 
 def people(root, base, tip):
-    lines = git(root, "log", "--format=%an <%ae>%x1f%s", f"{base}..{tip}").splitlines()
+    lines = git(root, "log", "--no-merges", "--format=%an <%ae>%x1f%s", f"{base}..{tip}").splitlines()
     return collections.Counter(line for line in lines if line)
 
 
 def commits(root, base, tip):
-    return len(git(root, "rev-list", f"{base}..{tip}").split())
+    return len(git(root, "rev-list", "--no-merges", f"{base}..{tip}").split())
 
 
 def changed_lines(root, base, tip):
@@ -70,16 +70,17 @@ def differences(old, new, deleted=False):
 
 def verify(root, old, new, onto):
     old_base = git(root, "merge-base", old, onto).strip()
+    new_base = git(root, "merge-base", new, onto).strip()
     problems = []
-    if people(root, old_base, old) != people(root, onto, new):
+    if people(root, old_base, old) != people(root, new_base, new):
         problems.append("authors or subjects differ between the old and the new commits")
-    count_old, count_new = commits(root, old_base, old), commits(root, onto, new)
+    count_old, count_new = commits(root, old_base, old), commits(root, new_base, new)
     if count_old != count_new:
         problems.append(f"the branch has {count_new} commits on {onto}, and had {count_old} on its old base")
     old_added, old_deleted = changed_lines(root, old_base, old)
-    new_added, new_deleted = changed_lines(root, onto, new)
+    new_added, new_deleted = changed_lines(root, new_base, new)
     problems += differences(old_added, new_added)
-    upstream_added, upstream_deleted = changed_lines(root, old_base, onto) if old_deleted else ({}, {})
+    upstream_added, upstream_deleted = changed_lines(root, old_base, new_base) if old_deleted else ({}, {})
     expected_deleted = {
         path: lines - (upstream_deleted.get(path, collections.Counter()) - upstream_added.get(path, collections.Counter()))
         for path, lines in old_deleted.items()

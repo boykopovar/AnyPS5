@@ -212,6 +212,11 @@ def place_segments(data, headers, records):
                 header["source"] = segment
                 break
 
+    for header in loads:
+        if header["size"] and (header["source"] < 0 or header["source"] > len(data)
+                               or header["size"] > len(data) - header["source"]):
+            raise Refused("segment %d does not fit the file" % header["index"])
+
     def load_for(vaddr, size):
         found = None
         for header in loads:

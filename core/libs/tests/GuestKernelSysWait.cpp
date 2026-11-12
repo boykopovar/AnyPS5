@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
     auto* libc = LoadLibraryFile(directory / "libc.prx");
     const auto error = LoadFunction<int* (APS5_VABI*)()>(libc, "__error", patched);
     const auto wait3 = LoadFunction<int (APS5_VABI*)(int*, int, void*)>(sys, "wait3", patched);
-    const auto wait4 = LoadFunction<int (APS5_VABI*)(int, int*, int, void*)>(sys, "wait4", patched);
+    const auto wait4 = LoadFunction<int (APS5_VABI*)(int, int*, int, void*)>(sys, test == "_wait4" ? "_wait4" : "wait4", patched);
     int status = 0x12345678;
     std::array<unsigned char, 144> usage;
     usage.fill(0xa5);
@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
             const int result = test == "wait3" ? wait3(&status, static_cast<int>(options), usage.data()) : wait4(pid, &status, static_cast<int>(options), usage.data());
             int expected = (options & ~0x8000003fu) ? 22 : 10;
 #ifdef __linux__
-            if ((options & ~0x8000003fu) == 0 && test == "wait4" && pid == std::numeric_limits<int>::min()) expected = 3;
+            if ((options & ~0x8000003fu) == 0 && test != "wait3" && pid == std::numeric_limits<int>::min()) expected = 3;
 #endif
             if (result != -1 || *error() != expected)
                 std::fprintf(stderr, "pid=%d options=%u result=%d errno=%d expected=%d\n", pid, options, result, *error(), expected);

@@ -2,6 +2,7 @@
 #include "prx/libSceVenc/include/InventoryExports.hpp"
 #include "prx/libSceVenc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -21,14 +22,27 @@ constexpr std::uint32_t ModeWithExtraPointer = 2;
 constexpr std::uint32_t SocIdThreshold = 0x840F80;
 
 template <typename TValue>
+bool TryFieldAt(TValue& outValue, const void* object, std::size_t offset) {
+    if (object == nullptr) return false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&outValue, static_cast<const std::uint8_t*>(object) + offset, sizeof(outValue));
+    errno = savedErrno;
+    return copied;
+}
+
+template <typename TValue>
 TValue FieldAt(const void* object, std::size_t offset) {
-    TValue value;
-    std::memcpy(&value, static_cast<const std::uint8_t*>(object) + offset, sizeof(value));
+    TValue value{};
+    TryFieldAt(value, object, offset);
     return value;
 }
 
 bool PointerFieldIsNull(const void* object, std::size_t offset) {
-    return FieldAt<const void*>(object, offset) == nullptr;
+    const void* ptr = nullptr;
+    if (!TryFieldAt(ptr, object, offset)) {
+        return true;
+    }
+    return ptr == nullptr;
 }
 
 bool MemoryIsIncomplete(const void* memory) {
@@ -40,7 +54,8 @@ int CheckRegion(const void* encoder, const void* region) {
     if (encoder == nullptr) {
         return VencError(0x00);
     }
-    if (region == nullptr || FieldAt<std::uint64_t>(region, 0) != MemoryRegionSize) {
+    std::uint64_t regionSize = 0;
+    if (region == nullptr || !TryFieldAt(regionSize, region, 0) || regionSize != MemoryRegionSize) {
         return VencError(0x10);
     }
     return 0;
@@ -71,7 +86,12 @@ int APS5_VABI sceVencCreateEncoder(const void* parameters, const void* memory, v
     if (encoder == nullptr) {
         return VencError(0x00);
     }
-    *encoder = nullptr;
+    void* localEncoder = nullptr;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(encoder, &localEncoder, sizeof(localEncoder))) {
+        errno = savedErrno;
+        return VencError(0x00);
+    }
     if (parameters == nullptr) {
         return VencError(0x01);
     }
@@ -217,8 +237,8 @@ int APS5_VABI sceVencQueryPreset2(const void* preset, void* parameters, void* st
     if (preset == nullptr) {
         return VencError(0x04);
     }
-    const auto size = FieldAt<std::uint64_t>(preset, 0);
-    if (size < PresetMinimumSize || size > PresetMaximumSize) {
+    std::uint64_t size = 0;
+    if (!TryFieldAt(size, preset, 0) || size < PresetMinimumSize || size > PresetMaximumSize) {
         return VencError(0x04);
     }
     NotImplemented_nid_no_patch(__func__);

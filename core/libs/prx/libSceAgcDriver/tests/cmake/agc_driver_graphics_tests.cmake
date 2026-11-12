@@ -154,6 +154,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_heap_mirror_unwatched_import PROPERTIES TIMEOUT 30)
     endif()
 
+    add_test(NAME agc_host_import_validity COMMAND agc_driver_graphics_tests --host-import-validity)
+    set_tests_properties(agc_host_import_validity PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_host_import_validity PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test(NAME agc_address_copy_cap COMMAND agc_driver_graphics_tests --address-copy-cap)
     add_test(NAME agc_address_copy_cap_remembered COMMAND agc_driver_graphics_tests --address-copy-cap-remembered)
     add_test(NAME agc_address_copy_cap_mirror COMMAND agc_driver_graphics_tests --address-copy-cap-mirror)

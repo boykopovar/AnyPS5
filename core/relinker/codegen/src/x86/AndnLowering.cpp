@@ -34,31 +34,33 @@ void EmitAndn(StubBodyBuilder& body, const AndnOperands& operands) {
     auto used = operands.Memory ? UsedRegisters({operands.Destination, operands.InvertedSource}, operands.Memory)
                                 : UsedRegisters({operands.Destination, operands.InvertedSource, operands.Source}, std::nullopt);
     const auto scratch = Scratch(used, "ANDN");
-    StackSlot(body, 0x8D, true, Stack, -FrameSize);
+    const auto frame = SelectFrame(operands.Memory, operands.Wide, FrameSize, 16);
+    StackSlot(body, 0x8D, true, Stack, -frame);
     StackSlot(body, 0x89, true, scratch, 0);
     if (!operands.Memory && operands.Source == Stack) {
-        StackSlot(body, 0x8D, true, scratch, FrameSize);
+        StackSlot(body, 0x8D, true, scratch, frame);
         StackSlot(body, 0x89, true, scratch, 8);
     }
     if (operands.InvertedSource == Stack)
-        StackSlot(body, 0x8D, true, scratch, FrameSize);
+        StackSlot(body, 0x8D, true, scratch, frame);
     else
         Register(body, 0x8B, operands.Wide, scratch, operands.InvertedSource);
     Register(body, 0xF7, operands.Wide, 2, scratch);
     if (operands.Memory)
-        Memory(body, 0x23, operands.Wide, *operands.Memory, scratch, "ANDN");
+        Memory(body, 0x23, operands.Wide, *operands.Memory, scratch, "ANDN", frame);
     else if (operands.Source == Stack)
         StackSlot(body, 0x23, operands.Wide, scratch, 8);
     else
         Register(body, 0x23, operands.Wide, scratch, operands.Source);
-    if (operands.Destination == Stack)
+    if (operands.Destination == Stack) {
         StackSlot(body, 0x89, operands.Wide, scratch, 8);
-    else
-        Register(body, 0x8B, operands.Wide, operands.Destination, scratch);
+        StackSlot(body, 0x8B, true, scratch, 0);
+        StackSlot(body, 0x8B, operands.Wide, Stack, 8);
+        return;
+    }
+    Register(body, 0x8B, operands.Wide, operands.Destination, scratch);
     StackSlot(body, 0x8B, true, scratch, 0);
-    StackSlot(body, 0x8D, true, Stack, FrameSize);
-    if (operands.Destination == Stack)
-        StackSlot(body, 0x8B, operands.Wide, Stack, 8 - FrameSize);
+    StackSlot(body, 0x8D, true, Stack, frame);
 }
 
 }

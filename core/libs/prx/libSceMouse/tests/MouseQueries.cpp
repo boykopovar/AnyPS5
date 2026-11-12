@@ -158,6 +158,9 @@ int main() {
     protectedPosition.CheckPrefix();
 
     Require(setConfig(handle, nullptr) == InvalidArg, "ExtensionSetConfig took a null config");
+    errno = 71;
+    Require(setConfig(handle, reinterpret_cast<const void*>(0x10)) == InvalidArg, "ExtensionSetConfig touched an unmapped guest config");
+    Require(errno == 71, "ExtensionSetConfig changed errno for an unmapped guest config");
     config[5] = 1;
     Require(setConfig(handle, config.data()) == InvalidArg, "ExtensionSetConfig took a non-zero byte 5");
     config[5] = 0;
@@ -180,6 +183,9 @@ int main() {
     std::memset(buffer.data(), 0xaa, buffer.size());
     Require(extensionReadState(handle + 1, buffer.data(), 0x40) == InvalidHandle, "ExtensionReadState took an unopened handle");
     for (const auto byte : buffer) Require(byte == 0, "ExtensionReadState didn't clear the state before the handle check");
+    errno = 73;
+    Require(extensionReadState(handle, reinterpret_cast<void*>(0x10), 0x40) == InvalidArg, "ExtensionReadState touched an unmapped guest state");
+    Require(errno == 73, "ExtensionReadState changed errno for an unmapped guest state");
 
     Require(setCursor(handle + 1, 0) == InvalidHandle, "ExtensionSetCursor took an unopened handle");
     Require(getCursor(handle, nullptr) == InvalidArg && getCursor(handle + 1, nullptr) == InvalidArg, "ExtensionGetCursor didn't check its output before the handle");
