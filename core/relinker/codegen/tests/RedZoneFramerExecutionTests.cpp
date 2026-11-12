@@ -229,6 +229,35 @@ std::vector<Leaf> framedLeaves() {
             0xff, 0xc9, 0x75, 0xed, 0x48, 0x8b, 0x54, 0x24, 0x38,
             0x48, 0x83, 0xc4, 0x40, 0x5b, 0x41, 0x5c, 0x41, 0x5d, 0x41, 0x5e, 0x41, 0x5f, 0x5d, 0xc3,
         }, 4 * (kB + 2 * kA)},
+        {"leaf transferring a red-zone spill through xmm4 with movq", frameless({
+            0x48, 0x89, 0x7c, 0x24, 0xf0, 0xf3, 0x0f, 0x7e, 0x64, 0x24, 0xf0,
+            0xf3, 0x0f, 0x7e, 0xc4, 0x66, 0x48, 0x0f, 0x7e, 0xc0,
+        }), kA},
+    };
+}
+
+std::vector<Leaf> skippedDirectRspLeaves() {
+    return {
+        {"leaf reading rsp through vmovq", {
+            0x53, 0x48, 0x83, 0xec, 0x10, 0x48, 0x89, 0x3c, 0x24, 0x48, 0x89, 0x74, 0x24, 0xf0,
+            0xc4, 0xe1, 0xf9, 0x6e, 0xc4, 0xc4, 0xc1, 0xf9, 0x7e, 0xc0, 0x49, 0x8b, 0x00,
+            0x48, 0x83, 0xc4, 0x10, 0x5b, 0xc3,
+        }, kA},
+        {"leaf reading rsp through pinsrq", {
+            0x53, 0x48, 0x83, 0xec, 0x10, 0x48, 0x89, 0x3c, 0x24, 0x48, 0x89, 0x74, 0x24, 0xf0,
+            0x66, 0x48, 0x0f, 0x3a, 0x22, 0xc4, 0x01, 0x66, 0x49, 0x0f, 0x3a, 0x16, 0xc0, 0x01, 0x49, 0x8b, 0x00,
+            0x48, 0x83, 0xc4, 0x10, 0x5b, 0xc3,
+        }, kA},
+        {"leaf reading rsp through movbe", {
+            0x53, 0x48, 0x83, 0xec, 0x10, 0x48, 0x89, 0x3c, 0x24, 0x4c, 0x8d, 0x4c, 0x24, 0xf0,
+            0x49, 0x0f, 0x38, 0xf1, 0x21, 0x4d, 0x0f, 0x38, 0xf0, 0x01, 0x48, 0x89, 0x74, 0x24, 0xf0, 0x49, 0x8b, 0x00,
+            0x48, 0x83, 0xc4, 0x10, 0x5b, 0xc3,
+        }, kA},
+        {"leaf writing rsp through immediate imul", {
+            0x53, 0x48, 0x83, 0xec, 0x10, 0x48, 0x89, 0x3c, 0x24, 0x4c, 0x8d, 0x4c, 0x24, 0xf0,
+            0x4d, 0x8d, 0x41, 0x10, 0x4d, 0x89, 0x01, 0x49, 0x6b, 0x21, 0x01, 0x48, 0x8b, 0x04, 0x24,
+            0x48, 0x83, 0xc4, 0x10, 0x5b, 0xc3,
+        }, kA},
     };
 }
 
@@ -452,6 +481,20 @@ Codegen::RedZoneFrameReport runLeaves(const std::vector<Leaf>& leaves) {
     return framing.Report;
 }
 
+void verifySkippedLeaves(const std::vector<Leaf>& leaves) {
+    const auto image = place(leaves);
+    const auto framing = load(image, true);
+    for (std::size_t index = 0; index < leaves.size(); ++index) {
+        const auto executed = run(image.Starts[index], false);
+        require(executed.Result == leaves[index].Expected,
+                std::string(leaves[index].Name) + ": returned " + hex(executed.Result) + " after framing pass, not " + hex(leaves[index].Expected));
+    }
+    require(framing.Report.RedZoneFunctions == leaves.size() && framing.Report.Framed == 0 && framing.Sites.empty() && framing.Displacements.empty(),
+            "a leaf with a direct rsp operand was framed");
+    require(framing.Report.Skipped.at("other use of rsp") == leaves.size(),
+            "not every leaf with a direct rsp operand was skipped as another use of rsp");
+}
+
 }
 
 int main() {
@@ -469,6 +512,7 @@ int main() {
         require(backward.OperandStubs == 2 && backward.StubbedOperands == 3 && backward.MovedOperands == 5, "the leaves comparing at rsp before a branch were framed with " + std::to_string(backward.OperandStubs) + " operand stubs carrying " + std::to_string(backward.StubbedOperands) + " rsp operands and " + std::to_string(backward.MovedOperands) + " moved in place, not 2 carrying 3 and 5");
         const auto widened = runLeaves(widenedLeaves());
         require(widened.WidenedPrologues == 8 && widened.WidenedExits == 9 && widened.WidenedOperands == 12, "the leaves with short prologues and exits were framed with " + std::to_string(widened.WidenedPrologues) + " widened prologues, " + std::to_string(widened.WidenedExits) + " widened exits and " + std::to_string(widened.WidenedOperands) + " rsp operands in them, not 8, 9 and 12");
+        verifySkippedLeaves(skippedDirectRspLeaves());
         std::cout << "red-zone framer execution tests passed\n";
         return 0;
     } catch (const std::exception& error) {

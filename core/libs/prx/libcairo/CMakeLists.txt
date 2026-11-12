@@ -1,8 +1,21 @@
 add_library(libcairo SHARED EXCLUDE_FROM_ALL Export.cpp Matrix.cpp Surface.cpp Context.cpp FontOptions.cpp Region.cpp Glyph.cpp)
 target_include_directories(libcairo PRIVATE ${LIBS_INCLUDE_DIR})
+target_sources(libcairo PRIVATE Png.cpp)
+target_link_libraries(libcairo PRIVATE decoder_png)
 configure_windows_unwind(libcairo)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_cairo_png_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoPng.cpp)
+    target_include_directories(guest_cairo_png_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cairo_png_tests PRIVATE libcairo libc decoder_png)
+    configure_windows_unwind(guest_cairo_png_tests)
+    add_test(NAME guest_cairo_png COMMAND guest_cairo_png_tests)
+    set_tests_properties(guest_cairo_png PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_cairo_png PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>")
+    endif()
+
     add_test_executable(guest_cairo_matrix_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoMatrix.cpp)
     target_include_directories(guest_cairo_matrix_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_cairo_matrix_tests PRIVATE libcairo libc)

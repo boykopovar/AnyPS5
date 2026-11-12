@@ -18,6 +18,8 @@
 
 ### Functional
 
+- [sceUltGetUlthreadInfo and sceUltGetUlthreadRuntimeInfo](../../../core/libs/prx/libSceUlt/Export.cpp) (libSceUlt) - return `ULT_ERROR_NULL` when destination info pointer points to unmapped guest memory via `GuestCopyOut_nid_no_patch`, preserving guest errno. Hardware fault signaling on unmapped memory is unverified.
+- [sceUltGetMutexInfo](../../../core/libs/prx/libSceUlt/Export.cpp) (libSceUlt) - returns `ULT_ERROR_NULL` when `info` points to unmapped guest memory via `GuestCopyOut_nid_no_patch`, preserving guest errno; hardware fault behavior on unmapped memory is unverified.
 - [sceUltFinalize](../../../core/libs/prx/libSceUlt/Export.cpp) - allocator-failure behavior is unverified on a PS5. The host may throw `std::bad_alloc` while reserving temporary wake lists; guest waiting-pool exhaustion and native finalization errors are not modeled.
 - [libSceUlt queues](../../../core/libs/prx/libSceUlt/Export.cpp) use preallocated host storage instead of the supplied guest work area; the guest object layouts remain incomplete. Waiting-queue pool thread limits and waiter priority ordering are not implemented. Finalization wakes blocked queue callers with `ULT_ERROR_STATE`.
 - [sceUltWaitingQueueResourcePoolDestroy](../../../core/libs/prx/libSceUlt/Export.cpp) refuses with `ULT_ERROR_STATE` only when a thread is currently waiting on a pool-backed mutex, semaphore or queue, matching the PS5 libSceUlt disassembly (0x473a in or55417wcDk); bound but idle objects do not block pool destruction. Waiting-queue pool guest work area node accounting is not implemented.

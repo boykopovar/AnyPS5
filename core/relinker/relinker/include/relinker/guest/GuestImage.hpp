@@ -52,6 +52,7 @@ struct GuestImage {
     std::vector<Domain::ProgramHeader> Headers;
     std::vector<GuestSymbol> Symbols;
     std::vector<std::string> Dependencies;
+    std::vector<std::pair<std::size_t, std::string>> BindingAliases;
     Domain::SysVDynamicSection Dynamic;
     std::vector<std::uint64_t> InitArray;
     std::vector<std::uint64_t> FiniArray;
