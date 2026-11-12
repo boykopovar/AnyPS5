@@ -2801,11 +2801,16 @@ const char* APS5_VABI sceNetInetNtop(int af, const void* src, char* dst, uint32_
         set_errno(NET_EAFNOSUPPORT);
         return nullptr;
     }
+    std::array<std::uint8_t, 16> address{};
+    if (!GuestCopyIn_nid_no_patch(address.data(), src, af == NET_AF_INET ? 4 : address.size())) {
+        set_errno(NET_EFAULT);
+        return nullptr;
+    }
     char text[INET6_ADDRSTRLEN];
 #ifdef _WIN32
-    const auto* result = af == NET_AF_INET6 ? __inet_ntop_nid_postfix(af, src, text, sizeof(text)) : InetNtopA(AF_INET, const_cast<void*>(src), text, sizeof(text));
+    const auto* result = af == NET_AF_INET6 ? __inet_ntop_nid_postfix(af, address.data(), text, sizeof(text)) : InetNtopA(AF_INET, address.data(), text, sizeof(text));
 #else
-    const auto* result = af == NET_AF_INET6 ? __inet_ntop_nid_postfix(af, src, text, sizeof(text)) : ::inet_ntop(AF_INET, src, text, sizeof(text));
+    const auto* result = af == NET_AF_INET6 ? __inet_ntop_nid_postfix(af, address.data(), text, sizeof(text)) : ::inet_ntop(AF_INET, address.data(), text, sizeof(text));
 #endif
     if (!result) {
         set_errno(native_error());
@@ -2816,7 +2821,10 @@ const char* APS5_VABI sceNetInetNtop(int af, const void* src, char* dst, uint32_
         set_errno(NET_ENOSPC);
         return nullptr;
     }
-    std::memcpy(dst, text, length);
+    if (!GuestCopyOut_nid_no_patch(dst, text, length)) {
+        set_errno(NET_EFAULT);
+        return nullptr;
+    }
     return dst;
 }
 
