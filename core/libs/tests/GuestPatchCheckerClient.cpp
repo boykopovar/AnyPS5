@@ -12,7 +12,7 @@ void Require(bool value) {
 
 int main() {
     constexpr int notInitialized = static_cast<int>(0x80182402u);
-    for (int call = 0; call < 2; ++call) {
+    for (int call = 0; call < 4; ++call) {
         Require(scePatchCheckerCancel() == notInitialized);
         Require(scePatchCheckerCheckPatch() == notInitialized);
         Require(scePatchCheckerCreateHandler() == notInitialized);
