@@ -590,13 +590,39 @@ void DefineDescriptors(SpirvEmitterState& state) {
             if (ImageBindingResourceClass(binding.kind) == ImageResourceClass::None) {
                 FailEmit("descriptor binding has an unmapped image resource class");
             }
-            const auto modes = ResourceMaterializer::RuntimeImageModes(state.program.Info().images.at(binding.resources.front()));
-            const auto selected = std::ranges::find_if(modes, [&](const ImageResource& mode) { return DescriptorBindingForImage(mode) == binding.kind; });
-            if (selected == modes.end()) FailEmit("static image heap has no runtime mode");
-            const auto& image = *selected;
-            const auto name = "image_" + std::to_string(static_cast<std::uint32_t>(binding.kind));
-            state.imageVariables.at(ImageBindingIndex(binding.kind)) = Define(ArrayType(ImageType(state, image)), name.c_str(), spv::StorageClassUniformConstant);
-            if (std::ranges::any_of(binding.resources, [&](std::uint32_t resource) { return state.program.Info().images.at(resource).targetMerge; })) state.module.AddAnnotation(spv::OpDecorate, state.imageVariables.at(ImageBindingIndex(binding.kind)), spv::DecorationCoherent);
+            const bool merged = std::ranges::any_of(binding.resources, [&](std::uint32_t resource) { return state.program.Info().images.at(resource).targetMerge; });
+            const auto& stored = state.program.Info().runtimeImageModes;
+            const auto variants = [&] {
+                std::vector<ImageResource> distinct;
+                for (const auto resource : binding.resources) {
+                    const auto modes = stored.empty() ? ResourceMaterializer::RuntimeImageModes(state.program.Info().images.at(resource)) : stored.at(resource);
+                    const auto selected = std::ranges::find_if(modes, [&](const ImageResource& mode) { return DescriptorBindingForImage(mode) == binding.kind; });
+                    if (selected == modes.end()) FailEmit("static image heap has no runtime mode");
+                    const auto format = ImageSpirvFormat(state, *selected);
+                    if (std::ranges::none_of(distinct, [&](const ImageResource& other) { return ImageSpirvFormat(state, other) == format; })) distinct.push_back(*selected);
+                }
+                return distinct;
+            };
+            auto distinct = variants();
+            const auto formatless = [&](spv::Capability capability) { return std::ranges::find(state.supportedCapabilities, capability) != state.supportedCapabilities.end(); };
+            if (distinct.size() > 1u && formatless(spv::CapabilityStorageImageReadWithoutFormat) && formatless(spv::CapabilityStorageImageWriteWithoutFormat)) {
+                state.formatlessImageHeaps.push_back(binding.kind);
+                distinct = variants();
+            }
+            std::vector<std::uint32_t> heapVariables;
+            for (const auto& mode : distinct) {
+                const auto format = ImageSpirvFormat(state, mode);
+                const auto name = "image_" + std::to_string(static_cast<std::uint32_t>(binding.kind)) + (heapVariables.empty() ? "" : "_" + std::to_string(format));
+                const auto variable = Define(ArrayType(ImageType(state, mode)), name.c_str(), spv::StorageClassUniformConstant);
+                state.imageVariables.push_back({binding.kind, format, variable});
+                heapVariables.push_back(variable);
+                if (merged) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationCoherent);
+            }
+            if (distinct.empty()) FailEmit("static image heap has no resources");
+            if (heapVariables.size() > 1u) {
+                for (const auto variable : heapVariables) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);
+            }
+            const auto& image = distinct.front();
             if (image.dimension == RdnaImageDimension::Dim1D || image.dimension == RdnaImageDimension::Dim1DArray) {
                 state.module.EmitCapability(image.resourceClass == ImageResourceClass::Sampled ? spv::CapabilitySampled1D : spv::CapabilityImage1D);
             }

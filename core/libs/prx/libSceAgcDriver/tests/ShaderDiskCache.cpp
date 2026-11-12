@@ -371,6 +371,7 @@ CompiledVariant sampleVariant() {
     image.table = 0;
     image.tableOperation = TableOperation::Unsupported;
     image.targetMerge = true;
+    image.storageFormat = StorageImageFormat::R16ui;
     info.info.images = {image};
     ResourceMaterializer::PrepareImageModes(info.info);
     info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather, true, 1}};

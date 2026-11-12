@@ -98,6 +98,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 mix(merge.depthStencilTests);
                 if (!merge.blend.enabled) continue;
                 const auto& blend = merge.blend;
+                mix(static_cast<std::uint64_t>(merge.storageFormat));
                 mix(blend.snorm);
                 mix(blend.colorSource);
                 mix(blend.colorDestination);

@@ -1938,6 +1938,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
             mix(merge.lastSlice);
             for (const auto word : merge.descriptor) mix(word);
             if (!merge.blend.enabled) continue;
+            mix(static_cast<std::uint64_t>(merge.storageFormat));
             mix(merge.blend.snorm);
             mix(merge.blend.colorSource);
             mix(merge.blend.colorDestination);

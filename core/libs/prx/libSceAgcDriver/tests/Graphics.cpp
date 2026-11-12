@@ -11609,6 +11609,22 @@ void unorm4_4_4_4TargetTests() {
         const std::array<std::uint32_t, 2> noFormatlessReads{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT};
         unformatted.target.supportedCapabilities = noFormatlessReads;
         expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(unformatted)); }, "storage image reads without a format");
+        auto typed = merging;
+        const std::array<std::uint32_t, 3> typedCapabilities{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT, spv::CapabilityStorageImageExtendedFormats};
+        typed.target.supportedCapabilities = typedCapabilities;
+        const auto typedWords = ShaderRecompiler::Recompile(typed).spirv.Copy();
+        bool typedReadsFormatless = false, typedWritesFormatless = false, typedExtended = false;
+        std::size_t typedImages = 0;
+        for (std::size_t at = 5; at < typedWords.size() && (typedWords[at] >> 16u) != 0; at += typedWords[at] >> 16u) {
+            const auto op = static_cast<spv::Op>(typedWords[at] & 0xffffu);
+            if (op == spv::OpCapability) {
+                typedReadsFormatless |= typedWords[at + 1u] == spv::CapabilityStorageImageReadWithoutFormat;
+                typedWritesFormatless |= typedWords[at + 1u] == spv::CapabilityStorageImageWriteWithoutFormat;
+                typedExtended |= typedWords[at + 1u] == spv::CapabilityStorageImageExtendedFormats;
+            }
+            if (op == spv::OpTypeImage && typedWords[at + 7u] == 2u) typedImages += typedWords[at + 8u] == spv::ImageFormatR16ui ? 1u : 100u;
+        }
+        Require(!typedReadsFormatless && !typedWritesFormatless && typedExtended && typedImages == 1u, "a 4_4_4_4 merge on a device with extended storage formats but without formatless access did not read and write its target through one r16ui storage image");
         auto killing = merging;
         killing.context.pixel->pixelKillEnable = true;
         killing.context.pixel->earlyZ = false;

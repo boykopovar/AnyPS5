@@ -571,6 +571,7 @@ void AddTargetMerge(const ShaderPixelInputInfo& pixel, ShaderInfo& info) {
     for (const auto& merge : pixel.merges) {
         image.numericClass = merge.blend.enabled ? IrTextureNumericClass::Float : IrTextureNumericClass::Uint;
         image.dimension = pixel.mergeSamples > 1u ? RdnaImageDimension::Dim2DMsaa : merge.layered ? RdnaImageDimension::Dim2DArray : RdnaImageDimension::Dim2D;
+        image.storageFormat = merge.blend.enabled ? merge.storageFormat : merge.packing == ColorExportPacking::Unorm4_4_4_4 ? StorageImageFormat::R16ui : StorageImageFormat::R32ui;
         info.images.push_back(image);
         info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
     }
