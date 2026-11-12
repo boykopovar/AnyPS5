@@ -186,14 +186,39 @@ void DefineInputs(SpirvEmitterState& state) {
     for (const auto& input : state.program.Info().inputs) {
         state.inputs.push_back(SpirvInputBinding {input});
     }
-    if (state.laneCount == 2u || state.spannedWave) {
-        const auto addBuiltin = [&](StageInputKind kind, std::uint32_t components, const char* name) {
-            if (std::none_of(state.inputs.begin(), state.inputs.end(), [kind](const SpirvInputBinding& input) {
-                return input.kind == kind;
-            })) {
-                state.inputs.push_back(SpirvInputBinding {{kind, 0u, components, name, false}});
+    const auto addBuiltin = [&](StageInputKind kind, std::uint32_t components, const char* name) {
+        if (std::none_of(state.inputs.begin(), state.inputs.end(), [kind](const SpirvInputBinding& input) {
+            return input.kind == kind;
+        })) {
+            state.inputs.push_back(SpirvInputBinding {{kind, 0u, components, name, false}});
+        }
+    };
+    if (StageOf(state) == IrShaderStage::Compute) {
+        for (const auto& block : state.program.Blocks()) {
+            for (const IrValue* instruction : block->Instructions()) {
+                if (instruction->Opcode() != IrOpcode::GetBuiltin) {
+                    continue;
+                }
+                switch (static_cast<StageInputKind>(instruction->Argument(0)->Resolve()->ImmediateU32())) {
+                case StageInputKind::WorkgroupId:
+                    addBuiltin(StageInputKind::WorkgroupId, 3u, "gl_WorkGroupID");
+                    break;
+                case StageInputKind::LocalInvocationId:
+                    addBuiltin(StageInputKind::LocalInvocationId, 3u, "gl_LocalInvocationID");
+                    break;
+                case StageInputKind::LocalInvocationIndex:
+                    addBuiltin(StageInputKind::LocalInvocationIndex, 1u, "gl_LocalInvocationIndex");
+                    break;
+                case StageInputKind::GlobalInvocationId:
+                    addBuiltin(StageInputKind::GlobalInvocationId, 3u, "gl_GlobalInvocationID");
+                    break;
+                default:
+                    break;
+                }
             }
-        };
+        }
+    }
+    if (state.laneCount == 2u || state.spannedWave) {
         addBuiltin(StageInputKind::LocalInvocationIndex, 1u, "gl_LocalInvocationIndex");
         if (std::any_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
             return input.kind == StageInputKind::GlobalInvocationId;
@@ -528,6 +553,12 @@ void DefineDescriptors(SpirvEmitterState& state) {
         case DescriptorBindingKind::Gds:
             state.gdsVariable = Define(StorageBufferBlockType(state), "gds");
             state.module.AddAnnotation(spv::OpDecorate, state.gdsVariable, spv::DecorationCoherent);
+            if (state.requirements.gdsInt64Atomics) {
+                state.gdsU64Variable = Define(StorageBufferU64BlockType(state), "gds_u64");
+                state.module.AddAnnotation(spv::OpDecorate, state.gdsU64Variable, spv::DecorationCoherent);
+                state.module.AddAnnotation(spv::OpDecorate, state.gdsU64Variable, spv::DecorationAliased);
+                state.module.AddAnnotation(spv::OpDecorate, state.gdsVariable, spv::DecorationAliased);
+            }
             break;
         case DescriptorBindingKind::ImageTable:
         case DescriptorBindingKind::ImageStorageTable:
@@ -594,6 +625,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
         state.module.AddAnnotation(spv::OpDecorate, state.meshWindowBufferVariable, spv::DecorationDescriptorSet, MeshWindowDescriptorSet);
         state.module.AddAnnotation(spv::OpDecorate, state.meshWindowBufferVariable, spv::DecorationBinding, 0u);
         state.module.AddAnnotation(spv::OpDecorate, state.meshWindowBufferVariable, spv::DecorationRestrict);
+        state.module.AddAnnotation(spv::OpDecorate, state.meshWindowBufferVariable, spv::DecorationCoherent);
         state.meshWindowSlotVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassWorkgroup, TypeU32(state)), spv::StorageClassWorkgroup);
         state.module.AddName(state.meshWindowSlotVariable, "mesh_window_slot");
         state.meshWindowBaseVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeU32(state)), spv::StorageClassPrivate);

@@ -10,6 +10,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <list>
 #include <mutex>
@@ -26,6 +27,12 @@
 #endif
 #include <windows.h>
 #endif
+
+extern "C" {
+
+extern FileStream* __stderrp_nid_postfix;
+[[noreturn]] void abort_nid_postfix(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
+}
 
 namespace {
 
@@ -488,17 +495,8 @@ static_assert(offsetof(GuestPad, condition) == 0x8 && offsetof(GuestPad, mutex) 
 [[noreturn]] void ThrowCppError_nid_no_patch(int code);
 
 static void RequireThrd(int result, const char* what) {
-    switch (result) {
-    case threadSuccess:
-        return;
-    case threadNomem:
-    case threadTimedout:
-        ThrowCppError_nid_no_patch(6);
-    case threadBusy:
-        ThrowCppError_nid_no_patch(0);
-    case threadError:
-        ThrowCppError_nid_no_patch(1);
-    }
+    if (result == threadSuccess) return;
+    _ZSt14_Throw_C_errori_nid_postfix(result);
     throw std::runtime_error(std::string(what) + " failed with " + std::to_string(result));
 }
 
@@ -565,7 +563,7 @@ static void LaunchPad_nid_no_patch(GuestPad* pad, void** attrSlot, void** thread
     if (!pad || !thread) APS5_INVALID_ARG_EX;
     const auto create = registeredPthreadCreate.load(std::memory_order_acquire);
     if (!create) throw std::runtime_error("_Pad::_Launch: pthread_create is not registered");
-    const int created = create(thread, attrSlot, PadEntry_nid_no_patch, pad);
+    const int created = create(thread, attrSlot, PadEntry_nid_no_patch, pad, nullptr);
     if (created != 0) ThrowCppError_nid_no_patch(6);
     while (!pad->started) RequireThrd(_Cnd_wait_nid_postfix(&pad->condition, &pad->mutex), "_Pad::_Launch: _Cnd_wait");
 }
@@ -607,6 +605,101 @@ static const ThreadForwards_nid_no_patch& ThreadForwards(const char* function) {
     const auto* forwards = registeredThreadForwards.load(std::memory_order_acquire);
     if (!forwards) throw std::runtime_error(std::string(function) + ": libkernel threads are not registered");
     return *forwards;
+}
+
+namespace {
+
+constexpr int detachedState = 1;
+
+int StartThread(void** thread, void* attribute, void* (APS5_VABI* entry)(void*), void* argument, const char* name) {
+    const auto create = registeredPthreadCreate.load(std::memory_order_acquire);
+    if (!create) throw std::runtime_error("_Thrd_start: pthread_create is not registered");
+    bool detached = false;
+    if (attribute) {
+        int state = 0;
+        detached = ThreadForwards("_Thrd_start").attrDetachState(attribute, &state) == 0 && state == detachedState;
+    }
+    const int created = create(thread, attribute, entry, argument, name);
+    if (detached) *thread = nullptr;
+    return created == 0 ? threadSuccess : threadError;
+}
+
+struct StartGate {
+    void* (APS5_VABI* entry)(void*);
+    void* argument;
+    void** condition;
+    void** mutex;
+    std::atomic<int>* started;
+};
+
+void* APS5_VABI StartGateEntry_nid_no_patch(void* argument) {
+    auto* gate = static_cast<StartGate*>(argument);
+    void** const condition = gate->condition;
+    void** const mutex = gate->mutex;
+    std::atomic<int>* const started = gate->started;
+    void* (APS5_VABI* const entry)(void*) = gate->entry;
+    void* const value = gate->argument;
+    RequireThrd(_Mtx_lock_nid_postfix(mutex), "_Thrd_create: _Mtx_lock");
+    started->store(1, std::memory_order_release);
+    RequireThrd(_Cnd_signal_nid_postfix(condition), "_Thrd_create: _Cnd_signal");
+    RequireThrd(_Mtx_unlock_nid_postfix(mutex), "_Thrd_create: _Mtx_unlock");
+    void* const result = entry(value);
+    _Cnd_do_broadcast_at_thread_exit_nid_postfix();
+    return result;
+}
+
+}
+
+int APS5_VABI _Thrd_start_with_name_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name, void* attribute) {
+    if (!thread || !entry) APS5_INVALID_ARG_EX;
+    return StartThread(thread, attribute, entry, argument, name && *name ? name : nullptr);
+}
+
+int APS5_VABI _Thrd_start_with_name_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name) {
+    return _Thrd_start_with_name_attr_nid_postfix(thread, entry, argument, name, nullptr);
+}
+
+int APS5_VABI _Thrd_start_with_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, void* attribute) {
+    return _Thrd_start_with_name_attr_nid_postfix(thread, entry, argument, nullptr, attribute);
+}
+
+int APS5_VABI _Thrd_start_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument) {
+    return _Thrd_start_with_name_attr_nid_postfix(thread, entry, argument, nullptr, nullptr);
+}
+
+int APS5_VABI _Thrd_create_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument) {
+    if (!thread || !entry) APS5_INVALID_ARG_EX;
+    std::atomic<int> started{0};
+    void* condition = nullptr;
+    void* mutex = nullptr;
+    if (_Cnd_init_nid_postfix(&condition) != threadSuccess) return threadError;
+    if (_Mtx_init_nid_postfix(&mutex, 1) != threadSuccess) {
+        _Cnd_destroy_nid_postfix(&condition);
+        return threadError;
+    }
+    StartGate gate{entry, argument, &condition, &mutex, &started};
+    int result = threadError;
+    try {
+        RequireThrd(_Mtx_lock_nid_postfix(&mutex), "_Thrd_create: _Mtx_lock");
+        result = StartThread(thread, nullptr, StartGateEntry_nid_no_patch, &gate, nullptr);
+        if (result == threadSuccess)
+            while (started.load(std::memory_order_acquire) == 0)
+                RequireThrd(_Cnd_wait_nid_postfix(&condition, &mutex), "_Thrd_create: _Cnd_wait");
+        RequireThrd(_Mtx_unlock_nid_postfix(&mutex), "_Thrd_create: _Mtx_unlock");
+    } catch (...) {
+        _Cnd_destroy_nid_postfix(&condition);
+        _Mtx_destroy_nid_postfix(&mutex);
+        throw;
+    }
+    _Cnd_destroy_nid_postfix(&condition);
+    _Mtx_destroy_nid_postfix(&mutex);
+    return result;
+}
+
+[[noreturn]] void APS5_VABI _Thrd_abort_nid_postfix(const char* message) {
+    fputs_nid_postfix(message ? message : "", __stderrp_nid_postfix);
+    fputc_nid_postfix('\n', __stderrp_nid_postfix);
+    abort_nid_postfix(0, 0, 0, 0, 0, 0);
 }
 
 void APS5_VABI _Call_once_nid_postfix(std::int32_t* flag, void (APS5_VABI* function)(void)) {
@@ -754,6 +847,96 @@ int APS5_VABI _ZNSt8__sce_v214_Cnd_broadcastEPP12pthread_cond_nid_postfix(void**
     return threadSuccess;
 }
 
+struct SceV2AtThreadExitEntry {
+    void* thread;
+    void** mutex;
+    void** condition;
+    int* ready;
+};
+
+struct SceV2AtThreadExitBlock {
+    SceV2AtThreadExitEntry entries[20];
+    std::int32_t count;
+    SceV2AtThreadExitBlock* next;
+};
+
+static_assert(sizeof(SceV2AtThreadExitEntry) == 0x20);
+static_assert(offsetof(SceV2AtThreadExitBlock, count) == 0x280 && offsetof(SceV2AtThreadExitBlock, next) == 0x288 && sizeof(SceV2AtThreadExitBlock) == 0x290);
+
+static SceV2AtThreadExitBlock sceV2AtThreadExitEntries {};
+static void* sceV2AtThreadExitMutex = nullptr;
+static std::once_flag sceV2AtThreadExitInit;
+
+static void** SceV2AtThreadExitMutex() {
+    std::call_once(sceV2AtThreadExitInit, [] {
+        static_cast<void>(_ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(&sceV2AtThreadExitMutex, 0x102, "SceLibc_V2AtThreadExit"));
+    });
+    return &sceV2AtThreadExitMutex;
+}
+
+void APS5_VABI _ZNSt8__sce_v226_Lock_at_thread_exit_mutexEv_nid_postfix() {
+    if (_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(SceV2AtThreadExitMutex()) != threadSuccess) _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(5);
+}
+
+void APS5_VABI _ZNSt8__sce_v228_Unlock_at_thread_exit_mutexEv_nid_postfix() {
+    _ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(SceV2AtThreadExitMutex());
+}
+
+void APS5_VABI _ZNSt8__sce_v228_Cnd_register_at_thread_exitEPP12pthread_condPP13pthread_mutexPi_nid_postfix(void** condition, void** mutex, int* ready) {
+    _ZNSt8__sce_v226_Lock_at_thread_exit_mutexEv_nid_postfix();
+    auto* block = &sceV2AtThreadExitEntries;
+    while (block != nullptr && block->count == 20) {
+        if (block->next == nullptr) block->next = static_cast<SceV2AtThreadExitBlock*>(std::calloc(1, sizeof(SceV2AtThreadExitBlock)));
+        block = block->next;
+    }
+    if (block != nullptr) {
+        for (auto& entry : block->entries) {
+            if (entry.mutex != nullptr) continue;
+            entry = {_ZNSt8__sce_v28_Thrd_idEv_nid_postfix(), mutex, condition, ready};
+            ++block->count;
+            break;
+        }
+    }
+    _ZNSt8__sce_v228_Unlock_at_thread_exit_mutexEv_nid_postfix();
+}
+
+void APS5_VABI _ZNSt8__sce_v230_Cnd_unregister_at_thread_exitEPP13pthread_mutex_nid_postfix(void** mutex) {
+    _ZNSt8__sce_v226_Lock_at_thread_exit_mutexEv_nid_postfix();
+    for (auto* block = &sceV2AtThreadExitEntries; block != nullptr; block = block->next) {
+        if (block->count == 0) continue;
+        for (auto& entry : block->entries) {
+            if (entry.mutex == mutex) {
+                entry.mutex = nullptr;
+                --block->count;
+            }
+            if (block->count == 0) break;
+        }
+    }
+    _ZNSt8__sce_v228_Unlock_at_thread_exit_mutexEv_nid_postfix();
+}
+
+void APS5_VABI _ZNSt8__sce_v232_Cnd_do_broadcast_at_thread_exitEv_nid_postfix() {
+    void* const thread = _ZNSt8__sce_v28_Thrd_idEv_nid_postfix();
+    _ZNSt8__sce_v226_Lock_at_thread_exit_mutexEv_nid_postfix();
+    for (auto* block = &sceV2AtThreadExitEntries; block != nullptr; block = block->next) {
+        if (block->count == 0) continue;
+        for (auto& entry : block->entries) {
+            if (entry.mutex != nullptr && entry.thread == thread) {
+                if (entry.ready != nullptr) {
+                    static_cast<void>(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(entry.mutex));
+                    *entry.ready = 1;
+                }
+                _ZNSt8__sce_v214_Cnd_broadcastEPP12pthread_cond_nid_postfix(entry.condition);
+                _ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(entry.mutex);
+                entry.mutex = nullptr;
+                --block->count;
+            }
+            if (block->count == 0) break;
+        }
+    }
+    _ZNSt8__sce_v228_Unlock_at_thread_exit_mutexEv_nid_postfix();
+}
+
 int APS5_VABI _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(const Xtime* target) {
     if (!target)
         APS5_INVALID_ARG_EX;
@@ -777,6 +960,45 @@ int APS5_VABI _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postf
         nanos = 0;
     }
     return static_cast<int>(static_cast<std::uint32_t>(seconds) * 1000000u + static_cast<std::uint32_t>((nanos + 999) / 1000));
+}
+
+void APS5_VABI _ZNSt8__sce_v219_Timespec64_get_sysEP8timespec_nid_postfix(Xtime* now) {
+    if (!now)
+        APS5_INVALID_ARG_EX;
+    const auto ticks = static_cast<std::uint64_t>(_Xtime_get_ticks_nid_postfix());
+    now->sec = static_cast<std::int64_t>(ticks / 1000000);
+    now->nsec = static_cast<std::int64_t>(ticks % 1000000) * 1000;
+}
+
+Xtime APS5_VABI _ZNSt8__sce_v222_Timespec64_diff_to_tsEPK8timespec_nid_postfix(const Xtime* target) {
+    if (!target)
+        APS5_INVALID_ARG_EX;
+    constexpr std::uint64_t billion = nanosPerSecond;
+    const auto ticks = static_cast<std::uint64_t>(_Xtime_get_ticks_nid_postfix());
+    const std::uint64_t nowSeconds = ticks / 1000000;
+    const auto nowNanos = static_cast<std::int64_t>(ticks % 1000000) * 1000;
+    std::uint64_t seconds = static_cast<std::uint64_t>(target->sec);
+    std::uint64_t nanos = static_cast<std::uint64_t>(target->nsec);
+    if (static_cast<std::int64_t>(nanos) < 0) {
+        const std::uint64_t lowest = 0 - billion;
+        const std::uint64_t whole = nanos < lowest ? (lowest - nanos - 1) / billion + 1 : 0;
+        seconds -= whole + 1;
+        nanos += (whole + 1) * billion;
+    }
+    if (static_cast<std::int64_t>(nanos) >= nanosPerSecond) {
+        const std::uint64_t whole = ((nanos >= 2 * billion - 1 ? nanos - (2 * billion - 1) : 0) + billion - 1) / billion;
+        seconds += whole + 1;
+        nanos -= (whole + 1) * billion;
+    }
+    if (static_cast<std::int64_t>(nanos) < nowNanos) {
+        seconds += ~nowSeconds;
+        nanos += billion;
+    } else {
+        seconds -= nowSeconds;
+    }
+    nanos -= static_cast<std::uint64_t>(nowNanos);
+    if (static_cast<std::int64_t>(seconds) < 0 || (seconds == 0 && static_cast<std::int64_t>(nanos) <= 0)) return {0, 0};
+    return {static_cast<std::int64_t>(seconds), static_cast<std::int64_t>(nanos)};
 }
 
 static int SharedMutexResult(int result) {
@@ -848,6 +1070,18 @@ void APS5_VABI _ZNSt8__sce_v211_Thrd_yieldEv_nid_postfix() {
 
 void* APS5_VABI _ZNSt8__sce_v28_Thrd_idEv_nid_postfix() {
     return _Thrd_current_nid_postfix();
+}
+
+int APS5_VABI _ZNSt8__sce_v221_Thrd_start_with_nameEPP7pthreadPFPvS3_ES3_PKc_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name) {
+    return _Thrd_start_with_name_nid_postfix(thread, entry, argument, name);
+}
+
+int APS5_VABI _ZNSt8__sce_v221_Thrd_start_with_attrEPP7pthreadPFPvS3_ES3_PP12pthread_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, void* attribute) {
+    return _Thrd_start_with_attr_nid_postfix(thread, entry, argument, attribute);
+}
+
+int APS5_VABI _ZNSt8__sce_v226_Thrd_start_with_name_attrEPP7pthreadPFPvS3_ES3_PKcPP12pthread_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name, void* attribute) {
+    return _Thrd_start_with_name_attr_nid_postfix(thread, entry, argument, name, attribute);
 }
 
 }
