@@ -7,13 +7,17 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <source_location>
+#include <span>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -79,7 +83,24 @@ public:
         return true;
     }
     bool Behind(VkCommandBuffer commands) const { return commands == recent.load(std::memory_order_relaxed) && executed.load(std::memory_order_acquire) < posted.load(std::memory_order_acquire); }
-    std::byte* Append(Run run, std::size_t bytes);
+    static constexpr std::size_t RecordAlign = 16;
+    static constexpr std::size_t Aligned(std::size_t bytes) { return (bytes + RecordAlign - 1) / RecordAlign * RecordAlign; }
+    template<typename... A>
+    static constexpr void CheckPlain() {
+        static_assert(((!std::is_pointer_v<A> || !std::is_const_v<std::remove_pointer_t<A>>) && ...), "AGC graphics: a plain encoded command copies its arguments by value, so a pointer-to-const argument would be read after the caller's storage is gone; encode it with its pointed-to data");
+    }
+    template<typename Payload, typename... T>
+    void Emplace(Run run, const Payload& payload, std::span<const T>... arrays) {
+        static_assert((std::is_trivially_copyable_v<T> && ...), "AGC graphics: an encoded command's arrays are copied as bytes, so their elements must be trivially copyable; keep owners in batch storage");
+        static_assert(std::is_trivially_destructible_v<Payload>, "AGC graphics: an encoded command's payload is never destroyed, so it must be trivially destructible; keep owners in batch storage");
+        static_assert(std::is_nothrow_copy_constructible_v<Payload>, "AGC graphics: an encoded command's payload must be built without throwing");
+        const std::size_t bytes = Aligned(sizeof(Payload)) + (Aligned(sizeof(T) * arrays.size()) + ... + 0);
+        auto* at = reserve(run, bytes);
+        new (at) Payload(payload);
+        at += Aligned(sizeof(Payload));
+        ((at = copyInto(at, arrays)), ...);
+        publish();
+    }
     std::mutex& PoolMutex() { return poolMutex; }
     const DeviceFunctions& Real() const { return real; }
     struct Statistics {
@@ -125,6 +146,14 @@ private:
     CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot);
     static std::size_t claim();
     bool post() noexcept;
+    std::byte* reserve(Run run, std::size_t bytes);
+    template<typename T>
+    static std::byte* copyInto(std::byte* at, std::span<const T> values) {
+        if (!values.empty()) std::memcpy(at, values.data(), values.size_bytes());
+        return at + Aligned(values.size_bytes());
+    }
+    void publish() noexcept;
+    void refuseEncoderThread() const noexcept;
     void run();
     void execute(Chunk& chunk);
     void await(const WaitSite& site, bool flushed) noexcept;
@@ -139,6 +168,7 @@ private:
     std::atomic<VkCommandBuffer> recent{VK_NULL_HANDLE};
     Recording* recording = nullptr;
     Chunk* filling = nullptr;
+    std::size_t reserved = 0;
     std::mutex queueMutex;
     Chunk* head = nullptr;
     Chunk* tail = nullptr;

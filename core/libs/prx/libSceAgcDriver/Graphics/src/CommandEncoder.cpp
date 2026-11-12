@@ -36,7 +36,7 @@ std::chrono::nanoseconds EncoderIdleSpin() {
     }();
     return spin;
 }
-constexpr std::size_t RecordAlign = 16;
+constexpr std::size_t RecordAlign = CommandEncoder::RecordAlign;
 
 struct Record {
     CommandEncoder::Run run;
@@ -46,7 +46,7 @@ struct Record {
 constexpr std::size_t RecordHeader = (sizeof(Record) + RecordAlign - 1) / RecordAlign * RecordAlign;
 
 constexpr std::size_t aligned(std::size_t bytes) {
-    return (bytes + RecordAlign - 1) / RecordAlign * RecordAlign;
+    return CommandEncoder::Aligned(bytes);
 }
 
 struct SlotState {
@@ -124,8 +124,9 @@ void runPlain(const std::byte* payload, VkCommandBuffer commands, const DeviceFu
 
 template<std::size_t S, auto Member, typename Name, typename... A>
 VKAPI_ATTR void VKAPI_CALL plain(VkCommandBuffer commands, A... arguments) {
+    CommandEncoder::CheckPlain<A...>();
     if (auto* encoder = deferring<S>(commands, Name::Text())) {
-        new (encoder->Append(&runPlain<Member, A...>, sizeof(std::tuple<A...>))) std::tuple<A...>(arguments...);
+        encoder->Emplace(&runPlain<Member, A...>, std::tuple<A...>(arguments...));
         return;
     }
     (slots()[S].real.*Member)(commands, arguments...);
@@ -148,12 +149,6 @@ constexpr auto directFor(void(VKAPI_PTR*)(VkCommandBuffer, A...)) {
 }
 
 template<typename T>
-std::byte* copyArray(std::byte* to, const T* from, std::uint32_t count) {
-    if (count != 0) std::memcpy(to, from, sizeof(T) * count);
-    return to + aligned(sizeof(T) * count);
-}
-
-template<typename T>
 const T* arrayAt(const std::byte*& at, std::uint32_t count) {
     const auto* values = count != 0 ? reinterpret_cast<const T*>(at) : nullptr;
     at += aligned(sizeof(T) * count);
@@ -168,13 +163,11 @@ struct RangeHeader {
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL setViewport(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const VkViewport* viewports) {
     if (auto* encoder = deferring<S>(commands, "cmdSetViewport")) {
-        auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
+        encoder->Emplace([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
             const auto header = unpack<RangeHeader>(payload);
             const auto* at = payload + aligned(sizeof(RangeHeader));
             functions.cmdSetViewport(target, header.first, header.count, arrayAt<VkViewport>(at, header.count));
-        }, aligned(sizeof(RangeHeader)) + aligned(sizeof(VkViewport) * count));
-        new (at) RangeHeader{first, count};
-        copyArray(at + aligned(sizeof(RangeHeader)), viewports, count);
+        }, RangeHeader{first, count}, std::span(viewports, count));
         return;
     }
     slots()[S].real.cmdSetViewport(commands, first, count, viewports);
@@ -183,13 +176,11 @@ VKAPI_ATTR void VKAPI_CALL setViewport(VkCommandBuffer commands, std::uint32_t f
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL setScissor(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const VkRect2D* scissors) {
     if (auto* encoder = deferring<S>(commands, "cmdSetScissor")) {
-        auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
+        encoder->Emplace([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
             const auto header = unpack<RangeHeader>(payload);
             const auto* at = payload + aligned(sizeof(RangeHeader));
             functions.cmdSetScissor(target, header.first, header.count, arrayAt<VkRect2D>(at, header.count));
-        }, aligned(sizeof(RangeHeader)) + aligned(sizeof(VkRect2D) * count));
-        new (at) RangeHeader{first, count};
-        copyArray(at + aligned(sizeof(RangeHeader)), scissors, count);
+        }, RangeHeader{first, count}, std::span(scissors, count));
         return;
     }
     slots()[S].real.cmdSetScissor(commands, first, count, scissors);
@@ -198,13 +189,11 @@ VKAPI_ATTR void VKAPI_CALL setScissor(VkCommandBuffer commands, std::uint32_t fi
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL setColorWriteMask(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const VkColorComponentFlags* masks) {
     if (auto* encoder = deferring<S>(commands, "cmdSetColorWriteMask")) {
-        auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
+        encoder->Emplace([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
             const auto header = unpack<RangeHeader>(payload);
             const auto* at = payload + aligned(sizeof(RangeHeader));
             functions.cmdSetColorWriteMask(target, header.first, header.count, arrayAt<VkColorComponentFlags>(at, header.count));
-        }, aligned(sizeof(RangeHeader)) + aligned(sizeof(VkColorComponentFlags) * count));
-        new (at) RangeHeader{first, count};
-        copyArray(at + aligned(sizeof(RangeHeader)), masks, count);
+        }, RangeHeader{first, count}, std::span(masks, count));
         return;
     }
     slots()[S].real.cmdSetColorWriteMask(commands, first, count, masks);
@@ -221,15 +210,13 @@ struct BindSetsHeader {
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL bindDescriptorSets(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, std::uint32_t firstSet, std::uint32_t sets, const VkDescriptorSet* descriptorSets, std::uint32_t offsets, const std::uint32_t* dynamicOffsets) {
     if (auto* encoder = deferring<S>(commands, "cmdBindDescriptorSets")) {
-        auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
+        encoder->Emplace([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
             const auto header = unpack<BindSetsHeader>(payload);
             const auto* at = payload + aligned(sizeof(BindSetsHeader));
             const auto* descriptorSets = arrayAt<VkDescriptorSet>(at, header.sets);
             const auto* dynamicOffsets = arrayAt<std::uint32_t>(at, header.offsets);
             functions.cmdBindDescriptorSets(target, header.bindPoint, header.layout, header.firstSet, header.sets, descriptorSets, header.offsets, dynamicOffsets);
-        }, aligned(sizeof(BindSetsHeader)) + aligned(sizeof(VkDescriptorSet) * sets) + aligned(sizeof(std::uint32_t) * offsets));
-        new (at) BindSetsHeader{bindPoint, layout, firstSet, sets, offsets};
-        copyArray(copyArray(at + aligned(sizeof(BindSetsHeader)), descriptorSets, sets), dynamicOffsets, offsets);
+        }, BindSetsHeader{bindPoint, layout, firstSet, sets, offsets}, std::span(descriptorSets, sets), std::span(dynamicOffsets, offsets));
         return;
     }
     slots()[S].real.cmdBindDescriptorSets(commands, bindPoint, layout, firstSet, sets, descriptorSets, offsets, dynamicOffsets);
@@ -245,12 +232,10 @@ struct PushHeader {
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL pushConstants(VkCommandBuffer commands, VkPipelineLayout layout, VkShaderStageFlags stages, std::uint32_t offset, std::uint32_t size, const void* values) {
     if (auto* encoder = deferring<S>(commands, "cmdPushConstants")) {
-        auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
+        encoder->Emplace([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
             const auto header = unpack<PushHeader>(payload);
             functions.cmdPushConstants(target, header.layout, header.stages, header.offset, header.size, payload + aligned(sizeof(PushHeader)));
-        }, aligned(sizeof(PushHeader)) + aligned(size));
-        new (at) PushHeader{layout, stages, offset, size};
-        if (size != 0) std::memcpy(at + aligned(sizeof(PushHeader)), values, size);
+        }, PushHeader{layout, stages, offset, size}, std::span(static_cast<const std::byte*>(values), size));
         return;
     }
     slots()[S].real.cmdPushConstants(commands, layout, stages, offset, size, values);
@@ -259,15 +244,13 @@ VKAPI_ATTR void VKAPI_CALL pushConstants(VkCommandBuffer commands, VkPipelineLay
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL bindVertexBuffers(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const VkBuffer* buffers, const VkDeviceSize* offsets) {
     if (auto* encoder = deferring<S>(commands, "cmdBindVertexBuffers")) {
-        auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
+        encoder->Emplace([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
             const auto header = unpack<RangeHeader>(payload);
             const auto* at = payload + aligned(sizeof(RangeHeader));
             const auto* buffers = arrayAt<VkBuffer>(at, header.count);
             const auto* offsets = arrayAt<VkDeviceSize>(at, header.count);
             functions.cmdBindVertexBuffers(target, header.first, header.count, buffers, offsets);
-        }, aligned(sizeof(RangeHeader)) + aligned(sizeof(VkBuffer) * count) + aligned(sizeof(VkDeviceSize) * count));
-        new (at) RangeHeader{first, count};
-        copyArray(copyArray(at + aligned(sizeof(RangeHeader)), buffers, count), offsets, count);
+        }, RangeHeader{first, count}, std::span(buffers, count), std::span(offsets, count));
         return;
     }
     slots()[S].real.cmdBindVertexBuffers(commands, first, count, buffers, offsets);
@@ -294,16 +277,14 @@ template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL pipelineBarrier(VkCommandBuffer commands, VkPipelineStageFlags source, VkPipelineStageFlags destination, VkDependencyFlags dependencies, std::uint32_t memory, const VkMemoryBarrier* memoryBarriers, std::uint32_t buffers, const VkBufferMemoryBarrier* bufferBarriers, std::uint32_t images, const VkImageMemoryBarrier* imageBarriers) {
     if (auto* encoder = deferring<S>(commands, "cmdPipelineBarrier")) {
         if (!chained(memoryBarriers, memory) && !chained(bufferBarriers, buffers) && !chained(imageBarriers, images)) {
-            auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
+            encoder->Emplace([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
                 const auto header = unpack<BarrierHeader>(payload);
                 const auto* at = payload + aligned(sizeof(BarrierHeader));
                 const auto* memoryBarriers = arrayAt<VkMemoryBarrier>(at, header.memory);
                 const auto* bufferBarriers = arrayAt<VkBufferMemoryBarrier>(at, header.buffers);
                 const auto* imageBarriers = arrayAt<VkImageMemoryBarrier>(at, header.images);
                 functions.cmdPipelineBarrier(target, header.source, header.destination, header.dependencies, header.memory, memoryBarriers, header.buffers, bufferBarriers, header.images, imageBarriers);
-            }, aligned(sizeof(BarrierHeader)) + aligned(sizeof(VkMemoryBarrier) * memory) + aligned(sizeof(VkBufferMemoryBarrier) * buffers) + aligned(sizeof(VkImageMemoryBarrier) * images));
-            new (at) BarrierHeader{source, destination, dependencies, memory, buffers, images};
-            copyArray(copyArray(copyArray(at + aligned(sizeof(BarrierHeader)), memoryBarriers, memory), bufferBarriers, buffers), imageBarriers, images);
+            }, BarrierHeader{source, destination, dependencies, memory, buffers, images}, std::span(memoryBarriers, memory), std::span(bufferBarriers, buffers), std::span(imageBarriers, images));
             return;
         }
         if (!encoder->Direct("cmdPipelineBarrier")) return;
@@ -320,14 +301,12 @@ template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL beginRenderPass(VkCommandBuffer commands, const VkRenderPassBeginInfo* info, VkSubpassContents contents) {
     if (auto* encoder = deferring<S>(commands, "cmdBeginRenderPass")) {
         if (info->pNext == nullptr) {
-            auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
+            encoder->Emplace([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
                 auto header = unpack<BeginPassHeader>(payload);
                 const auto* at = payload + aligned(sizeof(BeginPassHeader));
                 header.info.pClearValues = arrayAt<VkClearValue>(at, header.info.clearValueCount);
                 functions.cmdBeginRenderPass(target, &header.info, header.contents);
-            }, aligned(sizeof(BeginPassHeader)) + aligned(sizeof(VkClearValue) * info->clearValueCount));
-            new (at) BeginPassHeader{*info, contents};
-            copyArray(at + aligned(sizeof(BeginPassHeader)), info->pClearValues, info->clearValueCount);
+            }, BeginPassHeader{*info, contents}, std::span(info->pClearValues, info->clearValueCount));
             return;
         }
         if (!encoder->Direct("cmdBeginRenderPass")) return;
@@ -347,16 +326,14 @@ VKAPI_ATTR void VKAPI_CALL beginRendering(VkCommandBuffer commands, const VkRend
         const bool plainDepth = info->pDepthAttachment == nullptr || info->pDepthAttachment->pNext == nullptr;
         const bool plainStencil = info->pStencilAttachment == nullptr || info->pStencilAttachment->pNext == nullptr;
         if (info->pNext == nullptr && plainDepth && plainStencil && !chained(info->pColorAttachments, info->colorAttachmentCount)) {
-            auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
+            encoder->Emplace([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
                 auto header = unpack<RenderingHeader>(payload);
                 const auto* at = payload + aligned(sizeof(RenderingHeader));
                 header.info.pColorAttachments = arrayAt<VkRenderingAttachmentInfoKHR>(at, header.info.colorAttachmentCount);
                 if (header.info.pDepthAttachment != nullptr) header.info.pDepthAttachment = &header.depth;
                 if (header.info.pStencilAttachment != nullptr) header.info.pStencilAttachment = &header.stencil;
                 functions.cmdBeginRendering(target, &header.info);
-            }, aligned(sizeof(RenderingHeader)) + aligned(sizeof(VkRenderingAttachmentInfoKHR) * info->colorAttachmentCount));
-            new (at) RenderingHeader{*info, info->pDepthAttachment != nullptr ? *info->pDepthAttachment : VkRenderingAttachmentInfoKHR{}, info->pStencilAttachment != nullptr ? *info->pStencilAttachment : VkRenderingAttachmentInfoKHR{}};
-            copyArray(at + aligned(sizeof(RenderingHeader)), info->pColorAttachments, info->colorAttachmentCount);
+            }, RenderingHeader{*info, info->pDepthAttachment != nullptr ? *info->pDepthAttachment : VkRenderingAttachmentInfoKHR{}, info->pStencilAttachment != nullptr ? *info->pStencilAttachment : VkRenderingAttachmentInfoKHR{}}, std::span(info->pColorAttachments, info->colorAttachmentCount));
             return;
         }
         if (!encoder->Direct("cmdBeginRendering")) return;
@@ -537,7 +514,7 @@ void CommandEncoder::Close(std::source_location where) {
     target.store(windows.back().commands, std::memory_order_relaxed);
 }
 
-std::byte* CommandEncoder::Append(Run run, std::size_t bytes) {
+std::byte* CommandEncoder::reserve(Run run, std::size_t bytes) {
     const auto need = RecordHeader + aligned(bytes);
     if (filling != nullptr && (filling->recording != recording || filling->used + need > filling->bytes.size())) post();
     if (filling == nullptr) {
@@ -569,9 +546,20 @@ std::byte* CommandEncoder::Append(Run run, std::size_t bytes) {
     }
     auto* at = filling->bytes.data() + filling->used;
     new (at) Record{run, static_cast<std::uint32_t>(need)};
-    filling->used += need;
-    ++filling->records;
+    reserved = need;
     return at + RecordHeader;
+}
+
+void CommandEncoder::publish() noexcept {
+    filling->used += std::exchange(reserved, 0);
+    ++filling->records;
+}
+
+void CommandEncoder::refuseEncoderThread() const noexcept {
+    if (std::this_thread::get_id() != worker.get_id()) return;
+    std::fputs("AGC graphics: the command encoder was asked to wait for its own thread (a replayed command reached a settle); the wait could never return\n", stderr);
+    std::fflush(stderr);
+    std::abort();
 }
 
 bool CommandEncoder::post() noexcept {
@@ -604,6 +592,7 @@ void CommandEncoder::Settle(WaitSite site) noexcept {
 }
 
 void CommandEncoder::await(const WaitSite& site, bool flushed) noexcept {
+    refuseEncoderThread();
     const auto through = posted.load(std::memory_order_acquire);
     if (executed.load(std::memory_order_acquire) >= through) {
         if (flushed) note(site, 0, false, true);
@@ -652,6 +641,7 @@ void CommandEncoder::printSites(bool final) noexcept {
 }
 
 void CommandEncoder::awaitSpare() noexcept {
+    refuseEncoderThread();
     const auto start = std::chrono::steady_clock::now();
     const auto seen = executed.load(std::memory_order_acquire);
     {

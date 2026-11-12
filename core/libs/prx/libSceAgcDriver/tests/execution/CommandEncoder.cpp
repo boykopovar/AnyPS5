@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/tests/AllocationFailure.hpp"
 #include <algorithm>
 #include <atomic>
+#include <csignal>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +17,7 @@
 #include <mutex>
 #include <random>
 #include <source_location>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -682,6 +684,21 @@ void WaitsAreAttributedToTheirCallSites() {
 
 }
 
+void WaitOnTheEncoderThread() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x54);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    const auto commands = Handle<VkCommandBuffer>(0x1700);
+    CommandEncoder::SetDelayForTesting([device] { AgcDriver::Graphics::BeforeCommandLookup(device); });
+    encoder.Open(commands, RecordingOf(commands));
+    table.cmdDraw(commands, 1, 1, 0, 0);
+    encoder.Close();
+    encoder.Quiesce();
+    CommandEncoder::SetDelayForTesting({});
+}
+
 bool Reports(const std::function<void()>& settle) {
     try {
         settle();
@@ -806,12 +823,15 @@ void AppendFailureKeepsTheWindow() {
     auto& encoder = *attached;
     encoder.Open(commands, RecordingOf(commands));
     table.cmdDraw(commands, 1, 1, 0, 0);
+    const std::vector<std::byte> oversized(128 * 1024);
     bool refused = false;
     try {
-        static_cast<void>(encoder.Append([](const std::byte*, VkCommandBuffer, const DeviceFunctions&) {}, static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max() / 2)));
+        AgcDriver::Tests::SetAllocationFailureCountdown(0);
+        encoder.Emplace([](const std::byte*, VkCommandBuffer, const DeviceFunctions&) {}, std::uint32_t{0}, std::span<const std::byte>(oversized));
     } catch (const std::exception&) {
         refused = true;
     }
+    AgcDriver::Tests::SetAllocationFailureCountdown(-1);
     table.cmdDraw(commands, 2, 1, 0, 0);
     encoder.Close();
     encoder.Quiesce();
@@ -965,8 +985,14 @@ void ReplayFailureNeedsNoAllocation() {
     Compare({{healthy, {"draw 2 1 0 0"}}}, "a replay after a failure stored without allocating");
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (argc > 1 && std::string(argv[1]) == "--wait-on-the-encoder-thread") {
+            std::signal(SIGABRT, [](int) { std::_Exit(0); });
+            WaitOnTheEncoderThread();
+            std::cerr << "a wait on the encoder thread returned instead of stopping the process\n";
+            return 1;
+        }
 #ifdef _WIN32
         _putenv_s("APS5_HANDOFF_SPIN_US", "150");
 #else
