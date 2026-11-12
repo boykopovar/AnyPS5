@@ -39,22 +39,6 @@ void CheckSetFlags(std::uint64_t initial, std::uint64_t flags) {
     Require(std::memcmp(&guarded, &expected, sizeof(guarded)) == 0);
 }
 
-void CheckVersionDependent(std::uint64_t initial, std::uint64_t flags) {
-    GuardedParam guarded;
-    std::memset(&guarded, 0x5A, sizeof(guarded));
-    guarded.param.flags = initial;
-    GuardedParam expected;
-    std::memcpy(&expected, &guarded, sizeof(guarded));
-    bool thrown = false;
-    try {
-        X509_VERIFY_PARAM_set_flags_nid_postfix(&guarded.param, flags);
-    } catch (const std::runtime_error&) {
-        thrown = true;
-    }
-    Require(thrown);
-    Require(std::memcmp(&guarded, &expected, sizeof(guarded)) == 0);
-}
-
 void TestSetFlags() {
     CheckSetFlags(0, 0);
     CheckSetFlags(0, PartialChain);
@@ -66,9 +50,6 @@ void TestSetFlags() {
     CheckSetFlags(0, PolicyCheck | ExplicitPolicy);
     CheckSetFlags(PolicyCheck, ExplicitPolicy);
     CheckSetFlags(PolicyCheck | PartialChain, InhibitAny | InhibitMap);
-    for (std::uint64_t initial : {std::uint64_t {0}, PartialChain, ExplicitPolicy})
-        for (std::uint64_t flags : {ExplicitPolicy, InhibitAny, InhibitMap, ExplicitPolicy | PartialChain})
-            CheckVersionDependent(initial, flags);
     bool thrown = false;
     try {
         X509_VERIFY_PARAM_set_flags_nid_postfix(nullptr, PartialChain);

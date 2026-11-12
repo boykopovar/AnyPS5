@@ -28,7 +28,8 @@ enum class InputControl {
     ShowPadStatus,
     VolumeUp,
     VolumeDown,
-    ToggleMute
+    ToggleMute,
+    ReloadInputMapping
 };
 
 enum class PadButton : std::uint32_t {
@@ -66,6 +67,7 @@ struct InputBinding {
     InputControl control;
     PadButton button = PadButton::None;
     int wheelDirection = 0;
+    int wheelTilt = 0;
 };
 
 }

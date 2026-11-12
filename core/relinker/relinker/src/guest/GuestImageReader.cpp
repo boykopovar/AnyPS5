@@ -1,3 +1,4 @@
+#include <unordered_map>
 #include <relinker/guest/GuestImage.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/parsing/RelrRelocations.hpp>
@@ -14,7 +15,7 @@
 
 namespace Relinker {
 
-GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector<std::uint8_t> bytes, const bool windows) const try {
+GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector<std::uint8_t> bytes, const bool windows, const bool functionSymbolRoots) const try {
     const auto fail = [&](const std::string& message) { throw Domain::RelinkerException(Io::Utf8Path(path) + ": " + message); };
     const auto range = [&](std::uint64_t offset, std::uint64_t size) {
         if (offset > bytes.size() || size > bytes.size() - offset) {
@@ -31,11 +32,13 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     range(Io::ReadU64(bytes, 32), static_cast<std::uint64_t>(Io::ReadU16(bytes, 56)) * 56);
     GuestImage image;
     image.SourcePath = path;
+    image.FunctionSymbolRoots = functionSymbolRoots;
     image.OutputName = path.filename().string() + GuestModuleSuffix;
     image.Headers = ElfReader(bytes).ReadProgramHeaders();
     const Domain::ProgramHeader* dynamic = nullptr;
     const Domain::ProgramHeader* dynlib = nullptr;
     const Domain::ProgramHeader* tls = nullptr;
+    const Domain::ProgramHeader* ehFrame = nullptr;
     std::map<std::uint64_t, std::uint64_t> loads;
     constexpr std::uint32_t sceComment = 0x6fffff00;
     constexpr std::uint32_t sceLibVersion = 0x6fffff01;
@@ -47,6 +50,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (header.Type == 1) {
             if (header.FileSize > header.MemorySize || header.MemorySize > std::numeric_limits<std::uint64_t>::max() - header.MappedAddress || (header.Flags & ~7u) != 0) fail("Invalid load segment");
             if (header.Alignment > 1 && (!std::has_single_bit(header.Alignment) || header.Offset % header.Alignment != header.MappedAddress % header.Alignment)) fail("Invalid load segment alignment");
+            if (header.MemorySize == 0) continue;
             const auto next = loads.lower_bound(header.MappedAddress);
             if ((next != loads.end() && next->first < header.MappedAddress + header.MemorySize) || (next != loads.begin() && std::prev(next)->second > header.MappedAddress)) fail("Overlapping load segments");
             loads.emplace(header.MappedAddress, header.MappedAddress + header.MemorySize);
@@ -58,6 +62,10 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (header.Type == 0x61000000) {
             if (dynlib != nullptr) fail("Duplicate SCE dynamic data");
             dynlib = &header;
+        }
+        if (header.Type == 0x6474e550) {
+            if (ehFrame != nullptr) fail("Duplicate EH frame segment");
+            ehFrame = &header;
         }
         if (header.Type == 7) {
             if (tls != nullptr || header.FileSize > header.MemorySize || (header.Alignment > 1 && !std::has_single_bit(header.Alignment))) fail("Invalid TLS segment");
@@ -84,16 +92,20 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         }
     }
     if (!terminated) fail("Unterminated dynamic segment");
-    for (const auto unsupported : {15u, 16u, 17u, 18u, 19u, 22u}) {
+    for (const auto unsupported : {15u, 16u, 22u}) {
         if (tags.contains(unsupported)) fail("Unsupported dynamic tag " + std::to_string(unsupported));
     }
-    if (tags.contains(30) && (tags.at(30) & ~(2ull | 8ull)) != 0) fail("Unsupported guest dynamic flags");
+    if (tags.contains(30) && (tags.at(30) & ~(2ull | 8ull | 16ull)) != 0) fail("Unsupported guest dynamic flags");
     image.Symbolic = tags.contains(30) && (tags.at(30) & 2ull) != 0;
     const auto mapped = [&](std::uint64_t address, std::uint64_t size, std::uint32_t flags) {
         for (const auto& header : image.Headers) {
             if (header.Type == 1 && (header.Flags & flags) == flags && address >= header.MappedAddress && address - header.MappedAddress <= header.MemorySize && size <= header.MemorySize - (address - header.MappedAddress)) return;
         }
         fail("Unmapped or inaccessible guest address " + std::to_string(address));
+    };
+    const auto relativeAddress = [&](std::uint64_t address) {
+        if (address < loads.begin()->first || address > loads.rbegin()->second)
+            fail("Relative relocation addend is outside the ELF image " + std::to_string(address));
     };
     const auto translate = [&](std::uint64_t address, std::uint64_t size) {
         for (const auto& header : image.Headers) {
@@ -209,7 +221,11 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         }
         if (section >= 0xff00 && (section != AbsoluteSection || (info & 15) == 6)) fail("Unsupported special symbol section: " + name);
         if ((info & 15) == 6 && section != 0 && (tls == nullptr || value > tls->MemorySize || size > tls->MemorySize - value)) fail("TLS symbol exceeds TLS segment: " + name);
-        if (section != 0 && section != AbsoluteSection && (info & 15) != 6) mapped(value, std::max<std::uint64_t>(size, 1), (info & 15) == 2 ? 1 : 0);
+        if (section != 0 && section != AbsoluteSection && (info & 15) != 6) {
+            const bool functionRoot = functionSymbolRoots && (info & 15) == 2;
+            mapped(value, functionRoot ? 1 : std::max<std::uint64_t>(size, 1), (info & 15) == 2 ? 1 : 0);
+            if (functionRoot) translate(value, 1);
+        }
         if (image.Dynamic.DynStrData.size() > std::numeric_limits<std::uint32_t>::max()) fail("String table too large");
         Io::WriteU32(image.Dynamic.DynSymData, offset, static_cast<std::uint32_t>(image.Dynamic.DynStrData.size()));
         Io::AppendString(image.Dynamic.DynStrData, name);
@@ -239,12 +255,13 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (size % 24 != 0) fail("Invalid relocation table size");
         return {table(addressTag, sceAddressTag, size), size};
     };
-    if (tags.contains(7) || tags.contains(0x6100002f)) {
+    if (tags.contains(17) || tags.contains(18) || tags.contains(19)) fail("DT_REL relocations are not supported");
+    if (tags.contains(7) || tags.contains(0x6100002f) || tags.contains(9) || tags.contains(0x61000033)) {
         if (get(9, 0x61000033) != 24) fail("Invalid RELA entry size");
     }
     const auto [relaOffset, relaSize] = relocationRange(7, 0x6100002f, 8, 0x61000031);
     const auto [pltOffset, pltSize] = relocationRange(23, 0x61000029, 2, 0x6100002d);
-    if (pltSize != 0 && get(20, 0x6100002b) != 7) fail("Unsupported PLT relocation format");
+    if ((pltSize != 0 || tags.contains(20) || tags.contains(0x6100002b)) && get(20, 0x6100002b) != 7) fail("Unsupported PLT relocation format");
     if (relaSize != 0 && pltSize != 0 && relaOffset < pltOffset + pltSize && pltOffset < relaOffset + relaSize
         && relaOffset % 24 != pltOffset % 24)
         fail("Unaligned overlapping relocation tables");
@@ -254,12 +271,13 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (tag >= 35 && tag <= 37) relrTags.push_back({static_cast<std::int64_t>(tag), value});
     for (const auto& [target, addend] : ReadRelrRelocations(bytes, image.Headers, relrTags)) {
         mapped(target, 8, 2);
-        mapped(addend, 0, 0);
+        relativeAddress(addend);
         relocationTargets.emplace(target, target + 8);
         Io::AppendU64(image.Dynamic.RelaData, target);
         Io::AppendU64(image.Dynamic.RelaData, 8);
         Io::AppendU64(image.Dynamic.RelaData, addend);
     }
+    std::map<std::uint64_t, std::size_t> relativeEntries;
     const auto copyRelocations = [&](std::uint64_t offset, std::uint64_t size, std::vector<std::uint8_t>& output, bool plt) {
         output.reserve(size);
         for (std::uint64_t index = 0; index < size; index += 24) {
@@ -274,6 +292,12 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             const auto target = Io::ReadU64(bytes, offset + index);
             const auto addend = Io::ReadU64(bytes, offset + index + 16);
             mapped(target, 8, 2);
+            const bool relative = !plt && relocation == 8 && (info >> 32) == 0;
+            if (const auto earlier = relativeEntries.find(target); relative && earlier != relativeEntries.end()) {
+                relativeAddress(addend);
+                Io::WriteU64(output, earlier->second + 16, addend);
+                continue;
+            }
             const auto next = relocationTargets.lower_bound(target);
             if ((next != relocationTargets.end() && next->first < target + 8) || (next != relocationTargets.begin() && std::prev(next)->second > target)) fail("Overlapping guest relocations");
             relocationTargets.emplace(target, target + 8);
@@ -285,24 +309,26 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
                         if (symbol.Value != 0) fail("RELATIVE relocation has a symbol");
                     } else if (symbol.Section == 0 || addend > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) || symbol.Value != addend)
                         fail("RELATIVE relocation has a symbol");
-                    mapped(addend, 0, 0);
+                    relativeAddress(addend);
                     Io::AppendU64(output, target);
                     Io::AppendU64(output, relocation);
                     Io::AppendU64(output, addend);
                     continue;
                 }
-                mapped(addend, 0, 0);
+                relativeAddress(addend);
             } else if (relocation == 1 || relocation == 6 || relocation == 7) {
                 const auto& symbol = image.Symbols[info >> 32];
                 if ((info >> 32) == 0 || (symbol.Info & 15) == 6 || (relocation != 1 && addend != 0) || (symbol.Section == 0 && symbol.Name.empty())) fail("Invalid guest symbol relocation");
             } else {
                 const auto& symbol = image.Symbols[info >> 32];
-                ownTlsBlock = (info >> 32) != 0 && (relocation == 16 || relocation == 17) && symbol.Info == 3 && symbol.Section == 0 && symbol.Value == 0 && tls != nullptr;
-                if (((info >> 32) == 0 && tls == nullptr) || ((info >> 32) != 0 && (symbol.Info & 15) != 6 && !ownTlsBlock) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
+                const bool hasTlsBlock = tls != nullptr && tls->MemorySize != 0;
+                ownTlsBlock = (info >> 32) != 0 && (relocation == 16 || relocation == 17) && symbol.Info == 3 && symbol.Section == 0 && symbol.Value == 0 && hasTlsBlock;
+                if (((info >> 32) == 0 && !hasTlsBlock) || ((info >> 32) != 0 && (symbol.Info & 15) != 6 && !ownTlsBlock) || ((symbol.Info & 15) == 6 && symbol.Section != 0 && !hasTlsBlock) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
             }
             const auto position = output.size();
             output.insert(output.end(), bytes.begin() + offset + index, bytes.begin() + offset + index + 24);
             if (ownTlsBlock) Io::WriteU64(output, position + 8, relocation);
+            if (relative) relativeEntries.emplace(target, position);
         }
     };
     copyRelocations(relaOffset, relaSize, image.Dynamic.RelaData, false);
@@ -327,11 +353,15 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         const auto address = tags.at(addressTag);
         mapped(address, size, 4);
         const auto fileOffset = translate(address, size);
+        std::unordered_map<std::uint64_t, std::vector<std::pair<const std::vector<std::uint8_t>*, std::size_t>>> relocationsAt;
+        for (const auto* table : {&image.Dynamic.RelaData, &image.Dynamic.RelaPltData})
+            for (std::size_t position = 0; position < table->size(); position += 24)
+                relocationsAt[Io::ReadU64(*table, position)].emplace_back(table, position);
         for (std::uint64_t offset = 0; offset < size; offset += 8) {
             bool relocated = false;
-            for (const auto* table : {&image.Dynamic.RelaData, &image.Dynamic.RelaPltData}) {
-                for (std::size_t position = 0; position < table->size(); position += 24) {
-                    if (Io::ReadU64(*table, position) != address + offset) continue;
+            const auto found = relocationsAt.find(address + offset);
+            if (found != relocationsAt.end()) {
+                for (const auto& [table, position] : found->second) {
                     relocated = true;
                     const auto info = Io::ReadU64(*table, position + 8);
                     const auto addend = Io::ReadU64(*table, position + 16);

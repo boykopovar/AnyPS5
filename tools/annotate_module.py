@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import argparse
+import functools
+import os
 import re
 import shutil
 import struct
@@ -7,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import json
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nid_names
@@ -29,7 +32,10 @@ DT_SYMENT = 11
 DT_RELAENT = 9
 DT_REL = 17
 DT_RELA_KIND = 7
+STT_FUNC = 2
 STT_TLS = 6
+SHN_COMMON = 0xFFF2
+GHIDRA_MAX_NAME_LENGTH = 2000
 DT_GNU_HASH = 0x6ffffef5
 SYMBOL_SIZE = 24
 RELA_SIZE = 24
@@ -39,6 +45,7 @@ LINE_ADDRESS = re.compile(r"^\s*([0-9a-f]+):")
 STUB = re.compile(r"^\s*([0-9a-f]+):\s+(?:\w+\s+)*jmpq?\s+\*(?:-?0x[0-9a-f]+)?\(%(?:rip|eip)\)\s+# 0x([0-9a-f]+)")
 BRANCH = re.compile(r"\b(?:call|jmp)q?\s+0x([0-9a-f]+)")
 REFERENCE = re.compile(r"# 0x([0-9a-f]+)")
+LEA = re.compile(r"^\s*[0-9a-f]+:\s+(?:\w+\s+)*lea[wlq]?\s+[^#]*,\s*%(\w+)")
 
 
 class ModuleError(Exception):
@@ -75,10 +82,18 @@ class Module:
             raise ModuleError("not an ELF file")
         if self.data[4] != 2 or self.data[5] != 1:
             raise ModuleError("not a 64-bit little-endian ELF")
+        if self.data[6] != 1 or self.unpack("<I", 20)[0] != 1:
+            raise ModuleError("unsupported ELF version")
+        if self.unpack("<H", 52)[0] != 64:
+            raise ModuleError("unsupported ELF header size")
         if self.unpack("<H", 0x12)[0] != 0x3E:
             raise ModuleError("not an x86-64 ELF")
         phoff, = self.unpack("<Q", 0x20)
         phentsize, phnum = self.unpack("<HH", 0x36)
+        if phentsize != 56:
+            raise ModuleError("unsupported ELF program header size")
+        if (phnum and phoff < 64) or phoff + phnum * phentsize > len(self.data):
+            raise ModuleError("ELF program header table is outside its supported file range")
         for index in range(phnum):
             kind, flags, offset, vaddr, _, filesz, _, _ = self.unpack("<IIQQQQQQ", phoff + index * phentsize)
             if kind == PT_LOAD:
@@ -91,12 +106,14 @@ class Module:
     def read_tags(self):
         tags = {}
         offset, size = self.dynamic
-        for position in range(offset, offset + size, 16):
+        if offset + size > len(self.data):
+            raise ModuleError("PT_DYNAMIC extends past the end of the file")
+        for position in range(offset, offset + size - 15, 16):
             tag, value = self.unpack("<qQ", position)
             if tag == DT_NULL:
-                break
+                return tags
             tags.setdefault(tag, value)
-        return tags
+        raise ModuleError("PT_DYNAMIC has no complete DT_NULL terminator")
 
     def require_tag(self, tag, name):
         if tag not in self.tags:
@@ -129,6 +146,8 @@ class Module:
 
     def count_gnu_symbols(self, table):
         buckets, symoffset, bloom_size, _ = self.unpack("<IIII", self.address(table, 16))
+        if bloom_size == 0 or (bloom_size & (bloom_size - 1)) != 0:
+            raise ModuleError("GNU hash Bloom filter count %d is not a power of two" % bloom_size)
         buckets_at = table + 16 + bloom_size * 8
         chains_at = buckets_at + buckets * 4
         self.address(table, chains_at - table)
@@ -185,13 +204,17 @@ class Module:
                     slots[offset] = self.symbol(info >> 32)[0]
         return slots
 
-    def exports(self):
-        found = {}
-        thread_local = {}
+    def exported_symbols(self):
         for index in range(1, self.symbol_count):
             name, shndx, value, kind, binding, visibility = self.symbol(index)
             if shndx == 0 or not name or binding == 0 or visibility in (1, 2):
                 continue
+            yield name, shndx, value, kind
+
+    def exports(self):
+        found = {}
+        thread_local = {}
+        for name, _, value, kind in self.exported_symbols():
             (thread_local if kind == STT_TLS else found).setdefault(value, []).append(name)
         return found, thread_local
 
@@ -217,9 +240,38 @@ class Namer:
         return name if name and nid_names.compute_nid(name) == nid else nid
 
 
+def ghidra_symbols(module, namer):
+    rows = {(address, False, "imp_" + namer.resolve(symbol), symbol) for address, symbol in module.imports().items()}
+    for symbol, section, address, kind in module.exported_symbols():
+        if kind == STT_TLS or section == SHN_COMMON:
+            continue
+        function = kind == STT_FUNC and any(flags & PF_X and start <= address < start + size and
+                                           offset + address - start < len(module.data)
+                                           for start, offset, size, flags in module.loads)
+        rows.add((address, function, namer.resolve(symbol), symbol))
+    names, functions, lines = set(), set(), []
+    for address, function, resolved, symbol in sorted(rows, key=lambda row: (row[0], not row[1], row[2] == row[3].split("#", 1)[0], row[2], row[3])):
+        stem = re.sub(r"[^A-Za-z0-9_]", "_", resolved)
+        if not stem or stem[0].isdigit():
+            stem = "_" + stem
+        stem = stem[:GHIDRA_MAX_NAME_LENGTH]
+        name, suffix = stem, 2
+        while name in names:
+            ending = "_%d" % suffix
+            name = stem[:GHIDRA_MAX_NAME_LENGTH - len(ending)] + ending
+            suffix += 1
+        names.add(name)
+        marker = "f" if function and address not in functions else "l"
+        if marker == "f":
+            functions.add(address)
+        lines.append("%s %#x %s" % (name, address, marker))
+    return lines
+
+
 OBJDUMP_NAMES = ("objdump", "gobjdump", "x86_64-linux-gnu-objdump", "x86_64-elf-objdump")
 
 
+@functools.cache
 def gnu_objdump():
     for name in OBJDUMP_NAMES:
         path = shutil.which(name)
@@ -235,24 +287,32 @@ def disassemble(code, vaddr):
     objdump = gnu_objdump()
     if objdump is None:
         raise ModuleError("GNU binutils objdump was not found as any of %s" % ", ".join(OBJDUMP_NAMES))
+    objdump = str(Path(objdump).absolute())
     with tempfile.TemporaryDirectory() as directory:
         blob = Path(directory) / "text.bin"
         blob.write_bytes(code)
         command = [objdump, "-D", "--disassemble-zeroes", "-b", "binary", "-m", "i386:x86-64", "--no-show-raw-insn",
-                   "--adjust-vma=%d" % vaddr, str(blob)]
-        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
+                   "--adjust-vma=%d" % vaddr, blob.name]
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=directory)
     if result.returncode != 0:
         raise ModuleError("objdump failed: %s" % result.stderr.strip())
     return result.stdout.splitlines()
 
 
 def referenced_address(line):
-    if "%fs:" in line or "%gs:" in line:
+    lea = LEA.match(line)
+    if ("%fs:" in line or "%gs:" in line) and not lea:
         return None
     reference = REFERENCE.search(line)
     if reference is None:
         return None
     address = int(reference.group(1), 16)
+    if lea:
+        destination = lea.group(1)
+        if destination.startswith("e") or destination.endswith("d"):
+            return address & 0xFFFFFFFF
+        if not destination.startswith("r") or destination.endswith("w"):
+            return None
     return address & 0xFFFFFFFF if "(%eip)" in line else address
 
 
@@ -300,12 +360,43 @@ def export_lines(exports, thread_local, namer):
     return lines
 
 
+def link_target(text):
+    if os.name != "nt":
+        return text
+    if text.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + text[8:]
+    if text.startswith("\\\\?\\"):
+        return text[4:]
+    return text
+
+
+def resolved_path(path):
+    for _ in range(40):
+        if not path.is_symlink():
+            break
+        target = Path(link_target(os.readlink(path)))
+        path = target if target.is_absolute() else path.parent / target
+    try:
+        return path.resolve(strict=True)
+    except FileNotFoundError:
+        return path.resolve()
+
+
+def same_file(left, right):
+    try:
+        return resolved_path(left) == resolved_path(right) or (left.exists() and right.exists() and left.samefile(right))
+    except (OSError, RuntimeError) as error:
+        raise ModuleError(f"cannot resolve annotation path {left} or {right}: {error}") from error
+
+
 def annotate(module_path, prefix, namer):
     source = Path(module_path)
-    for suffix in (".imports.txt", ".exports.txt", ".asm"):
-        output = Path(prefix + suffix)
-        if output.resolve() == source.resolve() or (output.exists() and source.exists() and output.samefile(source)):
+    outputs = [Path(prefix + suffix) for suffix in (".imports.txt", ".exports.txt", ".asm")]
+    for index, output in enumerate(outputs):
+        if same_file(output, source):
             raise ModuleError(f"annotation output must be separate from the input module: {output}")
+        if any(same_file(output, previous) for previous in outputs[:index]):
+            raise ModuleError(f"annotation outputs must name different files: {output}")
     module = Module(Path(module_path).read_bytes())
     slots = module.imports()
     exports, thread_local = module.exports()
@@ -326,21 +417,52 @@ def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         description="Annotated disassembly of a relinked guest module (no section headers). Writes PREFIX.imports.txt, "
                     "PREFIX.exports.txt and PREFIX.asm, with imports, PLT stubs, GOT references and exports named "
-                    "through the NID database. Requires GNU binutils objdump (objdump, or gobjdump from Homebrew binutils).")
+                    "through the NID database. Disassembly requires GNU binutils objdump (objdump, or gobjdump from "
+                    "Homebrew binutils); offline symbol exports need no objdump.")
     parser.add_argument("module", help="relinked guest module, for example libc.prx.guest.prx")
     parser.add_argument("--out", help="output prefix (default: the module path)")
-    parser.add_argument("--db", help="NID database CSV (downloaded to a cache dir by default)")
+    parser.add_argument("--db", help="NID database CSV (symbol exports read local files only; disassembly downloads to a cache dir by default)")
     parser.add_argument("--no-names", action="store_true", help="print NIDs without loading the database")
-    return parser.parse_args(argv)
+    formats = parser.add_mutually_exclusive_group()
+    formats.add_argument("--symbols-json", action="store_true", help="inspect imports and exports as JSON offline without objdump or output files")
+    formats.add_argument("--symbols-ghidra", action="store_true", help="print an offline Ghidra ImportSymbolsScript map; omits TLS and unallocated common symbols; needs no objdump")
+    args = parser.parse_args(argv)
+    if (args.symbols_json or args.symbols_ghidra) and args.out is not None:
+        mode = "--symbols-json" if args.symbols_json else "--symbols-ghidra"
+        parser.error("%s cannot be combined with --out" % mode)
+    return args
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     args = parse_arguments(sys.argv[1:] if argv is None else argv)
-    if gnu_objdump() is None:
+    symbols_only = args.symbols_json or args.symbols_ghidra
+    if not symbols_only and gnu_objdump() is None:
         sys.exit("GNU binutils objdump is required but none of %s in PATH is GNU objdump" % ", ".join(OBJDUMP_NAMES))
     try:
-        db = {} if args.no_names else nid_names.load_db(Path(args.db) if args.db else nid_names.DEFAULT_CACHE)
-        print(annotate(args.module, args.out or args.module, Namer(db)))
+        db_path = Path(args.db) if args.db else nid_names.DEFAULT_CACHE
+        if args.no_names:
+            db = {}
+        elif symbols_only:
+            db = nid_names.read_db(db_path) if args.db or db_path.exists() else {}
+        else:
+            db = nid_names.load_db(db_path)
+        namer = Namer(db)
+        if args.symbols_ghidra:
+            for line in ghidra_symbols(Module(Path(args.module).read_bytes()), namer):
+                print(line)
+        elif args.symbols_json:
+            module = Module(Path(args.module).read_bytes())
+            exports, thread_local = module.exports()
+            def entries(values):
+                return [{"address": address, "symbol": symbol, "name": namer.resolve(symbol)}
+                        for address in sorted(values) for symbol in values[address]]
+            print(json.dumps({"imports": entries({address: [symbol] for address, symbol in module.imports().items()}), "exports": entries(exports),
+                              "tls_exports": entries(thread_local)}, ensure_ascii=False, indent=2))
+        else:
+            print(annotate(args.module, args.out or args.module, namer))
     except (ModuleError, OSError, UnicodeError) as error:
         sys.exit("%s: %s" % (args.module, error))
     return 0

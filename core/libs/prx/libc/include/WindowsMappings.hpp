@@ -16,6 +16,7 @@
 #include <mutex>
 #include <map>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 #include <stdexcept>
 #include <string>
@@ -47,6 +48,7 @@ public:
         std::vector<std::pair<std::uintptr_t, std::size_t>> created;
         std::lock_guard lock(mutex);
         collectableRanges.clear();
+        disown(reinterpret_cast<std::uintptr_t>(address), reinterpret_cast<std::uintptr_t>(address) + bytes);
         const DWORD flags = MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER | (watched ? MEM_WRITE_WATCH : 0);
         const auto cut = [](std::uintptr_t at, std::size_t size, const char* operation) {
             if (!VirtualFree(reinterpret_cast<void*>(at), size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) fail(operation);
@@ -54,6 +56,7 @@ public:
         const auto replace = [&](std::uintptr_t at, std::size_t size) {
             if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(at), size, flags, protection, nullptr, 0)) fail("replace guest placeholder with private memory");
             privateAllocations.emplace(at, at + size);
+            if (watched) markZero(at, at + size);
             if (!created.empty() && created.back().first + created.back().second == at) created.back().second += size;
             else created.emplace_back(at, size);
         };
@@ -106,6 +109,17 @@ public:
     void Reset(void* address, std::size_t bytes) {
         std::lock_guard lock(mutex);
         reset(reinterpret_cast<std::uintptr_t>(address), bytes);
+    }
+
+    void MapZero(void* address, std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        if (zeroSection == nullptr && (zeroSection = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READONLY, 0, static_cast<DWORD>(pageBytes), nullptr)) == nullptr) fail("create the read-only zero guest page");
+        const auto start = reinterpret_cast<std::uintptr_t>(address);
+        reset(start, bytes);
+        for (auto cursor = start; cursor < start + bytes; cursor += pageBytes) {
+            split(cursor, pageBytes);
+            if (!map(zeroSection, GetCurrentProcess(), reinterpret_cast<void*>(cursor), 0, pageBytes, MEM_REPLACE_PLACEHOLDER, PAGE_READONLY, nullptr, 0)) fail("map the read-only zero guest page");
+        }
     }
 
     void Map(void* address, std::size_t bytes, HANDLE section, std::uint64_t offset, DWORD protection, bool watched = false, bool resident = false, DWORD viewProtection = PAGE_EXECUTE_READWRITE, std::size_t sectionBytes = SIZE_MAX, std::vector<std::pair<std::uintptr_t, std::size_t>>* createdPrivate = nullptr) {
@@ -161,7 +175,10 @@ public:
                     bool compared = false;
                     if (const auto found = physical.find(std::make_pair(key, offset + done + at)); found != physical.end()) {
                         const auto& slot = *found->second;
-                        if (slot.saved) std::memcpy(reinterpret_cast<void*>(base + at), slot.saved->bytes + slot.savedOffset, pageBytes);
+                        if (slot.saved) {
+                            std::memcpy(reinterpret_cast<void*>(base + at), slot.saved->bytes + slot.savedOffset, pageBytes);
+                            forgetZero(base + at, base + at + pageBytes);
+                        }
                         compared = slot.comparedWhenShared;
                         physical.erase(found);
                     }
@@ -223,6 +240,7 @@ public:
 
     void SetProtection(std::uintptr_t address, std::size_t bytes, DWORD protection) {
         std::lock_guard lock(mutex);
+        disown(address, address + bytes);
         collectableRanges.clear();
         for (auto it = views.lower_bound(address); it != views.end() && it->first < address + bytes; ++it) {
             it->second.protection = protection;
@@ -233,6 +251,8 @@ public:
 
     void Pin(std::uintptr_t address, std::size_t bytes) {
         std::lock_guard lock(mutex);
+        disown(address, address + bytes);
+        ownedPins.emplace(address, address + bytes);
         for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < address + bytes; ++it) {
             if (it->second.resident) {
                 ++it->second.pins;
@@ -253,6 +273,8 @@ public:
 
     void Unpin(std::uintptr_t address, std::size_t bytes) {
         std::lock_guard lock(mutex);
+        disown(address, address + bytes);
+        eraseOwnedRange(ownedPins, address, address + bytes);
         for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < address + bytes; ++it) {
             auto& pins = it->second.resident ? it->second.pins : it->second.page->pins;
             if (pins != 0) --pins;
@@ -355,6 +377,9 @@ public:
         for (auto it = first; it != views.end() && it->first < end; ++it) {
             if (!writable(it->second.protection)) return false;
         }
+        disown(address, end);
+        forgetZero(address, end);
+        ownedHostAccess.emplace(address, end);
         for (auto it = first; it != views.end() && it->first < end; ++it) {
             auto& view = it->second;
             if (store) ++view.hostWrites;
@@ -376,6 +401,8 @@ public:
     void EndHostWrite(std::uintptr_t address, std::size_t bytes, bool store = true) {
         std::lock_guard lock(mutex);
         const auto end = address + bytes;
+        disown(address, end);
+        eraseOwnedRange(ownedHostAccess, address, end);
         for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < end; ++it) {
             if (store) --it->second.hostWrites;
             else --it->second.hostImports;
@@ -400,8 +427,9 @@ public:
         if (page < run->second.end) run->second.imported = true;
     }
 
-    void* MapAlias(std::uintptr_t address, std::size_t bytes) {
+    void* MapAlias(std::uintptr_t address, std::size_t bytes, bool* boundsRefused = nullptr) {
         std::lock_guard lock(mutex);
+        if (boundsRefused != nullptr) *boundsRefused = false;
         const auto refuse = [&](const char* reason) {
             char text[192];
             std::snprintf(text, sizeof(text), "read-write alias of shared guest memory 0x%llx+0x%llx: %s", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), reason);
@@ -412,7 +440,10 @@ public:
             const auto found = views.find(address + done);
             if (found == views.end() || !found->second.resident) continue;
             const auto run = std::prev(residentRuns.upper_bound(address + done));
-            if (run->first < address || run->second.end > address + bytes) throw refuse("a resident run of direct memory extends outside the range");
+            if (run->first < address || run->second.end > address + bytes) {
+                if (boundsRefused != nullptr) *boundsRefused = true;
+                throw refuse("a resident run of direct memory extends outside the range");
+            }
             for (auto page = views.find(run->first); page != views.end() && page->first < run->second.end; ++page) {
                 if (page->second.hostWrites != 0) return nullptr;
             }
@@ -478,11 +509,133 @@ public:
     }
 #endif
 
+    static constexpr std::size_t ownedBlockBytes = 0x10000;
+#ifdef GUEST_OWNED_LIMIT_TEST
+    static constexpr std::size_t ownedEntryLimit = 8;
+#else
+    static constexpr std::size_t ownedEntryLimit = 65536;
+#endif
+    static constexpr unsigned OwnedPrivate = 1;
+
+    bool ArmOwned(std::uintptr_t address, std::size_t bytes, std::uint64_t* words, std::size_t count, unsigned flags = 0) {
+        std::lock_guard lock(mutex);
+        if (words == nullptr || (flags & ~OwnedPrivate) != 0 || !ownedRange(address, bytes, count)) return false;
+        if (nextOwned == 0 || count > UINT64_MAX - nextOwned + 1) return false;
+        const auto first = address & ~(ownedBlockBytes - 1);
+        const auto end = (address + bytes - 1) | (ownedBlockBytes - 1);
+        if (count > ownedEntryLimit) return false;
+        std::size_t alreadyPending = 0;
+        for (auto it = ownedPending.lower_bound(first); it != ownedPending.end() && it->first <= end; ++it) ++alreadyPending;
+        if (count - alreadyPending > ownedEntryLimit - ownedPending.size()) return false;
+        for (auto block = first; block < end; block += ownedBlockBytes) {
+            if (!ownable(block, flags)) return false;
+        }
+        disown(first, end + 1);
+        while (ownedWords.size() > ownedEntryLimit - count) ownedWords.erase(ownedWords.begin());
+        for (auto block = first; block < end; block += ownedBlockBytes) {
+            auto& pending = ownedPending[block];
+            auto run = residentRuns.upper_bound(block);
+            if (run != residentRuns.begin() && std::prev(run)->second.end > block) --run;
+            for (; run != residentRuns.end() && run->first < block + ownedBlockBytes; ++run) run->second.reset = true;
+            std::array<void*, ownedBlockBytes / 4096> written{};
+            ULONG_PTR reported = written.size();
+            DWORD granularity = 0;
+            if (watchWrites(WRITE_WATCH_FLAG_RESET, reinterpret_cast<void*>(block), ownedBlockBytes, written.data(), &reported, &granularity) != 0) return false;
+            for (ULONG_PTR index = 0; index < reported; ++index) pending |= std::uint16_t{1} << ((reinterpret_cast<std::uintptr_t>(written[index]) - block) / 4096);
+            if (pending == 0) ownedPending.erase(block);
+        }
+        for (auto block = first; block < end; block += ownedBlockBytes) {
+            ownedWords[block] = nextOwned++;
+        }
+        for (auto block = first; block < end; block += ownedBlockBytes) words[(block - first) / ownedBlockBytes] = ownedWords.at(block);
+        return true;
+    }
+
+    bool OwnedUnchanged(std::uintptr_t address, std::size_t bytes, const std::uint64_t* words, std::size_t count) {
+        std::lock_guard lock(mutex);
+        if (words == nullptr || !ownedRange(address, bytes, count)) return false;
+        const auto first = address & ~(ownedBlockBytes - 1);
+        const auto end = (address + bytes - 1) | (ownedBlockBytes - 1);
+        for (auto block = first; block < end; block += ownedBlockBytes) {
+            const auto found = ownedWords.find(block);
+            if (found == ownedWords.end() || found->second != words[(block - first) / ownedBlockBytes]) return false;
+            std::array<void*, ownedBlockBytes / 4096> written{};
+            ULONG_PTR reported = written.size();
+            DWORD granularity = 0;
+            if (watchWrites(0, reinterpret_cast<void*>(block), ownedBlockBytes, written.data(), &reported, &granularity) != 0 || reported != 0) {
+                ownedWords.erase(found);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void ForgetKnownZero(std::uintptr_t address, std::size_t bytes) {
+        if (bytes == 0 || bytes > UINTPTR_MAX - address) return;
+        std::lock_guard lock(mutex);
+        forgetZero(address, address + bytes);
+    }
+
+    void KnownZero(std::uintptr_t address, std::size_t bytes, void (*zero)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
+        if (bytes == 0 || bytes > UINTPTR_MAX - address) return;
+        const auto end = address + bytes;
+        std::uintptr_t reportStart = 0;
+        std::uintptr_t reportEnd = 0;
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> found;
+        const auto report = [&](std::uintptr_t from, std::uintptr_t to) {
+            from = std::max(from, address);
+            to = std::min(to, end);
+            if (from >= to) return;
+            if (!found.empty() && found.back().second == from) found.back().second = to;
+            else found.emplace_back(from, to);
+        };
+        const auto deliver = [&] {
+            for (const auto& [from, to] : found) {
+                if (reportEnd == from) {
+                    reportEnd = to;
+                    continue;
+                }
+                if (reportEnd > reportStart) zero(context, reportStart, reportEnd);
+                reportStart = from;
+                reportEnd = to;
+            }
+            found.clear();
+        };
+        for (auto cursor = address & ~std::uintptr_t{4095}; cursor < end;) {
+            const auto chunk = cursor & ~(chunkBytes - 1);
+            const auto chunkEnd = std::min(end, chunk + chunkBytes);
+            std::unique_lock lock(mutex);
+            if (zeroPages.empty()) break;
+            if (zeroPages.find(chunk) == zeroPages.end()) {
+                cursor = chunkEnd;
+                continue;
+            }
+            while (cursor < chunkEnd) {
+                const auto limit = zeroSpanEnd(cursor);
+                const auto stop = limit == 0 ? std::min(chunkEnd, (cursor & ~(pageBytes - 1)) + pageBytes) : std::min(chunkEnd, limit);
+                if (limit == 0) forgetZero(cursor, stop);
+                else harvestZero(cursor, stop);
+                if (const auto bits = zeroPages.find(chunk); bits != zeroPages.end()) {
+                    for (auto page = cursor; page < stop; page += 4096) {
+                        const auto bit = (page - chunk) >> 12;
+                        if ((bits->second[bit >> 6] >> (bit & 63) & 1) != 0) report(page, page + 4096);
+                    }
+                }
+                cursor = stop;
+            }
+            lock.unlock();
+            deliver();
+        }
+        deliver();
+        if (reportEnd > reportStart) zero(context, reportStart, reportEnd);
+    }
+
     bool Collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection = Collection::All) {
         std::lock_guard lock(mutex);
         const auto capacity = *count;
         *count = 0;
         const auto end = address + bytes;
+        if (clear) disown(address, end);
         if (collection == Collection::Fresh) {
             const auto fresh = freshRanges.upper_bound(address);
             if ((fresh == freshRanges.begin() || std::prev(fresh)->second <= address) && (fresh == freshRanges.end() || fresh->first >= end)) return true;
@@ -615,8 +768,8 @@ public:
                 }
                 const auto allocationEnd = privateAllocationEnd(cursor);
                 if (allocationEnd == 0) return false;
-                const auto stop = std::min(end, allocationEnd);
                 if (capacity == *count) return true;
+                const auto stop = ownedPending.empty() ? std::min(end, allocationEnd) : std::min({end, allocationEnd, (cursor & ~std::uintptr_t{4095}) + (capacity - *count) * 4096});
                 const auto touched = (((stop + 4095) & ~static_cast<std::uintptr_t>(4095)) - (cursor & ~static_cast<std::uintptr_t>(4095))) / 4096;
                 ULONG_PTR available = std::min<ULONG_PTR>(capacity - *count, touched);
                 DWORD granularity = 0;
@@ -625,7 +778,7 @@ public:
                 collectPieces += (stop + pageBytes - 1) / pageBytes - cursor / pageBytes;
 #endif
                 const bool committed = !verifyDirect() || committedPrivate(cursor, stop);
-                if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) {
+                if (collectOwnedWrites(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) {
                     const auto memory = query(cursor);
                     if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
                     fail("collect private guest writes");
@@ -641,6 +794,217 @@ public:
     }
 
 private:
+    using OwnedRanges = std::multimap<std::uintptr_t, std::uintptr_t>;
+
+    static bool ownedRange(std::uintptr_t address, std::size_t bytes, std::size_t count) {
+        if (address == 0 || bytes == 0 || address >= (std::uintptr_t{1} << 47) || bytes > (std::uintptr_t{1} << 47) - address) return false;
+        return count == ((address + bytes - 1) / ownedBlockBytes - address / ownedBlockBytes + 1);
+    }
+
+    static bool overlapsOwnedRange(const OwnedRanges& ranges, std::uintptr_t first, std::uintptr_t end) {
+        for (auto it = ranges.begin(); it != ranges.end() && it->first < end; ++it) {
+            if (it->second > first) return true;
+        }
+        return false;
+    }
+
+    static void eraseOwnedRange(OwnedRanges& ranges, std::uintptr_t first, std::uintptr_t end) {
+        const auto [begin, stop] = ranges.equal_range(first);
+        for (auto it = begin; it != stop; ++it) {
+            if (it->second == end) {
+                ranges.erase(it);
+                return;
+            }
+        }
+    }
+
+    void disown(std::uintptr_t first, std::uintptr_t end) {
+        if (end <= first) return;
+        ownedWords.erase(ownedWords.lower_bound(first & ~(ownedBlockBytes - 1)), ownedWords.lower_bound(end));
+    }
+
+    bool ownable(std::uintptr_t block, unsigned flags) {
+        const auto end = block + ownedBlockBytes;
+        if (overlapsOwnedRange(ownedPins, block, end) || overlapsOwnedRange(ownedHostAccess, block, end)) return false;
+        for (auto cursor = block; cursor < end;) {
+            const auto memory = query(cursor);
+            if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE || (memory.Protect != PAGE_READWRITE && memory.Protect != PAGE_EXECUTE_READWRITE)) return false;
+            const auto found = views.find(cursor & ~(pageBytes - 1));
+            if (found != views.end()) {
+                const auto& view = found->second;
+                if (!view.resident || view.pins != 0 || view.hostWrites != 0 || view.hostImports != 0 || !writable(view.protection)) return false;
+                const auto next = residentRuns.upper_bound(cursor);
+                if (next == residentRuns.begin() || cursor >= std::prev(next)->second.end || !std::prev(next)->second.watched) return false;
+            } else if ((flags & OwnedPrivate) == 0 || privateAllocationEnd(cursor) == 0) return false;
+            cursor = std::min({end, (cursor & ~(pageBytes - 1)) + pageBytes, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize});
+        }
+        std::array<void*, ownedBlockBytes / 4096> written{};
+        ULONG_PTR reported = written.size();
+        DWORD granularity = 0;
+        return watchWrites(0, reinterpret_cast<void*>(block), ownedBlockBytes, written.data(), &reported, &granularity) == 0;
+    }
+
+    void forgetOwnedPending(std::uintptr_t first, std::uintptr_t end) {
+        for (auto it = ownedPending.lower_bound(first & ~(ownedBlockBytes - 1)); it != ownedPending.end() && it->first < end;) {
+            for (unsigned bit = 0; bit < ownedBlockBytes / 4096; ++bit) {
+                const auto page = it->first + bit * 4096;
+                if (page < end && page + 4096 > first) it->second &= ~(std::uint16_t{1} << bit);
+            }
+            if (it->second == 0) it = ownedPending.erase(it);
+            else ++it;
+        }
+    }
+
+    void markZero(std::uintptr_t start, std::uintptr_t end) {
+        start = (start + 4095) & ~std::uintptr_t{4095};
+        end &= ~std::uintptr_t{4095};
+        while (start < end) {
+            const auto chunk = start & ~(chunkBytes - 1);
+            const auto stop = std::min(end, chunk + chunkBytes);
+            auto& bits = zeroPages[chunk];
+            for (auto bit = (start - chunk) >> 12; bit < (stop - chunk) >> 12; ++bit) bits[bit >> 6] |= std::uint64_t{1} << (bit & 63);
+            start = stop;
+        }
+    }
+
+    static void clearZeroBits(auto& bits, std::uintptr_t chunk, std::uintptr_t from, std::uintptr_t to) {
+        for (auto bit = (from - chunk) >> 12; bit < (to - chunk) >> 12; ++bit) bits[bit >> 6] &= ~(std::uint64_t{1} << (bit & 63));
+    }
+
+    static bool noZeroBits(const auto& bits) {
+        return std::all_of(bits.begin(), bits.end(), [](std::uint64_t word) { return word == 0; });
+    }
+
+    void forgetZero(std::uintptr_t start, std::uintptr_t end) {
+        if (zeroPages.empty() || end <= start) return;
+        start &= ~std::uintptr_t{4095};
+        end = (end + 4095) & ~std::uintptr_t{4095};
+        if ((end - start) / chunkBytes > zeroPages.size()) {
+            for (auto it = zeroPages.begin(); it != zeroPages.end();) {
+                const auto chunk = it->first;
+                if (chunk + chunkBytes <= start || chunk >= end) {
+                    ++it;
+                    continue;
+                }
+                clearZeroBits(it->second, chunk, std::max(start, chunk), std::min(end, chunk + chunkBytes));
+                if (noZeroBits(it->second)) it = zeroPages.erase(it);
+                else ++it;
+            }
+            return;
+        }
+        while (start < end) {
+            const auto chunk = start & ~(chunkBytes - 1);
+            const auto stop = std::min(end, chunk + chunkBytes);
+            if (const auto found = zeroPages.find(chunk); found != zeroPages.end()) {
+                clearZeroBits(found->second, chunk, start, stop);
+                if (noZeroBits(found->second)) zeroPages.erase(found);
+            }
+            start = stop;
+        }
+    }
+
+    bool anyZero(std::uintptr_t start, std::uintptr_t end) const {
+        if (zeroPages.empty()) return false;
+        start &= ~std::uintptr_t{4095};
+        end = (end + 4095) & ~std::uintptr_t{4095};
+        while (start < end) {
+            const auto chunk = start & ~(chunkBytes - 1);
+            const auto stop = std::min(end, chunk + chunkBytes);
+            if (const auto found = zeroPages.find(chunk); found != zeroPages.end()) {
+                for (auto bit = (start - chunk) >> 12; bit < (stop - chunk) >> 12; ++bit) {
+                    if ((found->second[bit >> 6] >> (bit & 63) & 1) != 0) return true;
+                }
+            }
+            start = stop;
+        }
+        return false;
+    }
+
+    bool stillZero(std::uintptr_t page) const {
+        const auto found = zeroPages.find(page & ~(chunkBytes - 1));
+        if (found == zeroPages.end()) return false;
+        const auto bit = (page & (chunkBytes - 1)) >> 12;
+        if ((found->second[bit >> 6] >> (bit & 63) & 1) == 0) return false;
+        thread_local std::array<std::uint64_t, 512> bytes{};
+        SIZE_T read = 0;
+        if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(page), bytes.data(), sizeof(bytes), &read) || read != sizeof(bytes)) return false;
+        return std::all_of(bytes.begin(), bytes.end(), [](std::uint64_t word) { return word == 0; });
+    }
+
+    UINT watchWrites(DWORD flags, void* address, std::size_t bytes, void** pages, ULONG_PTR* count, DWORD* granularity, bool dropZero = false) {
+        const auto capacity = *count;
+        const auto result = GetWriteWatch(flags, address, bytes, pages, count, granularity);
+        if (result != 0 || zeroPages.empty()) return result;
+        const auto first = reinterpret_cast<std::uintptr_t>(address) & ~std::uintptr_t{4095};
+        const auto last = (reinterpret_cast<std::uintptr_t>(address) + bytes + 4095) & ~std::uintptr_t{4095};
+        const bool complete = dropZero && (*count < capacity || capacity >= (last - first) / 4096);
+        ULONG_PTR kept = 0;
+        for (ULONG_PTR index = 0; index < *count; ++index) {
+            const auto page = reinterpret_cast<std::uintptr_t>(pages[index]) & ~std::uintptr_t{4095};
+            if (complete && stillZero(page)) continue;
+            forgetZero(page, page + 4096);
+            pages[kept++] = pages[index];
+        }
+        *count = kept;
+        return result;
+    }
+
+    void harvestZero(std::uintptr_t start, std::uintptr_t end) {
+        start &= ~std::uintptr_t{4095};
+        end = (end + 4095) & ~std::uintptr_t{4095};
+        if (!anyZero(start, end)) return;
+        std::vector<void*> written((end - start) / 4096);
+        ULONG_PTR reported = written.size();
+        DWORD granularity = 0;
+        if (watchWrites(0, reinterpret_cast<void*>(start), end - start, written.data(), &reported, &granularity, true) != 0 || reported == written.size()) forgetZero(start, end);
+    }
+
+    bool resetWrites(std::uintptr_t start, std::uintptr_t end) {
+        if (!anyZero(start, end)) return ResetWriteWatch(reinterpret_cast<void*>(start), end - start) == 0;
+        std::vector<void*> written(((end + 4095) & ~std::uintptr_t{4095}) / 4096 - (start & ~std::uintptr_t{4095}) / 4096);
+        ULONG_PTR reported = written.size();
+        DWORD granularity = 0;
+        if (watchWrites(WRITE_WATCH_FLAG_RESET, reinterpret_cast<void*>(start), end - start, written.data(), &reported, &granularity, true) != 0) {
+            forgetZero(start, end);
+            return false;
+        }
+        return true;
+    }
+
+    std::uintptr_t zeroSpanEnd(std::uintptr_t at) {
+        const auto run = residentRuns.upper_bound(at);
+        if (run != residentRuns.begin() && std::prev(run)->second.end > at) {
+            const auto& resident = std::prev(run)->second;
+            return resident.watched && !resident.imported ? resident.end : 0;
+        }
+        if (views.find(at & ~(pageBytes - 1)) != views.end()) return 0;
+        return privateAllocationEnd(at);
+    }
+
+    UINT collectOwnedWrites(DWORD flags, void* address, std::size_t bytes, void** pages, ULONG_PTR* count, DWORD* granularity) {
+        const auto capacity = *count;
+        const auto result = watchWrites(flags, address, bytes, pages, count, granularity);
+        if (result != 0 || ownedPending.empty()) return result;
+        std::sort(pages, pages + *count);
+        const auto reported = *count;
+        const auto first = reinterpret_cast<std::uintptr_t>(address);
+        const auto end = first + bytes;
+        for (auto it = ownedPending.lower_bound(first & ~(ownedBlockBytes - 1)); it != ownedPending.end() && it->first < end; ++it) {
+            for (unsigned bit = 0; bit < ownedBlockBytes / 4096; ++bit) {
+                const auto page = it->first + bit * 4096;
+                if ((it->second & (std::uint16_t{1} << bit)) == 0 || page >= end || page + 4096 <= first) continue;
+                auto* pointer = reinterpret_cast<void*>(page);
+                if (!std::binary_search(pages, pages + reported, pointer)) {
+                    if (*count == capacity) throw std::runtime_error("owned write collection exceeds its page buffer");
+                    pages[(*count)++] = pointer;
+                }
+            }
+        }
+        std::sort(pages, pages + *count);
+        if ((flags & WRITE_WATCH_FLAG_RESET) != 0) forgetOwnedPending(first, end);
+        return result;
+    }
+
     bool collectable(std::uintptr_t address, std::uintptr_t end) {
         const auto proven = collectableRanges.upper_bound(address);
         if (proven != collectableRanges.begin() && std::prev(proven)->second >= end) return true;
@@ -781,7 +1145,7 @@ private:
         if (run.fresh == 0 && collection != Collection::Fresh) {
             ULONG_PTR reported = (stop - first + 4095) / 4096;
             DWORD granularity = 0;
-            if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(first), stop - first, pages + *count, &reported, &granularity) != 0) fail("collect resident guest writes");
+            if (collectOwnedWrites(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(first), stop - first, pages + *count, &reported, &granularity) != 0) fail("collect resident guest writes");
             for (ULONG_PTR index = 0; index < reported; ++index) pages[*count + index] = reinterpret_cast<void*>(std::max(from, reinterpret_cast<std::uintptr_t>(pages[*count + index])));
             *count += reported;
             return;
@@ -791,13 +1155,14 @@ private:
             std::vector<void*> found((stop - first + 4095) / 4096);
             ULONG_PTR reported = found.size();
             DWORD granularity = 0;
-            if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(first), stop - first, found.data(), &reported, &granularity) != 0) fail("collect resident guest writes");
+            if (collectOwnedWrites(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(first), stop - first, found.data(), &reported, &granularity) != 0) fail("collect resident guest writes");
             for (ULONG_PTR index = 0; index < reported; ++index) written.push_back(reinterpret_cast<std::uintptr_t>(found[index]));
         }
         auto next = written.begin();
         std::uintptr_t resetFrom = 0;
         const auto flushReset = [&](std::uintptr_t to) {
-            if (resetFrom != 0 && ResetWriteWatch(reinterpret_cast<void*>(resetFrom), to - resetFrom) != 0) fail("reset resident guest writes");
+            if (resetFrom != 0) forgetOwnedPending(resetFrom, to);
+            if (resetFrom != 0 && !resetWrites(resetFrom, to)) fail("reset resident guest writes");
             resetFrom = 0;
         };
         for (auto at = first; at < stop; at += 4096) {
@@ -838,6 +1203,7 @@ private:
     void commitResident(std::uintptr_t base, std::size_t bytes) {
         const DWORD flags = MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER | (watchResident ? MEM_WRITE_WATCH : 0);
         if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(base), bytes, flags, PAGE_READWRITE, nullptr, 0)) fail("replace guest placeholder with resident direct memory");
+        if (watchResident) markZero(base, base + bytes);
     }
 
     static std::size_t hostPages(std::size_t bytes) {
@@ -897,6 +1263,13 @@ private:
         }
         const auto section = first->second.section;
         const auto offset = first->second.offset;
+        std::vector<unsigned char> saved;
+        for (auto it = views.lower_bound(start); it != views.end() && it->first < stop; ++it) {
+            for (std::size_t sub = 0; sub < subpages; ++sub) {
+                const auto* bytes = reinterpret_cast<const unsigned char*>(it->first + sub * subpageBytes);
+                if ((it->second.armed & (1u << sub)) != 0) saved.insert(saved.end(), bytes, bytes + subpageBytes);
+            }
+        }
         if (!unmap(GetCurrentProcess(), reinterpret_cast<void*>(start), MEM_PRESERVE_PLACEHOLDER)) fail("unmap a run of shared guest pages to split it");
         split(start, at - start);
         mapRun(start, at - start, section->handle, offset);
@@ -907,6 +1280,16 @@ private:
                 DWORD previous;
                 if (from < to && !VirtualProtect(reinterpret_cast<void*>(from), to - from, part.protection, &previous)) fail("protect a split run of shared guest pages");
             }
+        }
+        const auto* before = saved.data();
+        for (auto it = views.lower_bound(start); it != views.end() && it->first < stop; ++it) {
+            std::uint8_t written = 0;
+            for (std::size_t sub = 0; sub < subpages; ++sub) {
+                if ((it->second.armed & (1u << sub)) == 0) continue;
+                if (std::memcmp(reinterpret_cast<const void*>(it->first + sub * subpageBytes), before, subpageBytes) != 0) written |= static_cast<std::uint8_t>(1u << sub);
+                before += subpageBytes;
+            }
+            if (written != 0) invalidate(*it->second.page, written);
         }
     }
 
@@ -934,6 +1317,9 @@ private:
         const auto run = std::prev(residentRuns.upper_bound(address));
         const auto start = run->first;
         const auto stop = run->second.end;
+        disown(start, stop);
+        forgetOwnedPending(start, stop);
+        forgetZero(start, stop);
         const auto entry = indexEntry(run);
         const bool indexed = entry != residentIndex.end();
         std::vector<std::pair<std::shared_ptr<SharedPage>, std::shared_ptr<Physical>>> created;
@@ -994,6 +1380,9 @@ private:
     void evict(std::map<std::uintptr_t, Run>::iterator run) {
         const auto start = run->first;
         const auto stop = run->second.end;
+        disown(start, stop);
+        forgetOwnedPending(start, stop);
+        forgetZero(start, stop);
         DWORD previous;
         if (!VirtualProtect(reinterpret_cast<void*>(start), stop - start, PAGE_READONLY, &previous)) fail("open resident guest pages");
         const auto entry = indexEntry(run);
@@ -1005,7 +1394,7 @@ private:
             dirty.resize((stop - start) / subpageBytes);
             ULONG_PTR reported = dirty.size();
             DWORD granularity = 0;
-            if (GetWriteWatch(0, reinterpret_cast<void*>(start), stop - start, dirty.data(), &reported, &granularity) == 0) {
+            if (watchWrites(0, reinterpret_cast<void*>(start), stop - start, dirty.data(), &reported, &granularity) == 0) {
                 touched = TouchedPages(start, (stop - start) / pageBytes, dirty.data(), reported);
                 filtered = true;
             }
@@ -1181,6 +1570,9 @@ private:
     }
 
     void reset(std::uintptr_t address, std::size_t bytes) {
+        disown(address, address + bytes);
+        forgetOwnedPending(address, address + bytes);
+        forgetZero(address, address + bytes);
         collectableRanges.clear();
         const auto end = address + bytes;
         privateAllocations.erase(privateAllocations.lower_bound(address), privateAllocations.lower_bound(end));
@@ -1277,6 +1669,11 @@ private:
         return error;
     }
 
+    std::map<std::uintptr_t, std::uint64_t> ownedWords;
+    std::map<std::uintptr_t, std::uint16_t> ownedPending;
+    OwnedRanges ownedPins;
+    OwnedRanges ownedHostAccess;
+    std::uint64_t nextOwned = 1;
     Ranges cleanRanges;
     Ranges collectableRanges;
     Ranges privateAllocations;
@@ -1285,6 +1682,7 @@ private:
     std::uint64_t collectPieces = 0;
 #endif
     Ranges freshRanges;
+    std::unordered_map<std::uintptr_t, std::array<std::uint64_t, chunkBytes / 4096 / 64>> zeroPages;
     std::map<std::uintptr_t, View> views;
 
     using Views = std::map<std::uintptr_t, View>;
@@ -1308,6 +1706,7 @@ private:
     static inline std::atomic<std::uint64_t> queries{0};
 #endif
     std::mutex mutex;
+    HANDLE zeroSection = nullptr;
     AllocateFunction allocate = nullptr;
     MapFunction map = nullptr;
     UnmapFunction unmap = nullptr;

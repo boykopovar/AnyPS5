@@ -66,6 +66,17 @@ bool isLaneLocal(IrOpcode opcode) {
         case IrOpcode::PackFloat2x16Rtz:
         case IrOpcode::FPAdd16x2:
         case IrOpcode::FPMul16x2:
+        case IrOpcode::FPFma16x2:
+        case IrOpcode::IAdd16x2:
+        case IrOpcode::ISub16x2:
+        case IrOpcode::IMul16x2:
+        case IrOpcode::ShiftLeftLogical16x2:
+        case IrOpcode::ShiftRightLogical16x2:
+        case IrOpcode::ShiftRightArithmetic16x2:
+        case IrOpcode::SMin16x2:
+        case IrOpcode::SMax16x2:
+        case IrOpcode::UMin16x2:
+        case IrOpcode::UMax16x2:
         case IrOpcode::BitFieldInsert:
         case IrOpcode::BitFieldUExtract:
         case IrOpcode::BitFieldSExtract:
@@ -165,6 +176,7 @@ bool isLaneLocal(IrOpcode opcode) {
         case IrOpcode::FPAdd64:
         case IrOpcode::FPMul64:
         case IrOpcode::FPFma64:
+        case IrOpcode::FPFmaScale32:
         case IrOpcode::FPMin64:
         case IrOpcode::FPMax64:
         case IrOpcode::FPSaturate64:

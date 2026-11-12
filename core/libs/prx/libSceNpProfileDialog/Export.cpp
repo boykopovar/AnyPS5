@@ -1,4 +1,5 @@
 #include "prx/libSceNpProfileDialog/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <mutex>
@@ -10,14 +11,6 @@
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
 
 namespace {
-
-constexpr int COMMON_DIALOG_STATUS_NONE = 0;
-constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
-constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
-constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
-constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
-constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
-constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 
 constexpr std::uint32_t NP_PROFILE_DIALOG_MODE_NORMAL = 1;
 constexpr std::uint32_t NP_PROFILE_DIALOG_MODE_GRIEF_REPORT = 4;
@@ -67,13 +60,22 @@ int OpenDialog(const TParam* param, const char* function) {
         Unsettled(function, "status " + std::to_string(dialog.status) + " is neither INITIALIZED nor FINISHED, and the error for it is unsettled");
     }
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    if (param->size != sizeof(TParam)) {
-        Unsettled(function, "param size " + std::to_string(param->size) + " is not the " + std::to_string(sizeof(TParam)) + "-byte layout this library reads");
+    std::uint64_t reportedSize = 0;
+    const int savedErrno = errno;
+    const bool sizeCopied = GuestCopyIn_nid_no_patch(&reportedSize, reinterpret_cast<const char*>(param) + offsetof(TParam, size), sizeof(reportedSize));
+    errno = savedErrno;
+    if (!sizeCopied) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (reportedSize != sizeof(TParam)) {
+        Unsettled(function, "param size " + std::to_string(reportedSize) + " is not the " + std::to_string(sizeof(TParam)) + "-byte layout this library reads");
     }
-    if (param->mode < NP_PROFILE_DIALOG_MODE_NORMAL || param->mode > NP_PROFILE_DIALOG_MODE_GRIEF_REPORT) {
-        Unsettled(function, "mode " + std::to_string(param->mode) + " is not a known profile dialog mode");
+    TParam localParam{};
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (localParam.mode < NP_PROFILE_DIALOG_MODE_NORMAL || localParam.mode > NP_PROFILE_DIALOG_MODE_GRIEF_REPORT) {
+        Unsettled(function, "mode " + std::to_string(localParam.mode) + " is not a known profile dialog mode");
     }
-    dialog.userData = param->userData;
+    dialog.userData = localParam.userData;
     dialog.status = COMMON_DIALOG_STATUS_FINISHED;
     PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
     return COMMON_DIALOG_OK;
@@ -137,10 +139,14 @@ int APS5_VABI sceNpProfileDialogGetResult(SceNpProfileDialogResult* result) {
         return COMMON_DIALOG_ERROR_NOT_FINISHED;
     }
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    *result = SceNpProfileDialogResult{};
-    result->result = COMMON_DIALOG_OK;
-    result->userAction = COMMON_DIALOG_RESULT_USER_CANCELED;
-    result->userData = dialog.userData;
+    SceNpProfileDialogResult out{};
+    out.result = COMMON_DIALOG_OK;
+    out.userAction = COMMON_DIALOG_RESULT_USER_CANCELED;
+    out.userData = dialog.userData;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &out, sizeof(out));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
     return COMMON_DIALOG_OK;
 }
 

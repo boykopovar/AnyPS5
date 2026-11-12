@@ -182,7 +182,7 @@ inline std::string ApplicableLength(const std::string& length, char conversion) 
     if (std::strchr("diouxXn", conversion)) return length == "L" ? std::string() : length;
     if (std::strchr("aAeEfFgG", conversion)) return length == "L" ? length : std::string();
     if (conversion == 'c' || conversion == 's') return length == "l" ? length : std::string();
-    if (conversion == 'p') return std::string();
+    if (conversion == 'p' || conversion == 'S') return std::string();
     return length;
 }
 
@@ -510,7 +510,7 @@ inline std::string FormatPointer(const std::string& spec, const void* pointer) {
     return std::string(padding, ' ') + digits;
 }
 
-inline constexpr char KnownConversions[] = "diouxXeEfFgGaAcCsSpn";
+inline constexpr char KnownConversions[] = "diouxXeEfFgGaAcsSpn";
 constexpr size_t maximumArgumentPosition = 65535;
 
 inline size_t ArgumentPosition(const char*& format) {
@@ -526,7 +526,7 @@ inline size_t ArgumentPosition(const char*& format) {
     return position;
 }
 
-inline std::vector<ArgumentClass> NumberedArgumentClasses(const char* format) {
+inline std::vector<ArgumentClass> NumberedArgumentClasses(const char* format, bool wide = false) {
     if (!std::strchr(format, '$')) return {};
     std::vector<ArgumentClass> classes;
     bool numbered = false;
@@ -545,7 +545,7 @@ inline std::vector<ArgumentClass> NumberedArgumentClasses(const char* format) {
             next = position;
             numbered = true;
         }
-        while (*format && std::strchr("-+ #0'123456789.*", *format)) {
+        while (*format && std::strchr("-+ #0123456789.*", *format)) {
             if (*format++ != '*') continue;
             const size_t position = ArgumentPosition(format);
             if (position) numbered = true;
@@ -557,7 +557,7 @@ inline std::vector<ArgumentClass> NumberedArgumentClasses(const char* format) {
         if (!conversion) break;
         ++format;
         if (std::strchr("aAeEfFgG", conversion)) take(next++, longDouble ? ArgumentClass::LongDouble : ArgumentClass::Double);
-        else if (std::strchr("diouxXcCsSpn", conversion)) take(next++, ArgumentClass::Integer);
+        else if (std::strchr(wide ? "diouxXcspn" : "diouxXcsSpn", conversion)) take(next++, ArgumentClass::Integer);
     }
     if (!numbered) classes.clear();
     return classes;
@@ -585,24 +585,15 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         }
         if (const size_t position = ArgumentPosition(format)) args.Seek(position);
         std::string spec = "%";
-        bool unmeasuredUnknownFlag = false;
-        bool zeroFlag = false;
-        for (; *format && std::strchr("-+ #0'", *format); ++format) {
-            if (*format != '\'') spec += *format;
-            if (std::strchr("+ '", *format)) unmeasuredUnknownFlag = true;
-            if (*format == '0') zeroFlag = true;
-        }
-        bool widthGiven = false;
+        for (; *format && std::strchr("-+ #0", *format); ++format) spec += *format;
         if (*format == '*') {
             ++format;
             const int width = star();
             if (width < 0) spec += '-';
             spec += std::to_string(width < 0 ? -static_cast<long long>(width) : width);
-            widthGiven = true;
         } else {
-            for (; *format >= '0' && *format <= '9'; widthGiven = true) spec += *format++;
+            while (*format >= '0' && *format <= '9') spec += *format++;
         }
-        if (zeroFlag && widthGiven) unmeasuredUnknownFlag = true;
         size_t precisionLimit = std::numeric_limits<size_t>::max();
         if (*format == '.') {
             ++format;
@@ -634,8 +625,6 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         if (!conversion) throw std::invalid_argument("Incomplete format conversion");
         ++format;
         if (!std::strchr(KnownConversions, conversion)) {
-            if (secure || unmeasuredUnknownFlag)
-                throw std::invalid_argument("Unsupported format conversion '" + spec + length + conversion + "' in \"" + std::string(formatStart).substr(0, 160) + "\"");
             const char text[] = {'%', conversion, '\0'};
             output.Value(PaddedStringSpec(spec), conversion == '%' ? "%" : text);
             continue;
@@ -696,11 +685,10 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             }
         } else if (conversion == 'c' && (length.empty() || length == "h")) {
             output.Value(spec + conversion, args.Next<int>());
-        } else if ((conversion == 'c' && length == "l") || (conversion == 'C' && length.empty())) {
+        } else if (conversion == 'c' && length == "l") {
             std::string utf8;
             AppendUtf8(utf8, static_cast<char16_t>(args.Next<unsigned int>()));
-            if (utf8[0] == 0) output.Value(spec + 'c', 0);
-            else output.Value(spec + 's', utf8.c_str());
+            if (utf8[0] != 0) output.Value(spec.substr(0, spec.find('.')) + 's', utf8.c_str());
         } else if (conversion == 's' && (length.empty() || length == "h")) {
             const char* value = args.Next<const char*>();
             if (!value && secure) throw FormatConstraintViolation("Null string argument");

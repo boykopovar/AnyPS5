@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import re
@@ -30,6 +31,19 @@ PROJECT = {
     "beta/setup.c": "int main(void) { return 0; }\n",
     "data/input.txt": "input\n",
 }
+
+
+def excessively_nested_json(test):
+    depth = sys.getrecursionlimit() + 64
+    while True:
+        text = "[" * depth + "]" * depth
+        try:
+            json.loads(text)
+        except RecursionError:
+            return text
+        depth *= 2
+        if depth > 10_000_000:
+            test.fail("the JSON decoder accepts every probed nesting depth")
 
 
 @unittest.skipUnless(shutil.which("ninja") and (shutil.which("gcc") or shutil.which("cc")), "needs ninja and a C compiler")
@@ -85,7 +99,7 @@ class SelectTests(SelectFixture):
 
     def test_fixture_setup_runs_with_its_test(self):
         self.assertEqual(self.select("beta/main.c")[1], {"beta", "beta_setup", "script"})
-        self.assertEqual(self.select("beta/setup.c")[1], {"beta_setup", "script"})
+        self.assertEqual(self.select("beta/setup.c")[1], {"beta", "beta_setup", "script"})
 
     def test_cmake_file_selects_the_tests_it_registers(self):
         self.assertEqual(self.select("beta/CMakeLists.txt")[1], {"beta", "beta_setup", "script"})
@@ -101,6 +115,35 @@ class SelectTests(SelectFixture):
                 output, selected = self.select("alpha/alpha.h", changed)
                 self.assertIsNone(selected)
                 self.assertIn(changed, output)
+
+class FixtureSelectionTests(unittest.TestCase):
+    def test_changed_setup_selects_all_consumers_and_their_other_setups(self):
+        def test(target, sets=(), requires=()):
+            return {"target": target, "registered": [], "arguments": [], "sets": list(sets),
+                    "requires": list(requires), "depends": []}
+
+        tests = {"setup": test("setup", sets=("first",)),
+                 "bridge": test("bridge", sets=("second",), requires=("first", "other")),
+                 "other_setup": test("other_setup", sets=("other",)),
+                 "consumer": test("consumer", requires=("second",)),
+                 "sibling": test("sibling", requires=("first",)),
+                 "unrelated": test("unrelated", sets=("unrelated",))}
+        graph = {"tests": tests, "closures": {name: ["src/" + name + ".c"] for name in tests}}
+        reasons = {}
+        selected, full = select_tests.select(graph, ["src/setup.c"], reasons)
+        self.assertEqual(selected, set(tests) - {"unrelated"})
+        self.assertEqual(full, [])
+        self.assertIn("fixture consumer of: setup", reasons["bridge"])
+        self.assertIn("fixture consumer of: bridge", reasons["consumer"])
+        self.assertIn("fixture setup for: bridge", reasons["other_setup"])
+
+    def test_fixture_cycles_terminate_without_selecting_unrelated_tests(self):
+        tests = {name: {"target": name, "registered": [], "arguments": [], "depends": [],
+                        "sets": [name], "requires": [requires]}
+                 for name, requires in (("first", "second"), ("second", "first"), ("other", "other"))}
+        graph = {"tests": tests, "closures": {name: ["src/" + name + ".c"] for name in tests}}
+        self.assertEqual(select_tests.select(graph, ["src/first.c"]), ({"first", "second"}, []))
+
 
 class SelectGraphStateTests(SelectFixture):
     def test_changed_list_with_a_byte_order_mark_and_crlf_keeps_its_first_path(self):
@@ -134,6 +177,21 @@ class SelectGraphStateTests(SelectFixture):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("invalid test graph", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse((self.build / "select.tests").exists())
+        self.assertFalse((self.build / "select.ninja").exists())
+
+    def test_excessively_nested_graph_is_reported_without_stale_selection(self):
+        self.select("alpha/alpha.h")
+        self.assertTrue((self.build / "select.tests").exists())
+        graph = self.build / "nested.json"
+        graph.write_text(excessively_nested_json(self), encoding="utf-8")
+        changed = self.build / "changed nested.txt"
+        changed.write_text("alpha/alpha.h\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, "-I", str(TOOL), "select", str(self.build), str(graph), str(changed)],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertNotIn("invalid test graph", result.stderr)
         self.assertFalse((self.build / "select.tests").exists())
         self.assertFalse((self.build / "select.ninja").exists())
 
@@ -349,6 +407,13 @@ class FixtureBuildTests(unittest.TestCase):
         self.assertNotIn("alpha", output)
         self.assertFalse(any(path.is_file() for path in (self.build / "alpha").glob("alpha_tests*")))
 
+    def test_changed_setup_builds_and_runs_its_consumer(self):
+        output = self.run_selected("beta/setup.c", self.graph)
+        for name in ("beta", "beta_setup", "beta_cleanup"):
+            self.assertIn(name, output)
+        self.assertNotIn("alpha", output)
+        self.assertFalse(any(path.is_file() for path in (self.build / "alpha").glob("alpha_tests*")))
+
     def test_new_test_gets_its_current_setup_and_cleanup(self):
         graph = json.loads(self.graph.read_text(encoding="utf-8"))
         del graph["tests"]["beta"]
@@ -418,7 +483,7 @@ class NonAsciiDirectoryTests(unittest.TestCase):
 
 class BuildErrorTests(unittest.TestCase):
     def run_tool(self, *args):
-        return subprocess.run([sys.executable, "-I", str(TOOL), *map(str, args)], capture_output=True, text=True, timeout=60)
+        return subprocess.run([sys.executable, "-I", str(TOOL), *map(str, args)], capture_output=True, encoding="utf-8", timeout=60)
 
     def test_explain_rejects_malformed_saved_graph_without_a_traceback(self):
         graphs = (
@@ -443,6 +508,27 @@ class BuildErrorTests(unittest.TestCase):
                     self.assertIn("invalid test graph", result.stderr)
                     self.assertNotIn("Traceback", result.stderr)
 
+    def test_explain_rejects_excessively_nested_saved_graph_without_a_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graph = Path(directory) / "graph.json"
+            changed = Path(directory) / "changed.txt"
+            graph.write_text(excessively_nested_json(self), encoding="utf-8")
+            changed.write_text("src/unit.cpp\n", encoding="utf-8")
+            result = self.run_tool("explain", graph, changed)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertNotIn("invalid test graph", result.stderr)
+
+    def test_a_recursion_error_outside_the_graph_parser_is_not_a_usage_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graph = Path(directory) / "graph.json"
+            changed = Path(directory) / "changed.txt"
+            graph.write_text(json.dumps({"tests": {}, "closures": {}}), encoding="utf-8")
+            changed.write_text("src/unit.cpp" + chr(10), encoding="utf-8")
+            with mock.patch.object(select_tests, "select", side_effect=RecursionError("unrelated")):
+                with self.assertRaises(RecursionError):
+                    select_tests.main(["explain", str(graph), str(changed)])
+
     def test_missing_build_directory_is_reported_without_a_traceback(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -453,6 +539,25 @@ class BuildErrorTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 2)
                     self.assertIn("not a configured CMake build directory", result.stderr)
                     self.assertNotIn("Traceback", result.stderr)
+
+    def test_ctest_reports_an_unreadable_selection_without_a_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            selected = build / "select.tests"
+            for shape in ("non-UTF-8", "directory"):
+                with self.subTest(shape):
+                    if shape == "directory":
+                        selected.unlink()
+                        selected.mkdir()
+                    else:
+                        selected.write_bytes(b"\xff\xfe0,0,0,1\n")
+                    with mock.patch.object(select_tests.subprocess, "run") as run, \
+                            mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                        with self.assertRaises(SystemExit) as raised:
+                            select_tests.main(["ctest", str(build)])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn(str(selected), stderr.getvalue())
+                    run.assert_not_called()
 
     def test_cache_without_the_build_locations_is_reported_without_a_traceback(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -570,6 +675,43 @@ class CaseInsensitivePathTests(unittest.TestCase):
             self.assertEqual(build.repo(os.path.join(os.sep, "work", "source", "core", "libSceAgc", "Driver.cpp")), "core/libSceAgc/Driver.cpp")
             self.assertIsNone(build.repo(os.path.join(os.sep, "WORK", "SOURCE", "BUILD", "Generated.h")))
 
+    def test_paths_under_the_resolved_root_map_to_the_root(self):
+        build = self.build()
+        resolved = os.path.join(os.sep, "Users", "Long Name", "Source")
+        names = {build.source: resolved, build.path: os.path.join(resolved, "build")}
+        with mock.patch.object(select_tests, "real_path", lambda path: names.get(path, path)):
+            self.assertEqual(build.repo(os.path.join(resolved, "core", "libSceAgc", "Driver.cpp")), "core/libSceAgc/Driver.cpp")
+            self.assertIsNone(build.repo(os.path.join(resolved, "build", "Generated.h")))
+            self.assertEqual(build.key(os.path.join(resolved, "build", "tests", "MemoryPoolTest.exe")),
+                             build.key(os.path.join("tests", "MemoryPoolTest.exe")))
+
+
+@unittest.skipUnless(shutil.which("ninja") and (shutil.which("gcc") or shutil.which("cc")), "needs ninja and a C compiler")
+class LinkedDirectoryTests(unittest.TestCase):
+    def test_header_the_compiler_reports_under_the_resolved_root_is_an_input_of_its_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            real, link = Path(directory) / "r", Path(directory) / "a_directory_link_with_a_name_longer_than_its_target"
+            for name, content in PROJECT.items():
+                (real / "source" / name).parent.mkdir(parents=True, exist_ok=True)
+                (real / "source" / name).write_text(content, encoding="utf-8")
+            try:
+                link.symlink_to(real, target_is_directory=True)
+            except OSError as error:
+                if getattr(error, "winerror", None) != 1314:
+                    raise
+                import _winapi
+                _winapi.CreateJunction(str(real), str(link))
+            source, build, graph = link / "source", link / "build", Path(directory) / "graph.json"
+            compiler = shutil.which("gcc") or shutil.which("cc")
+            subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
+                           check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(build)], check=True, capture_output=True)
+            SelectTests.tool("dump", build, graph)
+            reasons = {}
+            select_tests.select(json.loads(graph.read_text(encoding="utf-8")), ["alpha/alpha.h"], reasons)
+        self.assertIn("input: alpha/alpha.h", reasons["alpha"])
+        self.assertIn("input: alpha/alpha.h", reasons["alpha_data"])
+
 
 class ChunkTests(unittest.TestCase):
     def test_windows_batches_fit_the_serialized_utf16_budget(self):
@@ -668,6 +810,48 @@ class MissingCommandTests(unittest.TestCase):
             self.assertEqual(commands, {"absolute": [executable, helper], "relative": None, "path": None,
                                         "ambiguous": None, "existing": [helper], "stale": None})
 
+    def test_looping_subdirectory_is_skipped_when_recovering_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            loop = root / "first"
+            (root / "nested").mkdir()
+            (root / "CTestTestfile.cmake").write_text('subdirs("nested" "first")\n', encoding="utf-8")
+            (root / "nested/CTestTestfile.cmake").write_text('add_test(kept "/bin/kept")\n', encoding="utf-8")
+            build = object.__new__(select_tests.Build)
+            original_resolve = Path.resolve
+
+            def resolve(path):
+                if path == loop:
+                    raise RuntimeError("Symlink loop")
+                return original_resolve(path)
+
+            for directory, expected in ((root, {"kept": {("/bin/kept",)}}), (loop, {})):
+                build.path = str(directory)
+                with self.subTest(root=directory), mock.patch.object(Path, "resolve", autospec=True, side_effect=resolve) as resolving:
+                    self.assertEqual(dict(build.test_commands({"kept"})), expected)
+                    resolving.assert_any_call(loop)
+
+    def test_real_looping_subdirectory_is_skipped_when_recovering_commands_where_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "nested").mkdir()
+            try:
+                os.symlink("second", root / "first", target_is_directory=True)
+                os.symlink("first", root / "second", target_is_directory=True)
+            except NotImplementedError as error:
+                self.skipTest(f"symbolic links are unavailable: {error}")
+            except OSError as error:
+                if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                    self.skipTest(f"symbolic link privilege is unavailable: {error}")
+                raise
+            (root / "CTestTestfile.cmake").write_text('subdirs("nested" "first")\n', encoding="utf-8")
+            (root / "nested/CTestTestfile.cmake").write_text('add_test(kept "/bin/kept")\n', encoding="utf-8")
+            build = object.__new__(select_tests.Build)
+            build.path = str(root)
+            self.assertEqual(dict(build.test_commands({"kept"})), {"kept": {("/bin/kept",)}})
+            build.path = str(root / "first")
+            self.assertEqual(dict(build.test_commands({"kept"})), {})
+
 
     def test_main_reconfigures_streams(self):
         class Stream:
@@ -708,7 +892,7 @@ class GraphClosureTests(unittest.TestCase):
             changed = root / "changed.txt"
             changed.write_text("src/unit.cpp\n", encoding="utf-8")
             result = subprocess.run([sys.executable, str(Path(select_tests.__file__)), "explain", str(path), str(changed)],
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, encoding="utf-8", timeout=10)
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertIn("unit", result.stderr)
             self.assertIn("closure", result.stderr)

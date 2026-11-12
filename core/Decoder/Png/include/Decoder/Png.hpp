@@ -45,6 +45,8 @@ inline constexpr std::uint8_t FILTER_ALL = FILTER_NONE | FILTER_SUB | FILTER_UP 
 struct EncodeOptions {
     int compressionLevel = 8;
     std::uint8_t filters = FILTER_ALL;
+    std::uint8_t bitDepth = 8;
+    bool whiteBackground = false;
 };
 
 std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,

@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -26,6 +27,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
@@ -56,6 +58,16 @@ alignas(256) constexpr std::array<std::uint32_t, 10> Code{
     0x3404008e, 0xdc388000, 0x04000002, 0x34060082, 0xbf8c3f70, 0xe0701000, 0x80010403, 0xe0701000, 0x80020303, 0xbf810000,
 };
 
+constexpr std::uint32_t ImageSide = 256;
+constexpr std::uint32_t Format32UInt = 20;
+constexpr std::uint32_t TileR64KBX = 0x1b;
+constexpr std::uint32_t Type2D = 9;
+constexpr std::uint32_t Stored = 0x12345678u;
+constexpr std::uint64_t UnreadBlock = 16 * Block;
+
+alignas(256) constexpr std::array<std::uint32_t, 7> StoreCode{
+    0x7e040300, 0x7e060280, 0x7e0202ff, Stored, 0xf0200108, 0x00020102, 0xbf810000,
+};
 alignas(256) constexpr std::array<std::uint32_t, 7> CopyCode{0x34060082, 0xe0301000, 0x80000403, 0xbf8c3f70, 0xe0701000, 0x80010403, 0xbf810000};
 
 class OutputBlock {
@@ -220,6 +232,15 @@ void Copy(AgcDriver::VulkanDevice& device, std::uint64_t source, const OutputBlo
     Run(device, CopyCode, userData);
 }
 
+void StoreImage(AgcDriver::VulkanDevice& device, std::uint64_t address) {
+    std::vector<std::uint32_t> userData(16, 0u);
+    userData[8] = static_cast<std::uint32_t>(address >> 8u);
+    userData[9] = static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((ImageSide - 1u) & 3u) << 30u);
+    userData[10] = ((ImageSide - 1u) >> 2u) | ((ImageSide - 1u) << 14u);
+    userData[11] = 0xfacu | (TileR64KBX << 20u) | (Type2D << 28u);
+    Run(device, StoreCode, userData);
+}
+
 void CheckReads(const OutputBlock& output, const std::string& step, bool late) {
     for (std::uint32_t thread = 0; thread < Threads; ++thread) {
         const auto expected = thread * ThreadStride < Block ? Pattern(thread) : late && thread == LateThread ? Pattern(thread) : 0u;
@@ -265,6 +286,60 @@ void ResidentTests(AgcDriver::VulkanDevice& device) {
     Require(again.rebuilds == steady.rebuilds && again.heapBytes == steady.heapBytes, "resident heap mirror: an unchanged dispatch rebuilt or grew the heap mirrors");
     CheckReads(output, "unchanged dispatch", true);
     CheckStores(written, "unchanged dispatch");
+    const auto settled = AgcDriver::Graphics::MirrorCounters();
+    AgcDriver::GuestMemory::MarkWritten(read.Address() + 8, 16);
+    Dispatch(device, read, written, output);
+    Require(AgcDriver::Graphics::MirrorCounters().blocksCopied == settled.blocksCopied, "resident heap mirror: a block stamped without a byte change was copied into its mirror again");
+    CheckReads(output, "a stamped block that did not change", true);
+    CheckStores(written, "a stamped block that did not change");
+}
+
+void StagingChunkTests(AgcDriver::VulkanDevice& device) {
+    constexpr std::uint64_t LargeBytes = 48u << 20u;
+    constexpr std::uint64_t ChunkBoundary = 32u << 20u;
+    constexpr std::uint64_t First = ChunkBoundary - Threads / 2 * ThreadStride;
+    GuestHeap read(false, 1, LargeBytes);
+    GuestHeap written(true);
+    const OutputBlock output;
+    for (std::uint64_t block = 0; block < LargeBytes; block += Block) read.Store(block + 8, 0x11u);
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) read.Store(First + thread * ThreadStride, Pattern(thread));
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    const auto before = AgcDriver::Graphics::MirrorCounters();
+    Dispatch(device, read.Address() + First, written.Address(), output);
+    const auto made = AgcDriver::Graphics::MirrorCounters();
+    Require(made.heapBytes - before.heapBytes > First + Threads * ThreadStride, "resident heap mirror: a " + std::to_string(LargeBytes >> 20u) + " MiB heap mirror does not reach past the read range (" + std::to_string((made.heapBytes - before.heapBytes) >> 10u) + " KiB held)");
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        Require(output.Data()[thread] == Pattern(thread), "resident heap mirror: an upload split into staging chunks: thread " + std::to_string(thread) + " read " + Hex(output.Data()[thread]) + " at heap offset " + Hex(First + thread * ThreadStride) + ", expected " + Hex(Pattern(thread)));
+    }
+}
+
+void StorageImageZeroStoreTests(AgcDriver::VulkanDevice& device) {
+    GuestHeap heap(true);
+    GuestHeap written(true);
+    const OutputBlock output;
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    Dispatch(device, heap, written, output);
+    StoreImage(device, heap.Address() + UnreadBlock);
+    heap.Store(UnreadBlock, 0u);
+    std::uint32_t texel = 1u;
+    AgcDriver::GuestMemory::Read(heap.Address() + UnreadBlock, std::as_writable_bytes(std::span(&texel, 1)));
+    Require(texel == 0u, "resident heap mirror: a CPU store of zero after an image store into a never-written block read " + Hex(texel));
+}
+
+void StorageImageTests(AgcDriver::VulkanDevice& device) {
+    GuestHeap heap(true);
+    GuestHeap written(true);
+    const OutputBlock output;
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    Dispatch(device, heap, written, output);
+    Require(output.Data()[0] == 0u, "resident heap mirror: the first texel read " + Hex(output.Data()[0]) + " before any image store");
+    StoreImage(device, heap.Address());
+    Dispatch(device, heap, written, output);
+    Require(output.Data()[0] == Stored, "resident heap mirror: an address-based read after an image store inside the mirror read " + Hex(output.Data()[0]));
+    StoreImage(device, heap.Address() + UnreadBlock);
+    std::uint32_t texel = 0;
+    AgcDriver::GuestMemory::Read(heap.Address() + UnreadBlock, std::as_writable_bytes(std::span(&texel, 1)));
+    Require(texel == Stored, "resident heap mirror: a CPU read after an image store inside the mirror read " + Hex(texel));
 }
 
 struct AddressSpaceLimit {
@@ -378,10 +453,25 @@ void JoinedImportTests(AgcDriver::VulkanDevice& device) {
     const auto mirrored = AgcDriver::Graphics::HeapMirrorsWithin(begin, end);
     Require(before.mirrors == 0 && mirrored.mirrors == 2 && mirrored.bytes == 4 * Block, "resident heap mirror: two adjacent heaps hold " + std::to_string(before.mirrors) + " heap mirrors before the first dispatch and " + std::to_string(mirrored.mirrors) + " (" + std::to_string(mirrored.bytes >> 10u) + " KiB) after it, expected 0 and 2 (256 KiB); " + std::to_string(AgcDriver::Graphics::HostImportLiveBytes() >> 10u) + " KiB host imports live");
     const auto live = AgcDriver::Graphics::HostImportLiveBytes();
+    const auto beforeJoin = AgcDriver::Graphics::HostImportSetGeneration();
     Copy(device, begin + JoinedBytes - Threads * sizeof(std::uint32_t) / 2, output);
     Require(output.Data()[Threads / 2 - 1] == 0x41u && output.Data()[Threads / 2] == 0x42u, "resident heap mirror: a view across two adjacent heaps read " + Hex(output.Data()[Threads / 2 - 1]) + " " + Hex(output.Data()[Threads / 2]) + ", expected 0x41 0x42");
     const auto joined = AgcDriver::Graphics::HostImportLiveBytes() - live;
     Require(joined >= 2 * JoinedBytes, "resident heap mirror: a view across two adjacent heaps made no joined host import (" + std::to_string(joined >> 10u) + " KiB imported)");
+    Require(AgcDriver::Graphics::HostImportSetGeneration() != beforeJoin, "resident heap mirror: creating a joined import did not move the import set generation");
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+        const auto* imported = AgcDriver::Graphics::HostImportFor(context, begin, 2 * JoinedBytes);
+        Require(imported != nullptr, "resident heap mirror: the joined host import was not reusable");
+        const auto generation = AgcDriver::Graphics::HostImportSetGeneration();
+        const auto identity = AgcDriver::Graphics::HostImportsIdentity(context);
+        for (unsigned hit = 0; hit < 3; ++hit) {
+            Require(AgcDriver::Graphics::HostImportFor(context, begin, 2 * JoinedBytes) == imported, "resident heap mirror: a repeated joined lookup replaced the import");
+            Require(AgcDriver::Graphics::HostImportSetGeneration() == generation, "resident heap mirror: a joined import cache hit moved the generation");
+            Require(AgcDriver::Graphics::HostImportsIdentity(context).inserted == identity.inserted, "resident heap mirror: a joined import cache hit changed insertion bookkeeping");
+        }
+    }
     Dispatch(device, begin, begin + JoinedBytes, output);
     CheckReads(output, "after the joined import", false);
     const auto released = AgcDriver::Graphics::HeapMirrorsWithin(begin, end);
@@ -519,6 +609,7 @@ int main() {
         const bool sparse = context.sparseBinding && context.sparseResidencyBuffer && context.sparseResidencyAliased;
         if (sparse) {
             ResidentTests(*device);
+            StagingChunkTests(*device);
             ReusedAddressTests(*device);
             JoinedImportTests(*device);
         } else {
@@ -526,6 +617,8 @@ int main() {
         }
         CopiedTests(*device);
         BudgetEvictionTests(*device, sparse);
+        StorageImageTests(*device);
+        StorageImageZeroStoreTests(*device);
         for (const bool copied : {false, true}) {
             if (!copied && !sparse) continue;
             for (const bool readFirst : {false, true}) PartialImportTests(*device, copied, readFirst);

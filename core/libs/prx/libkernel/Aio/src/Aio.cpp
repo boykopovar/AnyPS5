@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -252,6 +253,50 @@ int ValidateIds(const std::int32_t* id, std::int32_t num, const void* out) {
     return 0;
 }
 
+using IdArray = std::array<std::int32_t, AioIdNumMax>;
+
+int CopyStateOut(std::int32_t* out, std::int32_t state, int result = 0) {
+    return GuestCopyOut_nid_no_patch(out, &state, sizeof(state)) ? result : SCE_KERNEL_ERROR_EFAULT;
+}
+
+bool CopyIdsIn(IdArray& ids, const std::int32_t* guestIds, std::int32_t num) {
+    return GuestCopyIn_nid_no_patch(ids.data(), guestIds, static_cast<std::size_t>(num) * sizeof(std::int32_t));
+}
+
+int CopyStatesOut(std::int32_t* out, const IdArray& states, std::int32_t num, int result = 0) {
+    const std::size_t bytes = static_cast<std::size_t>(num) * sizeof(std::int32_t);
+    return GuestCopyOut_nid_no_patch(out, states.data(), bytes) ? result : SCE_KERNEL_ERROR_EFAULT;
+}
+
+int WaitTimeout(const std::uint32_t* usec, std::optional<std::uint32_t>& limit, std::chrono::steady_clock::time_point start) {
+    if (usec == nullptr) return 0;
+    if (!limit) {
+        std::uint32_t value = 0;
+        if (!GuestCopyIn_nid_no_patch(&value, usec, sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
+        limit = value;
+    }
+    if (*limit == 0) return 0;
+    const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+    return elapsed > static_cast<std::int64_t>(*limit) ? SCE_KERNEL_ERROR_ETIMEDOUT : 0;
+}
+
+int ApplyToIds(const std::int32_t* guestIds, std::int32_t num, std::int32_t* out, const char* function, bool requireFinished,
+    std::int32_t (*operation)(std::int32_t)) {
+    const int error = ValidateIds(guestIds, num, out);
+    if (error != 0) return error;
+    IdArray ids{};
+    if (!CopyIdsIn(ids, guestIds, num)) return SCE_KERNEL_ERROR_EFAULT;
+    IdArray states{};
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (requireFinished) {
+            for (std::int32_t i = 0; i < num; ++i) RequireFinishedLocked(ids[i], function);
+        }
+        for (std::int32_t i = 0; i < num; ++i) states[i] = operation(ids[i]);
+    }
+    return CopyStatesOut(out, states, num);
+}
+
 }
 
 extern "C" {
@@ -271,36 +316,32 @@ void AioAdvanceIdentityForTest_nid_no_patch(std::int64_t next) {
 
 int APS5_VABI sceKernelAioDeleteRequest(int32_t id, int32_t* ret) {
     if (ret == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    std::lock_guard<std::mutex> lock(g_mutex);
-    RequireFinishedLocked(id, __func__);
-    *ret = DeleteLocked(id);
-    return 0;
+    std::int32_t result;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        RequireFinishedLocked(id, __func__);
+        result = DeleteLocked(id);
+    }
+    return CopyStateOut(ret, result);
 }
 
 int APS5_VABI sceKernelAioDeleteRequests(int32_t* id, int32_t num, int32_t* ret) {
-    const int error = ValidateIds(id, num, ret);
-    if (error != 0) return error;
-    std::lock_guard<std::mutex> lock(g_mutex);
-    for (int32_t i = 0; i < num; ++i) RequireFinishedLocked(id[i], __func__);
-    for (int32_t i = 0; i < num; ++i) ret[i] = DeleteLocked(id[i]);
-    return 0;
+    return ApplyToIds(id, num, ret, __func__, true, DeleteLocked);
 }
 
 int APS5_VABI sceKernelAioCancelRequest(int32_t id, int32_t* state) {
     if (state == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    std::lock_guard<std::mutex> lock(g_mutex);
-    RequireFinishedLocked(id, __func__);
-    *state = CancelLocked(id);
-    return 0;
+    std::int32_t result;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        RequireFinishedLocked(id, __func__);
+        result = CancelLocked(id);
+    }
+    return CopyStateOut(state, result);
 }
 
 int APS5_VABI sceKernelAioCancelRequests(int32_t* id, int32_t num, int32_t* state) {
-    const int error = ValidateIds(id, num, state);
-    if (error != 0) return error;
-    std::lock_guard<std::mutex> lock(g_mutex);
-    for (int32_t i = 0; i < num; ++i) RequireFinishedLocked(id[i], __func__);
-    for (int32_t i = 0; i < num; ++i) state[i] = CancelLocked(id[i]);
-    return 0;
+    return ApplyToIds(id, num, state, __func__, true, CancelLocked);
 }
 
 int APS5_VABI sceKernelAioInitializeImpl(void* param, int32_t size) {
@@ -349,45 +390,55 @@ int APS5_VABI sceKernelAioSubmitWriteCommandsMultiple(KernelAioRwRequest* req, i
 
 int APS5_VABI sceKernelAioPollRequest(int32_t id, int32_t* state) {
     if (state == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    std::lock_guard<std::mutex> lock(g_mutex);
-    *state = ReportLocked(id);
-    return 0;
+    std::int32_t result;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        result = ReportLocked(id);
+    }
+    return CopyStateOut(state, result);
 }
 
 int APS5_VABI sceKernelAioWaitRequests(int32_t* id, int32_t num, int32_t* state, uint32_t mode, uint32_t* usec) {
     const int error = ValidateIds(id, num, state);
     if (error != 0) return error;
     if (mode != AioWaitAnd && mode != AioWaitOr) return SCE_KERNEL_ERROR_EINVAL;
+    IdArray ids{};
+    if (!CopyIdsIn(ids, id, num)) return SCE_KERNEL_ERROR_EFAULT;
+    IdArray states{};
     const auto start = std::chrono::steady_clock::now();
+    std::optional<std::uint32_t> limit;
 #ifdef ANYPS5_AIO_TESTING
     ProcessingWaiter waiter;
 #endif
     for (;;) {
         bool allDone = true;
         bool anyCompleted = false;
+        bool reported = false;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             for (int32_t i = 0; i < num; ++i) {
-                const std::int32_t current = StateLocked(id[i]);
+                const std::int32_t current = StateLocked(ids[i]);
                 if (current == AioProcessing) allDone = false;
                 if ((current & ~AioReported) == AioCompleted) anyCompleted = true;
             }
             if (allDone || (mode == AioWaitOr && anyCompleted)) {
-                for (int32_t i = 0; i < num; ++i) state[i] = ReportLocked(id[i]);
-                return 0;
+                for (int32_t i = 0; i < num; ++i) states[i] = ReportLocked(ids[i]);
+                reported = true;
             }
         }
+        if (reported) return CopyStatesOut(state, states, num);
 #ifdef ANYPS5_AIO_TESTING
         waiter.Observe();
 #endif
-        if (usec != nullptr && *usec != 0) {
-            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
-            if (elapsed > static_cast<std::int64_t>(*usec)) {
+        const int timeout = WaitTimeout(usec, limit, start);
+        if (timeout == SCE_KERNEL_ERROR_ETIMEDOUT) {
+            {
                 std::lock_guard<std::mutex> lock(g_mutex);
-                for (int32_t i = 0; i < num; ++i) state[i] = ReportLocked(id[i]);
-                return SCE_KERNEL_ERROR_ETIMEDOUT;
+                for (int32_t i = 0; i < num; ++i) states[i] = ReportLocked(ids[i]);
             }
+            return CopyStatesOut(state, states, num, timeout);
         }
+        if (timeout != 0) return timeout;
         PreciseSleepUs(10);
     }
 }
@@ -395,6 +446,7 @@ int APS5_VABI sceKernelAioWaitRequests(int32_t* id, int32_t num, int32_t* state,
 int APS5_VABI sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec) {
     if (state == nullptr) return SCE_KERNEL_ERROR_EFAULT;
     const auto start = std::chrono::steady_clock::now();
+    std::optional<std::uint32_t> limit;
 #ifdef ANYPS5_AIO_TESTING
     ProcessingWaiter waiter;
 #endif
@@ -404,30 +456,19 @@ int APS5_VABI sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec
             std::lock_guard<std::mutex> lock(g_mutex);
             current = ReportLocked(id);
         }
-        if (current != AioProcessing) {
-            *state = current;
-            return 0;
-        }
+        if (current != AioProcessing) return CopyStateOut(state, current);
 #ifdef ANYPS5_AIO_TESTING
         waiter.Observe();
 #endif
-        if (usec != nullptr && *usec != 0) {
-            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
-            if (elapsed > static_cast<std::int64_t>(*usec)) {
-                *state = current;
-                return SCE_KERNEL_ERROR_ETIMEDOUT;
-            }
-        }
+        const int timeout = WaitTimeout(usec, limit, start);
+        if (timeout == SCE_KERNEL_ERROR_ETIMEDOUT) return CopyStateOut(state, current, timeout);
+        if (timeout != 0) return timeout;
         PreciseSleepUs(10);
     }
 }
 
 int APS5_VABI sceKernelAioPollRequests(int32_t* id, int32_t num, int32_t* state) {
-    const int error = ValidateIds(id, num, state);
-    if (error != 0) return error;
-    std::lock_guard<std::mutex> lock(g_mutex);
-    for (int32_t i = 0; i < num; ++i) state[i] = ReportLocked(id[i]);
-    return 0;
+    return ApplyToIds(id, num, state, __func__, false, ReportLocked);
 }
 
 }
