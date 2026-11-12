@@ -2317,6 +2317,12 @@ static int fill_sock_info(int s, NetSockInfo& record) {
     return 0;
 }
 
+static bool CopySockInfo(void* output, std::size_t index, const void* record, std::size_t recordSize) {
+    const auto start = reinterpret_cast<std::uintptr_t>(output);
+    if (index > (UINTPTR_MAX - start) / recordSize) return false;
+    return GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(start + index * recordSize), record, recordSize);
+}
+
 int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
     if ((flags & ~NET_SOCKINFO_TIME_WAIT) != 0) return fail(NET_EINVAL);
     std::vector<int> listed;
@@ -2340,8 +2346,7 @@ int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
     NetSockInfo record;
     if (s >= 0) {
         if (const int error = fill_sock_info(s, record)) return fail(error);
-        std::memcpy(info, &record, sizeof(record));
-        return 1;
+        return CopySockInfo(info, 0, &record, sizeof(record)) ? 1 : fail(NET_EFAULT);
     }
     int written = 0;
     for (const int descriptor : listed) {
@@ -2349,7 +2354,7 @@ int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
         const int error = fill_sock_info(descriptor, record);
         if (error == NET_EBADF || error == NET_EAFNOSUPPORT) continue;
         if (error != 0) return fail(error);
-        std::memcpy(static_cast<char*>(info) + static_cast<std::size_t>(written) * sizeof(record), &record, sizeof(record));
+        if (!CopySockInfo(info, written, &record, sizeof(record))) return fail(NET_EFAULT);
         ++written;
     }
     return written;
@@ -2421,8 +2426,7 @@ int APS5_VABI sceNetGetSockInfo6(std::int32_t s, NetSockInfo6* info, std::uint32
     NetSockInfo6 record;
     if (s >= 0) {
         if (const int error = fill_sock_info6(s, record, includeIpv4)) return fail(error);
-        *info = record;
-        return 1;
+        return CopySockInfo(info, 0, &record, sizeof(record)) ? 1 : fail(NET_EFAULT);
     }
     int written = 0;
     for (const int descriptor : listed) {
@@ -2430,7 +2434,7 @@ int APS5_VABI sceNetGetSockInfo6(std::int32_t s, NetSockInfo6* info, std::uint32
         const int error = fill_sock_info6(descriptor, record, includeIpv4);
         if (error == NET_EBADF || error == NET_EAFNOSUPPORT) continue;
         if (error != 0) return fail(error);
-        info[written] = record;
+        if (!CopySockInfo(info, written, &record, sizeof(record))) return fail(NET_EFAULT);
         ++written;
     }
     return written;
