@@ -122,6 +122,10 @@ void APS5_VABI WKWebsiteDataStoreConfigurationSetServiceWorkerRegistrationDirect
 void APS5_VABI WKWebsiteDataStoreConfigurationSetStaleWhileRevalidateEnabled(const void* configuration, bool enabled);
 void APS5_VABI WKWebsiteDataStoreConfigurationSetTestingSessionEnabled(const void* configuration, bool enabled);
 void APS5_VABI WKWebsiteDataStoreConfigurationSetWebSQLDatabaseDirectory(const void* configuration, const void* directory);
+const void* APS5_VABI WKWebsiteDataStoreCreateNonPersistentDataStore();
+const void* APS5_VABI WKWebsiteDataStoreCreateWithConfiguration(const void* configuration);
+const void* APS5_VABI WKWebsiteDataStoreGetDefaultDataStore();
+const void* APS5_VABI WKWebsiteDataStoreGetHTTPCookieStore(const void* websiteDataStore);
 const void* APS5_VABI WKWebsitePoliciesCopyCustomHeaderFields(const void* websitePolicies);
 const void* APS5_VABI WKWebsitePoliciesCreate();
 std::uint32_t APS5_VABI WKWebsitePoliciesGetAllowedAutoplayQuirks(const void* websitePolicies);
