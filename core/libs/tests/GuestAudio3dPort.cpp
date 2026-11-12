@@ -1,4 +1,5 @@
 #include "prx/libSceAudio3d/include/Audio3d.hpp"
+#include <cerrno>
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <chrono>
@@ -281,6 +282,10 @@ void CheckQueue() {
     Require(Open(parameters, &id) == 0 && id == 0, "open");
     CheckAttributes();
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, nullptr) == INVALID_PARAMETER, "both outputs null");
+    errno = 71;
+    Require(sceAudio3dPortGetQueueLevel(0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == INVALID_PARAMETER, "unwritable level");
+    Require(sceAudio3dPortGetQueueLevel(0, nullptr, reinterpret_cast<std::uint32_t*>(0x10)) == INVALID_PARAMETER, "unwritable available");
+    Require(errno == 71, "errno preserved");
     std::uint32_t available = 0;
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, &available) == 0 && available == 2, "level pointer is optional");
     std::uint32_t level = 99;

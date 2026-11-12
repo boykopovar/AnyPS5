@@ -86,7 +86,9 @@ LINKAGE = re.compile(r'\bextern\s*""\s*$')
 ALIGNMENT_LIMIT = 8192
 LINK = re.compile(r"\[[^\]]+\]\((<[^<>\r\n]*>|(?!<)[^)\s]+)")
 FENCE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1[ \t]*\r?$|^ {0,3}(?:```|~~~).*\Z", re.S | re.M)
-INLINE = re.compile(r"`[^`\n]*`")
+BACKSLASH_ESCAPE = re.compile(r"\\([!-/:-@\[-`{-~])")
+BACKTICKS = re.compile(r"`+")
+INLINE = re.compile(BACKSLASH_ESCAPE.pattern + r"|`+")
 SECTION = re.compile(r"^###(?!#)\s*(.+?)\s*$", re.M)
 KEY = re.compile(r"^( *)([A-Za-z0-9_-]+|'[^']*'|\"[^\"]*\"):(?:\s+(.*?))?\s*$")
 
@@ -490,12 +492,38 @@ def fenced_lines(text):
     return inside
 
 
+def link_syntax(text):
+    def blank(value):
+        return re.sub(r"[^\r\n]", " ", value)
+
+    text = FENCE.sub(lambda match: blank(match[0]), text)
+    parts = []
+    cursor = 0
+    while match := INLINE.search(text, cursor):
+        parts.append(text[cursor:match.start()])
+        token = match[0]
+        end = match.end()
+        if token.startswith("\\"):
+            parts.append("\0" * len(token))
+        else:
+            close = next((tick for tick in BACKTICKS.finditer(text, end) if tick[0] == token), None)
+            if close:
+                end = close.end()
+                parts.append(blank(text[match.start():end]))
+            else:
+                parts.append(token)
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
 def links(path, text):
     result = []
-    text = INLINE.sub("code", FENCE.sub("", text))
-    for target in LINK.findall(text):
+    for match in LINK.finditer(link_syntax(text)):
+        target = text[match.start(1):match.end(1)]
         if target.startswith("<"):
             target = target[1:-1]
+        target = BACKSLASH_ESCAPE.sub(r"\1", target)
         if not target or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:|//|#", target):
             continue
         target = target.split("#", 1)[0].split("?", 1)[0]

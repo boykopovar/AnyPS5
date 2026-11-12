@@ -306,7 +306,13 @@ int APS5_VABI sceNpSessionSignalingGetCustomProperty(std::uint32_t contextId, st
     if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
     auto* context = FindContext(contextId);
     if (!context) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_NOT_FOUND;
-    if (property) *property = context->customProperty;
+    if (property) {
+        const std::uint32_t val = context->customProperty;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(property, &val, sizeof(val));
+        errno = savedErrno;
+        if (!copied) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
+    }
     return 0;
 }
 
