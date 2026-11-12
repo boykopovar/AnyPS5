@@ -59,6 +59,19 @@ def with_import_type(image, relocation_type):
     return image
 
 
+def with_landing_pad(image, personality):
+    header, cie, fde, lsda = 0x840, 0x860, 0x880, 0x8a0
+    struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 0x6474e550, 4, header, header, header, 20, 20, 4)
+    image[header:header + 20] = (b"\x01\x1b\x03\x3b" + rel(header + 4, cie) + struct.pack("<I", 1)
+                                 + rel(header, CODE) + rel(header, fde))
+    image[cie:cie + 32] = (struct.pack("<II", 28, 0) + b"\x01zPLR\0\x01\x78\x10\x07\x9b"
+                           + (rel(cie + 19, personality) if personality else bytes(4)) + b"\x1b\x1b" + bytes(7))
+    image[fde:fde + 24] = (struct.pack("<II", 20, fde + 4 - cie) + rel(fde + 8, CODE) + struct.pack("<i", 0x20)
+                           + b"\x04" + rel(fde + 17, lsda) + bytes(3))
+    image[lsda:lsda + 8] = b"\xff\xff\x01\x04\x00\x05\x10\x00"
+    return image
+
+
 def run(relinker, work, name, image, level=1):
     source = work / (name + ".elf")
     output = work / (name + ".out")
@@ -141,6 +154,15 @@ def cases():
         data=[(TABLE, struct.pack("<i", split - TABLE))])
     table_call = b"\x48\x8d\x05" + rel(CODE + 7, SLOT - 8) + b"\xff\x50\x08\xc3"
     yield "data-pointer-at-offset", True, with_import_type(build(at_offset([(0, table_call)])), 1)
+    landing_pad = at_offset([(0, b"\xe8" + rel(CODE + 5, FUNCTION) + b"\xc3"), (0x10, load_slot(CODE + 0x10)),
+                             (0x40, b"\xc3"), (0x60, b"\xc3")])
+    yield "landing-pad-import-personality", True, with_landing_pad(build(landing_pad), SLOT)
+    yield "landing-pad-relative-personality", True, with_landing_pad(
+        build(landing_pad, relative=[(POINTER, SECOND_FUNCTION)]), POINTER)
+    yield "landing-pad-without-personality", False, with_landing_pad(build(landing_pad), 0)
+    personality_only = at_offset([(0, b"\xe8" + rel(CODE + 5, FUNCTION) + b"\xc3"), (0x10, b"\xc3"),
+                                  (0x40, b"\xc3"), (0x60, b"\xc3")])
+    yield "personality-slot-only", True, with_landing_pad(build(personality_only), SLOT)
 
 
 def main():
