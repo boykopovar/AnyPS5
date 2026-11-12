@@ -1,6 +1,7 @@
 #include "prx/libSceRtc/include/Rtc.hpp"
 #include <cerrno>
 #include <chrono>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
@@ -200,13 +201,25 @@ int addTicks(RtcTick* dst, const RtcTick* src, std::int64_t count, std::int64_t 
 
 int addTicksWrapping(RtcTick* dst, const RtcTick* src, std::int64_t count, std::int64_t unit) {
     if (!dst || !src) return SCE_RTC_ERROR_INVALID_POINTER;
-    dst->tick = src->tick + static_cast<std::uint64_t>(count) * static_cast<std::uint64_t>(unit);
-    return 0;
+    RtcTick source{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&source, src, sizeof(source));
+    errno = savedErrno;
+    if (!copied) return SCE_RTC_ERROR_INVALID_POINTER;
+    const RtcTick result{source.tick + static_cast<std::uint64_t>(count) * static_cast<std::uint64_t>(unit)};
+    const bool written = GuestCopyOut_nid_no_patch(dst, &result, sizeof(result));
+    errno = savedErrno;
+    return written ? 0 : SCE_RTC_ERROR_INVALID_POINTER;
 }
 
 int addMonths(RtcTick* dst, const RtcTick* src, std::int32_t months) {
     if (!dst || !src) return SCE_RTC_ERROR_INVALID_POINTER;
-    RtcDateTime time = fromTick(src->tick);
+    RtcTick source{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&source, src, sizeof(source));
+    errno = savedErrno;
+    if (!copied) return SCE_RTC_ERROR_INVALID_POINTER;
+    RtcDateTime time = fromTick(source.tick);
     const auto index = static_cast<std::int32_t>(static_cast<std::uint32_t>(time.year) * 12u + time.month + static_cast<std::uint32_t>(months) - 1u);
     const auto year = static_cast<std::uint16_t>(index / 12);
     const std::int32_t month = index % 12;
@@ -215,8 +228,10 @@ int addMonths(RtcTick* dst, const RtcTick* src, std::int32_t months) {
     time.month = static_cast<std::uint16_t>(month + 1);
     const int lastDay = daysInMonth(year, time.month);
     if (time.day > lastDay) time.day = static_cast<std::uint16_t>(lastDay);
-    dst->tick = toTick(time);
-    return 0;
+    const RtcTick result{toTick(time)};
+    const bool written = GuestCopyOut_nid_no_patch(dst, &result, sizeof(result));
+    errno = savedErrno;
+    return written ? 0 : SCE_RTC_ERROR_INVALID_POINTER;
 }
 
 bool parseDigits(const char*& cursor, int count, int& value) {
