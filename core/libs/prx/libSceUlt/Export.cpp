@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <cerrno>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -262,11 +263,15 @@ int APS5_VABI sceUltMutexOptParamInitialize(UltMutexOptParam* optParam, std::uin
     if ((reinterpret_cast<std::uintptr_t>(optParam) & 7u) != 0) {
         return ULT_ERROR_ALIGNMENT;
     }
-    std::memset(optParam, 0, sizeof(*optParam));
-    optParam->header[0] = 0x6C696275;
-    optParam->header[1] = 0x6C746D61;
-    optParam->header[2] = 0x67696300;
-    optParam->buildVersion = buildVersion;
+    UltMutexOptParam local{};
+    local.header[0] = 0x6C696275;
+    local.header[1] = 0x6C746D61;
+    local.header[2] = 0x67696300;
+    local.buildVersion = buildVersion;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(optParam, &local, sizeof(local));
+    errno = savedErrno;
+    if (!copied) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
