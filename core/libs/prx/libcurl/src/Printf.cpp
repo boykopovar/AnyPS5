@@ -28,7 +28,7 @@ int APS5_VABI curl_mvfprintf_nid_postfix(std::FILE* whereto, const char* format,
 }
 
 int APS5_VABI curl_mfprintf_nid_postfix(std::FILE* whereto, const char* format, ...) {
-    CURL_ARGS_START(whereto);
+    CURL_ARGS_START(format);
     const int result = curl_mvfprintf_nid_postfix(whereto, format, GuestArguments(&args));
     CURL_ARGS_END();
     return result;
