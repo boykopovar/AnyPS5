@@ -1,9 +1,18 @@
 # libSceNpCommon technical debt
 
+### Title comparison limitations
+
+These two exports were reconstructed from a **static reading of the disassembly** of `libSceNpCommon.sprx` from **PS5 firmware 13.60**, using **Ghidra 12.1.4** (module SHA-256: `AB696280CAF5CF465C62E00D1785FB4348B59A7E376D7C6802453419E5765CD0`). The observed ranges and offsets are from instruction-level inspection, not execution on a console.
+
+- [`_ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE`](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `6jHOZ6fItFU`): compares **12 bytes** of the raw `SceNpTitleId` (first operand, offset 0) against **12 bytes** of `sce::np::NpTitleId` (second operand, offset 8), returning true when equal.
+- [`_ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret`](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `7b5y1XSa+KQ`): compares **128 bytes** of `sce::np::NpTitleSecret` (first operand, offset 8) against **128 bytes** of the raw `SceNpTitleSecret` (second operand, offset 0), returning true when different.
+- [libSceNpCommon](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp): **Unmeasured behavior:** Native null-pointer and unreadable-memory faults have not been measured on a PS5. The host checks guest reads through `GuestCopyIn_nid_no_patch` and throws `std::runtime_error` for null, overflowing or unreadable ranges. This is an emulator-side choice, not verified firmware behavior; a failed read must not silently return `false` (which would conflate an unreadable secret with an equal one).
+
 ### Unknown function info
 
 - [sceNpGetSandboxMode](../../../core/libs/prx/libSceNpCommon/PendingExports.cpp) (NID `N59Z0D0WTuQ`) - signature and behavior are unknown. The parameterless import-resolution placeholder throws through `NotImplemented_nid_no_patch`.
 - [sceNpUtilGetSandboxMode](../../../core/libs/prx/libSceNpCommon/PendingExports.cpp) (NID `0rqvzrXUR5Y`) - signature and behavior are unknown. The parameterless import-resolution placeholder throws through `NotImplemented_nid_no_patch`.
+- [Integer-to-string guest outputs](../../../core/libs/prx/libSceNpCommon/Strings.cpp) - `sceNpUInt32ToStr`, `sceNpUInt64ToStr`, `sceNpInt32ToStr` and `sceNpInt64ToStr` stage at most 66 formatted bytes before a checked guest write, then checked-write the optional length. A non-null unwritable output returns `0x80558009` (invalid argument) instead of faulting the host. The console's result for unwritable pointers and the precedence between two unwritable outputs were not measured; the host-safety fallback retains the existing order of string output before length output.
 
 Pending import declarations are matched to names in the local libSceNpCommon.sprx export table and the public [PS5 3.20 libSceNpCommon export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/main/libSceNpCommon.c); their NIDs are recomputed with tools/nid_names.py. Prototypes and behavior are unknown. Each remaining parameterless, unimplemented declaration exists for import resolution and throws if called.
 
@@ -120,8 +129,6 @@ The following nine state helpers in [PendingExportsRound7.cpp](../../../core/lib
 - [_ZN3sce2np8WorkItem10SetPendingEv](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `2YbS+GhInZQ`) - the signature and behavior are unknown. The no-parameter declaration only resolves the import; it makes no ABI claim. Calls throw through `NotImplemented_nid_no_patch`.
 - [_ZN3sce2np7Callout4StopEv](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `14PDhhMEBKY`) - the signature and behavior are unknown. The no-parameter declaration only resolves the import; it makes no ABI claim. Calls throw through `NotImplemented_nid_no_patch`.
 - [_ZN3sce2np6ThreadD1Ev](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `0Q5aKjYErBA`) - the signature and behavior are unknown. The no-parameter declaration only resolves the import; it makes no ABI claim. Calls throw through `NotImplemented_nid_no_patch`.
-- [_ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `6jHOZ6fItFU`) - the signature and behavior are unknown. The no-parameter declaration only resolves the import; it makes no ABI claim. Calls throw through `NotImplemented_nid_no_patch`.
-- [_ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `7b5y1XSa+KQ`) - the signature and behavior are unknown. The no-parameter declaration only resolves the import; it makes no ABI claim. Calls throw through `NotImplemented_nid_no_patch`.
 - [_ZN3sce2np9LocalFileD0Ev](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `-n0CR0QxhnY`) - the signature and behavior are unknown. The no-parameter declaration only resolves the import; it makes no ABI claim. Calls throw through `NotImplemented_nid_no_patch`.
 - [_ZN3sce2np16StreamReadBufferD2Ev](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `bH7ljyLOsBw`) - the signature and behavior are unknown. The no-parameter declaration only resolves the import; it makes no ABI claim. Calls throw through `NotImplemented_nid_no_patch`.
 - [_ZN3sce2np3ipc17ServiceIpmiClient11TermServiceEi](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `0rqwC4+sgzU`) - the signature and behavior are unknown. The no-parameter declaration only resolves the import; it makes no ABI claim. Calls throw through `NotImplemented_nid_no_patch`.

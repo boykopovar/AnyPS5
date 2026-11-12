@@ -162,9 +162,20 @@ int main() {
             "null launch argument must be invalid");
     Require(sceNpAppLauncherLaunchApp(0, "", nullptr) == kLauncherInvalidArgument,
             "empty launch argument must be invalid");
+    errno = 71;
+    Require(sceNpAppLauncherLaunchApp(0, reinterpret_cast<const char*>(0x10), nullptr) == kLauncherInvalidArgument,
+            "unreadable required launch string must be invalid");
+    Require(sceNpAppLauncherLaunchApp(0, "app", reinterpret_cast<const char*>(0x10)) == kLauncherInvalidArgument,
+            "unreadable optional launch string must be invalid");
+    Require(errno == 71, "invalid launch string changed host errno");
     std::vector<char> unterminated(0x2001, 'x');
     Require(sceNpAppLauncherLaunchApp(0, "app", unterminated.data()) == kLauncherInvalidArgument,
             "non-terminated 0x2001-byte argument must be invalid");
+    unterminated.back() = '\0';
+    Require(sceNpAppLauncherLaunchApp(0, "app", unterminated.data()) == kLauncherNotInitialized,
+            "0x2000-byte optional launch string must be accepted");
+    Require(sceNpAppLauncherLaunchApp(0, "app", "optional") == kLauncherNotInitialized,
+            "terminated optional launch string must pass argument validation");
     Require(sceNpAppLauncherLaunchApp(0, "app", nullptr) == kLauncherNotInitialized,
             "launch without a connected service must report not-initialized");
     Require(sceNpAppLauncherTerminate() == 0, "app launcher terminate failed");

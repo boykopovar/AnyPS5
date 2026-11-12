@@ -565,6 +565,7 @@ int APS5_VABI sceImeSetCaret(const Caret* caret) {
     if (!caret) return ErrorInvalidAddress;
     if (caret->index > g_session->text.size()) return ErrorInvalidParam;
     g_session->caret = caret->index;
+    NormalizeCaret(*g_session);
     ++g_session->revision;
     return 0;
 }
@@ -583,7 +584,7 @@ int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length) {
     if (!ValidText(text, count, (session.param.option & OptionMultiline) != 0)) return ErrorInvalidText;
     session.text.assign(text, count);
     ++session.revision;
-    if (session.caret > session.text.size()) session.caret = static_cast<uint32_t>(session.text.size());
+    NormalizeCaret(session);
     SyncBuffers(session);
     return 0;
 }

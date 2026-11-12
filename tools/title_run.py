@@ -82,7 +82,10 @@ def load_titles(path):
         for key, value in entry.items():
             if key not in TITLE_FIELDS:
                 raise ValueError(f"{path}: {title_id}: unknown field {key}")
-            if not isinstance(value, TITLE_FIELDS[key]):
+            if key == "seconds":
+                if type(value) is not int or value < 1:
+                    raise ValueError(f"{path}: {title_id}: seconds must be a positive integer")
+            elif not isinstance(value, TITLE_FIELDS[key]):
                 raise ValueError(f"{path}: {title_id}: {key} must be {TITLE_FIELDS[key].__name__}")
             if key in ("pad", "files"):
                 try:
@@ -173,13 +176,19 @@ def take_report(work, run_dir):
 
 def frame_is_uniform(path, tolerance=8):
     data = path.read_bytes()
+    if data[:2] != b"BM":
+        return None
     try:
         offset = struct.unpack_from("<I", data, 10)[0]
+        header_size = struct.unpack_from("<I", data, 14)[0]
         width, height = struct.unpack_from("<ii", data, 18)
+        planes = struct.unpack_from("<H", data, 26)[0]
         bits = struct.unpack_from("<H", data, 28)[0]
+        compression = struct.unpack_from("<I", data, 30)[0]
     except struct.error:
         return None
-    if bits not in (24, 32):
+    if (header_size < 40 or offset < 14 + header_size or width <= 0 or height == 0 or
+            planes != 1 or compression != 0 or bits not in (24, 32)):
         return None
     channels = bits // 8
     stride = (width * channels + 3) & ~3
@@ -414,7 +423,9 @@ def discover(directories, wanted=()):
 
 def unwrap_or_copy(source, target):
     target.parent.mkdir(parents=True, exist_ok=True)
-    if source.read_bytes()[:4] == b"\x7fELF":
+    with source.open("rb") as stream:
+        magic = stream.read(4)
+    if magic == b"\x7fELF":
         shutil.copyfile(source, target)
     else:
         unwrap_self.unwrap(source, target)

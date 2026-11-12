@@ -130,10 +130,9 @@ int APS5_VABI sceFreeTypeOtGlyphGetCBox_nid_no_patch() {
 }
 APS5_EXPORT("avLzN0tTxLI", sceFreeTypeOtGlyphGetCBox_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_0rKmI1ZbMAc_nid_no_patch() {
+int APS5_VABI FT_Glyph_Stroke_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("0rKmI1ZbMAc", sceFreeTypeOtUnknown_0rKmI1ZbMAc_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtGlyphStrokeBorder_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -175,10 +174,9 @@ int APS5_VABI sceFreeTypeOtUnknown_4LY5pyZ5IQk_nid_no_patch() {
 }
 APS5_EXPORT("4LY5pyZ5IQk", sceFreeTypeOtUnknown_4LY5pyZ5IQk_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_WIvTHYs7ZQQ_nid_no_patch() {
+int APS5_VABI FT_New_GlyphSlot_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("WIvTHYs7ZQQ", sceFreeTypeOtUnknown_WIvTHYs7ZQQ_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtNewLibrary_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -278,10 +276,9 @@ int APS5_VABI FT_Render_Glyph_Internal_nid_postfix(FreeType::GuestLibrary* libra
     return FT_Render_Glyph_nid_postfix(slot, renderMode);
 }
 
-int APS5_VABI sceFreeTypeOtUnknown_uK7vGxAQVxM_nid_no_patch() {
+int APS5_VABI FT_Set_Debug_Hook_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("uK7vGxAQVxM", sceFreeTypeOtUnknown_uK7vGxAQVxM_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtSetMMBlendCoordinates_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -312,16 +309,6 @@ void APS5_VABI FT_Stroker_ExportForward_nid_no_patch(void* stroker, FreeType::Gu
     FT_Stroker_Export_nid_postfix(stroker, outline);
 }
 APS5_EXPORT("2rcvKZfm5rI", FT_Stroker_ExportForward_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtStrokerExportBorder_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("7cIS2cFG3PE", sceFreeTypeOtStrokerExportBorder_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtStrokerParseOutline_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("RvFx7dv9ThU", sceFreeTypeOtStrokerParseOutline_nid_no_patch);
 
 int APS5_VABI FT_Trace_Get_Count_nid_no_patch() {
     return 0;

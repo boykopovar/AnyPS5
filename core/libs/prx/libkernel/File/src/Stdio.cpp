@@ -141,7 +141,7 @@ static std::optional<std::filesystem::path> HandlePath(HANDLE handle) {
     return path;
 }
 std::optional<std::filesystem::path> File::WindowsDescriptorPath_nid_no_patch(int descriptor) {
-    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+    const auto handle = WindowsDescriptorHandle_nid_no_patch(descriptor);
     if (handle == INVALID_HANDLE_VALUE) {
         errno = EBADF;
         return std::nullopt;
@@ -257,7 +257,7 @@ static int NativeUtimes(const std::filesystem::path& path, const KernelTimeval* 
 static int NativeFutimes(int descriptor, const KernelTimeval* times) {
     if (const auto directory = File::DirectoryDescriptorPath(descriptor)) return NativeUtimes(*directory, times);
 
-    const auto original = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+    const auto original = WindowsDescriptorHandle_nid_no_patch(descriptor);
     if (original == INVALID_HANDLE_VALUE) { errno = EBADF; return -1; }
     if (GetFileType(original) != FILE_TYPE_DISK) { errno = EINVAL; return -1; }
     const auto handle = ReOpenFile(original, FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
@@ -277,7 +277,8 @@ static int NativeSync(int descriptor) {
     } else {
         const int previous = errno;
         const auto pipe = reinterpret_cast<HANDLE>(WithoutParameterHandler([descriptor] { return ::_get_osfhandle(descriptor); }));
-        if (pipe != INVALID_HANDLE_VALUE && GetFileType(pipe) == FILE_TYPE_PIPE) { errno = EINVAL; return -1; }
+        if (pipe == INVALID_HANDLE_VALUE) { errno = EBADF; return -1; }
+        if (GetFileType(pipe) == FILE_TYPE_PIPE) { errno = EINVAL; return -1; }
         if (::_commit(descriptor) == 0) return 0;
         const auto original = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
         if (original == INVALID_HANDLE_VALUE || GetFileType(original) != FILE_TYPE_DISK) { errno = EBADF; return -1; }
@@ -407,6 +408,10 @@ static std::int64_t NativeTransferBuffer(int descriptor, void* buf, std::size_t 
             if (appended != -2) return appended;
         }
     }
+    if (WindowsDescriptorHandle_nid_no_patch(descriptor) == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return -1;
+    }
     if (!write) return ::_read(descriptor, buf, static_cast<unsigned int>(nbytes));
     const int result = ::_write(descriptor, buf, static_cast<unsigned int>(nbytes));
     if (result < 0 && (_doserrno == ERROR_NO_DATA || _doserrno == ERROR_BROKEN_PIPE) && ::GetFileType(reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor))) == FILE_TYPE_PIPE) errno = EPIPE;
@@ -417,7 +422,7 @@ static std::int64_t NativeTransfer(int descriptor, void* buf, std::size_t nbytes
     return NativeTransferBuffer(descriptor, buf, nbytes, write);
 }
 static bool NativeIsDisk(int descriptor) {
-    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+    const auto handle = WindowsDescriptorHandle_nid_no_patch(descriptor);
     return handle != INVALID_HANDLE_VALUE && ::GetFileType(handle) == FILE_TYPE_DISK;
 }
 static bool NativePipeHasData(int descriptor) {

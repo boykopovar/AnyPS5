@@ -162,6 +162,16 @@ static void CheckPositionalUnknownConversion() {
     Require(FormatList(output, sizeof(output), "%1$C%d", 7) == 3 && std::strcmp(output, "%C7") == 0);
 }
 
+static void CheckSecureCountBeforeInputFailure() {
+    for (const auto scan : {sscanf_s_nid_postfix, ScanListS}) {
+        int count = -7;
+        int value = -7;
+        Require(scan("", "%n%d", &count, &value) == 0 && count == 0 && value == -7);
+        Require(scan("  ", "%*n%d", &value) == 0 && value == -7);
+        Require(scan("", " %n%d", &count, &value) == 0 && value == -7);
+    }
+}
+
 static void CheckIgnoredLengths() {
     CheckCharacterScanLengths();
     char output[96];
@@ -894,4 +904,4 @@ static void CheckLongDoubleHexFloat() {
     }
 }
 
-int main() { CheckPositionalUnknownConversion(); CheckScanIgnoredLengths(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { CheckPositionalUnknownConversion(); CheckSecureCountBeforeInputFailure(); CheckScanIgnoredLengths(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
