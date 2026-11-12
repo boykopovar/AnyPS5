@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_CPUTOPOLOGY_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_CPUTOPOLOGY_HPP
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -171,7 +172,7 @@ inline std::optional<unsigned long> ReadSysfsNumber(const std::string& path) {
 inline std::vector<CpuSet> SysfsCpuSets(const std::string& root, std::uint64_t process, std::uint64_t efficient) {
     std::vector<CpuSet> sets;
     std::vector<std::pair<unsigned long, unsigned long>> cores;
-    std::vector<unsigned long> caches;
+    std::vector<std::pair<unsigned long, unsigned long>> caches;
     const auto indexOf = [](auto& seen, const auto& key) {
         std::size_t index = 0;
         while (index < seen.size() && seen[index] != key) ++index;
@@ -185,7 +186,17 @@ inline std::vector<CpuSet> SysfsCpuSets(const std::string& root, std::uint64_t p
         const auto package = ReadSysfsNumber(base + "/topology/physical_package_id");
         if (!core.has_value() || !package.has_value()) return {};
         const auto coreIndex = indexOf(cores, std::pair{*package, *core});
-        const auto cacheIndex = indexOf(caches, ReadSysfsNumber(base + "/cache/index3/id").value_or(0));
+        unsigned long level = 0;
+        unsigned long cacheId = 0;
+        for (unsigned index = 0; index < 8; ++index) {
+            const auto cacheBase = base + "/cache/index" + std::to_string(index);
+            const auto cacheLevel = ReadSysfsNumber(cacheBase + "/level");
+            const auto id = ReadSysfsNumber(cacheBase + "/id");
+            if (!cacheLevel.has_value() || !id.has_value() || *cacheLevel < level) continue;
+            level = *cacheLevel;
+            cacheId = *id;
+        }
+        const auto cacheIndex = indexOf(caches, std::pair{*package, cacheId});
         if (coreIndex > 0xffu || cacheIndex > 0xffu) return {};
         const bool efficientCore = ((efficient >> cpu) & 1u) != 0;
         sets.push_back({cpu, 0, static_cast<std::uint8_t>(cpu), static_cast<std::uint8_t>(coreIndex), static_cast<std::uint8_t>(efficientCore ? 0u : 1u), static_cast<std::uint8_t>(cacheIndex), false});
@@ -295,7 +306,15 @@ inline std::uint64_t PinTraced(const char* role, void* handle, std::uint64_t mas
 
 // Helper threads (deferred release, mirror refresh) are pinned only when APS5_HELPER_AFFINITY_MASK
 // names their cores.
+inline std::atomic<std::uint64_t>& UnreservedMask() {
+    static std::atomic<std::uint64_t> mask{0};
+    return mask;
+}
+
 inline void PinHelperThread(const char* role) {
+#ifdef __linux__
+    if (const auto unreserved = UnreservedMask().load(std::memory_order_acquire); unreserved != 0) Pin(nullptr, unreserved);
+#endif
     static const std::uint64_t mask = MaskFromEnvironment("APS5_HELPER_AFFINITY_MASK");
     if (mask != 0) PinTraced(role, nullptr, mask);
 }

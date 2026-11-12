@@ -129,6 +129,7 @@ static void ReservedCoreTests() {
     const auto requestedGroup = ChooseReservedCore(groupZeroFirst, {}, 3u);
     Require(requestedGroup.has_value() && requestedGroup->chosen.group == 0 && requestedGroup->chosen.logical == 3, "a requested logical processor is one of group 0");
 }
+#ifdef __linux__
 static void WriteNumber(const std::filesystem::path& path, unsigned long value) {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream(path, std::ios::trunc) << value << "\n";
@@ -143,6 +144,11 @@ static std::filesystem::path FakeSysfs(unsigned packages, unsigned cachesPerPack
         const auto base = root / ("cpu" + std::to_string(cpu));
         WriteNumber(base / "topology" / "core_id", core % (cachesPerPackage * coresPerCache));
         WriteNumber(base / "topology" / "physical_package_id", core / (cachesPerPackage * coresPerCache));
+        WriteNumber(base / "cache" / "index0" / "level", 1);
+        WriteNumber(base / "cache" / "index0" / "id", core);
+        WriteNumber(base / "cache" / "index2" / "level", 2);
+        WriteNumber(base / "cache" / "index2" / "id", core);
+        WriteNumber(base / "cache" / "index3" / "level", 3);
         WriteNumber(base / "cache" / "index3" / "id", 100 + core / coresPerCache);
     }
     return root;
@@ -183,6 +189,7 @@ static void SysfsTests() {
     Require(socketSets[0].core != socketSets[8].core, "equal core ids in two packages are different cores");
     std::filesystem::remove_all(sockets);
 }
+#endif
 
 int main() {
     Require(Parse("0-15\n") == 0xffffull, "range");
@@ -219,7 +226,9 @@ int main() {
     }
 
     ReservedCoreTests();
+#ifdef __linux__
     SysfsTests();
+#endif
 
     const auto& layout = CpuTopology::Get();
     Require(layout.process != 0, "process affinity read");

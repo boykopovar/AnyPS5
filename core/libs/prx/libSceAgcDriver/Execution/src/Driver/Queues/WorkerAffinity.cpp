@@ -13,6 +13,7 @@
 #include <tlhelp32.h>
 #elif defined(__linux__)
 #include <dirent.h>
+#include <string>
 #include <sched.h>
 #include <unistd.h>
 #endif
@@ -121,6 +122,9 @@ std::vector<CpuTopology::CpuSet> SystemCpuSets() {
 #else
 std::vector<CpuTopology::CpuSet> SystemCpuSets() {
     const auto& layout = CpuTopology::Get();
+    cpu_set_t allowed;
+    CPU_ZERO(&allowed);
+    if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0 || CPU_COUNT(&allowed) != __builtin_popcountll(layout.process)) return {};
     return CpuTopology::SysfsCpuSets("/sys/devices/system/cpu", layout.process, layout.hybrid ? layout.efficient : 0);
 }
 
@@ -133,6 +137,10 @@ bool PinTo(pid_t thread, const std::vector<std::uint32_t>& cpus) {
     CPU_ZERO(&set);
     for (const auto cpu : cpus) CPU_SET(cpu, &set);
     return sched_setaffinity(thread, sizeof(set), &set) == 0;
+}
+
+bool OwnThread(unsigned long tid) {
+    return access(("/proc/self/task/" + std::to_string(tid)).c_str(), F_OK) == 0;
 }
 
 void NoteWorkerThread() {
@@ -216,15 +224,21 @@ void Reserve(std::size_t slot, const char* role, std::optional<unsigned> logical
         }
         closedir(tasks);
     }
-    const char* processState = "inherited by new threads";
+    const char* processState = "set for helper threads";
     std::vector<CpuTopology::CpuSet> held;
     for (const auto& reserved : reservations) {
         if (reserved.has_value()) held.push_back(reserved->set);
     }
-    pipelineCpus = CpuTopology::PipelineCacheSet(sets, held);
+    std::uint64_t unreserved = 0;
+    for (const auto cpu : reservation->others) unreserved |= std::uint64_t{1} << cpu;
+    CpuTopology::UnreservedMask().store(unreserved, std::memory_order_release);
+    pipelineCpus = WorkerAffinityMask() != 0 ? std::vector<std::uint32_t>{} : CpuTopology::PipelineCacheSet(sets, held);
     if (!pipelineCpus.empty()) {
         std::size_t kept = 0;
-        for (const auto worker : workerThreads) kept += PinTo(static_cast<pid_t>(worker), pipelineCpus) ? 1u : 0u;
+        for (const auto worker : workerThreads) {
+            if (!OwnThread(worker)) continue;
+            kept += PinTo(static_cast<pid_t>(worker), pipelineCpus) ? 1u : 0u;
+        }
         std::fprintf(stderr, "[affinity] %zu queue workers kept on the %zu other CPUs of the reserved cores' last-level cache\n", kept, pipelineCpus.size());
     }
 #endif
