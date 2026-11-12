@@ -289,6 +289,27 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
     return requests;
 }
 
+Pad::InputRequests Pad::KeyboardMouse::PadChordRequests(std::uint32_t buttons) {
+    InputRequests requests;
+    const auto previous = padButtons;
+    padButtons = buttons;
+    for (const auto& binding : configuration.bindings) {
+        if (binding.padButtons == 0) continue;
+        const bool wasHeld = (previous & binding.padButtons) == binding.padButtons;
+        const bool held = (buttons & binding.padButtons) == binding.padButtons;
+        if (!held || wasHeld) continue;
+        if (binding.control == InputControl::ToggleFullscreen) requests.toggleFullscreen = true;
+        if (binding.control == InputControl::TogglePerformanceOverlay) requests.togglePerformanceOverlay = true;
+        if (binding.control == InputControl::Screenshot) requests.screenshot = true;
+        if (binding.control == InputControl::ShowPadStatus) requests.showPadStatus = true;
+        if (binding.control == InputControl::VolumeUp) requests.volumeUp = true;
+        if (binding.control == InputControl::VolumeDown) requests.volumeDown = true;
+        if (binding.control == InputControl::ToggleMute) requests.toggleMute = true;
+        if (binding.control == InputControl::ReloadInputMapping) requests.reloadInputMapping = true;
+    }
+    return requests;
+}
+
 PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const {
     PadInputState state = controller;
     for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {

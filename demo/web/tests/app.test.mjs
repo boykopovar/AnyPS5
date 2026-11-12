@@ -80,6 +80,48 @@ async function inspect(worker, count) {
   await worker.onmessage({ data: { type: "inspection-complete" } });
 }
 
+for (const stage of ["constructor", "postMessage"]) {
+  test(`A worker ${stage} failure restores selection and permits retry`, async t => {
+    const { get, workers } = await setup(t, `startup-${stage}`);
+    const OriginalWorker = globalThis.Worker;
+    const message = stage === "constructor" ? "Worker creation denied" : "Input could not be cloned";
+    globalThis.Worker = class extends OriginalWorker {
+      constructor() {
+        if (stage === "constructor") throw new DOMException(message, "SecurityError");
+        super();
+      }
+      postMessage() { throw new DOMException(message, "DataCloneError"); }
+    };
+    get("file").files = [{ name: "first.zip" }];
+    get("file").onchange();
+    await setImmediate();
+    globalThis.Worker = OriginalWorker;
+
+    assert.equal(get("error").hidden, false);
+    assert.equal(get("error").children[0].textContent, message);
+    assert.equal(get("status").hidden, true);
+    assert.equal(get("cancel").hidden, true);
+    assert.equal(get("drop").hidden, false);
+    for (const id of ["choose", "choose-folder", "change", "target", "save", "intel"]) {
+      assert.equal(get(id).disabled, false, id);
+    }
+    assert.equal(get("convert").disabled, true);
+    assert.equal(workers.length, stage === "constructor" ? 0 : 1);
+    for (const worker of workers) assert.equal(worker.terminated, true);
+
+    get("file").files = [{ name: "replacement.zip" }];
+    get("file").onchange();
+    const replacement = workers.at(-1);
+    assert.deepEqual(replacement.messages[0].inputs.map(input => input.name), ["replacement.zip"]);
+    await inspect(replacement, 1);
+    assert.equal(get("error").hidden, true);
+    assert.equal(get("archive-name").textContent, "replacement.zip");
+    get("acknowledge").checked = true;
+    get("acknowledge").listeners.get("change")();
+    assert.equal(get("convert").disabled, false);
+  });
+}
+
 for (const kind of ["zip", "batch", "folder"]) {
   test(`Change resets an inspected ${kind} and permits a new conversion`, async t => {
     const { get, workers } = await setup(t, kind);

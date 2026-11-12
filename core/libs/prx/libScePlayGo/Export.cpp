@@ -1,4 +1,5 @@
 #include "prx/libScePlayGo/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <charconv>
@@ -186,7 +187,12 @@ static uint64_t SupportedOptionalChunkMask(uint32_t type) {
 static int ValidateOptionalChunkRequest(uint32_t type, const PlayGoOptionalChunk* option) {
     if (!option) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (type > PLAYGO_OPTIONAL_CHUNK_TYPE_LAST) return SCE_PLAYGO_ERROR_BAD_OPTIONAL_TYPE;
-    if (type == PLAYGO_OPTIONAL_CHUNK_TYPE_SCENARIO && (option->bitmask & ~PLAYGO_SCENARIO_MASK_ALL) != 0) return SCE_PLAYGO_ERROR_BAD_SCENARIO_CONFIGURATION;
+    PlayGoOptionalChunk localOption{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
+    errno = savedErrno;
+    if (!copied) return SCE_PLAYGO_ERROR_BAD_POINTER;
+    if (type == PLAYGO_OPTIONAL_CHUNK_TYPE_SCENARIO && (localOption.bitmask & ~PLAYGO_SCENARIO_MASK_ALL) != 0) return SCE_PLAYGO_ERROR_BAD_SCENARIO_CONFIGURATION;
     return 0;
 }
 

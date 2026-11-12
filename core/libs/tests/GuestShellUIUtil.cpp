@@ -1,4 +1,5 @@
 #include "prx/libSceShellUIUtil/libSceShellUIUtil.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -44,6 +45,9 @@ void CheckArguments() {
     }
     Require(sceShellUIUtilLaunchByUri(nullptr, LaunchParameter(good)) == InvalidArgument, "LaunchByUri: null uri");
     Require(sceShellUIUtilLaunchByUri("u", nullptr) == InvalidArgument, "LaunchByUri: null parameter");
+    errno = 71;
+    Require(sceShellUIUtilLaunchByUri("u", reinterpret_cast<const ShellUIUtilLaunchParameter*>(0x10)) == InvalidArgument, "LaunchByUri: unreadable parameter");
+    Require(errno == 71, "LaunchByUri: errno preserved");
     Require(sceShellUIUtilLaunchByUri(longText.c_str(), LaunchParameter(good)) == InvalidArgument, "LaunchByUri: long uri");
     Require(sceShellUIUtilLaunchByUri(longestText.c_str(), LaunchParameter(good)) == NotInitialized, "LaunchByUri before Initialize");
 
@@ -51,6 +55,9 @@ void CheckArguments() {
     Require(sceShellUIUtilLaunchTask(1, nullptr, taskOutput.data(), 0x1000) == InvalidArgument, "LaunchTask: null uri");
     Require(sceShellUIUtilLaunchTask(1, "u", taskOutput.data(), 0xFFF) == InvalidArgument, "LaunchTask: capacity");
     Require(sceShellUIUtilLaunchTask(1, "u", nullptr, 0x1000) == InvalidArgument, "LaunchTask: null output");
+    errno = 71;
+    Require(sceShellUIUtilLaunchTask(1, "u", reinterpret_cast<char*>(0x10), 0x1000) == InvalidArgument, "LaunchTask: unwritable output");
+    Require(errno == 71, "LaunchTask: errno preserved");
     Require(sceShellUIUtilLaunchTask(1, longText.c_str(), taskOutput.data(), 0x1000) == InvalidArgument, "LaunchTask: long uri");
     for (const char byte : taskOutput) Require(byte == 'x', "LaunchTask: a rejected call leaves the output");
     Require(sceShellUIUtilLaunchTask(1, "u", taskOutput.data(), 0x1000) == NotInitialized, "LaunchTask before Initialize");

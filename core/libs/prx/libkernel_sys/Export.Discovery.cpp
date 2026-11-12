@@ -61,7 +61,6 @@ int WriteCommand(void* dst, const TCommand& command, std::uint64_t* outSize) {
 constexpr std::uint32_t AmmPriorities = 3;
 constexpr std::uint64_t MapperGranuleMask = 0x1FFFFF;
 constexpr std::uint64_t MapperParamBytes = 0x38;
-constexpr std::uint64_t MapperKnownBytes = 0x28;
 
 std::uint32_t CallIndirectBuffer(const char* function, std::uint32_t priority, void* base, std::uint64_t bytes) {
     if (priority >= AmmPriorities || !base) NotImplemented_nid_no_patch(function);
@@ -335,9 +334,9 @@ int APS5_VABI ptrace_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI reboot_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI reboot_nid_postfix(int) {
+    *__error_nid_postfix() = 1;
+    return -1;
 }
 
 int APS5_VABI revoke_nid_postfix(const char* path) {
@@ -1403,8 +1402,7 @@ int APS5_VABI sceKernelMapperGetParam(std::uint64_t* param) {
     std::uint64_t bytes = 0;
     if (!GuestCopyIn_nid_no_patch(&bytes, param, sizeof(bytes))) return SCE_KERNEL_ERROR_EFAULT;
     if (bytes > MapperParamBytes) return SCE_KERNEL_ERROR_EINVAL;
-    if (bytes > MapperKnownBytes) NotImplemented_nid_no_patch(__func__);
-    std::uint64_t values[5]{MapperParamBytes};
+    std::uint64_t values[7]{MapperParamBytes};
     AmmVirtualAddressRanges_nid_no_patch(&values[1], &values[2], &values[3], &values[4]);
     if (!GuestCopyOut_nid_no_patch(param, values, static_cast<std::size_t>(bytes))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;

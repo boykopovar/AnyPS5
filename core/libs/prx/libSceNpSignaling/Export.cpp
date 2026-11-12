@@ -229,7 +229,12 @@ int APS5_VABI sceNpSignalingCreateContextA(int userId, void* callback, void* cal
 int APS5_VABI sceNpSignalingActivateConnectionA(int ctxId, const NpSignalingAccountPlatformPair* peerAddr, int* outConnId) {
     std::lock_guard lock(signalingMutex);
     if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
-    if (!peerAddr || !outConnId || peerAddr->accountId == 0 || peerAddr->platformType == 0) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
+    if (!peerAddr || !outConnId) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
+    NpSignalingAccountPlatformPair localPeer{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localPeer, peerAddr, sizeof(localPeer));
+    errno = savedErrno;
+    if (!copied || localPeer.accountId == 0 || localPeer.platformType == 0) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     if (!FindContext(ctxId)) return SCE_NP_SIGNALING_ERROR_CTX_NOT_FOUND;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
