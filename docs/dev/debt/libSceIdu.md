@@ -2,7 +2,9 @@
 
 ### Unknown function info
 
-- [sceIduGetEnv, sceIduInit, sceIduInstallPkg, sceIduIsAppInstalled, sceIduIsRifInstalled, sceIduIsStaffMode, sceIduReboot and sceIduTerm](../../../core/libs/prx/libSceIdu/Export.cpp) (libSceIdu) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceIdu.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [sceIduIsAppInstalled and sceIduTerm](../../../core/libs/prx/libSceIdu/Export.cpp) (libSceIdu) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceIdu.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+
+- [The early answers](../../../core/libs/prx/libSceIdu/Export.cpp) (libSceIdu) - 17 exports return only their argument errors and the uninitialized error: `sceIduInit` throws once its checks pass, so the library is never initialized here. Of the additional exports below, all but `sceIduGetPkgInstallStatus` and `sceIduNotificationShow` are among them. The declarations give only the widths the module checks; what the arguments mean is unknown. In firmware 13.42's `libSceIdu.sprx` (SHA-256 `c86f259763876c82225553653856bb176b332e1ce3c18f473ac2f8bd9fad70f1`), read from disassembly and not run on a console, each returns `0xFFFFFF99` for an argument it rejects and then `0xFFFFFF9A` while the pointer at `0xc030` is null, before any call. That pointer lies past its segment's file data, so it starts null, and only `sceIduInit` stores a non-null value in it. A field the module reads that cannot be read here throws. The errors' names are unverified.
 
 ### Additional callable exports
 
