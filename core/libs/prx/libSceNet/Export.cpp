@@ -1125,6 +1125,9 @@ const KernelSocketPoll::Forwards g_socketForwards{
     [](int descriptor, const void* address, std::uint32_t length) {
         return ErrorOf(sceNetBind_nid_postfix(descriptor, address, length));
     },
+    [](int descriptor, const void* address, std::uint32_t length) {
+        return ErrorOf(sceNetConnect(descriptor, address, length));
+    },
     [](int descriptor, void* address, std::uint32_t* length) {
         return ErrorOf(sceNetGetsockname(descriptor, address, length));
     },
@@ -3504,8 +3507,7 @@ void APS5_VABI sceNetMemoryFree(void* memory) {
 }
 
 int APS5_VABI sceNetSetDnsInfoToKernel(const NetDnsInfo* info, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetSetDnsInfo(info, flags);
 }
 
 int APS5_VABI sceNetSetsockoptEx(int socketId, int level, int option, const void* value, std::uint32_t valueSize) {

@@ -143,6 +143,7 @@ class HistoryCsvTests(unittest.TestCase):
                     for name in ("libraries", "shaders"):
                         for key in ("done", "total", "percent"):
                             self.assertEqual(float(row[f"{name}_{key}"]), point[name][key])
+                    self.assertEqual(row["shader_metric"], point["shader_metric"])
                 original = (output / "history.csv").read_bytes()
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                     progress_history.main([str(output), "--csv", "--cache", str(output / "history.csv")])
