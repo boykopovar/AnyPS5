@@ -761,6 +761,8 @@ int APS5_VABI sceImeConfirmCandidate(std::int32_t index) {
 }
 
 int APS5_VABI sceImeDisableController(void) {
+    std::lock_guard lock(g_imeMutex);
+    if (!g_session) return ErrorNotOpened;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

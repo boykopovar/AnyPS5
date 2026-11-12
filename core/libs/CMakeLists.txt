@@ -56,8 +56,14 @@ function(configure_windows_unwind target)
         if(NOT EXISTS "${CMAKE_OBJCOPY}")
             message(FATAL_ERROR "Windows DWARF unwinding requires objcopy")
         endif()
+        set(refreshStagedRuntime "")
+        get_target_property(targetType ${target} TYPE)
+        if(BUILD_TESTING AND NOT CMAKE_VERSION VERSION_LESS 3.21 AND targetType STREQUAL "SHARED_LIBRARY")
+            set(refreshStagedRuntime COMMAND "${CMAKE_COMMAND}" "-DSOURCE=$<TARGET_FILE:${target}>" "-DSTAGED_DIR=${ANYPS5_TEST_OUTPUT_DIRECTORY}" -P "${CMAKE_SOURCE_DIR}/cmake/RefreshStagedRuntime.cmake")
+        endif()
         add_custom_command(TARGET ${target} POST_BUILD
                 COMMAND "${CMAKE_OBJCOPY}" --rename-section .eh_frame=.ehfram --rename-section .eh_fram=.ehfram "$<TARGET_FILE:${target}>"
+                ${refreshStagedRuntime}
                 VERBATIM
         )
     endif()
@@ -1439,6 +1445,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_kernel_sys_ktimer PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_kernel_sys_ktimer PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
+    add_test_executable(guest_kernel_timer_gettime_bounds_tests tests/GuestKernelTimerGettimeBounds.cpp)
+    target_include_directories(guest_kernel_timer_gettime_bounds_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_timer_gettime_bounds_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_timer_gettime_bounds_tests)
+    add_test(NAME guest_kernel_timer_gettime_bounds COMMAND guest_kernel_timer_gettime_bounds_tests)
+    set_tests_properties(guest_kernel_timer_gettime_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_timer_gettime_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
 
