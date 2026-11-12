@@ -287,7 +287,7 @@ def run_probes(probes, digest, output_dir, device_label):
     return destinations
 
 
-def read_measurement(path, probe, digest, device_label):
+def read_measurement(path, probe, device_label):
     try:
         report = compare_results.read_report(path)
     except (OSError, UnicodeError, ValueError) as error:
@@ -330,7 +330,7 @@ def coverage(probes, digest, results_dir, device_label):
         if not path.exists():
             result.append({"id": probe["id"], "status": "missing", "detail": "no report"})
             continue
-        status, detail = read_measurement(path, probe, digest, device_label)
+        status, detail = read_measurement(path, probe, device_label)
         result.append({"id": probe["id"], "status": status, "detail": detail})
     return result
 
