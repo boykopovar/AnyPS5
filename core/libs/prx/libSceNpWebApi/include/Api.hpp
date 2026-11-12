@@ -108,5 +108,7 @@ int APS5_VABI sceNpWebApiSetMultipartContentType(std::int64_t requestId, const c
 int APS5_VABI sceNpWebApiSetRequestTimeout(std::int64_t requestId, std::uint32_t timeout);
 int APS5_VABI sceNpWebApiUnregisterNotificationCallback(int titleUserCtxId);
 int APS5_VABI sceNpWebApiVshInitialize(int libHttpCtxId, std::size_t poolSize);
+bool APS5_VABI libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(const void* object);
+bool APS5_VABI libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(const void* object);
 
 }
