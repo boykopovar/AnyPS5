@@ -1,6 +1,7 @@
 #include "prx/libSceAudio3d/include/Audio3d.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -248,6 +249,9 @@ void CheckObjects() {
     std::uint32_t id = 7;
     Require(Open(parameters, &id) == 0 && id == 0, "open");
     Require(sceAudio3dObjectReserve(0, nullptr) == INVALID_PARAMETER, "null object id");
+    errno = 71;
+    Require(sceAudio3dObjectReserve(0, reinterpret_cast<std::uint32_t*>(0x10)) == INVALID_PARAMETER, "unwritable object id");
+    Require(errno == 71, "errno preserved");
     Require(sceAudio3dObjectReserve(1, &object) == INVALID_PORT && object == 7, "reserve on port 1");
     Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 1, "first object is 1");
     Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 2, "second object is 2");
