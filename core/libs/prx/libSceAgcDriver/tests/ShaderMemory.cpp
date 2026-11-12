@@ -4212,13 +4212,16 @@ void verifyTableSnapshotReuse() {
         GuestAllocations::Mutation mutation;
         mutation.Add(unrelated, UnrelatedBytes, true, true, false);
     }
-    const auto remapped = capture(request, heap, Bytes, nullptr);
+    expectUnwritten(capture(request, heap, Bytes, nullptr), "the table after a range was registered elsewhere");
     {
         GuestAllocations::Mutation mutation;
         mutation.Remove(unrelated);
     }
     ::operator delete(unrelated, std::align_val_t{UnrelatedBytes});
-    require(remapped.reuse.unwritten == 0u && remapped.reuse.compared == 1u && heldRecords(remapped, heap, Records), "table snapshot reuse: a table was reused without a read after a guest mapping changed");
+    expectUnwritten(capture(request, heap, Bytes, nullptr), "the table after a range was removed elsewhere");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(reinterpret_cast<std::uintptr_t>(heap), 4096u);
+    const auto remapped = capture(request, heap, Bytes, nullptr);
+    require(remapped.reuse.unwritten == 0u && remapped.reuse.compared == 1u && heldRecords(remapped, heap, Records), "table snapshot reuse: a table was reused without a read after its own mapping changed");
 
     auto& flipped = heap[100u * 8u + 1u];
     const auto keptWord = flipped;
@@ -4605,12 +4608,15 @@ void verifyTableVouch() {
         GuestAllocations::Mutation mutation;
         mutation.Add(unrelated, UnrelatedBytes, true, true, false);
     }
-    refused("a changed guest mapping", nullptr);
+    require(vouch(unchanged, nullptr, vouched) == tableWords, "table vouch: a range registered elsewhere refused the table");
     {
         GuestAllocations::Mutation mutation;
         mutation.Remove(unrelated);
     }
     ::operator delete(unrelated, std::align_val_t{UnrelatedBytes});
+    require(vouch(unchanged, nullptr, vouched) == tableWords, "table vouch: a range removed elsewhere refused the table");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(static_cast<std::uintptr_t>(address), 4096u);
+    refused("a changed mapping of the table", nullptr);
 
     const auto rewrite = [&](const std::string& what, const std::function<void()>& store, bool gap) {
         auto held = capture(request, nullptr);

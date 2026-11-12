@@ -77,6 +77,10 @@ struct CaptureProfile {
 
 constexpr std::uint64_t WordWaitNanoseconds = 50000;
 
+bool mappingUnchanged(std::uint64_t forgetSerial, std::uint64_t address, std::uint64_t bytes) {
+    return (forgetSerial & 1u) == 0 && (GuestMemory::ForgetSerial() & 1u) == 0 && GuestMemory::ForgetStamp(address, static_cast<std::size_t>(bytes)) <= forgetSerial;
+}
+
 std::uint64_t imageViewGeneration(void*) {
     return GuestAllocations::GuestAllocationsGeneration_nid_postfix();
 }
@@ -665,7 +669,8 @@ ShaderRecompiler::SrtWriteStamp ShaderMemory::stampWrites(void* context, std::ui
     const bool anyFetched = fetched != self.pages.size() && self.pages[fetched].first < address + bytes;
     if (anyFetched && !self.spanQuery) return {};
     GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
-    const auto layout = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    const auto layout = GuestMemory::ForgetSerial();
+    if ((layout & 1u) != 0) return {};
     const auto generation = GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes));
     if (generation == 0) return {};
     if (self.pendingSpan != nullptr && self.pendingSpan(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return {};
@@ -684,7 +689,7 @@ ShaderRecompiler::SrtWriteStamp ShaderMemory::stampWrites(void* context, std::ui
 
 bool ShaderMemory::Vouched(PendingWriteQuery pending, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp) {
     CaptureTotals().vouchCalls.fetch_add(1, std::memory_order_relaxed);
-    if (stamp.generation == 0 || bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes || stamp.layout != GuestAllocations::GuestAllocationsGeneration_nid_postfix()) return false;
+    if (stamp.generation == 0 || bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes || !mappingUnchanged(stamp.layout, address, bytes)) return false;
     if (pending != nullptr && pending(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return false;
     GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
     if (GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes)) == 0) return false;

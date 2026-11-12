@@ -23,7 +23,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/General.hpp"
-#include "prx/libc/include/GuestAllocations.hpp"
 #include "Optimization/include/Optimization/ShaderStageInputInfo.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #include "ThreadOwned.hpp"
@@ -1462,7 +1461,7 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
             copy.reused = true;
             return copy;
         }
-        copy.registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+        copy.forgetSerial = GuestMemory::ForgetSerial();
         copy.generation = GuestMemory::CollectWrites(address, bytes);
         if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived);
         else if (owned) copy.owned = recorder->ArmOwnedDrawInput(address, bytes);
@@ -1489,7 +1488,7 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
     auto* recorder = context.recorder;
     const bool keep = recorder != nullptr && readable != 0 && readable <= std::numeric_limits<std::uint32_t>::max();
     if (keep) {
-        copy.registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+        copy.forgetSerial = GuestMemory::ForgetSerial();
         copy.generation = GuestMemory::CollectWrites(address, readable);
         std::uint32_t keptReadable = 0;
         if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, Recorder::SnapshotUse::PaddedVertex, &keptReadable);
@@ -1503,7 +1502,7 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
     const auto span = copy.buffer->Bytes();
     GuestMemory::Read(address, span.subspan(0, readable), 1);
     std::fill(span.begin() + static_cast<std::ptrdiff_t>(readable), span.end(), std::byte{0});
-    if (keep) recorder->KeepDrawSnapshot(address, bytes, copy.generation, copy.registryGeneration, copy.buffer, Recorder::SnapshotUse::PaddedVertex, static_cast<std::uint32_t>(readable));
+    if (keep) recorder->KeepDrawSnapshot(address, bytes, copy.generation, copy.forgetSerial, copy.buffer, Recorder::SnapshotUse::PaddedVertex, static_cast<std::uint32_t>(readable));
     return copy;
 }
 
@@ -1513,7 +1512,7 @@ void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCop
         if (!copy.owned.words.empty() && !RuntimeSwitches::Set(RuntimeSwitch::NoOwnedDrawInputs)) recorder->KeepOwnedDrawInput(address, copy.buffer->Bytes().size(), copy.owned, copy.buffer, use, derived);
         return;
     }
-    recorder->KeepDrawSnapshot(address, copy.buffer->Bytes().size(), copy.generation, copy.registryGeneration, copy.buffer, use, derived);
+    recorder->KeepDrawSnapshot(address, copy.buffer->Bytes().size(), copy.generation, copy.forgetSerial, copy.buffer, use, derived);
 }
 
 const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite) {
@@ -1547,14 +1546,14 @@ InPlaceIndices InPlaceIndexRange(Recorder& recorder, std::uint64_t address, std:
         return indices;
     }
     const auto use = indexSize == 2 ? (skipRestart ? Recorder::SnapshotUse::Index16Restart : Recorder::SnapshotUse::Index16) : (skipRestart ? Recorder::SnapshotUse::Index32Restart : Recorder::SnapshotUse::Index32);
-    const auto registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    const auto forgetSerial = GuestMemory::ForgetSerial();
     const auto generation = GuestMemory::CollectWrites(address, bytes);
     if (generation != 0 && recorder.KnownHighestIndex(address, bytes, use, indices.highest)) {
         indices.reused = true;
         return indices;
     }
     indices.highest = HighestDrawIndex(range, indexSize, skipRestart);
-    recorder.KeepHighestIndex(address, bytes, use, generation, registryGeneration, indices.highest);
+    recorder.KeepHighestIndex(address, bytes, use, generation, forgetSerial, indices.highest);
     return indices;
 }
 

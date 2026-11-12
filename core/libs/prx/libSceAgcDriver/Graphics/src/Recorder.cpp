@@ -3267,6 +3267,10 @@ namespace {
 std::size_t SnapshotPool(Recorder::SnapshotUse use) {
     return use == Recorder::SnapshotUse::Storage ? 0 : 1;
 }
+
+bool MappingUnchanged(std::uint64_t forgetSerial, std::uint64_t address, std::size_t bytes) {
+    return (forgetSerial & 1u) == 0 && (GuestMemory::ForgetSerial() & 1u) == 0 && GuestMemory::ForgetStamp(address, bytes) <= forgetSerial;
+}
 }
 
 void Recorder::eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry) {
@@ -3324,10 +3328,10 @@ std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, st
         eraseDrawSnapshot(found);
         return {};
     }
-    const bool sameRegistry = found->second.registryGeneration == GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const auto guestBytes = use == SnapshotUse::PaddedVertex ? static_cast<std::size_t>(found->second.derived) : bytes;
-    if (!sameRegistry || !GuestMemory::UnchangedSince(address, guestBytes, found->second.generation)) {
-        if (!sameRegistry || generation == 0 || use != SnapshotUse::Storage || !refreshDrawSnapshot(found->second, address, bytes)) {
+    const bool sameMapping = MappingUnchanged(found->second.forgetSerial, address, guestBytes);
+    if (!sameMapping || !GuestMemory::UnchangedSince(address, guestBytes, found->second.generation)) {
+        if (!sameMapping || generation == 0 || use != SnapshotUse::Storage || !refreshDrawSnapshot(found->second, address, bytes)) {
             eraseDrawSnapshot(found);
             return {};
         }
@@ -3341,13 +3345,12 @@ std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, st
 
 std::shared_ptr<Buffer> Recorder::containingDrawSnapshot(std::uint64_t address, std::size_t bytes, VkDeviceSize* offset) {
     const VkDeviceSize alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
-    const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     auto entry = drawSnapshots.upper_bound({address, SnapshotUse::Storage, std::numeric_limits<std::size_t>::max()});
     for (std::size_t probe = 0; probe < ContainingSnapshotProbes && entry != drawSnapshots.begin(); ++probe) {
         --entry;
         const auto& [start, use, held] = entry->first;
         if (use != SnapshotUse::Storage || start + held < address + bytes || (address - start) % alignment != 0) continue;
-        if (entry->second.registryGeneration != registry || !GuestMemory::UnchangedSince(address, bytes, entry->second.generation)) continue;
+        if (!MappingUnchanged(entry->second.forgetSerial, address, bytes) || !GuestMemory::UnchangedSince(address, bytes, entry->second.generation)) continue;
         auto& recency = drawSnapshotPools[SnapshotPool(use)].recency;
         recency.splice(recency.end(), recency, entry->second.recent);
         *offset = address - start;
@@ -3407,7 +3410,7 @@ static void OwnedDrawTraceCount(const char* name, std::uint64_t amount = 1) {
     PerformanceTrace::CountOwnedDraw(name, amount);
 }
 
-void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use, std::uint32_t derived, bool ownedInsertion) {
+void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t forgetSerial, std::shared_ptr<Buffer> buffer, SnapshotUse use, std::uint32_t derived, bool ownedInsertion) {
     const bool storage = use == SnapshotUse::Storage;
     const auto budget = storage ? DrawSnapshotBudget : DrawInputBudget;
     const auto maxEntries = storage ? DrawSnapshotEntries : DrawInputEntries;
@@ -3430,7 +3433,7 @@ void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::u
     const DrawSnapshotKey key{address, use, bytes};
     pool.recency.push_back(key);
     try {
-        drawSnapshots.emplace(key, DrawSnapshot{generation, registryGeneration, std::prev(pool.recency.end()), std::move(buffer), derived});
+        drawSnapshots.emplace(key, DrawSnapshot{generation, forgetSerial, std::prev(pool.recency.end()), std::move(buffer), derived});
     } catch (...) {
         pool.recency.pop_back();
         throw;
@@ -3505,14 +3508,14 @@ void Recorder::KeepOwnedDrawInput(std::uint64_t address, std::size_t bytes, cons
     Require(use != SnapshotUse::Storage, "an owned draw input is a vertex or index buffer");
     if (buffer == nullptr || buffer->Bytes().size() != bytes || !ownedDrawInputHolds(address, bytes, proof)) return;
     auto kept = proof;
-    KeepDrawSnapshot(address, bytes, proof.since, proof.registry, std::move(buffer), use, derived, true);
+    KeepDrawSnapshot(address, bytes, proof.since, proof.forget, std::move(buffer), use, derived, true);
     if (const auto found = drawSnapshots.find({address, use, bytes}); found != drawSnapshots.end()) found->second.owned = std::move(kept);
 }
 
 bool Recorder::KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest) {
     const auto found = indexRanges.find({address, use, bytes});
     if (found == indexRanges.end()) return false;
-    if (found->second.registryGeneration != GuestAllocations::GuestAllocationsGeneration_nid_postfix() || !GuestMemory::UnchangedSince(address, bytes, found->second.generation)) {
+    if (!MappingUnchanged(found->second.forgetSerial, address, bytes) || !GuestMemory::UnchangedSince(address, bytes, found->second.generation)) {
         indexRangeRecency.erase(found->second.recent);
         indexRanges.erase(found);
         return false;
@@ -3522,7 +3525,7 @@ bool Recorder::KnownHighestIndex(std::uint64_t address, std::size_t bytes, Snaps
     return true;
 }
 
-void Recorder::KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t registryGeneration, std::optional<std::uint32_t> highest) {
+void Recorder::KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t forgetSerial, std::optional<std::uint32_t> highest) {
     Require(use != SnapshotUse::Storage && use != SnapshotUse::Vertex, "a highest index belongs to an index buffer");
     if (generation == 0) return;
     const DrawSnapshotKey key{address, use, bytes};
@@ -3536,7 +3539,7 @@ void Recorder::KeepHighestIndex(std::uint64_t address, std::size_t bytes, Snapsh
     }
     indexRangeRecency.push_back(key);
     try {
-        indexRanges.emplace(key, IndexRange{generation, registryGeneration, std::prev(indexRangeRecency.end()), highest});
+        indexRanges.emplace(key, IndexRange{generation, forgetSerial, std::prev(indexRangeRecency.end()), highest});
     } catch (...) {
         indexRangeRecency.pop_back();
         throw;
