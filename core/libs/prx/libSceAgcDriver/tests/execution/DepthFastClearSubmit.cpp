@@ -460,9 +460,9 @@ void MaskCleanupIsolation(AgcDriver::VulkanDevice& device, AgcDriver::VulkanDevi
         RecordHtileWords(otherContext, other, otherHtile, 0xf0u);
         NoteHtileMaskOnGpu(otherContext, {otherHtile.Address(), HtileBytes, 0x3f0u, 0u});
         ClearDepthSurfaces(context.device);
+        CheckRecordedHtile(otherContext, other, otherHtile, false, 0xfffc000fu, "other device survives cleanup");
         CheckRecordedHtile(context, first, firstHtile, true, 0xfffc000fu, "device cleanup first owner");
         CheckRecordedHtile(context, second, secondHtile, true, 0xfffc000fu, "device cleanup second owner");
-        CheckRecordedHtile(otherContext, other, otherHtile, false, 0xfffc000fu, "other device survives cleanup");
     }
     ClearDepthSurfaces(context.device);
     ClearDepthSurfaces(otherContext.device);
