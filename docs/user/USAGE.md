@@ -599,7 +599,7 @@ Page 2 is wider, 46 characters, and has no graph. It reads its sources once a se
 | `HOST IMPORTS` | Host memory imports in use, then their size against the import budget, in GB. Not shown on a device that can't import host memory. |
 | `CPU COPIES` | Guest memory copied per second by address-based resource builds, for the ranges that no host import or mirror serves, in MB of 2^20 bytes. `CAP`: the largest of those builds in the last second against the copy cap, `APS5_ADDRESS_COPY_MAX_MIB` (64 MiB unless set), past which a build stops the game. |
 | `UNIMPLEMENTED` | Calls per second to functions AnyPS5 doesn't implement, then their total since the start. Such a call throws an error, so a count above 0 means the title caught it and went on. |
-| `REFUSED SHADERS` | Shaders whose draws are skipped. Shown only with `APS5_SKIP_REFUSED_DRAWS=1`; without it a refused shader stops the game. |
+| `REFUSED SHADERS` | Shaders whose draws or dispatches are skipped. Shown only with `APS5_SKIP_REFUSED_DRAWS=1` or `APS5_SKIP_REFUSED_DISPATCHES=1`; without them a refused shader stops the game. |
 | `TITLE`, `PRESENT` | The title ID from the title's `param.json`, and the swapchain's present mode, as `ANYPS5_PRESENT_MODE` names it. |
 | `FPS LIMIT` | The value of `ANYPS5_FPS_LIMIT`, on a line of its own after `TITLE` and `PRESENT` and formatted as `FPS` is (`59.94` reads `59.9`), in thousands from 10000. Not shown without a limit. |
 
