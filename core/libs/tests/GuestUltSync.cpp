@@ -98,6 +98,26 @@ void MutexAndRuntimeOptParams() {
     for (std::size_t i = sizeof(console); i < sizeof(runtimeOptions.bytes); i++) CHECK(runtimeOptions.bytes[i] == 0);
 }
 
+void UnreadableOptParams() {
+    const auto* unreadable = reinterpret_cast<const UltMutexOptParam*>(0x10);
+    Object mutex{};
+    Object pool{};
+    Object object{};
+    alignas(8) std::uint8_t runtime[4096]{};
+    std::uint8_t workArea[2048];
+    errno = 71;
+    CHECK(sceUltUlthreadRuntimeOptParamInitialize(reinterpret_cast<UltUlthreadRuntimeOptParam*>(0x10), 0) == Null);
+    CHECK(sceUltMutexCreate(&mutex, "unreadable", nullptr, unreadable, 0) == Null);
+    CHECK(_sceUltMutexCreate(&mutex, "unreadable", &pool, unreadable) == Null);
+    CHECK(sceUltUlthreadRuntimeCreate(runtime, "unreadable", 2, 1, nullptr, unreadable, 0) == Null);
+    CHECK(_sceUltWaitingQueueResourcePoolCreate(&pool, "unreadable", 2, 2, workArea, unreadable) == Null);
+    CHECK(_sceUltSemaphoreCreate(&object, "unreadable", 1, nullptr, unreadable) == Null);
+    CHECK(_sceUltQueueDataResourcePoolCreate(&object, "unreadable", 8, 64, 2, nullptr, workArea, unreadable) == Null);
+    CHECK(errno == 71);
+    CHECK(sceUltMutexCreate(&mutex, "plain", nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltMutexDestroy(&mutex) == Ok);
+}
+
 void OptParams() {
     using Initializer = decltype(&sceUltSemaphoreOptParamInitialize);
     for (const Initializer initialize : {sceUltSemaphoreOptParamInitialize, sceUltQueueOptParamInitialize, sceUltQueueDataResourcePoolOptParamInitialize,
@@ -757,6 +777,7 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "opt-params") == 0) {
         OptParams();
         MutexAndRuntimeOptParams();
+        UnreadableOptParams();
     }
     else if (std::strcmp(argv[1], "rwlock-validation") == 0) ReaderWriterValidation();
     else if (std::strcmp(argv[1], "rwlock-readers") == 0) ReaderWriterReaders();
