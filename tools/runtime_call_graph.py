@@ -63,9 +63,9 @@ def load_graph(path):
         library, name = imported.get("library"), imported.get("name")
         if not isinstance(library, str) or not isinstance(name, str) or not name:
             raise ValueError(f"{location}.import: expected string library and non-empty name fields")
-        provider = _image(edge.get("provider"), f"{location}.provider", False)
+        provider = _image(edge.get("provider"), f"{location}.provider", True)
         key = (consumer["module"], consumer["offset"], consumer["address"], library, name,
-               provider["module"], provider["offset"])
+               provider["module"], provider["offset"], provider["address"])
         if key not in aggregate:
             aggregate[key] = {"calls": 0, "consumer": consumer, "import": {"library": library, "name": name},
                               "provider": provider}
