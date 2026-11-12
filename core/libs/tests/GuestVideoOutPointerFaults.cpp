@@ -33,6 +33,14 @@ void Require(bool value, const char* message) {
 }
 
 int main() {
+    VideoOutBufferAttribute2 mapped{};
+    mapped.width = 123;
+    mapped.option = 1;
+    sceVideoOutAddBufferAttributeOption(&mapped, 0x20);
+    Require(mapped.option == 0x21 && mapped.width == 123, "AddBufferAttributeOption changed another field");
+    sceVideoOutRemoveBufferAttributeOption(&mapped, 1);
+    Require(mapped.option == 0x20 && mapped.width == 123, "RemoveBufferAttributeOption changed another field");
+
     auto* const unmapped = reinterpret_cast<void*>(Unmapped);
     auto* const attribute2 = static_cast<VideoOutBufferAttribute2*>(unmapped);
     auto* const attribute = static_cast<VideoOutBufferAttribute*>(unmapped);

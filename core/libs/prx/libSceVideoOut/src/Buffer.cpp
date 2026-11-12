@@ -1,5 +1,6 @@
 #include "prx/libSceVideoOut/include/Buffer.hpp"
 #include <array>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -146,12 +147,13 @@ void APS5_VABI sceVideoOutAddBufferAttributeOption(VideoOutBufferAttribute2* att
     if (attribute == nullptr) {
         throw std::runtime_error("sceVideoOutAddBufferAttributeOption: null attribute");
     }
-    VideoOutBufferAttribute2 value{};
-    if (!GuestPtr<VideoOutBufferAttribute2>(attribute).CopyIn(value)) {
+    const auto optionAddress = reinterpret_cast<const std::byte*>(attribute) + offsetof(VideoOutBufferAttribute2, option);
+    std::uint64_t value = 0;
+    if (!GuestBytes(optionAddress).CopyIn(&value, sizeof(value))) {
         throw std::runtime_error("sceVideoOutAddBufferAttributeOption: VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
-    value.option |= option;
-    if (!GuestPtr<VideoOutBufferAttribute2>(attribute).CopyOut(value)) {
+    value |= option;
+    if (!GuestBytes(optionAddress).CopyOut(&value, sizeof(value))) {
         throw std::runtime_error("sceVideoOutAddBufferAttributeOption: VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
 }
@@ -160,12 +162,13 @@ void APS5_VABI sceVideoOutRemoveBufferAttributeOption(VideoOutBufferAttribute2* 
     if (attribute == nullptr) {
         throw std::runtime_error("sceVideoOutRemoveBufferAttributeOption: null attribute");
     }
-    VideoOutBufferAttribute2 value{};
-    if (!GuestPtr<VideoOutBufferAttribute2>(attribute).CopyIn(value)) {
+    const auto optionAddress = reinterpret_cast<const std::byte*>(attribute) + offsetof(VideoOutBufferAttribute2, option);
+    std::uint64_t value = 0;
+    if (!GuestBytes(optionAddress).CopyIn(&value, sizeof(value))) {
         throw std::runtime_error("sceVideoOutRemoveBufferAttributeOption: VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
-    value.option &= ~option;
-    if (!GuestPtr<VideoOutBufferAttribute2>(attribute).CopyOut(value)) {
+    value &= ~option;
+    if (!GuestBytes(optionAddress).CopyOut(&value, sizeof(value))) {
         throw std::runtime_error("sceVideoOutRemoveBufferAttributeOption: VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
 }
