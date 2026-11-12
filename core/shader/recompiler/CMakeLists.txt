@@ -207,6 +207,7 @@ function(add_shader_recompiler target runtimeTarget)
     list(REMOVE_DUPLICATES shaderCacheRecompilerSources)
     set(shaderCacheKeySources
             "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThreadLocal.hpp"
+            "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/RemoveTree.hpp"
             "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThreadSlot.hpp"
             "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/general/AtomicSharedPtr.hpp")
     foreach(source IN LISTS shaderCacheKeySources)
