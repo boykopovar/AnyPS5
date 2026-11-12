@@ -1,5 +1,6 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
@@ -163,6 +164,12 @@ int main() {
     RequireEncode(nullptr, 0xFFFFFFFF, illegalCode, 0);
     Require(sceCesJiscsToUcs(profiles[0], 0x2422, nullptr) == invalidDstBuffer);
     Require(sceCesUcsToJiscs(0x3042, profiles[0], nullptr) == invalidDstBuffer);
+    errno = 71;
+    Require(sceCesJiscsToUcs(profiles[0], 0x2422, reinterpret_cast<uint32_t*>(0x10)) == invalidDstBuffer);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceCesUcsToJiscs(0x3042, profiles[0], reinterpret_cast<uint32_t*>(0x10)) == invalidDstBuffer);
+    Require(errno == 71);
     Require(sceCesJiscsToUcs(nullptr, 0x2422, nullptr) == invalidProfile);
     return 0;
 }

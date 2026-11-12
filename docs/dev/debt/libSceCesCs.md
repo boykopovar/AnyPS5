@@ -1,5 +1,9 @@
 # libSceCesCs technical debt
 
+### Functional
+
+- [JISCS conversions](../../../core/libs/prx/libSceCesCs/Export.cpp) safely write output destination pointers using guest copy operations, preserving caller errno across destination write faults.
+
 ### Silent stubs
 
 - [sceCesMbcsUcsContextInit](../../../core/libs/prx/libSceCesCs/Export.cpp) (libSceCesCs) stores the profile pointer in the first 8 bytes of the caller's context; the console's context layout is not known. It returns the invalid-parameter error for a null context and, as a payload process on a PS5 (firmware 13.60) did, for a null profile. The signature `int sceCesMbcsUcsContextInit(union* context, const union* mbcsUcsPrf)` follows the [Orbital IDA type database](https://github.com/AlexAltea/orbital/blob/master/tools/ida/db_types.json). `sceCesRefersUcsProfileCp1251` returns a profile accepted by `sceCesSbcToUtf8`, `sceCesUtf8ToSbc` and the MBCS context conversions, with the Windows-1251 table of Microsoft's [bestfit1251.txt](https://unicode.org/Public/MAPPINGS/VENDORS/MICSFT/WindowsBestFit/bestfit1251.txt), except byte 0x98, which is unassigned
