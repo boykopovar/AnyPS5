@@ -20,6 +20,7 @@ int APS5_VABI sceAppContentGetAddcontInfoList(uint32_t serviceLabel, AppContentA
 int APS5_VABI sceAppContentAppParamGetInt(uint32_t paramId, int32_t* value);
 int APS5_VABI sceAppContentDownloadDataFormat(const AppContentMountPoint* mountPoint);
 int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMountPoint* mountPoint, size_t* availableSpaceKb);
+int APS5_VABI sceAppContentDownloadDataGetBlockSize(const AppContentMountPoint* mountPoint, size_t* blockSize);
 int APS5_VABI sceAppContentInitialize(const AppContentInitParam* initParam, AppContentBootParam* bootParam);
 int APS5_VABI sceAppContentTemporaryDataFormat(const AppContentMountPoint* mountPoint);
 int APS5_VABI sceAppContentTemporaryDataGetAvailableSpaceKb(const AppContentMountPoint* mountPoint, size_t* availableSpaceKb);
@@ -33,23 +34,23 @@ int APS5_VABI sceAppContentAddcontEnqueueDownloadSp(uint32_t serviceLabel, const
 int APS5_VABI sceAppContentAddcontMountByEntitlemetId(const char* entitlementId, AppContentMountPoint* mountPoint);
 int APS5_VABI sceAppContentAddcontShrink(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel);
 int APS5_VABI sceAppContentCheckBundleLicenseOnDisc(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel);
-int APS5_VABI sceAppContentAppParamGetString(void);
+int APS5_VABI sceAppContentAppParamGetString(uint32_t paramId, char* value, size_t valueSize);
 int APS5_VABI sceAppContentDownload0Expand(void);
 int APS5_VABI sceAppContentDownload0Shrink(void);
-int APS5_VABI sceAppContentDownload1Expand(void);
+int APS5_VABI sceAppContentDownload1Expand(size_t size);
 int APS5_VABI sceAppContentDownload1Shrink(void);
 int APS5_VABI sceAppContentDownload2Expand(size_t size);
 int APS5_VABI sceAppContentDownload2Shrink(void);
-int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(void);
+int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(const void* mdid, bool* matches);
 int APS5_VABI sceAppContentGetAddcontInfoByEntitlementId(const char* entitlementId, AppContentAddcontInfo* info);
 int APS5_VABI sceAppContentGetAddcontInfoListByIroTag(uint32_t iroTag, AppContentAddcontInfo* list, uint32_t listNum, uint32_t* hitNum);
-int APS5_VABI sceAppContentGetDownloadedStoreCountry(void);
+int APS5_VABI sceAppContentGetDownloadedStoreCountry(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, void* storeCountry);
 int APS5_VABI sceAppContentGetEntitlementKey(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, AppContentEntitlementKey* key);
 int APS5_VABI sceAppContentGetGameTrialsFlag(uint32_t* gameTrialsFlag);
 int APS5_VABI sceAppContentGetPftFlag(uint32_t* pftFlag);
 int APS5_VABI sceAppContentGetPlayableStatus(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, uint32_t* playableStatus);
-int APS5_VABI sceAppContentGetRegion(void);
-int APS5_VABI sceAppContentRequestPatchInstall(void);
+int APS5_VABI sceAppContentGetRegion(void* region);
+int APS5_VABI sceAppContentRequestPatchInstall(const char* text);
 int APS5_VABI sceAppContentTemporaryDataMount(AppContentMountPoint* mountPoint);
 
 }
