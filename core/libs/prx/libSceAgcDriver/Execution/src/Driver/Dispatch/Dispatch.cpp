@@ -138,6 +138,16 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     }
     const bool pipelineCandidate = !resolving && !fromAhead && DispatchItemsEnabled() && DrawPipeline::Active() && indirectArguments == 0 && deferredLabels().labels.empty() && !matchesCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesStreamCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesIndexedCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute);
     const bool partialLastGroup = partialGroups != std::array<std::uint32_t, 3>{};
+    if (!resolving && DrawPipeline::Active() && DrawFinisher::Busy() && !DrawFinisher::OnFinisherThread()) {
+        const auto code = std::span(snapshot.code).subspan(codeOffset);
+        const bool handled = !pipelineCandidate || Graphics::MatchMultisampledSingleClear(code, userData, compute.numThreads) || matchesFillKernel(code, userData, compute) ||
+                             (indirectArguments == 0 && (MatchDwordPatternFill(packet, code, userData, compute) || MatchConstantDwordFill(packet, code, userData, compute) ||
+                                                         MatchClampedGlobalFill(packet, code, userData, compute) || MatchMemoryValueBufferFill(packet, code, userData, compute) ||
+                                                         Graphics::MatchMemoryValueFill(code, userData, compute.numThreads, {packet[1], packet[2], packet[3]}).has_value())) ||
+                             Graphics::HtileDepthClearAddress(code, userData, compute.numThreads) != 0 || Graphics::MatchHtileBufferMaskClear(code, userData, compute, packet, indirectArguments).has_value();
+        if (handled) DrawFinisher::Get().Drain();
+        DrawFinisher::NoteDrain(DrawFinisher::DrainSite::Dispatch, handled);
+    }
     std::optional<std::pair<std::uint64_t, std::size_t>> htileClearCompletion;
     Graphics::HtileMaskClear htileMask;
     if (resolving) {
@@ -531,7 +541,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         const auto queueId = submission.queue;
         itemCommits.fetch_add(1, std::memory_order_relaxed);
-        DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Dispatch, [this, localDevice = std::move(localDevice), result = compiledResult, capture, registeredViews, snapshots = std::move(snapshots), liveWords = std::move(liveWords), groups, address, queueId, recipe, keepVariant, dataHit, epoch, htileClearCompletion, htileMask] {
+        auto commit = [this, localDevice = std::move(localDevice), result = compiledResult, capture, registeredViews, snapshots = std::move(snapshots), liveWords = std::move(liveWords), groups, address, queueId, recipe, keepVariant, dataHit, epoch, htileClearCompletion, htileMask] {
             DrawPipeline::FollowEpoch(epoch);
             GuestMemory::SetCurrentPacket(0x15, queueId);
             const auto& compiledCommit = *result;
@@ -580,7 +590,17 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
                 std::snprintf(where, sizeof(where), "compute shader 0x%llx: ", static_cast<unsigned long long>(address));
                 throw std::runtime_error(where + std::string(error.what()));
             }
-        }, std::move(itemWrites));
+        };
+        if (DrawFinisher::Overlap() && DrawFinisher::Busy() && !DrawFinisher::OnFinisherThread()) {
+            DrawFinisher::Pending held;
+            held.unknown = false;
+            held.writes = itemWrites;
+            DrawFinisher::Get().Enqueue([commit = std::move(commit), writes = std::move(itemWrites)]() mutable {
+                DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Dispatch, std::move(commit), std::move(writes));
+            }, std::move(held));
+        } else {
+            DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Dispatch, std::move(commit), std::move(itemWrites));
+        }
         ReportDispatchItems(profile);
         return;
     }
