@@ -126,6 +126,10 @@ class AnalysisTests(unittest.TestCase):
         text = "[gpu] storage image 0x1 destroyed with GPU results pending\n" * 2
         self.assertEqual(title_run.warning_counts(text)["destroyed with GPU results pending"], 2)
 
+    def test_first_error_reports_a_module_that_did_not_load(self):
+        text = "[time] scheduler tick raised to 0.5 ms\nFailed to load module: libs/libSceSystemService.prx\nGetLastError: 127 - The specified procedure could not be found.\n"
+        self.assertEqual(title_run.first_error(text), "Failed to load module: libs/libSceSystemService.prx")
+
     def test_read_summary(self):
         path = self.root / "aps5-summary.jsonl"
         lines = [{"presents": 300, "window": {"ms": 10000}, "gpu": "A", "driver": "1", "os": "W"},

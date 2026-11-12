@@ -105,7 +105,7 @@ def relink_args(entry, platform):
     return args
 
 
-ERROR = re.compile(r"what\(\):|FAIL:|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission")
+ERROR = re.compile(r"what\(\):|FAIL:|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission|Failed to load module:")
 WARNINGS = ("destroyed with GPU results pending", "guest memory changed while GPU results were pending")
 STALL_SECONDS = 20
 
