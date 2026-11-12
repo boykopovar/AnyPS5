@@ -34,10 +34,6 @@ int APS5_VABI _ZN6icu_687UVector9retainAllERKS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN6icu_689BytesTrie4nextEPKci_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_687UVector6equalsERKS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -160,10 +156,6 @@ int APS5_VABI sceIcuLegacyUnknown__minus_1flXphRNrw_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("-1flXphRNrw", sceIcuLegacyUnknown__minus_1flXphRNrw_nid_no_patch);
-
-int APS5_VABI ucptrie_getRange_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZNK6icu_6819FilteredNormalizer224normalizeSecondAndAppendERNS_13UnicodeStringERKS1_R10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -319,10 +311,6 @@ int APS5_VABI _ZN6icu_6817CharacterIteratorC2ERKS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI umutablecptrie_clone_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6819FilteredNormalizer210quickCheckERKNS_13UnicodeStringER10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -384,10 +372,6 @@ int APS5_VABI sceIcuLegacyUnknown_0NEGEdzvNw4_nid_no_patch() {
 }
 APS5_EXPORT("0NEGEdzvNw4", sceIcuLegacyUnknown_0NEGEdzvNw4_nid_no_patch);
 
-int APS5_VABI ucptrie_internalSmallIndex_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6811ICU_Utility14skipWhitespaceERKNS_13UnicodeStringERia_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -416,10 +400,6 @@ int APS5_VABI sceIcuLegacyUnknown_0ZHUcvkrLyI_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("0ZHUcvkrLyI", sceIcuLegacyUnknown_0ZHUcvkrLyI_nid_no_patch);
-
-int APS5_VABI umutablecptrie_getRange_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZNK6icu_6810UnicodeSet12spanBackUTF8EPKci17USetSpanCondition_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -472,10 +452,6 @@ int APS5_VABI _ZN6icu_6820CheckedArrayByteSink5ResetEv_nid_postfix() {
 }
 
 int APS5_VABI _ZNK6icu_6813UnicodeString11lastIndexOfEPKDsiiii_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucptrie_internalSmallU8Index_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -679,10 +655,6 @@ int APS5_VABI _ZNK6icu_6816LocaleKeyFactory17getDynamicClassIDEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucptrie_openFromBinary_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_2kDzl5NtoCI_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -842,10 +814,6 @@ int APS5_VABI _ZN6icu_6813UnicodeStringaSEOS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI utrie2_get32FromLeadSurrogateCodeUnit_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ures_getLocale_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -902,10 +870,6 @@ int APS5_VABI _ZN6icu_6822UCharCharacterIterator12firstPostIncEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN6icu_6810UCharsTrieD2Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uhash_initSize_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -941,10 +905,6 @@ int APS5_VABI _ZN6icu_686Locale15getISOCountriesEv_nid_postfix() {
 }
 
 int APS5_VABI ucnv_getInvalidUChars_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN6icu_6810UCharsTrie8nextImplEPKDsi_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -985,10 +945,6 @@ int APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryC1ERKNS_13UnicodeStringE_nid_p
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN6icu_689BytesTrieD1Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6813UnicodeString14copyFieldsFromERS0_a_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1010,10 +966,6 @@ int APS5_VABI _ZN6icu_6817CharacterIteratorD1Ev_nid_postfix() {
 }
 
 int APS5_VABI _ZN6icu_6813UnicodeStringC1EaNS_14ConstChar16PtrEi_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN6icu_689BytesTrie15findUniqueValueEPKhaRi_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1184,10 +1136,6 @@ int APS5_VABI sceIcuLegacyUnknown_5yoxeYXrdUE_nid_no_patch() {
 }
 APS5_EXPORT("5yoxeYXrdUE", sceIcuLegacyUnknown_5yoxeYXrdUE_nid_no_patch);
 
-int APS5_VABI utrie2_internalU8PrevIndex_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6822RuleBasedBreakIterator5firstEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1355,10 +1303,6 @@ int APS5_VABI _ZNK6icu_689UVector3217getDynamicClassIDEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK6icu_689BytesTrie7currentEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6810Normalizer5firstEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1485,10 +1429,6 @@ int APS5_VABI udata_swapInvStringBlock_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN6icu_689BytesTrie10branchNextEPKhii_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uloc_getISOCountries_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1544,10 +1484,6 @@ int APS5_VABI sceIcuLegacyUnknown_8AZHHqP1m2U_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("8AZHHqP1m2U", sceIcuLegacyUnknown_8AZHHqP1m2U_nid_no_patch);
-
-int APS5_VABI _ZN6icu_6810UCharsTrie19getNextBranchUCharsEPKDsiRNS_10AppendableE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZNK6icu_6818UnicodeSetIterator17getDynamicClassIDEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -1712,10 +1648,6 @@ int APS5_VABI _ZNK6icu_6813UnicodeString11moveIndex32Eii_nid_postfix() {
 }
 
 int APS5_VABI uprv_stableBinarySearch_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucptrie_toBinary_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1970,10 +1902,6 @@ int APS5_VABI _ZNK6icu_6822UCharCharacterIterator17getDynamicClassIDEv_nid_postf
 }
 
 int APS5_VABI ures_swap_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI umutablecptrie_fromUCPTrie_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -2334,10 +2262,6 @@ int APS5_VABI sceIcuLegacyUnknown_CdnnbByeuSY_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("CdnnbByeuSY", sceIcuLegacyUnknown_CdnnbByeuSY_nid_no_patch);
-
-int APS5_VABI _ZNK6icu_6810UCharsTrie7currentEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI sceIcuLegacyUnknown_CeRYvzs4RtY_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -2717,10 +2641,6 @@ int APS5_VABI sceIcuLegacyUnknown_Equprw_minus_ihwk_nid_no_patch() {
 }
 APS5_EXPORT("Equprw-ihwk", sceIcuLegacyUnknown_Equprw_minus_ihwk_nid_no_patch);
 
-int APS5_VABI utrie2_enumForLeadSurrogate_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6815Normalizer2Impl16composeAndAppendEPKDsS2_aaRNS_13UnicodeStringERNS_16ReorderingBufferER10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -3071,10 +2991,6 @@ int APS5_VABI sceIcuLegacyUnknown_HAuBG_plus_Yzjus_nid_no_patch() {
 }
 APS5_EXPORT("HAuBG+Yzjus", sceIcuLegacyUnknown_HAuBG_plus_Yzjus_nid_no_patch);
 
-int APS5_VABI _ZN6icu_6810UCharsTrie10branchNextEPKDsii_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ucase_toFullFolding_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -3164,10 +3080,6 @@ int APS5_VABI _ZNK6icu_6813UnicodeString6toUTF8ERNS_8ByteSinkE_nid_postfix() {
 }
 
 int APS5_VABI _ZN6icu_688ByteSinkD2Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK6icu_689BytesTrie12getNextBytesERNS_8ByteSinkE_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -3716,10 +3628,6 @@ int APS5_VABI _ZN6icu_686Locale8getChinaEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI umutablecptrie_get_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_687UVector12containsNoneERKS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -3891,10 +3799,6 @@ int APS5_VABI sceIcuLegacyUnknown_Mgt7OGGL2ks_nid_no_patch() {
 APS5_EXPORT("Mgt7OGGL2ks", sceIcuLegacyUnknown_Mgt7OGGL2ks_nid_no_patch);
 
 int APS5_VABI ucnv_getAvailableName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN6icu_689BytesTrie4nextEi_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -4398,10 +4302,6 @@ int APS5_VABI sceIcuLegacyUnknown_Q9b2pE80yXA_nid_no_patch() {
 }
 APS5_EXPORT("Q9b2pE80yXA", sceIcuLegacyUnknown_Q9b2pE80yXA_nid_no_patch);
 
-int APS5_VABI ucptrie_getValueWidth_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_687UVector14ensureCapacityEiR10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4414,10 +4314,6 @@ int APS5_VABI sceIcuLegacyUnknown_QDhlB11wVSk_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("QDhlB11wVSk", sceIcuLegacyUnknown_QDhlB11wVSk_nid_no_patch);
-
-int APS5_VABI utrie2_close_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI uhash_close_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -4517,10 +4413,6 @@ int APS5_VABI sceIcuLegacyUnknown_QryKIm1pddE_nid_no_patch() {
 APS5_EXPORT("QryKIm1pddE", sceIcuLegacyUnknown_QryKIm1pddE_nid_no_patch);
 
 int APS5_VABI _ZN6icu_6823StringCharacterIteratorC1ERKNS_13UnicodeStringEi_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN6icu_6810UCharsTrie25findUniqueValueFromBranchEPKDsiaRi_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -4757,10 +4649,6 @@ int APS5_VABI _ZN6icu_6817UCharsTrieBuilder17writeValueAndTypeEaii_nid_postfix()
 }
 
 int APS5_VABI ucnv_resetToUnicode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI umutablecptrie_fromUCPMap_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -5006,10 +4894,6 @@ int APS5_VABI sceIcuLegacyUnknown_TbVO1SJy7vQ_nid_no_patch() {
 }
 APS5_EXPORT("TbVO1SJy7vQ", sceIcuLegacyUnknown_TbVO1SJy7vQ_nid_no_patch);
 
-int APS5_VABI _ZN6icu_6810UCharsTrie4nextEi_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_686Locale10getDefaultEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -5204,10 +5088,6 @@ int APS5_VABI utext_isWritable_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI umutablecptrie_set_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_VBisVJCbwCE_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -5236,14 +5116,6 @@ int APS5_VABI sceIcuLegacyUnknown_VMWgNeCyEtQ_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("VMWgNeCyEtQ", sceIcuLegacyUnknown_VMWgNeCyEtQ_nid_no_patch);
-
-int APS5_VABI _ZN6icu_689BytesTrie9readValueEPKhi_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN6icu_689BytesTrie25findUniqueValueFromBranchEPKhiaRi_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6813UnicodeStringaSERKS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -5425,10 +5297,6 @@ int APS5_VABI _ZN6icu_685EditsaSERKS0__nid_postfix() {
 }
 
 int APS5_VABI _ZNK6icu_6819FilteredNormalizer216isNormalizedUTF8ENS_11StringPieceER10UErrorCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucptrie_close_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6181,10 +6049,6 @@ int APS5_VABI _ZNK6icu_6819FilteredNormalizer217getCombiningClassEi_nid_postfix(
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI umutablecptrie_buildImmutable_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_686UStackC1EiR10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6200,10 +6064,6 @@ int APS5_VABI sceIcuLegacyUnknown_bwporVBRX1U_nid_no_patch() {
 APS5_EXPORT("bwporVBRX1U", sceIcuLegacyUnknown_bwporVBRX1U_nid_no_patch);
 
 int APS5_VABI utext_clone_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN6icu_689BytesTrieD2Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6295,10 +6155,6 @@ int APS5_VABI _ZNK6icu_6814ResourceBundle7getNameEv_nid_postfix() {
 }
 
 int APS5_VABI _ZNK6icu_689LocaleKey15canonicalLocaleERNS_6LocaleE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI umutablecptrie_setRange_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6436,10 +6292,6 @@ int APS5_VABI _ZN6icu_6811StringPieceC2ERKS0_ii_nid_postfix() {
 }
 
 int APS5_VABI _ZN6icu_689ErrorCodeD2Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN6icu_689BytesTrie8nextImplEPKhi_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6770,20 +6622,12 @@ int APS5_VABI sceIcuLegacyUnknown_fpukSRJrA2g_nid_no_patch() {
 }
 APS5_EXPORT("fpukSRJrA2g", sceIcuLegacyUnknown_fpukSRJrA2g_nid_no_patch);
 
-int APS5_VABI utrie2_serialize_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_fsZaxc2Qa4A_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("fsZaxc2Qa4A", sceIcuLegacyUnknown_fsZaxc2Qa4A_nid_no_patch);
 
 int APS5_VABI _ZN6icu_6828FilteredBreakIteratorBuilderD0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK6icu_6810UCharsTrie13getNextUCharsERNS_10AppendableE_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7218,10 +7062,6 @@ int APS5_VABI sceIcuLegacyUnknown_iO1ZBSuY0fA_nid_no_patch() {
 }
 APS5_EXPORT("iO1ZBSuY0fA", sceIcuLegacyUnknown_iO1ZBSuY0fA_nid_no_patch);
 
-int APS5_VABI _ZN6icu_689BytesTrie11jumpByDeltaEPKh_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6813UnicodeString16doCodepageCreateEPKciS2__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7427,10 +7267,6 @@ int APS5_VABI _ZN6icu_6810AppendableD0Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN6icu_6810UCharsTrie15findUniqueValueEPKDsaRi_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6813LocaleBuilder12setExtensionEcNS_11StringPieceE_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7522,10 +7358,6 @@ int APS5_VABI _ZNK6icu_6813ParsePosition5cloneEv_nid_postfix() {
 }
 
 int APS5_VABI _ZN6icu_6810Normalizer7composeERKNS_13UnicodeStringEaiRS1_R10UErrorCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI umutablecptrie_open_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7625,10 +7457,6 @@ int APS5_VABI sceIcuLegacyUnknown_lNz2pz61tRQ_nid_no_patch() {
 APS5_EXPORT("lNz2pz61tRQ", sceIcuLegacyUnknown_lNz2pz61tRQ_nid_no_patch);
 
 int APS5_VABI _ZNK6icu_6810ICUService6getKeyERNS_13ICUServiceKeyER10UErrorCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN6icu_6810UCharsTrie16nextForCodePointEi_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7815,10 +7643,6 @@ int APS5_VABI _ZN6icu_6817StringTrieBuilder8hashNodeEPKv_nid_postfix() {
 }
 
 int APS5_VABI _ZN6icu_6813BreakIterator14createInstanceERKNS_6LocaleEiR10UErrorCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN6icu_6810UCharsTrieD1Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8096,19 +7920,11 @@ int APS5_VABI _ZN6icu_6813UnicodeStringC2ERKS0_i_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI utrie2_enum_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6819FilteredNormalizer29normalizeERKNS_13UnicodeStringERS1_17USetSpanConditionR10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI _ZN6icu_6817StringTrieBuilder5buildE22UStringTrieBuildOptioniR10UErrorCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucpmap_getRange_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8231,10 +8047,6 @@ int APS5_VABI sceIcuLegacyUnknown_p1py_plus_0pWihc_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("p1py+0pWihc", sceIcuLegacyUnknown_p1py_plus_0pWihc_nid_no_patch);
-
-int APS5_VABI umutablecptrie_close_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6810Normalizer5resetEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -8439,10 +8251,6 @@ int APS5_VABI sceIcuLegacyUnknown_qPVPvgCLdLw_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("qPVPvgCLdLw", sceIcuLegacyUnknown_qPVPvgCLdLw_nid_no_patch);
-
-int APS5_VABI _ZN6icu_689BytesTrie18getNextBranchBytesEPKhiRNS_8ByteSinkE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI uprv_timezone_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -8732,10 +8540,6 @@ int APS5_VABI _ZN6icu_6834SimpleFilteredBreakIteratorBuilderD2Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI utrie2_openFromSerialized_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_686Locale15setKeywordValueEPKcS2_R10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8796,10 +8600,6 @@ int APS5_VABI sceIcuLegacyUnknown_svSitLIoR0M_nid_no_patch() {
 APS5_EXPORT("svSitLIoR0M", sceIcuLegacyUnknown_svSitLIoR0M_nid_no_patch);
 
 int APS5_VABI _ZN6icu_6812ByteSinkUtil12appendChangeEiPKDsiRNS_8ByteSinkEPNS_5EditsER10UErrorCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucpmap_get_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8913,10 +8713,6 @@ int APS5_VABI _ZN6icu_6813ResourceValueD2Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI utrie2_get32_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6813UnicodeString13doLastIndexOfEDsii_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8976,10 +8772,6 @@ int APS5_VABI sceIcuLegacyUnknown_uA2aJgvkoug_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("uA2aJgvkoug", sceIcuLegacyUnknown_uA2aJgvkoug_nid_no_patch);
-
-int APS5_VABI utrie2_isFrozen_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6822UCharCharacterIteratorC1ERKS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -9045,10 +8837,6 @@ int APS5_VABI _ZN6icu_6813BreakIterator19createTitleInstanceERKNS_6LocaleER10UEr
 }
 
 int APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryD0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucptrie_getType_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9232,10 +9020,6 @@ int APS5_VABI _ZN6icu_6823UnicodeStringAppendable15appendCodePointEi_nid_postfix
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN6icu_6810UCharsTrie4nextENS_14ConstChar16PtrEi_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6813BreakIterator13getRuleStatusEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9342,10 +9126,6 @@ int APS5_VABI uloc_getName_nid_postfix() {
 }
 
 int APS5_VABI _ZNK6icu_687UVector7toArrayEPPv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucptrie_internalU8PrevIndex_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9475,10 +9255,6 @@ int APS5_VABI sceIcuLegacyUnknown_xIpYVsuNBnA_nid_no_patch() {
 APS5_EXPORT("xIpYVsuNBnA", sceIcuLegacyUnknown_xIpYVsuNBnA_nid_no_patch);
 
 int APS5_VABI _ZNK6icu_6815Normalizer2Impl19getRawDecompositionEiPDsRi_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI utrie2_openDummy_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9708,10 +9484,6 @@ int APS5_VABI _ZN6icu_685Edits8Iterator21updatePreviousIndexesEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN6icu_689BytesTrie6appendERNS_8ByteSinkEi_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6810UnicodeSet23applyPatternIgnoreSpaceERKNS_13UnicodeStringERNS_13ParsePositionEPKNS_11SymbolTableER10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9754,10 +9526,6 @@ int APS5_VABI ucnv_countAvailable_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucptrie_get_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_yt5SoFC3Qbs_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9786,10 +9554,6 @@ int APS5_VABI _ZN6icu_6813BreakIterator16getRuleStatusVecEPiiR10UErrorCode_nid_p
 }
 
 int APS5_VABI _ZN6icu_6824ForwardCharacterIteratorC2Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN6icu_6810UCharsTrie17firstForCodePointEi_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9878,10 +9642,6 @@ int APS5_VABI sceIcuLegacyUnknown_zmmG6Otbj70_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("zmmG6Otbj70", sceIcuLegacyUnknown_zmmG6Otbj70_nid_no_patch);
-
-int APS5_VABI utrie2_internalU8NextIndex_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6810Appendable21reserveAppendCapacityEi_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);

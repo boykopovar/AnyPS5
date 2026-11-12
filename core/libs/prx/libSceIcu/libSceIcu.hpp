@@ -25,6 +25,9 @@
 #include "CharsetDetection.hpp"
 #include "Normalization.hpp"
 #include "CodePoints.hpp"
+#include "CodePointTrie.hpp"
+#include "LegacyTrie.hpp"
+#include "StringTrie.hpp"
 #include "Identified.hpp"
 
 #include "prx/libSceIcu/include/Api.hpp"
