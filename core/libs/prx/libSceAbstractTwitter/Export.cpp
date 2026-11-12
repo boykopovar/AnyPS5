@@ -246,7 +246,7 @@ int APS5_VABI _ZN15AbstractStorage14TwitterStorageD2Ev() {
 }
 
 int APS5_VABI _ZNK15AbstractStorage13TwitterFolder10GetServiceEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 3;
 }
 
 int APS5_VABI _ZNK15AbstractStorage13TwitterFolder13GetCapabilityEv() {
@@ -258,11 +258,11 @@ int APS5_VABI _ZNK15AbstractStorage13TwitterFolder7GetStatEPNS_4StatE() {
 }
 
 int APS5_VABI _ZNK15AbstractStorage14TwitterContent10GetServiceEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 3;
 }
 
 int APS5_VABI _ZNK15AbstractStorage14TwitterContent13GetCapabilityEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0x6C0A;
 }
 
 int APS5_VABI _ZNK15AbstractStorage14TwitterContent7GetStatEPNS_4StatE() {
@@ -270,11 +270,11 @@ int APS5_VABI _ZNK15AbstractStorage14TwitterContent7GetStatEPNS_4StatE() {
 }
 
 int APS5_VABI _ZNK15AbstractStorage14TwitterService14GetServiceTypeEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 3;
 }
 
 int APS5_VABI _ZNK15AbstractStorage14TwitterStorage10GetServiceEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 3;
 }
 
 int APS5_VABI _ZNK15AbstractStorage14TwitterStorage13GetCapabilityEv() {
