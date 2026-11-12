@@ -16,6 +16,7 @@ BROAD_CHANGES = {
     "tools/build_mingw_host_only_tests.py",
     "tools/build_changed_guest_tests.py",
 }
+LIBRARY_LOAD_TEST = "patched_libraries_tests"
 
 
 def reaches_libs(changed):
@@ -48,8 +49,11 @@ def guest_test_targets(source_root, targets, changed_paths=None):
     broad_change = any(path in BROAD_CHANGES or path.startswith(host_only.BUILD_WIDE_PREFIXES) or path.startswith("core/libs/") and (
         path.endswith((".h", ".hpp", ".hh", ".inl", ".cmake")) or Path(path).name == "CMakeLists.txt"
     ) for path in changed)
+    loads_libraries = broad_change or any(path.startswith("core/libs/prx/") for path in changed)
+    load_test = [LIBRARY_LOAD_TEST] if loads_libraries and any(
+        target.get("name") == LIBRARY_LOAD_TEST and target.get("type") == "EXECUTABLE" for target in targets.values()) else []
     if broad_change:
-        return selected
+        return sorted(set(selected + load_test), key=str.casefold)
     changed_source = {
         relative
         for target in targets.values()
@@ -67,8 +71,8 @@ def guest_test_targets(source_root, targets, changed_paths=None):
                 host_only.source_relative_path(source_root, source_root / item["path"]) in matched_sources
                 for item in target.get("sources", []) if not item.get("isGenerated")
             )
-        ]
-    return []
+        ] + load_test
+    return load_test
 
 
 def target_artifact_names(target):

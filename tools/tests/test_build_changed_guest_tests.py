@@ -103,6 +103,24 @@ class GuestTestTargets(unittest.TestCase):
                 self.assertTrue(build_changed_guest_tests.reaches_libs({path}))
                 self.assertEqual(self.selections(build, [path]), ["guest_a_tests", "guest_b_tests"])
 
+    def test_a_prx_change_runs_the_test_that_loads_every_built_library(self):
+        guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
+        loader = self.target("patched_libraries_tests", source="core/libs/tests/PatchedLibraries.cpp")
+        build = self.fixture([guest, loader])
+        for path in ("core/libs/prx/libcairo/Export.cpp", "core/libs/prx/libcairo/CMakeLists.txt"):
+            with self.subTest(path=path):
+                self.assertIn("patched_libraries_tests", self.selections(build, [path]))
+        self.assertEqual(self.selections(build, ["core/libs/prx/libcairo/Export.cpp"]), ["patched_libraries_tests"])
+        self.assertEqual(self.selections(build, ["core/libs/prx/libScePad/include/Pad.hpp"]), ["guest_pad_tests", "patched_libraries_tests"])
+        self.assertEqual(self.selections(build, ["3rdparty/ZArchive"]), ["guest_pad_tests", "patched_libraries_tests"])
+
+    def test_a_change_that_cannot_alter_a_built_library_does_not_run_the_loader(self):
+        guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
+        loader = self.target("patched_libraries_tests", source="core/libs/tests/PatchedLibraries.cpp")
+        build = self.fixture([guest, loader])
+        self.assertEqual(self.selections(build, ["core/libs/tests/Guest.cpp"]), ["guest_pad_tests"])
+        self.assertEqual(self.selections(build, ["core/relinker/codegen/src/Amd64OnlyConverter.cpp"]), [])
+
     def test_an_unrelated_change_selects_nothing(self):
         guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest]), ["core/relinker/codegen/src/Amd64OnlyConverter.cpp"]), [])
