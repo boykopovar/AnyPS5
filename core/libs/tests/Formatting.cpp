@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
 #include <string>
 #include <stdexcept>
 #include <cstdint>
@@ -103,6 +104,22 @@ static void CheckCharacterScanLengths() {
             check(std::strcmp(output.data(), example.first[1] == ' ' ? "ab" : "%lls") == 0, "Character scan normalization changed a literal or scanset");
         }
     }
+}
+
+static void CheckFloatingScanRange() {
+    const auto scan = [](const std::string& input) {
+        double value = 0.0;
+        errno = 0;
+        const int result = sscanf_s_nid_postfix(input.c_str(), "%lf", &value);
+        return std::pair{result, errno};
+    };
+    Require(scan("1.5") == std::pair{1, 0});
+    Require(scan(std::string(4000, '9')) == std::pair{1, 0});
+    Require(scan(std::string(5000, '9')) == std::pair{1, ERANGE});
+    Require(scan("0." + std::string(5000, '0') + "1") == std::pair{1, ERANGE});
+    Require(scan("1e5000") == std::pair{1, ERANGE});
+    Require(scan("1e-5000") == std::pair{1, ERANGE});
+    Require(scan("1e300") == std::pair{1, 0});
 }
 
 static int APS5_VABI PrintList(const char* format, ...) {
@@ -872,4 +889,4 @@ static void CheckLongDoubleHexFloat() {
     }
 }
 
-int main() { CheckPositionalUnknownConversion(); CheckSecureCountBeforeInputFailure(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { CheckPositionalUnknownConversion(); CheckSecureCountBeforeInputFailure(); CheckFloatingScanRange(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }

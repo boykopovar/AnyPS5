@@ -1459,7 +1459,7 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
 #else
         constexpr bool owned = false;
 #endif
-        if (owned) copy.buffer = recorder->ReusableOwnedDrawInput(address, bytes, use, &copy.derived, from, &copy.lowest);
+        if (owned && recorder->OwnedDrawInputEntries() != 0) copy.buffer = recorder->ReusableOwnedDrawInput(address, bytes, use, &copy.derived, from, &copy.lowest);
         if (copy.buffer != nullptr) {
             copy.reused = true;
             return copy;
