@@ -870,6 +870,9 @@ void CheckStreamInfo(AvPlayerInternal* player) {
     AvPlayerStreamInfo unused{};
     Check(sceAvPlayerGetStreamInfo(player, 3, &unused) == OperationFailed, "invalid stream accepted");
     Check(sceAvPlayerGetStreamInfo(player, 0, nullptr) == InvalidParams, "null stream info accepted");
+    errno = 71;
+    Check(sceAvPlayerGetStreamInfo(player, 0, reinterpret_cast<AvPlayerStreamInfo*>(0x10)) == InvalidParams, "unmapped stream info accepted");
+    Check(errno == 71, "preserve errno on unmapped stream info");
 }
 
 void CheckStreamInfoEx(AvPlayerInternal* player) {
@@ -898,6 +901,9 @@ void CheckStreamInfoEx(AvPlayerInternal* player) {
     AvPlayerStreamInfoEx unused{};
     Check(sceAvPlayerGetStreamInfoEx(player, 3, &unused) == OperationFailed, "invalid extended stream accepted");
     Check(sceAvPlayerGetStreamInfoEx(player, 0, nullptr) == InvalidParams, "null extended stream info accepted");
+    errno = 71;
+    Check(sceAvPlayerGetStreamInfoEx(player, 0, reinterpret_cast<AvPlayerStreamInfoEx*>(0x10)) == InvalidParams, "unmapped extended stream info accepted");
+    Check(errno == 71, "preserve errno on unmapped extended stream info");
     Check(sceAvPlayerGetStreamInfoEx(nullptr, 0, &unused) == InvalidParams, "null player accepted");
 }
 
@@ -910,6 +916,9 @@ void TestPlayback() {
     post.demux_video_buffer_size = 64 * 1024;
     Check(sceAvPlayerPostInit(player, &post) == 0, "post init failed");
     Check(sceAvPlayerPostInit(player, nullptr) == InvalidParams, "post init accepted null data");
+    errno = 71;
+    Check(sceAvPlayerPostInit(player, reinterpret_cast<const AvPlayerPostInitData*>(0x10)) == InvalidParams, "unmapped post init accepted");
+    Check(errno == 71, "preserve errno on unmapped post init");
     Check(sceAvPlayerStreamCount(player) == OperationFailed, "stream count without a source");
     Check(sceAvPlayerSetTrickSpeed(player, 100) == OperationFailed, "trick speed accepted without a source");
     Check(sceAvPlayerSetTrickSpeed(player, 0) == OperationFailed, "trick speed checked the speed before the source");
