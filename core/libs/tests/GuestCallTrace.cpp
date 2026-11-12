@@ -264,6 +264,7 @@ int main(int argc, char** argv) {
     const auto executableName = std::filesystem::path(argv[0]).filename().string();
     Require(graph.find("\"version\": 1") != std::string::npos);
     Require(graph.find("\"dropped_callsite_events\": 0") != std::string::npos);
+    Require(graph.find("\"calls\": 80000") != std::string::npos);
     Require(graph.find("\"library\": \"libOther.prx\", \"name\": \"Alias\"") != std::string::npos);
     Require(graph.find("\"consumer\": {\"module\": \"" + executableName + "\"") != std::string::npos);
     Require(graph.find("\"provider\": {\"module\": \"" + executableName + "\"") != std::string::npos);
