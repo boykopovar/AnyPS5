@@ -44,17 +44,7 @@ int APS5_VABI EVP_PKCS82PKEY_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_PKEY_get1_RSA_nid_disambig1_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_PKEY_set1_EC_KEY_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
