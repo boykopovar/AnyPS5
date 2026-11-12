@@ -203,9 +203,11 @@ std::uint32_t FrameRecorder::holdMask(std::span<const std::pair<std::uint64_t, s
     return mask;
 }
 
-void FrameRecorder::countUnwatched(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks) {
+void FrameRecorder::countUnwatched(std::vector<std::pair<std::uint64_t, std::uint64_t>>& unwatched, std::vector<std::pair<std::uint64_t, std::uint64_t>>& blocks) {
     std::vector<std::byte> bytes;
-    for (const auto& [begin, end] : blocks) {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> held;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> unchanged;
+    for (const auto& [begin, end] : unwatched) {
         bytes.resize(static_cast<std::size_t>(end - begin));
         ReadAroundRanges(begin, bytes, Graphics::HostOnlySampleRanges(begin, bytes.size()), GuestMemory::ReadCommittedUnsynced);
         bool changed = false;
@@ -227,7 +229,11 @@ void FrameRecorder::countUnwatched(std::span<const std::pair<std::uint64_t, std:
         ++counts.deltas;
         counts.changed += changed ? 1 : 0;
         counts.stored += stored ? 1 : 0;
+        if (stored) held.emplace_back(begin, end);
+        else if (!changed) unchanged.emplace_back(begin, end);
     }
+    std::erase_if(blocks, [&](const auto& block) { return std::find(unchanged.begin(), unchanged.end(), block) != unchanged.end(); });
+    unwatched = std::move(held);
 }
 
 void FrameRecorder::recordUnwatched(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stores) {
@@ -669,6 +675,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
     const auto group = deltaGroups + 1;
     std::vector<std::uint64_t> started;
     bool inFlightRead = false;
+    if (completed < accepted && !unwatched.empty()) countUnwatched(unwatched, blocks);
     if (completed < accepted && (!added.empty() || !blocks.empty() || !hostPages.empty())) {
         const auto holdsWait = [&](std::span<const std::pair<std::uint64_t, std::uint64_t>> waits) {
             return std::any_of(waits.begin(), waits.end(), [&](const auto& wait) { return std::any_of(blocks.begin(), blocks.end(), [&](const auto& block) { return wait.first < block.second && block.first < wait.second; }); });
@@ -677,7 +684,6 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
         const auto mask = holdMask(blocks) | (unwatched.empty() ? 0u : 1u << 1) | (!added.empty() || !hostPages.empty() ? 1u << 2 : 0u) | (callThreads.size() > 1 ? 1u << 3 : 0u) | (entry.queued != 0 ? 1u << 11 : 0u) | (awaitsTitle ? 1u << 12 : 0u);
         ++holdMasks[mask];
         for (std::size_t reason = 1; reason < holdReasons.size(); ++reason) holdReasons[reason] += (mask >> reason) & 1u;
-        countUnwatched(unwatched);
         if (mask != 0) {
             driver.ReleaseForRecorder();
             if (!driver.WaitSettledFor(std::chrono::seconds(10))) {
@@ -754,6 +760,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
         forget(page, page + HostPageBytes);
         hostPageHashes[page] = hash;
         writer->WriteDelta(group, completed, page, bytes);
+        recordUnwatched(page, bytes, stores);
         deltaBytes += bytes.size();
         any = true;
     }
