@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostErrno.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <cerrno>
@@ -31,13 +32,13 @@ GuestWriteHook_nid_no_patch LibcGetGuestWriteHook_nid_no_patch() {
 }
 
 char* APS5_VABI strndup_nid_postfix(const char* source, std::size_t limit) {
-    if (!source) { errno = 22; return nullptr; }
+    if (!source && limit != 0) { errno = 22; return nullptr; }
     std::size_t length = 0;
     while (length < limit && source[length] != '\0') ++length;
     try {
         auto* result = static_cast<char*>(ApplicationHeapAllocate_nid_no_patch(length + 1));
         if (!result) { errno = 12; return nullptr; }
-        std::memcpy(result, source, length);
+        if (length > 0) { std::memcpy(result, source, length); }
         result[length] = '\0';
         return result;
     } catch (const std::bad_alloc&) {
@@ -86,19 +87,25 @@ int APS5_VABI vdprintf_nid_postfix(int descriptor, const char* format, VaList* a
         std::int64_t written = 0;
         if (const auto hook = g_guestWriteHook.load(std::memory_order_acquire)) {
             written = hook(descriptor, ptr, remaining);
+            if (written <= 0) {
+                writeError = errno;
+                break;
+            }
         } else {
 #ifdef _WIN32
             const auto ignore = +[](const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {};
             const auto previous = _set_thread_local_invalid_parameter_handler(ignore);
             written = ::_write(descriptor, ptr, static_cast<unsigned int>(remaining));
+            const int nativeError = errno;
             _set_thread_local_invalid_parameter_handler(previous);
 #else
             written = ::write(descriptor, ptr, remaining);
+            const int nativeError = errno;
 #endif
-        }
-        if (written <= 0) {
-            writeError = errno;
-            break;
+            if (written <= 0) {
+                writeError = written < 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : nativeError;
+                break;
+            }
         }
         ptr += written;
         remaining -= static_cast<std::size_t>(written);

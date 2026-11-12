@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
@@ -124,6 +125,9 @@ static void CheckMultiSlotVariables() {
 
     Require(sceNpTusGetMultiSlotVariableAsync(request, nullptr, nullptr, variables, sizeof(variables), 2, nullptr) == INSUFFICIENT_ARGUMENT);
     Require(sceNpTusGetMultiSlotVariableAsync(request, nullptr, slots, nullptr, sizeof(variables), 2, nullptr) == INSUFFICIENT_ARGUMENT);
+    errno = 71;
+    Require(sceNpTusGetMultiSlotVariableAsync(request, nullptr, reinterpret_cast<const std::int32_t*>(0x10), variables, sizeof(variables), 2, nullptr) == INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceNpTusGetMultiSlotVariableAsync(request, nullptr, slots, variables, sizeof(variables), 0, nullptr) == INVALID_ARGUMENT);
     Require(sceNpTusGetMultiSlotVariableAsync(request, nullptr, slots, variables, sizeof(variables), 65, nullptr) == TOO_MANY_SLOTID);
     Require(sceNpTusGetMultiSlotVariableAsync(request, nullptr, negative, variables, sizeof(variables), 1, nullptr) == INVALID_ARGUMENT);
@@ -247,6 +251,9 @@ int main() {
     std::uint8_t variables[256] = {};
     Require(sceNpTusGetMultiSlotVariableAAsync(request, 0, nullptr, variables, sizeof(variables), 2, nullptr) == INSUFFICIENT_ARGUMENT);
     Require(sceNpTusGetMultiSlotVariableAAsync(request, 0, slots, nullptr, sizeof(variables), 2, nullptr) == INSUFFICIENT_ARGUMENT);
+    errno = 71;
+    Require(sceNpTusGetMultiSlotVariableAAsync(request, 0, reinterpret_cast<const std::int32_t*>(0x10), variables, sizeof(variables), 2, nullptr) == INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceNpTusGetMultiSlotVariableAAsync(request, 0, slots, variables, sizeof(variables), 0, nullptr) == INVALID_ARGUMENT);
     Require(sceNpTusGetMultiSlotVariableAAsync(request, 0, slots, variables, sizeof(variables), 65, nullptr) == TOO_MANY_SLOTID);
     Require(sceNpTusGetMultiSlotVariableAAsync(request, 0, slots, variables, sizeof(variables), 2, variables) == INVALID_ARGUMENT);

@@ -107,6 +107,9 @@ int main() {
     Require(sceDeviceServiceQueryDeviceInfo_(0xFFFF, nullptr, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "unrecognized device class accepted");
     DeviceServiceUsageFilter filter{1, 2, 3};
     Require(sceDeviceServiceQueryDeviceInfo_(0x8001, &filter, 0, info.data(), 1, &count, nullptr, info.size()) == 0, "valid HID filter rejected");
+    count = 7;
+    Require(sceDeviceServiceQueryDeviceInfo_(0x8001, reinterpret_cast<const DeviceServiceUsageFilter*>(0x10), 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument && count == 7,
+            "unreadable HID filter accepted or modified the count output");
     Require(sceDeviceServiceQueryDeviceInfo_(0x8001, nullptr, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "missing HID filter accepted");
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, &filter, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "unexpected HID filter accepted");
     filter.minimumUsage = 4;

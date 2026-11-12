@@ -51,6 +51,7 @@ static void CheckOptions(int context) {
         }
         Require(sceRudpSetOption(context, option, nullptr, sizeof(result)) == invalidArgument);
         Require(sceRudpGetOption(context, option, nullptr, sizeof(result)) == invalidArgument);
+        Require(sceRudpGetOption(context, option, reinterpret_cast<void*>(0x10), sizeof(result)) == invalidArgument);
         Require(sceRudpGetOption(context, option, &result, sizeof(result)) == 0);
         Require(result == 0xffffffffu);
     }
