@@ -30,6 +30,13 @@ static void RequireInvalidArguments() {
     Require(sceKernelCreateSema(&rejected, "rejected", 0, 0, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelCreateSema(&rejected, "rejected", 0, -1, 3, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelCreateSema(&rejected, nullptr, 0, 0, 1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateSema(&rejected, "", 0, 0, 1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateSema(&rejected, "01234567890123456789012345678901", 0, 0, 1, nullptr) == static_cast<int>(0x8002003fu));
+    {
+        KernelSema longest = nullptr;
+        Require(sceKernelCreateSema(&longest, "0123456789012345678901234567890", 0, 0, 1, nullptr) == SCE_OK);
+        Require(sceKernelDeleteSema(longest) == SCE_OK);
+    }
     Require(sceKernelCreateSema(&rejected, "rejected", 0, 0, -1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     for (std::uint32_t attr = 3; attr <= 0x320; ++attr) {
         if (attr >= 0x100 && attr <= 0x102) continue;
@@ -119,6 +126,8 @@ int main() {
     Require(sceKernelWaitSema(sem, 4, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     remaining = 1000;
     Require(sceKernelWaitSema(sem, 4, &remaining) == SCE_KERNEL_ERROR_EINVAL && remaining == 1000);
+    Require(sceKernelWaitSema(sem, 0, &remaining) == SCE_KERNEL_ERROR_EINVAL && remaining == 1000);
+    Require(sceKernelWaitSema(sem, -1, &remaining) == SCE_KERNEL_ERROR_EINVAL && remaining == 1000);
 
     Require(sceKernelSignalSema(sem, 1) == SCE_OK);
     Require(sceKernelWaitSema(sem, 1, nullptr) == SCE_OK);

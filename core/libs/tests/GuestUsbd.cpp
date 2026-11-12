@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <atomic>
@@ -226,6 +227,9 @@ void Device() {
     const int speed = sceUsbdGetDeviceSpeed(device);
     Require(speed >= 1 && speed <= 4, "the device speed is not low, full, high or super speed");
     std::printf("device speed %d\n", speed);
+    errno = 71;
+    Require(sceUsbdGetConfiguration(handle, reinterpret_cast<std::int32_t*>(0x10)) == invalidArgument, "unwritable configuration rejected");
+    Require(errno == 71, "errno preserved");
     std::int32_t configuration = -1;
     Require(sceUsbdGetConfiguration(handle, &configuration) == 0 && configuration == activeValue, "configuration differs from the active config descriptor");
     std::uint8_t text[256] = {};

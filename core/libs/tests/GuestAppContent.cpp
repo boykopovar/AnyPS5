@@ -360,6 +360,9 @@ int main() {
     Require(sceAppContentGetAddcontInfoList(0, reinterpret_cast<AppContentAddcontInfo*>(info), 1, &hitNum) == 0);
     Require(hitNum == 0);
     Require(std::memcmp(info, untouchedInfo, sizeof(info)) == 0);
+    hitNum = 0x5a5a5a5a;
+    Require(sceAppContentGetAddcontInfoList(0, reinterpret_cast<AppContentAddcontInfo*>(0x10), 1, &hitNum) == 0);
+    Require(hitNum == 0);
     Require(sceAppContentGetAddcontInfoList(0, reinterpret_cast<AppContentAddcontInfo*>(info), 1, nullptr) == ErrorParameter);
     Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, nullptr) == ErrorParameter);
     Require(sceAppContentGetAddcontInfoList(0, reinterpret_cast<AppContentAddcontInfo*>(info), 0, nullptr) == ErrorParameter);

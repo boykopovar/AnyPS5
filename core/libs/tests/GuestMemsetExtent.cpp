@@ -79,4 +79,21 @@ int main() {
             Prefix(destination);
         }
     }
+    for (std::size_t count : {512, 1024, 2048}) {
+        auto* destination = output.At(count);
+        std::memset(destination - 16, 0xa5, count + 16);
+        Require(memset_nid_postfix(destination, 0x3c, count) == destination);
+        for (std::size_t index = 0; index < count; ++index) Require(destination[index] == 0x3c);
+        Prefix(destination);
+    }
+    for (std::size_t count = 0; count <= 128; ++count) {
+        auto* destination = output.At<char16_t>(count);
+        for (char16_t value : {char16_t(0), char16_t(1), char16_t(0x7f), char16_t(0xff), char16_t(0x1234), char16_t(0xd800), char16_t(0xffff)}) {
+            std::memset(destination - 16, 0xa5, ((std::max)(count, std::size_t{1}) + 16) * sizeof(char16_t));
+            Require(wmemset_nid_postfix(destination, value, count) == destination);
+            for (std::size_t index = 0; index < count; ++index) Require(destination[index] == value);
+            if (count == 0) Require(destination[0] == 0xa5a5);
+            Prefix(destination);
+        }
+    }
 }

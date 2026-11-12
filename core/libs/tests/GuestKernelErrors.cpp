@@ -195,10 +195,13 @@ int main() {
     Require(count == 0);
     Require(sceKernelWaitEqueue(eq, nullptr, 1, &count, &timeout) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelWaitEqueue(eq, &event, 0, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, &event, -1, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelDeleteUserEvent(eq, 7) == SCE_KERNEL_ERROR_ENOENT);
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
     Require(sceKernelDeleteEqueue(eq) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelWaitEqueue(0, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelWaitEqueue(1, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelCreateEqueue(nullptr, "errors") == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelCreateEqueue(&eq, nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
@@ -240,6 +243,23 @@ int main() {
     Require(scePthreadMutexUnlock(&timedDefault) == SCE_OK);
     Require(scePthreadMutexDestroy(&timedDefault) == SCE_OK);
 
+    struct HeldTrylock {
+        int type;
+        int second;
+    };
+    for (const HeldTrylock held : {HeldTrylock{MUTEX_TYPE_ERRORCHECK, SCE_KERNEL_ERROR_EBUSY}, HeldTrylock{2, SCE_OK}, HeldTrylock{MUTEX_TYPE_NORMAL, SCE_KERNEL_ERROR_EBUSY}, HeldTrylock{MUTEX_TYPE_ADAPTIVE, SCE_KERNEL_ERROR_EINVAL}}) {
+        Require(scePthreadMutexattrInit(&attr) == SCE_OK);
+        Require(scePthreadMutexattrSettype(&attr, held.type) == SCE_OK);
+        PthreadMutex typed = nullptr;
+        Require(scePthreadMutexInit(&typed, &attr, nullptr) == SCE_OK);
+        Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+        Require(scePthreadMutexTrylock(&typed) == SCE_OK);
+        Require(scePthreadMutexTrylock(&typed) == held.second);
+        if (held.second == SCE_OK) Require(scePthreadMutexUnlock(&typed) == SCE_OK);
+        Require(scePthreadMutexUnlock(&typed) == SCE_OK);
+        Require(scePthreadMutexDestroy(&typed) == SCE_OK);
+    }
+
     Require(scePthreadMutexattrInit(&attr) == SCE_OK);
     Require(scePthreadMutexattrSettype(&attr, MUTEX_TYPE_NORMAL) == SCE_OK);
     PthreadMutex normal = nullptr;
@@ -266,12 +286,12 @@ int main() {
     Require(scePthreadMutexLock(&adaptiveStatic) == SCE_OK);
     Require(adaptiveStatic != reinterpret_cast<PthreadMutex>(std::uintptr_t{1}));
     Require(scePthreadMutexLock(&adaptiveStatic) == SCE_KERNEL_ERROR_EDEADLK);
-    Require(scePthreadMutexTrylock(&adaptiveStatic) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadMutexTrylock(&adaptiveStatic) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexUnlock(&adaptiveStatic) == SCE_OK);
     Require(scePthreadMutexDestroy(&adaptiveStatic) == SCE_OK);
     adaptiveStatic = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
     Require(scePthreadMutexTrylock(&adaptiveStatic) == SCE_OK);
-    Require(scePthreadMutexTrylock(&adaptiveStatic) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadMutexTrylock(&adaptiveStatic) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexUnlock(&adaptiveStatic) == SCE_OK);
     Require(scePthreadMutexDestroy(&adaptiveStatic) == SCE_OK);
     adaptiveStatic = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
@@ -458,6 +478,15 @@ int main() {
     KernelUseconds efTimeout = 1000;
     Require(sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_OR, &pattern, &efTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(pattern == 0);
+    for (const std::uint32_t mode : {0x00u, 0x03u, 0x04u, 0x31u}) {
+        pattern = 0xdeadbeef;
+        efTimeout = 1000;
+        Require(sceKernelWaitEventFlag(ef, 1, mode, &pattern, &efTimeout) == SCE_KERNEL_ERROR_EINVAL && pattern == 0xdeadbeef && efTimeout == 1000);
+    }
+    pattern = 0xdeadbeef;
+    efTimeout = 1000;
+    Require(sceKernelWaitEventFlag(ef, 0, EVF_WAITMODE_AND, &pattern, &efTimeout) == SCE_KERNEL_ERROR_EINVAL && pattern == 0xdeadbeef && efTimeout == 1000);
+    pattern = 0;
 
     int waitThreads = -1;
     Require(sceKernelCancelEventFlag(ef, 0x42, &waitThreads) == SCE_OK);

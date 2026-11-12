@@ -18,7 +18,7 @@ class Element {
   replaceChildren(...children) { this.children = children; }
 }
 
-async function setup(t, name, windowOptions = {}) {
+async function setup(t, name, overrides = {}) {
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   const elements = new Map([...html.matchAll(/<[^>]+\bid="([^"]+)"[^>]*>/gu)].map(match => [
     match[1], new Element(/\shidden(?:\s|>)/u.test(match[0]))
@@ -40,20 +40,22 @@ async function setup(t, name, windowOptions = {}) {
   }
   const globals = {
     document: {
+      documentElement: { lang: "", dir: "" },
       getElementById: get,
       createElement: () => new Element(),
       createTextNode: text => ({ textContent: text }),
       querySelector: selector => {
         assert.equal(selector, 'input[name="target"]:checked');
         return { value: "linux" };
-      }
+      },
+      querySelectorAll: () => []
     },
-    window: { isSecureContext: true, Worker, WebAssembly, ReadableStream, WritableStream, crypto: { subtle: {} }, ...windowOptions },
+    window: { isSecureContext: true, Worker, WebAssembly, ReadableStream, WritableStream, crypto: { subtle: {} }, ...overrides },
     Worker,
-    fetch: async () => ({
+    fetch: overrides.fetch ?? (async () => ({
       ok: true,
       json: async () => ({ tag: "test-release", platforms: { linux: { expandedBytes: 1024 }, windows: { expandedBytes: 1024 } } })
-    })
+    }))
   };
   for (const [key, value] of Object.entries(globals)) {
     const original = Object.getOwnPropertyDescriptor(globalThis, key);
@@ -266,3 +268,15 @@ for (const stage of ["picker", "writable", "root"]) {
     assert.equal(removed, stage === "root" ? 1 : 0);
   });
 }
+
+test("a visible error follows a language switch", async t => {
+  const { get } = await setup(t, "locale-error", { fetch: async () => ({ ok: false, status: 404 }) });
+  assert.equal(get("error").hidden, false);
+  assert.equal(get("error").children[0].textContent, "Cannot load release information (404). release.json is generated during the site build, so it is missing when serving demo/web directly.");
+  get("locale").onclick();
+  assert.equal(document.documentElement.lang, "de");
+  assert.equal(get("error").children[0].textContent, "Release-Informationen können nicht geladen werden (404). release.json wird während des Site-Builds erzeugt und fehlt deshalb, wenn demo/web direkt bereitgestellt wird.");
+  get("locale").onclick();
+  assert.equal(document.documentElement.lang, "en");
+  assert.equal(get("error").children[0].textContent, "Cannot load release information (404). release.json is generated during the site build, so it is missing when serving demo/web directly.");
+});
