@@ -6,7 +6,10 @@
 
 #include "prx/libSceNKWebKit/include/Api.hpp"
 #include "prx/libSceNKWebKit/include/ContentTypeExports.hpp"
+#include "prx/libSceNKWebKit/include/FieldGettersExports.hpp"
 #include "prx/libSceNKWebKit/include/FieldSettersExports.hpp"
+#include "prx/libSceNKWebKit/include/InspectorFrontendRouterExports.hpp"
+#include "prx/libSceNKWebKit/include/InspectorExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/JscExports.hpp"
 #include "prx/libSceNKWebKit/include/NoOpExports.hpp"
@@ -36,3 +39,4 @@
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 
 #include "prx/libSceNKWebKit/include/CacheControlExports.hpp"
+#include "prx/libSceNKWebKit/include/FloatSizeExports.hpp"

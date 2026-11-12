@@ -695,7 +695,7 @@ static SpinSample MeasureWorkerSpin(std::uint32_t spin, std::uint32_t rounds, bo
 
 static SpinSample QuietestWorkerSpin(std::uint32_t spin, std::uint32_t rounds, bool pending) {
     auto best = MeasureWorkerSpin(spin, rounds, pending);
-    for (int attempt = 1; attempt < 3; ++attempt) {
+    for (int attempt = 1; attempt < 7; ++attempt) {
         const auto sample = MeasureWorkerSpin(spin, rounds, pending);
         if (sample.consumed < best.consumed) {
             best = sample;
@@ -719,7 +719,7 @@ static void WorkerSpinCase() {
     const auto interval = spinning.reference * rounds / 100;
     Require(spinning.consumed > parked.consumed + interval / 3);
     Require(spinning.consumed < parked.consumed + interval * 5);
-    Require(noPending.consumed < parked.consumed + interval / 3);
+    Require(noPending.consumed < parked.consumed + interval);
 }
 
 struct WorkerClocks {

@@ -85,6 +85,9 @@ class PadInputTests(unittest.TestCase):
             (1, b"0 100 16384\n0 100 64\n"),
             (1, b"0 100 16384\ntrailing\n"),
             (1, b"0 100 16384\n" + b" " * 4096 + b"extra"),
+            (1, b"0 100 16384 255\n"), (1, b"0 100 16384 255 128\n"), (1, b"0 100 16384 255 128 128\n"),
+            (1, b"0 100 16384 255 128 128 128 128\n"), (1, b"0 100 16384 256 128 128 128\n"),
+            (1, b"0 100 16384 255 128 128 x\n"),
         ]
         for count, body in cases:
             with self.subTest(count=count, body=body):
@@ -98,6 +101,8 @@ class PadInputTests(unittest.TestCase):
             b"0+100+16384\n100 100 64\n200 1 0\n",
             b"0 100 16384\x00-1\n100 100 64\n200 1 0\n",
             b"0 100 16384\n100 100 64\n" + b" " * 120 + b"200 1 0",
+            b"0 100 16384 255 0 128 128\n100 100 64\n200 1 0 0 255 +255 +0\n",
+            b"0+100+16384+255+0+128+128\n100 100 64\n200 1 0\n",
         ]
         for body in bodies:
             with self.subTest(body=body):

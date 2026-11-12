@@ -20,6 +20,15 @@
 using namespace AgcDriver::Graphics;
 using namespace std::chrono_literals;
 
+namespace AgcDriver::Graphics {
+
+std::uint64_t& DeviceProcLookups() {
+    thread_local std::uint64_t count = 0;
+    return count;
+}
+
+}
+
 namespace {
 
 void Check(bool value, const char* reason) {
