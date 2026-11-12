@@ -1,6 +1,7 @@
 #include "prx/libSceVrTracker/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
+#include <cerrno>
 #include <cstdlib>
 #include <stdexcept>
 
@@ -65,6 +66,10 @@ int Recalibrate(std::uint32_t deviceType, std::uint32_t size = sizeof(VrTrackerL
 void CheckQueryMemory() {
     VrTrackerLegacy::QueryMemoryParam query{sizeof(VrTrackerLegacy::QueryMemoryParam)};
     auto result = FreshResult();
+    errno = 71;
+    Require(sceVrTrackerQueryMemory(reinterpret_cast<const void*>(0x10), &result) == ArgumentInvalid);
+    Require(sceVrTrackerQueryMemory(&query, reinterpret_cast<void*>(0x10)) == ArgumentInvalid);
+    Require(errno == 71);
     Require(sceVrTrackerQueryMemory(&query, &result) == 0);
     Require(result.words[0] == Untouched);
     Require(result.words[1] == 0x400000 && result.words[2] == 0x10000);
