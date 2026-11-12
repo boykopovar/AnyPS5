@@ -518,4 +518,19 @@ int main() {
     Require(sceKernelDeleteEqueue(closedEq) == SCE_OK);
     Require(sceKernelAddUserEvent(closedEq, 7) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelAddUserEvent(0, 7) == SCE_KERNEL_ERROR_EBADF);
+
+    KernelEqueue amprEq = 0;
+    Require(sceKernelCreateEqueue(&amprEq, "ampr-system") == SCE_OK);
+    int amprUdata = 0;
+    Require(sceKernelAddAmprSystemEvent(amprEq, 4, &amprUdata) == SCE_OK);
+    KernelEvent amprEvents[2]{};
+    int amprCount = 0;
+    const KernelUseconds amprPoll = 0;
+    Require(EqueueTriggerEvent_nid_postfix(amprEq, 4, EVFILT_AMPR, reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x66))) == SCE_OK);
+    Require(sceKernelWaitEqueue(amprEq, amprEvents, 2, &amprCount, &amprPoll) == SCE_OK);
+    Require(amprCount == 1 && sceKernelGetEventFilter(&amprEvents[0]) == EVFILT_AMPR && sceKernelGetEventId(&amprEvents[0]) == 4 &&
+        sceKernelGetEventData(&amprEvents[0]) == 0x66 && sceKernelGetEventUserData(&amprEvents[0]) == &amprUdata);
+    Require(sceKernelDeleteEqueue(amprEq) == SCE_OK);
+    Require(sceKernelAddAmprSystemEvent(amprEq, 4, &amprUdata) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelAddAmprSystemEvent(0, 4, &amprUdata) == SCE_KERNEL_ERROR_EBADF);
 }

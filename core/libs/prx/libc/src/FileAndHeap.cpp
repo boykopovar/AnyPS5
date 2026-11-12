@@ -717,10 +717,10 @@ FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const 
 }
 
 size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, FileStream* stream) {
-    if (size != 0 && count > std::numeric_limits<std::size_t>::max() / size) { errno = EINVAL; return 0; }
+    if (size == 0 || count == 0) return 0;
+    if (count > std::numeric_limits<std::size_t>::max() / size) { errno = EINVAL; return 0; }
     if (stream && !stream->IsOpen()) { errno = 9; return 0; }
     auto* handle = GetStreamHandle(stream);
-    if (size == 0 || count == 0) return 0;
     stream->Orientation(-1);
     if (!buffer) throw std::runtime_error("fread: null buffer");
     const auto bytes = size * count;
@@ -745,9 +745,9 @@ size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, File
 }
 
 size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t count, FileStream* stream) {
+    if (size * count == 0) return 0;
     if (stream && !stream->IsOpen()) { errno = 9; return 0; }
     auto* handle = GetNativeStream(stream);
-    if (size == 0 || count == 0) return 0;
     stream->Orientation(-1);
     if (!buffer) throw std::runtime_error("fwrite: null buffer");
     if (count > std::numeric_limits<std::size_t>::max() / size) throw std::overflow_error("fwrite: buffer size overflow");
@@ -915,6 +915,12 @@ int APS5_VABI fflush_nid_postfix(FileStream* stream) {
     errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
 }
+
+int APS5_VABI malloc_stats_nid_postfix(void* stats) {
+    return ApplicationHeapStats_nid_no_patch(stats);
+}
+
+void* APS5_VABI _sceLibcGetMallocParam_nid_postfix() { return nullptr; }
 
 int APS5_VABI malloc_stats_fast_nid_postfix(void* stats) {
     return ApplicationHeapStatsFast_nid_no_patch(stats);

@@ -47,6 +47,9 @@ int main() {
     Require(sceContentDeleteInitialize(&param) == static_cast<int>(0x809D5003u));
     Require(sceContentDeleteInitialize(nullptr) == static_cast<int>(0x809D5001u));
     Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5001u));
+    errno = 71;
+    Require(sceContentDeleteByPath(reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x809D5001u));
+    Require(errno == 71);
 
     Require(LogicErrorMessage([] { sceContentDeleteByPath(nullptr); }) == "invalid argument");
 

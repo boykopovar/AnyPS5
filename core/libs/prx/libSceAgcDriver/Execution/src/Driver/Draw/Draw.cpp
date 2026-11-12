@@ -865,7 +865,11 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         if (program.binary.stage == Stage::Fragment || roles[i] == Role::GeometryBack) return;
         decodeReads[i].clear();
         vertexInfos[i] = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, &decodeReads[i], false, 8u - program.firstUserSgpr);
-        if (vertexInfos[i]) vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, tail.reg207, program.tailContinuation.get()) | graphics.layerExports;
+        if (vertexInfos[i]) {
+            vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, tail.reg207, program.tailContinuation.get()) | graphics.layerExports;
+            vertexInfos[i]->depthRemapMode = graphics.depthRemap.mode;
+            Graphics::ApplyPointSize(graphics, *vertexInfos[i]);
+        }
     };
     const auto fold = [&](const ShaderRecompiler::RecompileResult& main, Pm4::DrawParameters& parameters) { FoldDrawOffsets(main, programs.front(), parameters); };
 
@@ -1042,6 +1046,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         static std::mutex captureMutex;
         static std::map<std::pair<std::uint32_t, std::uint32_t>, ShaderRecompiler::RecompileResult> captureShaders;
         const auto& geometry = *graphics.stages.tessellationGeometry;
+        results.reserve(programs.size() + 2u);
         {
             std::lock_guard captureLock(captureMutex);
             auto found = captureShaders.find({geometry.esgsItemSize, geometry.primitivesPerGroup});
