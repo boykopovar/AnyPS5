@@ -600,6 +600,9 @@ void testControls() {
         check(cfg->flipRate == 3, "a rejected flip rate changed the stored rate");
     }
     check(sceVideoOutSetFlipRate(handle, 2) == 0 && cfg->flipRate == 2, "flip rate was not restored");
+    for (const int unopened : {-1, 99}) {
+        check(sceVideoOutSetFlipRate(unopened, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip rate on an invalid handle was not refused");
+    }
     VideoOutColorSettings settings{};
     expectFailure([&] { sceVideoOutColorSettingsSetGamma(&settings, std::numeric_limits<float>::quiet_NaN()); });
     expectFailure([&] { sceVideoOutColorSettingsSetGamma_(&settings, 1.0f, sizeof(VideoOutColorSettings) - 1); });
@@ -700,6 +703,7 @@ void testControls() {
     sceVideoOutClose(handle);
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 0); });
     expectFailure([&] { sceVideoOutVrrUnpegFromFixedRate(handle); });
+    check(sceVideoOutSetFlipRate(handle, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip rate on a closed handle was not refused");
     check(owner->GetTriggeredEvents(&event, 1) == 0, "closed port retained pending events");
     check(sceKernelDeleteEqueue(queue) == 0, "event queue deletion failed");
     LibcRunShutdown_nid_postfix();
