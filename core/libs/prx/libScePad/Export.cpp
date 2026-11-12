@@ -51,8 +51,9 @@ std::atomic_bool g_initialized{false};
 std::atomic_bool g_particularMode{false};
 
 bool SpecialHandle(int handle) {
+    if (handle < PAD_SPECIAL_HANDLE || handle >= PAD_SPECIAL_HANDLE + PAD_SPECIAL_HANDLE_COUNT) return false;
     const int slot = handle - PAD_SPECIAL_HANDLE;
-    return slot >= 0 && slot < PAD_SPECIAL_HANDLE_COUNT && g_specialUsers[slot] != 0;
+    return g_specialUsers[slot] != 0;
 }
 
 int SpecialHandleOf(int userId) {
@@ -63,8 +64,9 @@ int SpecialHandleOf(int userId) {
 }
 
 int PortOf(int handle) {
+    if (handle < PAD_HANDLE_BASE || handle >= PAD_HANDLE_BASE + PAD_MAX_CONTROLLERS) return -1;
     const int port = handle - PAD_HANDLE_BASE;
-    if (port < 0 || port >= PAD_MAX_CONTROLLERS || !g_everOpened[port]) return -1;
+    if (!g_everOpened[port]) return -1;
     return port;
 }
 
@@ -87,11 +89,16 @@ constexpr std::size_t PAD_LEONARDO_UNIQUE_DATA_SIZE = 0x18;
 constexpr std::uint32_t PAD_HISTORY_BUFFER_SIZE = 0x960;
 constexpr std::int32_t PAD_OPEN_EXT2_PARAM_SIZE = 0x10;
 
+void WriteDefaultData(PadData* data) {
+    std::memset(data, 0, sizeof(*data));
+    data->left_stick_x = data->left_stick_y = data->right_stick_x = data->right_stick_y = 0x80;
+    data->orientation_w = 1.0f;
+    data->acceleration_y = 1.0f;
+}
+
 PadData SpecialData() {
-    PadData data{};
-    data.left_stick_x = data.left_stick_y = data.right_stick_x = data.right_stick_y = 0x80;
-    data.orientation_w = 1.0f;
-    data.acceleration_y = 1.0f;
+    PadData data;
+    WriteDefaultData(&data);
     return data;
 }
 
@@ -111,12 +118,9 @@ int OpenPortType(int handle) {
 }
 
 int PortForUser(int userId, int type, int index) {
-    if (index != 0) return -1;
-    if (type == PAD_PORT_TYPE_STANDARD) {
-        const int port = userId - 0x10000000;
-        if (port >= 0 && port < PAD_MAX_CONTROLLERS) return port;
-    }
-    return -1;
+    if (index != 0 || type != PAD_PORT_TYPE_STANDARD || userId < 0x10000000 ||
+        userId >= 0x10000000 + PAD_MAX_CONTROLLERS) return -1;
+    return userId - 0x10000000;
 }
 
 bool ValidPort(int userId, int type, int index) {
@@ -358,8 +362,8 @@ int APS5_VABI scePadOutputReport(std::int32_t handle, std::uint8_t reportId, con
 
 int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
  if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+ if (data == nullptr || num < 1 || num > 64) return PAD_ERROR_INVALID_ARG;
  if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
- if (data == nullptr || num <= 0) return PAD_ERROR_INVALID_ARG;
  if (RemoteHandle(handle)) {
   data[0] = PadData{};
   return 1;
@@ -373,6 +377,7 @@ int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
 
 int APS5_VABI scePadReadState(int handle, PadData* data) {
  if (data == nullptr) return PAD_ERROR_INVALID_ARG;
+ WriteDefaultData(data);
  if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
 
@@ -573,8 +578,9 @@ int APS5_VABI scePadLastLotusButtonData(std::int32_t handle, std::uint32_t param
 }
 
 int APS5_VABI scePadReadStateExt(std::int32_t handle, PadDataExtended* data) {
-    if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     if (data == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     NotImplemented_nid_no_patch(__func__);
 }
 

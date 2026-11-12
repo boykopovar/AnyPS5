@@ -5,6 +5,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -605,6 +606,9 @@ void CheckManagerIntAuthorization() {
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 0, code.bytes, 0) == InvalidSize && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a size of 0");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 0, code.bytes, 0x802) == InvalidSize && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a size above 0x801");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 4, code.bytes, 0x801) == InvalidPlatformType && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a mode other than 0, 3 or 5");
+    errno = 71;
+    Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, reinterpret_cast<const char*>(0x10), 0, code.bytes, 0x801) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse an unreadable URI");
+    Require(errno == 71, "sceNpManagerIntGetAuthorizationCodeWithPsnoUri changed host errno on an unreadable URI");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, longUri, 0, code.bytes, 0x801) == OutOfMemory && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a URI of 0x2000 bytes");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, nullptr, 0, code.bytes, 0) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri checks a null URI before the size");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 4, code.bytes, 0) == InvalidSize && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri checks the size before the mode");
@@ -1147,9 +1151,15 @@ int main() {
     std::uint32_t state = 0x5a5a;
     Require(sceNpGetState(0x10000, &state) == 0 && state == StateSignedOut, "sceNpGetState must report the user as signed out");
     Require(sceNpGetState(0x10000, nullptr) == InvalidArgument, "sceNpGetState must reject a null state");
+    errno = 71;
+    Require(sceNpGetState(0x10000, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument, "unwritable state rejected");
+    Require(errno == 71, "errno preserved");
     bool hasSignedUp = true;
     Require(sceNpHasSignedUp(0x10000, &hasSignedUp) == 0 && !hasSignedUp, "sceNpHasSignedUp must report no sign-up");
     Require(sceNpHasSignedUp(0x10000, nullptr) == InvalidArgument, "sceNpHasSignedUp must reject a null output");
+    errno = 71;
+    Require(sceNpHasSignedUp(0x10000, reinterpret_cast<bool*>(0x10)) == InvalidArgument, "unwritable has_signed_up rejected");
+    Require(errno == 71, "errno preserved");
     Require(sceNpCheckNpReachability(1, 0x10000) == SignedOut, "sceNpCheckNpReachability must report the user as signed out");
     NpCheckPremiumParameter premiumParameter{};
     NpCheckPremiumResult premiumResult{};

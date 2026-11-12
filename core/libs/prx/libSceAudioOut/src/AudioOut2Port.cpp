@@ -1,6 +1,7 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "prx/libSceAudioOut/include/InventoryExports.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
@@ -277,11 +278,14 @@ int APS5_VABI sceAudioOut2PortGetState(AudioOut2PortHandle port, AudioOut2PortSt
     const auto* entry = FromHandle(port);
     if (!entry) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!state) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
-    *state = AudioOut2PortState{};
-    state->output = OUTPUT_MAIN;
-    state->num_channels = static_cast<std::uint8_t>(entry->channels);
-    state->volume = VOLUME_MAX;
-    return 0;
+    AudioOut2PortState result{};
+    result.output = OUTPUT_MAIN;
+    result.num_channels = static_cast<std::uint8_t>(entry->channels);
+    result.volume = VOLUME_MAX;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &result, sizeof(result));
+    errno = savedErrno;
+    return copied ? 0 : SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
