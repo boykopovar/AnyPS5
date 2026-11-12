@@ -2264,6 +2264,7 @@ static void TestImage() {
     Require(threwOutOfRange);
 }
 
+<<<<<<< HEAD
 static void TestAuthentication() {
     Require(WKAuthenticationChallengeGetTypeID() == 2);
     Require(WKAuthenticationDecisionListenerGetTypeID() == 3);
@@ -2317,6 +2318,33 @@ static void TestAuthentication() {
     threw = false;
     try {
         WKAuthenticationDecisionListenerCancel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestFormSubmissionListener() {
+    Require(WKFormSubmissionListenerGetTypeID() == 54);
+    auto listener = NKWebKit::Make<NKWebKit::FormSubmissionListener>();
+    int callCount = 0;
+    listener->completionHandler = [&callCount]() {
+        callCount++;
+    };
+    const void* ref = listener.Get();
+    Require(!listener->continued);
+    Require(callCount == 0);
+
+    WKFormSubmissionListenerContinue(ref);
+    Require(listener->continued);
+    Require(callCount == 1);
+
+    WKFormSubmissionListenerContinue(ref);
+    Require(callCount == 1);
+
+    bool threw = false;
+    try {
+        WKFormSubmissionListenerContinue(nullptr);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -2702,6 +2730,7 @@ int main() {
     }
 
     TestInspector();
+    TestFormSubmissionListener();
     TestContext();
     TestSessionState();
     TestSerializedScriptValue();
