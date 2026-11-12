@@ -155,8 +155,12 @@ static void TestCaptureMuteGenerations() {
     Require(generations.Observe(4, 9));
     Require(!generations.Observe(4, 9));
     Require(!generations.Observe(5, 9));
-    generations.Forget(4);
+    Require(!generations.Observe(5, 10));
     Require(!generations.Observe(4, 9));
+    Require(generations.Observe(4, 10));
+    generations.Forget(4);
+    Require(!generations.Observe(4, 10));
+    Require(!generations.Observe(5, 10));
 }
 
 int main() {
