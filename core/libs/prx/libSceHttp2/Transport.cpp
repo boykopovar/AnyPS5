@@ -825,7 +825,12 @@ struct Request::State {
             if (chunkTerminator) { Require(Line(deadline).empty(), "sceHttp2: invalid chunk terminator"); chunkTerminator = false; }
             if (!chunkRemaining) {
                 const auto line = Line(deadline);
-                chunkRemaining = Number(std::string_view(line).substr(0, line.find(';')), 16);
+                const auto extension = line.find(';');
+                auto digits = std::string_view(line).substr(0, extension);
+                if (extension != std::string::npos) {
+                    while (!digits.empty() && (digits.back() == ' ' || digits.back() == '\t')) digits.remove_suffix(1);
+                }
+                chunkRemaining = Number(digits, 16);
                 if (!chunkRemaining) {
                     std::size_t bytes = 0;
                     for (;;) {

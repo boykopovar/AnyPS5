@@ -3435,10 +3435,6 @@ int APS5_VABI sceIcuLegacyUnknown_Jf4entCVZCU_nid_no_patch() {
 }
 APS5_EXPORT("Jf4entCVZCU", sceIcuLegacyUnknown_Jf4entCVZCU_nid_no_patch);
 
-int APS5_VABI unorm_compare_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_686LocaleC1EPKcS2_S2_S2__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
