@@ -23,8 +23,10 @@ int main() {
         int expected;
     };
     constexpr CriticalCase criticalCases[] {
-        {std::numeric_limits<std::int32_t>::min(), 0}, {-256, 0}, {-1, 0}, {0, 0},
-        {1, 1}, {127, 1}, {128, 1}, {255, 1}, {256, 1}, {65536, 1},
+        {std::numeric_limits<std::int32_t>::min(), 0},
+        {std::numeric_limits<std::int32_t>::min() + 1, 0},
+        {-256, 0}, {-1, 0}, {0, 0},
+        {1, 1}, {2, 1}, {127, 1}, {128, 1}, {255, 1}, {256, 1}, {65536, 1},
         {std::numeric_limits<std::int32_t>::max(), 1}
     };
     unsigned char object[16] {};
@@ -42,10 +44,12 @@ int main() {
                     std::memcpy(storage.data() + 16, &item.stored, 4);
                     std::memcpy(storage.data() + 24, &dataPointer, 8);
                     const auto before = storage;
-                    Require(X509_EXTENSION_get_critical_nid_postfix(extension) == item.expected, "signed critical field ignores padding");
-                    Require(X509_EXTENSION_get_object_nid_postfix(extension) == objectPointer, "borrowed object pointer is preserved");
-                    Require(X509_EXTENSION_get_data_nid_postfix(extension) == dataPointer, "borrowed ASN1 string pointer is preserved");
-                    Require(storage == before, "getters preserve the extension and adjacent bytes");
+                    for (int repeat = 0; repeat < 2; ++repeat) {
+                        Require(X509_EXTENSION_get_critical_nid_postfix(extension) == item.expected, "signed critical field ignores padding");
+                        Require(X509_EXTENSION_get_object_nid_postfix(extension) == objectPointer, "borrowed object pointer is preserved");
+                        Require(X509_EXTENSION_get_data_nid_postfix(extension) == dataPointer, "borrowed ASN1 string pointer is preserved");
+                        Require(storage == before, "getters preserve the extension and adjacent bytes");
+                    }
                 }
             }
         }
