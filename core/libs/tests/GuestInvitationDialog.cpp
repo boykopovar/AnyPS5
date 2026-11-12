@@ -64,6 +64,9 @@ void TestBeforeInitialize() {
     Require(sceInvitationDialogGetResult(nullptr) == NotInitialized, "null result before initialization");
     Require(sceInvitationDialogClose() == NotInitialized, "close before initialization");
     Require(sceInvitationDialogTerminate() == NotInitialized, "terminate before initialization");
+    Require(sceInvitationDialogGetStatus_nid_postfix() == StatusNone, "nid status before initialization");
+    Require(sceInvitationDialogOpenA_nid_postfix() == NotInitialized, "openA before initialization");
+    Require(sceInvitationDialogGetResultA_nid_postfix() == NotInitialized, "resultA before initialization");
     const InvitationDialogParam param = MakeParam(ModeSend, nullptr);
     RequireUnsettled([&] { sceInvitationDialogOpen(&param); }, "open before initialization");
     RequireUnsettled([] { sceInvitationDialogOpen(nullptr); }, "null open before initialization");
