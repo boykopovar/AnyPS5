@@ -311,9 +311,9 @@ class AnnotateModuleTests(unittest.TestCase):
         self.assertEqual([], [path.name for path in self.root.iterdir() if path.suffix == ".bin"])
 
     def test_unknown_nid_prints_the_nid(self):
-        empty = self.root / "empty.csv"
-        empty.write_text("", encoding="utf-8")
-        self.run_tool(build_module(), "--db", str(empty))
+        db = self.root / "db.csv"
+        db.write_text("AAAAAAAAAAA some_other_name\n", encoding="utf-8")
+        self.run_tool(build_module(), "--db", str(db))
         self.assertEqual("%#x %s %s\n" % (SLOT, symbol_name(IMPORT_NAME), nid(IMPORT_NAME)), self.read(".imports.txt"))
         self.assertIn("; -> " + nid(IMPORT_NAME), self.read(".asm"))
 

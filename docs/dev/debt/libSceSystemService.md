@@ -164,7 +164,7 @@
 - [sceCoredumpSequenceHandlerGetCoredumpStatusByAppId](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown signature
 - [sceCoredumpSequenceHandlerCancelCoredump](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown signature
 
-- [sceShellCoreUtilGetFreeSizeOfUserPartition, sceShellCoreUtilGetFreeSizeOfAvContentsTmp](../../../core/libs/prx/libSceSystemService/PendingExports.cpp) (libSceSystemService) - the units of the sizes and what the user partition's free and total sizes measure are not measured; shadPS4 stubs both as returning OK without writing an output ([systemservice.cpp L832-L840](https://github.com/shadps4-emu/shadPS4/blob/1d8004a22feb0d5cc58828bac066018e80b6d73f/src/core/libraries/system/systemservice.cpp#L832-L840)), so no value is known and both throw through `NotImplemented_nid_no_patch`
+- [sceShellCoreUtilGetFreeSizeOfUserPartition, sceShellCoreUtilGetFreeSizeOfAvContentsTmp](../../../core/libs/prx/libSceSystemService/PendingExports.cpp) (libSceSystemService) - they return the host's disk space for the working directory: the partition call returns 0 with the available and the total bytes, the other the available bytes. On a PS5 (firmware 11.60, payload process) the partition call returned 0 with a non-zero free and total size and the other a non-zero size; the exact values, the units and what the partition covers are not measured. shadPS4 stubs both as returning OK without writing an output ([systemservice.cpp L832-L840](https://github.com/shadps4-emu/shadPS4/blob/1d8004a22feb0d5cc58828bac066018e80b6d73f/src/core/libraries/system/systemservice.cpp#L832-L840))
 
 ### Functional
 

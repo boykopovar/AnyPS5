@@ -78,7 +78,10 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set_property(TARGET anyps5_curl_backend APPEND PROPERTY INTERFACE_LINK_LIBRARIES pthread)
 endif()
 
-add_library(libcurl SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libcurl SHARED EXCLUDE_FROM_ALL
+    Export.cpp
+    src/FormFree.cpp
+)
 target_include_directories(libcurl PUBLIC ${curlSourceDir}/include PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libcurl PRIVATE libc libkernel anyps5_curl_backend)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")

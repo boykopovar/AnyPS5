@@ -64,10 +64,9 @@ int APS5_VABI libAacsUnknown_0oisD9Dr3FI_nid_no_patch() {
 }
 APS5_EXPORT("0oisD9Dr3FI", libAacsUnknown_0oisD9Dr3FI_nid_no_patch);
 
-int APS5_VABI libAacsUnknown_12CP5PHvlgs_nid_no_patch() {
+int APS5_VABI _ZN12CAacsLoadMgrD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("12CP5PHvlgs", libAacsUnknown_12CP5PHvlgs_nid_no_patch);
 
 int APS5_VABI libAacsUnknown_15QPrQC1usM_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -79,10 +78,9 @@ int APS5_VABI libAacsUnknown_1CNq2v6hoig_nid_no_patch() {
 }
 APS5_EXPORT("1CNq2v6hoig", libAacsUnknown_1CNq2v6hoig_nid_no_patch);
 
-int APS5_VABI libAacsUnknown_1aMnfYcnn1I_nid_no_patch() {
+int APS5_VABI _ZN12CAacsAuthMgrC2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("1aMnfYcnn1I", libAacsUnknown_1aMnfYcnn1I_nid_no_patch);
 
 int APS5_VABI libAacsUnknown_1bzdduTshZ4_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -163,10 +161,9 @@ int APS5_VABI AacsPermissionActivate() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI libAacsUnknown_54hkTYBIxqs_nid_no_patch() {
+int APS5_VABI _ZN12CAacsLoadMgraSERKS_() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("54hkTYBIxqs", libAacsUnknown_54hkTYBIxqs_nid_no_patch);
 
 int APS5_VABI AacsBusDecrypt() {
     NotImplemented_nid_no_patch(__func__);
@@ -186,10 +183,9 @@ int APS5_VABI libAacsUnknown_6XcWJGADJeU_nid_no_patch() {
 }
 APS5_EXPORT("6XcWJGADJeU", libAacsUnknown_6XcWJGADJeU_nid_no_patch);
 
-int APS5_VABI libAacsUnknown_753FlqNkJlM_nid_no_patch() {
+int APS5_VABI _ZN12CAacsAuthMgrD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("753FlqNkJlM", libAacsUnknown_753FlqNkJlM_nid_no_patch);
 
 int APS5_VABI libAacsUnknown_7ETkLi9auE0_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -260,10 +256,9 @@ int APS5_VABI libAacsUnknown_9rQgwWQB9NE_nid_no_patch() {
 }
 APS5_EXPORT("9rQgwWQB9NE", libAacsUnknown_9rQgwWQB9NE_nid_no_patch);
 
-int APS5_VABI libAacsUnknown_AVRC3P8reF0_nid_no_patch() {
+int APS5_VABI _ZN12CAacsAuthMgrC2ERKS_() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("AVRC3P8reF0", libAacsUnknown_AVRC3P8reF0_nid_no_patch);
 
 int APS5_VABI libAacsUnknown_Apl9mjDSCE0_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -363,10 +358,9 @@ int APS5_VABI libAacsUnknown_FEi5mHUWB0M_nid_no_patch() {
 }
 APS5_EXPORT("FEi5mHUWB0M", libAacsUnknown_FEi5mHUWB0M_nid_no_patch);
 
-int APS5_VABI libAacsUnknown_FHWdAzU_minus_rRI_nid_no_patch() {
+int APS5_VABI _Z22AacsAuthMgrGetInstancev() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("FHWdAzU-rRI", libAacsUnknown_FHWdAzU_minus_rRI_nid_no_patch);
 
 int APS5_VABI libAacsUnknown_Fl0RrZ7B27g_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -423,10 +417,9 @@ int APS5_VABI libAacsUnknown_ILwfo94p_minus_ng_nid_no_patch() {
 }
 APS5_EXPORT("ILwfo94p-ng", libAacsUnknown_ILwfo94p_minus_ng_nid_no_patch);
 
-int APS5_VABI libAacsUnknown_Iofb1lKwTNA_nid_no_patch() {
+int APS5_VABI _ZN12CAacsAuthMgraSERKS_() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Iofb1lKwTNA", libAacsUnknown_Iofb1lKwTNA_nid_no_patch);
 
 int APS5_VABI libAacsUnknown_IxvgFI5JtxE_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -632,10 +625,9 @@ int APS5_VABI libAacsUnknown_SjewOoJlr9c_nid_no_patch() {
 }
 APS5_EXPORT("SjewOoJlr9c", libAacsUnknown_SjewOoJlr9c_nid_no_patch);
 
-int APS5_VABI libAacsUnknown_TK5prfVU4b0_nid_no_patch() {
+int APS5_VABI _ZN12CAacsLoadMgrD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("TK5prfVU4b0", libAacsUnknown_TK5prfVU4b0_nid_no_patch);
 
 int APS5_VABI libAacsUnknown_TQCLQjHkkW0_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -756,20 +748,18 @@ int APS5_VABI libAacsUnknown_Z9yhz8_plus_DS3k_nid_no_patch() {
 }
 APS5_EXPORT("Z9yhz8+DS3k", libAacsUnknown_Z9yhz8_plus_DS3k_nid_no_patch);
 
-int APS5_VABI libAacsUnknown_ZCRVIAxld6o_nid_no_patch() {
+int APS5_VABI _ZN12CAacsAuthMgrD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("ZCRVIAxld6o", libAacsUnknown_ZCRVIAxld6o_nid_no_patch);
 
 int APS5_VABI libAacsUnknown_ZEdbi75pkX0_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("ZEdbi75pkX0", libAacsUnknown_ZEdbi75pkX0_nid_no_patch);
 
-int APS5_VABI libAacsUnknown_ZUEIg4QZJ_plus_k_nid_no_patch() {
+int APS5_VABI _Z22AacsLoadMgrGetInstancev() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("ZUEIg4QZJ+k", libAacsUnknown_ZUEIg4QZJ_plus_k_nid_no_patch);
 
 int APS5_VABI libAacsUnknown_ZnJgSGpLzGs_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -974,10 +964,9 @@ int APS5_VABI libAacsUnknown_igIuBDqdlZo_nid_no_patch() {
 }
 APS5_EXPORT("igIuBDqdlZo", libAacsUnknown_igIuBDqdlZo_nid_no_patch);
 
-int APS5_VABI libAacsUnknown_j0quzCtmBr4_nid_no_patch() {
+int APS5_VABI _ZN12CAacsLoadMgrD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("j0quzCtmBr4", libAacsUnknown_j0quzCtmBr4_nid_no_patch);
 
 int APS5_VABI libAacsUnknown_jXZJmZu3ihs_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -1003,10 +992,9 @@ int APS5_VABI libAacsUnknown_kX1hCR9FDo0_nid_no_patch() {
 }
 APS5_EXPORT("kX1hCR9FDo0", libAacsUnknown_kX1hCR9FDo0_nid_no_patch);
 
-int APS5_VABI libAacsUnknown_kYQis7lBy_plus_U_nid_no_patch() {
+int APS5_VABI _ZN12CAacsAuthMgrD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("kYQis7lBy+U", libAacsUnknown_kYQis7lBy_plus_U_nid_no_patch);
 
 int APS5_VABI libAacsUnknown_kaxfKxeOvbU_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
