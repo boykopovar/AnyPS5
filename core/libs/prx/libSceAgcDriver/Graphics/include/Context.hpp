@@ -16,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
+#include <source_location>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -148,7 +149,7 @@ struct DeviceFunctions {
 
 // Per-thread count of vkGetDeviceProcAddr lookups made through Context::Function (the [vk] line).
 std::uint64_t& DeviceProcLookups();
-void BeforeCommandLookup(VkDevice device);
+void BeforeCommandLookup(VkDevice device, std::source_location where = std::source_location::current());
 
 inline constexpr std::size_t EmptyBufferBytes = 16;
 
@@ -297,10 +298,10 @@ struct Context {
     VertexBufferFormats* vertexFormats = nullptr;
 
     template<typename TFunction>
-    TFunction Function(const char* name) const {
+    TFunction Function(const char* name, std::source_location where = std::source_location::current()) const {
         Require(deviceProc != nullptr, "missing Vulkan device function resolver");
         ++DeviceProcLookups();
-        if (name[0] == 'v' && name[1] == 'k' && name[2] == 'C' && name[3] == 'm' && name[4] == 'd') BeforeCommandLookup(device);
+        if (name[0] == 'v' && name[1] == 'k' && name[2] == 'C' && name[3] == 'm' && name[4] == 'd') BeforeCommandLookup(device, where);
         const auto function = reinterpret_cast<TFunction>(deviceProc(device, name));
         if (function == nullptr) throw std::runtime_error(std::string("AGC graphics: missing Vulkan function: ") + name);
         return function;

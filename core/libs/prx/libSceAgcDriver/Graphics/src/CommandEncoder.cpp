@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <new>
 #include <stdexcept>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -61,12 +63,44 @@ std::function<void()>& testDelay() {
     return value;
 }
 
+bool sameSite(const CommandEncoder::WaitSite& left, const CommandEncoder::WaitSite& right) {
+    if (left.kind != right.kind || left.line != right.line) return false;
+    if (left.detail == right.detail) return true;
+    return left.detail != nullptr && right.detail != nullptr && std::strcmp(left.detail, right.detail) == 0;
+}
+
+std::string_view shortFunction(std::string_view name) {
+    if (const auto close = name.rfind(')'); close != std::string_view::npos) {
+        int depth = 0;
+        for (auto at = close + 1; at-- > 0;) {
+            if (name[at] == ')') ++depth;
+            else if (name[at] == '(' && --depth == 0) {
+                name = name.substr(0, at);
+                break;
+            }
+        }
+    }
+    int depth = 0;
+    for (auto at = name.size(); at-- > 0;) {
+        if (name[at] == ')' || name[at] == '>') ++depth;
+        else if (name[at] == '(' || name[at] == '<') --depth;
+        else if (name[at] == ' ' && depth == 0) {
+            name = name.substr(at + 1);
+            break;
+        }
+    }
+    const auto last = name.rfind("::");
+    if (last == std::string_view::npos || last == 0) return name;
+    const auto previous = name.rfind("::", last - 1);
+    return previous == std::string_view::npos ? name : name.substr(previous + 2);
+}
+
 template<std::size_t S>
-CommandEncoder* deferring(VkCommandBuffer commands) {
+CommandEncoder* deferring(VkCommandBuffer commands, const char* command) {
     auto* encoder = slots()[S].encoder.load(std::memory_order_acquire);
     if (encoder == nullptr) return nullptr;
     if (encoder->Defers(commands)) return encoder;
-    if (encoder->Behind(commands)) encoder->Settle();
+    if (encoder->Behind(commands)) encoder->Settle(CommandEncoder::WaitSite{CommandEncoder::Wait::Behind, command, 0});
     return nullptr;
 }
 
@@ -80,29 +114,29 @@ void runPlain(const std::byte* payload, VkCommandBuffer commands, const DeviceFu
     std::apply([&](const A&... arguments) { (functions.*Member)(commands, arguments...); }, unpack<std::tuple<A...>>(payload));
 }
 
-template<std::size_t S, auto Member, typename... A>
+template<std::size_t S, auto Member, typename Name, typename... A>
 VKAPI_ATTR void VKAPI_CALL plain(VkCommandBuffer commands, A... arguments) {
-    if (auto* encoder = deferring<S>(commands)) {
+    if (auto* encoder = deferring<S>(commands, Name::Text())) {
         new (encoder->Append(&runPlain<Member, A...>, sizeof(std::tuple<A...>))) std::tuple<A...>(arguments...);
         return;
     }
     (slots()[S].real.*Member)(commands, arguments...);
 }
 
-template<std::size_t S, auto Member, typename... A>
+template<std::size_t S, auto Member, typename Name, typename... A>
 VKAPI_ATTR void VKAPI_CALL direct(VkCommandBuffer commands, A... arguments) {
-    if (auto* encoder = deferring<S>(commands); encoder != nullptr && !encoder->Direct()) return;
+    if (auto* encoder = deferring<S>(commands, Name::Text()); encoder != nullptr && !encoder->Direct(Name::Text())) return;
     (slots()[S].real.*Member)(commands, arguments...);
 }
 
-template<std::size_t S, auto Member, typename... A>
+template<std::size_t S, auto Member, typename Name, typename... A>
 constexpr auto plainFor(void(VKAPI_PTR*)(VkCommandBuffer, A...)) {
-    return &plain<S, Member, A...>;
+    return &plain<S, Member, Name, A...>;
 }
 
-template<std::size_t S, auto Member, typename... A>
+template<std::size_t S, auto Member, typename Name, typename... A>
 constexpr auto directFor(void(VKAPI_PTR*)(VkCommandBuffer, A...)) {
-    return &direct<S, Member, A...>;
+    return &direct<S, Member, Name, A...>;
 }
 
 template<typename T>
@@ -125,7 +159,7 @@ struct RangeHeader {
 
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL setViewport(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const VkViewport* viewports) {
-    if (auto* encoder = deferring<S>(commands)) {
+    if (auto* encoder = deferring<S>(commands, "cmdSetViewport")) {
         auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
             const auto header = unpack<RangeHeader>(payload);
             const auto* at = payload + aligned(sizeof(RangeHeader));
@@ -140,7 +174,7 @@ VKAPI_ATTR void VKAPI_CALL setViewport(VkCommandBuffer commands, std::uint32_t f
 
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL setScissor(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const VkRect2D* scissors) {
-    if (auto* encoder = deferring<S>(commands)) {
+    if (auto* encoder = deferring<S>(commands, "cmdSetScissor")) {
         auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
             const auto header = unpack<RangeHeader>(payload);
             const auto* at = payload + aligned(sizeof(RangeHeader));
@@ -155,7 +189,7 @@ VKAPI_ATTR void VKAPI_CALL setScissor(VkCommandBuffer commands, std::uint32_t fi
 
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL setColorWriteMask(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const VkColorComponentFlags* masks) {
-    if (auto* encoder = deferring<S>(commands)) {
+    if (auto* encoder = deferring<S>(commands, "cmdSetColorWriteMask")) {
         auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
             const auto header = unpack<RangeHeader>(payload);
             const auto* at = payload + aligned(sizeof(RangeHeader));
@@ -178,7 +212,7 @@ struct BindSetsHeader {
 
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL bindDescriptorSets(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, std::uint32_t firstSet, std::uint32_t sets, const VkDescriptorSet* descriptorSets, std::uint32_t offsets, const std::uint32_t* dynamicOffsets) {
-    if (auto* encoder = deferring<S>(commands)) {
+    if (auto* encoder = deferring<S>(commands, "cmdBindDescriptorSets")) {
         auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
             const auto header = unpack<BindSetsHeader>(payload);
             const auto* at = payload + aligned(sizeof(BindSetsHeader));
@@ -202,7 +236,7 @@ struct PushHeader {
 
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL pushConstants(VkCommandBuffer commands, VkPipelineLayout layout, VkShaderStageFlags stages, std::uint32_t offset, std::uint32_t size, const void* values) {
-    if (auto* encoder = deferring<S>(commands)) {
+    if (auto* encoder = deferring<S>(commands, "cmdPushConstants")) {
         auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
             const auto header = unpack<PushHeader>(payload);
             functions.cmdPushConstants(target, header.layout, header.stages, header.offset, header.size, payload + aligned(sizeof(PushHeader)));
@@ -216,7 +250,7 @@ VKAPI_ATTR void VKAPI_CALL pushConstants(VkCommandBuffer commands, VkPipelineLay
 
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL bindVertexBuffers(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const VkBuffer* buffers, const VkDeviceSize* offsets) {
-    if (auto* encoder = deferring<S>(commands)) {
+    if (auto* encoder = deferring<S>(commands, "cmdBindVertexBuffers")) {
         auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
             const auto header = unpack<RangeHeader>(payload);
             const auto* at = payload + aligned(sizeof(RangeHeader));
@@ -250,7 +284,7 @@ bool chained(const T* values, std::uint32_t count) {
 
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL pipelineBarrier(VkCommandBuffer commands, VkPipelineStageFlags source, VkPipelineStageFlags destination, VkDependencyFlags dependencies, std::uint32_t memory, const VkMemoryBarrier* memoryBarriers, std::uint32_t buffers, const VkBufferMemoryBarrier* bufferBarriers, std::uint32_t images, const VkImageMemoryBarrier* imageBarriers) {
-    if (auto* encoder = deferring<S>(commands)) {
+    if (auto* encoder = deferring<S>(commands, "cmdPipelineBarrier")) {
         if (!chained(memoryBarriers, memory) && !chained(bufferBarriers, buffers) && !chained(imageBarriers, images)) {
             auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
                 const auto header = unpack<BarrierHeader>(payload);
@@ -264,7 +298,7 @@ VKAPI_ATTR void VKAPI_CALL pipelineBarrier(VkCommandBuffer commands, VkPipelineS
             copyArray(copyArray(copyArray(at + aligned(sizeof(BarrierHeader)), memoryBarriers, memory), bufferBarriers, buffers), imageBarriers, images);
             return;
         }
-        if (!encoder->Direct()) return;
+        if (!encoder->Direct("cmdPipelineBarrier")) return;
     }
     slots()[S].real.cmdPipelineBarrier(commands, source, destination, dependencies, memory, memoryBarriers, buffers, bufferBarriers, images, imageBarriers);
 }
@@ -276,7 +310,7 @@ struct BeginPassHeader {
 
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL beginRenderPass(VkCommandBuffer commands, const VkRenderPassBeginInfo* info, VkSubpassContents contents) {
-    if (auto* encoder = deferring<S>(commands)) {
+    if (auto* encoder = deferring<S>(commands, "cmdBeginRenderPass")) {
         if (info->pNext == nullptr) {
             auto* at = encoder->Append([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
                 auto header = unpack<BeginPassHeader>(payload);
@@ -288,7 +322,7 @@ VKAPI_ATTR void VKAPI_CALL beginRenderPass(VkCommandBuffer commands, const VkRen
             copyArray(at + aligned(sizeof(BeginPassHeader)), info->pClearValues, info->clearValueCount);
             return;
         }
-        if (!encoder->Direct()) return;
+        if (!encoder->Direct("cmdBeginRenderPass")) return;
     }
     slots()[S].real.cmdBeginRenderPass(commands, info, contents);
 }
@@ -301,7 +335,7 @@ struct RenderingHeader {
 
 template<std::size_t S>
 VKAPI_ATTR void VKAPI_CALL beginRendering(VkCommandBuffer commands, const VkRenderingInfoKHR* info) {
-    if (auto* encoder = deferring<S>(commands)) {
+    if (auto* encoder = deferring<S>(commands, "cmdBeginRendering")) {
         const bool plainDepth = info->pDepthAttachment == nullptr || info->pDepthAttachment->pNext == nullptr;
         const bool plainStencil = info->pStencilAttachment == nullptr || info->pStencilAttachment->pNext == nullptr;
         if (info->pNext == nullptr && plainDepth && plainStencil && !chained(info->pColorAttachments, info->colorAttachmentCount)) {
@@ -317,7 +351,7 @@ VKAPI_ATTR void VKAPI_CALL beginRendering(VkCommandBuffer commands, const VkRend
             copyArray(at + aligned(sizeof(RenderingHeader)), info->pColorAttachments, info->colorAttachmentCount);
             return;
         }
-        if (!encoder->Direct()) return;
+        if (!encoder->Direct("cmdBeginRendering")) return;
     }
     slots()[S].real.cmdBeginRendering(commands, info);
 }
@@ -325,9 +359,19 @@ VKAPI_ATTR void VKAPI_CALL beginRendering(VkCommandBuffer commands, const VkRend
 template<std::size_t S>
 void install(DeviceFunctions& table) {
 #define APS5_PLAIN(member) \
-    if (table.member != nullptr) table.member = plainFor<S, &DeviceFunctions::member>(table.member)
+    if (table.member != nullptr) { \
+        struct Name { \
+            static constexpr const char* Text() { return #member; } \
+        }; \
+        table.member = plainFor<S, &DeviceFunctions::member, Name>(table.member); \
+    }
 #define APS5_DIRECT(member) \
-    if (table.member != nullptr) table.member = directFor<S, &DeviceFunctions::member>(table.member)
+    if (table.member != nullptr) { \
+        struct Name { \
+            static constexpr const char* Text() { return #member; } \
+        }; \
+        table.member = directFor<S, &DeviceFunctions::member, Name>(table.member); \
+    }
 #define APS5_CUSTOM(member, function) \
     if (table.member != nullptr) table.member = &function<S>
     APS5_CUSTOM(cmdPipelineBarrier, pipelineBarrier);
@@ -433,7 +477,7 @@ CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::siz
 }
 
 CommandEncoder::~CommandEncoder() {
-    Quiesce();
+    Quiesce(WaitSite{Wait::Teardown, nullptr, 0});
     stopping.store(true, std::memory_order_seq_cst);
     posted.fetch_add(1, std::memory_order_seq_cst);
     posted.notify_all();
@@ -456,8 +500,8 @@ void CommandEncoder::Recording::refuse() {
     throw std::runtime_error("AGC graphics: the encoder failed to record this command buffer, so it is not submitted");
 }
 
-void CommandEncoder::Open(VkCommandBuffer commands, Recording& recording) {
-    if (recent.load(std::memory_order_relaxed) != commands) Quiesce();
+void CommandEncoder::Open(VkCommandBuffer commands, Recording& recording, std::source_location where) {
+    if (recent.load(std::memory_order_relaxed) != commands) Quiesce(WaitSite::At(Wait::Open, where));
     windows.push_back({commands, &recording});
     owner.store(std::this_thread::get_id(), std::memory_order_relaxed);
     this->recording = &recording;
@@ -469,8 +513,8 @@ void CommandEncoder::RefuseForeignProducer() {
     throw std::logic_error("AGC graphics: another thread used the encoder while an encoding window was open");
 }
 
-void CommandEncoder::Close() {
-    post();
+void CommandEncoder::Close(std::source_location where) {
+    const bool flushed = post();
     const auto closed = windows.back().commands;
     windows.pop_back();
     if (windows.empty()) {
@@ -478,7 +522,7 @@ void CommandEncoder::Close() {
         recording = nullptr;
         return;
     }
-    if (windows.back().commands != closed) await();
+    if (windows.back().commands != closed) await(WaitSite::At(Wait::Close, where), flushed);
     recording = windows.back().recording;
     recent.store(windows.back().commands, std::memory_order_relaxed);
     target.store(windows.back().commands, std::memory_order_relaxed);
@@ -521,8 +565,8 @@ std::byte* CommandEncoder::Append(Run run, std::size_t bytes) {
     return at + RecordHeader;
 }
 
-void CommandEncoder::post() noexcept {
-    if (filling == nullptr || filling->records == 0) return;
+bool CommandEncoder::post() noexcept {
+    if (filling == nullptr || filling->records == 0) return false;
     commandCount.fetch_add(filling->records, std::memory_order_relaxed);
     postCount.fetch_add(1, std::memory_order_relaxed);
     {
@@ -533,31 +577,54 @@ void CommandEncoder::post() noexcept {
     }
     posted.fetch_add(1, std::memory_order_seq_cst);
     if (sleeping.load(std::memory_order_seq_cst)) posted.notify_one();
+    return true;
 }
 
-void CommandEncoder::Quiesce() noexcept {
-    post();
-    await();
+void CommandEncoder::Quiesce(WaitSite site) noexcept {
+    const bool flushed = post();
+    await(site, flushed);
 }
 
-bool CommandEncoder::Direct() noexcept {
-    Quiesce();
+bool CommandEncoder::Direct(const char* command) noexcept {
+    Quiesce(WaitSite{Wait::Direct, command, 0});
     return recording == nullptr || !recording->Failed();
 }
 
-void CommandEncoder::Settle() noexcept {
-    await();
+void CommandEncoder::Settle(WaitSite site) noexcept {
+    await(site, false);
 }
 
-void CommandEncoder::await() noexcept {
+void CommandEncoder::await(const WaitSite& site, bool flushed) noexcept {
     const auto through = posted.load(std::memory_order_acquire);
-    if (executed.load(std::memory_order_acquire) >= through) return;
+    if (executed.load(std::memory_order_acquire) >= through) {
+        if (flushed) note(site, 0, false, true);
+        return;
+    }
     const auto start = std::chrono::steady_clock::now();
     if (!SpinUntil(HandoffSpinWindow(), [&] { return executed.load(std::memory_order_acquire) >= through; })) {
         for (auto seen = executed.load(std::memory_order_acquire); seen < through; seen = executed.load(std::memory_order_acquire)) executed.wait(seen, std::memory_order_acquire);
     }
+    const auto ns = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
     waitCount.fetch_add(1, std::memory_order_relaxed);
-    waitNs.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
+    waitNs.fetch_add(ns, std::memory_order_relaxed);
+    note(site, ns, true, flushed);
+}
+
+void CommandEncoder::note(const WaitSite& site, std::uint64_t ns, bool waited, bool flushed) noexcept {
+    std::lock_guard lock(siteMutex);
+    auto* entry = std::find_if(sites.begin(), sites.begin() + siteCount, [&](const SiteWaits& tracked) { return sameSite(tracked.site, site); });
+    if (entry == sites.begin() + siteCount) {
+        if (siteCount + 1 < sites.size()) {
+            ++siteCount;
+            entry->site = site;
+        } else {
+            entry = &sites.back();
+            entry->site = WaitSite{};
+        }
+    }
+    entry->waits += waited ? 1 : 0;
+    entry->waitNs += ns;
+    entry->flushes += flushed ? 1 : 0;
 }
 
 void CommandEncoder::awaitSpare() noexcept {
@@ -568,8 +635,10 @@ void CommandEncoder::awaitSpare() noexcept {
         if (spare != nullptr) return;
     }
     executed.wait(seen, std::memory_order_acquire);
+    const auto ns = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
     waitCount.fetch_add(1, std::memory_order_relaxed);
-    waitNs.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
+    waitNs.fetch_add(ns, std::memory_order_relaxed);
+    note(WaitSite{Wait::ChunkPool, nullptr, 0}, ns, true, false);
 }
 
 void CommandEncoder::execute(Chunk& chunk) {
@@ -633,16 +702,50 @@ CommandEncoder::Statistics CommandEncoder::Counts() const {
     return {postCount.load(std::memory_order_relaxed), commandCount.load(std::memory_order_relaxed), waitCount.load(std::memory_order_relaxed), waitNs.load(std::memory_order_relaxed), encodeNs.load(std::memory_order_relaxed), parkCount.load(std::memory_order_relaxed)};
 }
 
+std::vector<CommandEncoder::SiteWaits> CommandEncoder::WaitsBySite() const {
+    std::vector<SiteWaits> result;
+    {
+        std::lock_guard lock(siteMutex);
+        result.assign(sites.begin(), sites.begin() + siteCount);
+        if (sites.back().waits != 0 || sites.back().flushes != 0) result.push_back(sites.back());
+    }
+    std::stable_sort(result.begin(), result.end(), [](const SiteWaits& left, const SiteWaits& right) { return left.waitNs != right.waitNs ? left.waitNs > right.waitNs : left.flushes > right.flushes; });
+    return result;
+}
+
+std::string CommandEncoder::Report(const std::vector<SiteWaits>& sites, std::size_t limit) {
+    std::string text;
+    for (std::size_t index = 0; index < sites.size() && index < limit; ++index) {
+        const auto& entry = sites[index];
+        char numbers[96];
+        std::snprintf(numbers, sizeof(numbers), " %llu/%.2f/%llu", static_cast<unsigned long long>(entry.waits), static_cast<double>(entry.waitNs) / 1e6, static_cast<unsigned long long>(entry.flushes));
+        text += (index == 0 ? " " : ", ") + Describe(entry.site) + numbers;
+    }
+    if (sites.size() > limit) text += ", " + std::to_string(sites.size() - limit) + " more sites";
+    return text.empty() ? " none" : text;
+}
+
+std::string CommandEncoder::Describe(const WaitSite& site) {
+    static constexpr std::array<const char*, 11> kinds{"quiesce", "settle", "open", "close", "lookup", "direct", "behind", "chunk pool", "teardown", "unwind", "other sites"};
+    std::string text = kinds[static_cast<std::size_t>(site.kind)];
+    if (site.detail == nullptr) return text;
+    text += ' ';
+    text += site.line != 0 ? shortFunction(site.detail) : std::string_view(site.detail);
+    if (site.line != 0) text += ':' + std::to_string(site.line);
+    return text;
+}
+
 void CommandEncoder::SetDelayForTesting(std::function<void()> delay) {
     testDelay() = std::move(delay);
 }
 
-void BeforeCommandLookup(VkDevice device) {
+void BeforeCommandLookup(VkDevice device, std::source_location where) {
+    const auto site = CommandEncoder::WaitSite::At(CommandEncoder::Wait::Lookup, where);
     for (auto& state : slots()) {
         auto* encoder = state.encoder.load(std::memory_order_acquire);
         if (encoder == nullptr || state.device != device) continue;
-        if (encoder->OpenOnThisThread()) encoder->Quiesce();
-        else encoder->Settle();
+        if (encoder->OpenOnThisThread()) encoder->Quiesce(site);
+        else encoder->Settle(site);
     }
 }
 

@@ -62,7 +62,7 @@ public:
     // so a dispatch, fill or copy whose leading barrier asks for a subset of them may skip it
     // (the [barriers] line counts the merges). The call clears the mask (whatever the caller
     // records is assumed uncovered until it marks); a new batch starts uncovered.
-    VkCommandBuffer Commands(VkAccessFlags* coveredAccess = nullptr);
+    VkCommandBuffer Commands(VkAccessFlags* coveredAccess = nullptr, std::source_location where = std::source_location::current());
     // After a trailing barrier with ALL_COMMANDS as its destination stage: `access` is its
     // destination access mask.
     void MarkCovered(VkAccessFlags access);
@@ -73,9 +73,9 @@ public:
     static constexpr std::uint64_t RunAccessWritten = 1, RunAccessImage = 2;
     using RunAccess = std::array<std::uint64_t, 3>;
     static std::uint32_t PeekUnorderedDispatch();
-    VkCommandBuffer OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped);
+    VkCommandBuffer OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped, std::source_location where = std::source_location::current());
     void DeferDispatchBarrier(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses);
-    VkCommandBuffer RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess);
+    VkCommandBuffer RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess, std::source_location where = std::source_location::current());
     void OpenBatch() { ensureOpen(); }
     bool RunOpen() const { return open != nullptr && open->deferredDispatchQueue != 0; }
     void AfterRun(std::function<void(Recorder&)> work);
@@ -480,21 +480,22 @@ public:
     // there must not have a publish recorded for it (UnitShadow), see SyncThrough.
     static bool InCompletion();
     void Activate();
-    bool BeginEncoding();
-    void EndEncoding();
+    bool BeginEncoding(std::source_location where = std::source_location::current());
+    void EndEncoding(std::source_location where = std::source_location::current());
     bool Encodes() const { return encoder != nullptr; }
-    CommandEncoder::UnwindQuiesce UnwindGuard() const { return CommandEncoder::UnwindQuiesce(encoder.get()); }
+    CommandEncoder::UnwindQuiesce UnwindGuard(std::source_location where = std::source_location::current()) const { return CommandEncoder::UnwindQuiesce(encoder.get(), where); }
     class EncodingWindow {
     public:
-        explicit EncodingWindow(Recorder& recorder) : recorder(recorder), opened(recorder.BeginEncoding()) {}
+        explicit EncodingWindow(Recorder& recorder, std::source_location where = std::source_location::current()) : recorder(recorder), where(where), opened(recorder.BeginEncoding(where)) {}
         ~EncodingWindow() {
-            if (opened) recorder.EndEncoding();
+            if (opened) recorder.EndEncoding(where);
         }
         EncodingWindow(const EncodingWindow&) = delete;
         EncodingWindow& operator=(const EncodingWindow&) = delete;
 
     private:
         Recorder& recorder;
+        std::source_location where;
         bool opened;
     };
     CommandEncoder::Statistics EncoderCounts() const { return encoder != nullptr ? encoder->Counts() : CommandEncoder::Statistics{}; }
@@ -874,8 +875,8 @@ private:
     PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
     template<typename TFunction>
-    TFunction function(TFunction resolved, const char* name) const {
-        return resolved != nullptr ? resolved : context.Function<TFunction>(name);
+    TFunction function(TFunction resolved, const char* name, std::source_location where = std::source_location::current()) const {
+        return resolved != nullptr ? resolved : context.Function<TFunction>(name, where);
     }
     VkResult fenceStatus(VkFence fence) const { return function(getFenceStatus, "vkGetFenceStatus")(context.device, fence); }
     void recordBarrier(VkCommandBuffer commands, VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) const;
@@ -966,13 +967,13 @@ private:
     std::unique_ptr<Batch> open;
     VkCommandPool encoderPool = VK_NULL_HANDLE;
     std::unique_ptr<CommandEncoder> encoder;
-    void quiesce() {
+    void quiesce(std::source_location where = std::source_location::current()) {
         if (encoder == nullptr) return;
-        encoder->Quiesce();
+        encoder->Quiesce(where);
         if (open != nullptr) open->recording.Report();
     }
-    VkCommandBuffer live() {
-        quiesce();
+    VkCommandBuffer live(std::source_location where = std::source_location::current()) {
+        quiesce(where);
         return open->commands.Get(BatchCommands::Use::Quiesced);
     }
     std::vector<std::shared_ptr<void>> holdKept;

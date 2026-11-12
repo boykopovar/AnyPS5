@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <random>
+#include <source_location>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -575,6 +576,81 @@ void RawCallAfterLookupKeepsOrder() {
     Compare({{commands, {"draw 1 1 0 0", "draw 2 1 0 0", "draw 3 1 0 0", "draw 4 1 0 0"}}}, "a raw call after a lookup inside a window");
 }
 
+const CommandEncoder::SiteWaits* SiteOf(const std::vector<CommandEncoder::SiteWaits>& sites, const CommandEncoder::WaitSite& site) {
+    const auto wanted = CommandEncoder::Describe(site);
+    const CommandEncoder::SiteWaits* found = nullptr;
+    for (const auto& entry : sites) {
+        if (CommandEncoder::Describe(entry.site) != wanted) continue;
+        Require(found == nullptr, "the wait site " + wanted + " was reported twice");
+        found = &entry;
+    }
+    return found;
+}
+
+void RequireSite(const std::vector<CommandEncoder::SiteWaits>& sites, const CommandEncoder::WaitSite& site, std::uint64_t waits, std::uint64_t flushes) {
+    const auto* entry = SiteOf(sites, site);
+    const auto name = CommandEncoder::Describe(site);
+    Require(entry != nullptr, "no waits were attributed to " + name + "; sites:" + CommandEncoder::Report(sites, sites.size()));
+    Require(entry->waits == waits, name + " waited " + std::to_string(entry->waits) + " times, expected " + std::to_string(waits));
+    Require(entry->flushes == flushes, name + " flushed " + std::to_string(entry->flushes) + " chunks, expected " + std::to_string(flushes));
+    Require(entry->waitNs >= waits * 1'000'000ull, name + " reported " + std::to_string(entry->waitNs) + " ns for " + std::to_string(waits) + " waits on a 2 ms replay");
+}
+
+void WaitsAreAttributedToTheirCallSites() {
+    using Wait = CommandEncoder::Wait;
+    using Site = CommandEncoder::WaitSite;
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x53);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    const auto first = Handle<VkCommandBuffer>(0x1500);
+    const auto second = Handle<VkCommandBuffer>(0x1580);
+    const std::uint32_t word = 7;
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(2)); });
+    const auto repeated = std::source_location::current();
+    const auto once = std::source_location::current();
+    const auto lookup = std::source_location::current();
+    const auto opened = std::source_location::current();
+    const auto idle = std::source_location::current();
+    encoder.Open(first, RecordingOf(first));
+    for (int round = 0; round < 2; ++round) {
+        table.cmdDraw(first, 1, 1, 0, 0);
+        encoder.Quiesce(repeated);
+    }
+    table.cmdDraw(first, 2, 1, 0, 0);
+    encoder.Quiesce(once);
+    table.cmdDraw(first, 3, 1, 0, 0);
+    table.cmdUpdateBuffer(first, Handle<VkBuffer>(0x1600), 0, sizeof(word), &word);
+    table.cmdDraw(first, 4, 1, 0, 0);
+    AgcDriver::Graphics::BeforeCommandLookup(device, lookup);
+    table.cmdDraw(first, 5, 1, 0, 0);
+    encoder.Close();
+    table.cmdDraw(first, 6, 1, 0, 0);
+    encoder.Open(first, RecordingOf(first));
+    table.cmdDraw(first, 7, 1, 0, 0);
+    encoder.Close();
+    encoder.Open(second, RecordingOf(second), opened);
+    encoder.Close();
+    encoder.Quiesce(idle);
+    CommandEncoder::SetDelayForTesting({});
+    const auto sites = encoder.WaitsBySite();
+    RequireSite(sites, Site::At(Wait::Quiesce, repeated), 2, 2);
+    RequireSite(sites, Site::At(Wait::Quiesce, once), 1, 1);
+    RequireSite(sites, Site{Wait::Direct, "cmdUpdateBuffer", 0}, 1, 1);
+    RequireSite(sites, Site::At(Wait::Lookup, lookup), 1, 1);
+    RequireSite(sites, Site{Wait::Behind, "cmdDraw", 0}, 1, 0);
+    RequireSite(sites, Site::At(Wait::Open, opened), 1, 0);
+    Require(SiteOf(sites, Site::At(Wait::Quiesce, idle)) == nullptr, "a quiesce with nothing posted and nothing to flush was attributed a wait");
+    std::uint64_t waits = 0;
+    for (const auto& entry : sites) waits += entry.waits;
+    Require(waits == encoder.Counts().waits, "the waits by site do not add up to the encoder's waits");
+    Require(sites.size() == 6, "expected six wait sites, got:" + CommandEncoder::Report(sites, sites.size()));
+    const auto report = CommandEncoder::Report(sites, 2);
+    Require(report.find("4 more sites") != std::string::npos && report.find(CommandEncoder::Describe(sites.front().site)) != std::string::npos, "the site report does not name the costliest site and the rest:" + report);
+    Require(CommandEncoder::Describe(Site::At(Wait::Lookup, lookup)).find("WaitsAreAttributedToTheirCallSites:" + std::to_string(lookup.line())) != std::string::npos, "a call site is not described by its function and line: " + CommandEncoder::Describe(Site::At(Wait::Lookup, lookup)));
+}
+
 }
 
 bool Reports(const std::function<void()>& settle) {
@@ -887,6 +963,7 @@ int main() {
         ProducerAheadOfTheChunkPoolWaits();
         EncoderParksBetweenSpacedPosts();
         ReplayFailureNeedsNoAllocation();
+        WaitsAreAttributedToTheirCallSites();
         std::cout << "command encoder tests passed\n";
         return 0;
     } catch (const std::exception& error) {

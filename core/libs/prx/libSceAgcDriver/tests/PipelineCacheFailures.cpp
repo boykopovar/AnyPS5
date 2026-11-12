@@ -27,7 +27,7 @@ std::uint64_t& DeviceProcLookups() {
     return count;
 }
 
-void BeforeCommandLookup(VkDevice) {}
+void BeforeCommandLookup(VkDevice, std::source_location) {}
 
 }
 

@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_COMMANDENCODER_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +10,8 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <source_location>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -17,6 +20,22 @@ namespace AgcDriver::Graphics {
 class CommandEncoder {
 public:
     using Run = void (*)(const std::byte* payload, VkCommandBuffer commands, const DeviceFunctions& functions);
+    enum class Wait : std::uint8_t { Quiesce, Settle, Open, Close, Lookup, Direct, Behind, ChunkPool, Teardown, Unwind, OtherSites };
+    struct WaitSite {
+        Wait kind = Wait::OtherSites;
+        const char* detail = nullptr;
+        std::uint32_t line = 0;
+        static WaitSite At(Wait kind, std::source_location where) { return {kind, where.function_name(), where.line()}; }
+    };
+    struct SiteWaits {
+        WaitSite site;
+        std::uint64_t waits = 0;
+        std::uint64_t waitNs = 0;
+        std::uint64_t flushes = 0;
+    };
+    static constexpr std::size_t TrackedSites = 64;
+    static std::string Describe(const WaitSite& site);
+    static std::string Report(const std::vector<SiteWaits>& sites, std::size_t limit);
     class Recording {
     public:
         Recording() = default;
@@ -44,11 +63,13 @@ public:
     ~CommandEncoder();
     CommandEncoder(const CommandEncoder&) = delete;
     CommandEncoder& operator=(const CommandEncoder&) = delete;
-    void Open(VkCommandBuffer commands, Recording& recording);
-    void Close();
-    void Quiesce() noexcept;
-    bool Direct() noexcept;
-    void Settle() noexcept;
+    void Open(VkCommandBuffer commands, Recording& recording, std::source_location where = std::source_location::current());
+    void Close(std::source_location where = std::source_location::current());
+    void Quiesce(std::source_location where = std::source_location::current()) noexcept { Quiesce(WaitSite::At(Wait::Quiesce, where)); }
+    void Quiesce(WaitSite site) noexcept;
+    bool Direct(const char* command) noexcept;
+    void Settle(std::source_location where = std::source_location::current()) noexcept { Settle(WaitSite::At(Wait::Settle, where)); }
+    void Settle(WaitSite site) noexcept;
     [[noreturn]] static void RefuseForeignProducer();
     bool OpenOnThisThread() const { return target.load(std::memory_order_acquire) != VK_NULL_HANDLE && owner.load(std::memory_order_relaxed) == std::this_thread::get_id(); }
     bool Defers(VkCommandBuffer commands) const {
@@ -69,12 +90,13 @@ public:
         std::uint64_t parks = 0;
     };
     Statistics Counts() const;
+    std::vector<SiteWaits> WaitsBySite() const;
     static void SetDelayForTesting(std::function<void()> delay);
     class UnwindQuiesce {
     public:
-        explicit UnwindQuiesce(CommandEncoder* encoder) : encoder(encoder), exceptions(std::uncaught_exceptions()) {}
+        explicit UnwindQuiesce(CommandEncoder* encoder, std::source_location where = std::source_location::current()) : encoder(encoder), exceptions(std::uncaught_exceptions()), where(where) {}
         ~UnwindQuiesce() {
-            if (encoder != nullptr && std::uncaught_exceptions() > exceptions) encoder->Quiesce();
+            if (encoder != nullptr && std::uncaught_exceptions() > exceptions) encoder->Quiesce(WaitSite::At(Wait::Unwind, where));
         }
         UnwindQuiesce(const UnwindQuiesce&) = delete;
         UnwindQuiesce& operator=(const UnwindQuiesce&) = delete;
@@ -82,6 +104,7 @@ public:
     private:
         CommandEncoder* encoder;
         int exceptions;
+        std::source_location where;
     };
 
 private:
@@ -99,11 +122,12 @@ private:
     };
     CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot);
     static std::size_t claim();
-    void post() noexcept;
+    bool post() noexcept;
     void run();
     void execute(Chunk& chunk);
-    void await() noexcept;
+    void await(const WaitSite& site, bool flushed) noexcept;
     void awaitSpare() noexcept;
+    void note(const WaitSite& site, std::uint64_t ns, bool waited, bool flushed) noexcept;
     DeviceFunctions& table;
     DeviceFunctions real;
     VkDevice device = VK_NULL_HANDLE;
@@ -131,6 +155,9 @@ private:
     std::atomic<std::uint64_t> waitCount{0};
     std::atomic<std::uint64_t> waitNs{0};
     std::atomic<std::uint64_t> encodeNs{0};
+    mutable std::mutex siteMutex;
+    std::array<SiteWaits, TrackedSites> sites{};
+    std::size_t siteCount = 0;
 };
 
 }

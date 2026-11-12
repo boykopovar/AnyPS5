@@ -83,6 +83,7 @@ struct SyncSiteWaits {
 std::vector<SyncSiteWaits> syncSites;
 constexpr std::size_t NoSyncSite = static_cast<std::size_t>(-1);
 constexpr std::size_t SyncSiteLimit = 48;
+constexpr std::size_t ReportedEncoderSites = 16;
 thread_local std::size_t activeSyncSite = NoSyncSite;
 
 bool SyncSitesProfiled() {
@@ -1768,12 +1769,12 @@ bool Recorder::joinsRun(std::uint32_t queueKey, std::span<const void* const> own
     return std::none_of(owners.begin(), owners.end(), taken) && !runConflict(accesses);
 }
 
-VkCommandBuffer Recorder::RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess) {
+VkCommandBuffer Recorder::RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess, std::source_location where) {
     GuestMemory::AssertGpuLockHeld("Recorder::RunCommands");
     inRun = joinsRun(queueKey, std::span(&owner, 1), accesses);
     if (!inRun) return Commands(coveredAccess);
     if (coveredAccess != nullptr) *coveredAccess = 0;
-    return live();
+    return live(where);
 }
 
 void Recorder::AfterRun(std::function<void(Recorder&)> work) {
@@ -1788,12 +1789,12 @@ bool Recorder::CloseRunOwing(const void* owner) {
     return true;
 }
 
-VkCommandBuffer Recorder::OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped) {
+VkCommandBuffer Recorder::OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped, std::source_location where) {
     GuestMemory::AssertGpuLockHeld("Recorder::OverlapCommands");
     overlapped = joinsRun(queueKey, owners, accesses);
     if (!overlapped) return Commands(coveredAccess);
     if (coveredAccess != nullptr) *coveredAccess = 0;
-    return live();
+    return live(where);
 }
 
 void Recorder::DeferDispatchBarrier(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses) {
@@ -1842,7 +1843,7 @@ std::uint64_t Recorder::ReapsWithWork() {
     return holdCounters.reapsWithWork;
 }
 
-VkCommandBuffer Recorder::Commands(VkAccessFlags* coveredAccess) {
+VkCommandBuffer Recorder::Commands(VkAccessFlags* coveredAccess, std::source_location where) {
     ensureOpen();
     flushDeferredDispatch();
     // Work recorded after a draw's render pass or an inline store run must see their writes: the
@@ -1852,17 +1853,17 @@ VkCommandBuffer Recorder::Commands(VkAccessFlags* coveredAccess) {
     if (open->run.open && !LabelRunsPerBatch()) closeStoreRun();
     if (coveredAccess != nullptr) *coveredAccess = open->coveredAccess;
     open->coveredAccess = 0;
-    return live();
+    return live(where);
 }
 
-bool Recorder::BeginEncoding() {
+bool Recorder::BeginEncoding(std::source_location where) {
     if (encoder == nullptr || open == nullptr) return false;
-    encoder->Open(open->commands.Get(BatchCommands::Use::Handoff), open->recording);
+    encoder->Open(open->commands.Get(BatchCommands::Use::Handoff), open->recording, where);
     return true;
 }
 
-void Recorder::EndEncoding() {
-    if (encoder != nullptr) encoder->Close();
+void Recorder::EndEncoding(std::source_location where) {
+    if (encoder != nullptr) encoder->Close(where);
 }
 
 void Recorder::MarkCovered(VkAccessFlags access) {
@@ -4876,6 +4877,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
                     if (recorder.encoder != nullptr) {
                         const auto encoded = recorder.encoder->Counts();
                         AgcDriver::ProfilePrint_nid_no_patch("[recorder] encoder: %llu chunks, %llu commands, %.1f ms recording; %llu waits for it, %.1f ms\n", static_cast<unsigned long long>(encoded.posts), static_cast<unsigned long long>(encoded.commands), static_cast<double>(encoded.encodeNs) / 1e6, static_cast<unsigned long long>(encoded.waits), static_cast<double>(encoded.waitNs) / 1e6);
+                        AgcDriver::ProfilePrint_nid_no_patch("[recorder] encoder waits by site (waits/ms/flushes):%s\n", CommandEncoder::Report(recorder.encoder->WaitsBySite(), ReportedEncoderSites).c_str());
                     }
                     const auto reads = Recorder::ReadCounts();
                     AgcDriver::ProfilePrint_nid_no_patch("[recorder] in-place reads: %llu noted, %llu queries, hits by reader: dispatch element %llu, gpu copy %llu, address-based %llu, indirect %llu, storage upload %llu, copy source %llu, draw input %llu, address-based read-only %llu; %llu hits on signaled batches ignored\n", static_cast<unsigned long long>(reads.noted), static_cast<unsigned long long>(reads.queries), static_cast<unsigned long long>(reads.hits[0]), static_cast<unsigned long long>(reads.hits[1]), static_cast<unsigned long long>(reads.hits[2]), static_cast<unsigned long long>(reads.hits[3]), static_cast<unsigned long long>(reads.hits[4]), static_cast<unsigned long long>(reads.hits[5]), static_cast<unsigned long long>(reads.hits[6]), static_cast<unsigned long long>(reads.hits[7]), static_cast<unsigned long long>(reads.staleIgnored));
