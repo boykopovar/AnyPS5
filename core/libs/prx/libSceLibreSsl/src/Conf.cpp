@@ -1,3 +1,5 @@
+/* Derived from LibreSSL 2.5.4 (openbsd 2e2c612066aa993717528a0249c15c51128d61cb) src/lib/libcrypto/conf/conf_mod.c (conf_mod.c,v 1.27),
+ * conf/conf_def.c (conf_def.c,v 1.32) and bio/bss_file.c (bss_file.c,v 1.32) */
 /* $OpenBSD: conf_mod.c,v 1.27 2017/01/29 17:49:22 beck Exp $ */
 /* Written by Stephen Henson (steve@openssl.org) for the OpenSSL
  * project 2001.
