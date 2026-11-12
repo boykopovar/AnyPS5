@@ -3,6 +3,7 @@
 #include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -357,6 +358,9 @@ void TestLowLatencyCallsRejectBadArguments() {
     std::size_t standardSize = sizeSentinel;
     Require(sceAudioOut2ContextQueryMemory(&params, &standardSize) == 0);
     Require(size == 0x5b1c && standardSize == 0x10000);
+    errno = 73;
+    Require(sceAudioOut2ContextQueryMemory(&params, reinterpret_cast<std::size_t*>(0x10)) == static_cast<int>(0x80260502));
+    Require(errno == 73);
 
     const AudioOut2ContextHandle contextSentinel = 0x5A5A;
     AudioOut2ContextHandle context = contextSentinel;
