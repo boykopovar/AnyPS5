@@ -375,6 +375,8 @@ int APS5_VABI sceKernelMunmap(uint64_t vaddr, size_t len) {
  if (result == 0) {
   _releaseFlexible(static_cast<uintptr_t>(vaddr), len);
   ForgetLockedRange(static_cast<uintptr_t>(vaddr), static_cast<uintptr_t>(vaddr) + len);
+  std::lock_guard lock(g_rangeNameLock);
+  EraseRangeNames(static_cast<uintptr_t>(vaddr), static_cast<uintptr_t>(vaddr) + len);
  }
  return result;
 }

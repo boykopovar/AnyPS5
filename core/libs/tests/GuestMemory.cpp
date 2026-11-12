@@ -228,7 +228,12 @@ static void CheckVirtualRangeNames() {
     Require(std::strcmp(NameAt(mapping), "second") == 0);
     Require(sceKernelClearVirtualRangeName(mapping, length) == 0);
     Require(NameAt(mapping)[0] == '\0');
+    Require(sceKernelSetVirtualRangeName(mapping, length, "before munmap") == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), length) == 0);
+    void* again = mapping;
+    Require(sceKernelMapFlexibleMemory(&again, length, 3, 0x90) == 0 && again == mapping);
+    Require(NameAt(again)[0] == '\0');
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(again), length) == 0);
 }
 
 static void CheckAudioCoprocessorProtection() {
