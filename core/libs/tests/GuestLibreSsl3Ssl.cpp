@@ -248,7 +248,8 @@ struct VersionResult {
 };
 
 VersionResult ReadVersion(Asn1String* version) {
-    LibreSsl3X509CertInfo info{version};
+    LibreSsl3X509CertInfo info{};
+    info.version = version;
     LibreSsl3X509 certificate;
     std::memset(&certificate, 0xA5, sizeof(certificate));
     certificate.certInfo = &info;

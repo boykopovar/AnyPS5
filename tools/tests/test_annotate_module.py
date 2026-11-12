@@ -662,6 +662,8 @@ class InputProtectionTests(unittest.TestCase):
             self.assertFalse((root / "report.asm").exists())
 
     def test_cli_rejects_invalid_gnu_bloom_size_without_reports(self):
+        if annotate_module.gnu_objdump() is None:
+            self.skipTest("GNU binutils objdump (objdump or gobjdump) is required to run this test")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             module = root / "invalid.prx"

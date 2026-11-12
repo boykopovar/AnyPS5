@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -27,6 +28,13 @@ std::atomic_bool& NpGameIntentInitialized() {
 std::atomic_bool& AppLauncherInitialized() {
     static std::atomic_bool initialized{false};
     return initialized;
+}
+
+bool ReadGuestBytePreservingErrno_nid_no_patch(const char* source, char& value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(value));
+    errno = savedErrno;
+    return copied;
 }
 
 }
@@ -153,7 +161,15 @@ int APS5_VABI sceNpAppLauncherInitialize(const void* initParam) {
 int APS5_VABI sceNpAppLauncherLaunchApp(std::int32_t arg0, const char* arg2, const char* arg3) {
     (void)arg0;
     if (!AppLauncherInitialized()) return NpAppLauncherErrorNotInitialized;
-    if (arg2 == nullptr || *arg2 == '\0' || (arg3 != nullptr && std::memchr(arg3, '\0', 0x2001) == nullptr)) return NpAppLauncherErrorInvalidArgument;
+    char first = 0;
+    if (arg2 == nullptr || !ReadGuestBytePreservingErrno_nid_no_patch(arg2, first) || first == '\0') return NpAppLauncherErrorInvalidArgument;
+    if (arg3 != nullptr) {
+        std::string optionalArgument;
+        const int savedErrno = errno;
+        const int copyResult = CopyGuestString_nid_no_patch(arg3, 0x2001, optionalArgument);
+        errno = savedErrno;
+        if (copyResult != 0) return NpAppLauncherErrorInvalidArgument;
+    }
     return NpAppLauncherErrorNotInitialized;
 }
 

@@ -51,8 +51,9 @@ std::atomic_bool g_initialized{false};
 std::atomic_bool g_particularMode{false};
 
 bool SpecialHandle(int handle) {
+    if (handle < PAD_SPECIAL_HANDLE || handle >= PAD_SPECIAL_HANDLE + PAD_SPECIAL_HANDLE_COUNT) return false;
     const int slot = handle - PAD_SPECIAL_HANDLE;
-    return slot >= 0 && slot < PAD_SPECIAL_HANDLE_COUNT && g_specialUsers[slot] != 0;
+    return g_specialUsers[slot] != 0;
 }
 
 int SpecialHandleOf(int userId) {
@@ -63,8 +64,9 @@ int SpecialHandleOf(int userId) {
 }
 
 int PortOf(int handle) {
+    if (handle < PAD_HANDLE_BASE || handle >= PAD_HANDLE_BASE + PAD_MAX_CONTROLLERS) return -1;
     const int port = handle - PAD_HANDLE_BASE;
-    if (port < 0 || port >= PAD_MAX_CONTROLLERS || !g_everOpened[port]) return -1;
+    if (!g_everOpened[port]) return -1;
     return port;
 }
 
@@ -116,12 +118,9 @@ int OpenPortType(int handle) {
 }
 
 int PortForUser(int userId, int type, int index) {
-    if (index != 0) return -1;
-    if (type == PAD_PORT_TYPE_STANDARD) {
-        const int port = userId - 0x10000000;
-        if (port >= 0 && port < PAD_MAX_CONTROLLERS) return port;
-    }
-    return -1;
+    if (index != 0 || type != PAD_PORT_TYPE_STANDARD || userId < 0x10000000 ||
+        userId >= 0x10000000 + PAD_MAX_CONTROLLERS) return -1;
+    return userId - 0x10000000;
 }
 
 bool ValidPort(int userId, int type, int index) {
