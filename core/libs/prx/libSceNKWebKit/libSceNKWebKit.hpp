@@ -1,6 +1,7 @@
 #pragma once
 #include "prx/libSceNKWebKit/include/CredentialBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/HTTPHeaderFieldExports.hpp"
+#include "prx/libSceNKWebKit/include/GLContextExtensionsExports.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 
