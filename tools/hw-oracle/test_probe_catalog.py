@@ -1,4 +1,6 @@
 import copy
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -211,6 +213,12 @@ class ProbeRunTests(unittest.TestCase):
                     probe_catalog.run_probes([probe], self.digest, temporary, "rx-6750-xt")
             self.assertEqual(list((Path(temporary) / "rx-6750-xt").glob("*.json")), [])
 
+    def test_run_rejects_unsafe_device_labels_before_creating_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(ValueError, "device label must contain"):
+                probe_catalog.run_probes(self.catalog["probes"][:1], self.digest, temporary, "../gpu")
+            self.assertEqual(list(Path(temporary).iterdir()), [])
+
 
 class ProbeCoverageTests(unittest.TestCase):
     def setUp(self):
@@ -271,12 +279,46 @@ class ProbeCoverageTests(unittest.TestCase):
             self.assertEqual(result["status"], "invalid")
             self.assertTrue(result["detail"])
 
-    def test_run_rejects_unsafe_device_labels_before_creating_paths(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            with self.assertRaisesRegex(ValueError, "device label must contain"):
-                probe_catalog.run_probes(self.catalog["probes"][:1], self.digest, temporary, "../gpu")
-            self.assertEqual(list(Path(temporary).iterdir()), [])
 
+class ProbeCatalogCliTests(unittest.TestCase):
+    def test_list_and_generate_commands_run_without_a_gpu(self):
+        listing = io.StringIO()
+        with contextlib.redirect_stdout(listing):
+            result = probe_catalog.main(["list"])
+        self.assertEqual(result, 0)
+        self.assertIn("v-add-f32-edge-values", listing.getvalue())
+        with tempfile.TemporaryDirectory() as temporary:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = probe_catalog.main([
+                    "generate", "--output-dir", temporary,
+                    "--probe", "v-add-f32-edge-values",
+                ])
+            self.assertEqual(result, 0)
+            self.assertTrue((Path(temporary) / "v-add-f32-edge-values" / "body.s").is_file())
+
+    def test_coverage_cli_emits_json_for_missing_measurements(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = probe_catalog.main([
+                    "coverage", "--results-dir", temporary, "--device-label", "local-rdna2", "--json",
+                ])
+            report = json.loads(output.getvalue())
+            self.assertEqual(result, 1)
+            self.assertEqual(report["measured"], 0)
+            self.assertEqual(report["total"], 5)
+            self.assertTrue(all(item["status"] == "missing" for item in report["probes"]))
+
+    def test_cli_rejects_unknown_probes_without_running_them(self):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as exit:
+                probe_catalog.main([
+                    "generate", "--output-dir", "/tmp/unused-probe-catalog", "--probe", "unknown",
+                ])
+        self.assertEqual(exit.exception.code, 2)
+        self.assertIn("unknown probe id", stderr.getvalue())
 
 if __name__ == "__main__":
     unittest.main()
