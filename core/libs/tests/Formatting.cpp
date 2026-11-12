@@ -105,6 +105,28 @@ static void CheckCharacterScanLengths() {
     }
 }
 
+static void CheckPlainScanResults() {
+#ifndef _WIN32
+    struct Case {
+        const char* input;
+        const char* format;
+        int result;
+    };
+    const Case cases[]{{"8", "%*d%d%n", 0}, {"8 ", "%*d %d%n", 0}, {"ab", "%*s%d%n", 0}, {"0x", "%x%n", EOF}, {"0x", "%i%n", EOF}, {"5 6", "%2$d %1$d%n", 0}};
+    for (const auto scan : {sscanf_nid_postfix, ScanList}) {
+        for (const Case& test : cases) {
+            std::array<unsigned char, 8> first;
+            std::array<unsigned char, 8> second;
+            first.fill(0x55);
+            second.fill(0x55);
+            int count = -7;
+            Require(scan(test.input, test.format, first.data(), second.data(), &count) == test.result && count == -7);
+            Require(std::all_of(first.begin(), first.end(), [](unsigned char value) { return value == 0x55; }));
+        }
+    }
+#endif
+}
+
 static int APS5_VABI PrintList(const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
@@ -862,4 +884,4 @@ static void CheckLongDoubleHexFloat() {
     }
 }
 
-int main() { CheckPositionalUnknownConversion(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { CheckPositionalUnknownConversion(); CheckPlainScanResults(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }

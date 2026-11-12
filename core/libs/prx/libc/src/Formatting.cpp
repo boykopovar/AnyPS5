@@ -125,7 +125,11 @@ bool ScansInProcess(const char* format) {
         LibcDetail::RequireNoPositionalWideScan(format);
         return true;
     }
+#ifdef _WIN32
     return HasNarrowCharacterScan(format);
+#else
+    return true;
+#endif
 }
 
 const char* CutAtQuadScanDirective(const char* format, std::string& head) {
