@@ -1,5 +1,6 @@
 #include "prx/libSceNpTrophy/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cerrno>
 #include <cstdio>
@@ -211,6 +212,15 @@ int main() {
     Require(sceNpTrophyGetGameIcon(context, handle, icon, nullptr) == InvalidArgument, "null game icon size pointer");
     Require(sceNpTrophyGetGroupIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null group icon size pointer");
     Require(sceNpTrophyGetTrophyIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null trophy icon size pointer");
+    errno = 71;
+    Require(sceNpTrophyGetGameInfo(context, handle, reinterpret_cast<GameDetails*>(0x10), nullptr) == InvalidArgument, "unmapped game details refused");
+    Require(errno == 71, "errno preserved across unmapped game details");
+    errno = 71;
+    Require(sceNpTrophyGetGroupInfo(context, handle, 0, reinterpret_cast<GroupDetails*>(0x10), nullptr) == InvalidArgument, "unmapped group details refused");
+    Require(errno == 71, "errno preserved across unmapped group details");
+    errno = 71;
+    Require(sceNpTrophyGetTrophyInfo(context, handle, 0, reinterpret_cast<TrophyDetails*>(0x10), nullptr) == InvalidArgument, "unmapped trophy details refused");
+    Require(errno == 71, "errno preserved across unmapped trophy details");
     Require(sceNpTrophyGetGameInfo(context, handle, nullptr, nullptr) == InvalidArgument, "null game info pointers");
     Require(sceNpTrophyGetGroupInfo(context, handle, 0, nullptr, nullptr) == InvalidArgument, "null group info pointers");
     Require(sceNpTrophyGetTrophyInfo(context, handle, 0, nullptr, nullptr) == InvalidArgument, "null trophy info pointers");

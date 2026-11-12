@@ -81,6 +81,10 @@ static void CheckBadPointers(PthreadMutex* valid) {
         Require(scePthreadMutexGetyieldloops(static_cast<PthreadMutex*>(pointer), &count) == SCE_KERNEL_ERROR_EFAULT && count == -1);
         Require(scePthreadMutexGetspinloops(valid, static_cast<int*>(pointer)) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadMutexGetyieldloops(valid, static_cast<int*>(pointer)) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadMutexSetspinloops(static_cast<PthreadMutex*>(pointer), 5) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadMutexSetyieldloops(static_cast<PthreadMutex*>(pointer), 5) == SCE_KERNEL_ERROR_EFAULT);
+        Require(pthread_mutex_setspinloops_np_nid_postfix(static_cast<PthreadMutex*>(pointer), 5) == 14);
+        Require(pthread_mutex_setyieldloops_np_nid_postfix(static_cast<PthreadMutex*>(pointer), 5) == 14);
     }
 }
 

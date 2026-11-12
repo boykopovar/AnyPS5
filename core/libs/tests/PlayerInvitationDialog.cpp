@@ -2,6 +2,7 @@
 #include "prx/libSceCommonDialog/include/Api.hpp"
 #include "prx/libSceCommonDialog/include/DialogUse.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -48,11 +49,18 @@ int main() {
 
     ScePlayerInvitationDialogParam param{};
     expect_nid_no_patch(scePlayerInvitationDialogOpen(nullptr), argNull);
+    errno = 71;
+    expect_nid_no_patch(scePlayerInvitationDialogOpen(reinterpret_cast<const ScePlayerInvitationDialogParam*>(0x10)), argNull);
+    expect_nid_no_patch(errno, 71);
     expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Initialized));
     expect_nid_no_patch(scePlayerInvitationDialogOpen(&param), 0);
     expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Running));
     expect_nid_no_patch(scePlayerInvitationDialogGetResult(&result), notFinished);
     expect_nid_no_patch(scePlayerInvitationDialogUpdateStatus(), static_cast<std::int32_t>(Finished));
+    errno = 71;
+    expect_nid_no_patch(scePlayerInvitationDialogGetResult(reinterpret_cast<ScePlayerInvitationDialogResult*>(0x10)), argNull);
+    expect_nid_no_patch(errno, 71);
+    expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Finished));
     std::memset(&result, 0xFF, sizeof(result));
     expect_nid_no_patch(scePlayerInvitationDialogGetResult(&result), 0);
     expect_nid_no_patch(result.errorCode, 0);

@@ -1,6 +1,7 @@
 #include "prx/libScePlayGo/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
@@ -113,11 +114,13 @@ static int CheckNoPlayGoFile(const char* root) {
     Require(scePlayGoSetInstallSpeed2(0, 2) == notInitialized);
     Require(scePlayGoInitialize(&init) == 0);
     Require(scePlayGoOpen(nullptr, nullptr) == badPointer);
+    Require(scePlayGoOpen(reinterpret_cast<int*>(0x10), nullptr) == badPointer);
     Require(scePlayGoOpen(&handle, nullptr) == 0);
 
     std::uint64_t mask = 0;
     Require(scePlayGoGetLanguageMask(handle + 1, &mask) == badHandle);
     Require(scePlayGoGetLanguageMask(handle, nullptr) == badPointer);
+    Require(scePlayGoGetLanguageMask(handle, reinterpret_cast<std::uint64_t*>(0x10)) == badPointer);
     Require(scePlayGoGetLanguageMask(handle, &mask) == 0 && mask == ~0ull);
     Require(scePlayGoSetLanguageMask(handle + 1, 0x5) == badHandle);
     Require(scePlayGoGetLanguageMask(handle, &mask) == 0 && mask == ~0ull);
@@ -131,6 +134,7 @@ static int CheckNoPlayGoFile(const char* root) {
         PlayGoOptionalChunk option{};
         Require(getOptionalChunk(handle + 1, 0, &option) == badHandle);
         Require(getOptionalChunk(handle, 0, nullptr) == badPointer);
+        for (const std::uint32_t type : {0u, 1u, 2u}) Require(getOptionalChunk(handle, type, reinterpret_cast<PlayGoOptionalChunk*>(0x10)) == badPointer);
         Require(getOptionalChunk(handle, 0, &option) == 0 && option.bitmask == ~0ull);
         Require(getOptionalChunk(handle, 1, &option) == 0 && option.bitmask == 0x1F);
         Require(getOptionalChunk(handle, 2, &option) == 0 && option.bitmask == ~0ull);
@@ -158,6 +162,7 @@ static int CheckNoPlayGoFile(const char* root) {
 
     std::uint32_t entries = 1;
     Require(scePlayGoGetToDoList(handle, todo, 2, &entries) == 0 && entries == 0);
+    Require(scePlayGoGetToDoList(handle, todo, 2, reinterpret_cast<std::uint32_t*>(0x10)) == badPointer);
     const std::uint16_t chunk = 0;
     std::int8_t locus = 0;
     Require(scePlayGoGetLocus(handle, &chunk, 0, &locus) == badSize);
@@ -168,6 +173,7 @@ static int CheckNoPlayGoFile(const char* root) {
     Require(scePlayGoGetChunkId(handle, &invalidListOutput, 1001, &invalidListCount) == badSize);
     Require(invalidListCount == 42);
     Require(scePlayGoGetLocus(handle, &chunk, 1, &locus) == 0 && locus == 3);
+    Require(scePlayGoGetLocus(handle, &chunk, 1, reinterpret_cast<std::int8_t*>(0x10)) == badPointer);
     const std::uint16_t undeclared[2] = {1, 10};
     std::int8_t loci[2] = {0, 0};
     RequireMissingChunkMetadata([&] { scePlayGoGetLocus(handle, undeclared, 2, loci); });
@@ -175,9 +181,14 @@ static int CheckNoPlayGoFile(const char* root) {
     Require(scePlayGoGetLocus(handle, onlyDeclared, 2, loci) == 0 && loci[0] == 3 && loci[1] == 3);
     std::uint32_t chunkCount = 0;
     Require(scePlayGoGetChunkId(handle, nullptr, 0, &chunkCount) == 0 && chunkCount == 1);
+    Require(scePlayGoGetChunkId(handle, nullptr, 0, reinterpret_cast<std::uint32_t*>(0x10)) == badPointer);
+    Require(scePlayGoGetInstallChunkId(handle, nullptr, 0, reinterpret_cast<std::uint32_t*>(0x10)) == badPointer);
+    std::uint32_t unwritableListCount = 42;
+    Require(scePlayGoGetChunkId(handle, reinterpret_cast<std::uint16_t*>(0x10), 1, &unwritableListCount) == badPointer && unwritableListCount == 42);
     PlayGoProgress progress{};
     Require(scePlayGoGetProgress(handle + 1, &chunk, 1, &progress) == badHandle);
     Require(scePlayGoGetProgress(handle, &chunk, 1, nullptr) == badPointer);
+    Require(scePlayGoGetProgress(handle, &chunk, 1, reinterpret_cast<PlayGoProgress*>(0x10)) == badPointer);
     Require(scePlayGoGetProgress(handle, nullptr, 1, &progress) == badPointer);
     Require(scePlayGoGetProgress(handle, &chunk, 0, &progress) == badSize);
     Require(scePlayGoGetProgress(handle, &chunk, 1, &progress) == 0 && progress.progress_size == 1 && progress.total_size == 1);
@@ -186,6 +197,7 @@ static int CheckNoPlayGoFile(const char* root) {
     std::int32_t speed = 0;
     Require(scePlayGoGetInstallSpeed(handle + 1, &speed) == badHandle);
     Require(scePlayGoGetInstallSpeed(handle, nullptr) == badPointer);
+    Require(scePlayGoGetInstallSpeed(handle, reinterpret_cast<std::int32_t*>(0x10)) == badPointer);
     Require(scePlayGoGetInstallSpeed(handle, &speed) == 0 && speed == 2);
     Require(scePlayGoSetInstallSpeed2(1, 1) == invalidArgument);
     Require(scePlayGoSetInstallSpeed2(-1, 3) == invalidArgument);
@@ -206,6 +218,9 @@ static int CheckNoPlayGoFile(const char* root) {
     Require(scePlayGoRequestOptionalChunk(handle + 1, 0, &request) == badHandle);
     Require(scePlayGoRequestOptionalChunk(handle + 1, 3, nullptr) == badHandle);
     Require(scePlayGoRequestOptionalChunk(handle, 0, nullptr) == badPointer);
+    errno = 71;
+    Require(scePlayGoRequestOptionalChunk(handle, 0, reinterpret_cast<const PlayGoOptionalChunk*>(0x10)) == badPointer);
+    Require(errno == 71);
     Require(scePlayGoRequestOptionalChunk(handle, 3, nullptr) == badPointer);
     Require(scePlayGoRequestOptionalChunk(handle, 3, &request) == badOptionalType);
     Require(scePlayGoRequestOptionalChunk(handle, 0xFFFFFFFF, &request) == badOptionalType);
@@ -221,6 +236,7 @@ static int CheckNoPlayGoFile(const char* root) {
     std::uint32_t disc = 7;
     Require(scePlayGoGetRequiredDisc(handle + 1, 0, &request, &disc) == badHandle && disc == 7);
     Require(scePlayGoGetRequiredDisc(handle, 0, &request, nullptr) == badPointer);
+    Require(scePlayGoGetRequiredDisc(handle, 0, &request, reinterpret_cast<std::uint32_t*>(0x10)) == badPointer);
     Require(scePlayGoGetRequiredDisc(handle, 0, nullptr, &disc) == badPointer && disc == 7);
     Require(scePlayGoGetRequiredDisc(handle, 3, nullptr, &disc) == badPointer && disc == 7);
     Require(scePlayGoGetRequiredDisc(handle, 3, &request, &disc) == badOptionalType && disc == 7);
@@ -233,6 +249,7 @@ static int CheckNoPlayGoFile(const char* root) {
     int64_t eta = -1;
     Require(scePlayGoGetEta(handle + 1, &chunk, 1, &eta) == badHandle);
     Require(scePlayGoGetEta(handle, &chunk, 1, nullptr) == badPointer);
+    Require(scePlayGoGetEta(handle, &chunk, 1, reinterpret_cast<std::int64_t*>(0x10)) == badPointer);
     Require(scePlayGoGetEta(handle, nullptr, 1, &eta) == badPointer);
     Require(scePlayGoGetEta(handle, &chunk, 0, &eta) == badSize);
     Require(scePlayGoGetEta(handle, &chunk, 1, &eta) == 0 && eta == 0);
@@ -412,11 +429,33 @@ static int CheckUnknownUnlistedChunkAnswer(const char* root) {
     return 0;
 }
 
+static int CheckChunkdefsRejected(const char* root) {
+    std::filesystem::current_path(root);
+    PlayGoInitParams init{};
+    int handle = -1;
+    Require(scePlayGoInitialize(&init) == 0);
+    Require(scePlayGoOpen(&handle, nullptr) == 0);
+    const uint16_t chunk = 1;
+    int8_t locus = 0;
+    bool threw = false;
+    try {
+        scePlayGoGetLocus(handle, &chunk, 1, &locus);
+    } catch (const std::exception& error) {
+        threw = std::string_view(error.what()).find("playgo-chunkdefs.xml") != std::string_view::npos;
+    }
+    Require(threw);
+    Require(scePlayGoClose(handle) == 0);
+    return 0;
+}
+
 static void RunLayout(const char* self, const char* mode, std::initializer_list<std::pair<const char*, std::string>> files) {
     const auto root = std::filesystem::temp_directory_path() / ("guest_playgo_" + std::to_string(std::random_device{}()));
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root / "app0" / "sce_sys");
-    for (const auto& [name, content] : files) std::ofstream(root / "app0" / "sce_sys" / name, std::ios::binary).write(content.data(), static_cast<std::streamsize>(content.size()));
+    for (const auto& [name, content] : files) {
+        const auto directory = std::string_view(name) == "playgo-chunkdefs.xml" ? root / "app0" : root / "app0" / "sce_sys";
+        std::ofstream(directory / name, std::ios::binary).write(content.data(), static_cast<std::streamsize>(content.size()));
+    }
     const std::string arguments = "\"" + std::string(self) + "\" " + mode + " \"" + root.string() + "\"";
 #ifdef _WIN32
     const std::string command = "\"" + arguments + "\"";
@@ -456,6 +495,7 @@ int main(int argc, char** argv) {
         if (mode == "--ficm-only") return CheckRejectedLayout(argv[2], "playgo-ficm.dat");
         if (mode == "--hash-table-only") return CheckRejectedLayout(argv[2], "playgo-hash-table.dat");
         if (mode == "--invalid-chunk-table") return CheckRejectedLayout(argv[2], "playgo-chunk.dat");
+        if (mode == "--chunkdefs-range" || mode == "--chunkdefs-overflow") return CheckChunkdefsRejected(argv[2]);
     }
     RunLayout(argv[0], "--no-file", {});
     RunLayout(argv[0], "--no-file-installed", {});
@@ -501,5 +541,7 @@ int main(int argc, char** argv) {
     RunLayout(argv[0], "--hash-table-only", {{"playgo-hash-table.dat", "x"}});
     RunLayout(argv[0], "--invalid-chunk-table", {{"playgo-chunk.dat", "not a chunk table"}});
     RunLayout(argv[0], "--invalid-chunk-table", {{"playgo-chunk.dat", ChunkTableFile("plgo", 0)}});
+    RunLayout(argv[0], "--chunkdefs-range", {{"playgo-chunkdefs.xml", "<chunkdefs><chunk id=\"65537\"/></chunkdefs>"}});
+    RunLayout(argv[0], "--chunkdefs-overflow", {{"playgo-chunkdefs.xml", "<chunkdefs><chunk id=\"4294967296\"/></chunkdefs>"}});
     return 0;
 }

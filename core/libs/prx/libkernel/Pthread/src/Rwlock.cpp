@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 static constexpr int SCE_OK = 0;
 static constexpr int SCE_KERNEL_ERROR_EPERM = 0x80020001;
@@ -19,6 +20,8 @@ static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = 0x8002003C;
 static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
 static constexpr int FIRST_STORED_RWLOCK_TYPE = 1;
 static constexpr int LAST_STORED_RWLOCK_TYPE = 2;
+static constexpr int POSIX_EFAULT = 14;
+static constexpr std::size_t MAX_RWLOCK_NAME = 1024;
 static constexpr int POSIX_EINVAL = 22;
 static constexpr int POSIX_EAGAIN = 35;
 
@@ -209,13 +212,17 @@ int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type) {
 
 int APS5_VABI pthread_rwlock_setname_np_nid_postfix(PthreadRwlock* rwlock, const char* name) {
     if (!rwlock) throw std::runtime_error("pthread_rwlock_setname_np: null rwlock");
+    PthreadRwlock probe = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&probe, rwlock, sizeof(probe))) return POSIX_EFAULT;
     PthreadRwlock current = std::atomic_ref<PthreadRwlock>(*rwlock).load(std::memory_order_acquire);
     if (current == nullptr) throw std::runtime_error("pthread_rwlock_setname_np: statically initialized rwlock");
     if (current == DestroyedRwlock) throw std::runtime_error("pthread_rwlock_setname_np: destroyed rwlock");
     std::lock_guard state(current->_state);
     if (current->_named) return POSIX_EAGAIN;
     if (!name) return POSIX_EINVAL;
-    current->_name = name;
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, MAX_RWLOCK_NAME, copy)) return error;
+    current->_name = std::move(copy);
     current->_named = true;
     return SCE_OK;
 }

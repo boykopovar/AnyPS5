@@ -691,6 +691,8 @@ int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name) {
     if (eq == nullptr || name == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
+    std::string nameCopy;
+    if (const int error = CopyGuestString_nid_no_patch(name, 32, nameCopy)) return SceKernelError(error);
     std::unique_lock lock(g_equeueMutex);
     if (g_nextEqueueId > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
         throw std::runtime_error("equeue handle space exhausted");
@@ -703,9 +705,13 @@ int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name) {
     }
     const auto handle = static_cast<KernelEqueue>((static_cast<std::uint64_t>(g_nextEqueueId++) << 32) | static_cast<std::uint32_t>(descriptor));
     auto owner = std::make_shared<KernelEqueuePrivate>(handle);
-    owner->SetName(std::string(name));
+    owner->SetName(std::move(nameCopy));
     RegisterKqueueDescriptor(descriptor, std::move(owner));
-    *eq = handle;
+    lock.unlock();
+    if (!GuestCopyOut_nid_no_patch(eq, &handle, sizeof(handle))) {
+        sceKernelDeleteEqueue(handle);
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return EQUEUE_OK;
 }
 

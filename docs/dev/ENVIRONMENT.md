@@ -573,6 +573,12 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 |------|------|--------|---------|-------------|
 | `APS5_TRACE_AJM` | presence | `core/libs/prx/libSceAjm.native/src/Ajm.cpp` |  | logs every job the title submits and what the library writes back |
 
+### libSceAudioIn
+
+| Name | Kind | Source | Default | Description |
+|------|------|--------|---------|-------------|
+| `ANYPS5_AUDIO_IN_DEVICE` | string | `core/libs/prx/libSceAudioIn/Export.cpp` | default | exact SDL capture-device name; unset, empty or `default` selects SDL's default; missing, duplicate or unopenable selected devices make AudioIn open return `0x8026010F`; read each time a port opens |
+
 ### libSceAudioOut
 
 | Name | Kind | Source | Default | Description |
@@ -629,7 +635,9 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_AUDIO_IN_MUTE_ON_FOCUS_LOSS` | string | `core/libs/prx/libScePad/src/HostVolumeState.cpp` | 0 | `1` returns silence to the guest while the display window has no focus and resumes input when it returns; SDL capture stays open, and queued samples are cleared across focus changes; `0` or unset leaves input unchanged; any other value, including an empty one, stops the game with an error naming the variable |
 | `ANYPS5_RUMBLE` | integer | `core/libs/prx/libScePad/include/PadRumbleIntensity.hpp` | 100 | host controller vibration strength as a whole percentage from 0 to 100, read once when the pad input starts and again by the audio-out controller sound card path; 100 or unset leaves vibration exactly as the title asks, 0 turns motor rumble, impulse-trigger rumble, controller-sound-card haptics and Bluetooth DualSense haptics off, in between scales the motor amplitudes with rounding and the haptic samples linearly; DualSense adaptive trigger effects are not scaled; any other value (empty, signed, fractional, above 100) stops the game with an error naming the variable |
+| `ANYPS5_RUMBLE_ON_FOCUS_LOSS` | string | `core/libs/prx/libScePad/include/PadRumbleIntensity.hpp` | 1 | `1` stops the motor rumble and drops new pulses while the display window has no focus, sending one zero-intensity request when focus is lost and resuming with the next pulse when it returns; `0` keeps rumble on without focus; any other value, including an empty one, stops the game at start with an error naming the variable; the light bar and the pad state are not changed |
 | `ANYPS5_PAD_IDENTIFY` | string | `core/libs/prx/libScePad/include/PadIdentify.hpp` | off | which controller-identification pulse to send when a controller is bound to a player slot: `off` sends none, `connect` sends the pattern once per binding (player N gets N short pulses), `always` also repeats it every 30 seconds while the title is not rumbling; the pulse is scaled by `ANYPS5_RUMBLE`, never overrides a title's rumble, and any other value (empty, uppercase, a list) stops the game with an error naming the variable |
 | `APS5_PAD_INPUT_FILE` | string | `core/libs/prx/libScePad/src/PadState.cpp` |  | path of the file polled for injected pad button and stick commands |
 
@@ -666,8 +674,10 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
 | `ANYPS5_DISPLAY_INDEX` | integer | `core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp` | 0 | SDL display index used for the initial window size and centered position; invalid or unavailable indices fail window creation; selection does not guarantee the window will not activate |
-| `ANYPS5_FULLSCREEN` | presence | `core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp` |  | opens the display window fullscreen at the desktop resolution when set to a non-empty value other than 0; F11 still switches back |
+| `ANYPS5_FULLSCREEN` | string | `core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp` | windowed | `1` or `borderless` opens the display window fullscreen at the desktop resolution, `0` or `windowed` (or empty) keeps it windowed; any other non-empty value opens it fullscreen as before and prints a warning naming the value; F11 switches in either case |
 | `ANYPS5_INPUT_CONFIG` | string | `core/libs/prx/libSceVideoOut/src/InputMapping.cpp` |  | path of the input mapping file that binds host keys and mouse to guest pad actions |
+| `ANYPS5_AUDIO_DEVICE` | string | `core/libs/prx/libSceAudioOut/src/AudioOut.cpp` |  | the exact name of a host output device to play the title's audio on; a name that is not listed is refused with the list of output devices in the log, and the default device is used |
+| `ANYPS5_TIME_FORMAT` | string | `core/libs/prx/libc/src/Time.cpp` | `c` | `host` takes the date and time strings of `%c`, `%x` and `%X` from the host's `LC_TIME` locale (glibc only); any other value keeps the C locale strings |
 | `ANYPS5_PAD_PORT0_STATE` | string | `core/libs/prx/libSceVideoOut/include/Port0Presence.hpp` | default | `default` keeps port 0 connected and user 0 logged in as before; `controller` makes port 0 and user 0 follow the controller bound to slot 0, a change committed after 500 ms, and a withdrawn port 0 reads zeroed and disconnected; any other value, including an empty one, stops the game when video output starts with an error naming the variable |
 | `ANYPS5_REQUIRE_DISPLAY` | presence | `core/libs/prx/libSceVideoOut/tests/Flip.cpp` |  | makes video-out tests fail instead of skipping when no display or Vulkan device is available |
 | `ANYPS5_VIDEO_OUT_MAX_HEIGHT` | integer | `core/libs/prx/libSceVideoOut/src/Output.cpp` |  | host display height hint: when set to a positive integer below 2160, an unknown output mode is reported as unsupported so the title can fall back to the host resolution; a malformed or zero value makes output-mode queries throw; buffer attributes are left untouched |
@@ -693,7 +703,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_HANG_DUMP_SECS` | integer | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | on Windows, whole seconds after which a watchdog dumps all threads and aborts; 0 or a value that is not a decimal number is ignored |
 | `APS5_HEAP_CACHE_MIB` | integer | `core/libs/prx/libc/src/GuestHeap.cpp` | 4096 | size in MiB of the cache of freed large blocks before the oldest are decommitted |
 | `APS5_HELPER_AFFINITY_MASK` | integer | `core/libs/prx/libc/include/CpuTopology.hpp` |  | hex core mask that helper threads (deferred release, mirror refresh) are pinned to |
-| `APS5_LOG_TIMESTAMPS` | presence | `core/libs/prx/libc/include/general/LogMacros.hpp` |  | prefixes each log line with `[+S.UUUUUU s]`, the seconds with microsecond digits since the clock started at the first stamped line; on Windows each library has its own clock, started at that library's first stamped line |
+| `APS5_LOG_TIMESTAMPS` | presence | `core/libs/prx/libc/include/general/LogMacros.hpp` |  | prefixes each log line with `[+S.UUUUUU s]`, the seconds with microsecond digits since the clock started at the first stamped line |
 | `APS5_NO_PROCMAP_QUERY` | presence | `core/libs/prx/libc/include/specifics/linux/HostMapping.hpp` |  | skips the /proc/self/maps PROCMAP_QUERY ioctl and scans the maps file instead |
 | `APS5_NO_SSE4A_EMULATION` | presence | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | disables emulation of AMD-only SSE4a instructions, making such a fault fatal |
 | `APS5_NO_WRITE_WATCH` | presence | `core/libs/prx/libc/src/GuestArena.cpp` |  | disables write watching so guest buffers are fully re-read on every use |
@@ -732,4 +742,3 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_TRACE_TIMERS` | presence | `core/libs/prx/libkernel/Time/Time.cpp` |  | on Windows, runs a timed-wait selftest at startup and prints mean, p50 and max latencies |
 | `APS5_TRACE_USLEEP` | presence | `core/libs/prx/libkernel/Time/Time.cpp` |  | reports every 2000 `sceKernelUsleep` calls the call sites that sleep most, including calls through `sceNetUsleep` and the `APS5_TRACE_TIMERS` measurement on Windows; guest `usleep` calls are not counted |
 | `APS5_TRACE_WAITS` | presence | `core/libs/prx/libkernel/Time/Time.cpp` |  | aggregates blocking waits per guest call site and prints the longest-waiting sites every 3 s |
-
