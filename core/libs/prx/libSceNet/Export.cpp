@@ -2320,7 +2320,10 @@ static int fill_sock_info(int s, NetSockInfo& record) {
 static bool CopySockInfo(void* output, std::size_t index, const void* record, std::size_t recordSize) {
     const auto start = reinterpret_cast<std::uintptr_t>(output);
     if (index > (UINTPTR_MAX - start) / recordSize) return false;
-    return GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(start + index * recordSize), record, recordSize);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(start + index * recordSize), record, recordSize);
+    errno = savedErrno;
+    return copied;
 }
 
 int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
