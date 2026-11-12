@@ -61,6 +61,7 @@ static void TestRequestArguments(int notInitialized, int invalidArgument, int in
     Require(sceGameUpdateCheck(requestId, &param, &result) == notInitialized);
     Require(sceGameUpdateAbortRequest(requestId) == notInitialized);
     Require(sceGameUpdateDeleteRequest(requestId) == notInitialized);
+    Require(sceGameUpdateCheckTitle() == notInitialized);
 
     Require(sceGameUpdateInitialize() == 0);
     Require(sceGameUpdateCheck(requestId, &param, &result) == notFound);

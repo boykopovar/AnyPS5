@@ -197,7 +197,12 @@ int APS5_VABI sceGameUpdateTerminate(void) {
 }
 
 int APS5_VABI sceGameUpdateCheckTitle() {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) {
+        return SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED;
+    }
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }
