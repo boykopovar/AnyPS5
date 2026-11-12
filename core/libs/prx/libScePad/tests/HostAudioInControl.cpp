@@ -51,6 +51,33 @@ static void TestFocusMuteState() {
     HostAudioInConfigure_nid_no_patch(nullptr);
 }
 
+static void TestAudioMuteTracksFocusIndependentlyFromHostVolume() {
+    HostVolumeConfigure_nid_no_patch("100", "1");
+    HostAudioInConfigure_nid_no_patch("0");
+    const std::uint64_t initial = HostAudioInMuteState_nid_no_patch();
+
+    HostVolumeApply_nid_no_patch(HostVolumeCommand::ToggleMute, nullptr);
+    Require(HostAudioInMuteState_nid_no_patch() == initial);
+
+    HostAudioInConfigure_nid_no_patch("1");
+    const std::uint64_t enabled = HostAudioInMuteState_nid_no_patch();
+    Require((enabled & 1u) == 0 && (enabled >> 1) == (initial >> 1));
+
+    HostVolumeFocus_nid_no_patch(false, nullptr);
+    const std::uint64_t unfocused = HostAudioInMuteState_nid_no_patch();
+    Require((unfocused & 1u) != 0 && (unfocused >> 1) == (enabled >> 1) + 1);
+
+    HostVolumeApply_nid_no_patch(HostVolumeCommand::ToggleMute, nullptr);
+    Require(HostAudioInMuteState_nid_no_patch() == unfocused);
+
+    HostVolumeFocus_nid_no_patch(true, nullptr);
+    const std::uint64_t focused = HostAudioInMuteState_nid_no_patch();
+    Require((focused & 1u) == 0 && (focused >> 1) == (unfocused >> 1) + 1);
+
+    HostAudioInConfigure_nid_no_patch(nullptr);
+    HostVolumeConfigure_nid_no_patch(nullptr, nullptr);
+}
+
 static void TestCapturedSampleFilter() {
     std::array<std::uint8_t, 4> samples{0x11, 0x22, 0x33, 0x44};
     Require(audioin::detail::filterCapturedSamples(samples.data(), samples.size(), 2, false) == 2);
@@ -127,6 +154,7 @@ static void TestCaptureMuteGenerations() {
 int main() {
     TestFocusMuteState();
     TestCapturedSampleFilter();
+    TestAudioMuteTracksFocusIndependentlyFromHostVolume();
     TestCaptureMuteGenerations();
     TestDiscardQueuedAudioBelowThreshold();
     TestDiscardQueuedAudioInChunks();
