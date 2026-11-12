@@ -906,6 +906,11 @@ std::uint32_t lastUnixInode = 0;
 bool PairPeerGone(const Socket& socket) {
     return socket.family == GuestUnix && socket.peer.expired();
 }
+bool RecordOverSendBuffer(Socket& socket, std::uint64_t length) {
+    if (socket.family != GuestUnix || (socket.type != 2 && socket.type != 5) || socket.peer.expired()) return false;
+    std::lock_guard lock(socket.modeMutex);
+    return !socket.sendShut && length > static_cast<std::uint64_t>(GuestSockets::SendBufferSize(socket.options, socket.family, socket.type));
+}
 int SetNonBlocking(Socket& socket) {
 #ifdef _WIN32
     unsigned long value = 1;
@@ -1787,6 +1792,7 @@ std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std:
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
     if (SendBeforeConnect(*socket)) return Fail(57);
+    if (RecordOverSendBuffer(*socket, length)) return Fail(40);
     if (!buffer && length) return Fail(14);
 #ifdef _WIN32
     if (socket->type == 1 && PairPeerGone(*socket)) return Fail(32);
@@ -2010,6 +2016,7 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
     if (!address && SendBeforeConnect(*socket)) return Fail(57);
+    if (RecordOverSendBuffer(*socket, length)) return Fail(40);
     if (!buffer && length) return Fail(14);
     bool sendShut = false;
     if (address && socket->family == GuestUnix) {

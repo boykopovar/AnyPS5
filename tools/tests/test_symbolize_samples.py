@@ -896,6 +896,40 @@ class SymbolizeSamplesTests(unittest.TestCase):
                 getattr(later, category)[key] = 5
                 symbolize_samples.validate_window(later, earlier)
 
+    def test_strict_window_rejects_ambiguous_module_records(self):
+        earlier, later = self.root / "earlier.txt", self.root / "later.txt"
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        for frames in ("libSceAgcDriver.prx+0x1011 {count}\n",
+                       "libSceAgcDriver.prx 0x1011 {count} {count}\n"):
+            for timestamp in (TIMESTAMP, TIMESTAMP + 1):
+                with self.subTest(frames=frames, timestamp=timestamp):
+                    earlier.write_text(record * 2 + frames.format(count=4), encoding="utf-8")
+                    later.write_text(record + f"# module LIBSCEAGCDRIVER.PRX {SIZE_OF_IMAGE:#x} {timestamp:#x}\n" +
+                                     frames.format(count=7), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "libSceAgcDriver.prx:.*multiple sampled modules"):
+                        symbolize_samples.validate_window(symbolize_samples.load(later),
+                                                          symbolize_samples.load(earlier))
+
+    def test_strict_window_ambiguous_modules_preserve_files(self):
+        earlier, later, output = [self.root / name for name in ("earlier.txt", "later.txt", "output.txt")]
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        earlier.write_text(record * 2 + "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
+        later.write_text(record * 2 + "libSceAgcDriver.prx+0x1011 7\n", encoding="utf-8")
+        output.write_bytes(b"previous output\n")
+        original = {path: path.read_bytes() for path in (earlier, later, output)}
+        for flags in ([], ["--json"]):
+            with self.subTest(flags=flags):
+                result = subprocess.run([sys.executable, symbolize_samples.__file__, str(later),
+                                         "--libs", str(self.libs), "--since", str(earlier), "--out", str(output),
+                                         "--require-matching-window", *flags], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("libSceAgcDriver.prx", result.stderr)
+                self.assertIn("multiple sampled modules", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                for path, content in original.items():
+                    self.assertEqual(path.read_bytes(), content)
+
     def test_strict_window_cli_is_opt_in_and_rejects_before_writing_output(self):
         record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
         later, earlier, output = self.root / "later.txt", self.root / "earlier.txt", self.root / "output.txt"
