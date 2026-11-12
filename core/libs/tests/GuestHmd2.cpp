@@ -451,11 +451,27 @@ void TestReprojection() {
             "the re-initialized state carries the default timing");
 }
 
+void TestNamedErrorAnswersBeforeInitialize() {
+    Require(sceHmd2InternalSetVolume() == Hmd2::Error0004 && sceHmd2InternalResetViewPosition() == Hmd2::Error0004, "volume and view position before initialization");
+    Require(sceHmd2InternalClearTrackerFts() == Hmd2::Error0004 && sceHmd2InternalSetSlamCommand() == Hmd2::Error0004, "tracker FTS and SLAM command before initialization");
+    Require(sceHmd2InternalDfuStart() == Hmd2::Error0004, "DFU start before initialization");
+    Require(sceHmd2InternalDecryptData() == Hmd2::ParameterNull && sceHmd2InternalGetMirroringMode() == Hmd2::ParameterNull, "decrypt and mirroring mode before initialization");
+    Require(sceHmd2InternalRelocalizerSetResultData() == Hmd2::ParameterNull && sceHmd2InternalGetFlipInfo() == Hmd2::ParameterNull, "relocalizer result data and flip info before initialization");
+    Require(sceHmd2InternalSetPositionResetIcon() == Hmd2::ParameterInvalid && sceHmd2InternalSetPowerOff() == Hmd2::ParameterInvalid, "position reset icon and power off before initialization");
+    Require(sceHmd2InternalSetBudgetMode() == Hmd2::ParameterInvalid && sceHmd2InternalSetForceIcon() == Hmd2::ParameterInvalid, "budget mode and force icon before initialization");
+    Require(sceHmd2InternalBindDeviceWithUserId() == Hmd2::ParameterInvalid, "device bind by user id before initialization");
+    Require(sceHmd2InternalRelocalizerStart() == -1 && sceHmd2InternalRelocalizerStop() == -1, "relocalizer start and stop before initialization");
+    Require(sceHmd2InternalImageStart() == -1 && sceHmd2InternalImageStop() == -1, "image start and stop before initialization");
+    Require(sceHmd2InternalGenDataStart() == -1 && sceHmd2InternalGenDataStop() == -1, "generated data start and stop before initialization");
+    Require(sceHmd2InternalSlamTraceStart() == -1 && sceHmd2InternalSlamTraceStop() == -1, "SLAM trace start and stop before initialization");
+}
+
 int main() {
     SizeQueriesReturnTheConsoleSizes();
     InstallProcessParameters();
     TestBeforeInitialize();
     TestNamedCallsBeforeInitialize();
+    TestNamedErrorAnswersBeforeInitialize();
     TestWithoutHeadset();
     TestReprojection();
     Require(sceHmd2GazeActivateGazeTracking(0) == 0, "gaze activation before initialization");
