@@ -2896,8 +2896,11 @@ int lookup_host(int rid, const char* hostname, const char* func, int family, std
     if (!initialize_sockets()) return fail(5);
     std::uint64_t generation = 0;
     if (const int error = begin_lookup(rid, &Resolver::abort_ntoa, generation)) return error;
+    std::string guestHostname;
+    if (const int error = CopyGuestString_nid_no_patch(hostname, NI_MAXHOST, guestHostname))
+        return end_lookup(rid, generation, fail(error));
     if (const auto lookup = g_resolverLookupForTests.load()) {
-        if (!lookup(hostname, family, addresses) || addresses.empty()) {
+        if (!lookup(guestHostname.c_str(), family, addresses) || addresses.empty()) {
             set_errno(NET_ENOENT);
             log_soft(func, "host DNS lookup failed");
             return end_lookup(rid, generation, NET_ERROR_RESOLVER_ENODNS);
@@ -2907,7 +2910,7 @@ int lookup_host(int rid, const char* hostname, const char* func, int family, std
     addrinfo hints{};
     hints.ai_family = family;
     addrinfo* results = nullptr;
-    const int result = ::getaddrinfo(hostname, nullptr, &hints, &results);
+    const int result = ::getaddrinfo(guestHostname.c_str(), nullptr, &hints, &results);
     if (result != 0) {
         set_errno(result == EAI_AGAIN ? NET_ETIMEDOUT : NET_ENOENT);
         log_soft(func, "host DNS lookup failed");

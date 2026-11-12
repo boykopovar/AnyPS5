@@ -931,6 +931,9 @@ static void CheckRejectedArguments() {
     std::array<std::uint8_t, 4> ipv4{};
     const int resolver = sceNetResolverCreate("rejected-ntoa", 0, 0);
     Require(resolver >= 0);
+    Require(Failed(sceNetResolverStartNtoa(resolver, reinterpret_cast<const char*>(0x10), ipv4.data(), 0, 0, 0), 14));
+    int lookupError = 0;
+    Require(sceNetResolverGetError(resolver, &lookupError) == 0 && lookupError == static_cast<int>(0x8041010Eu));
     Require(sceNetResolverAbort(resolver, 1) == 0);
     Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), -1, 1, 0), 22));
     Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, -1, 0), 22));
