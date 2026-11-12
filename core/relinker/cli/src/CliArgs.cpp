@@ -35,6 +35,7 @@ const char* Usage() {
            "  --sce-module-path <path>       Parent of the module directories. Default: the input file's directory.\n"
            "  --module-dir <dir>             Also relink the modules of this directory. Repeatable.\n"
            "  --executable <path>            Also convert another executable of the title. Repeatable.\n"
+           "  --executable-module <name>     Resolve this needed library on the executable instead of loading it. Repeatable.\n"
            "  --windows-fixed-base <address> Map the lowest load page at a fixed Windows address instead of 0x400000.\n"
            "  --linux-fixed-base <address>   Load the Linux executable at a fixed address instead of 0x400000.\n"
            "  --macos-fixed-base <address>   Map the lowest load page of the macOS executable at a fixed address.\n"
@@ -73,7 +74,7 @@ constexpr std::string_view kVerifyRejectedOptions[] = {
     "--dry-run",
     "--windows", "--macos", "--windows-gui", "--windows-diagnostics", "--windows-fixed-base", "--trace-imports", "--linux-fixed-base", "--macos-fixed-base",
     "--to-intel", "--to-rosetta", "--frame-red-zone", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "--function-symbol-roots", "unused-filter=",
-    "--rpath", "--registry", "--omit-unavailable-dependencies", "--lazy-binding", "--autorun", "--patches", "--no-patches",
+    "--rpath", "--registry", "--omit-unavailable-dependencies", "--lazy-binding", "--autorun", "--patches", "--no-patches", "--executable-module",
 };
 
 constexpr std::string_view kModuleDiscoveryOptions[] = {"--sce-module-path", "--module-dir", "--exclude-sce-module", "--skip-sce-module"};
@@ -163,6 +164,10 @@ Args ParseArgs(int argc, char* argv[]) {
             if (i + 1 >= argc || std::string_view(argv[i + 1]).empty())
                 throw std::runtime_error("--module-dir requires a directory");
             args.moduleDirectories.push_back(argv[++i]);
+        } else if (arg == "--executable-module") {
+            if (i + 1 >= argc || std::string_view(argv[i + 1]).empty() || std::string_view(argv[i + 1]).starts_with("--"))
+                throw std::runtime_error("--executable-module requires a library name");
+            args.executableModules.insert(argv[++i]);
         } else if (arg == "--executable") {
             if (i + 1 >= argc || std::string(argv[i + 1]).empty() || std::string(argv[i + 1]).starts_with("--")) throw std::runtime_error("--executable requires a nonempty path");
             args.executables.push_back(argv[++i]);

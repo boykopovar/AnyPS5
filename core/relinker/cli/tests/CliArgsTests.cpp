@@ -154,6 +154,21 @@ void excludeSceModuleWithoutValue() {
     require(args.excludedSceModules.count("module with spaces.prx") == 1, "a nonempty excluded file name was changed");
 }
 
+void executableModule() {
+    const auto args = parse({"--executable-module", "SyntheticMain", "--executable-module", "libshared", "input.elf", "output.elf"});
+    require(args.executableModules.size() == 2, "both executable modules were not recorded");
+    require(args.executableModules.count("SyntheticMain") == 1 && args.executableModules.count("libshared") == 1, "an executable module name was lost");
+    require(parse({"input.elf", "output.elf"}).executableModules.empty(), "no executable module is named by default");
+}
+
+void executableModuleWithoutValue() {
+    const std::string message = "--executable-module requires a library name";
+    expectThrows({"--executable-module"}, message);
+    expectThrows({"--executable-module", "", "input.elf", "output.elf"}, message);
+    expectThrows({"--executable-module", "--windows", "input.elf", "output.elf"}, message);
+    expectThrows({"--verify-patches", "p.toml", "--executable-module", "m", "in.elf"}, "--executable-module cannot be used with --verify-patches");
+}
+
 void excludeConflictsWithSkip() {
     const std::string message = "--exclude-sce-module conflicts with --skip-sce-module";
     expectThrows({"--skip-sce-module", "--exclude-sce-module", "m", "input.elf", "output.elf"}, message);
@@ -407,6 +422,8 @@ int main() {
         excludeSceModuleConsumesNextTokenVerbatim();
         excludeSceModuleWithoutValue();
         excludeConflictsWithSkip();
+        executableModule();
+        executableModuleWithoutValue();
         moduleDirectories();
         sceModulePath();
         targetSelection();
