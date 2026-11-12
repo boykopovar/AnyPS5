@@ -296,6 +296,38 @@ constexpr std::uint32_t DmaSourceCachePolicy = 3u << 13u;
 constexpr std::uint32_t DmaDestinationCachePolicy = 3u << 25u;
 constexpr std::uint32_t WriteDataCachePolicy = 3u << 25u;
 
+namespace {
+
+const std::array<std::uint64_t, 4> OpcodesWithoutReason = [] {
+    std::array<std::uint64_t, 4> bits{};
+    for (std::uint32_t opcode = 0; opcode < 0x100u; ++opcode) {
+        if (opcode == 0x10u || opcode == 0x24u || opcode == 0x25u || opcode == 0x2cu || opcode == 0x38u) continue;
+        if (UnsupportedReason(opcode << 8u).empty()) bits[opcode >> 6u] |= 1ull << (opcode & 63u);
+    }
+    return bits;
+}();
+
+bool WithoutReason(std::uint32_t opcode) {
+    return ((OpcodesWithoutReason[opcode >> 6u] >> (opcode & 63u)) & 1u) != 0;
+}
+
+bool RegisterWriteOpcode(std::uint32_t opcode) {
+    return opcode - 0x69u < 0x12u && ((0x32001u >> (opcode - 0x69u)) & 1u) != 0;
+}
+
+void ValidateRegisterWrite(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue) {
+    if (IsTagMarker(packet)) return;
+    if (opcode != 0x76) require(queue == 0, "graphics packet in compute queue");
+    require(packet.size() >= 3, "register packet has no values");
+    if (opcode == 0x7a) require((packet[1] & 0xf0000000u) == 0 || (packet.size() == 3 && (packet[1] == 0x20000243u || packet[1] == 0x10000242u)), "indexed register bank selection is not implemented");
+    const auto offset = registerOffset(packet[1]);
+    require(packet.size() - 2 <= 0x10000u - offset, "register range overflow");
+}
+
+[[gnu::noinline]] void ValidateGeneral(std::span<const std::uint32_t> packet, std::uint32_t queue, std::uint32_t header, std::uint32_t opcode);
+
+}
+
 void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
     require(!packet.empty(), "truncated PM4 header");
     const auto header = packet[0];
@@ -307,9 +339,23 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
     require((header & 0xc0000000u) == 0xc0000000u, "unsupported PM4 packet type");
     require(packet.size() == ((header >> 16u) & 0x3fffu) + 2u, "invalid PM4 packet size");
     const auto opcode = (header >> 8u) & 0xffu;
+    if (RegisterWriteOpcode(opcode) && (header & 0xf8u) == 0) {
+        ValidateRegisterWrite(packet, opcode, queue);
+        return;
+    }
+    if (opcode == 0x10 && (header & 0xffu) == 0) {
+        require((packet[1] & 0xffff0000u) != 0x68750000u, "typed user-data and legacy flip markers are not implemented");
+        return;
+    }
+    ValidateGeneral(packet, queue, header, opcode);
+}
+
+namespace {
+
+void ValidateGeneral(std::span<const std::uint32_t> packet, std::uint32_t queue, std::uint32_t header, std::uint32_t opcode) {
     const auto size = [&](std::size_t count) { require(packet.size() == count, "invalid packet size"); };
     const auto graphics = [&] { require(queue == 0, "graphics packet in compute queue"); };
-    const auto reason = UnsupportedReason(header);
+    const auto reason = WithoutReason(opcode) ? std::string_view{} : UnsupportedReason(header);
     if (!reason.empty() && !(opcode == 0x3f && Predicated(header))) throw std::runtime_error(std::string(reason));
     if (opcode == 0x10) {
         require((header & 3u) == 0, "unsupported NOP header flags");
@@ -492,15 +538,9 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             size(5);
             require((packet[1] & 3u) == 0 && packet[4] <= 0x3fffu && (packet[3] == 0x80000000u || ((packet[3] & ~0xffffu) == 0 && packet[4] <= 0x10000u - packet[3])), "unsupported indirect-register address or control fields");
             break;
-        case 0x69: case 0x76: case 0x79: case 0x7a: {
-            if (IsTagMarker(packet)) break;
-            if (opcode != 0x76) graphics();
-            require(packet.size() >= 3, "register packet has no values");
-            if (opcode == 0x7a) require((packet[1] & 0xf0000000u) == 0 || (packet.size() == 3 && (packet[1] == 0x20000243u || packet[1] == 0x10000242u)), "indexed register bank selection is not implemented");
-            const auto offset = registerOffset(packet[1]);
-            require(packet.size() - 2 <= 0x10000u - offset, "register range overflow");
+        case 0x69: case 0x76: case 0x79: case 0x7a:
+            ValidateRegisterWrite(packet, opcode, queue);
             break;
-        }
         case 0x59:
             size(2);
             require((packet[1] & ~(RewindValid | RewindOffloadEnable)) == 0, "unsupported REWIND payload bits");
@@ -591,6 +631,8 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             break;
         default: throw std::runtime_error("known packet has no validator");
     }
+}
+
 }
 
 bool IsTagMarker(std::span<const std::uint32_t> packet) {

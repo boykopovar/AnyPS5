@@ -100,6 +100,23 @@ bool EopRelease(std::span<const std::uint32_t> words) {
     return words.size() >= 8 && (words[0] >> 30u) == 3u && Pm4::PacketWords(words[0]) == 8u && ((words[0] >> 8u) & 0xffu) == 0x49u && ((words[2] >> 24u) & 7u) == 2u;
 }
 
+bool ScannedPacket(std::uint32_t header, std::uint32_t opcode) {
+    return header == FlipPacketHeader || header == RenderingWaitPacketHeader || opcode == 0x49u || opcode == 0x37u || opcode == 0x3cu || opcode == 0x93u;
+}
+
+template<typename TAction>
+void ScanPackets(const Submission& submission, TAction&& action) {
+    if (!submission.scanAll) {
+        for (const auto cursor : submission.scanCursors) {
+            if (!action(cursor)) return;
+        }
+        return;
+    }
+    for (std::size_t cursor = 0; cursor < submission.commands.size(); cursor += Pm4::PacketWords(submission.commands[cursor])) {
+        if (!action(cursor)) return;
+    }
+}
+
 }
 
 std::uint64_t Driver::FlipSubmissions() const {
@@ -140,7 +157,10 @@ void Driver::noteReleasedTails(const Submission& submission) {
 void Driver::copyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words) {
     submission.commands.clear();
     submission.conditionalEnds.clear();
+    submission.scanCursors.clear();
+    submission.scanAll = false;
     std::size_t budget = std::size_t{1} << 26u;
+    if (words <= budget) submission.commands.reserve(std::min<std::size_t>(words, std::size_t{1} << 14u));
     copySegment(submission, guest, words, budget, 0);
 }
 
@@ -160,6 +180,11 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
     require(words <= budget, "command buffer jumps exceed the copy limit (a jump loop?)");
     budget -= words;
     std::vector<std::pair<std::size_t, std::size_t>> guarded;
+    const auto noteScanned = [&](std::size_t index, std::uint32_t header, std::uint32_t opcode) {
+        if (!ScannedPacket(header, opcode)) return;
+        if (submission.scanCursors.empty()) submission.scanCursors.reserve(8);
+        submission.scanCursors.push_back(index);
+    };
     const auto reach = [&](std::size_t cursor, std::size_t next) {
         std::erase_if(guarded, [&](const auto& range) {
             if (range.first != cursor) return false;
@@ -178,6 +203,7 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
         }
         const auto count = (header & 0xc0000000u) == 0xc0000000u ? Pm4::PacketWords(header) : words - cursor;
         if ((header & 0xc0000000u) != 0xc0000000u || count > words - cursor) {
+            submission.scanAll = true;
             submission.commands.insert(submission.commands.end(), guest + cursor, guest + words);
             return false;
         }
@@ -232,7 +258,29 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
             cursor += count;
             continue;
         }
+        if (opcode != 0x22u && opcode != 0x59u && guarded.empty()) {
+            const auto first = submission.commands.size();
+            auto end = cursor + count;
+            noteScanned(first, header, opcode);
+            while (end < words) {
+                const auto next = guest[end];
+                if (Pm4::FillerPacket(next)) {
+                    ++end;
+                    continue;
+                }
+                if ((next & 0xc0000000u) != 0xc0000000u) break;
+                const auto nextCount = Pm4::PacketWords(next);
+                const auto nextOpcode = (next >> 8u) & 0xffu;
+                if (nextCount > words - end || nextOpcode == 0x3fu || nextOpcode == 0x22u || nextOpcode == 0x59u) break;
+                noteScanned(first + (end - cursor), next, nextOpcode);
+                end += nextCount;
+            }
+            submission.commands.insert(submission.commands.end(), guest + cursor, guest + end);
+            cursor = end;
+            continue;
+        }
         if (opcode == 0x22u && count == 5) guarded.emplace_back(cursor + count + Pm4::ConditionalWords(std::span(guest + cursor, count)), submission.commands.size());
+        noteScanned(submission.commands.size(), header, opcode);
         submission.commands.insert(submission.commands.end(), guest + cursor, guest + cursor + count);
         cursor += count;
         if (opcode == 0x59u) {
@@ -247,7 +295,7 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
     return false;
 }
 
-ReferencedProgramScan ReferencedPrograms(std::span<const std::uint32_t> commands, const std::map<std::size_t, std::vector<std::uint32_t>>& registerLists) {
+ReferencedProgramScan ReferencedPrograms(std::span<const std::uint32_t> commands, const RegisterLists& registerLists) {
     constexpr std::array<std::uint32_t, 7> programRegisters{0x008u, 0x048u, 0x088u, 0x0c8u, 0x108u, 0x148u, 0x20cu};
     std::array<std::uint32_t, programRegisters.size() * 2> values{};
     std::array<bool, programRegisters.size() * 2> written{};
@@ -284,13 +332,13 @@ ReferencedProgramScan ReferencedPrograms(std::span<const std::uint32_t> commands
             const auto offset = packet[1] & ~0x70000000u;
             for (std::size_t i = 2; i < words; ++i) write(offset + static_cast<std::uint32_t>(i - 2), packet[i], conditional);
         } else if (opcode == 0x63u) {
-            const auto list = registerLists.find(cursor);
-            if (list == registerLists.end()) continue;
-            if (!Pm4::IndirectRegistersValid(list->second)) {
+            const auto* list = registerLists.find(cursor);
+            if (list == nullptr) continue;
+            if (!Pm4::IndirectRegistersValid(*list)) {
                 scan.complete = false;
                 continue;
             }
-            for (std::size_t i = 0; i + 1 < list->second.size(); i += 2) write(list->second[i] & ~0x70000000u, list->second[i + 1], conditional);
+            for (std::size_t i = 0; i + 1 < list->size(); i += 2) write((*list)[i] & ~0x70000000u, (*list)[i + 1], conditional);
         }
     }
     for (std::size_t slot = 0; slot < written.size(); slot += 2) {
@@ -307,7 +355,7 @@ void Driver::readRegisterLists(Submission& submission) {
         const auto header = submission.commands[cursor];
         if ((header >> 30u) != 3u || !Pm4::IndirectRegisterOpcode((header >> 8u) & 0xffu)) continue;
         try {
-            submission.registerLists.emplace(cursor, Pm4::ReadIndirectRegisters(std::span<const std::uint32_t>(submission.commands).subspan(cursor, Pm4::PacketWords(header))));
+            submission.registerLists.append(cursor, Pm4::ReadIndirectRegisters(std::span<const std::uint32_t>(submission.commands).subspan(cursor, Pm4::PacketWords(header))));
         } catch (const std::exception& error) {
             throw std::runtime_error("AGC driver: " + Pm4::Name(header) + " at DWORD " + std::to_string(cursor) + ": " + error.what());
         }
@@ -315,8 +363,8 @@ void Driver::readRegisterLists(Submission& submission) {
 }
 
 void Driver::waitForFlipRoom(const Submission& submission) {
-    for (std::size_t cursor = 0; cursor < submission.commands.size(); cursor += Pm4::PacketWords(submission.commands[cursor])) {
-        if (submission.commands[cursor] != FlipPacketHeader) continue;
+    ScanPackets(submission, [&](std::size_t cursor) {
+        if (submission.commands[cursor] != FlipPacketHeader) return true;
         std::shared_ptr<IVideoOutput> output;
         {
             std::lock_guard lock(mutex);
@@ -325,7 +373,8 @@ void Driver::waitForFlipRoom(const Submission& submission) {
             output = found->second;
         }
         output->WaitForFlipRoom();
-    }
+        return true;
+    });
 }
 
 bool Driver::awaitsTitle(std::uint64_t awaited) const {
@@ -361,17 +410,19 @@ void Driver::noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited) {
 void Driver::holdFlipBehindWorker(const Submission& submission, bool cpuFlip) {
     if (submission.queue != 0 || onWorkerThread()) return;
     bool candidate = false;
-    for (std::size_t cursor = 0; cursor < submission.commands.size() && !candidate; cursor += Pm4::PacketWords(submission.commands[cursor])) {
+    ScanPackets(submission, [&](std::size_t cursor) {
         const auto words = std::span(submission.commands).subspan(cursor);
         candidate = words[0] == FlipPacketHeader || EopRelease(words);
-    }
+        return !candidate;
+    });
     if (!candidate) return;
     std::unique_lock lock(mutex);
     bool flips = false;
-    for (std::size_t cursor = 0; cursor < submission.commands.size() && !flips; cursor += Pm4::PacketWords(submission.commands[cursor])) {
+    ScanPackets(submission, [&](std::size_t cursor) {
         const auto words = std::span(submission.commands).subspan(cursor);
         flips = words[0] == FlipPacketHeader || (EopRelease(words) && eopFlips.contains(words[7]));
-    }
+        return !flips;
+    });
     if (!flips) return;
     flipHolders.fetch_add(1, std::memory_order_acq_rel);
     changed.wait(lock, [&] { return failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipsAhead.load(std::memory_order_acquire) == 0 || queue0AwaitsTitle.load(std::memory_order_acquire); });
@@ -426,7 +477,7 @@ void Driver::finishFlipWork(std::uint64_t workSerial) {
 
 void Driver::reserveOutputs(Submission& submission) {
     std::set<std::uint32_t> eopTokens;
-    for (std::size_t cursor = 0; cursor < submission.commands.size();) {
+    ScanPackets(submission, [&](std::size_t cursor) {
         const auto* words = submission.commands.data() + cursor;
         if (words[0] == RenderingWaitPacketHeader) {
             const auto output = outputs.find(words[1]);
@@ -453,8 +504,8 @@ void Driver::reserveOutputs(Submission& submission) {
             require(request != nullptr, "video output returned a null flip reservation");
             submission.flips.emplace(cursor, std::move(request));
         }
-        cursor += Pm4::PacketWords(words[0]);
-    }
+        return true;
+    });
     for (const auto token : eopTokens) eopFlips.erase(token);
 }
 
@@ -491,8 +542,8 @@ std::vector<std::uint64_t> BoundGraphicsPrograms(const Submission& submission) {
         if (!Pm4::FillerPacket(header) && opcode == 0x76 && count > 2 && !Pm4::IsTagMarker(packet)) {
             for (std::size_t index = 2; index < count; ++index) note((packet[1] & ~0x70000000u) + static_cast<std::uint32_t>(index - 2), packet[index]);
         } else if (!Pm4::FillerPacket(header) && opcode == 0x63) {
-            if (const auto found = submission.registerLists.find(cursor); found != submission.registerLists.end()) {
-                for (std::size_t index = 0; index + 1 < found->second.size(); index += 2) note(found->second[index] & ~0x70000000u, found->second[index + 1]);
+            if (const auto* found = submission.registerLists.find(cursor); found != nullptr) {
+                for (std::size_t index = 0; index + 1 < found->size(); index += 2) note((*found)[index] & ~0x70000000u, (*found)[index + 1]);
             }
         }
         flush();

@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRegisterKey.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/Submission.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
@@ -172,6 +173,52 @@ void testRegisters() {
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x28, {0x80000000}), 0); }, "packet size");
     expectFailure([&] { execute(state, makePacket(0x69, {0xffff, 1, 2})); }, "overflow");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x9f, {0, 0, 0x80000000, 0}), 0x20); }, "compute");
+}
+
+std::string validationMessage(const std::vector<std::uint32_t>& packet, std::uint32_t queue) {
+    try { AgcDriver::Pm4::Validate(packet, queue); }
+    catch (const std::runtime_error& error) { return error.what(); }
+    return {};
+}
+
+void testValidationMessages() {
+    for (std::uint32_t opcode = 0; opcode < 256; ++opcode) {
+        for (const std::uint32_t flags : {0u, 1u, 2u, 4u}) {
+            auto packet = makePacket(opcode, {0, 0, 0, 0, 0, 0, 0, 0, 0}, flags);
+            const auto reason = std::string(AgcDriver::Pm4::UnsupportedReason(packet[0]));
+            const bool predicatedNested = opcode == 0x3f && (flags & 1u) != 0;
+            if (reason.empty() || predicatedNested) continue;
+            check(validationMessage(packet, 0) == reason, "an unsupported opcode is not rejected with its reason");
+            check(validationMessage(packet, 0x20) == reason, "an unsupported opcode is not rejected with its reason on a compute queue");
+        }
+    }
+    for (const auto opcode : {0x69u, 0x76u, 0x79u, 0x7au}) {
+        check(validationMessage(makePacket(opcode, {0x10, 1}), 0).empty(), "a register write was rejected");
+        check(validationMessage(makePacket(opcode, {0x10, 1, 2}, 6), 0).empty(), "a register write with the filter and shader type flags was rejected");
+        check(validationMessage(makePacket(opcode, {0x10, 1}, 7), 0).empty(), "a predicated register write was rejected");
+        check(validationMessage(makePacket(opcode, {0x10, 1}, 8), 0) == "PM4 header flags 0x8 are not implemented", "register write header flags message changed");
+        check(validationMessage(makePacket(opcode, {0x10, 1}, 0xf6), 0) == "PM4 header flags 0xf6 are not implemented", "register write header flags message changed");
+        check(validationMessage(makePacket(opcode, {0x10}), 0) == "register packet has no values", "register write without values message changed");
+        check(validationMessage(makePacket(opcode, {0xffffffffu, 1}), 0) == (opcode == 0x7a ? "indexed register bank selection is not implemented" : "indirect register sentinel semantics are not implemented"), "register sentinel message changed");
+        check(validationMessage(makePacket(opcode, {0x1000000f, 1}), 0) == (opcode == 0x7a ? "indexed register bank selection is not implemented" : ""), "a register bank selector message changed");
+        check(validationMessage(makePacket(opcode, {0x8000, 1, 2, 3}), 0).empty(), "a register write was rejected");
+        check(validationMessage(makePacket(opcode, {0xffff, 1, 2}), 0) == "register range overflow", "register range overflow message changed");
+        check(validationMessage(makePacket(opcode, {0x20000, 1}), 0).find("extended register semantics are not implemented (offset dword 0x00020000)") == 0, "extended register message changed");
+        const auto compute = validationMessage(makePacket(opcode, {0x10, 1}), 0x20);
+        check(compute == (opcode == 0x76 ? "" : "graphics packet in compute queue"), "compute queue register write message changed");
+    }
+    check(validationMessage(makePacket(0x10, {0}), 0).empty() && validationMessage(makePacket(0x10, {0x1234, 5, 6}), 0x20).empty(), "a plain NOP was rejected");
+    check(validationMessage(makePacket(0x10, {0x68750000u}), 0) == "typed user-data and legacy flip markers are not implemented", "the typed user-data NOP message changed");
+    check(validationMessage(makePacket(0x10, {0x687500ffu, 1}), 0x20) == "typed user-data and legacy flip markers are not implemented", "the typed user-data NOP message changed on a compute queue");
+    check(validationMessage(makePacket(0x10, {0x68740000u}), 0).empty(), "a NOP close to the typed user-data tag was rejected");
+    check(validationMessage(makePacket(0x10, {0}, 1), 0) == "unsupported NOP header flags", "the NOP header flags message changed");
+    check(validationMessage(makePacket(0x10, {0}, 2), 0) == "unsupported NOP header flags", "the NOP header flags message changed");
+    check(validationMessage(makePacket(0x10, {0}, 4), 0) == "custom packet has no implemented contract in the reference dispatch table", "an unknown custom NOP message changed");
+    check(validationMessage(makePacket(0x7a, {0x10000010, 1}), 0) == "indexed register bank selection is not implemented", "indexed bank message changed");
+    check(validationMessage(makePacket(0x7a, {0x20000243, 1}), 0).empty(), "an indexed index type write was rejected");
+    check(validationMessage(makePacket(0x79, {0x342, 4}, 1), 0x20).empty(), "a tag marker was rejected on a compute queue");
+    check(validationMessage(makePacket(0x79, {0x342}, 1), 0) == "register packet has no values", "a short tag marker message changed");
+    check(validationMessage(makePacket(0x79, {0x342, 4}, 0), 0).empty(), "an unpredicated write of the tag register was rejected");
 }
 
 void testRegisterFile() {
@@ -1220,6 +1267,57 @@ void testRegisterListsReadAtSubmission() {
     std::atomic_ref<std::uint32_t>(gate).store(1);
     AgcDriverWaitIdle_nid_postfix();
     check(std::atomic_ref<std::uint32_t>(done).load() == 1, "register list rewritten after submission was read by the worker");
+}
+
+void testRegisterListLookup() {
+    AgcDriver::DriverDetail::RegisterLists lists;
+    for (std::size_t i = 0; i < 100; ++i) lists.append(i * 5 + 3, {static_cast<std::uint32_t>(i), static_cast<std::uint32_t>(i * 2)});
+    check(lists.size() == 100, "register lists lost entries");
+    for (std::size_t i = 0; i < 100; ++i) {
+        const auto& pairs = lists.at(i * 5 + 3);
+        check(pairs.size() == 2 && pairs[0] == i && pairs[1] == i * 2, "register list lookup returned another packet's list");
+    }
+    for (const std::size_t missing : {std::size_t{0}, std::size_t{4}, std::size_t{499}, std::size_t{503}, std::size_t{100000}}) {
+        bool thrown = false;
+        try {
+            lists.at(missing);
+        } catch (const std::out_of_range&) {
+            thrown = true;
+        }
+        check(thrown, "a register list lookup of a cursor without a list did not throw");
+    }
+    lists.clear();
+    check(lists.size() == 0, "clearing register lists kept entries");
+    bool cleared = false;
+    try {
+        lists.at(3);
+    } catch (const std::out_of_range&) {
+        cleared = true;
+    }
+    check(cleared, "cleared register lists still answered a lookup");
+}
+
+void testManyRegisterListsReadAtSubmission() {
+    alignas(8) static std::uint32_t gate = 0;
+    static std::uint32_t done = 0;
+    constexpr std::size_t count = 40;
+    static std::array<std::array<std::uint32_t, 4>, count> lists;
+    gate = 0;
+    done = 0;
+    std::vector<std::vector<std::uint32_t>> parts{makePacket(0x3c, {0x13, low(&gate), high(&gate), 1, 0xffffffffu, 0x19})};
+    for (std::size_t i = 0; i < count; ++i) {
+        lists[i] = {0x10 + static_cast<std::uint32_t>(i), 100 + static_cast<std::uint32_t>(i), 0x200 + static_cast<std::uint32_t>(i), 7};
+        parts.push_back(makePacket(i % 3 == 0 ? 0x9f : (i % 3 == 1 ? 0x63 : 0x64), {low(lists[i].data()), high(lists[i].data()), 0x80000000, 2}));
+        parts.push_back(makePacket(0x69, {0x11, 50, 51}));
+    }
+    parts.push_back(writeWord(done, 1));
+    std::vector<std::uint32_t> words;
+    for (const auto& part : parts) words.insert(words.end(), part.begin(), part.end());
+    submitWords(words);
+    for (auto& list : lists) list = {0x3a888889u, 0x3a888889u, 0x3a888889u, 0x3a888889u};
+    std::atomic_ref<std::uint32_t>(gate).store(1);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(done).load() == 1, "register lists of a long submission were not read at submission");
 }
 
 void testInvalidRegisterListEntries() {
@@ -2606,6 +2704,7 @@ int main(int argc, char** argv) {
         testWriteChangedStoresExactlyTheChangedRuns();
         testWriteChangedKeepingGuestKeepsCpuWrites();
         testRegisters();
+        testValidationMessages();
         testRegisterFile();
         testContextAndBases();
         testIndexedDraw();
@@ -2631,6 +2730,8 @@ int main(int argc, char** argv) {
         testUnwrittenUserData();
         testDriverSubmission();
         testRegisterListsReadAtSubmission();
+        testRegisterListLookup();
+        testManyRegisterListsReadAtSubmission();
         testInvalidRegisterListEntries();
         testPartlyUpdatedRegisterListSkipsOnlyItsInvalidEntries();
         testRegisterListReadAgainAtExecution();

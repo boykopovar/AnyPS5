@@ -6,8 +6,31 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <new>
 #include <stdexcept>
+#include <vector>
+
+namespace {
+
+thread_local std::size_t allocations = 0;
+
+}
+
+void* operator new(std::size_t size) {
+    ++allocations;
+    if (void* memory = std::malloc(size != 0 ? size : 1)) return memory;
+    throw std::bad_alloc();
+}
+
+void operator delete(void* memory) noexcept {
+    std::free(memory);
+}
+
+void operator delete(void* memory, std::size_t) noexcept {
+    std::free(memory);
+}
 
 namespace {
 
@@ -227,6 +250,116 @@ void testDirectList() {
     }
 }
 
+struct Grown {
+    std::array<std::uint32_t, 24> oldWords{};
+    std::array<std::uint32_t, 64> newWords{};
+    CommandBuffer buffer{oldWords.data(), oldWords.data() + oldWords.size(), oldWords.data() + oldWords.size(), oldWords.data() + oldWords.size(), nullptr, nullptr, 0};
+    std::size_t callbacks = 0;
+
+    static bool APS5_VABI grow(CommandBuffer* buffer, std::uint32_t, void* user) {
+        auto* self = static_cast<Grown*>(user);
+        ++self->callbacks;
+        self->oldWords.fill(0xdeadbeefu);
+        buffer->bottom = self->newWords.data();
+        buffer->top = self->newWords.data() + self->newWords.size();
+        buffer->cursor_up = self->newWords.data();
+        buffer->cursor_down = self->newWords.data() + self->newWords.size();
+        return true;
+    }
+
+    Grown() {
+        buffer.callback = &Grown::grow;
+        buffer.user_data = this;
+    }
+};
+
+void testValuesSurviveBufferGrowth() {
+    for (const auto writer : {sceAgcCbSetShRegisterRangeDirect, sceAgcCbSetUcRegisterRangeDirect}) {
+        Grown grown;
+        const std::array<std::uint32_t, 4> values{11, 22, 33, 44};
+        std::copy(values.begin(), values.end(), grown.oldWords.begin() + 4);
+        auto* packet = writer(&grown.buffer, 0x30u, grown.oldWords.data() + 4, 4);
+        check(grown.callbacks == 1 && packet == grown.newWords.data() && grown.buffer.cursor_up == packet + 6, "grown buffer allocation mismatch");
+        check(packet[1] == 0x30u && std::equal(values.begin(), values.end(), packet + 2), "register range values were read after the buffer was replaced");
+    }
+    Grown grown;
+    const std::array<ShaderRegister, 3> registers{{{0x40u, 5}, {0x41u, 6}, {0x42u, 7}}};
+    std::memcpy(grown.oldWords.data() + 4, registers.data(), sizeof(registers));
+    auto* packet = sceAgcCbSetShRegistersDirect(&grown.buffer, reinterpret_cast<const ShaderRegister*>(grown.oldWords.data() + 4), 3);
+    const std::array<std::uint32_t, 5> expected{0xc0030000u | 0x7600u, 0x40u, 5, 6, 7};
+    check(grown.callbacks == 1 && packet == grown.newWords.data() && std::equal(expected.begin(), expected.end(), packet), "register list values were read after the buffer was replaced");
+}
+
+std::vector<std::uint32_t> referenceRuns(std::uint32_t opcode, const std::vector<ShaderRegister>& registers) {
+    std::vector<std::uint32_t> words;
+    std::size_t index = 0;
+    while (index < registers.size()) {
+        const auto offset = registers[index].offset;
+        std::size_t length = 1;
+        while (index + length < registers.size() && registers[index + length].offset == offset + length && length < 0x3fffu) ++length;
+        words.push_back(0xc0000000u | (static_cast<std::uint32_t>(length) << 16u) | opcode);
+        words.push_back(offset);
+        for (std::size_t i = 0; i < length; ++i) words.push_back(registers[index + i].value);
+        index += length;
+    }
+    return words;
+}
+
+void testRegisterListRuns() {
+    std::uint32_t seed = 12345u;
+    const auto next = [&] {
+        seed = seed * 1664525u + 1013904223u;
+        return seed >> 8u;
+    };
+    const std::array sizes{1u, 2u, 3u, 63u, 64u, 65u, 66u, 127u, 128u, 129u, 200u, 0x3ffeu, 0x3fffu, 0x4000u, 0x4001u, 0x8005u};
+    for (const auto count : sizes) {
+        for (std::size_t variant = 0; variant < 4; ++variant) {
+            std::vector<ShaderRegister> registers;
+            std::uint32_t offset = 0x10u;
+            for (std::uint32_t i = 0; i < count; ++i) {
+                const auto step = variant == 0 ? 1u : variant == 1 ? (next() % 4u == 0 ? 2u : 1u) : variant == 2 ? (i % 70u == 69u ? 5u : 1u) : 1u + next() % 3u;
+                offset += i == 0 ? 0u : step;
+                registers.push_back({offset, next()});
+            }
+            for (const auto sh : {true, false}) {
+                const auto expected = referenceRuns(sh ? 0x7600u : 0x7900u, registers);
+                std::vector<std::uint32_t> words(expected.size() + 4, 0xabcdef01u);
+                CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+                auto* packet = (sh ? sceAgcCbSetShRegistersDirect : sceAgcCbSetUcRegistersDirect)(&buffer, registers.data(), count);
+                check(packet == words.data() && buffer.cursor_up == packet + expected.size(), "register list length mismatch");
+                check(std::equal(expected.begin(), expected.end(), packet), "register list contents mismatch");
+                check(std::all_of(words.begin() + expected.size(), words.end(), [](std::uint32_t word) { return word == 0xabcdef01u; }), "register list overwrote following words");
+            }
+        }
+    }
+    const std::vector<ShaderRegister> invalid{{0x10u, 1}, {0x11u, 2}, {0x10000u, 3}};
+    for (const auto writer : {sceAgcCbSetShRegistersDirect, sceAgcCbSetUcRegistersDirect}) {
+        std::array<std::uint32_t, 16> words{};
+        CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+        expectFailure([&] { writer(&buffer, invalid.data(), 3); });
+    }
+}
+
+void testRegisterWritesDoNotAllocate() {
+    std::array<std::uint32_t, 8> values{1, 2, 3, 4, 5, 6, 7, 8};
+    std::array<ShaderRegister, 12> registers;
+    for (std::uint32_t i = 0; i < registers.size(); ++i) registers[i] = {0x20u + (i < 6 ? i : i + 4u), i};
+    std::array<std::uint32_t, 256> words{};
+    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+    const auto measure = [&](const char* message, auto&& write) {
+        const auto before = allocations;
+        write();
+        check(allocations == before, message);
+    };
+    measure("sceAgcDcbSetCxRegisterDirect allocated", [&] { sceAgcDcbSetCxRegisterDirect(&buffer, {0x10u, 1}); });
+    measure("sceAgcDcbSetShRegisterDirect allocated", [&] { sceAgcDcbSetShRegisterDirect(&buffer, {0x10u, 1}); });
+    measure("sceAgcDcbSetUcRegisterDirect allocated", [&] { sceAgcDcbSetUcRegisterDirect(&buffer, {0x10u, 1}); });
+    measure("sceAgcCbSetShRegisterRangeDirect allocated", [&] { sceAgcCbSetShRegisterRangeDirect(&buffer, 0x30u, values.data(), 8); });
+    measure("sceAgcCbSetUcRegisterRangeDirect allocated", [&] { sceAgcCbSetUcRegisterRangeDirect(&buffer, 0x30u, values.data(), 8); });
+    measure("sceAgcCbSetShRegistersDirect allocated", [&] { sceAgcCbSetShRegistersDirect(&buffer, registers.data(), 12); });
+    measure("sceAgcCbSetUcRegistersDirect allocated", [&] { sceAgcCbSetUcRegistersDirect(&buffer, registers.data(), 12); });
+}
+
 }
 
 int main() {
@@ -238,6 +371,9 @@ int main() {
         testIndirect();
         testIndirectPlaceholder();
         testDirectList();
+        testValuesSurviveBufferGrowth();
+        testRegisterListRuns();
+        testRegisterWritesDoNotAllocate();
         std::puts("AGC register command tests passed");
         return 0;
     } catch (const std::exception& error) {

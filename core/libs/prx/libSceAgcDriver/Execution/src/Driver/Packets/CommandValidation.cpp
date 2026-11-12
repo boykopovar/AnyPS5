@@ -52,7 +52,7 @@ void Driver::validate(const Submission& submission, const std::uint32_t* guest) 
     const auto queue = submission.queue;
     std::vector<std::size_t> guarded;
     for (std::size_t cursor = 0; cursor < commands.size();) {
-        std::erase_if(guarded, [cursor](std::size_t end) { return end <= cursor; });
+        if (!guarded.empty()) std::erase_if(guarded, [cursor](std::size_t end) { return end <= cursor; });
         const auto header = commands[cursor];
         if (Pm4::FillerPacket(header)) { ++cursor; continue; }
         if ((header & 0xc0000000u) != 0xc0000000u) {
