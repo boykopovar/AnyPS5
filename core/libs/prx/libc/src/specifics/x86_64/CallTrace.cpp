@@ -146,6 +146,16 @@ bool Selected(std::string_view library) {
     return false;
 }
 
+bool CallGraphRequested() {
+#ifdef _WIN32
+    const wchar_t* value = _wgetenv(L"APS5_TRACE_CALLS_GRAPH_FILE");
+    return value != nullptr && *value != L'\0';
+#else
+    const char* value = std::getenv("APS5_TRACE_CALLS_GRAPH_FILE");
+    return value != nullptr && *value != '\0';
+#endif
+}
+
 std::string DefiningLibrary(const void* target) {
 #ifdef _WIN32
     MEMORY_BASIC_INFORMATION memory{};
@@ -485,6 +495,56 @@ void* WriteThunk(const ImportRecord& record, const std::size_t index) {
     return g_executable + offset;
 }
 
+std::size_t CallSiteIndex(const ImportRecord* record, const std::uint64_t returnAddress) {
+    std::uint64_t value = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(record) >> 4) ^
+        (returnAddress + 0x9e3779b97f4a7c15ull + (returnAddress << 6) + (returnAddress >> 2));
+    value ^= value >> 30;
+    value *= 0xbf58476d1ce4e5b9ull;
+    value ^= value >> 27;
+    value *= 0x94d049bb133111ebull;
+    value ^= value >> 31;
+    return static_cast<std::size_t>(value) & (CallSiteCapacity - 1);
+}
+
+void RecordCallSite(const ImportRecord* record, const std::uint64_t returnAddress) {
+    CallSiteRecord* sites = g_callSites.load(std::memory_order_acquire);
+    if (sites == nullptr) return;
+    const auto begin = CallSiteIndex(record, returnAddress);
+    for (std::size_t probe = 0; probe < CallSiteProbeLimit; ++probe) {
+        CallSiteRecord& site = sites[(begin + probe) & (CallSiteCapacity - 1)];
+        unsigned char state = site.state.load(std::memory_order_acquire);
+        if (state == 2) {
+            if (site.import == record && site.returnAddress == returnAddress) {
+                site.calls.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            continue;
+        }
+        if (state == 1) {
+            for (unsigned attempt = 0; attempt < 32 && state == 1; ++attempt)
+                state = site.state.load(std::memory_order_acquire);
+            if (state == 2 && site.import == record && site.returnAddress == returnAddress) {
+                site.calls.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            if (state != 0) continue;
+        }
+        unsigned char empty = 0;
+        if (!site.state.compare_exchange_strong(empty, 1, std::memory_order_acq_rel)) continue;
+        site.import = record;
+        site.returnAddress = returnAddress;
+        const auto consumer = LocateImage(reinterpret_cast<const void*>(returnAddress));
+        site.consumerModule = consumer.module;
+        site.consumerOffset = consumer.offset;
+        site.consumerResolved = consumer.resolved;
+        site.calls.store(1, std::memory_order_relaxed);
+        g_callSiteCount.fetch_add(1, std::memory_order_relaxed);
+        site.state.store(2, std::memory_order_release);
+        return;
+    }
+    g_callSiteOverflow.fetch_add(1, std::memory_order_relaxed);
+}
+
 }
 
 static_assert(offsetof(ImportRecord, target) == 0);
@@ -492,7 +552,9 @@ static_assert(offsetof(ImportRecord, target) == 0);
 extern "C" {
 
 void APS5_VABI CallTraceRecord_nid_no_patch(const void* record, std::uint64_t returnAddress) {
-    static_cast<const ImportRecord*>(record)->calls.fetch_add(1, std::memory_order_relaxed);
+    const auto* imported = static_cast<const ImportRecord*>(record);
+    imported->calls.fetch_add(1, std::memory_order_relaxed);
+    RecordCallSite(imported, returnAddress);
     const std::uint64_t sequence = g_sequence.fetch_add(1, std::memory_order_relaxed) + 1;
     RingSlot& slot = g_ring.load(std::memory_order_relaxed)[sequence % RingCapacity];
     slot.sequence.store(0, std::memory_order_release);
@@ -517,6 +579,7 @@ void* TraceImport_nid_no_patch(void* target, const char* name, const char* libra
         MapThunkArea();
         g_records.store(new ImportRecord[RecordCapacity], std::memory_order_release);
         g_ring.store(new RingSlot[RingCapacity], std::memory_order_release);
+        if (CallGraphRequested()) g_callSites.store(new CallSiteRecord[CallSiteCapacity], std::memory_order_release);
 #if defined(__linux__) || defined(__APPLE__)
         InstallAbortReport();
 #endif
