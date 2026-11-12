@@ -132,6 +132,45 @@
         {"name": "zero-times-infinity-plus-one", "input": ["0x00000000", "0x7f800000", "0x3f800000", 0]},
         {"name": "nan-payload-through-fma", "input": ["0x7fc12345", "0x3f800000", "0x40000000", 0]}
       ]
+    },
+    {
+      "id": "v-add-f32-round-up",
+      "instruction": "v_add_f32",
+      "description": "Positive and negative halfway additions with rounding toward positive infinity.",
+      "body": "v_add_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 1,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "positive-halfway",
+          "input": [
+            "0x3f800000",
+            "0x33800000",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "negative-halfway",
+          "input": [
+            "0xbf800000",
+            "0xb3800000",
+            0,
+            0
+          ]
+        }
+      ]
     }
   ]
 }

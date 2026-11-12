@@ -307,7 +307,7 @@ class ProbeCatalogCliTests(unittest.TestCase):
             report = json.loads(output.getvalue())
             self.assertEqual(result, 1)
             self.assertEqual(report["measured"], 0)
-            self.assertEqual(report["total"], 5)
+            self.assertEqual(report["total"], len(probe_catalog.read_catalog()[0]["probes"]))
             self.assertTrue(all(item["status"] == "missing" for item in report["probes"]))
 
     def test_cli_rejects_unknown_probes_without_running_them(self):
