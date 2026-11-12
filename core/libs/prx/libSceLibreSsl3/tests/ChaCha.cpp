@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <random>
 #include <source_location>
 #include <vector>
@@ -165,6 +166,12 @@ void CheckObjects() {
     Require(EVP_CIPHER_key_length_nid_postfix(aeadView) == 32 && EVP_CIPHER_iv_length_nid_postfix(aeadView) == 12);
 }
 
+Bytes FromHex(const char* hex) {
+    Bytes bytes;
+    for (; hex[0] != 0 && hex[1] != 0; hex += 2) bytes.push_back(static_cast<unsigned char>(std::stoul(std::string(hex, 2), nullptr, 16)));
+    return bytes;
+}
+
 void CheckStreamVector() {
     const Bytes key = Sequence(0, 32);
     const Bytes iv = {0x00, 0x00, 0x00, 0x4a, 0x00, 0x00, 0x00, 0x00};
@@ -172,6 +179,7 @@ void CheckStreamVector() {
     const Bytes expected = Stream(key, IetfNonce(0, iv), 1, plain);
     const Bytes rfcStart = {0x6e, 0x2e, 0x35, 0x9a, 0x25, 0x68, 0xf9, 0x80, 0x41, 0xba, 0x07, 0x28, 0xdd, 0x0d, 0x69, 0x81};
     Require(std::memcmp(expected.data(), rfcStart.data(), rfcStart.size()) == 0);
+    Require(expected == FromHex("6e2e359a2568f98041ba0728dd0d6981e97e7aec1d4360c20a27afccfd9fae0bf91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d807ca0dbf500d6a6156a38e088a22b65e52bc514d16ccf806818ce91ab77937365af90bbf74a35be6b40b8eedf2785e42874d"));
     Context context;
     const Bytes evpIv = EvpIv(1, iv);
     Require(EVP_EncryptInit_ex_nid_postfix(context.get(), EVP_chacha20_nid_postfix(), nullptr, key.data(), evpIv.data()) == 1);

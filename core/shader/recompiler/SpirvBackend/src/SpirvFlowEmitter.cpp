@@ -744,18 +744,26 @@ void EmitStructuredInstruction(SpirvValueEmitContext& ctx, StructuredFunctionSta
 }
 
 const IrValue* RegionNanCondition(const IrValue* test) {
-    test = test->Resolve();
-    if (test->Opcode() == IrOpcode::LogicalAnd && test->Flags<std::uint64_t>() == 0u) {
-        for (const auto* argument : test->Arguments()) if (const auto* source = RegionNanCondition(argument)) return source;
-    }
-    if (test->Opcode() != IrOpcode::UGreaterThan32 || test->Flags<std::uint64_t>() != 0u) return nullptr;
-    const auto* limit = test->Argument(1)->Resolve();
-    if (!limit->HasImmediate() || limit->ImmediateU32() != 0x7f800000u) return nullptr;
-    const auto* magnitude = test->Argument(0)->Resolve();
-    if (magnitude->Opcode() != IrOpcode::BitwiseAnd32 || magnitude->Flags<std::uint64_t>() != 0u) return nullptr;
-    for (std::size_t index = 0u; index < 2u; ++index) {
-        const auto* mask = magnitude->Argument(index)->Resolve();
-        if (mask->HasImmediate() && mask->ImmediateU32() == 0x7fffffffu) return magnitude->Argument(1u - index)->Resolve();
+    std::vector<const IrValue*> pending{test};
+    std::unordered_set<const IrValue*> visited;
+    while (!pending.empty()) {
+        test = pending.back()->Resolve();
+        pending.pop_back();
+        if (!visited.insert(test).second) continue;
+        if (test->Flags<std::uint64_t>() != 0u) continue;
+        if (test->Opcode() == IrOpcode::LogicalAnd) {
+            for (std::size_t index = test->ArgumentCount(); index > 0u; --index) pending.push_back(test->Argument(index - 1u));
+            continue;
+        }
+        if (test->Opcode() != IrOpcode::UGreaterThan32) continue;
+        const auto* limit = test->Argument(1)->Resolve();
+        if (!limit->HasImmediate() || limit->ImmediateU32() != 0x7f800000u) continue;
+        const auto* magnitude = test->Argument(0)->Resolve();
+        if (magnitude->Opcode() != IrOpcode::BitwiseAnd32 || magnitude->Flags<std::uint64_t>() != 0u) continue;
+        for (std::size_t index = 0u; index < 2u; ++index) {
+            const auto* mask = magnitude->Argument(index)->Resolve();
+            if (mask->HasImmediate() && mask->ImmediateU32() == 0x7fffffffu) return magnitude->Argument(1u - index)->Resolve();
+        }
     }
     return nullptr;
 }
@@ -1128,10 +1136,6 @@ bool PrecedesEveryMemoryAccess(const IrProgram& program, const IrValue& barrier)
     return false;
 }
 
-}
-
-void EmitControlFlow(SpirvModule& module, const IrProgram& program) {
-    throw std::runtime_error("EmitControlFlow not implemented");
 }
 
 void EmitControlFlow(SpirvValueEmitContext& context, StructuredFunctionState& functionState, const IrProgram& program) {
