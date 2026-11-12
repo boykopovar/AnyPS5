@@ -510,6 +510,13 @@ int main(int argc, char** argv) {
     result.tick = 123;
     Require(sceRtcTickAddHours(nullptr, &source, 1) == invalidPointer);
     Require(sceRtcTickAddMicroseconds(&result, nullptr, 1) == invalidPointer);
+    const auto* unreadableTick = reinterpret_cast<const RtcTick*>(std::uintptr_t{0x10});
+    auto* unwritableTick = reinterpret_cast<RtcTick*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(sceRtcTickAddSeconds(&result, unreadableTick, 1) == invalidPointer && result.tick == 123 && errno == 71);
+    Require(sceRtcTickAddSeconds(unwritableTick, &source, 1) == invalidPointer && errno == 71);
+    Require(sceRtcTickAddMonths(&result, unreadableTick, 1) == invalidPointer && result.tick == 123 && errno == 71);
+    Require(sceRtcTickAddMonths(unwritableTick, &source, 1) == invalidPointer && errno == 71);
     source.tick = maxTick;
     Require(sceRtcTickAddTicks(&source, &source, 0) == 0 && source.tick == maxTick);
     Require(sceRtcTickAddTicks(&source, &source, -1) == 0 && source.tick == maxTick - 1);
@@ -1019,6 +1026,39 @@ int main(int argc, char** argv) {
     Require(sceRtcGetCurrentAdNetworkTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
     Require(sceRtcGetCurrentDebugNetworkTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
     Require(sceRtcSetCurrentTick(reinterpret_cast<const RtcTick*>(0x10)) == invalidPointer);
+    {
+        const auto* unreadableTick = reinterpret_cast<const RtcTick*>(0x10);
+        auto* unwritableTick = reinterpret_cast<RtcTick*>(0x10);
+        auto* unwritableText = reinterpret_cast<char*>(0x10);
+        const RtcTick validTick{leapDayTick};
+        RtcTick untouched{123};
+        char untouchedText[40];
+        std::memset(untouchedText, 'x', sizeof(untouchedText));
+        errno = 71;
+        Require(sceRtcCompareTick(unreadableTick, &validTick) == invalidPointer);
+        Require(sceRtcCompareTick(&validTick, unreadableTick) == invalidPointer);
+        Require(sceRtcConvertUtcToLocalTime(unreadableTick, &untouched) == invalidPointer && untouched.tick == 123);
+        Require(sceRtcConvertUtcToLocalTime(&validTick, unwritableTick) == invalidPointer);
+        Require(sceRtcConvertLocalTimeToUtc(unreadableTick, &untouched) == invalidPointer && untouched.tick == 123);
+        Require(sceRtcConvertLocalTimeToUtc(&validTick, unwritableTick) == invalidPointer);
+        Require(sceRtcFormatRFC3339(untouchedText, unreadableTick, 0) == invalidPointer);
+        Require(sceRtcFormatRFC3339(unwritableText, &validTick, 0) == invalidPointer);
+        Require(sceRtcFormatRFC3339LocalTime(untouchedText, unreadableTick) == invalidPointer);
+        Require(sceRtcFormatRFC3339LocalTime(unwritableText, &validTick) == invalidPointer);
+        Require(sceRtcFormatRFC2822(untouchedText, unreadableTick, 0) == invalidPointer);
+        Require(sceRtcFormatRFC2822(unwritableText, &validTick, 0) == invalidPointer);
+        Require(sceRtcFormatRFC2822LocalTime(untouchedText, unreadableTick) == invalidPointer);
+        Require(sceRtcFormatRFC2822LocalTime(unwritableText, &validTick) == invalidPointer);
+        Require(sceRtcFormatRFC3339Precise(untouchedText, unreadableTick, 0, 6) == invalidPointer);
+        Require(sceRtcFormatRFC3339Precise(unwritableText, &validTick, 0, 6) == invalidPointer);
+        Require(sceRtcFormatRFC3339PreciseLocalTime(untouchedText, unreadableTick, 6) == invalidPointer);
+        Require(sceRtcFormatRFC3339PreciseLocalTime(unwritableText, &validTick, 6) == invalidPointer);
+        Require(errno == 71);
+        Require(std::string_view(untouchedText, sizeof(untouchedText)) == std::string(sizeof(untouchedText), 'x'));
+        Require(sceRtcFormatRFC3339Precise(untouchedText, &validTick, 0, 6) == 0 && std::strcmp(untouchedText, "2024-02-29T12:34:56.789000Z") == 0);
+        Require(sceRtcFormatRFC2822(untouchedText, &validTick, 0) == 0 && std::strcmp(untouchedText, "Thu, 29 Feb 2024 12:34:56 +0000") == 0);
+        Require(untouchedText[32] == 'x');
+    }
     {
         const RtcDateTime validDate{2020, 1, 1, 0, 0, 0, 0};
         const RtcDateTime preEpochDate{1969, 1, 1, 0, 0, 0, 0};
