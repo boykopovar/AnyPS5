@@ -1274,22 +1274,28 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
     const auto& voice = *found;
     switch (voice.rack->rackId) {
         case SCE_NGS2_RACK_ID_SAMPLER: {
-            if (state_size != sizeof(Ngs2SamplerVoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
-            auto& sampler = *reinterpret_cast<Ngs2SamplerVoiceState*>(state);
-            if (voice.pendingPlay) { sampler = {}; sampler.voice_state.state_flags = SCE_NGS2_VOICE_STATE_FLAG_INUSE; return SCE_NGS2_OK; }
-            if (voice.rack->system != nullptr && voice.rack->system->renderDepth != 0 && voice.rack->system->jobManagers[0].handle != 0) {
+            const bool commonOnly = PS4_LIBRARY && state_size == sizeof(Ngs2VoiceState);
+            if (!commonOnly && state_size != sizeof(Ngs2SamplerVoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+            Ngs2SamplerVoiceState commonResult;
+            auto& sampler = commonOnly ? commonResult : *reinterpret_cast<Ngs2SamplerVoiceState*>(state);
+            if (voice.pendingPlay) {
+                sampler = {};
+                sampler.voice_state.state_flags = SCE_NGS2_VOICE_STATE_FLAG_INUSE;
+            } else if (voice.rack->system != nullptr && voice.rack->system->renderDepth != 0 && voice.rack->system->jobManagers[0].handle != 0) {
                 sampler = voice.publishedSampler;
-                return SCE_NGS2_OK;
+            } else {
+                sampler = {};
+                sampler.voice_state.state_flags = voice.stateFlags;
+                if (voice.state != Ngs2PlayState::Empty) {
+                    sampler.envelope_height = 1.0f;
+                    sampler.peak_height = voice.peakHeight;
+                    sampler.num_decoded_samples = voice.decodedSamples;
+                    sampler.decoded_data_size = voice.decodedBytes;
+                    sampler.user_data = voice.waveformUserData;
+                    sampler.waveform_data = voice.WaveformData();
+                }
             }
-            sampler = {};
-            sampler.voice_state.state_flags = voice.stateFlags;
-            if (voice.state == Ngs2PlayState::Empty) return SCE_NGS2_OK;
-            sampler.envelope_height = 1.0f;
-            sampler.peak_height = voice.peakHeight;
-            sampler.num_decoded_samples = voice.decodedSamples;
-            sampler.decoded_data_size = voice.decodedBytes;
-            sampler.user_data = voice.waveformUserData;
-            sampler.waveform_data = voice.WaveformData();
+            if (commonOnly) *state = sampler.voice_state;
             return SCE_NGS2_OK;
         }
         case SCE_NGS2_RACK_ID_REVERB: {
