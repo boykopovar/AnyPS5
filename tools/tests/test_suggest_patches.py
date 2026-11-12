@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -130,6 +131,57 @@ class PatchAdvisorTests(unittest.TestCase):
         self.assertEqual(self.advise(), 1)
 
     @patch.object(suggest_patches.subprocess, "run")
+    def test_excessively_nested_json_is_a_usage_error(self, run):
+        depth = sys.getrecursionlimit() + 64
+        for _ in range(8):
+            try:
+                json.loads("[" * depth + "]" * depth)
+            except RecursionError:
+                break
+            depth *= 2
+        else:
+            self.fail("JSON decoder accepted every bounded nesting probe")
+        nested = "[" * (depth + 128) + "]" * (depth + 128)
+        for target in (self.param, self.catalog / "index.json"):
+            with self.subTest(target=target.name):
+                original = target.read_text(encoding="utf-8")
+                try:
+                    target.write_text(nested, encoding="utf-8")
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr):
+                        self.assertEqual(self.advise(), 2)
+                    self.assertTrue(stderr.getvalue().startswith("Patch advisor: "), stderr.getvalue())
+                    self.assertNotIn("param.json must be an object", stderr.getvalue())
+                    self.assertNotIn("catalog must have format 1", stderr.getvalue())
+                    run.assert_not_called()
+                finally:
+                    target.write_text(original, encoding="utf-8")
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_excessively_nested_patch_file_rejects_only_its_entry(self, run):
+        depth = sys.getrecursionlimit() + 64
+        for _ in range(8):
+            try:
+                tomllib.loads("a = " + "[" * depth + "]" * depth)
+            except RecursionError:
+                break
+            depth *= 2
+        else:
+            self.fail("TOML decoder accepted every bounded nesting probe")
+        (self.catalog / "deep.toml").write_text("a = " + "[" * (depth + 128) + "]" * (depth + 128), encoding="utf-8")
+        deep = dict(self.entry, patch="deep.toml")
+        self.write_index([deep, self.entry])
+        run.return_value.returncode = 0
+        run.return_value.stdout = VERIFIED
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            self.assertEqual(self.advise(), 0)
+        self.assertIn("Catalog entry 1 ('deep.toml'): rejected: ", stdout.getvalue())
+        self.assertIn("Recommended: " + str(self.catalog / "patch.toml"), stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(run.call_args.args[0][2], str(self.catalog / "patch.toml"))
+
+    @patch.object(suggest_patches.subprocess, "run")
     def test_catalog_cannot_escape_directory(self, run):
         self.entry["patch"] = "../outside.toml"
         self.write_index()
@@ -214,6 +266,51 @@ class PatchAdvisorTests(unittest.TestCase):
             self.assertEqual(self.advise(), 0)
         self.assertIn("Catalog entry 1 ('loop-target.toml'): rejected", output.getvalue())
         run.assert_called_once()
+
+    def test_resolve_path_reports_symlink_loops(self):
+        first, second = self.root / "loop-first", self.root / "loop-second"
+        try:
+            first.symlink_to(second)
+            second.symlink_to(first)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(str(error))
+        with self.assertRaises(ValueError) as error:
+            suggest_patches.resolve_path(first)
+        self.assertRegex(str(error.exception), r"Symlink loop|Too many levels of symbolic links")
+
+    def test_resolve_path_reports_windows_symlink_loops(self):
+        unresolvable = OSError(22, "The name of the file cannot be resolved by the system", "loop")
+        unresolvable.winerror = 1921
+        missing = OSError(2, "No such file or directory", "missing")
+        for failure, expected in ((unresolvable, True), (missing, False)):
+            with self.subTest(winerror=getattr(failure, "winerror", None)), \
+                    patch.object(suggest_patches.Path, "resolve", side_effect=failure):
+                with self.assertRaises(ValueError) as error:
+                    suggest_patches.resolve_path(self.root / "loop")
+                self.assertEqual("Symlink loop" in str(error.exception), expected, str(error.exception))
+
+    def test_cli_path_symlink_loops_are_reported_without_traceback(self):
+        first, second = self.root / "loop-first", self.root / "loop-second"
+        try:
+            first.symlink_to(second)
+            second.symlink_to(first)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(str(error))
+        tool = Path(suggest_patches.__file__)
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+        cases = (
+            ("catalog", ["--catalog", str(first), "--relinker", str(self.relinker)]),
+            ("module parent", ["--catalog", str(self.catalog), "--sce-module-path", str(first), "--relinker", str(self.relinker)]),
+        )
+        for label, arguments in cases:
+            with self.subTest(label=label):
+                result = subprocess.run(
+                    [sys.executable, str(tool), *arguments, "--param-json", str(self.param), "--input", str(self.input),
+                     "--module-dir", "Media/Modules"],
+                    capture_output=True, text=True, timeout=30, env=env)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertRegex(result.stderr, r"Symlink loop|Too many levels of symbolic links")
 
     @patch.object(suggest_patches.subprocess, "run")
     def test_relinker_timeout_is_not_a_recommendation(self, run):

@@ -1,5 +1,7 @@
 import argparse
 import collections
+import contextlib
+import functools
 import hashlib
 import json
 import math
@@ -9,15 +11,60 @@ import re
 import signal
 import subprocess
 import sys
+import time
 import xml.etree.ElementTree as ET
 
 
 FORCED = {"ANYPS5_REQUIRE_VULKAN": "1", "ANYPS5_NO_SHADER_CACHE": "1",
-          "VK_INSTANCE_LAYERS": "VK_LAYER_KHRONOS_validation"}
+          "VK_INSTANCE_LAYERS": "VK_LAYER_KHRONOS_validation", "VK_LOADER_DEBUG": "layer"}
 PUBLIC_ENV = ("ANYPS5_GPU", "VK_ICD_FILENAMES", "VK_DRIVER_FILES", "VK_LAYER_PATH")
 DIAGNOSTIC = re.compile(r"\b(VUID-[A-Za-z0-9_-]+|SYNC-HAZARD-[A-Za-z0-9_-]+)")
 MESSAGE = re.compile(r"Validation (?:Error|Warning):|(?:VUID-|SYNC-HAZARD-)[\w-]+\s*\((?:ERROR|WARNING)\s*/")
 MISSING_LAYER = "was not found but was requested by env var VK_INSTANCE_LAYERS"
+INSERTED_LAYER = 'Insert instance layer "VK_LAYER_KHRONOS_validation"'
+
+if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
+
+    class ThreadEntry(ctypes.Structure):
+        _fields_ = [("size", wintypes.DWORD), ("usage", wintypes.DWORD), ("thread", wintypes.DWORD),
+                    ("owner", wintypes.DWORD), ("base_priority", wintypes.LONG), ("delta_priority", wintypes.LONG),
+                    ("flags", wintypes.DWORD)]
+
+    class Limits(ctypes.Structure):
+        _fields_ = [("user_process", ctypes.c_int64), ("user_job", ctypes.c_int64), ("flags", wintypes.DWORD),
+                    ("min_ws", ctypes.c_size_t), ("max_ws", ctypes.c_size_t), ("active_limit", wintypes.DWORD),
+                    ("affinity", ctypes.c_size_t), ("priority", wintypes.DWORD), ("scheduling", wintypes.DWORD),
+                    ("io", ctypes.c_uint64 * 6), ("memory", ctypes.c_size_t * 4)]
+
+    class Accounting(ctypes.Structure):
+        _fields_ = [("user", ctypes.c_int64), ("kernel", ctypes.c_int64), ("period_user", ctypes.c_int64),
+                    ("period_kernel", ctypes.c_int64), ("faults", wintypes.DWORD), ("total", wintypes.DWORD),
+                    ("active", wintypes.DWORD), ("terminated", wintypes.DWORD)]
+
+    KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    for name, restype, *argtypes in (
+            ("CreateJobObjectW", wintypes.HANDLE, wintypes.LPVOID, wintypes.LPCWSTR),
+            ("SetInformationJobObject", wintypes.BOOL, wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD),
+            ("QueryInformationJobObject", wintypes.BOOL, wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD,
+             ctypes.POINTER(wintypes.DWORD)),
+            ("GetCurrentProcess", wintypes.HANDLE),
+            ("OpenProcess", wintypes.HANDLE, wintypes.DWORD, wintypes.BOOL, wintypes.DWORD),
+            ("AssignProcessToJobObject", wintypes.BOOL, wintypes.HANDLE, wintypes.HANDLE),
+            ("CreateToolhelp32Snapshot", wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD),
+            ("Thread32First", wintypes.BOOL, wintypes.HANDLE, ctypes.POINTER(ThreadEntry)),
+            ("Thread32Next", wintypes.BOOL, wintypes.HANDLE, ctypes.POINTER(ThreadEntry)),
+            ("OpenThread", wintypes.HANDLE, wintypes.DWORD, wintypes.BOOL, wintypes.DWORD),
+            ("ResumeThread", wintypes.DWORD, wintypes.HANDLE),
+            ("TerminateJobObject", wintypes.BOOL, wintypes.HANDLE, wintypes.UINT),
+            ("CloseHandle", wintypes.BOOL, wintypes.HANDLE)):
+        getattr(KERNEL32, name).restype, getattr(KERNEL32, name).argtypes = restype, argtypes
+    CREATE_SUSPENDED, TH32CS_SNAPTHREAD, THREAD_SUSPEND_RESUME = 0x4, 0x4, 0x2
+    KILL_ON_JOB_CLOSE, LIMITS, ACCOUNTING = 0x2000, 9, 1
+    PROCESS_SET_QUOTA_AND_TERMINATE = 0x0101
+    INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+    DRAIN_SECONDS = 10
 
 
 class GateError(Exception):
@@ -48,7 +95,132 @@ def identity(source, expected):
     return {"source": str(source), "commit": expected}
 
 
+def win32(name, *arguments, failed=(None, 0)):
+    result = getattr(KERNEL32, name)(*arguments)
+    if result in failed:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return result
+
+
+def close(handle):
+    if handle:
+        KERNEL32.CloseHandle(handle)
+
+
+def new_job():
+    job = win32("CreateJobObjectW", None, None)
+    try:
+        limits = Limits(flags=KILL_ON_JOB_CLOSE)
+        win32("SetInformationJobObject", job, LIMITS, ctypes.byref(limits), ctypes.sizeof(limits))
+        return job
+    except BaseException:
+        close(job)
+        raise
+
+
+@functools.lru_cache(maxsize=None)
+def guard():
+    job = new_job()
+    try:
+        win32("AssignProcessToJobObject", job, KERNEL32.GetCurrentProcess())
+        return job
+    except BaseException:
+        close(job)
+        raise
+
+
+def contain(pid):
+    job = new_job()
+    try:
+        process = win32("OpenProcess", PROCESS_SET_QUOTA_AND_TERMINATE, False, pid)
+        try:
+            win32("AssignProcessToJobObject", job, process)
+        finally:
+            close(process)
+        snapshot = win32("CreateToolhelp32Snapshot", TH32CS_SNAPTHREAD, 0, failed=(INVALID_HANDLE_VALUE,))
+        resumed = 0
+        try:
+            entry = ThreadEntry(ctypes.sizeof(ThreadEntry))
+            more = KERNEL32.Thread32First(snapshot, ctypes.byref(entry))
+            while more:
+                if entry.owner == pid:
+                    thread = win32("OpenThread", THREAD_SUSPEND_RESUME, False, entry.thread)
+                    try:
+                        count = win32("ResumeThread", thread, failed=(0xFFFFFFFF,))
+                        if count != 1:
+                            raise GateError(f"process {pid}: initial thread had unexpected suspend count {count}")
+                        resumed += 1
+                    finally:
+                        close(thread)
+                more = KERNEL32.Thread32Next(snapshot, ctypes.byref(entry))
+        finally:
+            close(snapshot)
+        if not resumed:
+            raise GateError(f"process {pid}: no thread to resume after joining the job")
+        return job
+    except BaseException:
+        KERNEL32.TerminateJobObject(job, 1)
+        close(job)
+        raise
+
+
+def wait_in_slices(process, timeout):
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        try:
+            return process.wait(timeout=min(remaining, 0.25))
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def drain(job, process, strict):
+    deadline = time.monotonic() + DRAIN_SECONDS
+    accounting = Accounting()
+    try:
+        with contextlib.nullcontext() if strict else contextlib.suppress(OSError):
+            win32("TerminateJobObject", job, 1)
+            while True:
+                win32("QueryInformationJobObject", job, ACCOUNTING, ctypes.byref(accounting),
+                      ctypes.sizeof(accounting), None)
+                if not accounting.active or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.02)
+    finally:
+        close(job)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.wait(timeout=max(0.0, deadline - time.monotonic()))
+    if strict and (accounting.active or process.returncode is None):
+        raise GateError(f"command job still has {accounting.active or 1} active process(es) that survived job termination")
+
+
+def run_in_job(command, log, environment, timeout):
+    guard()
+    with log.open("w", encoding="utf-8") as output:
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+                                   env=environment, creationflags=CREATE_SUSPENDED)
+        try:
+            job = contain(process.pid)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                process.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=DRAIN_SECONDS)
+            raise
+        try:
+            code = wait_in_slices(process, timeout)
+        except BaseException:
+            drain(job, process, strict=False)
+            raise
+        drain(job, process, strict=True)
+        return code
+
+
 def run(command, log, environment, timeout):
+    if os.name == "nt":
+        return run_in_job(command, log, environment, timeout)
     with log.open("w", encoding="utf-8") as output:
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
                                    env=environment, start_new_session=True)
@@ -75,12 +247,12 @@ def artifact_hashes(build, tests, runtime):
     paths = set()
     for test in tests:
         command = test.get("command") or []
-        if not command or not Path(command[0]).is_file():
-            raise GateError(f"{test['name']}: selected command is not an existing executable")
         working = next((Path(prop["value"]) for prop in test.get("properties", [])
                         if prop["name"] == "WORKING_DIRECTORY"), Path("."))
         if not working.is_absolute():
             working = build / working
+        if not command or not (working / command[0]).is_file():
+            raise GateError(f"{test['name']}: selected command is not an existing executable")
         for argument in command:
             value = argument.partition("=")[2] if argument.startswith("-D") else argument
             path = Path(value)
@@ -121,17 +293,20 @@ def parse_report(path, expected):
             raise GateError(f"{path}: missing or duplicate testcase name")
         messages = collections.Counter()
         missing = []
+        inserted = False
         for channel in ("system-out", "system-err"):
             for line in (case.findtext(channel) or "").splitlines():
                 if MESSAGE.search(line):
                     messages.update(DIAGNOSTIC.findall(line))
                 if MISSING_LAYER in line:
                     missing.append(line)
+                inserted = inserted or INSERTED_LAYER in line
         failed = (case.find("failure") is not None or case.find("error") is not None
                   or case.find("skipped") is not None or case.get("status") in ("disabled", "notrun"))
-        if failed or missing:
+        if failed or missing or not inserted:
             problems.append(name)
-        results[name] = {"diagnostics": dict(messages), "missing_layers": missing, "failed_or_skipped": failed}
+        results[name] = {"diagnostics": dict(messages), "missing_layers": missing, "layer_inserted": inserted,
+                         "failed_or_skipped": failed}
     if set(results) != set(expected):
         problems.append("test coverage differs: missing=" + repr(sorted(set(expected) - set(results)))
                         + " extra=" + repr(sorted(set(results) - set(expected))))
@@ -160,7 +335,7 @@ def save(output, report):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Build and repeatedly compare focused Vulkan CTests on two pinned clean POSIX worktrees")
+    parser = argparse.ArgumentParser(description="Build and repeatedly compare focused Vulkan CTests on two pinned clean worktrees")
     parser.add_argument("--baseline", nargs=2, required=True, metavar=("SOURCE", "COMMIT"))
     parser.add_argument("--candidate", nargs=2, required=True, metavar=("SOURCE", "COMMIT"))
     parser.add_argument("--output", type=Path, required=True, help="new directory outside both source worktrees")
@@ -174,8 +349,8 @@ def main(argv=None):
     parser.add_argument("--runtime", action="append", default=[], help="build-relative runtime file/directory to hash before and after tests")
     parser.add_argument("--cmake", default="cmake")
     parser.add_argument("--ctest", default="ctest")
-    if os.name != "posix":
-        parser.error("execution is currently supported only on POSIX; Windows process containment is not implemented")
+    if os.name not in ("posix", "nt") or sys.platform in ("cygwin", "msys"):
+        parser.error("use native Windows Python or a POSIX host; Cygwin and MSYS Python cannot contain native Windows processes")
     args = parser.parse_args(argv)
     if args.repeat <= 0:
         parser.error("--repeat must be positive")

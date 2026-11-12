@@ -1,7 +1,9 @@
 #include "prx/libSceUlt/include/Api.hpp"
+#include <cerrno>
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -61,11 +63,24 @@ void MutexTryLock() {
     CHECK(sceUltMutexUnlock(&mutex) == Ok);
     CHECK(sceUltMutexDestroy(&mutex) == Ok);
     CHECK(sceUltMutexTryLock(&mutex) == State);
+    CHECK(sceUltMutexCreate(&mutex, "plain", nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltMutexTryLock(&mutex) == Ok);
+    CHECK(sceUltMutexTryLock(&mutex) == State);
+    CHECK(sceUltMutexUnlock(&mutex) == Ok);
+    std::thread([&] {
+        other = sceUltMutexTryLock(&mutex);
+        if (other == Ok) other = sceUltMutexUnlock(&mutex);
+    }).join();
+    CHECK(other == Ok);
+    CHECK(sceUltMutexDestroy(&mutex) == Ok);
 }
 
 void MutexAndRuntimeOptParams() {
     alignas(8) std::uint8_t misaligned[sizeof(UltMutexOptParam) + 8];
     CHECK(sceUltMutexOptParamInitialize(nullptr, 0) == Null);
+    errno = 71;
+    CHECK(sceUltMutexOptParamInitialize(reinterpret_cast<UltMutexOptParam*>(0x10), 0) == Null);
+    CHECK(errno == 71);
     CHECK(sceUltMutexOptParamInitialize(reinterpret_cast<UltMutexOptParam*>(misaligned + 4), 0) == -2139029502);
     UltMutexOptParam mutexOptions;
     std::memset(&mutexOptions, 0xa5, sizeof(mutexOptions));
@@ -76,14 +91,19 @@ void MutexAndRuntimeOptParams() {
     UltUlthreadRuntimeOptParam runtimeOptions;
     std::memset(&runtimeOptions, 0xa5, sizeof(runtimeOptions));
     CHECK(sceUltUlthreadRuntimeOptParamInitialize(nullptr, 0) == Null);
-    CHECK(sceUltUlthreadRuntimeOptParamInitialize(&runtimeOptions, 0) == Ok);
-    for (const std::uint8_t byte : runtimeOptions.bytes) CHECK(byte == 0);
+    CHECK(sceUltUlthreadRuntimeOptParamInitialize(&runtimeOptions, 0x12400000) == Ok);
+    const std::uint8_t console[40] = {0x75, 0x62, 0x69, 0x6c, 0x61, 0x6d, 0x74, 0x6c, 0x00, 0x63, 0x69, 0x67, 0x00, 0x00, 0x40, 0x12, 0x00, 0x40, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0xff, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbc, 0x02, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00};
+    CHECK(std::memcmp(runtimeOptions.bytes, console, sizeof(console)) == 0);
+    for (std::size_t i = sizeof(console); i < sizeof(runtimeOptions.bytes); i++) CHECK(runtimeOptions.bytes[i] == 0);
 }
 
 void OptParams() {
     using Initializer = decltype(&sceUltSemaphoreOptParamInitialize);
     for (const Initializer initialize : {sceUltSemaphoreOptParamInitialize, sceUltQueueOptParamInitialize, sceUltQueueDataResourcePoolOptParamInitialize,
                                          sceUltWaitingQueueResourcePoolOptParamInitialize, sceUltUlthreadOptParamInitialize, sceUltReaderWriterLockOptParamInitialize,
+                                         _sceUltSemaphoreOptParamInitialize, _sceUltQueueOptParamInitialize, _sceUltQueueDataResourcePoolOptParamInitialize,
+                                         _sceUltWaitingQueueResourcePoolOptParamInitialize, _sceUltUlthreadOptParamInitialize, _sceUltReaderWriterLockOptParamInitialize,
                                          sceUltConditionVariableOptParamInitialize, _sceUltConditionVariableOptParamInitialize}) {
         alignas(UltOptParam) std::uint8_t bytes[136];
         std::memset(bytes, 0xa5, sizeof(bytes));
@@ -238,6 +258,31 @@ void ReaderWriterFinalize() {
     CHECK(sceUltInitialize() == Ok);
 }
 
+void ReaderWriterUnderscored() {
+    Object pool{};
+    Object rwlock{};
+    std::memset(&rwlock, 0x5a, sizeof(rwlock));
+    alignas(UltOptParam) std::uint8_t optBytes[128];
+    auto* optParam = reinterpret_cast<UltOptParam*>(optBytes);
+    std::uint8_t workArea[2048];
+    CHECK(_sceUltReaderWriterLockOptParamInitialize(optParam, 0) == Ok);
+    CHECK(_sceUltReaderWriterLockCreate(nullptr, "underscored", nullptr, optParam, 0) == Null);
+    CHECK(_sceUltReaderWriterLockCreate(&rwlock, "underscored", &pool, optParam, 0) == Invalid);
+    for (const auto byte : rwlock.bytes) CHECK(byte == 0x5a);
+    CHECK(_sceUltWaitingQueueResourcePoolCreate(&pool, "pool", 2, 2, workArea, nullptr) == Ok);
+    CHECK(_sceUltReaderWriterLockCreate(&rwlock, "underscored", &pool, optParam, 0) == Ok);
+    for (const auto byte : rwlock.bytes) CHECK(byte == 0);
+    CHECK(_sceUltReaderWriterLockCreate(&rwlock, "underscored", &pool, optParam, 0) == State);
+    CHECK(sceUltReaderWriterLockLockRead(&rwlock) == Ok);
+    CHECK(sceUltReaderWriterLockTryLockWrite(&rwlock) == Busy);
+    CHECK(sceUltReaderWriterLockDestroy(&rwlock) == Busy);
+    CHECK(sceUltReaderWriterLockUnlockRead(&rwlock) == Ok);
+    CHECK(sceUltReaderWriterLockLockWrite(&rwlock) == Ok);
+    CHECK(sceUltReaderWriterLockUnlockWrite(&rwlock) == Ok);
+    CHECK(sceUltReaderWriterLockDestroy(&rwlock) == Ok);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(&pool) == Ok);
+}
+
 struct alignas(8) UlthreadObject {
     std::uint8_t bytes[512];
 };
@@ -272,6 +317,12 @@ void Ulthreads() {
     UlthreadObject first{};
     std::uint8_t context[4096];
     CHECK(sceUltUlthreadCreate(&first, "exits", ExitingEntry, 42, context, sizeof(context), &runtime, nullptr, 0) == Ok);
+    UltUlthreadInfo threadQueryInfo{};
+    CHECK(sceUltGetUlthreadInfo(&first, &threadQueryInfo) == Ok);
+    CHECK(std::strcmp(threadQueryInfo.name, "exits") == 0);
+    errno = 71;
+    CHECK(sceUltGetUlthreadInfo(&first, reinterpret_cast<UltUlthreadInfo*>(0x10)) == Null);
+    CHECK(errno == 71);
     std::int32_t status = 0;
     CHECK(sceUltUlthreadJoin(&first, &status) == Ok);
     CHECK(status == 42 && gSelf.load() == &first && gYield.load() == Ok && !gPastExit.load());
@@ -400,6 +451,9 @@ void GetInfoTests() {
 
     CHECK(sceUltMutexCreate(mutexObj, "test-mutex", poolObj, nullptr, 0) == Ok);
     CHECK(sceUltGetMutexInfo(mutexObj, &mutexInfo, waitThreads, 4) == Ok);
+    errno = 71;
+    CHECK(sceUltGetMutexInfo(mutexObj, reinterpret_cast<UltMutexInfo*>(0x10), waitThreads, 4) == Null);
+    CHECK(errno == 71);
     CHECK(mutexInfo.size == sizeof(UltMutexInfo));
     CHECK(mutexInfo.object == mutexObj);
     CHECK(std::strcmp(mutexInfo.name, "test-mutex") == 0);
@@ -516,6 +570,9 @@ void GetInfoTests() {
     CHECK(sceUltUlthreadRuntimeCreate(rtObj, "test-rt", 2, 1, nullptr, nullptr, 0) == Ok);
     void* activeThreads[4]{};
     CHECK(sceUltGetUlthreadRuntimeInfo(rtObj, &rtInfo, activeThreads, 4, nullptr, 0) == Ok);
+    errno = 71;
+    CHECK(sceUltGetUlthreadRuntimeInfo(rtObj, reinterpret_cast<UltUlthreadRuntimeInfo*>(0x10), nullptr, 0, nullptr, 0) == Null);
+    CHECK(errno == 71);
     CHECK(rtInfo.size == sizeof(UltUlthreadRuntimeInfo));
     CHECK(rtInfo.object == rtObj);
     CHECK(std::strcmp(rtInfo.name, "test-rt") == 0);
@@ -703,6 +760,7 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "rwlock-writer") == 0) ReaderWriterWriter();
     else if (std::strcmp(argv[1], "rwlock-pool") == 0) ReaderWriterPool();
     else if (std::strcmp(argv[1], "rwlock-finalize") == 0) ReaderWriterFinalize();
+    else if (std::strcmp(argv[1], "rwlock-underscored") == 0) ReaderWriterUnderscored();
     else if (std::strcmp(argv[1], "ulthreads") == 0) Ulthreads();
     else if (std::strcmp(argv[1], "get-info") == 0) GetInfoTests();
     else if (std::strcmp(argv[1], "queue-waiters") == 0) QueueWaiters();

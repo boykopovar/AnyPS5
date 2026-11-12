@@ -78,10 +78,9 @@ int APS5_VABI libSceTEEClientUnknown_Xn5kfzvPht4_nid_no_patch() {
 }
 APS5_EXPORT("Xn5kfzvPht4", libSceTEEClientUnknown_Xn5kfzvPht4_nid_no_patch);
 
-int APS5_VABI libSceTEEClientUnknown_ZAJdq_minus_IONZ4_nid_no_patch() {
+int APS5_VABI AMDTEE_DLM_StartTADebug() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("ZAJdq-IONZ4", libSceTEEClientUnknown_ZAJdq_minus_IONZ4_nid_no_patch);
 
 int APS5_VABI libSceTEEClientUnknown_d_minus_OLk3nvFIA_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);

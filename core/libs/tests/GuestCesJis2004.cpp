@@ -9,9 +9,13 @@
 namespace {
 
 constexpr int invalidParameter = static_cast<int>(0x805C0001);
+constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
 constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
 constexpr int invalidEncode = static_cast<int>(0x805C0014);
+constexpr int outOfCodeSpace = static_cast<int>(0x805C0015);
 constexpr int unassignedCode = static_cast<int>(0x805C0020);
+constexpr int invalidDstBuffer = static_cast<int>(0x805C0030);
+constexpr int dstBufferEnd = static_cast<int>(0x805C0031);
 
 void Require(bool value) { if (!value) std::abort(); }
 
@@ -102,8 +106,16 @@ void CheckEuc() {
     std::uint32_t used = 0;
     std::uint32_t produced = 0;
     Require(sceCesMbcsStrToUtf32Str(context, Bytes("\x8F\xA1\xA1"), 3, &used, wide, 4, &produced) == 0 && produced == 1 && wide[0] == 0x20089);
+    Require(sceCesMbcsStrToUtf32Str(nullptr, Bytes("\x8F\xA1\xA1"), 3, &used, wide, 4, &produced) == invalidParameter);
+    Require(sceCesMbcsStrToUtf32Str(context, nullptr, 3, &used, wide, 4, &produced) == invalidSrcBuffer);
+    Require(sceCesMbcsStrToUtf32Str(context, Bytes("\x8F\xA1\xA1"), 3, &used, nullptr, 4, &produced) == invalidDstBuffer);
+    Require(sceCesMbcsStrToUtf32Str(context, Bytes("\x8F\xA1\xA1"), 3, &used, wide, 0, &produced) == dstBufferEnd);
     std::uint8_t utf8[8] = {};
     Require(sceCesMbcToUtf8(sheet, Bytes("\xAE\xA1"), 2, &used, utf8, sizeof(utf8), &produced) == 0 && used == 2 && produced == 3 && std::memcmp(utf8, "\xE4\xBF\xB1", 3) == 0);
+    Require(sceCesMbcToUtf8(nullptr, Bytes("\xAE\xA1"), 2, &used, utf8, sizeof(utf8), &produced) == invalidParameter);
+    Require(sceCesMbcToUtf8(sheet, nullptr, 2, &used, utf8, sizeof(utf8), &produced) == invalidSrcBuffer);
+    Require(sceCesMbcToUtf8(sheet, Bytes("\xAE\xA1"), 2, &used, nullptr, sizeof(utf8), &produced) == invalidDstBuffer);
+    Require(sceCesMbcToUtf8(sheet, Bytes("\xAE\xA1"), 2, &used, utf8, 1, &produced) == dstBufferEnd);
     std::uint16_t ucs2 = 0;
     Require(sceCesEucJpToUcs2(sheet, Bytes("\xA4\xA2"), 2, &used, &ucs2) == invalidParameter);
     alignas(8) std::uint8_t euc[64] = {};
@@ -143,7 +155,36 @@ void CheckShiftJis() {
 
 }
 
+void CheckLevels() {
+    std::uint32_t hash = 0x811C9DC5u;
+    std::uint32_t assigned = 0;
+    for (std::uint32_t plane = 0; plane < 4; ++plane) {
+        for (std::uint32_t row = 0; row < 256; ++row) {
+            for (std::uint32_t cell = 0; cell < 256; ++cell) {
+                std::uint32_t level = 0xEEEEEEEE;
+                const int result = sceCesJisGetLevel(static_cast<std::uint8_t>(plane), static_cast<std::uint8_t>(row), static_cast<std::uint8_t>(cell), &level);
+                hash = (hash ^ (static_cast<std::uint32_t>(result) & 0xFF)) * 0x01000193u;
+                hash = (hash ^ (level & 0xFF)) * 0x01000193u;
+                if (result == 0) ++assigned;
+            }
+        }
+    }
+    Require(hash == 0xD41EFACBu && assigned == 11233);
+    std::uint32_t level = 0;
+    Require(sceCesJisGetLevel(1, 4, 2, &level) == 0 && level == 1);
+    Require(sceCesJisGetLevel(1, 48, 1, &level) == 0 && level == 2);
+    Require(sceCesJisGetLevel(1, 13, 1, &level) == 0 && level == 3);
+    Require(sceCesJisGetLevel(1, 4, 87, &level) == 0 && level == 3);
+    Require(sceCesJisGetLevel(1, 4, 92, &level) == unassignedCode && level == 3);
+    Require(sceCesJisGetLevel(2, 1, 1, &level) == 0 && level == 4);
+    Require(sceCesJisGetLevel(2, 2, 1, &level) == unassignedCode && level == 4);
+    Require(sceCesJisGetLevel(3, 1, 1, &level) == outOfCodeSpace && level == 0);
+    Require(sceCesJisGetLevel(1, 95, 1, &level) == outOfCodeSpace && level == 0);
+    Require(sceCesJisGetLevel(1, 0x21, 0x21, nullptr) == invalidParameter);
+}
+
 int main() {
+    CheckLevels();
     CheckEuc();
     CheckShiftJis();
     return 0;

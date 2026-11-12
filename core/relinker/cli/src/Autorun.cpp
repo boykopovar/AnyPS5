@@ -5,6 +5,7 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <cstdlib>
 #include <cerrno>
 
@@ -33,8 +34,10 @@ int Autorun(const std::string& absPath, bool toWindows) {
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
-    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process))
-        throw Domain::RelinkerException("Cannot run the output executable: " + absPath);
+    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) {
+        const unsigned long runError = GetLastError();
+        throw Domain::RelinkerException("Cannot run the output executable: " + absPath + " (error " + std::to_string(runError) + ")");
+    }
     if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0) {
         const unsigned long waitError = GetLastError();
         CloseHandle(process.hThread);
@@ -71,8 +74,11 @@ int Autorun(const std::string& absPath, bool toWindows) {
     std::cout << "\nRaw exit code: " << rawCode << "; Unpacked: " << exitCode << '\n';
 #endif
 
-    std::cout << "\nPress Enter to exit...\n";
-    std::cin.ignore((std::numeric_limits<std::streamsize>::max)(), '\n');
+    const char* noPause = std::getenv("ANYPS5_AUTORUN_NO_PAUSE");
+    if (!noPause || std::string_view(noPause) != "1") {
+        std::cout << "\nPress Enter to exit...\n";
+        std::cin.ignore((std::numeric_limits<std::streamsize>::max)(), '\n');
+    }
 
     return exitCode;
 }

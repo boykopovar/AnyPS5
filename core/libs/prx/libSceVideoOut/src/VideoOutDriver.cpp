@@ -13,6 +13,7 @@
 
 #include "SDL.h"
 #include "SDL_vulkan.h"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceVideoOut/include/MainThread.hpp"
 #include "prx/libSceVideoOut/include/PadInput.hpp"
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
@@ -23,6 +24,7 @@
 #include "prx/libSceVideoOut/include/DialogInput.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
@@ -38,6 +40,10 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libc/include/RunReport.hpp"
+#include "prx/libc/include/RunReportComponent.hpp"
+
+APS5_RUN_REPORT_COMPONENT("libSceVideoOut")
 
 namespace {
 
@@ -88,6 +94,15 @@ std::optional<std::uint32_t> configuredResolution() {
         throw std::runtime_error("VideoOut: APS5_OUTPUT_RESOLUTION must be <width>x<height> with positive integers, got \"" + text + "\"");
     }
     return resolutionIndex(width, height);
+}
+
+bool readHostClipboard(std::string& text) {
+    if (SDL_HasClipboardText() != SDL_TRUE) return false;
+    char* raw = SDL_GetClipboardText();
+    if (raw == nullptr) return false;
+    text.assign(raw);
+    SDL_free(raw);
+    return true;
 }
 
 std::vector<const char*> windowExtensions(SDL_Window* window) {
@@ -341,7 +356,7 @@ VideoOutDriver::VideoOutDriver() {
         AgcDriverWaitIdle_nid_postfix();
         std::promise<void> started;
         auto attached = started.get_future();
-        presentThread = std::jthread([this, &started](std::stop_token token) {
+        presentThread = Libc::StartHostJThread([this, &started](std::stop_token token) {
             try {
                 AgcDriverRaiseWorkerThreadPriority_nid_postfix("presenter");
             } catch (...) {
@@ -351,7 +366,7 @@ VideoOutDriver::VideoOutDriver() {
             presentLoop(token, started);
         });
         attached.get();
-        vblankThread = std::jthread([this](std::stop_token token) { vblankLoop(token); });
+        vblankThread = Libc::StartHostJThread([this](std::stop_token token) { vblankLoop(token); });
         LibcRegisterShutdown_nid_postfix([] { VideoOutDriver::Get().Shutdown(); });
     } catch (...) {
         if (vblankThread.joinable()) {
@@ -400,19 +415,30 @@ void VideoOutDriver::Shutdown() {
 }
 
 int VideoOutDriver::Open(int busType) {
-    std::lock_guard lock(mutex);
-    {
-        std::lock_guard queueLock(flipQueue->mutex);
-        if (flipQueue->failure) std::rethrow_exception(flipQueue->failure);
-        if (flipQueue->stopping || LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
-    }
+    std::unique_lock lock(mutex);
     const int handle = busType + 1;
-    require(handle > 0 && handle < VIDEO_OUT_NUM_MAX, "invalid output bus");
-    auto previous = contexts[handle];
+    std::shared_ptr<VideoOutConfig> previous;
+    for (std::shared_ptr<VideoOutConfig> settled;; settled = previous) {
+        {
+            std::lock_guard queueLock(flipQueue->mutex);
+            if (flipQueue->failure) std::rethrow_exception(flipQueue->failure);
+            if (flipQueue->stopping || LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
+        }
+        require(handle > 0 && handle < VIDEO_OUT_NUM_MAX, "invalid output bus");
+        previous = contexts[handle];
+        if (!previous) break;
+        {
+            std::lock_guard cfgLock(previous->mutex);
+            if (previous->opened) return -1;
+        }
+        if (previous == settled) break;
+        lock.unlock();
+        AgcDriverWaitIdle_nid_postfix();
+        lock.lock();
+    }
     uint64_t generation = 1;
     if (previous) {
         std::lock_guard cfgLock(previous->mutex);
-        if (previous->opened) return -1;
         require(previous->generation != std::numeric_limits<uint64_t>::max(), "port generation overflow");
         generation = previous->generation + 1;
     }
@@ -589,6 +615,7 @@ void VideoOutDriver::vblankEnd(std::uint64_t tick) {
         ++cfg->vblankStatus.count;
         cfg->vblankStatus.processTime = sceKernelGetProcessTime();
         cfg->vblankStatus.processTimeCounter = sceKernelGetProcessTimeCounter();
+        cfg->vblankStatus.reserved = sceKernelReadTsc();
         triggerEvents(*cfg, VIDEO_OUT_EVENT_VBLANK, reinterpret_cast<void*>(cfg->vblankStatus.count));
         cfg->vblankCond.notify_all();
     }
@@ -754,6 +781,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             keyboardInput.emplace();
             imeTextInput.emplace();
             dialogInput.emplace();
+            imeTextInput->SetClipboardProvider(&readHostClipboard);
         });
         while (!token.stop_requested()) {
             {
@@ -784,6 +812,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 return false;
             });
             if (quit) {
+                LibcRunReportQuitRequested_nid_no_patch();
                 LibcRequestExit_nid_postfix(0);
                 throw ProcessShutdown{};
             }
