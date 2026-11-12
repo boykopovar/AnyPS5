@@ -3036,10 +3036,7 @@ bool Recorder::RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress resul
             layoutInfo.pushConstantRangeCount = 1;
             layoutInfo.pPushConstantRanges = &push;
             Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &changedCopyLayout), "vkCreatePipelineLayout changed copy");
-            VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-            moduleInfo.codeSize = sizeof(STAGING_COPY_BACK_SPV);
-            moduleInfo.pCode = STAGING_COPY_BACK_SPV;
-            Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule changed copy");
+            module = CreateShaderModule(context, STAGING_COPY_BACK_SPV, sizeof(STAGING_COPY_BACK_SPV), "vkCreateShaderModule changed copy");
             VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
             pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
             pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
