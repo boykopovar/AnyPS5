@@ -7766,6 +7766,7 @@ void ShaderResources::writeHeapTableMap(const BindlessHeap::SpanScope& spans, Bi
         heapTableMapSet[stageIndex] = true;
         return;
     }
+    stageState.mapBuilt = false;
     stageState.mapSlots.clear();
     stageState.mapSamplers.clear();
     const auto image = [&](std::uint32_t slot) {

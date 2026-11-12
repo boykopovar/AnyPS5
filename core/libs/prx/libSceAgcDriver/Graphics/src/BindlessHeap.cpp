@@ -648,13 +648,13 @@ std::uint32_t BindlessHeap::SamplerGeneration(std::uint32_t slot) const {
 bool BindlessHeap::GenerationsCurrent(std::span<const std::uint32_t> slots, std::span<const std::uint32_t> slotGenerations,
                                       std::span<const std::uint32_t> samplerSlots,
                                       std::span<const std::uint32_t> samplerGenerations) const {
-    if (slots.size() != slotGenerations.size()) return false;
+    if (slots.size() != slotGenerations.size() || samplerSlots.size() != samplerGenerations.size()) return false;
     for (std::size_t i = 0; i < slots.size(); ++i) {
         if (imagePool.Generation(slots[i]) != slotGenerations[i]) return false;
     }
     for (std::size_t i = 0; i < samplerSlots.size(); ++i) {
         if (samplerSlots[i] == Abi::NoEmbeddedSampler) continue;
-        if (i >= samplerGenerations.size() || samplerPool.Generation(samplerSlots[i]) != samplerGenerations[i]) return false;
+        if (samplerPool.Generation(samplerSlots[i]) != samplerGenerations[i]) return false;
     }
     return true;
 }
