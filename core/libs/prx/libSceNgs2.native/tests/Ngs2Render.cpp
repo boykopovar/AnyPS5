@@ -161,6 +161,18 @@ static void TestPcmBlockEnd() {
     Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
     Require(state.num_decoded_samples == Grain && state.decoded_data_size == Grain * 2 && state.user_data == 0x55);
     Require(state.waveform_data == pcm.data() + Grain);
+#ifdef APS5_NGS2_PS4_LIBRARY
+    {
+        struct GuardedVoiceState {
+            std::uint64_t before;
+            Ngs2VoiceState state;
+            std::uint64_t after;
+        } common{UINT64_MAX, {UINT32_MAX, -1}, UINT64_MAX};
+        Require(sceNgs2VoiceGetState(sampler, &common.state, sizeof(common.state)) == SCE_NGS2_OK);
+        Require(common.state.state_flags == state.voice_state.state_flags && common.state.error_code == state.voice_state.error_code);
+        Require(common.before == UINT64_MAX && common.after == UINT64_MAX);
+    }
+#endif
 
     out = RenderI16(system);
     for (std::uint32_t i = 0; i < Grain; i++) Require(out[i] == (Grain + i - 3 < pcm.size() ? TowardZero(pcm[Grain + i - 3]) : 0));

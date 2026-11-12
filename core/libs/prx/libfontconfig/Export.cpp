@@ -58,10 +58,6 @@ int APS5_VABI FcFontMatch() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcPatternGetFTFace() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 uint32_t APS5_VABI FcCharSetSubtractCount(const FcCharSet* first, const FcCharSet* second) {
     if (!first || !second) return 0;
     uint32_t count = 0;

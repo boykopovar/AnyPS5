@@ -1,5 +1,6 @@
 #include "prx/libSceVrTracker2/include/Api.hpp"
 #include "prx/libSceHmd2/libSceHmd2.hpp"
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <cstddef>
@@ -143,7 +144,11 @@ private:
 
 std::int32_t ClearThenReportNotInitialized(void* output, std::size_t size) {
     if (output == nullptr) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-    std::memset(output, 0, size);
+    const std::array<std::byte, 24> cleared{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(output, cleared.data(), size);
+    errno = savedErrno;
+    if (!copied) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     return VR_TRACKER2_ERROR_NOT_INITIALIZED;
 }
 
