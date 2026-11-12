@@ -986,87 +986,88 @@ void ReplayFailureNeedsNoAllocation() {
     Compare({{healthy, {"draw 2 1 0 0"}}}, "a replay after a failure stored without allocating");
 }
 
-std::atomic<std::uint64_t> replayed{0};
-
-VKAPI_ATTR void VKAPI_CALL NopDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {
-    replayed.fetch_add(1, std::memory_order_relaxed);
-}
-
-VKAPI_ATTR void VKAPI_CALL NopBindPipeline(VkCommandBuffer, VkPipelineBindPoint, VkPipeline) {
-    replayed.fetch_add(1, std::memory_order_relaxed);
-}
-
-VKAPI_ATTR void VKAPI_CALL NopPushConstants(VkCommandBuffer, VkPipelineLayout, VkShaderStageFlags, std::uint32_t, std::uint32_t, const void*) {
-    replayed.fetch_add(1, std::memory_order_relaxed);
-}
-
-VKAPI_ATTR void VKAPI_CALL NopBindDescriptorSets(VkCommandBuffer, VkPipelineBindPoint, VkPipelineLayout, std::uint32_t, std::uint32_t, const VkDescriptorSet*, std::uint32_t, const std::uint32_t*) {
-    replayed.fetch_add(1, std::memory_order_relaxed);
-}
-
-DeviceFunctions NopTable() {
-    DeviceFunctions table{};
-    table.cmdDraw = &NopDraw;
-    table.cmdBindPipeline = &NopBindPipeline;
-    table.cmdPushConstants = &NopPushConstants;
-    table.cmdBindDescriptorSets = &NopBindDescriptorSets;
-    return table;
-}
-
-void RecordOneDraw(const DeviceFunctions& table, VkCommandBuffer commands) {
-    const std::array<std::uint8_t, 16> constants{};
-    const VkDescriptorSet set = Handle<VkDescriptorSet>(0x77);
-    table.cmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, Handle<VkPipeline>(0x66));
-    table.cmdPushConstants(commands, Handle<VkPipelineLayout>(0x55), VK_SHADER_STAGE_ALL_GRAPHICS, 0, static_cast<std::uint32_t>(constants.size()), constants.data());
-    table.cmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, Handle<VkPipelineLayout>(0x55), 0, 1, &set, 0, nullptr);
-    table.cmdDraw(commands, 3, 1, 0, 0);
-}
-
 double NanosecondsSince(std::chrono::steady_clock::time_point start) {
     return static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
 }
 
-int HandoffBench() {
-    constexpr std::uint32_t Windows = 200000;
-    constexpr std::uint32_t Batches[] = {1, 8, 64, 512};
+std::atomic<std::uint64_t> replayNs{0};
+
+VKAPI_ATTR void VKAPI_CALL BurnDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {
+    BusyFor(std::chrono::nanoseconds(replayNs.load(std::memory_order_relaxed)));
+}
+
+DeviceFunctions BurnTable() {
+    DeviceFunctions table{};
+    table.cmdDraw = &BurnDraw;
+    return table;
+}
+
+struct Pattern {
+    const char* name;
+    std::uint32_t batch;
+    std::uint64_t workNs;
+    std::uint64_t encodeNs;
+};
+
+double RunPattern(const Pattern& pattern, CommandEncoder::Handoff handoff, std::uint32_t draws, CommandEncoder::Statistics& counts) {
     const auto commands = Handle<VkCommandBuffer>(0x1700);
-    const auto device = Handle<VkDevice>(0x57);
-    {
-        auto table = NopTable();
-        for (std::uint32_t round = 0; round < 3; ++round) {
-            const auto start = std::chrono::steady_clock::now();
-            for (std::uint32_t index = 0; index < Windows; ++index) RecordOneDraw(table, commands);
-            const double ns = NanosecondsSince(start) / Windows;
-            if (round == 2) std::cout << "bench inline ns_per_draw=" << ns << "
-";
-        }
+    auto table = BurnTable();
+    replayNs.store(pattern.encodeNs, std::memory_order_relaxed);
+    const auto attached = Attached(Handle<VkDevice>(0x57), table);
+    auto& encoder = *attached;
+    const auto start = std::chrono::steady_clock::now();
+    for (std::uint32_t index = 0; index < draws; ++index) {
+        BusyFor(std::chrono::nanoseconds(pattern.workNs));
+        const bool encoded = encoder.Admit(handoff);
+        if (encoded) encoder.Open(commands, RecordingOf(commands));
+        table.cmdDraw(commands, 3, 1, 0, 0);
+        if (encoded) encoder.Close();
+        if ((index + 1) % pattern.batch == 0) encoder.Quiesce();
     }
-    for (const auto batch : Batches) {
-        auto table = NopTable();
-        const auto attached = Attached(device, table);
-        auto& encoder = *attached;
-        double best = 0;
-        CommandEncoder::Statistics counts{};
-        for (std::uint32_t round = 0; round < 3; ++round) {
-            Reset();
-            const auto before = encoder.Counts();
-            const auto start = std::chrono::steady_clock::now();
-            for (std::uint32_t index = 0; index < Windows; ++index) {
-                encoder.Open(commands, RecordingOf(commands));
-                RecordOneDraw(table, commands);
-                encoder.Close();
-                if ((index + 1) % batch == 0) encoder.Quiesce();
+    encoder.Quiesce();
+    const double ns = NanosecondsSince(start) / draws;
+    counts = encoder.Counts();
+    return ns;
+}
+
+int HandoffBench() {
+    const Pattern patterns[] = {
+        {"few-draws-per-batch", 3, 1000, 3300},
+        {"few-draws-heavy-encode", 3, 1000, 20000},
+        {"many-draws-per-batch", 512, 4000, 3300},
+    };
+    constexpr std::uint32_t Draws = 40000;
+    for (const auto& pattern : patterns) {
+        for (const auto handoff : {CommandEncoder::Handoff::Never, CommandEncoder::Handoff::Always, CommandEncoder::Handoff::Adaptive}) {
+            const char* name = handoff == CommandEncoder::Handoff::Never ? "inline" : handoff == CommandEncoder::Handoff::Always ? "always" : "adaptive";
+            double best = 0;
+            CommandEncoder::Statistics counts{};
+            for (std::uint32_t round = 0; round < 3; ++round) {
+                Reset();
+                const double ns = RunPattern(pattern, handoff, Draws, counts);
+                if (round == 0 || ns < best) best = ns;
             }
-            encoder.Quiesce();
-            const double ns = NanosecondsSince(start) / Windows;
-            const auto after = encoder.Counts();
-            counts = {after.posts - before.posts, after.commands - before.commands, after.waits - before.waits, after.waitNs - before.waitNs, after.encodeNs - before.encodeNs, after.parks - before.parks};
-            if (round == 2) best = ns;
+            std::cout << "bench " << pattern.name << " " << name << " ns_per_draw=" << best << " inlined_share=" << static_cast<double>(counts.inlined) / Draws << " parks_per_draw=" << static_cast<double>(counts.parks) / Draws << " wait_ns_per_draw=" << static_cast<double>(counts.waitNs) / Draws << "\n";
         }
-        std::cout << "bench encoded batch=" << batch << " ns_per_draw=" << best << " chunks_per_draw=" << static_cast<double>(counts.posts) / Windows << " parks_per_draw=" << static_cast<double>(counts.parks) / Windows << " waits_per_draw=" << static_cast<double>(counts.waits) / Windows << " wait_ns_per_draw=" << static_cast<double>(counts.waitNs) / Windows << " encode_ns_per_draw=" << static_cast<double>(counts.encodeNs) / Windows << "
-";
     }
     return 0;
+}
+
+void HandoffPolicyFollowsItsMeasuredCost() {
+    constexpr std::uint32_t Draws = 6000;
+    CommandEncoder::Statistics counts{};
+    Reset();
+    RunPattern({"never", 2, 1000, 0}, CommandEncoder::Handoff::Never, Draws, counts);
+    Require(counts.posts == 0 && counts.inlined == Draws, "a draw went through the encoder with the hand-off refused");
+    Reset();
+    RunPattern({"always", 2, 1000, 0}, CommandEncoder::Handoff::Always, Draws, counts);
+    Require(counts.inlined == 0 && counts.posts == Draws, "an always-handoff draw was recorded inline");
+    Reset();
+    RunPattern({"short batches", 2, 1000, 0}, CommandEncoder::Handoff::Adaptive, Draws, counts);
+    Require(counts.inlined * 10 >= static_cast<std::uint64_t>(Draws) * 7, "the adaptive hand-off kept " + std::to_string(Draws - counts.inlined) + " of " + std::to_string(Draws) + " draws on the encoder although each batch cost more to wait for than to record");
+    Reset();
+    RunPattern({"long batches", 64, 40000, 20000}, CommandEncoder::Handoff::Adaptive, Draws, counts);
+    Require(counts.inlined * 10 <= Draws, "the adaptive hand-off recorded " + std::to_string(counts.inlined) + " of " + std::to_string(Draws) + " draws inline although the encoder overlapped them with the drawing thread's work");
 }
 
 int main(int argc, char** argv) {
@@ -1105,6 +1106,7 @@ int main(int argc, char** argv) {
         ReplayFailureNeedsNoAllocation();
         WaitsAreAttributedToTheirCallSites();
         SitesAreCountedOnlyWhenProfiled();
+        HandoffPolicyFollowsItsMeasuredCost();
         std::cout << "command encoder tests passed\n";
         return 0;
     } catch (const std::exception& error) {

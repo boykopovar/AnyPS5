@@ -62,6 +62,10 @@ public:
         std::atomic<bool> failed{false};
         bool reported = false;
     };
+    enum class Handoff : std::uint8_t { Always, Adaptive, Never };
+    static constexpr std::uint64_t EncodeEpoch = 256;
+    static constexpr std::uint64_t InlineSpanMin = 1024;
+    static constexpr std::uint64_t InlineSpanMax = 16384;
     static bool Enabled();
     static constexpr std::size_t Slots = 4;
     static std::unique_ptr<CommandEncoder> Attach(VkDevice device, DeviceFunctions& table);
@@ -70,6 +74,7 @@ public:
     CommandEncoder& operator=(const CommandEncoder&) = delete;
     void Open(VkCommandBuffer commands, Recording& recording, std::source_location where = std::source_location::current());
     void Close(std::source_location where = std::source_location::current());
+    bool Admit(Handoff handoff, std::source_location where = std::source_location::current());
     void Quiesce(std::source_location where = std::source_location::current()) noexcept { Quiesce(WaitSite::At(Wait::Quiesce, where)); }
     void Quiesce(WaitSite site) noexcept;
     bool Direct(const char* command) noexcept;
@@ -110,6 +115,8 @@ public:
         std::uint64_t waitNs = 0;
         std::uint64_t encodeNs = 0;
         std::uint64_t parks = 0;
+        std::uint64_t postNs = 0;
+        std::uint64_t inlined = 0;
     };
     Statistics Counts() const;
     std::vector<SiteWaits> WaitsBySite() const;
@@ -187,6 +194,19 @@ private:
     std::atomic<std::uint64_t> waitCount{0};
     std::atomic<std::uint64_t> waitNs{0};
     std::atomic<std::uint64_t> encodeNs{0};
+    std::atomic<std::uint64_t> postNs{0};
+    std::atomic<std::uint64_t> inlinedCount{0};
+    struct Policy {
+        bool inlined = false;
+        bool measuring = false;
+        std::uint64_t windows = 0;
+        std::uint64_t span = 0;
+        std::uint32_t strikes = 0;
+        std::uint64_t baseEncodeNs = 0;
+        std::uint64_t baseHandoffNs = 0;
+    } policy;
+    bool decline(std::source_location where) noexcept;
+    std::uint64_t handoffNs() const noexcept;
     void printSites(bool final) noexcept;
     const bool profiled;
     std::chrono::steady_clock::time_point printedAt;

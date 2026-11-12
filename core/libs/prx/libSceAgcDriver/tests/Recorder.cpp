@@ -1885,6 +1885,8 @@ void encoderRuntimeSwitchTests(const Device& device, Recorder& recorder) {
     };
     const auto encoded = [&] { return recorder.EncoderCounts().commands; };
     const bool initial = RuntimeSwitches::Set(RuntimeSwitch::NoRecordEncoder);
+    const bool adaptive = RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, true);
     RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, false);
     auto before = encoded();
     record();
@@ -1904,6 +1906,7 @@ void encoderRuntimeSwitchTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
     Require(recorder.Idle(), "a batch recorded through the encoder after the switch was unset did not complete");
     RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, initial);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, adaptive);
     std::cout << "Command encoder runtime switch tests passed\n";
 }
 

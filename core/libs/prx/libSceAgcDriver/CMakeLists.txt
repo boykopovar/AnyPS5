@@ -1120,6 +1120,12 @@ if(NOT ANYPS5_AGC_EXECUTION_TESTS OR "CommandEncoder" IN_LIST ANYPS5_AGC_EXECUTI
         set_tests_properties(agc_driver_command_encoder_self_wait PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_driver_command_encoder_bench COMMAND agc_driver_command_encoder_tests --bench)
+    set_tests_properties(agc_driver_command_encoder_bench PROPERTIES TIMEOUT 300)
+    if(WIN32)
+        set_tests_properties(agc_driver_command_encoder_bench PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 add_library(agc_encoder_guard_accepted OBJECT tests/EncoderGuards.cpp)
 target_include_directories(agc_encoder_guard_accepted PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
