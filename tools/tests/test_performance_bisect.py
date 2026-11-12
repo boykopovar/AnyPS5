@@ -746,3 +746,12 @@ class FocusedInputEdgeTests(unittest.TestCase):
                     self.assertRaisesRegex(RuntimeError, "title run failed.*runner failed"):
                 performance_bisect.run_sample(root, root / "build", root / "result", recipe, GOOD)
 
+
+    def test_report_rejects_non_finite_values_without_leaving_temp_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            with self.assertRaises(ValueError):
+                performance_bisect.write_report(path, {"fps": math.nan})
+            self.assertFalse(path.exists())
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
