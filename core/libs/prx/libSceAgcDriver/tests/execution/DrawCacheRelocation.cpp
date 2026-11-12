@@ -55,6 +55,7 @@ alignas(16) std::array<float, 4> Other{0.5f, 0.0f, 0.0f, 0.0f};
 alignas(16) std::array<float, 4> ForwardedData{};
 alignas(32) std::array<std::array<std::uint64_t, 4>, 6> AlignedTables{};
 alignas(32) std::array<std::uint64_t, 4> OffsetTable{};
+alignas(32) std::array<std::uint64_t, 4> SecondOffsetTable{};
 alignas(256) std::array<std::byte, 1024> ColorMemory{};
 constexpr std::uint32_t LinearAttrib3 = 0x9000000u;
 constexpr std::uint32_t RenderTargetAttrib3 = LinearAttrib3 | (0x1bu << 14u);
@@ -389,6 +390,12 @@ void MovedForwardedWordReachesStageDataHit(bool libraries) {
     std::printf("%s: the same draw again after the donor tables moved to other data: %llu hits, %llu inserts\n", mode.c_str(), static_cast<unsigned long long>(again.hits - restartedCounters.hits), static_cast<unsigned long long>(again.inserts - restartedCounters.inserts));
     const auto repeated = pixels({64, 255, 255, 64});
     Require(repeated.empty(), mode + ": a draw cached after its relocated hit was recaptured drew through the donor's user word: " + repeated);
+    SecondOffsetTable[2] = data;
+    const auto moved2 = draw(&SecondOffsetTable[2]);
+    std::printf("%s: a draw through a second moved table at the same alignment: %llu lookups, %llu hits, %llu stage data hits, %llu inserts\n", mode.c_str(), static_cast<unsigned long long>(moved2.lookups - again.lookups), static_cast<unsigned long long>(moved2.hits - again.hits), static_cast<unsigned long long>(moved2.stageDataHits - again.stageDataHits), static_cast<unsigned long long>(moved2.inserts - again.inserts));
+    Require(moved2.hits == again.hits + 1 && moved2.inserts == again.inserts, mode + ": a draw through a second moved table was not a relocated hit after its alias's entry was recaptured (" + std::to_string(moved2.hits - again.hits) + " hits, " + std::to_string(moved2.inserts - again.inserts) + " inserts)");
+    const auto second = pixels({64, 255, 255, 64});
+    Require(second.empty(), mode + ": a draw through a second moved table drew wrong pixels: " + second);
 }
 
 }
