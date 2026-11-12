@@ -88,7 +88,7 @@ int main() {
         waiters.emplace_back([&] {
             Require(pthread_mutex_lock_nid_postfix(&mutex) == 0);
             arrived.fetch_add(1, std::memory_order_release);
-            Require(pthread_cond_signal_nid_postfix(&cond) == 0);
+            Require(pthread_cond_broadcast_nid_postfix(&cond) == 0);
             while (!releaseAll) {
                 Require(pthread_cond_wait_nid_postfix(&cond, &mutex) == 0);
             }
