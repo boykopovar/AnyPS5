@@ -154,6 +154,15 @@ void AuditDescriptorValidation(const std::string& readOnlyPath, const std::strin
         "pread on closed socket must fail with EBADF (9)");
     Require(pwrite_nid_disambig1_nid_postfix(sock, "A", 1, 0) == -1 && *__error_nid_postfix() == PosixEbadf,
         "pwrite on closed socket must fail with EBADF (9)");
+
+    const int nullFd = open_nid_postfix("/dev/null", SCE_KERNEL_O_RDWR, 0);
+    Require(nullFd >= 0, "open /dev/null failed");
+    char nullBuffer[16]{};
+    Require(sceKernelPread(nullFd, nullBuffer, sizeof(nullBuffer), 0) == 0,
+        "sceKernelPread on /dev/null must return 0");
+    Require(sceKernelPwrite(nullFd, nullBuffer, sizeof(nullBuffer), 0) == static_cast<std::int64_t>(sizeof(nullBuffer)),
+        "sceKernelPwrite on /dev/null must return the length");
+    Require(close_nid_postfix(nullFd) == 0, "close /dev/null failed");
 }
 
 void AuditNullBufferValidation(int descriptor) {
