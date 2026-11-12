@@ -1270,7 +1270,13 @@ void pendingWriteSnapshotTests(const Device& device, Recorder& recorder) {
     Recorder::WriteRanges expected;
     const auto check = [&] {
         const auto snapshot = Recorder::PendingWriteSnapshot();
-        Require(snapshot != nullptr && *snapshot == expectedWriteUnion(expected), "pending write snapshot differs from the full union");
+        const auto merged = expectedWriteUnion(expected);
+        Require(snapshot != nullptr && *snapshot == merged, "pending write snapshot differs from the full union");
+        if (!std::all_of(merged.begin(), merged.end(), [](const auto& range) { return range.second > range.first; })) return;
+        for (const auto& [begin, end] : merged) {
+            Require(Recorder::SnapshotWriteOverlaps(begin, 1), "the access hook missed the first byte of a published range: " + std::to_string(begin) + ".." + std::to_string(end));
+            Require(Recorder::SnapshotWriteOverlaps(end - 1, 1), "the access hook missed the last byte of a published range: " + std::to_string(begin) + ".." + std::to_string(end));
+        }
     };
     const auto note = [&](std::uint64_t address, std::size_t bytes) {
         const auto previous = Recorder::PendingWriteSnapshot();
@@ -1327,10 +1333,16 @@ void pendingWriteSnapshotTests(const Device& device, Recorder& recorder) {
         std::atomic<bool> invalid{false};
         std::atomic<unsigned> ready{0};
         std::atomic<std::uint64_t> reads{0};
+        std::atomic<std::uint64_t> publishedAddress{0};
+        std::array<std::atomic<std::uint64_t>, 2> observed{};
         std::array<std::jthread, 2> readers;
-        for (auto& reader : readers) reader = std::jthread([&](std::stop_token stop) {
+        for (std::size_t index = 0; index < readers.size(); ++index) readers[index] = std::jthread([&, index](std::stop_token stop) {
+            if (!Recorder::SnapshotWriteOverlaps(0x90000, 16)) invalid.store(true, std::memory_order_relaxed);
             ready.fetch_add(1, std::memory_order_release);
             while (!stop.stop_requested()) {
+                const auto address = publishedAddress.load(std::memory_order_acquire);
+                if (address != 0 && !Recorder::SnapshotWriteOverlaps(address, 32)) invalid.store(true, std::memory_order_relaxed);
+                observed[index].store(address, std::memory_order_release);
                 const auto snapshot = Recorder::PendingWriteSnapshot();
                 if (snapshot == nullptr || !Recorder::SnapshotOverlaps(snapshot.get(), 0x90000, 16)) invalid.store(true, std::memory_order_relaxed);
                 if (snapshot != nullptr) {
@@ -1343,12 +1355,21 @@ void pendingWriteSnapshotTests(const Device& device, Recorder& recorder) {
             }
         });
         while (ready.load(std::memory_order_acquire) != readers.size()) std::this_thread::yield();
-        for (std::uint64_t i = 0; i < 256; ++i) note(0x91000 + i * 128, 32);
+        for (std::uint64_t i = 0; i < 256; ++i) {
+            const auto address = 0x91000 + i * 128;
+            note(address, 32);
+            publishedAddress.store(address, std::memory_order_release);
+        }
+        const auto last = publishedAddress.load(std::memory_order_acquire);
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while ((observed[0].load(std::memory_order_acquire) != last || observed[1].load(std::memory_order_acquire) != last) && std::chrono::steady_clock::now() < until) std::this_thread::yield();
+        Require(observed[0].load(std::memory_order_acquire) == last && observed[1].load(std::memory_order_acquire) == last, "snapshot readers did not observe the last published write");
         for (auto& reader : readers) reader.request_stop();
         for (auto& reader : readers) reader.join();
         Require(reads.load() != 0 && !invalid.load(), "concurrent snapshot readers observed an invalid or incomplete union");
     }
     recorder.Sync();
+    Require(!Recorder::SnapshotWriteOverlaps(0x90000, 16), "the access hook retained completed writes");
     expected.clear();
     note(UINT64_MAX - 3, 8);
     note(0x50000, 16);
