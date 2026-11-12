@@ -32,6 +32,16 @@ void _writeFile(const std::string& path, const std::vector<std::uint8_t>& data) 
             throw std::runtime_error("cannot write: " + path);
         }
     }
+    std::error_code existing;
+    const auto mode = std::filesystem::status(target, existing);
+    if (!existing) {
+        std::error_code restricted;
+        std::filesystem::permissions(pending, mode.permissions(), restricted);
+        if (restricted) {
+            std::filesystem::remove(pending, discarded);
+            throw std::runtime_error("cannot write: " + path + ": " + restricted.message());
+        }
+    }
     std::error_code renamed;
     std::filesystem::rename(pending, target, renamed);
     if (renamed) {

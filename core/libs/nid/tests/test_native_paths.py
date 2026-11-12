@@ -43,6 +43,17 @@ class NativePathTests(unittest.TestCase):
             self.assertEqual(exports_of(file.read_bytes()), {"_puts_nid_postfix": (0, 0x100), "_" + nid("exit"): (0, 0x108)})
             self.assertEqual(reference.read_bytes(), original)
 
+    @unittest.skipIf(sys.platform == "win32", "needs POSIX file modes")
+    def test_patching_keeps_the_file_mode(self):
+        for mode in (0o755, 0o640):
+            with self.subTest(mode=oct(mode)), tempfile.TemporaryDirectory() as temporary:
+                file = Path(temporary) / "library.prx"
+                file.write_bytes(build_dylib([("_puts_nid_postfix", 0, 0x100)], []))
+                file.chmod(mode)
+                result = self.invoke(file)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(file.stat().st_mode & 0o777, mode)
+
     def test_missing_unicode_input_does_not_modify_another_file(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
