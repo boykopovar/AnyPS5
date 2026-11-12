@@ -2146,6 +2146,18 @@ if(BUILD_TESTING)
             add_test(NAME guest_image_anonymous COMMAND guest_image_anonymous_tests)
         endif()
     endif()
+
+    add_test_executable(unwind_enclosing_function_tests ${LIBS_INCLUDE_DIR}/tests/EnclosingFunction.cpp)
+    target_include_directories(unwind_enclosing_function_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(unwind_enclosing_function_tests PRIVATE libc)
+    configure_windows_unwind(unwind_enclosing_function_tests)
+    configure_macos_unwind(unwind_enclosing_function_tests)
+    add_test(NAME unwind_enclosing_function COMMAND unwind_enclosing_function_tests)
+    set_tests_properties(unwind_enclosing_function PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(unwind_enclosing_function PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 add_test_executable(guest_collate_tests EXCLUDE_FROM_ALL ${LIBS_INCLUDE_DIR}/tests/GuestCollate.cpp)
