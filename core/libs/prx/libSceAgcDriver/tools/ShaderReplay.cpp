@@ -59,6 +59,8 @@ bool g_shaderFma = false;
 bool g_code = false;
 bool g_float16WidenNans = false;
 bool g_float16NarrowNans = false;
+bool g_unpreservedF16F64Denorms = false;
+bool g_coupledF16F64Denorms = false;
 
 bool OutputSpirv(const char* path, std::span<const std::uint32_t> spirv) {
     if (g_spirv) {
@@ -103,6 +105,11 @@ bool Replay(const char* path) {
     }
     if (g_float16WidenNans) request.request.target.float16WidenNans = true;
     if (g_float16NarrowNans) request.request.target.float16NarrowNans = true;
+    if (g_unpreservedF16F64Denorms || g_coupledF16F64Denorms) {
+        request.request.target.float16DenormPreserve = g_coupledF16F64Denorms;
+        request.request.target.float64DenormPreserve = g_coupledF16F64Denorms;
+        request.request.target.coupledF16F64Denorms = g_coupledF16F64Denorms;
+    }
     std::printf("%s: %zu code words, %zu user data, %zu memory regions, wave%u\n", path, request.request.shader.code.size(), request.request.context.userData.size(), request.request.context.memory.size(), request.request.context.waveSize);
     if (request.request.context.compute.has_value()) {
         const auto& compute = *request.request.context.compute;
@@ -240,7 +247,7 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--shader-fma] [--f16-widen-nans] [--f16-narrow-nans] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--shader-fma] [--f16-widen-nans] [--f16-narrow-nans] [--unpreserved-f16-f64-denorms | --coupled-f16-f64-denorms] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
         return 2;
     }
     int failures = 0;
@@ -291,6 +298,14 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[i]) == "--f16-narrow-nans") {
             g_float16NarrowNans = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--unpreserved-f16-f64-denorms") {
+            g_unpreservedF16F64Denorms = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--coupled-f16-f64-denorms") {
+            g_coupledF16F64Denorms = true;
             continue;
         }
         if (std::string(argv[i]) == "--mem") {

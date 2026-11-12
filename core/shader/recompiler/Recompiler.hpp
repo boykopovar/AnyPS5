@@ -363,6 +363,7 @@ struct SpirvTarget {
     bool vertexSubgroups = true;
     bool tessellationEvaluationSubgroups = true;
     bool float16DenormPreserve = false;
+    bool coupledF16F64Denorms = false;
     bool spannedWaves = false;
     bool robustBufferAccess2 = false;
     bool exactRobustLoads = false;
