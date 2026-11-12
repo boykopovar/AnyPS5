@@ -122,6 +122,17 @@ int main() {
         Require(registered.user_id[i] == USER_SERVICE_USER_ID_INVALID);
     }
 
+    std::int32_t homeIds[16]{};
+    int homeCount = -1;
+    Require(sceUserServiceGetRegisteredHomeUserIdList(nullptr, &homeCount) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetRegisteredHomeUserIdList(homeIds, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    std::memset(homeIds, 0x7B, sizeof(homeIds));
+    Require(sceUserServiceGetRegisteredHomeUserIdList(homeIds, &homeCount) == USER_SERVICE_OK);
+    Require(homeCount == 1 && homeIds[0] == USER_SERVICE_INITIAL_USER_ID);
+    for (int i = 1; i < 16; ++i) {
+        Require(homeIds[i] == USER_SERVICE_USER_ID_INVALID);
+    }
+
     char nameBuffer[32]{};
     for (int i = 0; i < USER_SERVICE_MAX_USERS; ++i) {
         const int userId = USER_SERVICE_INITIAL_USER_ID + i;

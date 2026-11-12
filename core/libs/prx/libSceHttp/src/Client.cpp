@@ -411,7 +411,9 @@ struct HttpClientState : Aps5HttpClient {
                 requestUrl = Redirect(parsed, headers.at("location"));
                 continue;
             }
-            const bool empty = status == 416 && headers.contains("content-range") && headers.at("content-range") == "bytes */0";
+            const auto unsatisfied = headers.find("content-range");
+            const bool empty = status == 416 && unsatisfied != headers.end() && Lower(unsatisfied->second.substr(0, 8)) == "bytes */"
+                && Number(std::string_view(unsatisfied->second).substr(8)) == 0;
             if (status != 200 && status != 206 && !empty) throw HttpFailure("HTTP source request was refused");
             if (headers.contains("content-encoding") && Lower(headers.at("content-encoding")) != "identity") NotImplemented_nid_no_patch("HTTP client encoded HTTP representations");
             if (full && status != 200) throw HttpFailure("HTTP full source request returned partial content");

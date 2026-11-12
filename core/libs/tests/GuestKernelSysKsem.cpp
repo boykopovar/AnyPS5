@@ -15,6 +15,12 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -222,7 +228,69 @@ void Limit() {
 
 }
 
+class UnreadablePage {
+public:
+    UnreadablePage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS));
+        Require(memory != nullptr);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0);
+        size = static_cast<std::size_t>(pageSize);
+        memory = static_cast<char*>(mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+#endif
+    }
+
+    ~UnreadablePage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, size);
+#endif
+    }
+
+    UnreadablePage(const UnreadablePage&) = delete;
+    UnreadablePage& operator=(const UnreadablePage&) = delete;
+
+    void* Address() const { return memory; }
+
+private:
+    char* memory = nullptr;
+    std::size_t size = 0;
+};
+
+void BadPointers() {
+    UnreadablePage page;
+    void* const bad[] = {reinterpret_cast<void*>(0x10), page.Address()};
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 0) == 0 && id >= 0);
+    for (void* pointer : bad) {
+        Require(ksem_init_nid_postfix(static_cast<std::intptr_t*>(pointer), 1) == -1 && Error() == Efault);
+        Require(ksem_timedwait_nid_postfix(id, static_cast<const KernelTimespec*>(pointer)) == -1 && Error() == Efault);
+        Require(ksem_timedwait_nid_postfix(-1, static_cast<const KernelTimespec*>(pointer)) == -1 && Error() == Efault);
+    }
+    Require(ksem_destroy_nid_postfix(id) == 0);
+    const auto openDescriptors = [] {
+        std::intptr_t probe = -1;
+        Require(ksem_init_nid_postfix(&probe, 0) == 0);
+        const auto first = probe;
+        Require(ksem_destroy_nid_postfix(probe) == 0);
+        return first;
+    };
+    const auto before = openDescriptors();
+    Require(ksem_init_nid_postfix(reinterpret_cast<std::intptr_t*>(0x10), 1) == -1 && Error() == Efault);
+    Require(openDescriptors() == before);
+    KernelTimespec valid = FromNow(std::chrono::milliseconds(1));
+    Require(ksem_init_nid_postfix(&id, 1) == 0 && ksem_timedwait_nid_postfix(id, &valid) == 0 && ksem_destroy_nid_postfix(id) == 0);
+}
+
 int main() {
+    BadPointers();
     Counting();
     Timed();
     AbsoluteTimeouts();

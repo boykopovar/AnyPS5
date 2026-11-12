@@ -9,6 +9,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 using FreeType::GuestMemoryRec;
 using FreeType::GuestLibrary;
@@ -68,6 +74,8 @@ int main() {
     REQUIRE(sceFreeTypeOlFtaRemoveModuleAutofitter_nid_postfix(&invalidLibrary) == 0x21);
     REQUIRE(sceFreeTypeOlFtaSupportFormatBdf_nid_postfix(nullptr) == 0x21);
     REQUIRE(sceFreeTypeOlFtaSupportFormatBdf_nid_postfix(&invalidLibrary) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportModules_nid_postfix(nullptr) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportModules_nid_postfix(&invalidLibrary) == 0x21);
 
     for (const auto& entry : cases) {
         REQUIRE(entry.remove(library) == 0);
@@ -123,6 +131,46 @@ int main() {
     sceFreeTypeOlDoneGlyphSlot_nid_postfix(face->glyph);
     REQUIRE(face->glyph == nullptr);
     REQUIRE(FT_Done_Face_nid_postfix(face) == 0);
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleTruetype_nid_postfix(library) == 0);
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleCff_nid_postfix(library) == 0);
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleType1_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "truetype") == nullptr);
+    REQUIRE(FT_Get_Module(native, "cff") == nullptr);
+    REQUIRE(FT_Get_Module(native, "type1") == nullptr);
+
+    GuestFaceRec* missingFace = nullptr;
+    REQUIRE(FT_New_Memory_Face_nid_postfix(library, font.data(), font.size(), 0, &missingFace) != 0);
+
+    REQUIRE(sceFreeTypeOlFtaSupportModules_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "truetype") != nullptr);
+    REQUIRE(FT_Get_Module(native, "cff") != nullptr);
+    REQUIRE(FT_Get_Module(native, "type1") != nullptr);
+
+    GuestFaceRec* restoredFace = nullptr;
+    REQUIRE(FT_New_Memory_Face_nid_postfix(library, font.data(), font.size(), 0, &restoredFace) == 0);
+    REQUIRE(restoredFace != nullptr && restoredFace->glyph != nullptr);
+    REQUIRE(FT_Select_Charmap_nid_postfix(restoredFace, FT_ENCODING_UNICODE) == 0);
+    REQUIRE(FT_Get_Char_Index_nid_postfix(restoredFace, 'A') != 0);
+    REQUIRE(FT_Done_Face_nid_postfix(restoredFace) == 0);
+
+#ifdef _WIN32
+    HMODULE prx = GetModuleHandleA("libSceFreeTypeOl.prx");
+    if (!prx) prx = GetModuleHandleA("libSceFreeTypeOl.dll");
+    REQUIRE(prx != nullptr);
+    const auto lookup = [&](const char* nid) {
+        const std::string name = std::string(nid) + "_nid_no_patch_cut";
+        return GetProcAddress(prx, name.c_str()) != nullptr;
+    };
+#else
+    void* prx = dlopen(nullptr, RTLD_NOW);
+    REQUIRE(prx != nullptr);
+    const auto lookup = [&](const char* nid) {
+        const std::string name = std::string(nid) + "_nid_no_patch_cut";
+        return dlsym(prx, name.c_str()) != nullptr;
+    };
+#endif
+    REQUIRE(lookup("oM0zMNCfXKM"));
 
     REQUIRE(FT_Done_FreeType_nid_postfix(library) == 0);
 }
