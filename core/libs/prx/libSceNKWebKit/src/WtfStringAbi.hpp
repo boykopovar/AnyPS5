@@ -20,6 +20,26 @@ struct StringView {
     bool is8Bit;
 };
 
+enum class HTMLIntegerParsingError : int { NegativeOverflow, PositiveOverflow, Other };
+
+struct HTMLNonNegativeIntegerResult {
+    union {
+        unsigned value;
+        HTMLIntegerParsingError error;
+    };
+    bool hasValue;
+};
+
+static_assert(sizeof(HTMLIntegerParsingError) == 4);
+static_assert(sizeof(HTMLNonNegativeIntegerResult) == 8);
+static_assert(alignof(HTMLNonNegativeIntegerResult) == 4);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, value) == 0);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, error) == 0);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, hasValue) == 4);
+static_assert(std::is_trivially_copy_constructible_v<HTMLNonNegativeIntegerResult>);
+static_assert(std::is_trivially_move_constructible_v<HTMLNonNegativeIntegerResult>);
+static_assert(std::is_trivially_destructible_v<HTMLNonNegativeIntegerResult>);
+
 struct URL {
     StringImpl* impl;
     unsigned bits;
@@ -30,6 +50,12 @@ struct URL {
     unsigned pathAfterLastSlash;
     unsigned pathEnd;
     unsigned queryEnd;
+};
+
+struct LogSiteIdentifier {
+    const char* className;
+    const char* methodName;
+    std::uintptr_t objectPtr;
 };
 
 static_assert(sizeof(URL) == 40);
@@ -63,6 +89,7 @@ struct String {
 StringImpl* EmptyStringImpl();
 StringImpl* TryCreateUninitialized(unsigned length, bool is8Bit, void*& characters);
 String SubstringSharingImpl(const String& string, unsigned start, unsigned length);
+String FromUTF8ReplacingInvalidSequences_nid_no_patch(const unsigned char* input, std::size_t length);
 
 struct StringVector {
     String* buffer;
@@ -116,5 +143,9 @@ static_assert(offsetof(CStringBuffer, refCount) == 0);
 static_assert(offsetof(CStringBuffer, length) == 8);
 static_assert(sizeof(ProcessPrivileges) == 4);
 static_assert(offsetof(ProcessPrivileges, storage) == 0);
+static_assert(sizeof(LogSiteIdentifier) == 24);
+static_assert(offsetof(LogSiteIdentifier, className) == 0);
+static_assert(offsetof(LogSiteIdentifier, methodName) == 8);
+static_assert(offsetof(LogSiteIdentifier, objectPtr) == 16);
 
 }  // namespace NKWebKit::WtfAbi

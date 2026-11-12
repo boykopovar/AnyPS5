@@ -113,6 +113,11 @@ export const locales = [
         "code": "pl",
         "name": "Polski",
         "direction": "ltr"
+    },
+    {
+        "code": "el",
+        "name": "Ελληνικά",
+        "direction": "ltr"
     }
 ];
 
@@ -1348,6 +1353,86 @@ export const messages = {
         "faq3Answer": "Zmiany są tylko w pamięci: skopiuj lub pobierz przed odświeżeniem. Zapisywany jest tylko język. Nieustawione akcje zachowują wartości domyślne.",
         "searchOptions": "Szukaj opcji",
         "noOptions": "Brak pasujących opcji."
+    },
+    "el": {
+        "controls": "Χειρισμοί",
+        "configuration": "Διαμόρφωση",
+        "help": "Βοήθεια",
+        "settings": "Ρυθμίσεις",
+        "language": "Γλώσσα",
+        "close": "Κλείσιμο",
+        "eyebrow": "Αξεσουάρ / Προσαρμοσμένοι χειρισμοί",
+        "intro": "Επιλέξτε έναν χειρισμό και μετά αντιστοιχίστε του εισόδους πληκτρολογίου ή ποντικιού.",
+        "search": "Αναζήτηση χειρισμών",
+        "import": "Εισαγωγή INI",
+        "reset": "Επαναφορά",
+        "group0": "Κύρια κουμπιά",
+        "group1": "Κουμπιά ώμων",
+        "group2": "Κουμπιά κατεύθυνσης",
+        "group3": "Αριστερός μοχλός",
+        "group4": "Δεξιός μοχλός",
+        "group5": "Αφή και βοηθητικά",
+        "select": "Επιλογή…",
+        "add": "+ Προσθήκη αντιστοίχισης",
+        "capture": "Καταγραφή",
+        "remove": "Αφαίρεση",
+        "builtin": "Προεπιλογή: {inputs}",
+        "custom": "Οι προσαρμοσμένες είσοδοι αντικαθιστούν τις προεπιλεγμένες.",
+        "noResults": "Κανένας χειρισμός δεν ταιριάζει με την αναζήτηση.",
+        "download": "Λήψη INI",
+        "copy": "Αντιγραφή διαμόρφωσης",
+        "previewEmpty": "Προσθέστε μια αντιστοίχιση για να ξεκινήσετε.",
+        "backControls": "Πίσω στους χειρισμούς",
+        "switchGroup": "Αλλαγή ομάδας",
+        "moveFocus": "Μετακίνηση εστίασης",
+        "helpIntro": "Μερικές απαντήσεις για να ξεκινήσετε.",
+        "configIntro": "Ελέγξτε τις εισόδους και μετά αντιγράψτε ή κατεβάστε το αρχείο.",
+        "captureTitle": "Πατήστε ένα πλήκτρο για {action}",
+        "cancelCapture": "Ακύρωση καταγραφής",
+        "keepEditing": "Συνέχεια επεξεργασίας",
+        "discard": "Απόρριψη αλλαγών",
+        "faq0Question": "Πώς αντιστοιχίζω ένα πλήκτρο;",
+        "faq0Answer": "Επιλέξτε μια ομάδα, πατήστε Προσθήκη αντιστοίχισης και μετά Καταγραφή ή διαλέξτε ένα πλήκτρο από τη λίστα. Οι πολλαπλές αντιστοιχίσεις λειτουργούν εναλλακτικά.",
+        "faq1Question": "Πού μπαίνει το αρχείο INI;",
+        "faq1Answer": "Κατεβάστε το anyps5-input.ini και βάλτε το δίπλα στο εκτελέσιμο του παιχνιδιού που δημιουργήθηκε. Για άλλη θέση, ορίστε στο ANYPS5_INPUT_CONFIG τη διαδρομή του αρχείου.",
+        "faq2Question": "Γιατί δεν καταγράφεται ένα πλήκτρο;",
+        "faq2Answer": "Μπορεί να το αναχαιτίζει μια συντόμευση του προγράμματος περιήγησης ή του συστήματος. Επιλέξτε το χειροκίνητα από τη λίστα. Το Escape ακυρώνει την καταγραφή. Για να αντιστοιχίσετε το Escape, επιλέξτε το από τη λίστα.",
+        "faq3Question": "Αποθηκεύονται αυτόματα οι αλλαγές μου;",
+        "faq3Answer": "Οι αλλαγές στις εισόδους μένουν μόνο στη μνήμη: αντιγράψτε ή κατεβάστε πριν ανανεώσετε τη σελίδα. Σε αυτό το πρόγραμμα περιήγησης αποθηκεύεται μόνο η επιλογή γλώσσας. Οι ενέργειες χωρίς ρύθμιση κρατούν τις προεπιλογές τους.",
+        "skip": "Μετάβαση στο περιεχόμενο",
+        "mainNav": "Κύρια πλοήγηση",
+        "groups": "Ομάδες χειρισμών",
+        "find": "Εύρεση ενέργειας",
+        "clock": "Τοπική ώρα",
+        "output": "Έξοδος διαμόρφωσης",
+        "captureHelp": "Η καταγραφή χρησιμοποιεί τις φυσικές θέσεις των πλήκτρων. Το Escape ακυρώνει την καταγραφή. Για να αντιστοιχίσετε το Escape, επιλέξτε το από τη λίστα. Ορισμένες συντομεύσεις του προγράμματος περιήγησης και του συστήματος επιλέγονται μόνο χειροκίνητα.",
+        "replaceTitle": "Απόρριψη των μη αποθηκευμένων αλλαγών;",
+        "replaceHelp": "Αν θέλετε να κρατήσετε τη διαμόρφωση, αντιγράψτε την ή κατεβάστε την πρώτα.",
+        "captureCancelled": "Η καταγραφή ακυρώθηκε.",
+        "captureBlur": "Η καταγραφή ακυρώθηκε επειδή το παράθυρο έχασε την εστίαση.",
+        "captured": "Καταγράφηκε το {value} για {action}.",
+        "resetDone": "Έγινε επαναφορά της διαμόρφωσης.",
+        "importRejected": "Η εισαγωγή απορρίφθηκε",
+        "importRead": "Η εισαγωγή διαβάστηκε επιτυχώς",
+        "line": "Γραμμή {line}: {message}",
+        "preserved": "Η τρέχουσα διαμόρφωση διατηρήθηκε.",
+        "imported": "Έγινε εισαγωγή του {name}.",
+        "importFailed": "Η εισαγωγή απέτυχε: {message}",
+        "fileTooLarge": "Το αρχείο INI πρέπει να είναι μικρότερο από 1 MiB.",
+        "invalidUtf8": "Το αρχείο πρέπει να είναι έγκυρο κείμενο UTF-8.",
+        "downloaded": "Ζητήθηκε η λήψη της διαμόρφωσης.",
+        "copied": "Η διαμόρφωση αντιγράφηκε.",
+        "clipboardFailed": "Το πρόχειρο δεν είναι διαθέσιμο. Αντιγράψτε την επιλεγμένη προεπισκόπηση με Ctrl+C.",
+        "noScript": "Ενεργοποιήστε τη JavaScript για να χρησιμοποιήσετε αυτό το εργαλείο διαμόρφωσης.",
+        "noDefault": "καμία είσοδος πληκτρολογίου ή ποντικιού",
+        "bindingLabel": "{action}, αντιστοίχιση {number}",
+        "typeLabel": "{binding}: τύπος εισόδου",
+        "valueLabel": "{binding}: τιμή εισόδου",
+        "addLabel": "Προσθήκη αντιστοίχισης για {action}",
+        "captureLabel": "Καταγραφή πλήκτρου για {binding}",
+        "removeLabel": "Αφαίρεση: {binding}",
+        "searchOptions": "Αναζήτηση επιλογών",
+        "noOptions": "Καμία επιλογή δεν ταιριάζει."
     }
 };
 
@@ -1356,43 +1441,77 @@ export function translate(locale, key, values = {}) {
     return text.replace(/\{(\w+)\}/gu, (match, name) => String(values[name] ?? match));
 }
 
+const diagnostics = {
+    'ar-EG': [
+        [/(\w+) is set more than once\./gu, '$1 متكرر ومش لازم يتحدد أكتر من مرة.'],
+        [/(\w+) must be a whole percentage from 0 to 90\./gu, '$1 لازم يكون رقم صحيح من 0 لـ 90.'],
+        [/(\w+) must be a number greater than 0 and at most 10\./gu, '$1 لازم يكون رقم أكبر من 0 وبحد أقصى 10.'],
+        [/(\w+) must be a number from ([\d.]+) to ([\d.]+)\./gu, '$1 لازم يكون رقم من $2 لـ $3.'],
+        [/(\w+): unknown input setting\./gu, 'الإعداد $1 مش معروف.'],
+        ['Configuration must be a list of bindings.', 'الإعدادات لازم تكون قائمة روابط أزرار.'],
+        ['Unknown or empty action.', 'الحركة مش معروفة أو فاضية.'],
+        ['Input type must be KEY, MOUSE or WHEEL.', 'نوع الإدخال لازم يكون KEY أو MOUSE أو WHEEL.'],
+        [/(\w+) cannot use (\w+)\./gu, '$1 مينفعش يستخدم $2.'],
+        [/Unknown or empty (\w+) value\./gu, 'قيمة $1 مش معروفة أو فاضية.'],
+        ['This SDL key name cannot be represented in the current INI comment syntax.', 'اسم الزرار ده مينفعش يتحفظ بالصيغة الحالية لملف INI.'],
+        [/duplicate (.+) will be omitted\./gu, 'الربط $1 متكرر وهيتحفظ مرة واحدة.'],
+        ['Composition and dead keys are ambiguous. Select an SDL key from the list.', 'زرار تركيب الحروف مش واضح في التسجيل. اختار زرار SDL من القائمة.'],
+        [' controls ', ' بيشغّل '],
+        [' (built-in)', ' (افتراضي)', true],
+        [' and ', ' و ', true],
+        ['Expected Action = TYPE:VALUE.', 'الصيغة المطلوبة: Action = TYPE:VALUE.'],
+        ['Duplicate binding ignored.', 'الربط المتكرر تم تجاهله.'],
+        ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'الزرار ده مينفعش يتسجل بالصيغة الحالية لملف INI. اختار زرار SDL من القائمة.'],
+    ],
+    'sv': [
+        ['Configuration must be a list of bindings.', 'Konfigurationen måste vara en lista med bindningar.'],
+        ['Unknown or empty action.', 'Okänd eller tom åtgärd.'],
+        ['Input type must be KEY, MOUSE or WHEEL.', 'Indatatypen måste vara KEY, MOUSE eller WHEEL.'],
+        [/(\w+) cannot use (\w+)\./gu, '$1 kan inte använda $2.'],
+        [/Unknown or empty (\w+) value\./gu, 'Okänt eller tomt $1-värde.'],
+        ['This SDL key name cannot be represented in the current INI comment syntax.', 'Det här SDL-tangentnamnet kan inte representeras med den aktuella INI-kommentarsyntaxen.'],
+        [/duplicate (.+) will be omitted\./gu, 'den dubbla bindningen $1 utelämnas.'],
+        [' controls ', ' styr '],
+        [' (built-in)', ' (inbyggd)', true],
+        ['Composition and dead keys are ambiguous. Select an SDL key from the list.', 'Döda tangenter och kombinationstangenter är tvetydiga. Välj en SDL-tangent i listan.'],
+        [' and ', ' och ', true],
+        ['Expected Action = TYPE:VALUE.', 'Förväntat format: Action = TYPE:VALUE.'],
+        ['Duplicate binding ignored.', 'Dubblettbindning ignorerades.'],
+        ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Den här fysiska tangenten kan inte fångas i det aktuella INI-formatet. Välj en SDL-tangent i listan.'],
+    ],
+    'pt-BR': [
+        [/(\w+) is set more than once\./gu, '$1 está definido mais de uma vez.'],
+        [/(\w+) must be a whole percentage from 0 to 90\./gu, '$1 deve ser uma porcentagem inteira de 0 a 90.'],
+        [/(\w+) must be a number greater than 0 and at most 10\./gu, '$1 deve ser um número maior que 0 e no máximo 10.'],
+        [/(\w+) must be a number from ([\d.]+) to ([\d.]+)\./gu, '$1 deve ser um número de $2 a $3.'],
+        [/(\w+) must be LEFT or RIGHT\./gu, '$1 deve ser LEFT ou RIGHT.'],
+        [/(\w+): unknown input setting\./gu, '$1: configuração de entrada desconhecida.'],
+        ['Configuration must be a list of bindings.', 'A configuração deve ser uma lista de atribuições.'],
+        ['Unknown or empty action.', 'Ação desconhecida ou vazia.'],
+        ['Input type must be KEY, MOUSE or WHEEL.', 'O tipo de entrada deve ser KEY, MOUSE ou WHEEL.'],
+        [/(\w+) cannot use (\w+)\./gu, '$1 não pode usar $2.'],
+        [/Unknown or empty (\w+) value\./gu, 'Valor $1 desconhecido ou vazio.'],
+        ['This SDL key name cannot be represented in the current INI comment syntax.', 'Este nome de tecla SDL não pode ser representado na sintaxe de comentário INI atual.'],
+        [/duplicate (.+) will be omitted\./gu, 'duplicado $1 será omitido.'],
+        ['Composition and dead keys are ambiguous. Select an SDL key from the list.', 'A composição e as teclas mortas são ambíguas. Escolha uma tecla SDL na lista.'],
+        [' controls ', ' controla '],
+        [' (built-in)', ' (padrão)', true],
+        [' and ', ' e ', true],
+        ['Binding: ', 'Atribuição: '],
+        ['Expected Action = TYPE:VALUE.', 'Formato esperado: Action = TYPE:VALUE.'],
+        ['Duplicate binding ignored.', 'Atribuição duplicada ignorada.'],
+        ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Esta tecla física não pode ser capturada no formato INI atual. Escolha uma tecla SDL na lista.'],
+    ]
+};
+
+function applyDiagnostic(message, [find, replace, all]) {
+    if (typeof find !== 'string') return message.replace(find, replace);
+    return all ? message.replaceAll(find, replace) : message.replace(find, replace);
+}
+
 export function diagnostic(locale, message) {
-    if (locale === 'sv') return message
-        .replace('Configuration must be a list of bindings.', 'Konfigurationen måste vara en lista med bindningar.')
-        .replace('Unknown or empty action.', 'Okänd eller tom åtgärd.')
-        .replace('Input type must be KEY, MOUSE or WHEEL.', 'Indatatypen måste vara KEY, MOUSE eller WHEEL.')
-        .replace(/(\w+) cannot use (\w+)\./gu, '$1 kan inte använda $2.')
-        .replace(/Unknown or empty (\w+) value\./gu, 'Okänt eller tomt $1-värde.')
-        .replace('This SDL key name cannot be represented in the current INI comment syntax.', 'Det här SDL-tangentnamnet kan inte representeras med den aktuella INI-kommentarsyntaxen.')
-        .replace(/duplicate (.+) will be omitted\./gu, 'den dubbla bindningen $1 utelämnas.')
-        .replace(' controls ', ' styr ')
-        .replaceAll(' (built-in)', ' (inbyggd)')
-        .replace('Composition and dead keys are ambiguous. Select an SDL key from the list.', 'Döda tangenter och kombinationstangenter är tvetydiga. Välj en SDL-tangent i listan.')
-        .replaceAll(' and ', ' och ')
-        .replace('Expected Action = TYPE:VALUE.', 'Förväntat format: Action = TYPE:VALUE.')
-        .replace('Duplicate binding ignored.', 'Dubblettbindning ignorerades.')
-        .replace('This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Den här fysiska tangenten kan inte fångas i det aktuella INI-formatet. Välj en SDL-tangent i listan.');
-    if (locale !== 'ar-EG') return message;
-    return message
-        .replace(/(\w+) is set more than once\./gu, '$1 متكرر ومش لازم يتحدد أكتر من مرة.')
-        .replace(/(\w+) must be a whole percentage from 0 to 90\./gu, '$1 لازم يكون رقم صحيح من 0 لـ 90.')
-        .replace(/(\w+) must be a number greater than 0 and at most 10\./gu, '$1 لازم يكون رقم أكبر من 0 وبحد أقصى 10.')
-        .replace(/(\w+) must be a number from ([\d.]+) to ([\d.]+)\./gu, '$1 لازم يكون رقم من $2 لـ $3.')
-        .replace(/(\w+): unknown input setting\./gu, 'الإعداد $1 مش معروف.')
-        .replace('Configuration must be a list of bindings.', 'الإعدادات لازم تكون قائمة روابط أزرار.')
-        .replace('Unknown or empty action.', 'الحركة مش معروفة أو فاضية.')
-        .replace('Input type must be KEY, MOUSE or WHEEL.', 'نوع الإدخال لازم يكون KEY أو MOUSE أو WHEEL.')
-        .replace(/(\w+) cannot use (\w+)\./gu, '$1 مينفعش يستخدم $2.')
-        .replace(/Unknown or empty (\w+) value\./gu, 'قيمة $1 مش معروفة أو فاضية.')
-        .replace('This SDL key name cannot be represented in the current INI comment syntax.', 'اسم الزرار ده مينفعش يتحفظ بالصيغة الحالية لملف INI.')
-        .replace(/duplicate (.+) will be omitted\./gu, 'الربط $1 متكرر وهيتحفظ مرة واحدة.')
-        .replace(' controls ', ' بيشغّل ')
-        .replaceAll(' (built-in)', ' (افتراضي)')
-        .replace('Composition and dead keys are ambiguous. Select an SDL key from the list.', 'زرار تركيب الحروف مش واضح في التسجيل. اختار زرار SDL من القائمة.')
-        .replaceAll(' and ', ' و ')
-        .replace('Expected Action = TYPE:VALUE.', 'الصيغة المطلوبة: Action = TYPE:VALUE.')
-        .replace('Duplicate binding ignored.', 'الربط المتكرر تم تجاهله.')
-        .replace('This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'الزرار ده مينفعش يتسجل بالصيغة الحالية لملف INI. اختار زرار SDL من القائمة.');
+    const entries = Object.hasOwn(diagnostics, locale) ? diagnostics[locale] : [];
+    return entries.reduce(applyDiagnostic, message);
 }
 
 export function initialLocale(savedLocale) {

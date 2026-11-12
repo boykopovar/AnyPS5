@@ -58,8 +58,13 @@ if(BUILD_TESTING)
             ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpServer.py $<TARGET_FILE:guest_http_client_tests> client)
         set_tests_properties(guest_http_client PROPERTIES
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_http_client TIMEOUT 20)
+        file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_http_client_203)
+        add_test(NAME guest_http_client_203 COMMAND ${Python3_EXECUTABLE}
+            ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpServer.py $<TARGET_FILE:guest_http_client_tests> client203 --transformed)
+        set_tests_properties(guest_http_client_203 PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_http_client_203 TIMEOUT 20)
         if(WIN32)
-            set_tests_properties(guest_http_client PROPERTIES ENVIRONMENT_MODIFICATION
+            set_tests_properties(guest_http_client guest_http_client_203 PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
         endif()
     endif()
@@ -75,5 +80,25 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_http guest_http_uri_locale guest_http_response_header guest_http_options PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_http_state_allocation_tests ${LIBS_INCLUDE_DIR}/tests/HttpStateAllocation.cpp Export.cpp src/Options.cpp)
+    target_include_directories(guest_http_state_allocation_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_http_state_allocation_tests PRIVATE libc)
+    configure_windows_unwind(guest_http_state_allocation_tests)
+    add_test(NAME guest_http_state_init COMMAND guest_http_state_allocation_tests init)
+    add_test(NAME guest_http_state_init_live COMMAND guest_http_state_allocation_tests init-live)
+    add_test(NAME guest_http_state_create_epoll COMMAND guest_http_state_allocation_tests create)
+    foreach(budget RANGE 0 3)
+        add_test(NAME guest_http_state_term_${budget} COMMAND guest_http_state_allocation_tests term ${budget})
+    endforeach()
+    set(httpStateTests guest_http_state_init guest_http_state_init_live guest_http_state_create_epoll guest_http_state_term_0
+        guest_http_state_term_1 guest_http_state_term_2 guest_http_state_term_3)
+    set_tests_properties(${httpStateTests} PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(${httpStateTests} PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
