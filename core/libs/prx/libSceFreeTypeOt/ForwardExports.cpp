@@ -335,6 +335,16 @@ int APS5_VABI FT_Stroker_GetBorderCountsForward_nid_no_patch(void* stroker, std:
 }
 APS5_EXPORT("LfyUi-LkdCk", FT_Stroker_GetBorderCountsForward_nid_no_patch);
 
+int APS5_VABI FT_Stroker_ParseOutlineForward_nid_no_patch(void* stroker, const FreeType::GuestOutline* outline, std::uint8_t opened) {
+    return FT_Stroker_ParseOutline_nid_postfix(stroker, outline, opened);
+}
+APS5_EXPORT("RvFx7dv9ThU", FT_Stroker_ParseOutlineForward_nid_no_patch);
+
+void APS5_VABI FT_Stroker_ExportBorderForward_nid_no_patch(void* stroker, std::int32_t border, FreeType::GuestOutline* outline) {
+    return FT_Stroker_ExportBorder_nid_postfix(stroker, border, outline);
+}
+APS5_EXPORT("7cIS2cFG3PE", FT_Stroker_ExportBorderForward_nid_no_patch);
+
 int APS5_VABI FT_Stroker_ConicToForward_nid_no_patch(void* stroker, const FreeType::GuestVector* control, const FreeType::GuestVector* to) {
     return FT_Stroker_ConicTo_nid_postfix(stroker, control, to);
 }

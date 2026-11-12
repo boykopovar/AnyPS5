@@ -1,5 +1,6 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -132,13 +133,16 @@ int APS5_VABI sceAudioOut2GetSpeakerInfo(AudioOut2SpeakerInfo* info, uint32_t fl
     constexpr std::uint8_t SpeakerTypeTelevision = 0;
     constexpr std::uint32_t FrontLeftAndRight = 0x3;
     constexpr AudioOut2SpeakerAngle NoSpeaker = {-360, -360};
-    *info = AudioOut2SpeakerInfo{};
-    info->type = SpeakerTypeTelevision;
-    info->available_bits = FrontLeftAndRight;
-    for (auto& angle : info->speaker_angle) angle = NoSpeaker;
-    info->speaker_angle[0] = {30, 0};
-    info->speaker_angle[1] = {-30, 0};
-    return 0;
+    AudioOut2SpeakerInfo result{};
+    result.type = SpeakerTypeTelevision;
+    result.available_bits = FrontLeftAndRight;
+    for (auto& angle : result.speaker_angle) angle = NoSpeaker;
+    result.speaker_angle[0] = {30, 0};
+    result.speaker_angle[1] = {-30, 0};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &result, sizeof(result));
+    errno = savedErrno;
+    return copied ? 0 : ErrorInvalidPointer;
 }
 
 }

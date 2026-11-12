@@ -259,10 +259,6 @@ int APS5_VABI uloc_countAvailable() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uloc_forLanguageTag() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uloc_getAvailable() {
     NotImplemented_nid_no_patch(__func__);
 }
