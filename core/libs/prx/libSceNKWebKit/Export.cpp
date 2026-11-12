@@ -946,10 +946,6 @@ int APS5_VABI _ZN7WebCore11MediaPlayer33copyVideoTextureToPlatformTextureEPNS_23
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore17LibWebRTCProviderdlEPv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore25WebSocketChannelInspector36didReceiveWebSocketHandshakeResponseEPNS_8DocumentERKNS_16ResourceResponseE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -2677,10 +2673,6 @@ int APS5_VABI _ZN7WebCore14SocketProviderC1Ev() {
 }
 
 int APS5_VABI _ZN7WebCore11DisplayList6RotateD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore17LibWebRTCProvidernaEmPv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -4613,10 +4605,6 @@ int APS5_VABI _ZNK7WebCore9FrameView35convertFromContainingViewToRendererEPKNS_1
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore17LibWebRTCProviderdaEPv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList7ClipOutD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4860,10 +4848,6 @@ int APS5_VABI _ZN7WebCore18TextureMapperLayer9applyMaskERKNS_25TextureMapperPain
 }
 
 int APS5_VABI _ZN7WebCore20DecodeOrderSampleMap30reverseFindSampleWithDecodeKeyERKSt4pairIN3WTF9MediaTimeES3_E() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore17LibWebRTCProvidernwEm() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7040,10 +7024,6 @@ int APS5_VABI _ZN7WebCore11MediaPlayer8bufferedEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore17LibWebRTCProvidernaEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleSetAllowUniversalAccessFromFileURLs() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8193,10 +8173,6 @@ int APS5_VABI _ZN7WebCore8Gradient12addColorStopEONS0_9ColorStopE() {
 }
 
 int APS5_VABI _ZN7WebCore14ResourceHandle25loadResourceSynchronouslyEPNS_17NetworkingContextERKNS_15ResourceRequestENS_23StoredCredentialsPolicyERNS_13ResourceErrorERNS_16ResourceResponseERN3WTF6VectorIcLm0ENSB_15CrashOnOverflowELm16ENSB_10FastMallocEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore17LibWebRTCProvidernwEmPv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
