@@ -134,6 +134,26 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         self.package(self.out / "work" / TITLE / "unselected", OTHER)
         self.refuse()
 
+    def test_unselected_duplicate_package_is_protected(self):
+        self.package(self.root / "games" / TITLE)
+        self.package(self.root / "games" / OTHER, OTHER)
+        self.package(self.out / "work" / TITLE / "unselected", OTHER)
+        self.refuse()
+
+    def test_disjoint_unselected_duplicates_do_not_block_selected_title(self):
+        packages = [self.package(self.root / "games" / TITLE),
+                    self.package(self.root / "games/first-copy", OTHER),
+                    self.package(self.root / "games/second-copy", OTHER)]
+        self.fake_relinker()
+        self.stale_work()
+        inputs = [(path, snapshot(path)) for path in packages]
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for path, before in inputs:
+            self.assertEqual(snapshot(path), before)
+        report = json.loads((self.reports()[0] / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(report["titles"]), [TITLE])
+
     def test_preflight_checks_later_titles_before_cleaning_first(self):
         self.package(self.root / "games" / TITLE)
         self.package(self.out / "work" / OTHER, OTHER)

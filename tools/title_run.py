@@ -401,7 +401,7 @@ def render_markdown(summary, previous=None):
     return "\n".join(lines + [""])
 
 
-def discover(directories, wanted=()):
+def discover(directories, wanted=(), packages=None):
     found = {}
     for directory in directories:
         for param in sorted(Path(directory).glob("**/sce_sys/param.json")):
@@ -414,6 +414,8 @@ def discover(directories, wanted=()):
                 raise ValueError(f"{param}: no titleId")
             if not TITLE_ID.fullmatch(title_id):
                 raise ValueError(f"{param}: titleId {title_id!r} is not a title ID")
+            if packages is not None:
+                packages.append(package)
             if wanted and title_id not in wanted:
                 continue
             if title_id in found:
@@ -609,9 +611,9 @@ def check_work_directories(work, output, protected, checks):
                     pending.append(child)
 
 
-def validate_layout(args, found, ids, titles, source, platform):
+def validate_layout(args, found, ids, titles, source, platform, packages=None):
     checks = PathChecks()
-    package_trees = [title["package"] for title in found.values()]
+    package_trees = list(packages) if packages is not None else [title["package"] for title in found.values()]
     trees = list(package_trees)
     files = [args.titles, args.build / "CMakeCache.txt"]
     content = getattr(args, "content", None)
@@ -1023,14 +1025,15 @@ def main(argv=None):
         args.ids = [title_id for title_id, entry in sorted(titles.items()) if entry.get("smoke")]
         if not args.ids:
             raise SystemExit(f"no title in {args.titles} is marked smoke")
-    found = discover(args.games, args.ids)
+    packages = []
+    found = discover(args.games, args.ids, packages=packages)
     ids = args.ids or sorted(found)
     missing = [title_id for title_id in ids if title_id not in found]
     if missing:
         raise SystemExit(f"not found under --games: {', '.join(missing)}")
     source = source_root(args.build)
     try:
-        validate_layout(args, found, ids, titles, source, platform)
+        validate_layout(args, found, ids, titles, source, platform, packages=packages)
     except (OSError, RuntimeError, ValueError) as error:
         parser.error(f"unsafe title-run layout: {error}")
     locks = {title_id: lock_work(args.out.resolve() / "work" / f"{title_id}.lock") for title_id in ids}
