@@ -755,3 +755,14 @@ class FocusedInputEdgeTests(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(list(Path(directory).iterdir()), [])
 
+
+    def test_bisect_refuses_existing_output_before_history_or_worktree_access(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "report.json"
+            output.write_text("owned", encoding="utf-8")
+            with patch.object(performance_bisect, "first_parent_commits") as history:
+                with self.assertRaisesRegex(ValueError, "report already exists"):
+                    performance_bisect.bisect(directory, "good", "bad", {}, output)
+            history.assert_not_called()
+            self.assertEqual(output.read_text(encoding="utf-8"), "owned")
+
