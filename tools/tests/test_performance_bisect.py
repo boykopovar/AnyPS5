@@ -697,3 +697,15 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "ancestor"):
                 performance_bisect.first_parent_commits(repo, good, bad)
 
+
+    def test_build_command_failure_reports_status_and_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            command = [sys.executable, "-c", "print('compiler detail'); raise SystemExit(7)"]
+            with self.assertRaisesRegex(RuntimeError, "failed \(7\).*compiler detail"):
+                performance_bisect.run_build_commands(
+                    repo, {"build_dir": "build", "build_commands": [command]},
+                    GOOD, Path(directory) / "results")
+
