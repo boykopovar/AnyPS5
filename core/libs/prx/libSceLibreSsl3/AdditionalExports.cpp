@@ -250,8 +250,8 @@ int APS5_VABI SSL_process_quic_post_handshake_nid_postfix(void* ssl) {
     return 1;
 }
 
-int APS5_VABI EC_POINT_clear_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI EC_POINT_clear_free_nid_postfix(EcPoint* point) {
+    EC_POINT_free_nid_postfix(point);
 }
 
 int APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_nid_postfix() {
