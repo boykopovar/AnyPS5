@@ -401,6 +401,9 @@ void TestLowLatencyCallsRejectBadArguments() {
     Require(sceAudioOut2LoPortSetAttributes(0, &attribute, 1) == errorInvalidHandle);
     AudioOut2PortState state;
     Require(sceAudioOut2LoPortGetState(0, &state) == errorInvalidHandle);
+    uint8_t extra = 0xAA;
+    Require(sceAudioOut2LoPortGetStateEx(0, &state, &extra) == errorInvalidHandle);
+    Require(extra == 0xAA);
 
     Session session("anyps5_audio_out2_low_arguments.raw", true);
     Require(sceAudioOut2LoPortCreate(session.context, nullptr, &port) == errorInvalidArgument);
@@ -412,14 +415,27 @@ void TestLowLatencyCallsRejectBadArguments() {
     Require(sceAudioOut2LoPortSetAttributes(session.port, nullptr, 1) == errorInvalidArgument);
     Require(sceAudioOut2LoPortSetAttributes(session.port, nullptr, 0) == 0);
     Require(sceAudioOut2LoPortGetState(session.port, nullptr) == errorInvalidArgument);
+    Require(sceAudioOut2LoPortGetStateEx(session.port, nullptr, &extra) == errorInvalidArgument);
+    Require(extra == 0xAA);
     Require(sceAudioOut2LoContextGetQueueLevel(session.context, nullptr, nullptr) == 0);
     std::memset(&state, 0xAB, sizeof(state));
     Require(sceAudioOut2LoPortGetState(session.port, &state) == 0);
     Require(state.output == 1 && state.num_channels == 2 && state.volume == 127 && state.reroute_counter == 0 && state.flags == 0);
+    std::memset(&state, 0xAB, sizeof(state));
+    Require(sceAudioOut2LoPortGetStateEx(session.port, &state, nullptr) == 0);
+    Require(state.output == 1 && state.num_channels == 2 && state.volume == 127 && state.reroute_counter == 0 && state.flags == 0);
+    std::memset(&state, 0xAB, sizeof(state));
+    extra = 0x55;
+    Require(sceAudioOut2LoPortGetStateEx(session.port, &state, &extra) == 0);
+    Require(state.output == 1 && state.num_channels == 2 && state.volume == 127 && state.reroute_counter == 0 && state.flags == 0);
+    Require(extra == 0);
     const auto destroyed = session.port;
     Require(sceAudioOut2LoPortDestroy(destroyed) == 0);
     Require(sceAudioOut2LoPortDestroy(destroyed) == errorInvalidHandle);
     Require(sceAudioOut2LoPortGetState(destroyed, &state) == errorInvalidHandle);
+    extra = 0xBB;
+    Require(sceAudioOut2LoPortGetStateEx(destroyed, &state, &extra) == errorInvalidHandle);
+    Require(extra == 0xBB);
     Require(sceAudioOut2LoPortSetAttributes(destroyed, &attribute, 1) == errorInvalidHandle);
     Require(sceAudioOut2LoContextDestroy(session.context) == 0);
     std::filesystem::remove(session.path);
