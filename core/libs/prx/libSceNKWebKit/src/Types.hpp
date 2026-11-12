@@ -61,6 +61,31 @@ public:
     std::vector<std::uint8_t> bytes;
 };
 
+enum class SerializedScriptValueKind {
+    Json,
+    Undefined,
+    NaN,
+    PositiveInfinity,
+    NegativeInfinity,
+};
+
+class SerializedScriptValue final : public ObjectOf<ObjectType::SerializedScriptValue> {
+public:
+    std::string data;
+    SerializedScriptValueKind kind = SerializedScriptValueKind::Json;
+
+    SerializedScriptValue() = default;
+    SerializedScriptValue(std::string str, SerializedScriptValueKind k = SerializedScriptValueKind::Json)
+        : data(std::move(str)), kind(k) {}
+};
+
+class SessionState final : public ObjectOf<ObjectType::SessionState> {
+public:
+    explicit SessionState(std::vector<std::uint8_t> data) : data(std::move(data)) {}
+
+    std::vector<std::uint8_t> data;
+};
+
 template<ObjectType kind, typename Value>
 class Number final : public ObjectOf<kind> {
 public:
@@ -149,6 +174,20 @@ public:
     }
 };
 
+class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
+public:
+};
+
+class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
+public:
+    BundleDOMWindowExtension() = default;
+    BundleDOMWindowExtension(Retained<BundleFrame> frame, Retained<BundleScriptWorld> scriptWorld)
+        : frame(std::move(frame)), scriptWorld(std::move(scriptWorld)) {}
+
+    Retained<BundleFrame> frame;
+    Retained<BundleScriptWorld> scriptWorld;
+};
+
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
     Retained<URL> absoluteImageURL;
@@ -157,6 +196,19 @@ public:
     Retained<URL> absolutePDFURL;
     Retained<String> linkLabel;
     Retained<String> linkTitle;
+    Retained<String> linkSuggestedFilename;
+    bool isSelected = false;
+    bool isDownloadableMedia = false;
+    bool mediaHasAudio = false;
+    bool mediaIsInFullscreen = false;
+    std::uint32_t mediaType = 0;
+};
+
+class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
+public:
+    Retained<BundleNodeHandle> document;
+    Retained<BundleFrame> documentFrame;
+    Retained<BundleFrame> htmlIFrameElementContentFrame;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
@@ -164,6 +216,7 @@ public:
     Retained<Object> request;
     Retained<Object> originatingPage;
     bool wasUserInitiated = false;
+    bool isCancelled = false;
 };
 
 class AccessibilityObject final : public ObjectOf<ObjectType::AccessibilityObject> {
@@ -254,6 +307,13 @@ public:
     bool isVisible = false;
 };
 
+class Connection final : public ObjectOf<ObjectType::Connection> {
+public:
+    Retained<Object> lastMessageName;
+    Retained<Object> lastMessageBody;
+    bool clientConfigured = false;
+};
+
 class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
 public:
     bool decided = false;
@@ -268,6 +328,50 @@ public:
         decided = true;
         allowed = false;
     }
+};
+
+class Notification final : public ObjectOf<ObjectType::Notification> {
+public:
+    std::u16string title;
+    std::u16string body;
+    std::u16string iconURL;
+    std::u16string tag;
+    std::u16string lang;
+    std::u16string dir;
+    std::uint64_t notificationID = 0;
+};
+
+class Frame final : public ObjectOf<ObjectType::Frame> {
+public:
+    bool isDisplayingMarkupDocument = false;
+    bool isDisplayingStandaloneImageDocument = false;
+    bool isMainFrame = false;
+};
+
+class Image final : public ObjectOf<ObjectType::Image> {
+public:
+    explicit Image(int width, int height) : width(width), height(height) {}
+
+    int width = 0;
+    int height = 0;
+};
+
+class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {
+public:
+    NavigationAction() = default;
+    explicit NavigationAction(bool shouldPerformDownload) : shouldPerformDownload_(shouldPerformDownload) {}
+    bool shouldPerformDownload() const noexcept { return shouldPerformDownload_; }
+private:
+    bool shouldPerformDownload_ = false;
+};
+
+class NavigationResponse final : public ObjectOf<ObjectType::NavigationResponse> {
+public:
+    NavigationResponse() = default;
+    explicit NavigationResponse(bool canShowMIMEType) : canShowMIMEType_(canShowMIMEType) {}
+    bool canShowMIMEType() const noexcept { return canShowMIMEType_; }
+private:
+    bool canShowMIMEType_ = true;
 };
 
 }  // namespace NKWebKit

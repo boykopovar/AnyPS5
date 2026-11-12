@@ -86,6 +86,8 @@ OPCODE_VARIANTS = {
 }
 REPORT_ROWS = 100
 PANEL_WIDTH, GAP, MAP_HEIGHT, HEADER = 495, 10, 280, 30
+LIBRARY_TIERS = ("Large system libraries", "Medium system libraries", "Small system libraries")
+GRID_COLUMNS, GRID_ROW = 12, 28
 DONE_COLOR, TODO_COLOR, BORDER, TEXT = "#2ea043", "#6e7681", "#0d1117", "#ffffff"
 
 
@@ -253,7 +255,10 @@ def collect_shaders():
     isa = {}
     for line in ISA.read_text(encoding="utf-8", errors="ignore").splitlines():
         if line and not line.startswith("#"):
-            name, encoding = line.split()
+            parts = line.split()
+            if len(parts) != 2:
+                raise ValueError(f"tools/rdna_isa.txt: expected 'name encoding' per line, got: {line}")
+            name, encoding = parts
             isa[name] = encoding
     by_camel = {camel(name): name for name in isa}
     enum = re.search(r"enum class RdnaOpcode[^{]*\{(.*?)\};", OPCODES.read_text(encoding="utf-8", errors="ignore"), re.S).group(1)
@@ -341,23 +346,72 @@ def text(x, y, value, size):
             f'stroke="{BORDER}" stroke-width="3" paint-order="stroke">{escape(value)}</text>')
 
 
-def treemap(title, data, left):
-    groups = sorted((g for g in data["groups"] if g["done"] + g["todo"]), key=lambda g: -(g["done"] + g["todo"]))
-    parts = [text(left + 4, 21, f'{title}: {data["percent"]}% ({data["done"]}/{data["total"]})', 16)]
-    for group, (x, y, w, h) in zip(groups, squarify([g["done"] + g["todo"] for g in groups], left, HEADER, PANEL_WIDTH, MAP_HEIGHT)):
-        total = group["done"] + group["todo"]
-        shared = [g["name"] for g in data["groups"] if g.get("shared_sources") == group["name"]]
-        suffix = "; shared by " + ", ".join(shared) if shared else ""
-        parts.append(f'<g><title>{escape(group["name"])}: {group["done"]}/{total} ({100 * group["done"] / total:.0f}%){escape(suffix)}</title>')
-        for i, cell in enumerate(cells(total, x + 1, y + 1, w - 2, h - 2)):
-            parts.append(rect(*cell, DONE_COLOR if i < group["done"] else TODO_COLOR))
-        parts.append(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="none" stroke="{BORDER}" stroke-width="2"/>')
-        label_length = int((w - 10) / 7)
-        label = group["label"][:label_length] if label_length > 0 else ""
-        if (label == group["label"] or len(label) >= 3) and h > 22:
-            parts.append(text(x + 5, y + 16, label, 12))
-        parts.append("</g>")
+def tile_label(group, w, h):
+    label_length = int((w - 10) / 7)
+    label = group["label"][:label_length] if label_length > 0 else ""
+    return label if (label == group["label"] or len(label) >= 3) and h > 22 else ""
+
+
+def map_groups(data):
+    return sorted((g for g in data["groups"] if g["done"] + g["todo"]), key=lambda g: -(g["done"] + g["todo"]))
+
+
+def labelled_tier(groups):
+    shown = list(groups)
+    while len(shown) > 1:
+        rects = squarify([g["done"] + g["todo"] for g in shown], 0, HEADER, PANEL_WIDTH, MAP_HEIGHT)
+        if all(tile_label(g, w, h) for g, (x, y, w, h) in zip(shown, rects)):
+            break
+        shown.pop()
+    return shown
+
+
+def library_tiers(libraries):
+    rest, tiers = map_groups(libraries), []
+    empty = [g for g in libraries["groups"] if not g["done"] + g["todo"]]
+    while rest and len(tiers) < len(LIBRARY_TIERS) - 1:
+        tier = labelled_tier(rest)
+        tiers.append(summarize(tier + empty))
+        rest = rest[len(tier):]
+    if rest:
+        tiers.append(summarize(rest + empty))
+    return tiers
+
+
+def heading(title, data, x, y):
+    return text(x + 4, y + 21, f'{title}: {data["percent"]}% ({data["done"]}/{data["total"]})', 16)
+
+
+def tile(group, data, x, y, w, h):
+    total = group["done"] + group["todo"]
+    shared = [g["name"] for g in data["groups"] if g.get("shared_sources") == group["name"]]
+    suffix = "; shared by " + ", ".join(shared) if shared else ""
+    parts = [f'<g><title>{escape(group["name"])}: {group["done"]}/{total} ({100 * group["done"] / total:.0f}%){escape(suffix)}</title>']
+    for i, cell in enumerate(cells(total, x + 1, y + 1, w - 2, h - 2)):
+        parts.append(rect(*cell, DONE_COLOR if i < group["done"] else TODO_COLOR))
+    parts.append(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="none" stroke="{BORDER}" stroke-width="2"/>')
+    label = tile_label(group, w, h)
+    if label:
+        parts.append(text(x + 5, y + 16, label, 12))
+    parts.append("</g>")
     return parts
+
+
+def treemap(title, data, left, top=0):
+    groups = map_groups(data)
+    parts = [heading(title, data, left, top)]
+    for group, (x, y, w, h) in zip(groups, squarify([g["done"] + g["todo"] for g in groups], left, top + HEADER, PANEL_WIDTH, MAP_HEIGHT)):
+        parts += tile(group, data, x, y, w, h)
+    return parts
+
+
+def tile_grid(title, data, top):
+    groups = sorted(map_groups(data), key=lambda g: (g["label"].lower(), g["name"]))
+    width = (2 * PANEL_WIDTH + GAP) / GRID_COLUMNS
+    parts = [heading(title, data, 0, top)]
+    for index, group in enumerate(groups):
+        parts += tile(group, data, index % GRID_COLUMNS * width, top + HEADER + index // GRID_COLUMNS * GRID_ROW, width, GRID_ROW)
+    return parts, HEADER + -(-len(groups) // GRID_COLUMNS) * GRID_ROW
 
 
 def shader_forms_panel(source):
@@ -414,13 +468,13 @@ def bar_row(x, y, label, count, of, color, caption=None):
             plain_text(x + COLUMN_WIDTH - 4, y + 11, caption or str(count), anchor="end")]
 
 
-def still_needed_svg(source, top):
+def still_needed_svg(source, top, left_top):
     data = still_needed(source)
     right = PANEL_WIDTH + GAP
     total, areas = data["throws"]
-    parts = [text(4, top + 21, f"Unsupported-throw sites by area ({total})", 16),
+    parts = [text(4, left_top + 21, f"Unsupported-throw sites by area ({total})", 16),
              text(right + 4, top + 21, "Instruction forms still needed", 16)]
-    y = top + HEADER
+    y = left_top + HEADER
     for name, count in areas:
         parts += bar_row(0, y, name, count, total, THROW_COLOR)
         y += ROW
@@ -445,19 +499,28 @@ def still_needed_svg(source, top):
         y += 8
     y = max(left_end, y) + 6
     parts.append(plain_text(4, y + 10, "Still needed (counted from the code, not from playing games)", 11))
-    return parts, y + 20 - top
+    return parts, y + 20
 
 
 def render(libraries, shaders, shader_source=None):
-    width, height = 2 * PANEL_WIDTH + GAP, HEADER + MAP_HEIGHT
-    body = treemap("System libraries*", libraries, 0)
+    width, row = 2 * PANEL_WIDTH + GAP, HEADER + MAP_HEIGHT
+    tiers = library_tiers(libraries)
+    body = [heading("System libraries*", libraries, 0, 0)]
+    top = HEADER
+    for index, (title, data) in enumerate(zip(LIBRARY_TIERS[:2], tiers[:2])):
+        body += treemap(title, data, index * (PANEL_WIDTH + GAP), top)
+    top += row if tiers[:2] else 0
+    if len(tiers) > 2:
+        grid, height = tile_grid(LIBRARY_TIERS[2], tiers[2], top + 10)
+        body += grid
+        top += height + 10
     if shader_source:
-        body += treemap("Shader forms decoded", shader_forms_panel(shader_source), PANEL_WIDTH + GAP)
-        panel, extra = still_needed_svg(shader_source, height)
+        body += treemap("Shader forms decoded", shader_forms_panel(shader_source), 0, top)
+        panel, height = still_needed_svg(shader_source, top, top + row)
         body += panel
-        height += extra
     else:
-        body += treemap("GPU shader instructions", shaders, PANEL_WIDTH + GAP)
+        body += treemap("GPU shader instructions", shaders, 0, top)
+        height = top + row
     return "\n".join([f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">',
                       rect(0, 0, width, height, BORDER, 0), *body, "</svg>"])
 
