@@ -73,9 +73,16 @@ void Vectors() {
         Require(*__error_nid_postfix() == 22 && Equal(output, sentinel), "failure preserves previous output and exposes errno");
     }
     Require(sigvec_nid_disambig1(signal, nullptr, &queried) == 0 && Equal(queried, newState), "failed update leaves disposition unchanged");
+    for (const int number : std::array{-100, -1, 0, 129, 200}) {
+        GuestSignalVector output = sentinel;
+        *__error_nid_postfix() = 0;
+        Require(sigvec_nid_disambig1(number, nullptr, &output) == -1 && *__error_nid_postfix() == 22, "invalid signal query fails with EINVAL");
+        Require(Equal(output, sentinel), "invalid signal query preserves output");
+    }
     for (const int number : std::array{9, 17}) {
         GuestSignalVector output = sentinel;
-        Require(sigvec_nid_disambig1(number, &newState, &output) == -1 && Equal(output, sentinel), "uninstallable handlers preserve output");
+        *__error_nid_postfix() = 0;
+        Require(sigvec_nid_disambig1(number, &newState, &output) == -1 && *__error_nid_postfix() == 22 && Equal(output, sentinel), "uninstallable handlers preserve output");
     }
     Require(sigvec_nid_disambig1(signal, nullptr, nullptr) == 0, "null input and output query is accepted");
     const GuestSignalSet saved = Mask();

@@ -4,6 +4,26 @@
 
 - [sceOpusDecGetAjmContext](../../../core/libs/prx/libSceOpusDec/Export.cpp) hashes to `OyDFNZOLrp0`; the public 3.20 catalogue does not list it. Two version-labelled images contain function records `OyDFNZOLrp0#D#A` and `OyDFNZOLrp0#E#A`, respectively. Dynamic metadata maps those library IDs and module ID 0 to `libSceOpusDec`. Older module words: `0x08540001`, `0x03200004`; later: `0x13590001`, `0x13600007`. Their 15 and 30 function NIDs have sorted-LF SHA-256 values `f4a21bfa5759129658496cfc706b1aa43d45e5c38f04838e964b09dc97e37cbf` and `323309a804d747d76ac694770153c20644f7d30b210ca7eaaf6c15f949e05837`, using the [static ELF membership procedure](https://github.com/boykopovar/AnyPS5/pull/12367#issuecomment-6470603298). Labels do not authenticate retail provenance; the digests identify NID sets only. Independent verification requires matching images. The signature and behavior are unverified; this declaration throws.
 
+- [Later callable exports](../../../core/libs/prx/libSceOpusDec/Export.cpp) - the function exports of `libSceOpusDec` listed below throw through `NotImplemented_nid_no_patch` on every call; their names, parameter lists, return types and behavior are unknown, and the parameterless `int` declarations only resolve imports. The [PS5 13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/ba1933f305f1934ed2a12c94479a977844bdbe5a/data/firmware-13.60/libsceopusdec-69c895457e.jsonl) lists them as function exports of the 13.60-labelled image only, not of its 3.20 reference; the label does not authenticate retail firmware. `tools/nid_names.py` resolves none of them, so each uses a literal NID alias.
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `-NcPFjTj5zU` |
+| `Unknown` | `EF6FftzF33M` |
+| `Unknown` | `I1ugumHd0+A` |
+| `Unknown` | `JZapTsLx0j0` |
+| `Unknown` | `VsujeTF0+xk` |
+| `Unknown` | `ZBx02KtHz2Y` |
+| `Unknown` | `ark0tPj4meI` |
+| `Unknown` | `ct42RpB2CaM` |
+| `Unknown` | `eJQx7Emrwb0` |
+| `Unknown` | `ewfq1d5iJhU` |
+| `Unknown` | `gMazl3u8Y40` |
+| `Unknown` | `jXVNwfmd1II` |
+| `Unknown` | `lFTdHt-AuKU` |
+| `Unknown` | `sr25irrwGBI` |
+| `Unknown` | `ygCoF49g3F0` |
+
 ### Unknown function info
 
 - [sceOpusDecCancel and sceOpusDecCreate](../../../core/libs/prx/libSceOpusDec/Export.cpp) (libSceOpusDec) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceOpusDec.c), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim.

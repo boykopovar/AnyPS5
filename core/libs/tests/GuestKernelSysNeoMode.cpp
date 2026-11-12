@@ -16,6 +16,7 @@ namespace {
 
 constexpr std::int32_t SupportNeoMode = 0x00800000;
 constexpr std::int32_t SupportPsVrAndEnterCross = 0x00004002;
+constexpr std::uint32_t ApplicationCategoryType = 0x00010000;
 
 struct Entry {
     std::string key;
@@ -90,7 +91,7 @@ void WriteParamSfo(const std::filesystem::path& directory, const std::vector<Ent
 
 void WriteParamJson(const std::filesystem::path& directory) {
     std::ofstream file(Metadata(directory) / "param.json");
-    file << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}}})";
+    file << R"({"titleId":"PPSA00000","applicationCategoryType":65536,"localizedParameters":{"en-US":{"titleName":"Example"}}})";
     Require(static_cast<bool>(file), "cannot write the param.json fixture");
 }
 
@@ -137,6 +138,24 @@ int main(int argc, char** argv) {
             Require(Throws("param.json or param.sfo not found"), "a title without metadata did not throw");
             return 0;
         }
+        if (mode == "--category") {
+            std::uint32_t categoryType = 0;
+            Require(sceKernelGetAppCategoryType(getpid_nid_postfix(), &categoryType) == 0, "current-process category lookup failed");
+            Require(categoryType == ApplicationCategoryType, "current-process category type was not read from param.json");
+            bool unsupportedPid = false;
+            try { static_cast<void>(sceKernelGetAppCategoryType(getpid_nid_postfix() + 1, &categoryType)); }
+            catch (const std::runtime_error&) { unsupportedPid = true; }
+            Require(unsupportedPid, "a different process id was accepted");
+            return 0;
+        }
+        if (mode == "--category-unavailable") {
+            std::uint32_t categoryType = 0;
+            bool unavailable = false;
+            try { static_cast<void>(sceKernelGetAppCategoryType(getpid_nid_postfix(), &categoryType)); }
+            catch (const std::runtime_error&) { unavailable = true; }
+            Require(unavailable, "category lookup without param.json category metadata did not throw");
+            return 0;
+        }
         return 1;
     }
 
@@ -165,6 +184,12 @@ int main(int argc, char** argv) {
         if (test.paramJson) WriteParamJson(directory);
         if (RunSelf(argv[0], test.mode, directory) != 0) {
             std::fprintf(stderr, "KERNEL SYS NEO MODE: case failed: %s\n", test.failure);
+            std::filesystem::remove_all(root);
+            return 1;
+        }
+        const auto categoryMode = test.paramJson ? "--category" : "--category-unavailable";
+        if (RunSelf(argv[0], categoryMode, directory) != 0) {
+            std::fprintf(stderr, "KERNEL SYS NEO MODE: category case failed: %s\n", test.failure);
             std::filesystem::remove_all(root);
             return 1;
         }

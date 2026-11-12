@@ -2155,9 +2155,6 @@ private:
                 continue;
             }
             image.table = next++;
-            if (image.packed || image.byElements != 0u) {
-                image.tableOperation = TableOperation::Unsupported;
-            }
         }
         for (auto& sampler : m_info.samplers) {
             if (TableSource(sampler.source)) {
@@ -2296,6 +2293,7 @@ private:
     static void Merge(ImageResource& image, const MemoryInfo& memory, IrOpcode op, std::uint32_t pc) {
         image.optionalDescriptor = image.optionalDescriptor && memory.descriptorWebArm;
         const auto access = ImageOpcodeInfoOf(op).access;
+        if (memory.imagePacked && op != IrOpcode::ImageRead && op != IrOpcode::ImageWrite) image.tableOperation = TableOperation::Unsupported;
         const bool atomic = access == ImageAccess::Atomic;
         const bool write = access == ImageAccess::Write || atomic;
         const bool atomic64 = IsImageAtomic64Opcode(op);
@@ -2478,7 +2476,7 @@ private:
         resource = AddImage(source, memory, op, flags.pc);
         NoteBlockImage(resource);
         if (resource == std::numeric_limits<std::uint32_t>::max()) {
-            fail("image resource limit exceeded");
+            fail("image resource limit exceeded (" + std::to_string(m_info.images.size() + 1u) + " of " + std::to_string(ShaderInfo::MaxImages) + ")");
         }
         AddHandlePatch(handle, resource);
         std::uint32_t sampler = 0;

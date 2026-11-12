@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <source_location>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -88,7 +89,31 @@ static constexpr int SceEnoent = static_cast<int>(0x80020002);
 static constexpr int SceEbadf = static_cast<int>(0x80020009);
 static constexpr int SceEinval = static_cast<int>(0x80020016);
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (!value) {
+        std::fprintf(stderr, "kqueue check failed at %s:%u\n", location.file_name(), static_cast<unsigned>(location.line()));
+        std::abort();
+    }
+}
+
+static double ProcessCpuSeconds() {
+#ifdef _WIN32
+    FILETIME creation{};
+    FILETIME exitTime{};
+    FILETIME kernelTime{};
+    FILETIME userTime{};
+    if (GetThreadTimes(GetCurrentThread(), &creation, &exitTime, &kernelTime, &userTime) == 0) return 0.0;
+    ULARGE_INTEGER kernel{};
+    ULARGE_INTEGER user{};
+    kernel.LowPart = kernelTime.dwLowDateTime;
+    kernel.HighPart = kernelTime.dwHighDateTime;
+    user.LowPart = userTime.dwLowDateTime;
+    user.HighPart = userTime.dwHighDateTime;
+    return static_cast<double>(kernel.QuadPart + user.QuadPart) / 10000000.0;
+#else
+    return static_cast<double>(std::clock()) / static_cast<double>(CLOCKS_PER_SEC);
+#endif
+}
 
 static KernelEvent Change(std::uintptr_t ident, std::int16_t filter, std::uint16_t flags, std::uint32_t fflags = 0, std::intptr_t data = 0, void* udata = nullptr) {
     KernelEvent change{};
@@ -158,6 +183,12 @@ static void BadPointersFaultAndBatchesFill() {
     const KernelTimespec zero{0, 0};
     RequireFailure(kevent_nid_postfix(kq, unmapped, 1, nullptr, 0, nullptr), fault);
     RequireFailure(kevent_nid_postfix(kq, nullptr, 0, events, 16, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    RequireFailure(kevent_nid_postfix(-1, nullptr, 0, nullptr, 0, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    RequireFailure(kevent_nid_postfix(kq, nullptr, 0, events, -1, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    int ends[2];
+    Require(pipe_nid_postfix(ends) == 0);
+    RequireFailure(kevent_nid_postfix(ends[0], nullptr, 0, nullptr, 0, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    Require(close_nid_postfix(ends[0]) == 0 && close_nid_postfix(ends[1]) == 0);
     RequireFailure(kevent_nid_postfix(kq, nullptr, 0, unmapped, 16, &zero), fault);
     void* page = nullptr;
     Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
@@ -349,6 +380,28 @@ static void UnsupportedFilters() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void EqueueIsKqueueDescriptor() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "kqueue descriptor") == SceOk);
+    const int kq = static_cast<int>(static_cast<std::uint32_t>(eq));
+    Require((eq >> 32) != 0 && kq > 0 && kq < FirstSocket);
+    Require(Apply(kq, Change(9, EvfiltUser, EvAdd | EvClear)) == 0);
+    Require(Apply(kq, Change(9, EvfiltUser, 0, NoteTrigger)) == 0);
+    KernelEvent events[2]{};
+    int out = 0;
+    const KernelUseconds none = 0;
+    Require(sceKernelWaitEqueue(eq, events, 2, &out, &none) == SceOk && out == 1 && events[0].ident == 9 && events[0].filter == EvfiltUser);
+    Require(sceKernelDeleteEqueue(eq ^ (KernelEqueue{1} << 32)) == SceEbadf);
+    Require(sceKernelDeleteEqueue(eq) == SceOk);
+    RequireFailure(Poll(kq, events, 2), GuestEbadf);
+    Require(sceKernelDeleteEqueue(eq) == SceEbadf);
+
+    Require(sceKernelCreateEqueue(&eq, "closed descriptor") == SceOk);
+    Require(close_nid_postfix(static_cast<int>(static_cast<std::uint32_t>(eq))) == 0);
+    Require(sceKernelWaitEqueue(eq, events, 2, &out, &none) == SceEbadf);
+    Require(sceKernelDeleteEqueue(eq) == SceEbadf);
+}
+
 static void FilesystemEvents() {
     const int kq = kqueue_nid_postfix();
     int marker = 0;
@@ -534,10 +587,14 @@ static void PipeWrite() {
     Require(empty >= PipeAtomic);
     Require(write_nid_postfix(pipe[1], "abc", 3) == 3);
     Require(Poll(kq, events, 4) == 1 && events[0].data == empty - 3);
-#ifndef _WIN32
+    std::int64_t queued = 3;
+#ifdef _WIN32
+    const std::string fill(static_cast<std::size_t>(empty - queued), 'x');
+    Require(write_nid_postfix(pipe[1], fill.data(), static_cast<std::int64_t>(fill.size())) == static_cast<std::int64_t>(fill.size()));
+    queued += static_cast<std::int64_t>(fill.size());
+#else
     Require(fcntl_nid_postfix(pipe[1], SetStatusFlags, NonBlocking) == 0);
     const std::string chunk(4096, 'x');
-    std::int64_t queued = 3;
     for (;;) {
         const std::int64_t written = write_nid_postfix(pipe[1], chunk.data(), static_cast<std::int64_t>(chunk.size()));
         if (written < 0) {
@@ -546,6 +603,7 @@ static void PipeWrite() {
         }
         queued += written;
     }
+#endif
     Require(queued > PipeAtomic);
     Require(Poll(kq, events, 4) == 0);
     const KernelTimespec limit{5, 0};
@@ -566,11 +624,6 @@ static void PipeWrite() {
     Require(waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(4));
     Require(events[0].ident == writeEnd && events[0].data >= PipeAtomic && (events[0].flags & EvEof) == 0);
     Require(Poll(kq, events, 4) == 1 && events[0].data == empty);
-#else
-    char back[3];
-    Require(read_nid_postfix(pipe[0], back, 3) == 3);
-    Require(Poll(kq, events, 4) == 1 && events[0].data == empty);
-#endif
     Require(close_nid_postfix(pipe[0]) == 0);
     Require(Poll(kq, events, 4) == 1 && events[0].data == 0 && (events[0].flags & EvEof) != 0);
     const int late = kqueue_nid_postfix();
@@ -599,9 +652,6 @@ static void SocketPair() {
     Require(Apply(kq, Change(static_cast<std::uintptr_t>(pair[1]), EvfiltWrite, EvAdd | EvOneshot)) == 0);
     Require(Wait(kq, events, 4) == 1 && events[0].filter == EvfiltWrite);
     RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(pair[1]), EvfiltWrite, EvDelete)), GuestEnoent);
-#ifndef __linux__
-    Require(Throws([kq, &pair] { Apply(kq, Change(static_cast<std::uintptr_t>(pair[1]), EvfiltRead, EvAdd | EvClear)); }));
-#endif
     const int space = kqueue_nid_postfix();
     Require(Apply(space, Change(static_cast<std::uintptr_t>(pair[1]), EvfiltWrite, EvAdd)) == 0);
     Require(Poll(space, events, 4) == 1 && events[0].filter == EvfiltWrite);
@@ -967,7 +1017,7 @@ static void SocketShutReadReportsEof() {
     }
 }
 
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 static void EdgeTriggeredSocketRead() {
     const int kq = kqueue_nid_postfix();
     int pair[2];
@@ -987,9 +1037,9 @@ static void EdgeTriggeredSocketRead() {
 
     const KernelTimespec quiet{0, 150000000};
     const auto idleStart = std::chrono::steady_clock::now();
-    const std::clock_t idleCpu = std::clock();
+    const double idleCpu = ProcessCpuSeconds();
     Require(kevent_nid_postfix(kq, nullptr, 0, events, 4, &quiet) == 0);
-    Require(std::clock() - idleCpu < CLOCKS_PER_SEC / 20);
+    Require(ProcessCpuSeconds() - idleCpu < 0.05);
     Require(std::chrono::steady_clock::now() - idleStart >= std::chrono::milliseconds(140));
 
     Require(send_nid_postfix(pair[1], "d", 1, 0) == 1);
@@ -1047,6 +1097,7 @@ static void EdgeTriggeredSocketRead() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+#ifdef __linux__
 static void EdgeTriggeredSocketWrite() {
     const int kq = kqueue_nid_postfix();
     int pair[2];
@@ -1113,6 +1164,7 @@ static void SocketWriteLowWaterWhileFilling() {
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
     Require(close_nid_postfix(kq) == 0);
 }
+#endif
 
 #endif
 
@@ -1139,7 +1191,7 @@ static void EdgeTriggeredTcpWriteLowWater() {
     Require(close_nid_postfix(kq) == 0);
 }
 
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 static void EdgeTriggeredPipeRead() {
     const int kq = kqueue_nid_postfix();
     int pipe[2];
@@ -1163,6 +1215,9 @@ static void EdgeTriggeredPipeRead() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+#endif
+
+#ifdef __linux__
 static void EdgeTriggeredDispatch() {
     const int kq = kqueue_nid_postfix();
     int pair[2];
@@ -1322,9 +1377,6 @@ static void Errors() {
     Require(Throws([kq, &pipe] { Apply(kq, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltWrite, EvAdd)); }));
 #ifdef __APPLE__
     Require(Throws([kq, &pipe] { Apply(kq, Change(static_cast<std::uintptr_t>(pipe[1]), EvfiltWrite, EvAdd)); }));
-#endif
-#ifndef __linux__
-    Require(Throws([kq, &pipe] { Apply(kq, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltRead, EvAdd | EvClear)); }));
 #endif
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
     const KernelEvent skipped = Change(1, 0, EvAdd);
@@ -1823,6 +1875,7 @@ int main(int argc, char** argv) {
     StandardInputReplacement();
     StandardInput();
     CreateAndClose();
+    EqueueIsKqueueDescriptor();
     SocketReplacesDescriptor();
     KqueueDescriptorOperations();
     Timers();
@@ -1840,14 +1893,16 @@ int main(int argc, char** argv) {
     WatchKqueue();
     SocketPair();
     SocketShutReadReportsEof();
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
     EdgeTriggeredSocketRead();
-    EdgeTriggeredSocketWrite();
-    SocketWriteLowWaterWhileFilling();
     EdgeTriggeredPipeRead();
-    EdgeTriggeredDispatch();
 #endif
     EdgeTriggeredTcpWriteLowWater();
+#ifdef __linux__
+    EdgeTriggeredSocketWrite();
+    SocketWriteLowWaterWhileFilling();
+    EdgeTriggeredDispatch();
+#endif
     DisableAndDispatch();
     ReportedKnotesMoveToTail();
     Errors();

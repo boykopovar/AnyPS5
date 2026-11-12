@@ -110,6 +110,12 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
+    add_test(NAME audio_out_buffer_size_any_index COMMAND audio_out_buffer_size_tests any_index)
+    set_tests_properties(audio_out_buffer_size_any_index PROPERTIES TIMEOUT 5)
+    if(WIN32)
+        set_tests_properties(audio_out_buffer_size_any_index PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 
     add_test_executable(audio_out_vibration_tests tests/AudioOutVibration.cpp)
     target_include_directories(audio_out_vibration_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -334,6 +340,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_audio_out COMMAND guest_audio_out_tests)
     if(WIN32)
         set_tests_properties(guest_audio_out PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
+    add_test_executable(guest_audio_out_ports_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOutPorts.cpp)
+    target_include_directories(guest_audio_out_ports_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio_out_ports_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(guest_audio_out_ports_tests)
+    add_test(NAME guest_audio_out_ports COMMAND guest_audio_out_ports_tests)
+    if(WIN32)
+        set_tests_properties(guest_audio_out_ports PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
 
