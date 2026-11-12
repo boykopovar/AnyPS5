@@ -288,6 +288,12 @@ static void CheckOperationLifecycle(const std::string& file) {
     const SceFiosOp missingOp = sceFiosExists(nullptr, "fios2_probe/none", &exists);
     REQUIRE(!exists && sceFiosOpSyncWait(missingOp) == 0);
 
+    const SceFiosOp directoryOp = sceFiosDirectoryExists(nullptr, "fios2_probe", &exists);
+    REQUIRE(exists && sceFiosOpGetActualCount(directoryOp) == 1);
+    REQUIRE(sceFiosOpSyncWait(directoryOp) == 1);
+    const SceFiosOp fileAsDirectoryOp = sceFiosDirectoryExists(nullptr, file.c_str(), &exists);
+    REQUIRE(!exists && sceFiosOpSyncWait(fileAsDirectoryOp) == 0);
+
     const SceFiosOp failed = sceFiosFileGetSize(nullptr, "fios2_probe/none");
     REQUIRE(sceFiosOpGetError(failed) == SCE_FIOS_ERROR_BAD_PATH);
     REQUIRE(sceFiosOpSyncWait(failed) == SCE_FIOS_ERROR_BAD_PATH);

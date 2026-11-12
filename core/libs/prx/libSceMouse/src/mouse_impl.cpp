@@ -329,7 +329,11 @@ void Publish(const MouseInputEvent& event) {
     if (event.connectionChange) {
         if (connected == event.connected) return;
         connected = event.connected;
-        if (!connected) buttons = 0;
+        if (!connected) {
+            buttons = 0;
+            absoluteHead = 0;
+            absoluteCount = 0;
+        }
     } else if (!connected) {
         return;
     }
