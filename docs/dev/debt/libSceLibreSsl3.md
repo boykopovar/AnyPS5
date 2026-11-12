@@ -102,7 +102,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 76 still-unimplemented callable exports: 72 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 75 still-unimplemented callable exports: 71 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -170,7 +170,6 @@
 | `unknown` | `qGsc6uT6p1E` |
 | `EVP_PKEY_verify_init` | `qseLIVbdvMQ` |
 | `X509_add1_ext_i2d` | `s8WMaKNjwvE` |
-| `EC_GROUP_cmp` | `sENJFZ7WbLU` |
 | `SSL_do_handshake` | `tJsbVTdWjT4` |
 | `EVP_PKEY_sign_init` | `tZG2VIefbX0` |
 | `EC_POINT_dup` | `uITUdhDDAg8` |
@@ -191,3 +190,5 @@
 
 - [Forwarded BN_new and BN_free](../../../core/libs/prx/libSceLibreSsl3/ParentExports.cpp) still throw in the parent library. Future implementations must allocate owned BIGNUM limbs and structs from the same guest heap used by the RSA setters and set `BN_FLG_MALLOCED` on heap-owned structs. Constructor/setter/destructor interoperability remains unverified.
 - [SSL_SESSION_get_master_key](../../../core/libs/prx/libSceLibreSsl3/src/SessionMetadata.cpp) (libSceLibreSsl3) - the NID is in the PS5 3.20 inventory; console prototype and version equivalence are unverified. The LP64 behaviour follows the bundled LibreSSL `ssl_sess.c`: a null `out` returns the stored length, otherwise the number of copied bytes is returned and the key is truncated to `max_out`. A null session returns 0 and a stored length above the 48-byte field clamps to 48 as host-safety limits; console behaviour for those inputs is unmeasured.
+
+- [EC_GROUP_cmp](../../../core/libs/prx/libSceLibreSsl3/src/EcGroupCmp.cpp) - nothing is checked on the console. The module's `EcGroup` is always a named mbedtls curve, so only the curve NID is compared: equal returns 0 and different returns 1. [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/ec/ec_lib.c) also compares the field type, curve parameters, generator, order and cofactor, which the NID settles for these groups; it returns -1 only when a `BN_CTX` allocation fails, and this implementation allocates none. A null group, which LibreSSL dereferences, throws. Closes when: compared with the console.
