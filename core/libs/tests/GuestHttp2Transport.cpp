@@ -1424,8 +1424,8 @@ void GzipFailure(int ssl, Mode mode, const char* message) {
     server.Join();
 }
 
-void Async(int ssl) {
-    std::fprintf(stderr, "HTTP2 async scenario\n");
+void Async(int ssl, bool zeroTimeout = false) {
+    std::fprintf(stderr, "HTTP2 async scenario zero timeout %d\n", zeroTimeout);
     Server server(Mode::Normal, "/another", 302, "localhost");
     Client client(ssl);
     Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify async host name");
@@ -1444,8 +1444,10 @@ void Async(int ssl) {
     const KernelUseconds timeout = 10000000;
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == 0 && count == 1, "async send event");
     Require(event.ident == static_cast<std::uintptr_t>(client.request) && event.udata == &tag, "async send event payload");
+    std::uint32_t remaining = 0;
+    auto* completionTimeout = zeroTimeout ? &remaining : nullptr;
     Http2AsyncResult result{};
-    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == 0, "async send completion");
+    Require(sceHttp2WaitAsync(client.request, &result, completionTimeout, nullptr) == 0, "async send completion");
     Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "async send result");
     std::array<char, 64> buffer{};
     Http2AsyncOption readOption = option;
@@ -1454,9 +1456,12 @@ void Async(int ssl) {
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == 0 && count == 1, "async read event");
     Require(event.ident == static_cast<std::uintptr_t>(client.request) && event.udata == &tag, "async read event payload");
     Http2AsyncResult readResult{};
-    Require(sceHttp2WaitAsync(client.request, &readResult, nullptr, nullptr) == 0, "async read completion");
+    Require(sceHttp2WaitAsync(client.request, &readResult, completionTimeout, nullptr) == 0, "async read completion");
     Require(readResult.req_id == client.request && readResult.result == 13 && readResult.event_type == 1, "async read result");
     Require(std::string(buffer.data(), 13) == "response body", "async read body");
+    if (zeroTimeout) {
+        Require(remaining == 0, "completed poll changed zero timeout");
+    }
     server.Join();
     Require(server.Negotiated(), "async h2 ALPN");
     Require(sceKernelDeleteUserEvent(eq, client.request) == 0, "delete async user event");
@@ -2208,7 +2213,9 @@ int main(int argc, char** argv) {
     SceSsl::Data root{reinterpret_cast<std::uint8_t*>(const_cast<char*>(RootPem)), sizeof(RootPem)};
     SceSsl::Data* authorities[] = {&root};
     Require(sceSslLoadCert(ssl, 1, authorities, nullptr, nullptr) == 0, "trust loopback CA");
-    if (argc == 2 && std::string_view(argv[1]) == "--system-roots") {
+    if (argc == 2 && std::string_view(argv[1]) == "--async-completed-zero") {
+        Async(ssl, true);
+    } else if (argc == 2 && std::string_view(argv[1]) == "--system-roots") {
         const auto list = std::filesystem::current_path() / sceKernelGetFsSandboxRandomWord() / "common" / "cert" / "CA_LIST.cer";
         std::filesystem::create_directories(list.parent_path());
         std::ofstream(list, std::ios::binary | std::ios::trunc) << RootPem;
