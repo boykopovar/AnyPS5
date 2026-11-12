@@ -185,7 +185,7 @@ endif()
 
 add_test_executable(agc_semaphore_tests EXCLUDE_FROM_ALL tests/Semaphore.cpp)
 target_include_directories(agc_semaphore_tests PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(agc_semaphore_tests PRIVATE libSceAgc libc)
+target_link_libraries(agc_semaphore_tests PRIVATE libSceAgc libSceAgcDriver libc)
 configure_windows_unwind(agc_semaphore_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_semaphore_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)

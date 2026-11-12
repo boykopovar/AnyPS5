@@ -55,7 +55,6 @@ agcbuild_CbCondWrite_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbCondWrite_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbDispatch_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbDispatch_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_CbMemSemaphore_c	diff	the operation argument changes the control word; not modelled
 agcbuild_CbReleaseMem_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbReleaseMem_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbReleaseMem_c	throw	AnyPS5 throws for arguments the console encodes

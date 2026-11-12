@@ -4,6 +4,7 @@
 #include "prx/libSceAgc/Cb/include/Sync.hpp"
 #include "prx/libSceAgc/Acb/include/Sync.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
@@ -15,6 +16,7 @@
 #include <memory>
 #include <new>
 #include <stdexcept>
+#include <span>
 #include <vector>
 
 namespace {
@@ -149,7 +151,7 @@ void testMemSemaphore() {
         check(packet[0] == 0xc0023900u, "MEM_SEMAPHORE header opcode mismatch");
         check(packet[1] == 0x22222220u, "MEM_SEMAPHORE address low mismatch");
         check(packet[2] == 0x11111111u, "MEM_SEMAPHORE address high mismatch");
-        check(packet[3] == 0x80100000u, "MEM_SEMAPHORE control word mismatch");
+        check(packet[3] == 0x00010000u, "MEM_SEMAPHORE control word mismatch");
         check(buffer.cursor_up == words.data() + 4, "cursor did not advance by 4 words");
         check(words[4] == 0xdeadbeefu, "words past packet modified");
     }
@@ -175,14 +177,43 @@ void testMemSemaphore() {
         const auto* packet = sceAgcCbMemSemaphore(&buffer, label, 0x12345678u, 0x9abcdef0u, 0x55aa55aau);
         check(packet == words.data(), "packet address mismatch");
         check(packet[0] == 0xc0023900u, "MEM_SEMAPHORE header opcode mismatch");
-        check(packet[1] == static_cast<std::uint32_t>(guestAddress & ~static_cast<std::uintptr_t>(0xfu)), "MEM_SEMAPHORE address low mismatch");
+        check(packet[1] == static_cast<std::uint32_t>(guestAddress & ~static_cast<std::uintptr_t>(7u)), "MEM_SEMAPHORE address low mismatch");
         check(packet[2] == static_cast<std::uint32_t>(guestAddress >> 32u), "MEM_SEMAPHORE address high mismatch");
-        check(packet[3] == 0x80100000u, "MEM_SEMAPHORE control word mismatch");
+        check(packet[3] == 0x40000000u, "MEM_SEMAPHORE control word mismatch");
         check(buffer.cursor_up == words.data() + 4, "cursor did not advance by 4 words");
         check(words[4] == 0xdeadbeefu, "words past packet modified");
     }
 
     expectFailure([&] { sceAgcCbMemSemaphore(nullptr, label, 0, 0, 0); });
+}
+
+void testMemSemaphoreExecution() {
+    void* label = nullptr;
+    check(sceAgcGetSemaphoreLabel(0, &label) == 0 && label != nullptr, "no label for semaphore execution");
+    auto* lanes = static_cast<std::uint64_t*>(label);
+    const std::array original{lanes[0], lanes[1]};
+    lanes[0] = 0x123456789abcdef0ull;
+    lanes[1] = 5u;
+    auto state = std::make_unique<AgcDriver::QueueState>();
+    const auto execute = [&](std::uint32_t signalType, std::uint32_t operation) {
+        std::array<std::uint32_t, 8> words{};
+        words.fill(0xdeadbeefu);
+        CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+        const auto* packet = sceAgcCbMemSemaphore(&buffer, lanes + 1, 0, signalType, operation);
+        check(packet == words.data() && buffer.cursor_up == words.data() + 4 && words[4] == 0xdeadbeefu, "semaphore execution packet bounds differ");
+        const std::span command(packet, 4);
+        AgcDriver::Pm4::Validate(command, 0);
+        AgcDriver::Pm4::Validate(command, 0x20u);
+        AgcDriver::Pm4::Execute(command, *state);
+        check(lanes[0] == 0x123456789abcdef0ull, "semaphore command touched the preceding eight-byte word");
+    };
+    execute(0, 6);
+    check(lanes[1] == 6u, "semaphore increment did not reach the selected word");
+    execute(1, 6);
+    check(lanes[1] == 1u, "semaphore set did not reach the selected word");
+    execute(0, 7);
+    check(lanes[1] == 0u, "semaphore wait did not consume the signal");
+    std::copy(original.begin(), original.end(), lanes);
 }
 
 using QueueMemSemaphore = std::uint32_t* APS5_VABI (*)(CommandBuffer*, const volatile void*, std::uint8_t, std::uint8_t, std::uint8_t);
@@ -230,6 +261,7 @@ int main() {
         testRegistration();
         testLabels();
         testMemSemaphore();
+        testMemSemaphoreExecution();
         testQueueMemSemaphore(sceAgcAcbMemSemaphore);
         testQueueMemSemaphore(sceAgcDcbMemSemaphore);
         testLabelRejections();
