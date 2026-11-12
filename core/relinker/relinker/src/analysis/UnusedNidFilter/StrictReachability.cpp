@@ -161,6 +161,9 @@ private:
                 const auto offset = static_cast<std::size_t>(address - input.TextVaddr);
                 region.Instructions.push_back(address);
                 if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
+                    if ((info.BranchDisp < 0 && next < static_cast<VirtualAddress>(-info.BranchDisp))
+                        || (info.BranchDisp > 0 && std::numeric_limits<VirtualAddress>::max() - next < static_cast<VirtualAddress>(info.BranchDisp)))
+                        throw RelinkerException("Strict filter: direct branch leaves code", address);
                     const auto target = next + static_cast<VirtualAddress>(info.BranchDisp);
                     if (!isCode(target)) throw RelinkerException("Strict filter: direct branch leaves code", address);
                     region.Edges.insert(target);

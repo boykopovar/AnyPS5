@@ -248,12 +248,20 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         const auto nchain = Io::ReadU32(bytes, header + 4);
         if (nbucket == 0 || nchain == 0)
             throw Domain::RelinkerException("Code analysis: invalid SysV hash header", address);
+        if (static_cast<std::uint64_t>(nbucket) > (std::numeric_limits<std::uint32_t>::max() - 8) / 4 ||
+            static_cast<std::uint64_t>(nchain) > (std::numeric_limits<std::uint32_t>::max() - 8 - static_cast<std::uint64_t>(nbucket) * 4) / 4)
+            throw Domain::RelinkerException("Code analysis: invalid SysV hash geometry", address);
         const std::uint64_t hashSize = 8 + static_cast<std::uint64_t>(nbucket) * 4 + static_cast<std::uint64_t>(nchain) * 4;
         const auto start = fileOffset(address, hashSize);
         for (std::uint64_t index = 0; index < nbucket; ++index) {
             const auto bucket = Io::ReadU32(bytes, start + 8 + index * 4);
             if (bucket >= nchain)
                 throw Domain::RelinkerException("Code analysis: invalid SysV hash bucket index", address);
+        }
+        for (std::uint64_t index = 0; index < nchain; ++index) {
+            const auto chain = Io::ReadU32(bytes, start + 8 + static_cast<std::uint64_t>(nbucket) * 4 + index * 4);
+            if (chain >= nchain)
+                throw Domain::RelinkerException("Code analysis: invalid SysV hash chain index", address);
         }
         symbolCount = nchain;
     } else if (tags.contains(0x6ffffef5)) {
@@ -287,7 +295,7 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                     throw Domain::RelinkerException("Code analysis: invalid GNU hash chain", address);
                 const auto chain = Io::ReadU32(bytes, fileOffset(address + offset, 4));
                 ++symbolCount;
-                if (symbolCount > std::numeric_limits<std::uint32_t>::max())
+                if (symbolCount > std::numeric_limits<std::uint32_t>::max() || symbolCount > bytes.size() / 24)
                     throw Domain::RelinkerException("Code analysis: invalid GNU hash chain", address);
                 if (chain & 1) break;
             }

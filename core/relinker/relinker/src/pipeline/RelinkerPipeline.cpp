@@ -652,7 +652,14 @@ RelinkResult RelinkerPipeline::Relink() {
                 throw RelinkerException("TLS relocation in an executable without a non-empty PT_TLS segment", pos);
             if (relType == R_X86_64_DTPMOD64 && rAddend != 0)
                 throw RelinkerException("DTPMOD64 relocation has a nonzero addend", pos);
-            const auto addend = relType == R_X86_64_DTPMOD64 ? 0 : static_cast<std::int64_t>(offset + static_cast<std::uint64_t>(rAddend));
+            std::int64_t addend = 0;
+            if (relType != R_X86_64_DTPMOD64) {
+                if (offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+                    throw RelinkerException("TLS addend overflow", pos);
+                if (rAddend > 0 && offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max() - rAddend))
+                    throw RelinkerException("TLS addend overflow", pos);
+                addend = static_cast<std::int64_t>(offset) + rAddend;
+            }
             appendRela(dynSection.RelaData, rOffset, static_cast<std::uint64_t>(relType), addend);
         }
     };
