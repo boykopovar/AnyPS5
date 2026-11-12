@@ -2097,7 +2097,7 @@ double APS5_VABI lgamma_nid_postfix(double x) {
     if (x == 0) signgam_nid_postfix = std::signbit(x) ? -1 : 1;
     else signgam_nid_postfix = x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
     const double result = LgammaMsun(x);
-    if (std::isinf(result) && std::isfinite(x)) errno = ERANGE;
+    if (std::isinf(result) && std::isfinite(x) && x <= 0 && std::floor(x) == x) errno = ERANGE;
     return result;
 }
 

@@ -4082,6 +4082,10 @@ int main() {
              std::pair{0x1.861b7e0ac7da2p+24, 0x1.877de051bc34ep+28}}) {
         Require(std::bit_cast<std::uint64_t>(lgamma_nid_postfix(x)) == std::bit_cast<std::uint64_t>(expected));
     }
+    for (const auto& [x, error] : {std::pair{0.0, ERANGE}, std::pair{-3.0, ERANGE}, std::pair{-1e308, ERANGE}, std::pair{1e308, 0}, std::pair{-std::numeric_limits<double>::infinity(), 0}}) {
+        errno = 0;
+        Require(std::isinf(lgamma_nid_postfix(x)) && errno == error);
+    }
     for (const double sign : {1.0, -1.0}) {
         std::feclearexcept(FE_ALL_EXCEPT);
         Require(std::abs(lgamma_nid_postfix(sign * std::numeric_limits<double>::denorm_min()) - 744.44007192138122) < 1e-12);
