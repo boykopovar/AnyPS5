@@ -3,6 +3,7 @@
 #include "prx/libSceJxr/src/EncoderMetadata.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +17,15 @@ namespace {
 
 void Check(bool value, int line) { if (!value) { std::fprintf(stderr, "GuestJxr.cpp:%d: requirement failed\n", line); std::abort(); } }
 #define Require(value) Check((value), __LINE__)
+
+template <typename F>
+void RequireThrows(F&& function) {
+    try {
+        function();
+        std::abort();
+    } catch (const std::invalid_argument&) {
+    }
+}
 
 void* lastFreed = nullptr;
 int frees = 0;
@@ -309,6 +319,214 @@ void TestTermPostProc() {
     Require(threw);
 }
 
+std::int64_t APS5_VABI MockGetPosition(Jxr::Stream*, std::size_t* pos) {
+    *pos = 42;
+    return 0;
+}
+
+std::int64_t APS5_VABI MockFailingGetPosition(Jxr::Stream*, std::size_t* pos) {
+    *pos = 77;
+    return -1;
+}
+
+int streamCloseCount = 0;
+int freesAtClose = -1;
+Jxr::Stream* closedStreamPointer = nullptr;
+Jxr::Stream** closeArgument = nullptr;
+
+std::int64_t RecordClose(Jxr::Stream** stream, std::int64_t result) {
+    ++streamCloseCount;
+    freesAtClose = frees;
+    closeArgument = stream;
+    closedStreamPointer = *stream;
+    *stream = nullptr;
+    return result;
+}
+
+std::int64_t APS5_VABI MockClose(Jxr::Stream** stream) {
+    return RecordClose(stream, 0);
+}
+
+std::int64_t APS5_VABI MockFailingClose(Jxr::Stream** stream) {
+    return RecordClose(stream, -1);
+}
+
+bool GuidEquals(const JxrGuestGuid& lhs, const JxrGuestGuid& rhs) {
+    return std::memcmp(&lhs, &rhs, sizeof(JxrGuestGuid)) == 0;
+}
+
+extern "C" {
+std::size_t JxrDecodeFixtureSize_nid_no_patch(void);
+std::size_t JxrDecodeFixtureGetPosOffset_nid_no_patch(void);
+std::size_t JxrDecodeFixtureCloseOffset_nid_no_patch(void);
+void JxrDecodeFixtureSetStream_nid_no_patch(void* decoder, void* stream, std::int32_t owner);
+void* JxrDecodeFixtureStream_nid_no_patch(void* decoder);
+void* JxrDecodeFixtureStreamAddress_nid_no_patch(void* decoder);
+std::size_t JxrDecodeFixtureStartOffset_nid_no_patch(void* decoder);
+void JxrDecodeFixtureSetImage_nid_no_patch(void* decoder, std::uint32_t width, std::uint32_t height, std::uint32_t frames,
+                                           float resolutionX, float resolutionY, const void* format);
+void JxrDecodeFixtureGetImage_nid_no_patch(void* decoder, std::uint32_t* frames, float* resolutionX, float* resolutionY, void* format);
+std::uint8_t* JxrDecodeFixtureMisc_nid_no_patch(void* decoder);
+std::size_t JxrDecodeFixtureMiscSize_nid_no_patch(void);
+}
+
+void* NewDecoder() {
+    const auto size = JxrDecodeFixtureSize_nid_no_patch();
+    void* decoder = malloc_nid_postfix(size);
+    Require(decoder != nullptr);
+    std::memset(decoder, 0, size);
+    return decoder;
+}
+
+bool AllBytes(const std::uint8_t* bytes, std::size_t size, std::uint8_t value) {
+    return std::all_of(bytes, bytes + size, [value](std::uint8_t b) { return b == value; });
+}
+
+void TestDecodeInitialize() {
+    Require(JxrDecodeFixtureGetPosOffset_nid_no_patch() == offsetof(Jxr::Stream, getPosition));
+    Require(JxrDecodeFixtureCloseOffset_nid_no_patch() == offsetof(Jxr::Stream, close));
+
+    Jxr::Stream stream{};
+    stream.getPosition = &MockGetPosition;
+    Jxr::Stream withoutGetPosition{};
+    void* decoder = NewDecoder();
+    const auto miscSize = JxrDecodeFixtureMiscSize_nid_no_patch();
+    auto* misc = JxrDecodeFixtureMisc_nid_no_patch(decoder);
+
+    RequireThrows([&] { PKImageDecode_Initialize_nid_postfix(nullptr, &stream); });
+    RequireThrows([&] { PKImageDecode_Initialize_nid_postfix(decoder, nullptr); });
+    RequireThrows([&] { PKImageDecode_Initialize_nid_postfix(decoder, &withoutGetPosition); });
+    Require(JxrDecodeFixtureStream_nid_no_patch(decoder) == nullptr);
+
+    std::memset(misc, 0xa5, miscSize);
+    Require(PKImageDecode_Initialize_nid_postfix(decoder, &stream) == 0);
+    Require(JxrDecodeFixtureStream_nid_no_patch(decoder) == &stream);
+    Require(JxrDecodeFixtureStartOffset_nid_no_patch(decoder) == 42);
+    std::uint32_t frames = 0;
+    float resolutionX = 0;
+    float resolutionY = 0;
+    JxrGuestGuid format{};
+    JxrDecodeFixtureGetImage_nid_no_patch(decoder, &frames, &resolutionX, &resolutionY, &format);
+    Require(frames == 1 && resolutionX == 96.0f && resolutionY == 96.0f);
+    Require(GuidEquals(format, JxrGuest_GUID_PKPixelFormatDontCare_nid_no_patch));
+    Require(AllBytes(misc, miscSize, 0));
+
+    void* failing = NewDecoder();
+    auto* failingMisc = JxrDecodeFixtureMisc_nid_no_patch(failing);
+    Jxr::Stream failingStream{};
+    failingStream.getPosition = &MockFailingGetPosition;
+    std::memset(failingMisc, 0xa5, miscSize);
+    Require(PKImageDecode_Initialize_nid_postfix(failing, &failingStream) == 0);
+    Require(JxrDecodeFixtureStream_nid_no_patch(failing) == &failingStream);
+    Require(JxrDecodeFixtureStartOffset_nid_no_patch(failing) == 77);
+    JxrDecodeFixtureGetImage_nid_no_patch(failing, &frames, &resolutionX, &resolutionY, &format);
+    Require(frames == 1 && resolutionX == 96.0f && resolutionY == 96.0f);
+    Require(AllBytes(failingMisc, miscSize, 0xa5));
+
+    Require(PKFree_nid_postfix(&decoder) == 0);
+    Require(PKFree_nid_postfix(&failing) == 0);
+}
+
+void TestDecodeQueries() {
+    void* decoder = NewDecoder();
+    JxrGuestGuid custom = JxrGuest_GUID_PKPixelFormat8bppGray_nid_no_patch;
+    JxrDecodeFixtureSetImage_nid_no_patch(decoder, 0x80000001u, 7, 3, 300.5f, 72.25f, &custom);
+
+    JxrGuestGuid queried{};
+    RequireThrows([&] { PKImageDecode_GetPixelFormat_nid_postfix(nullptr, &queried); });
+    RequireThrows([&] { PKImageDecode_GetPixelFormat_nid_postfix(decoder, nullptr); });
+    Require(PKImageDecode_GetPixelFormat_nid_postfix(decoder, &queried) == 0);
+    Require(GuidEquals(queried, custom));
+
+    std::int32_t width = 0;
+    std::int32_t height = 0;
+    RequireThrows([&] { PKImageDecode_GetSize_nid_postfix(nullptr, &width, &height); });
+    RequireThrows([&] { PKImageDecode_GetSize_nid_postfix(decoder, nullptr, &height); });
+    RequireThrows([&] { PKImageDecode_GetSize_nid_postfix(decoder, &width, nullptr); });
+    Require(PKImageDecode_GetSize_nid_postfix(decoder, &width, &height) == 0);
+    Require(width == static_cast<std::int32_t>(0x80000001u) && height == 7);
+
+    float resolutionX = 0;
+    float resolutionY = 0;
+    RequireThrows([&] { PKImageDecode_GetResolution_nid_postfix(nullptr, &resolutionX, &resolutionY); });
+    RequireThrows([&] { PKImageDecode_GetResolution_nid_postfix(decoder, nullptr, &resolutionY); });
+    RequireThrows([&] { PKImageDecode_GetResolution_nid_postfix(decoder, &resolutionX, nullptr); });
+    Require(PKImageDecode_GetResolution_nid_postfix(decoder, &resolutionX, &resolutionY) == 0);
+    Require(resolutionX == 300.5f && resolutionY == 72.25f);
+
+    std::uint32_t frames = 0;
+    RequireThrows([&] { PKImageDecode_GetFrameCount_nid_postfix(nullptr, &frames); });
+    RequireThrows([&] { PKImageDecode_GetFrameCount_nid_postfix(decoder, nullptr); });
+    Require(PKImageDecode_GetFrameCount_nid_postfix(decoder, &frames) == 0);
+    Require(frames == 3);
+
+    std::array<std::uint8_t, 16> colorBuffer{};
+    colorBuffer.fill(0xa5);
+    std::uint32_t colorSize = 16;
+    Require(PKImageDecode_GetColorContext_nid_postfix(decoder, colorBuffer.data(), &colorSize) == -2);
+    Require(PKImageDecode_GetColorContext_nid_postfix(nullptr, colorBuffer.data(), &colorSize) == -2);
+    Require(PKImageDecode_GetColorContext_nid_postfix(nullptr, nullptr, nullptr) == -2);
+    Require(AllBytes(colorBuffer.data(), colorBuffer.size(), 0xa5) && colorSize == 16);
+
+    std::array<std::uint8_t, 32> metadata{};
+    metadata.fill(0xa5);
+    Require(PKImageDecode_GetDescriptiveMetadata_nid_postfix(decoder, metadata.data()) == -2);
+    Require(PKImageDecode_GetDescriptiveMetadata_nid_postfix(nullptr, metadata.data()) == -2);
+    Require(PKImageDecode_GetDescriptiveMetadata_nid_postfix(nullptr, nullptr) == -2);
+    Require(AllBytes(metadata.data(), metadata.size(), 0xa5));
+
+    Require(PKFree_nid_postfix(&decoder) == 0);
+}
+
+void TestDecodeRelease() {
+    RequireThrows([&] { PKImageDecode_Release_nid_postfix(nullptr); });
+    void* nullDecoder = nullptr;
+    RequireThrows([&] { PKImageDecode_Release_nid_postfix(&nullDecoder); });
+
+    Jxr::Stream closable{};
+    closable.close = &MockClose;
+    Jxr::Stream unclosable{};
+
+    void* ownedWithoutStream = NewDecoder();
+    JxrDecodeFixtureSetStream_nid_no_patch(ownedWithoutStream, nullptr, 1);
+    int freesBefore = frees;
+    streamCloseCount = 0;
+    RequireThrows([&] { PKImageDecode_Release_nid_postfix(&ownedWithoutStream); });
+    Require(ownedWithoutStream != nullptr && frees == freesBefore && streamCloseCount == 0);
+    JxrDecodeFixtureSetStream_nid_no_patch(ownedWithoutStream, nullptr, 0);
+    Require(PKImageDecode_Release_nid_postfix(&ownedWithoutStream) == 0);
+    Require(ownedWithoutStream == nullptr && frees == freesBefore + 1);
+
+    void* ownedWithoutClose = NewDecoder();
+    JxrDecodeFixtureSetStream_nid_no_patch(ownedWithoutClose, &unclosable, 1);
+    freesBefore = frees;
+    RequireThrows([&] { PKImageDecode_Release_nid_postfix(&ownedWithoutClose); });
+    Require(ownedWithoutClose != nullptr && frees == freesBefore && streamCloseCount == 0);
+    JxrDecodeFixtureSetStream_nid_no_patch(ownedWithoutClose, &unclosable, 0);
+    Require(PKImageDecode_Release_nid_postfix(&ownedWithoutClose) == 0);
+    Require(ownedWithoutClose == nullptr && frees == freesBefore + 1);
+
+    void* borrowed = NewDecoder();
+    JxrDecodeFixtureSetStream_nid_no_patch(borrowed, &closable, 0);
+    freesBefore = frees;
+    Require(PKImageDecode_Release_nid_postfix(&borrowed) == 0);
+    Require(borrowed == nullptr && frees == freesBefore + 1 && streamCloseCount == 0);
+
+    for (const auto closeFunction : {&MockClose, &MockFailingClose}) {
+        void* owned = NewDecoder();
+        Jxr::Stream stream{};
+        stream.close = closeFunction;
+        JxrDecodeFixtureSetStream_nid_no_patch(owned, &stream, 1);
+        auto* const streamAddress = static_cast<Jxr::Stream**>(JxrDecodeFixtureStreamAddress_nid_no_patch(owned));
+        freesBefore = frees;
+        streamCloseCount = 0;
+        Require(PKImageDecode_Release_nid_postfix(&owned) == 0);
+        Require(owned == nullptr);
+        Require(streamCloseCount == 1 && closedStreamPointer == &stream && closeArgument == streamAddress);
+        Require(freesAtClose == freesBefore && frees == freesBefore + 1);
+    }
+}
+
 int main() {
     InitializeHeap();
     void* memory = malloc_nid_postfix(64);
@@ -348,8 +566,29 @@ int main() {
     try { PKAlloc_nid_postfix(nullptr, 1); }
     catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
+    std::array<std::uint8_t, 64> object{};
+    std::array<std::uint8_t, 64> pixels{};
+    std::array<std::uint8_t, 16> rect{};
+    object.fill(0x5A);
+    pixels.fill(0x5A);
+    rect.fill(0x5A);
+    const auto freesBefore = frees;
+    Require(PKFormatConverter_Convert_nid_postfix(object.data(), rect.data(), pixels.data(), 16) == 0);
+    Require(PKFormatConverter_Convert_nid_postfix(nullptr, nullptr, nullptr, 0) == 0);
+    Require(PKImageDecode_SelectFrame_nid_postfix(object.data(), 3) == 0);
+    Require(PKImageEncode_CreateNewFrame_nid_postfix(object.data(), pixels.data(), pixels.size()) == 0);
+    Require(PKImageEncode_CreateNewFrame_nid_postfix(nullptr, nullptr, 0) == 0);
+    Require(PKImageEncode_Terminate_nid_postfix(object.data()) == 0);
+    for (const auto byte : object) Require(byte == 0x5A);
+    for (const auto byte : pixels) Require(byte == 0x5A);
+    for (const auto byte : rect) Require(byte == 0x5A);
+    Require(frees == freesBefore);
     TestTermPostProc();
     TestInitPostProc();
     TestExifMetadata();
+    TestDecodeInitialize();
+    TestDecodeQueries();
+    TestDecodeRelease();
+
     return 0;
 }

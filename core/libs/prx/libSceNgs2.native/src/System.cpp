@@ -20,6 +20,12 @@
 #include "prx/libSceNgs2/include/Api.hpp"
 #include "Ngs2Internal.hpp"
 
+#ifdef APS5_NGS2_PS4_LIBRARY
+static constexpr bool PS4_LIBRARY = true;
+#else
+static constexpr bool PS4_LIBRARY = false;
+#endif
+
 using Ngs2ParseReadHandler = std::int32_t (APS5_VABI *)(std::uintptr_t user_data, std::uint32_t offset, void* data, std::size_t size);
 
 static std::vector<Ngs2System*>& Systems() {
@@ -558,6 +564,10 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBuffe
             return SCE_NGS2_ERROR_INVALID_WAVEFORM_TYPE;
         }
         if (buffer_info[i].buffer == nullptr) return SCE_NGS2_ERROR_INVALID_RENDER_BUFFER;
+    }
+    if (PS4_LIBRARY && std::any_of(buffer_info, buffer_info + num_buffer_info, [](const Ngs2RenderBufferInfo& info) { return Ngs2Ps4UnsupportedBufferChannels(info.num_channels); })) {
+        Ngs2RenderRefused(*system, buffer_info, num_buffer_info);
+        return SCE_NGS2_ERROR_PS4_INVALID_NUM_CHANNELS;
     }
     SystemLockState* state = nullptr;
     {
