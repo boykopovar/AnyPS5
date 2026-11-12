@@ -1,5 +1,9 @@
 # libSceUserService technical debt
 
+### Functional
+
+- [sceUserServiceInitialize](../../../core/libs/prx/libSceUserService/Export.cpp) - returning `0x80960005` (`USER_SERVICE_ERROR_INVALID_ARGUMENT`) for an unmapped or unreadable parameter pointer is a defensive host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+
 ### Unsupported account state
 
 - [sceUserServiceIsKratosUser, sceUserServiceIsKratosPrimaryUser and sceUserServiceGetKratosPrimaryUser](../../../core/libs/prx/libSceUserService/Export.cpp) throw because the account-state backend and Cronos behavior are unavailable. A non-Cronos model alone does not establish the full export contract.

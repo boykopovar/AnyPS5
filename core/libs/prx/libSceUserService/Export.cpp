@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <cerrno>
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -499,7 +500,11 @@ static int MarkInitialized() {
 
 int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* params) {
  if (params != nullptr) {
-  if (!ValidThreadPriority(params->priority)) {
+  UserServiceInitParam localParams{};
+  const int savedErrno = errno;
+  const bool copied = GuestCopyIn_nid_no_patch(&localParams, params, sizeof(localParams));
+  errno = savedErrno;
+  if (!copied || !ValidThreadPriority(localParams.priority)) {
    return USER_SERVICE_ERROR_INVALID_ARGUMENT;
   }
  }
