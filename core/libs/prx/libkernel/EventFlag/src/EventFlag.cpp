@@ -107,9 +107,13 @@ std::shared_ptr<EventFlagHandle> ResolveEventFlag(KernelEventFlag handle) {
     return it == eventFlagRegistry.end() ? std::shared_ptr<EventFlagHandle>{} : it->second;
 }
 
-KernelEventFlag RegisterEventFlag(const std::shared_ptr<EventFlagHandle>& entry) {
+KernelEventFlag RegisterEventFlag(const std::shared_ptr<EventFlagHandle>& entry, KernelEventFlag* output) {
     const auto handle = reinterpret_cast<KernelEventFlag>(entry.get());
     eventFlagRegistry.emplace(handle, entry);
+    if (!GuestCopyOut_nid_no_patch(output, &handle, sizeof(handle))) {
+        eventFlagRegistry.erase(handle);
+        return nullptr;
+    }
     return handle;
 }
 
@@ -179,11 +183,11 @@ int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, ui
                 if (!otherEntry->flag->_deleted && otherEntry->flag->_name == flag->_name) return SCE_KERNEL_ERROR_EPERM;
             }
         }
-        handle = RegisterEventFlag(entry);
+        handle = RegisterEventFlag(entry, ef);
     } catch (const std::bad_alloc&) {
         return SCE_KERNEL_ERROR_ENOMEM;
     }
-    *ef = handle;
+    if (!handle) return SCE_KERNEL_ERROR_EFAULT;
     if (TraceSync()) std::fprintf(stderr, "[evf] create %p '%s' attr=0x%x init=0x%llx\n", static_cast<void*>(handle), nameCopy.c_str(), attr, static_cast<unsigned long long>(init_pattern));
     return SCE_OK;
 }
@@ -204,7 +208,8 @@ int APS5_VABI sceKernelOpenEventFlag(KernelEventFlag* ef, const char* name) {
         }
         if (!target) return SCE_KERNEL_ERROR_ESRCH;
         if (!ef) return SCE_KERNEL_ERROR_EFAULT;
-        *ef = RegisterEventFlag(std::make_shared<EventFlagHandle>(EventFlagHandle{std::move(target), true}));
+        if (!RegisterEventFlag(std::make_shared<EventFlagHandle>(EventFlagHandle{std::move(target), true}), ef))
+            return SCE_KERNEL_ERROR_EFAULT;
     } catch (const std::bad_alloc&) {
         return SCE_KERNEL_ERROR_ENOMEM;
     }
