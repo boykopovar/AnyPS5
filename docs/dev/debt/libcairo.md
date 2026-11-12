@@ -2,7 +2,7 @@
 
 ### Functional
 
-- [Cairo affine matrices](../../../core/libs/prx/libcairo/Matrix.cpp) - Ten pure affine operations implement the documented [Cairo matrix API](https://www.cairographics.org/manual/cairo-cairo-matrix-t.html), including multiplication with aliased outputs, singular inversion status and point/distance transforms. The 48-byte `cairo_matrix_t` layout and C signatures are public; the PS5 library revision and native behavior have not been measured. These functions do not require the other 73 pending surface, font or rendering exports.
+- [Cairo affine matrices](../../../core/libs/prx/libcairo/Matrix.cpp) - Ten pure affine operations implement the documented [Cairo matrix API](https://www.cairographics.org/manual/cairo-cairo-matrix-t.html), including multiplication with aliased outputs, singular inversion status and point/distance transforms. The 48-byte `cairo_matrix_t` layout and C signatures are public; the PS5 library revision and native behavior have not been measured. These functions do not require the other 117 pending surface, font or rendering exports.
 
 ### Functional image and surface exports
 
@@ -20,13 +20,19 @@
 
 ### Functional context and coordinate transforms
 
-- [Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) implements seventeen Cairo context lifecycle, nested matrix save/restore, and user/device coordinate transform exports, with an owned surface reference, a sticky invalid-matrix/invalid-restore state and System V guest ABI. Graphics state beyond the CTM, drawing, clipping, path construction and rasterization remain pending; this does not provide a functioning Cairo renderer. The context code depends on the image/surface lifecycles above and shares the affine matrix primitives.
+- [Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) implements seventeen Cairo context lifecycle, nested matrix save/restore, and user/device coordinate transform exports, with an owned surface reference, a sticky invalid-matrix/invalid-restore state and System V guest ABI. Drawing, clipping and rasterization remain pending. The context code depends on the image/surface lifecycles above and shares the affine matrix primitives.
 
-- [Path data in Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) implements eleven path lifecycle and current-point exports with Cairo 24.8 device-coordinate quantization, target device scale, forward-collinear line canonicalization, move/line/cubic/close elements, deep-copied public cairo_path_t arrays, and guest ABI ownership. Append converts user paths through the current CTM and target device scale, while save/restore preserves the independent path. Rendering and path extents are not yet implemented; arc/rectangle constructors remain pending.
+- [Path data in Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) implements eleven path lifecycle and current-point exports with Cairo 24.8 device-coordinate quantization, target device scale, forward-collinear line canonicalization, move/line/cubic/close elements, deep-copied public cairo_path_t arrays, and guest ABI ownership. Append converts user paths through the current CTM and target device scale, while save/restore preserves the independent path. Rectangles use quantized device displacements and close-path canonicalization. Path extents bound line segments and quantized cubic extrema in device space, then convert to user coordinates. Arc construction and rendering remain unsupported, and console behavior is unmeasured.
+
+- [Operator state in Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) has no rendering consumer. The default is OVER, and save/restore preserves the stored operator. Native Cairo 1.18.0 is the comparison target; console behavior is unmeasured.
+
+### Functional glyphs
+
+- [Glyph.cpp](../../../core/libs/prx/libcairo/Glyph.cpp) implements `cairo_glyph_free` for null, which Cairo ignores. No export here allocates glyph arrays yet, and `cairo_glyph_allocate` is not in the catalogue, so a non-null array comes from outside this library and still throws through `NotImplemented_nid_no_patch` instead of reaching `free`. Freeing must follow the allocator once `cairo_scaled_font_text_to_glyphs` returns arrays. Unverified on a console.
 
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 73 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
+- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - The remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
 
 | Name | NID |
 | --- | --- |
@@ -51,7 +57,6 @@
 | `cairo_set_source_rgba` | `BZFvjfb9xDk` |
 | `cairo_ft_font_face_create_for_pattern` | `By6b1vjSVok` |
 | `cairo_mask` | `D1KYCZ80Sac` |
-| `cairo_rectangle` | `E5LkpnAY7po` |
 | `cairo_scaled_font_extents` | `FbWFbLUQOys` |
 | `cairo_show_glyphs` | `FnhwGKKZOjU` |
 | `cairo_mesh_pattern_curve_to` | `H9bwCsWw7LA` |
@@ -69,7 +74,6 @@
 | `cairo_pattern_create_for_surface` | `Q6xyruheFCE` |
 | `cairo_arc` | `R0TePTSHd2k` |
 | `cairo_stroke_preserve` | `RzM4ZhlKzPg` |
-| `cairo_path_extents` | `S6ieIssLpCA` |
 | `cairo_ft_scaled_font_unlock_face` | `SJMLSxaYvWU` |
 | `cairo_mesh_pattern_move_to` | `T0JOV6EajrA` |
 | `cairo_paint_with_alpha` | `TAIhaLjmAlg` |
@@ -81,7 +85,6 @@
 | `cairo_font_face_get_user_data` | `bXupa3+NYIs` |
 | `cairo_pattern_create_mesh` | `bz5MfOeWZw4` |
 | `cairo_stroke` | `cdr2T4SoIyU` |
-| `cairo_set_operator` | `dc4bb-f5YEE` |
 | `cairo_fill_preserve` | `dewyjTlk+u8` |
 | `cairo_fill_extents` | `dkoQNd4kBlQ` |
 | `cairo_ft_font_face_create_for_ft_face` | `dqEhIWRTjuo` |
@@ -89,7 +92,7 @@
 | `cairo_pattern_set_matrix` | `fDNhBmmwSNs` |
 | `cairo_pattern_set_filter` | `gsqESe70WD0` |
 | `cairo_push_group` | `hlh15JjNtWg` |
-| `cairo_glyph_free` | `lAEbTbSUTTo` |
+| `cairo_ft_font_options_substitute` | `ii895dyBjMo` |
 | `cairo_select_font_face` | `ldk9m5h+-no` |
 | `cairo_scaled_font_reference` | `mb4bdMeFRs8` |
 | `cairo_font_face_reference` | `nqmUW6Z8xLE` |
@@ -97,14 +100,8 @@
 | `cairo_scaled_font_glyph_extents` | `oy7NcAkex1I` |
 | `cairo_show_text` | `psdqLsaPnkk` |
 | `cairo_set_font_face` | `qzEwpfbLVxI` |
-| `cairo_get_operator` | `tYTJIi4s6t0` |
 | `cairo_scaled_font_create` | `uKNPDudJTmo` |
 | `cairo_pattern_create_radial` | `uYFjM3ReDRQ` |
 | `cairo_set_source_surface` | `vcN1gg+gWRg` |
 | `cairo_device_destroy` | `wO1D4B90k0k` |
 | `cairo_pattern_add_color_stop_rgba` | `xXWrbaaPNNg` |
-
-### FreeType font-option substitution
-
-- [FreeType font-option substitution](../../../core/libs/prx/libcairo/src/FtFontOptions.cpp) follows Cairo 1.18.0 [cairo-ft-font.c](https://gitlab.freedesktop.org/cairo/cairo/-/blob/1.18.0/src/cairo-ft-font.c), `_cairo_ft_font_options_substitute` and its public wrapper, through the guest Fontconfig exports. PS5 behavior is unmeasured. The existing four-field font-options state has no internal LCD filter; its Cairo default leaves `lcdfilter` untouched. Hint metrics are unused by upstream substitution. Allocation failure stops substitution without rolling back earlier properties, as in the void upstream wrapper.
-

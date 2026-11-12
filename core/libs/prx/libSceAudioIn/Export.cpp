@@ -29,6 +29,7 @@ constexpr int AUDIO_IN_ERROR_INVALID_DEVICE = static_cast<int>(0x8026010F);
 constexpr int AUDIO_IN_SILENT_STATE_DEVICE_NONE = 1;
 constexpr std::uint32_t HANDLE_BASE = 0x30000000;
 constexpr std::uint32_t MAX_QUEUED_BLOCKS = 4;
+constexpr std::size_t MAX_CAPTURE_BYTES = 0x100u * 2u * sizeof(float);
 
 using Clock = std::chrono::steady_clock;
 
@@ -161,6 +162,7 @@ int APS5_VABI sceAudioInGetSilentState(int handle) {
 }
 
 int APS5_VABI sceAudioInInput(int handle, void* dest) {
+    const int savedErrno = errno;
     std::unique_lock lock(g_mutex);
     Port* port;
     if (const int error = findPort(handle, &port)) return error;
@@ -171,6 +173,7 @@ int APS5_VABI sceAudioInInput(int handle, void* dest) {
         return 0;
     }
     const std::size_t bytes = static_cast<std::size_t>(port->samples) * port->frameBytes;
+    if (bytes > MAX_CAPTURE_BYTES) throw std::logic_error("AudioIn capture block exceeds supported format");
     const SDL_AudioDeviceID device = port->device;
     const auto now = Clock::now();
     const auto wake = port->next > now ? port->next : now;
@@ -180,16 +183,21 @@ int APS5_VABI sceAudioInInput(int handle, void* dest) {
     port->busy = true;
     lock.unlock();
 
-    auto* out = static_cast<std::uint8_t*>(dest);
+    std::array<std::uint8_t, MAX_CAPTURE_BYTES> block;
     std::size_t captured = 0;
     if (device != 0) {
-        captured = capture(device, out, bytes, deadline);
+        captured = capture(device, block.data(), bytes, deadline);
     } else {
         PreciseSleepUntil(wake);
     }
-    std::memset(out + captured, 0, bytes - captured);
+    std::memset(block.data() + captured, 0, bytes - captured);
+    const bool copied = GuestCopyOut_nid_no_patch(dest, block.data(), bytes);
     lock.lock();
     port->busy = false;
+    if (!copied) {
+        errno = savedErrno;
+        return AUDIO_IN_ERROR_INVALID_POINTER;
+    }
     return samples;
 }
 

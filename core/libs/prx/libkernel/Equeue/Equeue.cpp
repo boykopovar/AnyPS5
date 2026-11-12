@@ -691,6 +691,7 @@ int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name) {
     if (eq == nullptr || name == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
+    if (strnlen(name, 32) > 31) return SCE_KERNEL_ERROR_ENAMETOOLONG;
     std::unique_lock lock(g_equeueMutex);
     if (g_nextEqueueId > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
         throw std::runtime_error("equeue handle space exhausted");
