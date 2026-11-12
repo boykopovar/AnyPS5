@@ -1,5 +1,6 @@
 #include "prx/libSceImeBackend/include/Api.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 
@@ -9,6 +10,9 @@ void Require(bool value) { if (!value) std::abort(); }
 
 void CheckParamInit() {
     sceImeBackendParamInit(nullptr);
+    errno = 71;
+    sceImeBackendParamInit(reinterpret_cast<void*>(0x10));
+    Require(errno == 71);
     for (const unsigned char fill : {static_cast<unsigned char>(0xaa), static_cast<unsigned char>(0x00), static_cast<unsigned char>(0xff)}) {
         std::array<unsigned char, 0x40> buffer{};
         buffer.fill(fill);
