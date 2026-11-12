@@ -10,7 +10,7 @@ Supported input sources are:
 
 - `KEY:Return`, `KEY:Space`, or another key name accepted by SDL.
 - `MOUSE:Left`, `MOUSE:Middle`, `MOUSE:Right`, `MOUSE:X1`, or `MOUSE:X2`.
-- `WHEEL:Up` or `WHEEL:Down` for pad buttons.
+- `WHEEL:Up`, `WHEEL:Down`, `WHEEL:Left` or `WHEEL:Right` for pad buttons. `Left` and `Right` are horizontal scroll steps, such as a tilting wheel's sideways clicks; no action uses them by default.
 
 While a title has a mouse open (`sceMouseOpen`) and the window is focused, AnyPS5 hides and captures the host cursor, so the title's own cursor is the only one; the capture ends when the window loses focus or when the mouse-to-stick toggle (`ToggleMouse`) is on. Mouse movement reaches the title scaled from the window's presented image to the title's display resolution, so the title's cursor moves as far as the host cursor would.
 
