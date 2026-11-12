@@ -605,16 +605,24 @@ struct Replay {
             auto bytes = reader.Read(*chunk);
             auto* const target = reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(chunk->address));
             AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, static_cast<std::size_t>(chunk->bytes));
+            std::vector<std::size_t> kept;
             for (auto at = static_cast<std::size_t>((4 - chunk->address % 4) % 4); at + 4 <= bytes.size(); at += 4) {
                 std::uint32_t value = 0;
                 std::memcpy(&value, bytes.data() + at, sizeof(value));
-                if ((value & AgcDriver::Pm4::RewindValid) == 0) continue;
+                if ((value & AgcDriver::Pm4::RewindValid) == 0 || at < 4) continue;
                 std::uint32_t header = 0;
-                if (at >= 4) std::memcpy(&header, bytes.data() + at - 4, sizeof(header));
-                const bool rewind = (header >> 30u) == 3u && ((header >> 8u) & 0xffu) == 0x59u;
-                if (!rewind && std::find(parked.begin(), parked.end(), chunk->address + at) == parked.end()) continue;
-                if (!again) controls.emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
-                std::memcpy(bytes.data() + at, target + at, sizeof(value));
+                std::memcpy(&header, bytes.data() + at - 4, sizeof(header));
+                if ((header >> 30u) == 3u && ((header >> 8u) & 0xffu) == 0x59u) kept.push_back(at);
+            }
+            for (const auto address : parked) {
+                if (address % 4 == 0 && address >= chunk->address && address + 4 <= chunk->address + bytes.size()) kept.push_back(static_cast<std::size_t>(address - chunk->address));
+            }
+            std::ranges::sort(kept);
+            kept.erase(std::ranges::unique(kept).begin(), kept.end());
+            for (const auto at : kept) {
+                std::uint32_t value = 0;
+                std::memcpy(&value, bytes.data() + at, sizeof(value));
+                if (!again || (value & AgcDriver::Pm4::RewindValid) == 0) controls.emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
             }
             for (const auto& wait : held) {
                 if (wait.address < chunk->address || wait.address + wait.bytes > chunk->address + bytes.size()) continue;
@@ -622,7 +630,12 @@ struct Replay {
                 staged.push_back({wait.address, {bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.begin() + static_cast<std::ptrdiff_t>(offset + wait.bytes)}});
                 std::memcpy(bytes.data() + offset, target + offset, wait.bytes);
             }
-            std::memcpy(target, bytes.data(), bytes.size());
+            std::size_t from = 0;
+            for (const auto at : kept) {
+                std::memcpy(target + from, bytes.data() + from, at - from);
+                from = at + 4;
+            }
+            std::memcpy(target + from, bytes.data() + from, bytes.size() - from);
             deltaBytes += chunk->bytes;
         }
         for (const auto& [control, value] : controls) std::atomic_ref<std::uint32_t>(*control).store(value, std::memory_order_release);

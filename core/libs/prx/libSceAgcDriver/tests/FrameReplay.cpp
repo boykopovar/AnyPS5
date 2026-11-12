@@ -808,14 +808,46 @@ void testQueueBusyPastPacing(const std::filesystem::path& tool) {
     check(replayed(tool, checkCapture(0), layout.firstTarget, DataBytes, " --pace-timeout-ms 1") == copied, "the replay gave up pacing or released the compute queue while the graphics queue was still copying");
 }
 
+void testRewindPageRestored(const std::filesystem::path& tool) {
+    constexpr std::uint32_t ComputeQueue = 0x20;
+    constexpr std::size_t Deltas = 8;
+    const auto layout = allocate();
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+
+    flip();
+    auto* const control = submitRewound(layout.firstCommands, [](CommandBuffer&) {}, [&](CommandBuffer& buffer) { writeDone(buffer, layout.label); });
+    waitUntil([&] {
+        std::array<AgcDriver::AwaitedWait, 8> waits{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(waits.data(), waits.size());
+        return std::any_of(waits.begin(), waits.begin() + static_cast<std::ptrdiff_t>(count), [&](const auto& wait) { return wait.address == at(control); });
+    }, "the queue did not park at the unreleased REWIND");
+    auto* const neighbours = layout.firstCommands + 16;
+    auto* const scratch = layout.label + 2;
+    for (std::size_t delta = 0; delta < Deltas; ++delta) {
+        neighbours[delta] = static_cast<std::uint32_t>(delta + 1);
+        auto* const words = layout.secondCommands + delta * 16;
+        auto compute = commands(words);
+        sceAgcAcbWriteData(&compute, ComputeMemory, 0, at(scratch), &Done, 1, 0, 1);
+        Packet packet{words, static_cast<std::uint32_t>(compute.cursor_up - words), 0, {}};
+        check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "compute submission failed");
+    }
+    release(control);
+    flip();
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    check(*layout.label == Done, "the driver did not run the REWIND tail");
+    check(replayed(tool, checkCapture(1), layout.label, 4) == std::vector<std::byte>{std::byte{Done}, std::byte{0}, std::byte{0}, std::byte{0}}, "the replay did not run the REWIND tail after the deltas that restored the page of its control");
+}
+
 }
 
 int main(int argc, char** argv) {
     const std::string mode = argc == 3 ? argv[2] : "";
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
-        {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}};
+        {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"rewind_page", testRewindPageRestored}};
     if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || mode == "rewind_reuse" || rewound.contains(mode)))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_reuse]\n");
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_reuse|rewind_page]\n");
         return 2;
     }
     int status = 0;
