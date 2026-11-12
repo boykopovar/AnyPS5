@@ -1,5 +1,9 @@
 # libSceAppContent technical debt
 
+### Silent stubs
+
+- [sceAppContentGetGameTrialsFlag](../../../core/libs/prx/libSceAppContent/Export.cpp) (libSceAppContent) - returning `SCE_APP_CONTENT_ERROR_PARAMETER` for an unwritable game trials flag pointer is a host-safety fallback with console behavior unmeasured.
+
 ### Unknown function info
 
 - [sceAppContentDownloadDataGetAvailableSpaceKb](../../../core/libs/prx/libSceAppContent/Export.cpp) (libSceAppContent) - a title whose `param.json` declares `downloadDataSize` 0 gets 0 KB and OK; the console's behaviour for a title without a download data area is unverified (it may return an error instead). shadPS4 stubs 1048576 KB. One disassembled title (PPSA15246) calls it with the `/download0` mount point and a zeroed 64-bit output, ignores the return value and multiplies the output by 1024, so for that title an error that leaves the output untouched and an OK with 0 KB look the same. `/download1` and `/download2` queries reflect their configured quota.
@@ -10,6 +14,8 @@
 - [libSceAppContent pending exports](../../../core/libs/prx/libSceAppContent/Export.cpp) - 3 named callable exports (`sceAppContentDownload0Expand`, `sceAppContentDownload0Shrink` and `sceAppContentDownload1Shrink`) are listed in the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAppContent.c) and were cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
 - [sceAppContentAppParamGetString, sceAppContentDownloadDataGetBlockSize, sceAppContentGetRegion and sceAppContentRequestPatchInstall](../../../core/libs/prx/libSceAppContent/Export.cpp) (libSceAppContent) - after their argument checks each passes its request to a service outside the module, whose answers are unknown, so they throw there. The checks follow firmware 13.42 `libSceAppContent.sprx` (read from disassembly, not measured on a console): `NOT_INITIALIZED` first, then `PARAMETER` for a null `value`, a null mount point or `blockSize`, a null `region`, and a null `text` or one longer than 255 bytes (`strlen`). Argument counts come from how each export forwards its registers. `DownloadDataGetBlockSize` forwards like `DownloadDataGetAvailableSpaceKb`, so its output is taken as `size_t*`; the type behind `region` and what `text` names are unknown.
 ### Functional
+
+- [sceAppContentGetAddcontInfoList](../../../core/libs/prx/libSceAppContent/Export.cpp) (libSceAppContent) - returning `PARAMETER` for an unwritable non-null list or hit-count output is a host-safety fallback; console behavior for those pointers is unmeasured.
 
 - [Download partition expansion](../../../core/libs/prx/libSceAppContent/Export.cpp) - `/download1` and `/download2` expansion tracks size monotonically and reports available space in `sceAppContentDownloadDataGetAvailableSpaceKb`. The quota units and hardware shrink behavior remain unverified.
 
