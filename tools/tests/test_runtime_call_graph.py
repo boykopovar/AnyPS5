@@ -53,6 +53,15 @@ class RuntimeCallGraphTests(unittest.TestCase):
         self.assertIn("4 calls across 1 shown edges", text)
         self.assertIn("sceAudioOutInit", text)
         self.assertNotIn("sceAudioOutOutput", text)
+        self.assertIn("sceAudioOutInit", runtime_call_graph.report(graph, consumer="engine.guest.prx"))
+        self.assertIn("sceAudioOutOutput", runtime_call_graph.report(graph, provider="libSceAudioOut.guest.prx"))
+
+    def test_report_can_focus_on_unresolved_images(self):
+        unresolved = edge(consumer=None, consumer_offset=None, address="0x9980", provider=None, provider_offset=None)
+        graph = runtime_call_graph.load_graph(self.write(document([unresolved])))
+        text = runtime_call_graph.report(graph, unresolved_only=True)
+        self.assertIn("<unresolved> (0x9980)", text)
+        self.assertNotIn("engine.guest.prx", text)
 
     def test_markdown_cells_escape_pipes_and_newlines(self):
         graph = runtime_call_graph.load_graph(self.write(document([edge(name="line|one\ntwo")])))
@@ -103,6 +112,10 @@ class RuntimeCallGraphTests(unittest.TestCase):
         missing = subprocess.run([sys.executable, str(tool), str(self.path / "missing")], capture_output=True, text=True)
         self.assertEqual(missing.returncode, 2)
         self.assertIn("cannot read graph", missing.stderr)
+        invalid_limit = subprocess.run([sys.executable, str(tool), str(self.path), "--limit", "-1"],
+                                       capture_output=True, text=True)
+        self.assertEqual(invalid_limit.returncode, 2)
+        self.assertIn("--limit must be non-negative", invalid_limit.stderr)
 
 
 if __name__ == "__main__":
