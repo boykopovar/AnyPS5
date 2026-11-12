@@ -304,6 +304,8 @@ struct ResidentStatistics {
     std::uint64_t promoted = 0, bound = 0, skipped = 0, copied = 0, invalidated = 0;
 };
 ResidentStatistics ResidentCounts();
+using ResidentCopyHook = void (*)(std::uint64_t begin, std::uint64_t end);
+void SetResidentCopyHookForTests(ResidentCopyHook hook);
 
 struct RetainedAddressSpace {
     std::shared_ptr<const void> space;

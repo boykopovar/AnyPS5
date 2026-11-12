@@ -6056,13 +6056,27 @@ constexpr std::size_t ResidentLimit = 32;
 constexpr std::uint32_t ResidentPromoteAfter = 8;
 constexpr std::uint64_t ResidentMinBytes = 65536;
 constexpr std::uint64_t ResidentShadowMaxBytes = std::uint64_t{16} << 20;
+constexpr std::uint64_t ResidentBudgetBytes = std::uint64_t{256} << 20;
+ResidentCopyHook residentCopyHook = nullptr;
+
+std::uint64_t residentShadowBytes(const ResidentRanges& residents) {
+    std::uint64_t bytes = 0;
+    for (const auto& [key, range] : residents.ranges) bytes += range.shadow.size();
+    return bytes;
+}
+
+std::uint64_t residentBytes(const ResidentRanges& residents) {
+    std::uint64_t bytes = 0;
+    for (const auto& [key, range] : residents.ranges) bytes += key.second - key.first;
+    return bytes;
+}
 
 void reportResidents(ResidentRanges& residents) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto now = std::chrono::steady_clock::now();
     if (now - residents.reported < std::chrono::seconds(10)) return;
     residents.reported = now;
-    if (profile) std::fprintf(stderr, "[resident-ranges] (10 s) %zu resident, %llu promoted, %llu bound by builds, copy-ins %llu skipped (%.1f MiB) / %llu made, %llu invalidated by other stamps\n", residents.ranges.size(), static_cast<unsigned long long>(residents.promoted), static_cast<unsigned long long>(residents.bound), static_cast<unsigned long long>(residents.skipped), residents.skippedBytes / 1048576.0, static_cast<unsigned long long>(residents.copied), static_cast<unsigned long long>(residents.invalidated));
+    if (profile) std::fprintf(stderr, "[resident-ranges] (10 s) %zu resident (%.1f MiB device, %.1f MiB shadow), %llu promoted, %llu bound by builds, copy-ins %llu skipped (%.1f MiB) / %llu made, %llu invalidated by other stamps\n", residents.ranges.size(), residentBytes(residents) / 1048576.0, residentShadowBytes(residents) / 1048576.0, static_cast<unsigned long long>(residents.promoted), static_cast<unsigned long long>(residents.bound), static_cast<unsigned long long>(residents.skipped), residents.skippedBytes / 1048576.0, static_cast<unsigned long long>(residents.copied), static_cast<unsigned long long>(residents.invalidated));
     residents.promoted = residents.bound = residents.skipped = residents.skippedBytes = residents.copied = residents.invalidated = 0;
     residents.heat.clear();
     for (auto it = residents.ranges.begin(); it != residents.ranges.end();) {
@@ -6078,7 +6092,7 @@ void reportResidents(ResidentRanges& residents) {
 }
 
 std::shared_ptr<Buffer> residentBuffer(const Context& context, std::uint64_t begin, std::uint64_t end) {
-    if (RuntimeSwitches::Set(RuntimeSwitch::NoResidentRanges) || end - begin < ResidentMinBytes) return nullptr;
+    if (RuntimeSwitches::Set(RuntimeSwitch::NoResidentRanges) || end - begin < ResidentMinBytes || end - begin > ResidentShadowMaxBytes) return nullptr;
     auto& residents = Residents();
     std::lock_guard lock(residents.mutex);
     if (residents.device != context.device) {
@@ -6097,7 +6111,7 @@ std::shared_ptr<Buffer> residentBuffer(const Context& context, std::uint64_t beg
         }
         residents.ranges.erase(found);
     }
-    if (++residents.heat[key] < ResidentPromoteAfter || residents.ranges.size() >= ResidentLimit) return nullptr;
+    if (++residents.heat[key] < ResidentPromoteAfter || residents.ranges.size() >= ResidentLimit || residentBytes(residents) + (end - begin) > ResidentBudgetBytes) return nullptr;
     auto buffer = stagingBuffer(context, static_cast<std::size_t>(end - begin), gpuCopyUsage(context, true));
     if (buffer == nullptr) return nullptr;
     residents.ranges[key] = ResidentRange{buffer, {}, 0, forget, true};
@@ -6136,7 +6150,7 @@ bool residentCurrent(std::uint64_t begin, std::uint64_t end, const std::shared_p
     return true;
 }
 
-void residentCopied(std::uint64_t begin, std::uint64_t end, const std::shared_ptr<Buffer>& buffer) {
+void residentCopied(std::uint64_t begin, std::uint64_t end, const std::shared_ptr<Buffer>& buffer, std::span<const std::byte> copied, std::uint64_t generation) {
     auto& residents = Residents();
     std::lock_guard lock(residents.mutex);
     const auto found = residents.ranges.find({begin, end});
@@ -6144,10 +6158,14 @@ void residentCopied(std::uint64_t begin, std::uint64_t end, const std::shared_pt
     ++residents.copied;
     auto& range = found->second;
     const auto bytes = static_cast<std::size_t>(end - begin);
-    range.syncGeneration = GuestMemory::CollectWrites(begin, bytes);
+    range.syncGeneration = copied.empty() ? GuestMemory::CollectWrites(begin, bytes) : generation;
     if (range.syncGeneration != 0 || bytes > ResidentShadowMaxBytes) {
         range.shadow.clear();
         range.shadow.shrink_to_fit();
+        return;
+    }
+    if (!copied.empty()) {
+        range.shadow.assign(copied.begin(), copied.end());
         return;
     }
     const auto* guest = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(begin));
@@ -6237,6 +6255,10 @@ void reportStaging() {
     lastOut = out;
 }
 
+}
+
+void SetResidentCopyHookForTests(ResidentCopyHook hook) {
+    residentCopyHook = hook;
 }
 
 ResidentStatistics ResidentCounts() {
@@ -7041,7 +7063,9 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
         std::shared_ptr<Buffer> inputSnapshot;
         auto copySource = region->copySource;
         auto copyOffset = region->begin - region->copySourceBase;
+        std::uint64_t residentGeneration = 0;
         if (!pendingWriter && !writable) {
+            if (region->resident) residentGeneration = GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes));
             inputSnapshot = std::make_shared<Buffer>(context, static_cast<std::size_t>(bytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             std::memcpy(inputSnapshot->Bytes().data(), reinterpret_cast<const void*>(address), static_cast<std::size_t>(bytes));
             copySource = inputSnapshot->Handle();
@@ -7073,7 +7097,10 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
         } else {
             CopyBuffer(context, commands, copySource, copyOffset, region->buffer->Handle(), 0, bytes);
         }
-        if (region->resident) residentCopied(region->begin, region->end, region->buffer);
+        if (region->resident) {
+            residentCopied(region->begin, region->end, region->buffer, inputSnapshot != nullptr ? std::span<const std::byte>(inputSnapshot->Bytes()) : std::span<const std::byte>{}, residentGeneration);
+            if (residentCopyHook != nullptr) residentCopyHook(region->begin, region->end);
+        }
         if (!expected.empty()) {
             auto readback = std::make_shared<Buffer>(context, expected.size(), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
             recorder->Keep(readback, readback->Bytes().size());
