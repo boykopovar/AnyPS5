@@ -193,7 +193,7 @@ std::uint64_t SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vecto
         auto& load = headers[loads[position]];
         const auto prefix = load.MappedAddress % kDefaultLoadAlignment;
         const bool congruent = load.Offset % kDefaultLoadAlignment == prefix;
-        if (load.FileSize == 0 || (congruent && prefix == 0))
+        if ((load.FileSize == 0 || congruent) && prefix == 0)
             continue;
         const auto pageStart = load.MappedAddress - prefix;
         std::vector<std::uint8_t> image(static_cast<std::size_t>(prefix), 0);
@@ -210,15 +210,17 @@ std::uint64_t SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vecto
         const auto mapped = load.Offset - prefix;
         bool differs = !congruent;
         for (std::size_t index = 0; index < image.size() && !differs; ++index)
-            differs = covered[index] && buf[static_cast<std::size_t>(mapped) + index] != image[index];
+            differs = covered[index] && (buf[static_cast<std::size_t>(mapped) + index] != image[index] || (load.FileSize == 0 && image[index] != 0));
         if (!differs)
             continue;
         Io::AlignBuffer(buf, static_cast<std::size_t>(kDefaultLoadAlignment));
         buf.insert(buf.end(), image.begin(), image.end());
         const auto offset = static_cast<std::uint64_t>(buf.size());
-        buf.resize(static_cast<std::size_t>(offset + load.FileSize));
+        const auto fileSize = load.FileSize == 0 ? std::min(load.MemorySize, kDefaultLoadAlignment - prefix) : load.FileSize;
+        buf.resize(static_cast<std::size_t>(offset + fileSize));
         std::copy_n(buf.begin() + static_cast<std::ptrdiff_t>(load.Offset), static_cast<std::size_t>(load.FileSize), buf.begin() + static_cast<std::ptrdiff_t>(offset));
         load.Offset = offset;
+        load.FileSize = fileSize;
         if (load.Alignment > kDefaultLoadAlignment && (load.Alignment & (load.Alignment - 1)) == 0)
             lowered = std::max(lowered, load.Alignment);
         load.Alignment = std::min(load.Alignment, kDefaultLoadAlignment);

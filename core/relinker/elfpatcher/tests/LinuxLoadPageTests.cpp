@@ -80,7 +80,7 @@ std::vector<Domain::ProgramHeader> OutputLoads(const Bytes& output) {
     return loads;
 }
 
-std::map<std::uint64_t, std::uint8_t> MapLikeLinux(const Bytes& output) {
+std::map<std::uint64_t, std::uint8_t> MapLikeLinux(const Bytes& output, const bool clearsEmptyLoadPage) {
     std::map<std::uint64_t, std::uint8_t> memory;
     for (const auto& load : OutputLoads(output)) {
         const auto prefix = load.MappedAddress % kPage;
@@ -92,8 +92,9 @@ std::map<std::uint64_t, std::uint8_t> MapLikeLinux(const Bytes& output) {
             memory[address] = offset < output.size() ? output[offset] : 0;
         }
         if (load.MemorySize > load.FileSize) {
+            const auto zeroStart = load.FileSize == 0 && clearsEmptyLoadPage ? load.MappedAddress - prefix : fileEnd;
             const auto memoryPageEnd = (load.MappedAddress + load.MemorySize + kPage - 1) & ~(kPage - 1);
-            for (auto address = fileEnd; address < memoryPageEnd; ++address)
+            for (auto address = zeroStart; address < memoryPageEnd; ++address)
                 memory[address] = 0;
         }
     }
@@ -101,17 +102,20 @@ std::map<std::uint64_t, std::uint8_t> MapLikeLinux(const Bytes& output) {
 }
 
 void RequireImage(const Bytes& output, const Bytes& source, const std::vector<Domain::ProgramHeader>& headers, const std::string& what) {
-    const auto memory = MapLikeLinux(output);
-    for (const auto& load : headers) {
-        for (std::uint64_t relative = 0; relative < load.MemorySize; ++relative) {
-            const auto address = load.MappedAddress + relative;
-            const auto found = memory.find(address);
-            Require(found != memory.end(), what + ": address not mapped");
-            const std::uint8_t expected = relative < load.FileSize ? source[load.Offset + relative] : 0;
-            if (found->second != expected) {
-                char text[96];
-                std::snprintf(text, sizeof(text), ": byte at 0x%llx reads 0x%02x, not 0x%02x", static_cast<unsigned long long>(address), found->second, expected);
-                Require(false, what + text);
+    for (const bool clearsEmptyLoadPage : {false, true}) {
+        const auto memory = MapLikeLinux(output, clearsEmptyLoadPage);
+        const auto context = what + (clearsEmptyLoadPage ? " on Linux 6.7 or later" : " on Linux before 6.7");
+        for (const auto& load : headers) {
+            for (std::uint64_t relative = 0; relative < load.MemorySize; ++relative) {
+                const auto address = load.MappedAddress + relative;
+                const auto found = memory.find(address);
+                Require(found != memory.end(), context + ": address not mapped");
+                const std::uint8_t expected = relative < load.FileSize ? source[load.Offset + relative] : 0;
+                if (found->second != expected) {
+                    char text[96];
+                    std::snprintf(text, sizeof(text), ": byte at 0x%llx reads 0x%02x, not 0x%02x", static_cast<unsigned long long>(address), found->second, expected);
+                    Require(false, context + text);
+                }
             }
         }
     }
@@ -179,6 +183,56 @@ void ZeroFileBytesStayInPlace() {
     const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
     RequireImage(output, source, headers, "zero bytes below the next segment");
     Require(OutputOffset(output, 0x2c20) == 0x2c20, "a segment whose page already reads right was moved");
+}
+
+void DataBelowASegmentWithoutFileBytes() {
+    auto source = Fixture(0x3000);
+    std::fill(source.begin() + 0x1000, source.begin() + 0x1800, std::uint8_t{0xAA});
+    std::fill(source.begin() + 0x1800, source.begin() + 0x2000, std::uint8_t{0x77});
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x1000, 0x800, 0x800, 6),
+        Load(0x1800, 0x1800, 0, 0x1000, 6),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(output, source, headers, "data in the first page of a segment without file bytes");
+}
+
+void ZeroFillBelowASegmentWithoutFileBytes() {
+    auto source = Fixture(0x3000);
+    std::fill(source.begin() + 0x1000, source.begin() + 0x1800, std::uint8_t{0x55});
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x1000, 0, 0x800, 6),
+        Load(0x1800, 0x1800, 0, 0x1000, 6),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(output, source, headers, "bss in the first page of a segment without file bytes");
+}
+
+void IncongruentSegmentWithoutFileBytes() {
+    auto source = Fixture(0x3000);
+    std::fill(source.begin() + 0x1000, source.begin() + 0x1800, std::uint8_t{0xAA});
+    std::fill(source.begin() + 0x2000, source.begin() + 0x3000, std::uint8_t{0x77});
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x1000, 0x800, 0x800, 6),
+        Load(0x2010, 0x1800, 0, 0x1000, 6),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(output, source, headers, "segment without file bytes whose offset differs within its page");
+}
+
+void ZeroPageBelowASegmentWithoutFileBytesStaysInPlace() {
+    auto source = Fixture(0x3000);
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x1000, 0x800, 0x800, 6),
+        Load(0x1800, 0x1800, 0, 0x1000, 6),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(output, source, headers, "zero bytes below a segment without file bytes");
+    Require(OutputOffset(output, 0x1800) == 0x1800, "a segment without file bytes whose page already reads right was moved");
 }
 
 std::uint64_t VaddrOf(const Bytes& output, const std::uint64_t fileOffset) {
@@ -363,6 +417,10 @@ int main() {
         ZeroFillBelowTheNextSegment();
         DataAndZeroFillBelowTheNextSegment();
         ZeroFileBytesStayInPlace();
+        DataBelowASegmentWithoutFileBytes();
+        ZeroFillBelowASegmentWithoutFileBytes();
+        IncongruentSegmentWithoutFileBytes();
+        ZeroPageBelowASegmentWithoutFileBytesStaysInPlace();
         TrampolineDisplacementAcrossInt64Max();
         TrampolineDisplacementBeyondInt64Range();
         IncongruentSegmentAtPageStart();
