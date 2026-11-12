@@ -44,6 +44,9 @@ Sony guest HTTP requests still do not reach the network. The separate `Aps5HttpC
 - [sceHttpSetDelayBuildRequestEnabled](../../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - sets the delay-build option on templates, connections or requests following the object option lifecycle. The options change no request, as none reaches the network.
 - [sceHttpsEnableOption, sceHttpsDisableOption](../../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - the public TLS option toggles return 0 for any id and keep nothing, since no request reaches the network. Unlike the `*Private` variants above, they do not reject flags outside the `0x2dff` mask: the `ssl_flags` argument is ignored outright.
 - [sceHttpSetConnectTimeOut](../../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - returns 0 for any id and keeps the microsecond connection timeout nowhere, since no connection is made, as the send and receive timeout setters do. Call of Duty: Black Ops II (PPSA34502) imports it.
+- [sceHttpSetResolveTimeOut](../../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - returns 0 for any id and keeps the microsecond DNS-resolve timeout nowhere, the counterpart of `sceHttpSetResolveRetry` above; no name is resolved, since no request reaches the network.
+- [sceHttpAddRequestHeader](../../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - returns 0 for any id and keeps nothing: the header `name`, `value` and `mode` are all ignored, so a request's caller-added headers are silently dropped (the counterpart of `sceHttpRemoveRequestHeader` above). No request reaches the network.
+- [sceHttpsSetSslCallback](../../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - returns 0 for any id and keeps nothing: the TLS verification callback and its user argument are discarded and never invoked, since no connection is made. A caller that relies on it to inspect or override certificate-verification results sees success but no callback.
 
 ### Functional
 
