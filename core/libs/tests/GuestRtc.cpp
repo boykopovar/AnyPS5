@@ -3,6 +3,7 @@
 #include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -136,6 +137,9 @@ int main(int argc, char** argv) {
     RtcDateTime leapDay{2024, 2, 29, 12, 34, 56, 789000};
     Require(sceRtcCheckValid(&leapDay) == 0);
     Require(sceRtcCheckValid(nullptr) == invalidPointer);
+    errno = 71;
+    Require(sceRtcCheckValid(reinterpret_cast<const RtcDateTime*>(0x10)) == invalidPointer);
+    Require(errno == 71);
     RtcDateTime invalid = leapDay;
     invalid.year = 2023;
     Require(sceRtcCheckValid(&invalid) == invalidDay);
