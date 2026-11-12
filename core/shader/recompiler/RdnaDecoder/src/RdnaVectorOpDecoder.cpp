@@ -1799,6 +1799,20 @@ bool isVop3pIntegerSaturate(RdnaOpcode opcode) {
     }
 }
 
+bool ignoresVop3pIntegerClamp(RdnaOpcode opcode) {
+    switch (opcode) {
+        case RdnaOpcode::VPkMulLoU16:
+        case RdnaOpcode::VPkMaxI16:
+        case RdnaOpcode::VPkMinI16:
+        case RdnaOpcode::VPkMaxU16:
+        case RdnaOpcode::VPkMinU16:
+        case RdnaOpcode::VPkLshlrevB16:
+        case RdnaOpcode::VPkLshrrevB16:
+        case RdnaOpcode::VPkAshrrevI16: return true;
+        default: return false;
+    }
+}
+
 bool isMadMixF16(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::VMadMixloF16 || opcode == RdnaOpcode::VMadMixhiF16;
 }
@@ -2503,7 +2517,7 @@ RdnaInstruction DecodeRdnaVop3p(std::uint32_t programCounter, std::span<const st
     }
     if (instruction.op == RdnaOpcode::VFmaF32 || instruction.op == RdnaOpcode::VDot2F32F16 || isMadMixF16(instruction.op) || isPackedVop3p(instruction.op) || isVop3pIntegerSaturate(instruction.op)) {
         instruction.destination.clamp = clamp != 0u;
-    } else if (clamp != 0u && instruction.op != RdnaOpcode::VPkMulLoU16) {
+    } else if (clamp != 0u && !ignoresVop3pIntegerClamp(instruction.op)) {
         throw std::invalid_argument("VOP3P integer clamp is not implemented");
     }
     if (isVop3pIntegerDot(instruction.op)) {
