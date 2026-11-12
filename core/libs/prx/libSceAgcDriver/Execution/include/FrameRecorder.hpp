@@ -141,6 +141,7 @@ private:
     std::uint64_t hostOnlySampleBytes = 0;
     std::uint64_t allocationsGeneration = 0;
     std::uint64_t lateRanges = 0;
+    std::array<std::uint64_t, 17> submitDepths{};
     std::vector<std::string> warnings;
     std::chrono::steady_clock::time_point origin;
     std::chrono::steady_clock::time_point startedAt;

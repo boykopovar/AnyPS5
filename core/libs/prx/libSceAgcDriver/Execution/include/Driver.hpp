@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <vector>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "SceShaders.hpp"
@@ -18,6 +19,12 @@ struct AwaitedWait {
     std::uint64_t mask = 0;
     std::uint32_t function = 0;
     std::uint32_t bytes = 0;
+};
+
+struct StartedProgressSnapshot {
+    std::uint64_t accepted = 0;
+    std::uint64_t completed = 0;
+    std::vector<std::uint64_t> started;
 };
 
 }

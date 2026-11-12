@@ -57,6 +57,7 @@ void Driver::markCompleted(std::uint64_t serial) {
         completed = *completedOutOfOrder.begin();
         completedOutOfOrder.erase(completedOutOfOrder.begin());
     }
+    startedAhead.erase(startedAhead.begin(), startedAhead.upper_bound(completed));
 }
 
 bool& Driver::completionDeferred() {
@@ -261,6 +262,7 @@ void Driver::run(std::uint32_t id) noexcept {
                 submission = std::move(pending.front());
                 pending.pop_front();
                 worker.executingPacket.store(0, std::memory_order_relaxed);
+                if (submission.serial > completed) startedAhead.insert(submission.serial);
                 if (APS5_ENABLE_TIMING_LOG) submission.dequeuedAt = std::chrono::steady_clock::now();
                 if (id == 0) queue0Executing = submission.suspend ? 0 : submission.received;
                 struct OrderHold {
