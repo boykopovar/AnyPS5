@@ -118,9 +118,10 @@ python3 tools/hw-oracle/probe_catalog.py coverage --results-dir measurements --d
 `run` measures every catalog entry by default; repeat `--probe ID` to select a subset. It does not overwrite an existing
 measurement file. Reports include the hardware-oracle runtime and assembly target, the exact catalog digest, all input
 and output words, and the user-supplied device label. The label is not checked against the physical GPU, and the
-assembly target alone does not identify a GPU model or driver. `coverage` counts only reports for the current catalog
-digest with matching probe inputs and settings; it reports missing, stale or invalid files separately and exits 1 when
-the selected probe set is incomplete. Use `--json` for machine-readable coverage data.
+assembly target alone does not identify a GPU model or driver. `coverage` checks the individual probe definition
+digest, inputs and settings. Adding another probe leaves existing measurements valid; editing a probe marks only that
+probe's old report stale. It reports missing, stale or invalid files separately and exits 1 when the selected probe set
+is incomplete. Use `--json` for machine-readable coverage data.
 
 ## Recompiler comparison
 
