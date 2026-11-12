@@ -21,6 +21,30 @@ When sources disagree, say so in the pull request and in the debt entry.
 
 [prosper](https://github.com/mattias800/prosper)'s console oracle has published such measurements for libSceRtc, libc, libSceHttp, libSceNet, libSceUserService, libkernel and libSceAgc's packet builders. `python3 tools/library-oracle/library_oracle.py` replays them against the built modules, after `cmake --build build --target library_oracle_replay`: it downloads the measurements from a pinned commit, checks their digest and fails on a result that is not in [known.tsv](../../tools/library-oracle/known.tsv). A pull request that fixes a listed case removes its line, and one that adds a difference explains it there.
 
+## Public source baselines
+
+Some libraries are builds of public projects. The library's debt file records which release its entries follow,
+and an entry cites the file at that release. This can differ from the submodule the repository bundles, which some
+adapters call into.
+
+| Library | Project | Entries follow | Bundled submodule |
+| --- | --- | --- | --- |
+| [libwebrtc](debt/libwebrtc.md) | WebRTC | code that is the same at M127 and M134 (its Source revision entry) | none |
+| [libSceLibreSsl](debt/libSceLibreSsl.md) | LibreSSL | 2.5.4 | `3rdparty/libressl-openbsd` (OpenBSD 7.0) |
+| [libSceLibreSsl3](debt/libSceLibreSsl3.md) | LibreSSL | 4.0.0 | `3rdparty/libressl-openbsd` (OpenBSD 7.0) |
+| [libSceFreeType](debt/libSceFreeType.md), [libSceFreeTypeOt](debt/libSceFreeTypeOt.md) | FreeType | 2.13.3 | `3rdparty/freetype` (2.15.0) |
+| [libfreetype](debt/libfreetype.md) | FreeType | 2.15.0 | `3rdparty/freetype` (2.15.0) |
+| [libSceIcu](debt/libSceIcu.md) | ICU | 68 for names (`icu_68`), 78.1 for behaviour | `3rdparty/icu` (78.1) |
+| [libharfbuzz](debt/libharfbuzz.md) | HarfBuzz | 10.0.1 | `3rdparty/harfbuzz` (10.0.1) |
+| [libfontconfig](debt/libfontconfig.md) | Fontconfig | 2.15.0 | `3rdparty/fontconfig` (2.15.0) |
+| [libSceJxr](debt/libSceJxr.md) | jxrlib | v2019.10.9 | `3rdparty/jxrlib` (v2019.10.9) |
+| [libSceNKWebKit](debt/libSceNKWebKit.md) | WebKit | the PS5 firmware 11.x WebKit source | none |
+| [libc](debt/libc.md), [libkernel](debt/libkernel.md), [libkernel_sys](debt/libkernel_sys.md), [libSceNet](debt/libSceNet.md), [libScePosixForWebKit](debt/libScePosixForWebKit.md), [libSceUsbd](debt/libSceUsbd.md) | FreeBSD | 11.4 | none |
+| [libSceLibcInternal](debt/libSceLibcInternal.md) | FreeBSD, Microsoft STL (Dinkumware) | FreeBSD 11.4 for C functions, the Microsoft STL for C++ helpers | none |
+
+The guest `std::string` is the 0x28-byte object in [GuestLocale.hpp](../../core/libs/prx/libc/include/GuestLocale.hpp),
+not libc++'s 24-byte one. The layouts of the other standard containers are not settled yet (#18830).
+
 ## What a call site settles
 
 The PS5 uses the System V AMD64 calling convention: integer and pointer arguments in `rdi`, `rsi`, `rdx`, `rcx`, `r8`,
