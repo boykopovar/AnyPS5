@@ -25,6 +25,10 @@ FLOW_TOKEN = re.compile(r"\w+|[()[\]{}]")
 PREPROCESSOR_LINE = re.compile(r"^[ \t]*#[ \t]*(ifdef|ifndef|if|elifdef|elifndef|elif|else|endif)\b[^\n]*$", re.M)
 BRANCH_VARIANT_LIMIT = 256
 PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
+ELF_SYMBOL_TAGS = {
+    4: "DT_HASH", 5: "DT_STRTAB", 6: "DT_SYMTAB",
+    10: "DT_STRSZ", 11: "DT_SYMENT", 0x6ffffef5: "DT_GNU_HASH",
+}
 
 
 class AuditError(Exception):
@@ -115,6 +119,8 @@ def elf_program_dynamic_symbols(path, data):
             break
         if tag == 1:
             needed_offsets.append(value)
+        elif tag in ELF_SYMBOL_TAGS and dynamic.get(tag, value) != value:
+            raise AuditError(f"{path}: conflicting duplicate {ELF_SYMBOL_TAGS[tag]} at 0x{dynamic_offset + position:x}")
         else:
             dynamic[tag] = value
     if not terminated:

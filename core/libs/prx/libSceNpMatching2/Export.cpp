@@ -518,8 +518,13 @@ int APS5_VABI sceNpMatching2SignalingGetPingInfo(std::uint16_t ctxId, const void
 }
 
 int APS5_VABI sceNpMatching2SignalingGetPort(std::uint16_t* port) {
+    if (port == nullptr) return SCE_NP_MATCHING2_SIGNALING_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(matching2Mutex);
-    *port = signalingPort;
+    const std::uint16_t currentPort = signalingPort;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(port, &currentPort, sizeof(currentPort));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_MATCHING2_SIGNALING_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
