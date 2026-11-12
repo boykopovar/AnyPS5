@@ -54,9 +54,11 @@ static void CheckOptionPrecedenceAndBounds() {
     Require(setsockopt_nid_postfix(socketFd, SolSocket, SoBintime, &one, 0) == -1 && *__error_nid_postfix() == ErrorInvalid);
     Require(setsockopt_nid_postfix(socketFd, SolSocket, SoBintime, &one, 2) == -1 && *__error_nid_postfix() == ErrorInvalid);
 
-    Require(getsockopt_nid_postfix(socketFd, SolSocket, SoTimestamp, nullptr, &length) == -1 && *__error_nid_postfix() == ErrorFault);
+    length = sizeof(value);
+    Require(getsockopt_nid_postfix(socketFd, SolSocket, SoTimestamp, nullptr, &length) == 0 && length == 0);
     Require(getsockopt_nid_postfix(socketFd, SolSocket, SoTimestamp, &value, nullptr) == -1 && *__error_nid_postfix() == ErrorFault);
-    Require(getsockopt_nid_postfix(socketFd, SolSocket, SoBintime, nullptr, &length) == -1 && *__error_nid_postfix() == ErrorFault);
+    length = sizeof(value);
+    Require(getsockopt_nid_postfix(socketFd, SolSocket, SoBintime, nullptr, &length) == 0 && length == 0);
     Require(getsockopt_nid_postfix(socketFd, SolSocket, SoBintime, &value, nullptr) == -1 && *__error_nid_postfix() == ErrorFault);
     Require(getsockopt_nid_postfix(socketFd, SolSocket, SoTimestamp, reinterpret_cast<void*>(0x10), &length) == -1 && *__error_nid_postfix() == ErrorFault);
     Require(getsockopt_nid_postfix(socketFd, SolSocket, SoTimestamp, &value, reinterpret_cast<std::uint32_t*>(0x10)) == -1 && *__error_nid_postfix() == ErrorFault);
