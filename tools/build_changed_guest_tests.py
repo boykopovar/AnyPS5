@@ -119,7 +119,8 @@ def test_owner(command, targets_by_name):
         owner_index = command.index("--") + 1
         candidates += command[owner_index:owner_index + 1]
     else:
-        candidates += [part for part in command[1:] if not part.startswith("-") and Path(part).suffix.casefold() == ".exe"]
+        candidates += [part for part in command[1:] if not part.startswith("-")
+                       and (Path(part).suffix.casefold() == ".exe" or "/" in part or "\\" in part)]
     for part in candidates:
         name = Path(part).name.casefold()
         if name.endswith(".exe"):

@@ -146,6 +146,12 @@ class OwnerResolution(unittest.TestCase):
             ["C:/b/tests/guest_np_common_tests.exe", "build"], {"guest_np_common_tests": "guest_np_common_tests"})
         self.assertEqual(owner, "guest_np_common_tests")
 
+    def test_cmake_wrapper_without_marker_resolves_an_extensionless_path(self):
+        owner = build_changed_guest_tests.test_owner(
+            ["/usr/bin/cmake", "-DPATCHER=/build/patcher", "-P", "wrapper.cmake", "/build/host_tests", "write"],
+            {"patcher": "patcher", "host_tests": "host_tests"})
+        self.assertEqual(owner, "host_tests")
+
     def test_argumentless_registration_resolves(self):
         owner = build_changed_guest_tests.test_owner(
             ["C:/b/tests/guest_pad_tests.exe"], {"guest_pad_tests": "guest_pad_tests"})
