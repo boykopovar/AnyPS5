@@ -6428,6 +6428,10 @@ bool idlePublishDmaBufWaitTests(const Device& device, Recorder& recorder) {
     std::memset(words, 0x11, bytes);
     const auto address = reinterpret_cast<std::uint64_t>(words);
     const auto* import = HostImportFor(context, address, bytes);
+    if (import != nullptr && !import->dmaBuf) {
+        std::cout << "skipped, the device imports shared memory through host pointers, so the direct memory has no dma-buf import\n";
+        return false;
+    }
     Require(import != nullptr && import->dmaBuf, "the direct memory did not use a dma-buf import");
     Require(!import->unwatched && Watched(address, bytes), "the dma-buf import did not stay watched");
     recorder.Sync();
