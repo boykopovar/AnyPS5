@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 
 #include <array>
 #include <cstdint>
@@ -18,6 +19,7 @@ void Require(bool condition, int line = __builtin_LINE()) {
 }
 
 int main() {
+    ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     LibreSsl3Ssl ssl{};
     const std::array<std::uint8_t, 3> first{0x01, 0x02, 0x03};
     Require(SSL_set_quic_transport_params_nid_postfix(&ssl, first.data(), first.size()) == 1);
