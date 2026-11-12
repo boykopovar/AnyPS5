@@ -108,7 +108,13 @@ int RecordGameData(int reqId, const void* data, void* option) {
 
 int RecordScore(int reqId, const NpScoreGameInfo* gameInfo, void* option) {
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    if (gameInfo && gameInfo->infoSize > GAME_INFO_MAX_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (gameInfo) {
+        NpScoreGameInfo localInfo{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localInfo, gameInfo, sizeof(localInfo));
+        errno = savedErrno;
+        if (!copied || localInfo.infoSize > GAME_INFO_MAX_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     return Offline(reqId);
 }
 
