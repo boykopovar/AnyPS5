@@ -217,14 +217,17 @@ int main() {
     known.tm_wday = 7;
     text[0] = 'x';
     Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+    Require(LibcViolation("asctime_s: bad argument"));
     known.tm_wday = 4;
     known.tm_year = 9000;
     text[0] = 'x';
     Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+    Require(LibcViolation("asctime_s: bad argument"));
     for (const int year : {INT_MAX, INT_MAX - 1899, INT_MIN}) {
         known.tm_year = year;
         text[0] = 'x';
         Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+        Require(LibcViolation("asctime_s: bad argument"));
         text[0] = 'x';
         Require(asctime_s_nid_postfix(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
         Require(LibcViolation("asctime_s: bad argument"));
@@ -265,11 +268,15 @@ int main() {
     known.tm_mday = 32;
     text[0] = 'x';
     Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+    Require(LibcViolation("asctime_s: bad argument"));
     known.tm_mday = 1;
     Require(sceAmprAsctimeS(nullptr, sizeof(text), &known) == EINVAL);
+    Require(LibcViolation("asctime_s: bad destination argument"));
     text[0] = 'x';
     Require(sceAmprAsctimeS(text, sizeof(text), nullptr) == EINVAL && text[0] == '\0');
+    Require(LibcViolation("asctime_s: bad argument"));
     Require(sceAmprAsctimeS(text, 25, &known) == EINVAL);
+    Require(LibcViolation("asctime_s: bad argument"));
     const std::int64_t epoch = 0;
     Require(sceAmprCtimeS(text, sizeof(text), &epoch) == 0);
     Require(std::strlen(text) == 25 && text[24] == '\n');
