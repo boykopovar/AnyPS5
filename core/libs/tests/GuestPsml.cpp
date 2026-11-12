@@ -16,6 +16,17 @@ constexpr std::int32_t kErrNotInitialized = static_cast<std::int32_t>(0x8A810001
 
 using GetDispatchPacket = std::int32_t (APS5_VABI*)(void*, void*, const void*);
 
+template <typename TRequirement, typename TParam>
+void RequirementUntouched(std::int32_t (APS5_VABI* get)(TRequirement*, const TParam*)) {
+    std::array<std::uint8_t, 0x158> param{};
+    std::array<std::uint8_t, 0x18> requirement;
+    requirement.fill(0xa5);
+    const auto untouchedRequirement = requirement;
+    Require(get(reinterpret_cast<TRequirement*>(requirement.data()), reinterpret_cast<const TParam*>(param.data())) == kErrNotInitialized);
+    Require(requirement == untouchedRequirement);
+    Require(get(nullptr, nullptr) == kErrNotInitialized);
+}
+
 template <typename TParam>
 void CreateContextUntouched(std::int32_t (APS5_VABI* create)(void**, const TParam*)) {
     std::array<std::uint8_t, 0x158> param{};
@@ -41,7 +52,13 @@ void DispatchPacketUntouched(GetDispatchPacket dispatch) {
     Require(dwords == untouchedDwords);
 }
 
-
+void LaterFormsUntouched() {
+    RequirementUntouched(scePsmlMfsrGetContextBufferRequirement);
+    RequirementUntouched(scePsmlMfsrGetContextBufferRequirement800M3);
+    RequirementUntouched(scePsmlMfsrGetContextBufferRequirementFrom2023July);
+    CreateContextUntouched(scePsmlMfsrCreateContext);
+    CreateContextUntouched(scePsmlMfsrCreateContextFrom2023July);
+}
 
 void SetupBeforeInit() {
     std::uint64_t storage = 0;
@@ -65,6 +82,7 @@ void SetupBeforeInit() {
     Require(scePsmlMfsrSelectConfig(sentinel) == kErrNotInitialized);
     Require(scePsmlMfsrRequestCapture(sentinel) == kErrNotInitialized);
     Require(scePsmlMfsrIsCaptureInProgress(sentinel) == kErrNotInitialized);
+    LaterFormsUntouched();
 }
 
 void EnableFlagsReturnZero() {
@@ -173,12 +191,7 @@ void Mfsr2OnBaseConsole() {
 int main() {
     std::array<std::uint8_t, 0x158> param{};
 
-    std::array<std::uint8_t, 0x18> requirement;
-    requirement.fill(0xa5);
-    const auto untouchedRequirement = requirement;
-    Require(scePsmlMfsrGetContextBufferRequirement1100(requirement.data(), param.data()) == kErrNotInitialized);
-    Require(requirement == untouchedRequirement);
-    Require(scePsmlMfsrGetContextBufferRequirement1100(nullptr, nullptr) == kErrNotInitialized);
+    RequirementUntouched(scePsmlMfsrGetContextBufferRequirement1100);
 
     std::uint64_t contextStorage = 0;
     void* const sentinel = &contextStorage;
@@ -199,13 +212,7 @@ int main() {
     Require(commandBuffer.cursor == dwords.data());
     Require(dwords == untouchedDwords);
 
-    std::array<std::uint8_t, 0x18> olderRequirement;
-    olderRequirement.fill(0xa5);
-    const auto untouchedOlderRequirement = olderRequirement;
-    Require(scePsmlMfsrGetContextBufferRequirement800M3_2(reinterpret_cast<MfsrRequirement*>(olderRequirement.data()), reinterpret_cast<const MfsrContextParam*>(param.data())) == kErrNotInitialized);
-    Require(olderRequirement == untouchedOlderRequirement);
-    Require(scePsmlMfsrGetContextBufferRequirement800M3_2(nullptr, nullptr) == kErrNotInitialized);
-
+    RequirementUntouched(scePsmlMfsrGetContextBufferRequirement800M3_2);
     CreateContextUntouched(scePsmlMfsrCreateContext800M3_2);
     CreateContextUntouched(scePsmlMfsrCreateContext1300);
     DispatchPacketUntouched(scePsmlMfsrGetDispatchMfsrPacket900);

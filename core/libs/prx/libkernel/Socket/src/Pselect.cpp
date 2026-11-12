@@ -56,7 +56,8 @@ int APS5_VABI pselect_nid_postfix(int nfds, void* readfds, void* writefds, void*
     if (timeout != nullptr) {
         std::int64_t spec[2]{};
         if (!GuestCopyIn_nid_no_patch(spec, timeout, sizeof(spec))) return Fault();
-        limit = {spec[0], spec[1] / 1000};
+        const bool validNsec = spec[1] >= 0 && spec[1] < 1000000000;
+        limit = {spec[0], validNsec ? spec[1] / 1000 : -1};
         wait = &limit;
     }
     if (sigmask == nullptr) return select_nid_postfix(nfds, readfds, writefds, exceptfds, wait);

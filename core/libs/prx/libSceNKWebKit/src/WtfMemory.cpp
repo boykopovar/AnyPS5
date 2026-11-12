@@ -1,4 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNKWebKit/include/Api.hpp"
+#include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfMemoryTypes.hpp"
 
@@ -24,6 +26,54 @@ void* APS5_VABI _ZN3WTF10fastMallocEm(std::size_t size) {
 
 void APS5_VABI _ZN3WTF8fastFreeEPv(void* ptr) {
     NKWebKit::Deallocate(ptr);
+}
+
+void* APS5_VABI _ZN7WebCore9GLContextnwEm(std::size_t size) {
+    return _ZN3WTF10fastMallocEm(size);
+}
+
+void* APS5_VABI _ZN7WebCore9GLContextnaEm(std::size_t size) {
+    return _ZN3WTF10fastMallocEm(size);
+}
+
+void APS5_VABI _ZN7WebCore9GLContextdlEPv(void* ptr) {
+    _ZN3WTF8fastFreeEPv(ptr);
+}
+
+void APS5_VABI _ZN7WebCore9GLContextdaEPv(void* ptr) {
+    _ZN3WTF8fastFreeEPv(ptr);
+}
+
+void* APS5_VABI _ZN7WebCore9GLContextnwEmPv(std::size_t, void* location) {
+    return location;
+}
+
+void* APS5_VABI _ZN7WebCore9GLContextnaEmPv(std::size_t, void* location) {
+    return location;
+}
+
+void* APS5_VABI _ZN7WebCore17LibWebRTCProvidernwEm(std::size_t size) {
+    return _ZN3WTF10fastMallocEm(size);
+}
+
+void* APS5_VABI _ZN7WebCore17LibWebRTCProvidernaEm(std::size_t size) {
+    return _ZN3WTF10fastMallocEm(size);
+}
+
+void APS5_VABI _ZN7WebCore17LibWebRTCProviderdlEPv(void* ptr) {
+    _ZN3WTF8fastFreeEPv(ptr);
+}
+
+void APS5_VABI _ZN7WebCore17LibWebRTCProviderdaEPv(void* ptr) {
+    _ZN3WTF8fastFreeEPv(ptr);
+}
+
+void* APS5_VABI _ZN7WebCore17LibWebRTCProvidernwEmPv(std::size_t, void* location) {
+    return location;
+}
+
+void* APS5_VABI _ZN7WebCore17LibWebRTCProvidernaEmPv(std::size_t, void* location) {
+    return location;
 }
 
 void* APS5_VABI _ZN3WTF10fastCallocEmm(std::size_t count, std::size_t size) {

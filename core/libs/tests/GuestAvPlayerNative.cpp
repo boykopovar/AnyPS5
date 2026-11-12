@@ -6,12 +6,12 @@
 
 int main(int argc, char** argv) {
     struct Export {
-        int (APS5_VABI* function)(void);
+        void* function;
         const char* name;
     };
     const Export exports[] = {
-        {sceAvPlayerPrintf, "sceAvPlayerPrintf"},
-        {sceAvPlayerVprintf, "sceAvPlayerVprintf"},
+        {reinterpret_cast<void*>(sceAvPlayerPrintf), "sceAvPlayerPrintf"},
+        {reinterpret_cast<void*>(sceAvPlayerVprintf), "sceAvPlayerVprintf"},
     };
     if (!ExportsResolveByName(argc > 1 ? argv[1] : nullptr, exports, "sceAvPlayerNotExported")) return 1;
     std::puts("libSceAvPlayer.native pending exports are exported");

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+#include "mbedtls/bignum.h"
 #include "mbedtls/ecp.h"
 
 struct NamedCurve {
@@ -19,6 +20,29 @@ struct EcGroup {
 
     const NamedCurve curve;
     mbedtls_ecp_group group;
+    std::int32_t asn1Flag = 0;
+};
+
+struct EcPoint {
+    explicit EcPoint(const NamedCurve& named);
+    ~EcPoint();
+
+    EcPoint(const EcPoint&) = delete;
+    EcPoint& operator=(const EcPoint&) = delete;
+
+    const NamedCurve curve;
+    mbedtls_ecp_point point;
+};
+
+struct EcPrivateKey {
+    explicit EcPrivateKey(const NamedCurve& named);
+    ~EcPrivateKey();
+
+    EcPrivateKey(const EcPrivateKey&) = delete;
+    EcPrivateKey& operator=(const EcPrivateKey&) = delete;
+
+    const NamedCurve curve;
+    mbedtls_mpi value;
 };
 
 struct EcKey {
@@ -31,8 +55,8 @@ struct EcKey {
     const void* method = nullptr;
     std::int32_t version = 1;
     EcGroup* group = nullptr;
-    void* publicKey = nullptr;
-    void* privateKey = nullptr;
+    EcPoint* publicKey = nullptr;
+    EcPrivateKey* privateKey = nullptr;
     std::uint32_t encodingFlags = 0;
     std::int32_t conversionForm = 4;
     std::int32_t references = 1;

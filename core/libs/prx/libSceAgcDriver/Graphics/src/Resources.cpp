@@ -3,15 +3,19 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestWorkMark.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include <algorithm>
+#include <array>
 #include <exception>
 #ifdef __APPLE__
 #include <cstring>
 #endif
 
 namespace AgcDriver::Graphics {
+void WriteCheckpointSentinel(const Context& context, VkCommandBuffer commands);
 
 namespace {
 
@@ -276,6 +280,7 @@ void FillDeviceFunctions(const Context& context, DeviceFunctions& functions) {
     functions.cmdEndRenderPass = context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass");
     functions.cmdSetViewport = context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport");
     functions.cmdSetScissor = context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor");
+    if (context.dynamicColorWriteMask) functions.cmdSetColorWriteMask = context.Function<PFN_vkCmdSetColorWriteMaskEXT>("vkCmdSetColorWriteMaskEXT");
     functions.cmdSetDepthBounds = context.Function<PFN_vkCmdSetDepthBounds>("vkCmdSetDepthBounds");
     functions.cmdSetDepthBias = context.Function<PFN_vkCmdSetDepthBias>("vkCmdSetDepthBias");
     if (context.graphicsPipelineLibrary) {
@@ -368,6 +373,10 @@ VkImageView RenderTarget::View() const {
     return view;
 }
 
+void NoteGuestWorkOnCommandBuffer(VkCommandBuffer commands) {
+    GuestWorkMark::Note(commands);
+}
+
 CommandBatch::CommandBatch(const Context& context) : context(context) {
     // Records into the device's one command pool and submits to its queue: device-lock work only.
     GuestMemory::AssertGpuLockHeld("CommandBatch");
@@ -384,6 +393,7 @@ CommandBatch::CommandBatch(const Context& context) : context(context) {
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         Check(context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(commands, &begin), "vkBeginCommandBuffer");
+        WriteCheckpointSentinel(context, commands);
         // Work recorded so far goes first in queue order, so this batch sees its results.
         if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Recording()) recorder->Submit();
     } catch (...) {
@@ -397,6 +407,7 @@ CommandBatch::~CommandBatch() {
 }
 
 void CommandBatch::release() noexcept {
+    GuestWorkMark::Forget(commands);
     if (pending) {
         auto result = context.Function<PFN_vkGetFenceStatus>("vkGetFenceStatus")(context.device, fence);
         if (result == VK_NOT_READY) result = context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue);
@@ -428,6 +439,7 @@ void CommandBatch::Submit() {
     pending = true;
     submitted = true;
     timing.Mark("queue_submit");
+    if (GuestWorkMark::Take(commands)) LibcRunReportMilestone_nid_no_patch(2);
 }
 
 void CommandBatch::Wait() {
