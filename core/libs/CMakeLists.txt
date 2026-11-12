@@ -56,8 +56,14 @@ function(configure_windows_unwind target)
         if(NOT EXISTS "${CMAKE_OBJCOPY}")
             message(FATAL_ERROR "Windows DWARF unwinding requires objcopy")
         endif()
+        set(refreshStagedRuntime "")
+        get_target_property(targetType ${target} TYPE)
+        if(BUILD_TESTING AND NOT CMAKE_VERSION VERSION_LESS 3.21 AND targetType STREQUAL "SHARED_LIBRARY")
+            set(refreshStagedRuntime COMMAND "${CMAKE_COMMAND}" "-DSOURCE=$<TARGET_FILE:${target}>" "-DSTAGED_DIR=${ANYPS5_TEST_OUTPUT_DIRECTORY}" -P "${CMAKE_SOURCE_DIR}/cmake/RefreshStagedRuntime.cmake")
+        endif()
         add_custom_command(TARGET ${target} POST_BUILD
                 COMMAND "${CMAKE_OBJCOPY}" --rename-section .eh_frame=.ehfram --rename-section .eh_fram=.ehfram "$<TARGET_FILE:${target}>"
+                ${refreshStagedRuntime}
                 VERBATIM
         )
     endif()
@@ -1368,6 +1374,13 @@ if(BUILD_TESTING)
         add_test(NAME prx_thread_local_destructors COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
             -DMODULES=$<TARGET_FILE_DIR:libc> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
         set_tests_properties(prx_thread_local_destructors PROPERTIES TIMEOUT 300)
+        add_test(NAME test_thread_local_destructors COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
+            -DPATTERN=*.exe -DMODULES=$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
+        set_tests_properties(test_thread_local_destructors PROPERTIES TIMEOUT 300)
+        add_test(NAME thread_local_destructors_unusable_nm COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_CURRENT_BINARY_DIR}/missing/nm
+            -DOBJDUMP=${CMAKE_OBJDUMP} -DPATTERN=ThreadLocalDestructors.cmake -DMODULES=${CMAKE_CURRENT_SOURCE_DIR}/tests
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
+        set_tests_properties(thread_local_destructors_unusable_nm PROPERTIES WILL_FAIL TRUE TIMEOUT 30)
     endif()
 
     add_test_executable(guest_np_cpp_web_api_intrusive_ptr_tests tests/GuestNpCppWebApiIntrusivePtr.cpp)

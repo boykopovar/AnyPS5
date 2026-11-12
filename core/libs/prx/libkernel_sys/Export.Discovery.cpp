@@ -1987,7 +1987,8 @@ int APS5_VABI scePthreadBarrierattrSetpshared(PthreadBarrierattrPrivate** attr, 
 }
 
 int APS5_VABI scePthreadGetconcurrency(void) {
-    return pthread_getconcurrency_nid_postfix();
+    const int level = pthread_getconcurrency_nid_postfix();
+    return level == 0 ? 0 : static_cast<int>(0x80020000u | static_cast<unsigned>(level));
 }
 
 int APS5_VABI scePthreadGetcpuclockid(Pthread thread, int* clockId) {

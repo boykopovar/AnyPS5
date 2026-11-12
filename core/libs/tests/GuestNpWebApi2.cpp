@@ -1,6 +1,7 @@
 #include "prx/libSceNpWebApi2/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #ifdef __APPLE__
@@ -45,6 +46,9 @@ int main() {
     const int user = sceNpWebApi2CreateUserContext(context, 1);
     std::int64_t request = 0;
     Require(user > 0 && sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", nullptr, &request) == 0);
+    errno = 71;
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", nullptr, reinterpret_cast<std::int64_t*>(0x10)) == static_cast<int>(0x80553402));
+    Require(errno == 71);
     Require(sceNpWebApi2SetRequestTimeout(request, 30000000) == 0);
     Require(sceNpWebApi2AddWebTraceTag(request, "trace-tag-1") == 0);
     Require(sceNpWebApi2AddWebTraceTag(request, nullptr) == static_cast<int>(0x80553402));
@@ -82,6 +86,9 @@ int main() {
     std::int64_t nextMultipart = 0;
     Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", &nextMultipart) == 0 && nextMultipart > multipart);
     Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", nullptr) == 0);
+    errno = 71;
+    Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", reinterpret_cast<std::int64_t*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     unsigned char part[4]{1, 2, 3, 4};
     Require(sceNpWebApi2SendMultipartRequest(multipart, 0, part, sizeof(part), nullptr) == invalidArgument);
     Require(sceNpWebApi2SendMultipartRequest(multipart, -1, part, sizeof(part), nullptr) == invalidArgument);
