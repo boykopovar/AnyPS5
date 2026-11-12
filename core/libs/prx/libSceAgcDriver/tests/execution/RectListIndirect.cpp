@@ -172,8 +172,13 @@ void DrawnOnTheGpu() {
         if (!cpu.empty()) cpu += ", ";
         cpu += std::to_string(counts[path]) + " " + AgcDriver::Graphics::IndirectDrawPathName(static_cast<AgcDriver::Graphics::IndirectDrawPath>(path));
     }
+#ifdef ANYPS5_SETTLED_RECORDS
+    const auto settled = counts[static_cast<std::size_t>(AgcDriver::Graphics::IndirectDrawPath::Settled)];
+    Require(counts[0] == 0 && settled == 4, "the indirect rect-list draws whose records no batch writes took the GPU-side path " + std::to_string(counts[0]) + " times and read their records on the CPU as: " + cpu + ", expected 4 settled reads");
+#else
     Require(cpu.empty(), "indirect rect-list draws read their records on the CPU: " + cpu);
     Require(counts[0] == 4, "the GPU drew " + std::to_string(counts[0]) + " indirect rect-list draws from their records, expected 4");
+#endif
 }
 
 void IndirectRectListsDrawAsDirectOnes() {
@@ -218,13 +223,24 @@ int main() {
 #else
         setenv("APS5_PROFILE_DRAW", "1", 1);
 #endif
+#ifndef ANYPS5_SETTLED_RECORDS
+#ifdef _WIN32
+        _putenv_s("APS5_NO_SETTLED_INDIRECT_READ", "1");
+#else
+        setenv("APS5_NO_SETTLED_INDIRECT_READ", "1", 1);
+#endif
+#endif
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
         IndirectRectListsDrawAsDirectOnes();
         AgcDriverShutdown_nid_postfix();
+#ifdef ANYPS5_SETTLED_RECORDS
+        std::puts("indirect rect-list draws over settled records were read on the CPU and drew what the direct draw did");
+#else
         std::puts("indirect rect-list draws were drawn on the GPU and drew what the direct draw did");
+#endif
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
