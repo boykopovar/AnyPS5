@@ -45,7 +45,7 @@ int APS5_VABI sceVideoStreamingEngineDeleteMediaSample() {
 }
 
 int APS5_VABI sceVideoStreamingEngineDeletePlayer() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_VIDEO_STREAMING_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceVideoStreamingEngineDivideMediaSample() {

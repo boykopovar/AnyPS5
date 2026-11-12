@@ -21,6 +21,7 @@ int main() {
         Require(sceVideoStreamingEngineClearLiveSeekableRange() == notInitialized);
         Require(sceVideoStreamingEngineCreatePlayer() == notInitialized);
         Require(sceVideoStreamingEngineDeleteMediaSample() == notInitialized);
+        Require(sceVideoStreamingEngineDeletePlayer() == notInitialized);
         Require(sceVideoStreamingEngineDivideMediaSample() == notInitialized);
         Require(sceVideoStreamingEngineEnableAudioTrack() == notInitialized);
         Require(sceVideoStreamingEngineEndOfStream() == notInitialized);
