@@ -114,11 +114,15 @@ static void CheckDanglingExponentScan() {
     };
     const Case cases[]{{"1e", "%lf%n", 2, 1.0}, {"1ee", "%lf%n", 2, 1.0}, {"1e+", "%lf%n", 3, 1.0}, {"1e-x", "%lf%n", 3, 1.0}, {"1.e", "%lf%n", 3, 1.0},
         {"0e", "%lf%n", 2, 0.0}, {"-2.5E", "%lf%n", 5, -2.5}, {"0x1p", "%lf%n", 4, 1.0}, {"0x1.8p+", "%lf%n", 7, 1.5}, {"1E5", "%2lf%n", 2, 1.0},
-        {"1e-400", "%3lf%n", 3, 1.0}, {"1.e3", "%3lf%n", 3, 1.0}, {"1e5", "%lf%n", 3, 100000.0}, {"1e+2", "%3lf%n", 3, 1.0}};
+        {"1e-400", "%3lf%n", 3, 1.0}, {"1.e3", "%3lf%n", 3, 1.0}, {"1e5", "%lf%n", 3, 100000.0}, {"1e+2", "%3lf%n", 3, 1.0}, {" 1e", "%lf%n", 3, 1.0}, {"\t-1E+", "%lf%n", 5, -1.0}};
     for (const Case& test : cases) {
         double value = -9.0;
         int consumed = -1;
-        Require(sscanf_s_nid_postfix(test.input, test.format, &value, &consumed) == 1 && consumed == test.consumed && value == test.value);
+        const int result = sscanf_s_nid_postfix(test.input, test.format, &value, &consumed);
+        if (result != 1 || consumed != test.consumed || value != test.value) {
+            std::fprintf(stderr, "sscanf_s(\"%s\", \"%s\"): result %d, count %d, value %g; expected 1, %d, %g\n", test.input, test.format, result, consumed, value, test.consumed, test.value);
+            Require(false);
+        }
         float single = -9.0f;
         consumed = -1;
         const std::string format = std::string(test.format).replace(std::string(test.format).find('l'), 1, "");
