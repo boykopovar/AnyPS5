@@ -16,6 +16,7 @@ int APS5_VABI FT_Get_Glyph_Name_nid_postfix(GuestFaceRec* face, std::uint32_t gl
     const FT_Face host = owner ? owner->host : nullptr;
     if (!host || !buffer || bufferSize == 0) return FT_Get_Glyph_Name(host, glyphIndex, buffer, bufferSize);
     GuestArena::HostWrite write(buffer, bufferSize);
+    if (!write.Open()) return FT_Err_Invalid_Argument;
     if (static_cast<std::int64_t>(glyphIndex) >= host->num_glyphs) {
         static_cast<char*>(buffer)[0] = '\0';
         return FT_Err_Invalid_Glyph_Index;
@@ -43,6 +44,8 @@ int APS5_VABI FT_Get_Sfnt_Name_nid_postfix(GuestFaceRec* face, std::uint32_t ind
     FT_SfntName native{};
     const FT_Error error = FT_Get_Sfnt_Name(owner ? owner->host : nullptr, index, name ? &native : nullptr);
     if (!error) {
+        GuestArena::HostWrite write(name, sizeof(*name));
+        if (!write.Open()) return FT_Err_Invalid_Argument;
         name->platform_id = native.platform_id;
         name->encoding_id = native.encoding_id;
         name->language_id = native.language_id;

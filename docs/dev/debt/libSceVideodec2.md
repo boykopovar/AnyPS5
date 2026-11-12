@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceVideodec2ReleaseComputeQueue](../../../core/libs/prx/libSceVideodec2/Export.cpp) (libSceVideodec2) - ignores its queue handle and returns 0, including for a handle that `sceVideodec2AllocateComputeQueue` never returned. That call only hands out increasing counter values and keeps no queue state, so there is nothing to free. What the console returns for an unknown or already released handle is not measured.
+- [sceVideodec2ReleaseComputeQueue](../../../core/libs/prx/libSceVideodec2/Export.cpp) (libSceVideodec2) - refuses handle 0 with `0x811D0110`, as a PS5 on system software 12.40 did. Any other handle is ignored and returns 0, including one that `sceVideodec2AllocateComputeQueue` never returned. That call only hands out increasing counter values and keeps no queue state, so there is nothing to free. What the console returns for an unknown or already released handle is not measured.
 
 ### Unknown function info
 

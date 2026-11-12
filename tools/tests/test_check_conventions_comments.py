@@ -157,6 +157,77 @@ class RawLiteralCommentTests(unittest.TestCase):
                 self.assertEqual(self.findings(comment, [1]), [("comment", self.path, 1, "")])
 
 
+class LicenseHeaderCommentTests(unittest.TestCase):
+    path = "core/example.cpp"
+
+    def findings(self, source, added):
+        check = Check.__new__(Check)
+        check.tree = set()
+        check.status = {}
+        check.findings = []
+        lines = source.split("\n")
+        check.added = {self.path: [(number, lines[number - 1]) for number in added]}
+        with patch.object(check, "show", return_value=source), patch.object(check, "duplicates"):
+            check.code()
+        return check.findings
+
+    def test_an_unmarked_line_in_a_marked_run_is_not_reported(self):
+        source = ("/* Derived from FreeBSD lib/msun/src/e_atan2.c (release/11.4.0) */\n"
+                   "/* Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved. */\n"
+                   "#include <cmath>\n"
+                   "int value;\n")
+        self.assertEqual(self.findings(source, [1, 2]), [])
+
+    def test_new_comment_after_code_starts_is_still_reported(self):
+        source = ("/* an existing header notice */\n"
+                   "#include <cmath>\n"
+                   "/* a new mid-file comment */\n"
+                   "int value;\n")
+        self.assertEqual(self.findings(source, [3]), [("comment", self.path, 3, "")])
+
+    def test_mid_file_license_block_is_not_reported(self):
+        source = ("#include <cmath>\n"
+                   "/* Permission to use, copy, modify, and distribute this\n"
+                   " * software is freely granted, provided that this notice\n"
+                   " * is preserved. */\n"
+                   "int value;\n")
+        self.assertEqual(self.findings(source, [2, 3, 4]), [])
+
+    def test_derived_from_alone_is_not_a_license_marker(self):
+        source = ("#include <cmath>\n"
+                   "int value;\n"
+                   "// Derived from X\n"
+                   "int other;\n")
+        self.assertEqual(self.findings(source, [3]), [("comment", self.path, 3, "")])
+
+    def test_mentioning_copyright_without_a_marker_shape_is_still_reported(self):
+        source = "// handle copyright string\n#include <cmath>\nint value;\n"
+        self.assertEqual(self.findings(source, [1]), [("comment", self.path, 1, "")])
+
+    def test_todo_after_a_blank_line_following_a_license_block_is_still_reported(self):
+        source = ("/* Copyright (c) 2024 Example Corp. All rights reserved. */\n"
+                   "\n"
+                   "// TODO: refactor this\n"
+                   "#include <cmath>\n"
+                   "int value;\n")
+        self.assertEqual(self.findings(source, [1, 3]), [("comment", self.path, 3, "")])
+
+    def test_a_new_comment_is_reported_when_the_file_opens_with_code(self):
+        source = "int value;\n/* a new comment after code */\n"
+        self.assertEqual(self.findings(source, [2]), [("comment", self.path, 2, "")])
+
+    def test_a_marker_on_a_code_line_is_still_reported(self):
+        source = "#include <cmath>\nint value; // Copyright (c) 2020 X\n"
+        self.assertEqual(self.findings(source, [2]), [("comment", self.path, 2, "")])
+
+    def test_a_marker_sharing_its_line_with_other_text_is_still_exempt(self):
+        source = ("#include <cmath>\n"
+                   "int value;\n"
+                   "// Copyright 2025 TODO: hack\n"
+                   "int other;\n")
+        self.assertEqual(self.findings(source, [3]), [])
+
+
 class HashCommentTests(unittest.TestCase):
     def findings(self, path, source, added):
         check = Check.__new__(Check)
@@ -184,6 +255,11 @@ class HashCommentTests(unittest.TestCase):
         for source in ("#!/usr/bin/env python3\nprint(1)\n", "\ufeff#!/usr/bin/env python3\nprint(1)\n"):
             with self.subTest(source=source):
                 self.assertEqual(self.findings("tools/generate.py", source, [1, 2]), [])
+
+    def test_hash_bang_after_the_first_line_is_a_comment(self):
+        for path in ("tools/generate.py", "cmake/Generate.cmake", "CMakeLists.txt"):
+            with self.subTest(path=path):
+                self.assertEqual(self.findings(path, "set = 1\n#!pending\n", [1, 2]), [("comment", path, 2, "")])
 
     def test_unparsable_python_falls_back_to_the_line_check(self):
         source = 'TEMPLATE = """\n#include <cstdint>\n'
@@ -547,6 +623,50 @@ class TestFixtureExportTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("All conventions checks passed", result.stdout)
 
+    def test_comment_in_assembly_is_reported(self):
+        sources = {}
+        for stem, extension in (("Preprocessed", "S"), ("Plain", "s"), ("Asm", "asm")):
+            for style, line in (("Line", "    // save the frame"), ("Block", "    /* save the frame */"), ("Hash", "    pushq %rbp # save the frame")):
+                sources[f"core/libs/tests/{stem}{style}.{extension}"] = f".text\nFixture:\n{line}\n    ret\n"
+        result = self.check(sources)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for path in sources:
+            with self.subTest(path=path):
+                self.assertIn(f"{path}:3: error: [comment]", result.stdout)
+
+    def test_directive_words_after_a_hash_are_comments_without_the_preprocessor(self):
+        lines = ("# if we get here the frame is set", "# else fall through", '#include "macros.h"', "# endif of the loop")
+        sources = {f"tools/hw-oracle/Fixture.{extension}": ".text\n" + "\n".join(lines) + "\n    ret\n" for extension in ("s", "asm")}
+        result = self.check(sources)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for path in sources:
+            for number in range(2, 6):
+                with self.subTest(path=path, line=number):
+                    self.assertIn(f"{path}:{number}: error: [comment]", result.stdout)
+
+    def test_hash_after_a_continued_directive_in_assembly_is_reported(self):
+        result = self.check("core/libs/tests/Fixture.S", "#define NAME(n) \\\n    n ## _impl\n    pushq %rbp # save the frame\n")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("core/libs/tests/Fixture.S:3: error: [comment]", result.stdout)
+        self.assertNotIn("core/libs/tests/Fixture.S:2:", result.stdout)
+
+    def test_licence_notice_in_assembly_is_not_reported(self):
+        notice = ("/*-\n * Copyright (c) 1990 The Regents of the University of California.\n"
+                  " * Redistribution and use in source and binary forms, with or without\n"
+                  " * modification, are permitted provided that the conditions are met.\n */\n")
+        result = self.check("core/libs/tests/Fixture.S", notice + ".text\n    ret\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.check("core/libs/tests/Fixture.S", notice + ".text\n    // save the frame\n    ret\n")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("core/libs/tests/Fixture.S:7: error: [comment]", result.stdout)
+
+    def test_assembly_without_comments_passes(self):
+        result = self.check("core/libs/tests/Fixture.S",
+                            '\ufeff#include "macros.h"\n#ifdef _WIN32\n.section .rdata,"dr"\n#else\n.string "a//b#c"\n#endif // _WIN32\n#\n'
+                            '#define PUSH(r) pushq r\n#define NAME(n) \\\n    n ## _impl\n    PUSH(%rbp)\n')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("All conventions checks passed", result.stdout)
+
 
 class PullRequestTemplateTests(unittest.TestCase):
     def body_findings(self, body):
@@ -624,7 +744,7 @@ class SystemDependencyTests(unittest.TestCase):
                 self.assertIsNotNone(SYSTEM_DEPENDENCY.search(line))
 
     def test_allows_exempt_lines(self):
-        for line in ("find_package(Python3 COMPONENTS Interpreter)", "find_package( Threads REQUIRED )", "FIND_PACKAGE(Git)", "add_library(x)"):
+        for line in ("find_package(Python3 COMPONENTS Interpreter)", "find_package( Threads REQUIRED )", "FIND_PACKAGE(Git)", "find_package(LLVM REQUIRED CONFIG)", "add_library(x)"):
             with self.subTest(line=line):
                 self.assertIsNone(SYSTEM_DEPENDENCY.search(line))
 

@@ -39,6 +39,7 @@ class BranchScanTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         os.chdir(self.tmp.name)
         run("init", "-q")
+        run("config", "core.safecrlf", "false")
         for name in ("a.txt", "b.txt", "c.txt"):
             write(name, "one\ntwo\nthree\n")
         write("core/libs/prx/lib/Existing.cpp", "int Existing() { return 0; }\n")
@@ -166,6 +167,85 @@ class BranchScanTests(unittest.TestCase):
 
         self.assertIn("refs/pr/5", merged)
         self.assertEqual(pr_overlap.overlaps(self.prs, 0, 5)["exports"], {"shared", "renamed"})
+
+
+class ExportSourceTests(unittest.TestCase):
+    def setUp(self):
+        self.old = os.getcwd()
+        self.tmp = tempfile.TemporaryDirectory()
+        os.chdir(self.tmp.name)
+        run("init", "-q")
+        run("config", "core.safecrlf", "false")
+        write("core/libs/prx/lib/Existing.cpp", "int Existing() { return 0; }\n")
+        run("add", "-A")
+        run("commit", "-q", "-m", "base")
+        run("update-ref", "refs/pr/base", run("rev-parse", "HEAD"))
+
+    def tearDown(self):
+        os.chdir(self.old)
+        self.tmp.cleanup()
+
+    def test_callbacks_in_test_directories_are_not_export_candidates(self):
+        base = run("rev-parse", "refs/pr/base")
+        for folder in ("test", "tests", "Tests"):
+            with self.subTest(folder=folder):
+                first_path = f"core/libs/prx/lib/{folder}/First.cpp"
+                second_path = f"core/libs/prx/lib/{folder}/nested/Second.cpp"
+                first = commit_on_base(base, "first test callback", {first_path: EXPORT})
+                second = commit_on_base(base, "second test callback", {second_path: EXPORT})
+                prs = {0: {"ref": first, "author": None, "depends": set()},
+                       1: {"ref": second, "author": "other", "depends": set()}}
+                for number, path in ((0, first_path), (1, second_path)):
+                    files, found, existing = pr_overlap.probe(prs[number])
+                    self.assertEqual(files, {path})
+                    self.assertEqual(found, (set(), {}))
+                    self.assertEqual(existing, set())
+                    pr_overlap.scan(prs[number])
+                    self.assertEqual(prs[number]["exports"], set())
+                    self.assertEqual(prs[number]["added_exports"], {})
+                    self.assertEqual(prs[number]["removed_exports"], {})
+                self.assertIsNone(pr_overlap.overlaps(prs, 0, 1))
+
+    def test_production_exports_in_test_named_files_still_overlap(self):
+        base = run("rev-parse", "refs/pr/base")
+        first = commit_on_base(base, "production test named file", {"core/libs/prx/lib/src/TestExports.cpp": EXPORT})
+        second = commit_on_base(base, "other production definition", {"core/libs/prx/lib/testing/Other.cpp": EXPORT})
+        prs = {0: {"ref": first, "author": None, "depends": set()},
+               1: {"ref": second, "author": "other", "depends": set()}}
+        for pr in prs.values():
+            self.assertEqual(pr_overlap.probe(pr)[1][0], {"shared"})
+            pr_overlap.scan(pr)
+        self.assertEqual(pr_overlap.overlaps(prs, 0, 1)["exports"], {"shared"})
+
+    def test_conflicting_test_sources_are_still_reported(self):
+        path = "core/libs/prx/lib/tests/Shared.cpp"
+        base = commit_on_base(run("rev-parse", "refs/pr/base"), "test source base", {path: "int value = 0;\n"})
+        run("update-ref", "refs/pr/base", base)
+        first = commit_on_base(base, "first test edit", {path: "int value = 1;\n" + EXPORT})
+        second = commit_on_base(base, "other test edit", {path: "int value = 2;\n" + EXPORT})
+        prs = {0: {"ref": first, "author": None, "depends": set()},
+               1: {"ref": second, "author": "other", "depends": set()}}
+        for pr in prs.values():
+            pr_overlap.scan(pr)
+        overlap = pr_overlap.overlaps(prs, 0, 1)
+        self.assertIn(path, overlap["conflicts"])
+        self.assertEqual(overlap["exports"], set())
+
+    def test_moving_test_callback_to_production_reports_a_new_export(self):
+        test_path = "core/libs/prx/lib/tests/Old.cpp"
+        base = commit_on_base(run("rev-parse", "refs/pr/base"), "existing production and test callback", {
+            test_path: EXPORT, "core/libs/prx/lib/src/Original.cpp": EXPORT,
+        })
+        run("update-ref", "refs/pr/base", base)
+        run("rm", test_path)
+        write("core/libs/prx/lib/src/Additional.cpp", EXPORT)
+        run("add", "-A")
+        run("commit", "-q", "-m", "remove test callback and add production definition")
+        pr = {"ref": run("rev-parse", "HEAD")}
+        pr_overlap.scan(pr)
+        self.assertEqual(pr["removed_exports"], {})
+        findings = pr_overlap.main_export_findings({1: pr}, pr_overlap.base_exports("refs/pr/base"))
+        self.assertIn("shared", findings.get(1, {}))
 
 
 if __name__ == "__main__":

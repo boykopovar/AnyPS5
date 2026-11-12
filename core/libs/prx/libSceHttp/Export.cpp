@@ -20,7 +20,6 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
-#include <vector>
 
 // No network is emulated: contexts, templates and requests can be created, but any request
 // that would touch the network fails with the library's network error.
@@ -192,8 +191,12 @@ int APS5_VABI sceHttpCreateEpoll(int http_ctx_id, HttpEpollHandle* eh) {
     if (!g_contexts.contains(http_ctx_id)) return ERROR_INVALID_ID;
     if (!eh) return ERROR_INVALID_VALUE;
     auto epoll = std::make_shared<HttpEpoll>();
-    *eh = epoll.get();
-    g_epolls.emplace(epoll.get(), std::move(epoll));
+    const auto handle = epoll.get();
+    g_epolls.emplace(handle, std::move(epoll));
+    if (!GuestCopyOut_nid_no_patch(eh, &handle, sizeof(handle))) {
+        g_epolls.erase(handle);
+        return ERROR_INVALID_VALUE;
+    }
     return 0;
 }
 
@@ -279,10 +282,17 @@ int APS5_VABI sceHttpGetStatusCode(int request_id, int* status_code) {
 int APS5_VABI sceHttpInit_nid_postfix(int memid, int ssl_ctx_id, uint64_t pool_size) {
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(g_stateMutex);
-    g_contextPoolSizes[id] = pool_size;
-    g_contextRegisteredIds[id] = {memid, ssl_ctx_id};
-    g_contexts.insert(id);
-    AddHttpContext(id);
+    try {
+        g_contextPoolSizes[id] = pool_size;
+        g_contextRegisteredIds[id] = {memid, ssl_ctx_id};
+        g_contexts.insert(id);
+        AddHttpContext(id);
+    } catch (...) {
+        g_contextPoolSizes.erase(id);
+        g_contextRegisteredIds.erase(id);
+        g_contexts.erase(id);
+        throw;
+    }
     return id;
 }
 
@@ -400,7 +410,7 @@ int APS5_VABI sceHttpsSetSslCallback(int id, HttpsCallback cbfunc, void* user_ar
 }
 
 int APS5_VABI sceHttpTerm_nid_postfix(int http_ctx_id) {
-    std::vector<std::shared_ptr<HttpEpoll>> epolls;
+    decltype(g_epolls) epolls;
     {
         std::lock_guard lock(g_stateMutex);
         g_contextPoolSizes.erase(http_ctx_id);
@@ -409,10 +419,9 @@ int APS5_VABI sceHttpTerm_nid_postfix(int http_ctx_id) {
         if (g_contexts.erase(http_ctx_id) == 0) return ERROR_INVALID_ID;
         RemoveHttpContext(http_ctx_id);
         if (!g_contexts.empty()) return 0;
-        for (auto& [handle, epoll] : g_epolls) epolls.push_back(std::move(epoll));
-        g_epolls.clear();
+        epolls.swap(g_epolls);
     }
-    for (const auto& epoll : epolls) MarkDestroyed(*epoll);
+    for (const auto& entry : epolls) MarkDestroyed(*entry.second);
     return 0;
 }
 
@@ -788,13 +797,15 @@ int APS5_VABI sceHttpGetCookieStats(int id, HttpCookieStats* stats) {
 }
 
 int APS5_VABI sceHttpSetPriorityOption(int id, int priority) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    (void)priority;
+    return FindHttpOptions(id) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpSetPolicyOption(int id, int policy) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    (void)policy;
+    return FindHttpOptions(id) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpRequestGetAllHeaders(int requestId, HttpRequestHeader* headers, std::uint32_t* headerCount, char* contentLength, std::size_t* contentLengthSize) {
@@ -814,14 +825,10 @@ int APS5_VABI sceHttpSetProxy(int id, int, int, const char* hostname, std::uint1
     return FindHttpOptions(id) ? 0 : ERROR_INVALID_ID;
 }
 
-int APS5_VABI sceHttpSetSocketCreationCallback(std::int32_t id, HttpSocketCreationCallback callback, void* userArg) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceHttpSetHttp09Enabled(int id, int enabled) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    (void)enabled;
+    return FindHttpOptions(id) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpGetRegisteredCtxIds(int contextId, int* netPoolId, int* sslContextId) {
@@ -836,7 +843,12 @@ int APS5_VABI sceHttpGetRegisteredCtxIds(int contextId, int* netPoolId, int* ssl
 }
 
 int APS5_VABI sceHttpGetConnectionStat(std::int32_t connectionId, HttpConnectionStat* stat) {
-    NotImplemented_nid_no_patch(__func__);
+    static_assert(sizeof(HttpConnectionStat) == 16);
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    if (!stat) return ERROR_INVALID_VALUE;
+    const auto options = FindHttpOptions(connectionId);
+    if (!options) return ERROR_INVALID_ID;
+    *stat = {};
     return 0;
 }
 
@@ -846,8 +858,8 @@ int APS5_VABI sceHttpAddQuery(int id, const char* query) {
 }
 
 int APS5_VABI sceHttpSetDelayBuildRequestEnabled(int id, int enabled) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    return SetHttpOption(id, &HttpOptions::delayBuildRequest, enabled != 0) ? 0 : ERROR_INVALID_ID;
 }
 
 }

@@ -1,7 +1,10 @@
 #include "prx/libSceZlib/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "zlib.h"
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <limits>
@@ -90,12 +93,25 @@ std::int32_t APS5_VABI sceZlibWaitForDone(std::uint64_t* requestId, std::uint32_
     std::unique_lock lock(serviceMutex);
     if (!initialized) return NOT_INITIALIZED;
     if (!requestId) return INVALID_ARGUMENT;
+    std::uint32_t timeoutMicros = 0;
+    if (timeout) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&timeoutMicros, timeout, sizeof(timeoutMicros));
+        errno = savedErrno;
+        if (!copied) return INVALID_ARGUMENT;
+    }
     const std::uint64_t waitSession = session;
     const auto finished = [waitSession] { return !completed.empty() || session != waitSession; };
     if (!timeout) completion.Wait(lock, finished);
-    else if (!completion.WaitUntil(lock, TimedWait::DeadlineNanos(*timeout), finished)) return TIMED_OUT;
+    else if (!completion.WaitUntil(lock, TimedWait::DeadlineNanos(timeoutMicros), finished)) return TIMED_OUT;
     if (session != waitSession) throw std::runtime_error("sceZlibWaitForDone: finalization during a wait semantics unknown");
-    *requestId = completed.front();
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(requestId, &completed.front(), sizeof(*requestId));
+    errno = savedErrno;
+    if (!copied) {
+        completion.NotifyOne();
+        return INVALID_ARGUMENT;
+    }
     completed.pop_front();
     return 0;
 }
@@ -106,8 +122,11 @@ std::int32_t APS5_VABI sceZlibGetResult(std::uint64_t requestId, std::uint32_t* 
     if (!destinationLength || !status) return INVALID_ARGUMENT;
     const auto found = results.find(requestId);
     if (found == results.end()) return NOT_FOUND;
-    *destinationLength = found->second.produced;
-    *status = found->second.status;
+    const int savedErrno = errno;
+    const bool copiedLength = GuestCopyOut_nid_no_patch(destinationLength, &found->second.produced, sizeof(found->second.produced));
+    const bool copiedStatus = GuestCopyOut_nid_no_patch(status, &found->second.status, sizeof(found->second.status));
+    errno = savedErrno;
+    if (!copiedLength || !copiedStatus) return INVALID_ARGUMENT;
     return 0;
 }
 
