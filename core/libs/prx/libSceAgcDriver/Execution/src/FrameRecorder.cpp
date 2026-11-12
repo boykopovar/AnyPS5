@@ -762,6 +762,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
             if (found->first.first + found->first.second > begin) found = unwatchedHashes.erase(found);
             else ++found;
         }
+        for (auto page = begin & ~std::uint64_t{HostPageBytes - 1}; page < end; page += HostPageBytes) unwatchedPages.erase(page);
     };
     for (const auto& range : added) {
         writer->WriteRange(range.address, range.bytes, range.kind, range.protection, range.access);

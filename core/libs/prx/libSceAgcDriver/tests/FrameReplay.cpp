@@ -2030,6 +2030,76 @@ void checkUnwatchedInFlight(const std::filesystem::path& tool, bool restored) {
     check(replayed(tool, checkCapture(0), word, 4) == std::vector<std::byte>(4), "the replay kept the busy submission's store into the unwatched block over the title's later write of the recorded bytes");
 }
 
+void testUnwatchedRewatchedInFlight(const std::filesystem::path& tool) {
+#ifndef _WIN32
+    static_cast<void>(tool);
+    throw Inconclusive("Rewatch notes no stores on this host, so a block cannot return to the write watch");
+#else
+    static_cast<void>(tool);
+    const auto layout = allocate();
+    const auto busy = allocate();
+    const auto bulk = allocate();
+    for (const auto* touched : {&layout, &busy, &bulk}) std::memset(touched->base, 0, BlockBytes);
+    constexpr std::uint32_t Recorded = 0x41414141u;
+    constexpr std::uint32_t Rewritten = 0x42424242u;
+    auto* const word = reinterpret_cast<std::uint32_t*>(bulk.base);
+    std::atomic_ref<std::uint32_t>(*word).store(Recorded, std::memory_order_release);
+    AgcDriver::GuestMemory::Unwatch(at(bulk.base), BlockBytes);
+    check(!AgcDriver::GuestMemory::Watched(at(bulk.base), BlockBytes), "the test block did not lose write-watch coverage");
+    const auto running = busyPacket(busy);
+    const auto warming = labelPacket(layout.firstCommands, layout.label);
+    auto behind = commands(layout.secondCommands);
+    writeDone(behind, layout.label + 1);
+    const Packet closing{layout.secondCommands, static_cast<std::uint32_t>(behind.cursor_up - layout.secondCommands), 0, {}};
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    check(sceAgcDriverSubmitDcb(&warming) == 0, "the warming submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    const std::pair<std::uint64_t, std::uint64_t> block{at(bulk.base), at(bulk.base) + BlockBytes};
+    AgcDriver::GuestMemory::Rewatch(std::span(&block, 1));
+    check(AgcDriver::GuestMemory::Watched(at(bulk.base), BlockBytes), "the test block did not return to the write watch");
+    check(sceAgcDriverSubmitDcb(&warming) == 0, "the warming submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    std::atomic_ref<std::uint32_t>(*word).store(Rewritten, std::memory_order_release);
+    check(sceAgcDriverSubmitDcb(&warming) == 0, "the warming submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(sceAgcDriverSubmitDcb(&running) == 0, "the busy submission failed");
+    awaitStarted();
+    std::atomic_ref<std::uint32_t>(*word).store(Recorded, std::memory_order_release);
+    AgcDriver::GuestMemory::Unwatch(at(bulk.base), BlockBytes);
+    check(sceAgcDriverSubmitDcb(&closing) == 0, "the submission behind the busy one failed");
+    AgcDriverWaitIdle_nid_postfix();
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(*word).load(std::memory_order_acquire) == Recorded, "the title's last store into the test block was lost");
+
+    const char* directory = std::getenv("APS5_FRAME_CAPTURE");
+    check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
+    const FrameCaptureReader reader(directory);
+    const auto& submit = submitted(reader, layout.secondCommands);
+    if (submit.accepted == submit.completed) throw Inconclusive("the busy submission finished before the title's next call, so no delta was read while it ran");
+    const auto& calls = reader.Calls();
+    const auto delta = std::find_if(calls.begin(), calls.end(), [&](const auto& call) { return call.kind == FrameCallKind::Memory && call.ordinal + 1 == submit.ordinal; });
+    if (delta != calls.end() && (delta->flags & AgcDriver::InFlightDeltaFlag) == 0) throw Inconclusive("the delta before the call behind the busy submission was held, so it read the unwatched block again after the settle");
+    bool listed = false;
+    if (delta != calls.end()) {
+        for (const auto& chunk : reader.Chunks()) {
+            if (chunk.kind != FrameMemoryKind::Delta || chunk.group != delta->values.at(0) || chunk.address > at(word) || chunk.address + chunk.bytes < at(word) + sizeof(std::uint32_t)) continue;
+            const auto bytes = reader.Read(chunk);
+            std::uint32_t value = 0;
+            std::memcpy(&value, bytes.data() + (at(word) - chunk.address), sizeof(value));
+            listed = listed || value == Recorded;
+        }
+    }
+    check(listed, "the delta read while the busy submission ran left out the unwatched block whose bytes the title wrote back after a delta listed it while it was watched, so a replay keeps the bytes it wrote in between: " + reader.Header());
+#endif
+}
+
 void testUnwatchedLeftInFlight(const std::filesystem::path& tool) {
     checkUnwatchedInFlight(tool, false);
 }
@@ -2210,9 +2280,9 @@ void testCarriedLabelKeepsSerial(const std::filesystem::path&) {
 int main(int argc, char** argv) {
     const std::string mode = argc == 3 ? argv[2] : "";
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
-        {"rewind_store", testStoreAfterGatedCopy}, {"store_idle", testStoreAfterGatedCopyIdle}, {"store_idle_rewind", testStoreAfterRewoundCopyIdle}, {"store_idle_unwatched", testUnwatchedStoreBeforeReservation}, {"store_second_wait", testStoreBeforeSecondWaitOnGate}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"gpu_store", testGpuStoreBehindRewind}, {"gpu_fill", testFillRewrittenByTitle}, {"gpu_restore_cached", testGpuFillRestoredToCachedValue}, {"unwatched_start", testInitiallyUnwatchedTitleStores}, {"unwatched_late", testLaterUnwatchedTitleStores}, {"unwatched_shared", testSharedTitleStores}, {"gpu_cleared", testFillClearedBeforeRange}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"allocation_ranges", testRegisteredRangeBoundaries}, {"in_flight_delta", testDeltaReadInFlight}, {"in_flight_store", testStoreIntoDeltaReadInFlight}, {"hold_diagnostics", testHoldDiagnostics}, {"late_store", testStoreAfterLastFrame}, {"wait_before_read", testWaitBeforeRead}, {"wait_after_read", testWaitAfterRead}, {"unwatched_in_flight", testUnwatchedLeftInFlight}, {"unwatched_restored", testUnwatchedRestoredInFlight}, {"host_page_restored", testHostPageRestoredInFlight}, {"in_flight_gate", testDeltaGatedOnStartedCopy}, {"wait64_after_read", testWait64AfterRead}, {"semaphore_after_read", testSemaphoreAfterRead}, {"rewind_after_read", testRewindAfterRead}, {"late_wait", testWaitAfterLastFrame}, {"wait_labelled_after", testWaitLabelledAfter}, {"wait_labelled_before", testWaitLabelledBefore}, {"wait_labelled_skipped", testWaitLabelledSkipped}, {"wait_labelled_elsewhere", testWaitLabelledElsewhere}, {"carried_label", testCarriedLabelKeepsSerial}, {"wait_labelled_rewind", testWaitLabelledRewind}, {"wait_labelled_rewind_chain", testWaitLabelledRewindChain}, {"flip_serial_start", testFlipSerialAtStart}};
+        {"rewind_store", testStoreAfterGatedCopy}, {"store_idle", testStoreAfterGatedCopyIdle}, {"store_idle_rewind", testStoreAfterRewoundCopyIdle}, {"store_idle_unwatched", testUnwatchedStoreBeforeReservation}, {"store_second_wait", testStoreBeforeSecondWaitOnGate}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"gpu_store", testGpuStoreBehindRewind}, {"gpu_fill", testFillRewrittenByTitle}, {"gpu_restore_cached", testGpuFillRestoredToCachedValue}, {"unwatched_start", testInitiallyUnwatchedTitleStores}, {"unwatched_late", testLaterUnwatchedTitleStores}, {"unwatched_shared", testSharedTitleStores}, {"gpu_cleared", testFillClearedBeforeRange}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"allocation_ranges", testRegisteredRangeBoundaries}, {"in_flight_delta", testDeltaReadInFlight}, {"in_flight_store", testStoreIntoDeltaReadInFlight}, {"hold_diagnostics", testHoldDiagnostics}, {"late_store", testStoreAfterLastFrame}, {"wait_before_read", testWaitBeforeRead}, {"wait_after_read", testWaitAfterRead}, {"unwatched_in_flight", testUnwatchedLeftInFlight}, {"unwatched_restored", testUnwatchedRestoredInFlight}, {"host_page_restored", testHostPageRestoredInFlight}, {"in_flight_gate", testDeltaGatedOnStartedCopy}, {"wait64_after_read", testWait64AfterRead}, {"semaphore_after_read", testSemaphoreAfterRead}, {"rewind_after_read", testRewindAfterRead}, {"late_wait", testWaitAfterLastFrame}, {"wait_labelled_after", testWaitLabelledAfter}, {"wait_labelled_before", testWaitLabelledBefore}, {"wait_labelled_skipped", testWaitLabelledSkipped}, {"wait_labelled_elsewhere", testWaitLabelledElsewhere}, {"carried_label", testCarriedLabelKeepsSerial}, {"wait_labelled_rewind", testWaitLabelledRewind}, {"wait_labelled_rewind_chain", testWaitLabelledRewindChain}, {"flip_serial_start", testFlipSerialAtStart}, {"unwatched_rewatched", testUnwatchedRewatchedInFlight}};
     if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || rewound.contains(mode)))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|store_idle|store_idle_rewind|store_idle_unwatched|store_second_wait|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|gpu_store|gpu_fill|gpu_restore_cached|unwatched_start|unwatched_late|unwatched_shared|gpu_cleared|fence_reuse|busy_queue|allocation_ranges|in_flight_delta|in_flight_store|hold_diagnostics|late_store|wait_after_read|wait_before_read|unwatched_in_flight|unwatched_restored|host_page_restored|in_flight_gate|wait64_after_read|semaphore_after_read|rewind_after_read|late_wait|wait_labelled_after|wait_labelled_before|wait_labelled_skipped|wait_labelled_elsewhere|carried_label|wait_labelled_rewind|wait_labelled_rewind_chain|flip_serial_start]\n");
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|store_idle|store_idle_rewind|store_idle_unwatched|store_second_wait|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|gpu_store|gpu_fill|gpu_restore_cached|unwatched_start|unwatched_late|unwatched_shared|gpu_cleared|fence_reuse|busy_queue|allocation_ranges|in_flight_delta|in_flight_store|hold_diagnostics|late_store|wait_after_read|wait_before_read|unwatched_in_flight|unwatched_restored|host_page_restored|in_flight_gate|wait64_after_read|semaphore_after_read|rewind_after_read|late_wait|wait_labelled_after|wait_labelled_before|wait_labelled_skipped|wait_labelled_elsewhere|carried_label|wait_labelled_rewind|wait_labelled_rewind_chain|flip_serial_start|unwatched_rewatched]\n");
         return 2;
     }
     int status = 0;
