@@ -305,11 +305,28 @@ int main() {
     const int dev0 = SDL_JoystickAttachVirtualEx(&desc);
     Require(dev0 >= 0);
     Require(SDL_IsGameController(dev0));
+    SDL_GameController* serialProbe = SDL_GameControllerOpen(dev0);
+    Require(serialProbe != nullptr);
+    Require(SDL_GameControllerGetSerial(serialProbe) == nullptr);
+    SDL_GameControllerClose(serialProbe);
+
+    const std::array<const char*, Pad::ControllerAssignmentSlots> serialVariables{
+        "ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL",
+        "ANYPS5_PAD_PLAYER_3_SERIAL", "ANYPS5_PAD_PLAYER_4_SERIAL"};
+    for (std::size_t slot = 0; slot < serialVariables.size(); ++slot) {
+        const char* value = slot == 1 ? "reserved-test-serial" : "";
+#ifdef _WIN32
+        Require(_putenv_s(serialVariables[slot], value) == 0);
+#else
+        Require(setenv(serialVariables[slot], value, 1) == 0);
+#endif
+    }
 
     DisplayWindow window;
     PadInput padInput;
     Require(padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
+    Require(!padInput.SlotOccupied(2));
 
     SDL_Event add0{};
     add0.type = SDL_CONTROLLERDEVICEADDED;
@@ -317,6 +334,7 @@ int main() {
     padInput.HandleEvent(add0, window);
     Require(padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
+    Require(!padInput.SlotOccupied(2));
 
     desc.name = "Virtual Controller 1";
     const int dev1 = SDL_JoystickAttachVirtualEx(&desc);
@@ -328,9 +346,9 @@ int main() {
     add1.cdevice.which = dev1;
     padInput.HandleEvent(add1, window);
     Require(padInput.SlotOccupied(0));
-    Require(padInput.SlotOccupied(1));
-    Require(!padInput.SlotOccupied(2));
-    Require(Pad::IsConnected(1));
+    Require(!padInput.SlotOccupied(1));
+    Require(padInput.SlotOccupied(2));
+    Require(Pad::IsConnected(2));
 
     const SDL_JoystickID id0 = SDL_JoystickGetDeviceInstanceID(dev0);
     SDL_Event rem0{};
@@ -338,12 +356,14 @@ int main() {
     rem0.cdevice.which = id0;
     padInput.HandleEvent(rem0, window);
     Require(!padInput.SlotOccupied(0));
-    Require(padInput.SlotOccupied(1));
-    Require(Pad::IsConnected(1));
+    Require(!padInput.SlotOccupied(1));
+    Require(padInput.SlotOccupied(2));
+    Require(Pad::IsConnected(2));
 
     padInput.HandleEvent(add0, window);
     Require(padInput.SlotOccupied(0));
-    Require(padInput.SlotOccupied(1));
+    Require(!padInput.SlotOccupied(1));
+    Require(padInput.SlotOccupied(2));
     HandOff(padInput, window, dev0);
 
     const SDL_JoystickID id1 = SDL_JoystickGetDeviceInstanceID(dev1);
@@ -353,11 +373,13 @@ int main() {
     padInput.HandleEvent(rem1, window);
     Require(padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
-    Require(!Pad::IsConnected(1));
+    Require(!padInput.SlotOccupied(2));
+    Require(!Pad::IsConnected(2));
 
     padInput.HandleEvent(rem0, window);
     Require(!padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
+    Require(!padInput.SlotOccupied(2));
     InjectedAnswer(padInput, window, commandPath);
     InjectedPressAfterUnreadRelease(padInput, window, commandPath, 3, false);
     InjectedPressAfterUnreadRelease(padInput, window, commandPath, 4, true);
