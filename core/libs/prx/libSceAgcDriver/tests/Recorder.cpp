@@ -4484,32 +4484,76 @@ bool carriedShadowTests(const Device& device, Recorder& recorder) {
     const auto element = address + 4096;
     constexpr std::size_t elementBytes = 1u << 20u;
     std::vector<std::unique_ptr<GuestBufferMemory>> kept;
-    const auto use = [&] {
+    const auto use = [&](Recorder& target) {
         auto& memory = *kept.emplace_back(std::make_unique<GuestBufferMemory>(context));
         memory.AllowDeviceStaging();
         memory.AddWritable(element, elementBytes, false, true);
         memory.Upload(false);
         Require(memory.InPlaceReads().empty(), "a read and written 1 MiB element was bound in place");
-        memory.RecordCopyBacks(recorder);
-        recorder.NotePendingWrites(memory.Writes());
+        memory.RecordCopyBacks(target);
+        target.NotePendingWrites(memory.Writes());
         memory.MarkDirectWrites();
-        memory.NoteCarriedShadows(recorder);
+        memory.NoteCarriedShadows(target);
     };
     AgcDriver::GuestMemory::BumpCollectEpoch();
     static_cast<void>(AgcDriver::GuestMemory::CollectWrites(element, elementBytes));
-    use();
+    use(recorder);
     const auto first = GuestBufferMemory::CarriedShadowCopies();
-    use();
+    use(recorder);
     Require(GuestBufferMemory::CarriedShadowCopies() == first + 1, "a staged region nobody wrote since its last use was not copied in from that use's device shadow");
     recorder.Sync();
     Require(std::all_of(static_cast<const std::byte*>(block), static_cast<const std::byte*>(block) + bytes, [](std::byte value) { return value == std::byte{0x11}; }), "a carried copy-in changed the guest bytes");
-    use();
+    use(recorder);
     std::memset(reinterpret_cast<void*>(element + 8192), 0x22, 4096);
     AgcDriver::GuestMemory::BumpCollectEpoch();
     const auto beforeWrite = GuestBufferMemory::CarriedShadowCopies();
-    use();
+    use(recorder);
     Require(GuestBufferMemory::CarriedShadowCopies() == beforeWrite, "a staged region the CPU wrote since its last use was copied in from that use's device shadow");
     recorder.Sync();
+    kept.clear();
+    use(recorder);
+    const auto serial = HostImportSerial(context, element, elementBytes, false);
+    Require(serial != 0 && recorder.NewestWriteNote(element, elementBytes) != 0, "the remap case lacks an import or a pending write note");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+    }
+    Require(HostImportFor(context, address, bytes) == nullptr, "a released range kept its import");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    Require(HostImportFor(context, address, bytes) != nullptr, "the registered-again range could not be imported");
+    Require(HostImportSerial(context, element, elementBytes, false) != serial, "registering the range again kept its import serial");
+    const auto beforeRemap = GuestBufferMemory::CarriedShadowCopies();
+    use(recorder);
+    Require(GuestBufferMemory::CarriedShadowCopies() == beforeRemap, "a range registered again was copied in from its released import's device shadow");
+    recorder.Sync();
+    kept.clear();
+    struct Reactivate {
+        Recorder& recorder;
+        ~Reactivate() { recorder.Activate(); }
+    } reactivate{recorder};
+    std::optional<Recorder> other;
+    other.emplace(context);
+    other->Activate();
+    use(*other);
+    const auto firstId = other->Id();
+    const auto* firstAddress = &*other;
+    const auto firstNote = other->NewestWriteNote(element, elementBytes);
+    other->Sync();
+    kept.clear();
+    other.reset();
+    other.emplace(context);
+    other->Activate();
+    Require(&*other == firstAddress && other->Id() != firstId, "the recorder identity case did not reuse the address with a new ID");
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> writes{{{element, element + elementBytes}}};
+    other->NotePendingWrites(writes);
+    Require(other->NewestWriteNote(element, elementBytes) == firstNote, "the replacement recorder did not repeat the write note");
+    const auto beforeRecorder = GuestBufferMemory::CarriedShadowCopies();
+    use(*other);
+    Require(GuestBufferMemory::CarriedShadowCopies() == beforeRecorder, "a new recorder at a freed recorder's address was copied in from the old recorder's device shadow");
+    other->Sync();
     kept.clear();
     return true;
 }

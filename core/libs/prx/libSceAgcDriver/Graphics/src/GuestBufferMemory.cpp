@@ -177,6 +177,7 @@ void SetHeapMirrorBudget(std::uint64_t bytes) {
 }
 
 namespace {
+void clearCarriedShadows(VkDevice device);
 struct RefreshBlock;
 static thread_local GuestBufferMemory* buildingBufferMemory = nullptr;
 static thread_local std::vector<RefreshBlock>* buildingBlocks = nullptr;
@@ -4039,6 +4040,7 @@ void ClearImageMirrors(VkDevice device) {
 }
 
 void ClearHostImports(VkDevice device) {
+    clearCarriedShadows(device);
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
     state.parked.erase(device);
@@ -6556,7 +6558,9 @@ std::atomic<std::uint64_t> carriedShadowCopies{0};
 
 struct CarriedShadow {
     std::shared_ptr<Buffer> buffer;
-    const Recorder* recorder = nullptr;
+    VkDevice device = VK_NULL_HANDLE;
+    std::uint64_t recorderId = 0;
+    std::uint64_t importSerial = 0;
     std::uint64_t note = 0;
     std::uint64_t generation = 0;
 };
@@ -6574,7 +6578,20 @@ CarriedShadows& Carried() {
     return shadows;
 }
 
-std::shared_ptr<Buffer> takeCarriedShadow(const Recorder& recorder, std::uint64_t begin, std::uint64_t end) {
+void clearCarriedShadows(VkDevice device) {
+    auto& shadows = Carried();
+    std::lock_guard lock(shadows.mutex);
+    for (auto entry = shadows.entries.begin(); entry != shadows.entries.end();) {
+        if (entry->second.device != device) {
+            ++entry;
+            continue;
+        }
+        shadows.bytes -= entry->first.second - entry->first.first;
+        entry = shadows.entries.erase(entry);
+    }
+}
+
+std::shared_ptr<Buffer> takeCarriedShadow(const Context& context, const Recorder& recorder, std::uint64_t begin, std::uint64_t end) {
     if (!carriedShadowsEnabled()) return nullptr;
     auto& shadows = Carried();
     CarriedShadow shadow;
@@ -6587,7 +6604,8 @@ std::shared_ptr<Buffer> takeCarriedShadow(const Recorder& recorder, std::uint64_
         shadows.entries.erase(found);
     }
     const auto bytes = static_cast<std::size_t>(end - begin);
-    if (shadow.recorder != &recorder || shadow.note == 0 || recorder.NewestWriteNote(begin, bytes) != shadow.note) return nullptr;
+    if (shadow.device != context.device || shadow.recorderId != recorder.Id() || shadow.note == 0 || recorder.NewestWriteNote(begin, bytes) != shadow.note) return nullptr;
+    if (shadow.importSerial == 0 || HostImportSerial(context, begin, bytes, false) != shadow.importSerial) return nullptr;
     static_cast<void>(GuestMemory::CollectWrites(begin, bytes));
     if (!GuestMemory::UnchangedSince(begin, bytes, shadow.generation)) return nullptr;
     return shadow.buffer;
@@ -6606,12 +6624,14 @@ void GuestBufferMemory::NoteCarriedShadows(const Recorder& recorder) const {
     for (const auto& region : regions) {
         if (!region.gpuCopy || !region.deviceLocal || !region.copiedBack || region.buffer == nullptr || region.sparse || region.mirror != nullptr || region.bufferEnd != 0) continue;
         const auto bytes = region.end - region.begin;
+        const auto serial = HostImportSerial(context, region.begin, static_cast<std::size_t>(bytes), false);
+        if (serial == 0) continue;
         if (generation == 0) generation = GuestMemory::TrackerGeneration();
         const auto note = recorder.NewestWriteNote(region.begin, static_cast<std::size_t>(bytes));
         std::lock_guard lock(shadows.mutex);
         auto [entry, inserted] = shadows.entries.try_emplace({region.begin, region.end});
         if (inserted) shadows.bytes += bytes;
-        entry->second = {region.buffer, &recorder, note, generation};
+        entry->second = {region.buffer, context.device, recorder.Id(), serial, note, generation};
         if (shadows.entries.size() > CarriedShadows::MaxEntries || shadows.bytes > CarriedShadows::MaxBytes) {
             shadows.entries.clear();
             shadows.bytes = 0;
@@ -6689,7 +6709,7 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
         }
         recorder->Keep(region->buffer);
         std::shared_ptr<Buffer> carried;
-        if (region->deviceLocal && inputSnapshot == nullptr && !region->sparse && region->mirror == nullptr && region->bufferEnd == 0) carried = takeCarriedShadow(*recorder, region->begin, region->end);
+        if (region->deviceLocal && inputSnapshot == nullptr && !region->sparse && region->mirror == nullptr && region->bufferEnd == 0) carried = takeCarriedShadow(context, *recorder, region->begin, region->end);
         if (carried != nullptr) {
             carriedShadowCopies.fetch_add(1, std::memory_order_relaxed);
             if (carried->Handle() != region->buffer->Handle()) {
