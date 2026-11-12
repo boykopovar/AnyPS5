@@ -69,6 +69,9 @@ namespace RunReport {
 namespace {
 
 constexpr const char* ReportName = "anyps5-report.json";
+constexpr std::string_view CheckpointPrefix = "anyps5-report.";
+constexpr std::string_view CheckpointSuffix = ".ckpt";
+constexpr std::string_view LockSuffix = ".lock";
 
 const char* KindName(Kind kind) {
     switch (kind) {
@@ -1166,6 +1169,433 @@ bool ReadBounded(const fs::path& path, std::size_t limit, std::string& bytes) {
 #endif
 }
 
+struct FileLock::Handle {
+#ifdef _WIN32
+    HANDLE file = INVALID_HANDLE_VALUE;
+#else
+    int file = -1;
+#endif
+};
+
+std::unique_ptr<FileLock> FileLock::TryAcquire(const fs::path& path, bool& busy) {
+    busy = false;
+    std::unique_ptr<FileLock> lock(new FileLock);
+    lock->handle = std::make_unique<Handle>();
+    lock->path = path;
+#ifdef _WIN32
+    lock->handle->file = CreateFileW(path.c_str(), GENERIC_WRITE | DELETE, 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (lock->handle->file == INVALID_HANDLE_VALUE) {
+        busy = GetLastError() == ERROR_SHARING_VIOLATION;
+        return nullptr;
+    }
+#else
+    lock->handle->file = ::open(path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (lock->handle->file < 0) return nullptr;
+    if (::flock(lock->handle->file, LOCK_EX | LOCK_NB) != 0) {
+        busy = errno == EWOULDBLOCK;
+        return nullptr;
+    }
+#endif
+    return lock;
+}
+
+void* FileLock::NativeHandle() const {
+#ifdef _WIN32
+    return handle ? handle->file : nullptr;
+#else
+    return nullptr;
+#endif
+}
+
+bool FileLock::IsCurrent() const {
+#ifdef _WIN32
+    return handle && handle->file != INVALID_HANDLE_VALUE;
+#else
+    struct stat held{}, named{};
+    return handle && handle->file >= 0 && ::fstat(handle->file, &held) == 0 && ::lstat(path.c_str(), &named) == 0 && held.st_dev == named.st_dev && held.st_ino == named.st_ino;
+#endif
+}
+
+void FileLock::RemoveAndRelease() {
+    if (!handle) return;
+#ifdef _WIN32
+    if (handle->file != INVALID_HANDLE_VALUE) {
+        FILE_DISPOSITION_INFO disposition{};
+        disposition.DeleteFile = TRUE;
+        SetFileInformationByHandle(handle->file, FileDispositionInfo, &disposition, sizeof(disposition));
+        CloseHandle(handle->file);
+        handle->file = INVALID_HANDLE_VALUE;
+    }
+#else
+    if (handle->file >= 0) {
+        ::unlink(path.c_str());
+        ::close(handle->file);
+        handle->file = -1;
+    }
+#endif
+}
+
+FileLock::~FileLock() {
+    if (!handle) return;
+#ifdef _WIN32
+    if (handle->file != INVALID_HANDLE_VALUE) CloseHandle(handle->file);
+#else
+    if (handle->file >= 0) ::close(handle->file);
+#endif
+}
+
+namespace {
+
+struct Json {
+    enum class Type { Null, Bool, Number, String, Array, Object } type = Type::Null;
+    bool boolean = false;
+    double number = 0.0;
+    std::string text;
+    std::vector<Json> items;
+    std::vector<std::pair<std::string, Json>> members;
+    const Json* Find(std::string_view key) const {
+        for (const auto& [name, value] : members) if (name == key) return &value;
+        return nullptr;
+    }
+};
+
+class JsonReader {
+public:
+    explicit JsonReader(std::string_view value) : text(value) {}
+    bool Parse(Json& out) {
+        if (!Value(out, 0)) return false;
+        Space();
+        return at == text.size();
+    }
+
+private:
+    static constexpr int MaxDepth = 8;
+    static constexpr int MaxNodes = 4096;
+
+    void Space() { while (at < text.size() && (text[at] == ' ' || text[at] == '\n' || text[at] == '\r' || text[at] == '\t')) ++at; }
+    bool Literal(std::string_view word) {
+        if (text.substr(at, word.size()) != word) return false;
+        at += word.size();
+        return true;
+    }
+    bool Text(std::string& out) {
+        if (at >= text.size() || text[at] != '"') return false;
+        ++at;
+        while (at < text.size() && text[at] != '"') {
+            const auto character = static_cast<unsigned char>(text[at]);
+            if (character < 0x20u) return false;
+            if (character != '\\') { out += static_cast<char>(character); ++at; continue; }
+            if (++at >= text.size()) return false;
+            switch (text[at]) {
+                case '"': out += '"'; break;
+                case '\\': out += '\\'; break;
+                case '/': out += '/'; break;
+                case 'n': out += '\n'; break;
+                case 'r': out += '\r'; break;
+                case 't': out += '\t'; break;
+                case 'u': {
+                    unsigned code = 0;
+                    if (at + 4u >= text.size() || std::from_chars(text.data() + at + 1u, text.data() + at + 5u, code, 16).ptr != text.data() + at + 5u || code >= 0x80u) return false;
+                    out += static_cast<char>(code);
+                    at += 4u;
+                    break;
+                }
+                default: return false;
+            }
+            ++at;
+        }
+        if (at >= text.size()) return false;
+        ++at;
+        return true;
+    }
+    bool Value(Json& out, int depth) {
+        if (depth > MaxDepth || ++nodes > MaxNodes) return false;
+        Space();
+        if (at >= text.size()) return false;
+        const char c = text[at];
+        if (c == '{') {
+            ++at;
+            out.type = Json::Type::Object;
+            Space();
+            if (at < text.size() && text[at] == '}') { ++at; return true; }
+            for (;;) {
+                Space();
+                std::string key;
+                Json child;
+                if (!Text(key)) return false;
+                Space();
+                if (at >= text.size() || text[at++] != ':' || !Value(child, depth + 1)) return false;
+                out.members.emplace_back(std::move(key), std::move(child));
+                Space();
+                if (at >= text.size()) return false;
+                if (text[at] == ',') { ++at; continue; }
+                if (text[at] == '}') { ++at; return true; }
+                return false;
+            }
+        }
+        if (c == '[') {
+            ++at;
+            out.type = Json::Type::Array;
+            Space();
+            if (at < text.size() && text[at] == ']') { ++at; return true; }
+            for (;;) {
+                Json child;
+                if (!Value(child, depth + 1)) return false;
+                out.items.push_back(std::move(child));
+                Space();
+                if (at >= text.size()) return false;
+                if (text[at] == ',') { ++at; continue; }
+                if (text[at] == ']') { ++at; return true; }
+                return false;
+            }
+        }
+        if (c == '"') { out.type = Json::Type::String; return Text(out.text); }
+        if (Literal("true")) { out.type = Json::Type::Bool; out.boolean = true; return true; }
+        if (Literal("false")) { out.type = Json::Type::Bool; return true; }
+        if (Literal("null")) return true;
+        out.type = Json::Type::Number;
+        return NumberValue(out.number);
+    }
+
+    bool NumberValue(double& value) {
+        std::size_t i = at;
+        const bool negative = i < text.size() && text[i] == '-';
+        if (negative) ++i;
+        const std::size_t integerStart = i;
+        std::uint64_t mantissa = 0;
+        const auto digits = [&](std::size_t& count) {
+            while (i < text.size() && text[i] >= '0' && text[i] <= '9') {
+                if (++count > 16) return false;
+                mantissa = mantissa * 10u + static_cast<std::uint64_t>(text[i] - '0');
+                ++i;
+            }
+            return true;
+        };
+        std::size_t integerDigits = 0, fractionDigits = 0;
+        if (!digits(integerDigits) || integerDigits == 0 || (integerDigits > 1 && text[integerStart] == '0')) return false;
+        if (i < text.size() && text[i] == '.') {
+            ++i;
+            std::size_t total = integerDigits;
+            if (!digits(total)) return false;
+            fractionDigits = total - integerDigits;
+            if (fractionDigits == 0 || fractionDigits > 9) return false;
+        }
+        if (mantissa > (std::uint64_t{1} << 53)) return false;
+        static constexpr double kPowers[] = {1.0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9};
+        const double magnitude = static_cast<double>(mantissa) / kPowers[fractionDigits];
+        value = negative ? -magnitude : magnitude;
+        at = i;
+        return true;
+    }
+
+    std::string_view text;
+    std::size_t at = 0;
+    int nodes = 0;
+};
+
+const Json* Member(const Json& object, std::string_view key, Json::Type type) {
+    if (object.type != Json::Type::Object) return nullptr;
+    const auto* value = object.Find(key);
+    return value != nullptr && value->type == type ? value : nullptr;
+}
+
+std::optional<std::string> NullableText(const Json& object, std::string_view key, const char* pattern) {
+    const auto* value = Member(object, key, Json::Type::String);
+    if (value == nullptr || !std::regex_match(value->text, std::regex(pattern))) return std::nullopt;
+    return value->text;
+}
+
+}
+
+namespace {
+
+bool IsNull(const Json& object, std::string_view key) {
+    const auto* value = object.type == Json::Type::Object ? object.Find(key) : nullptr;
+    return value != nullptr && value->type == Json::Type::Null;
+}
+
+std::optional<std::int64_t> IntegerOf(const Json& object, std::string_view key) {
+    const auto* value = Member(object, key, Json::Type::Number);
+    if (value == nullptr || value->number != std::floor(value->number) || value->number < -9.0e15 || value->number > 9.0e15) return std::nullopt;
+    return static_cast<std::int64_t>(value->number);
+}
+
+std::optional<std::string> TextOf(const Json& object, std::string_view key) {
+    const auto* value = Member(object, key, Json::Type::String);
+    return value != nullptr ? std::optional<std::string>(value->text) : std::nullopt;
+}
+
+int IndexOf(const std::string& text, std::initializer_list<const char*> names) {
+    int index = 0;
+    for (const char* name : names) {
+        if (text == name) return index;
+        ++index;
+    }
+    return -1;
+}
+
+bool StatusOf(const Json& object, Status& status) {
+    const auto text = TextOf(object, "status");
+    if (!text) return false;
+    const int index = IndexOf(*text, {"accepted", "rejected", "unknown"});
+    if (index < 0) return false;
+    status = static_cast<Status>(index);
+    return true;
+}
+
+bool ParseObservations(const Json& root, const Json& run, Observations& o) {
+    const auto* milestones = Member(run, "milestones", Json::Type::Object);
+    const auto framesPresented = IntegerOf(run, "framesPresented");
+    if (milestones == nullptr || !framesPresented) return false;
+    const auto seconds = [&](const char* key) -> std::optional<double> {
+        const auto* value = Member(*milestones, key, Json::Type::Number);
+        return value != nullptr ? std::optional<double>(value->number) : std::nullopt;
+    };
+    o.loaded = seconds("loaded");
+    o.started = seconds("started");
+    o.firstDraw = seconds("firstDraw");
+    o.firstPresent = seconds("firstPresent");
+    o.framesPresented = *framesPresented;
+    if (const auto* fps = Member(run, "averageFps", Json::Type::Number)) o.averageFps = fps->number;
+    else if (!IsNull(run, "averageFps")) return false;
+    if (const auto* window = Member(run, "fpsWindowSeconds", Json::Type::Number)) o.fpsWindowSeconds = window->number;
+    else if (!IsNull(run, "fpsWindowSeconds")) return false;
+    const auto* coverage = Member(root, "coverage", Json::Type::Object);
+    const auto* truncated = Member(root, "truncated", Json::Type::Object);
+    const auto* missing = Member(root, "missing", Json::Type::Object);
+    const auto* shaders = Member(root, "shaders", Json::Type::Object);
+    if (coverage == nullptr || truncated == nullptr || missing == nullptr || shaders == nullptr) return false;
+    const auto flag = [&](const char* key, bool& out) {
+        const auto* value = Member(*coverage, key, Json::Type::Bool);
+        if (value == nullptr) return false;
+        out = value->boolean;
+        return true;
+    };
+    if (!flag("milestones", o.coverage.milestones) || !flag("missing", o.coverage.missing) || !flag("shaders", o.coverage.shaders) ||
+        !flag("unsupported", o.coverage.unsupported) || !flag("imageFormats", o.coverage.imageFormats) || !flag("descriptors", o.coverage.descriptors)) return false;
+    const auto functions = IntegerOf(*truncated, "functions"), unsupported = IntegerOf(*truncated, "unsupported");
+    const auto formats = IntegerOf(*truncated, "imageFormats"), descriptors = IntegerOf(*truncated, "descriptors");
+    if (!functions || !unsupported || !formats || !descriptors) return false;
+    o.truncated = {*functions, *unsupported, *formats, *descriptors};
+    const auto compiled = IntegerOf(*shaders, "compiled"), failed = IntegerOf(*shaders, "failed");
+    if (!compiled || !failed) return false;
+    o.shadersCompiled = *compiled;
+    o.shadersFailed = *failed;
+    if (shaders->Find("cacheHits") != nullptr) {
+        o.cacheHits = IntegerOf(*shaders, "cacheHits");
+        if (!o.cacheHits) return false;
+    }
+    const auto* functionList = Member(*missing, "functions", Json::Type::Array);
+    const auto* unsupportedList = Member(*shaders, "unsupported", Json::Type::Array);
+    const auto* formatList = Member(*shaders, "imageFormats", Json::Type::Array);
+    const auto* descriptorList = Member(*shaders, "descriptors", Json::Type::Array);
+    if (functionList == nullptr || unsupportedList == nullptr || formatList == nullptr || descriptorList == nullptr) return false;
+    for (const auto& item : functionList->items) {
+        const auto name = TextOf(item, "name"), calls = std::optional<std::string>(), library = TextOf(item, "library");
+        const auto count = IntegerOf(item, "calls");
+        if (!name || !count || (!library && !IsNull(item, "library"))) return false;
+        o.functions.push_back({library, *name, *count});
+    }
+    for (const auto& item : unsupportedList->items) {
+        UnsupportedEntry entry;
+        entry.encoding = TextOf(item, "encoding");
+        entry.opcode = TextOf(item, "opcode");
+        entry.opcodeValue = IntegerOf(item, "opcodeValue");
+        const auto count = IntegerOf(item, "count");
+        if (!count || (!entry.encoding && !IsNull(item, "encoding")) || (!entry.opcode && !IsNull(item, "opcode")) || (!entry.opcodeValue && !IsNull(item, "opcodeValue"))) return false;
+        entry.count = *count;
+        if (const auto* modifiers = Member(item, "modifiers", Json::Type::Array)) {
+            entry.modifiers = std::vector<std::string>();
+            for (const auto& modifier : modifiers->items) {
+                if (modifier.type != Json::Type::String) return false;
+                entry.modifiers->push_back(modifier.text);
+            }
+        } else if (!IsNull(item, "modifiers")) {
+            return false;
+        }
+        o.unsupported.push_back(std::move(entry));
+    }
+    for (const auto& item : formatList->items) {
+        FormatEntry entry;
+        const auto format = IntegerOf(item, "format"), count = IntegerOf(item, "count");
+        const auto usage = TextOf(item, "usage");
+        entry.name = TextOf(item, "name");
+        if (!format || !count || !usage || !StatusOf(item, entry.status) || (!entry.name && !IsNull(item, "name"))) return false;
+        entry.usage = IndexOf(*usage, {"sampled", "storage", "color-target", "depth-target", "transfer", "other"});
+        if (entry.usage < 0) return false;
+        entry.format = *format;
+        entry.count = *count;
+        o.imageFormats.push_back(std::move(entry));
+    }
+    for (const auto& item : descriptorList->items) {
+        DescriptorEntry entry;
+        const auto type = TextOf(item, "type"), usage = TextOf(item, "usage");
+        const auto count = IntegerOf(item, "count");
+        if (!type || !usage || !count || !StatusOf(item, entry.status)) return false;
+        entry.type = IndexOf(*type, {"UniformBuffer", "StorageBuffer", "UniformTexelBuffer", "StorageTexelBuffer", "SampledImage", "StorageImage", "Sampler"});
+        entry.usage = IndexOf(*usage, {"read", "write", "atomic", "other"});
+        if (entry.type < 0 || entry.usage < 0) return false;
+        entry.count = *count;
+        o.descriptors.push_back(entry);
+    }
+    return true;
+}
+
+}
+
+std::optional<Report> ParseCheckpoint(std::string_view bytes, std::string_view id, const HostIdentifiers& host) {
+    Json root;
+    if (bytes.empty() || bytes.size() > MaxBytes || !JsonReader(bytes).Parse(root)) return std::nullopt;
+    const auto* format = Member(root, "format", Json::Type::String);
+    const auto* version = Member(root, "version", Json::Type::Number);
+    const auto* run = Member(root, "run", Json::Type::Object);
+    const auto* stop = Member(root, "stop", Json::Type::Object);
+    if (format == nullptr || format->text != "anyps5-report" || version == nullptr || version->number != 1.0 || run == nullptr || stop == nullptr) return std::nullopt;
+    const auto* runId = Member(*run, "id", Json::Type::String);
+    const auto* exit = Member(*run, "exit", Json::Type::String);
+    const auto* recovered = Member(*run, "recovered", Json::Type::Bool);
+    const auto* seconds = Member(*run, "seconds", Json::Type::Number);
+    const auto* reason = Member(*stop, "reason", Json::Type::String);
+    if (runId == nullptr || runId->text != id || exit == nullptr || exit->text != "killed" || recovered == nullptr || !recovered->boolean ||
+        seconds == nullptr || !(seconds->number >= 0.0 && seconds->number < 1.0e9) || reason == nullptr || reason->text != "unclean-unknown") return std::nullopt;
+    Report report;
+    report.generated = NullableText(root, "generated", R"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)").value_or("");
+    if (report.generated.empty()) return std::nullopt;
+    report.runId = std::string(id);
+    report.seconds = seconds->number;
+    report.exit = Exit::Killed;
+    report.recovered = true;
+    report.incomplete = true;
+    report.stop = Stop{Kind::Other, Reason::UncleanUnknown, std::nullopt};
+    if (const auto* build = Member(root, "anyps5", Json::Type::Object)) {
+        report.build.commit = NullableText(*build, "commit", "[0-9a-f]{40}");
+        report.build.release = NullableText(*build, "release", "v[0-9A-Za-z][0-9A-Za-z._-]{0,62}");
+        if (const auto* modified = Member(*build, "modified", Json::Type::Bool)) report.build.modified = modified->boolean;
+    }
+    if (const auto* game = Member(root, "game", Json::Type::Object)) {
+        report.game.titleId = NullableText(*game, "titleId", "[A-Z]{4}[0-9]{5}");
+        report.game.contentVersion = NullableText(*game, "contentVersion", "[0-9A-Za-z._-]{1,32}");
+        if (const auto* name = Member(*game, "name", Json::Type::String)) report.game.name = SafeText(name->text, host);
+    }
+    if (const auto* system = Member(root, "system", Json::Type::Object)) {
+        report.os = NullableText(*system, "os", "linux|windows|macos");
+        if (const auto* version = Member(*system, "osVersion", Json::Type::String)) report.machine.osVersion = version->text;
+        if (const auto* cpu = Member(*system, "cpu", Json::Type::String)) report.machine.cpu = cpu->text;
+        report.machine.ramGiB = IntegerOf(*system, "ramGiB");
+        if (const auto* gpu = Member(*system, "gpu", Json::Type::Object)) {
+            GpuInfo parsed;
+            if (const auto* vendor = Member(*gpu, "vendor", Json::Type::String)) parsed.vendor = vendor->text;
+            if (const auto* name = Member(*gpu, "name", Json::Type::String)) parsed.name = name->text;
+            if (const auto* driver = Member(*gpu, "driver", Json::Type::String)) parsed.driver = driver->text;
+            if (const auto* vulkan = Member(*gpu, "vulkan", Json::Type::String)) parsed.vulkan = vulkan->text;
+            report.machine.gpu = std::move(parsed);
+        }
+    }
+    if (!ParseObservations(root, *run, report.observed)) return std::nullopt;
+    if (Serialize(report, host) != bytes) return std::nullopt;
+    return report;
+}
+
 namespace {
 
 bool EnsureRealDirectory(const fs::path& path) {
@@ -1184,6 +1614,80 @@ fs::path Canonical(const fs::path& path) {
     return error ? path : result;
 }
 
+void RecoverOne(const fs::path& checkpoint, const std::string& id, const fs::path& destination, std::vector<fs::path>& recovered, std::string& warnings) {
+    auto lockPath = checkpoint;
+    lockPath.replace_extension(std::string(LockSuffix));
+    bool busy = false;
+    const auto lock = FileLock::TryAcquire(lockPath, busy);
+    if (!lock) return;
+    std::string body;
+    std::error_code error;
+    if (!lock->IsCurrent() || !fs::exists(checkpoint, error)) {
+        if (lock->IsCurrent()) lock->RemoveAndRelease();
+        return;
+    }
+    const auto host = CurrentHostIdentifiers();
+    std::optional<Report> report;
+    if (ReadBounded(checkpoint, MaxBytes, body)) report = ParseCheckpoint(body, id, host);
+    if (!report) {
+        warnings += "the checkpoint of run " + id + " is not a valid checkpoint; it was set aside as .invalid\n";
+        fs::rename(checkpoint, fs::path(checkpoint).replace_extension(".invalid"), error);
+        lock->RemoveAndRelease();
+        return;
+    }
+    std::string failure;
+    if (!EnsureRealDirectory(destination.parent_path()) || !EnsureRealDirectory(destination) || !WriteAtomically(destination / ReportName, Serialize(*report, host), id.substr(0, 8), failure)) {
+        warnings += "could not recover the report of run " + id + (failure.empty() ? "" : ": " + failure) + "\n";
+        return;
+    }
+    fs::remove(checkpoint, error);
+    lock->RemoveAndRelease();
+    recovered.push_back(destination / ReportName);
+}
+
+}
+
+
+std::vector<fs::path> RecoverAbandonedRuns(const std::vector<fs::path>& directories, std::string& warnings, const std::vector<fs::path>& nestedRoots) {
+    std::vector<fs::path> recovered;
+    const auto checkpointsIn = [](const fs::path& directory) {
+        std::vector<fs::path> checkpoints;
+        std::error_code error;
+        for (fs::directory_iterator it(directory, fs::directory_options::skip_permission_denied, error), end; !error && it != end; it.increment(error)) {
+            const auto name = it->path().filename().string();
+            std::error_code statusError;
+            if (name.size() > CheckpointPrefix.size() + CheckpointSuffix.size() && name.rfind(CheckpointPrefix, 0) == 0 && name.ends_with(CheckpointSuffix) && it->symlink_status(statusError).type() == fs::file_type::regular) checkpoints.push_back(it->path());
+        }
+        return checkpoints;
+    };
+    const auto idOf = [](const fs::path& checkpoint) {
+        const auto name = checkpoint.filename().string();
+        return name.substr(CheckpointPrefix.size(), name.size() - CheckpointPrefix.size() - CheckpointSuffix.size());
+    };
+    for (const auto& directory : directories) {
+        std::error_code error;
+        if (directory.empty() || fs::symlink_status(directory, error).type() != fs::file_type::directory) continue;
+        for (const auto& checkpoint : checkpointsIn(directory)) {
+            const auto id = idOf(checkpoint);
+            if (Hex32(id)) RecoverOne(checkpoint, id, directory / "reports" / id, recovered, warnings);
+        }
+    }
+    for (const auto& root : nestedRoots) {
+        std::error_code error;
+        if (root.empty() || fs::symlink_status(root, error).type() != fs::file_type::directory) continue;
+        std::vector<fs::path> children;
+        for (fs::directory_iterator it(root, fs::directory_options::skip_permission_denied, error), end; !error && it != end; it.increment(error)) {
+            std::error_code statusError;
+            if (Hex32(it->path().filename().string()) && it->symlink_status(statusError).type() == fs::file_type::directory) children.push_back(it->path());
+        }
+        for (const auto& child : children) {
+            for (const auto& checkpoint : checkpointsIn(child)) {
+                const auto id = idOf(checkpoint);
+                if (Hex32(id) && id == child.filename().string()) RecoverOne(checkpoint, id, child, recovered, warnings);
+            }
+        }
+    }
+    return recovered;
 }
 
 namespace {
@@ -1237,6 +1741,39 @@ BuildInfo Collector::Provenance() const {
 }
 
 
+#ifdef _WIN32
+namespace {
+
+wchar_t g_exitCheckpoint[1024];
+std::atomic<HANDLE> g_exitLock{INVALID_HANDLE_VALUE};
+
+void RememberForExit(const fs::path& checkpoint, void* lock) {
+    const auto text = checkpoint.native();
+    g_exitCheckpoint[0] = L'\0';
+    if (text.size() < std::size(g_exitCheckpoint)) {
+        std::copy(text.begin(), text.end(), g_exitCheckpoint);
+        g_exitCheckpoint[text.size()] = L'\0';
+    }
+    g_exitLock = lock != nullptr ? static_cast<HANDLE>(lock) : INVALID_HANDLE_VALUE;
+}
+
+void ForgetForExit() {
+    g_exitLock = INVALID_HANDLE_VALUE;
+    g_exitCheckpoint[0] = L'\0';
+}
+
+}
+
+void ProcessDetachCleanup() {
+    const HANDLE lock = g_exitLock.exchange(INVALID_HANDLE_VALUE);
+    if (lock != INVALID_HANDLE_VALUE) {
+        FILE_DISPOSITION_INFO disposition{};
+        disposition.DeleteFile = TRUE;
+        SetFileInformationByHandle(lock, FileDispositionInfo, &disposition, sizeof(disposition));
+    }
+}
+#endif
+
 struct Collector::GameState {
     std::mutex mutex;
     std::condition_variable done;
@@ -1266,26 +1803,74 @@ Collector::Collector(Settings value) : settings(std::move(value)), game(std::mak
     host = CurrentHostIdentifiers();
 }
 
-Collector::~Collector() = default;
+Collector::~Collector() {
+    {
+        std::lock_guard guard(mutex);
+        stopWorker = true;
+    }
+    changed.notify_all();
+    if (worker.joinable()) worker.join();
+}
 
 bool Collector::Start() {
     started = std::chrono::steady_clock::now();
-    auto probed = settings.machine ? *settings.machine : ProbeHost();
     {
+        auto probed = settings.machine ? *settings.machine : ProbeHost();
         std::lock_guard guard(machineMutex);
         machineInfo = std::move(probed);
     }
-    if (!settings.executableDirectory.empty()) {
-        executableFolder = Canonical(settings.executableDirectory);
-        candidates.push_back(executableFolder);
+    const auto executableDirectory = settings.executableDirectory.empty() ? fs::path() : Canonical(settings.executableDirectory);
+    const auto userDirectory = settings.userStateDirectory.empty() ? fs::path() : Canonical(settings.userStateDirectory);
+    const auto userReports = userDirectory.empty() ? fs::path() : userDirectory / "reports";
+    std::string warnings;
+    std::vector<fs::path> scan, nested;
+    if (!executableDirectory.empty()) scan.push_back(executableDirectory);
+    if (!userReports.empty()) nested.push_back(userReports);
+    for (const auto& path : RecoverAbandonedRuns(scan, warnings, nested)) std::fprintf(stderr, "[run-report] recovered the report of an earlier run that ended without writing one: %s\n", path.filename().string().c_str());
+    if (!warnings.empty()) std::fputs(("[run-report] " + warnings).c_str(), stderr);
+
+    std::vector<fs::path> candidates;
+    if (!executableDirectory.empty()) candidates.push_back(executableDirectory);
+    if (!userReports.empty()) candidates.push_back(userReports / settings.runId);
+    for (const auto& candidate : candidates) {
+        std::error_code error;
+        if (candidate == executableDirectory) {
+            fs::create_directories(candidate, error);
+            if (error) continue;
+        } else {
+            std::error_code created;
+            fs::create_directories(userDirectory, created);
+            if (created || !EnsureRealDirectory(candidate.parent_path()) || !EnsureRealDirectory(candidate)) continue;
+        }
+        const auto stem = std::string(CheckpointPrefix) + settings.runId;
+        bool busy = false;
+        auto acquired = FileLock::TryAcquire(candidate / (stem + std::string(LockSuffix)), busy);
+        if (!acquired) continue;
+        directory = candidate;
+        lock = std::move(acquired);
+        reportPath = directory / ReportName;
+        checkpointPath = directory / (stem + std::string(CheckpointSuffix));
+        lockPath = directory / (stem + std::string(LockSuffix));
+        if (!WriteCheckpoint()) {
+            lock->RemoveAndRelease();
+            lock.reset();
+            directory.clear();
+            continue;
+        }
+#ifdef _WIN32
+        RememberForExit(checkpointPath, lock->NativeHandle());
+#endif
+        break;
     }
-    if (!settings.userStateDirectory.empty()) candidates.push_back(Canonical(settings.userStateDirectory) / "reports" / settings.runId);
-    if (candidates.empty()) {
-        std::fputs("[run-report] no folder for the run report; reporting is off for this run\n", stderr);
+    if (directory.empty()) {
+        std::fputs("[run-report] no writable folder for the run report; reporting is off for this run\n", stderr);
         return false;
     }
-    reportPath = candidates.front() / ReportName;
     started_ = true;
+    if (settings.worker) {
+        workerWanted = workerRunning = true;
+        worker = std::thread([this] { Work(); });
+    }
     NoteGame();
     return true;
 }
@@ -1293,8 +1878,138 @@ bool Collector::Start() {
 void Collector::NoteGame() {
     try {
         RefreshGame();
+        WriteCheckpoint();
     } catch (...) {
     }
+}
+
+void Collector::BeginWorker() {
+    try {
+        std::lock_guard guard(mutex);
+        if (!started_ || state != 0 || stopWorker || workerRunning) return;
+        if (worker.joinable()) worker.join();
+        workerWanted = workerRunning = true;
+        worker = std::thread([this] { Work(); });
+    } catch (...) {
+    }
+}
+
+PublishLock Collector::AcquirePublishLock(std::chrono::milliseconds wait) const {
+    // One lock file per report name. The holder removes it on release; a waiter that locked the removed file sees IsCurrent() fail and tries again on the new one,
+    // so two holders never share the lock and no file is left behind.
+    try {
+        auto path = reportPath;
+        path += ".publish.lock";
+        const auto deadline = std::chrono::steady_clock::now() + wait;
+        for (;;) {
+            bool busy = false;
+            if (auto lock = FileLock::TryAcquire(path, busy)) {
+                if (lock->IsCurrent()) return PublishLock(lock.release());
+                busy = true;
+            }
+            if (!busy || std::chrono::steady_clock::now() >= deadline) return nullptr;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+bool Collector::Resume() {
+    try {
+        {
+            std::lock_guard guard(mutex);
+            if (!started_ || state != 2) return false;
+        }
+        if (finalized) {
+            bool busy = false;
+            auto acquired = FileLock::TryAcquire(lockPath, busy);
+            if (!acquired) return false;
+            lock = std::move(acquired);
+        }
+        {
+            std::lock_guard guard(mutex);
+            state = 0;
+            stopWorker = false;
+            finalized = false;
+        }
+        if (!WriteCheckpoint()) return false;
+#ifdef _WIN32
+        RememberForExit(checkpointPath, lock->NativeHandle());
+#endif
+        if (reportPublished) {
+            // The report name is shared by every run from this executable folder. Read, compare and remove under the folder's publish lock, so another run cannot
+            // publish between the read and the remove; without the lock the report is left in place (a stale report is better than deleting another run's).
+            if (auto publishLock = AcquirePublishLock(settings.lockWait)) {
+                std::string current;
+                std::error_code error;
+                const bool read = ReadBounded(reportPath, MaxBytes, current);
+                if (settings.afterResumeRead) settings.afterResumeRead();
+                if (read && current == publishedBytes) fs::remove(reportPath, error);
+            }
+            reportPublished = false;
+            publishedBytes.clear();
+        }
+        std::lock_guard guard(mutex);
+        if (!workerRunning) {
+            if (worker.joinable()) worker.join();
+            if (workerWanted) {
+                workerRunning = true;
+                worker = std::thread([this] { Work(); });
+            }
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool Collector::WriteCheckpoint() {
+    return WriteCheckpoint(settings.lockWait);
+}
+
+bool Collector::WriteCheckpoint(std::chrono::milliseconds wait) {
+    try {
+        std::unique_lock guard(writeMutex, std::defer_lock);
+        if (!guard.try_lock_for(wait)) return false;
+        if (started_ && state != 0) return false;
+        if (settings.duringCheckpointWrite) settings.duringCheckpointWrite();
+        const auto text = Serialize(Snapshot(Exit::Killed, Stop{Kind::Other, Reason::UncleanUnknown, std::nullopt}, std::nullopt, true), host);
+        std::string error;
+        return WriteAtomically(checkpointPath, text, settings.runId.substr(0, 8), error);
+    } catch (...) {
+        return false;
+    }
+}
+
+void Collector::Work() {
+    std::unique_lock guard(mutex);
+    while (!stopWorker) {
+        if (changed.wait_for(guard, settings.checkpointInterval, [this] { return stopWorker || checkpointWanted.load(); })) {
+            if (stopWorker) break;
+            checkpointWanted = false;
+        }
+        workerBusy = true;
+        guard.unlock();
+        try {
+            RefreshGame();
+        } catch (...) {
+        }
+        WriteCheckpoint();
+        guard.lock();
+        workerBusy = false;
+        changed.notify_all();
+    }
+    workerBusy = false;
+    workerRunning = false;
+    changed.notify_all();
+}
+
+void Collector::CheckpointSoon() {
+    if (!started_ || state != 0 || checkpointsRequested.fetch_add(1) >= 64) return;
+    checkpointWanted = true;
+    changed.notify_all();
+    if (settings.deferredWorker) BeginWorker();
 }
 
 void Collector::RefreshGame(bool force) {
@@ -1323,7 +2038,7 @@ void Collector::RefreshGame(bool force) {
     current->done.wait_for(guard, std::chrono::seconds(1), [&current] { return current->pending == 0; });
 }
 
-Report Collector::Snapshot(Exit exit, Stop stop, std::optional<std::int64_t> exitCode) const {
+Report Collector::Snapshot(Exit exit, Stop stop, std::optional<std::int64_t> exitCode, bool recovered) const {
     Report report;
     report.generated = FormatUtc(std::chrono::system_clock::now());
     report.build = Provenance();
@@ -1355,6 +2070,8 @@ Report Collector::Snapshot(Exit exit, Stop stop, std::optional<std::int64_t> exi
     report.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     report.exit = exit;
     report.exitCode = exitCode;
+    report.recovered = recovered;
+    report.incomplete = recovered;
     report.stop = std::move(stop);
     report.observed = Observe();
     if (report.observed.lostObservations) report.incomplete = true;
@@ -1490,6 +2207,8 @@ void Collector::NoteQuitRequested() noexcept {
 
 void Collector::NoteMissingFunction(std::string_view library, std::string_view name, std::string_view) {
     if (!started_) return;
+    bool added = false;
+    {
     std::unique_lock guard(tables->mutex, std::defer_lock);
     if (!guard.try_lock_for(settings.tableWait)) {
         NoteLost(0);
@@ -1503,11 +2222,14 @@ void Collector::NoteMissingFunction(std::string_view library, std::string_view n
         ++found->calls;
     } else if (list.size() < TrackedEntries) {
         list.push_back({library.empty() ? std::nullopt : std::optional<std::string>(library), std::string(name), 1});
+        added = true;
     } else if (tables->droppedFunctionKeys.size() < 4096u) {
         if (tables->droppedFunctionKeys.insert(std::string(library) + "|" + std::string(name)).second) ++tables->dropped.functions;
     } else {
         tables->droppedSaturated = true;
     }
+    }
+    if (added) CheckpointSoon();
 }
 
 Observations Collector::Observe() const {
@@ -1575,35 +2297,47 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
             }
             state = 1;
             if (stop.reason == Reason::GuestExit && quitRequested) stop.reason = Reason::QuitRequested;
+            stopWorker = true;
+            changed.notify_all();
+            changed.wait_for(guard, std::chrono::seconds(1), [this] { return !workerBusy; });
         }
         if (exit == Exit::Clean) RefreshGame(true);
+        std::unique_lock files(writeMutex, std::defer_lock);
+        if (!files.try_lock_for(settings.lockWait)) {
+            std::fputs("[run-report] a checkpoint write did not finish; the report of this run is left to the next start\n", stderr);
+            std::lock_guard guard(mutex);
+            finalized = false;
+            state = 2;
+            changed.notify_all();
+            return;
+        }
         try {
-            const auto text = Serialize(Snapshot(exit, std::move(stop), exitCode), host);
+            const auto text = Serialize(Snapshot(exit, std::move(stop), exitCode, false), host);
             std::string error;
-            bool written = false;
-            for (const auto& directory : candidates) {
-                std::error_code created;
-                if (directory == executableFolder) {
-                    fs::create_directories(directory, created);
-                    if (created) continue;
-                } else {
-                    fs::create_directories(settings.userStateDirectory, created);
-                    if (created || !EnsureRealDirectory(directory.parent_path()) || !EnsureRealDirectory(directory)) continue;
-                }
-                const auto target = directory / ReportName;
-                if (WriteAtomically(target, text, settings.runId.substr(0, 8), error)) {
-                    reportPath = target;
-                    written = true;
-                    break;
-                }
+            auto publishLock = AcquirePublishLock(settings.lockWait);   // serializes publication with another instance's Resume retraction of the shared report name
+            if (!publishLock) {
+                std::fputs("[run-report] the report name is busy; the report of this run is left to the next start\n", stderr);
+            } else if (WriteAtomically(reportPath, text, settings.runId.substr(0, 8), error)) {
+                reportPublished = true;
+                publishedBytes = text;
+                if (settings.beforeCheckpointRemoval) settings.beforeCheckpointRemoval();
+                std::error_code ignored;
+                fs::remove(checkpointPath, ignored);
+                lock->RemoveAndRelease();
+#ifdef _WIN32
+                ForgetForExit();
+#endif
+                finalized = true;
+                std::fprintf(stderr, "[run-report] wrote %s\n", reportPath.filename().string().c_str());
+            } else {
+                std::fprintf(stderr, "[run-report] could not write %s: %s\n", reportPath.filename().string().c_str(), error.c_str());
             }
-            if (written) std::fprintf(stderr, "[run-report] wrote %s\n", reportPath.filename().string().c_str());
-            else std::fprintf(stderr, "[run-report] could not write %s: %s\n", reportPath.filename().string().c_str(), error.c_str());
         } catch (const std::exception& failure) {
             std::fprintf(stderr, "[run-report] could not write the report: %s\n", failure.what());
         } catch (...) {
             std::fputs("[run-report] could not write the report\n", stderr);
         }
+        files.unlock();
         std::lock_guard guard(mutex);
         state = 2;
         changed.notify_all();
@@ -1619,6 +2353,7 @@ namespace {
 
 std::atomic<bool (*)(RunReportGame*)> gameProvider{nullptr};
 RunReport::Collector* collector = nullptr;
+const char* relaunchChoice = nullptr;
 
 [[maybe_unused]] void FinishAtExit() {
     if (collector != nullptr && !collector->Finished()) collector->Finish(RunReport::Exit::Clean, RunReport::Stop{RunReport::Kind::None, RunReport::Reason::GuestExit, std::nullopt}, std::nullopt);
@@ -1657,18 +2392,26 @@ bool StartRunReport() noexcept {
         const auto arguments = RunReport::CommandLineArguments();
         const auto flag = RunReport::FlagFromArguments(arguments);
         const auto toggle = RunReport::ResolveToggle(flag ? std::optional<std::string_view>(*flag) : std::nullopt, environment != nullptr ? std::optional<std::string_view>(environment) : std::nullopt);
+        if (!toggle.enabled) relaunchChoice = "0";
+        else if (toggle.explicitlyOn) relaunchChoice = "1";
         for (const auto& warning : toggle.warnings) std::fprintf(stderr, "[run-report] %s\n", warning.c_str());
         if (!toggle.enabled || (!toggle.explicitlyOn && !GameProcess())) return false;
         RunReport::Settings settings;
         settings.executableDirectory = RunReport::ExecutableDirectory();
         settings.userStateDirectory = RunReport::UserStateDirectory();
         settings.runId = RunReport::GenerateRunId();
+#ifdef _WIN32
+        settings.worker = false;
+#endif
         if (*APS5_REPORT_COMMIT != '\0') settings.build.commit = APS5_REPORT_COMMIT;
         if (*APS5_REPORT_RELEASE != '\0') settings.build.release = APS5_REPORT_RELEASE;
         if (APS5_REPORT_MODIFIED >= 0) settings.build.modified = APS5_REPORT_MODIFIED != 0;
         settings.game = ProvideGame;
         settings.requiredComponents = {"libkernel", "libSceVideoOut", "libSceAgcDriver"};
         settings.coverage = {true, true, true, true, true, true};
+#ifdef _WIN32
+        settings.deferredWorker = true;
+#endif
         auto* created = new RunReport::Collector(std::move(settings));
         if (!created->Start()) {
             delete created;
@@ -1706,6 +2449,24 @@ std::string_view ExportName(std::string_view name) {
 extern "C" void LibcRunReportSetGameProvider_nid_no_patch(bool (*provider)(RunReportGame*)) {
     gameProvider.store(provider, std::memory_order_release);
     if (collector != nullptr) collector->NoteGame();
+}
+
+extern "C" void LibcRunReportResume_nid_no_patch() noexcept {
+    if (collector != nullptr) collector->Resume();
+}
+
+extern "C" void LibcRunReportBeginWorker_nid_no_patch() noexcept {
+    if (collector != nullptr) collector->BeginWorker();
+}
+
+extern "C" bool LibcRunReportHandoff_nid_no_patch(int exitCode) noexcept {
+    if (collector == nullptr) return true;
+    collector->Finish(RunReport::Exit::Clean, RunReport::Stop{RunReport::Kind::None, RunReport::Reason::GuestExit, std::nullopt}, exitCode);
+    return collector->Finalized();
+}
+
+extern "C" const char* LibcRunReportRelaunchEnvironment_nid_no_patch() noexcept {
+    return relaunchChoice;
 }
 
 extern "C" void LibcRunReportRegisterComponent_nid_no_patch(const char* name, const char* commit, int modified) noexcept {
@@ -1796,3 +2557,10 @@ extern "C" void LibcRunReportMissingFunction_nid_no_patch(const char* name, cons
     } catch (...) {
     }
 }
+
+#ifdef _WIN32
+extern "C" BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID reserved) {
+    if (reason == DLL_PROCESS_DETACH && reserved != nullptr) RunReport::ProcessDetachCleanup();
+    return TRUE;
+}
+#endif

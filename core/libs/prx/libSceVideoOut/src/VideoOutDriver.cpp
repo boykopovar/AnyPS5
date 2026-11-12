@@ -743,6 +743,7 @@ std::optional<AgcDriver::DisplayBuffer> VideoOutDriver::overlayPlane() {
 }
 
 void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& started) {
+    LibcRunReportBeginWorker_nid_no_patch();
     try {
         OnMainThread([&] {
             window.Ensure(VIDEO_OUT_DEFAULT_WIDTH, VIDEO_OUT_DEFAULT_HEIGHT);
