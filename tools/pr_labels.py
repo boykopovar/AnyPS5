@@ -152,7 +152,7 @@ def process(repo, pr, dry_run, comment=True):
                 args += ["--remove-label", ",".join(sorted(remove))]
             gh(*args)
         if post:
-            gh("api", "-X", "POST", f"repos/{repo}/issues/{pr['number']}/comments", "-f", f"body={COMMENT}")
+            gh("api", "-X", "POST", f"repos/{repo}/issues/{pr['number']}/comments", "-f", f"body={COMMENT}", attempts=1)
     return add, remove, post
 
 
