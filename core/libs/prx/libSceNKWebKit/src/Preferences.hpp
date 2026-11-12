@@ -117,6 +117,7 @@ std::uint32_t APS5_VABI WKPreferencesGetDefaultFontSize(const void* preferencesR
 bool APS5_VABI WKPreferencesGetDeveloperExtrasEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetDiagnosticLoggingEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetDirectoryUploadEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetDialogElementEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetDownloadAttributeEnabled(const void* preferencesRef);
 WKEditableLinkBehavior APS5_VABI WKPreferencesGetEditableLinkBehavior(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetEnableInheritURIQueryComponent(const void* preferencesRef);
@@ -307,6 +308,7 @@ void APS5_VABI WKPreferencesSetDefaultTextEncodingName(const void* preferencesRe
 void APS5_VABI WKPreferencesSetDeveloperExtrasEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetDiagnosticLoggingEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetDirectoryUploadEnabled(const void* preferencesRef, bool flag);
+void APS5_VABI WKPreferencesSetDialogElementEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetDownloadAttributeEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetEditableLinkBehavior(const void* preferencesRef, WKEditableLinkBehavior wkBehavior);
 void APS5_VABI WKPreferencesSetEnableInheritURIQueryComponent(const void* preferencesRef, bool enabled);

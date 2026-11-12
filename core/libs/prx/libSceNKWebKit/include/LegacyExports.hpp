@@ -740,7 +740,6 @@ int APS5_VABI _ZN7WebCore24MatrixTransformOperationC1Edddddd();
 int APS5_VABI _ZN7WebCore17PageConsoleClient9recordEndEPN3JSC14JSGlobalObjectEON3WTF3RefIN9Inspector15ScriptArgumentsENS4_13DumbPtrTraitsIS7_EEEE();
 int APS5_VABI libSceNKWebKitLegacyUnknown_I9SizkX_plus_i5Y_nid_no_patch();
 int APS5_VABI _ZN7WebCore15SQLiteStatement21getColumnBlobAsStringEi();
-int APS5_VABI WKPreferencesSetDialogElementEnabled();
 int APS5_VABI _ZN7WebCore11DisplayList13ClipOutToPathC1ERKNS_4PathE();
 int APS5_VABI _ZN7WebCore12SharedBuffer6createEPKhm();
 int APS5_VABI WKPageHandleMediaEvent();
@@ -1300,7 +1299,6 @@ int APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationC1EdNS_15FilterO
 int APS5_VABI _ZN7WebCore11DisplayList8ClipPathC1ERKNS_4PathENS_8WindRuleE();
 int APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperationC2EdNS_15FilterOperation13OperationTypeE();
 int APS5_VABI _ZN7WebCore12JSTimeRangesC2EPN3JSC9StructureERNS_17JSDOMGlobalObjectEON3WTF3RefINS_10TimeRangesENS6_13DumbPtrTraitsIS8_EEEE();
-int APS5_VABI WKPreferencesGetDialogElementEnabled();
 int APS5_VABI _ZN7WebCore11DisplayList17FillRectWithColorC2ERKNS_9FloatRectERKNS_5ColorE();
 int APS5_VABI _ZN7WebCore11DisplayList6SetCTMD0Ev();
 int APS5_VABI _ZN7WebCore9FontCache10invalidateEv();
