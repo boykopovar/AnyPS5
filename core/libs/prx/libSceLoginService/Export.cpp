@@ -1,5 +1,7 @@
 #include "prx/libSceLoginService/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -29,6 +31,13 @@ int APS5_VABI sceLoginServiceRequestDevices(const LoginServiceDeviceRequest* par
     if (param == nullptr) {
         return SCE_LOGIN_SERVICE_ERROR_INVALID_ARGUMENT;
     }
+    const int savedErrno = errno;
+    std::uint8_t probe = 0;
+    if (!GuestCopyIn_nid_no_patch(&probe, param, sizeof(probe))) {
+        errno = savedErrno;
+        return SCE_LOGIN_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    errno = savedErrno;
     if (!g_initialized.load()) {
         return SCE_LOGIN_SERVICE_ERROR_NOT_INITIALIZED;
     }

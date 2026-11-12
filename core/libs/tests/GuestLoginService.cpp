@@ -1,6 +1,7 @@
 #include "prx/libSceLoginService/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <cerrno>
 #include <cstdlib>
 
 namespace {
@@ -19,13 +20,22 @@ int main() {
     const auto* request = reinterpret_cast<const LoginServiceDeviceRequest*>(buffer);
 
     Require(sceLoginServiceRequestDevices(nullptr) == kErrInvalidArg);
+    errno = 71;
+    Require(sceLoginServiceRequestDevices(reinterpret_cast<const LoginServiceDeviceRequest*>(0x10)) == kErrInvalidArg);
+    Require(errno == 71);
     Require(sceLoginServiceRequestDevices(request) == kErrNotInitialized);
 
     Require(sceLoginServiceInitialize() == 0);
     Require(sceLoginServiceRequestDevices(nullptr) == kErrInvalidArg);
+    errno = 71;
+    Require(sceLoginServiceRequestDevices(reinterpret_cast<const LoginServiceDeviceRequest*>(0x10)) == kErrInvalidArg);
+    Require(errno == 71);
 
     Require(sceLoginServiceTerminate() == 0);
     Require(sceLoginServiceRequestDevices(nullptr) == kErrInvalidArg);
+    errno = 71;
+    Require(sceLoginServiceRequestDevices(reinterpret_cast<const LoginServiceDeviceRequest*>(0x10)) == kErrInvalidArg);
+    Require(errno == 71);
     Require(sceLoginServiceRequestDevices(request) == kErrNotInitialized);
     return 0;
 }
