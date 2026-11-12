@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -8,10 +9,14 @@
 #include <cmath>
 #include <cwchar>
 #include <cstdio>
+#include <array>
 #include <limits>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
@@ -21,6 +26,42 @@ namespace {
 int CompareUnits(char16_t left, char16_t right) {
     return left < right ? -1 : 1;
 }
+
+#if defined(__SSE2__)
+size_t BlocksInPage(const char16_t* s) {
+    return (4096 - (reinterpret_cast<uintptr_t>(s) & 4095)) / 16;
+}
+
+template<bool StopAtZero>
+[[gnu::no_sanitize("address")]] unsigned MismatchedUnits(const char16_t* s1, const char16_t* s2) {
+    const __m128i left = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s1));
+    const __m128i right = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s2));
+    unsigned mask = ~static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(left, right))) & 0xffff;
+    if constexpr (StopAtZero) mask |= static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(left, _mm_setzero_si128())));
+    return mask;
+}
+
+template<bool StopAtZero>
+size_t EqualUnits(const char16_t* s1, const char16_t* s2, size_t n) {
+    size_t index = 0;
+    while (n - index >= 8) {
+        size_t blocks = (n - index) / 8;
+        if constexpr (StopAtZero) {
+            blocks = (std::min)({blocks, BlocksInPage(s1 + index), BlocksInPage(s2 + index)});
+            if (blocks == 0) {
+                if (s1[index] != s2[index] || s1[index] == 0) return index;
+                ++index;
+                continue;
+            }
+        }
+        for (; blocks != 0; --blocks, index += 8) {
+            const unsigned mask = MismatchedUnits<StopAtZero>(s1 + index, s2 + index);
+            if (mask != 0) return index + std::countr_zero(mask) / 2;
+        }
+    }
+    return index;
+}
+#endif
 
 int ByteDifference(const void* s1, const void* s2, size_t n, bool stopAtNul) {
     const auto* left = static_cast<const unsigned char*>(s1);
@@ -39,10 +80,213 @@ bool Contains(const char16_t* set, char16_t character) {
     return false;
 }
 
+class WideSetTable {
+public:
+    bool Build(const char16_t* units) {
+        pageOf_.fill(0);
+        pages_[0] = {};
+        size_t used = 0;
+        for (; *units != 0; ++units) {
+            auto& page = pageOf_[*units >> 8];
+            if (page == 0) {
+                if (used == MaxPages) return false;
+                page = static_cast<std::uint8_t>(++used);
+                pages_[page] = {};
+            }
+            pages_[page][(*units & 0xff) >> 6] |= std::uint64_t{1} << (*units & 63);
+        }
+        return true;
+    }
+
+    bool Has(char16_t character) const {
+        return ((pages_[pageOf_[character >> 8]][(character & 0xff) >> 6] >> (character & 63)) & 1) != 0;
+    }
+
+private:
+    static constexpr size_t MaxPages = 32;
+    std::array<std::uint8_t, 256> pageOf_;
+    std::array<std::array<std::uint64_t, 4>, MaxPages + 1> pages_;
+};
+
+template<typename TScan>
+auto ScanIndexed(const char16_t* units, TScan scan) {
+    WideSetTable table;
+    if (table.Build(units)) return scan([&table](char16_t character) { return table.Has(character); });
+    return scan([units](char16_t character) { return Contains(units, character); });
+}
+
+template<typename TScan>
+auto ScanWideSet(const char16_t* units, TScan scan) {
+    constexpr size_t LinearLimit = 16;
+    size_t length = 0;
+    while (units[length] != 0 && length < LinearLimit) ++length;
+    if (units[length] != 0) return ScanIndexed(units, scan);
+    return scan([units](char16_t character) { return Contains(units, character); });
+}
+
+#if defined(__SSE2__)
+bool UnitAligned(const char16_t* s) {
+    return (reinterpret_cast<uintptr_t>(s) & 1) == 0;
+}
+
+const char16_t* UnitAt(uintptr_t block, unsigned mask) {
+    return reinterpret_cast<const char16_t*>(block + std::countr_zero(mask));
+}
+
+[[gnu::no_sanitize("address")]] unsigned MatchUnits(uintptr_t block, __m128i target) {
+    const __m128i units = _mm_load_si128(reinterpret_cast<const __m128i*>(block));
+    return static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(units, target)));
+}
+
+[[gnu::no_sanitize("address")]] unsigned MatchUnitsOrZero(uintptr_t block, __m128i target) {
+    const __m128i units = _mm_load_si128(reinterpret_cast<const __m128i*>(block));
+    const __m128i matches = _mm_or_si128(_mm_cmpeq_epi16(units, target), _mm_cmpeq_epi16(units, _mm_setzero_si128()));
+    return static_cast<unsigned>(_mm_movemask_epi8(matches));
+}
+
+const char16_t* FindUnitOrZero(const char16_t* s, char16_t c) {
+    const __m128i target = _mm_set1_epi16(static_cast<short>(c));
+    const auto address = reinterpret_cast<uintptr_t>(s);
+    uintptr_t block = address & ~uintptr_t{15};
+    unsigned mask = MatchUnitsOrZero(block, target) & (~0u << (address - block));
+    while (mask == 0) {
+        block += 16;
+        mask = MatchUnitsOrZero(block, target);
+    }
+    return UnitAt(block, mask);
+}
+
+const char16_t* FindUnit(const char16_t* s, char16_t c, size_t n) {
+    const __m128i target = _mm_set1_epi16(static_cast<short>(c));
+    const auto address = reinterpret_cast<uintptr_t>(s);
+    n = (std::min)(n, (UINTPTR_MAX - address) / sizeof(char16_t));
+    const uintptr_t end = address + n * sizeof(char16_t);
+    uintptr_t block = address & ~uintptr_t{15};
+    unsigned mask = MatchUnits(block, target) & (~0u << (address - block));
+    for (;;) {
+        const uintptr_t remaining = end - block;
+        if (remaining <= 16) {
+            mask &= (1u << remaining) - 1;
+            return mask == 0 ? nullptr : UnitAt(block, mask);
+        }
+        if (mask != 0) return UnitAt(block, mask);
+        block += 16;
+        mask = MatchUnits(block, target);
+    }
+}
+
+[[gnu::no_sanitize("address")]] const char16_t* FindLastUnit(const char16_t* s, char16_t c) {
+    const __m128i target = _mm_set1_epi16(static_cast<short>(c));
+    const __m128i zero = _mm_setzero_si128();
+    const auto address = reinterpret_cast<uintptr_t>(s);
+    uintptr_t block = address & ~uintptr_t{15};
+    unsigned skip = ~0u << (address - block);
+    const char16_t* found = nullptr;
+    for (;; block += 16, skip = ~0u) {
+        const __m128i units = _mm_load_si128(reinterpret_cast<const __m128i*>(block));
+        unsigned matches = static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(units, target))) & skip;
+        const unsigned zeros = static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(units, zero))) & skip;
+        if (zeros != 0) matches &= ((zeros & (0u - zeros)) << 2) - 1;
+        if (matches != 0) found = reinterpret_cast<const char16_t*>(block + 30 - std::countl_zero(matches));
+        if (zeros != 0) return found;
+    }
+}
+#endif
+
 size_t Length(const char16_t* s) {
+#if defined(__SSE2__)
+    if (UnitAligned(s)) return static_cast<size_t>(FindUnitOrZero(s, 0) - s);
+#endif
     size_t length = 0;
     while (s[length] != 0) ++length;
     return length;
+}
+
+constexpr size_t NaiveSearchSlack = 256;
+
+template<typename TUnit, typename TBefore>
+size_t MaximalSuffix(const TUnit* needle, size_t length, size_t& period, TBefore before) {
+    size_t suffix = SIZE_MAX;
+    size_t candidate = 0;
+    size_t offset = 1;
+    period = 1;
+    while (candidate + offset < length) {
+        const TUnit next = needle[candidate + offset];
+        const TUnit current = needle[suffix + offset];
+        if (before(next, current)) {
+            candidate += offset;
+            offset = 1;
+            period = candidate - suffix;
+        } else if (next == current) {
+            if (offset != period) {
+                ++offset;
+            } else {
+                candidate += period;
+                offset = 1;
+            }
+        } else {
+            suffix = candidate++;
+            offset = period = 1;
+        }
+    }
+    return suffix;
+}
+
+template<typename TUnit>
+size_t CriticalFactorization(const TUnit* needle, size_t length, size_t& period) {
+    if (length < 3) {
+        period = 1;
+        return length - 1;
+    }
+    size_t forwardPeriod = 1;
+    size_t reversePeriod = 1;
+    const size_t forward = MaximalSuffix(needle, length, forwardPeriod, [](TUnit a, TUnit b) { return a < b; });
+    const size_t reverse = MaximalSuffix(needle, length, reversePeriod, [](TUnit a, TUnit b) { return b < a; });
+    if (reverse + 1 < forward + 1) {
+        period = forwardPeriod;
+        return forward + 1;
+    }
+    period = reversePeriod;
+    return reverse + 1;
+}
+
+template<typename TUnit, typename TAvailable>
+const TUnit* TwoWaySearch(const TUnit* haystack, const TUnit* needle, size_t length, TAvailable available) {
+    size_t period = 1;
+    const size_t suffix = CriticalFactorization(needle, length, period);
+    size_t start = 0;
+    if (std::equal(needle, needle + suffix, needle + period)) {
+        size_t memory = 0;
+        while (available(start + length)) {
+            size_t index = std::max(suffix, memory);
+            while (index < length && needle[index] == haystack[index + start]) ++index;
+            if (index < length) {
+                start += index - suffix + 1;
+                memory = 0;
+                continue;
+            }
+            index = suffix - 1;
+            while (memory < index + 1 && needle[index] == haystack[index + start]) --index;
+            if (index + 1 < memory + 1) return haystack + start;
+            start += period;
+            memory = length - period;
+        }
+        return nullptr;
+    }
+    period = std::max(suffix, length - suffix) + 1;
+    while (available(start + length)) {
+        size_t index = suffix;
+        while (index < length && needle[index] == haystack[index + start]) ++index;
+        if (index < length) {
+            start += index - suffix + 1;
+            continue;
+        }
+        index = suffix - 1;
+        while (index != SIZE_MAX && needle[index] == haystack[index + start]) --index;
+        if (index == SIZE_MAX) return haystack + start;
+        start += period;
+    }
+    return nullptr;
 }
 
 std::string AsciiPrefix(const char16_t* text) {
@@ -363,11 +607,19 @@ void* APS5_VABI memmem_nid_postfix(const void* haystack, size_t haystacklen, con
     if (haystacklen < needlelen) return nullptr;
     const auto* h = static_cast<const unsigned char*>(haystack);
     const auto* n = static_cast<const unsigned char*>(needle);
-    const unsigned char first = n[0];
     const size_t limit = haystacklen - needlelen;
-    for (size_t i = 0; i <= limit; ++i) {
-        if (h[i] == first && std::memcmp(h + i, n, needlelen) == 0) {
-            return const_cast<unsigned char*>(h + i);
+    size_t wasted = 0;
+    for (size_t start = 0; start <= limit; ++start) {
+        const void* candidate = std::memchr(h + start, n[0], limit - start + 1);
+        if (candidate == nullptr) return nullptr;
+        start = static_cast<size_t>(static_cast<const unsigned char*>(candidate) - h);
+        size_t matched = 1;
+        while (matched < needlelen && h[start + matched] == n[matched]) ++matched;
+        if (matched == needlelen) return const_cast<unsigned char*>(h + start);
+        wasted += matched;
+        if (wasted > start + NaiveSearchSlack) {
+            const size_t rest = haystacklen - start - 1;
+            return const_cast<unsigned char*>(TwoWaySearch(h + start + 1, n, needlelen, [rest](size_t end) { return end <= rest; }));
         }
     }
     return nullptr;
@@ -532,10 +784,14 @@ long long APS5_VABI atoll_nid_postfix(const char* str) {
 }
 
 std::div_t APS5_VABI div_nid_postfix(int numerator, int denominator) {
+    if (denominator == -1) return {static_cast<int>(0u - static_cast<unsigned int>(numerator)), 0};
     return std::div(numerator, denominator);
 }
 
 const char16_t* APS5_VABI wmemchr_nid_postfix(const char16_t* s, char16_t c, size_t n) {
+#if defined(__SSE2__)
+    if (n != 0 && UnitAligned(s)) return FindUnit(s, c, n);
+#endif
     for (; n != 0; ++s, --n) {
         if (*s == c) return s;
     }
@@ -543,6 +799,12 @@ const char16_t* APS5_VABI wmemchr_nid_postfix(const char16_t* s, char16_t c, siz
 }
 
 int APS5_VABI wmemcmp_nid_postfix(const char16_t* s1, const char16_t* s2, size_t n) {
+#if defined(__SSE2__)
+    const size_t equal = EqualUnits<false>(s1, s2, n);
+    s1 += equal;
+    s2 += equal;
+    n -= equal;
+#endif
     for (; n != 0; ++s1, ++s2, --n) {
         if (*s1 != *s2) return CompareUnits(*s1, *s2);
     }
@@ -565,6 +827,10 @@ extern "C" {
 
 int APS5_VABI strcasecmp_nid_postfix(const char* s1, const char* s2) {
     for (;; ++s1, ++s2) {
+        if (*s1 == *s2) {
+            if (*s1 == 0) return 0;
+            continue;
+        }
         const int a = tolower_nid_postfix(static_cast<unsigned char>(*s1));
         const int b = tolower_nid_postfix(static_cast<unsigned char>(*s2));
         if (a != b || *s1 == 0) return (a > b) - (a < b);
@@ -573,6 +839,10 @@ int APS5_VABI strcasecmp_nid_postfix(const char* s1, const char* s2) {
 
 int APS5_VABI strncasecmp_nid_postfix(const char* s1, const char* s2, size_t n) {
     for (; n != 0; ++s1, ++s2, --n) {
+        if (*s1 == *s2) {
+            if (*s1 == 0) break;
+            continue;
+        }
         const int a = tolower_nid_postfix(static_cast<unsigned char>(*s1));
         const int b = tolower_nid_postfix(static_cast<unsigned char>(*s2));
         if (a != b) return a < b ? -1 : 1;
@@ -622,21 +892,40 @@ int APS5_VABI memmove_s_nid_postfix(void* dest, size_t destsz, const void* src, 
 }
 
 int APS5_VABI memset_s_nid_postfix(void* dest, size_t destsz, int value, size_t count) {
-    constexpr int GuestEinval = 22;
-    constexpr size_t RsizeMax = SIZE_MAX >> 1;
-    if (!dest || destsz > RsizeMax || count > RsizeMax) return GuestEinval;
-    const auto length = count > destsz ? destsz : count;
+    constexpr int GuestErange = 34;
+    constexpr size_t RsizeMax = SIZE_MAX >> 3;
+    if (!dest || destsz > RsizeMax || count > destsz) {
+        SonyInvokeConstraintHandler("memset_s: bad destination argument", nullptr, GuestErange);
+        return GuestErange;
+    }
     auto* bytes = static_cast<volatile unsigned char*>(dest);
-    for (size_t index = 0; index < length; ++index) bytes[index] = static_cast<unsigned char>(value);
-    return count > destsz ? GuestEinval : 0;
+    for (size_t index = 0; index < count; ++index) bytes[index] = static_cast<unsigned char>(value);
+    return 0;
 }
 
 char* APS5_VABI strnstr_nid_postfix(const char* haystack, const char* needle, size_t length) {
     const size_t needleLength = std::strlen(needle);
     if (needleLength == 0) return const_cast<char*>(haystack);
-    for (size_t index = 0; index < length && haystack[index] != '\0'; ++index) {
-        if (needleLength > length - index) break;
-        if (std::strncmp(haystack + index, needle, needleLength) == 0) return const_cast<char*>(haystack + index);
+    size_t wasted = 0;
+    for (size_t start = 0; start < length && haystack[start] != '\0'; ++start) {
+        if (needleLength > length - start) break;
+        if (haystack[start] != needle[0]) continue;
+        size_t matched = 1;
+        while (matched < needleLength && haystack[start + matched] == needle[matched]) ++matched;
+        if (matched == needleLength) return const_cast<char*>(haystack + start);
+        wasted += matched;
+        if (wasted > start + NaiveSearchSlack) {
+            const char* rest = haystack + start + 1;
+            const size_t bound = length - start - 1;
+            size_t known = 0;
+            return const_cast<char*>(TwoWaySearch(rest, needle, needleLength, [rest, bound, &known](size_t end) {
+                if (end > bound) return false;
+                for (; known < end; ++known) {
+                    if (rest[known] == '\0') return false;
+                }
+                return true;
+            }));
+        }
     }
     return nullptr;
 }
@@ -652,12 +941,23 @@ size_t APS5_VABI wcslen_nid_postfix(const char16_t* s) {
 
 size_t APS5_VABI wcsnlen_s_nid_postfix(const char16_t* s, size_t maxlen) {
     if (!s) return 0;
+#if defined(__SSE2__)
+    if (maxlen != 0 && UnitAligned(s)) {
+        const char16_t* end = FindUnit(s, 0, maxlen);
+        return end == nullptr ? maxlen : static_cast<size_t>(end - s);
+    }
+#endif
     size_t length = 0;
     while (length < maxlen && s[length] != 0) ++length;
     return length;
 }
 
 int APS5_VABI wcscmp_nid_postfix(const char16_t* s1, const char16_t* s2) {
+#if defined(__SSE2__)
+    const size_t equal = EqualUnits<true>(s1, s2, SIZE_MAX);
+    s1 += equal;
+    s2 += equal;
+#endif
     for (; *s1 == *s2; ++s1, ++s2) {
         if (*s1 == 0) return 0;
     }
@@ -665,6 +965,12 @@ int APS5_VABI wcscmp_nid_postfix(const char16_t* s1, const char16_t* s2) {
 }
 
 int APS5_VABI wcsncmp_nid_postfix(const char16_t* s1, const char16_t* s2, size_t n) {
+#if defined(__SSE2__)
+    const size_t equal = EqualUnits<true>(s1, s2, n);
+    s1 += equal;
+    s2 += equal;
+    n -= equal;
+#endif
     for (; n != 0; ++s1, ++s2, --n) {
         if (*s1 != *s2) return CompareUnits(*s1, *s2);
         if (*s1 == 0) return 0;
@@ -690,6 +996,12 @@ char16_t* APS5_VABI wcsncpy_nid_postfix(char16_t* dest, const char16_t* src, siz
 }
 
 const char16_t* APS5_VABI wcschr_nid_postfix(const char16_t* s, char16_t c) {
+#if defined(__SSE2__)
+    if (UnitAligned(s)) {
+        const char16_t* found = FindUnitOrZero(s, c);
+        return *found == c ? found : nullptr;
+    }
+#endif
     for (;; ++s) {
         if (*s == c) return s;
         if (*s == 0) return nullptr;
@@ -697,6 +1009,9 @@ const char16_t* APS5_VABI wcschr_nid_postfix(const char16_t* s, char16_t c) {
 }
 
 const char16_t* APS5_VABI wcsrchr_nid_postfix(const char16_t* s, char16_t c) {
+#if defined(__SSE2__)
+    if (UnitAligned(s)) return FindLastUnit(s, c);
+#endif
     const char16_t* found = nullptr;
     for (;; ++s) {
         if (*s == c) found = s;
@@ -707,51 +1022,72 @@ const char16_t* APS5_VABI wcsrchr_nid_postfix(const char16_t* s, char16_t c) {
 const char16_t* APS5_VABI wcsstr_nid_postfix(const char16_t* haystack, const char16_t* needle) {
     const size_t length = Length(needle);
     if (length == 0) return haystack;
-    for (; *haystack != 0; ++haystack) {
-        size_t matched = 0;
-        while (matched < length && haystack[matched] == needle[matched]) ++matched;
-        if (matched == length) return haystack;
+    size_t wasted = 0;
+    for (size_t start = 0; haystack[start] != 0; ++start) {
+        if (haystack[start] != needle[0]) continue;
+        size_t matched = 1;
+        while (matched < length && haystack[start + matched] == needle[matched]) ++matched;
+        if (matched == length) return haystack + start;
+        wasted += matched;
+        if (wasted > start + NaiveSearchSlack) {
+            const char16_t* rest = haystack + start + 1;
+            size_t known = 0;
+            return TwoWaySearch(rest, needle, length, [rest, &known](size_t end) {
+                for (; known < end; ++known) {
+                    if (rest[known] == 0) return false;
+                }
+                return true;
+            });
+        }
     }
     return nullptr;
 }
 
 const char16_t* APS5_VABI wcspbrk_nid_postfix(const char16_t* s, const char16_t* accept) {
-    for (; *s != 0; ++s) {
-        if (Contains(accept, *s)) return s;
-    }
-    return nullptr;
+    return ScanWideSet(accept, [s](auto member) -> const char16_t* {
+        for (const char16_t* unit = s; *unit != 0; ++unit) {
+            if (member(*unit)) return unit;
+        }
+        return nullptr;
+    });
 }
 
 size_t APS5_VABI wcsspn_nid_postfix(const char16_t* s, const char16_t* accept) {
-    size_t count = 0;
-    while (s[count] != 0 && Contains(accept, s[count])) ++count;
-    return count;
+    return ScanWideSet(accept, [s](auto member) {
+        size_t count = 0;
+        while (s[count] != 0 && member(s[count])) ++count;
+        return count;
+    });
 }
 
 size_t APS5_VABI wcscspn_nid_postfix(const char16_t* s, const char16_t* reject) {
-    size_t count = 0;
-    while (s[count] != 0 && !Contains(reject, s[count])) ++count;
-    return count;
+    return ScanWideSet(reject, [s](auto member) {
+        size_t count = 0;
+        while (s[count] != 0 && !member(s[count])) ++count;
+        return count;
+    });
 }
 
 char16_t* APS5_VABI wcstok_nid_postfix(char16_t* text, const char16_t* delimiters, char16_t** last) {
     static const char16_t exhausted[] = u"";
     if (text == nullptr) text = *last;
     if (text == nullptr) return nullptr;
-    while (*text != 0 && Contains(delimiters, *text)) ++text;
-    if (*text == 0) {
-        *last = const_cast<char16_t*>(exhausted);
-        return nullptr;
-    }
-    char16_t* end = text;
-    while (*end != 0 && !Contains(delimiters, *end)) ++end;
-    if (*end == 0) {
-        *last = end;
-    } else {
-        *end = 0;
-        *last = end + 1;
-    }
-    return text;
+    return ScanWideSet(delimiters, [text, last](auto member) mutable -> char16_t* {
+        while (*text != 0 && member(*text)) ++text;
+        if (*text == 0) {
+            *last = const_cast<char16_t*>(exhausted);
+            return nullptr;
+        }
+        char16_t* end = text;
+        while (*end != 0 && !member(*end)) ++end;
+        if (*end == 0) {
+            *last = end;
+        } else {
+            *end = 0;
+            *last = end + 1;
+        }
+        return text;
+    });
 }
 
 char16_t* APS5_VABI wmemset_nid_postfix(char16_t* s, char16_t c, size_t n) {
@@ -911,8 +1247,8 @@ size_t APS5_VABI strxfrm_nid_postfix(char* destination, const char* source, size
     return length;
 }
 
-char* APS5_VABI strtok_s_nid_postfix(char* str, const char* delim, char** context) {
-    return SonyStrtokS(str, delim, context);
+char* APS5_VABI strtok_s_nid_postfix(char* str, std::size_t* remaining, const char* delimiters, char** context) {
+    return SonyStrtokS(str, remaining, delimiters, context);
 }
 
 int APS5_VABI wmemcpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count) {
