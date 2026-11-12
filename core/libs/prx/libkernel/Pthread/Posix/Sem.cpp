@@ -26,6 +26,7 @@ struct PosixSemaphore {
 };
 
 static constexpr int GUEST_ENOENT = 2;
+static constexpr int GUEST_ENOMEM = 12;
 static constexpr int GUEST_EEXIST = 17;
 static constexpr int GUEST_EAGAIN = 35;
 static constexpr int GUEST_ENAMETOOLONG = 63;
@@ -79,15 +80,21 @@ static bool IsNamed(const void* sem) {
     return named.open.count(sem) != 0;
 }
 
-static int NamedPathError(const char* function, const char* name, int notAbsolute) {
+static int CopyNamedPath(const char* function, const char* name, int notAbsolute, std::string& copy) {
     if (!name) throw std::invalid_argument(std::string(function) + ": null name");
-    if (name[0] != '/') return notAbsolute;
-    if (NAMED_SEMAPHORE_PREFIX.size() + std::strlen(name + 1) >= GUEST_PATH_MAX) return GUEST_ENAMETOOLONG;
+    char first{};
+    if (!GuestCopyIn_nid_no_patch(&first, name, 1)) return PosixThread::GUEST_EFAULT;
+    if (first != '/') return notAbsolute;
+    const auto maximum = GUEST_PATH_MAX - NAMED_SEMAPHORE_PREFIX.size() + 1;
+    const int error = CopyGuestString_nid_no_patch(name, maximum, copy);
+    if (error == GUEST_ENAMETOOLONG) return GUEST_ENAMETOOLONG;
+    if (error == GUEST_ENOMEM) return GUEST_ENOMEM;
+    if (error != 0) return PosixThread::GUEST_EFAULT;
     return 0;
 }
 
-static int NamedFileError(const char* function, const char* name) {
-    const std::string_view file(name + 1);
+static int NamedFileError(const char* function, const std::string& name) {
+    const std::string_view file = std::string_view(name).substr(1);
     if (file.find('/') != std::string_view::npos)
         throw std::runtime_error(std::string(function) + ": the name " + name + " would resolve below /tmp, which is not modelled");
     if (NAMED_SEMAPHORE_FILE_PREFIX.size() + file.size() > GUEST_NAME_MAX) return GUEST_ENAMETOOLONG;
@@ -185,17 +192,19 @@ int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value) {
 
 int APS5_VABI sem_setname_nid_postfix(void* sem, const char* name) {
     if (!sem) throw std::invalid_argument("sem_setname: null semaphore");
-    if (!name) throw std::invalid_argument("sem_setname: null name");
     auto* semaphore = Get(sem);
     if (!semaphore) return Fail(GUEST_EAGAIN);
     std::lock_guard lock(semaphore->lock);
     if (semaphore->named) return Fail(GUEST_EAGAIN);
+    if (!name) return Fail(PosixThread::GUEST_EINVAL);
+    if (strnlen(name, 32) > 31) return Fail(63);
     semaphore->named = true;
     return 0;
 }
 
 void* APS5_VABI sem_open_nid_postfix(const char* name, int flags, ...) {
-    if (const int error = NamedPathError("sem_open", name, PosixThread::GUEST_EINVAL)) {
+    std::string nameCopy;
+    if (const int error = CopyNamedPath("sem_open", name, PosixThread::GUEST_EINVAL, nameCopy)) {
         Fail(error);
         return nullptr;
     }
@@ -219,13 +228,13 @@ void* APS5_VABI sem_open_nid_postfix(const char* name, int flags, ...) {
         va_end(arguments);
 #endif
     }
-    if (const int error = NamedFileError("sem_open", name)) {
+    if (const int error = NamedFileError("sem_open", nameCopy)) {
         Fail(error);
         return nullptr;
     }
     auto& named = Named();
     std::lock_guard lock(named.lock);
-    const std::string file(name + 1);
+    const std::string file(nameCopy.substr(1));
     std::shared_ptr<NamedSemaphore> object;
     if (const auto found = named.linked.find(file); found != named.linked.end()) {
         if ((flags & (GUEST_O_CREAT | GUEST_O_EXCL)) == (GUEST_O_CREAT | GUEST_O_EXCL)) {
@@ -268,11 +277,12 @@ int APS5_VABI sem_close_nid_postfix(void* sem) {
 }
 
 int APS5_VABI sem_unlink_nid_postfix(const char* name) {
-    if (const int error = NamedPathError("sem_unlink", name, GUEST_ENOENT)) return Fail(error);
-    if (const int error = NamedFileError("sem_unlink", name)) return Fail(error);
+    std::string nameCopy;
+    if (const int error = CopyNamedPath("sem_unlink", name, GUEST_ENOENT, nameCopy)) return Fail(error);
+    if (const int error = NamedFileError("sem_unlink", nameCopy)) return Fail(error);
     auto& named = Named();
     std::lock_guard lock(named.lock);
-    if (named.linked.erase(std::string(name + 1)) == 0) return Fail(GUEST_ENOENT);
+    if (named.linked.erase(nameCopy.substr(1)) == 0) return Fail(GUEST_ENOENT);
     return 0;
 }
 

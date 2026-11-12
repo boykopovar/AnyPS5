@@ -1,6 +1,7 @@
 #include "prx/libSceImeDialog/include/Api.hpp"
 #include "prx/libSceImeDialog/include/PadKeyboard.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
@@ -241,9 +242,13 @@ int APS5_VABI sceImeDialogAbort(void) {
 
 int APS5_VABI sceImeDialogGetPanelPositionAndForm(PositionAndForm* form) {
     if (form == nullptr) return ErrorNotOpened;
-    *form = PositionAndForm{};
-    form->width = 1920;
-    form->height = 1080;
+    PositionAndForm localForm{};
+    localForm.width = 1920;
+    localForm.height = 1080;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(form, &localForm, sizeof(localForm));
+    errno = savedErrno;
+    if (!copied) return ErrorNotOpened;
     return 0;
 }
 

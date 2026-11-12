@@ -284,7 +284,7 @@ A Windows executable started without a standard output or error handle, such as 
 
 ### Display resolution and window size
 
-The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. F11 switches between window and fullscreen; set `ANYPS5_FULLSCREEN` to a non-empty value other than `0` to open the window fullscreen from the start. Changing the window size does not change the game's render resolution. The only host setting that changes the resolution a game reads is `APS5_OUTPUT_RESOLUTION`, described below; otherwise AnyPS5 provides no render-resolution override, so use a game's own display setting when it offers one.
+The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. F11 switches between window and fullscreen and returns the window to the size it had before. Set `ANYPS5_FULLSCREEN` to `1` or `borderless` to open the window fullscreen at the desktop resolution from the start, or to `0` or `windowed` (the default) to keep it windowed. Any other non-empty value, such as `true` or `yes`, still opens it fullscreen as before, and a warning on stderr names the value. Fullscreen goes to the display the window is on, which is the one `ANYPS5_DISPLAY_INDEX` selects at start. The mouse cursor is hidden while the window is fullscreen unless the game has opened a mouse. Changing the window size does not change the game's render resolution. The only host setting that changes the resolution a game reads is `APS5_OUTPUT_RESOLUTION`, described below; otherwise AnyPS5 provides no render-resolution override, so use a game's own display setting when it offers one.
 
 `APS5_OUTPUT_RESOLUTION=<width>x<height>`, for example `APS5_OUTPUT_RESOLUTION=1920x1080`, makes the game's video output status report the 1080p class when the width is below 3840 and the height below 2160, and the 2160p class otherwise, instead of the class of the display's current mode. The two numbers must be positive integers separated by `x` or `X`. An empty value is the same as an unset one; any other value stops the game with an error that names the variable.
 
@@ -317,6 +317,14 @@ Set `APS5_NO_PAD_INPUT` to any value, an empty one included, to make the window 
 
 On Windows, set `APS5_NO_WGI` to any value to turn off SDL's Windows Gaming Input controller backend. AnyPS5 turns off DirectInput there in every case, and this variable is read once when the video output driver is created.
 
+### Host microphone selection
+
+By default, `libSceAudioIn` captures from SDL's default host input device. Set `ANYPS5_AUDIO_IN_DEVICE` to an exact capture-device name reported by SDL to select another microphone. An unset or empty value, or `default`, keeps SDL's default. If the selected name is missing, appears more than once, or cannot be opened, the game's AudioIn open call returns the invalid-device error `0x8026010F`; AnyPS5 does not silently switch to another microphone. SDL2 identifies capture devices by name, so duplicate names cannot be selected individually. The setting is read each time the game opens an AudioIn port.
+
+```sh
+ANYPS5_AUDIO_IN_DEVICE="USB Microphone" ./app.elf
+```
+
 ### Controller vibration strength
 
 Set `ANYPS5_RUMBLE` to a whole number from `0` to `100` to scale how strongly the game's vibration reaches your controller. `100`, which is also the value when the variable is unset, passes the vibration exactly as the game asks. `0` turns vibration off: the motors never receive a nonzero request, and a rumble that was running is stopped. Values in between scale the motor strength by that percentage and apply to every connected controller.
@@ -329,6 +337,10 @@ ANYPS5_RUMBLE=0 ./app.elf
 The setting covers the rumble motors, the impulse-trigger rumble of controllers that have it, and the vibration a game plays as audio, both when it is played on a DualSense's own sound card and when it is turned into motor rumble. It does not change DualSense adaptive trigger effects (resistance and trigger vibration profiles), which still reach the controller as the game sends them. A value that is empty, signed, fractional or above 100 stops the game at start with an error naming `ANYPS5_RUMBLE`.
 
 This is a host-side comfort setting, not console behaviour: it is applied by AnyPS5 between the game and your controller, it is read once at start, and there is no hotkey or overlay entry for it. It is not a model of any console setting.
+
+### Vibration while the window has no focus
+
+By default the controller stops vibrating while the AnyPS5 window has no focus, and vibrates again with the next pulse when the focus returns. Set `ANYPS5_RUMBLE_ON_FOCUS_LOSS=0` to keep vibration on while the window is in the background. Only the vibration motors are affected: the light bar and the controller's state are not changed, and identify pulses still work while the window has focus. Any value other than `0` or `1` stops the game at start with an error naming the variable.
 
 ### Controller connection and user 0
 
@@ -438,6 +450,8 @@ Set `ANYPS5_MUTE_ON_FOCUS_LOSS=1` to mute the audio while the display window has
 
 The keys work while the display window has focus. Not measured on a real audio device or on a console.
 
+Set `ANYPS5_AUDIO_IN_MUTE_ON_FOCUS_LOSS=1` to return silent microphone samples to the guest while the display window has no focus. Capture remains open in SDL, but queued samples are cleared when focus changes so speech captured while muted is not delivered after focus returns. `0` or unset leaves microphone input unchanged; an invalid value stops the game with an error naming the variable.
+
 ### GPU selection
 
 The game runs on the first Vulkan 1.1 device with graphics and compute queues and swapchain presentation, preferring a discrete GPU over an integrated one. Set `ANYPS5_GPU` to a part of a device name, compared without regard to case, to run on another device; the names are printed at start-up in the `Physical device candidate` lines. When no usable device contains the text, the start fails and the error lists the device names.
@@ -455,7 +469,7 @@ $env:VK_LOADER_DRIVERS_DISABLE = '*dzn*'
 .\app.exe
 ```
 
-Do not disable Dozen if it is the only Vulkan driver available; the application would have no device to use. `VK_LOADER_DRIVERS_DISABLE` matches Vulkan driver manifest filenames and requires a Vulkan loader built with headers 1.3.234 or later ([loader documentation](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderInterfaceArchitecture.md#filter-environment-variables)).
+Do not disable Dozen if it is the only Vulkan driver available; the application would have no device to use. `VK_LOADER_DRIVERS_DISABLE` matches Vulkan driver manifest filenames and requires a Vulkan loader built with headers 1.3.234 or later ([loader documentation](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderInterfaceArchitecture.md#filter-environment-variables)). Loaders up to version 1.4.365 ignore it in an elevated process, such as one started from a PowerShell opened with **Run as administrator**.
 
 On Windows, NVIDIA driver 610.47 can crash in its shader compiler while pipelines are created: the log ends in `FATAL: unhandled exception 0xc0000005` with `nvgpucomp64.dll` in `rip`, on a driver thread. PPSA25344 on an RTX 3060 stopped this way in 3 of 3 New Game loads, also with `APS5_NO_PIPELINE_LTO=1`; with driver 617.42 the same build and scene ran for 40 minutes. Update the driver when the crash is in `nvgpucomp64.dll`.
 
@@ -595,7 +609,7 @@ Page 2 is wider, 46 characters, and has no graph. It reads its sources once a se
 | `HOST IMPORTS` | Host memory imports in use, then their size against the import budget, in GB. Not shown on a device that can't import host memory. |
 | `CPU COPIES` | Guest memory copied per second by address-based resource builds, for the ranges that no host import or mirror serves, in MB of 2^20 bytes. `CAP`: the largest of those builds in the last second against the copy cap, `APS5_ADDRESS_COPY_MAX_MIB` (64 MiB unless set), past which a build stops the game. |
 | `UNIMPLEMENTED` | Calls per second to functions AnyPS5 doesn't implement, then their total since the start. Such a call throws an error, so a count above 0 means the title caught it and went on. |
-| `REFUSED SHADERS` | Shaders whose draws are skipped. Shown only with `APS5_SKIP_REFUSED_DRAWS=1`; without it a refused shader stops the game. |
+| `REFUSED SHADERS` | Shaders whose draws or dispatches are skipped. Shown only with `APS5_SKIP_REFUSED_DRAWS=1` or `APS5_SKIP_REFUSED_DISPATCHES=1`; without them a refused shader stops the game. |
 | `TITLE`, `PRESENT` | The title ID from the title's `param.json`, and the swapchain's present mode, as `ANYPS5_PRESENT_MODE` names it. |
 | `FPS LIMIT` | The value of `ANYPS5_FPS_LIMIT`, on a line of its own after `TITLE` and `PRESENT` and formatted as `FPS` is (`59.94` reads `59.9`), in thousands from 10000. Not shown without a limit. |
 
@@ -687,7 +701,7 @@ python3 tools/import_audit.py app.registry.json app.libc.prx.guest.prx.registry.
 | `implemented` | A built library exports the NID and its function is not a throwing stub. |
 | `partial` | Exported, but the function throws for inputs whose behaviour is unknown. |
 | `stub` | Exported, but the whole function calls `NotImplemented_nid_no_patch`: the game loads and throws when it calls it. |
-| `absent` | No built library exports the NID: the loader fails. |
+| `absent` | No built library that the loader searches exports the NID: the loader fails. |
 | `module` | The import names a title library found in `--modules` that exports the symbol or its NID. |
 
 An import that names a library requires the literal export name. If its implementation is found only by hashing the import name, it still counts as `implemented` or `stub`, but the report lists the name mismatch, sets `symbol_mismatch` on the JSON import record and counts it in the summary, and exits with code 1. A strong import with a name mismatch is a current stop. Imports without a library retain the audit's name-to-NID fallback.
@@ -699,6 +713,8 @@ ELF modules in `--modules` are audited regardless of filename: their undefined s
 Each registry has a companion with the same prefix and the suffix `.needed.json`, listing its host library dependencies, including declared `DT_NEEDED` entries with no imports. Dependencies supplied by converted bundled modules, including their aliases, are omitted. The executable's companion includes host dependencies of its bundled modules. The audit reads these companions automatically; keep them beside the registries. Older registries without companions still work, but cannot report dependencies that have no imports; regenerate them with `--registry` to include those dependencies.
 
 The report also lists needed libraries that have no file in `--libs` or `--modules`, including dependencies with zero imports. These do not increase the import or reference counts. Windows can skip a missing dependency when no import needs it; Linux still needs the file. The audit also lists imports exported only by a library other than the one they name; those resolve on Linux and can fail on Windows.
+
+On a Windows build with companions, an import without a library counts only what the entry stub searches: the title's modules, the libraries the companions list, the kernel family when one of them is a kernel library, and `libc.prx` when one is a kernel library or `libSceLibcInternal.prx`. An import that only other built libraries export is `absent`; its JSON import record lists them in `unsearched_providers`, and the summary and the report count them per library. The companions of all registries passed are pooled, so pass the registries of one executable and its modules together, with every folder that holds the title's converted modules in `--modules`: an import that only a title module provides counts as `absent` when that module's folder is missing. When no companion lists a library, and on a Linux build, every built library still counts.
 
 The audit also walks the built libraries' own host dependencies: each `.prx` under `--libs` has its PE imports (or ELF `DT_NEEDED` entries) checked for `.prx` names with no file in `--libs` or `--modules`, following present libraries transitively. Gaps fail the audit and are reported as `Importer: <root> Chain: <root> -> ... -> <missing>` lines, since the loader fails on them even when every game import resolves.
 
