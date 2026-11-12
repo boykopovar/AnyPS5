@@ -25,6 +25,11 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 |------|------|--------|---------|-------------|
 | `ANYPS5_AUTORUN_NO_PAUSE` | string | `core/relinker/cli/src/Autorun.cpp` | | exactly `1` skips the exit prompt and stdin read after autorun; unset, empty and other values keep the prompt |
 | `ANYPS5_GUEST_MODULE_ARGS` | string | `core/relinker/elfpatcher/tests/GuestModuleArgsHost.cpp` |  | path of the file the module-argument fixture appends its events to |
+| `APS5_RELINK_REDZONE_SKIPS` | presence | `core/relinker/codegen/src/x86/RedZoneFramer.cpp` |  | prints each red-zone leaf the in-place framing refuses and each one relocation refuses, with the reason |
+| `APS5_RELINK_RELOCATE_RANGE` | string | `core/relinker/codegen/src/x86/RedZoneFramer.cpp` |  | `low:high` relocates only the red-zone candidates with those ordinals, for bisecting a relocated leaf |
+| `APS5_RELINK_RELOCATE_RED_ZONE` | presence | `core/relinker/relinker/src/pipeline/Conversion.cpp` |  | with `--frame-red-zone`, relocates the red-zone leaves the in-place framing refuses whole into framed stubs |
+| `APS5_RELINK_RELOCATE_TRACE` | integer | `core/relinker/codegen/src/x86/RedZoneFramer.cpp` |  | prints the bytes each instruction of the relocated leaf at this guest address becomes |
+| `APS5_RELINK_STUB_MAP` | presence | `core/relinker/elfpatcher/src/windows/WindowsTrampolineBuilder.cpp` |  | prints the RVA of each stub and of the site it replaces |
 
 ### core/shader
 
