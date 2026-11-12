@@ -411,11 +411,24 @@ private:
                 if (IsHttp1()) {
                     ExchangeHttp1(client, &ssl);
                     mbedtls_ssl_close_notify(&ssl);
-                } else Exchange(ssl);
+                } else {
+                    Exchange(ssl);
+                    if (mode == Mode::CloseHeaders || mode == Mode::CloseBody) CloseAfterDrain(client);
+                }
             }
         }
         mbedtls_ssl_free(&ssl);
         mbedtls_net_free(&client);
+    }
+
+    void CloseAfterDrain(mbedtls_net_context& client) {
+#ifdef _WIN32
+        shutdown(static_cast<SOCKET>(client.fd), SD_SEND);
+#else
+        shutdown(client.fd, SHUT_WR);
+#endif
+        std::array<unsigned char, 4096> drain;
+        while (mbedtls_net_poll(&client, MBEDTLS_NET_POLL_READ, 2000) > 0 && mbedtls_net_recv(&client, drain.data(), drain.size()) > 0) {}
     }
 
     void RefuseHello(mbedtls_net_context& client) {
