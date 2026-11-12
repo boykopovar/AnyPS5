@@ -5,9 +5,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
-#ifdef APS5_COUNT_MAPPING_QUERIES
 #include <atomic>
-#endif
 #include <cstdio>
 #include <cstddef>
 #include <cstdint>
@@ -255,6 +253,7 @@ public:
         ownedPins.emplace(address, address + bytes);
         for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < address + bytes; ++it) {
             if (it->second.resident) {
+                if (it->second.armed != 0) resumeResidentWrites(it->first);
                 ++it->second.pins;
                 invalidate(it->first, it->second);
                 continue;
@@ -280,6 +279,13 @@ public:
             if (pins != 0) --pins;
             invalidate(it->first, it->second);
         }
+    }
+
+    void SetArmResident(bool on) {
+        std::lock_guard lock(mutex);
+        armResidentFlag().store(on, std::memory_order_relaxed);
+        if (on) return;
+        for (const auto& [start, run] : residentRuns) resumeResidentWrites(start, false);
     }
 
     void CompareWhenShared(std::uintptr_t address, std::size_t bytes, bool residentOnly = false) {
@@ -332,6 +338,10 @@ public:
         if (found == views.end() || !writable(found->second.protection)) return false;
         auto& view = found->second;
         if (view.resident) {
+            if ((view.armed & subpagesOf(base, address, address + 1)) != 0) {
+                resumeResidentWrites(base);
+                return true;
+            }
             const auto memory = query(address);
             return memory.State == MEM_COMMIT && writable(memory.Protect & 0xffu);
         }
@@ -1029,6 +1039,57 @@ private:
         return verify;
     }
 
+    static std::atomic<bool>& armResidentFlag() {
+        static std::atomic<bool> arm{std::getenv("APS5_ARM_RESIDENT") != nullptr};
+        return arm;
+    }
+
+    static bool armResidentRuns() {
+        return armResidentFlag().load(std::memory_order_relaxed);
+    }
+
+    bool armResident(std::uintptr_t from, std::uintptr_t stop) {
+        const auto first = views.lower_bound(from & ~(pageBytes - 1));
+        if (first == views.end() || first->first > from || !writable(first->second.protection)) return false;
+        const auto protection = first->second.protection;
+        auto expected = first->first;
+        for (auto it = first; it != views.end() && it->first < stop; ++it) {
+            const auto& view = it->second;
+            if (it->first != expected || !view.resident || view.protection != protection || view.hostWrites != 0 || view.hostImports != 0 || view.pins != 0) return false;
+            expected = it->first + pageBytes;
+        }
+        if (expected < stop) return false;
+        DWORD previous;
+        const auto readOnly = protection == PAGE_EXECUTE_READWRITE ? PAGE_EXECUTE_READ : PAGE_READONLY;
+        if (!VirtualProtect(reinterpret_cast<void*>(from), stop - from, readOnly, &previous)) fail("arm resident memory write tracking");
+        for (auto it = first; it != views.end() && it->first < stop; ++it) it->second.armed |= subpagesOf(it->first, from, stop);
+        return true;
+    }
+
+    void resumeResidentWrites(std::uintptr_t address, bool observed = true) {
+        const auto run = std::prev(residentRuns.upper_bound(address));
+        if (observed) run->second.writeObserved = true;
+        forgetClean(run->first, run->second.end);
+        auto first = views.lower_bound(run->first);
+        while (first != views.end() && first->first < run->second.end) {
+            const auto begin = first->first;
+            auto end = begin;
+            const auto protection = first->second.protection;
+            auto next = first;
+            bool armed = false;
+            do {
+                armed = armed || next->second.armed != 0;
+                end = std::min(next->first + pageBytes, run->second.end);
+                ++next;
+            } while (next != views.end() && next->first == end && end < run->second.end && next->second.protection == protection);
+            if (armed) {
+                DWORD previous;
+                if (!VirtualProtect(reinterpret_cast<void*>(begin), end - begin, protection, &previous)) fail("resume resident guest writes");
+            }
+            for (; first != next; ++first) first->second.armed = 0;
+        }
+    }
+
     static bool committedPrivate(std::uintptr_t address, std::uintptr_t end) {
         for (auto cursor = address; cursor < end;) {
             const auto memory = query(cursor);
@@ -1128,6 +1189,7 @@ private:
         bool watched = false;
         bool reset = false;
         bool imported = false;
+        bool writeObserved = false;
     };
     struct Window {
         void* view = nullptr;
@@ -1142,12 +1204,14 @@ private:
     void collectResident(std::uintptr_t start, Run& run, std::uintptr_t from, std::uintptr_t stop, void** pages, std::size_t* count, bool clear, Collection collection) {
         if (clear) run.reset = true;
         const auto first = from & ~std::uintptr_t{4095};
+        const bool armed = armResidentRuns() && clear && run.watched && run.fresh == 0 && !run.writeObserved && collection != Collection::Fresh && run.end - start >= 0x40000 && armResident(first, stop);
         if (run.fresh == 0 && collection != Collection::Fresh) {
             ULONG_PTR reported = (stop - first + 4095) / 4096;
             DWORD granularity = 0;
             if (collectOwnedWrites(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(first), stop - first, pages + *count, &reported, &granularity) != 0) fail("collect resident guest writes");
             for (ULONG_PTR index = 0; index < reported; ++index) pages[*count + index] = reinterpret_cast<void*>(std::max(from, reinterpret_cast<std::uintptr_t>(pages[*count + index])));
             *count += reported;
+            if (armed) rememberClean(from, stop);
             return;
         }
         std::vector<std::uintptr_t> written;
@@ -1317,6 +1381,7 @@ private:
         const auto run = std::prev(residentRuns.upper_bound(address));
         const auto start = run->first;
         const auto stop = run->second.end;
+        forgetClean(start, stop);
         disown(start, stop);
         forgetOwnedPending(start, stop);
         forgetZero(start, stop);
