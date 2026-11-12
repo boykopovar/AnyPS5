@@ -861,8 +861,11 @@ void CheckAmmMapperCalls() {
     param.fill(0xAAAAAAAAAAAAAAAAull);
     param[0] = 0x10;
     Require(sceKernelMapperGetParam(param.data()) == 0 && param[0] == 0x38 && param[1] == start && param[2] == 0xAAAAAAAAAAAAAAAAull);
+    param.fill(0xAAAAAAAAAAAAAAAAull);
     param[0] = 0x30;
-    Require(MapperCallThrows([&] { sceKernelMapperGetParam(param.data()); }));
+    Require(sceKernelMapperGetParam(param.data()) == 0 && param[5] == 0 && param[6] == 0xAAAAAAAAAAAAAAAAull);
+    param[0] = 0x38;
+    Require(sceKernelMapperGetParam(param.data()) == 0 && param[5] == 0 && param[6] == 0);
 
     std::array<std::uint8_t, 64> commands{};
     std::uint64_t bytes = 0;

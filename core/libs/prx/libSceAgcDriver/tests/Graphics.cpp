@@ -11975,6 +11975,29 @@ void DualSourceBlendTests() {
         changed.context[0x1e0] = 0x40010f01u | (operation << 5u);
         expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "MIN or MAX operation");
     }
+    for (const auto operation : {2u, 3u}) {
+        const auto expected = operation == 2u ? VK_BLEND_OP_MIN : VK_BLEND_OP_MAX;
+        for (const bool alpha : {false, true}) {
+            changed = queue;
+            const auto extrema = 0x101u | (operation << 5u);
+            const auto weighted = 0x0f01u;
+            changed.context[0x1e0] = 0x60000000u | (alpha ? (extrema << 16u) | weighted : (weighted << 16u) | extrema);
+            const auto decoded = AgcDriver::Graphics::DecodeState(changed);
+            Require(decoded.dualSourceBlend, "a MIN or MAX equation with ONE factors disabled dual-source blending in the other equation");
+            const auto& blend = decoded.blends.front();
+            Require((alpha ? blend.alphaBlendOp : blend.colorBlendOp) == expected && (alpha ? blend.colorBlendOp : blend.alphaBlendOp) == VK_BLEND_OP_ADD, "the independent MIN or MAX and dual-source equations changed operations");
+            Require((alpha ? blend.srcAlphaBlendFactor : blend.srcColorBlendFactor) == VK_BLEND_FACTOR_ONE && (alpha ? blend.dstAlphaBlendFactor : blend.dstColorBlendFactor) == VK_BLEND_FACTOR_ONE, "the MIN or MAX equation did not keep its ONE factors");
+            Require((alpha ? blend.dstColorBlendFactor : blend.dstAlphaBlendFactor) == VK_BLEND_FACTOR_SRC1_COLOR, "the weighted equation lost its second-source factor");
+            for (const auto factor : {0u, 2u, 15u, 18u}) {
+                for (const auto shift : {0u, 8u}) {
+                    auto invalid = changed;
+                    const auto offset = shift + (alpha ? 16u : 0u);
+                    invalid.context[0x1e0] = (changed.context[0x1e0] & ~(0x1fu << offset)) | (factor << offset);
+                    expectFailure([&] { AgcDriver::Graphics::DecodeState(invalid); }, "MIN or MAX operation");
+                }
+            }
+        }
+    }
     changed.context[0x1e0] = 0x40010f01u | (4u << 5u);
     Require(AgcDriver::Graphics::DecodeState(changed).blends[0].colorBlendOp == VK_BLEND_OP_REVERSE_SUBTRACT, "a reverse-subtract dual-source blend was refused");
     changed = queue;
@@ -13970,6 +13993,10 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--multisample-dcc-state") {
             multisampleDccStateTests();
             std::cout << "Multisampled DCC state checks passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--dual-source-blend-state") {
+            DualSourceBlendTests();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--depth-bounds-state") {
