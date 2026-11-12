@@ -74,7 +74,7 @@ void Driver::deferCompletion(const Submission& submission) {
     completionDeferred() = true;
     static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
     if (traceGpu) std::fprintf(stderr, "[gpu] %.1f deferred completion serial=%llu to the draw pipeline\n", TraceMs(), static_cast<unsigned long long>(submission.serial));
-    DrawPipeline::Queue0().Enqueue([this, serial = submission.serial, received, labelWrites = submission.labelWrites, progress = submission.progress, holdsFlip = submission.holdsFlip] {
+    DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Completion, [this, serial = submission.serial, received, labelWrites = submission.labelWrites, progress = submission.progress, holdsFlip = submission.holdsFlip] {
         completeSubmission(serial, received, labelWrites, progress, holdsFlip);
     }, {});
 }
@@ -275,7 +275,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         OrderHold hold{orderHolders};
                         const auto released = [&] { return failure || stopping || !waitFreeBefore(submission.received); };
                         StallWatch stall(id);
-                        while (!released() && !poll(released)) stall.Check("order behind other queues for event", submission.received);
+                        while (!released() && !poll(released)) stall.Check("order behind other queues for event", submission.received, &lock);
                     }
                     rethrowFailure();
                 }
@@ -288,7 +288,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         OrderHold hold{orderHolders};
                         const auto released = [&] { return failure || stopping || orderReleased(id, submission.received); };
                         StallWatch stall(id);
-                        while (!released() && !poll(released)) stall.Check("order behind queue 0 for event", submission.received);
+                        while (!released() && !poll(released)) stall.Check("order behind queue 0 for event", submission.received, &lock);
                     }
                     rethrowFailure();
                 }

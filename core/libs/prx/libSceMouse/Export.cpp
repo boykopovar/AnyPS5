@@ -36,26 +36,29 @@ bool MouseIsOpen_nid_no_patch() {
 }
 
 int APS5_VABI sceMouseConnectPort() {
+    if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceMouseDebugGetDeviceId() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceMouseDebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
+    return Mouse::DebugGetDeviceId(handle, deviceId);
 }
 
 int APS5_VABI sceMouseDeviceOpen() {
+    if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMouseDisconnectDevice() {
+    if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMouseDisconnectPort() {
+    if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -68,6 +71,7 @@ int APS5_VABI sceMouseGetDeviceInfo(std::int32_t device, void* info) {
 }
 
 int APS5_VABI sceMouseMbusInit() {
+    if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -87,6 +91,7 @@ int APS5_VABI sceMouseSetPointerSpeed(std::int32_t handle, std::uint32_t speed) 
 }
 
 int APS5_VABI sceMouseSetProcessPrivilege() {
+    if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

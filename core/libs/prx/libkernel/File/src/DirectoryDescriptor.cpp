@@ -5,6 +5,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 
 #include <algorithm>
@@ -23,7 +24,6 @@
 
 #ifdef _WIN32
 #include "prx/libc/include/FileStream.hpp"
-#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include <fcntl.h>
 #include <io.h>
@@ -38,6 +38,16 @@
 #endif
 
 namespace {
+
+std::filesystem::path HostPath(const std::filesystem::path& path) {
+#ifdef _WIN32
+    std::error_code error;
+    auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    return error ? path : verbatim;
+#else
+    return path;
+#endif
+}
 
 #ifndef _WIN32
 std::filesystem::path HostDescriptorTarget(int fd, std::error_code& error) {
@@ -114,7 +124,7 @@ std::uint8_t DirectoryEntryType(const std::filesystem::file_status& status) {
 }
 #else
 bool InsideApp0(const std::filesystem::path& directory) {
-    const auto root = ResolveDiskPath_nid_no_patch("/app0");
+    const auto root = HostPath(ResolveDiskPath_nid_no_patch("/app0"));
     const auto handle = CreateFileW(root.c_str(), FILE_READ_ATTRIBUTES,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
         FILE_FLAG_BACKUP_SEMANTICS, nullptr);
@@ -137,6 +147,32 @@ bool InsideApp0(const std::filesystem::path& directory) {
         ++entry;
     }
     return true;
+}
+
+std::vector<std::filesystem::path> ListDirectoryEntries(const std::filesystem::path& directory) {
+    std::vector<std::filesystem::path> entries;
+    WIN32_FIND_DATAW data{};
+    const auto pattern = HostPath(directory / L"*");
+    const HANDLE find = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, 0);
+    if (find == INVALID_HANDLE_VALUE) {
+        const DWORD code = GetLastError();
+        if (code == ERROR_FILE_NOT_FOUND) return entries;
+        throw std::system_error(static_cast<int>(code), std::system_category(), "read directory descriptor");
+    }
+    try {
+        do {
+            const std::wstring_view name(data.cFileName);
+            if (name == L"." || name == L"..") continue;
+            entries.push_back(HostPath(directory / data.cFileName));
+        } while (FindNextFileW(find, &data));
+        const DWORD code = GetLastError();
+        if (code != ERROR_NO_MORE_FILES) throw std::system_error(static_cast<int>(code), std::system_category(), "read directory descriptor");
+    } catch (...) {
+        FindClose(find);
+        throw;
+    }
+    FindClose(find);
+    return entries;
 }
 
 std::uint8_t EntryType(const std::filesystem::path& path, bool followLinks) {
@@ -169,16 +205,17 @@ void Load(DirectoryState& state, int fd) {
     if (state.loaded) return;
     state.entries.clear();
     const auto directoryPath = state.nativeBacked ? File::DirectoryDescriptorPath(fd).value_or(state.path) : state.path;
+    const auto hostPath = HostPath(directoryPath);
     AppArchiveNode node{};
     const bool hasArchiveDirectory = AppArchiveLookup_nid_no_patch(directoryPath, &node) && node.Directory;
     std::error_code hostError;
-    const auto hostPathStatus = std::filesystem::status(directoryPath, hostError);
+    const auto hostPathStatus = std::filesystem::status(hostPath, hostError);
     if (hostError && hostError != std::errc::no_such_file_or_directory)
         throw std::system_error(hostError, "stat directory descriptor path");
     const bool hostPathExists = !hostError && std::filesystem::exists(hostPathStatus);
     const bool hasHostDirectory = hostPathExists && std::filesystem::is_directory(hostPathStatus);
     FileStat directoryStatus{};
-    if (hasHostDirectory && !File::TryFillFileStat(directoryPath, &directoryStatus))
+    if (hasHostDirectory && !File::TryFillFileStat(hostPath, &directoryStatus))
         throw std::system_error(errno, std::generic_category(), "stat directory descriptor identity");
     if (!hasHostDirectory && !hasArchiveDirectory) throw std::system_error(ENOTDIR, std::generic_category(), "directory descriptor path");
     std::uint64_t currentNumber = hasArchiveDirectory ? static_cast<std::uint64_t>(node.Handle) + 1 : 0;
@@ -186,7 +223,7 @@ void Load(DirectoryState& state, int fd) {
     Add(state, ".", currentNumber, GuestDirectoryType);
     std::uint64_t parentNumber = 0;
     FileStat parentStatus{};
-    const bool hasHostParent = File::TryFillFileStat(directoryPath.parent_path(), &parentStatus);
+    const bool hasHostParent = File::TryFillFileStat(hostPath.parent_path(), &parentStatus);
     if (hasHostParent) parentNumber = static_cast<std::uint64_t>(parentStatus.st_ino);
     AppArchiveNode parentNode{};
     if (!hasHostParent && AppArchiveLookup_nid_no_patch(directoryPath.parent_path(), &parentNode) && parentNode.Directory)
@@ -198,7 +235,17 @@ void Load(DirectoryState& state, int fd) {
         const int savedErrno = errno;
         const bool followLinks = InsideApp0(directoryPath);
         errno = savedErrno;
-#endif
+        for (const auto& entryPath : ListDirectoryEntries(hostPath)) {
+            const auto utf8Name = entryPath.filename().u8string();
+            const std::string name(reinterpret_cast<const char*>(utf8Name.data()), utf8Name.size());
+            FileStat entryStatus{};
+            if (!File::FillLinkStat(entryPath, &entryStatus)) {
+                if (errno == ENOENT) continue;
+                throw std::system_error(errno, std::generic_category(), "stat directory entry");
+            }
+            Add(state, name, static_cast<std::uint64_t>(entryStatus.st_ino), EntryType(entryPath, followLinks));
+        }
+#else
         for (std::filesystem::directory_iterator it(directoryPath, error), end; it != end; it.increment(error)) {
             if (error) throw std::system_error(error, "read directory descriptor");
             const auto utf8Name = it->path().filename().u8string();
@@ -208,14 +255,11 @@ void Load(DirectoryState& state, int fd) {
                 if (errno == ENOENT) continue;
                 throw std::system_error(errno, std::generic_category(), "stat directory entry");
             }
-#ifdef _WIN32
-            Add(state, name, static_cast<std::uint64_t>(entryStatus.st_ino), EntryType(it->path(), followLinks));
-#else
             Add(state, name, static_cast<std::uint64_t>(entryStatus.st_ino), DirectoryEntryType(it->symlink_status(error)));
-#endif
             if (error) throw std::system_error(error, "stat directory entry");
         }
         if (error) throw std::system_error(error, "read directory descriptor");
+#endif
     }
     if (hasArchiveDirectory) {
         std::vector<std::string> hostNames;
@@ -277,7 +321,7 @@ int OpenDirectoryDescriptor(const std::filesystem::path& path) {
     auto state = std::make_shared<DirectoryState>();
     state->path = path;
     std::error_code statusError;
-    const bool hostDirectory = std::filesystem::is_directory(path, statusError);
+    const bool hostDirectory = std::filesystem::is_directory(HostPath(path), statusError);
     AppArchiveNode archiveNode{};
     const bool archiveDirectory = AppArchiveLookup_nid_no_patch(path, &archiveNode) && archiveNode.Directory;
     state->virtualNamespace = archiveDirectory;
@@ -409,17 +453,19 @@ int ReadDirectoryDescriptor(int fd, char* buf, int nbytes, std::int64_t* base) {
     }
     catch (const DirectoryEntryNameTooLong&) { throw; }
     catch (const std::exception&) { return SCE_KERNEL_ERROR_EIO; }
-    if (base != nullptr) *base = static_cast<std::int64_t>(state->cursor);
+    const auto start = static_cast<std::int64_t>(state->cursor);
+    auto cursor = state->cursor;
+    std::string staged;
     std::size_t used = 0;
-    while (state->cursor < state->entries.size()) {
-        const auto& entry = state->entries[state->cursor];
+    while (cursor < state->entries.size()) {
+        const auto& entry = state->entries[cursor];
         const std::size_t record = (8 + entry.name.size() + 1 + 3) & ~std::size_t{3};
         if (used + record > static_cast<std::size_t>(nbytes)) {
             if (used == 0) return SCE_KERNEL_ERROR_EINVAL;
             break;
         }
-        char* out = buf + used;
-        std::memset(out, 0, record);
+        staged.resize(used + record);
+        char* out = staged.data() + used;
         const auto recordLength = static_cast<std::uint16_t>(record);
         const auto nameLength = static_cast<std::uint8_t>(entry.name.size());
         std::memcpy(out, &entry.fileNumber, sizeof(entry.fileNumber));
@@ -428,8 +474,11 @@ int ReadDirectoryDescriptor(int fd, char* buf, int nbytes, std::int64_t* base) {
         out[7] = static_cast<char>(nameLength);
         std::memcpy(out + 8, entry.name.c_str(), entry.name.size() + 1);
         used += record;
-        ++state->cursor;
+        ++cursor;
     }
+    if (used != 0 && !GuestCopyOut_nid_no_patch(buf, staged.data(), used)) return SCE_KERNEL_ERROR_EFAULT;
+    if (base != nullptr && !GuestCopyOut_nid_no_patch(base, &start, sizeof(start))) return SCE_KERNEL_ERROR_EFAULT;
+    state->cursor = cursor;
     return static_cast<int>(used);
 }
 

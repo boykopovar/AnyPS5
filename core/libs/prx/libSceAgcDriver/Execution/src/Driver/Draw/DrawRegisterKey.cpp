@@ -229,7 +229,7 @@ bool Driver::sameDecode(const DrawDecode& a, const DrawDecode& b) {
     const auto& s = a.state;
     const auto& t = b.state;
     const auto sameColor = [](const Graphics::ColorTarget& x, const Graphics::ColorTarget& y) {
-        return x.address == y.address && x.extent.width == y.extent.width && x.extent.height == y.extent.height && x.format == y.format && x.bytes == y.bytes && x.componentMapping == y.componentMapping && x.tileMode == y.tileMode && x.elementBytes == y.elementBytes && x.dccAddress == y.dccAddress && x.dccAlphaOnMsb == y.dccAlphaOnMsb && x.slot == y.slot && x.exportIndex == y.exportIndex && x.partialWriteMask == y.partialWriteMask && x.staged == y.staged && x.stagedMask == y.stagedMask && x.stagedFormat == y.stagedFormat;
+        return x.address == y.address && x.extent.width == y.extent.width && x.extent.height == y.extent.height && x.format == y.format && x.bytes == y.bytes && x.componentMapping == y.componentMapping && x.tileMode == y.tileMode && x.elementBytes == y.elementBytes && x.dccAddress == y.dccAddress && x.dccAlphaOnMsb == y.dccAlphaOnMsb && x.slot == y.slot && x.exportIndex == y.exportIndex && x.partialWriteMask == y.partialWriteMask && x.staged == y.staged && x.stagedMask == y.stagedMask && x.stagedFormat == y.stagedFormat && x.mergeBlend == y.mergeBlend;
     };
     const auto sameBlend = [](const VkPipelineColorBlendAttachmentState& x, const VkPipelineColorBlendAttachmentState& y) {
         return x.blendEnable == y.blendEnable && x.srcColorBlendFactor == y.srcColorBlendFactor && x.dstColorBlendFactor == y.dstColorBlendFactor && x.colorBlendOp == y.colorBlendOp && x.srcAlphaBlendFactor == y.srcAlphaBlendFactor && x.dstAlphaBlendFactor == y.dstAlphaBlendFactor && x.alphaBlendOp == y.alphaBlendOp && x.colorWriteMask == y.colorWriteMask;
@@ -252,7 +252,7 @@ bool Driver::sameDecode(const DrawDecode& a, const DrawDecode& b) {
     for (std::size_t i = 0; i < s.blends.size(); ++i) {
         if (!sameBlend(s.blends[i], t.blends[i])) return false;
     }
-    if (s.colorRop != t.colorRop || s.hasColorTarget != t.hasColorTarget || s.rectList != t.rectList || s.renderExtent.width != t.renderExtent.width || s.renderExtent.height != t.renderExtent.height || s.topology != t.topology || s.negativeOneToOne != t.negativeOneToOne || s.depthClamp != t.depthClamp || s.conservativeRasterization != t.conservativeRasterization || s.perSampleShading != t.perSampleShading || s.cullMode != t.cullMode || s.polygonMode != t.polygonMode || s.lineWidth != t.lineWidth || s.frontFace != t.frontFace || !sameBlend(s.blend, t.blend) || s.blendConstants != t.blendConstants) return false;
+    if (s.colorRop != t.colorRop || s.hasColorTarget != t.hasColorTarget || s.rectList != t.rectList || s.rasterizerDiscard != t.rasterizerDiscard || s.renderExtent.width != t.renderExtent.width || s.renderExtent.height != t.renderExtent.height || s.topology != t.topology || s.negativeOneToOne != t.negativeOneToOne || s.depthClamp != t.depthClamp || s.conservativeRasterization != t.conservativeRasterization || s.perSampleShading != t.perSampleShading || s.cullMode != t.cullMode || s.polygonMode != t.polygonMode || s.lineWidth != t.lineWidth || s.frontFace != t.frontFace || !sameBlend(s.blend, t.blend) || s.blendConstants != t.blendConstants) return false;
     if (std::memcmp(&s.viewport, &t.viewport, sizeof(VkViewport)) != 0 || std::memcmp(&s.scissor, &t.scissor, sizeof(VkRect2D)) != 0) return false;
     const auto& p = a.pixel;
     const auto& q = b.pixel;
