@@ -700,7 +700,7 @@ class SystemDependencyTests(unittest.TestCase):
                 self.assertIsNotNone(SYSTEM_DEPENDENCY.search(line))
 
     def test_allows_exempt_lines(self):
-        for line in ("find_package(Python3 COMPONENTS Interpreter)", "find_package( Threads REQUIRED )", "FIND_PACKAGE(Git)", "add_library(x)"):
+        for line in ("find_package(Python3 COMPONENTS Interpreter)", "find_package( Threads REQUIRED )", "FIND_PACKAGE(Git)", "find_package(LLVM REQUIRED CONFIG)", "add_library(x)"):
             with self.subTest(line=line):
                 self.assertIsNone(SYSTEM_DEPENDENCY.search(line))
 

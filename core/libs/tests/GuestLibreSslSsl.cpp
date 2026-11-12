@@ -3,6 +3,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
@@ -241,6 +242,31 @@ static void TestSetExDataPrefilledStack() {
     FreeExData(internal);
 }
 
+static void TestGetPeerCertChain() {
+    TestSsl ssl {};
+    LibreSslPutError_nid_no_patch(3, 100, 65);
+    LibreSslPutError_nid_no_patch(4, 101, 66);
+    constexpr std::uint64_t firstError = (std::uint64_t{3} << 24) | (std::uint64_t{100} << 12) | 65;
+    constexpr std::uint64_t secondError = (std::uint64_t{4} << 24) | (std::uint64_t{101} << 12) | 66;
+    Require(ERR_peek_error_nid_postfix() == firstError);
+    Require(SSL_get_peer_cert_chain_nid_postfix(nullptr) == nullptr);
+    Require(ERR_peek_error_nid_postfix() == firstError);
+    unsigned char before[sizeof(ssl)];
+    std::memcpy(before, &ssl, sizeof(ssl));
+    Require(SSL_get_peer_cert_chain_nid_postfix(Ssl(&ssl)) == nullptr);
+    Require(std::memcmp(&ssl, before, sizeof(ssl)) == 0);
+    Require(ERR_peek_error_nid_postfix() == firstError);
+    int session = 0;
+    ssl.session = &session;
+    std::memcpy(before, &ssl, sizeof(ssl));
+    RequireThrows([&] { SSL_get_peer_cert_chain_nid_postfix(Ssl(&ssl)); });
+    Require(std::memcmp(&ssl, before, sizeof(ssl)) == 0);
+    Require(ERR_peek_error_nid_postfix() == firstError);
+    Require(ERR_get_error_nid_postfix() == firstError);
+    Require(ERR_get_error_nid_postfix() == secondError);
+    Require(ERR_get_error_nid_postfix() == 0);
+}
+
 int main() {
     void* heap[10] {};
     ApplicationHeapRegister_nid_no_patch(heap);
@@ -255,5 +281,6 @@ int main() {
     TestWant();
     TestSetExData();
     TestSetExDataPrefilledStack();
+    TestGetPeerCertChain();
     return 0;
 }
