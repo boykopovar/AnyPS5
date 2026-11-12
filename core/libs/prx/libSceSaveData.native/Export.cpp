@@ -2192,7 +2192,8 @@ static int umountWithBackup(const SaveDataMountPoint* mount_point) {
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    if (!isValidMountPoint(mount_point)) {
+    SaveDataMountPoint localPoint{};
+    if (!copy_mount_point(mount_point, &localPoint)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     SaveDataEvent event{};
@@ -2200,7 +2201,7 @@ static int umountWithBackup(const SaveDataMountPoint* mount_point) {
     event.error_code = SAVE_DATA_OK;
     {
         std::lock_guard lock(g_slots_mutex);
-        const int slot = find_slot_by_mount_point(mount_point->data);
+        const int slot = find_slot_by_mount_point(localPoint.data);
         if (slot == -1) {
             return SAVE_DATA_ERROR_NOT_MOUNTED;
         }
