@@ -4404,10 +4404,6 @@ int APS5_VABI _ZN7WebCore20HTMLFrameElementBase5widthEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPreferencesSetDoNotTrackEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore14FileIconLoader10iconLoadedEON3WTF6RefPtrINS_4IconENS1_13DumbPtrTraitsIS3_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -5669,10 +5665,6 @@ int APS5_VABI _ZN7WebCore9FrameView17addScrollableAreaEPNS_14ScrollableAreaE() {
 }
 
 int APS5_VABI _ZN7WebCore20SharedBufferDataViewD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPreferencesSetLazyImageLoadingEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7350,10 +7342,6 @@ int APS5_VABI _ZN7WebCore14FrameSelection7setBaseERKNS_8PositionENS_9EAffinityEN
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPreferencesGetLazyImageLoadingEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore12SettingsBase20setFantasyFontFamilyERKN3WTF10AtomStringE11UScriptCode() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8149,10 +8137,6 @@ int APS5_VABI _ZNK7WebCore5Frame13ownerRendererEv() {
 }
 
 int APS5_VABI _ZN7WebCore8Settings24setStorageBlockingPolicyENS_14SecurityOrigin21StorageBlockingPolicyE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPreferencesGetDoNotTrackEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -10409,18 +10393,6 @@ int APS5_VABI WKBundleIsPageBoxVisible() {
 }
 
 int APS5_VABI WKBundleIsProcessingUserGesture() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleNodeHandleCopyDocumentFrame() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleNodeHandleCopyDocument() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleNodeHandleCopyHTMLIFrameElementContentFrame() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -18730,10 +18702,6 @@ int APS5_VABI _ZN7WebCore14SecurityOrigin6createERKN3WTF3URLE() {
 }
 
 int APS5_VABI _ZN7WebCore14SecurityPolicy18setLocalLoadPolicyENS0_15LocalLoadPolicyE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SecurityPolicy18shouldHideReferrerERKN3WTF3URLERKNS1_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

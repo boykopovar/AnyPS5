@@ -1,4 +1,5 @@
 #include "prx/libSceM4aacEnc/libSceM4aacEnc.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -121,6 +122,24 @@ void CheckContextCalls() {
         context[0] = id;
         Require(libSceM4aacEncUnknown_dyjd6gEaAXw_nid_no_patch(context, &value) == 0 && value == id, "dyjd6gEaAXw: value");
     }
+    errno = 71;
+    Require(sceM4aacEncCreateEncoder(2, 48000, 128000, 0, 0, reinterpret_cast<int32_t*>(0x10)) == ErrorInvalidPointer, "Create: unmapped error pointer");
+    Require(errno == 71, "Create: errno preserved");
+    errno = 71;
+    Require(sceM4aacEncCreateEncoderEx(reinterpret_cast<int32_t*>(0x10), 2, 48000, 128000, 0, 0, &error) == ErrorInvalidPointer, "CreateEx: unmapped context");
+    Require(errno == 71, "CreateEx: errno preserved");
+    errno = 71;
+    Require(sceM4aacEncDeleteEncoder(1, reinterpret_cast<int32_t*>(0x10)) == ErrorInvalidPointer, "Delete: unmapped error pointer");
+    Require(errno == 71, "Delete: errno preserved");
+    errno = 71;
+    Require(sceM4aacEncDeleteEncoderEx(reinterpret_cast<int32_t*>(0x10), &error) == ErrorInvalidPointer, "DeleteEx: unmapped context");
+    Require(errno == 71, "DeleteEx: errno preserved");
+    errno = 71;
+    Require(libSceM4aacEncUnknown_dyjd6gEaAXw_nid_no_patch(reinterpret_cast<const int32_t*>(0x10), &value) == ErrorInvalidPointer, "dyjd6gEaAXw: unmapped context");
+    Require(errno == 71, "dyjd6gEaAXw: errno preserved on unmapped context");
+    errno = 71;
+    Require(libSceM4aacEncUnknown_dyjd6gEaAXw_nid_no_patch(context, reinterpret_cast<int32_t*>(0x10)) == ErrorInvalidPointer, "dyjd6gEaAXw: unmapped value");
+    Require(errno == 71, "dyjd6gEaAXw: errno preserved on unmapped value");
 }
 
 }
