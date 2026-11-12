@@ -13,7 +13,7 @@ from pathlib import Path
 import package_headers
 
 ROOT = Path(__file__).resolve().parent.parent
-WEB_FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "output-directory.mjs", "worker.mjs",
+WEB_FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "i18n.mjs", "output-directory.mjs", "worker.mjs",
              "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
 
 

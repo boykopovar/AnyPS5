@@ -1109,6 +1109,8 @@ static std::uint64_t ClockUsec() {
     return static_cast<std::uint64_t>(usec);
 }
 
+static thread_local bool calloutContextEnded = false;
+
 static void* APS5_VABI CalloutThread(void* arg) {
     auto* context = static_cast<NpCalloutContext*>(arg);
     sceNpMutexLock(&context->mutex);
@@ -1121,6 +1123,7 @@ static void* APS5_VABI CalloutThread(void* arg) {
             sceNpMutexUnlock(&context->mutex);
 
             head->handler(head->arg);
+            if (calloutContextEnded) return nullptr;
             sceNpMutexLock(&context->mutex);
 
             continue;
@@ -1160,8 +1163,16 @@ int APS5_VABI sceNpCalloutInitCtx(NpCalloutContext* context, const char* name, s
 
 void APS5_VABI sceNpCalloutTermCtx(NpCalloutContext* context) {
     if (context->initialized == 0) return;
-    if (scePthreadEqual(scePthreadSelf(), context->thread) != 0)
-        throw std::runtime_error("sceNpCalloutTermCtx: terminating a callout context from one of its own callouts is not implemented");
+    if (scePthreadEqual(scePthreadSelf(), context->thread) != 0) {
+        sceNpMutexLock(&context->mutex);
+        sceNpMutexUnlock(&context->mutex);
+        sceNpCondDestroy(&context->cond);
+        sceNpMutexDestroy(&context->mutex);
+        scePthreadDetach(context->thread);
+        context->initialized = 0;
+        calloutContextEnded = true;
+        return;
+    }
     sceNpMutexLock(&context->mutex);
 
     context->stopping = 1;
