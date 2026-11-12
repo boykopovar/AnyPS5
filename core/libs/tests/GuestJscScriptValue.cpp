@@ -20,20 +20,28 @@ std::array<unsigned char, 16> ValueHolding(const std::uint64_t* slot) {
     return object;
 }
 
-} // namespace
+}
 
 int main() {
     std::array<unsigned char, 16> empty{};
     std::memset(empty.data(), 0x5A, empty.size());
     _ZN10Deprecated11ScriptValueC1Ev(empty.data());
-    Require(_ZNK10Deprecated11ScriptValue10hasNoValueEv(empty.data()));
-    Require(_ZNK10Deprecated11ScriptValue7jsValueEv(empty.data()) == 0);
+    std::uint64_t* constructedSlot = nullptr;
+    std::memcpy(&constructedSlot, empty.data(), sizeof(constructedSlot));
+    Require(constructedSlot == nullptr);
+    for (std::size_t i = sizeof(constructedSlot); i < empty.size(); ++i) Require(empty[i] == 0x5A);
+    for (int call = 0; call < 2; ++call) {
+        Require(_ZNK10Deprecated11ScriptValue10hasNoValueEv(empty.data()));
+        Require(_ZNK10Deprecated11ScriptValue7jsValueEv(empty.data()) == 0);
+    }
 
     for (const std::uint64_t encoded : {std::uint64_t{0x0002000000000007}, std::uint64_t{0xFFFE000000000001}, std::uint64_t{1}}) {
         std::uint64_t slot = encoded;
         const auto object = ValueHolding(&slot);
-        Require(!_ZNK10Deprecated11ScriptValue10hasNoValueEv(object.data()));
-        Require(_ZNK10Deprecated11ScriptValue7jsValueEv(object.data()) == encoded);
+        for (int call = 0; call < 2; ++call) {
+            Require(!_ZNK10Deprecated11ScriptValue10hasNoValueEv(object.data()));
+            Require(_ZNK10Deprecated11ScriptValue7jsValueEv(object.data()) == encoded);
+        }
         Require(slot == encoded);
         for (std::size_t i = sizeof(&slot); i < object.size(); ++i) Require(object[i] == 0x5A);
     }
