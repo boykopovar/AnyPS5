@@ -12,7 +12,7 @@ void Require(bool value) {
 
 int main() {
     constexpr int notSupported = static_cast<int>(0x809E0005u);
-    for (int call = 0; call < 2; ++call) {
+    for (int call = 0; call < 4; ++call) {
         Require(_ZNK15AbstractStorage14TwitterContent13GetCapabilityEv() == 0x6C0A);
         Require(_ZNK15AbstractStorage14TwitterContent10GetServiceEv() == 3);
         Require(_ZNK15AbstractStorage13TwitterFolder10GetServiceEv() == 3);
