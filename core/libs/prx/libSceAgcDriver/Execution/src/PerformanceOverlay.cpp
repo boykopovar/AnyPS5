@@ -728,10 +728,18 @@ std::optional<std::uint64_t> ReadPhysicalMemoryBytes() {
 #endif
 }
 
-std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content) {
-    auto scale = std::max<std::int32_t>(1, static_cast<std::int32_t>((extent.height + 240) / 480));
+std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content, std::int32_t requested) {
+    auto scale = requested > 0 ? requested : std::max<std::int32_t>(1, static_cast<std::int32_t>((extent.height + 240) / 480));
     while (scale > 1 && !fits(extent, content, scale)) --scale;
     return scale;
+}
+
+std::int32_t OverlayScaleRequest(const char* value) {
+    if (value == nullptr || value[0] == '\0') return 0;
+    char* end = nullptr;
+    const long parsed = std::strtol(value, &end, 10);
+    if (end == value || *end != '\0' || parsed < 1 || parsed > 8) return 0;
+    return static_cast<std::int32_t>(parsed);
 }
 
 OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, OverlayCorner corner) {
@@ -740,7 +748,7 @@ OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, Ov
     Graphics::Require(content.columns > 0, "the performance overlay panel needs at least one column");
     Graphics::Require(content.graph ? content.columns * OverlayMetrics::Advance - 1 >= static_cast<std::int32_t>(OverlayStatistics::FrameHistory) : content.frameTimes.empty(), "the performance overlay graph needs a graph row as wide as its 120 frames");
     OverlayLayout layout;
-    const auto scale = OverlayScale(extent, content);
+    const auto scale = OverlayScale(extent, content, OverlayScaleRequest(std::getenv("ANYPS5_OVERLAY_SCALE")));
     layout.scale = scale;
     const auto width = panelWidth(content.columns, scale);
     const auto height = panelHeight(content, scale);
