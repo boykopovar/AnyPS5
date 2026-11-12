@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -223,6 +224,7 @@ void TestCapture() {
 
 void TestNoDevice() {
     constexpr int invalidHandle = static_cast<int>(0x80260101);
+    constexpr int invalidPointer = static_cast<int>(0x80260105);
     constexpr int invalidState = static_cast<int>(0x80260109);
     constexpr int portFull = static_cast<int>(0x80260107);
     SetEnvironment("SDL_AUDIODRIVER", "none");
@@ -241,6 +243,9 @@ void TestNoDevice() {
     Require(elapsed >= std::chrono::milliseconds(4 * 16) && elapsed < std::chrono::milliseconds(1000));
     for (std::size_t i = 0; i < 256 * 8; ++i) Require(buffer[i] == 0);
     Require(buffer[256 * 8] == 0xCC);
+    errno = EBUSY;
+    Require(sceAudioInInput(handle, reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10))) == invalidPointer && errno == EBUSY);
+    Require(sceAudioInInput(handle, buffer.data()) == 256);
     Require(sceAudioInInput(handle, nullptr) == 0);
     const int hq = sceAudioInHqOpen(user, 0, 0, 128, 48000, 2);
     const int async = sceAudioInAsyncOpen(user, 1, 0, 128, 48000, 0x11);
