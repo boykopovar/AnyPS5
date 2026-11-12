@@ -1,4 +1,5 @@
 #include "prx/libSceMouse/include/Api.hpp"
+#include "prx/libSceMouse/include/InventoryExports.hpp"
 #include "prx/libSceMouse/include/mouse_structs.h"
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
@@ -219,11 +220,10 @@ int main() {
     Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, nullptr) == MOUSE_ERROR_INVALID_ARG);
     Require(sceMouseDebugGetDeviceId(42, &deviceId) == MOUSE_ERROR_INVALID_HANDLE && deviceId == -1);
     Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, &deviceId) == MOUSE_OK && deviceId == MOUSE_DEVICE_ID);
+    Require(sceMouseDisconnectAll() == MOUSE_OK);
+    Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, &deviceId) == MOUSE_OK && deviceId == -1);
     MouseInputEvent disconnectEvent{};
     disconnectEvent.connectionChange = true;
-    disconnectEvent.connected = false;
-    MousePublishInput_nid_no_patch(disconnectEvent);
-    Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, &deviceId) == MOUSE_OK && deviceId == -1);
     disconnectEvent.connected = true;
     MousePublishInput_nid_no_patch(disconnectEvent);
     Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, &deviceId) == MOUSE_OK && deviceId == MOUSE_DEVICE_ID);

@@ -65,10 +65,10 @@ int APS5_VABI sceMouseDisconnectPort() {
 }
 
 int APS5_VABI sceMouseGetDeviceInfo(std::int32_t device, void* info) {
-    static_cast<void>(device);
     if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     if (info == nullptr) return MOUSE_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceMouseMbusInit() {
@@ -80,15 +80,17 @@ int APS5_VABI sceMouseMbusInit() {
 int APS5_VABI sceMouseSetHandType(std::int32_t handle, std::uint32_t type) {
     if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     if (type > MOUSE_MAX_HAND_TYPE) return MOUSE_ERROR_INVALID_ARG;
-    static_cast<void>(handle);
+    if (const int error = Mouse::CheckHandle(handle)) return error;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceMouseSetPointerSpeed(std::int32_t handle, std::uint32_t speed) {
     if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     if (speed > MOUSE_MAX_POINTER_SPEED) return MOUSE_ERROR_INVALID_ARG;
-    static_cast<void>(handle);
+    if (const int error = Mouse::CheckHandle(handle)) return error;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceMouseSetProcessPrivilege() {
@@ -118,6 +120,7 @@ int APS5_VABI sceMouseExtensionRead(std::int32_t handle, void* data, std::uint32
     if (size != MOUSE_EXTENSION_DATA_SIZE) return MOUSE_ERROR_INVALID_ARG;
     if (const int error = Mouse::CheckRead(handle, data, num)) return error;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceMouseExtensionReadState(std::int32_t handle, void* state, std::uint32_t size) {
@@ -129,6 +132,7 @@ int APS5_VABI sceMouseExtensionReadState(std::int32_t handle, void* state, std::
     if (!cleared) return MOUSE_ERROR_INVALID_ARG;
     if (const int error = Mouse::CheckRead(handle, state, MOUSE_MAX_DATA_NUM)) return error;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceMouseExtensionSetConfig(std::int32_t handle, const void* config) {
@@ -138,8 +142,8 @@ int APS5_VABI sceMouseExtensionSetConfig(std::int32_t handle, const void* config
 int APS5_VABI sceMouseExtensionSetCursor(std::int32_t handle, std::int32_t cursor) {
     if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     if (const int error = Mouse::CheckHandle(handle)) return error;
-    static_cast<void>(cursor);
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceMouseExtensionGetCursor(std::int32_t handle, void* cursor) {
@@ -147,6 +151,7 @@ int APS5_VABI sceMouseExtensionGetCursor(std::int32_t handle, void* cursor) {
     if (cursor == nullptr) return MOUSE_ERROR_INVALID_ARG;
     if (const int error = Mouse::CheckHandle(handle)) return error;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceMouseExtensionScalePosition(std::uint16_t* position, std::uint16_t scale) {

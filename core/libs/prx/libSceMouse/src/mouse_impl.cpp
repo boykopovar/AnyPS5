@@ -368,4 +368,12 @@ void Publish(const MouseInputEvent& event) {
     enqueue(data);
 }
 
+int DisconnectAll() {
+    MouseInputEvent event{};
+    event.connectionChange = true;
+    event.connected = false;
+    Publish(event);
+    return MOUSE_OK;
+}
+
 }

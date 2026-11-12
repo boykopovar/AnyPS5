@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -105,6 +106,7 @@ int main() {
     const auto scale = As<ScaleFn>(&sceMouseExtensionScalePosition);
 
     std::array<std::uint8_t, 0x40> buffer{};
+    std::array<std::uint8_t, 168> deviceInfoBuffer{};
     std::array<std::uint8_t, 0x20> config{};
     std::uint16_t position = 100;
     ProtectedPosition protectedPosition;
@@ -114,7 +116,8 @@ int main() {
     Require(scale(inaccessible, 1920) == NotInitialized, "ScalePosition accessed memory before initialization");
 
     Require(getHandle(1, 0, 0) == NotInitialized, "GetHandle answered before sceMouseInit");
-    Require(getDeviceInfo(0, buffer.data()) == NotInitialized, "GetDeviceInfo answered before sceMouseInit");
+    Require(getDeviceInfo(0, deviceInfoBuffer.data()) == NotInitialized, "GetDeviceInfo answered before sceMouseInit");
+    Require(sceMouseDisconnectAll() == NotInitialized, "DisconnectAll answered before sceMouseInit");
     Require(setHandType(1, 0) == NotInitialized && setPointerSpeed(1, 0) == NotInitialized, "SetHandType or SetPointerSpeed answered before sceMouseInit");
     Require(setConfig(1, config.data()) == NotInitialized, "ExtensionSetConfig answered before sceMouseInit");
     Require(setCursor(1, 0) == NotInitialized && getCursor(1, buffer.data()) == NotInitialized, "the cursor calls answered before sceMouseInit");
@@ -190,6 +193,30 @@ int main() {
     Require(setCursor(handle + 1, 0) == InvalidHandle, "ExtensionSetCursor took an unopened handle");
     Require(getCursor(handle, nullptr) == InvalidArg && getCursor(handle + 1, nullptr) == InvalidArg, "ExtensionGetCursor didn't check its output before the handle");
     Require(getCursor(handle + 1, buffer.data()) == InvalidHandle, "ExtensionGetCursor took an unopened handle");
+
+    auto assertThrowsNotImplemented = [](auto&& call, const char* name) {
+        bool threw = false;
+        try {
+            call();
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        Require(threw, name);
+    };
+
+    assertThrowsNotImplemented([&] { setHandType(handle, 0); }, "SetHandType didn't throw NotImplemented after checks");
+    Require(setHandType(handle + 1, 0) == InvalidHandle, "SetHandType took an unopened handle");
+    assertThrowsNotImplemented([&] { setPointerSpeed(handle, 4); }, "SetPointerSpeed didn't throw NotImplemented after checks");
+    Require(setPointerSpeed(handle + 1, 4) == InvalidHandle, "SetPointerSpeed took an unopened handle");
+    assertThrowsNotImplemented([&] { getDeviceInfo(0, deviceInfoBuffer.data()); }, "GetDeviceInfo didn't throw NotImplemented after checks");
+    assertThrowsNotImplemented([&] { extensionRead(handle, buffer.data(), 0x30, 1); }, "ExtensionRead didn't throw NotImplemented after checks");
+    std::memset(buffer.data(), 0xcc, buffer.size());
+    assertThrowsNotImplemented([&] { extensionReadState(handle, buffer.data(), 0x40); }, "ExtensionReadState didn't throw NotImplemented after checks");
+    for (const auto byte : buffer) {
+        Require(byte == 0, "ExtensionReadState didn't zero output buffer");
+    }
+    assertThrowsNotImplemented([&] { setCursor(handle, 1); }, "ExtensionSetCursor didn't throw NotImplemented after checks");
+    assertThrowsNotImplemented([&] { getCursor(handle, buffer.data()); }, "ExtensionGetCursor didn't throw NotImplemented after checks");
 
     Require(sceMouseClose(handle) == Ok, "sceMouseClose failed");
     Require(getHandle(1, 0, 0) == NoHandle, "GetHandle returned a closed handle");

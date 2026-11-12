@@ -33,6 +33,7 @@ int SetAbsoluteVirtualScreenSize(std::int32_t handle, std::int32_t size);
 int SetAbsoluteHighPrecisionMode(std::int32_t handle, std::int32_t mode);
 int ReadAbsolutePosition(std::int32_t handle, MouseAbsoluteData* data, std::int32_t num);
 int DebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId);
+int DisconnectAll();
 void Publish(const MouseInputEvent& event);
 }
 
