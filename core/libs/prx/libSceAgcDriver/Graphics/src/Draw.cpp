@@ -1456,6 +1456,27 @@ bool vertexCopyTailReadable(const Recorder& recorder, std::uint64_t address, std
 
 }
 
+std::size_t GrownVertexCopyBytes(std::size_t bytes, std::size_t growLimit) {
+    if (growLimit <= bytes) return bytes;
+    const auto grown = bytes + std::min(bytes / 4u, growLimit - bytes);
+    return grown <= Recorder::DrawInputBudget ? grown : bytes;
+}
+
+std::uint64_t VertexCopyGrowEnd(const State& state, std::uint64_t end, std::uint64_t limit) {
+    limit = std::max(limit, end);
+    const auto cut = [&](std::uint64_t target) {
+        if (target >= end && target < limit) limit = target;
+    };
+    if (state.hasColorTarget) cut(state.color.MemoryAddress());
+    for (const auto& color : state.colors) cut(color.MemoryAddress());
+    if (state.depth) {
+        cut(state.depth->address);
+        cut(state.depth->stencilAddress);
+        cut(state.depth->htileAddress);
+    }
+    return limit;
+}
+
 DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t growLimit) {
     Require(use != Recorder::SnapshotUse::Storage, "a draw input is a vertex or index buffer");
     DrawInputCopy copy;
@@ -1480,13 +1501,10 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
             copy.reused = true;
             return copy;
         }
-        if (copy.generation != 0 && use == Recorder::SnapshotUse::Vertex && growLimit > bytes && recorder->ShorterDrawSnapshotKept(address, bytes, use)) {
-            const auto grown = bytes + std::min(bytes / 4u, growLimit - bytes);
-            if (grown > bytes && grown <= Recorder::DrawInputBudget && vertexCopyTailReadable(*recorder, address, bytes, grown)) {
-                if (const auto generation = GuestMemory::CollectWrites(address, grown); generation != 0) {
-                    copy.generation = generation;
-                    copied = grown;
-                }
+        if (const auto grown = GrownVertexCopyBytes(bytes, growLimit); copy.generation != 0 && use == Recorder::SnapshotUse::Vertex && grown > bytes && recorder->ShorterDrawSnapshotKept(address, bytes, use) && vertexCopyTailReadable(*recorder, address, bytes, grown)) {
+            if (const auto generation = GuestMemory::CollectWrites(address, grown); generation != 0) {
+                copy.generation = generation;
+                copied = grown;
             }
         }
     }
@@ -2011,17 +2029,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             inputs.inPlaceReads.emplace_back(begin, end);
             continue;
         }
-        auto limit = std::max<std::uint64_t>(rangeLimit[range], end);
-        const auto cut = [&](std::uint64_t target) {
-            if (target >= end && target < limit) limit = target;
-        };
-        if (state.hasColorTarget) cut(state.color.MemoryAddress());
-        for (const auto& color : state.colors) cut(color.MemoryAddress());
-        if (state.depth) {
-            cut(state.depth->address);
-            cut(state.depth->stencilAddress);
-            cut(state.depth->htileAddress);
-        }
+        const auto limit = VertexCopyGrowEnd(state, end, rangeLimit[range]);
         auto copy = CopyDrawInput(context, context.recorder, begin, bytes, 1, Recorder::SnapshotUse::Vertex, static_cast<std::size_t>(limit - begin));
         KeepDrawInput(context.recorder, begin, copy, Recorder::SnapshotUse::Vertex, 0);
         rangeHandles.push_back(copy.buffer->Handle());

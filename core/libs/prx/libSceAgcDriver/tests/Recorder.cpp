@@ -5749,6 +5749,71 @@ void growingVertexCopyTests(const Device& device) {
     Require(!longerIndex.reused && longerIndex.buffer->Bytes().size() == 70000 && matches(longerIndex), "an index copy took headroom");
 }
 
+void grownVertexCopyShadowTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    using AgcDriver::Graphics::CopyDrawInput;
+    using AgcDriver::Graphics::KeepDrawInput;
+    auto context = device.GetContext();
+    if (!UnitShadowEnabled() || context.hostImportAlignment == 0) {
+        std::cout << "unit shadows or host imports unavailable: vertex copy headroom over a unit shadow not tested\n";
+        return;
+    }
+    constexpr std::uint64_t unit = 65536;
+    constexpr std::size_t bytes = 64 * unit;
+    void* block = AllocateWatched(bytes, 65536);
+    Require(block != nullptr, "unit shadows are on without write watching");
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    auto* guest = static_cast<std::byte*>(block);
+    for (std::size_t i = 0; i < bytes; ++i) guest[i] = static_cast<std::byte>(i * 5u);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, address, bytes);
+        }
+    } unregister{context, block, address};
+    const auto* import = HostImportFor(context, address, bytes);
+    if (import == nullptr || !Watched(address, bytes)) {
+        std::cout << "the test block is not imported and watched: vertex copy headroom over a unit shadow not tested\n";
+        return;
+    }
+    CollectWritesUncached(address, bytes);
+    {
+        const auto destination = ShadowDestinationFor(context, *import, address + 2 * unit, address + 3 * unit);
+        Require(destination.has_value(), "the shadow test unit got no slab");
+        const ShadowedRange range{address + 2 * unit, address + 3 * unit, destination->slab};
+        MarkShadowed(*import, std::span(&range, 1), TrackerGeneration());
+    }
+    Require(AnyShadowedOverlaps(address + 2 * unit, unit) && !AnyShadowedOverlaps(address, 2 * unit), "the shadow test unit is not the only shadowed one");
+    Recorder cache(context);
+    context.recorder = &cache;
+    const auto copyOf = [&](std::size_t requested) {
+        auto copy = CopyDrawInput(context, &cache, address, requested, 1, Recorder::SnapshotUse::Vertex, 4 * unit);
+        KeepDrawInput(&cache, address, copy, Recorder::SnapshotUse::Vertex, 0);
+        return copy;
+    };
+    copyOf(80000);
+    const auto before = copyOf(100000);
+    Require(!before.reused && before.buffer->Bytes().size() == 125000 && std::memcmp(before.buffer->Bytes().data(), guest, 125000) == 0, "a vertex copy whose headroom ends before a unit shadow took none");
+    const auto over = copyOf(126000);
+    Require(!over.reused && over.buffer->Bytes().size() == 126000 && std::memcmp(over.buffer->Bytes().data(), guest, 126000) == 0, "a vertex copy's headroom took bytes of a unit shadow");
+    guest[2 * unit] = std::byte{0x6d};
+    CollectWritesUncached(address, bytes);
+}
+
 void containingSnapshotTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     constexpr std::size_t bytes = 131072;
@@ -16444,6 +16509,7 @@ int main(int argc, char** argv) {
         drawSnapshotEvictionTests(device);
         paddedVertexSnapshotTests(device);
         growingVertexCopyTests(device);
+        grownVertexCopyShadowTests(device);
         containingSnapshotTests(device);
         unwrittenSnapshotTests(device);
         drawSnapshotUploadTests(device, recorder);

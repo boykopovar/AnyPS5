@@ -12285,6 +12285,42 @@ void validationTests() {
             Require(AgcDriver::Graphics::VertexDescriptorEnd(constant, 0) == 0, "a zero-stride descriptor has an end");
         }
         {
+            using AgcDriver::Graphics::GrownVertexCopyBytes;
+            constexpr std::size_t mib = std::size_t{1} << 20u;
+            Require(GrownVertexCopyBytes(1000, 0) == 1000 && GrownVertexCopyBytes(1000, 1000) == 1000, "a vertex copy grew without room past its read");
+            Require(GrownVertexCopyBytes(1000, 2000) == 1250 && GrownVertexCopyBytes(3, 2000) == 3, "a vertex copy did not grow by a quarter of its read");
+            Require(GrownVertexCopyBytes(1000, 1100) == 1100, "a vertex copy grew past its limit");
+            Require(GrownVertexCopyBytes(800 * mib, 2048 * mib) == 1000 * mib && GrownVertexCopyBytes(900 * mib, 1024 * mib) == 1024 * mib, "a vertex copy within the draw input budget did not grow");
+            Require(GrownVertexCopyBytes(900 * mib, 1025 * mib) == 900 * mib && GrownVertexCopyBytes(900 * mib, 2048 * mib) == 900 * mib, "a vertex copy grew past the draw input budget");
+        }
+        {
+            using AgcDriver::Graphics::DepthTarget;
+            using AgcDriver::Graphics::VertexCopyGrowEnd;
+            const AgcDriver::Graphics::State none{};
+            Require(VertexCopyGrowEnd(none, 0x2000, 0x3000) == 0x3000, "a vertex copy's limit was cut without a target");
+            Require(VertexCopyGrowEnd(none, 0x2000, 0x1800) == 0x2000, "a vertex copy's limit fell before its read's end");
+            auto color = none;
+            color.hasColorTarget = true;
+            color.color.address = 0x2800;
+            Require(VertexCopyGrowEnd(color, 0x2000, 0x3000) == 0x2800, "a vertex copy's limit passed the color target");
+            Require(VertexCopyGrowEnd(color, 0x2800, 0x3000) == 0x2800, "a color target at a vertex copy's read end left it headroom");
+            Require(VertexCopyGrowEnd(color, 0x2000, 0x2700) == 0x2700 && VertexCopyGrowEnd(color, 0x2000, 0x2800) == 0x2800 && VertexCopyGrowEnd(color, 0x2900, 0x3000) == 0x3000, "a color target outside a vertex copy's headroom moved its limit");
+            color.hasColorTarget = false;
+            Require(VertexCopyGrowEnd(color, 0x2000, 0x3000) == 0x3000, "an unbound color target cut a vertex copy's limit");
+            auto colors = none;
+            colors.colors.resize(3);
+            colors.colors[0].address = 0x2c00;
+            colors.colors[1].address = 0x2400;
+            colors.colors[2].address = 0x2a00;
+            Require(VertexCopyGrowEnd(colors, 0x2000, 0x3000) == 0x2400, "a vertex copy's limit passed a color target of the set");
+            for (const auto member : {&DepthTarget::address, &DepthTarget::stencilAddress, &DepthTarget::htileAddress}) {
+                auto depth = none;
+                depth.depth = DepthTarget{};
+                (*depth.depth).*member = 0x2600;
+                Require(VertexCopyGrowEnd(depth, 0x2000, 0x3000) == 0x2600, "a vertex copy's limit passed a depth, stencil or HTILE address");
+            }
+        }
+        {
             auto wider = attribute;
             wider.resource.fields[2] = 9;
             auto instanced = attribute;
