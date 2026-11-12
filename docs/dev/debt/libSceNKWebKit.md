@@ -447,7 +447,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKKeyboardEventMake` | `UJXHm7AkPK8` |
 | `WKMessageListenerSendReply` | `9Rvb-lG-IYI` |
 | `WKMouseEventMake` | `4LPi8JtvxYQ` |
-
 | `WKNotificationManagerProviderDidClickNotification` | `U3ua0NGm+jE` |
 | `WKNotificationManagerProviderDidCloseNotifications` | `IeQSRVoUfPw` |
 | `WKNotificationManagerProviderDidRemoveNotificationPolicies` | `gjIRPiBLogA` |
