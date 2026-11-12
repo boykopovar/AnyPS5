@@ -177,7 +177,9 @@ std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int
     }
     return NativePositioned_nid_no_patch(fd, buf, nbyte, offset, false);
 #else
-    return static_cast<std::int64_t>(::pread(fd, buf, nbyte, static_cast<off_t>(offset)));
+    const iovec whole{buf, nbyte};
+    const auto parts = File::TransferInParts(fd, &whole, 1, &offset, false);
+    return parts == -2 ? static_cast<std::int64_t>(::pread(fd, buf, nbyte, static_cast<off_t>(offset))) : parts;
 #endif
 }
 
@@ -193,11 +195,12 @@ std::int64_t NativePwrite(std::int32_t fd, const void* buf, std::size_t nbyte, s
 #else
     const auto result = File::PwriteSharedMemory_nid_no_patch(fd, buf, nbyte, offset);
     if (result != -2) return result;
-#ifdef __APPLE__
     const iovec whole{const_cast<void*>(buf), nbyte};
+#ifdef __APPLE__
     if (const auto appended = File::WritevAtEnd(fd, &whole, 1); appended != -2) return appended;
 #endif
-    return static_cast<std::int64_t>(::pwrite(fd, buf, nbyte, static_cast<off_t>(offset)));
+    const auto parts = File::TransferInParts(fd, &whole, 1, &offset, true);
+    return parts == -2 ? static_cast<std::int64_t>(::pwrite(fd, buf, nbyte, static_cast<off_t>(offset))) : parts;
 #endif
 }
 

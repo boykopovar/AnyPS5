@@ -25,6 +25,7 @@ static int MakePipe(int* ends) { return ::_pipe(ends, 64, _O_BINARY); }
 static int ClosePipe(int end) { return ::_close(end); }
 #else
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <unistd.h>
 static int MakePipe(int* ends) { return ::pipe(ends); }
 static int ClosePipe(int end) { return ::close(end); }
@@ -153,11 +154,70 @@ static void ConcurrentRecords(const std::filesystem::path& path) {
     for (const auto descriptor : descriptors) Require(sceKernelClose(descriptor) == 0);
 }
 
+#ifndef _WIN32
+static void LargeTransfers(const std::filesystem::path& root) {
+    constexpr std::size_t Slot = std::size_t{64} << 20;
+    constexpr std::size_t Span = 34 * Slot;
+    constexpr std::size_t Gib = std::size_t{1} << 30;
+    constexpr auto Length = static_cast<std::int64_t>(Span - Slot);
+    const auto backing = root / "large-buffer.bin";
+    const int memory = ::open(backing.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0600);
+    Require(memory >= 0 && ::ftruncate(memory, static_cast<off_t>(Slot)) == 0);
+    auto* const region = static_cast<char*>(::mmap(nullptr, Span, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(region != MAP_FAILED);
+    for (std::size_t offset = 0; offset < Span; offset += Slot) {
+        Require(::mmap(region + offset, Slot, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, memory, 0) == region + offset);
+    }
+    const int file = sceKernelOpen((root / "large.bin").string().c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC, 0644);
+    Require(file >= 0 && sceKernelFtruncate(file, Length) == 0);
+    Require(sceKernelPwrite(file, "abcdefghijklmnop", 16, Gib - 8) == 16);
+    Require(sceKernelPwrite(file, "ABCDEFGHIJKLMNOP", 16, 2 * Gib - 8) == 16);
+
+    Require(sceKernelRead(file, region, Span) == Length);
+    Require(sceKernelLseek(file, 0, SEEK_CUR) == Length);
+    Require(sceKernelPread(file, region, Span, Slot) == Length - static_cast<std::int64_t>(Slot));
+    Require(sceKernelLseek(file, 0, SEEK_CUR) == Length);
+    KernelAioResult result{-1, 0};
+    KernelAioRwRequest request{0, Span, region, &result, file};
+    std::int32_t id = 0;
+    std::int32_t removed = -1;
+    Require(sceKernelAioSubmitReadCommands(&request, 1, 1, &id) == 0 && result.state == 3 && result.return_value == Length);
+    Require(sceKernelAioDeleteRequest(id, &removed) == 0 && removed == 0);
+
+    char marks[32] = {};
+    KernelIovec pieces[5] = {{region, Gib - 8}, {marks, 16}, {region, Gib - 16}, {marks + 16, 16}, {region, Span - 2 * Gib - 8}};
+    Require(sceKernelLseek(file, 0, SEEK_SET) == 0);
+    Require(sceKernelReadv(file, pieces, 5) == Length);
+    Require(std::memcmp(marks, "abcdefghijklmnopABCDEFGHIJKLMNOP", sizeof(marks)) == 0);
+    Require(sceKernelLseek(file, 0, SEEK_CUR) == Length);
+    std::memset(marks, 0, sizeof(marks));
+    Require(sceKernelPreadv(file, pieces, 5, 0) == Length);
+    Require(std::memcmp(marks, "abcdefghijklmnopABCDEFGHIJKLMNOP", sizeof(marks)) == 0);
+    Require(sceKernelLseek(file, 0, SEEK_CUR) == Length);
+
+    std::memcpy(marks, "0123456789ABCDEFghijklmnopqrstuv", sizeof(marks));
+    Require(sceKernelLseek(file, 0, SEEK_SET) == 0);
+    Require(sceKernelWritev(file, pieces, 5) == static_cast<std::int64_t>(Span));
+    Require(sceKernelLseek(file, 0, SEEK_CUR) == static_cast<std::int64_t>(Span));
+    Require(sceKernelLseek(file, 0, SEEK_END) == static_cast<std::int64_t>(Span));
+    std::memset(marks, 0, sizeof(marks));
+    Require(sceKernelPread(file, marks, 16, Gib - 8) == 16 && sceKernelPread(file, marks + 16, 16, 2 * Gib - 8) == 16);
+    Require(std::memcmp(marks, "0123456789ABCDEFghijklmnopqrstuv", sizeof(marks)) == 0);
+    Require(sceKernelFtruncate(file, 0) == 0);
+
+    Require(sceKernelClose(file) == 0);
+    Require(::munmap(region, Span) == 0 && ::close(memory) == 0);
+}
+#endif
+
 int main() {
     const auto root = std::filesystem::path("anyps5-file-vector-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     ConcurrentRecords(root / "concurrent.bin");
+#ifndef _WIN32
+    LargeTransfers(root);
+#endif
     const auto path = root / "data.bin";
     { std::ofstream stream(path, std::ios::binary); stream << "0123456789"; }
 
