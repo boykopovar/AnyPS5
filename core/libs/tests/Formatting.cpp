@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <utility>
+#include <tuple>
 #include <iterator>
 #include <climits>
 #include <cmath>
@@ -107,22 +108,19 @@ static void CheckCharacterScanLengths() {
 
 static void CheckPlainScanResults() {
 #ifndef _WIN32
-    struct Case {
-        const char* input;
-        const char* format;
-        int result;
-    };
-    const Case cases[]{{"8", "%*d%d%n", 0}, {"8 ", "%*d %d%n", 0}, {"ab", "%*s%d%n", 0}, {"0x", "%x%n", EOF}, {"0x", "%i%n", EOF}, {"5 6", "%2$d %1$d%n", 0}};
-    for (const auto scan : {sscanf_nid_postfix, ScanList}) {
-        for (const Case& test : cases) {
-            std::array<unsigned char, 8> first;
-            std::array<unsigned char, 8> second;
-            first.fill(0x55);
-            second.fill(0x55);
+    using Scanner = int (APS5_VABI*)(const char*, const char*, ...);
+    for (const Scanner scan : {Scanner{sscanf_nid_postfix}, Scanner{ScanList}}) {
+        for (const auto& [input, format, result] : {std::tuple{"8", "%*d%d%n", 0}, std::tuple{"8 ", "%*d %d%n", 0}, std::tuple{"ab", "%*s%d%n", 0}, std::tuple{"0x", "%i%n", EOF}}) {
+            int value = -7;
             int count = -7;
-            Require(scan(test.input, test.format, first.data(), second.data(), &count) == test.result && count == -7);
-            Require(std::all_of(first.begin(), first.end(), [](unsigned char value) { return value == 0x55; }));
+            Require(scan(input, format, &value, &count) == result && value == -7 && count == -7);
         }
+        unsigned int hex = 0x55555555u;
+        int count = -7;
+        Require(scan("0x", "%x%n", &hex, &count) == EOF && hex == 0x55555555u && count == -7);
+        int first = -7;
+        int second = -7;
+        Require(scan("5 6", "%2$d %1$d", &first, &second) == 0 && first == -7 && second == -7);
     }
 #endif
 }
