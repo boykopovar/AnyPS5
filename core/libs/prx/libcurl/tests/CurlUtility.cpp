@@ -87,8 +87,8 @@ int main() {
     Require(curl_strnequal(nullptr, "test", 4) == 0);
     Require(curl_strnequal("test", nullptr, 4) == 0);
     Require(curl_strnequal(nullptr, nullptr, 4) == 0);
-    Require(curl_strnequal("Hello World", "hello there", 5) == 1);
-    Require(curl_strnequal("Hello World", "hello there", 6) == 0);
+    Require(curl_strnequal("HelloWorld", "hellothere", 5) == 1);
+    Require(curl_strnequal("HelloWorld", "hellothere", 6) == 0);
 
     Require(curl_slist_append(nullptr, nullptr) == nullptr);
     auto* list = curl_slist_append(nullptr, "alpha");
