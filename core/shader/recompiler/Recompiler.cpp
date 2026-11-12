@@ -967,6 +967,7 @@ struct SpecializedModule {
     SpirvContentHash hash;
     mutable std::mutex mutex;
     mutable SharedSpirv::Weak spirv;
+    mutable SharedSpirv kept;
 };
 
 struct SpecializedSpirv {
@@ -1120,6 +1121,7 @@ SharedSpirv specializedWords(const SpecializedModule& module, const CompiledShad
     auto spirv = InternSpirv(specializeWords(artifact, classes, constants, target));
     if (spirv.ContentHash() != module.hash) throw std::runtime_error("ShaderRecompiler: a specialized module built again from its key differs from its first build");
     module.spirv = spirv.Weaken();
+    module.kept = spirv;
     return spirv;
 }
 
@@ -1152,6 +1154,7 @@ struct RegistrationModuleEntry {
 
 SharedSpirv lockedWords(const SpecializedModule& module) {
     std::lock_guard lock(module.mutex);
+    if (!module.kept.empty()) return module.kept;
     return module.spirv.Lock();
 }
 
