@@ -1,27 +1,35 @@
 #pragma once
 
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 struct GuestJSString {
-    std::atomic<std::size_t> references{1};
+    std::atomic<std::uint32_t> references{1};
     std::vector<std::uint16_t> characters;
     bool nullString = false;
 };
 
+template<typename Unit> constexpr bool GuestJSStringValidLength(std::size_t length) {
+    constexpr std::size_t HeaderSize = 24;
+    return length <= std::min<std::size_t>(std::numeric_limits<std::int32_t>::max(),
+        (std::numeric_limits<std::uint32_t>::max() - HeaderSize) / sizeof(Unit));
+}
+
 extern "C" {
 
-GuestJSString* APS5_VABI JSStringCreateWithCharacters(const std::uint16_t* characters, std::size_t count);
-GuestJSString* APS5_VABI JSStringCreateWithUTF8CString(const char* text);
-GuestJSString* APS5_VABI JSStringRetain(GuestJSString* string);
-void APS5_VABI JSStringRelease(GuestJSString* string);
-std::size_t APS5_VABI JSStringGetLength(const GuestJSString* string);
-const std::uint16_t* APS5_VABI JSStringGetCharactersPtr(const GuestJSString* string);
-std::size_t APS5_VABI JSStringGetMaximumUTF8CStringSize(const GuestJSString* string);
-std::size_t APS5_VABI JSStringGetUTF8CString(const GuestJSString* string, char* buffer, std::size_t bufferSize);
+GuestJSString* APS5_VABI JSStringCreateWithCharacters_nid_postfix(const std::uint16_t* characters, std::size_t count);
+GuestJSString* APS5_VABI JSStringCreateWithUTF8CString_nid_postfix(const char* text);
+GuestJSString* APS5_VABI JSStringRetain_nid_postfix(GuestJSString* string);
+void APS5_VABI JSStringRelease_nid_postfix(GuestJSString* string);
+std::size_t APS5_VABI JSStringGetLength_nid_postfix(const GuestJSString* string);
+const std::uint16_t* APS5_VABI JSStringGetCharactersPtr_nid_postfix(const GuestJSString* string);
+std::size_t APS5_VABI JSStringGetMaximumUTF8CStringSize_nid_postfix(const GuestJSString* string);
+std::size_t APS5_VABI JSStringGetUTF8CString_nid_postfix(const GuestJSString* string, char* buffer, std::size_t bufferSize);
 bool APS5_VABI JSStringIsEqual(const GuestJSString* first, const GuestJSString* second);
 bool APS5_VABI JSStringIsEqualToUTF8CString(const GuestJSString* string, const char* text);
 
@@ -31,7 +39,7 @@ int APS5_VABI _ZN9Inspector20DOMBackendDispatcher29setBreakpointForEventListener
 int APS5_VABI _ZN9Inspector20DOMBackendDispatcher16getSearchResultsElON3WTF6RefPtrINS1_8JSONImpl6ObjectENS1_13DumbPtrTraitsIS4_EEEE();
 int APS5_VABI _ZN3JSC8JSObject12getPrototypeEPS0_PNS_14JSGlobalObjectE();
 int APS5_VABI _ZN9Inspector24RuntimeBackendDispatcher8dispatchElRKN3WTF6StringEONS1_3RefINS1_8JSONImpl6ObjectENS1_13DumbPtrTraitsIS7_EEEE();
-int APS5_VABI _ZN3JSC2VM10ClientDataD1Ev();
+void APS5_VABI _ZN3JSC2VM10ClientDataD1Ev(void*);
 int APS5_VABI _ZN3JSC17JSArrayBufferView14finishCreationERNS_2VME();
 int APS5_VABI _ZN9Inspector14InspectorAgentC1ERNS_12AgentContextE();
 int APS5_VABI _ZN3JSC17FunctionOverrides18reinstallOverridesEv();
@@ -39,8 +47,6 @@ int APS5_VABI _ZN3JSC22JSFinalizationRegistry9deadCountERKN3WTF6LockerINS_10JSCe
 int APS5_VABI _ZNK3WTF6String12toUIntStrictEPbi();
 int APS5_VABI _ZN3WTF20ParallelHelperClientC1EONS_6RefPtrINS_18ParallelHelperPoolENS_13DumbPtrTraitsIS2_EEEE();
 int APS5_VABI _ZN3JSC11ProxyObjectC1ERNS_2VMEPNS_9StructureE();
-int APS5_VABI _ZN9Inspector22InspectorDebuggerAgentnwEmPv();
-int APS5_VABI _ZN7bmalloc15IsoHeapImplBasenwEmPv();
 int APS5_VABI _ZN3JSC17DebuggerCallFrame20positionForCallFrameERNS_2VMEPNS_9CallFrameE();
 int APS5_VABI _ZN3WTF24AutomaticThreadCondition6createEv();
 int APS5_VABI _ZN3JSC16InternalFunctionC1ERNS_2VMEPNS_9StructureENS_14NativeFunctionES5_();
@@ -81,15 +87,15 @@ int APS5_VABI _ZN3JSC12CachePayloadD2Ev();
 int APS5_VABI _ZN3WTF13StringBuilder6resizeEj();
 int APS5_VABI _ZN3JSC2VM29scopedArgumentsTableSpaceSlowEv();
 int APS5_VABI _ZN9Inspector14ConsoleMessageC2EN3JSC13MessageSourceENS1_11MessageTypeENS1_12MessageLevelERKN3WTF6StringEONS5_3RefINS_15ScriptArgumentsENS5_13DumbPtrTraitsISA_EEEEPNS1_14JSGlobalObjectEm();
-int APS5_VABI _ZN9Inspector13AgentRegistryC1Ev();
+void APS5_VABI _ZN9Inspector13AgentRegistryC1Ev(void* self);
 int APS5_VABI _ZN3JSC2VM16weakSetSpaceSlowEv();
 int APS5_VABI _ZN3JSC17checkModuleSyntaxEPNS_14JSGlobalObjectERKNS_10SourceCodeERNS_11ParserErrorE();
 int APS5_VABI _ZN9Inspector14InspectorAgentD1Ev();
 int APS5_VABI _ZN9Inspector22InspectorDebuggerAgentnaEm();
 int APS5_VABI _ZN3WTF15base64URLDecodeERKNS_6StringENS_33SignedOrUnsignedCharVectorAdapterE();
 int APS5_VABI _ZN9Inspector20DOMBackendDispatcher24setEventListenerDisabledElON3WTF6RefPtrINS1_8JSONImpl6ObjectENS1_13DumbPtrTraitsIS4_EEEE();
-int APS5_VABI _ZN9Inspector32TimelineBackendDispatcherHandlerD1Ev();
-int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE();
+void APS5_VABI _ZN9Inspector32TimelineBackendDispatcherHandlerD1Ev(void*);
+void APS5_VABI _ZN9Inspector22InspectorDebuggerAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE(void*, void*, void*);
 int APS5_VABI _ZN3WTF7RunLoop6wakeUpEv();
 int APS5_VABI _ZN3WTF6StringC2ENS_12ASCIILiteralE();
 int APS5_VABI _ZNK3WTF7SecondsplERKNS_24TimeWithDynamicClockTypeE();
@@ -115,7 +121,7 @@ int APS5_VABI _ZN9Inspector24CanvasFrontendDispatcher17recordingProgressERKN3WTF
 int APS5_VABI _ZN9Inspector24RuntimeBackendDispatcher25enableControlFlowProfilerElON3WTF6RefPtrINS1_8JSONImpl6ObjectENS1_13DumbPtrTraitsIS4_EEEE();
 int APS5_VABI _ZNK3WTF3URL5queryEv();
 int APS5_VABI _ZN3JSC6JSLock12DropAllLocksC2EPNS_14JSGlobalObjectE();
-int APS5_VABI _ZN7bmalloc8FreeListC2Ev();
+void APS5_VABI _ZN7bmalloc8FreeListC2Ev(void* self);
 int APS5_VABI _ZN9Inspector15RemoteInspector9setClientEPNS0_6ClientE();
 int APS5_VABI _ZN3JSC14JSGlobalObject13visitChildrenEPNS_6JSCellERNS_11SlotVisitorE();
 int APS5_VABI _ZN9Inspector22RemoteInspectionTargetD0Ev();
@@ -137,10 +143,9 @@ int APS5_VABI _ZN9Inspector21HeapBackendDispatcher6createERNS_17BackendDispatche
 int APS5_VABI _ZN3JSC21MarkedJSValueRefArrayD2Ev();
 int APS5_VABI _ZN3WTF11ThreadGroupD1Ev();
 int APS5_VABI _ZThn24_N9Inspector18InspectorHeapAgentD0Ev();
-int APS5_VABI _ZN9Inspector32DebuggerBackendDispatcherHandlerD2Ev();
+void APS5_VABI _ZN9Inspector32DebuggerBackendDispatcherHandlerD2Ev(void*);
 int APS5_VABI _ZN9Inspector28DOMDebuggerBackendDispatcherD0Ev();
 int APS5_VABI _ZN3WTF4Lock16unlockFairlySlowEv();
-int APS5_VABI _ZN9Inspector14ConsoleMessagenwEm10NotNullTagPv();
 int APS5_VABI _ZN3JSC10JSFunction6createERNS_2VMEPNS_14JSGlobalObjectEiRKN3WTF6StringENS_14NativeFunctionENS_9IntrinsicES9_PKNS_6DOMJIT9SignatureE();
 int APS5_VABI _ZNK9Inspector15RemoteInspector26listingForAutomationTargetERKNS_22RemoteAutomationTargetE();
 int APS5_VABI _ZN9Inspector28InspectorScriptProfilerAgentD2Ev();
@@ -166,7 +171,7 @@ int APS5_VABI _ZNK9Inspector22RemoteAutomationTarget20remoteControlAllowedEv();
 int APS5_VABI _ZN3JSC12JSLockHolderC1ERNS_2VME();
 int APS5_VABI _ZNK3JSC4Yarr17RegularExpression7isValidEv();
 int APS5_VABI _ZN10Deprecated18ScriptFunctionCallC2ERKNS_12ScriptObjectERKN3WTF6StringEPFN3JSC7JSValueEPNS8_14JSGlobalObjectES9_RKNS8_8CallDataES9_RKNS8_7ArgListERNS4_8NakedPtrINS8_9ExceptionEEEE();
-int APS5_VABI _ZN7bmalloc8FreeListD2Ev();
+void APS5_VABI _ZN7bmalloc8FreeListD2Ev(void*);
 int APS5_VABI _ZThn16_N9Inspector21InspectorRuntimeAgent20getCollectionEntriesERN3WTF6StringERKS2_PS4_PKiS8_RNS1_6RefPtrINS1_8JSONImpl7ArrayOfINS_8Protocol7Runtime15CollectionEntryEEENS1_13DumbPtrTraitsISF_EEEE();
 int APS5_VABI _ZN9Inspector17ScriptDebugServer16willRunMicrotaskEv();
 int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent24updatePauseReasonAndDataENS_26DebuggerFrontendDispatcher6ReasonEON3WTF6RefPtrINS3_8JSONImpl6ObjectENS3_13DumbPtrTraitsIS6_EEEE();

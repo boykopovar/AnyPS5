@@ -25,7 +25,7 @@ class FeatureTests(unittest.TestCase):
         import contextlib
         import io
         path = self.root / "absent" / "db.csv"
-        with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=AssertionError("network access")), contextlib.redirect_stderr(io.StringIO()):
+        with patch.object(nid_names.urllib.request, "urlopen", side_effect=AssertionError("network access")), contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit) as caught:
                 nid_names.main(["--offline", "--db", str(path), "--nid", "AAAAAAAAAAA"])
         self.assertEqual(caught.exception.code, 2)
@@ -37,7 +37,7 @@ class FeatureTests(unittest.TestCase):
         import contextlib
         import io
         path = self.root / "absent" / "db.csv"
-        with patch.object(Path, "is_file", return_value=True), patch.object(nid_names.urllib.request, "urlretrieve", side_effect=AssertionError("network access")), contextlib.redirect_stderr(io.StringIO()):
+        with patch.object(Path, "is_file", return_value=True), patch.object(nid_names.urllib.request, "urlopen", side_effect=AssertionError("network access")), contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit) as caught:
                 nid_names.main(["--offline", "--db", str(path), "--nid", "AAAAAAAAAAA"])
         self.assertEqual(caught.exception.code, 2)

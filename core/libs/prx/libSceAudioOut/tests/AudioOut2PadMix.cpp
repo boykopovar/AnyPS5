@@ -1,20 +1,55 @@
 #include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
+#include <string>
 
 static void Require(bool value, const char*) {
     if (!value) std::abort();
 }
 
-template<typename TAction>
+static void SetEnvironment(const char* name, const std::string& value) {
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
+}
+
+static void UnsetEnvironment(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
+}
+
+static void RequireGain(const char* text, float expected, const char* message) {
+    Require(std::fabs(AudioPadSpeakerFallbackGainFrom(text) - expected) <= 1e-6f, message);
+}
+
+static void RequireRejected(const char* text, const char* message) {
+    try {
+        AudioPadSpeakerFallbackGainFrom(text);
+    } catch (const std::exception& error) {
+        const std::string what(error.what());
+        Require(what.find(std::string(AUDIO_PAD_SPEAKER_FALLBACK_ENV) + '=' + text) != std::string::npos && what.find("expected") != std::string::npos, message);
+        return;
+    }
+    Require(false, message);
+}
+
+template<typename TException, typename TAction>
 static bool Throws(TAction action) {
     try {
         action();
-    } catch (const std::invalid_argument&) {
+    } catch (const TException&) {
         return true;
+    } catch (...) {
+        return false;
     }
     return false;
 }
@@ -98,10 +133,38 @@ int main() {
     {
         auto out = Silence<1>();
         const float data[8] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-        Require(Throws([&] { AudioOut2AccumulatePadFrame(AudioOut2Route::Main, data, 2, unity, out.data()); }), "a main-mix port is refused");
-        Require(Throws([&] { AudioOut2AccumulatePadFrame(AudioOut2Route::PadVibration, data, 8, unity, out.data()); }), "an 8-channel pad port is refused");
+        Require(Throws<std::invalid_argument>([&] { AudioOut2AccumulatePadFrame(AudioOut2Route::Main, data, 2, unity, out.data()); }), "a main-mix port is refused");
+        Require(Throws<std::invalid_argument>([&] { AudioOut2AccumulatePadFrame(AudioOut2Route::PadVibration, data, 8, unity, out.data()); }), "an 8-channel pad port is refused");
         for (float sample : out) Require(sample == 0.0f, "a refused port mixes nothing");
     }
+
+    RequireGain(nullptr, 1.0f, "unset text keeps unity");
+    RequireGain("0", 1.0f, "0 dB is unity");
+    RequireGain("-15", 0.17782794f, "explicit -15");
+    RequireGain(" -15 ", 0.17782794f, "surrounding whitespace is ignored");
+    RequireGain("mute", 0.0f, "mute");
+    RequireGain("off", 0.0f, "off");
+    RequireGain(" -inf ", 0.0f, "negative infinity with surrounding whitespace");
+    RequireGain("-60", 0.001f, "lower bound");
+    RequireRejected("", "an empty value is rejected");
+    RequireRejected("   ", "whitespace-only text is rejected");
+    RequireRejected("nan", "a non-finite value is rejected");
+    RequireRejected("inf", "a non-finite value is rejected");
+    RequireRejected("-100", "a value below the range is rejected");
+    RequireRejected("5", "a value above the range is rejected");
+    RequireRejected("garbage", "invalid input is rejected");
+    RequireRejected("-15x", "trailing text is rejected");
+    RequireRejected("  -15x", "leading whitespace is reported verbatim");
+
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
+    Require(std::fabs(AudioPadSpeakerFallbackGain() - 1.0f) <= 1e-6f, "unset environment keeps unity");
+    SetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV, "-15");
+    Require(std::fabs(AudioPadSpeakerFallbackGain() - 0.17782794f) <= 1e-6f, "environment override");
+    SetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV, "mute");
+    Require(AudioPadSpeakerFallbackGain() == 0.0f, "muted environment");
+    SetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV, "garbage");
+    Require(Throws<std::runtime_error>([] { AudioPadSpeakerFallbackGain(); }), "an invalid environment stops the title");
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
 
     {
         const auto quad = AudioOut2PadLayoutForDriver("pipewire");

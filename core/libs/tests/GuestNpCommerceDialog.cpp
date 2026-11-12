@@ -1,11 +1,14 @@
 #include "prx/libSceNpCommerce/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
+#include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include <array>
 #include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -25,12 +28,68 @@ constexpr std::int32_t resultUserCanceled = 1;
 void RequireCanceledResult(std::uint64_t userData, bool clearsReserved) {
     NpCommerceDialogResult result;
     std::memset(&result, 0x33, sizeof(result));
+    Require(sceNpCommerceDialogGetResult(reinterpret_cast<NpCommerceDialogResult*>(0x10)) == static_cast<int>(0x80B8000Au));
     Require(sceNpCommerceDialogGetResult(&result) == resultUserCanceled);
     Require(result.result == resultUserCanceled);
     Require(result.authorized == 0);
     Require(result.userData == userData);
     for (const auto value : result.padding) Require(value == 0x33);
     for (const auto value : result.reserved) Require(value == (clearsReserved ? 0 : 0x33));
+}
+
+
+bool PsnNoticeShown() {
+    ModalDialogView view;
+    if (!ModalDialogReadView_nid_postfix(view)) return false;
+    return view.message == PsnDialogNoticeRequest(PsnDialogNoticeKind::PsnFeature).message;
+}
+
+void RequireNotices() {
+    std::uint32_t sdkVersion = 0x03500000;
+    std::memcpy(process.data() + 16, &sdkVersion, sizeof(sdkVersion));
+    NpCommerceDialogParam param{};
+    param.base.size = sizeof(param.base);
+    param.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param)) - 1060003575u;
+    param.size = sizeof(param);
+    param.userId = USER_SERVICE_INITIAL_USER_ID;
+    param.mode = 5;
+    param.argument = 1;
+    NpCommerceDialogParam2 param2{};
+    param2.base.size = sizeof(param2.base);
+    param2.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param2)) - 1060003575u;
+    param2.size = sizeof(param2);
+    param2.userId = USER_SERVICE_INITIAL_USER_ID;
+    param2.mode = 5;
+    param2.argument = 1;
+
+    ModalDialogSetPresenter_nid_postfix(true);
+    sceNpCommerceDialogTerminate();
+    Require(sceNpCommerceDialogInitialize() == 0);
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpCommerceDialogOpen(&param) == 0);
+    Require(!PsnNoticeShown() && !ModalDialogCapturesInput_nid_postfix());
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpCommerceDialogOpen(nullptr) == static_cast<int>(0x80B8000Du));
+    errno = 71;
+    Require(sceNpCommerceDialogOpen(reinterpret_cast<const NpCommerceDialogParam*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
+    Require(!PsnNoticeShown());
+    Require(sceNpCommerceDialogOpen(&param) == 0);
+    Require(PsnNoticeShown());
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpCommerceDialogOpen2(&param2) == 0);
+    Require(PsnNoticeShown());
+
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    ModalDialogSetPresenter_nid_postfix(false);
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    Require(sceNpCommerceDialogTerminate() == 0);
 }
 
 }
@@ -49,6 +108,12 @@ int main() {
     Require(sceNpCommerceDialogGetStatus() == statusNone);
     Require(sceNpCommerceDialogOpen(nullptr) == static_cast<int>(0x80B8000Du));
     Require(sceNpCommerceDialogOpen2(nullptr) == static_cast<int>(0x80B8000Du));
+    errno = 71;
+    Require(sceNpCommerceDialogOpen(reinterpret_cast<const NpCommerceDialogParam*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpCommerceDialogOpen2(reinterpret_cast<const NpCommerceDialogParam2*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
     Require(sceNpCommerceDialogOpen2(&param2) == static_cast<int>(0x80B80003u));
     param2.base.magic = 0;
     Require(sceNpCommerceDialogOpen2(&param2) == static_cast<int>(0x80B8000Au));
@@ -79,6 +144,12 @@ int main() {
     Require(sceNpCommerceDialogGetResult(&result) == static_cast<int>(0x80B80005u));
     Require(sceNpCommerceDialogGetResult(nullptr) == static_cast<int>(0x80B8000Du));
     Require(sceNpCommerceDialogGetStatus() == statusInitialized);
+    errno = 71;
+    Require(sceNpCommerceDialogOpen(reinterpret_cast<const NpCommerceDialogParam*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpCommerceDialogOpen2(reinterpret_cast<const NpCommerceDialogParam2*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
 
     Require(sceNpCommerceDialogOpen2(&param2) == 0);
     Require(sceNpCommerceDialogUpdateStatus() == statusFinished);
@@ -89,6 +160,12 @@ int main() {
     Require(sceNpCommerceDialogGetStatus() == statusFinished);
     Require(sceNpCommerceDialogTerminate() == 0);
     Require(sceNpCommerceDialogGetStatus() == statusNone);
+    errno = 71;
+    Require(sceNpCommerceDialogOpen(reinterpret_cast<const NpCommerceDialogParam*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpCommerceDialogOpen2(reinterpret_cast<const NpCommerceDialogParam2*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
 
     NpCommerceDialogParam param{};
     param.base.size = sizeof(param.base);
@@ -204,6 +281,7 @@ int main() {
     Require(sceNpCommerceDialogGetResult(&result) == static_cast<int>(0x80B80003u));
     Require(sceNpCommerceDialogGetStatus() == statusNone);
     Require(sceNpCommerceDialogUpdateStatus() == statusNone);
+    RequireNotices();
     Require(sceUserServiceTerminate() == 0);
     return 0;
 }

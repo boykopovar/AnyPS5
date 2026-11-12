@@ -49,7 +49,9 @@ int main() {
     Require(sceNpWebApi2AddWebTraceTag(request, "trace-tag-1") == 0);
     Require(sceNpWebApi2AddWebTraceTag(request, nullptr) == static_cast<int>(0x80553402));
     Require(sceNpWebApi2DeleteRequest(request) == 0);
+    Require(sceNpWebApi2Terminate(-1) == invalidContext);
     Require(sceNpWebApi2Terminate(context) == 0);
+    Require(sceNpWebApi2Terminate(context) == invalidContext);
     Require(sceNpWebApi2GetMemoryPoolStats(context, &stats) == invalidContext);
     Require(sceNpWebApi2PushEventAbortHandle(context, handle) == invalidContext);
     Require(sceNpWebApi2PushEventSetHandleTimeout(context, handle, 30000) == invalidContext);
@@ -91,5 +93,41 @@ int main() {
         Require(sceNpWebApi2Terminate(created) == 0);
         Require(sceNpWebApi2GetMemoryPoolStats(created, &stats) == invalidContext);
     }
+
+    const int pushLibrary = sceNpWebApi2Initialize(1, 0x10000);
+    const int pushUser = sceNpWebApi2CreateUserContext(pushLibrary, 1);
+    const int otherUser = sceNpWebApi2CreateUserContext(pushLibrary, 2);
+    Require(pushLibrary > 0 && pushUser > 0 && otherUser > 0 && otherUser != pushUser);
+    std::int64_t sent = 0;
+    Require(sceNpWebApi2CreateRequest(pushUser, "sessionManager", "/v1/sessions", "GET", nullptr, nullptr) == invalidArgument);
+    Require(sceNpWebApi2CreateRequest(pushUser, "sessionManager", "/v1/sessions", "GET", nullptr, &sent) == 0 && sent > 0);
+    Require(sceNpWebApi2AddHttpRequestHeader(sent, "Accept", "application/json") == 0);
+    Require(sceNpWebApi2SendRequest(sent, nullptr, 0, nullptr) == unavailable);
+    Require(sceNpWebApi2AbortRequest(sent) == 0);
+    sceNpWebApi2CheckTimeout();
+    Require(sceNpWebApi2DeleteRequest(sent) == 0);
+    const int pushHandle = sceNpWebApi2PushEventCreateHandle(pushLibrary);
+    const int filter = sceNpWebApi2PushEventCreateFilter(pushLibrary, pushHandle, "sessionManager", 0, nullptr, 0);
+    const int nextFilter = sceNpWebApi2PushEventCreateFilter(pushLibrary, pushHandle, "sessionManager", 0, nullptr, 0);
+    Require(pushHandle > 0 && filter > 0 && nextFilter > 0 && nextFilter != filter);
+    int userArg = 0;
+    for (const int userContext : {pushUser, 0, 1, -1, 0x7fffffff}) {
+        Require(sceNpWebApi2PushEventRegisterCallback(userContext, 5, nullptr, &userArg) == invalidArgument);
+        Require(sceNpWebApi2PushEventRegisterPushContextCallback(userContext, 5, nullptr, &userArg) == invalidArgument);
+    }
+    void* const nonNullCallback = &userArg;
+    const int callback = sceNpWebApi2PushEventRegisterCallback(pushUser, filter, nonNullCallback, &userArg);
+    const int contextCallback = sceNpWebApi2PushEventRegisterPushContextCallback(pushUser, nextFilter, nonNullCallback, &userArg);
+    Require(callback > 0 && contextCallback > 0 && contextCallback != callback);
+    NpWebApi2PushContextId pushContext{};
+    Require(sceNpWebApi2PushEventCreatePushContext(pushUser, &pushContext) == unavailable);
+    Require(sceNpWebApi2PushEventStartPushContextCallback(pushUser, &pushContext) == 0);
+    Require(sceNpWebApi2PushEventUnregisterPushContextCallback(pushUser, contextCallback) == 0);
+    Require(sceNpWebApi2PushEventUnregisterCallback(pushUser, callback) == 0);
+    Require(sceNpWebApi2PushEventDeletePushContext(pushUser, &pushContext) == 0);
+    Require(sceNpWebApi2PushEventDeleteFilter(pushLibrary, nextFilter) == 0 && sceNpWebApi2PushEventDeleteFilter(pushLibrary, filter) == 0);
+    Require(sceNpWebApi2PushEventDeleteHandle(pushLibrary, pushHandle) == 0);
+    Require(sceNpWebApi2DeleteUserContext(otherUser) == 0 && sceNpWebApi2DeleteUserContext(pushUser) == 0);
+    Require(sceNpWebApi2Terminate(pushLibrary) == 0);
     return 0;
 }

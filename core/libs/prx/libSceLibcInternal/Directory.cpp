@@ -23,10 +23,26 @@ extern "C" void* APS5_VABI fdopendir_nid_postfix(int fd) {
         virtualDirectory ? SeekDirectoryDescriptorCallback_nid_no_patch : nullptr);
 }
 
+namespace {
+
+int APS5_VABI EmptyClose(int) { return 0; }
+int APS5_VABI EmptyRead(int, char*, int) { return 0; }
+std::int64_t APS5_VABI EmptySeek(int, std::int64_t, int) { return 0; }
+
+}
+
 extern "C" void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags) {
-    constexpr int HideWhiteouts = 0x1;
-    constexpr int NoDuplicates = 0x2;
-    constexpr int Rewind = 0x4;
-    if ((flags & ~(HideWhiteouts | NoDuplicates | Rewind)) != 0) NotImplemented_nid_no_patch("__opendir2: flags other than DTF_HIDEW, DTF_NODUP and DTF_REWIND");
-    return opendir_nid_postfix(name);
+    constexpr int ReadAll = 0x8;
+    void* directory = opendir_nid_postfix(name);
+    if (directory == nullptr || (flags & ReadAll) == 0) return directory;
+    closedir_nid_postfix(directory);
+    return OpenDescriptorDirectory_nid_no_patch(name, -1, EmptyClose, 0, EmptyRead, EmptySeek);
+}
+
+extern "C" GuestDirectoryEntry* APS5_VABI _readdir_unlocked_nid_postfix(void* handle, int skip) {
+    return ReadDirectoryUnlocked_nid_no_patch(handle, skip);
+}
+
+extern "C" void APS5_VABI _seekdir_nid_postfix(void* handle, std::int64_t location) {
+    SeekDirectoryUnlocked_nid_no_patch(handle, location);
 }
