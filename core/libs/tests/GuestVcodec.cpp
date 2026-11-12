@@ -1,6 +1,7 @@
 #include "prx/libSceVcodec/libSceVcodec.hpp"
 
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -43,6 +44,12 @@ int main() {
     Require(libSceVcodecUnknown_Ipf4PM5PIHE_nid_no_patch(&result, config.data()) == ErrorPermission, "Ipf4PM5PIHE without /dev/uvd_bgt maps EBADF");
     Require(result == 0, "a failed Ipf4PM5PIHE request leaves the cleared result");
     Require(libSceVcodecUnknown_Ipf4PM5PIHE_nid_no_patch(nullptr, config.data()) == ErrorPermission, "Ipf4PM5PIHE with no result pointer");
+    errno = 71;
+    Require(libSceVcodecUnknown_Ipf4PM5PIHE_nid_no_patch(reinterpret_cast<std::uint64_t*>(0x10), config.data()) == ErrorInvalidArgument, "Ipf4PM5PIHE unmapped result");
+    Require(errno == 71, "Ipf4PM5PIHE errno preserved on unmapped result");
+    errno = 71;
+    Require(libSceVcodecUnknown_Ipf4PM5PIHE_nid_no_patch(&result, reinterpret_cast<const void*>(0x10)) == ErrorInvalidArgument, "Ipf4PM5PIHE unmapped config");
+    Require(errno == 71, "Ipf4PM5PIHE errno preserved on unmapped config");
 
     std::array<std::uint8_t, 0x1308> status{};
     status.fill(0x5a);
