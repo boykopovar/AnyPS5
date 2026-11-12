@@ -27,9 +27,10 @@ int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t at
  if (sem == nullptr) {
   APS5_INVALID_ARG_EX;
  }
- if ((attr & ~0x103u) != 0 || (attr & 3u) == 3u || name == nullptr || init < 0 || max <= 0 || init > max) {
+ if ((attr & ~0x103u) != 0 || (attr & 3u) == 3u || name == nullptr || *name == '\0' || init < 0 || max <= 0 || init > max) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
+ if (strnlen(name, 32) > 31) return SCE_KERNEL_ERROR_ENAMETOOLONG;
  *sem = new KernelSemaPrivate(init, max, std::string(name), (attr & 3u) == 1u);
  (*sem)->priorityQueue = (attr & 3u) == 2u;
  if (TraceSync()) std::fprintf(stderr, "[sema] create %p '%s' attr=0x%x init=%d max=%d\n", static_cast<void*>(*sem), name, attr, init, max);
@@ -85,10 +86,7 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
  if (sem == nullptr) {
   return SCE_KERNEL_ERROR_ESRCH;
  }
- if (need <= 0) {
-  APS5_INVALID_ARG_EX;
- }
- if (need > sem->maxCount) {
+ if (need <= 0 || need > sem->maxCount) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
 
