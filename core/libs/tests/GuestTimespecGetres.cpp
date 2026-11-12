@@ -45,7 +45,20 @@ static void Mock(int result, bool write, KernelTimespec value = {0, 100}) {
     RegisterClockGetres_nid_no_patch(&ClockResolution);
 }
 
+static void MissingProvider() {
+    RegisterClockGetres_nid_no_patch(nullptr);
+    bool threw = false;
+    try {
+        KernelTimespec output{};
+        timespec_getres_nid_postfix(&output, 1);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void Unsupported() {
+    MissingProvider();
     Mock(0, true);
 #ifdef _WIN32
     auto* guard = static_cast<KernelTimespec*>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS));
