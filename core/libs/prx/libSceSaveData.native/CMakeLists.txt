@@ -71,6 +71,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
     endif()
 
+    add_test_executable(guest_savedata_is_mounted_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataIsMounted.cpp)
+    target_include_directories(guest_savedata_is_mounted_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_savedata_is_mounted_tests PRIVATE libSceSaveData.native libc)
+    configure_windows_unwind(guest_savedata_is_mounted_tests)
+    add_test(NAME guest_savedata_is_mounted COMMAND guest_savedata_is_mounted_tests)
+    if(WIN32)
+        set_tests_properties(guest_savedata_is_mounted PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
+    endif()
+
     add_test_executable(guest_savedata_event_callback_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataEventCallback.cpp)
     target_include_directories(guest_savedata_event_callback_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_savedata_event_callback_tests PRIVATE libSceSaveData.native libkernel libc)
