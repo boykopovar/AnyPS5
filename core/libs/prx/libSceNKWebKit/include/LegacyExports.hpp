@@ -1139,7 +1139,6 @@ int APS5_VABI _ZN7WebCore11DisplayList11DrawPatternD0Ev();
 int APS5_VABI _ZN7WebCore20UserGestureIndicatorC2EN3WTF8OptionalINS_26ProcessingUserGestureStateEEEPNS_8DocumentENS_15UserGestureTypeENS0_23ProcessInteractionStyleE();
 int APS5_VABI WKBundleSetJavaScriptCanAccessClipboard();
 int APS5_VABI _ZN7WebCore6Editor15pasteAsFragmentEON3WTF3RefINS_16DocumentFragmentENS1_13DumbPtrTraitsIS3_EEEEbbNS_22MailBlockquoteHandlingE();
-int APS5_VABI WKPreferencesSetInspectorAdditionsEnabled();
 int APS5_VABI libSceNKWebKitLegacyUnknown_THYrKHts64I_nid_no_patch();
 int APS5_VABI _ZThn176_N7WebCore8Document8postTaskEONS_22ScriptExecutionContext4TaskE();
 int APS5_VABI WKBundlePageGroupGetTypeID();
@@ -1828,7 +1827,6 @@ int APS5_VABI _ZN7WebCore9FrameView16setPaintBehaviorEN3WTF9OptionSetINS_13Paint
 int APS5_VABI _ZN7WebCore11DisplayList6RotateD0Ev();
 int APS5_VABI WKPreferencesGetIsITPDatabaseEnabled();
 int APS5_VABI _ZNK7WebCore11MediaSample16videoPixelFormatEv();
-int APS5_VABI WKPreferencesGetInspectorAdditionsEnabled();
 int APS5_VABI _ZN7WebCore17NowPlayingManager17setNowPlayingInfoERNS0_6ClientEONS_14NowPlayingInfoE();
 int APS5_VABI _ZN7WebCore16VisibleSelectionC1ERKNS_8PositionES3_NS_9EAffinityEb();
 int APS5_VABI _ZN7Nicosia5Scene5StateC1Ev();

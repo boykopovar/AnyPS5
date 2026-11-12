@@ -4683,10 +4683,6 @@ int APS5_VABI _ZN7WebCore6Editor15pasteAsFragmentEON3WTF3RefINS_16DocumentFragme
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPreferencesSetInspectorAdditionsEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_THYrKHts64I_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7481,10 +7477,6 @@ int APS5_VABI WKPreferencesGetIsITPDatabaseEnabled() {
 }
 
 int APS5_VABI _ZNK7WebCore11MediaSample16videoPixelFormatEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPreferencesGetInspectorAdditionsEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 
