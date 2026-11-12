@@ -31,4 +31,6 @@ int APS5_VABI sceNpEntitlementAccessPollConsumableEntitlementInfo(std::int64_t r
 int APS5_VABI sceNpEntitlementAccessRequestConsumableEntitlementInfo(std::int32_t userId, std::uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, std::int64_t* requestId);
 int APS5_VABI sceNpEntitlementAccessRequestConsumeEntitlement(std::int32_t userId, std::uint32_t serviceLabel, const void* entitlementLabel, const void* transactionId, std::int32_t useCount, std::int64_t* requestId);
 
+int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoListIndividual();
+
 }
