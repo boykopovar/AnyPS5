@@ -77,6 +77,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     std::vector<std::uint64_t> needed;
     std::vector<std::uint64_t> moduleImports;
     std::vector<std::uint64_t> ps4ModuleImports;
+    std::set<std::uint64_t> ownModules;
     std::vector<std::uint64_t> moduleExports;
     bool terminated = false;
     for (std::uint64_t offset = dynamic->Offset; dynamic->Offset + dynamic->FileSize - offset >= 16; offset += 16) {
@@ -86,7 +87,10 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (tag == 1) needed.push_back(value);
         else if (tag == 0x61000045) moduleImports.push_back(value);
         else if (tag == 0x6100000f) ps4ModuleImports.push_back(value);
-        else if (tag == 0x6100000d || tag == 0x61000043) moduleExports.push_back(value);
+        else if (tag == 0x6100000d || tag == 0x61000043) {
+            ownModules.insert(value >> 48);
+            moduleExports.push_back(value);
+        }
         else if (tag < 0x60000000 || tag == 0x6ffffef5 || tag == 0x6100003f || (tag >= 0x61000027 && tag <= 0x6100003b)) {
             if (!tags.emplace(tag, value).second) fail("Duplicate dynamic tag " + std::to_string(tag));
         }
@@ -197,9 +201,9 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     std::map<std::string, std::size_t> exports;
     for (std::uint64_t offset = 0; offset < symSize; offset += 24) {
         auto name = string(Io::ReadU32(bytes, symOffset + offset));
-        const auto library = Io::ReadU16(bytes, symOffset + offset + 6) == 0 ? Domain::ImportModule(name, importModules, neededLibraries) : std::string{};
+        const auto library = Io::ReadU16(bytes, symOffset + offset + 6) == 0 ? Domain::ImportModule(name, importModules, neededLibraries, ownModules) : std::string{};
         if (Io::ReadU16(bytes, symOffset + offset + 6) == 0 && library.empty()) {
-            if (auto declared = Domain::DeclaredImportModule(name, importModules); !declared.empty()) image.Dynamic.UnmatchedImportModules.insert(std::move(declared));
+            if (auto declared = Domain::DeclaredImportModule(name, importModules, ownModules); !declared.empty()) image.Dynamic.UnmatchedImportModules.insert(std::move(declared));
         }
         const auto qualifiedName = name;
         name = name.substr(0, name.find('#'));
