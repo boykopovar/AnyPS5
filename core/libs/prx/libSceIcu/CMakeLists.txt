@@ -32,6 +32,19 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_icu_timezone_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/TimeZone.cpp)
+    target_include_directories(guest_icu_timezone_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_timezone_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_timezone_tests)
+    add_test(NAME guest_icu_timezone COMMAND guest_icu_timezone_tests)
+    set_tests_properties(guest_icu_timezone PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_timezone PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
     add_test_executable(guest_icu_locale_core_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuLocaleCore.cpp)
     target_include_directories(guest_icu_locale_core_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_icu_locale_core_tests PRIVATE libSceIcu)
@@ -460,15 +473,57 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+set(ICU_RECOVERED_SOURCES
+    Calendar.cpp
+    Collator.cpp
+    DateFormat.cpp
+    DateIntervalFormat.cpp
+    DateTimePatternGenerator.cpp
+    FieldPositionIterator.cpp
+    FormattedValue.cpp
+    Idna.cpp
+    ListFormatter.cpp
+    LocaleDisplayNames.cpp
+    NumberFormat.cpp
+    NumberFormatter.cpp
+    NumberingSystem.cpp
+    PluralRules.cpp
+    RelativeDateTimeFormatter.cpp
+    ResourceBundle.cpp
+    StringSearch.cpp
+    UText.cpp)
+target_sources(libSceIcu PRIVATE ${ICU_RECOVERED_SOURCES})
+
 if(BUILD_TESTING)
-    add_test_executable(guest_icu_timezone_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/TimeZone.cpp)
-    target_include_directories(guest_icu_timezone_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_icu_timezone_tests PRIVATE libSceIcu libc)
-    configure_windows_unwind(guest_icu_timezone_tests)
-    add_test(NAME guest_icu_timezone COMMAND guest_icu_timezone_tests)
-    set_tests_properties(guest_icu_timezone PROPERTIES TIMEOUT 10)
+    set(ICU_RECOVERED_TESTS
+        tests/Calendar.cpp
+        tests/Collator.cpp
+        tests/DateFormat.cpp
+        tests/DateIntervalFormat.cpp
+        tests/DateTimePatternGenerator.cpp
+        tests/FieldPositionIterator.cpp
+        tests/FormattedValue.cpp
+        tests/Idna.cpp
+        tests/ListFormatter.cpp
+        tests/LocaleDisplayNames.cpp
+        tests/NumberFormat.cpp
+        tests/NumberFormatter.cpp
+        tests/NumberingSystem.cpp
+        tests/PluralRules.cpp
+        tests/RecoveredSignatures.cpp
+        tests/RelativeDateTimeFormatter.cpp
+        tests/ResourceBundle.cpp
+        tests/StringSearch.cpp
+        tests/UText.cpp)
+    list(TRANSFORM ICU_RECOVERED_TESTS PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/)
+    add_test_executable(guest_icu_recovered_signatures_tests ${ICU_RECOVERED_TESTS})
+    target_include_directories(guest_icu_recovered_signatures_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_recovered_signatures_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_recovered_signatures_tests)
+    add_test(NAME guest_icu_recovered_signatures COMMAND guest_icu_recovered_signatures_tests)
+    set_tests_properties(guest_icu_recovered_signatures PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(guest_icu_timezone PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_icu_recovered_signatures PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()

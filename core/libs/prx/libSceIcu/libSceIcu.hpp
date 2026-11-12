@@ -37,3 +37,4 @@
 #include "TimeZone.hpp"
 
 #include "ConverterHelpers.hpp"
+#include "RecoveredSignatures.hpp"
