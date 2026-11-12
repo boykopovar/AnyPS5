@@ -1,3 +1,6 @@
+#include <cstdlib>
+#include <optional>
+
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TraceFile.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
@@ -54,6 +57,108 @@ void WindowRejects() {
     Check(rejected, "frames and seconds were accepted together");
 }
 
+void WindowTrigger() {
+    const auto directory = std::filesystem::temp_directory_path() / ("aps5-trigger-test-" + std::to_string(Clock::now().time_since_epoch().count()));
+    std::filesystem::create_directory(directory);
+    const auto cleanup = std::unique_ptr<const std::filesystem::path, void(*)(const std::filesystem::path*)>(&directory, [](const auto* path) {
+        std::error_code error;
+        std::filesystem::remove_all(*path, error);
+    });
+    const auto path = directory / std::filesystem::path(u8"scene-\u00e9.ready");
+    const auto utf8 = path.u8string();
+    const std::string trigger(utf8.begin(), utf8.end());
+    auto seconds = TraceWindow::Parse(nullptr, "2:1", trigger.c_str()).value();
+    Check(seconds.Present(0, milliseconds(2000)) == Edge::None, "missing trigger opened the window");
+    std::ofstream(path).close();
+    Check(seconds.Present(1, milliseconds(2249)) == Edge::None, "trigger polling was not throttled");
+    Check(seconds.Present(2, milliseconds(2250)) == Edge::Open, "trigger did not open the seconds window");
+    std::filesystem::remove(path);
+    Check(seconds.Present(3, milliseconds(3249)) == Edge::None, "seconds duration began before the trigger");
+    Check(seconds.Present(4, milliseconds(3250)) == Edge::Close, "seconds window did not close after its full duration");
+    std::ofstream(path).close();
+    Check(seconds.Present(5, milliseconds(5000)) == Edge::None, "trigger reopened a completed window");
+    auto frames = TraceWindow::Parse("3:2", nullptr, trigger.c_str()).value();
+    Check(frames.Present(2, milliseconds(0)) == Edge::None, "preexisting trigger bypassed the frame lower bound");
+    Check(frames.Present(3, milliseconds(1)) == Edge::Open, "preexisting trigger did not open at the frame lower bound");
+    Check(frames.Present(4, milliseconds(2)) == Edge::None, "trigger shortened the frame window");
+    Check(frames.Present(5, milliseconds(3)) == Edge::Close, "triggered frame window did not close");
+    std::filesystem::remove(path);
+    auto late = TraceWindow::Parse("3:2", nullptr, trigger.c_str()).value();
+    Check(late.Present(100, milliseconds(0)) == Edge::None, "late frame window opened without a trigger");
+    std::ofstream(path).close();
+    Check(late.Present(120, milliseconds(250)) == Edge::Open, "late frame trigger was ignored");
+    Check(late.Present(121, milliseconds(500)) == Edge::None, "frame duration began at its original lower bound");
+    Check(late.Present(122, milliseconds(750)) == Edge::Close, "late frame window did not close after its full length");
+    auto early = TraceWindow::Parse(nullptr, "2:1", trigger.c_str()).value();
+    Check(early.Present(0, milliseconds(1999)) == Edge::None, "preexisting trigger bypassed the time lower bound");
+    Check(early.Present(1, milliseconds(2000)) == Edge::Open, "preexisting trigger did not open at the time lower bound");
+    const auto reject = [](auto&& action) {
+        bool rejected = false;
+        try { action(); }
+        catch (const std::exception&) { rejected = true; }
+        Check(rejected, "invalid trigger configuration was accepted");
+    };
+    reject([] { TraceWindow::Parse(nullptr, nullptr, "scene.ready"); });
+    reject([] { TraceWindow::Parse("0:1", nullptr, ""); });
+    const auto dirText = directory.string();
+    reject([&] { TraceWindow::Parse("0:1", nullptr, dirText.c_str())->Present(0, milliseconds(0)); });
+    const auto badPath = trigger + "/child";
+    std::error_code error;
+    const auto status = std::filesystem::status(std::filesystem::path(std::u8string_view(reinterpret_cast<const char8_t*>(badPath.c_str()))), error);
+    Check(!std::filesystem::exists(status), "a path beneath a regular file unexpectedly exists");
+    Check(error == std::errc::not_a_directory || error == std::errc::no_such_file_or_directory, "unexpected error for a trigger beneath a regular file");
+    if (error == std::errc::not_a_directory)
+        reject([&] { TraceWindow::Parse("0:1", nullptr, badPath.c_str())->Present(0, milliseconds(0)); });
+    else
+        Check(TraceWindow::Parse("0:1", nullptr, badPath.c_str())->Present(0, milliseconds(0)) == Edge::None, "a missing trigger beneath a regular file opened the window");
+}
+
+void WindowEnvironment() {
+    const auto directory = std::filesystem::temp_directory_path() / ("aps5-trigger-env-" + std::to_string(Clock::now().time_since_epoch().count()));
+    std::filesystem::create_directory(directory);
+    const auto files = std::unique_ptr<const std::filesystem::path, void(*)(const std::filesystem::path*)>(&directory, [](const auto* path) {
+        std::error_code error;
+        std::filesystem::remove_all(*path, error);
+    });
+    const auto marker = directory / std::filesystem::path(u8"scene-\u00e9-\u6f22.ready");
+#ifdef _WIN32
+    using Text = std::wstring;
+    const std::array names{L"APS5_TRACE_FRAMES", L"APS5_TRACE_SECONDS", L"APS5_TRACE_TRIGGER_FILE"};
+    const auto get = [](const auto* name) { return _wgetenv(name); };
+    const auto set = [](const auto* name, const wchar_t* value) { return _wputenv_s(name, value != nullptr ? value : L""); };
+    const Text frameSpec = L"0:1";
+#else
+    using Text = std::string;
+    const std::array names{"APS5_TRACE_FRAMES", "APS5_TRACE_SECONDS", "APS5_TRACE_TRIGGER_FILE"};
+    const auto get = [](const auto* name) { return std::getenv(name); };
+    const auto set = [](const auto* name, const char* value) { return value != nullptr ? setenv(name, value, 1) : unsetenv(name); };
+    const Text frameSpec = "0:1";
+#endif
+    std::array<std::optional<Text>, 3> saved;
+    for (std::size_t index = 0; index < names.size(); ++index)
+        if (const auto* value = get(names[index])) saved[index] = value;
+    int token = 0;
+    const auto restore = [&](int*) {
+        for (std::size_t index = 0; index < names.size(); ++index) set(names[index], saved[index] ? saved[index]->c_str() : nullptr);
+    };
+    const auto environment = std::unique_ptr<int, decltype(restore)>(&token, restore);
+    Check(set(names[0], frameSpec.c_str()) == 0 && set(names[1], nullptr) == 0 && set(names[2], marker.c_str()) == 0, "cannot configure the native trace environment");
+    Check(TraceWindow::TriggerConfigured(), "the native trigger environment was not detected");
+    auto window = TraceWindow::FromEnvironment().value();
+    Check(window.Present(0, milliseconds(0)) == Edge::None, "environment trace opened before the marker existed");
+    std::ofstream(marker).close();
+    Check(window.Present(1, milliseconds(250)) == Edge::Open, "environment reader did not use the Unicode marker path");
+    std::filesystem::remove(marker);
+    Check(window.Present(2, milliseconds(251)) == Edge::Close, "environment trace did not retain its bounded frame window");
+    Check(set(names[2], nullptr) == 0 && !TraceWindow::TriggerConfigured(), "clearing the native trigger environment did not disable its gate");
+    Check(TraceWindow::FromEnvironment()->Present(0, milliseconds(0)) == Edge::Open, "an unset environment marker changed ordinary tracing");
+    Check(set(names[0], nullptr) == 0 && set(names[2], marker.c_str()) == 0, "cannot configure the missing-window environment case");
+    bool rejected = false;
+    try { TraceWindow::FromEnvironment(); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Check(rejected, "an environment trigger was accepted without a trace window");
+}
+
 void BufferCap() {
     std::atomic<std::uint64_t> presents{1};
     TraceThread thread("queue worker 0x0", presents, 2);
@@ -84,6 +189,20 @@ void TotalsOverflow() {
     const auto snapshot = thread.Collect();
     Check(snapshot.totalsFull && snapshot.dropped && snapshot.eventsLost == 0 && !snapshot.eventsFullAt, "a full totals table was not reported apart from the event buffer");
     Check(snapshot.totals.size() == 512 && snapshot.slices.size() == 600, "a full totals table stopped the event buffer or kept more than its entries");
+    TraceThread weighted("weighted", presents, 1);
+    weighted.Count("OwnedDraw.blocks", 17);
+    weighted.Count("OwnedDraw.blocks", 3);
+    weighted.Count("OwnedDraw.zero", 0);
+    const auto weightedSnapshot = weighted.Collect();
+    Check(weightedSnapshot.totals.size() == 1 && weightedSnapshot.totals[0].count == 20 && weightedSnapshot.slices.empty(), "weighted counts were not accumulated without trace slices");
+    TraceThread countThread("count worker", presents, 1);
+    for (std::size_t index = 0; index < 512; ++index) countThread.Count(&scopes[index]);
+    countThread.Count("OwnedDraw.arm_attempt");
+    countThread.Count("OwnedDraw.arm_blocks_requested", 17);
+    const auto counts = countThread.Collect();
+    Check(counts.totalsFull && counts.dropped && counts.slices.empty(), "a lost owned counter did not mark the totals full");
+    const auto line = TraceFormat::Summary(AgcDriver::TraceSummary{}, std::vector<TraceThread::Snapshot>{counts}, {});
+    Check(line.find("\"trace_dropped\":true") != std::string::npos && line.find("\"totals_full\":true") != std::string::npos, "the summary hid a lost owned counter");
 }
 
 void CapacitySettings() {
@@ -235,8 +354,23 @@ void SummaryFields() {
         "\"frame_ms\":{\"p50\":24.000,\"p90\":24.000,\"p99\":24.000,\"max\":24.000},\"gpu_busy_ms_per_present\":10.000,"
         "\"worker_busy_pct\":{\"queue worker 0x0\":35.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000,\"Driver.Packet.draw\":5.000,\"Driver.Present\":3.000,\"Driver.Present.inflight_wait\":2.000,\"Driver.Completion\":1.000},"
-        "\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
+        "\"owned_draw_counts\":{},\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
     Check(line == expected, "summary line changed");
+    auto unboundSummary = summary;
+    unboundSummary.ownedDrawUnbound = 3;
+    const auto unboundLine = TraceFormat::Summary(unboundSummary, threads, presents);
+    Check(unboundLine.find("\"owned_draw_counts\":{\"OwnedDraw.unbound\":3},\"trace_dropped\":true") != std::string::npos, "unbound draw counts were not marked as incomplete");
+    auto counted = threads;
+    counted[0].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 5});
+    counted[1].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 3});
+    counted[1].totals.push_back({"OwnedDraw.reused", nullptr, {}, 2});
+    counted[0].totals.push_back({"OwnedDraw.arm_blocks_requested", nullptr, {}, 17});
+    const auto countedLine = TraceFormat::Summary(summary, counted, presents);
+    Check(countedLine.find("\"owned_draw_counts\":{\"OwnedDraw.arm_attempt\":8,\"OwnedDraw.arm_blocks_requested\":17,\"OwnedDraw.reused\":2}") != std::string::npos, "named owned counts were not summed across threads");
+    const std::vector<TraceThread::Total> before{{"OwnedDraw.arm_attempt", nullptr, {}, 2}};
+    const std::vector<TraceThread::Total> after{{"OwnedDraw.arm_attempt", nullptr, {}, 5}};
+    const auto countDelta = TraceFormat::Since(after, before);
+    Check(countDelta.size() == 1 && countDelta[0].count == 3, "interval owned count was not reduced by its previous total");
     auto dropped = threads;
     dropped[1].dropped = true;
     Check(TraceFormat::Summary(summary, dropped, presents).find("\"trace_dropped\":true") != std::string::npos, "a dropped thread did not mark the summary");
@@ -341,7 +475,7 @@ void IntervalSummaryFields() {
         "\"frame_ms\":{\"p50\":24.000,\"p90\":24.000,\"p99\":24.000,\"max\":24.000},\"gpu_busy_ms_per_present\":10.000,"
         "\"worker_busy_pct\":{\"queue worker 0x0\":30.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000},"
-        "\"trace_dropped\":false,\"trace\":\"\"}\n";
+        "\"owned_draw_counts\":{},\"trace_dropped\":false,\"trace\":\"\"}\n";
     Check(line == expected, "interval summary line changed");
 }
 
@@ -644,6 +778,35 @@ void GzipFile() {
     Check(word(bytes.size() - 4) == text.size(), "the size is wrong");
 }
 
+void Directory() {
+#ifdef _WIN32
+    const auto* previous = _wgetenv(L"APS5_TRACE_DIR");
+    struct Restore {
+        std::optional<std::wstring> value;
+        ~Restore() { _wputenv_s(L"APS5_TRACE_DIR", value ? value->c_str() : L""); }
+    } restore{previous != nullptr ? std::optional<std::wstring>(previous) : std::nullopt};
+    Check(_wputenv_s(L"APS5_TRACE_DIR", L"") == 0, "clearing the trace directory failed");
+    Check(AgcDriver::TraceFile::Directory() == std::filesystem::path(L"."), "the default trace directory changed");
+    Check(_wputenv_s(L"APS5_TRACE_DIR", L"trace-output") == 0, "setting an ASCII trace directory failed");
+    Check(AgcDriver::TraceFile::Directory() == std::filesystem::path(L"trace-output"), "the ASCII trace directory changed");
+    const auto expected = std::filesystem::temp_directory_path() / (L"aps5-trace-\u2122-\u65e5\u672c\u8a9e-" + std::to_wstring(Clock::now().time_since_epoch().count()));
+    Check(_wputenv_s(L"APS5_TRACE_DIR", expected.c_str()) == 0, "setting a Unicode trace directory failed");
+    const auto directory = AgcDriver::TraceFile::Directory();
+    Check(directory == expected, "the Unicode trace directory was not preserved");
+    std::filesystem::create_directories(directory);
+    struct Remove {
+        std::filesystem::path path;
+        ~Remove() { std::error_code error; std::filesystem::remove_all(path, error); }
+    } remove{directory};
+    AgcDriver::TraceFile::AppendLine(directory / "aps5-summary.jsonl", "{\"presents\":1}\n");
+    AgcDriver::TraceFile::WriteGzip(directory / "aps5-trace.json.gz", "{\"traceEvents\":[]}");
+    std::ifstream summary(expected / "aps5-summary.jsonl", std::ios::binary);
+    const std::string written((std::istreambuf_iterator<char>(summary)), std::istreambuf_iterator<char>());
+    Check(written == "{\"presents\":1}\n", "the summary was not written in the Unicode directory");
+    Check(std::filesystem::file_size(expected / "aps5-trace.json.gz") > 18, "the trace was not written in the Unicode directory");
+#endif
+}
+
 void AppendLines() {
     const auto path = std::filesystem::temp_directory_path() / ("aps5-summary-test-" + std::to_string(Clock::now().time_since_epoch().count()) + ".jsonl");
     AgcDriver::TraceFile::AppendLine(path, "{\"presents\":1}\n");
@@ -659,9 +822,12 @@ void AppendLines() {
 
 int main() {
     try {
+        Directory();
         WindowByFrames();
         WindowBySeconds();
         WindowRejects();
+        WindowTrigger();
+        WindowEnvironment();
         BufferCap();
         LostEventsCount();
         TotalsOverflow();

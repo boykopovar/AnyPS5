@@ -56,6 +56,7 @@ GLenum APS5_VABI glGetError_nid_postfix() {
 
 void APS5_VABI glGetIntegerv_nid_postfix(GLenum name, GLint* values) {
     std::lock_guard lock(mutex);
+    if (values == nullptr) return;
     std::vector<double> data;
     if (!Query_nid_no_patch(name, data)) return;
     for (std::size_t i = 0; i < data.size(); ++i) {
@@ -73,6 +74,7 @@ void APS5_VABI glGetFloatv_nid_postfix(GLenum name, GLfloat* values) {
 
 void APS5_VABI glGetBooleanv_nid_postfix(GLenum name, GLboolean* values) {
     std::lock_guard lock(mutex);
+    if (values == nullptr) return;
     std::vector<double> data;
     if (Query_nid_no_patch(name, data)) for (std::size_t i = 0; i < data.size(); ++i) values[i] = data[i] != 0;
 }

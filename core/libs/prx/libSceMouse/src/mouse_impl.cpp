@@ -1,10 +1,13 @@
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 
 namespace {
@@ -14,6 +17,9 @@ int head = 0;
 int count = 0;
 bool initialized = false;
 bool opened = false;
+int openedUser = 0;
+std::uint32_t extensionConfig = 0;
+std::uint8_t extensionFlags = 0;
 bool connected = true;
 std::uint32_t buttons = 0;
 constexpr std::array<std::int64_t, 4> SCREEN_WIDTHS{1280, 1920, 2560, 3840};
@@ -135,6 +141,9 @@ int Open(int userId, std::int32_t type, std::int32_t index, const MouseOpenParam
     }
     if (opened) return MOUSE_ERROR_ALREADY_OPENED;
     opened = true;
+    openedUser = userId;
+    extensionConfig = 0;
+    extensionFlags = 0;
     buttons = 0;
     head = 0;
     count = 0;
@@ -167,11 +176,57 @@ int Close(std::int32_t handle) {
     return MOUSE_OK;
 }
 
-int Read(std::int32_t handle, MouseData* data, std::int32_t num) {
-    std::lock_guard lock(mouseMutex);
+namespace {
+int checkRead(std::int32_t handle, const void* data, std::int32_t num) {
     if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
     if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
     if (data == nullptr || num <= 0 || num > MOUSE_MAX_DATA_NUM) return MOUSE_ERROR_INVALID_ARG;
+    return MOUSE_OK;
+}
+}
+
+int CheckRead(std::int32_t handle, const void* data, std::int32_t num) {
+    std::lock_guard lock(mouseMutex);
+    return checkRead(handle, data, num);
+}
+
+int CheckHandle(std::int32_t handle) {
+    std::lock_guard lock(mouseMutex);
+    return handle == MOUSE_HANDLE && opened ? MOUSE_OK : MOUSE_ERROR_INVALID_HANDLE;
+}
+
+bool IsInitialized() {
+    std::lock_guard lock(mouseMutex);
+    return initialized;
+}
+
+int GetHandle(int userId, std::int32_t type) {
+    std::lock_guard lock(mouseMutex);
+    if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
+    return opened && openedUser == userId && type == 0 ? MOUSE_HANDLE : MOUSE_ERROR_NO_HANDLE;
+}
+
+int SetExtensionConfig(std::int32_t handle, const std::uint8_t* config) {
+    std::lock_guard lock(mouseMutex);
+    if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
+    if (config == nullptr) return MOUSE_ERROR_INVALID_ARG;
+    std::array<std::uint8_t, MOUSE_EXTENSION_CONFIG_SIZE> local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(local.data(), config, local.size());
+    errno = savedErrno;
+    if (!copied) return MOUSE_ERROR_INVALID_ARG;
+    for (std::size_t offset = 5; offset < MOUSE_EXTENSION_CONFIG_SIZE; ++offset) {
+        if (local[offset] != 0) return MOUSE_ERROR_INVALID_ARG;
+    }
+    if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
+    std::memcpy(&extensionConfig, local.data(), sizeof(extensionConfig));
+    extensionFlags = local[4];
+    return MOUSE_OK;
+}
+
+int Read(std::int32_t handle, MouseData* data, std::int32_t num) {
+    std::lock_guard lock(mouseMutex);
+    if (const int error = checkRead(handle, data, num)) return error;
     const int available = std::min(count, num);
     for (int i = 0; i < available; ++i) {
         data[i] = history[head];
@@ -265,12 +320,27 @@ int ResetAbsolutePosition(std::int32_t handle, std::uint16_t x, std::uint16_t y)
     return MOUSE_OK;
 }
 
+int DebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
+    std::lock_guard lock(mouseMutex);
+    if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
+    if (deviceId == nullptr) return MOUSE_ERROR_INVALID_ARG;
+    *deviceId = -1;
+    if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
+    if (!connected) return MOUSE_OK;
+    *deviceId = MOUSE_DEVICE_ID;
+    return MOUSE_OK;
+}
+
 void Publish(const MouseInputEvent& event) {
     std::lock_guard lock(mouseMutex);
     if (event.connectionChange) {
         if (connected == event.connected) return;
         connected = event.connected;
-        if (!connected) buttons = 0;
+        if (!connected) {
+            buttons = 0;
+            absoluteHead = 0;
+            absoluteCount = 0;
+        }
     } else if (!connected) {
         return;
     }

@@ -708,7 +708,7 @@ std::uint32_t LoadedTexelResult(SpirvValueEmitContext& ctx, const ImageEmitAcces
 
 SpirvBufferFormatInfo PackedTexelFormat(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     const auto format = access.image.packedFormat;
-    if (format == IrBufferFormat::Invalid || access.image.table != NoTable || access.image.depthBits || access.image.conversionFormat != IrBufferFormat::Invalid) {
+    if (format == IrBufferFormat::Invalid || access.image.depthBits || access.image.conversionFormat != IrBufferFormat::Invalid) {
         ctx.Fail(access.inst, "accesses packed texels of an image without a packed format");
     }
     const auto info = GetFormatInfo(format);
@@ -1806,7 +1806,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         EmitEmulatedSample(ctx, access, setup, false);
         return;
     }
-    if (!setup.dref && image.conversionFormat == IrBufferFormat::Format11_11_10UNorm) {
+    if (!setup.dref && IsConvertedUnormTextureFormat(image.conversionFormat)) {
         EmitEmulatedSample(ctx, access, setup, true);
         return;
     }
@@ -1836,25 +1836,32 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         operandMask |= spv::ImageOperandsBiasMask;
         operands.push_back(AddressF32(ctx, access, setup.layout.bias));
     }
+    const auto unclampedLod = (operandMask & spv::ImageOperandsLodMask) != 0u ? operands.back() : 0u;
+    std::uint32_t lodClamp = 0;
+    std::uint32_t lodViewClamp = 0;
+    const auto fmax = [&](std::uint32_t left, std::uint32_t right) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, TypeF32(state), value, GlslStd450(state), GLSLstd450FMax, left, right);
+        return value;
+    };
+    const auto clampLod = [&](std::uint32_t lod) {
+        if (lodClamp != 0u) lod = fmax(lod, lodClamp);
+        if (lodViewClamp != 0u) lod = Select(state, TypeF32(state), Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), lodViewClamp, ZeroF32(state)), fmax(lod, lodViewClamp), lod);
+        return lod;
+    };
     const bool descriptorClamp = state.shaderImageMinLod && state.program.Info().images.at(mem.resource).table == NoTable;
     if (descriptorClamp && state.registrationModules) ctx.Fail(access.inst, "applies its T#'s minimum LOD clamp in the shader, which registration modules do not implement");
     if (setup.layout.clamp != NoImageComponent || descriptorClamp) {
         const auto& capabilities = state.supportedCapabilities;
         if (std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityMinLod)) == capabilities.end()) ctx.Fail(access.inst, "clamps its LOD, which needs the device's shaderResourceMinLod");
-        const auto fmax = [&](std::uint32_t left, std::uint32_t right) {
-            const auto value = state.module.AllocateId();
-            state.module.AddFunction(spv::OpExtInst, TypeF32(state), value, GlslStd450(state), GLSLstd450FMax, left, right);
-            return value;
-        };
-        const auto clamp = setup.layout.clamp != NoImageComponent ? AddressF32(ctx, access, setup.layout.clamp) : 0u;
-        const auto viewClamp = descriptorClamp ? Unary(state, spv::OpBitcast, TypeF32(state), state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MinLodBase + mem.resource, 0u)) : 0u;
+        lodClamp = setup.layout.clamp != NoImageComponent ? AddressF32(ctx, access, setup.layout.clamp) : 0u;
+        lodViewClamp = descriptorClamp ? Unary(state, spv::OpBitcast, TypeF32(state), state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MinLodBase + mem.resource, 0u)) : 0u;
         if ((operandMask & spv::ImageOperandsLodMask) != 0u) {
-            if (clamp != 0u) operands.back() = fmax(operands.back(), clamp);
-            if (viewClamp != 0u) operands.back() = Select(state, TypeF32(state), Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), viewClamp, ZeroF32(state)), fmax(operands.back(), viewClamp), operands.back());
+            operands.back() = clampLod(operands.back());
         } else {
             state.module.EmitCapability(spv::CapabilityMinLod);
             operandMask |= spv::ImageOperandsMinLodMask;
-            operands.push_back(clamp == 0u ? viewClamp : viewClamp == 0u ? clamp : fmax(clamp, viewClamp));
+            operands.push_back(lodClamp == 0u ? lodViewClamp : lodViewClamp == 0u ? lodClamp : fmax(lodClamp, lodViewClamp));
         }
     }
     const auto constantOffset = [&]() -> const IrValue* {
@@ -1920,6 +1927,42 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
             return emitDirectSample(coord, mask, arguments, sampleOpcode);
         });
     };
+    const auto emitBiasedSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {
+        if (!AppliesLodBiasInShader(state.program.Info().samplers.at(mem.sampler))) return emitSample(coord, mask, arguments, sampleOpcode);
+        const auto f32 = TypeF32(state);
+        const auto selector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::SamplerLodBiasBase + mem.sampler, 0u);
+        const auto beyondLimit = Binary(state, spv::OpINotEqual, TypeBool(state), selector, ConstantU32(state, 0u));
+        return EmitValueIfElse(state, beyondLimit, resultType, [&] {
+            const auto bias = Unary(state, spv::OpBitcast, f32, selector);
+            auto biased = arguments;
+            if ((mask & spv::ImageOperandsLodMask) != 0u) {
+                biased.front() = clampLod(Binary(state, spv::OpFAdd, f32, unclampedLod, bias));
+                return emitSample(coord, mask, biased, sampleOpcode);
+            }
+            auto gradMask = mask;
+            auto total = bias;
+            if ((mask & spv::ImageOperandsBiasMask) != 0u) {
+                total = Binary(state, spv::OpFAdd, f32, total, biased.front());
+                biased.erase(biased.begin());
+                gradMask &= ~static_cast<std::uint32_t>(spv::ImageOperandsBiasMask);
+            }
+            const auto components = setup.dimensionInfo.spatialComponents;
+            const auto gradientType = components == 1u ? f32 : TypeF32Vector(state, components);
+            if ((mask & spv::ImageOperandsGradMask) == 0u) {
+                const auto spatial = CoordF32(ctx, access, setup.layout.coord, components, AddressDimension(access).spatialComponents);
+                biased.insert(biased.begin(), {Unary(state, spv::OpDPdx, gradientType, spatial), Unary(state, spv::OpDPdy, gradientType, spatial)});
+                gradMask |= spv::ImageOperandsGradMask;
+            }
+            const auto scale = state.module.AllocateId();
+            state.module.AddFunction(spv::OpExtInst, f32, scale, GlslStd450(state), GLSLstd450Pow, ConstantF32(state, 0x40000000u), total);
+            for (std::size_t index = 0; index < 2u; ++index) {
+                biased[index] = Binary(state, components == 1u ? spv::OpFMul : spv::OpVectorTimesScalar, gradientType, biased[index], scale);
+            }
+            return emitSample(coord, gradMask, biased, setup.dref ? spv::OpImageSampleDrefExplicitLod : spv::OpImageSampleExplicitLod);
+        }, [&] {
+            return emitSample(coord, mask, arguments, sampleOpcode);
+        });
+    };
     std::uint32_t sample = 0;
     const bool alreadyBaseLevel = !hasOffset && opcode == spv::OpImageSampleExplicitLod && operandMask == spv::ImageOperandsLodMask && !HasFlag(mem, RdnaImageSampleFlagLod) && setup.layout.clamp == NoImageComponent;
     const bool baseLevelIfUnnormalized = !setup.dref && !alreadyBaseLevel && SamplesBaseLevelIfUnnormalized(state.program.Info().samplers.at(mem.sampler));
@@ -1929,12 +1972,12 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         sample = EmitValueIfElse(state, unnormalized, resultType, [&] {
             return emitSample(hasOffset ? FoldedOffsetCoord(ctx, access, setup) : setup.coord, spv::ImageOperandsLodMask, {ZeroF32(state)}, spv::OpImageSampleExplicitLod);
         }, [&] {
-            return emitSample(setup.coord, operandMask, operands, opcode);
+            return emitBiasedSample(setup.coord, operandMask, operands, opcode);
         });
     } else if (!foldOffset) {
-        sample = emitSample(setup.coord, operandMask, operands, opcode);
+        sample = emitBiasedSample(setup.coord, operandMask, operands, opcode);
     } else if (!offsetOperand) {
-        sample = emitSample(FoldedOffsetCoord(ctx, access, setup), foldedMask, foldedOperands, opcode);
+        sample = emitBiasedSample(FoldedOffsetCoord(ctx, access, setup), foldedMask, foldedOperands, opcode);
     } else {
         const auto selector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::FoldOffsetBase + mem.sampler, 0u);
         const auto folded = Binary(state, spv::OpINotEqual, TypeBool(state), selector, ConstantU32(state, 0u));
@@ -1944,11 +1987,11 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
         state.module.AddFunction(spv::OpBranchConditional, folded, foldLabel, operandLabel);
         EmitLabel(state, foldLabel);
-        const auto foldSample = emitSample(FoldedOffsetCoord(ctx, access, setup), foldedMask, foldedOperands, opcode);
+        const auto foldSample = emitBiasedSample(FoldedOffsetCoord(ctx, access, setup), foldedMask, foldedOperands, opcode);
         const auto foldEnd = state.currentLabel;
         state.module.AddFunction(spv::OpBranch, merge);
         EmitLabel(state, operandLabel);
-        const auto operandSample = emitSample(setup.coord, operandMask, operands, opcode);
+        const auto operandSample = emitBiasedSample(setup.coord, operandMask, operands, opcode);
         const auto operandEnd = state.currentLabel;
         state.module.AddFunction(spv::OpBranch, merge);
         EmitLabel(state, merge);

@@ -1,0 +1,4 @@
+add_library(libSceFaceTracker SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceFaceTracker PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceFaceTracker)
+target_link_libraries(libSceFaceTracker PRIVATE libSceFace)
