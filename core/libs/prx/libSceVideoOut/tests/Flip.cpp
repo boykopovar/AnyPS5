@@ -592,6 +592,9 @@ void testControls() {
     check(sceVideoOutIsOutputSupported(handle, 0xd000000aull, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE, "unknown output mode is supported");
     check(sceVideoOutConfigureOutput(handle, 0xd000000aull, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE, "unknown output mode was configured");
     check(sceVideoOutConfigureOutput(handle, VIDEO_OUT_OUTPUT_MODE_DEFAULT, nullptr, nullptr, 0) == 0, "default output mode was rejected");
+    for (const int unopened : {-1, 99}) {
+        check(sceVideoOutSetWindowModeMargins(unopened, 0, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "window mode margins on an invalid handle were not refused");
+    }
     for (int rate = 0; rate <= 2; ++rate) {
         check(sceVideoOutSetFlipRate(handle, rate) == 0 && cfg->flipRate == rate, "flip rate was not applied");
     }
@@ -699,6 +702,7 @@ void testControls() {
     sceVideoOutClose(handle);
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 0); });
     expectFailure([&] { sceVideoOutVrrUnpegFromFixedRate(handle); });
+    check(sceVideoOutSetWindowModeMargins(handle, 0, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "window mode margins on a closed handle were not refused");
     check(owner->GetTriggeredEvents(&event, 1) == 0, "closed port retained pending events");
     check(sceKernelDeleteEqueue(queue) == 0, "event queue deletion failed");
     LibcRunShutdown_nid_postfix();
