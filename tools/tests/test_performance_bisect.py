@@ -629,3 +629,11 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "existing content directory"):
                 performance_bisect.load_recipe(path)
 
+
+    def test_recipe_rejects_malformed_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "recipe.json"
+            path.write_text("{", encoding="utf-8")
+            with self.assertRaises(json.JSONDecodeError):
+                performance_bisect.load_recipe(path)
+
