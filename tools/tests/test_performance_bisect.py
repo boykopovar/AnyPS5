@@ -656,3 +656,9 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing machine"):
                 performance_bisect.sample_summary(path, "PPSA00000", GOOD)
 
+
+    def test_summary_uses_middle_pair_for_even_sample_count(self):
+        samples = [{"fps": value, "identity": IDENTITY} for value in (60.0, 62.0)]
+        result = performance_bisect.summarize(samples, 5)
+        self.assertEqual(result["median_fps"], 61.0)
+
