@@ -192,6 +192,11 @@ void testFailures() {
     checkThrows([&] { sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory); });
     config.maxFrameWidth = Width;
     check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory) == 0, "memory query failed");
+    errno = 71;
+    checkThrows([&] { sceVideodec2CreateDecoder_nid_postfix(reinterpret_cast<const DecoderConfigInfo*>(0x10), &memory, &handle); });
+    checkThrows([&] { sceVideodec2CreateDecoder_nid_postfix(&config, reinterpret_cast<const DecoderMemoryInfo*>(0x10), &handle); });
+    checkThrows([&] { sceVideodec2CreateDecoder_nid_postfix(&config, &memory, reinterpret_cast<std::uint64_t*>(0x10)); });
+    check(errno == 71, "preserves errno");
     check(sceVideodec2CreateDecoder_nid_postfix(&config, &memory, &handle) == 0, "decoder creation failed");
     std::vector<std::uint8_t> storage;
     const auto buffer = AlignedFrameStorage(storage, memory.maxFrameBufferSize, memory.frameBufferAlignment);
@@ -1144,6 +1149,11 @@ void testComputeQueues() {
     checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(nullptr, &memory, &first); });
     checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, nullptr, &first); });
     checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, nullptr); });
+    errno = 71;
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(reinterpret_cast<const SceVideodec2::ComputeConfigInfo*>(0x10), &memory, &first); });
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, reinterpret_cast<const SceVideodec2::ComputeMemoryInfo*>(0x10), &first); });
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, reinterpret_cast<std::uint64_t*>(0x10)); });
+    check(errno == 71, "preserves errno");
     check(first == 0, "a rejected allocation wrote a queue");
     check(sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, &first) == 0 && first != 0, "the first compute queue was not allocated");
     check(sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, &second) == 0 && second != 0 && second != first, "a second compute queue repeats the first");
