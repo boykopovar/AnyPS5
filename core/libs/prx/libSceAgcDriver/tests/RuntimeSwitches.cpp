@@ -55,6 +55,7 @@ void parse() {
     const auto config = AbSchedule::Parse(" 30 : APS5_NO_BARRIER_BATCH ", "815", "3");
     Require(config.phaseSeconds == 30 && config.settleSeconds == 3 && config.startPresent == 815 && !config.startSeconds.has_value(), "the phase settings were not parsed");
     Require(config.switches.size() == 1 && config.switches[0] == RuntimeSwitch::NoBarrierBatch, "the switch list was not parsed");
+    Require(config.arms.size() == 2 && config.arms[0].name == "A" && config.arms[0].switches.empty() && config.arms[1].name == "B" && config.arms[1].switches.size() == 1, "the legacy form is not the two arms A and B");
     const auto bySeconds = AbSchedule::Parse("60:APS5_NO_BARRIER_BATCH", "90s", "");
     Require(bySeconds.startSeconds == 90.0 && bySeconds.settleSeconds == 2 && bySeconds.startPresent == 0, "a start in seconds was not parsed");
     Require(Refusal("60:APS5_FULL_BARRIERS").find("APS5_FULL_BARRIERS cannot change while the title runs; switches the A/B can change: APS5_NO_BARRIER_BATCH") != std::string::npos, "a startup-only variable was not refused with the list of switches");
@@ -69,32 +70,62 @@ void parse() {
     }
 }
 
+void arms() {
+    const auto plan = AbSchedule::Parse("60:A|X=APS5_NO_BARRIER_BATCH|A|Y=APS5_NO_GUARD_SPANS+APS5_NO_OWNED_DRAW_INPUTS|X", "", "");
+    Require(plan.arms.size() == 5, "the five arms of A|X|A|Y|X were not parsed");
+    Require(plan.arms[0].name == "A" && plan.arms[0].switches.empty() && plan.arms[2].name == "A" && plan.arms[2].switches.empty(), "the baseline arm A was not parsed as no switches");
+    Require(plan.arms[1].name == "X" && plan.arms[1].switches.size() == 1 && plan.arms[1].switches[0] == RuntimeSwitch::NoBarrierBatch, "the group X was not parsed");
+    Require(plan.arms[3].name == "Y" && plan.arms[3].switches.size() == 2 && plan.arms[3].switches[1] == RuntimeSwitch::NoOwnedDrawInputs, "the group Y with two switches was not parsed");
+    Require(plan.arms[4].name == "X" && plan.arms[4].switches == plan.arms[1].switches, "a reused group name did not reuse its switches");
+    Require(plan.switches.size() == 3 && plan.switches[0] == RuntimeSwitch::NoBarrierBatch && plan.switches[1] == RuntimeSwitch::NoGuardSpans && plan.switches[2] == RuntimeSwitch::NoOwnedDrawInputs, "the union of the arms' switches was not collected");
+    const auto bare = AbSchedule::Parse("60:A|APS5_NO_OWNED_DRAW_INPUTS", "", "");
+    Require(bare.arms.size() == 2 && bare.arms[1].name == "APS5_NO_OWNED_DRAW_INPUTS" && bare.arms[1].switches.size() == 1, "a bare switch name as an arm was not parsed");
+    Require(Refusal("60:A|X").find("cannot change while the title runs") != std::string::npos, "an undefined group name was not refused");
+    Require(Refusal("60:A|X=APS5_NO_BARRIER_BATCH|X=APS5_NO_OWNED_DRAW_INPUTS").find("defined twice") != std::string::npos, "a group defined twice was not refused");
+    Require(Refusal("60:A|").find("empty arm") != std::string::npos, "an empty arm was not refused");
+    Require(Refusal("60:A=APS5_NO_BARRIER_BATCH|A").find("needs a name other than A") != std::string::npos, "an arm without a name before = was not refused");
+    Require(Refusal("60:A|X=").find("empty switch name") != std::string::npos, "a group without switches was not refused");
+    Require(Refusal("60:A|X=APS5_NO_BARRIER_BATCH+APS5_NO_BARRIER_BATCH").find("listed twice") != std::string::npos, "a group listing a switch twice was not refused");
+}
+
 void schedule() {
     AbSchedule plan(AbSchedule::Parse("60:APS5_NO_BARRIER_BATCH", "10", "2"));
     using Event = AbSchedule::Event;
-    const auto expect = [&](std::uint64_t present, double seconds, Event event, std::uint64_t phase, bool b) {
+    const auto expect = [&](std::uint64_t present, double seconds, Event event, std::uint64_t phase, std::size_t arm) {
         const auto step = plan.AtPresent(present, seconds);
-        Require(step.event == event && (event == Event::None || (step.phase == phase && step.b == b)), "unexpected step at present " + std::to_string(present));
+        Require(step.event == event && (event == Event::None || (step.phase == phase && step.arm == arm)), "unexpected step at present " + std::to_string(present));
     };
-    expect(1, 0.0, Event::None, 0, false);
-    expect(9, 100.0, Event::None, 0, false);
-    expect(10, 102.0, Event::Begin, 0, false);
-    expect(11, 103.0, Event::None, 0, false);
-    expect(12, 104.5, Event::Settled, 0, false);
-    expect(13, 150.0, Event::None, 0, false);
-    expect(14, 161.9, Event::None, 0, false);
-    expect(15, 162.0, Event::Begin, 1, true);
-    expect(16, 163.0, Event::None, 1, true);
-    expect(17, 300.0, Event::Begin, 2, false);
-    expect(18, 301.0, Event::None, 2, false);
-    expect(19, 302.5, Event::Settled, 2, false);
-    expect(20, 362.5, Event::Begin, 3, true);
+    expect(1, 0.0, Event::None, 0, 0);
+    expect(9, 100.0, Event::None, 0, 0);
+    expect(10, 102.0, Event::Begin, 0, 0);
+    expect(11, 103.0, Event::None, 0, 0);
+    expect(12, 104.5, Event::Settled, 0, 0);
+    expect(13, 150.0, Event::None, 0, 0);
+    expect(14, 161.9, Event::None, 0, 0);
+    expect(15, 162.0, Event::Begin, 1, 1);
+    expect(16, 163.0, Event::None, 1, 1);
+    expect(17, 300.0, Event::Begin, 2, 0);
+    expect(18, 301.0, Event::None, 2, 0);
+    expect(19, 302.5, Event::Settled, 2, 0);
+    expect(20, 362.5, Event::Begin, 3, 1);
 
     AbSchedule timed(AbSchedule::Parse("30:APS5_NO_BARRIER_BATCH", "90s", ""));
     Require(timed.AtPresent(500, 1000.0).event == Event::None, "a start in seconds began at the first present");
     Require(timed.AtPresent(501, 1089.0).event == Event::None, "a start in seconds began early");
     const auto begin = timed.AtPresent(502, 1090.0);
-    Require(begin.event == Event::Begin && begin.phase == 0 && !begin.b, "a start in seconds did not begin phase A");
+    Require(begin.event == Event::Begin && begin.phase == 0 && begin.arm == 0, "a start in seconds did not begin phase A");
+
+    AbSchedule cycle(AbSchedule::Parse("60:A|X=APS5_NO_BARRIER_BATCH|A|Y=APS5_NO_OWNED_DRAW_INPUTS", "", "2"));
+    const auto arm0 = cycle.AtPresent(1, 0.0);
+    Require(arm0.event == Event::Begin && arm0.phase == 0 && arm0.arm == 0, "the multi-arm cycle did not begin at arm A");
+    const auto arm1 = cycle.AtPresent(2, 60.0);
+    Require(arm1.event == Event::Begin && arm1.phase == 1 && arm1.arm == 1, "the multi-arm cycle did not change to arm X");
+    const auto arm2 = cycle.AtPresent(3, 120.0);
+    Require(arm2.event == Event::Begin && arm2.phase == 2 && arm2.arm == 2, "the multi-arm cycle did not change back to arm A");
+    const auto arm3 = cycle.AtPresent(4, 180.0);
+    Require(arm3.event == Event::Begin && arm3.phase == 3 && arm3.arm == 3, "the multi-arm cycle did not change to arm Y");
+    const auto arm4 = cycle.AtPresent(5, 240.0);
+    Require(arm4.event == Event::Begin && arm4.phase == 4 && arm4.arm == 0, "the multi-arm cycle did not wrap to arm A");
 }
 
 void glue() {
@@ -142,6 +173,7 @@ int main(int argc, char** argv) {
         SetEnvironment("APS5_AB_SETTLE", nullptr);
         registry();
         parse();
+        arms();
         schedule();
         glue();
     } catch (const std::exception& error) {
