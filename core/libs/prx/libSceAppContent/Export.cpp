@@ -337,12 +337,16 @@ int APS5_VABI sceAppContentTemporaryDataMount2(uint32_t option, AppContentMountP
     auto& state = Temporary();
     std::lock_guard lock(state.mutex);
     if (state.mounted) return SCE_APP_CONTENT_ERROR_BUSY;
+    AppContentMountPoint output{};
+    std::memcpy(output.data, TEMPORARY_MOUNT_POINT, sizeof(TEMPORARY_MOUNT_POINT));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(mountPoint, &output, sizeof(output));
+    errno = savedErrno;
+    if (!copied) return SCE_APP_CONTENT_ERROR_PARAMETER;
     if (std::filesystem::create_directories(state.directory)) RecordWrittenPath_nid_no_patch(state.directory);
     if (option == TEMPORARY_DATA_OPTION_FORMAT) ClearDirectory(state.directory);
     AddPathAlias_nid_no_patch(TEMPORARY_MOUNT_POINT, state.directory.string().c_str());
     state.mounted = true;
-    std::memset(mountPoint->data, 0, sizeof(mountPoint->data));
-    std::memcpy(mountPoint->data, TEMPORARY_MOUNT_POINT, sizeof(TEMPORARY_MOUNT_POINT));
     return 0;
 }
 

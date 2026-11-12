@@ -6,6 +6,8 @@
 
 ### Unknown function info
 
+- [sceAppContentTemporaryDataMount2](../../../core/libs/prx/libSceAppContent/Export.cpp) (libSceAppContent) - an inaccessible non-null mount-point output returns `SCE_APP_CONTENT_ERROR_PARAMETER` instead of crashing the host. This is a host-safety fallback; the console's invalid-memory result is unmeasured. The checked output is written before creating or formatting storage, so a failed write leaves the files and mount state untouched. If a later host filesystem operation throws, the guest output may already contain `/temp0`; that case is unmeasured.
+
 - [sceAppContentDownloadDataGetAvailableSpaceKb](../../../core/libs/prx/libSceAppContent/Export.cpp) (libSceAppContent) - a title whose `param.json` declares `downloadDataSize` 0 gets 0 KB and OK; the console's behaviour for a title without a download data area is unverified (it may return an error instead). shadPS4 stubs 1048576 KB. One disassembled title (PPSA15246) calls it with the `/download0` mount point and a zeroed 64-bit output, ignores the return value and multiplies the output by 1024, so for that title an error that leaves the output untouched and an OK with 0 KB look the same. `/download1` and `/download2` queries reflect their configured quota.
 - [sceAppContentDownloadDataFormat](../../../core/libs/prx/libSceAppContent/Export.cpp) (libSceAppContent) - empties the `/download0`, `/download1`, or `/download2` directory, creating it if needed. Imported by PPSA01317. A null mount point returns `PARAMETER` and another mount point returns `NOT_MOUNTED` as in `sceAppContentTemporaryDataFormat` and `sceAppContentDownloadDataGetAvailableSpaceKb`; the console's error codes for both and its behaviour with files still open are unverified
 
