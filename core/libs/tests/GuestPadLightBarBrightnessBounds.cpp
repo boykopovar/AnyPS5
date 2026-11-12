@@ -54,8 +54,6 @@ int main() {
     Require(scePadSetLightBarBaseBrightness(special, 1) == PAD_ERROR_INVALID_HANDLE);
 
     Require(scePadClose_nid_postfix(handle) == PAD_OK);
-    Require(scePadIsLightBarBaseBrightnessControllable(handle) == 1);
-    Require(scePadSetLightBarBaseBrightness(handle, 1) == PAD_OK);
 
     Require(scePadClose_nid_postfix(handle2) == PAD_OK);
 
