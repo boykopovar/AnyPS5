@@ -272,6 +272,8 @@ private:
 
     std::jthread presentThread;
     std::jthread vblankThread;
+    std::atomic<bool> presentReturned{false};
+    std::atomic<bool> vblankReturned{false};
 };
 
 #endif

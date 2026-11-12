@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "prx/libc/include/ShutdownJoin.hpp"
 #include "SDL.h"
 #include "SDL_vulkan.h"
 #include "prx/libSceVideoOut/include/MainThread.hpp"
@@ -388,28 +389,34 @@ VideoOutDriver::~VideoOutDriver() {
 }
 
 void VideoOutDriver::Shutdown() {
+    const int code = LibcExitCode_nid_no_patch();
+    if (LibcHostShutdownAbandoned_nid_no_patch()) LibcTerminate_nid_no_patch(code);
     require(std::this_thread::get_id() != presentThread.get_id(), "presentation thread cannot stop itself");
-    std::lock_guard shutdownLock(shutdownMutex);
+    LockOrEndIfHostAbandoned(shutdownMutex, code);
+    std::lock_guard shutdownLock(shutdownMutex, std::adopt_lock);
     if (stopped) return;
     LibcRequestShutdown_nid_postfix();
+    LockOrEndIfHostAbandoned(flipQueue->mutex, code);
     {
-        std::lock_guard queueLock(flipQueue->mutex);
+        std::lock_guard queueLock(flipQueue->mutex, std::adopt_lock);
         flipQueue->stopping = true;
     }
     presentThread.request_stop();
     vblankThread.request_stop();
     flipQueue->changed.NotifyAll();
-    presentThread.join();
-    vblankThread.join();
+    JoinWhenReturnedOrEndIfAbandoned(presentThread, presentReturned, code);
+    JoinWhenReturnedOrEndIfAbandoned(vblankThread, vblankReturned, code);
+    LockOrEndIfHostAbandoned(mutex, code);
     {
-        std::lock_guard lock(mutex);
+        std::lock_guard lock(mutex, std::adopt_lock);
         for (int handle = 1; handle < VIDEO_OUT_NUM_MAX; ++handle) {
             if (outputs[handle]) close(handle);
         }
     }
     OnMainThread([] { SDL_QuitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER); });
     stopped = true;
-    std::lock_guard lock(flipQueue->mutex);
+    LockOrEndIfHostAbandoned(flipQueue->mutex, code);
+    std::lock_guard lock(flipQueue->mutex, std::adopt_lock);
     if (flipQueue->failure) std::rethrow_exception(flipQueue->failure);
 }
 
@@ -742,6 +749,10 @@ std::optional<AgcDriver::DisplayBuffer> VideoOutDriver::overlayPlane() {
 }
 
 void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& started) {
+    struct MarkReturned {
+        std::atomic<bool>& flag;
+        ~MarkReturned() { flag.store(true, std::memory_order_release); }
+    } markReturned{presentReturned};
     try {
         OnMainThread([&] {
             window.Ensure(VIDEO_OUT_DEFAULT_WIDTH, VIDEO_OUT_DEFAULT_HEIGHT);
@@ -897,6 +908,10 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
 }
 
 void VideoOutDriver::vblankLoop(std::stop_token token) {
+    struct MarkReturned {
+        std::atomic<bool>& flag;
+        ~MarkReturned() { flag.store(true, std::memory_order_release); }
+    } markReturned{vblankReturned};
     using Frame = std::chrono::duration<int64_t, std::ratio<1001, 120000>>;
     const auto start = std::chrono::steady_clock::now();
     try {

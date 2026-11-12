@@ -1,7 +1,9 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include <algorithm>
+#include <typeinfo>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -291,6 +293,15 @@ void APS5_VABI __cxa_free_exception_nid_postfix(void* object) {
     ++globals.uncaught;
     _Unwind_RaiseException_nid_postfix(&header->unwind);
 
+    if (type && std::strcmp(type->name(), typeid(ProcessShutdown).name()) == 0 && LibcUnwindMissAtHostThreadRoot_nid_no_patch()) {
+        LibcNoteHostShutdownAbandoned_nid_no_patch();
+        RawLog("[libc] ProcessShutdown could not unwind a host thread root; leaving that thread paused\n");
+#ifdef _WIN32
+        for (;;) Sleep(1000);
+#else
+        for (;;) pause();
+#endif
+    }
     RawLog("[libc] unhandled exception '%s' thrown from %p\n", type ? type->name() : "?", throwSite);
     __cxa_begin_catch_nid_postfix(&header->unwind);
 

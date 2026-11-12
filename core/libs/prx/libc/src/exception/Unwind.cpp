@@ -41,6 +41,19 @@ extern "C" _Unwind_Reason_Code __gcc_personality_v0(int, _Unwind_Action, std::ui
 extern "C" void _Unwind_DeleteException(_Unwind_Exception*);
 #endif
 
+#ifdef __APPLE__
+namespace {
+thread_local std::uintptr_t unwindMissPc = 0;
+}
+extern "C" bool LibcUnwindMissAtHostThreadRoot_nid_no_patch() {
+    Dl_info image {};
+    if (unwindMissPc == 0 || !dladdr(reinterpret_cast<void*>(unwindMissPc), &image) || image.dli_sname == nullptr)
+        return false;
+    const char* const name = image.dli_sname;
+    return std::strcmp(name, "thread_start") == 0 || std::strcmp(name, "_thread_start") == 0;
+}
+#endif
+
 namespace LibcUnwind {
 #ifdef _WIN32
 static bool Readable(Word address, std::size_t size) {
@@ -463,6 +476,9 @@ bool CompactRules(Frame& frame, Rules& rules) {
 
 bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
     Lookup query {context.registers[16] - !context.signalFrame};
+#ifdef __APPLE__
+    unwindMissPc = query.pc;
+#endif
 #if defined(__linux__) || defined(__APPLE__)
 #ifdef LIBC_UNWIND_FIND_OBJECT
     if (!FindFrameFast(query))

@@ -17,6 +17,7 @@
 #include "ShaderDiskCache.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libc/include/ShutdownJoin.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -169,8 +170,11 @@ void Driver::Shutdown() {
 }
 
 void Driver::stop() {
+    const int code = LibcExitCode_nid_no_patch();
+    if (LibcHostShutdownAbandoned_nid_no_patch()) LibcTerminate_nid_no_patch(code);
     require(!onWorkerThread(), "worker cannot stop itself");
-    std::lock_guard shutdownLock(shutdownMutex);
+    LockOrEndIfHostAbandoned(shutdownMutex, code);
+    std::lock_guard shutdownLock(shutdownMutex, std::adopt_lock);
     if (stopped) return;
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     if (!GuestMemory::StopHostWrites(1000)) std::fprintf(stderr, "[driver] a host write was still inside the driver's hook 1 s into the shutdown; stopping without waiting for it\n");
@@ -186,9 +190,8 @@ void Driver::stop() {
         }
     }
     changed.notify_all();
-    for (auto& [queue, worker] : workers) {
-        if (worker.thread.joinable()) worker.thread.join();
-    }
+    for (auto& [queue, worker] : workers)
+        JoinWhenReturnedOrEndIfAbandoned(worker.thread, worker.exited, code);
     try {
         DrawFinisher::Get().Drain();
     } catch (...) {
@@ -199,7 +202,8 @@ void Driver::stop() {
     StopWorkerSampler();
     CloseRegistrationPreparation();
     Graphics::StopPipelineLibraryWorker();
-    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    LockOrEndIfHostAbandoned(GuestMemory::GpuMutex(), code);
+    std::lock_guard gpuLock(GuestMemory::GpuMutex(), std::adopt_lock);
     Graphics::ReportHostImports();
     device.Reset();
     replacedDevices.clear();
