@@ -63,6 +63,8 @@ struct ColorTarget {
     bool dccPipeAligned = false;
     std::uint64_t cmaskAddress = 0;
     std::size_t cmaskBytes = 0;
+    std::uint32_t cmaskSlice = 0;
+    std::size_t cmaskSliceBytes = 0;
     bool cmaskFastClear = false;
     std::uint32_t eqaaFragments = 0;
     std::uint64_t surfaceAddress = 0;
@@ -256,6 +258,7 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
 std::size_t CmaskBytes(std::uint32_t width, std::uint32_t height);
 std::uint32_t ColorWriteMask(const Registers& context);
 GuestTextureResource SurfaceForTarget(const ColorTarget& color);
+std::uint32_t ColorSliceXor(const ColorTarget& color, std::uint32_t slice);
 GuestTextureResource ArraySurfaceForTarget(const ColorTarget& color);
 
 struct ColorMetadataPass {

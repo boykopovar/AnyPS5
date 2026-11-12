@@ -122,7 +122,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DrawWriteRanges(const Graph
     }
     const auto addColor = [&](const Graphics::ColorTarget& color) {
         if (exact && color.bytes != 0) {
-            const auto slices = static_cast<std::uint64_t>(std::max<std::uint32_t>(color.depth, 1));
+            const auto slices = static_cast<std::uint64_t>(std::max({color.depth, color.layers, 1u}));
             const auto bytes = static_cast<std::uint64_t>(color.bytes) * slices;
             add(color.address, bytes);
             add(color.dccAddress, (bytes + 255) / 256);
@@ -133,7 +133,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DrawWriteRanges(const Graph
         const auto base = color.surfaceAddress != 0 ? std::min(color.surfaceAddress, color.address) : color.address;
         if (base != 0) ranges.emplace_back(base, color.address + 2 * bytes + Slack);
         add(color.dccAddress, bytes / 16 + Slack);
-        add(color.cmaskAddress, static_cast<std::uint64_t>(color.cmaskBytes) * std::max<std::uint32_t>(color.depth, 1));
+        add(color.cmaskAddress, static_cast<std::uint64_t>(color.cmaskBytes) * std::max({color.depth, color.layers, 1u}));
     };
     if (graphics.hasColorTarget) addColor(graphics.color);
     for (const auto& color : graphics.colors) addColor(color);
