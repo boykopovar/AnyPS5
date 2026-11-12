@@ -8,7 +8,7 @@ static void libressl_once(void) {
     ERR_load_crypto_strings();
 }
 
-int OPENSSL_init_crypto(unsigned long long opts, const void *settings) {
+int OPENSSL_init_crypto(uint64_t opts, const void *settings) {
     static pthread_once_t once = PTHREAD_ONCE_INIT;
     (void)opts; (void)settings;
     return pthread_once(&once, libressl_once) == 0;
