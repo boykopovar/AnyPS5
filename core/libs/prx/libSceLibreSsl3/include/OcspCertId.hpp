@@ -80,4 +80,3 @@ static_assert(offsetof(OCSP_CERTID, hashAlgorithm) == 0);
 static_assert(offsetof(OCSP_CERTID, issuerNameHash) == 8);
 static_assert(offsetof(OCSP_CERTID, issuerKeyHash) == 16);
 static_assert(offsetof(OCSP_CERTID, serialNumber) == 24);
-
