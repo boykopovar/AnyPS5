@@ -47,6 +47,14 @@ static void TestFocusMuteState() {
         rejected = true;
     }
     Require(rejected && HostAudioInMuteState_nid_no_patch() == state);
+
+    rejected = false;
+    try {
+        HostAudioInConfigure_nid_no_patch("");
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected && HostAudioInMuteState_nid_no_patch() == state);
     HostVolumeFocus_nid_no_patch(true, nullptr);
     HostAudioInConfigure_nid_no_patch(nullptr);
 }
