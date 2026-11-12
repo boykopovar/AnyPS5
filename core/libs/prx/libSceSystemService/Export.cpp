@@ -105,7 +105,7 @@ int WriteStatus(bool* status, bool value, const char* function) {
 
 int WriteStatusOrRefuse(bool* status, bool value, int nullOutputError) {
     if (status == nullptr) return nullOutputError;
-    *status = value;
+    if (!GuestCopyOut_nid_no_patch(status, &value, sizeof(value))) return nullOutputError;
     return SYSTEM_SERVICE_OK;
 }
 
