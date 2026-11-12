@@ -73,10 +73,6 @@ int APS5_VABI cairo_set_font_size() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_surface_write_to_png_stream() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI cairo_pattern_set_extend() {
     NotImplemented_nid_no_patch(__func__);
