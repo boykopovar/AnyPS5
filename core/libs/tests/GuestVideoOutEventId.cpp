@@ -36,7 +36,7 @@ bool Throws(const std::string& what, const std::function<int()>& call) {
     return false;
 }
 
-bool RejectsEventOfAnotherFilter(const std::string& what, const KernelEvent& event) {
+bool CheckEventOfAnotherFilter(const std::string& what, const KernelEvent& event) {
     std::int64_t data = Unwritten;
     bool passed = Returns("sceVideoOutGetEventId of " + what, [&] { return sceVideoOutGetEventId(&event); }, InvalidEvent);
     passed = Returns("sceVideoOutGetEventData of " + what, [&] { return sceVideoOutGetEventData(&event, &data); }, InvalidEvent) && passed;
@@ -66,8 +66,8 @@ int main() {
     flip.filter = EVFILT_VIDEO_OUT;
     flip.data = 0x12343000;
 
-    bool passed = RejectsEventOfAnotherFilter("a user event", user);
-    passed = RejectsEventOfAnotherFilter("a graphics core event", graphics) && passed;
+    bool passed = CheckEventOfAnotherFilter("a user event", user);
+    passed = CheckEventOfAnotherFilter("a graphics core event", graphics) && passed;
     passed = Returns("sceVideoOutGetEventId of a VideoOut event with an unknown id", [&] { return sceVideoOutGetEventId(&unknown); }, InvalidEvent) && passed;
     passed = Returns("sceVideoOutGetEventId of a VideoOut event with an id above 32 bits", [&] { return sceVideoOutGetEventId(&wide); }, InvalidEvent) && passed;
 
