@@ -1,8 +1,10 @@
 #include "prx/libSceAudioIn/include/AudioIn.hpp"
 #include "prx/libSceAudioIn/AudioInCapture.hpp"
+#include "prx/libSceAudioIn/AudioInDeviceSelection.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cerrno>
+#include <cstdlib>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
@@ -12,6 +14,8 @@
 #include <chrono>
 #include <cstring>
 #include <mutex>
+#include <string>
+#include <string_view>
 #include <stdexcept>
 
 namespace {
@@ -63,7 +67,7 @@ bool formatOf(std::uint32_t param, Format& format) {
     return true;
 }
 
-SDL_AudioDeviceID openDevice(std::uint32_t freq, std::uint32_t samples, const Format& format) {
+SDL_AudioDeviceID openDevice(std::uint32_t freq, std::uint32_t samples, const Format& format, std::string_view requestedName) {
     if (!g_sdlAudio) {
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) return 0;
         g_sdlAudio = true;
@@ -74,7 +78,23 @@ SDL_AudioDeviceID openDevice(std::uint32_t freq, std::uint32_t samples, const Fo
     desired.channels = format.channels;
     desired.samples = static_cast<Uint16>(samples);
     SDL_AudioSpec obtained{};
-    const SDL_AudioDeviceID device = SDL_OpenAudioDevice(nullptr, 1, &desired, &obtained, 0);
+    auto selection = audioin::detail::selectCaptureDevice(requestedName, 0,
+        [](int index) { return SDL_GetAudioDeviceName(index, 1); });
+    if (selection.kind != audioin::detail::CaptureDeviceMatchKind::Default) {
+        selection = audioin::detail::selectCaptureDevice(requestedName, SDL_GetNumAudioDevices(1),
+            [](int index) { return SDL_GetAudioDeviceName(index, 1); });
+    }
+    if (selection.kind == audioin::detail::CaptureDeviceMatchKind::Missing ||
+        selection.kind == audioin::detail::CaptureDeviceMatchKind::Ambiguous) return 0;
+    std::string selectedName;
+    const char* deviceName = nullptr;
+    if (selection.kind == audioin::detail::CaptureDeviceMatchKind::Found) {
+        const char* name = SDL_GetAudioDeviceName(selection.index, 1);
+        if (!name) return 0;
+        selectedName = name;
+        deviceName = selectedName.c_str();
+    }
+    const SDL_AudioDeviceID device = SDL_OpenAudioDevice(deviceName, 1, &desired, &obtained, 0);
     if (device != 0) SDL_PauseAudioDevice(device, 0);
     return device;
 }
@@ -125,12 +145,17 @@ void applyMode(int mode, int value) {
 int openPort(std::uint32_t len, std::uint32_t freq, std::uint32_t param) {
     Format format{};
     if (!formatOf(param, format)) return AUDIO_IN_ERROR_INVALID_PARAM;
+    const char* const configuredName = std::getenv("ANYPS5_AUDIO_IN_DEVICE");
+    const std::string_view requestedName = configuredName ? std::string_view(configuredName) : std::string_view{};
+    const bool explicitDevice = !requestedName.empty() && requestedName != "default";
     std::lock_guard lock(g_mutex);
     for (std::size_t i = g_ports.size(); i-- > 0;) {
         if (g_ports[i].used) continue;
         const auto frameBytes = static_cast<std::uint32_t>(SDL_AUDIO_BITSIZE(format.format) / 8 * format.channels);
         const auto grain = std::chrono::duration_cast<Clock::duration>(std::chrono::microseconds(1000000ull * len / freq));
-        g_ports[i] = {true, false, len, frameBytes, openDevice(freq, len, format), grain, {}, g_mode};
+        const SDL_AudioDeviceID device = openDevice(freq, len, format, requestedName);
+        if (explicitDevice && device == 0) return AUDIO_IN_ERROR_INVALID_DEVICE;
+        g_ports[i] = {true, false, len, frameBytes, device, grain, {}, g_mode};
         return static_cast<int>(HANDLE_BASE + i);
     }
     return AUDIO_IN_ERROR_PORT_FULL;
