@@ -119,12 +119,11 @@ void expectEliminated(const std::string& what) {
 }
 
 int main() {
+    if (std::getenv("APS5_NO_DRAW_PIPELINE") != nullptr) return VulkanTestSkipped;
 #ifdef _WIN32
     _putenv_s("APS5_PIPELINED_DRAWS", "1");
-    _putenv_s("APS5_DRAW_PIPELINE", "1");
 #else
     setenv("APS5_PIPELINED_DRAWS", "1", 1);
-    setenv("APS5_DRAW_PIPELINE", "1", 1);
 #endif
     try {
         {

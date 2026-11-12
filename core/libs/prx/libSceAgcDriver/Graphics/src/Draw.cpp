@@ -4442,7 +4442,7 @@ std::uint64_t AddressDrawReuseVerifications() {
 }
 
 bool DrawPipelineEnabled() {
-    static const bool enabled = std::getenv("APS5_DRAW_PIPELINE") != nullptr;
+    static const bool enabled = std::getenv("APS5_NO_DRAW_PIPELINE") == nullptr;
     return enabled;
 }
 
