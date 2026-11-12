@@ -1857,6 +1857,10 @@ VkCommandBuffer Recorder::Commands(VkAccessFlags* coveredAccess, std::source_loc
 
 bool Recorder::BeginEncoding(std::source_location where) {
     if (encoder == nullptr || open == nullptr) return false;
+    if (RuntimeSwitches::Set(RuntimeSwitch::NoRecordEncoder) && !encoder->OpenOnThisThread()) {
+        encoder->Quiesce(where);
+        return false;
+    }
     encoder->Open(open->commands.Get(BatchCommands::Use::Handoff), open->recording, where);
     return true;
 }

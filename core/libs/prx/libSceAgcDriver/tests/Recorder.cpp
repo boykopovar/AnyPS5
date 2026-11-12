@@ -1875,6 +1875,38 @@ void encoderFailureFollowsTheBatchTests(const Device& device, Recorder& recorder
     std::cout << "Command encoder failure tests passed\n";
 }
 
+void encoderRuntimeSwitchTests(const Device& device, Recorder& recorder) {
+    if (!recorder.Encodes()) return;
+    const auto& context = device.GetContext();
+    const auto record = [&] {
+        const auto commands = recorder.Commands();
+        const Recorder::EncodingWindow window(recorder);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    };
+    const auto encoded = [&] { return recorder.EncoderCounts().commands; };
+    const bool initial = RuntimeSwitches::Set(RuntimeSwitch::NoRecordEncoder);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, false);
+    auto before = encoded();
+    record();
+    Require(encoded() > before, "a draw's commands did not go through the encoder with APS5_NO_RECORD_ENCODER unset");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, true);
+    before = encoded();
+    record();
+    Require(encoded() == before, "a draw's commands went through the encoder with APS5_NO_RECORD_ENCODER set");
+    recorder.Submit();
+    recorder.Sync();
+    Require(recorder.Idle(), "a batch recorded without the encoder did not complete");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, false);
+    before = encoded();
+    record();
+    Require(encoded() > before, "the encoder did not take over again when APS5_NO_RECORD_ENCODER was unset");
+    recorder.Submit();
+    recorder.Sync();
+    Require(recorder.Idle(), "a batch recorded through the encoder after the switch was unset did not complete");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, initial);
+    std::cout << "Command encoder runtime switch tests passed\n";
+}
+
 void encoderSlotFallbackTests(const Device& device) {
     if (!CommandEncoder::Enabled()) return;
     const auto& context = device.GetContext();
@@ -16334,6 +16366,7 @@ int main(int argc, char** argv) {
         gpu.lock();
         encoderFailureFollowsTheBatchTests(device, recorder, gpu);
         encoderPassEndSiteTests(device);
+        encoderRuntimeSwitchTests(device, recorder);
         encoderSlotFallbackTests(device);
         recorder.Activate();
         const bool drew = vertexTargetRangeTests(device, recorder, false);
