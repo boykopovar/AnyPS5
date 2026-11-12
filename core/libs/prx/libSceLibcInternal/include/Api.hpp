@@ -9,6 +9,7 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
+#include <system_error>
 
 using ErrExit = void (APS5_VABI*)(int);
 
@@ -148,6 +149,7 @@ int APS5_VABI __std_init_once_begin_initialize_clr_nid_postfix(void** once, unsi
 int APS5_VABI __std_init_once_complete_clr_nid_postfix(void** once, unsigned long flags, void* context);
 [[noreturn]] void APS5_VABI __std_init_once_link_alternate_names_and_abort_nid_postfix();
 int APS5_VABI _Mtxinit_nid_postfix(PthreadMutex* mutex, const char* name);
+int APS5_VABI _ZNSt8__sce_v236_Mtx_init_with_default_name_overrideEPP13pthread_mutexiPKc_nid_postfix(void** mutex, int type, const char* name);
 int APS5_VABI _Mtxlock_nid_postfix(PthreadMutex* mutex);
 int APS5_VABI _Mtxunlock_nid_postfix(PthreadMutex* mutex);
 int APS5_VABI _Mtxdst_nid_postfix(PthreadMutex* mutex);
@@ -155,9 +157,17 @@ void APS5_VABI sceLibcInternalPlacementDelete_nid_no_patch(void* pointer, void* 
 void APS5_VABI sceLibcInternalPlacementArrayDelete_nid_no_patch(void* pointer, void* placement) noexcept;
 void* APS5_VABI sceLibcInternalAlignedArrayNewNothrow_nid_no_patch(std::size_t size, std::size_t alignment, const void* tag) noexcept;
 void APS5_VABI sceLibcInternalAlignedArrayDelete_nid_no_patch(void* pointer, std::size_t alignment);
+void APS5_VABI sceLibcInternalSizedNothrowDelete_nid_no_patch(void* pointer, std::size_t size, const void* tag) noexcept;
+void APS5_VABI sceLibcInternalSizedNothrowArrayDelete_nid_no_patch(void* pointer, std::size_t size, const void* tag) noexcept;
+const std::error_category* APS5_VABI sceLibcInternalIostreamCategory_nid_no_patch();
 void APS5_VABI sceLibcInternalFutureErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalFutureErrorCategoryDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalSystemErrorCategoryDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalSystemErrorCategoryDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalGenericErrorCategoryDestructor_nid_no_patch(void* self);
+[[noreturn]] void APS5_VABI sceLibcInternalXoverflowError_nid_no_patch(const char* message);
 [[noreturn]] void APS5_VABI _ZNKSs5_XranEv_nid_postfix(const GuestLocale::String* self);
 [[noreturn]] void APS5_VABI _ZNKSs5_XlenEv_nid_postfix(const GuestLocale::String* self);
 GuestLocale::String* APS5_VABI _ZNSs5eraseEmm_nid_postfix(GuestLocale::String* self, std::size_t position, std::size_t count);
@@ -196,6 +206,12 @@ void APS5_VABI sceLibcInternalPointerTypeInfoDeletingDestructor_nid_no_patch(voi
 void APS5_VABI sceLibcInternalPointerToMemberTypeInfoBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalPointerToMemberTypeInfoCompleteDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalPointerToMemberTypeInfoDeletingDestructor_nid_no_patch(void* self);
+const char* APS5_VABI sceLibcInternalSystemErrorCategoryName_nid_no_patch(const void* self) noexcept;
+const char* APS5_VABI sceLibcInternalGenericErrorCategoryName_nid_no_patch(const void* self) noexcept;
+const char* APS5_VABI sceLibcInternalIostreamErrorCategoryName_nid_no_patch(const void* self) noexcept;
+const char* APS5_VABI sceLibcInternalFutureErrorCategoryName_nid_no_patch(const void* self) noexcept;
+int APS5_VABI sceLibcInternalCodecvtBaseMaxLength_nid_no_patch(const void* self) noexcept;
+int APS5_VABI sceLibcInternalCodecvtBaseEncoding_nid_no_patch(const void* self) noexcept;
 char APS5_VABI sceLibcInternalNumpunctDoDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
 char APS5_VABI sceLibcInternalNumpunctDoThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self);
 GuestLocale::String* APS5_VABI sceLibcInternalNumpunctDoGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
@@ -247,6 +263,15 @@ int APS5_VABI sceLibcInternalPending4_007_nid_no_patch(const void* self, const v
 void APS5_VABI sceLibcInternalPending4_008_nid_no_patch(const void* self, int catalog);
 int APS5_VABI sceLibcInternalPending4_013_nid_no_patch(const void* self, const void* name, const void* locale);
 void APS5_VABI sceLibcInternalPending4_014_nid_no_patch(const void* self, int catalog);
+
+using LibcUnexpectedHandler = void (*)();
+
+LibcUnexpectedHandler APS5_VABI _ZSt14set_unexpectedPFvvE_nid_postfix(LibcUnexpectedHandler handler);
+LibcUnexpectedHandler APS5_VABI _ZSt14get_unexpectedv_nid_postfix();
+[[noreturn]] void APS5_VABI _ZSt10unexpectedv_nid_postfix();
+void APS5_VABI _ZNSt16nested_exceptionD0Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt16nested_exceptionD1Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt16nested_exceptionD2Ev_nid_postfix(void* self);
 
 
 }

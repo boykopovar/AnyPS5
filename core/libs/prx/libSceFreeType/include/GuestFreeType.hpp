@@ -9,6 +9,29 @@
 namespace FreeType {
 
 struct GuestLibrary;
+struct GuestMemoryRec;
+
+struct GuestStreamRec;
+
+using GuestStreamIoFunc = std::uint64_t (APS5_VABI *)(GuestStreamRec*, std::uint64_t, std::uint8_t*, std::uint64_t);
+using GuestStreamCloseFunc = void (APS5_VABI *)(GuestStreamRec*);
+
+struct GuestStreamRec {
+    std::uint8_t* base;
+    std::uint64_t size;
+    std::uint64_t pos;
+    void* descriptor;
+    void* pathname;
+    GuestStreamIoFunc read;
+    GuestStreamCloseFunc close;
+    GuestMemoryRec* memory;
+    std::uint8_t* cursor;
+    std::uint8_t* limit;
+};
+
+static_assert(sizeof(GuestStreamRec) == 80 && offsetof(GuestStreamRec, size) == 8 && offsetof(GuestStreamRec, pos) == 16);
+static_assert(offsetof(GuestStreamRec, read) == 40 && offsetof(GuestStreamRec, close) == 48 && offsetof(GuestStreamRec, memory) == 56);
+static_assert(offsetof(GuestStreamRec, cursor) == 64 && offsetof(GuestStreamRec, limit) == 72);
 
 struct GuestGeneric {
     void* data;
@@ -252,6 +275,8 @@ static_assert(offsetof(GuestSizeRequestRec, horiResolution) == 24 && offsetof(Gu
 static_assert(sizeof(GuestBitmap) == 40 && offsetof(GuestBitmap, buffer) == 16 && offsetof(GuestBitmap, palette) == 32);
 static_assert(sizeof(GuestOutlineFuncs) == 48 && offsetof(GuestOutlineFuncs, shift) == 32 && offsetof(GuestOutlineFuncs, delta) == 40);
 static_assert(sizeof(GuestOutline) == 40 && offsetof(GuestOutline, points) == 8 && offsetof(GuestOutline, flags) == 32);
+static_assert(sizeof(GuestVector) == 16 && alignof(GuestVector) == 8 && offsetof(GuestVector, y) == 8);
+static_assert(alignof(GuestMatrix) == 8 && offsetof(GuestMatrix, xx) == 0);
 static_assert(offsetof(GuestGlyphSlotRec, glyph_index) == 0x18 && offsetof(GuestGlyphSlotRec, metrics) == 0x30);
 static_assert(offsetof(GuestGlyphSlotRec, advance) == 0x80 && offsetof(GuestGlyphSlotRec, format) == 0x90);
 static_assert(offsetof(GuestGlyphSlotRec, bitmap) == 0x98 && offsetof(GuestGlyphSlotRec, bitmap_left) == 0xc0 && offsetof(GuestGlyphSlotRec, bitmap_top) == 0xc4);

@@ -4,8 +4,10 @@
 #include "prx/libSceFsInternalForVsh/libSceFsInternalForVsh.hpp"
 #include "prx/libSceHttpCache/libSceHttpCache.hpp"
 #include "prx/libScePlayReady/libScePlayReady.hpp"
+#include "prx/libScePSNowGkp/libScePSNowGkp.hpp"
 #include "prx/libSceSdma/libSceSdma.hpp"
 #include "prx/libSceSsl/libSceSsl.hpp"
+#include "prx/libSceSystemLogger2/libSceSystemLogger2.hpp"
 #include "prx/libSceVisionManager/libSceVisionManager.hpp"
 #include "prx/libmdbg_syscore/libmdbg_syscore.hpp"
 #include <array>
@@ -22,6 +24,7 @@ void CheckAvSetting() {
     constexpr int AvSettingError = static_cast<int>(0x802A00FF);
     Require(sceAvSettingSetDisplayBlackLevel() == AvSettingError);
     Require(sceAvSettingTerm() == AvSettingError);
+    Require(libSceAvSettingUnknown_Iv3zoMND6xU_nid_no_patch() == AvSettingError);
 }
 
 void CheckAvSettingCallbackFuncsInit(void (APS5_VABI* initialize)(void*), std::size_t size) {
@@ -176,6 +179,8 @@ void CheckVisionManager() {
         const int result = sceVisionManagerGetNumOfRegisterUserDataSlot(versions[i], &count);
         Require(slots[i] == 0 ? result == VisionInvalid && count == 0xaaaaaaaa : result == 0 && count == slots[i]);
     }
+    Require(sceVisionManagerGetNumOfRegisterUserDataSlot(LibraryVersion, nullptr) == VisionInvalid);
+    Require(sceVisionManagerGetNumOfRegisterUserDataSlot(RegisterUserDataVersion, nullptr) == VisionInvalid);
 
     const std::uint32_t fills[] = {0xaaaaaaaau, 0u, ~0u};
     for (const std::uint32_t fill : fills) {
@@ -234,6 +239,11 @@ void CheckDebugSyscore() {
     Require(sceDebugSetProcessEventCntlFlag() == 1);
 }
 
+void CheckTerminates() {
+    Require(sceCloudClientTerminate() == 0);
+    Require(sceSystemLogger2Terminate() == 0);
+}
+
 }
 
 int main() {
@@ -247,5 +257,6 @@ int main() {
     CheckSsl();
     CheckVisionManager();
     CheckDebugSyscore();
+    CheckTerminates();
     return 0;
 }

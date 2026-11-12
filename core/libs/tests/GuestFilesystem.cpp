@@ -18,6 +18,7 @@
 #include <array>
 #include <chrono>
 #include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -403,6 +404,26 @@ static void TestLongHostPathStat() {
     Require(sceKernelStat("/long-stat-host/missing.bin", &status) == static_cast<int>(0x80020002u));
     Require(lstat_nid_postfix("/long-stat-host/missing.bin", &status) == -1 && *__error_nid_postfix() == 2);
     Require(sceKernelStat("/long-stat-host/", &status) == 0 && (status.st_mode & 0170000) == 0040000);
+    const int opened = sceKernelOpen("/long-stat-host/payload.bin", 0, 0);
+    char content[8]{};
+    Require(opened >= 0 && sceKernelRead(opened, content, sizeof content) == 8 && std::memcmp(content, "metadata", 8) == 0 && sceKernelClose(opened) == 0);
+    const int listed = sceKernelOpen("/long-stat-host/", 0x20000, 0);
+    Require(listed >= 0);
+    std::vector<char> longListing(4096);
+    std::vector<std::string> longNames;
+    for (int count = sceKernelGetdents(listed, longListing.data(), static_cast<int>(longListing.size())); count > 0;
+         count = sceKernelGetdents(listed, longListing.data(), static_cast<int>(longListing.size()))) {
+        for (int offset = 0; offset < count;) {
+            std::uint16_t length = 0;
+            std::memcpy(&length, longListing.data() + offset + 4, sizeof length);
+            Require(length >= 8);
+            longNames.emplace_back(longListing.data() + offset + 8);
+            offset += length;
+        }
+    }
+    std::sort(longNames.begin(), longNames.end());
+    Require((longNames == std::vector<std::string>{".", "..", "payload.bin"}));
+    Require(sceKernelClose(listed) == 0);
     RemovePathAlias_nid_no_patch("/long-stat-host");
     const auto extendedHost = ExtendedPath(deep).string();
     AddPathAlias_nid_no_patch("/long-stat-extended", extendedHost.c_str());
@@ -1019,6 +1040,9 @@ int main() {
     Require(chflags_nid_postfix(file.string().c_str(), 1ULL << 32) == -1 && *__error_nid_postfix() == 45);
     Require(chflags_nid_postfix(file.string().c_str(), ~0ULL) == -1 && *__error_nid_postfix() == 45);
     Require(chflags_nid_postfix(file.string().c_str(), 0x200000) == -1 && *__error_nid_postfix() == 1);
+    Require(chflags_nid_postfix(file.string().c_str(), 0x1) == -1 && *__error_nid_postfix() == 45);
+    Require(chflags_nid_postfix(file.string().c_str(), 0x8) == -1 && *__error_nid_postfix() == 45);
+    Require(ChflagsThrows(file, 0x9, "UF_NODUMP|UF_OPAQUE"));
     Require(ChflagsThrows(file, 0x2, "UF_IMMUTABLE"));
     for (const std::uint64_t system : {0x10000ULL, 0x20000ULL, 0x40000ULL, 0x100000ULL, 0x200000ULL, 0x370000ULL, 0x1000ULL | 0x40000ULL, 0x2ULL | 0x20000ULL})
         Require(chflags_nid_postfix(file.string().c_str(), system) == -1 && *__error_nid_postfix() == 1);
@@ -1052,6 +1076,8 @@ int main() {
     Require(fchflags_nid_postfix(flagged, 1ULL << 32) == -1 && *__error_nid_postfix() == 45);
     Require(fchflags_nid_postfix(flagged, ~0ULL) == -1 && *__error_nid_postfix() == 45);
     Require(fchflags_nid_postfix(flagged, 0x200000) == -1 && *__error_nid_postfix() == 1);
+    Require(fchflags_nid_postfix(flagged, 0x1) == -1 && *__error_nid_postfix() == 45);
+    Require(fchflags_nid_postfix(flagged, 0x8) == -1 && *__error_nid_postfix() == 45);
     Require(FchflagsThrows(flagged, 0x2, "UF_IMMUTABLE"));
     for (const std::uint64_t system : {0x10000ULL, 0x20000ULL, 0x40000ULL, 0x100000ULL, 0x200000ULL, 0x1000ULL | 0x40000ULL, 0x2ULL | 0x20000ULL})
         Require(fchflags_nid_postfix(flagged, system) == -1 && *__error_nid_postfix() == 1);
