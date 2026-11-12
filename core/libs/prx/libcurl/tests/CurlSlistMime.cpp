@@ -6,9 +6,27 @@
 #include <cstring>
 #include <cstdio>
 #include <initializer_list>
+#include <string>
 
 static void Require(bool condition) {
     if (!condition) std::abort();
+}
+
+static size_t APS5_VABI AppendFormData(void* argument, const char* data, size_t size) {
+    static_cast<std::string*>(argument)->append(data, size);
+    return size;
+}
+
+static size_t APS5_VABI RejectFormData(void*, const char*, size_t) {
+    return 0;
+}
+
+static guest_curl_httppost* GuestFormNode(const char* name, const char* contents) {
+    auto* form = static_cast<guest_curl_httppost*>(calloc_nid_postfix(1, sizeof(guest_curl_httppost)));
+    Require(form != nullptr);
+    form->name = strdup_nid_postfix(name);
+    form->contents = strdup_nid_postfix(contents);
+    return form;
 }
 
 static guest_curl_slist* GuestNode(const char* text, guest_curl_slist* next) {
@@ -21,6 +39,15 @@ static guest_curl_slist* GuestNode(const char* text, guest_curl_slist* next) {
 
 int main() {
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
+    auto* form = GuestFormNode("field", "value");
+    std::string serialized;
+    Require(curl_formget_nid_postfix(form, &serialized, AppendFormData) == CURLE_OK);
+    Require(serialized.find("Content-Disposition: form-data; name=\"field\"") != std::string::npos);
+    Require(serialized.find("value") != std::string::npos);
+    Require(curl_formget_nid_postfix(form, nullptr, RejectFormData) == CURLE_READ_ERROR);
+    free_nid_postfix(form->name);
+    free_nid_postfix(form->contents);
+    free_nid_postfix(form);
     CURL* easy = curl_easy_init_nid_postfix();
     Require(easy != nullptr);
     curl_mime* mime = curl_mime_init_nid_postfix(easy);
