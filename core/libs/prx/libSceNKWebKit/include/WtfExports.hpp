@@ -98,6 +98,7 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF11LogArgumentIPKvE8toStringES2_(const 
 void* APS5_VABI _ZN3WTF11fastReallocEPvm(void* ptr, std::size_t size);
 void APS5_VABI _ZN3WTF11jsValueFreeEPv(void* ptr);
 bool APS5_VABI _ZN3WTF11portAllowedERKNS_3URLE(const NKWebKit::WtfAbi::URL* url);
+bool APS5_VABI _ZN3WTF11setNonBlockEi(int fileDescriptor);
 bool APS5_VABI _ZN3WTF12isMainThreadEv();
 WTF::MonotonicTime APS5_VABI _ZN3WTF13MonotonicTime3nowEv();
 void APS5_VABI _ZN3WTF13StringBuilder11shrinkToFitEv(NKWebKit::WtfAbi::StringBuilder* self);
@@ -111,6 +112,7 @@ bool APS5_VABI _ZN3WTF13isMainRunLoopEv();
 void* APS5_VABI _ZN3WTF13jsValueMallocEm(std::size_t size);
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF13tryFastCallocEmm(WTF::TryMallocReturnValue* result, std::size_t count, std::size_t size);
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF13tryFastMallocEm(WTF::TryMallocReturnValue* result, std::size_t size);
+int APS5_VABI _ZN3WTF14dupCloseOnExecEi(int fileDescriptor);
 std::size_t APS5_VABI _ZN3WTF14fastMallocSizeEPKv(const void* ptr);
 void* APS5_VABI _ZN3WTF14jsValueReallocEPvm(void* ptr, std::size_t size);
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF14tryFastReallocEPvm(WTF::TryMallocReturnValue* result, void* ptr, std::size_t size);
@@ -174,6 +176,7 @@ bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplEPKhj(const NKWebKit::WtfAbi::Stri
 bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplES2_(const NKWebKit::WtfAbi::StringImpl* a, const NKWebKit::WtfAbi::StringImpl* b);
 bool APS5_VABI _ZN3WTF5equalERKNS_10StringImplES2_(const NKWebKit::WtfAbi::StringImpl& a, const NKWebKit::WtfAbi::StringImpl& b);
 void APS5_VABI _ZN3WTF5sleepERKNS_24TimeWithDynamicClockTypeE(const WTF::TimeWithDynamicClockType& time);
+void APS5_VABI _ZN3WTF5sleepENS_7SecondsE(WTF::Seconds value);
 void APS5_VABI _ZN3WTF6Config17permanentlyFreezeEv();
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF6String13fromCodePointEi(std::int32_t cp);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF6String26fromUTF8WithLatin1FallbackEPKhm(const unsigned char* data, std::size_t length);

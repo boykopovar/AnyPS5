@@ -6,6 +6,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include <chrono>
 #include <filesystem>
 #ifndef _WIN32
@@ -562,6 +563,49 @@ static void TestFileHandles() {
     std::filesystem::remove_all(root);
 }
 
+static void TestUniStdExtras() {
+    const auto root = std::filesystem::current_path() / ("nkwebkit-unistd-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-unistd", reinterpret_cast<const char*>(hostPath.c_str()));
+    const int handle = sceKernelOpen("/nkwebkit-unistd/file.bin", SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT, 0666);
+    Require(handle >= 0);
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_NONBLOCK) == 0);
+    Require(_ZN3WTF11setNonBlockEi(handle));
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_NONBLOCK) != 0);
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_ACCMODE) == SCE_KERNEL_O_RDWR);
+    Require(_ZN3WTF11setNonBlockEi(handle));
+    Require(fcntl_nid_postfix(handle, 1) == 0);
+    const int duplicate = _ZN3WTF14dupCloseOnExecEi(handle);
+    Require(duplicate >= 0 && duplicate != handle);
+    Require(fcntl_nid_postfix(duplicate, 1) == 1);
+    Require(fcntl_nid_postfix(handle, 1) == 0);
+    Require(sceKernelWrite(duplicate, "abc", 3) == 3);
+    Require(sceKernelLseek(handle, 0, 1) == 3);
+    Require(close_nid_postfix(duplicate) == 0);
+    Require(sceKernelClose(handle) == 0);
+    *__error_nid_postfix() = 0;
+    Require(!_ZN3WTF11setNonBlockEi(handle));
+    Require(*__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(_ZN3WTF14dupCloseOnExecEi(-1) == -1);
+    Require(*__error_nid_postfix() == 9);
+    RemovePathAlias_nid_no_patch("/nkwebkit-unistd");
+    std::filesystem::remove_all(root);
+}
+
+static void TestSleepSeconds() {
+    double start = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{0.05});
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start >= 0.05);
+    start = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{0.0});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{-5.0});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{-std::numeric_limits<double>::infinity()});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{std::numeric_limits<double>::quiet_NaN()});
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start < 1.0);
+}
+
 int main() {
     TestAdditionalWtf();
     TestMemoryAllocations();
@@ -573,6 +617,8 @@ int main() {
     TestJscAndPal();
     TestMappedFiles();
     TestFileHandles();
+    TestUniStdExtras();
+    TestSleepSeconds();
     return 0;
 }
 
