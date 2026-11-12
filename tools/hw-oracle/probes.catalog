@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "probes": [
+    {
+      "id": "v-add-f32-edge-values",
+      "instruction": "v_add_f32",
+      "description": "Signed zero, halfway rounding, overflow, infinities and NaN payloads.",
+      "body": "v_add_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "positive-zero", "input": ["0x00000000", "0x00000000", 0, 0]},
+        {"name": "opposite-signed-zeros", "input": ["0x00000000", "0x80000000", 0, 0]},
+        {"name": "halfway-at-one", "input": ["0x3f800000", "0x33800000", 0, 0]},
+        {"name": "finite-overflow", "input": ["0x7f7fffff", "0x7f7fffff", 0, 0]},
+        {"name": "opposite-infinities", "input": ["0x7f800000", "0xff800000", 0, 0]},
+        {"name": "quiet-nan-payload", "input": ["0x7fc12345", "0x3f800000", 0, 0]},
+        {"name": "exact-cancellation", "input": ["0x3f800000", "0xbf800000", 0, 0]}
+      ]
+    },
+    {
+      "id": "v-mul-f32-edge-values",
+      "instruction": "v_mul_f32",
+      "description": "Zero, infinity, subnormal boundary and NaN operand combinations.",
+      "body": "v_mul_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "zero-times-infinity", "input": ["0x00000000", "0x7f800000", 0, 0]},
+        {"name": "negative-zero-times-two", "input": ["0x80000000", "0x40000000", 0, 0]},
+        {"name": "normal-times-half", "input": ["0x00800000", "0x3f000000", 0, 0]},
+        {"name": "infinity-times-zero", "input": ["0xff800000", "0x00000000", 0, 0]},
+        {"name": "nan-times-three", "input": ["0x7fc12345", "0x40400000", 0, 0]}
+      ]
+    },
+    {
+      "id": "v-min-f32-nan-and-zero",
+      "instruction": "v_min_f32",
+      "description": "Operand order for quiet NaNs and signed zeros, plus finite and infinite values.",
+      "body": "v_min_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "nan-first", "input": ["0x7fc12345", "0x3f800000", 0, 0]},
+        {"name": "nan-second", "input": ["0x3f800000", "0x7fc12345", 0, 0]},
+        {"name": "positive-zero-first", "input": ["0x00000000", "0x80000000", 0, 0]},
+        {"name": "negative-zero-first", "input": ["0x80000000", "0x00000000", 0, 0]},
+        {"name": "negative-and-positive", "input": ["0xc0000000", "0x40000000", 0, 0]},
+        {"name": "infinity-and-finite", "input": ["0x7f800000", "0x40400000", 0, 0]}
+      ]
+    },
+    {
+      "id": "v-max-f32-nan-and-zero",
+      "instruction": "v_max_f32",
+      "description": "Operand order for quiet NaNs and signed zeros, plus finite and infinite values.",
+      "body": "v_max_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "nan-first", "input": ["0x7fc12345", "0x3f800000", 0, 0]},
+        {"name": "nan-second", "input": ["0x3f800000", "0x7fc12345", 0, 0]},
+        {"name": "positive-zero-first", "input": ["0x00000000", "0x80000000", 0, 0]},
+        {"name": "negative-zero-first", "input": ["0x80000000", "0x00000000", 0, 0]},
+        {"name": "negative-and-positive", "input": ["0xc0000000", "0x40000000", 0, 0]},
+        {"name": "infinity-and-finite", "input": ["0xff800000", "0x40400000", 0, 0]}
+      ]
+    },
+    {
+      "id": "v-fma-f32-fused-rounding",
+      "instruction": "v_fma_f32",
+      "description": "A cancellation case that distinguishes fused from separately rounded multiply and add.",
+      "body": "v_fma_f32 v10, v4, v5, v6",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "single-rounding-cancellation", "input": ["0x3f800001", "0x3f7ffffe", "0xbf800000", 0]},
+        {"name": "zero-times-infinity-plus-one", "input": ["0x00000000", "0x7f800000", "0x3f800000", 0]},
+        {"name": "nan-payload-through-fma", "input": ["0x7fc12345", "0x3f800000", "0x40000000", 0]}
+      ]
+    }
+  ]
+}
