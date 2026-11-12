@@ -13,7 +13,7 @@ void Require(bool value) {
 int main() {
     constexpr int invalidHandle = static_cast<int>(0x80E00001u);
     constexpr int notEncoding = static_cast<int>(0x80E00009u);
-    for (int call = 0; call < 2; ++call) {
+    for (int call = 0; call < 4; ++call) {
         Require(sceAc3EncDeleteEncoder() == invalidHandle);
         Require(sceAc3EncEncode() == invalidHandle);
         Require(sceAc3EncEncodeAsync() == invalidHandle);
