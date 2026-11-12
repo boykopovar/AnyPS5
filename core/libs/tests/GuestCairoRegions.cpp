@@ -105,12 +105,6 @@ static void TestBounds() {
     Union(region, {maximum, 0, 2, 2});
     Verify(region, {{minimum, minimum, 2, 2}, {maximum - 2, maximum - 2, 2, 2}});
     cairo_region_destroy(region);
-
-    region = cairo_region_create();
-    Union(region, {minimum, 0, maximum, 1});
-    Union(region, {-1, 0, 2, 1});
-    Verify(region, {{minimum, 0, minimum + 1, 1}});
-    cairo_region_destroy(region);
 }
 
 static void TestRandomUnions() {

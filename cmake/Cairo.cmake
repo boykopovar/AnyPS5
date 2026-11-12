@@ -24,7 +24,8 @@ function(add_bundled_cairo)
     file(CONFIGURE OUTPUT ${cairoBinaryDir}/config.h CONTENT
         "#define SIZEOF_VOID_P 8\n#define SIZEOF_INT 4\n#define SIZEOF_LONG ${cairoLongSize}\n#define SIZEOF_LONG_LONG 8\n#define SIZEOF_SIZE_T 8\n#define HAVE_STDINT_H 1\n#define HAVE_INTTYPES_H 1\n#define HAVE_UINT64_T 1\n#define HAVE___UINT128_T 1\n#define HAVE_CXX11_ATOMIC_PRIMITIVES 1\n#define HAS_PIXMAN_GLYPHS 1\n${cairoThreads}")
 
-    file(STRINGS ${cairoSourceDir}/cairo.h cairoDeclarations REGEX "^cairo_[a-z0-9_]+ \\(")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${cairoSourceDir}/cairo.h)
+    file(STRINGS ${cairoSourceDir}/cairo.h cairoDeclarations REGEX "^cairo_[a-z0-9_]+ +\\(")
     set(cairoRenames "")
     set(cairoRestores "")
     foreach(declaration IN LISTS cairoDeclarations)
@@ -34,7 +35,7 @@ function(add_bundled_cairo)
     endforeach()
     file(CONFIGURE OUTPUT ${cairoBinaryDir}/CairoRename.h CONTENT "#pragma once\n${cairoRenames}")
     file(CONFIGURE OUTPUT ${cairoBinaryDir}/CairoBackend.h CONTENT
-        "#pragma once\n#include \"CairoRename.h\"\n#include <cairo.h>\n${cairoRestores}")
+        "#pragma once\n#define CAIRO_DEPRECATED_H\n#include \"CairoRename.h\"\n#include <cairo.h>\n${cairoRestores}")
 
     set(cairoSources
         cairo-analysis-surface.c cairo-arc.c cairo-array.c cairo-atomic.c cairo-base64-stream.c
@@ -66,11 +67,11 @@ function(add_bundled_cairo)
 
     add_library(cairo_backend STATIC EXCLUDE_FROM_ALL ${cairoSources})
     target_include_directories(cairo_backend PUBLIC ${cairoSourceDir} ${cairoBinaryDir})
-    target_compile_definitions(cairo_backend PRIVATE HAVE_CONFIG_H _GNU_SOURCE CAIRO_COMPILATION)
+    target_compile_definitions(cairo_backend PRIVATE HAVE_CONFIG_H CAIRO_COMPILATION)
     if(WIN32)
         target_compile_definitions(cairo_backend PUBLIC CAIRO_WIN32_STATIC_BUILD)
     endif()
-    target_compile_options(cairo_backend PRIVATE -w -include ${cairoBinaryDir}/CairoRename.h)
+    target_compile_options(cairo_backend PRIVATE -w -fno-strict-aliasing -include ${cairoBinaryDir}/CairoRename.h)
     target_link_libraries(cairo_backend PUBLIC pixman_backend Threads::Threads)
     if(NOT WIN32 AND NOT APPLE)
         target_link_libraries(cairo_backend PUBLIC m)

@@ -57,7 +57,7 @@ function(add_bundled_pixman)
     set_source_files_properties(${pixmanSourceDir}/pixman-ssse3.c PROPERTIES COMPILE_OPTIONS -mssse3)
     target_include_directories(pixman_backend PUBLIC ${pixmanSourceDir} ${pixmanBinaryDir})
     target_compile_definitions(pixman_backend PRIVATE HAVE_CONFIG_H)
-    target_compile_options(pixman_backend PRIVATE -w)
+    target_compile_options(pixman_backend PRIVATE -w -fno-strict-aliasing -ftrapping-math)
     set_target_properties(pixman_backend PROPERTIES
         POSITION_INDEPENDENT_CODE ON
         C_VISIBILITY_PRESET hidden)
