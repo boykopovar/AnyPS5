@@ -92,11 +92,16 @@ void FilterFrameCapture(const std::filesystem::path& source, const std::filesyst
     const AgcDriver::FrameCaptureReader reader(source);
     requireFilter(!reader.Truncated(), "cannot minimize a truncated capture");
     requireFilter(reader.Version() >= 2, "calls format 1 cannot be replayed; record the capture again");
+    std::error_code destinationStatusError;
+    const auto destinationStatus = std::filesystem::symlink_status(destination, destinationStatusError);
+    requireFilter(!destinationStatusError || destinationStatusError == std::errc::no_such_file_or_directory,
+        "cannot inspect destination " + destination.string() + ": " + destinationStatusError.message());
+    requireFilter(destinationStatus.type() == std::filesystem::file_type::not_found,
+        "destination already exists: " + destination.string());
     const auto sourcePath = normalized(source);
     const auto destinationPath = normalized(destination);
     requireFilter(sourcePath != destinationPath, "source and destination must be different paths");
     requireFilter(!isWithin(destinationPath, sourcePath) && !isWithin(sourcePath, destinationPath), "source and destination directories must not contain one another");
-    requireFilter(!std::filesystem::exists(destination), "destination already exists: " + destination.string());
     for (const auto index : plan.calls) requireFilter(index < reader.Calls().size(), "call index is outside the source capture");
     for (const auto index : plan.chunks) requireFilter(index < reader.Chunks().size(), "chunk index is outside the source capture");
 
@@ -109,6 +114,14 @@ void FilterFrameCapture(const std::filesystem::path& source, const std::filesyst
         const auto& call = reader.Calls()[index];
         if (!plan.calls.contains(index) && call.kind == AgcDriver::FrameCallKind::Memory && !call.values.empty()) removedGroups.erase(call.values[0]);
     }
+
+    auto parent = destination.parent_path();
+    if (parent.empty()) parent = ".";
+    std::error_code createError;
+    std::filesystem::create_directories(parent, createError);
+    requireFilter(!createError, "cannot create destination parent " + parent.string() + ": " + createError.message());
+    const bool createdDestination = std::filesystem::create_directory(destination, createError);
+    requireFilter(!createError && createdDestination, "destination already exists or cannot be created: " + destination.string());
 
     try {
         AgcDriver::FrameCaptureWriter writer(destination);
@@ -130,8 +143,10 @@ void FilterFrameCapture(const std::filesystem::path& source, const std::filesyst
         }
         writer.Finish(reader.Header());
     } catch (...) {
-        std::error_code error;
-        std::filesystem::remove_all(destination, error);
+        if (createdDestination) {
+            std::error_code error;
+            std::filesystem::remove_all(destination, error);
+        }
         throw;
     }
 }

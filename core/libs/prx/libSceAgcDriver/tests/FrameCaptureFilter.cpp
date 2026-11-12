@@ -113,6 +113,22 @@ void testInvalidPlan(const std::filesystem::path& root) {
     checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, existing, alias); }, "filtering overwrote an existing destination");
 }
 
+#ifndef _WIN32
+void testDanglingSymlinkDestination(const std::filesystem::path& root) {
+    const auto source = root / "source";
+    const auto destination = root / "dangling-output";
+    const auto missingTarget = root / "missing-output-target";
+    writeCapture(source);
+    std::filesystem::create_symlink(missingTarget, destination);
+    AgcDriverTools::FrameCaptureFilterPlan plan;
+    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, destination, plan); }, "filtering accepted a dangling output symlink");
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(destination, error);
+    check(!error && status.type() == std::filesystem::file_type::symlink, "filtering removed a pre-existing dangling output symlink");
+    check(!std::filesystem::exists(missingTarget), "filtering created the dangling symlink target");
+}
+#endif
+
 void testPlanReader(const std::filesystem::path& root) {
     const auto path = root / "capture.plan";
     {
@@ -328,6 +344,9 @@ int main() {
     testCallFilter(root);
     testChunkFilter(root);
     testInvalidPlan(root);
+#ifndef _WIN32
+    testDanglingSymlinkDestination(root);
+#endif
     testPlanReader(root);
     std::filesystem::remove_all(root);
     std::puts("frame capture filter tests passed");
