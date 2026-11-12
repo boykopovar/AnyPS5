@@ -1,6 +1,7 @@
 #include "prx/libSceGameLiveStreaming/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -116,6 +117,12 @@ void CheckFeedbackTypes() {
     Require(sceGameLiveStreamingGetSocialFeedbackMessages(1, 1, AsMessages(messages), nullptr) == kInvalidArgument);
     Require(acquired == 0xdeadbeef);
     Require(sceGameLiveStreamingGetSocialFeedbackMessagesCount(1, nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(sceGameLiveStreamingGetSocialFeedbackMessagesCount(1, reinterpret_cast<std::uint32_t*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceGameLiveStreamingGetSocialFeedbackMessages(1, 1, AsMessages(messages), reinterpret_cast<std::size_t*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 }
 
 void CheckArrays() {
@@ -206,6 +213,8 @@ int main() {
     std::memset(&liveStatus, 0x5a, sizeof(liveStatus));
     Require(sceGameLiveStreamingGetCurrentStatus(&liveStatus) == notInitialized);
     for (const auto value : std::as_bytes(std::span(&liveStatus, 1))) Require(value == std::byte{0x5a});
+    Require(sceGameLiveStreamingRegisterCallback(nullptr, nullptr) == notInitialized);
+    Require(sceGameLiveStreamingUnregisterCallback() == notInitialized);
     Require(EnableThrowsNotInitialized(true));
     CheckLifecycleFirst();
     CheckSeparateModeParameter();
@@ -220,6 +229,10 @@ int main() {
     std::memset(&liveStatus, 0x5a, sizeof(liveStatus));
     Require(sceGameLiveStreamingGetCurrentStatus(&liveStatus) == 0);
     for (const auto value : std::as_bytes(std::span(&liveStatus, 1))) Require(value == std::byte{0});
+    Require(sceGameLiveStreamingRegisterCallback(reinterpret_cast<void*>(0x1000), reinterpret_cast<void*>(0x2000)) == 0);
+    Require(sceGameLiveStreamingUnregisterCallback() == 0);
+    Require(sceGameLiveStreamingUnregisterCallback() == 0);
+    Require(sceGameLiveStreamingRegisterCallback(nullptr, nullptr) == 0);
 
     GameLiveStreamingStatus2 status{};
     std::memset(&status, 0x7f, sizeof(status));
@@ -264,5 +277,7 @@ int main() {
     programInfo.fill(0x7f);
     Require(sceGameLiveStreamingGetProgramInfo(reinterpret_cast<GameLiveStreamingProgramInfo*>(programInfo.data())) == notInitialized);
     for (const std::uint8_t byte : programInfo) Require(byte == 0x7f);
+    Require(sceGameLiveStreamingRegisterCallback(nullptr, nullptr) == notInitialized);
+    Require(sceGameLiveStreamingUnregisterCallback() == notInitialized);
     Require(sceGameLiveStreamingTerminate() == notInitialized);
 }

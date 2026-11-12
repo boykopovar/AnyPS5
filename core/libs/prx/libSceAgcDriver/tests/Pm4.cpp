@@ -2527,6 +2527,42 @@ void testWaitRegMemMisalignedBehindBusyPipeline() {
     }
 }
 
+void testPredicatedIndirectBufferKeepsBusyPipeline() {
+    alignas(8) static std::uint32_t other = 0;
+    alignas(8) static std::uint32_t target = 0;
+    static std::uint32_t done = 0;
+    const auto otherAddr = reinterpret_cast<std::uintptr_t>(&other);
+    const auto targetAddr = reinterpret_cast<std::uintptr_t>(&target);
+    std::atomic_ref<std::uint32_t>(target).store(0);
+    std::atomic_ref<std::uint32_t>(done).store(0);
+    std::atomic<bool> hold{true};
+    std::atomic<bool> started{false};
+    AgcDriver::DriverDetail::DrawPipeline::Queue0().Enqueue([&] {
+        started.store(true);
+        while (hold.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }, { {otherAddr, otherAddr + 4} });
+    while (!started.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    static std::vector<std::uint32_t> child;
+    child = joinPackets({makePacket(0x3c, {0x13, static_cast<std::uint32_t>(targetAddr), static_cast<std::uint32_t>(targetAddr >> 32u), 42, 0xffffffffu, 0}), writeWord(done, 1)});
+    const auto indirectDrainsBefore = AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(0x3f);
+    const auto waitDrainsBefore = AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(0x3c);
+    alignas(16) static std::uint64_t flag[2] = {1, 0};
+    const auto call = makePacket(0x3f, {low(child.data()), high(child.data()), static_cast<std::uint32_t>(child.size())}, 1);
+    auto words = joinPackets({makePacket(0x20, {0x31100, low(&flag[0]), high(&flag[0])}), call, makePacket(0x20, {0, 0, 0})});
+    submitWords(words, 0);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(0x3c) == waitDrainsBefore && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const bool reachedChild = AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(0x3c) != waitDrainsBefore;
+    const auto indirectDrains = AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(0x3f) - indirectDrainsBefore;
+    std::atomic_ref<std::uint32_t>(target).store(42);
+    hold.store(false);
+    AgcDriverWaitIdle_nid_postfix();
+    waitDrawPipelineIdle();
+    check(reachedChild, "the predicated indirect buffer's unsatisfied WAIT_REG_MEM behind a busy draw pipeline was not reached");
+    check(indirectDrains == 0, "a predicated INDIRECT_BUFFER whose predicate is clear of the draw pipeline drained it");
+    check(std::atomic_ref<std::uint32_t>(done).load() == 1, "the predicated indirect buffer behind a busy draw pipeline did not run");
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "failure") {
@@ -2609,6 +2645,7 @@ int main(int argc, char** argv) {
         testWaitRegMemPipelineDrain();
         testWaitRegMem64ZeroHighMaskDrain();
         testWaitRegMemMisalignedBehindBusyPipeline();
+        testPredicatedIndirectBufferKeepsBusyPipeline();
         LibcRunShutdown_nid_postfix();
         std::puts("PM4 catalog, registers, state, memory, conditional execution and submission tests passed");
         return 0;

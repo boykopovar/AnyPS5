@@ -4,11 +4,8 @@
 
 extern "C" {
 
-int APS5_VABI _ZNKSt18bad_variant_access4whatEv_nid_postfix();
-int APS5_VABI _ZNKSt12future_error8_DoraiseEv_nid_postfix();
 int APS5_VABI _WPutfld_nid_postfix();
 int APS5_VABI _Save_state_nid_postfix();
-int APS5_VABI _Thrd_start_nid_postfix();
 int APS5_VABI _ZNKSt5ctypeIcE10do_tolowerEPcPKc_nid_postfix();
 int APS5_VABI _Strerror_nid_postfix();
 int APS5_VABI _Ttotm_nid_postfix();
@@ -25,7 +22,6 @@ int APS5_VABI _ZNKSt7_MpunctIcE13do_pos_formatEv_nid_postfix();
 int APS5_VABI _ZNKSt5ctypeIwE10do_tolowerEPwPKw_nid_postfix();
 int APS5_VABI _WStoflt_nid_postfix();
 int APS5_VABI _WPutstr_nid_postfix();
-int APS5_VABI _Thrd_abort_nid_postfix();
 int APS5_VABI _WStofx_nid_postfix();
 int APS5_VABI _Skip_nid_postfix();
 int APS5_VABI _ZNKSt5ctypeIwE10do_toupperEw_nid_postfix();
@@ -39,8 +35,6 @@ int APS5_VABI _ZN6Dinkum7threads10lock_errorD0Ev_nid_postfix();
 int APS5_VABI _ZN6Dinkum7threads21thread_resource_errorD0Ev_nid_postfix();
 int APS5_VABI _Wcsftime_nid_postfix();
 int APS5_VABI _WStodx_nid_postfix();
-int APS5_VABI _Thrd_start_with_name_attr_nid_postfix();
-int APS5_VABI _Thrd_create_nid_postfix();
 int APS5_VABI _Rint_nid_postfix();
 int APS5_VABI _ZNKSt5ctypeIwE9do_narrowEwc_nid_postfix();
 int APS5_VABI _WFrprep_nid_postfix();
@@ -64,10 +58,8 @@ int APS5_VABI _Wcsxfrmx_nid_postfix();
 int APS5_VABI _WGetint_nid_postfix();
 int APS5_VABI _Xp_invx_nid_postfix();
 int APS5_VABI _WScanf_nid_postfix();
-int APS5_VABI _Thrd_start_with_attr_nid_postfix();
 int APS5_VABI _ZNKSt5ctypeIwE8do_widenEc_nid_postfix();
 int APS5_VABI _WFwprep_nid_postfix();
-int APS5_VABI _Thrd_start_with_name_nid_postfix();
 int APS5_VABI _Xp_addh_nid_postfix();
 int APS5_VABI _Sincos_nid_postfix();
 int APS5_VABI _Xp_mulx_nid_postfix();
@@ -85,7 +77,6 @@ int APS5_VABI _Tan_nid_postfix();
 int APS5_VABI _ZNKSt7_MpunctIcE16do_decimal_pointEv_nid_postfix();
 int APS5_VABI _ZNKSt19istreambuf_iteratorIcSt11char_traitsIcEE5equalERKS2__nid_postfix();
 int APS5_VABI _ZNKSt7_MpunctIcE13do_neg_formatEv_nid_postfix();
-int APS5_VABI _ZNKSt12system_error8_DoraiseEv_nid_postfix();
 int APS5_VABI _Strcollx_nid_postfix();
 int APS5_VABI _ZN6Dinkum7threads10lock_errorD1Ev_nid_postfix();
 int APS5_VABI _Stoflt_nid_postfix();
