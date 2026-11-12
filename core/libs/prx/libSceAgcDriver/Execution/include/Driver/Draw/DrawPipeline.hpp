@@ -78,6 +78,7 @@ private:
         bool draw = false;
         bool store = false;
         CommitKind kind = CommitKind::Other;
+        std::uint64_t storeSerial = 0;
     };
     DrawPipeline() = default;
     void enqueue(Item item);
@@ -162,6 +163,7 @@ private:
     std::condition_variable idle;
     std::deque<Job> jobs;
     std::deque<Pending> pending;
+    std::deque<std::uint64_t> storeSerials;
     std::vector<Job> ran;
     std::exception_ptr failure;
     bool running = false;
