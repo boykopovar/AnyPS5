@@ -1,6 +1,7 @@
 #include "prx/libSceContentExport/include/Api.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
@@ -58,8 +59,13 @@ extern "C" {
 
 int APS5_VABI sceContentExportInit2(const ContentExportInitParam2* init_param) {
     if (init_param == nullptr) APS5_INVALID_ARG_EX;
-    if (init_param->malloc_func == nullptr || init_param->free_func == nullptr) throw std::invalid_argument(std::string(__func__) + ": missing allocator functions");
-    if (init_param->reserved0 != 0 || init_param->reserved1 != 0) throw std::invalid_argument(std::string(__func__) + ": reserved fields are not zero");
+    ContentExportInitParam2 localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, init_param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) APS5_INVALID_ARG_EX;
+    if (localParam.malloc_func == nullptr || localParam.free_func == nullptr) throw std::invalid_argument(std::string(__func__) + ": missing allocator functions");
+    if (localParam.reserved0 != 0 || localParam.reserved1 != 0) throw std::invalid_argument(std::string(__func__) + ": reserved fields are not zero");
     bool expected = false;
     if (!g_initialized.compare_exchange_strong(expected, true)) throw std::logic_error(std::string(__func__) + ": already initialized");
     return 0;

@@ -1,6 +1,7 @@
 #include "prx/libSceNpGameIntent/include/InventoryExports.hpp"
 #include "prx/libSceNpGameIntent/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -77,14 +78,25 @@ int APS5_VABI sceNpGameIntentReceiveIntent(NpGameIntentInfo* intentInfo) {
 	if (!NpGameIntentInitialized()) {
 		return NpGameIntentErrorNotInitialized;
 	}
-	if (intentInfo == nullptr || intentInfo->size != 0x4140) {
+	if (intentInfo == nullptr) {
 		return NpGameIntentErrorInvalidArgument;
 	}
-
-	intentInfo->user_id = NpGameIntentUserIdInvalid;
-	std::memset(intentInfo->intent_type, 0, sizeof(intentInfo->intent_type));
-	std::memset(&intentInfo->intent_data, 0, sizeof(intentInfo->intent_data));
-
+	NpGameIntentInfo localInfo{};
+	const int savedErrno = errno;
+	const bool copiedIn = GuestCopyIn_nid_no_patch(&localInfo, intentInfo, sizeof(localInfo));
+	errno = savedErrno;
+	if (!copiedIn || localInfo.size != 0x4140) {
+		return NpGameIntentErrorInvalidArgument;
+	}
+	localInfo.user_id = NpGameIntentUserIdInvalid;
+	std::memset(localInfo.intent_type, 0, sizeof(localInfo.intent_type));
+	std::memset(&localInfo.intent_data, 0, sizeof(localInfo.intent_data));
+	const int savedErrnoOut = errno;
+	const bool copiedOut = GuestCopyOut_nid_no_patch(intentInfo, &localInfo, sizeof(localInfo));
+	errno = savedErrnoOut;
+	if (!copiedOut) {
+		return NpGameIntentErrorInvalidArgument;
+	}
 	return NpGameIntentErrorIntentNotFound;
 }
 
@@ -97,8 +109,14 @@ int APS5_VABI sceNpGameIntentInitParamInit(NpGameIntentInitParam* param) {
     if (param == nullptr) {
         APS5_INVALID_ARG_EX;
     }
-    std::memset(param, 0, sizeof(NpGameIntentInitParam));
-    param->size = sizeof(NpGameIntentInitParam);
+    NpGameIntentInitParam localParam{};
+    localParam.size = sizeof(NpGameIntentInitParam);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(param, &localParam, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) {
+        APS5_INVALID_ARG_EX;
+    }
     return 0;
 }
 
@@ -106,9 +124,15 @@ int APS5_VABI sceNpGameIntentInfoInit(NpGameIntentInfo* info) {
     if (info == nullptr) {
         APS5_INVALID_ARG_EX;
     }
-    std::memset(info, 0, sizeof(NpGameIntentInfo));
-    info->size = sizeof(NpGameIntentInfo);
-    info->user_id = NpGameIntentUserIdInvalid;
+    NpGameIntentInfo localInfo{};
+    localInfo.size = sizeof(NpGameIntentInfo);
+    localInfo.user_id = NpGameIntentUserIdInvalid;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) {
+        APS5_INVALID_ARG_EX;
+    }
     return 0;
 }
 

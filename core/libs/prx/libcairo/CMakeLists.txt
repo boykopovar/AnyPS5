@@ -1,4 +1,4 @@
-add_library(libcairo SHARED EXCLUDE_FROM_ALL Export.cpp Matrix.cpp Surface.cpp Context.cpp FontOptions.cpp Region.cpp)
+add_library(libcairo SHARED EXCLUDE_FROM_ALL Export.cpp Matrix.cpp Surface.cpp Context.cpp FontOptions.cpp Region.cpp Glyph.cpp)
 target_include_directories(libcairo PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libcairo)
 
@@ -83,20 +83,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_cairo_path PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>")
     endif()
-endif()
-
-if(BUILD_TESTING)
-    add_test_executable(guest_cairo_ft_font_options_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoFtFontOptions.cpp)
-    target_include_directories(guest_cairo_ft_font_options_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_cairo_ft_font_options_tests PRIVATE libcairo libfontconfig libc)
-    configure_windows_unwind(guest_cairo_ft_font_options_tests)
-    add_test(NAME guest_cairo_ft_font_options COMMAND guest_cairo_ft_font_options_tests)
-    set_tests_properties(guest_cairo_ft_font_options PROPERTIES TIMEOUT 20)
+    add_test_executable(guest_cairo_glyph_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoGlyph.cpp)
+    target_include_directories(guest_cairo_glyph_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cairo_glyph_tests PRIVATE libcairo libc)
+    configure_windows_unwind(guest_cairo_glyph_tests)
+    add_test(NAME guest_cairo_glyph COMMAND guest_cairo_glyph_tests)
+    set_tests_properties(guest_cairo_glyph PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_cairo_ft_font_options PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libfontconfig>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(guest_cairo_glyph PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>")
     endif()
 endif()
-
-target_sources(libcairo PRIVATE src/FtFontOptions.cpp)
-target_link_libraries(libcairo PRIVATE libfontconfig)
