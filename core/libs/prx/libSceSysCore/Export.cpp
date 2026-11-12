@@ -1,7 +1,9 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceSysCore/include/InventoryExports.hpp"
 #include "prx/libSceSysCore/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -30,6 +32,14 @@ int APS5_VABI sceApplicationGetAppInfoByAppId(std::uint32_t applicationId, Appli
 
 int APS5_VABI _sceApplicationGetAppId(std::uint64_t, std::uint32_t* appId) {
     if (appId == nullptr) return kInvalidArgument;
+    std::uint32_t probe = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&probe, appId, sizeof(probe)) ||
+        !GuestCopyOut_nid_no_patch(appId, &probe, sizeof(probe))) {
+        errno = savedErrno;
+        return kInvalidArgument;
+    }
+    errno = savedErrno;
     NotImplemented_nid_no_patch(__func__);
 }
 int APS5_VABI sceApplicationAddProcess2() {
@@ -133,6 +143,13 @@ int APS5_VABI sceApplicationInitialize() {
 }
 int APS5_VABI sceApplicationInitializeForShellCore(const void* parameter) {
     if (parameter == nullptr) return kInvalidArgument;
+    std::uint8_t probe = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&probe, parameter, sizeof(probe))) {
+        errno = savedErrno;
+        return kInvalidArgument;
+    }
+    errno = savedErrno;
     if (g_initialized.load(std::memory_order_acquire)) return kAlreadyInitialized;
     NotImplemented_nid_no_patch(__func__);
 }

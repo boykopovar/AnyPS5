@@ -1,6 +1,8 @@
 #include "prx/libSceSysCore/libSceSysCore.hpp"
 
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 
 namespace {
@@ -18,7 +20,13 @@ int main() {
     for (int call = 0; call < 2; ++call) {
         ApplicationInfo info{};
         Require(sceApplicationInitializeForShellCore(nullptr) == invalidArgument);
+        errno = 71;
+        Require(sceApplicationInitializeForShellCore(reinterpret_cast<const void*>(0x10)) == invalidArgument);
+        Require(errno == 71);
         Require(_sceApplicationGetAppId(0, nullptr) == invalidArgument);
+        errno = 71;
+        Require(_sceApplicationGetAppId(0, reinterpret_cast<std::uint32_t*>(0x10)) == invalidArgument);
+        Require(errno == 71);
         Require(sceApplicationIsCrashReportBeingProcessed());
         Require(sceApplicationGetAppInfoByAppId(0, &info) == notInitialized);
         Require(sceApplicationAddProcess2() == notInitialized);
