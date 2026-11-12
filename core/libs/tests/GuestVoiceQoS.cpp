@@ -46,6 +46,9 @@ int main(int argc, char** argv) {
     std::int32_t uninitRemote = -1;
     Require(sceVoiceQoSGetLocalEndpoint(1, &uninitLocal) == notInitialized);
     Require(sceVoiceQoSGetRemoteEndpoint(1, &uninitRemote) == notInitialized);
+    std::uint32_t uninitAttr = 0;
+    Require(sceVoiceQoSGetRemoteEndpointAttribute(1, 0, &uninitAttr, sizeof(uninitAttr)) == notInitialized);
+    Require(sceVoiceQoSGetConnectionAttribute(1, 0, &uninitAttr, sizeof(uninitAttr)) == notInitialized);
     Require(sceVoiceQoSInit(nullptr, 0x40000, appType) == argumentInvalid);
     Require(sceVoiceQoSInit(nullptr, 0, appType) == argumentInvalid);
     Require(sceVoiceQoSInitHQ(nullptr, 0x40000, appType) == argumentInvalid);

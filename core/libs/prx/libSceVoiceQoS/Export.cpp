@@ -297,8 +297,10 @@ int APS5_VABI sceVoiceQoSGetRemoteEndpointAttribute(int32_t remoteId, int32_t at
     (void)attributeId;
     (void)value;
     (void)size;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Locked([](QoS&) {
+        NotImplemented_nid_no_patch(__func__);
+        return 0;
+    });
 }
 
 int APS5_VABI sceVoiceQoSGetConnectionAttribute(int32_t connectionId, int32_t attributeId, void* value, int32_t size) {
@@ -306,8 +308,10 @@ int APS5_VABI sceVoiceQoSGetConnectionAttribute(int32_t connectionId, int32_t at
     (void)attributeId;
     (void)value;
     (void)size;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Locked([](QoS&) {
+        NotImplemented_nid_no_patch(__func__);
+        return 0;
+    });
 }
 
 int APS5_VABI sceVoiceQoSGetLocalEndpoint(int32_t connectionId, int32_t* localId) {
