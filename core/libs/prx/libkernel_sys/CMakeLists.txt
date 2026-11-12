@@ -4,4 +4,4 @@ target_sources(${LIB_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/AdditionalExports
 target_sources(${LIB_NAME} PRIVATE Mqueue.cpp)
 configure_windows_unwind(${LIB_NAME})
 
-target_sources(${LIB_NAME} PRIVATE Uuid.cpp)
+target_sources(${LIB_NAME} PRIVATE Wait.cpp Uuid.cpp)

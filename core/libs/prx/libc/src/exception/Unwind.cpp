@@ -985,6 +985,13 @@ _Unwind_Ptr APS5_VABI _Unwind_GetLanguageSpecificData_nid_postfix(_Unwind_Contex
 _Unwind_Ptr APS5_VABI _Unwind_GetRegionStart_nid_postfix(_Unwind_Context* context) { return context->region; }
 _Unwind_Ptr APS5_VABI _Unwind_GetDataRelBase_nid_postfix(_Unwind_Context* context) { return context->dataBase; }
 _Unwind_Ptr APS5_VABI _Unwind_GetTextRelBase_nid_postfix(_Unwind_Context* context) { return context->textBase; }
+_Unwind_Ptr APS5_VABI _Unwind_FindEnclosingFunction_nid_postfix(void* pc) {
+    _Unwind_Context context {};
+    context.registers[16] = reinterpret_cast<std::uintptr_t>(pc);
+    LibcUnwind::Frame frame {};
+    if (!LibcUnwind::DecodeFrame(context, frame)) return 0;
+    return frame.start;
+}
 
 _Unwind_Reason_Code APS5_VABI _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exception* exception, _Unwind_Stop_Fn stop, void* argument) {
     if (!stop) return _URC_FATAL_PHASE2_ERROR;
@@ -1032,6 +1039,7 @@ _Unwind_Ptr APS5_VABI _Unwind_GetLanguageSpecificData_nid_postfix(_Unwind_Contex
 _Unwind_Ptr APS5_VABI _Unwind_GetRegionStart_nid_postfix(_Unwind_Context*) { std::abort(); }
 _Unwind_Ptr APS5_VABI _Unwind_GetDataRelBase_nid_postfix(_Unwind_Context*) { std::abort(); }
 _Unwind_Ptr APS5_VABI _Unwind_GetTextRelBase_nid_postfix(_Unwind_Context*) { std::abort(); }
+_Unwind_Ptr APS5_VABI _Unwind_FindEnclosingFunction_nid_postfix(void*) { std::abort(); }
 _Unwind_Reason_Code APS5_VABI _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exception*, _Unwind_Stop_Fn, void*) { std::abort(); }
 _Unwind_Reason_Code APS5_VABI _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn, void*) { std::abort(); }
 }
