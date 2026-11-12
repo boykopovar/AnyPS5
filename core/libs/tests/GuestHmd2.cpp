@@ -4,6 +4,7 @@
 #include "prx/libSceHmd2/Hmd2.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 
+#include <cerrno>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -80,6 +81,16 @@ void TestNamedCallsBeforeInitialize() {
     Require(sceHmd2InternalLedDetectorOpen() == 0 && sceHmd2InternalLedDetectorClose() == 0, "LED detector open and close before initialization");
     Require(sceHmd2InternalTrackingStart() == -1 && sceHmd2InternalTrackingStop() == -1, "tracking start and stop before initialization");
     Require(sceHmd2InternalLedDetectorStart() == -1 && sceHmd2InternalLedDetectorStop() == -1, "LED detector start and stop before initialization");
+    Require(sceHmd2InternalRegisterVibrationCallback() == 0 && sceHmd2InternalUnregisterVibrationCallback() == 0, "vibration callback register and unregister before initialization");
+    Require(sceHmd2InternalPowerEventInitialize() == 0, "power event initialization before initialization");
+    Require(sceHmd2InternalDfuOpen() == 0 && sceHmd2InternalDfuClose() == 0, "DFU open and close before initialization");
+    Require(sceHmd2InternalCrashReportOpen() == 0 && sceHmd2InternalCrashReportClose() == 0, "crash report open and close before initialization");
+    Require(sceHmd2InternalRelocalizerOpen() == 0 && sceHmd2InternalRelocalizerClose() == 0, "relocalizer open and close before initialization");
+    Require(sceHmd2InternalImageOpen() == 0 && sceHmd2InternalImageClose() == 0, "image open and close before initialization");
+    Require(sceHmd2InternalGenDataOpen() == 0 && sceHmd2InternalGenDataClose() == 0, "generated data open and close before initialization");
+    Require(sceHmd2InternalSlamTraceOpen() == 0 && sceHmd2InternalSlamTraceClose() == 0, "SLAM trace open and close before initialization");
+    Require(sceHmd2InternalGazeOpen() == 0 && sceHmd2InternalGazeClose() == 0, "gaze open and close before initialization");
+    Require(sceHmd2InternalGazeStart() == 0 && sceHmd2InternalGazeStop() == 0, "gaze start and stop before initialization");
 }
 
 void TestBeforeInitialize() {
@@ -92,6 +103,9 @@ void TestBeforeInitialize() {
     Hmd2::FieldOfView fieldOfView{};
     Require(sceHmd2GetFieldOfViewWithoutHandle(&fieldOfView) == Hmd2::NotInitialized, "field of view before initialization");
     Require(sceHmd2GetFieldOfView(0, &fieldOfView) == Hmd2::InvalidHandle, "field of view of handle 0 before initialization");
+    errno = 0;
+    Require(sceHmd2GetDeviceInformation(reinterpret_cast<Hmd2::DeviceInformation*>(0x10)) == Hmd2::ParameterNull, "unwritable device info rejects");
+    Require(errno == 0, "preserves errno");
     Require(sceHmd2GetDeviceInformationByHandle(0, &info) == Hmd2::NotInitialized, "device information of handle 0 before initialization");
     Require(sceHmd2Open(USER_SERVICE_INITIAL_USER_ID, 0, 0, nullptr) == Hmd2::NotInitialized, "open before initialization");
     Require(sceHmd2Close(0) == Hmd2::NotInitialized, "close before initialization");
@@ -354,6 +368,9 @@ void TestReprojection() {
     std::uint8_t display[64]{};
     Hmd2::ReprojectionInitializeParameter initParam{};
     Require(sceHmd2ReprojectionInitialize(nullptr, nullptr) == Hmd2::ParameterNull, "initialization without a param");
+    errno = 71;
+    Require(sceHmd2ReprojectionInitialize(reinterpret_cast<const Hmd2::ReprojectionInitializeParameter*>(0x10), nullptr) == Hmd2::ParameterNull, "initialization with unmapped param");
+    Require(errno == 71, "errno preserved");
     Require(sceHmd2ReprojectionInitialize(&initParam, nullptr) == Hmd2::ParameterNull, "initialization without buffers");
     initParam.workMemory = work;
     Require(sceHmd2ReprojectionInitialize(&initParam, nullptr) == Hmd2::ParameterNull, "initialization without a display memory");
