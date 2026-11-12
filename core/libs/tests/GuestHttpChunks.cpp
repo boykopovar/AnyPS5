@@ -10,39 +10,42 @@ int main() {
         ";foo=\"bar baz\""sv, ";foo=\"\""sv, ";foo=\"a;b=c\""sv, ";foo=\"a\\\"b\\\\c\\\t\\ \\\xff\""sv,
         ";foo=\"x\x80\xff\""sv, ";foo=\" \tx\t \""sv, ";!#$%&'*+-.^_`|~=!#$%&'*+-.^_`|~"sv,
         ";foo=a;foo=b"sv, ";a;b=c;d=\"e;f\";g"sv, ";foo=\"!#[]~\x80\xff\""sv,
-        ";foo=\"\\!\\[\\]\\~\\\x80\""sv, ";FoO=BaR"sv
-    };
-    constexpr std::array invalid{
+        ";foo=\"\\!\\[\\]\\~\\\x80\""sv, ";FoO=BaR"sv,
         ";"sv, "; \t"sv, ";=x"sv, ";\"foo\"=x"sv, ";na/me=x"sv, ";foo="sv, ";foo= \t"sv,
         ";foo=\"bar"sv, ";foo=\"bar\\"sv, ";foo=bar/baz"sv, ";f\0=x"sv, ";\xff=x"sv,
         ";foo=\"x\x01y\""sv, ";foo=\"x\x7fy\""sv, ";foo=\"x\\\x01y\""sv, ";foo=\"x\\\x7fy\""sv,
         ";foo=\"x\"junk"sv, ";foo;;bar"sv, ";foo==x"sv, " "sv, ";foo "sv,
         ";foo=x "sv, ";foo=\"x\"\t"sv, ";foo=\"x\ny\""sv, ";foo=x\\y"sv
     };
-    constexpr std::array prefixes{"1"sv, "Ab"sv, "0000"sv};
-    constexpr std::array<std::uint64_t, 3> sizes{1, 171, 0};
+    constexpr std::array prefixes{"1"sv, "Ab"sv, "0000"sv, "FfFfFfFfFfFfFfFf"sv};
+    constexpr std::array<std::uint64_t, 4> sizes{1, 171, 0, UINT64_MAX};
+    constexpr std::array padding{""sv, " "sv, "\t"sv, " \t "sv};
     std::size_t accepted = 0;
-    std::size_t refused = 0;
     for (std::size_t prefix = 0; prefix < prefixes.size(); ++prefix) {
-        for (std::size_t suffix = 0; suffix < valid.size(); ++suffix) {
-            if (ChunkSize(std::string(prefixes[prefix]) + std::string(valid[suffix])) == sizes[prefix]) ++accepted;
-            else std::fprintf(stderr, "Valid chunk line failed: prefix %zu suffix %zu\n", prefix, suffix);
-        }
-        for (std::size_t suffix = 0; suffix < invalid.size(); ++suffix) {
-            if (!ChunkSize(std::string(prefixes[prefix]) + std::string(invalid[suffix]))) ++refused;
-            else std::fprintf(stderr, "Malformed chunk extension accepted: prefix %zu suffix %zu\n", prefix, suffix);
+        for (const auto leading : padding) {
+            for (const auto suffix : valid) {
+                for (const auto trailing : padding) {
+                    const auto line = std::string(leading) + std::string(prefixes[prefix]) + std::string(suffix) + std::string(trailing);
+                    if (ChunkSize(line) == sizes[prefix]) ++accepted;
+                }
+            }
         }
     }
     constexpr std::array invalidSizes{
         ""sv, "+1"sv, "-1"sv, "0x1"sv, "g"sv, "1g"sv, "18446744073709551616"sv,
-        "10000000000000000"sv, " 1"sv, "1 "sv, "\t1"sv, "1\t"sv
+        "10000000000000000"sv, " "sv, "\t"sv, ";foo "sv, ";foo=x "sv,
+        " \t;foo=x\t"sv, "1 2"sv, "1\t2"sv, "1 foo"sv, "1\tfoo"sv,
+        "1\v"sv, "\v1"sv, "1\f"sv, "\f1"sv, "1\r"sv, "1\n"sv, "1\0"sv,
+        "1\xff"sv, "1/"sv, "1=foo"sv
     };
     std::size_t badSizes = 0;
     for (const auto text : invalidSizes) {
-        if (!ChunkSize(text)) ++badSizes;
+        for (const auto suffix : valid) {
+            if (!ChunkSize(std::string(text) + std::string(suffix))) ++badSizes;
+        }
     }
-    const bool maximum = ChunkSize("FfFfFfFfFfFfFfFf;flag") == UINT64_MAX;
-    std::printf("Chunk extensions: valid %zu/48, malformed refused %zu/75, invalid sizes refused %zu/12, maximum %d/1\n",
-        accepted, refused, badSizes, maximum);
-    return accepted == 48 && refused == 75 && badSizes == 12 && maximum ? 0 : 1;
+    constexpr auto expectedValid = prefixes.size() * valid.size() * padding.size() * padding.size();
+    constexpr auto expectedInvalid = invalidSizes.size() * valid.size();
+    std::printf("Chunk lines: accepted %zu/%zu, invalid sizes refused %zu/%zu\n", accepted, expectedValid, badSizes, expectedInvalid);
+    return accepted == expectedValid && badSizes == expectedInvalid ? 0 : 1;
 }
