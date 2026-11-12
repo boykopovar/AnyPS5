@@ -1179,6 +1179,15 @@ static void TestBundleHitTestResult() {
     Require(unsetTitle != nullptr);
     Require(WKStringIsEqualToUTF8CString(unsetTitle, ""));
     WKRelease(unsetTitle);
+    auto* unsetSuggestedFilename = WKBundleHitTestResultCopyLinkSuggestedFilename(ref);
+    Require(unsetSuggestedFilename != nullptr);
+    Require(WKStringIsEqualToUTF8CString(unsetSuggestedFilename, ""));
+    WKRelease(unsetSuggestedFilename);
+    Require(!WKBundleHitTestResultGetIsSelected(ref));
+    Require(WKBundleHitTestResultGetMediaType(ref) == 0);
+    Require(!WKBundleHitTestResultIsDownloadableMedia(ref));
+    Require(!WKBundleHitTestResultMediaHasAudio(ref));
+    Require(!WKBundleHitTestResultMediaIsInFullscreen(ref));
 
     hit->absoluteImageURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/img.png");
     hit->absoluteLinkURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/link");
@@ -1225,9 +1234,74 @@ static void TestBundleHitTestResult() {
     Require(WKStringIsEqualToUTF8CString(title, "Example Title"));
     WKRelease(title);
 
+    hit->linkSuggestedFilename = NKWebKit::String::FromUtf8("example_file.pdf");
+    hit->isSelected = true;
+    hit->mediaType = 1;
+    hit->isDownloadableMedia = true;
+    hit->mediaHasAudio = true;
+    hit->mediaIsInFullscreen = true;
+
+    auto* suggestedFilename = WKBundleHitTestResultCopyLinkSuggestedFilename(ref);
+    Require(suggestedFilename != nullptr);
+    Require(WKStringIsEqualToUTF8CString(suggestedFilename, "example_file.pdf"));
+    WKRelease(suggestedFilename);
+    Require(WKBundleHitTestResultGetIsSelected(ref));
+    Require(WKBundleHitTestResultGetMediaType(ref) == 1);
+    Require(WKBundleHitTestResultIsDownloadableMedia(ref));
+    Require(WKBundleHitTestResultMediaHasAudio(ref));
+    Require(WKBundleHitTestResultMediaIsInFullscreen(ref));
+
     bool threw = false;
     try {
         WKBundleHitTestResultCopyLinkLabel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultCopyLinkSuggestedFilename(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetIsSelected(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetMediaType(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultIsDownloadableMedia(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultMediaHasAudio(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultMediaIsInFullscreen(nullptr);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -1781,6 +1855,16 @@ static void TestCertificateInfo() {
 
 static void TestEmptyFrameLoaderClient() {
     _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
+    _ZN7WebCore22EmptyFrameLoaderClient14didChangeTitleEPNS_14DocumentLoaderE();
+    _ZN7WebCore22EmptyFrameLoaderClient15finishedLoadingEPNS_14DocumentLoaderE();
+    _ZN7WebCore22EmptyFrameLoaderClient15willChangeTitleEPNS_14DocumentLoaderE();
+    _ZN7WebCore22EmptyFrameLoaderClient20setMainDocumentErrorEPNS_14DocumentLoaderERKNS_13ResourceErrorE();
+    _ZN7WebCore22EmptyFrameLoaderClient24revertToProvisionalStateEPNS_14DocumentLoaderE();
+    _ZN7WebCore22EmptyFrameLoaderClient19saveViewStateToItemERNS_11HistoryItemE();
+    _ZN7WebCore22EmptyFrameLoaderClient20redirectDataToPluginERNS_6WidgetE();
+    _ZN7WebCore22EmptyFrameLoaderClient21didRunInsecureContentERNS_14SecurityOriginERKN3WTF3URLE();
+    _ZN7WebCore22EmptyFrameLoaderClient23dispatchDidReceiveTitleERKNS_19StringWithDirectionE();
+    _ZN7WebCore22EmptyFrameLoaderClient36transitionToCommittedFromCachedFrameEPNS_11CachedFrameE();
 }
 
 static void TestSessionState() {
@@ -2164,7 +2248,13 @@ int main() {
     TestNotification();
     TestImage();
     TestCertificateInfo();
-    TestEmptyFrameLoaderClient();
+    try {
+        TestEmptyFrameLoaderClient();
+    } catch (const std::runtime_error& error) {
+        std::fprintf(stderr, "%s\n", error.what());
+        return 1;
+    }
+
     TestInspector();
     TestContext();
     TestSessionState();
