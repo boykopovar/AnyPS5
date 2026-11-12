@@ -13,6 +13,10 @@
 #define CURL_ARGS_END() va_end(args)
 #endif
 
+#ifndef _WIN32
+extern "C" int curl_mvsnprintf(char* buffer, size_t maxlength, const char* format, std::va_list arguments);
+#endif
+
 namespace {
 
 VaList* GuestArguments(void* arguments) {
@@ -46,7 +50,19 @@ int APS5_VABI curl_msprintf_nid_postfix(char* buffer, const char* format, ...) {
 }
 
 int APS5_VABI curl_mvsnprintf_nid_postfix(char* buffer, size_t maxlength, const char* format, VaList* args) {
-    return vsnprintf_nid_postfix(buffer, maxlength, format, args);
+#ifndef _WIN32
+    std::va_list copy;
+    va_copy(copy, *reinterpret_cast<std::va_list*>(args));
+    const int result = curl_mvsnprintf(buffer, maxlength, format, copy);
+    va_end(copy);
+    return result;
+#else
+    const int written = vsnprintf_nid_postfix(buffer, maxlength, format, args);
+    if (written < 0) return written;
+    if (maxlength == 0) return 0;
+    const auto stored = static_cast<size_t>(written) < maxlength ? static_cast<size_t>(written) : maxlength - 1;
+    return static_cast<int>(stored);
+#endif
 }
 
 int APS5_VABI curl_msnprintf_nid_postfix(char* buffer, size_t maxlength, const char* format, ...) {

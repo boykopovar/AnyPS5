@@ -69,18 +69,32 @@ int main() {
     Require(std::strcmp(buffer, "xyz-42") == 0);
 
     std::memset(buffer, 'x', sizeof(buffer));
-    Require(curl_msnprintf_nid_postfix(buffer, 5, "%s", "abcdef") == 6);
+    Require(curl_msnprintf_nid_postfix(buffer, 5, "%s", "abcdef") == 4);
     Require(std::strcmp(buffer, "abcd") == 0);
     std::memset(buffer, 'x', sizeof(buffer));
-    Require(MvSnprintf(buffer, 8, "%s", "abcdefghij") == 10);
+    Require(MvSnprintf(buffer, 8, "%s", "abcdefghij") == 7);
     Require(std::strcmp(buffer, "abcdefg") == 0);
+
+    char untouched[4] = {'x', 'x', 'x', 'x'};
+    Require(curl_msnprintf_nid_postfix(untouched, 0, "%s", "abcdef") == 0);
+    Require(untouched[0] == 'x' && untouched[1] == 'x' && untouched[2] == 'x' && untouched[3] == 'x');
+    buffer[0] = 'x';
+    Require(curl_msnprintf_nid_postfix(buffer, 1, "%s", "abcdef") == 0);
+    Require(buffer[0] == '\0');
+
+    Require(curl_msnprintf_nid_postfix(buffer, sizeof(buffer), "%.2f", 1.5) == 4);
+    Require(std::strcmp(buffer, "1.50") == 0);
+#ifndef _WIN32
+    Require(curl_msnprintf_nid_postfix(buffer, sizeof(buffer), "%s", static_cast<const char*>(nullptr)) == 5);
+    Require(std::strcmp(buffer, "(nil)") == 0);
+#endif
 
     char* text = curl_maprintf_nid_postfix("%s/%d", "x", 9);
     Require(text != nullptr && std::strcmp(text, "x/9") == 0);
-    free_nid_postfix(text);
+    curl_free(text);
     text = MvAprintf("%s-%s", "left", "right");
     Require(text != nullptr && std::strcmp(text, "left-right") == 0);
-    free_nid_postfix(text);
+    curl_free(text);
 
     Require(curl_mprintf_nid_postfix("%s", "") == 0);
     Require(MvPrintf("%s", "") == 0);
