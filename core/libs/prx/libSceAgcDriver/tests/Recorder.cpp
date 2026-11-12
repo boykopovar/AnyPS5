@@ -16019,7 +16019,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pending-key-refresh-only") {
             if (!pendingKeyRefreshTests(device, recorder)) {
-                std::cout << "skipped, refreshes over a pending key store are not testable here\n";
+                std::cout << "skipped, the device imports no watched host memory for refreshes over a pending key store\n";
                 return 77;
             }
             std::cout << "Refreshes over a pending DCC key store passed\n";
