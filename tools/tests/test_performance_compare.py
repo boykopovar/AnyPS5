@@ -613,6 +613,14 @@ class GraphicsTrackComparisonTests(unittest.TestCase):
         report = performance_compare.compare(before, after)
         self.assertEqual(report["graphics_track"]["render_passes"],
                          {"baseline": 2.0, "candidate": 3.0, "change": 1.0, "change_pct": 50.0})
+        self.assertEqual(report["graphics_track"]["continued_draws"],
+                         {"baseline": 10.0, "candidate": 5.0, "change": -5.0, "change_pct": -50.0})
+        self.assertEqual(report["graphics_track"]["barriers"],
+                         {"baseline": 20.0, "candidate": 30.0, "change": 10.0, "change_pct": 50.0})
+        self.assertEqual(report["graphics_track"]["merged_barriers"],
+                         {"baseline": 4.0, "candidate": 0.0, "change": -4.0, "change_pct": -100.0})
+        self.assertEqual(report["graphics_track"]["copies"],
+                         {"baseline": 1.0, "candidate": 1.5, "change": 0.5, "change_pct": 50.0})
         self.assertEqual(report["graphics_track"]["copy_mib"]["baseline"], 1.0)
         self.assertEqual(report["graphics_track"]["copy_mib"]["candidate"], 0.5)
         text = performance_compare.markdown(report)
@@ -626,6 +634,13 @@ class GraphicsTrackComparisonTests(unittest.TestCase):
         self.assertIsNone(report["graphics_track"]["render_passes"]["baseline"])
         self.assertIsNone(report["graphics_track"]["render_passes"]["change"])
         self.assertIn("unknown, not zero", " ".join(report["notes"]))
+
+    def test_absent_graphics_track_adds_no_note_or_table(self):
+        before, after = copy.deepcopy(SUMMARY), copy.deepcopy(SUMMARY)
+        report = performance_compare.compare(before, after)
+        self.assertIsNone(report["graphics_track"]["render_passes"]["baseline"])
+        self.assertNotIn("Graphics track (per present)", performance_compare.markdown(report))
+        self.assertNotIn("unknown, not zero", " ".join(report["notes"]))
 
     def test_invalid_graphics_track_is_rejected(self):
         with self.assertRaises(ValueError):

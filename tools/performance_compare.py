@@ -186,8 +186,9 @@ def compare(baseline, candidate):
              "Changes are candidate minus baseline. A negative frame-time change means a shorter frame interval.",
              "A missing top phase is unreported, not zero; its change is unavailable.",
              "Worker busy changes are percentage points; change (%) is relative to the baseline. "
-             "Workers are matched by their recorded names; a missing worker is unreported, not idle.",
-             "Graphics-track rates are per present; a capture without a graphics track is unknown, not zero."]
+             "Workers are matched by their recorded names; a missing worker is unreported, not idle."]
+    if any(values["baseline"] is not None or values["candidate"] is not None for values in graphics.values()):
+        notes.append("Graphics-track rates are per present; a capture without a graphics track is unknown, not zero.")
     if differences:
         notes.append("Recorded configuration differs; these measurements do not isolate the code change.")
     for label, summary in (("baseline", baseline), ("candidate", candidate)):
