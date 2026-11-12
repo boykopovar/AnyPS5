@@ -4,12 +4,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+TOOL = Path(__file__).resolve().parents[1] / "memory_trace_address.py"
+if TOOL.is_file():
+    sys.path.insert(0, str(TOOL.parent))
+    import memory_trace_address as trace
+else:
+    trace = None
 
-import memory_trace_address as trace
+
+class FeatureRequired(unittest.TestCase):
+    def setUp(self):
+        self.assertIsNotNone(trace, "memory_trace_address.py is required by these regression tests")
 
 
-class ParseTests(unittest.TestCase):
+class ParseTests(FeatureRequired):
     def test_parses_guest_mapping_events_and_keeps_source_lines(self):
         events = trace.parse_events([
             "ordinary output\n",
@@ -31,7 +39,7 @@ class ParseTests(unittest.TestCase):
             trace.parse_events(["[memory] protect with a truncated record\n"])
 
 
-class RangeTests(unittest.TestCase):
+class RangeTests(FeatureRequired):
     def test_accepts_decimal_and_hex_ranges(self):
         self.assertEqual(trace.parse_range("4096", "32"), (4096, 32))
         self.assertEqual(trace.parse_range("0x1000", "0x20"), (0x1000, 0x20))
@@ -44,8 +52,9 @@ class RangeTests(unittest.TestCase):
                 trace.parse_range(address, size)
 
 
-class SelectionTests(unittest.TestCase):
+class SelectionTests(FeatureRequired):
     def setUp(self):
+        super().setUp()
         self.events = trace.parse_events([
             "[memory] map anon 0x1000+0x1000 prot=0x3 flags=0x0\n",
             "[memory] protect 0x1800+0x100 prot=0x1\n",
@@ -69,14 +78,14 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("No traced mapping operations overlap", output)
 
 
-class CliTests(unittest.TestCase):
+class CliTests(FeatureRequired):
     def test_cli_prints_only_operations_overlapping_the_requested_range(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "run.log"
             path.write_text("[memory] map anon 0x1000+0x1000 prot=0x3 flags=0x0\n"
                             "[memory] allocate physical 0x1000+0x1000\n"
                             "[memory] protect 0x3000+0x100 prot=0x1\n", encoding="utf-8")
-            result = subprocess.run([sys.executable, trace.__file__, str(path), "--address", "0x1fff", "--length", "2"],
+            result = subprocess.run([sys.executable, str(TOOL), str(path), "--address", "0x1fff", "--length", "2"],
                                     capture_output=True, text=True, encoding="utf-8", timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("line 1: map anon", result.stdout)
@@ -87,7 +96,7 @@ class CliTests(unittest.TestCase):
         for path, address, length in (("missing.log", "0x1000", "1"),
                                       ("missing.log", "0xffffffffffffffff", "2")):
             with self.subTest(address=address, length=length), tempfile.TemporaryDirectory() as directory:
-                result = subprocess.run([sys.executable, trace.__file__, str(Path(directory) / path),
+                result = subprocess.run([sys.executable, str(TOOL), str(Path(directory) / path),
                                          "--address", address, "--length", length],
                                         capture_output=True, text=True, encoding="utf-8", timeout=10)
                 self.assertEqual(result.returncode, 2)
