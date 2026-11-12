@@ -1,5 +1,5 @@
 #include "prx/libc/include/ScanWideField.hpp"
-#include "prx/libc/include/General.hpp"
+
 
 namespace LibcDetail {
 
@@ -20,10 +20,6 @@ bool InWideScanset(const std::string& specifier, unsigned char byte) {
         }
     }
     return member != negated;
-}
-
-void RejectPositionalScan(const char* what) {
-    NotImplemented_nid_no_patch(what);
 }
 
 }

@@ -32,6 +32,7 @@ class ExportCacheTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         os.chdir(self.tmp.name)
         run("init", "-q")
+        run("config", "core.safecrlf", "false")
         write("core/libs/prx/libOne/One.cpp", export("sceOneFirst"))
         write("core/libs/prx/libTwo/Two.cpp", export("sceTwoFirst"))
         write("core/libs/prx/libTwo/Copy.cpp", export("sceTwoFirst"))

@@ -14,6 +14,7 @@ struct Args {
     bool showVersion = false;
     bool skipSyscallCheck = false;
     bool trapSdkSyscallStubs = false;
+    bool functionSymbolRoots = false;
     bool skipSceModule = false;
     bool toIntel = false;
     bool toRosetta = false;

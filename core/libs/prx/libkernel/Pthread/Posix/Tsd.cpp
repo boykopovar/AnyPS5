@@ -17,7 +17,13 @@ int APS5_VABI pthread_setspecific_nid_postfix(PthreadKey key, void* value) {
 
 int APS5_VABI pthread_key_create_nid_postfix(PthreadKey* key, pthread_key_destructor_func_t destructor) {
     if (!key) return PosixThread::GUEST_EINVAL;
-    return PosixThread::ToErrno(scePthreadKeyCreate(key, destructor));
+    PthreadKey created = 0;
+    if (const int result = scePthreadKeyCreate(&created, destructor)) return PosixThread::ToErrno(result);
+    if (!GuestCopyOut_nid_no_patch(key, &created, sizeof(created))) {
+        scePthreadKeyDelete(created);
+        return PosixThread::GUEST_EFAULT;
+    }
+    return 0;
 }
 
 int APS5_VABI pthread_key_delete_nid_postfix(PthreadKey key) {

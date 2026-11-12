@@ -6,7 +6,6 @@
 namespace LibcDetail {
 
 bool InWideScanset(const std::string& specifier, unsigned char byte);
-void RejectPositionalScan(const char* what);
 
 }
 

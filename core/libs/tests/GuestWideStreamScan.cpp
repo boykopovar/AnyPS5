@@ -107,6 +107,12 @@ static void CheckNarrowFormatWideFields() {
     Require(fscanf_nid_postfix(stream, "%d %ls %7s", &value, word, narrow) == 3 && value == 12 && std::u16string(word) == u"ab" && std::strcmp(narrow, "cd") == 0, "wide and narrow fields share the stream");
     Close(stream);
 
+    stream = Open("12 ab");
+    word[0] = u'!';
+    Require(fscanf_nid_postfix(stream, "%d %2$ls", &value, word) == 1 && value == 12 && word[0] == u'!', "a positional field ends the scan at the $");
+    Require(fgetc_nid_postfix(stream) == 'a', "the input after the $ stays in the stream");
+    Close(stream);
+
     stream = Open("ab\xc3\xa9t rest");
     Require(fscanf_nid_postfix(stream, "%l[a-c]", word) == 1 && std::u16string(word) == u"ab", "a scanset stops at a byte outside it");
     *__error_nid_postfix() = 0;
@@ -142,10 +148,6 @@ static void CheckNarrowFormatWideFields() {
     Require(scanf_nid_postfix("%ls", word) == 1 && std::u16string(word) == u"ab", "scanf %ls reads the guest standard input");
     Require(ScanNarrowInput(" %lc", &letter) == 1 && letter == u'c', "vscanf %lc reads the guest standard input");
     __stdinp_nid_postfix = standardInput;
-    Close(stream);
-
-    stream = Open("7 xy z");
-    Require(fscanf_nid_postfix(stream, "%3$d %1$ls %2$lc", word, &letter, &value) == 3 && value == 7 && std::u16string(word) == u"xy" && letter == u'z', "fscanf positional wide fields");
     Close(stream);
 }
 
