@@ -355,7 +355,8 @@ static void CheckStrictMemoryProtectionBits() {
         Require(sceKernelMapDirectMemory(&invalid, length, protection, 0, physical, 0) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
         Require(sceKernelMapDirectMemory2(&invalid, length, 0, protection, 0, physical, 0) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
         Require(sceKernelMapNamedDirectMemory(&invalid, length, protection, 0, physical, 0, "undefined") == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
-        rejected([&] { sceKernelMtypeprotect(mapping, length, 2, protection); });
+        if (protection == std::numeric_limits<int>::min()) rejected([&] { sceKernelMtypeprotect(mapping, length, 2, protection); });
+        else Require(sceKernelMtypeprotect(mapping, length, 2, protection) == SCE_KERNEL_ERROR_EINVAL);
         VirtualQueryInfo info{};
         Require(sceKernelVirtualQuery(mapping, 0, &info, sizeof(info)) == 0);
         Require(info.protection == 3 && info.memory_type == 0);
@@ -1166,6 +1167,12 @@ static void CheckMtypeprotect() {
     std::int64_t start = -1;
     std::int64_t end = -1;
     Require(sceKernelGetDirectMemoryType(phys + static_cast<std::int64_t>(page * 2), &type, &start, &end) == 0 && type == 2);
+    Require(sceKernelMtypeprotect(bytes, page * 3, 10, 3) == SCE_KERNEL_ERROR_EACCES);
+    for (const int badType : {127, -1}) Require(sceKernelMtypeprotect(bytes, page * 3, badType, 3) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelMtypeprotect(bytes, page * 3, 0, 0x400) == SCE_KERNEL_ERROR_EINVAL);
+    VirtualQueryInfo unchanged{};
+    Require(sceKernelVirtualQuery(bytes, 0, &unchanged, sizeof(unchanged)) == 0 && unchanged.memory_type == 2 && unchanged.protection == 3);
+    for (const int goodType : {0, 1, 9, 11, 15, 16}) Require(sceKernelMtypeprotect(bytes, page * 3, goodType, 3) == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), page * 3) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
 }
