@@ -1681,6 +1681,59 @@ static int ReopenSnapshotChild(const std::string& base) {
     return contents ? 0 : 164;
 }
 
+static std::atomic<int> g_failingClosingDescriptors{0};
+
+static void* FailFirstClosingDescriptor(int) {
+    if (g_failingClosingDescriptors.fetch_sub(1) > 0) throw std::bad_alloc();
+    return nullptr;
+}
+
+static void EndFailedClosingDescriptor(void*) {}
+
+#ifdef _WIN32
+static int OpenPlaceholderDirectory(const wchar_t*) {
+    return ::_open("NUL", _O_RDONLY | _O_BINARY);
+}
+
+static void ForgetPlaceholderDirectory(int) {}
+
+static void FailDirectoryDuplicate(int, int) {
+    throw std::bad_alloc();
+}
+#endif
+
+static int FreopenExceptionCleanupChild(const std::string& base) {
+    const std::string path = base + ".freopen-exception";
+    std::remove(path.c_str());
+    FileStream* stream = fopen_nid_postfix(path.c_str(), "wb");
+    if (!stream) return 190;
+    g_failingClosingDescriptors = 1;
+    LibcRegisterClosedDescriptors_nid_no_patch(&FailFirstClosingDescriptor, &EndFailedClosingDescriptor);
+    errno = 0;
+    FileStream* const failed = freopen_nid_postfix(path.c_str(), "rb", stream);
+    const int failedError = errno;
+    if (g_failingClosingDescriptors.load() > 0) return 191;
+    if (failed != nullptr || failedError != 12) return 192;
+    if (AcquireFileStreamLease_nid_no_patch(stream).Valid()) return 193;
+#ifdef _WIN32
+    const std::string directoryName = base + ".freopen-exception.dir";
+    std::error_code removed;
+    std::filesystem::remove_all(directoryName, removed);
+    if (!std::filesystem::create_directory(directoryName)) return 194;
+    stream = fopen_nid_postfix(path.c_str(), "rb");
+    if (!stream) return 195;
+    LibcRegisterDirectoryStreams_nid_no_patch(&OpenPlaceholderDirectory, &ForgetPlaceholderDirectory, &FailDirectoryDuplicate);
+    errno = 0;
+    FileStream* const directoryFailed = freopen_nid_postfix(directoryName.c_str(), "rb", stream);
+    const int directoryError = errno;
+    if (directoryFailed != nullptr || directoryError != 12) return 196;
+    if (AcquireFileStreamLease_nid_no_patch(stream).Valid()) return 197;
+    std::filesystem::remove(directoryName, removed);
+#endif
+    std::remove(path.c_str());
+    return 0;
+}
+
 static int RunFcloseallChild(const char* self, const char* base, const char* mode = "--fcloseall-child") {
 #ifdef _WIN32
     static_cast<void>(self);
@@ -1900,6 +1953,7 @@ int main(int argc, char** argv) {
     if (argc == 3 && std::strcmp(argv[2], "--freopen-lock-child") == 0) return FreopenLockChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--closed-reopen-child") == 0) return ClosedStreamReopenChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--reopen-snapshot-child") == 0) return ReopenSnapshotChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--freopen-exception-child") == 0) return FreopenExceptionCleanupChild(argv[1]);
     Require(argc == 2);
     CheckExclusiveCppOpen(argv[1]);
     CheckShortCharacterScans();
@@ -2047,6 +2101,9 @@ int main(int argc, char** argv) {
     Require(freopenLock == 0, "freopen locked-stream child failed");
     const int freopenAliases = RunFcloseallChild(argv[0], argv[1], "--freopen-aliases-child");
     Require(freopenAliases == 0, "freopen alias-state child failed");
+    const int freopenException = RunFcloseallChild(argv[0], argv[1], "--freopen-exception-child");
+    if (freopenException != 0) std::cerr << "freopen exception cleanup child exit " << freopenException << '\n';
+    Require(freopenException == 0, "freopen exception cleanup child failed");
     const int freopenStandard = RunFcloseallChild(argv[0], argv[1], "--freopen-standard-owner-child");
     Require(freopenStandard == 0, "freopen standard-stream owner child failed");
     std::cout << "PASS: stream objects, file operations, EOF and error handling\n";

@@ -607,7 +607,7 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
                 CancelFileStreamReopenReservation_nid_no_patch(reservation);
                 errno = error;
             }
-        } cleanup{stream, *reservation};
+        } cleanup{stream, *reservation, true};
 #ifdef _WIN32
         const bool directory = !parsed->writes && [&] {
             std::error_code status;
