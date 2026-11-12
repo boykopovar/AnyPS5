@@ -436,7 +436,9 @@ void testDrawPackets() {
     Storage size;
     sceAgcDcbSetIndexSize(&size.buffer, 1, 2);
     sceAgcDcbSetIndexSize_0600(&size.buffer, 2, 3, 1);
-    const std::array<std::uint32_t, 6> sizeExpected{0xc0017a00u, 0x20000243u, 0x481u, 0xc0017a00u, 0x20000243u, 0x44c2u};
+    sceAgcDcbSetIndexSize(&size.buffer, 0x11, 0x22);
+    sceAgcDcbSetIndexSize(&size.buffer, 0x22, 0x44);
+    const std::array<std::uint32_t, 12> sizeExpected{0xc0017a00u, 0x20000243u, 0x481u, 0xc0017a00u, 0x20000243u, 0x44c2u, 0xc0017a00u, 0x20000243u, 0x481u, 0xc0017a00u, 0x20000243u, 0x402u};
     check(std::equal(sizeExpected.begin(), sizeExpected.end(), size.words.begin()), "index size packet mismatch");
     Storage rejected;
     rejected.words.fill(0xa5a5a5a5u);
@@ -448,7 +450,7 @@ void testDrawPackets() {
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 3, 0); });
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 0, 4); });
+    expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 0x13, 0); });
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcDcbSetIndexSize_0600(&rejected.buffer, 0, 0, 2); });
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
@@ -463,15 +465,12 @@ void testIndexBuffer() {
     check(bound[1] == static_cast<std::uint32_t>(address) && bound[2] == static_cast<std::uint32_t>(address >> 32u), "index buffer address mismatch");
     const auto* unbound = sceAgcDcbSetIndexBuffer(&storage.buffer, 0);
     check(unbound == bound + 3 && unbound[0] == bound[0] && unbound[1] == 0 && unbound[2] == 0, "index buffer was not unbound");
-    const auto before = storage.words;
-    try {
-        sceAgcDcbSetIndexBuffer(&storage.buffer, 0x1001);
-    } catch (const std::runtime_error& error) {
-        check(std::string(error.what()).find("0x1001") != std::string::npos, "misaligned index buffer error omits the address");
-        check(storage.words == before, "misaligned index buffer modified packet memory");
-        return;
-    }
-    throw std::runtime_error("misaligned index buffer was accepted");
+    const auto* odd = sceAgcDcbSetIndexBuffer(&storage.buffer, 0x11111111u);
+    check(odd == unbound + 3 && odd[0] == bound[0] && odd[1] == 0x11111110u && odd[2] == 0, "odd index buffer address differs from the console's");
+    const auto* one = sceAgcDcbSetIndexBuffer(&storage.buffer, 1);
+    check(one == odd + 3 && one[0] == bound[0] && one[1] == 0 && one[2] == 0, "index buffer address 1 differs from the console's");
+    const auto* wide = sceAgcDcbSetIndexBuffer(&storage.buffer, 0x1111111122222222u);
+    check(wide == one + 3 && wide[0] == bound[0] && wide[1] == 0x22222222u && wide[2] == 0x11111111u, "64-bit index buffer address differs from the console's");
 }
 
 void testIndexIndirectArgs() {
@@ -482,10 +481,12 @@ void testIndexIndirectArgs() {
     check(sceAgcDcbSetIndexIndirectArgsGetSize() == expected.size() * sizeof(std::uint32_t), "index indirect args size differs from its packet");
     const auto* cleared = sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0, 0);
     check(cleared == packet + expected.size() && cleared[0] == expected[0] && cleared[1] == 0 && cleared[2] == 0 && cleared[3] == 0, "null index attribute base was not written as 0");
-    const auto before = storage.words;
-    expectFailure([&] { sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0x1111111122222228u, 0); });
-    expectFailure([&] { sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0x1111111122222220u, 0x10000u); });
-    check(storage.words == before && storage.buffer.cursor_up == cleared + expected.size(), "rejected index indirect args modified the buffer");
+    const auto* odd = sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0x11111111u, 0x22222222u);
+    check(odd == cleared + expected.size() && odd[0] == expected[0] && odd[1] == 0x11111110u && odd[2] == 0 && odd[3] == 0x2222u, "index indirect args differ from the console's for an odd address");
+    const auto* one = sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 1, 2);
+    check(one == odd + expected.size() && one[0] == expected[0] && one[1] == 0 && one[2] == 0 && one[3] == 2, "index indirect args differ from the console's for address 1");
+    const auto* wide = sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0x1111111122222222u, 0x44444444u);
+    check(wide == one + expected.size() && wide[0] == expected[0] && wide[1] == 0x22222220u && wide[2] == 0x11111111u && wide[3] == 0x4444u, "index indirect args differ from the console's for a 64-bit address");
 }
 
 void testIndirectBase() {
