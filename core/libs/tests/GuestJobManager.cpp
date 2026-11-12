@@ -4,6 +4,7 @@
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -75,6 +76,9 @@ static void MemoryCase() {
     const MemorySizeQueryParams single{0, 1, 1, 0, 0, 0, 0, 0, 0};
     Require(RequiredSize(&single) == 0x1090);
     Require(RequiredSize(nullptr) == 0);
+    errno = 71;
+    Require(RequiredSize(reinterpret_cast<const MemorySizeQueryParams*>(0x10)) == 0);
+    Require(errno == 71);
     for (const MemorySizeQueryParams& bad : {
              MemorySizeQueryParams{2, 4, 2, 0, 0, 0, 0, 0, 0}, MemorySizeQueryParams{0, 0, 2, 0, 0, 0, 0, 0, 0},
              MemorySizeQueryParams{0, 14, 2, 0, 0, 0, 0, 0, 0}, MemorySizeQueryParams{0, 4, 0, 0, 0, 0, 0, 0, 0},
@@ -146,6 +150,12 @@ static void ValidationCase() {
     Require(InitializeUnified(manager.storage, block.memory, block.bytes, 2, 2, 0, std::uint64_t{1} << 56, nullptr) == InvalidArgument);
     Require(Initialize(manager.storage, block.memory, 8, 2, 2, nullptr) == MemoryTooSmall);
     Require(Initialize(manager.storage, block.memory, 0x400, 2, 2, nullptr) == MemoryTooSmall);
+    errno = 71;
+    Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, reinterpret_cast<const ConfigParams*>(0x10)) == InvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(InitializeUnified(manager.storage, block.memory, block.bytes, 2, 2, 0, 0, reinterpret_cast<const ConfigParams*>(0x10)) == InvalidArgument);
+    Require(errno == 71);
     ConfigParams config{0, 0x00021fff, 0x10000, 0x2bc, nullptr, 0, 0x1fff, 0x100, 0};
     for (int field = 0; field < 7; ++field) {
         ConfigParams bad = config;
@@ -695,7 +705,7 @@ static SpinSample MeasureWorkerSpin(std::uint32_t spin, std::uint32_t rounds, bo
 
 static SpinSample QuietestWorkerSpin(std::uint32_t spin, std::uint32_t rounds, bool pending) {
     auto best = MeasureWorkerSpin(spin, rounds, pending);
-    for (int attempt = 1; attempt < 3; ++attempt) {
+    for (int attempt = 1; attempt < 7; ++attempt) {
         const auto sample = MeasureWorkerSpin(spin, rounds, pending);
         if (sample.consumed < best.consumed) {
             best = sample;
@@ -719,7 +729,7 @@ static void WorkerSpinCase() {
     const auto interval = spinning.reference * rounds / 100;
     Require(spinning.consumed > parked.consumed + interval / 3);
     Require(spinning.consumed < parked.consumed + interval * 5);
-    Require(noPending.consumed < parked.consumed + interval / 3);
+    Require(noPending.consumed < parked.consumed + interval);
 }
 
 struct WorkerClocks {

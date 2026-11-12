@@ -6,6 +6,7 @@
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
+#include <string>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -15,6 +16,7 @@
 
 static constexpr int GuestEagain = 35;
 static constexpr int GuestEfault = 14;
+static constexpr int GuestEnametoolong = 63;
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -105,6 +107,35 @@ private:
     std::size_t page = 0;
 };
 
+static void TestMutexBadPointers() {
+    GuardPage guard;
+    void* const badMutex[] = {reinterpret_cast<void*>(0x10), guard.Unreadable()};
+    for (void* pointer : badMutex) Require(pthread_mutex_setname_np_nid_postfix(static_cast<PthreadMutex*>(pointer), "name") == GuestEfault);
+    PthreadMutex mutex = nullptr;
+    Require(pthread_mutex_init_nid_postfix(&mutex, nullptr) == 0);
+    const char* const badName[] = {reinterpret_cast<const char*>(0x10), static_cast<const char*>(guard.Unreadable()), guard.Unterminated(8)};
+    for (const char* name : badName) Require(pthread_mutex_setname_np_nid_postfix(&mutex, name) == GuestEfault && !mutex->_named);
+    const std::string longName(1024, 'a');
+    Require(pthread_mutex_setname_np_nid_postfix(&mutex, longName.c_str()) == GuestEnametoolong && !mutex->_named);
+    Require(pthread_mutex_setname_np_nid_postfix(&mutex, nullptr) == 0 && !mutex->_named);
+    Require(pthread_mutex_setname_np_nid_postfix(&mutex, guard.Name("edge")) == 0 && mutex->_name == "edge");
+    Require(pthread_mutex_destroy_nid_postfix(&mutex) == 0);
+}
+
+static void TestRwlockBadPointers() {
+    GuardPage guard;
+    void* const badRwlock[] = {reinterpret_cast<void*>(0x10), guard.Unreadable()};
+    for (void* pointer : badRwlock) Require(pthread_rwlock_setname_np_nid_postfix(static_cast<PthreadRwlock*>(pointer), "name") == GuestEfault);
+    PthreadRwlock rwlock = nullptr;
+    Require(pthread_rwlock_init_nid_postfix(&rwlock, nullptr) == 0);
+    const char* const badName[] = {reinterpret_cast<const char*>(0x10), static_cast<const char*>(guard.Unreadable()), guard.Unterminated(8)};
+    for (const char* name : badName) Require(pthread_rwlock_setname_np_nid_postfix(&rwlock, name) == GuestEfault && !rwlock->_named);
+    const std::string longName(1024, 'a');
+    Require(pthread_rwlock_setname_np_nid_postfix(&rwlock, longName.c_str()) == GuestEnametoolong && !rwlock->_named);
+    Require(pthread_rwlock_setname_np_nid_postfix(&rwlock, guard.Name("edge")) == 0 && rwlock->_name == "edge");
+    Require(pthread_rwlock_destroy_nid_postfix(&rwlock) == 0);
+}
+
 static void TestBarrierBadPointers() {
     GuardPage guard;
     void* const badBarrier[] = {reinterpret_cast<void*>(0x10), guard.Unreadable()};
@@ -136,5 +167,7 @@ int main() {
     TestRwlock();
     TestBarrier();
     TestBarrierBadPointers();
+    TestMutexBadPointers();
+    TestRwlockBadPointers();
     std::puts("pthread setname tests passed");
 }

@@ -4,6 +4,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -334,7 +335,11 @@ int APS5_VABI sceNpWebApiGetMemoryPoolStats(int libCtxId, NpWebApiMemoryPoolStat
     std::lock_guard lock(contextsMutex);
     const auto context = contexts.find(libCtxId);
     if (context == contexts.end()) return SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND;
-    *stats = {context->second.poolSize, 0, 0};
+    const NpWebApiMemoryPoolStats localStats{context->second.poolSize, 0, 0};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stats, &localStats, sizeof(localStats));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -420,11 +425,6 @@ int APS5_VABI sceNpWebApiUnregisterServicePushEventCallback(int titleUserCtxId, 
     return lookup.user->servicePushEventCallbacks.erase(callbackId) != 0 ? 0 : SCE_NP_WEBAPI_ERROR_SERVICE_PUSH_EVENT_CALLBACK_NOT_FOUND;
 }
 
-int APS5_VABI sceNpWebApiUtilityParseNpId() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceNpWebApiAbortHandle(int libCtxId, int handleId) {
     std::lock_guard lock(contextsMutex);
     const auto context = contexts.find(libCtxId);
@@ -470,7 +470,11 @@ int APS5_VABI sceNpWebApiClearAllUnusedConnection() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceNpWebApiClearUnusedConnection() {
+int APS5_VABI sceNpWebApiClearUnusedConnection(int titleUserCtxId, const void* target, bool keep) {
+    if (!target) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findUserContext(titleUserCtxId);
+    if (lookup.error != 0) return lookup.error;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -481,7 +485,11 @@ int APS5_VABI sceNpWebApiCreateMultipartRequest(int titleUserCtxId, const char* 
     return createRequest(titleUserCtxId, true, requestId);
 }
 
-int APS5_VABI sceNpWebApiGetConnectionStats() {
+int APS5_VABI sceNpWebApiGetConnectionStats(int titleUserCtxId, const void* target, void* result) {
+    if (!target || !result) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findUserContext(titleUserCtxId);
+    if (lookup.error != 0) return lookup.error;
     NotImplemented_nid_no_patch(__func__);
 }
 

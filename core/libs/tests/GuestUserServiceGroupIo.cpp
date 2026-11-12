@@ -2,6 +2,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
@@ -32,6 +33,11 @@ std::int64_t APS5_VABI sceKernelWrite(int, const void* buffer, std::size_t size)
 }
 
 int main() {
+    std::int32_t groupCount = -1;
+    Require(sceUserServiceGetUserGroupNum(&groupCount) == USER_SERVICE_OK && groupCount == 128);
+    errno = 73;
+    Require(sceUserServiceGetUserGroupNum(reinterpret_cast<std::int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 73);
     char name[129]{};
     Require(sceUserServiceGetUserGroupName(INT_MAX, name, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserGroupName(INT_MIN, name, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);

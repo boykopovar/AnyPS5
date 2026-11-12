@@ -1,13 +1,8 @@
-#include "Translation/IntegerInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <array>
 #include <stdexcept>
 
 namespace ShaderRecompiler {
-
-void TranslateIntegerInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateIntegerInstruction not implemented");
-}
 
 bool TranslationContext::integer16Shift(const RdnaInstruction& inst, IrOpcode opcode, bool arithmetic) {
     const IrU32 value = readU16AsU32(sourceAt(inst, 1u), arithmetic);
@@ -40,7 +35,30 @@ bool TranslationContext::vMulLoU16(const RdnaInstruction& inst) {
     return true;
 }
 
+IrU32 TranslationContext::readPackedU16Source(const RdnaOperand& operand) {
+    const IrU32 raw = applyBitSourceModifiers(operand, readRawU32(operand));
+    IrU32 packed = raw;
+    if (operand.opSel && !operand.opSelHi) {
+        packed = IrU32(ir.Emit(IrOpcode::BitFieldInsert, IrType::U32, {&ir.ShiftRightLogical(raw.Value(), ir.Constant(16u)), &raw.Value(), &ir.Constant(16u), &ir.Constant(16u)}));
+    } else if (!operand.opSel && !operand.opSelHi) {
+        packed = IrU32(ir.Emit(IrOpcode::BitFieldInsert, IrType::U32, {&raw.Value(), &raw.Value(), &ir.Constant(16u), &ir.Constant(16u)}));
+    } else if (operand.opSel && operand.opSelHi) {
+        packed = IrU32(ir.Emit(IrOpcode::BitFieldInsert, IrType::U32, {&raw.Value(), &ir.ShiftRightLogical(raw.Value(), ir.Constant(16u)), &ir.Constant(0u), &ir.Constant(16u)}));
+    }
+    const std::uint32_t negate = (operand.negate ? 0x8000u : 0u) | (operand.negateHi ? 0x80000000u : 0u);
+    return negate != 0u ? IrU32(ir.BitwiseXor(packed.Value(), ir.Constant(negate))) : packed;
+}
+
+bool TranslationContext::packedInteger16Native(const RdnaInstruction& inst, IrOpcode opcode, std::uint32_t first, std::uint32_t second) {
+    const IrU32 lhs = readPackedU16Source(sourceAt(inst, first));
+    const IrU32 rhs = readPackedU16Source(sourceAt(inst, second));
+    const IrU32 result(ir.Emit(opcode, IrType::U32, {&lhs.Value(), &rhs.Value()}));
+    writeOperand(inst.destination, &result.Value());
+    return true;
+}
+
 bool TranslationContext::vPkMulLoU16(const RdnaInstruction& inst) {
+    if (nativeInteger16) return packedInteger16Native(inst, IrOpcode::IMul16x2, 0u, 1u);
     const RdnaOperand& lhs = sourceAt(inst, 0u);
     const RdnaOperand& rhs = sourceAt(inst, 1u);
     const auto lane = [&](bool highLane) {
@@ -135,6 +153,10 @@ bool TranslationContext::vAddSubNcI32(const RdnaInstruction& inst, bool subtract
 }
 
 bool TranslationContext::packedInteger16Shift(const RdnaInstruction& inst, IrOpcode opcode, bool arithmetic) {
+    if (nativeInteger16) {
+        const IrOpcode packed = opcode == IrOpcode::ShiftLeftLogical32 ? IrOpcode::ShiftLeftLogical16x2 : arithmetic ? IrOpcode::ShiftRightArithmetic16x2 : IrOpcode::ShiftRightLogical16x2;
+        return packedInteger16Native(inst, packed, 1u, 0u);
+    }
     const auto translateLane = [&](bool highLane) {
         const IrU32 count(ir.BitwiseAnd(readU16LaneAsU32(sourceAt(inst, 0u), highLane, false).Value(), ir.Constant(15u)));
         const IrU32 value = readU16LaneAsU32(sourceAt(inst, 1u), highLane, arithmetic);
@@ -156,6 +178,7 @@ IrU32 TranslationContext::saturateInteger16(const RdnaOperand& destination, IrU3
 }
 
 bool TranslationContext::packedInteger16Binary(const RdnaInstruction& inst, IrOpcode opcode, bool sign) {
+    if (nativeInteger16 && !inst.destination.clamp) return packedInteger16Native(inst, opcode == IrOpcode::IAdd32 ? IrOpcode::IAdd16x2 : IrOpcode::ISub16x2, 0u, 1u);
     const auto translateLane = [&](bool highLane) {
         const IrU32 lhs = readU16LaneAsU32(sourceAt(inst, 0u), highLane, sign);
         const IrU32 rhs = readU16LaneAsU32(sourceAt(inst, 1u), highLane, sign);
@@ -169,6 +192,15 @@ bool TranslationContext::packedInteger16Binary(const RdnaInstruction& inst, IrOp
 }
 
 bool TranslationContext::packedInteger16Mad(const RdnaInstruction& inst, bool sign) {
+    if (nativeInteger16 && !inst.destination.clamp) {
+        const IrU32 lhs = readPackedU16Source(sourceAt(inst, 0u));
+        const IrU32 rhs = readPackedU16Source(sourceAt(inst, 1u));
+        const IrU32 addend = readPackedU16Source(sourceAt(inst, 2u));
+        const IrU32 product(ir.Emit(IrOpcode::IMul16x2, IrType::U32, {&lhs.Value(), &rhs.Value()}));
+        const IrU32 result(ir.Emit(IrOpcode::IAdd16x2, IrType::U32, {&product.Value(), &addend.Value()}));
+        writeOperand(inst.destination, &result.Value());
+        return true;
+    }
     const auto translateLane = [&](bool highLane) {
         const IrU32 lhs = readU16LaneAsU32(sourceAt(inst, 0u), highLane, sign);
         const IrU32 rhs = readU16LaneAsU32(sourceAt(inst, 1u), highLane, sign);
@@ -187,6 +219,10 @@ bool TranslationContext::packedInteger16Mad(const RdnaInstruction& inst, bool si
 }
 
 bool TranslationContext::packedInteger16MinMax(const RdnaInstruction& inst, IrOpcode opcode, bool sign) {
+    if (nativeInteger16) {
+        const IrOpcode packed = opcode == IrOpcode::SMax32 ? IrOpcode::SMax16x2 : opcode == IrOpcode::SMin32 ? IrOpcode::SMin16x2 : opcode == IrOpcode::UMax32 ? IrOpcode::UMax16x2 : IrOpcode::UMin16x2;
+        return packedInteger16Native(inst, packed, 0u, 1u);
+    }
     const auto translateLane = [&](bool highLane) {
         const IrU32 lhs = readU16LaneAsU32(sourceAt(inst, 0u), highLane, sign);
         const IrU32 rhs = readU16LaneAsU32(sourceAt(inst, 1u), highLane, sign);
@@ -927,10 +963,6 @@ bool TranslationContext::vCvtPk16I32(const RdnaInstruction& inst, bool sign) {
     const IrU32 result = packU16Lanes(saturate(0u), saturate(1u));
     writeOperand(inst.destination, &result.Value());
     return true;
-}
-
-void TranslateIntegerInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateIntegerInstruction not implemented");
 }
 
 }

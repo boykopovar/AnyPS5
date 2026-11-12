@@ -1,4 +1,5 @@
 #include "prx/libSceUsbStorage/UsbStorage.hpp"
+#include <cerrno>
 #include "prx/libSceUsbStorage/include/HostVolumes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -377,9 +378,6 @@ void TestGetdents() {
 }
 
 void TestThrowingExports() {
-    char mountPoint[8]{};
-    Require(ThrowsWith([&] { sceUsbStorageGetMountPointOfShellCore(0, mountPoint); }, "sceUsbStorageGetMountPointOfShellCore not implemented"),
-            "get the mount point of shell core without a device did not throw its marker");
     Require(ThrowsWith([] { sceUsbStorageClearFakeWriteProtection(); }, "sceUsbStorageClearFakeWriteProtection not implemented"),
             "clear fake write protection did not throw its marker");
     Require(ThrowsWith([] { sceUsbStorageSetFakeMapLockForDebug(); }, "sceUsbStorageSetFakeMapLockForDebug not implemented"),
@@ -396,6 +394,9 @@ void TestDeviceInfo(const FakeHost& host) {
 
     UsbStorageDeviceInfo info;
     std::memset(&info, 0x5a, sizeof(info));
+    errno = 71;
+    Require(sceUsbStorageGetDeviceInfo(0, reinterpret_cast<UsbStorageDeviceInfo*>(0x10)) == UsbStorage::InvalidArgument, "unwritable info buffer");
+    Require(errno == 71, "errno preserved");
     Require(sceUsbStorageGetDeviceInfo(0, &info) == 0, "get device info of the attached device");
     Require(info.vendorId == 0x0781 && info.productId == 0x5581 && info.bcdDevice == 0x0100, "the device info holds the USB ids and release");
     Require(std::string_view(info.vendor) == "SanDisk" && info.vendorLength == 7, "the device info holds the vendor");

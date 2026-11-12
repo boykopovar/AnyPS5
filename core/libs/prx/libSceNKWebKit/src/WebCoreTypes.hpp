@@ -111,6 +111,12 @@ struct AffineTransform {
     std::array<double, 6> m_transform{1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
 };
 
+struct OptionalAffineTransform {
+    bool m_engaged;
+    std::array<std::uint8_t, 7> m_padding;
+    AffineTransform m_value;
+};
+
 struct alignas(16) TransformationMatrix {
     double m_matrix[4][4]{
         {1.0, 0.0, 0.0, 0.0},
@@ -207,6 +213,9 @@ static_assert(sizeof(LayoutSize) == 8);
 static_assert(sizeof(LayoutRect) == 16);
 static_assert(sizeof(RoundedRect) == 48);
 static_assert(sizeof(AffineTransform) == 48);
+static_assert(sizeof(OptionalAffineTransform) == 56);
+static_assert(offsetof(OptionalAffineTransform, m_padding) == 1);
+static_assert(offsetof(OptionalAffineTransform, m_value) == 8);
 static_assert(sizeof(TransformationMatrix) == 128);
 static_assert(sizeof(MatrixTransformOperation) == 64);
 static_assert(offsetof(MatrixTransformOperation, m_a) == 16);

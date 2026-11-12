@@ -60,8 +60,14 @@ int main() {
     Require(sceGameCustomDataDialogTerminate() == kErrNotInitialized);
     Require(sceGameCustomDataDialogOpen() == kErrNotInitialized);
     Require(sceGameCustomDataDialogOpenA(nullptr) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogOpenA(&param) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogClose() == kErrNotInitialized);
     Require(sceGameCustomDataDialogGetResult() == kErrNotInitialized);
     Require(sceGameCustomDataDialogGetResultA(nullptr) == kErrNotInitialized);
+    result[0] = -1;
+    result[1] = -1;
+    Require(sceGameCustomDataDialogGetResultA(result) == kErrNotInitialized);
+    Require(result[0] == -1 && result[1] == -1);
     Require(sceGameCustomDataDialogGetStatus() == kStatusNone);
     Require(sceGameCustomDataDialogUpdateStatus() == kStatusNone);
 
@@ -80,7 +86,10 @@ int main() {
     Require(sceGameCustomDataDialogClose() == kErrNotInitialized);
     Require(sceGameCustomDataDialogGetResult() == kErrNotInitialized);
     Require(sceGameCustomDataDialogGetResultA(nullptr) == kErrNotInitialized);
+    result[0] = -1;
+    result[1] = -1;
     Require(sceGameCustomDataDialogGetResultA(result) == kErrNotInitialized);
+    Require(result[0] == -1 && result[1] == -1);
     Require(sceGameCustomDataDialogGetStatus() == kStatusNone);
     Require(sceGameCustomDataDialogUpdateStatus() == kStatusNone);
 }

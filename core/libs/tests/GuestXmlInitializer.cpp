@@ -1,5 +1,6 @@
 #include "prx/libSceXml/include/Api.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -228,10 +229,86 @@ void TestTwoAllocators() {
     }
 }
 
+void TestInitializerNullValidation() {
+    bool threwNullSelf = false;
+    try {
+        _ZN3sce3Xml11Initializer10initializeEPKNS0_13InitParameterE(nullptr, nullptr);
+    } catch (const std::invalid_argument&) {
+        threwNullSelf = true;
+    }
+    Require(threwNullSelf, "Initializer::initialize rejects null self");
+
+    XmlHandle handle{reinterpret_cast<void*>(0x1234)};
+    _ZN3sce3Xml11InitializerC1Ev(&handle);
+    Require(handle.impl == nullptr, "Initializer C1 clears impl");
+
+    handle.impl = reinterpret_cast<void*>(0x1234);
+    _ZN3sce3Xml11InitializerC2Ev(&handle);
+    Require(handle.impl == nullptr, "Initializer C2 clears impl");
+
+    XmlInitParameter paramWithoutAllocator{nullptr, nullptr, {0, 0}};
+    bool threwNullAllocator = false;
+    try {
+        _ZN3sce3Xml11Initializer10initializeEPKNS0_13InitParameterE(&handle, &paramWithoutAllocator);
+    } catch (const std::invalid_argument&) {
+        threwNullAllocator = true;
+    }
+    Require(threwNullAllocator, "Initializer::initialize rejects null allocator");
+
+    errno = 71;
+    Require(_ZN3sce3Xml11Initializer10initializeEPKNS0_13InitParameterE(&handle, reinterpret_cast<const XmlInitParameter*>(0x10)) == static_cast<int>(0x80850003), "Initializer::initialize rejects unreadable parameter");
+    Require(errno == 71, "Initializer::initialize preserves errno on unreadable parameter");
+
+    bool threwTerminateNull = false;
+    try {
+        _ZN3sce3Xml11Initializer9terminateEv(nullptr);
+    } catch (const std::invalid_argument&) {
+        threwTerminateNull = true;
+    }
+    Require(threwTerminateNull, "Initializer::terminate rejects null self");
+
+    bool threwDtorNull = false;
+    try {
+        _ZN3sce3Xml11InitializerD1Ev(nullptr);
+    } catch (const std::invalid_argument&) {
+        threwDtorNull = true;
+    }
+    Require(threwDtorNull, "Initializer D1 rejects null self");
+
+    bool threwDtor2Null = false;
+    try {
+        _ZN3sce3Xml11InitializerD2Ev(nullptr);
+    } catch (const std::invalid_argument&) {
+        threwDtor2Null = true;
+    }
+    Require(threwDtor2Null, "Initializer D2 rejects null self");
+}
+
+void TestSimpleDataConstructors() {
+    XmlSimpleData data1;
+    _ZN3sce3Xml10SimpleDataC1Ev(&data1);
+    Require(data1.data == nullptr && data1.size == 0, "SimpleData C1 default clears members");
+
+    XmlSimpleData data2;
+    _ZN3sce3Xml10SimpleDataC2Ev(&data2);
+    Require(data2.data == nullptr && data2.size == 0, "SimpleData C2 default clears members");
+
+    const char* sample = "hello";
+    XmlSimpleData data3;
+    _ZN3sce3Xml10SimpleDataC1EPKcm(&data3, sample, 5);
+    Require(data3.data == sample && data3.size == 5, "SimpleData C1 param initializes members");
+
+    XmlSimpleData data4;
+    _ZN3sce3Xml10SimpleDataC2EPKcm(&data4, sample, 5);
+    Require(data4.data == sample && data4.size == 5, "SimpleData C2 param initializes members");
+}
+
 }
 
 int main() {
     TestMemAllocatorBase();
+    TestInitializerNullValidation();
+    TestSimpleDataConstructors();
     TestTwoAllocators();
     TestInitializer();
     std::puts("guest_xml_initializer: all checks passed");
