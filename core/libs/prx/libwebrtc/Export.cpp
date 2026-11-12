@@ -838,11 +838,6 @@ int APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc12AudioEncoder6EncodeEjN3rtc9ArrayViewIKsLln4711EEEPNS1_7BufferTIhLb0EEE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("qli1Cjz9UIo", libwebrtcUnknown36);
 int APS5_VABI libwebrtcUnknown36(void) {
     NotImplemented_nid_no_patch("qli1Cjz9UIo");

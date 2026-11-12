@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libwebrtc/include/RateTracker.hpp"
 #include "prx/libwebrtc/include/AudioCodecInfo.hpp"
+#include "prx/libwebrtc/include/Buffer.hpp"
 #include "prx/libwebrtc/include/AudioDecoder.hpp"
 #include "prx/libwebrtc/include/AudioDeviceGeneric.hpp"
 #include "prx/libwebrtc/include/AudioEncoder.hpp"
@@ -296,7 +297,7 @@ void APS5_VABI _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(WebRtcAu
 int APS5_VABI libwebrtcUnknown35(void);
 void APS5_VABI _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(WebRtcAudioDecoderParseResult* result);
 int APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(void);
-int APS5_VABI _ZN6webrtc12AudioEncoder6EncodeEjN3rtc9ArrayViewIKsLln4711EEEPNS1_7BufferTIhLb0EEE_nid_postfix(void);
+void* APS5_VABI _ZN6webrtc12AudioEncoder6EncodeEjN3rtc9ArrayViewIKsLln4711EEEPNS1_7BufferTIhLb0EEE_nid_postfix(void* info, WebRtcAudioEncoder* encoder, std::uint32_t rtpTimestamp, const std::int16_t* audio, std::size_t samples, WebRtcBuffer* encoded);
 bool APS5_VABI _ZNK6webrtc12AudioEncoder6GetDtxEv_nid_postfix(const WebRtcAudioEncoder* encoder);
 void APS5_VABI _ZN6webrtc12AudioEncoder16SetTargetBitrateEi_nid_postfix(WebRtcAudioEncoder* encoder, int targetBps);
 int APS5_VABI libwebrtcUnknown36(void);
