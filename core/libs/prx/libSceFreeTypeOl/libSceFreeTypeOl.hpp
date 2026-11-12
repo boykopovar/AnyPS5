@@ -11,6 +11,7 @@ int APS5_VABI sceFreeTypeOlFtaSupportFormatWinFonts_nid_postfix(void* library);
 int APS5_VABI sceFreeTypeOlFtaSupportHinterAutoFitter_nid_postfix(void* library);
 int APS5_VABI sceFreeTypeOlFtaSupportRendererRaster1_nid_postfix(void* library);
 int APS5_VABI sceFreeTypeOlFtaSupportRendererSmooth_nid_postfix(void* library);
+int APS5_VABI sceFreeTypeOlFtaSupportModules_nid_postfix(void* library);
 
 void APS5_VABI sceFreeTypeOlFtaAddModuleGxvalid_nid_postfix(void* library);
 void APS5_VABI sceFreeTypeOlFtaAddModuleOtvalid_nid_postfix(void* library);

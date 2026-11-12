@@ -195,10 +195,13 @@ int main() {
     Require(count == 0);
     Require(sceKernelWaitEqueue(eq, nullptr, 1, &count, &timeout) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelWaitEqueue(eq, &event, 0, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, &event, -1, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelDeleteUserEvent(eq, 7) == SCE_KERNEL_ERROR_ENOENT);
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
     Require(sceKernelDeleteEqueue(eq) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelWaitEqueue(0, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelWaitEqueue(1, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelCreateEqueue(nullptr, "errors") == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelCreateEqueue(&eq, nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
@@ -475,6 +478,15 @@ int main() {
     KernelUseconds efTimeout = 1000;
     Require(sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_OR, &pattern, &efTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(pattern == 0);
+    for (const std::uint32_t mode : {0x00u, 0x03u, 0x04u, 0x31u}) {
+        pattern = 0xdeadbeef;
+        efTimeout = 1000;
+        Require(sceKernelWaitEventFlag(ef, 1, mode, &pattern, &efTimeout) == SCE_KERNEL_ERROR_EINVAL && pattern == 0xdeadbeef && efTimeout == 1000);
+    }
+    pattern = 0xdeadbeef;
+    efTimeout = 1000;
+    Require(sceKernelWaitEventFlag(ef, 0, EVF_WAITMODE_AND, &pattern, &efTimeout) == SCE_KERNEL_ERROR_EINVAL && pattern == 0xdeadbeef && efTimeout == 1000);
+    pattern = 0;
 
     int waitThreads = -1;
     Require(sceKernelCancelEventFlag(ef, 0x42, &waitThreads) == SCE_OK);

@@ -59,6 +59,8 @@ void CheckPriority() {
     Require(sceSrcUtilitySetPriority(nullptr, 1) == INVALID_HANDLE, "set on a null handle");
     std::uint32_t priority = 7;
     Require(sceSrcUtilityGetPriority(nullptr, &priority) == INVALID_HANDLE && priority == 7, "get on a null handle");
+    Require(sceSrcUtilitySetPriority(reinterpret_cast<void*>(0x10), 1) == INVALID_HANDLE, "set on an invalid handle pointer");
+    Require(sceSrcUtilityGetPriority(reinterpret_cast<const void*>(0x10), &priority) == INVALID_HANDLE && priority == 7, "get on an invalid handle pointer");
     std::vector<std::uint8_t> handle(HANDLE_SIZE, 0xAB);
     const std::vector<std::uint8_t> untouched = handle;
     Require(sceSrcUtilitySetPriority(handle.data(), 1) == INVALID_HANDLE && handle == untouched, "set needs an initialized handle");
@@ -94,6 +96,11 @@ void CheckUnwritablePriorityOutput() {
     std::memcpy(handle.data() + 0x2C, &stored, sizeof(stored));
     Require(sceSrcUtilityGetPriority(handle.data(), reinterpret_cast<std::uint32_t*>(page)) == INVALID_POINTER,
             "get must report an unwritable output as the invalid pointer error");
+    std::uint32_t outputPriority = 0;
+    Require(sceSrcUtilityGetPriority(page, &outputPriority) == INVALID_HANDLE,
+            "get must report an unwritable handle as invalid handle");
+    Require(sceSrcUtilitySetPriority(page, 1) == INVALID_HANDLE,
+            "set must report an unwritable handle as invalid handle");
 #ifdef _WIN32
     VirtualFree(page, 0, MEM_RELEASE);
 #else

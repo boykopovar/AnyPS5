@@ -330,6 +330,10 @@ The setting covers the rumble motors, the impulse-trigger rumble of controllers 
 
 This is a host-side comfort setting, not console behaviour: it is applied by AnyPS5 between the game and your controller, it is read once at start, and there is no hotkey or overlay entry for it. It is not a model of any console setting.
 
+### Vibration while the window has no focus
+
+By default the controller stops vibrating while the AnyPS5 window has no focus, and vibrates again with the next pulse when the focus returns. Set `ANYPS5_RUMBLE_ON_FOCUS_LOSS=0` to keep vibration on while the window is in the background. Only the vibration motors are affected: the light bar and the controller's state are not changed, and identify pulses still work while the window has focus. Any value other than `0` or `1` stops the game at start with an error naming the variable.
+
 ### Controller connection and user 0
 
 By default port 0 stays connected and the first user stays logged in even when the only controller is removed, so the game keeps reading the last state and never learns the pad is gone. Set `ANYPS5_PAD_PORT0_STATE=controller` to make the game see the controller instead:
@@ -687,7 +691,7 @@ python3 tools/import_audit.py app.registry.json app.libc.prx.guest.prx.registry.
 | `implemented` | A built library exports the NID and its function is not a throwing stub. |
 | `partial` | Exported, but the function throws for inputs whose behaviour is unknown. |
 | `stub` | Exported, but the whole function calls `NotImplemented_nid_no_patch`: the game loads and throws when it calls it. |
-| `absent` | No built library exports the NID: the loader fails. |
+| `absent` | No built library that the loader searches exports the NID: the loader fails. |
 | `module` | The import names a title library found in `--modules` that exports the symbol or its NID. |
 
 An import that names a library requires the literal export name. If its implementation is found only by hashing the import name, it still counts as `implemented` or `stub`, but the report lists the name mismatch, sets `symbol_mismatch` on the JSON import record and counts it in the summary, and exits with code 1. A strong import with a name mismatch is a current stop. Imports without a library retain the audit's name-to-NID fallback.
@@ -699,6 +703,8 @@ ELF modules in `--modules` are audited regardless of filename: their undefined s
 Each registry has a companion with the same prefix and the suffix `.needed.json`, listing its host library dependencies, including declared `DT_NEEDED` entries with no imports. Dependencies supplied by converted bundled modules, including their aliases, are omitted. The executable's companion includes host dependencies of its bundled modules. The audit reads these companions automatically; keep them beside the registries. Older registries without companions still work, but cannot report dependencies that have no imports; regenerate them with `--registry` to include those dependencies.
 
 The report also lists needed libraries that have no file in `--libs` or `--modules`, including dependencies with zero imports. These do not increase the import or reference counts. Windows can skip a missing dependency when no import needs it; Linux still needs the file. The audit also lists imports exported only by a library other than the one they name; those resolve on Linux and can fail on Windows.
+
+On a Windows build with companions, an import without a library counts only what the entry stub searches: the title's modules, the libraries the companions list, the kernel family when one of them is a kernel library, and `libc.prx` when one is a kernel library or `libSceLibcInternal.prx`. An import that only other built libraries export is `absent`; its JSON import record lists them in `unsearched_providers`, and the summary and the report count them per library. The companions of all registries passed are pooled, so pass the registries of one executable and its modules together, with every folder that holds the title's converted modules in `--modules`: an import that only a title module provides counts as `absent` when that module's folder is missing. When no companion lists a library, and on a Linux build, every built library still counts.
 
 The audit also walks the built libraries' own host dependencies: each `.prx` under `--libs` has its PE imports (or ELF `DT_NEEDED` entries) checked for `.prx` names with no file in `--libs` or `--modules`, following present libraries transitively. Gaps fail the audit and are reported as `Importer: <root> Chain: <root> -> ... -> <missing>` lines, since the loader fails on them even when every game import resolves.
 

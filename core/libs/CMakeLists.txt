@@ -56,8 +56,14 @@ function(configure_windows_unwind target)
         if(NOT EXISTS "${CMAKE_OBJCOPY}")
             message(FATAL_ERROR "Windows DWARF unwinding requires objcopy")
         endif()
+        set(refreshStagedRuntime "")
+        get_target_property(targetType ${target} TYPE)
+        if(BUILD_TESTING AND NOT CMAKE_VERSION VERSION_LESS 3.21 AND targetType STREQUAL "SHARED_LIBRARY")
+            set(refreshStagedRuntime COMMAND "${CMAKE_COMMAND}" "-DSOURCE=$<TARGET_FILE:${target}>" "-DSTAGED_DIR=${ANYPS5_TEST_OUTPUT_DIRECTORY}" -P "${CMAKE_SOURCE_DIR}/cmake/RefreshStagedRuntime.cmake")
+        endif()
         add_custom_command(TARGET ${target} POST_BUILD
                 COMMAND "${CMAKE_OBJCOPY}" --rename-section .eh_frame=.ehfram --rename-section .eh_fram=.ehfram "$<TARGET_FILE:${target}>"
+                ${refreshStagedRuntime}
                 VERBATIM
         )
     endif()
@@ -572,6 +578,11 @@ if(BUILD_TESTING)
     add_test(NAME guest_kernel_sys_pwrite COMMAND guest_kernel_sys_pwrite_tests ${UNPATCHED_DIR} unpatched)
     add_test(NAME guest_kernel_sys_pwrite_patched COMMAND guest_kernel_sys_pwrite_tests ${PATCHED_DIR} patched)
     set_tests_properties(guest_kernel_sys_pwrite guest_kernel_sys_pwrite_patched PROPERTIES TIMEOUT 20)
+    if(MINGW)
+        get_filename_component(kernelSysPwriteRuntimeDirectory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        set_tests_properties(guest_kernel_sys_pwrite guest_kernel_sys_pwrite_patched PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${kernelSysPwriteRuntimeDirectory}")
+    endif()
     add_test_executable(guest_kernel_sys_tests tests/GuestKernelSys.cpp)
     target_include_directories(guest_kernel_sys_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_tests PRIVATE libkernel_sys libSceNet libSceAmpr libkernel libc)
@@ -1240,7 +1251,7 @@ if(BUILD_TESTING)
         add_test_executable(rudp_poll_wait_exception_tests tests/RudpPollWaitException.cpp
             prx/libSceRudp/Export.cpp prx/libkernel/Time/TimedWait.cpp)
         target_include_directories(rudp_poll_wait_exception_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        target_link_libraries(rudp_poll_wait_exception_tests PRIVATE libc)
+        target_link_libraries(rudp_poll_wait_exception_tests PRIVATE libSceNet libc)
         configure_windows_unwind(rudp_poll_wait_exception_tests)
         add_test(NAME rudp_poll_wait_exception COMMAND rudp_poll_wait_exception_tests)
         set_tests_properties(rudp_poll_wait_exception PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 ENVIRONMENT_MODIFICATION
@@ -1374,6 +1385,13 @@ if(BUILD_TESTING)
         add_test(NAME prx_thread_local_destructors COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
             -DMODULES=$<TARGET_FILE_DIR:libc> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
         set_tests_properties(prx_thread_local_destructors PROPERTIES TIMEOUT 300)
+        add_test(NAME test_thread_local_destructors COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
+            -DPATTERN=*.exe -DMODULES=$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
+        set_tests_properties(test_thread_local_destructors PROPERTIES TIMEOUT 300)
+        add_test(NAME thread_local_destructors_unusable_nm COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_CURRENT_BINARY_DIR}/missing/nm
+            -DOBJDUMP=${CMAKE_OBJDUMP} -DPATTERN=ThreadLocalDestructors.cmake -DMODULES=${CMAKE_CURRENT_SOURCE_DIR}/tests
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
+        set_tests_properties(thread_local_destructors_unusable_nm PROPERTIES WILL_FAIL TRUE TIMEOUT 30)
     endif()
 
     add_test_executable(guest_np_cpp_web_api_intrusive_ptr_tests tests/GuestNpCppWebApiIntrusivePtr.cpp)
@@ -1448,6 +1466,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
 
+    add_test_executable(guest_kernel_timer_gettime_bounds_tests tests/GuestKernelTimerGettimeBounds.cpp)
+    target_include_directories(guest_kernel_timer_gettime_bounds_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_timer_gettime_bounds_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_timer_gettime_bounds_tests)
+    add_test(NAME guest_kernel_timer_gettime_bounds COMMAND guest_kernel_timer_gettime_bounds_tests)
+    set_tests_properties(guest_kernel_timer_gettime_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_timer_gettime_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
     add_test_executable(guest_crt_tests tests/GuestCrt.cpp)
     target_include_directories(guest_crt_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_crt_tests PRIVATE libSceAmpr libc)
@@ -1499,10 +1528,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_kernel_process_exports_patched COMMAND guest_kernel_process_exports_tests ${PATCHED_DIR} patched)
     set_tests_properties(guest_kernel_process_exports guest_kernel_process_exports_patched PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_kernel_process_exports PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:${UNPATCHED_DIR}")
-        set_tests_properties(guest_kernel_process_exports_patched PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:${PATCHED_DIR}")
+        set(processExportsUnpatchedPath "PATH=path_list_prepend:${UNPATCHED_DIR}")
+        set(processExportsPatchedPath "PATH=path_list_prepend:${PATCHED_DIR}")
+        if(MINGW)
+            get_filename_component(processExportsRuntimeDirectory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            list(APPEND processExportsUnpatchedPath "PATH=path_list_prepend:${processExportsRuntimeDirectory}")
+            list(APPEND processExportsPatchedPath "PATH=path_list_prepend:${processExportsRuntimeDirectory}")
+        endif()
+        set_tests_properties(guest_kernel_process_exports PROPERTIES ENVIRONMENT_MODIFICATION "${processExportsUnpatchedPath}")
+        set_tests_properties(guest_kernel_process_exports_patched PROPERTIES ENVIRONMENT_MODIFICATION "${processExportsPatchedPath}")
     endif()
 
     add_test_executable(guest_posix_random_tests tests/GuestPosixRandom.cpp)
@@ -1536,6 +1570,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_kernel_sys_swapcontext PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_kernel_sys_swapcontext PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
+    add_test_executable(guest_kernel_sys_development_mode_tests tests/GuestKernelSysDevelopmentMode.cpp)
+    target_include_directories(guest_kernel_sys_development_mode_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_development_mode_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_development_mode_tests)
+    add_test(NAME guest_kernel_sys_development_mode COMMAND guest_kernel_sys_development_mode_tests)
+    set_tests_properties(guest_kernel_sys_development_mode PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_development_mode PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
 
