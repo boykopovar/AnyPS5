@@ -302,7 +302,7 @@ void testConcurrentCopies(const std::filesystem::path& tool) {
         if (call.kind == FrameCallKind::FrameStart) base = call.completed;
         if (call.kind == FrameCallKind::Memory) {
             ++memory;
-            check(call.completed >= base + submits, "a memory delta was read with " + std::to_string(base + submits - call.completed) + " of the " + std::to_string(submits) + " submissions recorded before it unfinished");
+            check(call.completed >= base + submits || (call.flags & AgcDriver::InFlightDeltaFlag) != 0, "a memory delta was read with " + std::to_string(base + submits - call.completed) + " of the " + std::to_string(submits) + " submissions recorded before it unfinished, and is not marked as read in flight");
         }
         submits += call.kind == FrameCallKind::Submit;
     }

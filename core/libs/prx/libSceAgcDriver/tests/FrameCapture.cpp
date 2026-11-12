@@ -158,7 +158,7 @@ void testRoundTrip(const std::filesystem::path& directory) {
 
     const FrameCaptureReader reader(directory);
     check(!reader.Truncated(), "a finished capture reads as truncated");
-    check(reader.Version() == 3, "a capture this build wrote reads as calls format " + std::to_string(reader.Version()) + ", not 3");
+    check(reader.Version() == 4, "a capture this build wrote reads as calls format " + std::to_string(reader.Version()) + ", not 4");
     check(reader.Header() == "{\"magic\":\"aps5-frame-capture 1\"}\n", "header does not round-trip");
     check(reader.Calls().size() == calls.size(), "call count does not round-trip");
     for (std::size_t index = 0; index < calls.size(); ++index) check(sameCall(reader.Calls()[index], calls[index]), "call " + std::to_string(index) + " does not round-trip");
@@ -401,6 +401,7 @@ int main(int argc, char** argv) {
     testTruncated(root / "capture", root / "truncated");
     testOlderVersion(root / "capture", root / "version-one", "aps5-frame-calls 1\n", 1);
     testOlderVersion(root / "capture", root / "version-two", "aps5-frame-calls 2\n", 2);
+    testOlderVersion(root / "capture", root / "version-three", "aps5-frame-calls 3\n", 3);
     testCorrupt(root / "capture", root / "corrupt");
     testWriter(root / "writer");
     std::filesystem::remove_all(root);

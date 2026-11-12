@@ -307,6 +307,22 @@ bool Driver::WaitIdleUnlessTitleWaitsFor(std::chrono::milliseconds timeout) {
     return idle();
 }
 
+bool Driver::WaitCompletedFor(std::uint64_t serial, std::chrono::milliseconds timeout) {
+    require(!onWorkerThread(), "worker cannot wait for itself");
+    std::unique_lock lock(mutex);
+    ++idleWaiters;
+    const bool done = changed.wait_for(lock, timeout, [&] { return failure != nullptr || stopping || completed >= serial; });
+    --idleWaiters;
+    rethrowFailure();
+    checkStopping();
+    return done;
+}
+
+void Driver::WaitDeviceIdle() {
+    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    if (const auto localDevice = device.Load()) localDevice->WaitIdle();
+}
+
 bool Driver::WaitSettledFor(std::chrono::milliseconds timeout) {
     require(!onWorkerThread(), "worker cannot wait for itself");
     std::unique_lock lock(mutex);
@@ -381,7 +397,42 @@ std::pair<std::uint64_t, std::uint64_t> Driver::SerialProgress() {
 
 StartedProgressSnapshot Driver::StartedProgress() {
     std::lock_guard lock(mutex);
-    return {accepted, completed, std::vector<std::uint64_t>(startedAhead.begin(), startedAhead.end())};
+    std::uint64_t begun = startedAhead.size();
+    for (const auto serial : completedOutOfOrder) begun += !startedAhead.contains(serial);
+    return {accepted, completed, std::vector<std::uint64_t>(startedAhead.begin(), startedAhead.end()), accepted - completed - std::min(begun, accepted - completed)};
+}
+
+void Driver::HoldForRecorder() {
+    recorderHold.store(true, std::memory_order_release);
+}
+
+void Driver::ReleaseForRecorder() {
+    {
+        std::lock_guard lock(mutex);
+        recorderHold.store(false, std::memory_order_release);
+    }
+    changed.notify_all();
+}
+
+void Driver::parkForRecorder() {
+    std::unique_lock lock(mutex);
+    changed.wait(lock, [&] { return !recorderHold.load(std::memory_order_acquire) || stopping.load(std::memory_order_acquire) || failure != nullptr; });
+}
+
+bool Driver::SerialDone(std::uint64_t serial) {
+    std::lock_guard lock(mutex);
+    rethrowFailure();
+    return serial <= completed || completedOutOfOrder.contains(serial);
+}
+
+bool Driver::UnfinishedLabelOverlaps(std::uint64_t begin, std::uint64_t end) {
+    std::lock_guard lock(mutex);
+    for (const auto& [id, worker] : workers) {
+        for (const auto& [dword, count] : worker.unfinishedWrites) {
+            if (count != 0 && dword < end && dword + 4 > begin) return true;
+        }
+    }
+    return false;
 }
 
 void Driver::CheckFailure() {

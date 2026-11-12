@@ -101,6 +101,18 @@ bool EopRelease(std::span<const std::uint32_t> words) {
     return words.size() >= 8 && (words[0] >> 30u) == 3u && Pm4::PacketWords(words[0]) == 8u && ((words[0] >> 8u) & 0xffu) == 0x49u && ((words[2] >> 24u) & 7u) == 2u;
 }
 
+std::optional<AwaitedDword> decodeAwaited(std::span<const std::uint32_t> packet) {
+    if (packet.empty() || (packet[0] >> 30u) != 3u) return std::nullopt;
+    const auto opcode = (packet[0] >> 8u) & 0xffu;
+    if (opcode == 0x39) {
+        if (packet.size() < 4 || (packet[3] >> 29u) == 6u) return std::nullopt;
+        return AwaitedDword{packet[1] | (static_cast<std::uint64_t>(packet[2]) << 32u), 8, false, false, AwaitKind::Semaphore};
+    }
+    if ((opcode != 0x3c && opcode != 0x93) || packet.size() < 7 || ((packet[1] >> 4u) & 3u) != 1u) return std::nullopt;
+    const auto wait = Pm4::DecodeWait(packet);
+    return AwaitedDword{wait.address, static_cast<std::uint32_t>(wait.bytes), false, false};
+}
+
 }
 
 std::uint64_t Driver::FlipSubmissions() const {
@@ -430,6 +442,7 @@ void Driver::finishFlipWork(std::uint64_t workSerial) {
 }
 
 void Driver::reserveOutputs(Submission& submission) {
+    const bool tracking = awaitedTracking.load(std::memory_order_relaxed);
     std::set<std::uint32_t> eopTokens;
     for (std::size_t cursor = 0; cursor < submission.commands.size();) {
         const auto* words = submission.commands.data() + cursor;
@@ -449,7 +462,7 @@ void Driver::reserveOutputs(Submission& submission) {
                 submission.flips.emplace(cursor, flip->second.request);
             }
         }
-        noteHeldAtSubmit(submission, cursor);
+        noteHeldAtSubmit(submission, cursor, tracking);
         if (words[0] == FlipPacketHeader) {
             const auto output = outputs.find(words[1]);
             require(output != outputs.end(), "flip references an unregistered video output");
@@ -461,6 +474,7 @@ void Driver::reserveOutputs(Submission& submission) {
         cursor += Pm4::PacketWords(words[0]);
     }
     for (const auto token : eopTokens) eopFlips.erase(token);
+    if (tracking && submission.rewindTail != nullptr) submission.awaitedDwords.push_back(AwaitedDword{reinterpret_cast<std::uint64_t>(submission.rewindTail - 1), 4, false, false, AwaitKind::Rewind, submission.queue});
 }
 
 namespace {
@@ -558,10 +572,19 @@ void Driver::executeRewindTail(const Submission& stalled) {
         std::lock_guard lock(mutex);
         rethrowFailure();
         checkStopping();
+        if (awaitedTracking.load(std::memory_order_relaxed)) {
+            const auto labelled = unfinishedLabels.find(stalled.serial);
+            tail.labelValues = stalled.labelValues.empty() && labelled != unfinishedLabels.end() ? labelled->second.second : stalled.labelValues;
+        }
         reserveOutputs(tail);
         if (!tail.flips.empty()) rewindTailFlips.fetch_add(1, std::memory_order_acq_rel);
         tail.shaders = shaders;
         tail.serial = stalled.serial;
+        if (awaitedTracking.load(std::memory_order_relaxed)) {
+            passAwaitedLocked(stalled.serial, reinterpret_cast<std::uint64_t>(stalled.rewindTail - 1));
+            auto& waits = unfinishedWaits[tail.serial];
+            waits.insert(waits.end(), tail.awaitedDwords.begin(), tail.awaitedDwords.end());
+        }
         tail.received = ++eventSerial;
         const auto& waiting = workers[tail.queue].pending;
         retiredTakes = waiting.empty() ? tail.received : std::min(tail.received, waiting.front().received);
@@ -807,6 +830,10 @@ void Driver::enqueue(Submission submission) {
     submission.waitFree = waitFree(submission);
     auto& worker = workers[queue];
     for (const auto dword : submission.labelWrites) ++worker.unfinishedWrites[dword];
+    if (awaitedTracking.load(std::memory_order_relaxed)) {
+        if (!submission.awaitedDwords.empty()) unfinishedWaits[submission.serial] = submission.awaitedDwords;
+        if (!submission.labelValues.empty()) unfinishedLabels[submission.serial] = {queue, std::move(submission.labelValues)};
+    }
     worker.pending.push_back(std::move(submission));
     worker.queued.fetch_add(1, std::memory_order_acq_rel);
     if (!worker.thread.joinable()) worker.thread = Libc::StartHostThread([this, queue] {
@@ -822,7 +849,7 @@ void Driver::enqueue(Submission submission) {
     });
 }
 
-void Driver::noteHeldAtSubmit(Submission& submission, std::size_t cursor) {
+void Driver::noteHeldAtSubmit(Submission& submission, std::size_t cursor, bool tracking) {
     const auto packet = std::span<const std::uint32_t>(submission.commands).subspan(cursor, std::min<std::size_t>(Pm4::PacketWords(submission.commands[cursor]), submission.commands.size() - cursor));
     const auto opcode = (packet[0] >> 8u) & 0xffu;
     if ((packet[0] >> 30u) != 3u) return;
@@ -831,8 +858,21 @@ void Driver::noteHeldAtSubmit(Submission& submission, std::size_t cursor) {
             const auto bytes = label->Bytes();
             if (label->address % 4 == 0 && bytes.size() <= 64) {
                 for (std::size_t offset = 0; offset < bytes.size(); offset += 4) submission.labelWrites.push_back(label->address + offset);
+                if (tracking) {
+                    const bool known = !Pm4::Predicated(packet[0]) && (opcode == 0x37 || (packet[2] >> 29u) < 3) && std::none_of(submission.conditionalEnds.begin(), submission.conditionalEnds.end(), [&](const auto& range) { return range.first < cursor && cursor < range.second; });
+                    for (std::size_t offset = 0; offset + 4 <= bytes.size(); offset += 4) {
+                        std::uint32_t value = 0;
+                        std::memcpy(&value, bytes.data() + offset, sizeof(value));
+                        submission.labelValues.push_back(LabelValue{label->address + offset, value, known});
+                    }
+                }
             }
         }
+        return;
+    }
+    if (opcode == 0x39) {
+        if (!tracking) return;
+        if (const auto awaited = decodeAwaited(packet); awaited && awaited->address % 4 == 0 && GuestMemory::Accessible(reinterpret_cast<const void*>(awaited->address), awaited->bytes)) submission.awaitedDwords.push_back(*awaited);
         return;
     }
     if ((opcode != 0x3c && opcode != 0x93) || packet.size() < 7 || ((packet[1] >> 4u) & 3u) != 1u) return;
@@ -840,6 +880,14 @@ void Driver::noteHeldAtSubmit(Submission& submission, std::size_t cursor) {
     const auto address = wait.address;
     const std::size_t bytes = wait.bytes;
     if (address % 4 != 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return;
+    if (tracking) {
+        AwaitedDword awaited{address, static_cast<std::uint32_t>(bytes), false, false, AwaitKind::Wait, submission.queue, wait.function, wait.reference, wait.mask};
+        for (std::size_t index = 0; index < awaited.ahead.size() && index * 4 < bytes; ++index) {
+            const auto found = std::find_if(submission.labelValues.rbegin(), submission.labelValues.rend(), [&](const auto& label) { return label.dword == address + index * 4; });
+            if (found != submission.labelValues.rend()) awaited.ahead[index] = *found;
+        }
+        submission.awaitedDwords.push_back(awaited);
+    }
     const auto worker = workers.find(submission.queue);
     for (std::size_t offset = 0; offset < bytes; offset += 4) {
         const auto dword = address + offset;
@@ -848,7 +896,9 @@ void Driver::noteHeldAtSubmit(Submission& submission, std::size_t cursor) {
     }
     std::uint64_t value = *reinterpret_cast<const volatile std::uint32_t*>(address);
     if (bytes == 8) value |= static_cast<std::uint64_t>(*reinterpret_cast<const volatile std::uint32_t*>(address + 4)) << 32u;
-    if (Pm4::WaitComparesValue(packet, value)) submission.heldAtSubmit.insert(cursor);
+    if (!Pm4::WaitComparesValue(packet, value)) return;
+    submission.heldAtSubmit.insert(cursor);
+    if (tracking) submission.awaitedDwords.back().satisfied = true;
 }
 
 void Driver::forgetUnfinishedWrites(QueueWorker& worker, const Submission& submission) {
@@ -861,6 +911,88 @@ void Driver::forgetUnfinishedWrites(QueueWorker& worker, std::span<const std::ui
         if (found == worker.unfinishedWrites.end()) continue;
         if (--found->second == 0) worker.unfinishedWrites.erase(found);
     }
+}
+
+void Driver::passAwaited(const Submission& submission, std::span<const std::uint32_t> packet) {
+    if (!awaitedTracking.load(std::memory_order_relaxed)) return;
+    const auto awaited = decodeAwaited(packet);
+    if (!awaited) return;
+    std::lock_guard lock(mutex);
+    passAwaitedLocked(submission.serial, awaited->address);
+}
+
+void Driver::passAwaitedLocked(std::uint64_t serial, std::uint64_t address) {
+    const auto found = unfinishedWaits.find(serial);
+    if (found == unfinishedWaits.end()) return;
+    for (auto& wait : found->second) {
+        if (wait.passed || wait.address != address) continue;
+        wait.passed = true;
+        return;
+    }
+}
+
+void Driver::finishAwaited(std::uint64_t serial) {
+    unfinishedLabels.erase(serial);
+    const auto found = unfinishedWaits.find(serial);
+    if (found == unfinishedWaits.end()) return;
+    for (const auto& wait : found->second) {
+        if (!wait.satisfied) finishedWaits.emplace_back(wait.address, wait.address + wait.bytes);
+    }
+    unfinishedWaits.erase(found);
+}
+
+bool Driver::gpuSatisfies(std::uint64_t serial, const AwaitedDword& wait) const {
+    if (wait.kind == AwaitKind::Semaphore) return false;
+    const auto accepts = [&](const LabelValue* low, const LabelValue* high) {
+        if (low == nullptr || !low->known || (wait.bytes == 8 && (high == nullptr || !high->known))) return false;
+        const std::uint64_t value = low->value | (wait.bytes == 8 ? static_cast<std::uint64_t>(high->value) << 32u : 0u);
+        return wait.kind == AwaitKind::Rewind ? (value & Pm4::RewindValid) != 0 : Pm4::WaitCompares(wait.function, wait.reference, wait.mask, value);
+    };
+    if (wait.kind == AwaitKind::Wait) {
+        const auto last = [](const std::vector<LabelValue>& labels, std::uint64_t dword) -> const LabelValue* {
+            const auto found = std::find_if(labels.rbegin(), labels.rend(), [&](const auto& label) { return label.dword == dword; });
+            return found != labels.rend() ? &*found : nullptr;
+        };
+        const LabelValue* low = wait.ahead[0] ? &*wait.ahead[0] : nullptr;
+        const LabelValue* high = wait.ahead[1] ? &*wait.ahead[1] : nullptr;
+        for (auto earlier = unfinishedLabels.lower_bound(serial); low == nullptr && high == nullptr && earlier != unfinishedLabels.begin();) {
+            --earlier;
+            if (earlier->second.first != wait.queue) continue;
+            low = last(earlier->second.second, wait.address);
+            if (wait.bytes == 8) high = last(earlier->second.second, wait.address + 4);
+        }
+        if (accepts(low, high)) return true;
+    }
+    for (const auto& [labeller, labels] : unfinishedLabels) {
+        if (labels.first == wait.queue) continue;
+        const auto& values = labels.second;
+        for (std::size_t index = 0; index < values.size(); ++index) {
+            if (values[index].dword == wait.address && accepts(&values[index], index + 1 < values.size() && values[index + 1].dword == wait.address + 4 ? &values[index + 1] : nullptr)) return true;
+        }
+    }
+    return false;
+}
+
+AwaitedDwordsSnapshot Driver::TakeAwaitedDwords() {
+    std::lock_guard lock(mutex);
+    AwaitedDwordsSnapshot result;
+    for (const auto& [serial, waits] : unfinishedWaits) {
+        for (const auto& wait : waits) {
+            if (wait.satisfied) continue;
+            result.unfinished.emplace_back(wait.address, wait.address + wait.bytes);
+            if (!wait.passed && !result.title) result.title = !gpuSatisfies(serial, wait);
+        }
+    }
+    result.finished.swap(finishedWaits);
+    return result;
+}
+
+void Driver::TrackAwaitedDwords(bool tracking) {
+    std::lock_guard lock(mutex);
+    awaitedTracking.store(tracking, std::memory_order_relaxed);
+    unfinishedWaits.clear();
+    unfinishedLabels.clear();
+    finishedWaits.clear();
 }
 
 }

@@ -144,11 +144,36 @@ private:
     Frames& frames;
 };
 
-std::uint64_t headerNumber(const std::string& header, std::string_view key) {
+std::optional<std::uint64_t> headerValue(const std::string& header, std::string_view key) {
     const auto quoted = "\"" + std::string(key) + "\":";
     const auto at = header.find(quoted);
-    if (at == std::string::npos) throw std::runtime_error("frame replay: the capture header has no " + std::string(key));
-    return std::strtoull(header.c_str() + at + quoted.size(), nullptr, 10);
+    if (at == std::string::npos) return std::nullopt;
+    const auto* const end = header.data() + header.size();
+    std::uint64_t value = 0;
+    const auto [last, error] = std::from_chars(header.data() + at + quoted.size(), end, value);
+    if (error != std::errc{} || last == end || std::string_view(",} \t\r\n").find(*last) == std::string_view::npos) throw std::runtime_error("frame replay: the capture header's " + std::string(key) + " is not a number");
+    return value;
+}
+
+std::uint64_t headerNumber(const std::string& header, std::string_view key) {
+    const auto value = headerValue(header, key);
+    if (!value) throw std::runtime_error("frame replay: the capture header has no " + std::string(key));
+    return *value;
+}
+
+void requireVerifiedDeltas(const FrameCaptureReader& reader) {
+    if (reader.Version() < AgcDriver::InFlightCallsVersion) return;
+    const auto& header = reader.Header();
+    if (header.empty()) throw std::runtime_error("frame replay: capture.json is missing or empty, so the capture never ended and its last memory deltas may be partial or never verified");
+    const auto stale = headerValue(header, "stale_delta");
+    if (stale.value_or(0) != 0) throw std::runtime_error("frame replay: the capture stopped because a memory delta was read while submissions that stored into it were in flight (stale_delta " + std::to_string(*stale) + ")");
+    const auto inFlight = std::count_if(reader.Calls().begin(), reader.Calls().end(), [](const FrameCall& call) { return call.kind == FrameCallKind::Memory && (call.flags & AgcDriver::InFlightDeltaFlag) != 0; });
+    if (inFlight == 0) return;
+    const auto refuse = [&](const std::string& reason) { return std::runtime_error("frame replay: " + std::to_string(inFlight) + " memory deltas were read while submissions were in flight, but " + reason + ", so stores those submissions made into them later were never checked"); };
+    if (!stale) throw refuse("capture.json has no stale_delta");
+    const auto unverified = headerValue(header, "unverified_deltas");
+    if (!unverified) throw refuse("capture.json has no unverified_deltas");
+    if (*unverified != 0) throw refuse("capture.json has unverified_deltas " + std::to_string(*unverified));
 }
 
 void requireMemoryInRanges(const FrameCaptureReader& reader) {
@@ -302,10 +327,12 @@ void restoreSnapshot(const FrameCaptureReader& reader, const Skipped& skipped) {
 
 Skipped restoreMemory(const FrameCaptureReader& reader) {
     if (reader.Version() < 2) throw std::runtime_error("frame replay: calls format 1 does not record whether GPU writes had landed before each memory delta was read; record the capture again");
+    if (reader.Version() < AgcDriver::InFlightCallsVersion && std::ranges::any_of(reader.Calls(), [](const FrameCall& call) { return call.kind == FrameCallKind::Memory && (call.flags & AgcDriver::InFlightDeltaFlag) != 0; })) throw std::runtime_error("frame replay: calls format " + std::to_string(reader.Version()) + " records no memory delta read with work in flight, but this capture marks one; record it again");
     std::uintptr_t base = 0;
     std::size_t size = 0;
     GuestArena::GuestArenaRange_nid_postfix(&base, &size);
     if (!reader.Header().empty() && headerNumber(reader.Header(), "arena_base") != base) throw std::runtime_error("frame replay: the guest arena is at a different address than in the capture");
+    requireVerifiedDeltas(reader);
     requireMemoryInRanges(reader);
     progress();
     Skipped skipped;
@@ -370,6 +397,12 @@ struct Replay {
     std::atomic<std::uint64_t> deltaBytes{0};
     std::atomic<std::uint64_t> parkRestores{0};
     std::atomic<std::int64_t> paceWaitedNs{0};
+    std::atomic<std::int64_t> heldWaitedNs{0};
+    std::atomic<std::int64_t> inFlightWaitedNs{0};
+    std::atomic<std::int64_t> restoredNs{0};
+    std::atomic<std::uint64_t> depthSamples{0};
+    std::atomic<std::uint64_t> depthTotal{0};
+    std::atomic<std::uint64_t> depthMax{0};
     std::atomic<bool> stalled{false};
     std::atomic<std::uint64_t> stalledAt{0};
     std::atomic<std::uint64_t> earlyReleases{0};
@@ -379,6 +412,7 @@ struct Replay {
     std::atomic<std::size_t> sequenced{0};
     std::uint64_t unfinished = 0;
     std::size_t threads = 0;
+    std::uint64_t singleThreadOrdinal = 0;
     std::size_t pass = 0;
     bool recording = false;
     Clock::time_point startedAt{};
@@ -393,6 +427,30 @@ struct Replay {
 
     double paceWaitedSeconds() const {
         return static_cast<double>(paceWaitedNs.load()) / 1e9;
+    }
+
+    static double secondsOf(const std::atomic<std::int64_t>& totalNs) {
+        return static_cast<double>(totalNs.load()) / 1e9;
+    }
+
+    double depthMean() const {
+        const auto samples = depthSamples.load();
+        return samples == 0 ? 0.0 : static_cast<double>(depthTotal.load()) / static_cast<double>(samples);
+    }
+
+    void memoryWaited(std::atomic<std::int64_t>& waited, Clock::time_point began) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
+        paceWaitedNs += elapsed;
+        waited += elapsed;
+    }
+
+    void sampleDepth() {
+        const auto [accepted, completed] = progress();
+        const auto depth = accepted - completed;
+        ++depthSamples;
+        depthTotal += depth;
+        auto deepest = depthMax.load();
+        while (depth > deepest && !depthMax.compare_exchange_weak(deepest, depth)) {}
     }
 
     void report() const {
@@ -452,6 +510,7 @@ struct Replay {
 
     void execute(const FrameCall& call) {
         pace(call);
+        if (recording && call.kind == FrameCallKind::Submit) sampleDepth();
         switch (call.kind) {
         case FrameCallKind::RegisterShader:
             registration([&] { AgcDriverRegisterShader_nid_postfix(shader(call.address)); });
@@ -515,13 +574,21 @@ struct Replay {
         case FrameCallKind::Memory: {
             const std::unique_lock lock(memoryMutex);
             const bool pacing = options.pace && recording;
+            if (pacing && reader.Version() >= AgcDriver::InFlightCallsVersion && (call.flags & AgcDriver::InFlightDeltaFlag) != 0) {
+                const auto began = Clock::now();
+                if (call.ordinal > singleThreadOrdinal) throw std::runtime_error("frame replay: memory delta at call " + std::to_string(call.ordinal) + " was read with submissions in flight after a second thread made calls, which this replay cannot order");
+                waitStarted(call);
+                memoryWaited(inFlightWaitedNs, began);
+                restoreGroup(call.values.at(0), false);
+                return;
+            }
             bool parkedAsCaptured = true;
             std::vector<StagedWord> staged;
             {
                 const auto began = Clock::now();
                 const bool settled = !pacing || AgcDriverHoldSettled_nid_postfix(stalled.load() && progress().second == stalledAt.load() ? 0 : options.busyTimeout.count());
                 const SettledHold hold{pacing};
-                paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
+                memoryWaited(heldWaitedNs, began);
                 if (!settled && options.strict) throw std::runtime_error("frame replay: the replay did not settle before memory delta " + std::to_string(call.ordinal));
                 parkedAsCaptured = !pacing || !settled || call.values.size() < 2 || atCapturedPark(call);
                 staged = restoreGroup(call.values.at(0), false, heldWaits());
@@ -536,6 +603,28 @@ struct Replay {
             return;
         }
         throw std::runtime_error("frame replay: unknown call kind");
+    }
+
+    void waitStarted(const FrameCall& call) {
+        const auto accepted = progress().first;
+        const auto limit = Clock::now() + options.busyTimeout;
+        auto lastSeen = progress();
+        auto quietSince = Clock::now();
+        for (std::size_t index = 1; index < call.values.size(); ++index) {
+            const auto serial = accepted - (call.accepted - call.values[index]);
+            const auto blocked = [&](const std::string& reason) { return std::runtime_error("frame replay: memory delta at call " + std::to_string(call.ordinal) + " waits for submission " + std::to_string(call.values[index]) + " (replay serial " + std::to_string(serial) + "), which had started when the capture read the delta, but " + reason); };
+            while (!AgcDriverSerialDone_nid_postfix(serial)) {
+                const auto now = Clock::now();
+                if (const auto seen = progress(); seen != lastSeen) {
+                    lastSeen = seen;
+                    quietSince = now;
+                } else if (now - quietSince >= options.paceTimeout && AgcDriverSettled_nid_postfix() && !AgcDriverSerialDone_nid_postfix(serial) && progress() == seen) {
+                    throw blocked("no queue runs and the serials stopped at " + std::to_string(seen.second) + "/" + std::to_string(seen.first) + "; blocked on" + describeBlocked());
+                }
+                if (now >= limit) throw blocked("it did not complete within " + std::to_string(options.busyTimeout.count()) + " ms");
+                std::this_thread::sleep_for(std::chrono::microseconds(50));
+            }
+        }
     }
 
     static bool rewindWait(const AgcDriver::AwaitedWait& wait) {
@@ -607,6 +696,7 @@ struct Replay {
         std::vector<StagedWord> staged;
         const auto found = groups.find(group);
         if (found == groups.end()) return staged;
+        const auto began = Clock::now();
         std::array<AgcDriver::AwaitedWait, 64> awaited{};
         const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
         std::vector<std::uint64_t> parked;
@@ -640,6 +730,7 @@ struct Replay {
             deltaBytes += chunk->bytes;
         }
         for (const auto& [control, value] : controls) std::atomic_ref<std::uint32_t>(*control).store(value, std::memory_order_release);
+        restoredNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
         return staged;
     }
 
@@ -748,6 +839,12 @@ struct Replay {
         std::map<std::uint64_t, std::vector<std::size_t>> byThread;
         for (std::size_t index = 0; index < calls.size(); ++index) byThread[calls[index].thread].push_back(index);
         threads = byThread.size();
+        singleThreadOrdinal = calls.empty() ? 0 : calls.back().ordinal;
+        for (const auto& call : calls) {
+            if (call.thread == calls.front().thread) continue;
+            singleThreadOrdinal = call.ordinal - 1;
+            break;
+        }
         std::mutex mutex;
         std::condition_variable turn;
         std::size_t started = 0;
@@ -755,6 +852,11 @@ struct Replay {
         std::atomic<bool> finished{false};
         sequenced.store(0);
         stalled.store(false);
+        if (pass == 1) {
+            depthSamples.store(0);
+            depthTotal.store(0);
+            depthMax.store(0);
+        }
         std::thread breaker([&] {
             if (!options.release) return;
             auto lastSeen = progress();
@@ -875,7 +977,7 @@ int usage() {
                          "  --no-synthesize     releases a wait only with a value the capture recorded, never with its reference value\n"
                          "  --strict            fails on a pacing timeout or a failed registration inside the captured frames\n"
                          "  --repeat <n>        replays the frames n times in this process, restoring the snapshot before each pass;\n"
-                         "                      with n > 1 the frame times come from passes 2 to n, after the first warmed the caches\n"
+                         "                      with n > 1 the frame times and the in-flight depth come from passes 2 to n, after the first warmed the caches\n"
                          "  --cold-pipelines    starts with an empty Vulkan pipeline cache instead of the title's pipeline cache file\n"
                          "  --shaders           replays nothing and maps no guest memory; lists each shader registration with its code\n"
                          "                      address, size and code hash as the snapshot and the captured writes before it hold them,\n"
@@ -1334,11 +1436,12 @@ int run(const Options& options) {
         frames += measured.frames;
     }
     const auto slowest = frameMs.empty() ? 0.0 : *std::max_element(frameMs.begin(), frameMs.end());
-    std::printf("{\"frames\":%zu,\"replay_s\":%.3f,\"fps\":%.3f,\"frame_ms\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"each\":[%s]},\"passes\":[%s],\"kept_reservations\":%llu,\"submits\":%llu,\"delta_mib\":%.1f,\"park_restores\":%llu,\"pace_timeouts\":%llu,\"pace_wait_s\":%.3f,\"stale_registrations\":%llu,\"failed_registrations\":%llu,\"skipped_mib\":%.1f,\"threads\":%zu,\"released_waits\":%llu,\"of_them_from_earlier_writes\":%llu,\"of_them_synthesized\":%llu,\"unfinished\":%llu,\"frames_compared\":%zu,\"pixels_identical\":%.6f,\"max_channel_diff\":%d,\"load_s\":%.3f,\"journal_s\":%.3f}\n",
+    std::printf("{\"frames\":%zu,\"replay_s\":%.3f,\"fps\":%.3f,\"frame_ms\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"each\":[%s]},\"passes\":[%s],\"kept_reservations\":%llu,\"submits\":%llu,\"delta_mib\":%.1f,\"park_restores\":%llu,\"pace_timeouts\":%llu,\"pace_wait_s\":%.3f,\"memory_held_wait_s\":%.3f,\"memory_in_flight_wait_s\":%.3f,\"restore_s\":%.3f,\"in_flight_max\":%llu,\"in_flight_mean\":%.3f,\"stale_registrations\":%llu,\"failed_registrations\":%llu,\"skipped_mib\":%.1f,\"threads\":%zu,\"released_waits\":%llu,\"of_them_from_earlier_writes\":%llu,\"of_them_synthesized\":%llu,\"unfinished\":%llu,\"frames_compared\":%zu,\"pixels_identical\":%.6f,\"max_channel_diff\":%d,\"load_s\":%.3f,\"journal_s\":%.3f}\n",
                 frames, seconds, seconds > 0 ? static_cast<double>(frames) / seconds : 0.0, percentile(frameMs, 0.5), percentile(frameMs, 0.9), slowest, frameList.c_str(), passList.c_str(),
                 static_cast<unsigned long long>(replay.keptReservations.load()),
                 static_cast<unsigned long long>(replay.submits.load()), static_cast<double>(replay.deltaBytes.load()) / (1024.0 * 1024.0), static_cast<unsigned long long>(replay.parkRestores.load()), static_cast<unsigned long long>(replay.paceTimeouts.load()),
-                replay.paceWaitedSeconds(), static_cast<unsigned long long>(replay.staleRegistrations.load()), static_cast<unsigned long long>(replay.failedRegistrations.load()),
+                replay.paceWaitedSeconds(), Replay::secondsOf(replay.heldWaitedNs), Replay::secondsOf(replay.inFlightWaitedNs), Replay::secondsOf(replay.restoredNs), static_cast<unsigned long long>(replay.depthMax.load()), replay.depthMean(),
+                static_cast<unsigned long long>(replay.staleRegistrations.load()), static_cast<unsigned long long>(replay.failedRegistrations.load()),
                 static_cast<double>(replay.skipped.bytes) / (1024.0 * 1024.0), replay.threads, static_cast<unsigned long long>(replay.earlyReleases.load()), static_cast<unsigned long long>(replay.lateReleases.load()),
                 static_cast<unsigned long long>(replay.syntheticReleases.load()),
                 static_cast<unsigned long long>(replay.unfinished), check.compared, check.identical, check.maxDifference, std::chrono::duration<double>(loaded - loadStart).count(), journalSeconds);
