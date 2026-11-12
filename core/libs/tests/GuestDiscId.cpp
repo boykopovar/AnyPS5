@@ -29,6 +29,7 @@ int main() {
     Require(sceDiscIdGet(nullptr) == ErrorInvalidArgument, "Get null output");
     Require(sceDiscIdGet2(nullptr, 0) == ErrorInvalidArgument, "Get2 null output");
     Require(sceDiscIdGet2(nullptr, 1) == ErrorInvalidArgument, "Get2 null output and nonzero flags");
+    Require(sceDiscIdGet2(nullptr, 0xFFFFFFFFu) == ErrorInvalidArgument, "Get2 null output and max flags");
 
     std::uint8_t buffer[64];
     std::memset(buffer, 0xAB, sizeof(buffer));
@@ -38,6 +39,7 @@ int main() {
         Require(sceDiscIdGet2(id2, flags) == ErrorInvalidArgument, "Get2 nonzero flags");
     }
     Require(sceDiscIdGet(id) == ErrorDeviceUnavailable, "Get without /dev/duid");
+    Require(sceDiscIdGet(id) == ErrorDeviceUnavailable, "repeated Get without /dev/duid");
     Require(sceDiscIdGet2(id2, 0) == ErrorDeviceUnavailable, "Get2 without /dev/duid");
     for (const std::uint8_t byte : buffer) Require(byte == 0xAB, "failed calls write nothing");
 
