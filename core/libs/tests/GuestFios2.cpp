@@ -228,6 +228,8 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     REQUIRE(sceFiosCachePrefetchFileRangeSync(nullptr, file.c_str(), 0, 10) == SCE_FIOS_OK);
     REQUIRE(sceFiosCachePrefetchFile(nullptr, file.c_str()) == 0);
     REQUIRE(sceFiosCachePrefetchFileRange(nullptr, file.c_str(), 0, 10) == 0);
+    REQUIRE(sceFiosCacheContainsFileRangeSync(file.c_str(), 0, 10) == SCE_FIOS_ERROR_BAD_INDEX);
+    REQUIRE(sceFiosCacheContainsFileRangeSync((directory + "/missing").c_str(), 0, 1) == SCE_FIOS_ERROR_BAD_INDEX);
     REQUIRE(sceFiosExistsSync(nullptr, file.c_str()));
     REQUIRE(sceFiosExistsSync(nullptr, directory.c_str()));
     REQUIRE(!sceFiosExistsSync(nullptr, (directory + "/missing").c_str()));

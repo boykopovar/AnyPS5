@@ -428,10 +428,10 @@ def main(argv=None):
             with (args.output / "history.csv").open("w", encoding="utf-8", newline="") as output:
                 writer = csv.writer(output)
                 writer.writerow(["date", "commit"] + [f"{name}_{key}" for name in ("libraries", "shaders")
-                                                      for key in ("done", "total", "percent")])
+                                                      for key in ("done", "total", "percent")] + ["shader_metric"])
                 writer.writerows([point["date"], point["commit"]] +
-                                 [point[name][key] for name in ("libraries", "shaders") for key in ("done", "total", "percent")]
-                                 for point in points)
+                                 [point[name][key] for name in ("libraries", "shaders") for key in ("done", "total", "percent")] +
+                                 [shader_metric(point)] for point in points)
     except OSError as error:
         parser.error(f"{error.filename or args.output}: {error.strerror or error}")
     print(f"{len(points)} days, {points[0]['date']} .. {points[-1]['date']}")

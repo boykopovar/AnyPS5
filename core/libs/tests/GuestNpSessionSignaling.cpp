@@ -185,6 +185,9 @@ int main() {
     std::uint32_t property = 0;
     Require(sceNpSessionSignalingGetCustomProperty(firstId, &property) == ContextNotFound, "custom property stale context");
     Require(sceNpSessionSignalingGetCustomProperty(contextId, nullptr) == 0, "null custom property output");
+    errno = 71;
+    Require(sceNpSessionSignalingGetCustomProperty(contextId, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument, "unwritable custom property output");
+    Require(errno == 71, "errno preserved on unwritable custom property output");
     Require(sceNpSessionSignalingGetCustomProperty(contextId, &property) == 0 && property == 0, "default custom property");
     Require(sceNpSessionSignalingSetCustomProperty(contextId, nullptr, nullptr) == InvalidArgument, "null custom property value");
     Require(sceNpSessionSignalingSetCustomProperty(firstId, &property, nullptr) == ContextNotFound, "set custom property stale context");
