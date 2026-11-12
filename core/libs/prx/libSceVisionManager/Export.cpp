@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVisionManager/include/InventoryExports.hpp"
 #include "prx/libSceVisionManager/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <algorithm>
 #include <cstddef>
@@ -143,9 +144,16 @@ int APS5_VABI sceVisionManagerGetStoreCameraImgYPtr() {
 }
 
 int APS5_VABI sceVisionManagerGetWorkingMemorySize(std::uint32_t* first, std::uint32_t* second, std::uint32_t* third) {
-    *first = 0;
-    *second = 0x1600000;
-    *third = 0x4200000;
+    if (first == nullptr || second == nullptr || third == nullptr) return ErrorInvalidArgument;
+    const std::uint32_t valFirst = 0;
+    const std::uint32_t valSecond = 0x1600000;
+    const std::uint32_t valThird = 0x4200000;
+    const int savedErrno = errno;
+    const bool copiedFirst = GuestCopyOut_nid_no_patch(first, &valFirst, sizeof(valFirst));
+    const bool copiedSecond = GuestCopyOut_nid_no_patch(second, &valSecond, sizeof(valSecond));
+    const bool copiedThird = GuestCopyOut_nid_no_patch(third, &valThird, sizeof(valThird));
+    errno = savedErrno;
+    if (!copiedFirst || !copiedSecond || !copiedThird) return ErrorInvalidArgument;
     return 0;
 }
 

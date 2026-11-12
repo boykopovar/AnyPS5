@@ -2070,6 +2070,74 @@ std::uint32_t EmitFPFma16x2(SpirvEmitterState& state, std::uint32_t arg0, std::u
     return Unary(state, spv::OpBitcast, TypeU32(state), Exact(state, result));
 }
 
+static std::uint32_t TypeU16x2(SpirvEmitterState& state) {
+    if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt16)) == state.supportedCapabilities.end()) FailEmit("packed 16-bit integer math needs Int16");
+    state.module.EmitCapability(spv::CapabilityInt16);
+    return state.module.Type(spv::OpTypeVector, state.module.Type(spv::OpTypeInt, 16u, 0u), 2u);
+}
+
+static std::uint32_t EmitInteger16x2(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t arg0, std::uint32_t arg1) {
+    const auto u16x2 = TypeU16x2(state);
+    const auto result = Binary(state, opcode, u16x2, Unary(state, spv::OpBitcast, u16x2, arg0), Unary(state, spv::OpBitcast, u16x2, arg1));
+    return Unary(state, spv::OpBitcast, TypeU32(state), result);
+}
+
+static std::uint32_t EmitShift16x2(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t value, std::uint32_t count) {
+    const auto u16x2 = TypeU16x2(state);
+    const auto u16 = state.module.Type(spv::OpTypeInt, 16u, 0u);
+    const auto fifteen = state.module.Constant(spv::OpConstant, u16, 15u);
+    const auto mask = state.module.Constant(spv::OpConstantComposite, u16x2, fifteen, fifteen);
+    const auto amount = Binary(state, spv::OpBitwiseAnd, u16x2, Unary(state, spv::OpBitcast, u16x2, count), mask);
+    const auto result = Binary(state, opcode, u16x2, Unary(state, spv::OpBitcast, u16x2, value), amount);
+    return Unary(state, spv::OpBitcast, TypeU32(state), result);
+}
+
+static std::uint32_t EmitMinMax16x2(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t arg0, std::uint32_t arg1) {
+    const auto u16x2 = TypeU16x2(state);
+    const auto result = EmitExt(state, u16x2, opcode, {Unary(state, spv::OpBitcast, u16x2, arg0), Unary(state, spv::OpBitcast, u16x2, arg1)});
+    return Unary(state, spv::OpBitcast, TypeU32(state), result);
+}
+
+std::uint32_t EmitIAdd16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitInteger16x2(state, spv::OpIAdd, arg0, arg1);
+}
+
+std::uint32_t EmitISub16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitInteger16x2(state, spv::OpISub, arg0, arg1);
+}
+
+std::uint32_t EmitIMul16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitInteger16x2(state, spv::OpIMul, arg0, arg1);
+}
+
+std::uint32_t EmitShiftLeftLogical16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitShift16x2(state, spv::OpShiftLeftLogical, arg0, arg1);
+}
+
+std::uint32_t EmitShiftRightLogical16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitShift16x2(state, spv::OpShiftRightLogical, arg0, arg1);
+}
+
+std::uint32_t EmitShiftRightArithmetic16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitShift16x2(state, spv::OpShiftRightArithmetic, arg0, arg1);
+}
+
+std::uint32_t EmitSMin16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitMinMax16x2(state, GLSLstd450SMin, arg0, arg1);
+}
+
+std::uint32_t EmitSMax16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitMinMax16x2(state, GLSLstd450SMax, arg0, arg1);
+}
+
+std::uint32_t EmitUMin16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitMinMax16x2(state, GLSLstd450UMin, arg0, arg1);
+}
+
+std::uint32_t EmitUMax16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    return EmitMinMax16x2(state, GLSLstd450UMax, arg0, arg1);
+}
+
 std::uint32_t EmitF32ToF16BitsRte(SpirvEmitterState& state, std::uint32_t value) {
     if (NativeF16Rte(state)) return EmitNativeF32ToF16BitsRte(state, value);
     const auto u32 = TypeU32(state);

@@ -32,9 +32,15 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "prx/libSceVideoOut/include/HostVolumeInput.hpp"
 #include "prx/libScePad/include/HostVolumeSettings.hpp"
+#include "prx/libScePad/include/HostVolumeControl.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 
 namespace {
+
+void stopRumble(SDL_GameController* controller) {
+    SDL_GameControllerRumble(controller, 0, 0, 0);
+    if (SDL_GameControllerHasRumbleTriggers(controller) == SDL_TRUE) SDL_GameControllerRumbleTriggers(controller, 0, 0, 0);
+}
 
 std::string appTitleId() {
     if (!std::filesystem::exists(ResolvePath_nid_no_patch("/app0/sce_sys/param.json")) && !std::filesystem::exists(ResolvePath_nid_no_patch("/app0/sce_sys/param.sfo"))) return {};
@@ -50,8 +56,9 @@ PadInput::PadInput() : PadInput(Pad::LoadInputMapping(appTitleId())) {
 
 static_assert(PAD_MAX_CONTROLLERS == AgcDriver::PadStatusSlots, "the pad status panel lists one line per controller slot");
 
-PadInput::PadInput(Pad::InputConfiguration configuration) : keyboardMouse(std::move(configuration)), statusProvider{[this] { return statusSnapshot(); }}, port0Mode(Port0Presence::ConfiguredMode()), port0(port0Mode, false) {
+PadInput::PadInput(Pad::InputConfiguration configuration) : mappings(std::move(configuration)), appliedMapping(mappings.Snapshot()), keyboardMouse(*appliedMapping), statusProvider{[this] { return statusSnapshot(); }}, port0Mode(Port0Presence::ConfiguredMode()), port0(port0Mode, false) {
     static_cast<void>(Pad::RumblePercent());
+    static_cast<void>(Pad::RumblePausesOnFocusLoss());
     identifyMode = Pad::IdentifyModeFromEnvironment();
     openAvailableControllers();
     port0 = Port0Presence::Presence(port0Mode, slots[0].controller != nullptr);
@@ -104,6 +111,7 @@ void PadInput::openController(int deviceIndex) {
     slots[slot].outputSequence = 0;
     slots[slot].outputState = {};
     slots[slot].outputPending = true;
+    slots[slot].rumbleLive = false;
     slots[slot].nextRumbleRefresh = {};
     slots[slot].lightBar.Reset();
     slots[slot].triggerEffect.Reset();
@@ -320,7 +328,12 @@ void PadInput::applyOutput() {
                 : LightBarPacer::Color{def.r, def.g, def.b};
             if (slots[slot].lightBar.Due(color, now)) slots[slot].lightBar.Result(color, now, SDL_GameControllerSetLED(controller, color[0], color[1], color[2]) == 0);
         }
-        const bool titleActive = slots[slot].outputPending || rumbling || triggerRumble;
+        const bool suppressed = Pad::RumbleSuppressed(Pad::RumblePausesOnFocusLoss(), HostVolumeFocused_nid_no_patch());
+        if (suppressed && slots[slot].rumbleLive) {
+            stopRumble(controller);
+            slots[slot].rumbleLive = false;
+        }
+        const bool titleActive = suppressed || slots[slot].outputPending || rumbling || triggerRumble;
         if (slots[slot].identify.Tick(now, titleActive, rumblePercent, [controller](std::uint16_t low, std::uint16_t high, std::uint32_t durationMs) {
                 SDL_GameControllerRumble(controller, low, high, durationMs);
             })) continue;
@@ -328,9 +341,12 @@ void PadInput::applyOutput() {
             if (effectPending || ((rumbling || (triggerRumble && !isPs5)) && now >= slots[slot].nextRumbleRefresh)) slots[slot].outputPending = true;
             else continue;
         }
-        slots[slot].outputPending = false;
-        slots[slot].nextRumbleRefresh = now + std::chrono::milliseconds(700);
-        SDL_GameControllerRumble(controller, motors.low, motors.high, motors.durationMs);
+        if (!suppressed) {
+            slots[slot].outputPending = false;
+            slots[slot].nextRumbleRefresh = now + std::chrono::milliseconds(700);
+            SDL_GameControllerRumble(controller, motors.low, motors.high, motors.durationMs);
+            slots[slot].rumbleLive = rumbling || triggerRumble;
+        }
         if (slot == 0 && haptics != nullptr) {
             if (hapticsRumbled && !rumbling) hapticsReconfigureAt = (now + DualSenseHaptics::RumbleSettle).time_since_epoch().count();
             hapticsRumbled = rumbling;
@@ -340,11 +356,30 @@ void PadInput::applyOutput() {
                 if (slots[slot].triggerEffect.NeedsSend(effect)) {
                     slots[slot].triggerEffect.Result(effect, SDL_GameControllerSendEffect(controller, effect.data(), static_cast<int>(effect.size())) == 0);
                 }
-            } else if (SDL_GameControllerHasRumbleTriggers(controller) == SDL_TRUE) {
+            } else if (!suppressed && SDL_GameControllerHasRumbleTriggers(controller) == SDL_TRUE) {
                 SDL_GameControllerRumbleTriggers(controller, triggers.low, triggers.high, triggers.durationMs);
             }
         }
     }
+}
+
+void PadInput::applyMappingSnapshot() {
+    auto snapshot = mappings.Snapshot();
+    if (snapshot == appliedMapping) return;
+    appliedMapping = snapshot;
+    keyboardMouse.Replace(*snapshot);
+}
+
+void PadInput::reloadInputMapping() {
+    Pad::InputConfiguration configuration;
+    std::string error;
+    if (!Pad::TryLoadInputMapping(appTitleId(), configuration, error)) {
+        APS5_LOG_ERR("Pad: input mapping reload rejected, the previous mapping stays active: %s", error.c_str());
+        return;
+    }
+    mappings.Publish(std::move(configuration));
+    applyMappingSnapshot();
+    APS5_LOG_CHARS_OUT("Pad: input mapping reloaded");
 }
 
 void PadInput::setMouseMode(bool enabled) {
@@ -430,6 +465,7 @@ PadInputState PadInput::sampleController(int slot) const {
 }
 
 void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
+    applyMappingSnapshot();
     if (event.type == SDL_CONTROLLERDEVICEADDED) {
         openController(event.cdevice.which);
         return;
@@ -476,6 +512,7 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     if (event.type != SDL_KEYUP && event.type != SDL_MOUSEBUTTONUP && ModalDialogCapturesInput_nid_postfix()) return;
     keyboardMouse.SetTitleReadsMouse(MouseIsOpen_nid_no_patch());
     const auto requests = keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now());
+    if (requests.reloadInputMapping) reloadInputMapping();
     if (requests.toggleFullscreen && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) window.ToggleFullscreen();
     if (requests.togglePerformanceOverlay && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) AgcDriverTogglePerformanceOverlay_nid_postfix();
     if (requests.screenshot && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) AgcDriverRequestScreenshot_nid_postfix();
@@ -492,6 +529,7 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
 }
 
 void PadInput::Update(const DisplayWindow& window) {
+    applyMappingSnapshot();
     if (!hostFocusSynced && window.Handle() != nullptr) {
         hostFocusSynced = true;
         HostVolume volume;

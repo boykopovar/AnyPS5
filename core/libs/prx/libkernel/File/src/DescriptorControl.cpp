@@ -607,8 +607,8 @@ void RememberDescriptor(int fd, int openFlags, bool fixedSizeWrites) {
 #endif
 }
 
-void RememberPipe(int fd) {
-    RememberDescriptor(fd, 0);
+void RememberPipe(int fd, int openFlags) {
+    RememberDescriptor(fd, openFlags);
     std::lock_guard lock(g_mutex);
     g_entries[fd].pipe = true;
 }

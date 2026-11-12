@@ -875,6 +875,9 @@ if(BUILD_TESTING)
         add_test(NAME guest_export_lookup COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_export_lookup.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_export_lookup PROPERTIES TIMEOUT 30)
+        add_test(NAME guest_load_start_module_defer COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_load_start_module_defer.py $<TARGET_FILE:relinker>)
+        set_tests_properties(guest_load_start_module_defer PROPERTIES TIMEOUT 60)
         add_test(NAME guest_zero_finalizer COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_zero_finalizer.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host> ${CMAKE_CXX_COMPILER})
@@ -1190,6 +1193,10 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     add_test(NAME macos_guest_weak_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_weak_imports.py $<TARGET_FILE:relinker>)
     set_property(TEST macos_guest_weak_imports APPEND PROPERTY LABELS relinker)
+    if(APPLE)
+        set_tests_properties(macos_trace_imports macos_guest_weak_exports macos_executable_exports macos_guest_weak_imports
+            PROPERTIES RUN_SERIAL TRUE)
+    endif()
 endif()
 
 if(BUILD_TESTING)

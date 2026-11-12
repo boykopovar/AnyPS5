@@ -1,6 +1,8 @@
 #include "prx/libSceVrTracker2/include/Api.hpp"
 #include "prx/libSceHmd2/libSceHmd2.hpp"
+#include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -142,7 +144,11 @@ private:
 
 std::int32_t ClearThenReportNotInitialized(void* output, std::size_t size) {
     if (output == nullptr) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-    std::memset(output, 0, size);
+    const std::array<std::byte, 24> cleared{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(output, cleared.data(), size);
+    errno = savedErrno;
+    if (!copied) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     return VR_TRACKER2_ERROR_NOT_INITIALIZED;
 }
 
@@ -225,7 +231,11 @@ std::int32_t APS5_VABI sceVrTracker2QueryMemory(const VrTracker2MemoryParameter*
     const std::uint32_t memorySize = WorkMemorySize(parameter->mode);
     for (const auto value : parameter->reserved)
         if (value != 0) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-    *requirement = {sizeof(VrTracker2MemoryRequirement), memorySize, 64u << 10, {}};
+    const VrTracker2MemoryRequirement req{sizeof(VrTracker2MemoryRequirement), memorySize, 64u << 10, {}};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(requirement, &req, sizeof(req));
+    errno = savedErrno;
+    if (!copied) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     return SCE_OK;
 }
 

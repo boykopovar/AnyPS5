@@ -23,6 +23,7 @@
 #include <unistd.h>
 #endif
 #include "ShaderCacheSourceVersion.hpp"
+#include "prx/libc/include/RemoveTree.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -1830,7 +1831,7 @@ private:
             if (!used) used = lastWriteTime(it->path());
             if (used && now - *used > std::chrono::hours(24 * 14)) {
                 std::error_code removeError;
-                std::filesystem::remove_all(it->path(), removeError);
+                RemoveTree(it->path(), removeError);
             }
         }
         error.clear();

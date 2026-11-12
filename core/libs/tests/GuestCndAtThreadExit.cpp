@@ -109,7 +109,7 @@ struct HostPadThread {
     void* result = nullptr;
 };
 
-static int APS5_VABI HostPthreadCreate(void** thread, const void*, void* (APS5_VABI* entry)(void*), void* argument) {
+static int APS5_VABI HostPthreadCreate(void** thread, const void*, void* (APS5_VABI* entry)(void*), void* argument, const char*) {
     auto* handle = new HostPadThread{};
     handle->worker = std::thread([handle, entry, argument] { handle->result = entry(argument); });
     *thread = handle;

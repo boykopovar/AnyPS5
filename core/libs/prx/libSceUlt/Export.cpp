@@ -5,10 +5,12 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <cerrno>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <cerrno>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -262,11 +264,15 @@ int APS5_VABI sceUltMutexOptParamInitialize(UltMutexOptParam* optParam, std::uin
     if ((reinterpret_cast<std::uintptr_t>(optParam) & 7u) != 0) {
         return ULT_ERROR_ALIGNMENT;
     }
-    std::memset(optParam, 0, sizeof(*optParam));
-    optParam->header[0] = 0x6C696275;
-    optParam->header[1] = 0x6C746D61;
-    optParam->header[2] = 0x67696300;
-    optParam->buildVersion = buildVersion;
+    UltMutexOptParam local{};
+    local.header[0] = 0x6C696275;
+    local.header[1] = 0x6C746D61;
+    local.header[2] = 0x67696300;
+    local.buildVersion = buildVersion;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(optParam, &local, sizeof(local));
+    errno = savedErrno;
+    if (!copied) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
@@ -1210,12 +1216,16 @@ int APS5_VABI sceUltGetUlthreadInfo(void* object, UltUlthreadInfo* info) {
         if (it == gUlthreads.end()) return ULT_ERROR_STATE;
         state = it->second;
     }
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltUlthreadInfo);
-    info->object = object;
-    std::memcpy(info->name, state->_name, sizeof(info->name));
-    info->runtime = state->_runtime;
-    info->contextAttribute = state->_contextAttribute;
+    UltUlthreadInfo localInfo{};
+    localInfo.size = sizeof(UltUlthreadInfo);
+    localInfo.object = object;
+    std::memcpy(localInfo.name, state->_name, sizeof(localInfo.name));
+    localInfo.runtime = state->_runtime;
+    localInfo.contextAttribute = state->_contextAttribute;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
@@ -1228,12 +1238,12 @@ int APS5_VABI sceUltGetUlthreadRuntimeInfo(void* runtime, UltUlthreadRuntimeInfo
     const auto it = gRuntimes.find(runtime);
     if (it == gRuntimes.end()) return ULT_ERROR_STATE;
     const auto& state = it->second;
-    std::memset(info, 0, sizeof(*info));
-    info->size = sizeof(UltUlthreadRuntimeInfo);
-    info->object = runtime;
-    std::memcpy(info->name, state._name, sizeof(info->name));
-    info->maxUlthreads = state._maxNumUlthread;
-    info->workerThreads = state._numWorkerThread;
+    UltUlthreadRuntimeInfo localInfo{};
+    localInfo.size = sizeof(UltUlthreadRuntimeInfo);
+    localInfo.object = runtime;
+    std::memcpy(localInfo.name, state._name, sizeof(localInfo.name));
+    localInfo.maxUlthreads = state._maxNumUlthread;
+    localInfo.workerThreads = state._numWorkerThread;
     std::uint32_t count = 0;
     for (const auto& [obj, ulthread] : gUlthreads) {
         if (ulthread->_runtime == runtime && !ulthread->_exited.load(std::memory_order_acquire)) {
@@ -1243,7 +1253,11 @@ int APS5_VABI sceUltGetUlthreadRuntimeInfo(void* runtime, UltUlthreadRuntimeInfo
             ++count;
         }
     }
-    info->activeUlthreads = count;
+    localInfo.activeUlthreads = count;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 

@@ -9,6 +9,8 @@
 #include <atomic>
 #include <array>
 #include <chrono>
+#include <cerrno>
+#include <climits>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -20,6 +22,16 @@
 #include <utility>
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+static void CheckGetInfoGuestOutput() {
+    Require(scePadGetInfo_nid_postfix(nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 91;
+    Require(scePadGetInfo_nid_postfix(reinterpret_cast<PadInfo*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 91);
+    PadInfo info{};
+    Require(scePadGetInfo_nid_postfix(&info) == PAD_OK);
+    Require(info.maxConnectCount == PAD_MAX_CONTROLLERS);
+}
 
 static void CheckInputCommands() {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5-pad-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -169,7 +181,7 @@ static void CheckTouchContact(int handle) {
     Require(scePadRead_nid_postfix(handle, nullptr, 1) == PAD_ERROR_INVALID_ARG);
     for (const int invalid : {-1, 0, handle + 1, 9999}) {
         Require(scePadReadState(invalid, nullptr) == PAD_ERROR_INVALID_ARG);
-        Require(scePadRead_nid_postfix(invalid, nullptr, 1) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadRead_nid_postfix(invalid, nullptr, 1) == PAD_ERROR_INVALID_ARG);
     }
     PadInputState touch;
     touch.buttons = static_cast<std::uint32_t>(Pad::PadButton::TouchPad);
@@ -487,6 +499,20 @@ static void CheckLatchedPressPerPort() {
     Require((data.buttons & cross) != 0);
 }
 
+static PadData DefaultPadData() {
+    PadData data;
+    std::memset(&data, 0, sizeof(data));
+    data.left_stick_x = data.left_stick_y = data.right_stick_x = data.right_stick_y = 0x80;
+    data.orientation_w = 1.0f;
+    data.acceleration_y = 1.0f;
+    return data;
+}
+
+static bool HoldsDefaults(const PadData& data) {
+    const PadData defaults = DefaultPadData();
+    return std::memcmp(&data, &defaults, sizeof(data)) == 0;
+}
+
 static void CheckReadStateHandle(int handle) {
     PadData data{};
     Require(scePadReadState(0, &data) == PAD_ERROR_INVALID_HANDLE);
@@ -497,6 +523,14 @@ static void CheckReadStateHandle(int handle) {
     Require(scePadRead_nid_postfix(handle, &data, 0) == PAD_ERROR_INVALID_ARG);
     Require(scePadRead_nid_postfix(handle, &data, -1) == PAD_ERROR_INVALID_ARG);
     Require(scePadReadState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadRead_nid_postfix(0, nullptr, 1) == PAD_ERROR_INVALID_ARG);
+    Require(scePadRead_nid_postfix(0, &data, 0) == PAD_ERROR_INVALID_ARG);
+    PadData many[65]{};
+    Require(scePadRead_nid_postfix(handle, many, 65) == PAD_ERROR_INVALID_ARG);
+    Require(scePadRead_nid_postfix(0, many, 65) == PAD_ERROR_INVALID_ARG);
+    Require(scePadRead_nid_postfix(handle, many, 64) >= 0);
+    std::memset(&data, 0x5a, sizeof(data));
+    Require(scePadReadState(0, &data) == PAD_ERROR_INVALID_HANDLE && HoldsDefaults(data));
 }
 
 static void CheckSpecialPort(int user, int handle) {
@@ -699,7 +733,12 @@ static void CheckSystemRemote(int handle) {
 static void CheckIsValidHandle(int user, int handle) {
     Require(scePadIsValidHandle(handle, PAD_PORT_TYPE_STANDARD));
     for (const int type : {PAD_PORT_TYPE_SPECIAL, PAD_PORT_TYPE_REMOTE, 1, 3, 4, 5, -1}) Require(!scePadIsValidHandle(handle, type));
-    for (const int other : {handle + 1, PAD_HANDLE_BASE + PAD_MAX_CONTROLLERS, 0, -1, PAD_SPECIAL_HANDLE}) Require(!scePadIsValidHandle(other, PAD_PORT_TYPE_STANDARD));
+    for (const int other : {handle + 1, PAD_HANDLE_BASE + PAD_MAX_CONTROLLERS, 0, -1, INT_MIN, INT_MAX, PAD_SPECIAL_HANDLE}) {
+        Require(!scePadIsValidHandle(other, PAD_PORT_TYPE_STANDARD));
+    }
+    Require(scePadClose_nid_postfix(INT_MIN) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadClose_nid_postfix(INT_MAX) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadOpenExt(INT_MIN, PAD_PORT_TYPE_STANDARD, 0, &handle) == PAD_ERROR_INVALID_ARG);
     const int special = scePadOpen_nid_postfix(user, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
     Require(special >= PAD_SPECIAL_HANDLE);
     Require(scePadIsValidHandle(special, PAD_PORT_TYPE_SPECIAL) && !scePadIsValidHandle(special, PAD_PORT_TYPE_STANDARD));
@@ -1495,11 +1534,16 @@ int main() {
     Require(scePadRead_nid_postfix(earlyPad, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadReadState(earlyPad, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadReadState(0x999, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
+    for (const int earlyHandle : {earlyPad, 0x999}) {
+        std::memset(&earlyPadData, 0x5a, sizeof(earlyPadData));
+        Require(scePadReadState(earlyHandle, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED && HoldsDefaults(earlyPadData));
+    }
     Require(scePadReadState(0x999, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadReadState(earlyPad, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadClose_nid_postfix(earlyPad) == PAD_OK);
     PadSetPortConnected_nid_postfix(1, true);
     Require(scePadInit_nid_postfix() == 0);
+    CheckGetInfoGuestOutput();
     PadInfo initInfo{};
     Require(scePadGetInfo_nid_postfix(&initInfo) == PAD_OK);
     Require(initInfo.connectedCount[0] == 2);

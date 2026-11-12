@@ -58,6 +58,19 @@ static void CheckThreadRename(Pthread thread) {
         Require(*__error_nid_postfix() == 77);
         CheckStoredName(thread, names[3]);
     }
+    constexpr int nameTooLong = static_cast<int>(0x8002003fu);
+    for (const std::size_t length : {32u, 40u}) {
+        const std::string name(length, 'x');
+        Require(scePthreadRename(thread, name.c_str()) == nameTooLong);
+        CheckStoredName(thread, names[3]);
+    }
+    for (const std::size_t length : {32u, 33u, 40u}) {
+        const std::string name(length, 'x');
+        *__error_nid_postfix() = 0;
+        pthread_set_name_np_nid_postfix(thread, name.c_str());
+        Require(*__error_nid_postfix() == 63);
+        CheckStoredName(thread, names[3]);
+    }
     Require(pthread_rename_np_nid_postfix(thread, "renamed") == 0);
     CheckStoredName(thread, "renamed");
     *__error_nid_postfix() = savedError;

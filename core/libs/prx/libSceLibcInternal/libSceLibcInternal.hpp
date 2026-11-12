@@ -6,6 +6,7 @@
 #include "prx/libSceLibcInternal/include/IntegerExtrema.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports2.hpp"
 #include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
+#include "prx/libSceLibcInternal/include/VectorAlgorithms.hpp"
 #include "prx/libSceLibcInternal/include/ErrExports.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/ExceptionVirtuals.hpp"

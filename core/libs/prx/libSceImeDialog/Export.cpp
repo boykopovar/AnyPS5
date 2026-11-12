@@ -115,11 +115,13 @@ void Apply(Dialog& dialog, ImeHostInputKind kind, const char16_t* units, std::si
         case ImeHostInputKind::End:
             dialog.caret = dialog.text.size();
             return;
-        case ImeHostInputKind::Enter:
-            std::copy(dialog.text.begin(), dialog.text.end(), dialog.buffer);
-            dialog.buffer[dialog.text.size()] = u'\0';
-            Finish(EndStatusOk);
+        case ImeHostInputKind::Enter: {
+            std::u16string output = dialog.text;
+            output.push_back(u'\0');
+            const bool written = GuestCopyOut_nid_no_patch(dialog.buffer, output.data(), output.size() * sizeof(char16_t));
+            Finish(written ? EndStatusOk : EndStatusAborted);
             return;
+        }
         case ImeHostInputKind::Escape:
             Finish(EndStatusUserCanceled);
             return;
@@ -278,16 +280,25 @@ int APS5_VABI sceImeDialogInit(const Param* param, const ExtendedParam* extended
     std::lock_guard lock(g_mutex);
     if (g_dialog.status != StatusNone) return ErrorBusy;
     if (param == nullptr) return ErrorInvalidAddress;
-    if (param->max_text_length == 0 || param->max_text_length > MaxTextLength) return ErrorInvalidMaxTextLength;
-    if (param->input_text_buffer == nullptr) return ErrorInvalidInputTextBuffer;
+    Param localParam{};
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return ErrorInvalidAddress;
+    ExtendedParam localExtended{};
+    if (extended != nullptr && !GuestCopyIn_nid_no_patch(&localExtended, extended, sizeof(localExtended))) return ErrorInvalidAddress;
+    if (localParam.max_text_length == 0 || localParam.max_text_length > MaxTextLength) return ErrorInvalidMaxTextLength;
+    if (localParam.input_text_buffer == nullptr) return ErrorInvalidInputTextBuffer;
+    std::u16string initialText;
+    for (std::uint32_t i = 0; i < localParam.max_text_length; ++i) {
+        char16_t unit = u'\0';
+        if (!GuestCopyIn_nid_no_patch(&unit, localParam.input_text_buffer + i, sizeof(unit))) return ErrorInvalidInputTextBuffer;
+        if (unit == u'\0') break;
+        initialText.push_back(unit);
+    }
     g_dialog = Dialog{};
-    g_dialog.buffer = param->input_text_buffer;
-    g_dialog.maxLength = param->max_text_length;
-    std::size_t length = 0;
-    while (length < param->max_text_length && param->input_text_buffer[length] != u'\0') ++length;
-    g_dialog.text.assign(param->input_text_buffer, length);
-    g_dialog.caret = length;
-    g_dialog.keyboard = ImeDialog::PadKeyboardOpen(KeyboardOptions(*param, extended));
+    g_dialog.buffer = localParam.input_text_buffer;
+    g_dialog.maxLength = localParam.max_text_length;
+    g_dialog.text = initialText;
+    g_dialog.caret = initialText.size();
+    g_dialog.keyboard = ImeDialog::PadKeyboardOpen(KeyboardOptions(localParam, extended != nullptr ? &localExtended : nullptr));
     g_dialog.status = StatusRunning;
     ImeSetHostTextSink_nid_no_patch(&Receive);
     ImeSetHostPreeditSink_nid_no_patch(&ReceivePreedit);

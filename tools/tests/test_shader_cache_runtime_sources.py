@@ -43,6 +43,9 @@ class Fixture:
         shared = root / 'core/libs/prx/libc/include/general/AtomicSharedPtr.hpp'
         shared.parent.mkdir(parents=True)
         shared.write_text('struct FixtureAtomicSharedPtr {};\n', encoding='utf-8')
+        remove_tree = root / 'core/libs/prx/libc/include/RemoveTree.hpp'
+        remove_tree.parent.mkdir(parents=True, exist_ok=True)
+        remove_tree.write_text('struct FixtureRemoveTree {};\n', encoding='utf-8')
         self.guard = root / 'driver.cpp'
         self.guard.write_text('int fixture_driver;\n', encoding='utf-8')
         compiler = root / ('compiler.cmd' if os.name == 'nt' else 'compiler')
