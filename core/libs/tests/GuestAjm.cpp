@@ -1044,9 +1044,11 @@ void TestBatchContextOwnership(std::uint32_t context) {
     constexpr int invalidContext = static_cast<int>(0x80930002);
     constexpr int invalidBatch = static_cast<int>(0x80930004);
     std::uint32_t other = 0;
-    std::uint32_t refused = 0xdeadbeefu;
-    Require(sceAjmInitialize(reinterpret_cast<std::intptr_t>(&refused), &refused) == static_cast<int>(0x80930005) && refused == 0xdeadbeefu);
     Require(sceAjmInitialize(0, &other) == 0 && other != context);
+    std::uint32_t lowValue = 0;
+    Require(sceAjmInitialize(0x20, &lowValue) == 0 && lowValue != other && lowValue != context);
+    std::uint32_t highHalf = 0;
+    Require(sceAjmInitialize(0x300000000, &highHalf) == 0 && highHalf != lowValue && highHalf != other && highHalf != context);
     std::vector<std::uint8_t> storage(256);
     AjmBatchInfo info{};
     Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
@@ -1060,7 +1062,7 @@ void TestBatchContextOwnership(std::uint32_t context) {
     Require(sceAjmBatchCancel(context, second) == invalidBatch);
     Require(sceAjmBatchWait(context, second, 0, &error) == invalidBatch);
     Require(sceAjmBatchWait(0, first, 0, &error) == invalidContext);
-    Require(sceAjmBatchWait(other + 1, first, 0, &error) == invalidContext);
+    Require(sceAjmBatchWait(highHalf + 1, first, 0, &error) == invalidContext);
     Require(sceAjmBatchCancel(context, first) == 0);
     Require(sceAjmBatchWait(context, first, 0, &error) == 0);
     Require(sceAjmBatchWait(other, second, 0, &error) == 0);
@@ -1068,9 +1070,11 @@ void TestBatchContextOwnership(std::uint32_t context) {
     Require(sceAjmBatchWait(other, second, 0, &error) == invalidBatch);
     std::uint32_t untouched = 0xfeedu;
     Require(sceAjmBatchStart(0, &info, 0, &error, &untouched) == invalidContext);
-    Require(sceAjmBatchStart(other + 1, &info, 0, &error, &untouched) == invalidContext);
+    Require(sceAjmBatchStart(highHalf + 1, &info, 0, &error, &untouched) == invalidContext);
     Require(untouched == 0xfeedu);
     Require(sceAjmFinalize(other) == 0);
+    Require(sceAjmFinalize(lowValue) == 0);
+    Require(sceAjmFinalize(highHalf) == 0);
 }
 
 constexpr std::uint64_t CONTROL_RESET = 1ull << 13;
@@ -2645,6 +2649,48 @@ void TestPcmResample(std::uint32_t context) {
     Require(sceAjmInstanceDestroy(context, invalid) == 0);
 }
 
+void TestRunSidebandStopsAtOversizedField(std::uint32_t context) {
+    constexpr std::uint64_t runMultipleFrames = 1ull << 12;
+    constexpr std::uint64_t sidebandStream = 1ull << 47;
+    std::vector<std::uint8_t> stream(1024, 0);
+    std::memcpy(stream.data(), AT9_MONO_SILENT_SUPERFRAME, sizeof(AT9_MONO_SILENT_SUPERFRAME));
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
+    const At9Control start{{512, 0, 0}, {0xFE, 0x70, 0x1F, 0xF0}, 0};
+    std::int32_t result[2] = {-1, -1};
+    RunControl(context, instance, CONTROL_START, &start, sizeof(start), result);
+    Require(result[0] == 0);
+
+    std::vector<std::uint8_t> batch(4096);
+    std::vector<std::int16_t> pcm(1024);
+    std::uint8_t sideband[32];
+    std::memset(sideband, 0xCD, sizeof(sideband));
+    AjmBatchInfo info{};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobRun(&info, instance, sidebandStream | runMultipleFrames, stream.data(), stream.size(), pcm.data(), pcm.size() * sizeof(std::int16_t), sideband, 16) == 0);
+    Submit(context, info);
+    Require(std::all_of(sideband + 8, sideband + sizeof(sideband), [](std::uint8_t byte) { return byte == 0xCD; }));
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
+void TestInlineBufferNullAddress(const char* ajmiLibrary) {
+#ifdef _WIN32
+    const char* nativeLibrary = "libSceAjm.native.prx";
+#else
+    const char* nativeLibrary = nullptr;
+#endif
+    const InlineBuffer nativeInline = reinterpret_cast<InlineBuffer>(ResolveExport(nativeLibrary, "sceAjmBatchJobInlineBuffer"));
+    const InlineBuffer ajmiInline = reinterpret_cast<InlineBuffer>(ResolveExport(ajmiLibrary, "sceAjmBatchJobInlineBuffer_nid_disambig1"));
+    for (const InlineBuffer inlineBuffer : {nativeInline, ajmiInline}) {
+        std::uint8_t data[13];
+        std::memset(data, 0x5A, sizeof(data));
+        std::vector<std::uint8_t> batch(64, 0xCD);
+        Require(inlineBuffer(batch.data(), data, sizeof(data), nullptr) == batch.data() + 24);
+        Require(BatchWord(batch, 0) == 0xCDCDCDC7 && BatchWord(batch, 4) == 16);
+        Require(std::memcmp(batch.data() + 8, data, sizeof(data)) == 0);
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -2736,6 +2782,8 @@ int main(int argc, char** argv) {
     TestConsoleEmptyBatch(context);
     TestConsoleSingleFrameRun(context);
     TestConsoleStaleHeaderBits(context);
+    TestRunSidebandStopsAtOversizedField(context);
+    TestInlineBufferNullAddress(argv[1]);
     Require(sceAjmDecWVorbisCreateHeaderPacket(nullptr) == static_cast<int>(0x8A6E0001));
     Require(sceAjmFinalize(context) == 0);
 }
