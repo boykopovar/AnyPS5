@@ -327,6 +327,17 @@ class ProbeCoverageTests(unittest.TestCase):
             results = probe_catalog.coverage([probe], self.digest, temporary, "rx-6750-xt")
             self.assertEqual(results[0]["status"], "measured")
 
+    def test_coverage_does_not_accept_a_report_moved_under_another_device_label(self):
+        probe = self.catalog["probes"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            other_path = self.write_report(temporary, probe, device_label="other-gpu")
+            selected_path = Path(temporary) / "rx-6750-xt" / other_path.name
+            selected_path.parent.mkdir()
+            selected_path.write_bytes(other_path.read_bytes())
+            result = probe_catalog.coverage([probe], self.digest, temporary, "rx-6750-xt")[0]
+            self.assertEqual(result["status"], "invalid")
+            self.assertIn("device_label differs", result["detail"])
+
     def test_coverage_marks_changed_probe_definitions_stale(self):
         original = self.catalog["probes"][0]
         changed = copy.deepcopy(original)
