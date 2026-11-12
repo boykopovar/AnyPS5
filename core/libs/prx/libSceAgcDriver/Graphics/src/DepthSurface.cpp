@@ -643,7 +643,18 @@ bool ProbeStencilShadowCopy(const Context& context, VkFormat format, std::uint32
         }
         barrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, static_cast<std::uint32_t>(toGeneral.size()), toGeneral.data());
         const VkClearDepthStencilValue clear{0.25f, 0xa5u};
-        context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, source->image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &aspects);
+        const VkImageSubresourceRange depthOnly{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, source->image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &depthOnly);
+        Buffer staging(context, extent.width * extent.height, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        const auto stagingBytes = staging.Bytes();
+        for (std::uint32_t y = 0; y < extent.height; ++y)
+            for (std::uint32_t x = 0; x < extent.width; ++x)
+                stagingBytes[y * extent.width + x] = static_cast<std::byte>((x * 37u + y * 53u + 0x5au) & 0xffu);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        VkBufferImageCopy stencilUpload{};
+        stencilUpload.imageSubresource = {VK_IMAGE_ASPECT_STENCIL_BIT, 0, 0, 1};
+        stencilUpload.imageExtent = extent;
+        context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, staging.Handle(), source->image, VK_IMAGE_LAYOUT_GENERAL, 1, &stencilUpload);
         VkImageMemoryBarrier clearToCopy{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         clearToCopy.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         clearToCopy.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
@@ -673,9 +684,13 @@ bool ProbeStencilShadowCopy(const Context& context, VkFormat format, std::uint32
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
         batch.SubmitAndWait();
         linear.Invalidate();
-        works = std::all_of(linear.Bytes().begin(), linear.Bytes().begin() + elements, [](std::byte value) { return value == std::byte{0xa5u}; });
-    } catch (...) {
         works = true;
+        for (std::uint32_t element = 0; element < elements && works; ++element) {
+            const auto pixel = element / samples;
+            works = linear.Bytes()[element] == static_cast<std::byte>(((pixel % extent.width) * 37u + ((pixel / extent.width) % extent.height) * 53u + 0x5au) & 0xffu);
+        }
+    } catch (...) {
+        works = false;
     }
     if (view != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     return works;
