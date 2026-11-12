@@ -983,7 +983,7 @@ int main() {
         return !StencilReplaySafe(other.program);
     });
 
-    const auto exportUnder =[](Builder& b, IrValue& guard, bool stencil, bool live) {
+    const auto exportUnder = [](Builder& b, IrValue& guard, bool stencil, bool live) {
         ExportInfo info{};
         info.kind = stencil ? ExportTargetKind::MrtZ : ExportTargetKind::Mrt;
         info.en = stencil ? 2u : 15u;
