@@ -2365,6 +2365,10 @@ if(BUILD_TESTING)
         add_test(NAME thread_name COMMAND thread_name_tests)
         set_tests_properties(thread_name PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(thread_name_tests ${LIBS_INCLUDE_DIR}/tests/ThreadName.cpp)
+        target_include_directories(thread_name_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        add_test(NAME thread_name COMMAND thread_name_tests)
     endif()
 
     add_test_executable(guest_strcmp_boundary_tests ${LIBS_INCLUDE_DIR}/tests/GuestStrcmpBoundary.cpp)

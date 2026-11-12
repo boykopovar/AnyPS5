@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_CPUTOPOLOGY_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_CPUTOPOLOGY_HPP
 
+#include "prx/libc/include/general/ThreadName.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -312,6 +313,9 @@ inline std::atomic<std::uint64_t>& UnreservedMask() {
 }
 
 inline void PinHelperThread(const char* role) {
+#if defined(_WIN32) || defined(__linux__)
+    static_cast<void>(ThreadName::SetCurrent(role));
+#endif
 #ifdef __linux__
     if (const auto unreserved = UnreservedMask().load(std::memory_order_acquire); unreserved != 0) Pin(nullptr, unreserved);
 #endif
