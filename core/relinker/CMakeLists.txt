@@ -241,7 +241,15 @@ if(WIN32)
     target_include_directories(windows_dependency_diagnostics_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include)
     if(BUILD_TESTING)
         set_target_properties(windows_dependency_diagnostics_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
-        add_test(NAME windows_dependency_diagnostics COMMAND windows_dependency_diagnostics_tests)
+        foreach(diagnosticScenario IN ITEMS
+                runtime_dependencies missing_symbol_diamond ordinal_missing ordinal_present
+                forwarded_missing forwarded_present forward_cycle_capacity mutual_cycle_resolved
+                mutual_cycle_missing module_not_found apiset_module_not_found real_export_present
+                real_module_fake_export corrupted_import_table not_a_pe_garbage not_a_pe_elf_magic
+                missing_root root_is_directory nested_not_a_pe)
+            add_test(NAME windows_dependency_diagnostics_${diagnosticScenario}
+                COMMAND windows_dependency_diagnostics_tests ${diagnosticScenario})
+        endforeach()
     endif()
 
     if(NOT ANYPS5_RELINKER_ONLY)
@@ -1030,7 +1038,7 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_copy_relocations.py $<TARGET_FILE:relinker>)
         if(WIN32)
             add_test(NAME windows_diagnostic_fixture_isolation COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/test_windows_diagnostic_fixture_isolation.py $<TARGET_FILE:windows_dependency_diagnostics_tests>)
+                ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/test_windows_diagnostic_fixture_isolation.py $<TARGET_FILE:windows_dependency_diagnostics_tests> missing_root)
             set_tests_properties(windows_diagnostic_fixture_isolation PROPERTIES TIMEOUT 30)
         endif()
         add_test(NAME entry_point_bounds COMMAND ${Python3_EXECUTABLE}
