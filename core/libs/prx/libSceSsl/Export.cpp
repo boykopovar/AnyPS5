@@ -724,12 +724,14 @@ int APS5_VABI sceSslGetMemoryPoolStats(int sslCtxId, SceSsl::MemoryPoolStats* st
     std::lock_guard lock(state.mutex);
     const auto found = state.contexts.find(sslCtxId);
     if (found == state.contexts.end()) {
-        std::memset(stats, 0, sizeof(*stats));
+        const SceSsl::MemoryPoolStats zeroStats{};
+        if (!GuestCopyOut_nid_no_patch(stats, &zeroStats, sizeof(zeroStats))) return ErrorInvalidValue;
         return ErrorInvalidId;
     }
     auto& pool = found->second->pool;
     std::lock_guard poolLock(pool.mutex);
-    *stats = {pool.size, pool.peak, pool.current, 0};
+    const SceSsl::MemoryPoolStats localStats = {pool.size, pool.peak, pool.current, 0};
+    if (!GuestCopyOut_nid_no_patch(stats, &localStats, sizeof(localStats))) return ErrorInvalidValue;
     return 0;
 }
 

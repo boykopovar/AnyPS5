@@ -93,7 +93,17 @@ static constexpr Answer small[] = {
         {1LL, -1LL, -1LL, 0LL},
         {-7LL, -1LL, 7LL, 0LL},
         {2147483647LL, -1LL, -2147483647LL, 0LL},
-        {-2147483648LL, -1LL, -2147483648LL, 0LL}
+        {-2147483648LL, -1LL, -2147483648LL, 0LL},
+        {42LL, 42LL, 1LL, 0LL},
+        {-42LL, -42LL, 1LL, 0LL},
+        {42LL, -42LL, -1LL, 0LL},
+        {-42LL, 42LL, -1LL, 0LL},
+        {5LL, 10LL, 0LL, 5LL},
+        {-5LL, 10LL, 0LL, -5LL},
+        {5LL, -10LL, 0LL, 5LL},
+        {-5LL, -10LL, 0LL, -5LL},
+        {1024LL, 16LL, 64LL, 0LL},
+        {-1024LL, 16LL, -64LL, 0LL}
 };
 static constexpr Answer wide[] = {
         {0LL, 1LL, 0LL, 0LL},
@@ -140,7 +150,22 @@ static constexpr Answer wide[] = {
         {-7LL, -1LL, 7LL, 0LL},
         {1099511627809LL, -1LL, -1099511627809LL, 0LL},
         {9223372036854775807LL, -1LL, -9223372036854775807LL, 0LL},
-        {-9223372036854775807LL - 1LL, -1LL, -9223372036854775807LL - 1LL, 0LL}
+        {-9223372036854775807LL - 1LL, -1LL, -9223372036854775807LL - 1LL, 0LL},
+        {42LL, 42LL, 1LL, 0LL},
+        {-42LL, -42LL, 1LL, 0LL},
+        {42LL, -42LL, -1LL, 0LL},
+        {-42LL, 42LL, -1LL, 0LL},
+        {5LL, 10LL, 0LL, 5LL},
+        {-5LL, 10LL, 0LL, -5LL},
+        {5LL, -10LL, 0LL, 5LL},
+        {-5LL, -10LL, 0LL, -5LL},
+        {1024LL, 16LL, 64LL, 0LL},
+        {-1024LL, 16LL, -64LL, 0LL},
+        {9223372036854775807LL, 1LL, 9223372036854775807LL, 0LL},
+        {9223372036854775807LL, 9223372036854775807LL, 1LL, 0LL},
+        {-9223372036854775807LL, 1LL, -9223372036854775807LL, 0LL},
+        {-9223372036854775807LL, -9223372036854775807LL, 1LL, 0LL},
+        {-9223372036854775807LL, 9223372036854775807LL, -1LL, 0LL}
 };
 
 template<typename TFunction, std::size_t TSize>
