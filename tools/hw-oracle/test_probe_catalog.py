@@ -123,6 +123,17 @@ class CatalogLoadingTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, message):
                         probe_catalog.read_catalog(path)
 
+    def test_probe_word_strings_accept_only_decimal_or_hexadecimal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "catalog"
+            for value in ("0b101", "0o17", "+1", "-1", "08", ""):
+                with self.subTest(value=value):
+                    malformed = copy.deepcopy(self.catalog)
+                    malformed["probes"][0]["rows"][0]["input"][0] = value
+                    path.write_text(json.dumps(malformed), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "numeric string"):
+                        probe_catalog.read_catalog(path)
+
     def test_probe_modes_and_dimensions_are_checked_before_execution(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "catalog"
