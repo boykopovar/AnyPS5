@@ -143,6 +143,7 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"DisabledAdaptationsMetaTagEnabled", {false, FeatureKind::Boolean}},
         {u"DisallowSyncXHRDuringPageDismissalEnabled", {true, FeatureKind::Testable}},
         {u"DisplayListDrawingEnabled", {false, FeatureKind::Internal}},
+        {u"DoNotTrackEnabled", {false, FeatureKind::Boolean}},
         {u"EditableLinkBehavior", {std::uint32_t{4}, FeatureKind::None}},
         {u"EmbedElementEnabled", {true, FeatureKind::Testable}},
         {u"EnableInheritURIQueryComponent", {false, FeatureKind::Boolean}},
@@ -899,6 +900,21 @@ bool APS5_VABI WKPreferencesGetTabsToLinks(const void* preferencesRef) {
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"TabsToLinks");
 }
 
+void APS5_VABI WKPreferencesSetDoNotTrackEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"DoNotTrackEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesGetDoNotTrackEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"DoNotTrackEnabled");
+}
+
+void APS5_VABI WKPreferencesSetLazyImageLoadingEnabled(const void* preferencesRef, bool enabled) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"LazyImageLoadingEnabled", enabled);
+}
+
+bool APS5_VABI WKPreferencesGetLazyImageLoadingEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"LazyImageLoadingEnabled");
+}
 void APS5_VABI WKPreferencesSetTabToLinksEnabled(const void* preferencesRef, bool enabled) {
     WKPreferencesSetTabsToLinks(preferencesRef, enabled);
 }
