@@ -1571,15 +1571,13 @@ int APS5_VABI scePthreadGetthreadid(void) {
 int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
     if (!thread || !name) return SCE_KERNEL_ERROR_EINVAL;
     if (!LockRegisteredGuestThread(thread)) return SCE_KERNEL_ERROR_ESRCH;
-    std::string value;
-    const int copied = CopyGuestString_nid_no_patch(name, 32, value);
-    if (copied == 14) return SCE_KERNEL_ERROR_EFAULT;
-    if (copied == 63) return SCE_KERNEL_ERROR_ENAMETOOLONG;
-    if (copied != 0) NotImplemented_nid_no_patch("scePthreadRename name copy failure");
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, GUEST_THREAD_NAME_CAPACITY, copy))
+        return error == 14 ? SCE_KERNEL_ERROR_EFAULT : error == 63 ? SCE_KERNEL_ERROR_ENAMETOOLONG : SCE_KERNEL_ERROR_ENOMEM;
     auto registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
     std::lock_guard lock(thread->nameLock);
-    thread->name = std::move(value);
+    thread->name = std::move(copy);
 #ifdef _WIN32
     SetThreadDescription(static_cast<HANDLE>(thread->nativeHandle), ThreadDescription(thread->name).c_str());
     ApplyJobAffinity(*thread, thread->nativeHandle);

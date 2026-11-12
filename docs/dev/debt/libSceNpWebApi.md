@@ -1,5 +1,9 @@
 # libSceNpWebApi technical debt
 
+### Functional
+
+- [sceNpWebApiGetMemoryPoolStats](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi) - returning `0x80552902` (`SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT`) when the `stats` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+
 ### Additional callable exports
 
 - [Additional callable exports](../../../core/libs/prx/libSceNpWebApi/InventoryExports.cpp) - 36 NIDs occur as functions under the same module and logical library in both version-labelled images. The labels do not independently authenticate retail firmware provenance; the NIDs are absent from the pinned public 3.20 catalogue. Names, prototypes and behavior are unverified. These import-resolution declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.

@@ -2,6 +2,7 @@
 #include "prx/libSceNpWebApi/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -333,6 +334,8 @@ void TestConsoleMeasuredExports() {
     Require(sceNpWebApiGetMemoryPoolStats(context, &stats) == 0 && stats.poolSize == 0x10000 && stats.maxInuseSize == 0 && stats.currentInuseSize == 0, "memory pool stats of a fresh context");
     Require(sceNpWebApiGetMemoryPoolStats(0x7fff + 1, &stats) == LibContextNotFound, "memory pool stats of an unknown context");
     Require(sceNpWebApiGetMemoryPoolStats(context, nullptr) == InvalidArgument, "memory pool stats without a buffer");
+    errno = 71;
+    Require(sceNpWebApiGetMemoryPoolStats(context, reinterpret_cast<NpWebApiMemoryPoolStats*>(0x10)) == InvalidArgument && errno == 71, "memory pool stats with an unwritable buffer");
 
     Require(sceNpWebApiCreateContextA(context, -1) == InvalidArgument, "user context for a negative user");
     Require(sceNpWebApiCreateContextA(0x7fff + 1, InitialUser) == InvalidLibContextId, "user context of an unknown library context by user id");

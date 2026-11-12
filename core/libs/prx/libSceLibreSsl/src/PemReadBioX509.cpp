@@ -8,10 +8,9 @@
 #include <cstring>
 #include <stdexcept>
 #include "prx/libSceLibreSsl/include/Bio.hpp"
+#include "PemReadBio.hpp"
 
-namespace {
-
-using LibreSsl::Bio;
+namespace LibreSsl {
 
 constexpr int BufferLibrary = 7;
 constexpr int BioLibrary = 32;
@@ -130,12 +129,9 @@ bool IsBeginLine(const std::array<char, 256>& line, std::size_t length) {
     return std::memcmp(line.data() + length - (sizeof(suffix) - 1), suffix, sizeof(suffix) - 1) == 0;
 }
 
-}
-
-extern "C" {
-
-LibreSslX509* APS5_VABI PEM_read_bio_X509_nid_postfix(LibreSsl::Bio* bio, LibreSslX509** certificate,
-                                                      LibreSslPemPasswordCallback callback, void* userData) {
+LibreSslX509* ReadPemRecord(Bio* bio, LibreSslX509** certificate,
+                            LibreSslPemPasswordCallback callback, void* userData,
+                            const char* function) {
     static_cast<void>(certificate);
     static_cast<void>(callback);
     static_cast<void>(userData);
@@ -171,8 +167,17 @@ LibreSslX509* APS5_VABI PEM_read_bio_X509_nid_postfix(LibreSsl::Bio* bio, LibreS
             return nullptr;
         }
         buffers.header->data[0] = '\0';
-        NotImplemented_nid_no_patch(__func__);
+        NotImplemented_nid_no_patch(function);
     }
+}
+
+}
+
+extern "C" {
+
+LibreSslX509* APS5_VABI PEM_read_bio_X509_nid_postfix(LibreSsl::Bio* bio, LibreSslX509** certificate,
+                                                      LibreSslPemPasswordCallback callback, void* userData) {
+    return LibreSsl::ReadPemRecord(bio, certificate, callback, userData, __func__);
 }
 
 }
