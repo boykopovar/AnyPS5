@@ -1,4 +1,6 @@
 #include "prx/libSceNet/include/Net.hpp"
+#include "prx/libkernel/DirectMemory/DirectMemory.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -13,6 +15,7 @@ void Require(bool value) { if (!value) std::abort(); }
 constexpr int kErrorBase = static_cast<int>(0x80410100);
 constexpr int kEnoent = 2;
 constexpr int kEbadf = 9;
+constexpr int kEfault = 14;
 constexpr int kEinval = 22;
 constexpr int kEnametoolong = 63;
 constexpr int kEnotinit = 200;
@@ -193,6 +196,16 @@ void CheckValidation() {
     Require(Failed(sceNetBandwidthControlGetDataTraffic(-1, nullptr, 0), kEinval));
     Require(Failed(sceNetBandwidthControlGetDataTraffic(-1, traffic, 1), kEinval));
     Require(Failed(sceNetDumpCreate(nullptr, 0x800, 0), kEinval));
+    void* mapping = nullptr;
+    Require(sceKernelMapFlexibleMemory(&mapping, 2 * PS5_PAGE_SIZE, 3, 0) == 0 && mapping != nullptr);
+    auto* boundary = static_cast<char*>(mapping) + PS5_PAGE_SIZE;
+    auto* dumpName = boundary - 16;
+    std::memset(dumpName, 'x', 16);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(boundary), PS5_PAGE_SIZE) == 0);
+    Require(Failed(sceNetDumpCreate(dumpName, 0x800, 0), kEfault));
+    dumpName[15] = '\0';
+    Require(Failed(sceNetDumpCreate(dumpName, 0x7ff, 0), kEinval));
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), PS5_PAGE_SIZE) == 0);
     Require(Failed(sceNetDumpCreate(reinterpret_cast<const char*>(0x10), 0x800, 0), 14));
     Require(Failed(sceNetDumpCreate("dump", 0x7FF, 0), kEinval));
     Require(Failed(sceNetDumpCreate("dump", 0x800, 3), kEinval));
