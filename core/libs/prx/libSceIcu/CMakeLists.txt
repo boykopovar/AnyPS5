@@ -1,5 +1,6 @@
 add_library(libSceIcu SHARED EXCLUDE_FROM_ALL CharacterDigits.cpp Comparisons.cpp ConstrainedFieldPosition.cpp Enumeration.cpp ErrorName.cpp Export.cpp Invariant.cpp Iterator.cpp Numeric.cpp Set.cpp Tokenize.cpp Unescape.cpp Version.cpp Utf32.cpp JavaUtf8.cpp Compare.cpp Search.cpp Character.cpp Configuration.cpp LocaleCore.cpp)
 target_include_directories(libSceIcu PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceIcu PRIVATE libc)
 target_sources(libSceIcu PRIVATE RecoveredInventory.cpp)
 configure_windows_unwind(libSceIcu)
 target_sources(libSceIcu PRIVATE ConverterCallbacks.cpp)
