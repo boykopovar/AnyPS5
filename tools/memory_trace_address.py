@@ -66,3 +66,40 @@ def overlaps(event, start, size):
 
 def select_events(events, start, size):
     return [event for event in events if overlaps(event, start, size)]
+
+
+def render_events(events, path, start, size, limit):
+    matches = select_events(events, start, size)
+    lines = [f"APS5_TRACE_MEMORY events overlapping 0x{start:x}+0x{size:x} in {path}"]
+    if not matches:
+        lines.append("No traced mapping operations overlap this range.")
+        return "\n".join(lines) + "\n"
+    if len(matches) > limit:
+        lines.append(f"Showing the last {limit} of {len(matches)} matching events.")
+        matches = matches[-limit:]
+    lines.extend(f"line {event.line}: {event.detail}" for event in matches)
+    return "\n".join(lines) + "\n"
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="show APS5_TRACE_MEMORY mapping operations overlapping a guest address range")
+    parser.add_argument("trace", type=Path, help="file containing APS5_TRACE_MEMORY stderr output")
+    parser.add_argument("--address", required=True, help="guest address (decimal or 0x-prefixed)")
+    parser.add_argument("--length", default="1", help="queried byte count (default: 1)")
+    parser.add_argument("--limit", type=int, default=40, help="maximum matching events to print (default: 40)")
+    args = parser.parse_args(argv)
+    if args.limit < 1:
+        parser.error("--limit must be positive")
+    try:
+        start, size = parse_range(args.address, args.length)
+        with args.trace.open(encoding="utf-8", errors="replace") as source:
+            events = parse_events(source)
+        sys.stdout.write(render_events(events, args.trace, start, size, args.limit))
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
