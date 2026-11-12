@@ -197,6 +197,10 @@ void LibcStartExit_nid_postfix() {
     StartExit();
 }
 
+bool LibcExitStarted_nid_no_patch() {
+    return exitStarted.load();
+}
+
 [[noreturn]] void LibcExit_nid_no_patch(int code) {
     StartExit();
     CxaFinalize_nid_no_patch(nullptr);
