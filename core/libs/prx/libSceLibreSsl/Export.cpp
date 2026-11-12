@@ -822,11 +822,6 @@ const char* APS5_VABI X509_verify_cert_error_string_nid_postfix(std::int64_t err
     return unknown;
 }
 
-int APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 void* APS5_VABI d2i_PKCS12_bio_nid_postfix(LibreSsl::Bio* bio, void** output) {
     ERR_clear_error_nid_postfix();
     constexpr int HeaderSize = 8;
