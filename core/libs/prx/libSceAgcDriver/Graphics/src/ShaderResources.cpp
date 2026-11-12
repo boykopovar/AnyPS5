@@ -3098,21 +3098,39 @@ void ShaderResources::noteReusable() {
     // Taken whether or not the object turns out reusable: the lookups' records are this build's.
     captureValidation();
     reusable = false;
+    unreusableReason = 0;
     spaceReuse = false;
     importsReconcilable = false;
     spaceReuse = false;
     directRegions.clear();
     const bool spaceReusable = !htileClear.has_value() && drawBuild && usesBda && bdaReadOnly && !SpaceReuseDisabled() && guestMemory.SpaceOnly() && !guestMemory.HasCopiedWrites() && multisampleSources.empty() && !(bda != nullptr && LoopGuardEnabled());
-    if (!spaceReusable && (htileClear.has_value() || guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || !multisampleSources.empty() || (bda != nullptr && LoopGuardEnabled()))) return;
-    if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) return;
-    if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) return;
+    if (!spaceReusable) {
+        if (htileClear.has_value()) unreusableReason = 1;
+        else if (guestMemory.HasCopiedWrites()) unreusableReason = 2;
+        else if (HoldsLease()) unreusableReason = 3;
+        else if (usesBda) unreusableReason = 4;
+        else if (!multisampleSources.empty()) unreusableReason = 5;
+        else if (bda != nullptr && LoopGuardEnabled()) unreusableReason = 6;
+        if (unreusableReason != 0) return;
+    }
+    if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) {
+        unreusableReason = 7;
+        return;
+    }
+    if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) {
+        unreusableReason = 8;
+        return;
+    }
     if (spaceReusable) {
         spaceReuse = true;
         reusable = true;
         return;
     }
     const auto regions = guestMemory.DirectRegions();
-    if (!regions.has_value()) return;
+    if (!regions.has_value()) {
+        unreusableReason = 9;
+        return;
+    }
     bool mirrored = false;
     for (const auto& [begin, end] : *regions) {
         // No reconcile here: the upload just took these imports, and the set is about to be recorded
@@ -3122,7 +3140,10 @@ void ShaderResources::noteReusable() {
         // bit set, so the two spaces never collide.
         const bool imported = serial != 0;
         if (serial == 0) serial = ImageMirrorSerial(context, begin, static_cast<std::size_t>(end - begin));
-        if (serial == 0) return;
+        if (serial == 0) {
+            unreusableReason = 10;
+            return;
+        }
         directRegions.push_back({begin, end, serial});
         mirrored = mirrored || !imported;
     }
@@ -3137,6 +3158,11 @@ void ShaderResources::noteReusable() {
     }
     importsReconcilable = !mirrored && !bounded;
     reusable = true;
+}
+
+const char* ShaderResources::UnreusableReasonName(std::uint8_t reason) {
+    constexpr std::array<const char*, 11> names{"unchecked", "htile clear", "copied writes", "lease", "bda", "multisample source", "loop guard", "texture refreshed per use", "template data refresh", "no direct regions", "region not served"};
+    return reason < names.size() ? names[reason] : "unknown";
 }
 
 namespace {

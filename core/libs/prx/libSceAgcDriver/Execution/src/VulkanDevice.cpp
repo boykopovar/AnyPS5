@@ -6673,6 +6673,47 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     return recordCompletedDispatch(shader, x, y, z, arguments, programAddress, recipeOut, threadGroup, htileClear, completion);
 }
 
+namespace {
+
+enum class RecipeRefusal : std::size_t { NotCacheable, Overlay, NoObjects, NoContentKey, NeedsFaultChecks, NeedsCopiedWrites, Unreusable, Count };
+constexpr std::size_t UnreusableReasons = 11;
+std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(RecipeRefusal::Count)> recipeRefusals{};
+std::array<std::atomic<std::uint64_t>, UnreusableReasons> unreusableRefusals{};
+
+void noteRecipeRefusal(bool cacheable, bool overlay, bool objects, bool contentKey, const Graphics::ShaderResources& resources) {
+    const auto note = [](RecipeRefusal reason) { recipeRefusals[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed); };
+    if (!cacheable) return note(RecipeRefusal::NotCacheable);
+    if (overlay) return note(RecipeRefusal::Overlay);
+    if (!objects) return note(RecipeRefusal::NoObjects);
+    if (!contentKey) return note(RecipeRefusal::NoContentKey);
+    if (!resources.Reusable()) {
+        note(RecipeRefusal::Unreusable);
+        unreusableRefusals[std::min<std::size_t>(resources.UnreusableReason(), UnreusableReasons - 1)].fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    if (resources.NeedsCompletion()) note(resources.HoldsCopiedWrites() ? RecipeRefusal::NeedsCopiedWrites : RecipeRefusal::NeedsFaultChecks);
+}
+
+}
+
+std::string VulkanDevice::DispatchRecipeRefusalText() {
+    constexpr std::array<const char*, static_cast<std::size_t>(RecipeRefusal::Count)> names{"not cacheable", "binding overlay", "no objects", "no content key", "fault checks", "copied writes", "unreusable"};
+    std::string text;
+    for (std::size_t index = 0; index < names.size(); ++index) {
+        const auto count = recipeRefusals[index].load(std::memory_order_relaxed);
+        if (count == 0) continue;
+        text += " " + std::string(names[index]) + " " + std::to_string(count);
+    }
+    std::string unreusable;
+    for (std::size_t index = 0; index < UnreusableReasons; ++index) {
+        const auto count = unreusableRefusals[index].load(std::memory_order_relaxed);
+        if (count == 0) continue;
+        unreusable += std::string(unreusable.empty() ? "" : ", ") + Graphics::ShaderResources::UnreusableReasonName(static_cast<std::uint8_t>(index)) + " " + std::to_string(count);
+    }
+    if (!unreusable.empty()) text += " (unreusable: " + unreusable + ")";
+    return text.empty() ? " none" : text;
+}
+
 VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress, std::shared_ptr<const Recipe>* recipeOut, const std::array<std::uint32_t, 3>& threadGroup, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear, DispatchCompletion& completion) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto& context = completion.context;
@@ -6751,7 +6792,10 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
     // object the resource cache serves under this content key (reusable: no lease, no copied
     // writes, every direct region import- or mirror-served), so a hit's proof is the template's
     // Revalidate and nothing needs completion work.
-    if (recipeOut != nullptr && DispatchRecipes() && cacheable && overlay == nullptr && resources->Reusable() && !resources->NeedsCompletion() && objects != nullptr && !contentKey.empty()) {
+    const bool recipeWanted = recipeOut != nullptr && DispatchRecipes();
+    if (recipeWanted && profile && !(cacheable && overlay == nullptr && resources->Reusable() && !resources->NeedsCompletion() && objects != nullptr && !contentKey.empty()))
+        noteRecipeRefusal(cacheable, overlay != nullptr, objects != nullptr, !contentKey.empty(), *resources);
+    if (recipeWanted && cacheable && overlay == nullptr && resources->Reusable() && !resources->NeedsCompletion() && objects != nullptr && !contentKey.empty()) {
         auto recipe = std::make_shared<Recipe>();
         recipe->device = state->device;
         recipe->templateRef = resources;
