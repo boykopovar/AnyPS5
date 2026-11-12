@@ -1961,7 +1961,7 @@ int APS5_VABI scePthreadBarrierDestroy(PthreadBarrierPrivate** barrier) {
 }
 
 int APS5_VABI scePthreadBarrierInit(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count, const char* name) {
-    (void)name;
+    if (name && std::strlen(name) >= 32) return SCE_KERNEL_ERROR_ENAMETOOLONG;
     return SceResult(pthread_barrier_init_nid_postfix(barrier, attr, count));
 }
 
