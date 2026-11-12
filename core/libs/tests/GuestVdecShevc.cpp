@@ -7,7 +7,7 @@
 
 namespace {
 
-using HandleCall = int (*)(void*);
+using HandleCall = decltype(&sceSdecExecuteSwHevc);
 
 void Require(bool value) {
     if (!value) std::abort();
