@@ -18,7 +18,7 @@ int APS5_VABI libSceOpusDecUnknown_ct42RpB2CaM_nid_no_patch();
 int APS5_VABI libSceOpusDecUnknown_eJQx7Emrwb0_nid_no_patch();
 int APS5_VABI libSceOpusDecUnknown_ewfq1d5iJhU_nid_no_patch();
 int APS5_VABI libSceOpusDecUnknown_gMazl3u8Y40_nid_no_patch(const void* state, std::uint32_t* value);
-int APS5_VABI libSceOpusDecUnknown_jXVNwfmd1II_nid_no_patch(const std::uint32_t* context);
+int APS5_VABI libSceOpusDecUnknown_jXVNwfmd1II_nid_no_patch(std::uint32_t* context);
 int APS5_VABI libSceOpusDecUnknown_lFTdHt_minus_AuKU_nid_no_patch();
 int APS5_VABI libSceOpusDecUnknown_sr25irrwGBI_nid_no_patch();
 int APS5_VABI libSceOpusDecUnknown_ygCoF49g3F0_nid_no_patch();

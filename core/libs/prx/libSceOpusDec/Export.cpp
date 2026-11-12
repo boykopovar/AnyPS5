@@ -155,7 +155,7 @@ int APS5_VABI libSceOpusDecUnknown_gMazl3u8Y40_nid_no_patch(const void* state, s
 }
 APS5_EXPORT("gMazl3u8Y40", libSceOpusDecUnknown_gMazl3u8Y40_nid_no_patch);
 
-int APS5_VABI libSceOpusDecUnknown_jXVNwfmd1II_nid_no_patch(const std::uint32_t* context) {
+int APS5_VABI libSceOpusDecUnknown_jXVNwfmd1II_nid_no_patch(std::uint32_t* context) {
     if (context == nullptr) return static_cast<int>(ErrorBase + 0x0d);
     NotImplemented_nid_no_patch(__func__);
 }
