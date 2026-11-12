@@ -1,8 +1,10 @@
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 import compare_results
@@ -143,3 +145,71 @@ def select_probes(probes, identifiers):
         seen.add(probe_id)
         selected.append(by_id[probe_id])
     return selected
+
+
+def write_atomic(path, content):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def render_probe_metadata(probe, catalog_digest):
+    return {
+        "schema_version": 1,
+        "catalog_sha256": catalog_digest,
+        "id": probe["id"],
+        "instruction": probe["instruction"],
+        "description": probe["description"],
+        "body": probe["body"],
+        "output_registers": probe["output_registers"],
+        "wave_size": probe["wave_size"],
+        "floating_point_modes": probe["floating_point_modes"],
+        "lds_bytes": probe["lds_bytes"],
+        "memory": probe["memory"],
+        "rows": probe["rows"],
+    }
+
+
+def generate(probes, catalog_digest, output_dir):
+    root = Path(output_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    destinations = [root / probe["id"] for probe in probes]
+    existing = [str(path) for path in destinations if path.exists()]
+    if existing:
+        raise ValueError("refusing to replace generated probe directories: " + ", ".join(existing))
+    stage = Path(tempfile.mkdtemp(prefix=".probe-catalog-", dir=root))
+    try:
+        for probe in probes:
+            case = stage / probe["id"]
+            case.mkdir()
+            metadata = render_probe_metadata(probe, catalog_digest)
+            (case / "probe.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+            (case / "body.s").write_text(probe["body"] + "\n", encoding="utf-8")
+            rows = "".join(" ".join(f"0x{word:08x}" for word in row["input"]) + "\n"
+                           for row in probe["rows"])
+            (case / "rows.txt").write_text(rows, encoding="utf-8")
+        for probe, destination in zip(probes, destinations):
+            os.replace(stage / probe["id"], destination)
+    finally:
+        try:
+            stage.rmdir()
+        except OSError:
+            pass
+    return destinations
+
+
+def list_probes(probes):
+    for probe in probes:
+        print(f"{probe['id']}\t{probe['instruction']}\t{len(probe['rows'])} rows\t{probe['description']}")
