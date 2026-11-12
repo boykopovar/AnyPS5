@@ -204,6 +204,13 @@ public:
     std::uint32_t mediaType = 0;
 };
 
+class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
+public:
+    Retained<BundleNodeHandle> document;
+    Retained<BundleFrame> documentFrame;
+    Retained<BundleFrame> htmlIFrameElementContentFrame;
+};
+
 class Download final : public ObjectOf<ObjectType::Download> {
 public:
     Retained<Object> request;

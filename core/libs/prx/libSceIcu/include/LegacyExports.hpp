@@ -805,7 +805,6 @@ int APS5_VABI _ZN6icu_6817CanonicalIterator9setSourceERKNS_13UnicodeStringER10UE
 int APS5_VABI _ZN6icu_687UVector15insertElementAtEiiR10UErrorCode_nid_postfix();
 int APS5_VABI _ZNK6icu_6813UnicodeString5cloneEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_Jf4entCVZCU_nid_no_patch();
-int APS5_VABI unorm_compare_nid_postfix();
 int APS5_VABI _ZN6icu_686LocaleC1EPKcS2_S2_S2__nid_postfix();
 int APS5_VABI _ZN6icu_6813UnicodeString16getStaticClassIDEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_JpxcMELea4U_nid_no_patch();
@@ -1020,7 +1019,6 @@ int APS5_VABI _ZN6icu_6813LocaleBuilder9setScriptENS_11StringPieceE_nid_postfix(
 int APS5_VABI _ZN6icu_6812ResourceSinkD1Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_PpGttpUbT8k_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_PrTDL68Pdfg_nid_no_patch();
-int APS5_VABI sceIcuLegacyUnknown_PuLoqDSNPPw_nid_no_patch();
 int APS5_VABI _ZNK6icu_6810UnicodeSet12containsNoneERKNS_13UnicodeStringE_nid_postfix();
 int APS5_VABI ulocimp_getKeywordValue_nid_postfix();
 int APS5_VABI _ZNK6icu_6810UnicodeSet17getDynamicClassIDEv_nid_postfix();
@@ -1184,7 +1182,6 @@ int APS5_VABI _ZN6icu_6813UnicodeStringC1EPKc_nid_postfix();
 int APS5_VABI _ZN6icu_6822RuleBasedBreakIterator14getBinaryRulesERj_nid_postfix();
 int APS5_VABI _ZN6icu_6813UnicodeString10padLeadingEiDs_nid_postfix();
 int APS5_VABI _ZNK6icu_6822RuleBasedBreakIterator8getUTextEP5UTextR10UErrorCode_nid_postfix();
-int APS5_VABI sceIcuLegacyUnknown_TuExC_minus_Sja8o_nid_no_patch();
 int APS5_VABI _ZThn8_NK6icu_6810UnicodeSet13addMatchSetToERS0__nid_postfix();
 int APS5_VABI _ZN6icu_6810CharString8copyFromERKS0_R10UErrorCode_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_TzTAzAs0BSM_nid_no_patch();

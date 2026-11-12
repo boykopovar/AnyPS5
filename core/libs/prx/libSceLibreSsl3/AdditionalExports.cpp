@@ -8,10 +8,6 @@ int APS5_VABI EVP_PKEY_CTX_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EVP_PKEY_assign_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EVP_PKEY_derive_set_peer_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -58,10 +54,6 @@ int APS5_VABI X509_EXTENSION_free_nid_postfix() {
 }
 
 int APS5_VABI X509_STORE_load_locations_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI X509_get0_pubkey_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

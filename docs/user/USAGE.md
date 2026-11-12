@@ -317,6 +317,14 @@ Set `APS5_NO_PAD_INPUT` to any value, an empty one included, to make the window 
 
 On Windows, set `APS5_NO_WGI` to any value to turn off SDL's Windows Gaming Input controller backend. AnyPS5 turns off DirectInput there in every case, and this variable is read once when the video output driver is created.
 
+### Host microphone selection
+
+By default, `libSceAudioIn` captures from SDL's default host input device. Set `ANYPS5_AUDIO_IN_DEVICE` to an exact capture-device name reported by SDL to select another microphone. An unset or empty value, or `default`, keeps SDL's default. If the selected name is missing, appears more than once, or cannot be opened, the game's AudioIn open call returns the invalid-device error `0x8026010F`; AnyPS5 does not silently switch to another microphone. SDL2 identifies capture devices by name, so duplicate names cannot be selected individually. The setting is read each time the game opens an AudioIn port.
+
+```sh
+ANYPS5_AUDIO_IN_DEVICE="USB Microphone" ./app.elf
+```
+
 ### Controller vibration strength
 
 Set `ANYPS5_RUMBLE` to a whole number from `0` to `100` to scale how strongly the game's vibration reaches your controller. `100`, which is also the value when the variable is unset, passes the vibration exactly as the game asks. `0` turns vibration off: the motors never receive a nonzero request, and a rumble that was running is stopped. Values in between scale the motor strength by that percentage and apply to every connected controller.
@@ -459,7 +467,7 @@ $env:VK_LOADER_DRIVERS_DISABLE = '*dzn*'
 .\app.exe
 ```
 
-Do not disable Dozen if it is the only Vulkan driver available; the application would have no device to use. `VK_LOADER_DRIVERS_DISABLE` matches Vulkan driver manifest filenames and requires a Vulkan loader built with headers 1.3.234 or later ([loader documentation](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderInterfaceArchitecture.md#filter-environment-variables)).
+Do not disable Dozen if it is the only Vulkan driver available; the application would have no device to use. `VK_LOADER_DRIVERS_DISABLE` matches Vulkan driver manifest filenames and requires a Vulkan loader built with headers 1.3.234 or later ([loader documentation](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderInterfaceArchitecture.md#filter-environment-variables)). Loaders up to version 1.4.365 ignore it in an elevated process, such as one started from a PowerShell opened with **Run as administrator**.
 
 On Windows, NVIDIA driver 610.47 can crash in its shader compiler while pipelines are created: the log ends in `FATAL: unhandled exception 0xc0000005` with `nvgpucomp64.dll` in `rip`, on a driver thread. PPSA25344 on an RTX 3060 stopped this way in 3 of 3 New Game loads, also with `APS5_NO_PIPELINE_LTO=1`; with driver 617.42 the same build and scene ran for 40 minutes. Update the driver when the crash is in `nvgpucomp64.dll`.
 
