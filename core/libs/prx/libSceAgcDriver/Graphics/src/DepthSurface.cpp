@@ -4101,6 +4101,7 @@ std::optional<float> planeFillDepth(const DepthTarget& target, std::uint64_t add
 }
 
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
+    forgetCopiesInside(address, bytes);
     std::lock_guard gpu(GuestMemory::GpuMutex());
     std::lock_guard lock(surfacesMutex());
     forgetHtileReads(address, bytes);
