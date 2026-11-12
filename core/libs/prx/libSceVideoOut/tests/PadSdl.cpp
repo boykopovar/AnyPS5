@@ -73,6 +73,19 @@ void DisconnectedControllerCanReconnectToItsPlayerSlot() {
     Require(assignment.SelectSlot("player-three-serial", occupied) == 2);
 }
 
+void DuplicateConfiguredSerialIsRejected() {
+    Pad::ControllerSerials configured{};
+    configured[0] = "same-serial";
+    configured[3] = "same-serial";
+    bool rejected = false;
+    try {
+        static_cast<void>(Pad::ControllerAssignment(configured));
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected);
+}
+
 void HandOff(PadInput& padInput, const DisplayWindow& window, int device) {
     constexpr std::uint32_t Cross = 0x4000;
     constexpr std::uint32_t R2 = 0x0200;
@@ -250,6 +263,7 @@ int main() {
     AutomaticControllersSkipReservedPlayerSlots();
     ConnectedSerialCannotClaimAnotherPlayerSlot();
     DisconnectedControllerCanReconnectToItsPlayerSlot();
+    DuplicateConfiguredSerialIsRejected();
 #ifdef SDL_JOYSTICK_HIDAPI
     std::puts("pad_sdl: SDL drives controllers through HIDAPI");
 #else
