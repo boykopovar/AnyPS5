@@ -477,6 +477,7 @@ private:
     }
 
     Outcome Count(const Directive& directive) {
+        converted = true;
         if (directive.suppress) return Outcome::Done;
         const std::size_t size = IntegerSize(directive.length);
         void* target = args.Next<void*>();
