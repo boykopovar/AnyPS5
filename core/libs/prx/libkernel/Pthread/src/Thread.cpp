@@ -1469,7 +1469,7 @@ void APS5_VABI scePthreadYield() {
 }
 
 int APS5_VABI scePthreadCancel(Pthread thread) {
-    if (!thread) return SCE_KERNEL_ERROR_ESRCH;
+    if (!thread) return SCE_KERNEL_ERROR_EINVAL;
     GuestThreadReference reference;
     auto registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
@@ -1555,6 +1555,7 @@ int APS5_VABI scePthreadGetthreadid(void) {
 
 int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
     if (!thread || !name) return SCE_KERNEL_ERROR_EINVAL;
+    if (std::strlen(name) >= GUEST_THREAD_NAME_CAPACITY) return SCE_KERNEL_ERROR_ENAMETOOLONG;
     auto registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
     std::lock_guard lock(thread->nameLock);

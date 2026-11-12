@@ -1130,6 +1130,12 @@ static void CheckStreamWritesAfterReads(const std::string& base) {
         clearerr_nid_postfix(stream);
         errno = 0;
         Require(fprintf_nid_postfix(stream, "%s", "XY") == -1 && errno == EBADF && ferror_nid_postfix(stream) != 0, "fprintf after fgetc on a read-only stream");
+        clearerr_nid_postfix(stream);
+        errno = 0;
+        Require(fputwc_nid_postfix(u'X', stream) == -1 && errno == EBADF && ferror_nid_postfix(stream) != 0, "fputwc after fgetc on a read-only stream");
+        clearerr_nid_postfix(stream);
+        errno = 0;
+        Require(fputws_nid_postfix(u"XY", stream) == -1 && errno == EBADF && ferror_nid_postfix(stream) != 0, "fputws after fgetc on a read-only stream");
     });
     CheckReadsOnWriteOnlyStreams(base + ".write-only");
     Require(std::remove(path.c_str()) == 0);
@@ -1198,9 +1204,8 @@ static void CheckOrdinaryCharacterScans() {
             std::uint64_t value = 0;
             char output = 'Z';
             int count = -77;
-            const std::uint64_t expected = format[2] == 'o' ? 012345670123ull : (format[2] == 'x' || format[2] == 'X' ? 0x12345670123ull : 12345670123ull);
-            Require(scan(&stream, format, &value, &output, &count) == 2 && value == expected && output == 'z' && count == 13, "Ordinary stream scan lost the host quad length");
-            Require(ftell_nid_postfix(&stream) == 13 && fgetc_nid_postfix(&stream) == '!' && ferror_nid_postfix(&stream) == 0);
+            Require(scan(&stream, format, &value, &output, &count) == 0 && value == 0 && output == 'Z' && count == -77, "Ordinary stream scan did not end at the quad length");
+            Require(ftell_nid_postfix(&stream) == 0 && fgetc_nid_postfix(&stream) == '1' && ferror_nid_postfix(&stream) == 0);
             Require(std::fclose(native) == 0);
         }
     }

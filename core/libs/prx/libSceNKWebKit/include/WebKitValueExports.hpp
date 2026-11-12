@@ -172,6 +172,7 @@ void APS5_VABI WKNotificationPermissionRequestDeny(const void* permissionRequest
 std::uint32_t APS5_VABI WKNotificationPermissionRequestGetTypeID();
 const void* APS5_VABI WKOpenPanelParametersCopyAcceptedFileExtensions(const void* parametersRef);
 const void* APS5_VABI WKOpenPanelParametersCopyAcceptedMIMETypes(const void* parametersRef);
+const void* APS5_VABI WKOpenPanelParametersCopyAllowedMIMETypes(const void* parametersRef);
 const void* APS5_VABI WKOpenPanelParametersCopySelectedFileNames(const void* parametersRef);
 bool APS5_VABI WKOpenPanelParametersGetAllowsDirectories(const void* parametersRef);
 bool APS5_VABI WKOpenPanelParametersGetAllowsMultipleFiles(const void* parametersRef);

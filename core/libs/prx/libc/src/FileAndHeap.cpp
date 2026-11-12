@@ -1131,43 +1131,6 @@ void* APS5_VABI lsearch_nid_postfix(const void* key, void* base, size_t* count,
     return tail;
 }
 
-int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare) {
-    if (count <= 1) return 0;
-    if (size == 0) {
-        errno = 22;
-        return -1;
-    }
-    if (!compare) throw std::invalid_argument("heapsort: null comparator");
-    if (!base) throw std::invalid_argument("heapsort: null base");
-    if (count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("heapsort: array size overflow");
-
-    auto* const bytes = static_cast<unsigned char*>(base);
-    const auto siftDown = [bytes, size, compare](size_t root, size_t n) {
-        size_t current = root;
-        while (2 * current + 1 < n) {
-            size_t child = 2 * current + 1;
-            if (child + 1 < n && compare(bytes + (child + 1) * size, bytes + child * size) > 0) {
-                child = child + 1;
-            }
-            if (compare(bytes + child * size, bytes + current * size) <= 0) {
-                break;
-            }
-            SwapElements(bytes + current * size, bytes + child * size, size);
-            current = child;
-        }
-    };
-
-    for (size_t i = count / 2; i > 0; --i) {
-        siftDown(i - 1, count);
-    }
-    for (size_t i = count - 1; i > 0; --i) {
-        SwapElements(bytes, bytes + i * size, size);
-        siftDown(0, i);
-    }
-
-    return 0;
-}
-
 void APS5_VABI qsort_nid_postfix(void* base, size_t count, size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
     if (!base || !compare) return;
     if (size == 0 && count >= 33) throw std::invalid_argument("qsort: zero element size");
