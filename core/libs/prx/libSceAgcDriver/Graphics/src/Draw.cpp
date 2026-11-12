@@ -1938,9 +1938,13 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto& attribute = attributes[i];
         const auto described = std::find_if(layout.attributes.begin(), layout.attributes.end(), [&](const auto& entry) { return entry.location == attribute.location; });
         Require(described != layout.attributes.end(), "vertex attribute missing from its input layout");
+        if (VertexFetchOutOfRange(attribute)) {
+            zeroed[i] = zeroVertexBuffer(context, ZeroVertexFormat(attribute).bytes);
+            continue;
+        }
         const auto narrow = DecodeVertexFormat(attribute);
         const std::size_t widened = described->format == narrow.format ? 0u : VertexReadBytes(attribute, described->format) - narrow.bytes;
-        if (NullVertexDescriptor(attribute) || VertexFetchOutOfRange(attribute)) {
+        if (NullVertexDescriptor(attribute)) {
             zeroed[i] = zeroVertexBuffer(context, narrow.bytes + widened);
             continue;
         }
@@ -4242,6 +4246,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     auto* recorder = Recorder::Active();
     if (state.quadList || StripPatches(state, shaders) || !RecordDraws() || recorder == nullptr || DumpTargetLimit() != 0) return miss(DrawRecipeMiss::NotRecordable);
     if (recipe.hasDepth != state.depth.has_value()) return miss(DrawRecipeMiss::TargetGone);
+    if (!ZeroVertexLayoutMatches(recipe.vertexInput, shaders.front().program->vertexAttributes)) return miss(DrawRecipeMiss::Proof);
     const std::size_t expectedViews = state.colors.size() + (recipe.hasDepth ? 1u : 0u);
     Require(recipe.targets.size() == state.colors.size() && recipe.targetViews.size() == expectedViews, "draw recipe targets do not match the state");
     const auto plan = planDraw(context, state, draw, shaders, &recipe, outcome, timer);

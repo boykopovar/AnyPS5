@@ -101,6 +101,31 @@ inline VertexFormat DecodeVertexFormat(const ShaderRecompiler::VertexAttribute& 
     }
 }
 
+inline std::uint32_t VertexBufferOutOfBoundsSelect(const ShaderRecompiler::VertexAttribute& attribute) {
+    return (attribute.resource.fields[3] >> 28u) & 3u;
+}
+
+inline bool VertexFetchOutOfRange(const ShaderRecompiler::VertexAttribute& attribute) {
+    const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
+    if (NullVertexDescriptor(attribute)) return false;
+    const auto select = VertexBufferOutOfBoundsSelect(attribute);
+    const auto records = attribute.resource.fields[2];
+    if (stride != 0) return (select == 2u && records == 0) || (select == 3u && records < DecodeVertexFormat(attribute).bytes);
+    if (select == 0u) return true;
+    if (select == 3u) return records < DecodeVertexFormat(attribute).bytes;
+    return records == 0;
+}
+
+inline VertexFormat ZeroVertexFormat(const ShaderRecompiler::VertexAttribute& attribute) {
+    const auto decoded = DecodeVertexFormat(attribute);
+    const auto format = std::strcmp(decoded.scalar, "u32") == 0 ? VK_FORMAT_R32G32B32A32_UINT : std::strcmp(decoded.scalar, "i32") == 0 ? VK_FORMAT_R32G32B32A32_SINT : VK_FORMAT_R32G32B32A32_SFLOAT;
+    return {format, 16u, 4u, decoded.scalar};
+}
+
+inline bool ZeroVertexChangesLayout(const ShaderRecompiler::VertexAttribute& attribute) {
+    return VertexFetchOutOfRange(attribute) && (((attribute.resource.fields[1] >> 16u) & 0x3fffu) != 0 || DecodeVertexFormat(attribute).format != ZeroVertexFormat(attribute).format);
+}
+
 inline std::string VertexAttributeSignature(const ShaderRecompiler::VertexAttribute& attribute) {
     const auto format = DecodeVertexFormat(attribute);
     return std::string(format.scalar) + (attribute.components == 1 ? "" : "x" + std::to_string(attribute.components));
@@ -117,7 +142,17 @@ inline std::uint32_t VertexReadBytes(const ShaderRecompiler::VertexAttribute& at
 struct VertexInputLayout {
     std::vector<VkVertexInputBindingDescription> bindings;
     std::vector<VkVertexInputAttributeDescription> attributes;
+    std::vector<std::uint32_t> zeroLayoutLocations;
 };
+
+inline bool ZeroVertexLayoutMatches(const VertexInputLayout& layout, std::span<const ShaderRecompiler::VertexAttribute> attributes) {
+    std::size_t index = 0;
+    for (const auto& attribute : attributes) {
+        if (!ZeroVertexChangesLayout(attribute)) continue;
+        if (index == layout.zeroLayoutLocations.size() || layout.zeroLayoutLocations[index++] != attribute.location) return false;
+    }
+    return index == layout.zeroLayoutLocations.size();
+}
 
 inline std::array<char, 160> VertexDescriptorFlagsMessage(const ShaderRecompiler::VertexAttribute& attribute) {
     std::array<char, 160> message{};
@@ -157,7 +192,8 @@ inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::spa
     result.attributes.reserve(attributes.size());
     for (const auto& attribute : attributes) {
         const auto& fields = attribute.resource.fields;
-        const auto format = DecodeVertexFormat(attribute);
+        const auto zero = VertexFetchOutOfRange(attribute);
+        const auto format = zero ? ZeroVertexFormat(attribute) : DecodeVertexFormat(attribute);
         const auto duplicate = std::any_of(result.attributes.begin(), result.attributes.end(), [&](const auto& described) { return described.location == attribute.location; });
         Require(attribute.location < context.limits.maxVertexInputAttributes && !duplicate, "invalid or duplicate vertex attribute location");
         Require(attribute.fetchIndex <= 1, "unsupported vertex fetch index");
@@ -166,29 +202,30 @@ inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::spa
         }
         const auto stride = (fields[1] >> 16u) & 0x3fffu;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
-        Require(NullVertexDescriptor(attribute) || (address != 0 && address % format.alignment == 0 && stride % format.alignment == 0), "unaligned vertex buffer");
-        Require(stride <= context.limits.maxVertexInputBindingStride, "vertex stride exceeds device limits");
+        Require(NullVertexDescriptor(attribute) || zero || (address != 0 && address % format.alignment == 0 && stride % format.alignment == 0), "unaligned vertex buffer");
+        Require(zero || stride <= context.limits.maxVertexInputBindingStride, "vertex stride exceeds device limits");
         Require(context.formatProperties != nullptr, "missing vertex format property query");
         const auto supported = [&](VkFormat candidate) {
             return context.vertexFormats != nullptr ? context.vertexFormats->Supported(context, candidate) : QueryVertexBufferFormat(context, candidate);
         };
         auto host = format.format;
         auto hostSupported = supported(host);
-        for (auto components = 1u; !hostSupported && components <= 4u; ++components) {
+        for (auto components = 1u; !zero && !hostSupported && components <= 4u; ++components) {
             host = DecodeVertexFormat(attribute, components).format;
             hostSupported = supported(host);
         }
         if (!hostSupported) Require(false, "device does not support vertex format " + std::to_string(format.format));
         const auto binding = static_cast<std::uint32_t>(result.bindings.size());
-        result.bindings.push_back({binding, stride, attribute.fetchIndex == 0 ? VK_VERTEX_INPUT_RATE_VERTEX : VK_VERTEX_INPUT_RATE_INSTANCE});
+        result.bindings.push_back({binding, zero ? 0u : stride, attribute.fetchIndex == 0 ? VK_VERTEX_INPUT_RATE_VERTEX : VK_VERTEX_INPUT_RATE_INSTANCE});
         result.attributes.push_back({attribute.location, binding, host, 0});
+        if (ZeroVertexChangesLayout(attribute)) result.zeroLayoutLocations.push_back(attribute.location);
     }
     return result;
 }
 
 inline void ValidateVertexAddresses(std::span<const ShaderRecompiler::VertexAttribute> attributes) {
     for (const auto& attribute : attributes) {
-        if (NullVertexDescriptor(attribute)) continue;
+        if (NullVertexDescriptor(attribute) || VertexFetchOutOfRange(attribute)) continue;
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
         if (address == 0 || address % DecodeVertexFormat(attribute).alignment != 0) Require(false, "unaligned vertex buffer");
@@ -247,7 +284,7 @@ private:
     static bool sameShape(std::span<const ShaderRecompiler::VertexAttribute> a, std::span<const ShaderRecompiler::VertexAttribute> b) {
         return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](const auto& x, const auto& y) {
             return x.location == y.location && x.components == y.components && x.formatComponents == y.formatComponents && x.fetchIndex == y.fetchIndex &&
-                (x.resource.fields[1] & 0xffff0000u) == (y.resource.fields[1] & 0xffff0000u) && x.resource.fields[3] == y.resource.fields[3] && NullVertexDescriptor(x) == NullVertexDescriptor(y);
+                (x.resource.fields[1] & 0xffff0000u) == (y.resource.fields[1] & 0xffff0000u) && x.resource.fields[3] == y.resource.fields[3] && NullVertexDescriptor(x) == NullVertexDescriptor(y) && ZeroVertexChangesLayout(x) == ZeroVertexChangesLayout(y);
         });
     }
     static std::size_t bypassIndex(std::uint64_t variant) {
@@ -274,28 +311,6 @@ private:
     std::unordered_map<std::uint64_t, Entry> entries;
 };
 
-inline std::uint32_t VertexBufferOutOfBoundsSelect(const ShaderRecompiler::VertexAttribute& attribute) {
-    return (attribute.resource.fields[3] >> 28u) & 3u;
-}
-
-inline bool VertexFetchOutOfRange(const ShaderRecompiler::VertexAttribute& attribute) {
-    const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
-    if (stride != 0 || NullVertexDescriptor(attribute)) return false;
-    const auto select = VertexBufferOutOfBoundsSelect(attribute);
-    const auto records = attribute.resource.fields[2];
-    if (select == 0u) return true;
-    if (select == 3u) return records < DecodeVertexFormat(attribute).bytes;
-    return records == 0;
-}
-
-inline bool StridedFetchReadsZero(const ShaderRecompiler::VertexAttribute& attribute) {
-    const auto select = VertexBufferOutOfBoundsSelect(attribute);
-    const auto records = attribute.resource.fields[2];
-    if (select == 2u) return records == 0;
-    if (select == 3u) return records < DecodeVertexFormat(attribute).bytes;
-    return false;
-}
-
 inline std::uint64_t ZeroStrideAvailableBytes(const ShaderRecompiler::VertexAttribute& attribute) {
     return VertexFetchOutOfRange(attribute) ? 0u : DecodeVertexFormat(attribute).bytes;
 }
@@ -305,6 +320,7 @@ inline std::size_t VertexBufferExtent(const ShaderRecompiler::VertexAttribute& a
     const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
     const auto records = attribute.resource.fields[2];
     Require(attribute.fetchIndex <= 1, "unsupported vertex fetch index");
+    if (VertexFetchOutOfRange(attribute)) return ZeroVertexFormat(attribute).bytes;
     const auto bytes = stride == 0 ? ZeroStrideAvailableBytes(attribute) : records == 0 ? 0 : static_cast<std::uint64_t>(records - 1u) * stride + DecodeVertexFormat(attribute).bytes;
     Require(bytes != 0 && bytes <= std::numeric_limits<std::size_t>::max(), "empty or oversized vertex buffer descriptor");
     const auto address = attribute.resource.fields[0] | (static_cast<std::uint64_t>(attribute.resource.fields[1] & 0xffffu) << 32u);
@@ -319,12 +335,12 @@ inline std::size_t VertexBufferReadSize(const ShaderRecompiler::VertexAttribute&
     const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
     const auto records = attribute.resource.fields[2];
     Require(attribute.fetchIndex <= 1, "unsupported vertex fetch index");
+    if (VertexFetchOutOfRange(attribute)) return ZeroVertexFormat(attribute).bytes;
     const auto index = attribute.fetchIndex == 0 ? maxIndex : firstInstance + instances - 1u;
     const auto bytes = DecodeVertexFormat(attribute).bytes;
     const auto select = VertexBufferOutOfBoundsSelect(attribute);
     const auto indexChecked = stride == 0 && select == 1u;
-    const auto readsZero = stride != 0 && select >= 2u && StridedFetchReadsZero(attribute);
-    if (readsZero || (indexChecked && index >= records)) {
+    if (indexChecked && index >= records) {
         Require(false, "vertex fetch exceeds descriptor record count: OOB_SELECT " + std::to_string(select) + ", stride " + std::to_string(stride) + ", NUM_RECORDS " + std::to_string(records) + (attribute.fetchIndex == 0 ? ", vertex index " : ", instance index ") + std::to_string(index));
     }
     const auto required = static_cast<std::uint64_t>(stride) * index + bytes;

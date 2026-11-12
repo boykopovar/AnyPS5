@@ -12380,12 +12380,10 @@ void validationTests() {
             narrow.resource.fields[3] = (74u << 12u) | (2u << 28u);
             Require(AgcDriver::Graphics::VertexBufferReadSize(narrow, 319706, 1) == 12u * 319706u + 12u, "oob_select 2 stride 12 index past NUM_RECORDS was rejected");
             narrow.resource.fields[2] = 0;
-            expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(narrow, 1, 1); }, "vertex fetch exceeds descriptor record count: OOB_SELECT 2, stride 12, NUM_RECORDS 0, vertex index 1");
+            Require(AgcDriver::Graphics::VertexBufferReadSize(narrow, 1, 1) == 16 && AgcDriver::Graphics::VertexBufferExtent(narrow) == 16, "a zero-record select-2 descriptor did not use the zero binding");
         }
         attribute.resource.fields[3] = 0x3004dfacu;
-        Require(AgcDriver::Graphics::VertexBufferExtent(attribute) == 80, "oob_select 3 indirect extent is not the descriptor's record range");
-        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "vertex fetch exceeds descriptor record count: OOB_SELECT 3, stride 32, NUM_RECORDS 3, vertex index 3");
-        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1); }, "record count");
+        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1) == 16 && AgcDriver::Graphics::VertexBufferExtent(attribute) == 16, "a short select-3 descriptor did not use the zero binding");
         attribute.resource.fields[2] = 72;
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1) == 112, "oob_select 3 with NUM_RECORDS covering the fetch rejected an index");
         attribute.resource.fields[2] = 3;
@@ -12400,8 +12398,8 @@ void validationTests() {
             zeroStride(0, records);
             Require(AgcDriver::Graphics::VertexFetchOutOfRange(attribute), "OOB_SELECT 0 must read every zero-stride fetch as zero");
             Require(AgcDriver::Graphics::ZeroStrideAvailableBytes(attribute) == 0, "OOB_SELECT 0 zero-stride fetch has bytes to read");
-            expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1); }, "byte range");
-            expectFailure([&] { AgcDriver::Graphics::VertexBufferExtent(attribute); }, "empty or oversized");
+            Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1) == 16, "a zero fetch did not size its constant host binding");
+            Require(AgcDriver::Graphics::VertexBufferExtent(attribute) == 16, "a zero indirect fetch did not size its constant host binding");
         }
         zeroStride(1, 16);
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 100, 2) == 16, "zero stride must repeat one value");
@@ -12435,7 +12433,7 @@ void validationTests() {
         for (const auto records : {1u, 8u, 15u}) {
             zeroStride(3, records);
             Require(AgcDriver::Graphics::VertexFetchOutOfRange(attribute), "OOB_SELECT 3 must read a fetch that only partly fits as zero");
-            expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1); }, "byte range");
+            Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1) == 16, "a zero fetch did not size its constant host binding");
         }
         for (const auto records : {16u, 17u, 0xffffffffu}) {
             zeroStride(3, records);
