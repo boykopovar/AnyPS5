@@ -1,4 +1,5 @@
 #include "prx/libcurl/src/CurlHost.hpp"
+#include "prx/libcurl/src/CurlSockets.hpp"
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -309,7 +310,7 @@ static void SocketTransfer(bool callbacks) {
 }
 
 static bool IsSet(const guest_fd_set& set, int descriptor) {
-    return (set.fds_bits[descriptor / 64] & (std::uint64_t{1} << (descriptor % 64))) != 0;
+    return descriptor >= 0 && descriptor < 1024 && (set.fds_bits[descriptor / 64] & (std::uint64_t{1} << (descriptor % 64))) != 0;
 }
 
 static void FdsetTransfer() {
@@ -440,6 +441,18 @@ static void ErrorsAndExtraDescriptors() {
     Require(curl_multi_socket_all_nid_postfix(multi, &running) == CURLM_OK && running == 0);
     Require(curl_multi_socket_action_nid_postfix(nullptr, -1, 0, &running) == CURLM_BAD_HANDLE);
     Require(curl_multi_fdset_nid_postfix(nullptr, nullptr, nullptr, nullptr, nullptr) == CURLM_BAD_HANDLE);
+    guest_fd_set boundSet{};
+    Require(!CurlSockets::Add_nid_no_patch(&boundSet, -1));
+    Require(!CurlSockets::Add_nid_no_patch(&boundSet, 1024));
+    Require(!CurlSockets::Add_nid_no_patch(&boundSet, 99999));
+    for (const auto word : boundSet.fds_bits) Require(word == 0);
+    Require(CurlSockets::Add_nid_no_patch(&boundSet, 42));
+    Require(IsSet(boundSet, 42));
+    Require(!IsSet(boundSet, -1));
+    Require(!IsSet(boundSet, 1024));
+    Require(CurlSockets::Add_nid_no_patch(nullptr, 42));
+    Require(!CurlSockets::Add_nid_no_patch(nullptr, -1));
+    Require(!CurlSockets::Add_nid_no_patch(nullptr, 1024));
     Require(curl_multi_poll_nid_postfix(nullptr, nullptr, 0, 0, nullptr) == CURLM_BAD_HANDLE);
     Require(curl_multi_wait_nid_postfix(multi, nullptr, 0, -1, nullptr) == CURLM_BAD_FUNCTION_ARGUMENT);
     int pair[2];
