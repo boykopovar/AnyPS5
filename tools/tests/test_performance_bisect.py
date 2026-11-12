@@ -671,7 +671,9 @@ class FocusedInputEdgeTests(unittest.TestCase):
         samples = [{"fps": value, "identity": IDENTITY} for value in (59.0, 61.0)]
         spread = (61.0 - 59.0) / 60.0 * 100
         result = performance_bisect.summarize(samples, spread)
-        self.assertAlmostEqual(result["spread_pct"], spread)
+        self.assertEqual(result["spread_pct"], spread)
+        with self.assertRaisesRegex(ValueError, "exceeds"):
+            performance_bisect.summarize(samples, math.nextafter(spread, 0.0))
 
 
     def test_summary_rejects_content_version_drift(self):
