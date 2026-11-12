@@ -514,13 +514,13 @@ interpret_builtin (FcFormatContext *c,
 	!read_word (c))
 	return FcFalse;
 
-    
+
     if (0) { }
 #define BUILTIN(name, func) \
     else if (0 == strcmp ((const char *) c->word, name))\
 	do { new_str = func (pat); ret = FcTrue; } while (0)
     BUILTIN ("unparse",  FormatUnparse);
- 
+
 #undef BUILTIN
     else
 	ret = FcFalse;
@@ -537,7 +537,7 @@ interpret_builtin (FcFormatContext *c,
 	    return FcFalse;
     }
 
-    
+
     if (0) { }
 #define BUILTIN(name, format) \
     else if (0 == strcmp ((const char *) c->word, name))\
@@ -592,7 +592,7 @@ skip_percent (FcFormatContext *c)
     if (!expect_char (c, '%'))
 	return FcFalse;
 
-    
+
     if (strtol ((const char *) c->format, (char **) &c->format, 10))
         {}
 
@@ -604,7 +604,7 @@ skip_percent (FcFormatContext *c)
 	switch (*c->format)
 	{
 	case '\\':
-	    c->format++; 
+	    c->format++;
 	    if (*c->format)
 		c->format++;
 	    continue;
@@ -627,7 +627,7 @@ skip_expr (FcFormatContext *c)
 	switch (*c->format)
 	{
 	case '\\':
-	    c->format++; 
+	    c->format++;
 	    if (*c->format)
 		c->format++;
 	    continue;
@@ -825,7 +825,7 @@ cescape (FcFormatContext *c,
 	 const FcChar8   *str,
 	 FcStrBuf        *buf)
 {
-    
+
 
     while(*str)
     {
@@ -864,7 +864,7 @@ xmlescape (FcFormatContext *c,
 	   const FcChar8   *str,
 	   FcStrBuf        *buf)
 {
-    
+
 
     while(*str)
     {
@@ -885,7 +885,7 @@ delete_chars (FcFormatContext *c,
 	      const FcChar8   *str,
 	      FcStrBuf        *buf)
 {
-    
+
 
     if (!expect_char (c, '(') ||
 	!read_chars (c, ')') ||
@@ -918,7 +918,7 @@ escape_chars (FcFormatContext *c,
 	      const FcChar8   *str,
 	      FcStrBuf        *buf)
 {
-    
+
 
     if (!expect_char (c, '(') ||
 	!read_chars (c, ')') ||
@@ -956,7 +956,7 @@ translate_chars (FcFormatContext *c,
     char *from, *to, repeat;
     int from_len, to_len;
 
-    
+
 
     if (!expect_char (c, '(') ||
 	!read_chars (c, ',') ||
@@ -967,7 +967,7 @@ translate_chars (FcFormatContext *c,
     from_len = strlen (from);
     to = from + from_len + 1;
 
-    
+
     c->word = (FcChar8 *) to;
     if (!read_chars (c, ')'))
     {
@@ -1021,14 +1021,14 @@ interpret_convert (FcFormatContext *c,
 	!read_word (c))
 	return FcFalse;
 
-    
+
     FcStrBufChar (buf, '\0');
     if (buf->failed)
 	return FcFalse;
     str = buf->buf + start;
     buf->len = start;
 
-    
+
     if (0) { }
 #define CONVERTER(name, func) \
     else if (0 == strcmp ((const char *) c->word, name))\
@@ -1054,7 +1054,7 @@ interpret_convert (FcFormatContext *c,
 
     FcStrBufInit (&new_buf, buf_static, sizeof (buf_static));
 
-    
+
     if (0) { }
 #define CONVERTER(name, func) \
     else if (0 == strcmp ((const char *) c->word, name))\
@@ -1108,7 +1108,7 @@ align_to_width (FcStrBuf *buf,
     len = buf->len - start;
     if (len < -width)
     {
-	
+
 	while (len++ < -width)
 	    FcStrBufChar (buf, ' ');
     }
@@ -1116,7 +1116,7 @@ align_to_width (FcStrBuf *buf,
     {
 	int old_len;
 	old_len = len;
-	
+
 	while (len++ < width)
 	    FcStrBufChar (buf, ' ');
 	if (buf->failed)
@@ -1143,13 +1143,13 @@ interpret_percent (FcFormatContext *c,
     if (!expect_char (c, '%'))
 	return FcFalse;
 
-    if (consume_char (c, '%')) 
+    if (consume_char (c, '%'))
     {
 	FcStrBufChar (buf, '%');
 	return FcTrue;
     }
 
-    
+
     width = strtol ((const char *) c->format, (char **) &c->format, 10);
 
     if (!expect_char (c, '{'))
@@ -1185,7 +1185,7 @@ interpret_expr (FcFormatContext *c,
 	switch (*c->format)
 	{
 	case '\\':
-	    c->format++; 
+	    c->format++;
 	    if (*c->format)
 		FcStrBufChar (buf, escaped_char (*c->format++));
 	    continue;
