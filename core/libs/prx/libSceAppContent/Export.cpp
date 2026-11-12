@@ -245,7 +245,7 @@ int APS5_VABI sceAppContentAppParamGetInt(uint32_t param_id, int32_t* value) {
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
     errno = savedErrno;
-    if (!copied) NotImplemented_nid_no_patch(__func__);
+    if (!copied) return SCE_APP_CONTENT_ERROR_PARAMETER;
     return 0;
 }
 

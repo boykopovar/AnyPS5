@@ -182,14 +182,9 @@ int main() {
 
     const int32_t expectedParams[] = {3, 23566, -7, 0, 2147483647};
     for (uint32_t id = 0; id < 5; ++id) {
-        const auto notImplemented = NotImplementedCalls_nid_no_patch();
-        bool threw = false;
-        try {
-            sceAppContentAppParamGetInt(id, reinterpret_cast<int32_t*>(std::uintptr_t{0x10}));
-        } catch (const std::runtime_error& error) {
-            threw = std::strcmp(error.what(), "sceAppContentAppParamGetInt not implemented") == 0;
-        }
-        Require(threw && NotImplementedCalls_nid_no_patch() == notImplemented + 1);
+        errno = EBUSY;
+        Require(sceAppContentAppParamGetInt(id, reinterpret_cast<int32_t*>(std::uintptr_t{0x10})) == ErrorParameter);
+        Require(errno == EBUSY);
         std::array<int32_t, 3> values{0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
         errno = EBUSY;
         Require(sceAppContentAppParamGetInt(id, &values[1]) == 0);
