@@ -144,6 +144,25 @@ int main() {
     drc.Set<std::uint32_t>(0x20, 0x8001);
     Require(setDrcParam(&drc) == ErrorArgument, "SetDrcParam took a second count above the limit");
 
+    try {
+        capture(0, out, nullptr, nullptr);
+        Require(false, "capture did not report unavailable service");
+    } catch (const std::runtime_error& err) {
+        Require(std::string(err.what()).find("screenshot service is not available") != std::string::npos, "capture error message");
+    }
+    try {
+        getAppInfo(0, out);
+        Require(false, "getAppInfo did not report unavailable service");
+    } catch (const std::runtime_error& err) {
+        Require(std::string(err.what()).find("screenshot service is not available") != std::string::npos, "getAppInfo error message");
+    }
+    try {
+        isVshDisabled(reinterpret_cast<int*>(out));
+        Require(false, "isVshDisabled did not report unavailable service");
+    } catch (const std::runtime_error& err) {
+        Require(std::string(err.what()).find("screenshot service is not available") != std::string::npos, "isVshDisabled error message");
+    }
+
     std::puts("ScreenShot checks passed");
     return 0;
 }

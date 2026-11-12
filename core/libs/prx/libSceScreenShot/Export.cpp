@@ -133,18 +133,22 @@ int APS5_VABI sceScreenShotEnableNotification() {
 int APS5_VABI sceScreenShotCapture(std::uint32_t type, void* result, int (APS5_VABI*)(void*), void*) {
     if (type >= 2 || !result) return ErrorArgument;
     ScreenShotService(__func__);
+    return 0;
 }
 int APS5_VABI sceScreenShotGetAppInfo(int id, void* info) {
     if (id == -1 || !info) return ErrorArgument;
     ScreenShotService(__func__);
+    return 0;
 }
 int APS5_VABI sceScreenShotGetDrcParam(int id, void* first, std::uint64_t, void* second, void* third, std::uint64_t, void* fourth) {
     if (id == -1 || !first || !second || !third || !fourth) return ErrorArgument;
     ScreenShotService(__func__);
+    return 0;
 }
 int APS5_VABI sceScreenShotIsVshScreenCaptureDisabled(int* isDisabled) {
     if (!isDisabled) return ErrorArgument;
     ScreenShotService(__func__);
+    return 0;
 }
 int APS5_VABI sceScreenShotSetDrcParam(const void* param) {
     std::byte buffer[0x30];
@@ -158,6 +162,7 @@ int APS5_VABI sceScreenShotSetDrcParam(const void* param) {
     if (!Field<const void*>(buffer, 0x08) || !Field<const void*>(buffer, 0x18)) return ErrorArgument;
     if (Field<std::uint32_t>(buffer, 0x10) != 0x400 || Field<std::uint32_t>(buffer, 0x20) != 0x8000) return ErrorArgument;
     ScreenShotService(__func__);
+    return 0;
 }
 int APS5_VABI sceScreenShotSetParam(const void* param) {
     std::byte buffer[0x28];
@@ -170,6 +175,7 @@ int APS5_VABI sceScreenShotSetParam(const void* param) {
     if (Field<std::uint64_t>(buffer, 0x20) != 0 || Field<std::uint32_t>(buffer, 0x00) != 0x28) return ErrorArgument;
     if (!StringFits(Field<const char*>(buffer, 0x08), 255) || !StringFits(Field<const char*>(buffer, 0x10), 255) || !StringFits(Field<const char*>(buffer, 0x18), 511)) return ErrorArgument;
     ScreenShotService(__func__);
+    return 0;
 }
 
 }
