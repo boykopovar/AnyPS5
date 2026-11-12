@@ -1203,6 +1203,10 @@ static void CheckErfConsoleBits() {
         Require(std::bit_cast<std::uint64_t>(erfc_nid_postfix(x)) == item.complement);
         Require(errno == (item.complementErrno != 0 ? item.complementErrno : 1234));
     }
+    for (const std::uint64_t input : {0x403c000000000000ull, 0x4060000000000000ull, 0x7fefffffffffffffull}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint64_t>(erfc_nid_postfix(std::bit_cast<double>(input))) == 0 && std::fetestexcept(FE_UNDERFLOW) == 0);
+    }
 }
 
 static void CheckLog10EdgeFlags() {

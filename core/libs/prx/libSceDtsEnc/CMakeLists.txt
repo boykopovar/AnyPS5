@@ -1,0 +1,15 @@
+add_library(libSceDtsEnc SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceDtsEnc PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceDtsEnc)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_dts_enc_tests ${LIBS_INCLUDE_DIR}/tests/GuestDtsEnc.cpp)
+    target_include_directories(guest_dts_enc_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_dts_enc_tests PRIVATE libSceDtsEnc libc)
+    configure_windows_unwind(guest_dts_enc_tests)
+    add_test(NAME guest_dts_enc COMMAND guest_dts_enc_tests)
+    if(WIN32)
+        set_tests_properties(guest_dts_enc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceDtsEnc>")
+    endif()
+endif()
