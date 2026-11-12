@@ -42,8 +42,10 @@ void CheckVs() {
     const auto* code = ShaderCode();
     Require(code[0] == 0xbeeb0387u && code[10] == 0xf80008cfu && code[11] == 0x03020001u && code[14] == 0xbf810000u);
 
-    Require(sceGnmSetEmbeddedVsShader(Fresh(), 0x1d, 1, 0) == Failure);
-    RequireUntouchedFrom(0);
+    for (const std::uint32_t invalidId : {1u, 2u, 10u, 100u, 0xffffffffu}) {
+        Require(sceGnmSetEmbeddedVsShader(Fresh(), 0x1d, invalidId, 0) == Failure);
+        RequireUntouchedFrom(0);
+    }
 }
 
 void CheckPs() {
@@ -63,8 +65,10 @@ void CheckPs() {
     const auto* depthOnly = ShaderCode();
     Require(depthOnly != black && depthOnly[1] == 0x7e040280u && depthOnly[2] == 0xf8001803u && depthOnly[4] == 0xbf810000u);
 
-    Require(sceGnmSetEmbeddedPsShader(Fresh(), 0x28, 2, 0) == Failure);
-    RequireUntouchedFrom(0);
+    for (const std::uint32_t invalidId : {2u, 3u, 10u, 100u, 0xffffffffu}) {
+        Require(sceGnmSetEmbeddedPsShader(Fresh(), 0x28, invalidId, 0) == Failure);
+        RequireUntouchedFrom(0);
+    }
 }
 
 } // namespace

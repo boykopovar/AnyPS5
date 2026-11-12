@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include <cerrno>
 #include "prx/libSceUsbStorage/include/InventoryExports.hpp"
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include <algorithm>
@@ -392,7 +393,10 @@ std::int32_t APS5_VABI sceUsbStorageGetDeviceInfo(std::uint32_t device, UsbStora
     record.productLength = CopyString(record.product, volume.product, __func__);
     record.serialNumberLength = CopyString(record.serialNumber, volume.serialNumber, __func__);
     record.flags = Flags(volume);
-    std::memcpy(info, &record, sizeof(record));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &record, sizeof(record));
+    errno = savedErrno;
+    if (!copied) return UsbStorage::InvalidArgument;
     return 0;
 }
 
@@ -410,11 +414,14 @@ std::int32_t APS5_VABI sceUsbStorageGetDeviceList(std::uint32_t* devices, std::i
     return 0;
 }
 
-int APS5_VABI sceUsbStorageGetMountPointOfShellCore(uint32_t device, char* mountPoint) {
+std::int32_t APS5_VABI sceUsbStorageGetMountPointOfShellCore(std::uint32_t device, char* mountPoint) {
+    if (mountPoint == nullptr) {
+        return UsbStorage::InvalidArgument;
+    }
     auto& service = State();
     std::lock_guard lock(service.mutex);
-    if (Find(service, device) == nullptr || mountPoint == nullptr) {
-        NotImplemented_nid_no_patch(__func__);
+    if (Find(service, device) == nullptr) {
+        return UsbStorage::DeviceNotFound;
     }
     WriteMountPoint(mountPoint, MountPoint(device));
     return 0;

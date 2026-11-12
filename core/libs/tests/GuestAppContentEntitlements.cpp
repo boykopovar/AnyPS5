@@ -3,7 +3,9 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <array>
+#include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -87,6 +89,13 @@ int main() {
     Require(list[1].status == 4);
     Require(std::strcmp(list[2].entitlement_label.data, "ADDONNODIR000001") == 0);
     Require(list[2].status == 4);
+
+    hitNum = 0x5a5a5a5au;
+    errno = EBUSY;
+    Require(sceAppContentGetAddcontInfoList(0, reinterpret_cast<AppContentAddcontInfo*>(std::uintptr_t{0x10}), 1, &hitNum) == ErrorParameter);
+    Require(hitNum == 0x5a5a5a5au && errno == EBUSY);
+    Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10})) == ErrorParameter);
+    Require(errno == EBUSY);
 
     NpUnifiedEntitlementLabel label0{};
     std::memcpy(label0.data, "ADDON00000000001", 16);
