@@ -143,6 +143,11 @@ class RelinkerEligibilityTests(unittest.TestCase):
         self.assertIs(result["outputs"]["relinker"], True)
         self.assertEqual(result["calls"], [["listCommits", "main", "author"]])
 
+    def test_pull_requests_run_one_macos_architecture_and_manual_runs_both(self):
+        macos = lambda result: [host.get("architectures", "native") for host in json.loads(result["outputs"]["relinker-hosts"]) if host["os"].startswith("macos")]
+        self.assertEqual(macos(self.run_gate([{"sha": "a"}], None)), ["native"])
+        self.assertEqual(macos(self.run_gate([{"sha": "a"}], None, manual=True)), ["native", "x86_64"])
+
     def test_author_with_only_merged_pull_requests_runs_the_relinker(self):
         result = self.run_gate([], {"total_count": 12, "incomplete_results": False, "items": []})
         self.assertIs(result["outputs"]["relinker"], True)
@@ -174,6 +179,11 @@ class RelinkerEligibilityTests(unittest.TestCase):
         self.assertIs(result["outputs"]["relinker"], False)
         self.assertIs(result["outputs"]["write-watch"], True)
         self.assertEqual(result["calls"], [])
+
+    def test_write_watch_backing_test_runs_the_write_watch_job(self):
+        for path in ("core/libs/tests/WriteWatchBacking.cpp", "core/libs/tests/WriteWatch.cpp"):
+            with self.subTest(path=path):
+                self.assertIs(self.run_gate([], None, files=(path,))["outputs"]["write-watch"], True)
 
     def test_relinker_build_inputs_outside_the_relinker_run_the_relinker(self):
         for path in ("core/libs/nid/src/NidCompute.cpp", "core/libs/nid/src/Sha1.cpp",
@@ -214,6 +224,38 @@ class RelinkerEligibilityTests(unittest.TestCase):
         self.assertIs(result["outputs"]["relinker"], True)
         self.assertEqual(result["calls"], [])
         self.assertIs(self.run_gate([], None, files=("README.md",), manual=True)["outputs"]["relinker"], False)
+
+
+class EligibilityJobConditionTests(unittest.TestCase):
+    def eligibility_runs(self, event_name, ref):
+        lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        job = lines.index("  eligibility:")
+        condition = next(line.split("if:", 1)[1].strip() for line in lines[job + 1:] if line.strip().startswith("if:"))
+        expression = condition.replace("github.event_name", repr(event_name)).replace("github.ref", repr(ref))
+        return eval(expression.replace("||", " or ").replace("&&", " and "), {})
+
+    def test_manual_run_from_a_branch_runs_eligibility(self):
+        self.assertTrue(self.eligibility_runs("workflow_dispatch", "refs/heads/fix/some-branch"))
+
+    def test_pull_request_and_main_push_still_run_eligibility(self):
+        self.assertTrue(self.eligibility_runs("pull_request", "refs/pull/7/merge"))
+        self.assertTrue(self.eligibility_runs("push", "refs/heads/main"))
+
+    def test_push_from_a_branch_skips_eligibility(self):
+        self.assertFalse(self.eligibility_runs("push", "refs/heads/fix/some-branch"))
+
+
+class ConcurrencyGroupTests(unittest.TestCase):
+    def workflow_line(self, prefix):
+        lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        return next(line.strip() for line in lines if line.strip().startswith(prefix))
+
+    def test_each_push_to_main_has_its_own_concurrency_group(self):
+        group = self.workflow_line("group: build-${{ github.event_name }}-")
+        self.assertIn("(github.event_name == 'push' && github.sha)", group)
+
+    def test_pushes_are_never_cancelled_by_a_later_push(self):
+        self.assertEqual(self.workflow_line("cancel-in-progress:"), "cancel-in-progress: ${{ github.event_name != 'push' }}")
 
 
 if __name__ == "__main__":

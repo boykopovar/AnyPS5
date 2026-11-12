@@ -24,8 +24,19 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         if (header.Type == 7) header.Alignment = std::max<std::uint64_t>(header.Alignment, 1);
         headers.push_back(header);
     }
-    if (std::none_of(headers.begin(), headers.end(), [&](const auto& header) { return header.Type == PT_GNU_STACK; }))
+    const auto lastStack = std::find_if(headers.rbegin(), headers.rend(), [](const auto& header) { return header.Type == PT_GNU_STACK; });
+    if (lastStack == headers.rend()) {
         headers.push_back({PT_GNU_STACK, PF_R | PF_W, 0, 0, 0, 0, 0, 16});
+    } else {
+        auto lastIndex = static_cast<std::size_t>(std::distance(lastStack, headers.rend()) - 1);
+        for (std::size_t i = 0; i < lastIndex; ++i) {
+            if (headers[i].Type == PT_GNU_STACK) {
+                headers.erase(headers.begin() + static_cast<std::ptrdiff_t>(i));
+                --i;
+                --lastIndex;
+            }
+        }
+    }
     std::vector<Domain::ProgramHeader> loads;
     for (const auto& header : headers)
         if (header.Type == 1) loads.push_back(header);
@@ -63,6 +74,17 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
             Io::WriteU32(symbols, index * 24, addString("__tls_get_addr"));
             needsTlsResolver = true;
         }
+    }
+    for (std::size_t index = 1; index < image.Symbols.size(); ++index) {
+        const auto& symbol = image.Symbols[index];
+        if (symbol.Value != 0 || symbol.Section == 0 || symbol.Section >= 0xff00 || (symbol.Info >> 4) == 0 ||
+            (symbol.Info & 15) != 2 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
+        const auto thunk = address();
+        if (thunk > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()) - 5)
+            throw Domain::RelinkerException("Guest export at address 0 exceeds relative branch range");
+        bytes.push_back(0xe9);
+        Io::AppendU32(bytes, static_cast<std::uint32_t>(-static_cast<std::int32_t>(thunk + 5)));
+        Io::WriteU64(symbols, index * 24 + 8, thunk);
     }
     std::vector<std::uint64_t> needed;
     for (const auto& dependency : dependencies) needed.push_back(addString(dependency));

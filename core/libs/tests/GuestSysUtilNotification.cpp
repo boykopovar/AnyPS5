@@ -1,4 +1,5 @@
 #include "prx/libSceSysUtil/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "tests/TemporaryFile.hpp"
 
@@ -6,6 +7,7 @@
 #include <cstdlib>
 #include <exception>
 #include <string>
+#include <vector>
 #ifdef _WIN32
 #include <io.h>
 #else
@@ -74,12 +76,18 @@ int main() {
 
     int hello = -1;
     int empty = -1;
+    int emptyString = -1;
+    int type1 = -1;
+    int type2 = -1;
     int truncated = -1;
     std::string output;
     try {
         StandardErrorCapture capture;
         hello = sceSysUtilSendSystemNotificationWithText(7, "hello");
         empty = sceSysUtilSendSystemNotificationWithText(-1, nullptr);
+        emptyString = sceSysUtilSendSystemNotificationWithText(0, "");
+        type1 = sceSysUtilSendSystemNotificationWithText(1, "notification type 1");
+        type2 = sceSysUtilSendSystemNotificationWithText(2, "notification type 2");
         truncated = sceSysUtilSendSystemNotificationWithText(0, longText.c_str());
         output = capture.Text();
     } catch (const std::exception& error) {
@@ -89,13 +97,37 @@ int main() {
 
     Require(hello == 0, "a text notification was not sent");
     Require(empty == 0, "a null message was not sent as an empty text");
+    Require(emptyString == 0, "an empty string notification was not sent");
+    Require(type1 == 0, "a type 1 notification was not sent");
+    Require(type2 == 0, "a type 2 notification was not sent");
     Require(truncated == 0, "a long message was not sent");
-    const std::string expected = "[notification] hello\n[notification] \n[notification] " + longText.substr(0, 179) + "\n";
+    Require(sceSysUtilSendSystemNotificationWithText(0, reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x8002000Eu), "an unreadable message pointer did not return EFAULT");
+    Require(sceSysUtilSendSystemNotificationWithText(0, reinterpret_cast<const char*>(~std::uintptr_t{0xfff})) == static_cast<int>(0x8002000Eu), "an unreadable message pointer did not return EFAULT");
+    const std::string expected =
+        "[notification] hello\n"
+        "[notification] \n"
+        "[notification] \n"
+        "[notification] notification type 1\n"
+        "[notification] notification type 2\n"
+        "[notification] " + longText.substr(0, 179) + "\n";
     if (output != expected) {
         std::fprintf(stderr, "notification output was:\n%s", output.c_str());
         Require(false, "the notification output differs from the sent texts");
     }
 
+    Require(sceKernelSendNotificationRequest(0, reinterpret_cast<const void*>(0x10), 3120, 0) == static_cast<int>(0x8002000eu), "invalid request memory must return badAddress");
+    std::vector<std::uint8_t> validReq(3120, 0);
+    constexpr auto invalidArgument = static_cast<int>(0x80020016u);
+    constexpr auto badAddress = static_cast<int>(0x8002000eu);
+    constexpr auto notSupported = static_cast<int>(0x8002002du);
+
+    Require(sceKernelSendNotificationRequest(0, nullptr, 3120, 0) == badAddress, "null request must return badAddress");
+    Require(sceKernelSendNotificationRequest(-1, validReq.data(), 3120, 0) == invalidArgument, "negative device must return invalidArgument");
+    Require(sceKernelSendNotificationRequest(0, validReq.data(), 0, 0) == invalidArgument, "zero size must return invalidArgument");
+    Require(sceKernelSendNotificationRequest(0, validReq.data(), 3119, 0) == invalidArgument, "undersized request must return invalidArgument");
+    Require(sceKernelSendNotificationRequest(0, validReq.data(), 3121, 0) == invalidArgument, "oversized request must return invalidArgument");
+    Require(sceKernelSendNotificationRequest(1, validReq.data(), 3120, 0) == notSupported, "nonzero device must return notSupported");
+    Require(sceKernelSendNotificationRequest(0, validReq.data(), 3120, 1) == notSupported, "nonzero flags must return notSupported");
     std::puts("SysUtil notification tests passed");
     return 0;
 }

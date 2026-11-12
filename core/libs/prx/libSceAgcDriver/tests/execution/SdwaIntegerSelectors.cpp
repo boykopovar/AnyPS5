@@ -172,12 +172,119 @@ void Check() {
     }
 }
 
+constexpr std::uint32_t BitResults = 7u * 2u * 6u * 3u;
+constexpr std::uint32_t Previous = 0xabcd1234u;
+constexpr std::array<std::uint32_t, 32> BitSources{
+    0u, 0xffffffffu, 0x40000000u, 0x80000000u, 0xfffffffeu, 0x80808080u, 0x80008000u, 0x01020384u,
+    0x8504f306u, 0x12345678u, 0x9abcdef0u, 0xfedcba98u, 0x76543210u, 0x00ff00ffu, 0xff00ff00u, 0x7fffffffu,
+    0x80u, 0x8000u, 0x800000u, 0xffu, 0xff00u, 0xff0000u, 0xff000000u, 0x7f7f7f7fu,
+    0x80007fffu, 0x7fff8000u, 0xc3a5815au, 0x5a81a5c3u, 0x0f1e2d3cu, 0xf0e1d2c3u, 0x40c08001u, 0xdeadbeefu,
+};
+alignas(256) std::array<std::uint32_t, 64> BitInput{};
+alignas(256) std::array<std::uint32_t, 64u * BitResults> BitOutput{};
+
+std::uint32_t FieldWidth(std::uint32_t selector) {
+    return selector < 4u ? 8u : selector < 6u ? 16u : 32u;
 }
 
-int main() {
+std::uint32_t FieldOffset(std::uint32_t selector) {
+    return selector < 4u ? selector * 8u : selector == 5u ? 16u : 0u;
+}
+
+std::uint32_t Extend(std::uint32_t value, std::uint32_t width, bool sign) {
+    if (width == 32u) return value;
+    const auto mask = (1u << width) - 1u;
+    value &= mask;
+    return sign && (value & (1u << (width - 1u))) ? value | ~mask : value;
+}
+
+std::uint32_t BitOperation(std::uint32_t opcode, std::uint32_t value) {
+    if (opcode == 0x38u) {
+        std::uint32_t result = 0u;
+        for (std::uint32_t bit = 0u; bit < 32u; ++bit) result |= ((value >> bit) & 1u) << (31u - bit);
+        return result;
+    }
+    if (opcode == 0x3bu && (value & 0x80000000u)) value = ~value;
+    if (value == 0u) return 0xffffffffu;
+    return opcode == 0x3au ? static_cast<std::uint32_t>(std::countr_zero(value)) : static_cast<std::uint32_t>(std::countl_zero(value));
+}
+
+void RunBits(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t waveSize) {
+    for (std::uint32_t lane = 0u; lane < waveSize; ++lane) BitInput[lane] = BitSources[lane % BitSources.size()];
+    BitOutput.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> words{
+        0x7e020300u, 0x160400ffu, BitResults, 0xe0302000u, 0x80000401u, 0xbf8c3f70u,
+    };
+    std::uint32_t index = 0u;
+    for (std::uint32_t source = 0u; source < 7u; ++source) {
+        for (std::uint32_t sign = 0u; sign < 2u; ++sign) {
+            for (std::uint32_t destination = 0u; destination < 6u; ++destination) {
+                for (std::uint32_t unused = 0u; unused < 3u; ++unused) {
+                    const auto destinationRegister = 5u + index % 4u;
+                    words.insert(words.end(), {
+                        0x7e0002ffu | (destinationRegister << 17u), Previous,
+                        0x7e0000f9u | (destinationRegister << 17u) | (opcode << 9u),
+                        4u | (destination << 8u) | (unused << 11u) | (source << 16u) | (sign << 19u),
+                    });
+                    if (index % 4u == 3u) words.insert(words.end(), {0xe0782000u | ((index - 3u) * 4u), 0x80010502u});
+                    ++index;
+                }
+            }
+        }
+    }
+    words.push_back(0xbf810000u);
+    std::vector<std::uint32_t> userData(8u);
+    auto input = BufferDescriptor(BitInput.data(), 64u);
+    auto output = BufferDescriptor(BitOutput.data(), static_cast<std::uint32_t>(BitOutput.size()));
+    input[1] |= 4u << 16u;
+    output[1] |= 4u << 16u;
+    input[3] = output[3] = 0x11016facu;
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(words);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{waveSize, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(), {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    index = 0u;
+    for (std::uint32_t source = 0u; source < 7u; ++source) {
+        for (std::uint32_t sign = 0u; sign < 2u; ++sign) {
+            for (std::uint32_t destination = 0u; destination < 6u; ++destination) {
+                for (std::uint32_t unused = 0u; unused < 3u; ++unused, ++index) {
+                    for (std::uint32_t lane = 0u; lane < waveSize; ++lane) {
+                        const auto value = Extend(BitInput[lane] >> FieldOffset(source), FieldWidth(source), sign != 0u);
+                        const auto field = Extend(BitOperation(opcode, value), FieldWidth(destination), unused == 1u);
+                        const auto offset = FieldOffset(destination);
+                        const auto mask = ((1u << FieldWidth(destination)) - 1u) << offset;
+                        const auto expected = (field << offset) | (unused == 2u ? Previous & ~mask : 0u);
+                        const auto name = "opcode " + Hex(opcode) + " wave" + std::to_string(waveSize) + " source " +
+                            std::to_string(source) + " sext " + std::to_string(sign) + " destination " +
+                            std::to_string(destination) + " unused " + std::to_string(unused);
+                        Expect(lane, BitOutput[lane * BitResults + index], expected, name.c_str());
+                    }
+                }
+            }
+        }
+    }
+    std::printf("sdwa bit operation 0x%x wave%u: %u combinations passed\n", opcode, waveSize, BitResults);
+}
+
+}
+
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        Require(argc == 1 || (argc == 2 && std::string(argv[1]) == "wave64"), "expected no argument or wave64");
+        const auto waveSize = argc == 2 ? 64u : 32u;
+        for (const auto opcode : {0x38u, 0x39u, 0x3au, 0x3bu}) RunBits(*device, opcode, waveSize);
         Run(*device);
         Check();
         std::puts("sdwa integer selectors tests passed");

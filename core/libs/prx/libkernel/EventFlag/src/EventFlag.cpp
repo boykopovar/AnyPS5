@@ -4,6 +4,7 @@
 #include <atomic>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/PrimedSharedMutex.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <chrono>
@@ -97,7 +98,7 @@ struct EventFlagHandle {
     bool opened = false;
 };
 
-std::shared_mutex eventFlagRegistryMutex;
+PrimedSharedMutex eventFlagRegistryMutex;
 std::unordered_map<KernelEventFlag, std::shared_ptr<EventFlagHandle>> eventFlagRegistry;
 
 std::shared_ptr<EventFlagHandle> ResolveEventFlag(KernelEventFlag handle) {

@@ -113,6 +113,18 @@ struct PadVirtualDeviceParameter;
 struct PadVirtualDeviceId;
 struct PadVirtualDeviceComponentInformation;
 
+struct PadContainerIdInformation {
+    std::uint32_t size;
+    char id[0x2000];
+};
+
+struct PadVolumeGain {
+    std::uint8_t speakerVolume;
+    std::uint8_t headsetVolume;
+    std::uint8_t padding;
+    std::uint8_t micGain;
+};
+
 struct PadVirtualTriggerInternalState {
     std::uint32_t states[2];
     std::uint8_t mode;
@@ -155,6 +167,14 @@ int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInfor
 int APS5_VABI scePadGetExtControllerInformation(int handle, void* info);
 int APS5_VABI scePadSetProcessPrivilege(int privilege);
 int APS5_VABI scePadSetParticularMode(bool mode);
+int APS5_VABI scePadGetParticularMode(void);
+int APS5_VABI scePadGetControllerBusType(int handle, int* busType);
+int APS5_VABI scePadGetJackState(int handle, int* state);
+int APS5_VABI scePadIsControllerUpdateRequired(int handle);
+int APS5_VABI scePadGetContainerIdInformation(int handle, PadContainerIdInformation* info);
+int APS5_VABI scePadIsSupportedAudioFunction(int handle);
+int APS5_VABI scePadSetAudioOutPath(int handle, int path);
+int APS5_VABI scePadSetVolumeGain(int handle, const PadVolumeGain* gain);
 int APS5_VABI scePadInit_nid_postfix(void);
 int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void* param);
 int APS5_VABI scePadOpenExt(int userId, int type, int index, const void* param);
@@ -167,6 +187,7 @@ int APS5_VABI scePadReadState(int handle, PadData* data);
 int APS5_VABI scePadResetLightBar(int handle);
 int APS5_VABI scePadResetOrientation(int handle);
 int APS5_VABI scePadSetAngularVelocityDeadbandState(int handle, bool enable);
+int APS5_VABI scePadSetConnection(std::int32_t handle, bool connected);
 int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param);
 int APS5_VABI scePadSetMotionSensorState(int handle, bool enable);
 int APS5_VABI scePadSetTiltCorrectionState(int handle, bool enabled);
@@ -192,7 +213,7 @@ int APS5_VABI scePadSetExtensionReport(std::int32_t handle, const PadExtensionRe
 int APS5_VABI scePadGetExtensionUnitInfo(std::int32_t handle, PadExtensionUnitInfo* info);
 int APS5_VABI scePadEnableExtensionPort(bool enabled);
 int APS5_VABI scePadEnableSpecificDeviceClass(std::int32_t deviceClass);
-int APS5_VABI scePadOpenExt2(std::uint64_t deviceId, std::int32_t type, const void* reserved);
+int APS5_VABI scePadOpenExt2(std::int32_t userId, std::int32_t paramSize, const void* param);
 int APS5_VABI scePadDeviceOpen(std::uint64_t deviceId, std::int32_t type, std::int32_t index);
 int APS5_VABI scePadGetDataInternal(std::uint8_t port, PadData* data);
 int APS5_VABI scePadSetUserColor(std::int32_t handle, std::uint32_t color);
@@ -309,7 +330,7 @@ int APS5_VABI scePadSetPS4BcVibrationMode(std::uint8_t mode);
 int APS5_VABI scePadSetVirtualDeviceComponentInformation(std::int32_t deviceId, const PadVirtualDeviceComponentInformation* info);
 int APS5_VABI scePadEnablePs4CompatibleMode(std::int32_t handle, bool enabled);
 int APS5_VABI scePadGetLicenseControllerInformation(std::int32_t handle, PadLicenseControllerInformation* info);
-int APS5_VABI scePadReadHistory(std::int32_t handle, PadHistoryData* data, std::int32_t count);
+int APS5_VABI scePadReadHistory(std::int32_t handle, PadHistoryData* data, std::uint32_t size);
 int APS5_VABI scePadStartRecording(void);
 int APS5_VABI scePadStopRecording(void);
 int APS5_VABI scePadRemoteControlInsertData(const std::uint8_t* data);

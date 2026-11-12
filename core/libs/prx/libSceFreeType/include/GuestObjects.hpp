@@ -5,6 +5,7 @@
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_SYSTEM_H
 
 #include <list>
 #include <memory>
@@ -26,6 +27,19 @@ struct GuestSize {
     FT_Size host = nullptr;
 };
 
+struct RasterTargetSpan {
+    unsigned char* begin = nullptr;
+    std::size_t bytes = 0;
+};
+
+RasterTargetSpan RasterTargetSpan_nid_no_patch(const GuestBitmap& target);
+
+struct GuestStreamBridge {
+    GuestStreamRec* guest = nullptr;
+    FT_StreamRec_ host{};
+    bool closed = false;
+};
+
 struct GuestFace {
     GuestFaceRec rec{};
     GuestGlyphSlotRec slot{};
@@ -41,6 +55,7 @@ struct GuestFace {
     std::vector<GuestCharMapRec> charmaps;
     std::vector<GuestCharMapRec*> charmapPointers;
     std::vector<GuestVector> outlinePoints;
+    std::unique_ptr<GuestStreamBridge> stream;
 
     ~GuestFace() { UnregisterBitmap_nid_no_patch(&slot.bitmap); }
 };
@@ -56,5 +71,7 @@ void SyncSizeRecord_nid_no_patch(GuestFace& face, GuestSizeRec& rec, FT_Size hos
 void SyncSlot(GuestFace& face);
 
 }
+
+extern "C" void FreeTypeSyncFace_nid_no_patch(FreeType::GuestFaceRec* face);
 
 #endif

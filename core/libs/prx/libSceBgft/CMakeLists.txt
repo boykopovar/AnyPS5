@@ -1,0 +1,16 @@
+add_library(libSceBgft SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_link_libraries(libSceBgft PRIVATE libkernel libc)
+target_include_directories(libSceBgft PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceBgft)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_bgft_tests ${LIBS_INCLUDE_DIR}/tests/GuestBgft.cpp)
+    target_include_directories(guest_bgft_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_bgft_tests PRIVATE libSceBgft libc)
+    configure_windows_unwind(guest_bgft_tests)
+    add_test(NAME guest_bgft COMMAND guest_bgft_tests)
+    if(WIN32)
+        set_tests_properties(guest_bgft PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceBgft>")
+    endif()
+endif()

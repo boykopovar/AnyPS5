@@ -6,10 +6,12 @@
 
 namespace ShaderRecompiler {
 
+void PlanFaultCheckDominators(SpirvEmitterState& state, const IrProgram& program);
 std::uint32_t EmitRuntimeBufferLoad(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t components);
 void EmitRuntimeBufferStore(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t components);
 std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const IrValue& instruction);
 std::uint32_t EmitRuntimeBufferAtomic(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t bits, std::uint32_t active, const std::function<std::uint32_t(std::uint32_t)>& operation);
+void EmitRuntimeBufferAtomicHalves(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t active, const std::function<void(std::uint32_t)>& operation);
 
 }
 

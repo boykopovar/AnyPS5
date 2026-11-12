@@ -25,7 +25,6 @@ enum class Vop2SdwaProfile {
     None,
     Float,
     Integer,
-    Float16,
 };
 
 struct Vop2OpcodeInfo {
@@ -78,19 +77,19 @@ constexpr Vop2OpcodeInfo vop2Opcodes[] = {
     {0x2cu, RdnaOpcode::VMadmkF32},
     {0x2du, RdnaOpcode::VMadakF32},
     {0x2fu, RdnaOpcode::VCvtPkrtzF16F32, Vop2SdwaProfile::Float},
-    {0x32u, RdnaOpcode::VAddF16, Vop2SdwaProfile::Float16},
-    {0x33u, RdnaOpcode::VSubF16, Vop2SdwaProfile::Float16},
-    {0x34u, RdnaOpcode::VSubrevF16, Vop2SdwaProfile::Float16},
-    {0x35u, RdnaOpcode::VMulF16, Vop2SdwaProfile::Float16},
+    {0x32u, RdnaOpcode::VAddF16, Vop2SdwaProfile::Float},
+    {0x33u, RdnaOpcode::VSubF16, Vop2SdwaProfile::Float},
+    {0x34u, RdnaOpcode::VSubrevF16, Vop2SdwaProfile::Float},
+    {0x35u, RdnaOpcode::VMulF16, Vop2SdwaProfile::Float},
     {0x36u, RdnaOpcode::VFmacF16},
     {0x37u, RdnaOpcode::VFmamkF16},
     {0x38u, RdnaOpcode::VFmaakF16},
-    {0x39u, RdnaOpcode::VMaxF16, Vop2SdwaProfile::Float16},
-    {0x3au, RdnaOpcode::VMinF16, Vop2SdwaProfile::Float16},
+    {0x39u, RdnaOpcode::VMaxF16, Vop2SdwaProfile::Float},
+    {0x3au, RdnaOpcode::VMinF16, Vop2SdwaProfile::Float},
     {0x3cu, RdnaOpcode::VPkFmacF16},
     {0x06u, RdnaOpcode::VMacLegacyF32},
     {0x07u, RdnaOpcode::VMulLegacyF32, Vop2SdwaProfile::Float},
-    {0x3bu, RdnaOpcode::VLdexpF16, Vop2SdwaProfile::Float16},
+    {0x3bu, RdnaOpcode::VLdexpF16, Vop2SdwaProfile::Float},
 };
 
 constexpr VectorOpcodeInfo vop1Opcodes[] = {
@@ -725,13 +724,7 @@ bool hasDppForm(RdnaOpcode opcode) {
 }
 
 bool acceptsDpp8(RdnaOpcode opcode) {
-    switch (opcode) {
-        case RdnaOpcode::VMovrelsB32:
-        case RdnaOpcode::VMovrelsdB32:
-        case RdnaOpcode::VMovrelsd2B32:
-            return false;
-        default: return hasDppForm(opcode);
-    }
+    return hasDppForm(opcode);
 }
 
 bool isNativeVop3F16TernaryOpcode(RdnaOpcode opcode) {
@@ -917,6 +910,7 @@ bool isVop1FloatResultOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::VFractF16:
         case RdnaOpcode::VSinF16:
         case RdnaOpcode::VCosF16:
+        case RdnaOpcode::VFrexpMantF16:
         case RdnaOpcode::VSinF32:
         case RdnaOpcode::VCosF32: return true;
         default: return false;
@@ -1123,22 +1117,25 @@ struct Vop1SdwaRule {
 
 constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VMovB32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
-    {RdnaOpcode::VCvtF32U32, sdwaSelAll(), 0, 0, false},
-    {RdnaOpcode::VCvtF32I32, sdwaSelAll(), 0, 0, false},
-    {RdnaOpcode::VCvtF32Ubyte0, sdwaSelAll(), 0, 0, false},
-    {RdnaOpcode::VCvtF32Ubyte1, sdwaSelAll(), 0, 0, false},
-    {RdnaOpcode::VCvtF32Ubyte2, sdwaSelAll(), 0, 0, false},
-    {RdnaOpcode::VCvtF32Ubyte3, sdwaSelAll(), 0, 0, false},
+    {RdnaOpcode::VCvtF32U32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
+    {RdnaOpcode::VCvtF32I32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
+    {RdnaOpcode::VCvtF32Ubyte0, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
+    {RdnaOpcode::VCvtF32Ubyte1, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
+    {RdnaOpcode::VCvtF32Ubyte2, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
+    {RdnaOpcode::VCvtF32Ubyte3, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VNotB32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
-    {RdnaOpcode::VFfblB32, sdwaSelAll(), 0, 0, false},
-    {RdnaOpcode::VFfbhU32, sdwaSelAll(), 0, 0, false},
-    {RdnaOpcode::VBfrevB32, sdwaSelAll(), 0, 0, false},
-    {RdnaOpcode::VCvtF32F16, sdwaSelWords() | sdwaSelFull(), 0, 0, true},
+    {RdnaOpcode::VFfblB32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
+    {RdnaOpcode::VFfbhI32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
+    {RdnaOpcode::VFfbhU32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
+    {RdnaOpcode::VBfrevB32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
+    {RdnaOpcode::VCvtF32F16, sdwaSelWords() | sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCvtF16F32, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), true},
     {RdnaOpcode::VCvtF16U16, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VCvtU16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCvtF16I16, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VCvtI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
+    {RdnaOpcode::VCvtNormI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
+    {RdnaOpcode::VCvtNormU16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VRcpF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VSqrtF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VRsqF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
@@ -1151,10 +1148,27 @@ constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VFractF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VSinF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCosF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
+    {RdnaOpcode::VFrexpMantF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
+    {RdnaOpcode::VFrexpExpI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCvtU32F32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
     {RdnaOpcode::VCvtI32F32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
     {RdnaOpcode::VCvtRpiI32F32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
     {RdnaOpcode::VCvtFlrI32F32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VSinF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VCosF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VRcpF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VSqrtF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VRsqF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VExpF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VLogF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VRcpIflagF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VFractF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VTruncF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VCeilF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VRndneF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VFloorF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VFrexpExpI32F32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VFrexpMantF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
 };
 
 const Vop1SdwaRule* findVop1SdwaRule(RdnaOpcode opcode) {
@@ -1208,6 +1222,14 @@ void validateVop1Sdwa(const RdnaInstruction& instruction, std::uint32_t destinat
     }
 }
 
+RdnaOperand decodeSdwaSource(std::uint32_t code, std::uint32_t programCounter) {
+    const RdnaOperand operand = DecodeRdnaScalarSource(code, programCounter);
+    if (operand.kind == RdnaOperandKind::LiteralConstant) {
+        throw std::invalid_argument("SDWA source operand cannot be a literal constant");
+    }
+    return operand;
+}
+
 void decodeVop1Sdwa(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex, std::uint32_t vdst, RdnaInstruction& instruction) {
     if (static_cast<std::size_t>(wordIndex) + 1u >= code.size()) {
         throw std::out_of_range("truncated VOP1 SDWA instruction");
@@ -1230,7 +1252,7 @@ void decodeVop1Sdwa(std::uint32_t programCounter, std::span<const std::uint32_t>
     instruction.destination = usesScalarDestination(instruction.op)
         ? DecodeRdnaScalarDestination(vdst, programCounter)
         : DecodeRdnaVectorGpr(vdst);
-    instruction.source0 = DecodeRdnaScalarSource(src0 + (s0 == 0u ? 256u : 0u), programCounter);
+    instruction.source0 = decodeSdwaSource(src0 + (s0 == 0u ? 256u : 0u), programCounter);
     instruction.destination.sdwaSel = dstSel;
     instruction.destination.sdwaDstUnused = dstUnused;
     instruction.destination.explicitSdwaDst = true;
@@ -1333,14 +1355,12 @@ struct Vop2SdwaRule {
     std::uint32_t src1Selectors = sdwaSelFull();
     bool partialDst = false;
     bool sourceModifiers = false;
-    bool byteSelectorClamp = true;
 };
 
 constexpr Vop2SdwaRule vop2SdwaRules[] = {
     {},
     {sdwaSelAll(), sdwaSelAll(), sdwaSelAll(), true, true},
     {sdwaSelAll(), sdwaSelAll(), sdwaSelAll(), true, false},
-    {sdwaSelAll(), sdwaSelAll(), sdwaSelAll(), true, true, false},
 };
 
 const Vop2SdwaRule* findVop2SdwaRule(std::uint32_t encoding) {
@@ -1401,10 +1421,6 @@ void validateVop2Sdwa(const RdnaInstruction& instruction, std::uint32_t opcode, 
     if (!rule->sourceModifiers && hasSourceModifiers && !cndmaskFloatModifiers) {
         throw std::invalid_argument("VOP2 SDWA source modifiers are not supported");
     }
-    const bool byteSelector = fields.src0Sel < 4u || fields.src1Sel < 4u || fields.dstSel < 4u;
-    if (!rule->byteSelectorClamp && fields.clamp != 0u && byteSelector) {
-        throw std::invalid_argument("VOP2 SDWA clamp with byte selectors is not implemented");
-    }
 }
 
 void finalizeVop2Instruction(std::span<const std::uint32_t> code, std::uint32_t wordIndex, RdnaInstruction& instruction) {
@@ -1450,8 +1466,8 @@ void decodeVop2Sdwa(std::uint32_t programCounter, std::span<const std::uint32_t>
     validateVop2Sdwa(instruction, opcode, fields);
 
     instruction.destination = DecodeRdnaVectorGpr(vdst);
-    instruction.source0 = DecodeRdnaScalarSource(fields.src0 + (fields.s0 == 0u ? 256u : 0u), programCounter);
-    instruction.source1 = DecodeRdnaScalarSource(vsrc1 + (fields.s1 == 0u ? 256u : 0u), programCounter);
+    instruction.source0 = decodeSdwaSource(fields.src0 + (fields.s0 == 0u ? 256u : 0u), programCounter);
+    instruction.source1 = decodeSdwaSource(vsrc1 + (fields.s1 == 0u ? 256u : 0u), programCounter);
     instruction.destination.sdwaSel = fields.dstSel;
     instruction.destination.sdwaDstUnused = fields.dstUnused;
     instruction.destination.explicitSdwaDst = true;
@@ -1646,8 +1662,8 @@ void decodeVopcSdwa(std::uint32_t programCounter, std::span<const std::uint32_t>
         throw std::invalid_argument("VOPC SDWA selector is invalid");
     }
 
-    instruction.source0 = DecodeRdnaScalarSource(fields.src0 + (fields.s0 == 0u ? 256u : 0u), programCounter);
-    instruction.source1 = DecodeRdnaScalarSource(vsrc1 + (fields.s1 == 0u ? 256u : 0u), programCounter);
+    instruction.source0 = decodeSdwaSource(fields.src0 + (fields.s0 == 0u ? 256u : 0u), programCounter);
+    instruction.source1 = decodeSdwaSource(vsrc1 + (fields.s1 == 0u ? 256u : 0u), programCounter);
     if (isVopcCompareExec(instruction.op)) {
         instruction.destination.kind = RdnaOperandKind::ExecLo;
     } else if (fields.sd == 0u) {

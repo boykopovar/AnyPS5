@@ -8,6 +8,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -27,6 +28,7 @@ constexpr std::int32_t resultUserCanceled = 1;
 void RequireCanceledResult(std::uint64_t userData, bool clearsReserved) {
     NpCommerceDialogResult result;
     std::memset(&result, 0x33, sizeof(result));
+    Require(sceNpCommerceDialogGetResult(reinterpret_cast<NpCommerceDialogResult*>(0x10)) == static_cast<int>(0x80B8000Au));
     Require(sceNpCommerceDialogGetResult(&result) == resultUserCanceled);
     Require(result.result == resultUserCanceled);
     Require(result.authorized == 0);
@@ -72,6 +74,9 @@ void RequireNotices() {
     PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
     ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
     Require(sceNpCommerceDialogOpen(nullptr) == static_cast<int>(0x80B8000Du));
+    errno = 71;
+    Require(sceNpCommerceDialogOpen(reinterpret_cast<const NpCommerceDialogParam*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
     Require(!PsnNoticeShown());
     Require(sceNpCommerceDialogOpen(&param) == 0);
     Require(PsnNoticeShown());
@@ -103,6 +108,12 @@ int main() {
     Require(sceNpCommerceDialogGetStatus() == statusNone);
     Require(sceNpCommerceDialogOpen(nullptr) == static_cast<int>(0x80B8000Du));
     Require(sceNpCommerceDialogOpen2(nullptr) == static_cast<int>(0x80B8000Du));
+    errno = 71;
+    Require(sceNpCommerceDialogOpen(reinterpret_cast<const NpCommerceDialogParam*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpCommerceDialogOpen2(reinterpret_cast<const NpCommerceDialogParam2*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
     Require(sceNpCommerceDialogOpen2(&param2) == static_cast<int>(0x80B80003u));
     param2.base.magic = 0;
     Require(sceNpCommerceDialogOpen2(&param2) == static_cast<int>(0x80B8000Au));
@@ -133,6 +144,12 @@ int main() {
     Require(sceNpCommerceDialogGetResult(&result) == static_cast<int>(0x80B80005u));
     Require(sceNpCommerceDialogGetResult(nullptr) == static_cast<int>(0x80B8000Du));
     Require(sceNpCommerceDialogGetStatus() == statusInitialized);
+    errno = 71;
+    Require(sceNpCommerceDialogOpen(reinterpret_cast<const NpCommerceDialogParam*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpCommerceDialogOpen2(reinterpret_cast<const NpCommerceDialogParam2*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
 
     Require(sceNpCommerceDialogOpen2(&param2) == 0);
     Require(sceNpCommerceDialogUpdateStatus() == statusFinished);
@@ -143,6 +160,12 @@ int main() {
     Require(sceNpCommerceDialogGetStatus() == statusFinished);
     Require(sceNpCommerceDialogTerminate() == 0);
     Require(sceNpCommerceDialogGetStatus() == statusNone);
+    errno = 71;
+    Require(sceNpCommerceDialogOpen(reinterpret_cast<const NpCommerceDialogParam*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpCommerceDialogOpen2(reinterpret_cast<const NpCommerceDialogParam2*>(0x10)) == static_cast<int>(0x80B8000Du));
+    Require(errno == 71);
 
     NpCommerceDialogParam param{};
     param.base.size = sizeof(param.base);

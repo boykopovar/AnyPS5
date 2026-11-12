@@ -1,12 +1,17 @@
 #include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include <algorithm>
 #include <array>
+#include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
-#include <cmath>
+#include <string>
+#include <string_view>
+#include <system_error>
 
 #include "SceTypes.hpp"
 #include "prx/libSceVideoOut/include/Output.hpp"
@@ -14,6 +19,41 @@
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
+
+namespace {
+
+struct VideoOutHostResolution {
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+};
+
+std::uint32_t ParseVideoOutHostDimension(const char* text, const char* name) {
+    if (text == nullptr) return 0;
+    const std::string_view value(text);
+    std::uint32_t parsed = 0;
+    const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (value.empty() || result.ec != std::errc{} || result.ptr != value.data() + value.size() || parsed == 0) {
+        throw std::runtime_error(std::string("VideoOut: invalid ") + name + " '" + std::string(value) + "'");
+    }
+    return parsed;
+}
+
+VideoOutHostResolution VideoOutHostResolutionLimit() {
+    static const VideoOutHostResolution limit = [] {
+        VideoOutHostResolution parsed{};
+        if (const char* text = std::getenv("ANYPS5_VIDEO_OUT_MAX_WIDTH")) parsed.width = ParseVideoOutHostDimension(text, "ANYPS5_VIDEO_OUT_MAX_WIDTH");
+        if (const char* text = std::getenv("ANYPS5_VIDEO_OUT_MAX_HEIGHT")) parsed.height = ParseVideoOutHostDimension(text, "ANYPS5_VIDEO_OUT_MAX_HEIGHT");
+        return parsed;
+    }();
+    return limit;
+}
+
+bool VideoOutHostResolutionLimited() {
+    const auto limit = VideoOutHostResolutionLimit();
+    return (limit.width != 0 && limit.width < 3840) || (limit.height != 0 && limit.height < 2160);
+}
+
+}
 
 static constexpr std::uint32_t VIDEO_OUT_OUTPUT_OPTIONS_FIRST_WORD = 0x00FF0000;
 static constexpr std::size_t VIDEO_OUT_OUTPUT_OPTIONS_FREE_WORD = 3;
@@ -112,6 +152,24 @@ int APS5_VABI sceVideoOutClose(int handle) try {
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceVideoOutGetDeviceCapabilityInfo_(int handle, void* info, std::uint64_t size) try {
+    if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (info == nullptr || size != sizeof(std::uint64_t)) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    const std::uint64_t capabilities = 1;
+    std::memcpy(info, &capabilities, sizeof(capabilities));
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+void APS5_VABI sceVideoOutModeSetAny_(void* mode, std::uint32_t size) {
+    if (mode == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    std::memcpy(mode, &size, sizeof(size));
+    if (size > sizeof(size)) std::memset(static_cast<std::byte*>(mode) + sizeof(size), 0xFF, size - sizeof(size));
+}
+
 int APS5_VABI sceVideoOutAllowOutputResolutionWqhdDetection(int handle) try {
     if (!VideoOutDriver::Get().IsOpen(handle)) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
@@ -122,11 +180,9 @@ int APS5_VABI sceVideoOutAllowOutputResolutionWqhdDetection(int handle) try {
 }
 
 int APS5_VABI sceVideoOutSetFlipRate(int handle, int rate) try {
+    if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
-    if (cfg == nullptr) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
-    }
-    if (rate < 0 || rate > 2) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    if (rate < 0 || rate > 3) return VIDEO_OUT_ERROR_INVALID_VALUE;
     std::lock_guard lock(cfg->mutex);
     cfg->Check();
     cfg->flipRate = rate;
@@ -332,7 +388,9 @@ int APS5_VABI sceVideoOutInitializeOutputOptions(VideoOutOutputOptions* options)
 }
 
 int APS5_VABI sceVideoOutIsOutputSupported(int handle, uint64_t mode, const VideoOutOutputOptions* options, void* reservedPtr, uint64_t reserved) try {
-    return validateOutputConfig(handle, mode, options, reservedPtr, reserved);
+    const int result = validateOutputConfig(handle, mode, options, reservedPtr, reserved);
+    if (result == VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE && VideoOutHostResolutionLimited()) return 0;
+    return result;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
