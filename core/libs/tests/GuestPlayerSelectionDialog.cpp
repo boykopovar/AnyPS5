@@ -37,7 +37,11 @@ int main() {
     PlayerSelectionDialogResult result{-1, 99, nullptr, 77, 55};
 
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
+    Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
     Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(scePlayerSelectionDialogOpen(reinterpret_cast<const PlayerSelectionDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(scePlayerSelectionDialogParamInitialize(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogParamInitialize(&param) == 0);
     errno = 71;
@@ -69,8 +73,13 @@ int main() {
     Require(scePlayerSelectionDialogInitialize() == kErrAlreadyInitialized);
     Require(scePlayerSelectionDialogGetStatus() == kStatusInitialized);
     Require(scePlayerSelectionDialogUpdateStatus() == kStatusInitialized);
+    Require(scePlayerSelectionDialogClose() == kErrNotRunning);
+    Require(scePlayerSelectionDialogGetStatus() == kStatusInitialized);
 
     Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(scePlayerSelectionDialogOpen(reinterpret_cast<const PlayerSelectionDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(scePlayerSelectionDialogGetResult(&result) == kErrNotFinished);
 
     param.base.size = sizeof(param.base) - 1;
@@ -223,7 +232,11 @@ int main() {
     Require(scePlayerSelectionDialogClose() == kErrNotRunning);
     Require(scePlayerSelectionDialogTerminate() == 0);
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
+    Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
     Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(scePlayerSelectionDialogOpen(reinterpret_cast<const PlayerSelectionDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(scePlayerSelectionDialogOpen(&param) == kErrNotInitialized);
     Require(scePlayerSelectionDialogClose() == kErrNotInitialized);
     Require(scePlayerSelectionDialogGetResult(nullptr) == kErrArgNull);
@@ -234,9 +247,13 @@ int main() {
     Require(scePlayerSelectionDialogInitialize() == 0);
     Require(scePlayerSelectionDialogInitialize() == kErrAlreadyInitialized);
     Require(scePlayerSelectionDialogGetStatus() == kStatusInitialized);
+    Require(scePlayerSelectionDialogClose() == kErrNotRunning);
+    Require(scePlayerSelectionDialogGetStatus() == kStatusInitialized);
     Require(scePlayerSelectionDialogOpen(&param) == 0);
     Require(scePlayerSelectionDialogGetStatus() == kStatusFinished);
     Require(scePlayerSelectionDialogGetResult(&result) == kResultUserCanceled);
     Require(scePlayerSelectionDialogTerminate() == 0);
+    Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
+    Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
     Require(sceUserServiceTerminate() == 0);
 }
