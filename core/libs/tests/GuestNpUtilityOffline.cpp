@@ -248,6 +248,8 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntInitialize() == 0, "sceNpServiceChecker2IntInitialize", "initialization failed");
     Require(sceNpServiceChecker2IntInitialize() == AlreadyInitialized, "sceNpServiceChecker2IntInitialize", "a second initialization was taken");
     Require(sceNpServiceChecker2IntCreateRequest(nullptr) == CheckerInvalidArgument, "sceNpServiceChecker2IntCreateRequest", "a null output was taken");
+    Require(sceNpServiceChecker2IntCreateRequest(reinterpret_cast<int*>(1)) == CheckerInvalidArgument, "sceNpServiceChecker2IntCreateRequest", "an unmapped low output was taken");
+    Require(sceNpServiceChecker2IntCreateRequest(reinterpret_cast<int*>(~0xFu)) == CheckerInvalidArgument, "sceNpServiceChecker2IntCreateRequest", "an unmapped high output was taken");
     Require(sceNpServiceChecker2IntCreateRequest(&request) == 0 && request == 1, "sceNpServiceChecker2IntCreateRequest", "the first request is not id 1");
     std::uint32_t availability = 0xA5A5A5A5;
     Require(sceNpServiceChecker2IntGetServiceAvailability(request, nullptr, &availability) == CheckerInvalidArgument, "sceNpServiceChecker2IntGetServiceAvailability", "a null NpId was taken");
@@ -307,6 +309,13 @@ void CheckLookupNet() {
     Require(sceNpLookupNetInit() == 0, "sceNpLookupNetInit", "a second initialization was refused");
     Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "the first termination failed");
     Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetTerm", "the reference count did not keep the service initialized");
+    Require(sceNpLookupNetInitWithFunctionPointer(nullptr, nullptr) == 0, "sceNpLookupNetInitWithFunctionPointer", "the function-pointer initialization failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetInitWithFunctionPointer", "the service dropped out of the initialized state");
+    Require(sceNpLookupNetInitWithMemoryPool(nullptr, nullptr) == 0, "sceNpLookupNetInitWithMemoryPool", "the memory-pool initialization failed");
+    Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "terminating one wrapper reference was refused");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetTerm", "a wrapper reference did not join the shared count");
+    Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "terminating the second wrapper reference was refused");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetTerm", "the service left the initialized state while a plain reference remained");
     Require(sceNpLookupNetCreateTitleCtx(nullptr, nullptr) == InsufficientArgumentNet, "sceNpLookupNetCreateTitleCtx", "a null NpId was taken");
     const int firstContext = sceNpLookupNetCreateTitleCtx(nullptr, selfNpId);
     Require(firstContext == 1, "sceNpLookupNetCreateTitleCtx", "the first context is not id 1");
@@ -355,6 +364,21 @@ void CheckLookupNet() {
     Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "the second termination failed");
     Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetTerm", "the service stayed initialized");
     Require(sceNpLookupNetTerm() == NotInitialized, "sceNpLookupNetTerm", "a terminated service was terminated again");
+}
+
+void CheckLookupNetInitVariants() {
+    constexpr int NotInitialized = static_cast<int>(0x80550702u);
+    int initialized = -1;
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetIsInit", "a terminated service reported itself initialized");
+    Require(sceNpLookupNetTerm() == NotInitialized, "sceNpLookupNetTerm", "terminating an uninitialized service was taken");
+    Require(sceNpLookupNetInitWithFunctionPointer(nullptr, nullptr) == 0, "sceNpLookupNetInitWithFunctionPointer", "initialization with null arguments failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetInitWithFunctionPointer", "the service did not report itself initialized");
+    Require(sceNpLookupNetInitWithMemoryPool(nullptr, nullptr) == 0, "sceNpLookupNetInitWithMemoryPool", "a second initialization through the memory pool variant was refused");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetInitWithMemoryPool", "the service did not report itself initialized after both variants");
+    Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "the first termination failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetTerm", "the reference count did not keep the service initialized after one variant init");
+    Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "the second termination failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetTerm", "the service stayed initialized after both terminations");
 }
 
 void CheckBandwidthTestInitStart() {
@@ -495,6 +519,7 @@ int main() {
     std::memset(selfNpId, 0, sizeof(selfNpId));
     std::strcpy(reinterpret_cast<char*>(selfNpId), "player_1");
     CheckLookupNet();
+    CheckLookupNetInitVariants();
     CheckBandwidthTestInitStart();
     CheckBandwidthTestShutdownWithDetailedInfo();
     CheckNpUtilityLifecycles();

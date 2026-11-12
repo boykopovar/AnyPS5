@@ -1,7 +1,10 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libSceIcu/Status.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "unicode/uclean.h"
 #include <cstddef>
+#include <cstring>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -19,24 +22,38 @@ struct MemoryFunctions {
 std::mutex NativeLock;
 std::mutex MemoryLock;
 MemoryFunctions Memory;
-MemoryFunctions Snapshot() {
+const std::int32_t ZeroMemory[] = {0, 0, 0, 0, 0, 0};
+
+MemoryFunctions CurrentMemory() {
     const std::lock_guard lock(MemoryLock);
     return Memory;
 }
 
-void* U_CALLCONV Allocate(const void*, std::size_t size) {
-    const auto memory = Snapshot();
-    return memory.allocate(memory.context, size);
+void* Allocate(std::size_t size) {
+    if (size == 0) return const_cast<std::int32_t*>(ZeroMemory);
+    const MemoryFunctions functions = CurrentMemory();
+    return functions.allocate ? functions.allocate(functions.context, size) : malloc_nid_postfix(size);
 }
 
-void* U_CALLCONV Reallocate(const void*, void* pointer, std::size_t size) {
-    const auto memory = Snapshot();
-    return memory.reallocate(memory.context, pointer, size);
+void Release(void* memory) {
+    const MemoryFunctions functions = CurrentMemory();
+    if (functions.release) functions.release(functions.context, memory);
+    else free_nid_postfix(memory);
 }
 
-void U_CALLCONV Release(const void*, void* pointer) {
-    const auto memory = Snapshot();
-    memory.release(memory.context, pointer);
+void* U_CALLCONV NativeAllocate(const void*, std::size_t size) {
+    const MemoryFunctions functions = CurrentMemory();
+    return functions.allocate(functions.context, size);
+}
+
+void* U_CALLCONV NativeReallocate(const void*, void* pointer, std::size_t size) {
+    const MemoryFunctions functions = CurrentMemory();
+    return functions.reallocate(functions.context, pointer, size);
+}
+
+void U_CALLCONV NativeRelease(const void*, void* pointer) {
+    const MemoryFunctions functions = CurrentMemory();
+    functions.release(functions.context, pointer);
 }
 
 std::mutex DirectoryLock;
@@ -66,7 +83,7 @@ void APS5_VABI u_setMemoryFunctions_nid_postfix(const void* context, Icu::Memory
     const std::lock_guard native(NativeLock);
     const std::lock_guard lock(MemoryLock);
     auto nativeStatus = static_cast<UErrorCode>(*status);
-    u_setMemoryFunctions(nullptr, Allocate, Reallocate, Release, &nativeStatus);
+    u_setMemoryFunctions(nullptr, NativeAllocate, NativeReallocate, NativeRelease, &nativeStatus);
     *status = nativeStatus;
     if (U_SUCCESS(nativeStatus)) Memory = {context, allocate, reallocate, release};
 }
@@ -112,6 +129,39 @@ void APS5_VABI u_cleanup_nid_postfix() {
     const std::lock_guard lock(DirectoryLock);
     DataDirectory.clear();
     TimeZoneDirectory.clear();
+}
+
+void* APS5_VABI uprv_malloc_nid_postfix(std::size_t size) {
+    return Allocate(size);
+}
+
+void* APS5_VABI uprv_realloc_nid_postfix(void* buffer, std::size_t size) {
+    if (buffer == ZeroMemory) return Allocate(size);
+    if (size == 0) {
+        Release(buffer);
+        return const_cast<std::int32_t*>(ZeroMemory);
+    }
+    const MemoryFunctions functions = CurrentMemory();
+    return functions.reallocate ? functions.reallocate(functions.context, buffer, size) : realloc_nid_postfix(buffer, size);
+}
+
+char* APS5_VABI uprv_strdup_nid_postfix(const char* source) {
+    if (!source) APS5_INVALID_ARG_EX;
+    const std::size_t length = std::strlen(source) + 1;
+    char* duplicate = static_cast<char*>(Allocate(length));
+    if (duplicate) std::memcpy(duplicate, source, length);
+    return duplicate;
+}
+
+char* APS5_VABI uprv_strndup_nid_postfix(const char* source, std::int32_t count) {
+    if (count < 0) return uprv_strdup_nid_postfix(source);
+    const std::size_t length = static_cast<std::size_t>(count);
+    char* duplicate = static_cast<char*>(Allocate(length + 1));
+    if (duplicate) {
+        if (length != 0) std::memcpy(duplicate, source, length);
+        duplicate[length] = 0;
+    }
+    return duplicate;
 }
 
 }

@@ -213,7 +213,7 @@ int32_t APS5_VABI sceJpegEncDelete(void* handle) {
     Encoder* encoder = toEncoder(handle);
     if (!encoder) return SCE_JPEG_ENC_ERROR_INVALID_HANDLE;
     Encoder cleared{};
-    GuestCopyOut_nid_no_patch(encoder, &cleared, sizeof(cleared));
+    if (!GuestCopyOut_nid_no_patch(encoder, &cleared, sizeof(cleared))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     return 0;
 }
 
