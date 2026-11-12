@@ -7581,6 +7581,129 @@ void verifyNarrowVertexWave() {
     require(GetPreparedArtifact(*PrepareShader(vertex(wave32, 32u, 32u, 8u))).spirv == GetPreparedArtifact(*PrepareShader(vertex(wave32, 32u, 64u, 8u))).spirv, "narrow vertex wave: s3 of a wave32 vertex program depended on the subgroup width");
 }
 
+void verifySingleLaneCrossLaneReads() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 5> capabilities{spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityClipDistance};
+    struct alignas(256) Texture { std::array<std::uint8_t, 4096> bytes{}; };
+    static Texture texture;
+    const auto textureBase = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
+    const std::array<std::uint32_t, 12> userData{
+        static_cast<std::uint32_t>(textureBase >> 8u), static_cast<std::uint32_t>((textureBase >> 40u) & 0xffu) | (56u << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u,
+        0x00000092u, 0x00fff000u, 0x05500000u, 0u};
+    const auto compiled = [&userData](std::span<const std::uint32_t> code, bool vertexSubgroups) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Vertex, 0x5a000u, code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.userDataBaseRegister = 8;
+        request.context.userData = userData;
+        request.context.vertex = ShaderVertexStageInfo{};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32u;
+        request.target.supportedCapabilities = capabilities;
+        request.target.vertexSubgroups = vertexSubgroups;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return Recompile(request).spirv.Copy();
+    };
+    const auto usesSubgroups = [](std::span<const std::uint32_t> spirv) {
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            const auto op = spirv[cursor] & 0xffffu;
+            if (op == spv::OpCapability && spirv[cursor + 1u] >= spv::CapabilityGroupNonUniform && spirv[cursor + 1u] <= spv::CapabilityGroupNonUniformQuad) return true;
+            if (op >= spv::OpGroupNonUniformElect && op <= spv::OpGroupNonUniformQuadSwap) return true;
+            if (op == spv::OpDecorate && spirv[cursor + 2u] == spv::DecorationBuiltIn && (spirv[cursor + 3u] == spv::BuiltInSubgroupLocalInvocationId || spirv[cursor + 3u] == spv::BuiltInSubgroupSize)) return true;
+        }
+        return false;
+    };
+    const auto exported = [](std::initializer_list<std::uint32_t> words) {
+        std::vector<std::uint32_t> code(words);
+        code.insert(code.end(), {0xf80008cfu, 0x01010101u, 0xbf810000u});
+        return code;
+    };
+    const std::array<std::pair<const char*, std::vector<std::uint32_t>>, 9> accepted{{
+        {"a DPP quad_perm:[0,0,2,2]", exported({0x7e0202fau, 0xff00a005u})},
+        {"a DPP row_shr:1", exported({0x7e0202fau, 0xff011105u})},
+        {"a DPP row_share:0", exported({0x7e0202fau, 0xff015005u})},
+        {"a DPP8 [0,0,0,0,4,4,4,4]", exported({0x7e0202e9u, 0x92400005u})},
+        {"ds_swizzle_b32 swizzle(BROADCAST,4,0)", exported({0xd8d4001cu, 0x01000005u})},
+        {"ds_swizzle_b32 in FFT mode at offset 0xffe0", exported({0xd8d4ffe0u, 0x01000005u})},
+        {"ds_bpermute_b32 of address 0", exported({0x7e040280u, 0xdacc0000u, 0x01000502u})},
+        {"v_permlane16_b32 with lane selects 0x76543210", exported({0xbe8003ffu, 0x76543210u, 0xd7770001u, 0x00040105u})},
+        {"image_sample_cd, whose derivatives come from the quad's first active lane", {0x7e020280u, 0x7e040280u, 0x7e060280u, 0x7e080280u, 0x7e0c0280u, 0xf1a00108u, 0x00820801u, 0xbf8c3f70u, 0xf80008cfu, 0x08080808u, 0xbf810000u}},
+    }};
+    for (const auto& [name, code] : accepted) {
+        const auto spirv = compiled(code, false);
+        require(!spirv.empty() && !usesSubgroups(spirv), (std::string("single-lane cross-lane reads: ") + name + " did not build without subgroup operations").c_str());
+    }
+    const std::array<std::tuple<const char*, std::vector<std::uint32_t>, const char*>, 17> rejected{{
+        {"a DPP quad_perm:[1,0,3,2]", exported({0x7e0202fau, 0xff00b105u}), "DPP read of lane 1 "},
+        {"a DPP row_shl:1", exported({0x7e0202fau, 0xff010105u}), "DPP read of lane 1 "},
+        {"a DPP row_ror:4", exported({0x7e0202fau, 0xff012405u}), "DPP read of lane 12 "},
+        {"a DPP row_mirror", exported({0x7e0202fau, 0xff014005u}), "DPP read of lane 15 "},
+        {"a fetch-inactive DPP row_xmask:2", exported({0x7e0202fau, 0xff056205u}), "DPP read of lane 2 "},
+        {"a DPP8 [7,6,5,4,3,2,1,0]", exported({0x7e0202e9u, 0x05397705u}), "DPP read of lane 7 "},
+        {"ds_swizzle_b32 swizzle(SWAP,1)", exported({0xd8d4041fu, 0x01000005u}), "ds_swizzle_b32 of lane 1 "},
+        {"ds_swizzle_b32 swizzle(QUAD_PERM,2,1,0,3)", exported({0xd8d480c6u, 0x01000005u}), "ds_swizzle_b32 of lane 2 "},
+        {"ds_bpermute_b32 of address 4", exported({0x7e040284u, 0xdacc0000u, 0x01000502u}), "ds_bpermute_b32 of lane 1 "},
+        {"ds_bpermute_b32 at offset 4", exported({0x7e040280u, 0xdacc0004u, 0x01000502u}), "ds_bpermute_b32 of lane 1 "},
+        {"ds_bpermute_b32 of the vertex index", exported({0xdacc0000u, 0x01000505u}), "ds_bpermute_b32 of a register-selected lane "},
+        {"ds_bpermute_b32 of the v_mbcnt lane id plus the vertex index", exported({0xd7650002u, 0x000100c1u, 0xd7660002u, 0x000204c1u, 0x4a040b02u, 0x34040482u, 0xdacc0000u, 0x01000502u}), "ds_bpermute_b32 of a register-selected lane "},
+        {"ds_bpermute_b32 of the vertex index plus 32", exported({0x4a040aa0u, 0x34040482u, 0xdacc0000u, 0x01000502u}), "ds_bpermute_b32 of a register-selected lane "},
+        {"ds_bpermute_b32 of the vertex index or 32", exported({0x38040aa0u, 0x34040482u, 0xdacc0000u, 0x01000502u}), "ds_bpermute_b32 of a register-selected lane "},
+        {"ds_bpermute_b32 of the vertex index at offset 128", exported({0x34040a82u, 0xdacc0080u, 0x01000502u}), "ds_bpermute_b32 of a register-selected lane "},
+        {"v_permlane16_b32 with lane selects 1", exported({0xbe800381u, 0xd7770001u, 0x00040105u}), "v_permlane16_b32 of lane 1 "},
+        {"v_permlane16_b32 with lane selects v_readfirstlane_b32 took from the vertex index", exported({0x7e000505u, 0xd7770001u, 0x00040105u}), "v_permlane16_b32 of a register-selected lane "},
+    }};
+    for (const auto& [name, code, reason] : rejected) {
+        expectFailure([&] { static_cast<void>(compiled(code, false)); }, (std::string(reason) + "is outside the 1-lane host subgroup").c_str(), (std::string("single-lane cross-lane reads: ") + name + " built without vertex subgroups").c_str());
+        require(!compiled(code, true).empty(), (std::string("single-lane cross-lane reads: ") + name + " did not build on a 32-lane vertex subgroup").c_str());
+    }
+    enum class FirstActiveAddress { Translated, ShiftedBy3, NextQuad };
+    const auto emitted = [](FirstActiveAddress shape) {
+        IrProgram program;
+        IrBuilder builder{program};
+        program.SetWaveSize(64);
+        program.Resources().stage = IrShaderStage::Vertex;
+        program.Resources().srtPlanComplete = true;
+        program.Resources().resourceTrackingComplete = true;
+        program.Metadata().shaderInfoComplete = true;
+        program.Metadata().bindingLayoutComplete = true;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        program.BlockOrder().push_back(&block);
+        BlockInfo info;
+        info.id = block.Id();
+        program.Metadata().blockInfo.push_back(info);
+        builder.SetInsertionPoint(block);
+        auto& ballot = builder.Emit(IrOpcode::Ballot, IrType::U32x4, {&builder.ConstantBool(true)});
+        auto& lane = builder.Emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& quad = builder.BitwiseAnd(lane, builder.Constant(~3u));
+        auto& word = builder.Select(builder.ULessThan(lane, builder.Constant(32u)), builder.CompositeExtract(ballot, 0u), builder.CompositeExtract(ballot, 1u));
+        auto& active = builder.BitwiseAnd(builder.ShiftRightLogical(word, builder.BitwiseAnd(quad, builder.Constant(31u))), builder.Constant(15u));
+        auto& first = builder.Emit(IrOpcode::FindILsb32, IrType::U32, {&active});
+        auto& base = shape == FirstActiveAddress::NextQuad ? builder.IAdd(quad, builder.Constant(4u)) : quad;
+        auto& source = builder.Select(builder.INotEqual(active, builder.Constant(0u)), builder.IAdd(base, first), lane);
+        auto& address = builder.ShiftLeftLogical(source, builder.Constant(shape == FirstActiveAddress::ShiftedBy3 ? 3u : 2u));
+        auto& read = builder.Emit(IrOpcode::BpermuteU32, IrType::U32, {&lane, &address, &builder.ConstantBool(true)});
+        static_cast<void>(builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&read}));
+        ShaderVertexInputInfo vertex;
+        ShaderStageInputInfo inputs;
+        inputs.vertex = &vertex;
+        CompiledBindingLayout bindings;
+        bindings.layout = program.Metadata().bindings;
+        SpirvTargetOptions target{};
+        target.vulkanVersion = 0x00401000u;
+        target.spirvVersion = 0x00010300u;
+        target.subgroupSize = 1u;
+        return SpirvEmitter().Emit(program, inputs, bindings, target);
+    };
+    require(!emitted(FirstActiveAddress::Translated).empty(), "single-lane cross-lane reads: the image_sample_*_cd address did not build in a one-lane IR program");
+    const std::array<std::pair<FirstActiveAddress, const char*>, 2> addresses{{{FirstActiveAddress::ShiftedBy3, "the quad's first active lane shifted left by 3"}, {FirstActiveAddress::NextQuad, "the next quad's first active lane"}}};
+    for (const auto& [shape, name] : addresses) {
+        expectFailure([&] { static_cast<void>(emitted(shape)); }, "ds_bpermute_b32 of a register-selected lane is outside the 1-lane host subgroup", (std::string("single-lane cross-lane reads: ds_bpermute_b32 of ") + name + " built in a one-lane IR program").c_str());
+    }
+}
+
 void verifySingleLaneVertexWave() {
     using namespace ShaderRecompiler;
     static constexpr std::array<std::uint32_t, 5> capabilities{spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityClipDistance};
@@ -11461,25 +11584,13 @@ void verifyFmaskImageMode() {
         require(expanded != selected && modes[expanded].numericClass == IrTextureNumericClass::Uint && modes[expanded].conversionFormat == FmaskExpansion && modes[expanded].dimension == RdnaImageDimension::Dim2D, "an FMASK format of up to 8 samples did not select the FMASK expansion mode");
     }
     require(std::ranges::count_if(modes, [](const ImageResource& mode) { return mode.conversionFormat == FmaskExpansion; }) == 1, "FMASK expansion needs exactly one runtime image mode");
-    for (const auto format : {161u, 166u}) {
-        descriptor.dwords[1] = format << 20u;
-        descriptor.dwords[3] = 0x91800005u;
-        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK destination channel selector is not implemented", "an FMASK load selecting Y was accepted");
-    }
-    descriptor.dwords[3] = 0x91800004u;
-    for (const auto format : {162u, 164u, 167u, 168u}) {
-        descriptor.dwords[1] = format << 20u;
-        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK format is not implemented", "an unsupported FMASK format was accepted");
-    }
+    descriptor.dwords[1] = 159u << 20u;
+    descriptor.dwords[6] = (1u << 21u) | (1u << 24u);
+    require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)].numericClass == IrTextureNumericClass::Uint, "a two-fragment CMASK FMASK did not select a bound integer image mode");
     descriptor.dwords[1] = 166u << 20u;
-    for (const auto compression : {1u << 20u, 1u << 21u}) {
-        descriptor.dwords[6] = compression;
-        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK CMASK compression is not implemented", "compressed FMASK was accepted without decoding its metadata");
-    }
+    descriptor.dwords[6] = 1u << 21u;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK CMASK compression is not implemented", "compressed FMASK was accepted without readable metadata");
     descriptor.dwords[6] = 0u;
-    image.packed = true;
-    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "packed FMASK image reads are not implemented", "packed FMASK was accepted");
-    image.packed = false;
     image.fmaskCompatible = false;
     expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK requires a direct 32-bit image load", "an incompatible FMASK operation was accepted");
 }
@@ -12152,6 +12263,7 @@ int main(int argc, char** argv) {
         verifyHalfWaveReduction();
         verifyFusedExactArithmetic();
         verifyNarrowVertexWave();
+        verifySingleLaneCrossLaneReads();
         verifySingleLaneVertexWave();
         verifySingleLaneElectedAtomicMax();
         verifySingleLaneDomainWave();

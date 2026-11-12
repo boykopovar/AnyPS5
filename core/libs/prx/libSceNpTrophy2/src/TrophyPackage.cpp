@@ -415,6 +415,24 @@ void readStat(const Json& definition, std::size_t index, StatRules& rules) {
     if (!rules.stats.emplace(*statId, stat).second) rules.skipped.push_back(name + " is defined twice; the first definition is used");
 }
 
+std::string quotedMember(std::string_view text) {
+    constexpr char digits[] = "0123456789abcdef";
+    std::string quoted = "\"";
+    for (const char character : text) {
+        const auto byte = static_cast<unsigned char>(character);
+        if (byte < 0x20 || byte == 0x7F) {
+            quoted += "\\u00";
+            quoted += digits[byte >> 4];
+            quoted += digits[byte & 0xF];
+        } else {
+            if (character == '"' || character == '\\') quoted += '\\';
+            quoted += character;
+        }
+    }
+    quoted += '"';
+    return quoted;
+}
+
 void readRule(const Json& rule, std::size_t index, StatRules& rules) {
     const auto where = "stats_extraction.json statsExtractionRuleArray[" + std::to_string(index) + "]";
     const auto* condition = rule.Find("condition");
@@ -435,15 +453,31 @@ void readRule(const Json& rule, std::size_t index, StatRules& rules) {
         const auto* comparator = property != nullptr && property->kind == Json::Kind::Object ? property->Find("comparator") : nullptr;
         const auto* value = property != nullptr && property->kind == Json::Kind::Object ? property->Find("value") : nullptr;
         const auto filterPath = path != nullptr && path->kind == Json::Kind::String ? propertyPath(path->text) : std::nullopt;
-        const auto filterValue = value != nullptr ? value->Unsigned() : std::nullopt;
         const bool equal = comparator != nullptr && comparator->kind == Json::Kind::String && comparator->text == "==";
-        if (condition->members.size() != 2 || property == nullptr || property->kind != Json::Kind::Object || property->members.size() != 3 || !filterPath || !equal || !filterValue) {
-            rules.skipped.push_back(where + " filters " + event->text + " by more than its eventName; only an eventName with one \"$.name\" property equal to an unsigned integer is supported");
+        const bool greater = comparator != nullptr && comparator->kind == Json::Kind::String && comparator->text == ">";
+        const auto filterValue = value != nullptr && equal ? value->Unsigned() : std::nullopt;
+        const auto filterBound = value != nullptr && greater ? value->Signed() : std::nullopt;
+        if (condition->members.size() != 2 || property == nullptr || property->kind != Json::Kind::Object || property->members.size() != 3 || !filterPath || (!filterValue && !filterBound)) {
+            rules.skipped.push_back(where + " filters " + event->text + " by more than its eventName; only an eventName with one \"$.name\" property equal to an unsigned integer or greater than an integer is supported");
             return;
         }
-        filter = StatFilter{*filterPath, *filterValue};
+        filter = StatFilter{*filterPath, filterValue.value_or(0), filterBound};
+    }
+    for (const auto& member : action->members) {
+        if (member.first != "input" && member.first != "output") {
+            rules.skipped.push_back(where + " for " + event->text + " has unsupported action member " + quotedMember(member.first) + "; only direct property copies are supported");
+            return;
+        }
     }
     const auto* output = action->Find("output");
+    if (output != nullptr) {
+        for (const auto& member : output->members) {
+            if (member.first != "statId") {
+                rules.skipped.push_back(where + " for " + event->text + " has unsupported output member " + quotedMember(member.first) + "; only a statId output is supported");
+                return;
+            }
+        }
+    }
     const auto* id = output != nullptr ? output->Find("statId") : nullptr;
     const auto statId = id != nullptr ? id->Unsigned() : std::nullopt;
     if (!statId) {
@@ -479,6 +513,15 @@ bool Json::IsTrue() const {
 std::optional<std::uint64_t> Json::Unsigned() const {
     if (kind != Kind::Number && kind != Kind::String) return std::nullopt;
     std::uint64_t value = 0;
+    const auto* end = text.data() + text.size();
+    const auto [stop, error] = std::from_chars(text.data(), end, value);
+    if (error != std::errc{} || stop != end) return std::nullopt;
+    return value;
+}
+
+std::optional<std::int64_t> Json::Signed() const {
+    if (kind != Kind::Number && kind != Kind::String) return std::nullopt;
+    std::int64_t value = 0;
     const auto* end = text.data() + text.size();
     const auto [stop, error] = std::from_chars(text.data(), end, value);
     if (error != std::errc{} || stop != end) return std::nullopt;

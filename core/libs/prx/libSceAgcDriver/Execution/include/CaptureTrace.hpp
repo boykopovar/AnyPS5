@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libc/include/HostThread.hpp"
 
 #include <array>
 #include <chrono>
@@ -62,7 +63,7 @@ private:
             return;
         }
         active = true;
-        worker = std::thread([this] { run(); });
+        worker = Libc::StartHostThread([this] { run(); });
     }
 
     ~CaptureTrace() {

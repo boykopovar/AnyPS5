@@ -1,6 +1,7 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
+#include <cerrno>
 #include <array>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
@@ -717,8 +718,26 @@ int main(int argc, char** argv) {
     Require(sceHttpCreateEpoll(1, &epoll) == beforeInit);
     Require(sceHttpAbortWaitRequest(nullptr) == beforeInit);
     Require(sceHttpTerm_nid_postfix(1) == beforeInit);
+    HttpConnectionStat preStat{};
+    Require(sceHttpGetConnectionStat(1, &preStat) == beforeInit);
+    Require(sceHttpGetConnectionStat(1, nullptr) == beforeInit);
     const int context = sceHttpInit_nid_postfix(0, 0, 0x10000);
     Require(context > 0);
+    static_assert(sizeof(HttpConnectionStat) == 16);
+    Require(sceHttpGetConnectionStat(1, nullptr) == invalidValue);
+    Require(sceHttpGetConnectionStat(12345, &preStat) == invalidId);
+    const int tmpl = sceHttpCreateTemplate(context, "test-agent", 1, 0);
+    Require(tmpl > 0);
+    const int conn = sceHttpCreateConnectionWithURL(tmpl, "http://127.0.0.1:8080", 0);
+    Require(conn > 0);
+    HttpConnectionStat connStat{};
+    connStat.words[0] = 0xdeadbeef;
+    Require(sceHttpGetConnectionStat(conn, &connStat) == 0);
+    Require(connStat.words[0] == 0 && connStat.words[1] == 0 && connStat.words[2] == 0 && connStat.words[3] == 0);
+    Require(sceHttpGetConnectionStat(conn, nullptr) == invalidValue);
+    Require(sceHttpDeleteConnection(conn) == 0);
+    Require(sceHttpGetConnectionStat(conn, &connStat) == invalidId);
+    Require(sceHttpDeleteTemplate(tmpl) == 0);
     flushCaches(context, 0);
     flushCaches(context, 0);
     flushCaches(0, invalidId);
@@ -735,6 +754,9 @@ int main(int argc, char** argv) {
     Require(Throws([] { sceHttpGetMemoryPoolStats(INT32_MAX, nullptr); }));
     Require(sceHttpCreateEpoll(-1, &epoll) == invalidId);
     Require(sceHttpCreateEpoll(context, nullptr) == invalidValue);
+    errno = 71;
+    Require(sceHttpCreateEpoll(context, reinterpret_cast<HttpEpollHandle*>(0x10)) == invalidValue);
+    Require(errno == 71);
     Require(sceHttpCreateEpoll(context, &epoll) == 0 && epoll != nullptr);
     Require(sceHttpWaitRequest(epoll, events, 2, 0) == 0);
     Require(sceHttpWaitRequest(epoll, events, 2, 1000) == 0);

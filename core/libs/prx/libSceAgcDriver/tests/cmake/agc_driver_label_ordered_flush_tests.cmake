@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test(NAME agc_driver_label_ordered_flush_disabled COMMAND agc_driver_label_ordered_flush_tests --disabled)
+    set_tests_properties(agc_driver_label_ordered_flush_disabled PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_FLUSH_GPU_ORDERED=1;APS5_NO_REFRESH_GPU_ORDERED=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME agc_driver_label_ordered_flush_unimported COMMAND agc_driver_label_ordered_flush_tests --unimported)
+    set_tests_properties(agc_driver_label_ordered_flush_unimported PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_HOST_IMPORT=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_label_ordered_flush_disabled agc_driver_label_ordered_flush_unimported PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

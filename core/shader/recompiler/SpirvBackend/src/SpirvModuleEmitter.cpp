@@ -1562,7 +1562,7 @@ void EmitMeshEntryPoint(SpirvEmitterState& state) {
             const auto nullBit = EmitBinaryU32(state, spv::OpBitwiseAnd, packed, ConstantU32(state, 0x80000000u));
             const auto culled = state.module.AllocateId();
             state.module.AddFunction(spv::OpINotEqual, TypeBool(state), culled, nullBit, ConstantU32(state, 0u));
-            state.module.AddFunction(spv::OpStore, MeshElement(state, state.meshCull, spv::StorageClassOutput, TypeBool(state), index), culled);
+            auto decision = culled;
             for (const auto& output : state.outputs) {
                 if (output.kind != StageOutputKind::Layer) {
                     continue;
@@ -1581,9 +1581,12 @@ void EmitMeshEntryPoint(SpirvEmitterState& state) {
                 state.module.AddFunction(spv::OpLogicalNot, TypeBool(state), outside, inside);
                 state.module.AddFunction(spv::OpSelect, TypeU32(state), selected, inside, relative, ConstantU32(state, 0u));
                 state.module.AddFunction(spv::OpLogicalOr, TypeBool(state), discarded, culled, outside);
-                state.module.AddFunction(spv::OpStore, MeshElement(state, state.meshCull, spv::StorageClassOutput, TypeBool(state), index), discarded);
+                decision = discarded;
                 state.module.AddFunction(spv::OpStore, pointer, selected);
             }
+            const auto cullPointer = MeshElement(state, state.meshCull, spv::StorageClassOutput, TypeBool(state), index);
+            state.module.AddFunction(spv::OpStore, cullPointer, ConstantBool(state, false));
+            EmitIfCondition(state, decision, [&]() { state.module.AddFunction(spv::OpStore, cullPointer, ConstantBool(state, true)); });
             if (emulating) {
                 const auto corners = state.module.Type(spv::OpTypeArray, TypeF32Vector(state, 4u), ConstantU32(state, 3u));
                 std::array<std::uint32_t, 3> staged {};
