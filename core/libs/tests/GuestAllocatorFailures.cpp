@@ -142,8 +142,9 @@ int main() {
     expectNull("malloc(SIZE_MAX - 0x1008e)", Untouched, [] { return malloc_nid_postfix(LastPlainFailure + 1); });
     expectNull("malloc(SIZE_MAX - 0x1008f)", InvalidArgument, [] { return malloc_nid_postfix(LastPlainFailure); });
     expectNull("malloc(PTRDIFF_MAX + 1)", InvalidArgument, [] { return malloc_nid_postfix(HalfPlusOne); });
-    expectNull("calloc(SIZE_MAX, 2)", Untouched, [] { return calloc_nid_postfix(Max, 2); });
-    expectNull("calloc(2^33, 2^33)", Untouched, [] { return calloc_nid_postfix(std::size_t{1} << 33, std::size_t{1} << 33); });
+    expectNull("calloc(SIZE_MAX, 2)", NoMemory, [] { return calloc_nid_postfix(Max, 2); });
+    expectNull("calloc(2^33, 2^33)", NoMemory, [] { return calloc_nid_postfix(std::size_t{1} << 33, std::size_t{1} << 33); });
+    expectNull("calloc(SIZE_MAX / 2 + 1, 2)", NoMemory, [] { return calloc_nid_postfix(HalfPlusOne, 2); });
     expectNull("calloc(1, SIZE_MAX - 0x1008e)", Untouched, [] { return calloc_nid_postfix(1, LastPlainFailure + 1); });
     expectNull("calloc(PTRDIFF_MAX + 1, 1)", InvalidArgument, [] { return calloc_nid_postfix(HalfPlusOne, 1); });
     expectNull("realloc(NULL, SIZE_MAX)", Untouched, [] { return realloc_nid_postfix(nullptr, Max); });

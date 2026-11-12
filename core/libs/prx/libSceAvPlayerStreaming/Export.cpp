@@ -1,6 +1,7 @@
 #include "prx/libSceAvPlayerStreaming/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -22,9 +23,11 @@ int APS5_VABI MvpHttpGet_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI MvpHttpGetLastError_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI MvpHttpGetLastError_nid_postfix(const void* context) {
+    if (context == nullptr) return -1;
+    std::int32_t error;
+    std::memcpy(&error, static_cast<const unsigned char*>(context) + 0x30, sizeof(error));
+    return error;
 }
 
 int APS5_VABI MvpHttpHead_nid_postfix(void) {
