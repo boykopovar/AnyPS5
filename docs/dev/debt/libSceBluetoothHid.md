@@ -1,5 +1,9 @@
 # libSceBluetoothHid technical debt
 
+### Functional
+
+- [sceBluetoothHidParamInitialize, sceBluetoothHidThreadParamInitialize, sceBluetoothHidRegisterCallback](../../../core/libs/prx/libSceBluetoothHid/Export.cpp) - returning `0x81540001` (`InvalidArgument`) for unmapped or unreadable parameter pointers is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+
 ### Silent stubs
 
 - [libSceBluetoothHid](../../../core/libs/prx/libSceBluetoothHid/Export.cpp): the host still has no device backend or event worker. Registration retains only lifecycle state and never delivers the recovered 104-byte callback events. Custom worker scheduling throws; device ioctl failures and resource exhaustion are not modeled.

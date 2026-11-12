@@ -15,6 +15,8 @@
 - [sceAppContentAppParamGetString, sceAppContentDownloadDataGetBlockSize, sceAppContentGetRegion and sceAppContentRequestPatchInstall](../../../core/libs/prx/libSceAppContent/Export.cpp) (libSceAppContent) - after their argument checks each passes its request to a service outside the module, whose answers are unknown, so they throw there. The checks follow firmware 13.42 `libSceAppContent.sprx` (read from disassembly, not measured on a console): `NOT_INITIALIZED` first, then `PARAMETER` for a null `value`, a null mount point or `blockSize`, a null `region`, and a null `text` or one longer than 255 bytes (`strlen`). Argument counts come from how each export forwards its registers. `DownloadDataGetBlockSize` forwards like `DownloadDataGetAvailableSpaceKb`, so its output is taken as `size_t*`; the type behind `region` and what `text` names are unknown.
 ### Functional
 
+- [sceAppContentGetAddcontInfoList](../../../core/libs/prx/libSceAppContent/Export.cpp) (libSceAppContent) - returning `PARAMETER` for an unwritable non-null list or hit-count output is a host-safety fallback; console behavior for those pointers is unmeasured.
+
 - [Download partition expansion](../../../core/libs/prx/libSceAppContent/Export.cpp) - `/download1` and `/download2` expansion tracks size monotonically and reports available space in `sceAppContentDownloadDataGetAvailableSpaceKb`. The quota units and hardware shrink behavior remain unverified.
 
 - [Download-data quota conversion](../../../core/libs/prx/libSceAppContent/Export.cpp) - console handling of `downloadDataSize` values too large to represent in 64-bit KiB is unverified. The host model throws `std::overflow_error` before writing the output or creating storage; no console error code is assigned.

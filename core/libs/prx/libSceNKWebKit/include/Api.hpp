@@ -2,6 +2,8 @@
 
 #include "SceTypes.hpp"
 
+#include <cstddef>
+
 namespace WebCore {
 class DOMWrapperWorld;
 }
@@ -24,7 +26,7 @@ int APS5_VABI _ZN7WebCore18JSHTMLInputElementC2ERKS0_();
 int APS5_VABI _ZN9Inspector21InspectorConsoleAgent5resetEv();
 int APS5_VABI _ZN7WebCore4Node16addEventListenerERKN3WTF10AtomStringEONS1_3RefINS_13EventListenerENS1_13DumbPtrTraitsIS6_EEEERKNS_11EventTarget23AddEventListenerOptionsE();
 int APS5_VABI _ZN7WebCore18TextureMapperLayer14paintRecursiveERKNS_25TextureMapperPaintOptionsE();
-int APS5_VABI _ZN7WebCore9GLContextnwEm();
+void* APS5_VABI _ZN7WebCore9GLContextnwEm(std::size_t size);
 int APS5_VABI _ZN7WebCore18HTMLMarqueeElement14setScrollDelayEj();
 int APS5_VABI _ZN3JSC9Structure40addPropertyTransitionToExistingStructureEPS0_NS_12PropertyNameEjRi();
 int APS5_VABI _ZN7WebCore9GLContextD0Ev();
@@ -71,7 +73,6 @@ int APS5_VABI _ZN7WebCore18TextureMapperLayer18setFixedToViewportEb();
 int APS5_VABI WKBundleBackForwardListGetForwardListCount();
 int APS5_VABI _ZN7WebCore28collectVaryingRequestHeadersEPNS_21NetworkStorageSessionERKNS_15ResourceRequestERKNS_16ResourceResponseE();
 int APS5_VABI _ZN7WebCore19approximateAsRegionERKNS_11RoundedRectEj();
-int APS5_VABI _ZN3WTF9URLParser23maybeCanonicalizeSchemeERKNS_6StringE();
 int APS5_VABI _ZN3WTF21MemoryPressureHandler15setProcessStateENS_18WebsamProcessStateE();
 int APS5_VABI _ZThn16_N9Inspector21InspectorConsoleAgent6enableERN3WTF6StringE();
 int APS5_VABI _ZN7WebCore27TranslateTransformOperationC1ERKNS_6LengthES3_S3_NS_18TransformOperation13OperationTypeE();

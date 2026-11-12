@@ -211,6 +211,20 @@ static void CheckAioProcessingOwnership(bool fail) {
     Check(sceKernelAioPollRequest(pending, &state) == 0 && state == 2);
     std::uint32_t timeout = 1000;
     Check(sceKernelAioWaitRequest(pending, &state, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT && state == 2);
+    std::int32_t pendingIds[1]{pending};
+    state = -7;
+    Check(sceKernelAioWaitRequests(pendingIds, 1, &state, 1, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT && state == 2);
+    auto* unreadableTimeout = reinterpret_cast<std::uint32_t*>(0x10);
+    auto* unwritableState = reinterpret_cast<std::int32_t*>(0x10);
+    state = -7;
+    Check(sceKernelAioWaitRequest(pending, &state, unreadableTimeout) == SCE_KERNEL_ERROR_EFAULT && state == -7);
+    Check(sceKernelAioWaitRequests(pendingIds, 1, &state, 1, unreadableTimeout) == SCE_KERNEL_ERROR_EFAULT && state == -7);
+    Check(sceKernelAioWaitRequest(pending, unwritableState, &timeout) == SCE_KERNEL_ERROR_EFAULT);
+    Check(sceKernelAioWaitRequests(pendingIds, 1, unwritableState, 1, &timeout) == SCE_KERNEL_ERROR_EFAULT);
+    std::int32_t completedIds[1]{completed};
+    Check(sceKernelAioWaitRequest(completed, &state, unreadableTimeout) == 0 && state == 0x10003);
+    state = -7;
+    Check(sceKernelAioWaitRequests(completedIds, 1, &state, 1, unreadableTimeout) == 0 && state == 0x10003);
     std::atomic<bool> waiterDone{false};
     std::int32_t waited = -7;
     std::thread waiter([&] {
