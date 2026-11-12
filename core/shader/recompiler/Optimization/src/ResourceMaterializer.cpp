@@ -113,8 +113,22 @@ bool descriptorIsShortCube(const DescriptorValue& descriptor) {
     return descriptorIsCube(descriptor) && descriptor.dwordCount == 8u && baseArray < depth && depth - baseArray < 5u;
 }
 
+bool oneFragmentImage(const DescriptorValue& descriptor) {
+    const auto type = rawImageType(descriptor);
+    if (type != ImageType::Color2DMsaa && type != ImageType::Color2DMsaaArray) return false;
+    const auto baseLevel = (descriptor.dwords[3] >> 12u) & 0xfu;
+    const auto fragments = (descriptor.dwords[3] >> 16u) & 0xfu;
+    const auto maxMip = descriptor.dwordCount == 8u ? (descriptor.dwords[5] >> 4u) & 0xfu : 0u;
+    return baseLevel == 0u && fragments == 0u && maxMip == 0u;
+}
+
+bool multisampledDimension(RdnaImageDimension dimension) {
+    return dimension == RdnaImageDimension::Dim2DMsaa || dimension == RdnaImageDimension::Dim2DMsaaArray;
+}
+
 RdnaImageDimension descriptorDimension(const DescriptorValue& descriptor, RdnaImageDimension requested) {
     const bool wantArray = requested == RdnaImageDimension::Dim1DArray || requested == RdnaImageDimension::Dim2DArray || requested == RdnaImageDimension::Dim2DMsaaArray;
+    if (oneFragmentImage(descriptor) && !multisampledDimension(requested)) return rawImageType(descriptor) == ImageType::Color2DMsaaArray && wantArray ? RdnaImageDimension::Dim2DArray : RdnaImageDimension::Dim2D;
     switch (rawImageType(descriptor)) {
         case ImageType::Color1D:
             return RdnaImageDimension::Dim1D;
@@ -168,7 +182,7 @@ bool validImageDescriptor(const DescriptorValue& descriptor, bool r128) {
         const auto baseLevel = (descriptor.dwords[3] >> 12u) & 0xfu;
         const auto fragments = (descriptor.dwords[3] >> 16u) & 0xfu;
         const auto maxMip = (descriptor.dwords[5] >> 4u) & 0xfu;
-        return baseLevel == 0u && fragments >= 1u && fragments <= 3u && (r128 || maxMip == fragments);
+        return oneFragmentImage(descriptor) || (baseLevel == 0u && fragments >= 1u && fragments <= 3u && (r128 || maxMip == fragments));
     }
     return true;
 }
@@ -255,6 +269,9 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     const bool queryLayers = base.dimension == RdnaImageDimension::Dim1D && base.dimensionQueryOnly && rawImageType(descriptor) == ImageType::Color2DArray;
     decoded.dimension = descriptorDimension(descriptor, queryLayers ? RdnaImageDimension::Dim2DArray : base.dimension);
+    if (oneFragmentImage(descriptor) && multisampledDimension(decoded.dimension)) {
+        return rejectImage(PoisonReason::Multisampled, "a multisample instruction reading a one-fragment multisampled descriptor is not implemented");
+    }
     if (base.depthCompare) {
         if (decoded.dimension == RdnaImageDimension::Dim1D) {
             decoded.dimension = RdnaImageDimension::Dim2D;
