@@ -1909,7 +1909,6 @@ int APS5_VABI _ZNK7WebCore24RotateTransformOperation1xEv();
 int APS5_VABI _ZN7WebCore11DisplayList13StrokeEllipseD2Ev();
 int APS5_VABI libSceNKWebKitLegacyUnknown_nl7jLNJI8Ns_nid_no_patch();
 int APS5_VABI _ZN7WebCore11JSDOMWindow4infoEv();
-int APS5_VABI _ZN7WebCore22parseVPCodecParametersEN3WTF10StringViewE();
 int APS5_VABI _ZN7WebCore13KeyboardEvent6createERKNS_21PlatformKeyboardEventEON3WTF6RefPtrINS_11WindowProxyENS4_13DumbPtrTraitsIS6_EEEE();
 int APS5_VABI _ZN7WebCore14FrameSelection7setBaseERKNS_15VisiblePositionENS_14EUserTriggeredE();
 int APS5_VABI _ZN7WebCore10StorageMap6createEj();
