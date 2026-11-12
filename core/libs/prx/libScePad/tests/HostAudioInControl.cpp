@@ -1,6 +1,8 @@
+#include "prx/libSceAudioIn/AudioInCapture.hpp"
 #include "prx/libScePad/include/HostAudioInControl.hpp"
 #include "prx/libScePad/include/HostVolumeControl.hpp"
 
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -49,7 +51,34 @@ static void TestFocusMuteState() {
     HostAudioInConfigure_nid_no_patch(nullptr);
 }
 
+static void TestCapturedSampleFilter() {
+    std::array<std::uint8_t, 4> samples{0x11, 0x22, 0x33, 0x44};
+    Require(audioin::detail::filterCapturedSamples(samples.data(), samples.size(), 2, false) == 2);
+    Require(samples == std::array<std::uint8_t, 4>{0x11, 0x22, 0, 0});
+
+    samples = {0x11, 0x22, 0x33, 0x44};
+    Require(audioin::detail::filterCapturedSamples(samples.data(), samples.size(), samples.size(), true) == 0);
+    Require(samples == std::array<std::uint8_t, 4>{0, 0, 0, 0});
+
+    samples = {0x11, 0x22, 0x33, 0x44};
+    Require(audioin::detail::filterCapturedSamples(samples.data(), samples.size(), samples.size() + 1, false) == samples.size());
+    Require(samples == std::array<std::uint8_t, 4>{0x11, 0x22, 0x33, 0x44});
+}
+
+static void TestCaptureMuteGenerations() {
+    audioin::detail::CaptureMuteGenerations generations;
+    Require(!generations.Observe(4, 8));
+    Require(!generations.Observe(4, 8));
+    Require(generations.Observe(4, 9));
+    Require(!generations.Observe(4, 9));
+    Require(!generations.Observe(5, 9));
+    generations.Forget(4);
+    Require(!generations.Observe(4, 9));
+}
+
 int main() {
     TestFocusMuteState();
+    TestCapturedSampleFilter();
+    TestCaptureMuteGenerations();
     return 0;
 }
