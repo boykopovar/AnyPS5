@@ -2,3 +2,5 @@
 
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/include/InventoryExports.hpp"
+#include "prx/libSceAudioOut/include/LaterExports.hpp"

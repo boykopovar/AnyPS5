@@ -66,6 +66,17 @@ bool isLaneLocal(IrOpcode opcode) {
         case IrOpcode::PackFloat2x16Rtz:
         case IrOpcode::FPAdd16x2:
         case IrOpcode::FPMul16x2:
+        case IrOpcode::FPFma16x2:
+        case IrOpcode::IAdd16x2:
+        case IrOpcode::ISub16x2:
+        case IrOpcode::IMul16x2:
+        case IrOpcode::ShiftLeftLogical16x2:
+        case IrOpcode::ShiftRightLogical16x2:
+        case IrOpcode::ShiftRightArithmetic16x2:
+        case IrOpcode::SMin16x2:
+        case IrOpcode::SMax16x2:
+        case IrOpcode::UMin16x2:
+        case IrOpcode::UMax16x2:
         case IrOpcode::BitFieldInsert:
         case IrOpcode::BitFieldUExtract:
         case IrOpcode::BitFieldSExtract:
@@ -165,6 +176,7 @@ bool isLaneLocal(IrOpcode opcode) {
         case IrOpcode::FPAdd64:
         case IrOpcode::FPMul64:
         case IrOpcode::FPFma64:
+        case IrOpcode::FPFmaScale32:
         case IrOpcode::FPMin64:
         case IrOpcode::FPMax64:
         case IrOpcode::FPSaturate64:
@@ -1220,15 +1232,12 @@ MaskedSelectEliminationStats MaskedSelectEliminator::Eliminate(IrProgram& progra
     const auto regions = blockRegions(program);
     const BlockSet uniform = uniformEntryBlocks(program);
     std::vector<IrValue*> selects;
-    std::uint32_t removed = 1;
-    while (removed != 0u) {
-        removed = removeFullWaveSelects(program, regions, selects);
-        for (const MaskFamily family : {MaskFamily{true, false}, MaskFamily{true, true}, MaskFamily{false, false}, MaskFamily{false, true}}) {
-            if (hasUnreadCandidate(selects, regions, family, program.WaveSize())) removed += UnreadLanes(program, regions, uniform, family, stats.steps).Remove();
-        }
-        stats.removedSelects += removed;
-        if (removed != 0u) DeadCodeEliminator{}.Eliminate(program);
+    std::uint32_t removed = removeFullWaveSelects(program, regions, selects);
+    for (const MaskFamily family : {MaskFamily{true, false}, MaskFamily{true, true}, MaskFamily{false, false}, MaskFamily{false, true}}) {
+        if (hasUnreadCandidate(selects, regions, family, program.WaveSize())) removed += UnreadLanes(program, regions, uniform, family, stats.steps).Remove();
     }
+    stats.removedSelects = removed;
+    if (removed != 0u) DeadCodeEliminator{}.Eliminate(program);
     return stats;
 }
 

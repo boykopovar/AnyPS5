@@ -1,8 +1,10 @@
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -28,6 +30,152 @@ ORIGINAL = index([A_STUB, B_STUB, C_STUB], [A_FUNCTIONAL, SHADER, SHARED])
 
 
 class DebtSplitTests(unittest.TestCase):
+
+
+    def test_relink_escaped_first_backtick_in_run(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/libSceA.md"
+
+        original = (
+            "prefix \\``[example](../../core/sample.cpp)` "
+            "[real](../../core/real.cpp)"
+        )
+        expected = (
+            "prefix \\``[example](../../core/sample.cpp)` "
+            "[real](../../../core/real.cpp)"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_escaped_backticks_do_not_hide_links(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/libSceA.md"
+
+        original = r"\`[real](../../core/example.cpp)\`"
+        expected = r"\`[real](../../../core/example.cpp)\`"
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_invalid_backtick_fence(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/libSceA.md"
+
+        cases = [
+            (
+                "```[example](../../core/sample.cpp)```\n"
+                "[real](../../core/example.cpp)",
+                "```[example](../../core/sample.cpp)```\n"
+                "[real](../../../core/example.cpp)",
+            ),
+            (
+                "```code``` and [real](../../core/real.cpp)\n"
+                "[later](../../core/later.cpp)",
+                "```code``` and [real](../../../core/real.cpp)\n"
+                "[later](../../../core/later.cpp)",
+            ),
+        ]
+
+        for original, expected in cases:
+            with self.subTest(original=original):
+                self.assertEqual(
+                    debt_split.relink(original, source, destination),
+                    expected,
+                )
+
+    def test_relink_escaped_backslash_before_code_span(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/libSceA.md"
+
+        original = (
+            "\\\\`[code](../../core/a.cpp)` "
+            "and [real](../../core/b.cpp)"
+        )
+        expected = (
+            "\\\\`[code](../../core/a.cpp)` "
+            "and [real](../../../core/b.cpp)"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_preserves_inline_code(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/example.md"
+
+        for marker in ("`", "``", "```"):
+            original = f"{marker}[example](../../core/test.cpp){marker}"
+            self.assertEqual(
+                debt_split.relink(original, source, destination),
+                original,
+            )
+
+    def test_relink_rewrites_links_outside_inline_code(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/example.md"
+
+        original = (
+            "`[code](../../core/test.cpp)` "
+            "and [real](../../core/real.cpp)"
+        )
+        expected = (
+            "`[code](../../core/test.cpp)` "
+            "and [real](../../../core/real.cpp)"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_preserves_code_after_real_link(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/example.md"
+
+        original = (
+            "[real](../../core/real.cpp) "
+            "and `[code](../../core/test.cpp)`"
+        )
+        expected = (
+            "[real](../../../core/real.cpp) "
+            "and `[code](../../core/test.cpp)`"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_preserves_tilde_fenced_code(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/example.md"
+
+        original = (
+            "~~~\n"
+            "[code](../../core/a.cpp)\n"
+            "~~~\n"
+            "[real](../../core/b.cpp)"
+        )
+        expected = (
+            "~~~\n"
+            "[code](../../core/a.cpp)\n"
+            "~~~\n"
+            "[real](../../../core/b.cpp)"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+
     def test_split_preserves_root_relative_links(self):
         targets = ("/AnyPS5/guide.html#usage", "/images/example.png", "/")
         references = " ".join(f"[reference]({target})" for target in targets)
@@ -43,6 +191,7 @@ class DebtSplitTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
         self.git("init", "-q", "-b", "main")
+        self.git("config", "core.safecrlf", "false")
         self.write(INDEX, ORIGINAL)
 
     def tearDown(self):
@@ -94,6 +243,21 @@ class DebtSplitTests(unittest.TestCase):
                 self.assertIn(f"[reference]({target})", moved)
         self.assertIn("[local](../ARCHITECTURE.md#layout)", moved)
         self.assertIn("../../../core/libs/prx/libSceA/Export.cpp", moved)
+
+    def test_split_rewrites_angle_bracket_destinations_inside_their_brackets(self):
+        links = {"<ARCHITECTURE.md>": "<../ARCHITECTURE.md>",
+                 "<user guide.md#first steps>": "<../user guide.md#first steps>",
+                 "<a\\>b.md>": "<../a\\>b.md>",
+                 "<https://example.test/guide>": "<https://example.test/guide>",
+                 "</AnyPS5/guide.html>": "</AnyPS5/guide.html>"}
+        references = " ".join(f"[reference]({target})" for target in links)
+        self.write(INDEX, ORIGINAL.replace(A_STUB, A_STUB + " " + references))
+        self.split()
+        moved = self.read("docs/dev/debt/libSceA.md")
+        for target, expected in links.items():
+            with self.subTest(target=target):
+                self.assertIn(f"[reference]({expected})", moved)
+        self.assertNotIn("../<", moved)
 
     def test_split_moves_entries_by_their_first_core_link(self):
         self.split()
@@ -316,6 +480,69 @@ class DebtSplitTests(unittest.TestCase):
                           + "\n- A toolchain limitation\n\n" + paragraph + "\n")
         self.split()
         self.assertIn("- A toolchain limitation\n\n" + paragraph + "\n", self.read(INDEX))
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(debt_split.sys, "stdout", out), patch.object(debt_split.sys, "stderr", err):
+            try:
+                debt_split.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
+
+    def test_main_reports_non_git_repository(self):
+        with tempfile.TemporaryDirectory() as empty_dir:
+            with patch("pathlib.Path.cwd", return_value=Path(empty_dir)):
+                with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                    with self.assertRaises(SystemExit) as cm:
+                        debt_split.main(["split"])
+                    self.assertEqual(cm.exception.code, 2)
+                    self.assertIn("not a git repository", stderr.getvalue())
+
+
+    def test_split_keeps_the_note_and_sub_headings_of_an_existing_debt_file(self):
+        self.write("docs/dev/debt/libSceA.md", "# libSceA technical debt\n\nA hand-written note that must stay.\n\n"
+                   "#### Detail heading\n\n### Silent stubs\n\n" + A_STUB + "\n")
+        extra = "- [libSceA](../../core/libs/prx/libSceA/Export.cpp) - `sceAExtra` returns 1"
+        self.write(INDEX, "# Project technical debt\n\n### Silent stubs\n\n" + extra + "\n")
+        self.split()
+        text = self.read("docs/dev/debt/libSceA.md")
+        self.assertIn("A hand-written note that must stay.", text)
+        self.assertIn("#### Detail heading", text)
+        self.assertIn("`sceAExtra` returns 1", text)
+        self.assertEqual(text.count(A_STUB), 1)
+        self.assertLess(text.index("A hand-written note"), text.index("### Silent stubs"))
+
+    def test_a_debt_file_with_only_a_note_is_written_and_not_deleted(self):
+        debt_split.write_debt(self.root, "libSceA", {}, [], ["A note that belongs to no section."])
+        self.assertIn("A note that belongs to no section.", self.read("docs/dev/debt/libSceA.md"))
+
+    def test_split_refuses_an_entry_above_the_first_section_without_writing(self):
+        before = self.read(INDEX)
+        self.write(INDEX, "# Project technical debt\n\n" + B_STUB + "\n\n### Silent stubs\n\n" + A_STUB + "\n")
+        result = self.tool("split")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("above the first ### section", result.stderr)
+        self.assertFalse((self.root / "docs/dev/debt").exists())
+        self.assertNotEqual(before, "")
 
 
 if __name__ == "__main__":

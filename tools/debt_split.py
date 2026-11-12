@@ -10,7 +10,7 @@ from check_conventions import DEBT as INDEX, debt_name
 
 DEBT_DIR = "docs/dev/debt"
 HEADING = re.compile(r"^(#{1,6}) (.+?)\s*$")
-LINK = re.compile(r"\]\(([^)\s]+)\)")
+LINK = re.compile(r"\]\((?:<((?:[^<>\n\\]|\\.)*)>|([^)\s<][^)\s]*))\)")
 
 
 def parse(text):
@@ -43,24 +43,105 @@ def key(kind, text):
     return debt_name(text) if kind == "entry" else None
 
 
-def relink(text, source, destination):
+
+def relink_unfenced(text, source, destination):
     def replace(match):
-        target = match.group(1)
+        angled = match.group(1) is not None
+        target = match.group(1) if angled else match.group(2)
         if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:|/", target):
             return match.group(0)
         path, _, anchor = target.partition("#")
         resolved = posixpath.normpath(posixpath.join(posixpath.dirname(source), path)) if path else source
-        moved = posixpath.relpath(resolved, posixpath.dirname(destination))
-        return "](" + moved + ("#" + anchor if anchor else "") + ")"
-    return LINK.sub(replace, text)
+        moved = posixpath.relpath(resolved, posixpath.dirname(destination)) + ("#" + anchor if anchor else "")
+        return "](<" + moved + ">)" if angled else "](" + moved + ")"
+
+    runs = list(re.finditer(r"`+", text))
+    result = []
+    position = 0
+    index = 0
+
+    while index < len(runs):
+        opening = runs[index]
+        opening_start = opening.start()
+        delimiter = opening.group()
+
+        preceding = text[:opening_start]
+        backslashes = len(preceding) - len(preceding.rstrip("\\"))
+        if backslashes % 2:
+            opening_start += 1
+            delimiter = delimiter[1:]
+            if not delimiter:
+                index += 1
+                continue
+
+        closing_index = next(
+            (i for i in range(index + 1, len(runs))
+             if runs[i].group() == delimiter),
+            None,
+        )
+
+        if closing_index is None:
+            index += 1
+            continue
+
+        closing = runs[closing_index]
+        result.append(LINK.sub(replace, text[position:opening_start]))
+        result.append(text[opening_start:closing.end()])
+        position = closing.end()
+        index = closing_index + 1
+
+    result.append(LINK.sub(replace, text[position:]))
+    return "".join(result)
+
+def relink(text, source, destination):
+    result = []
+    outside = []
+    fence_char = None
+    fence_length = 0
+
+    def flush_outside():
+        if outside:
+            result.append(relink_unfenced(
+                "".join(outside), source, destination
+            ))
+            outside.clear()
+
+    for line in text.splitlines(keepends=True):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})([^\r\n]*)", line)
+        if marker and marker.group(1).startswith("`") and "`" in marker.group(2):
+            marker = None
+
+
+        if fence_char is None:
+            if marker:
+                flush_outside()
+                fence_char = marker.group(1)[0]
+                fence_length = len(marker.group(1))
+                result.append(line)
+            else:
+                outside.append(line)
+        else:
+            result.append(line)
+            if re.match(
+                r"^ {0,3}" + re.escape(fence_char) +
+                "{" + str(fence_length) + r",}[ \t]*$",
+                line.rstrip("\r\n"),
+            ):
+                fence_char = None
+                fence_length = 0
+
+    flush_outside()
+    return "".join(result)
 
 
 def debt_file(name):
     return f"{DEBT_DIR}/{name}.md"
 
 
-def render(title, sections, order):
+def render(title, sections, order, preamble=()):
     out = [title, ""]
+    for text in preamble:
+        out += [text, ""]
     for section in sorted(sections, key=lambda section: order.index(section) if section in order else len(order)):
         out += [f"### {section}", ""] + sections[section] + [""]
     return "\n".join(out)
@@ -75,9 +156,22 @@ def read_debt(root, name):
             if kind == "heading" and item_section and text.startswith("### "):
                 section = item_section
                 sections.setdefault(section, [])
-            elif kind != "heading" and section:
+            elif section and (kind != "heading" or text.startswith("#### ")):
                 sections[section].append(text)
     return sections
+
+
+def read_preamble(root, name):
+    path = root / debt_file(name)
+    lines = []
+    if path.exists():
+        for kind, item_section, text in parse(path.read_text(encoding="utf-8-sig")):
+            if item_section is not None:
+                break
+            if kind == "heading" and text.startswith("# ") and not text.startswith("## "):
+                continue
+            lines.append(text)
+    return lines
 
 
 def write_lf(path, text):
@@ -85,15 +179,15 @@ def write_lf(path, text):
         file.write(text)
 
 
-def write_debt(root, name, sections, order):
+def write_debt(root, name, sections, order, preamble=()):
     path = root / debt_file(name)
     sections = {section: entries for section, entries in sections.items() if entries}
-    if not sections:
+    if not sections and not preamble:
         if path.exists():
             path.unlink()
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_lf(path, render(f"# {name} technical debt", sections, order))
+    write_lf(path, render(f"# {name} technical debt", sections, order, preamble))
 
 
 def sections_of(text):
@@ -133,11 +227,14 @@ def command_split(root):
     index, files, order = split(text)
     if not files:
         sys.exit(f"{INDEX} has no entries to move")
+    above = [item for kind, section, item in parse(text) if section is None and kind == "entry"]
+    if above:
+        sys.exit(f"{INDEX}: an entry is above the first ### section, so there is no section to file it under: {above[0].splitlines()[0][:100]}")
     for name, sections in files.items():
         existing = read_debt(root, name)
         for section, entries in sections.items():
             existing.setdefault(section, []).extend(entries)
-        write_debt(root, name, existing, order)
+        write_debt(root, name, existing, order, read_preamble(root, name))
     if index_note() not in index:
         index.insert(1, index_note())
     write_lf(root / INDEX, render_index(index))
@@ -157,9 +254,11 @@ def apply_change(root, base, new, index_text):
     before = [(kind, section, item, key(kind, item)) for kind, section, item in parse(base) if kind == "entry" and key(kind, item)]
     after = [(kind, section, item, key(kind, item)) for kind, section, item in parse(new) if kind == "entry" and key(kind, item)]
     files = {}
+    preambles = {}
 
     def load(name):
         if name not in files:
+            preambles[name] = read_preamble(root, name)
             files[name] = {section: [Entry(text) for text in entries]
                            for section, entries in read_debt(root, name).items()}
         return files[name]
@@ -223,7 +322,7 @@ def apply_change(root, base, new, index_text):
             insert(j1 + offset, anchor)
     for name, sections in files.items():
         write_debt(root, name, {section: [entry.text for entry in entries]
-                                for section, entries in sections.items()}, order)
+                                for section, entries in sections.items()}, order, preambles[name])
     return sorted(debt_file(name) for name in files)
 
 
@@ -254,12 +353,15 @@ def command_resolve(root):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=f"Split {INDEX} into one file per library or component, and move entries of a change made before the split")
     parser.add_argument("command", choices=("split", "resolve"),
                         help=f"split: move the entries of {INDEX} into {DEBT_DIR}/; resolve: during a rebase stopped on {INDEX}, apply the stopped commit's entry changes to {DEBT_DIR}/ and stage them")
     args = parser.parse_args(argv)
-    root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
+    try:
+        root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
+    except subprocess.CalledProcessError as error:
+        parser.error(f"not a git repository: {error}")
     command_split(root) if args.command == "split" else command_resolve(root)
 
 

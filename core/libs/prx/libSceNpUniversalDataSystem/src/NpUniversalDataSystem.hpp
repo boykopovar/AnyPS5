@@ -14,12 +14,16 @@
 
 static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_OK = 0;
 static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT = -2141900542;
+static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_PARAM_SIZE = -2141900526;
+static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_EVENT = -2141900522;
+static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_EVENT_NAME = -2141900531;
+static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_KEY = -2141900524;
+static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE = -2141900523;
+static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_OBJECT = -2141900519;
+static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY = -2141900518;
 
 static constexpr int NP_UNIVERSAL_DATA_SYSTEM_CONTEXT_DEFAULT = 1;
 static constexpr int NP_UNIVERSAL_DATA_SYSTEM_HANDLE_DEFAULT  = 1;
-
-static constexpr const char* NP_UNIVERSAL_DATA_SYSTEM_EMPTY_JSON = "{}";
-static constexpr size_t NP_UNIVERSAL_DATA_SYSTEM_EMPTY_EVENT_SIZE = 3;
 
 namespace Uds {
 
@@ -45,6 +49,17 @@ public:
     bool Contains(const TValue* value) {
         std::lock_guard lock(mutex);
         return values.contains(value);
+    }
+
+    template <typename F>
+    void ForEach(F&& visit) {
+        std::lock_guard lock(mutex);
+        for (const auto& [pointer, value] : values) visit(pointer);
+    }
+
+    void Clear() {
+        std::lock_guard lock(mutex);
+        values.clear();
     }
 
 private:

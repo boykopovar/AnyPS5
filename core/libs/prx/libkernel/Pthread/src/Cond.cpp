@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
@@ -5,12 +6,15 @@
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <thread>
@@ -59,6 +63,34 @@ std::shared_ptr<TimedWait::Condition> resolveCond(PthreadCond* cond, int* clockI
     return current->_cv;
 }
 
+std::mutex& WaiterMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::multimap<const TimedWait::Condition*, Pthread>& Waiters() {
+    static std::multimap<const TimedWait::Condition*, Pthread> waiters;
+    return waiters;
+}
+
+std::multimap<const TimedWait::Condition*, Pthread>::iterator AddWaiter(const TimedWait::Condition* condition) {
+    std::lock_guard lock(WaiterMutex());
+    return Waiters().emplace(condition, scePthreadSelf());
+}
+
+void RemoveWaiter(std::multimap<const TimedWait::Condition*, Pthread>::iterator waiter) {
+    std::lock_guard lock(WaiterMutex());
+    Waiters().erase(waiter);
+}
+
+bool IsWaiting(const TimedWait::Condition* condition, Pthread thread) {
+    std::lock_guard lock(WaiterMutex());
+    const auto [first, last] = Waiters().equal_range(condition);
+    for (auto waiter = first; waiter != last; ++waiter)
+        if (waiter->second == thread) return true;
+    return false;
+}
+
 int mutexOwnership(PthreadMutex* mutex, PthreadMutex* owned) {
     if (!mutex)
         throw std::invalid_argument("Mutex pointer is null");
@@ -75,7 +107,10 @@ template <class TNative>
 struct WakingLock {
     PthreadMutex mutex;
     TNative& native;
-    void lock() { native.lock(); }
+    void lock() {
+        if (!MutexOperations::SpinAcquire(mutex, native))
+            native.lock();
+    }
     void unlock() {
         native.unlock();
 #ifdef _WIN32
@@ -113,7 +148,9 @@ int waitUntil(std::shared_ptr<TimedWait::Condition> condition, PthreadMutex* mut
         m->_owner.store(std::thread::id{}, std::memory_order_release);
         for (int level = 1; level < previousCount; ++level)
             m->_rmtx.unlock();
+        const auto waiter = AddWaiter(condition.get());
         timedOut = !ThreadCancel::Wait(*condition, lock, deadlineNanos);
+        RemoveWaiter(waiter);
         for (int level = 1; level < previousCount; ++level)
             m->_rmtx.lock();
         m->_owner.store(std::this_thread::get_id(), std::memory_order_release);
@@ -124,7 +161,9 @@ int waitUntil(std::shared_ptr<TimedWait::Condition> condition, PthreadMutex* mut
     WakingLock<std::timed_mutex> waking{m, m->_mtx};
     std::unique_lock lock(waking, std::adopt_lock);
     m->_owner.store(std::thread::id{}, std::memory_order_release);
+    const auto waiter = AddWaiter(condition.get());
     timedOut = !ThreadCancel::Wait(*condition, lock, deadlineNanos);
+    RemoveWaiter(waiter);
     m->_owner.store(std::this_thread::get_id(), std::memory_order_release);
     lock.release();
     return finishWait(condition, timedOut);
@@ -143,6 +182,12 @@ int CondOperations::AbsoluteTimedwait(PthreadCond* cond, PthreadMutex* mutex, co
     return waitUntil(std::move(condition), mutex, TimedWait::DeadlineNanos(usec), __builtin_return_address(0));
 }
 
+int CondOperations::LoadAttribute(const PthreadCondattr* attr, PthreadCondattr& handle) {
+    if (!attr) return SCE_KERNEL_ERROR_EINVAL;
+    if (!GuestCopyIn_nid_no_patch(&handle, attr, sizeof(handle))) return SCE_KERNEL_ERROR_EFAULT;
+    return handle ? 0 : SCE_KERNEL_ERROR_EINVAL;
+}
+
 int CondOperations::SetName(PthreadCond* cond, const char* name) {
     if (!name)
         throw std::invalid_argument("Condition variable name is null");
@@ -156,24 +201,28 @@ int CondOperations::SetName(PthreadCond* cond, const char* name) {
 extern "C" {
 
 int APS5_VABI scePthreadCondattrInit(PthreadCondattr* attr) {
-    if (!attr)
-        throw std::invalid_argument("Condition attribute pointer is null");
-    *attr = new PthreadCondattrPrivate{0};
+    auto created = std::make_unique<PthreadCondattrPrivate>(PthreadCondattrPrivate{0});
+    PthreadCondattr handle = created.get();
+    if (!GuestCopyOut_nid_no_patch(attr, &handle, sizeof(handle))) return SCE_KERNEL_ERROR_EFAULT;
+    created.release();
     return 0;
 }
 
 int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr* attr) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
-    delete *attr;
-    *attr = nullptr;
+    PthreadCondattr handle = nullptr;
+    if (const int error = CondOperations::LoadAttribute(attr, handle)) return error;
+    const PthreadCondattr cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(attr, &cleared, sizeof(cleared))) return SCE_KERNEL_ERROR_EFAULT;
+    delete handle;
     return 0;
 }
 
 int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid clockId) {
     constexpr KernelClockid realtime = 0, virtualTime = 1, profiling = 2, monotonic = 4;
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
+    PthreadCondattr handle = nullptr;
+    if (const int error = CondOperations::LoadAttribute(attr, handle)) return error;
     if (clockId != realtime && clockId != virtualTime && clockId != profiling && clockId != monotonic) return SCE_KERNEL_ERROR_EINVAL;
-    (*attr)->_clockid = static_cast<int>(clockId);
+    handle->_clockid = static_cast<int>(clockId);
     return 0;
 }
 
@@ -218,10 +267,13 @@ int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) {
 }
 
 int APS5_VABI scePthreadCondSignalto(PthreadCond* cond, Pthread thread) {
-    (void)thread;
     const auto resolved = resolveCond(cond);
-    if (!resolved)
+    if (!resolved || !thread)
         return SCE_KERNEL_ERROR_EINVAL;
+    if (!GuestThreadIsLive(thread))
+        return SCE_KERNEL_ERROR_ESRCH;
+    if (!IsWaiting(resolved.get(), thread))
+        return SCE_KERNEL_ERROR_EPERM;
     resolved->NotifyAll();
     return 0;
 }

@@ -1,0 +1,16 @@
+add_library(libSceImeDialogVoiceDictation SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceImeDialogVoiceDictation PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceImeDialogVoiceDictation)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_ime_dialog_voice_dictation_catalog_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeDialogVoiceDictationCatalog.cpp)
+    target_include_directories(guest_ime_dialog_voice_dictation_catalog_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ime_dialog_voice_dictation_catalog_tests PRIVATE libSceImeDialogVoiceDictation libkernel libc)
+    configure_windows_unwind(guest_ime_dialog_voice_dictation_catalog_tests)
+    add_test(NAME guest_ime_dialog_voice_dictation_catalog COMMAND guest_ime_dialog_voice_dictation_catalog_tests)
+    set_tests_properties(guest_ime_dialog_voice_dictation_catalog PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_ime_dialog_voice_dictation_catalog PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceImeDialogVoiceDictation>")
+    endif()
+endif()

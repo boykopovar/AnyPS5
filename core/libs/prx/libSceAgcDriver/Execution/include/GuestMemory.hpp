@@ -2,12 +2,15 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_GUESTMEMORY_HPP
 
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -43,15 +46,16 @@ bool EqualsCommittedUnsynced(std::uint64_t address, std::span<const std::byte> b
 // space cannot be queried).
 enum class Compare : std::uint8_t { Equal, Differs, Unmapped };
 Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes);
-// CompareMapped's walk with a copy in place of the compare: the bytes at `address` are copied into
-// `out` (Equal), or Unmapped as CompareMapped answers it (the dispatch-cache validation's masked
-// re-read of a differing run).
 Compare CopyMapped(std::uint64_t address, std::span<std::byte> out);
 void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment = 1);
 // Stores the parts of `current` that differ from `original` (the guest bytes the GPU started from), so
 // guest writes made meanwhile to untouched bytes survive. Compares in 256-byte blocks.
 void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
+void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit);
+std::size_t WriteChangedIfHeld(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint64_t unchangedSince);
+std::uint32_t ChangedByteStoreLimit();
+void WriteChangedKeepingGuest(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
 
 // Write tracking. The guest arena is reserved with page write watching, so CollectWrites learns which
 // pages of a range the CPU wrote since they were last collected, stamps their 64 KiB blocks with a new
@@ -65,12 +69,39 @@ void Unwatch(std::uint64_t address, std::size_t bytes);
 void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
 bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function<bool()>& import, bool staysWatched = true, bool importMayWriteGuest = true);
 void SetUnwatchHook(void (*hook)(std::uint64_t address, std::size_t bytes));
+bool UnwatchWritesProven();
+void SetImportWalkFailureForTest(int walk, std::uint64_t span = 0);
 #ifdef _WIN32
 using FreshCollectHook = bool (*)(std::uintptr_t address, std::size_t bytes, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context);
 void SetFreshCollectHook(FreshCollectHook hook);
 #endif
 bool Watched(std::uint64_t address, std::size_t bytes);
 std::uint64_t CollectWrites(std::uint64_t address, std::size_t bytes);
+struct WriteSubscription;
+bool WriteIndexEnabled();
+std::shared_ptr<WriteSubscription> SubscribeWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+std::uint64_t SubscriptionGeneration(const WriteSubscription& subscription);
+std::span<const std::pair<std::uint64_t, std::uint64_t>> SubscriptionSpans(const WriteSubscription& subscription);
+bool SweepSubscription(const WriteSubscription& subscription);
+bool SubscriptionBumpsSince(const WriteSubscription& subscription, std::uint64_t generation, std::vector<std::uint64_t>& blocks, std::vector<std::uint64_t>& lookupBlocks);
+void TrimSubscriptionBumps(WriteSubscription& subscription, std::uint64_t generation);
+std::uint64_t WriteBlockOf(std::uint64_t address);
+void NoteGpuPending(std::uint64_t address, std::size_t bytes);
+void NoteTextureReleased(std::uint64_t address);
+enum class WriteBumpSource : std::uint8_t { Cpu, Driver, Pending, Unwatch, Forget, Release, Import, Count };
+struct WriteIndexStats {
+    std::uint64_t subscriptions = 0;
+    std::uint64_t blocks = 0;
+    std::uint64_t bumps = 0;
+    std::uint64_t lookups = 0;
+    std::uint64_t sweeps = 0;
+    std::uint64_t sweepFailures = 0;
+    std::uint64_t overflows = 0;
+    std::uint64_t lookupNanoseconds = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(WriteBumpSource::Count)> bySource{};
+};
+WriteIndexStats WriteIndexCounted();
+void ResetWriteIndexCounts();
 bool UnchangedSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // UnchangedSince for several ranges under one tracker lock: true only when every one holds.
 struct UnchangedQuery {
@@ -88,8 +119,13 @@ bool UnchangedCommittedSince(std::span<const std::pair<std::uint64_t, std::uint6
 // UnchangedSince(range, it) holds until the next store over the range.
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes);
+std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes, std::uint64_t& order);
+void ForgetKnownZero(std::uint64_t address, std::size_t bytes);
+void MaterializeKnownZero(std::uint64_t address, std::size_t bytes);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store);
+std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void(std::span<std::byte>)>& store);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source);
+void SetOwnStoreCompare(bool compare);
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // Collect epoch: within one epoch a range already collected is not walked again, CollectWrites
@@ -122,6 +158,7 @@ std::uint64_t CollectWritesUncached(std::uint64_t address, std::size_t bytes);
 // tracker mutex, so every collect that bumped before it has finished its walk and every later
 // collect stamps newer.
 std::uint64_t TrackerGeneration();
+void AdvanceTrackerGenerationForTest(std::uint64_t generation);
 std::uint64_t NewestStamp(std::uint64_t address, std::size_t bytes);
 std::uint64_t UntrackedHint(std::uint64_t address, std::size_t bytes);
 // Whether no CPU write touched the range since `generation`: an uncached resetting collect of the
@@ -129,6 +166,8 @@ std::uint64_t UntrackedHint(std::uint64_t address, std::size_t bytes);
 // the stamps collects make (dirty pages), not the MarkWritten stamps of the driver's own GPU label
 // records, which share the title's label blocks. False when the arena is not write-watched.
 bool UnchangedSinceCollected(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
+bool CpuWroteSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
+bool UnchangedSinceLastCollect(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // Per 64 KiB tracker block of [address, address + bytes) (block 0 holds `address`): `changed[k]`
 // receives whether the block was stamped after generations[k] (UnchangedSince over that block
 // alone), `cpu[k]`, when given, whether a collect stamped it after (a CPU store, as
@@ -208,14 +247,28 @@ unsigned long long CodeOffset(const void* address);
 // every read and store through this interface calls first. Code that reads guest memory directly
 // calls FlushGpuWrites itself.
 void SetFlushHook(void (*hook)(std::uint64_t address, std::size_t bytes));
+auto CurrentFlushHook() -> void (*)(std::uint64_t address, std::size_t bytes);
 void SetReadGuard(void (*guard)(std::uint64_t address, std::size_t bytes));
 void GuardRead(std::uint64_t address, std::size_t bytes);
 void FlushGpuWrites(std::uint64_t address, std::size_t bytes);
+void PrepareHostWrite(std::uintptr_t address, std::size_t bytes);
+bool StopHostWrites(std::uint32_t boundMs);
+std::uint64_t LockedHostWrites();
+struct HostWriteCounts {
+    std::uint64_t calls = 0;
+    std::uint64_t waited = 0;
+    double waitedMs = 0;
+    double maxWaitedMs = 0;
+};
+HostWriteCounts HostWritesCounted();
+void SetWaitedMsProvider(double (*provider)());
+std::string HostWriteReport();
 // Moves with every ForgetPages call (the libc invalidator: memory unmapped or re-registered): odd
 // while the call stores its page states, moved past it after, so a reader that loads an even
 // value before consulting the page states and reading directly, and the same value after, knows
 // the states it consulted were current and no page it read changed its mapping meanwhile.
 std::uint64_t ForgetSerial();
+std::uint64_t ForgetStamp(std::uint64_t address, std::size_t bytes);
 
 // Attribution of guest memory accesses (the [hooksync] line in Recorder.cpp and the read-site
 // counts of the [guestmem] line, APS5_PROFILE_DRAW): a sync the flush hook makes for an access has

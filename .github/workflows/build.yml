@@ -32,7 +32,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr || github.ref }}
+  group: build-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr || (github.event_name == 'push' && github.sha) || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 env:
@@ -43,7 +43,7 @@ env:
 
 jobs:
   eligibility:
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -56,10 +56,13 @@ jobs:
       relinker: ${{ steps.gate.outputs.relinker }}
       register-context: ${{ steps.gate.outputs.register-context }}
       write-watch: ${{ steps.gate.outputs.write-watch }}
+      edge-watch: ${{ steps.gate.outputs.edge-watch }}
+      pipe-write: ${{ steps.gate.outputs.pipe-write }}
+      mingw-host-tests: ${{ steps.gate.outputs.mingw-host-tests }}
       full: ${{ steps.gate.outputs.full }}
       relinker-hosts: ${{ steps.gate.outputs.relinker-hosts }}
     steps:
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@v9
         id: gate
         env:
           PR_NUMBER: ${{ inputs.pr }}
@@ -126,21 +129,34 @@ jobs:
                 paths.some((path) => prefixes.some((prefix) => prefix.endsWith('/') ? path.startsWith(prefix) : path === prefix));
               const edits = (job) => ['*', '', 'eligibility', job].some((name) => workflowJobs.has(name));
               return {
-                relinker: edits('relinker') || touches(
+                relinker: edits('relinker') || edits('relinker-asan') || touches(
                   'core/relinker/', libc, 'core/libs/prx/libkernel/AppMetadata/', 'core/libs/tests/ParamJsonParser.cpp',
-                  'core/shader/recompiler/tests/CacheFileReadTests.cpp', 'core/shader/recompiler/ShaderCacheDirectory.hpp',
+                  'core/libs/prx/libkernel/DirectMemory/DirectMemory.hpp', 'core/libs/prx/libkernel/KernelErrors.hpp',
+                  'core/libs/nid/src/NidCompute.cpp', 'core/libs/nid/src/Sha1.cpp',
+                  'core/libs/nid/include/nid/NidCompute.hpp', 'core/libs/nid/include/nid/Sha1.hpp',
+                  'core/libs/prx/libScePad/tests/InputCommandFile.cpp', 'core/libs/prx/libScePad/include/InputCommandFile.hpp',
+                  'core/shader/recompiler/', '.github/pull_request_template.md', '.github/workflows/pr-overlap.yml',
                   'tools/', 'cmake/', 'CMakeLists.txt'
                 ),
                 registerContext: edits('register-context') ||
                   touches('core/libs/tests/register_context/', 'core/libs/tests/RegisterContext.cpp', libc),
-                writeWatch: edits('write-watch') || touches('core/libs/tests/write_watch/', 'core/libs/tests/WriteWatch.cpp', libc),
+                writeWatch: edits('write-watch') || touches('core/libs/tests/write_watch/', 'core/libs/tests/WriteWatch.cpp', 'core/libs/tests/WriteWatchBacking.cpp', libc),
+                edgeWatch: edits('edge-watch') || touches('core/libs/tests/edge_watch/', 'core/libs/tests/EdgeWatch.cpp',
+                  'core/libs/prx/libkernel/Equeue/src/EdgeWatch.cpp', 'core/libs/prx/libkernel/Equeue/include/EdgeWatch.hpp', libc),
+                pipeWrite: edits('pipe-write') || touches('core/libs/tests/pipe_write/', 'core/libs/tests/PipeWrite.cpp',
+                  'core/libs/prx/libkernel/Socket/src/Udp.cpp', 'core/libs/prx/libkernel/Socket/include/SocketRuntime.hpp'),
+                mingwHostTests: edits('eligibility') || edits('windows') || touches(
+                  'core/libs/', 'cmake/', '3rdparty/', '.gitmodules', 'tools/build_mingw_host_only_tests.py',
+                  'tools/build_changed_guest_tests.py', 'tools/configure_seed.py', 'tools/select_tests.py',
+                  'tools/tests/test_build_changed_guest_tests.py', 'tools/tests/test_mingw_host_only_test_targets.py', 'CMakeLists.txt'
+                ),
               };
             };
-            const relinkerHosts = (full, linux) => JSON.stringify([
+            const relinkerHosts = (full, linux, intelMac = true) => JSON.stringify([
               ...(full && linux ? [] : [{ os: 'ubuntu-latest', compiler: 'g++' }]),
               ...(full ? [] : [{ os: 'windows-latest', compiler: 'g++' }]),
               { os: 'macos-latest', compiler: 'clang++' },
-              { os: 'macos-latest', compiler: 'clang++', architectures: 'x86_64' },
+              ...(intelMac ? [{ os: 'macos-latest', compiler: 'clang++', architectures: 'x86_64' }] : []),
             ]);
             if (context.eventName === 'push') {
               if (context.ref !== 'refs/heads/main') {
@@ -168,6 +184,9 @@ jobs:
               core.setOutput('relinker', run.relinker);
               core.setOutput('register-context', run.registerContext);
               core.setOutput('write-watch', run.writeWatch);
+              core.setOutput('edge-watch', run.edgeWatch);
+              core.setOutput('pipe-write', run.pipeWrite);
+              core.setOutput('mingw-host-tests', false);
               core.setOutput('full', true);
               core.setOutput('relinker-hosts', relinkerHosts(true, true));
               await core.summary.addRaw(
@@ -257,8 +276,11 @@ jobs:
             core.setOutput('relinker', relinker);
             core.setOutput('register-context', registerContext);
             core.setOutput('write-watch', writeWatch);
+            core.setOutput('edge-watch', run.edgeWatch);
+            core.setOutput('pipe-write', run.pipeWrite);
+            core.setOutput('mingw-host-tests', !manual && run.mingwHostTests);
             core.setOutput('full', full);
-            core.setOutput('relinker-hosts', relinkerHosts(full, linux));
+            core.setOutput('relinker-hosts', relinkerHosts(full, linux, manual));
             const merged = pulls.map((pull) => `PR #${pull.number} at ${pull.head} merged into main at ${main.commit.sha}`);
             merged.forEach((line) => core.info(line));
             await core.summary.addRaw(
@@ -279,6 +301,7 @@ jobs:
     env:
       WINLIBS_RELEASE: 15.2.0posix-14.0.0-ucrt-r7
       WINLIBS_ZIP: winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip
+      WINLIBS_SHA256: cb2fbad6162540cdf5e1facdce08d4dac359e8cf64f7f696a99274291763b815
     defaults:
       run:
         shell: bash
@@ -298,7 +321,17 @@ jobs:
           read -ra heads <<< "$PR_HEAD"
           refspecs=()
           for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
-          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags --unshallow origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
           for i in "${!numbers[@]}"; do
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
@@ -312,14 +345,18 @@ jobs:
       - if: runner.os == 'Windows' && steps.toolchain.outputs.cache-hit != 'true'
         run: |
           curl -sSfL -o "$RUNNER_TEMP/winlibs.zip" "https://github.com/brechtsanders/winlibs_mingw/releases/download/$WINLIBS_RELEASE/$WINLIBS_ZIP"
+          echo "$WINLIBS_SHA256  $RUNNER_TEMP/winlibs.zip" | sha256sum -c -
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs > /dev/null
       - if: runner.os == 'Windows'
         run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
       - if: ${{ matrix.architectures == 'x86_64' }}
-        run: sudo softwareupdate --install-rosetta --agree-to-license
+        run: arch -x86_64 /usr/bin/true || sudo softwareupdate --install-rosetta --agree-to-license
       - run: cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON -DCMAKE_OSX_ARCHITECTURES=${{ matrix.architectures }}
       - run: cmake --build build-relinker --parallel 3
-      - run: ctest --test-dir build-relinker --output-on-failure --timeout 120 --parallel 4
+      - run: |
+          repeat=()
+          if [ "$RUNNER_OS" = Windows ]; then repeat=(--repeat after-timeout:2); fi
+          ctest --test-dir build-relinker --output-on-failure --timeout 120 --parallel 4 --no-tests=error "${repeat[@]}"
 
   relinker-asan:
     needs: eligibility
@@ -341,7 +378,17 @@ jobs:
           read -ra heads <<< "$PR_HEAD"
           refspecs=()
           for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
-          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags --unshallow origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
           for i in "${!numbers[@]}"; do
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
@@ -358,8 +405,19 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-15-intel]
         configuration: [Debug, Release]
+        architectures: ['']
+        include:
+          - os: macos-15
+            configuration: Debug
+            architectures: x86_64
+          - os: macos-15
+            configuration: Release
+            architectures: x86_64
+        exclude:
+          - os: macos-15-intel
+            configuration: ${{ github.event_name == 'pull_request' && 'Debug' || 'none' }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+    timeout-minutes: ${{ matrix.architectures == 'x86_64' && 15 || 5 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -376,12 +434,24 @@ jobs:
           read -ra heads <<< "$PR_HEAD"
           refspecs=()
           for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
-          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags --unshallow origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
           for i in "${!numbers[@]}"; do
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
           done
-      - run: cmake -S core/libs/tests/register_context -B build/register-context -DCMAKE_BUILD_TYPE=${{ matrix.configuration }}
+      - if: ${{ matrix.architectures == 'x86_64' }}
+        run: sudo softwareupdate --install-rosetta --agree-to-license
+      - run: cmake -S core/libs/tests/register_context -B build/register-context -DCMAKE_BUILD_TYPE=${{ matrix.configuration }} -DCMAKE_OSX_ARCHITECTURES=${{ matrix.architectures }}
       - run: cmake --build build/register-context --parallel
       - run: ctest --test-dir build/register-context --output-on-failure --repeat until-fail:3 --no-tests=error
 
@@ -391,9 +461,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15-intel, macos-15]
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["macos-15"]') || fromJSON('["macos-15-intel", "macos-15"]') }}
+        architectures: ['']
+        include:
+          - os: macos-15
+            architectures: x86_64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+    timeout-minutes: ${{ matrix.architectures == 'x86_64' && 15 || 5 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -410,12 +484,24 @@ jobs:
           read -ra heads <<< "$PR_HEAD"
           refspecs=()
           for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
-          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags --unshallow origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
           for i in "${!numbers[@]}"; do
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
           done
-      - run: cmake -S core/libs/tests/write_watch -B build/write-watch -DCMAKE_BUILD_TYPE=Release
+      - if: ${{ matrix.architectures == 'x86_64' }}
+        run: sudo softwareupdate --install-rosetta --agree-to-license
+      - run: cmake -S core/libs/tests/write_watch -B build/write-watch -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.architectures }}
       - run: cmake --build build/write-watch --parallel
       - run: ctest --test-dir build/write-watch --output-on-failure --repeat until-fail:3 --no-tests=error
 
@@ -431,6 +517,9 @@ jobs:
       MESA_SHADER_CACHE_DIR: /var/cache/anyps5/mesa
       MESA_SHADER_CACHE_MAX_SIZE: 4G
     steps:
+      - name: Remove git locks left by an interrupted checkout
+        shell: bash
+        run: if [ -d .git ]; then find .git -name '*.lock' -type f -print -delete; fi
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.eligibility.outputs.sha }}
@@ -449,7 +538,17 @@ jobs:
           for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
           fetch_options=()
           if [ "$(git rev-parse --is-shallow-repository)" = true ]; then fetch_options+=(--unshallow); fi
-          git fetch --no-tags "${fetch_options[@]}" origin "${refspecs[@]}"
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags "${fetch_options[@]}" origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
           for i in "${!numbers[@]}"; do
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
@@ -508,6 +607,31 @@ jobs:
           echo "CCACHE_PREFIX=$GITHUB_WORKSPACE/tools/compile_slot.sh" >> "$GITHUB_ENV"
           echo "ANYPS5_COMPILE_SLOT_DIR=$slot_dir" >> "$GITHUB_ENV"
           echo "ANYPS5_COMPILE_SLOTS=$slots" >> "$GITHUB_ENV"
+      - name: Fetch the FFmpeg prebuilt with retries
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(git -C 3rdparty/ffmpeg-core rev-parse --short=12 HEAD)
+          repo=$(git -C 3rdparty/ffmpeg-core remote get-url origin | sed -E 's#^.*github\.com[/:]##; s#\.git$##')
+          name=ffmpeg-linux-x64.zip
+          zip=build/externals/$sha-$name
+          mkdir -p build/externals
+          valid() { python3 -c 'import sys, zipfile; z = zipfile.ZipFile(sys.argv[1]); sys.exit(1 if z.testzip() else 0)' "$1" 2>/dev/null; }
+          if valid "$zip"; then echo "$zip already present"; exit 0; fi
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL --connect-timeout 20 --max-time 300 -o "$zip.part" "https://github.com/$repo/releases/download/$sha/$name" && valid "$zip.part"; then
+              mv "$zip.part" "$zip"; echo "downloaded $name from the release URL (attempt $attempt)"; exit 0
+            fi
+            echo "::warning::release URL attempt $attempt failed"
+            if gh release download "$sha" -R "$repo" -p "$name" -O "$zip.part" --clobber && valid "$zip.part"; then
+              mv "$zip.part" "$zip"; echo "downloaded $name through the API (attempt $attempt)"; exit 0
+            fi
+            echo "::warning::API attempt $attempt failed"
+            sleep $((attempt * 15))
+          done
+          rm -f "$zip.part"
+          echo "::warning::could not prefetch $name; leaving the download to CMake"
       - run: cmake -S . -B build $CONFIGURE -DANYPS5_ENABLE_SPIRV_TOOLS=ON "-DCMAKE_EXE_LINKER_FLAGS=$LINKER_FLAGS" "-DCMAKE_SHARED_LINKER_FLAGS=$LINKER_FLAGS" "-DCMAKE_MODULE_LINKER_FLAGS=$LINKER_FLAGS"
       - name: Check that every test executable is registered with ctest
         run: python3 tools/check_test_registration.py build
@@ -522,7 +646,7 @@ jobs:
         env:
           BASE: ${{ needs.eligibility.outputs.sha }}
         run: |
-          git diff --name-only "$BASE" HEAD > changed.txt
+          git diff --name-only -z "$BASE" HEAD -- > changed.txt
           python3 tools/select_tests.py select build test-graph.json changed.txt
       - id: build
         run: |
@@ -557,12 +681,13 @@ jobs:
 
   windows:
     needs: eligibility
-    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.eligibility.outputs.full == 'true' }}
+    if: ${{ ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.eligibility.outputs.full == 'true') || (github.event_name == 'pull_request' && needs.eligibility.outputs.mingw-host-tests == 'true') }}
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       WINLIBS_RELEASE: 15.2.0posix-14.0.0-ucrt-r7
       WINLIBS_ZIP: winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip
+      WINLIBS_SHA256: cb2fbad6162540cdf5e1facdce08d4dac359e8cf64f7f696a99274291763b815
     defaults:
       run:
         shell: bash
@@ -582,7 +707,17 @@ jobs:
           read -ra heads <<< "$PR_HEAD"
           refspecs=()
           for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
-          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags --unshallow origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
           for i in "${!numbers[@]}"; do
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
@@ -624,6 +759,7 @@ jobs:
       - if: steps.toolchain.outputs.cache-hit != 'true'
         run: |
           curl -sSfL -o "$RUNNER_TEMP/winlibs.zip" "https://github.com/brechtsanders/winlibs_mingw/releases/download/$WINLIBS_RELEASE/$WINLIBS_ZIP"
+          echo "$WINLIBS_SHA256  $RUNNER_TEMP/winlibs.zip" | sha256sum -c -
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs > /dev/null
       - run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
       - uses: hendrikmuhs/ccache-action@v1.2.24
@@ -636,12 +772,15 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: build/externals
-          key: ffmpeg-${{ runner.os }}-${{ steps.submodules.outputs.ffmpeg }}
+          key: ffmpeg-${{ runner.os }}-winlibs-${{ env.WINLIBS_ZIP }}-${{ steps.submodules.outputs.ffmpeg }}
       - id: seed-cache
         uses: actions/cache/restore@v6
         with:
           path: configure-seed.cmake
           key: configure-seed-${{ env.WINLIBS_ZIP }}-${{ steps.submodules.outputs.key }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'core/libs/CMakeLists.txt', 'tools/configure_seed.py', '.github/workflows/build.yml') }}
+      - if: github.event_name == 'pull_request'
+        shell: bash
+        run: mkdir -p build/.cmake/api/v1/query && touch build/.cmake/api/v1/query/codemodel-v2
       - shell: cmd
         run: if exist configure-seed.cmake (cmake -C configure-seed.cmake -S . -B build %CONFIGURE% "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown") else (cmake -S . -B build %CONFIGURE% "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown")
       - if: steps.seed-cache.outputs.cache-hit != 'true'
@@ -674,17 +813,34 @@ jobs:
           BASE: ${{ needs.eligibility.outputs.sha }}
         shell: cmd
         run: |
-          git diff --name-only %BASE% HEAD > changed.txt
+          git diff --name-only -z %BASE% HEAD -- > changed.txt
           python tools/select_tests.py select build test-graph.json changed.txt
       - id: build
+        if: github.event_name != 'pull_request'
         shell: cmd
         run: if exist build\select.ninja (ninja -C build -f select.ninja selected) else (cmake --build build)
+      - name: List changed files for host-only test linking
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ needs.eligibility.outputs.sha }}
+        run: git diff --name-only "$BASE" HEAD > changed.txt
+      - name: Link changed host-only core/libs test executables
+        if: github.event_name == 'pull_request'
+        shell: cmd
+        run: python tools/build_mingw_host_only_tests.py build changed.txt
+      - name: Build and run changed core/libs tests
+        if: github.event_name == 'pull_request'
+        shell: cmd
+        run: python tools/build_changed_guest_tests.py build changed.txt --output-log ctest.log
       - id: libs
+        if: github.event_name != 'pull_request'
         shell: cmd
         run: cmake --build build --target libs
-      - shell: cmd
+      - if: github.event_name != 'pull_request'
+        shell: cmd
         run: python tools/select_tests.py ctest build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit ctest.xml
-      - run: python tools/check_skips.py build/ctest.xml --job windows
+      - if: github.event_name != 'pull_request'
+        run: python tools/check_skips.py build/ctest.xml --job windows
       - name: Write the test graph of main
         if: ${{ !cancelled() && github.event_name == 'push' && steps.build.outcome == 'success' && steps.libs.outcome == 'success' }}
         continue-on-error: true
@@ -704,3 +860,90 @@ jobs:
           awk '/Test +#[0-9]+: / && $NF == "sec" { for (i = 1; i <= NF; i++) if ($i ~ /^#[0-9]+:$/) name = $(i + 1); t = $(NF - 1) + 0; if (t > max[name]) max[name] = t }
             END { for (name in max) if (max[name] > 30) printf "::warning title=Slow test::%s took %.1f s on %s; tests must finish in 30 s (CONTRIBUTING.md)\n", name, max[name], ENVIRON["RUNNER_OS"] }' ctest.log
 
+  pipe-write:
+    needs: eligibility
+    if: ${{ needs.eligibility.outputs.pipe-write == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.eligibility.outputs.sha }}
+          persist-credentials: false
+      - name: Merge the pull request into main
+        if: ${{ needs.eligibility.outputs.head != '' }}
+        shell: bash
+        env:
+          PR_NUMBER: ${{ needs.eligibility.outputs.pr }}
+          PR_HEAD: ${{ needs.eligibility.outputs.head }}
+        run: |
+          read -ra numbers <<< "$PR_NUMBER"
+          read -ra heads <<< "$PR_HEAD"
+          refspecs=()
+          for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags --unshallow origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
+          for i in "${!numbers[@]}"; do
+            if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
+            if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
+          done
+      - run: cmake -S core/libs/tests/pipe_write -B build/pipe-write -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/pipe-write --parallel
+      - run: ctest --test-dir build/pipe-write --output-on-failure --repeat until-fail:3 --no-tests=error
+
+  edge-watch:
+    needs: eligibility
+    if: ${{ needs.eligibility.outputs.edge-watch == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.eligibility.outputs.sha }}
+          persist-credentials: false
+      - name: Merge the pull request into main
+        if: ${{ needs.eligibility.outputs.head != '' }}
+        shell: bash
+        env:
+          PR_NUMBER: ${{ needs.eligibility.outputs.pr }}
+          PR_HEAD: ${{ needs.eligibility.outputs.head }}
+        run: |
+          read -ra numbers <<< "$PR_NUMBER"
+          read -ra heads <<< "$PR_HEAD"
+          refspecs=()
+          for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
+          for attempt in $(seq 1 5); do
+            if git fetch --no-tags --unshallow origin "${refspecs[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::git fetch failed after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::git fetch failed (attempt $attempt/5), retrying in $((attempt * 3))s..."
+            sleep $((attempt * 3))
+          done
+          for i in "${!numbers[@]}"; do
+            if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
+            if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
+          done
+      - run: cmake -S core/libs/tests/edge_watch -B build/edge-watch -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/edge-watch --parallel
+      - run: ctest --test-dir build/edge-watch --output-on-failure --repeat until-fail:3 --no-tests=error

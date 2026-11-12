@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -19,7 +20,7 @@ PresentationScaler::PresentationScaler(const Graphics::Context& context, VkForma
 PresentationScaler::~PresentationScaler() {
     release();
     if (blackImage != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, blackImage, nullptr);
-    if (blackMemory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, blackMemory, nullptr);
+    if (blackMemory != VK_NULL_HANDLE) Graphics::MemoryAccounting::Free(context, blackMemory);
 }
 
 void PresentationScaler::release() noexcept {
@@ -150,7 +151,17 @@ void PresentationScaler::RecordBlit(VkCommandBuffer commands, VkImage destinatio
 
 void PresentationScaler::RecordBlitFrom(const Graphics::Context& context, VkCommandBuffer commands, VkImage image, VkImageLayout layout, std::uint32_t width, std::uint32_t height, VkFilter filter, VkImage destinationImage, std::uint32_t destinationWidth, std::uint32_t destinationHeight, std::uint32_t layer) {
     Graphics::Require(image != VK_NULL_HANDLE && width != 0 && height != 0, "presentation blit source is unavailable");
-    const auto rect = ComputeContainRect_nid_postfix(width, height, destinationWidth, destinationHeight);
+    RecordStretchFrom(context, commands, image, layout, width, height, filter, destinationImage, ComputeContainRect_nid_postfix(width, height, destinationWidth, destinationHeight), layer);
+}
+
+void PresentationScaler::RecordStretch(VkCommandBuffer commands, VkImage destinationImage, const AspectFitRect& destination) {
+    Graphics::Require(sourceImage != VK_NULL_HANDLE, "presentation source image has not been created");
+    RecordStretchFrom(context, commands, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sourceWidth, sourceHeight, VK_FILTER_LINEAR, destinationImage, destination);
+}
+
+void PresentationScaler::RecordStretchFrom(const Graphics::Context& context, VkCommandBuffer commands, VkImage image, VkImageLayout layout, std::uint32_t width, std::uint32_t height, VkFilter filter, VkImage destinationImage, const AspectFitRect& rect, std::uint32_t layer) {
+    Graphics::Require(image != VK_NULL_HANDLE && width != 0 && height != 0, "presentation blit source is unavailable");
+    Graphics::Require(destinationImage != VK_NULL_HANDLE && rect.width != 0 && rect.height != 0, "presentation blit destination is unavailable");
     VkImageBlit blit{};
     blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1};
     blit.srcOffsets[0] = {0, 0, 0};
@@ -198,11 +209,11 @@ void PresentationScaler::RecordLetterbox(VkCommandBuffer commands, std::uint32_t
             VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             allocation.allocationSize = requirements.size;
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            Graphics::Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory letterbox");
+            Graphics::Check(Graphics::MemoryAccounting::Allocate(context, allocation, "presentation image", &memory), "vkAllocateMemory letterbox");
             Graphics::Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory letterbox");
         } catch (...) {
             context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-            if (memory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+            if (memory != VK_NULL_HANDLE) Graphics::MemoryAccounting::Free(context, memory);
             throw;
         }
         blackImage = image;

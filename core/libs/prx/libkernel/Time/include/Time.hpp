@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBKERNEL_TIME_INCLUDE_TIME_HPP
 
 #include <cstdint>
+#include <cstdlib>
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -11,6 +12,7 @@ extern "C" {
     std::uint64_t APS5_VABI sceKernelGetProcessTimeCounter();
     std::uint64_t APS5_VABI sceKernelGetProcessTimeCounterFrequency();
     std::uint64_t APS5_VABI sceKernelGetTscFrequency();
+    std::uint64_t APS5_VABI HostTscFrequency_nid_no_patch();
     int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds);
     int APS5_VABI sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp);
     int APS5_VABI nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp);
@@ -26,6 +28,11 @@ extern "C" {
     // with their timeout rate; a site that times out once per frame is a lost wake-up.
     void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint64_t waitedNanos, bool timedOut);
 
+}
+
+inline bool KernelTraceWaitEnabled() {
+    static const bool enabled = std::getenv("APS5_TRACE_WAITS") != nullptr;
+    return enabled;
 }
 
 #endif

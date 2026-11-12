@@ -1,0 +1,1523 @@
+/*
+ * Copyright (C) 2004-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2012 Research In Motion Limited. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+/*
+ * Copyright (C) 2006-2019 Apple Inc. All rights reserved
+ * Copyright (C) Research In Motion Limited 2009. All rights reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ *
+ * Derived from Source/WTF/wtf/text/StringHash.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+ */
+/*
+ * Copyright (C) 2005-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2010 Patrick Gansterer <paroga@paroga.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ *
+ * Derived from Source/WTF/wtf/text/StringHasher.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+ */
+
+#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
+
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <vector>
+#include <algorithm>
+#include <charconv>
+#include <cstring>
+#include <limits>
+#include <new>
+#include <optional>
+#include <stdexcept>
+#include <string>
+
+#include "WtfStringAbi.hpp"
+
+namespace {
+
+class StringHasher {
+public:
+    static constexpr unsigned stringHashingStartValue = 0x9E3779B9U;
+    static constexpr unsigned maskHash = 0x00FFFFFFU;
+
+    void addCharacter(std::uint16_t character) {
+        if (m_hasPendingCharacter) {
+            m_hasPendingCharacter = false;
+            addPair(m_pendingCharacter, character);
+            return;
+        }
+        m_pendingCharacter = character;
+        m_hasPendingCharacter = true;
+    }
+
+    void addCharacters(std::uint16_t a, std::uint16_t b) {
+        if (m_hasPendingCharacter) {
+            m_hasPendingCharacter = false;
+            addPair(m_pendingCharacter, a);
+            m_pendingCharacter = b;
+            m_hasPendingCharacter = true;
+            return;
+        }
+        addPair(a, b);
+    }
+
+    unsigned hashWithTop8BitsMasked() const {
+        return hash(true);
+    }
+
+    unsigned hash(bool masked) const {
+        unsigned result = m_hash;
+        if (m_hasPendingCharacter) {
+            result += m_pendingCharacter;
+            result ^= result << 11;
+            result += result >> 17;
+        }
+        result ^= result << 3;
+        result += result >> 5;
+        result ^= result << 2;
+        result += result >> 15;
+        result ^= result << 10;
+        if (masked) result &= maskHash;
+        if (!result) {
+            return 0x00800000U;
+        }
+        return result;
+    }
+
+private:
+    void addPair(std::uint16_t first, std::uint16_t second) {
+        unsigned result = m_hash + first;
+        result = (result << 16) ^ ((static_cast<unsigned>(second) << 11) ^ result);
+        result += result >> 11;
+        m_hash = result;
+    }
+
+    unsigned m_hash{stringHashingStartValue};
+    std::uint16_t m_pendingCharacter{0};
+    bool m_hasPendingCharacter{false};
+};
+
+}  // namespace
+
+extern "C" {
+unsigned int APS5_VABI _ZN3WTF7Unicode51calculateStringHashAndLengthFromUTF8MaskingTop8BitsEPKcS2_RjS3_(
+    const char* data, const char* dataEnd, unsigned int& dataLength, unsigned int& utf16Length) {
+    if (!data || !dataEnd || reinterpret_cast<std::uintptr_t>(dataEnd) < reinterpret_cast<std::uintptr_t>(data))
+        throw std::invalid_argument("invalid WTF UTF-8 hash range");
+    StringHasher hasher;
+    utf16Length = 0;
+    const auto* cur = reinterpret_cast<const std::uint8_t*>(data);
+    const auto* end = reinterpret_cast<const std::uint8_t*>(dataEnd);
+
+    while (cur < end) {
+        std::uint8_t lead = *cur++;
+        std::uint32_t cp = 0;
+        int extraBytes = 0;
+
+        if (lead < 0x80) {
+            cp = lead;
+        } else if (lead >= 0xC2 && lead <= 0xDF) {
+            cp = lead & 0x1F;
+            extraBytes = 1;
+        } else if ((lead & 0xF0) == 0xE0) {
+            cp = lead & 0x0F;
+            extraBytes = 2;
+        } else if (lead >= 0xF0 && lead <= 0xF4) {
+            cp = lead & 0x07;
+            extraBytes = 3;
+        } else {
+            return 0;
+        }
+
+        if (static_cast<std::size_t>(end - cur) < static_cast<unsigned>(extraBytes)) {
+            return 0;
+        }
+
+        for (int i = 0; i < extraBytes; ++i) {
+            std::uint8_t b = *cur++;
+            if ((b & 0xC0) != 0x80) {
+                return 0;
+            }
+            cp = (cp << 6) | (b & 0x3F);
+        }
+
+        if ((extraBytes == 1 && cp < 0x80) || (extraBytes == 2 && cp < 0x800) || (extraBytes == 3 && cp < 0x10000)) return 0;
+
+        if (cp <= 0xFFFF) {
+            if (cp >= 0xD800 && cp <= 0xDFFF) {
+                return 0;
+            }
+            hasher.addCharacter(static_cast<std::uint16_t>(cp));
+            utf16Length++;
+        } else if (cp <= 0x10FFFF) {
+            std::uint32_t sub = cp - 0x10000;
+            auto leadSurrogate = static_cast<std::uint16_t>((sub >> 10) + 0xD800);
+            auto trailSurrogate = static_cast<std::uint16_t>((sub & 0x3FF) + 0xDC00);
+            hasher.addCharacters(leadSurrogate, trailSurrogate);
+            utf16Length += 2;
+        } else {
+            return 0;
+        }
+    }
+
+    dataLength = static_cast<unsigned int>(reinterpret_cast<const char*>(cur) - data);
+    return hasher.hashWithTop8BitsMasked();
+}
+
+double APS5_VABI _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(
+    const char16_t* string, std::size_t length, std::size_t& parsedLength) {
+    std::vector<char> buffer(length + 1);
+    for (std::size_t i = 0; i < length; ++i) {
+        char16_t ch = string[i];
+        buffer[i] = (ch < 0x80) ? static_cast<char>(ch) : 0;
+    }
+    buffer[length] = '\0';
+
+    char* endPtr = nullptr;
+    double val = std::strtod(buffer.data(), &endPtr);
+    parsedLength = static_cast<std::size_t>(endPtr - buffer.data());
+    return val;
+}
+
+}
+
+namespace NKWebKit {
+void* Allocate(std::size_t size, std::size_t alignment = 16);
+void* TryAllocate(std::size_t size, std::size_t alignment = 16);
+void Deallocate(void* ptr);
+}  // namespace NKWebKit
+
+namespace NKWebKit::WtfAbi {
+
+void Release(StringImpl* impl) {
+    if (!impl) return;
+    if (impl->refCount != 2) {
+        impl->refCount -= 2;
+        return;
+    }
+    if (impl->hashAndFlags & 48 || (impl->hashAndFlags & 3) == 3) std::terminate();
+    switch (impl->hashAndFlags & 3) {
+    case 1:
+        Deallocate(const_cast<void*>(impl->data));
+        break;
+    case 2:
+        Release(*reinterpret_cast<StringImpl**>(reinterpret_cast<unsigned char*>(impl) + 24));
+        break;
+    }
+    Deallocate(impl);
+}
+
+void Release(CStringBuffer* buffer) {
+    if (buffer && !--buffer->refCount) Deallocate(buffer);
+}
+
+}  // namespace NKWebKit::WtfAbi
+
+namespace {
+
+using NKWebKit::WtfAbi::StringImpl;
+using NKWebKit::WtfAbi::StringView;
+using NKWebKit::WtfAbi::String;
+using NKWebKit::WtfAbi::CString;
+using NKWebKit::WtfAbi::CStringBuffer;
+
+constexpr unsigned MaxStringLength = 0x7FFFFFFF;
+constexpr std::size_t NotFound = std::numeric_limits<std::size_t>::max();
+
+template<typename T> T& Checked(T* value) {
+    if (!value) throw std::invalid_argument("null WTF object");
+    return *value;
+}
+
+void CheckBuffer(const void* value, std::size_t length) {
+    if (!value && length) throw std::invalid_argument("null WTF character buffer");
+}
+
+StringView View(const StringImpl* impl) {
+    if (!impl) return {nullptr, 0, true};
+    return {impl->data, impl->length, !!(impl->hashAndFlags & 4)};
+}
+
+char16_t Unit(StringView view, unsigned index) {
+    CheckBuffer(view.data, view.length);
+    return view.is8Bit ? static_cast<const unsigned char*>(view.data)[index] : static_cast<const char16_t*>(view.data)[index];
+}
+
+unsigned Hash(StringView view, bool masked = true) {
+    StringHasher hasher;
+    for (unsigned i = 0; i < view.length; ++i) hasher.addCharacter(Unit(view, i));
+    return hasher.hash(masked);
+}
+
+unsigned AvoidDeletedHashValue(unsigned hash) {
+    return hash | (static_cast<unsigned>(!(hash + 1)) << 31);
+}
+
+StringImpl* EmptyImpl() {
+    static const unsigned char empty[] = "";
+    static StringImpl impl{1, 0, empty, (Hash({empty, 0, true}) << 8) | 28};
+    impl.refCount += 2;
+    return &impl;
+}
+
+StringImpl* Retain(StringImpl* impl) {
+    if (impl) impl->refCount += 2;
+    return impl;
+}
+
+bool ExceedsMaxLength(unsigned length, bool is8Bit) {
+    return length > std::min<std::size_t>(MaxStringLength, (0xFFFFFFFFULL - sizeof(StringImpl)) / (is8Bit ? 1 : 2));
+}
+
+std::size_t ImplAllocationSize(unsigned length, bool is8Bit) {
+    return std::max<std::size_t>(sizeof(StringImpl), 20 + (is8Bit ? 1 : 2) * std::size_t(length));
+}
+
+StringImpl* ConstructImpl(void* storage, unsigned length, bool is8Bit, void*& characters) {
+    characters = static_cast<unsigned char*>(storage) + 20;
+    return new (storage) StringImpl{2, length, characters, is8Bit ? 4U : 0U};
+}
+
+StringImpl* NewImpl(unsigned length, bool is8Bit, void*& characters) {
+    if (!length) {
+        characters = nullptr;
+        return EmptyImpl();
+    }
+    if (ExceedsMaxLength(length, is8Bit)) throw std::length_error("WTF string exceeds maximum length");
+    return ConstructImpl(NKWebKit::Allocate(ImplAllocationSize(length, is8Bit)), length, is8Bit, characters);
+}
+
+StringImpl* CopyImpl(StringView view, bool narrow = false) {
+    if (!view.data || !view.length) return EmptyImpl();
+    bool is8Bit = view.is8Bit;
+    if (narrow && !is8Bit) {
+        is8Bit = true;
+        for (unsigned i = 0; i < view.length; ++i) is8Bit &= Unit(view, i) <= 255;
+    }
+    void* data;
+    auto* impl = NewImpl(view.length, is8Bit, data);
+    for (unsigned i = 0; i < view.length; ++i) {
+        if (is8Bit) static_cast<unsigned char*>(data)[i] = static_cast<unsigned char>(Unit(view, i));
+        else static_cast<char16_t*>(data)[i] = Unit(view, i);
+    }
+    return impl;
+}
+
+char16_t AsciiCase(char16_t value, bool lower) {
+    if (lower && value >= 'A' && value <= 'Z') return value + 32;
+    if (!lower && value >= 'a' && value <= 'z') return value - 32;
+    return value;
+}
+
+StringImpl* ConvertCase(StringView view, bool lower, StringImpl* original = nullptr) {
+    if (!view.data) return nullptr;
+    if (original) {
+        bool changed = false;
+        for (unsigned i = 0; i < view.length; ++i) changed |= AsciiCase(Unit(view, i), lower) != Unit(view, i);
+        if (!changed) return Retain(original);
+    }
+    void* data;
+    auto* impl = NewImpl(view.length, view.is8Bit, data);
+    for (unsigned i = 0; i < view.length; ++i) {
+        auto value = AsciiCase(Unit(view, i), lower);
+        if (view.is8Bit) static_cast<unsigned char*>(data)[i] = static_cast<unsigned char>(value);
+        else static_cast<char16_t*>(data)[i] = value;
+    }
+    return impl;
+}
+
+bool EqualViews(StringView a, StringView b, bool ignoreCase = false) {
+    if (a.length != b.length) return false;
+    for (unsigned i = 0; i < a.length; ++i) {
+        auto x = Unit(a, i);
+        auto y = Unit(b, i);
+        if (ignoreCase) { x = AsciiCase(x, true); y = AsciiCase(y, true); }
+        if (x != y) return false;
+    }
+    return true;
+}
+
+bool EqualImpls(const StringImpl* a, const StringImpl* b, bool ignoreCase = false) {
+    if (a == b) return true;
+    return a && b && EqualViews(View(a), View(b), ignoreCase);
+}
+
+bool EqualBuffer(const StringImpl* impl, const void* buffer, unsigned length, bool is8Bit) {
+    if (!impl) return !buffer;
+    return buffer && EqualViews(View(impl), {buffer, length, is8Bit});
+}
+
+bool Affix(const StringImpl* impl, const char* buffer, unsigned length, bool suffix) {
+    auto view = View(&Checked(impl));
+    if (length > view.length) return false;
+    CheckBuffer(buffer, length);
+    unsigned start = suffix ? view.length - length : 0;
+    for (unsigned i = 0; i < length; ++i) {
+        if (Unit(view, start + i) != static_cast<unsigned char>(buffer[i])) return false;
+    }
+    return true;
+}
+
+std::int32_t CharacterAt(StringView view, unsigned index) {
+    if (index >= view.length) throw std::out_of_range("WTF character index");
+    auto first = Unit(view, index);
+    if (view.is8Bit || first < 0xD800 || first > 0xDFFF) return first;
+    if (first <= 0xDBFF && index + 1 < view.length) {
+        auto second = Unit(view, index + 1);
+        if (second >= 0xDC00 && second <= 0xDFFF) return 0x10000 + ((first - 0xD800) << 10) + second - 0xDC00;
+    }
+    return 0;
+}
+
+CString NewCString(std::size_t length, char*& data) {
+    if (length > std::numeric_limits<std::size_t>::max() - sizeof(CStringBuffer) - 1)
+        throw std::length_error("WTF CString allocation overflow");
+    auto* buffer = new (NKWebKit::Allocate(sizeof(CStringBuffer) + length + 1)) CStringBuffer{1, length};
+    data = reinterpret_cast<char*>(buffer + 1);
+    data[length] = 0;
+    return CString(buffer);
+}
+
+const char* Bytes(const CString& value) {
+    return value.buffer ? reinterpret_cast<const char*>(value.buffer + 1) : nullptr;
+}
+
+CString CopyCString(const char* data, std::size_t length) {
+    if (!data) {
+        CheckBuffer(data, length);
+        return CString();
+    }
+    char* output;
+    auto result = NewCString(length, output);
+    if (length) std::memcpy(output, data, length);
+    return result;
+}
+
+String FromUTF8(const unsigned char* input, std::size_t length, bool replaceInvalid = false) {
+    if (length > MaxStringLength) throw std::length_error("WTF UTF-8 input too long");
+    if (!input) return String();
+    bool ascii = true;
+    for (std::size_t i = 0; i < length; ++i) ascii &= input[i] < 128;
+    if (ascii) return String(CopyImpl({input, static_cast<unsigned>(length), true}));
+    std::u16string output;
+    for (std::size_t i = 0; i < length;) {
+        unsigned first = input[i++];
+        unsigned codePoint = 0;
+        unsigned count = 0;
+        if (first < 128) { output.push_back(static_cast<char16_t>(first)); continue; }
+        if (first >= 0xC2 && first <= 0xDF) { codePoint = first & 31; count = 1; }
+        else if (first >= 0xE0 && first <= 0xEF) { codePoint = first & 15; count = 2; }
+        else if (first >= 0xF0 && first <= 0xF4) { codePoint = first & 7; count = 3; }
+        unsigned lower = first == 0xE0 ? 0xA0 : first == 0xF0 ? 0x90 : 0x80;
+        unsigned upper = first == 0xED ? 0x9F : first == 0xF4 ? 0x8F : 0xBF;
+        unsigned consumed = 0;
+        for (; consumed < count && i < length; ++consumed, ++i) {
+            const unsigned next = input[i];
+            if (next < lower || next > upper) break;
+            codePoint = (codePoint << 6) | (next & 63);
+            lower = 0x80;
+            upper = 0xBF;
+        }
+        if (!count || consumed != count) {
+            if (!replaceInvalid) return String();
+            output.push_back(u'\uFFFD');
+            continue;
+        }
+        if (codePoint < 0x10000) output.push_back(static_cast<char16_t>(codePoint));
+        else {
+            output.push_back(static_cast<char16_t>(0xD800 + ((codePoint - 0x10000) >> 10)));
+            output.push_back(static_cast<char16_t>(0xDC00 + ((codePoint - 0x10000) & 1023)));
+        }
+    }
+    return String(CopyImpl({output.data(), static_cast<unsigned>(output.size()), false}));
+}
+
+CString ToUTF8(StringView view, unsigned mode) {
+    if (mode > 2 && !view.is8Bit) throw std::invalid_argument("invalid WTF UTF-8 conversion mode");
+    std::string bytes;
+    for (unsigned i = 0; i < view.length; ++i) {
+        unsigned cp = Unit(view, i);
+        if (!view.is8Bit && cp >= 0xD800 && cp <= 0xDFFF) {
+            if (cp <= 0xDBFF && i + 1 < view.length && Unit(view, i + 1) >= 0xDC00 && Unit(view, i + 1) <= 0xDFFF) {
+                cp = 0x10000 + ((cp - 0xD800) << 10) + Unit(view, i + 1) - 0xDC00;
+                ++i;
+            } else if (mode == 1) throw std::invalid_argument("unpaired WTF UTF-16 surrogate");
+            else if (mode == 2) cp = 0xFFFD;
+        }
+        if (cp < 0x80) bytes.push_back(static_cast<char>(cp));
+        else if (cp < 0x800) {
+            bytes.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+            bytes.push_back(static_cast<char>(0x80 | (cp & 63)));
+        } else if (cp < 0x10000) {
+            bytes.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+            bytes.push_back(static_cast<char>(0x80 | ((cp >> 6) & 63)));
+            bytes.push_back(static_cast<char>(0x80 | (cp & 63)));
+        } else {
+            bytes.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+            bytes.push_back(static_cast<char>(0x80 | ((cp >> 12) & 63)));
+            bytes.push_back(static_cast<char>(0x80 | ((cp >> 6) & 63)));
+            bytes.push_back(static_cast<char>(0x80 | (cp & 63)));
+        }
+    }
+    return CopyCString(bytes.data(), bytes.size());
+}
+
+String Substring(const StringImpl* original, unsigned start, unsigned length) {
+    const auto& impl = Checked(original);
+    if (start >= impl.length) return String(EmptyImpl());
+    if (length >= impl.length - start) {
+        if (!start) return String(Retain(const_cast<StringImpl*>(original)));
+        length = impl.length - start;
+    }
+    const auto* data = static_cast<const unsigned char*>(impl.data) + (impl.hashAndFlags & 4 ? start : 2ULL * start);
+    return String(CopyImpl({data, length, !!(impl.hashAndFlags & 4)}));
+}
+
+String SharedSubstring(const String* string, unsigned start, unsigned length) {
+    const auto& value = Checked(string);
+    unsigned size = value.impl ? value.impl->length : 0;
+    start = std::min(start, size);
+    length = std::min(length, size - start);
+    if (!start && length == size) return String(Retain(value.impl));
+    if (!length) return String(EmptyImpl());
+    const auto& impl = Checked(value.impl);
+    bool is8Bit = impl.hashAndFlags & 4;
+    if (32 >= 20 + std::size_t(length) * (is8Bit ? 1 : 2)) return Substring(&impl, start, length);
+    auto* owner = value.impl;
+    if ((impl.hashAndFlags & 3) == 2) owner = *reinterpret_cast<StringImpl* const*>(reinterpret_cast<const unsigned char*>(&impl) + 24);
+    auto* memory = static_cast<unsigned char*>(NKWebKit::Allocate(32));
+    auto* result = new (memory) StringImpl{2, length, static_cast<const unsigned char*>(impl.data) + std::size_t(start) * (is8Bit ? 1 : 2), (is8Bit ? 4U : 0U) | 2U};
+    *reinterpret_cast<StringImpl**>(memory + 24) = Retain(owner);
+    return String(result);
+}
+
+std::size_t ReverseFind(StringView view, char16_t value, unsigned start) {
+    if (!view.length) return NotFound;
+    std::size_t i = std::min(start, view.length - 1);
+    do { if (Unit(view, static_cast<unsigned>(i)) == value) return i; } while (i--);
+    return NotFound;
+}
+
+template<typename T> String IntegerString(T value) {
+    char buffer[32];
+    auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+    if (result.ec != std::errc{}) throw std::runtime_error("WTF integer formatting failed");
+    return String(CopyImpl({buffer, static_cast<unsigned>(result.ptr - buffer), true}));
+}
+
+char16_t FoldQuoteMark(char16_t value) {
+    switch (value) {
+    case 0x00AB:
+    case 0x00BB:
+    case 0x05F4:
+    case 0x201C:
+    case 0x201D:
+    case 0x201E:
+    case 0x201F:
+    case 0x2E42:
+    case 0x301D:
+    case 0x301E:
+    case 0x301F:
+    case 0xFF02:
+        return u'"';
+    case 0x05F3:
+    case 0x2018:
+    case 0x2019:
+    case 0x201A:
+    case 0x201B:
+    case 0x2039:
+    case 0x203A:
+    case 0x300C:
+    case 0x300D:
+    case 0x300E:
+    case 0x300F:
+    case 0xFE41:
+    case 0xFE42:
+    case 0xFE43:
+    case 0xFE44:
+    case 0xFF07:
+    case 0xFF62:
+    case 0xFF63:
+        return u'\'';
+    default:
+        return value;
+    }
+}
+
+String FoldQuoteMarks(const StringImpl* impl) {
+    auto view = View(impl);
+    unsigned first = 0;
+    while (first < view.length && FoldQuoteMark(Unit(view, first)) == Unit(view, first)) ++first;
+    if (first == view.length) return String(Retain(const_cast<StringImpl*>(impl)));
+    void* data;
+    auto* result = NewImpl(view.length, view.is8Bit, data);
+    for (unsigned i = 0; i < view.length; ++i) {
+        auto value = FoldQuoteMark(Unit(view, i));
+        if (view.is8Bit) static_cast<unsigned char*>(data)[i] = static_cast<unsigned char>(value);
+        else static_cast<char16_t*>(data)[i] = value;
+    }
+    return String(result);
+}
+
+const String* DefaultMIMEType() {
+    static const unsigned char characters[] = "application/octet-stream";
+    constexpr unsigned length = sizeof(characters) - 1;
+    static StringImpl impl{1, length, characters, (Hash({characters, length, true}) << 8) | 12};
+    static const String* value = new String(&impl);
+    return value;
+}
+
+}  // namespace
+
+namespace NKWebKit::WtfAbi {
+
+StringImpl* EmptyStringImpl() {
+    return EmptyImpl();
+}
+
+String FromUTF8ReplacingInvalidSequences_nid_no_patch(const unsigned char* input, std::size_t length) {
+    return FromUTF8(input, length, true);
+}
+
+StringImpl* TryCreateUninitialized(unsigned length, bool is8Bit, void*& characters) {
+    if (!length) {
+        characters = nullptr;
+        return EmptyImpl();
+    }
+    void* storage = ExceedsMaxLength(length, is8Bit) ? nullptr : NKWebKit::TryAllocate(ImplAllocationSize(length, is8Bit));
+    if (!storage) {
+        characters = nullptr;
+        return nullptr;
+    }
+    return ConstructImpl(storage, length, is8Bit, characters);
+}
+
+String SubstringSharingImpl(const String& string, unsigned start, unsigned length) {
+    return SharedSubstring(&string, start, length);
+}
+
+}  // namespace NKWebKit::WtfAbi
+
+extern "C" {
+String APS5_VABI _ZN3WTF10StringImpl6createEPKDsj(const char16_t* data, unsigned length) {
+    return String(CopyImpl({data, length, false}));
+}
+
+String APS5_VABI _ZN3WTF10StringImpl19createUninitializedEjRPDs(unsigned length, char16_t*& data) {
+    void* output;
+    auto* impl = NewImpl(length, false, output);
+    data = static_cast<char16_t*>(output);
+    return String(impl);
+}
+
+String APS5_VABI _ZN3WTF10StringImpl6createEPKhj(const unsigned char* data, unsigned length) {
+    return String(CopyImpl({data, length, true}));
+}
+
+String APS5_VABI _ZN3WTF10StringImpl19createUninitializedEjRPh(unsigned length, unsigned char*& data) {
+    void* output;
+    auto* impl = NewImpl(length, true, output);
+    data = static_cast<unsigned char*>(output);
+    return String(impl);
+}
+
+String APS5_VABI _ZN3WTF10StringImpl20create8BitIfPossibleEPKDsj(const char16_t* data, unsigned length) {
+    return String(CopyImpl({data, length, false}, true));
+}
+
+void APS5_VABI _ZN3WTF6StringC1EPKDsj(String* self, const char16_t* data, unsigned length) {
+    Checked(self);
+    Checked(self).impl = data ? CopyImpl({data, length, false}) : nullptr;
+}
+
+void APS5_VABI _ZN3WTF6StringC2EPKDsj(String* self, const char16_t* data, unsigned length) {
+    Checked(self);
+    Checked(self).impl = data ? CopyImpl({data, length, false}) : nullptr;
+}
+
+void APS5_VABI _ZN3WTF6StringC1EPKc(String* self, const char* data) {
+    Checked(self);
+    Checked(self).impl = data ? CopyImpl({data, static_cast<unsigned>(std::strlen(data)), true}) : nullptr;
+}
+
+void APS5_VABI _ZN3WTF6StringC2EPKc(String* self, const char* data) {
+    Checked(self);
+    Checked(self).impl = data ? CopyImpl({data, static_cast<unsigned>(std::strlen(data)), true}) : nullptr;
+}
+
+void APS5_VABI _ZN3WTF6StringC1EPKcj(String* self, const char* data, unsigned length) {
+    Checked(self);
+    Checked(self).impl = data ? CopyImpl({data, length, true}) : nullptr;
+}
+
+void APS5_VABI _ZN3WTF6StringC2EPKcj(String* self, const char* data, unsigned length) {
+    Checked(self);
+    Checked(self).impl = data ? CopyImpl({data, length, true}) : nullptr;
+}
+
+void APS5_VABI _ZN3WTF6StringC1EPKhj(String* self, const unsigned char* data, unsigned length) {
+    Checked(self);
+    Checked(self).impl = data ? CopyImpl({data, length, true}) : nullptr;
+}
+
+void APS5_VABI _ZN3WTF6StringC2EPKhj(String* self, const unsigned char* data, unsigned length) {
+    Checked(self);
+    Checked(self).impl = data ? CopyImpl({data, length, true}) : nullptr;
+}
+
+String APS5_VABI _ZN3WTF6String6numberEi(int value) {
+    return IntegerString(value);
+}
+
+String APS5_VABI _ZN3WTF6String6numberEj(unsigned value) {
+    return IntegerString(value);
+}
+
+String APS5_VABI _ZN3WTF6String6numberEl(std::int64_t value) {
+    return IntegerString(value);
+}
+
+String APS5_VABI _ZN3WTF6String6numberEm(std::uint64_t value) {
+    return IntegerString(value);
+}
+
+String APS5_VABI _ZN3WTF6String6numberEx(long long value) {
+    return IntegerString(value);
+}
+
+String APS5_VABI _ZN3WTF6String6numberEy(unsigned long long value) {
+    return IntegerString(value);
+}
+
+String APS5_VABI _ZN3WTF6String13fromCodePointEi(std::int32_t cp) {
+    if (cp < 0 || cp > 0x10FFFF) return String();
+    char16_t data[2];
+    unsigned length = 1;
+    if (cp <= 0xFFFF) data[0] = static_cast<char16_t>(cp);
+    else { data[0] = static_cast<char16_t>(0xD800 + ((cp - 0x10000) >> 10)); data[1] = static_cast<char16_t>(0xDC00 + ((cp - 0x10000) & 1023)); length = 2; }
+    return String(CopyImpl({data, length, false}));
+}
+
+String APS5_VABI _ZN3WTF6String8fromUTF8EPKhm(const unsigned char* data, std::size_t length) {
+    return FromUTF8(data, length);
+}
+
+String APS5_VABI _ZN3WTF6String8fromUTF8EPKh(const unsigned char* data) {
+    return FromUTF8(data, data ? std::strlen(reinterpret_cast<const char*>(data)) : 0);
+}
+
+String APS5_VABI _ZN3WTF6String8fromUTF8ERKNS_7CStringE(const CString& value) {
+    const char* data = Bytes(value);
+    return FromUTF8(reinterpret_cast<const unsigned char*>(data), data ? std::strlen(data) : 0);
+}
+
+String APS5_VABI _ZN3WTF6String26fromUTF8WithLatin1FallbackEPKhm(const unsigned char* data, std::size_t length) {
+    auto result = FromUTF8(data, length);
+    if (result.impl) return result;
+    return String(data ? CopyImpl({data, static_cast<unsigned>(length), true}) : nullptr);
+}
+
+String APS5_VABI _ZN3WTF10StringImpl23convertToASCIILowercaseEv(const StringImpl* self) {
+    return String(ConvertCase(View(&Checked(self)), true, const_cast<StringImpl*>(self)));
+}
+
+String APS5_VABI _ZN3WTF10StringImpl23convertToASCIIUppercaseEv(const StringImpl* self) {
+    return String(ConvertCase(View(&Checked(self)), false, const_cast<StringImpl*>(self)));
+}
+
+CString APS5_VABI _ZNK3WTF10StringImpl4utf8ENS_14ConversionModeE(const StringImpl* self, unsigned mode) {
+    return ToUTF8(View(&Checked(self)), mode);
+}
+
+String APS5_VABI _ZNK3WTF6String23convertToASCIILowercaseEv(const String* self) {
+    return String(ConvertCase(View(Checked(self).impl), true, Checked(self).impl));
+}
+
+String APS5_VABI _ZNK3WTF6String23convertToASCIIUppercaseEv(const String* self) {
+    return String(ConvertCase(View(Checked(self).impl), false, Checked(self).impl));
+}
+
+CString APS5_VABI _ZNK3WTF6String4utf8ENS_14ConversionModeE(const String* self, unsigned mode) {
+    return ToUTF8(View(Checked(self).impl), mode);
+}
+
+String APS5_VABI _ZNK3WTF10StringView23convertToASCIILowercaseEv(const StringView* self) {
+    return String(ConvertCase(Checked(self), true));
+}
+
+String APS5_VABI _ZNK3WTF10StringView23convertToASCIIUppercaseEv(const StringView* self) {
+    return String(ConvertCase(Checked(self), false));
+}
+
+CString APS5_VABI _ZNK3WTF10StringView4utf8ENS_14ConversionModeE(const StringView* self, unsigned mode) {
+    return ToUTF8(Checked(self), mode);
+}
+
+bool APS5_VABI _ZNK3WTF10StringImpl10startsWithEDs(const StringImpl* self, char16_t value) {
+    auto view = View(&Checked(self));
+    return view.length && Unit(view, 0) == value;
+}
+
+bool APS5_VABI _ZNK3WTF10StringImpl8endsWithEDs(const StringImpl* self, char16_t value) {
+    auto view = View(&Checked(self));
+    return view.length && Unit(view, view.length - 1) == value;
+}
+
+bool APS5_VABI _ZNK3WTF10StringView10startsWithEDs(const StringView* self, char16_t value) {
+    auto view = Checked(self);
+    return view.length && Unit(view, 0) == value;
+}
+
+bool APS5_VABI _ZNK3WTF10StringView8endsWithEDs(const StringView* self, char16_t value) {
+    auto view = Checked(self);
+    return view.length && Unit(view, view.length - 1) == value;
+}
+
+bool APS5_VABI _ZNK3WTF10StringImpl10startsWithEPKcj(const StringImpl* self, const char* data, unsigned length) {
+    return Affix(self, data, length, false);
+}
+
+bool APS5_VABI _ZNK3WTF10StringImpl8endsWithEPKcj(const StringImpl* self, const char* data, unsigned length) {
+    return Affix(self, data, length, true);
+}
+
+std::size_t APS5_VABI _ZNK3WTF10StringImpl11sizeInBytesEv(const StringImpl* self) {
+    const auto& impl = Checked(self);
+    return sizeof(StringImpl) + std::size_t(impl.length) * (impl.hashAndFlags & 4 ? 1 : 2);
+}
+
+unsigned APS5_VABI _ZNK3WTF10StringImpl14concurrentHashEv(const StringImpl* self) {
+    return Hash(View(&Checked(self)));
+}
+
+unsigned APS5_VABI _ZNK3WTF10StringImpl12hashSlowCaseEv(const StringImpl* self) {
+    auto& impl = Checked(self);
+    unsigned hash = Hash(View(&impl));
+    impl.hashAndFlags = (impl.hashAndFlags & 255) | (hash << 8);
+    return hash;
+}
+
+std::int32_t APS5_VABI _ZN3WTF10StringImpl19characterStartingAtEj(const StringImpl* self, unsigned index) {
+    return CharacterAt(View(&Checked(self)), index);
+}
+
+std::int32_t APS5_VABI _ZNK3WTF6String19characterStartingAtEj(const String* self, unsigned index) {
+    auto view = View(Checked(self).impl);
+    return index < view.length ? CharacterAt(view, index) : 0;
+}
+
+std::size_t APS5_VABI _ZN3WTF10StringImpl11reverseFindEDsj(const StringImpl* self, char16_t value, unsigned start) {
+    return ReverseFind(View(&Checked(self)), value, start);
+}
+
+String APS5_VABI _ZN3WTF10StringImpl9substringEjj(const StringImpl* self, unsigned start, unsigned length) {
+    return Substring(self, start, length);
+}
+
+String APS5_VABI _ZNK3WTF6String20substringSharingImplEjj(const String* self, unsigned start, unsigned length) {
+    return SharedSubstring(self, start, length);
+}
+
+bool APS5_VABI _ZNK3WTF6String27isSafeToSendToAnotherThreadEv(const String* self) {
+    const auto* impl = Checked(self).impl;
+    return !impl || !impl->length || (impl->refCount == 2 && !(impl->hashAndFlags & 16));
+}
+
+CString APS5_VABI _ZNK3WTF6String5asciiEv(const String* self) {
+    auto view = View(Checked(self).impl);
+    char* output;
+    auto result = NewCString(view.length, output);
+    for (unsigned i = 0; i < view.length; ++i) {
+        auto value = Unit(view, i);
+        output[i] = value && (value < 32 || value > 127) ? '?' : static_cast<char>(value);
+    }
+    return result;
+}
+
+CString APS5_VABI _ZNK3WTF6String6latin1Ev(const String* self) {
+    auto view = View(Checked(self).impl);
+    char* output;
+    auto result = NewCString(view.length, output);
+    for (unsigned i = 0; i < view.length; ++i) {
+        auto value = Unit(view, i);
+        output[i] = value > 255 ? '?' : static_cast<char>(value);
+    }
+    return result;
+}
+
+std::size_t APS5_VABI _ZNK3WTF10StringView4findES0_j(const StringView* self, StringView match, unsigned start) {
+    auto view = Checked(self);
+    if (start > view.length || match.length > view.length - start) return NotFound;
+    if (!match.length) return start;
+    for (unsigned i = start; i <= view.length - match.length; ++i) {
+        unsigned j = 0;
+        while (j < match.length && Unit(view, i + j) == Unit(match, j)) ++j;
+        if (j == match.length) return i;
+    }
+    return NotFound;
+}
+
+void APS5_VABI _ZNK3WTF10StringView26getCharactersWithASCIICaseENS0_15CaseConvertTypeEPDs(const StringView* self, unsigned type, char16_t* output) {
+    auto view = Checked(self);
+    CheckBuffer(output, view.length);
+    for (unsigned i = 0; i < view.length; ++i) output[i] = static_cast<char16_t>(AsciiCase(Unit(view, i), type == 1));
+}
+
+void APS5_VABI _ZNK3WTF10StringView26getCharactersWithASCIICaseENS0_15CaseConvertTypeEPh(const StringView* self, unsigned type, unsigned char* output) {
+    auto view = Checked(self);
+    CheckBuffer(output, view.length);
+    if (!view.is8Bit) throw std::invalid_argument("cannot narrow WTF StringView case output");
+    for (unsigned i = 0; i < view.length; ++i) output[i] = static_cast<unsigned char>(AsciiCase(Unit(view, i), type == 1));
+}
+
+bool APS5_VABI _ZN3WTF22equalRespectingNullityENS_10StringViewES0_(StringView a, StringView b) {
+    if (a.data == b.data) return a.length == b.length;
+    if (!a.length && !b.length) return !a.data == !b.data;
+    return EqualViews(a, b);
+}
+
+bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplES2_(const StringImpl* a, const StringImpl* b) {
+    return EqualImpls(a, b);
+}
+
+bool APS5_VABI _ZN3WTF5equalERKNS_10StringImplES2_(const StringImpl& a, const StringImpl& b) {
+    return EqualImpls(&a, &b);
+}
+
+bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplEPKDsj(const StringImpl* impl, const char16_t* data, unsigned length) {
+    return EqualBuffer(impl, data, length, false);
+}
+
+bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplEPKhj(const StringImpl* impl, const unsigned char* data, unsigned length) {
+    return EqualBuffer(impl, data, length, true);
+}
+
+bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplEPKh(const StringImpl* impl, const unsigned char* data) {
+    if (!impl || !data) return !impl && !data;
+    return EqualBuffer(impl, data, static_cast<unsigned>(std::strlen(reinterpret_cast<const char*>(data))), true);
+}
+
+bool APS5_VABI _ZN3WTF20equalIgnoringNullityEPNS_10StringImplES1_(StringImpl* a, StringImpl* b) {
+    return EqualViews(View(a), View(b));
+}
+
+bool APS5_VABI _ZN3WTF20equalIgnoringNullityEPKDsmPNS_10StringImplE(const char16_t* data, std::size_t length, StringImpl* impl) {
+    if (!impl) return !length;
+    if (length != impl->length) return false;
+    return EqualViews({data, static_cast<unsigned>(length), false}, View(impl));
+}
+
+bool APS5_VABI _ZN3WTF22equalIgnoringASCIICaseEPKNS_10StringImplES2_(const StringImpl* a, const StringImpl* b) {
+    return EqualImpls(a, b, true);
+}
+
+bool APS5_VABI _ZN3WTF29equalIgnoringASCIICaseNonNullEPKNS_10StringImplES2_(const StringImpl* a, const StringImpl* b) {
+    Checked(a);
+    Checked(b);
+    return EqualImpls(a, b, true);
+}
+
+void APS5_VABI _ZN3WTF7CStringC1EPKc(CString* self, const char* data) {
+    auto value = CopyCString(data, (data ? std::strlen(data) : 0));
+    Checked(self).buffer = std::exchange(value.buffer, nullptr);
+}
+
+void APS5_VABI _ZN3WTF7CStringC2EPKc(CString* self, const char* data) {
+    auto value = CopyCString(data, (data ? std::strlen(data) : 0));
+    Checked(self).buffer = std::exchange(value.buffer, nullptr);
+}
+
+void APS5_VABI _ZN3WTF7CStringC1EPKcm(CString* self, const char* data, std::size_t length) {
+    auto value = CopyCString(data, length);
+    Checked(self).buffer = std::exchange(value.buffer, nullptr);
+}
+
+void APS5_VABI _ZN3WTF7CStringC2EPKcm(CString* self, const char* data, std::size_t length) {
+    auto value = CopyCString(data, length);
+    Checked(self).buffer = std::exchange(value.buffer, nullptr);
+}
+
+CString APS5_VABI _ZN3WTF7CString16newUninitializedEmRPc(std::size_t length, char*& output) {
+    return NewCString(length, output);
+}
+
+char* APS5_VABI _ZN3WTF7CString11mutableDataEv(CString* self) {
+    auto& value = Checked(self);
+    if (!value.buffer) return nullptr;
+    if (value.buffer->refCount != 1) {
+        auto copy = CopyCString(Bytes(value), value.buffer->length);
+        NKWebKit::WtfAbi::Release(value.buffer);
+        value.buffer = std::exchange(copy.buffer, nullptr);
+    }
+    return const_cast<char*>(Bytes(value));
+}
+
+void APS5_VABI _ZN3WTF7CString4growEm(CString* self, std::size_t length) {
+    auto& value = Checked(self);
+    if (!value.buffer || length <= value.buffer->length) throw std::invalid_argument("WTF CString must grow");
+    char* output;
+    auto copy = NewCString(length, output);
+    std::memcpy(output, Bytes(value), value.buffer->length + 1);
+    NKWebKit::WtfAbi::Release(value.buffer);
+    value.buffer = std::exchange(copy.buffer, nullptr);
+}
+
+unsigned APS5_VABI _ZNK3WTF7CString4hashEv(const CString* self) {
+    const char* data = Bytes(Checked(self));
+    if (!data) return 0;
+    StringHasher hasher;
+    while (*data) hasher.addCharacter(static_cast<char16_t>(*data++));
+    return hasher.hash(false);
+}
+
+bool APS5_VABI _ZN3WTFeqERKNS_7CStringES2_(const CString& a, const CString& b) {
+    if (!a.buffer || !b.buffer) return !a.buffer && !b.buffer;
+    return a.buffer->length == b.buffer->length && !std::memcmp(Bytes(a), Bytes(b), a.buffer->length);
+}
+
+bool APS5_VABI _ZN3WTFeqERKNS_7CStringEPKc(const CString& a, const char* b) {
+    if (!a.buffer || !b) return !a.buffer && !b;
+    return !std::strcmp(Bytes(a), b);
+}
+
+bool APS5_VABI _ZN3WTFltERKNS_7CStringES2_(const CString& a, const CString& b) {
+    if (!a.buffer) return !!b.buffer;
+    return b.buffer && std::strcmp(Bytes(a), Bytes(b)) < 0;
+}
+
+bool APS5_VABI _ZN3WTF11CStringHash5equalERKNS_7CStringES3_(const CString& a, const CString& b) {
+    auto* deleted = reinterpret_cast<CStringBuffer*>(static_cast<std::uintptr_t>(-1));
+    if (a.buffer == deleted) return b.buffer == deleted;
+    if (b.buffer == deleted) return false;
+    if (!a.buffer || !b.buffer) return !a.buffer && !b.buffer;
+    return a.buffer->length == b.buffer->length && !std::memcmp(Bytes(a), Bytes(b), a.buffer->length);
+}
+
+String APS5_VABI _ZN7WebCore14foldQuoteMarksERKN3WTF6StringE(const String* string) {
+    return FoldQuoteMarks(Checked(string).impl);
+}
+
+const String& APS5_VABI _ZN7WebCore15defaultMIMETypeEv() {
+    return *DefaultMIMEType();
+}
+
+}
+
+namespace {
+
+using NKWebKit::WtfAbi::URL;
+
+StringView Slice(StringView view, unsigned start, unsigned length = MaxStringLength) {
+    if (start >= view.length) return {"", 0, true};
+    length = std::min(length, view.length - start);
+    return {static_cast<const unsigned char*>(view.data) + std::size_t(start) * (view.is8Bit ? 1 : 2), length, view.is8Bit};
+}
+
+unsigned HostStart(const URL& url) {
+    return url.passwordEnd == url.userStart ? url.passwordEnd : url.passwordEnd + 1;
+}
+
+unsigned CredentialsEnd(const URL& url, StringView view) {
+    unsigned end = url.passwordEnd;
+    if (end != url.hostEnd && end < view.length && Unit(view, end) == '@') ++end;
+    return end;
+}
+
+unsigned PathStart(const URL& url) {
+    unsigned start = url.hostEnd + ((url.bits >> 3) & 7);
+    auto view = View(url.impl);
+    if (start == (url.bits >> 6) + 1 && start < view.length && view.length - start > 1 && Unit(view, start) == '/' && Unit(view, start + 1) == '.') start += 2;
+    return start;
+}
+
+bool URLProtocol(const URL& url, StringView protocol) {
+    if (!(url.bits & 1) || (url.bits >> 6) != protocol.length) return false;
+    auto view = View(url.impl);
+    for (unsigned i = 0; i < protocol.length; ++i) {
+        if (i >= view.length) throw std::out_of_range("invalid WTF URL scheme boundary");
+        if ((Unit(view, i) | 32) != Unit(protocol, i)) return false;
+    }
+    return true;
+}
+
+bool JavaScriptProtocol(StringView view) {
+    constexpr char protocol[] = "javascript";
+    unsigned index = 0;
+    bool leading = true;
+    for (unsigned i = 0; i < view.length; ++i) {
+        auto value = Unit(view, i);
+        if (leading) {
+            if (value <= 32) continue;
+            leading = false;
+        } else if (value == '\t' || value == '\r' || value == '\n') continue;
+        if (index == 10) return value == ':';
+        if ((value | 32) != protocol[index++]) return false;
+    }
+    return false;
+}
+
+StringView ViewWithoutFragment(const URL& url) {
+    auto view = View(url.impl);
+    if (!(url.bits & 1)) return view;
+    return Slice(view, 0, std::min(url.queryEnd, view.length));
+}
+
+std::size_t FindUnit(StringView view, char16_t value, unsigned start) {
+    for (unsigned i = start; i < view.length; ++i) {
+        if (Unit(view, i) == value) return i;
+    }
+    return NotFound;
+}
+
+StringView LeftView(StringView view, unsigned length) {
+    return Slice(view, 0, length);
+}
+
+StringView RightView(StringView view, unsigned length) {
+    return Slice(view, view.length - length, length);
+}
+
+String ConcatViews(const StringView* parts, unsigned count) {
+    std::size_t total = 0;
+    bool is8Bit = true;
+    for (unsigned i = 0; i < count; ++i) {
+        total += parts[i].length;
+        is8Bit &= parts[i].is8Bit;
+    }
+    if (total > MaxStringLength) throw std::length_error("WTF string exceeds maximum length");
+    void* data;
+    auto* impl = NewImpl(static_cast<unsigned>(total), is8Bit, data);
+    unsigned offset = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        for (unsigned j = 0; j < parts[i].length; ++j, ++offset) {
+            if (is8Bit) static_cast<unsigned char*>(data)[offset] = static_cast<unsigned char>(Unit(parts[i], j));
+            else static_cast<char16_t*>(data)[offset] = Unit(parts[i], j);
+        }
+    }
+    return String(impl);
+}
+
+bool IsLeadSurrogate(char16_t value) { return (value & 0xFC00) == 0xD800; }
+
+bool IsTrailSurrogate(char16_t value) { return (value & 0xFC00) == 0xDC00; }
+
+bool NeedsFileNameEscape(char16_t value, char16_t previous, char16_t next) {
+    if (value <= 127) {
+        if (value < 0x20 || value == 0x7F) return true;
+        switch (value) {
+        case ' ': case '"': case '%': case '*': case '/': case ':': case '<': case '>': case '?': case '\\': case '|':
+            return true;
+        default:
+            return false;
+        }
+    }
+    if (IsLeadSurrogate(value) && !IsTrailSurrogate(next)) return true;
+    return IsTrailSurrogate(value) && !IsLeadSurrogate(previous);
+}
+
+void AppendHex(std::u16string& output, unsigned value, unsigned digits) {
+    static constexpr char16_t Digits[] = u"0123456789ABCDEF";
+    for (unsigned shift = digits * 4; shift;) {
+        shift -= 4;
+        output.push_back(Digits[(value >> shift) & 15]);
+    }
+}
+
+bool IsHexUnit(char16_t value) {
+    return (value >= '0' && value <= '9') || ((value | 32) >= 'a' && (value | 32) <= 'f');
+}
+
+unsigned HexUnitValue(char16_t value) { return value < 'A' ? value - '0' : (value - 'A' + 10) & 15; }
+
+String FinishFileName(const std::u16string& output) {
+    if (output.size() > MaxStringLength) throw std::length_error("WTF string exceeds maximum length");
+    return String(CopyImpl({output.data(), static_cast<unsigned>(output.size()), false}, true));
+}
+
+bool IsUnicodeCompatibleASCIIWhitespace(char32_t c) {
+    return c <= ' ' && (c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '\f');
+}
+
+std::optional<std::uint16_t> URLPort(const URL& url) {
+    unsigned portLength = (url.bits >> 3) & 7;
+    if (portLength <= 1) return std::nullopt;
+    auto view = View(url.impl);
+    if (url.hostEnd > view.length || portLength > view.length - url.hostEnd) return std::nullopt;
+    auto portView = Slice(view, url.hostEnd + 1, portLength - 1);
+    if (!portView.length) return std::nullopt;
+    unsigned i = 0;
+    while (i < portView.length && IsUnicodeCompatibleASCIIWhitespace(Unit(portView, i))) ++i;
+    if (i < portView.length && Unit(portView, i) == '+') ++i;
+    if (i == portView.length) return std::nullopt;
+    auto firstChar = Unit(portView, i);
+    if (firstChar < '0' || firstChar > '9') return std::nullopt;
+    std::uint32_t val = 0;
+    while (i < portView.length) {
+        auto ch = Unit(portView, i);
+        if (ch < '0' || ch > '9') break;
+        val = val * 10 + (ch - '0');
+        if (val > 65535) return std::nullopt;
+        ++i;
+    }
+    while (i < portView.length && IsUnicodeCompatibleASCIIWhitespace(Unit(portView, i))) ++i;
+    if (i != portView.length) return std::nullopt;
+    return static_cast<std::uint16_t>(val);
+}
+
+}  // namespace
+
+extern "C" {
+bool APS5_VABI _ZN3WTF11portAllowedERKNS_3URLE(const URL* urlPtr) {
+    const auto& url = Checked(urlPtr);
+    auto port = URLPort(url);
+    if (!port) return true;
+    static constexpr std::uint16_t blockedPortList[] = {
+        1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69,
+        77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123,
+        135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530,
+        531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719,
+        1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666,
+        6667, 6668, 6669, 6679, 6697, 10080
+    };
+    if (!std::binary_search(std::begin(blockedPortList), std::end(blockedPortList), *port)) return true;
+    if ((*port == 21 || *port == 22) && URLProtocol(url, {"ftp", 3, true})) return true;
+    if (URLProtocol(url, {"file", 4, true})) return true;
+    return false;
+}
+
+bool APS5_VABI _ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_(const URL* a, const URL* b) {
+    const auto& first = Checked(a);
+    const auto& second = Checked(b);
+    return EqualViews(ViewWithoutFragment(first), ViewWithoutFragment(second));
+}
+
+bool APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_(const URL* a, const URL* b) {
+    const auto& first = Checked(a);
+    const auto& second = Checked(b);
+    unsigned schemeEndA = first.bits >> 6;
+    unsigned schemeEndB = second.bits >> 6;
+    if (schemeEndA != schemeEndB) return false;
+    unsigned hostStartA = HostStart(first);
+    unsigned hostStartB = HostStart(second);
+    if (first.hostEnd < hostStartA || second.hostEnd < hostStartB) return false;
+    unsigned hostLengthA = first.hostEnd - hostStartA;
+    unsigned hostLengthB = second.hostEnd - hostStartB;
+    if (hostLengthA != hostLengthB) return false;
+    auto viewA = View(first.impl);
+    auto viewB = View(second.impl);
+    if (schemeEndA > viewA.length || schemeEndB > viewB.length) return false;
+    if (hostStartA + hostLengthA > viewA.length || hostStartB + hostLengthB > viewB.length) return false;
+    if (!EqualViews(Slice(viewA, 0, schemeEndA), Slice(viewB, 0, schemeEndB), true)) return false;
+    if (!EqualViews(Slice(viewA, hostStartA, hostLengthA), Slice(viewB, hostStartB, hostLengthB), true)) return false;
+    return URLPort(first) == URLPort(second);
+}
+
+bool APS5_VABI _ZN3WTF9URLParser14allValuesEqualERKNS_3URLES3_(const URL* a, const URL* b) {
+    const auto& first = Checked(a);
+    const auto& second = Checked(b);
+    return EqualImpls(first.impl, second.impl)
+        && first.bits == second.bits
+        && first.userStart == second.userStart
+        && first.userEnd == second.userEnd
+        && first.passwordEnd == second.passwordEnd
+        && first.hostEnd == second.hostEnd
+        && first.pathAfterLastSlash == second.pathAfterLastSlash
+        && first.pathEnd == second.pathEnd
+        && first.queryEnd == second.queryEnd;
+}
+
+bool APS5_VABI _ZN3WTF9URLParser24internalValuesConsistentERKNS_3URLE(const URL* self) {
+    const auto& url = Checked(self);
+    return (url.bits >> 6) <= url.userStart
+        && url.userStart <= url.userEnd
+        && url.userEnd <= url.passwordEnd
+        && url.passwordEnd <= url.hostEnd
+        && url.hostEnd + ((url.bits >> 3) & 7) <= url.pathAfterLastSlash
+        && url.pathAfterLastSlash <= url.pathEnd
+        && url.pathEnd <= url.queryEnd
+        && url.queryEnd <= View(url.impl).length;
+}
+
+void APS5_VABI _ZN3WTF3URL10invalidateEv(URL* self) {
+    auto& url = Checked(self);
+    url.bits = 0;
+    url.userStart = 0;
+    url.userEnd = 0;
+    url.passwordEnd = 0;
+    url.hostEnd = 0;
+    url.pathAfterLastSlash = 0;
+    url.pathEnd = 0;
+    url.queryEnd = 0;
+}
+
+StringView APS5_VABI _ZNK3WTF3URL8protocolEv(const URL* self) {
+    const auto& url = Checked(self);
+    return url.bits & 1 ? Slice(View(url.impl), 0, url.bits >> 6) : StringView{nullptr, 0, true};
+}
+
+StringView APS5_VABI _ZNK3WTF3URL4hostEv(const URL* self) {
+    const auto& url = Checked(self);
+    unsigned start = HostStart(url);
+    return url.bits & 1 ? Slice(View(url.impl), start, url.hostEnd - start) : StringView{nullptr, 0, true};
+}
+
+StringView APS5_VABI _ZNK3WTF3URL4pathEv(const URL* self) {
+    const auto& url = Checked(self);
+    if (!(url.bits & 1)) return {nullptr, 0, true};
+    unsigned start = PathStart(url);
+    return Slice(View(url.impl), start, url.pathEnd - start);
+}
+
+StringView APS5_VABI _ZNK3WTF3URL17lastPathComponentEv(const URL* self) {
+    const auto& url = Checked(self);
+    if (url.pathEnd <= PathStart(url)) return {nullptr, 0, true};
+    auto view = View(url.impl);
+    if (url.pathEnd > view.length) throw std::out_of_range("invalid WTF URL path boundary");
+    unsigned end = url.pathEnd - 1;
+    if (Unit(view, end) == '/') --end;
+    std::size_t start = NotFound;
+    for (std::size_t i = std::min<std::size_t>(end, view.length - 1) + 1; i--;) {
+        if (Unit(view, static_cast<unsigned>(i)) == '/') {
+            start = i;
+            break;
+        }
+    }
+    if (start < PathStart(url)) return {nullptr, 0, true};
+    ++start;
+    return Slice(view, static_cast<unsigned>(start), end - static_cast<unsigned>(start) + 1);
+}
+
+String APS5_VABI _ZNK3WTF3URL24strippedForUseAsReferrerEv(const URL* self) {
+    const auto& url = Checked(self);
+    auto view = View(url.impl);
+    if (!(url.bits & 1)) return String(Retain(url.impl));
+    if (url.userStart > url.passwordEnd || url.queryEnd > view.length) throw std::out_of_range("invalid WTF URL credential boundary");
+    unsigned end = CredentialsEnd(url, view);
+    if (url.userStart == end && url.queryEnd == view.length) return String(Retain(url.impl));
+    if (end > url.queryEnd) throw std::out_of_range("invalid WTF URL query boundary");
+    unsigned length = url.userStart + (url.queryEnd - end);
+    void* output;
+    auto* impl = NewImpl(length, view.is8Bit, output);
+    String result(impl);
+    if (!length) return result;
+    unsigned width = view.is8Bit ? 1 : 2;
+    auto* source = static_cast<const unsigned char*>(view.data);
+    auto* target = static_cast<unsigned char*>(output);
+    std::memcpy(target, source, std::size_t(url.userStart) * width);
+    std::memcpy(target + std::size_t(url.userStart) * width, source + std::size_t(end) * width, std::size_t(url.queryEnd - end) * width);
+    return result;
+}
+
+StringView APS5_VABI _ZNK3WTF3URL11encodedUserEv(const URL* self) {
+    const auto& url = Checked(self);
+    return Slice(View(url.impl), url.userStart, url.userEnd - url.userStart);
+}
+
+StringView APS5_VABI _ZNK3WTF3URL15encodedPasswordEv(const URL* self) {
+    const auto& url = Checked(self);
+    return url.passwordEnd != url.userEnd ? Slice(View(url.impl), url.userEnd + 1, url.passwordEnd - url.userEnd - 1) : StringView{nullptr, 0, true};
+}
+
+StringView APS5_VABI _ZNK3WTF3URL18fragmentIdentifierEv(const URL* self) {
+    const auto& url = Checked(self);
+    auto view = View(url.impl);
+    return (url.bits & 1) && view.length > url.queryEnd ? Slice(view, url.queryEnd + 1) : StringView{nullptr, 0, true};
+}
+
+StringView APS5_VABI _ZNK3WTF3URL39fragmentIdentifierWithLeadingNumberSignEv(const URL* self) {
+    const auto& url = Checked(self);
+    auto view = View(url.impl);
+    return (url.bits & 1) && view.length > url.queryEnd ? Slice(view, url.queryEnd) : StringView{nullptr, 0, true};
+}
+
+StringView APS5_VABI _ZNK3WTF3URL28queryWithLeadingQuestionMarkEv(const URL* self) {
+    const auto& url = Checked(self);
+    return url.queryEnd > url.pathEnd ? Slice(View(url.impl), url.pathEnd, url.queryEnd - url.pathEnd) : StringView{nullptr, 0, true};
+}
+
+bool APS5_VABI _ZNK3WTF3URL10protocolIsENS_10StringViewE(const URL* self, StringView protocol) {
+    return URLProtocol(Checked(self), protocol);
+}
+
+bool APS5_VABI _ZNK3WTF3URL14isHierarchicalEv(const URL* self) {
+    const auto& url = Checked(self);
+    if (!(url.bits & 1)) return false;
+    auto view = View(url.impl);
+    unsigned index = (url.bits >> 6) + 1;
+    return index < view.length && Unit(view, index) == '/';
+}
+
+bool APS5_VABI _ZNK3WTF3URL12isAboutBlankEv(const URL* self) {
+    const auto& url = Checked(self);
+    if (!URLProtocol(url, {"about", 5, true})) return false;
+    unsigned start = PathStart(url);
+    return EqualViews(Slice(View(url.impl), start, url.pathEnd - start), {"blank", 5, true});
+}
+
+bool APS5_VABI _ZNK3WTF3URL13isAboutSrcDocEv(const URL* self) {
+    const auto& url = Checked(self);
+    if (!URLProtocol(url, {"about", 5, true})) return false;
+    unsigned start = PathStart(url);
+    return EqualViews(Slice(View(url.impl), start, url.pathEnd - start), {"srcdoc", 6, true});
+}
+
+bool APS5_VABI _ZNK3WTF3URL20protocolIsJavaScriptEv(const URL* self) {
+    return JavaScriptProtocol(View(Checked(self).impl));
+}
+
+bool APS5_VABI _ZN3WTF20protocolIsJavaScriptENS_10StringViewE(StringView view) {
+    return JavaScriptProtocol(view);
+}
+
+bool APS5_VABI _ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE(StringView view) {
+    if (view.length < 5) return false;
+    if ((Unit(view, 0) | 32) != 'h' || (Unit(view, 1) | 32) != 't' || (Unit(view, 2) | 32) != 't' || (Unit(view, 3) | 32) != 'p') return false;
+    return Unit(view, 4) == ':' || ((Unit(view, 4) | 32) == 's' && view.length >= 6 && Unit(view, 5) == ':');
+}
+
+String APS5_VABI _ZN3WTF19mimeTypeFromDataURLENS_10StringViewE(StringView dataURL) {
+    auto index = FindUnit(dataURL, u';', 5);
+    if (index == NotFound) index = FindUnit(dataURL, u',', 5);
+    if (index == NotFound) return String(EmptyImpl());
+    if (index == 5) return String(CopyImpl({"text/plain", 10, true}));
+    return String(ConvertCase(Slice(dataURL, 5, static_cast<unsigned>(index - 5)), true));
+}
+
+String APS5_VABI _ZNK3WTF3URL30stringCenterEllipsizedToLengthEj(const URL* self, unsigned length) {
+    const auto& url = Checked(self);
+    auto view = View(url.impl);
+    if (view.length <= length) return String(Retain(url.impl));
+    const StringView parts[] = {LeftView(view, length / 2 - 1), {"...", 3, true}, RightView(view, length / 2 - 2)};
+    return ConcatViews(parts, 3);
+}
+
+unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashEPKDsj(const char16_t* characters, unsigned length) {
+    return AvoidDeletedHashValue(Hash({characters, length, false}, false));
+}
+
+unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashERKN3WTF6StringE(const String* string) {
+    return AvoidDeletedHashValue(Hash(View(Checked(string).impl), false));
+}
+
+String APS5_VABI _ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE(const String* input) {
+    const auto& string = Checked(input);
+    auto view = View(string.impl);
+    if (!view.length) return String(Retain(string.impl));
+    std::u16string output;
+    output.reserve(view.length);
+    for (unsigned i = 0; i < view.length; ++i) {
+        auto value = Unit(view, i);
+        auto previous = i ? Unit(view, i - 1) : char16_t{0};
+        auto next = i + 1 < view.length ? Unit(view, i + 1) : char16_t{0};
+        if (!NeedsFileNameEscape(value, previous, next)) {
+            output.push_back(value);
+            continue;
+        }
+        if (value <= 255) {
+            output.push_back(u'%');
+            AppendHex(output, value, 2);
+        } else {
+            output.push_back(u'%');
+            output.push_back(u'+');
+            AppendHex(output, value, 4);
+        }
+        if (output.size() > MaxStringLength) throw std::length_error("WTF string exceeds maximum length");
+    }
+    return FinishFileName(output);
+}
+
+String APS5_VABI _ZN3WTF14FileSystemImpl18decodeFromFilenameERKNS_6StringE(const String* input) {
+    const auto& string = Checked(input);
+    auto view = View(string.impl);
+    if (!view.length) return String(Retain(string.impl));
+    std::u16string output;
+    output.reserve(view.length);
+    for (unsigned i = 0; i < view.length; ++i) {
+        if (Unit(view, i) != '%') {
+            output.push_back(Unit(view, i));
+            continue;
+        }
+        if (std::size_t(i) + 2 >= view.length) return String();
+        if (Unit(view, i + 1) != '+') {
+            if (!IsHexUnit(Unit(view, i + 1)) || !IsHexUnit(Unit(view, i + 2))) return String();
+            output.push_back(static_cast<char16_t>(HexUnitValue(Unit(view, i + 1)) << 4 | HexUnitValue(Unit(view, i + 2))));
+            i += 2;
+            continue;
+        }
+        if (std::size_t(i) + 5 >= view.length) return String();
+        unsigned value = 0;
+        for (unsigned j = 2; j < 6; ++j) {
+            if (!IsHexUnit(Unit(view, i + j))) return String();
+            value = value << 4 | HexUnitValue(Unit(view, i + j));
+        }
+        output.push_back(static_cast<char16_t>(value));
+        i += 5;
+    }
+    return FinishFileName(output);
+}
+
+String APS5_VABI _ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSlashERKNS_6StringE(const String* input) {
+    const auto& string = Checked(input);
+    auto view = View(string.impl);
+    std::size_t position = ReverseFind(view, u'/', 0xFFFFFFFFU);
+    if (position == NotFound) return String(Retain(string.impl));
+    std::size_t end = view.length - 1;
+    if (position == end) {
+        --end;
+        position = ReverseFind(view, u'/', static_cast<unsigned>(end));
+    }
+    return Substring(string.impl, static_cast<unsigned>(position + 1), static_cast<unsigned>(end - position));
+}
+
+}
