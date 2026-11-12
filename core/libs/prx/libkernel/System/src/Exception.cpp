@@ -1322,6 +1322,8 @@ bool RaiseOn(Pthread thread) {
     InstallDelivery();
     if (thread == scePthreadSelf()) return Send(thread);
     HostSignalBlock block;
+    const auto live = LockLiveGuestThread(thread);
+    if (!live.owns_lock()) return false;
     std::lock_guard lock(thread->_join_mtx);
     if (thread->_finished.load(std::memory_order_acquire)) return false;
     return Send(thread);
@@ -1460,7 +1462,7 @@ void DeliverPendingException_nid_no_patch(PthreadPrivate* thread) {
 
 int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
  if (signum != RaisedSignal) return SCE_KERNEL_ERROR_EINVAL;
- if (thread == nullptr || thread->_finished.load(std::memory_order_acquire)) return SCE_KERNEL_ERROR_ESRCH;
+ if (thread == nullptr || !GuestThreadIsLive(thread)) return SCE_KERNEL_ERROR_ESRCH;
  const auto handler = Handler(signum);
  if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: no handler installed for the signal");
 #ifdef _WIN32

@@ -84,8 +84,8 @@ std::size_t HostPageSize() {
     return size;
 }
 
-bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
-    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
+bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes, bool prepare = true) {
+    if (prepare) GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
 #ifdef _WIN32
     SIZE_T copied = 0;
     return ReadProcessMemory(GetCurrentProcess(), source, destination, bytes, &copied) != 0 && copied == bytes;
@@ -860,6 +860,13 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
 #endif
 }
 
+extern "C" bool GuestCopyInUnsynced_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(source);
+    if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+    return CopyGuestBytes(destination, source, bytes, false);
+}
+
 extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
     if (bytes == 0) return true;
     const auto start = reinterpret_cast<std::uintptr_t>(source);
@@ -918,13 +925,15 @@ extern "C" bool FinalPathComponentIsDot_nid_no_patch(const char* path) {
 
 extern "C" int APS5_VABI chdir_nid_postfix(const char* path) {
     if (!path) { errno = 14; return -1; }
-    if (!*path) { errno = 2; return -1; }
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) { errno = error; return -1; }
+    if (copy.empty()) { errno = 2; return -1; }
     try {
         AppArchiveReady_nid_no_patch();
         auto& state = Directories();
         std::lock_guard lock(state.mutex);
-        const auto resolved = Resolve(state, path, false, true);
-        AppArchiveRefuseOnly_nid_no_patch(resolved, path, "changing the working directory to");
+        const auto resolved = Resolve(state, copy.c_str(), false, true);
+        AppArchiveRefuseOnly_nid_no_patch(resolved, copy.c_str(), "changing the working directory to");
         const int error = SetWorkingDirectory(state, resolved);
         if (error) { errno = error == 2 ? NotFoundError_nid_no_patch(resolved) : error; return -1; }
         return 0;

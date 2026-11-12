@@ -88,9 +88,12 @@ const BooleanCase booleanCases[]{
     {"DOMTimersThrottlingEnabled", WKPreferencesSetDOMTimersThrottlingEnabled, WKPreferencesGetDOMTimersThrottlingEnabled, true},
     {"DataTransferItemsEnabled", WKPreferencesSetDataTransferItemsEnabled, WKPreferencesGetDataTransferItemsEnabled, false},
     {"DatabasesEnabled", WKPreferencesSetDatabasesEnabled, WKPreferencesGetDatabasesEnabled, true},
+    {"DeferredCSSParserEnabled", WKPreferencesSetDeferredCSSParserEnabled, WKPreferencesGetDeferredCSSParserEnabled, false},
     {"DeveloperExtrasEnabled", WKPreferencesSetDeveloperExtrasEnabled, WKPreferencesGetDeveloperExtrasEnabled, false},
     {"DiagnosticLoggingEnabled", WKPreferencesSetDiagnosticLoggingEnabled, WKPreferencesGetDiagnosticLoggingEnabled, false},
     {"DirectoryUploadEnabled", WKPreferencesSetDirectoryUploadEnabled, WKPreferencesGetDirectoryUploadEnabled, false},
+    {"DialogElementEnabled", WKPreferencesSetDialogElementEnabled, WKPreferencesGetDialogElementEnabled, true},
+    {"DoNotTrackEnabled", WKPreferencesSetDoNotTrackEnabled, WKPreferencesGetDoNotTrackEnabled, false},
     {"DownloadAttributeEnabled", WKPreferencesSetDownloadAttributeEnabled, WKPreferencesGetDownloadAttributeEnabled, false},
     {"EnableInheritURIQueryComponent", WKPreferencesSetEnableInheritURIQueryComponent, WKPreferencesGetEnableInheritURIQueryComponent, false},
     {"EncodingDetectorEnabled", WKPreferencesSetEncodingDetectorEnabled, WKPreferencesGetEncodingDetectorEnabled, false},
@@ -110,6 +113,7 @@ const BooleanCase booleanCases[]{
     {"ICECandidateFilteringEnabled", WKPreferencesSetICECandidateFilteringEnabled, WKPreferencesGetICECandidateFilteringEnabled, true},
     {"ImageControlsEnabled", WKPreferencesSetImageControlsEnabled, WKPreferencesGetImageControlsEnabled, false},
     {"InlineMediaPlaybackRequiresPlaysInlineAttribute", WKPreferencesSetInlineMediaPlaybackRequiresPlaysInlineAttribute, WKPreferencesGetInlineMediaPlaybackRequiresPlaysInlineAttribute, false},
+    {"InspectorAdditionsEnabled", WKPreferencesSetInspectorAdditionsEnabled, WKPreferencesGetInspectorAdditionsEnabled, false},
     {"InteractiveFormValidationEnabled", WKPreferencesSetInteractiveFormValidationEnabled, WKPreferencesGetInteractiveFormValidationEnabled, true},
     {"IntersectionObserverEnabled", WKPreferencesSetIntersectionObserverEnabled, WKPreferencesGetIntersectionObserverEnabled, true},
     {"InvisibleMediaAutoplayPermitted", WKPreferencesSetInvisibleMediaAutoplayPermitted, WKPreferencesGetInvisibleMediaAutoplayPermitted, true},
@@ -118,6 +122,7 @@ const BooleanCase booleanCases[]{
     {"JavaScriptCanOpenWindowsAutomatically", WKPreferencesSetJavaScriptCanOpenWindowsAutomatically, WKPreferencesGetJavaScriptCanOpenWindowsAutomatically, true},
     {"JavaScriptEnabled", WKPreferencesSetJavaScriptEnabled, WKPreferencesGetJavaScriptEnabled, true},
     {"JavaScriptMarkupEnabled", WKPreferencesSetJavaScriptMarkupEnabled, WKPreferencesGetJavaScriptMarkupEnabled, true},
+    {"LazyImageLoadingEnabled", WKPreferencesSetLazyImageLoadingEnabled, WKPreferencesGetLazyImageLoadingEnabled, true},
     {"LargeImageAsyncDecodingEnabled", WKPreferencesSetLargeImageAsyncDecodingEnabled, WKPreferencesGetLargeImageAsyncDecodingEnabled, true},
     {"LegacyEncryptedMediaAPIEnabled", WKPreferencesSetLegacyEncryptedMediaAPIEnabled, WKPreferencesGetLegacyEncryptedMediaAPIEnabled, false},
     {"LinkPreloadEnabled", WKPreferencesSetLinkPreloadEnabled, WKPreferencesGetLinkPreloadEnabled, true},
@@ -177,6 +182,7 @@ const BooleanCase booleanCases[]{
     {"SuppressesIncrementalRendering", WKPreferencesSetSuppressesIncrementalRendering, WKPreferencesGetSuppressesIncrementalRendering, false},
     {"SyntheticEditingCommandsEnabled", WKPreferencesSetSyntheticEditingCommandsEnabled, WKPreferencesGetSyntheticEditingCommandsEnabled, true},
     {"TabsToLinks", WKPreferencesSetTabsToLinks, WKPreferencesGetTabsToLinks, false},
+    {"TabToLinksEnabled", WKPreferencesSetTabToLinksEnabled, WKPreferencesGetTabToLinksEnabled, false},
     {"TelephoneNumberParsingEnabled", WKPreferencesSetTelephoneNumberParsingEnabled, WKPreferencesGetTelephoneNumberParsingEnabled, false},
     {"TextAreasAreResizable", WKPreferencesSetTextAreasAreResizable, WKPreferencesGetTextAreasAreResizable, true},
     {"TextAutosizingEnabled", WKPreferencesSetTextAutosizingEnabled, WKPreferencesGetTextAutosizingEnabled, false},
@@ -215,6 +221,16 @@ void Booleans() {
         RequireThrows<std::invalid_argument>([&] { entry.get(nullptr); });
         RequireThrows<std::invalid_argument>([&] { entry.set(nullptr, true); });
     }
+}
+
+void LegacyTabToLinks() {
+    auto preferences = Create();
+    WKPreferencesSetTabToLinksEnabled(preferences.Get(), true);
+    Require(WKPreferencesGetTabsToLinks(preferences.Get()));
+    auto copy = Copy(preferences.Get());
+    WKPreferencesSetTabsToLinks(copy.Get(), false);
+    Require(!WKPreferencesGetTabToLinksEnabled(copy.Get()));
+    Require(WKPreferencesGetTabToLinksEnabled(preferences.Get()));
 }
 
 void Deprecated() {
@@ -508,6 +524,15 @@ void Features() {
     RequireThrows<std::invalid_argument>([&] { WKPreferencesSetExperimentalFeatureForKey(preferences.Get(), true, preferences.Get()); });
 }
 
+void DialogElementFeatureKey() {
+    auto preferences = Create();
+    auto key = NKWebKit::Make<NKWebKit::String>(std::u16string(u"DialogElementEnabled"));
+    WKPreferencesSetExperimentalFeatureForKey(preferences.Get(), false, key.Get());
+    Require(!WKPreferencesGetDialogElementEnabled(preferences.Get()));
+    WKPreferencesEnableAllExperimentalFeatures(preferences.Get());
+    Require(WKPreferencesGetDialogElementEnabled(preferences.Get()));
+}
+
 void CreationAndUnknownDefaults() {
     auto identifier = NKWebKit::Make<NKWebKit::String>(std::u16string(u"shared identifier"));
     auto first = NKWebKit::Retained<NKWebKit::Preferences>::Adopt(NKWebKit::Cast<NKWebKit::Preferences>(
@@ -561,10 +586,12 @@ void CreationAndUnknownDefaults() {
 
 int main() {
     Booleans();
+    LegacyTabToLinks();
     Deprecated();
     Numeric();
     Strings();
     Features();
+    DialogElementFeatureKey();
     CreationAndUnknownDefaults();
     std::puts("WKPreferences: defaults, boolean round trips, deprecated APIs, numeric boundaries, Unicode/null strings, copies, features and unknown media defaults passed");
 }

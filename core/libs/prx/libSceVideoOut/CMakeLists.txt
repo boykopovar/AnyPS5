@@ -6,6 +6,7 @@ add_library(libSceVideoOut SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Output.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoOutDriver.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DisplayWindow.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/HostFullscreen.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PadInput.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PadStatusSdl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Telemetry.cpp
@@ -77,6 +78,16 @@ target_link_libraries(video_out_flip_tests PRIVATE libSceVideoOut libSceAgcDrive
 set_target_properties(video_out_flip_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(video_out_flip_tests)
 if(BUILD_TESTING)
+    add_test_executable(video_out_host_fullscreen_tests tests/HostFullscreen.cpp)
+    target_include_directories(video_out_host_fullscreen_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+    target_link_libraries(video_out_host_fullscreen_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc SDL2-static)
+    configure_windows_unwind(video_out_host_fullscreen_tests)
+    add_test(NAME video_out_host_fullscreen COMMAND video_out_host_fullscreen_tests)
+    set_tests_properties(video_out_host_fullscreen PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(video_out_host_fullscreen PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(video_out_output_mode_policy_tests tests/OutputModePolicy.cpp)
     target_include_directories(video_out_output_mode_policy_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
     target_link_libraries(video_out_output_mode_policy_tests PRIVATE libSceVideoOut libc libkernel)
@@ -119,6 +130,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_video_out_device_capability PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_video_out_current_output_mode_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutCurrentOutputMode.cpp)
+    target_include_directories(guest_video_out_current_output_mode_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_out_current_output_mode_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
+    configure_windows_unwind(guest_video_out_current_output_mode_tests)
+    add_test(NAME guest_video_out_current_output_mode COMMAND guest_video_out_current_output_mode_tests)
+    set_tests_properties(guest_video_out_current_output_mode PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
+    if(WIN32)
+        set_tests_properties(guest_video_out_current_output_mode PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     if(WIN32)
         set(videoOutTestDriver "windows")
     else()
@@ -126,10 +147,18 @@ if(BUILD_TESTING)
     endif()
     set(ANYPS5_VIDEO_OUT_TEST_DRIVER "${videoOutTestDriver}" CACHE STRING
         "SDL video driver for VideoOut flip tests")
+    add_test(NAME video_out_host_fullscreen_window COMMAND video_out_host_fullscreen_tests window)
+    set_tests_properties(video_out_host_fullscreen_window PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER}")
+    add_test(NAME video_out_host_fullscreen_failed_create COMMAND video_out_host_fullscreen_tests failedcreate)
+    set_tests_properties(video_out_host_fullscreen_failed_create PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER}")
+    if(WIN32)
+        set_tests_properties(video_out_host_fullscreen_window video_out_host_fullscreen_failed_create PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 
     foreach(flipMode IN ITEMS labels labels_main)
         add_test(NAME video_out_flip_${flipMode} COMMAND video_out_flip_tests ${flipMode})
-        set_tests_properties(video_out_flip_${flipMode} PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER}")
+        set_tests_properties(video_out_flip_${flipMode} PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "APS5_NO_WGI=1;SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER}")
         if(WIN32)
             set_tests_properties(video_out_flip_${flipMode} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
@@ -144,7 +173,7 @@ if(BUILD_TESTING)
         else()
             add_test(NAME video_out_flip_${flipMode} COMMAND video_out_flip_tests ${flipMode})
         endif()
-        set_tests_properties(video_out_flip_${flipMode} PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER}")
+        set_tests_properties(video_out_flip_${flipMode} PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "APS5_NO_WGI=1;SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER}")
         if(WIN32)
             set_tests_properties(video_out_flip_${flipMode} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
@@ -152,26 +181,26 @@ if(BUILD_TESTING)
     endforeach()
     foreach(flipMode IN ITEMS eop eop_main eop_aftergpu cpuflip)
         add_test(NAME video_out_flip_${flipMode} COMMAND video_out_flip_tests ${flipMode})
-        set_tests_properties(video_out_flip_${flipMode} PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER}")
+        set_tests_properties(video_out_flip_${flipMode} PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "APS5_NO_WGI=1;SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER}")
         if(WIN32)
             set_tests_properties(video_out_flip_${flipMode} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
     add_test(NAME video_out_flip_fps_limit COMMAND video_out_flip_tests fps_limit)
-    set_tests_properties(video_out_flip_fps_limit PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};ANYPS5_FPS_LIMIT=20")
+    set_tests_properties(video_out_flip_fps_limit PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "APS5_NO_WGI=1;SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};ANYPS5_FPS_LIMIT=20")
     if(WIN32)
         set_tests_properties(video_out_flip_fps_limit PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME video_out_flip_cpuflip_in_order COMMAND video_out_flip_tests cpuflip)
-    set_tests_properties(video_out_flip_cpuflip_in_order PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};APS5_CPU_FLIP_IN_ORDER=1")
+    set_tests_properties(video_out_flip_cpuflip_in_order PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "APS5_NO_WGI=1;SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};APS5_CPU_FLIP_IN_ORDER=1")
     if(WIN32)
         set_tests_properties(video_out_flip_cpuflip_in_order PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME video_out_flip_unavailable COMMAND video_out_flip_tests unavailable)
-    set_tests_properties(video_out_flip_unavailable PROPERTIES TIMEOUT 30 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    set_tests_properties(video_out_flip_unavailable PROPERTIES TIMEOUT 30 RESOURCE_LOCK videoout_app0 ENVIRONMENT "APS5_NO_WGI=1;SDL_VIDEODRIVER=dummy")
     if(WIN32)
         set_tests_properties(video_out_flip_unavailable PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
@@ -316,6 +345,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_video_out_resolution_status PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+
+    add_test_executable(guest_video_out_vblank_status_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutVblankStatus.cpp)
+    target_include_directories(guest_video_out_vblank_status_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_out_vblank_status_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
+    configure_windows_unwind(guest_video_out_vblank_status_tests)
+    add_test(NAME guest_video_out_vblank_status COMMAND guest_video_out_vblank_status_tests)
+    set_tests_properties(guest_video_out_vblank_status PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
+    if(WIN32)
+        set_tests_properties(guest_video_out_vblank_status PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 if(BUILD_TESTING)
@@ -327,6 +367,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_video_out_output_mode PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
     if(WIN32)
         set_tests_properties(guest_video_out_output_mode PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
+    add_test_executable(guest_video_out_flip_rate_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutFlipRateBounds.cpp)
+    target_include_directories(guest_video_out_flip_rate_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_out_flip_rate_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
+    configure_windows_unwind(guest_video_out_flip_rate_tests)
+    add_test(NAME guest_video_out_flip_rate COMMAND guest_video_out_flip_rate_tests)
+    set_tests_properties(guest_video_out_flip_rate PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
+    if(WIN32)
+        set_tests_properties(guest_video_out_flip_rate PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
