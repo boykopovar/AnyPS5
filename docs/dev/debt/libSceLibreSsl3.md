@@ -102,7 +102,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 76 still-unimplemented callable exports: 72 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 75 still-unimplemented callable exports: 71 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -126,7 +126,6 @@
 | `EVP_PKEY_verify` | `HEuvmk+aHs4` |
 | `d2i_SSL_SESSION` | `IiG4HLr+cOw` |
 | `EVP_PKEY_CTX_new_id` | `J5ZLHxWkT6k` |
-| `RSAPublicKey_dup` | `JSqFTYGaWhU` |
 | `SSL_CTX_add1_chain_cert` | `L897DuAuXKk` |
 | `X509_print` | `LA1MlgDx80o` |
 | `X509_CRL_get0_by_cert` | `LdGe2IfIlpI` |
@@ -186,6 +185,8 @@
 ### Functional
 
 - [RSA_set0_key, RSA_set0_factors, RSA_set0_crt_params and BN_clear_free](../../../core/libs/prx/libSceLibreSsl3/src/RsaSetters.cpp) have no console verification or key-constructor/destructor interoperability measurement. They use the existing 152-byte RSA layout and the 24-byte BIGNUM layout of [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto), following `rsa/rsa_lib.c` and `bn/bn_lib.c`: a successful setter owns supplied components, retains omitted components and clears replaced components through the guest allocator; static limb arrays are borrowed. Missing required components return zero before mutation. Null RSA objects and negative owned limb capacities throw instead of dereferencing invalid memory or erasing an unbounded range. Malformed pointers and aliased component ownership are unverified. Closes when: compared with the console and complete key lifetimes.
+
+- [RSAPublicKey_dup](../../../core/libs/prx/libSceLibreSsl3/src/RsaPublicKeyDup.cpp) (libSceLibreSsl3) - nothing is checked on the console. It matches `ASN1_item_dup(&RSAPublicKey_it, rsa)` for this layout: a null source, or one missing n or e, returns null; otherwise a zeroed guest-heap key with version 0 and references 1, as `RSA_new` initialises them, receives copies of n and e through `BN_dup` and `RSA_set0_key`, and d, p, q, dmp1, dmq1 and iqmp stay null. The module has no RSA method, so method and flags stay null and zero. A failed duplicate or setter frees the partial key and returns null. Closes when: compared with the console.
 
 - [`EC_POINT_clear_free`](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) releases the opaque legacy `EcPoint` wrapper through `EC_POINT_free`; mbedTLS zeroizes and frees each coordinate limb. This matches LibreSSL's clear-free delegation, but the host wrapper itself follows its existing C++ destructor/allocation path rather than LibreSSL's native struct `freezero` allocation path. PS5-specific behavior is unverified.
 
