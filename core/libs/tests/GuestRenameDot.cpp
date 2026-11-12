@@ -74,6 +74,10 @@ int main() {
     Require(sceKernelRename(dotDot.c_str(), Moved) == static_cast<int>(0x80020016u), "sceKernelRename from dir/.. must return EINVAL");
     Require(sceKernelRename(dotted.c_str(), Moved) == static_cast<int>(0x80020016u), "sceKernelRename from dir/. must return EINVAL");
     Require(sceKernelRename(Source, intoTarget.c_str()) == static_cast<int>(0x80020016u), "sceKernelRename to dir/. must return EINVAL");
+    Require(sceKernelUnlink(dotted.c_str()) == static_cast<int>(0x80020001u), "sceKernelUnlink of dir/. must return EPERM");
+    Require(sceKernelUnlink(dotDot.c_str()) == static_cast<int>(0x80020001u), "sceKernelUnlink of dir/.. must return EPERM");
+    Require(sceKernelRmdir(dotted.c_str()) == static_cast<int>(0x80020016u), "sceKernelRmdir of dir/. must return EINVAL");
+    Require(sceKernelRmdir(dotDot.c_str()) == static_cast<int>(0x80020016u), "sceKernelRmdir of dir/.. must return EINVAL");
     Require(Exists(Source) && Exists(Target) && !Exists(Moved), "failed renames must change nothing");
 
     {
