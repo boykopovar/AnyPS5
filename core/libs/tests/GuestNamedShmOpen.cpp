@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <sys/mman.h>
@@ -18,6 +19,16 @@ static void Require(bool value, const char* message) {
     }
 }
 
+static void RemoveHostObject(const std::string& hostName) {
+#ifdef __APPLE__
+    std::error_code error;
+    const auto directory = std::filesystem::canonical(std::filesystem::temp_directory_path(error), error);
+    ::unlink((directory.string() + hostName).c_str());
+#else
+    ::shm_unlink(hostName.c_str());
+#endif
+}
+
 struct Object {
     std::string name;
     std::string hostName = "/anyps5-shm-";
@@ -27,9 +38,9 @@ struct Object {
             hostName += "0123456789abcdef"[byte >> 4];
             hostName += "0123456789abcdef"[byte & 15];
         }
-        ::shm_unlink(hostName.c_str());
+        RemoveHostObject(hostName);
     }
-    ~Object() { ::shm_unlink(hostName.c_str()); }
+    ~Object() { RemoveHostObject(hostName); }
     int Open(int flags, int mode = 0600) const { return shm_open_nid_postfix(name.c_str(), flags, mode); }
 };
 
