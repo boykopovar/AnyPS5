@@ -1954,6 +1954,8 @@ static void CheckStreamAddressLengths() {
     std::array<std::uint8_t, 28> peer;
     peer.fill(0xa5);
     size = 1;
+    Require(Failed(sceNetAccept(listener, peer.data(), reinterpret_cast<std::uint32_t*>(0x10)), 14));
+    Require(Untouched(peer, 0));
     const int accepted = sceNetAccept(listener, peer.data(), &size);
     Require(accepted >= 0 && size == 1 && peer[0] == 16 && Untouched(peer, 1));
     for (const std::uint32_t capacity : {0u, 1u, 15u, 16u, 28u, UINT32_MAX}) {
@@ -1963,7 +1965,13 @@ static void CheckStreamAddressLengths() {
         Require(sceNetGetpeername(accepted, peer.data(), &size) == 0 && size == copied);
         Require(std::memcmp(peer.data(), clientAddress.data(), copied) == 0 && Untouched(peer, copied));
     }
-    for (const int descriptor : {accepted, client, listener}) Require(sceNetSocketClose(descriptor) == 0);
+    const int second = sceNetSocket("fault-client", 2, 1, 6);
+    Require(second >= 0 && sceNetConnect(second, listening.data(), listening.size()) == 0);
+    const int count = sceNetGetSockInfo(-1, nullptr, 0, 0);
+    size = peer.size();
+    Require(Failed(sceNetAccept(listener, reinterpret_cast<void*>(0x10), &size), 14));
+    Require(size == peer.size() && sceNetGetSockInfo(-1, nullptr, 0, 0) == count);
+    for (const int descriptor : {second, accepted, client, listener}) Require(sceNetSocketClose(descriptor) == 0);
 }
 
 static void CheckKernelSocketOption() {
