@@ -1848,7 +1848,7 @@ VkCommandBuffer Recorder::Commands(VkAccessFlags* coveredAccess, std::source_loc
     // Work recorded after a draw's render pass or an inline store run must see their writes: the
     // pass's end and the run's trailing barrier go in first (a per-batch run waits for Submit, or
     // for a caller whose ranges overlap a queued store: FlushStores).
-    if (open->renderPass.open) endOpenRenderPass(PassBreak::Command);
+    if (open->renderPass.open) endOpenRenderPass(PassBreak::Command, true, where);
     if (open->run.open && !LabelRunsPerBatch()) closeStoreRun();
     if (coveredAccess != nullptr) *coveredAccess = open->coveredAccess;
     open->coveredAccess = 0;
@@ -1909,17 +1909,17 @@ void Recorder::SealPassWriteOnly() {
     if (open != nullptr) open->passHazards.SealWriteOnly();
 }
 
-void Recorder::endOpenRenderPass(PassBreak by, bool barrier) {
+void Recorder::endOpenRenderPass(PassBreak by, bool barrier, std::source_location where) {
     auto& pass = open->renderPass;
-    if (open->segmentActive) endSegment(*open);
-    EndRenderPass(context, live());
+    if (open->segmentActive) endSegment(*open, where);
+    EndRenderPass(context, live(where));
     // The pass's attachment and shader writes are visible to everything recorded after it (the
     // host sees them at the batch's fence).
     if (barrier) {
-        recordBarrier(live(), PassEndBarrier.srcStage, PassEndBarrier.dstStage, PassEndBarrier.srcAccess, PassEndBarrier.dstAccess);
+        recordBarrier(live(where), PassEndBarrier.srcStage, PassEndBarrier.dstStage, PassEndBarrier.srcAccess, PassEndBarrier.dstAccess);
         CountBarriers(CommandClass::Draw);
     }
-    if (pass.afterPass) pass.afterPass(live());
+    if (pass.afterPass) pass.afterPass(live(where));
     EndGpuTiming(pass.timing);
     open->coveredAccess = barrier ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT : 0;
     open->hostReadOwed = true;
@@ -2826,8 +2826,8 @@ void Recorder::beginSegment(Batch& batch) {
     batch.segmentActive = true;
 }
 
-void Recorder::endSegment(Batch& batch) {
-    quiesce();
+void Recorder::endSegment(Batch& batch, std::source_location where) {
+    quiesce(where);
     function(cmdEndQuery, "vkCmdEndQuery")(batch.commands.Get(BatchCommands::Use::Quiesced), batch.segments, batch.segmentSlot);
     batch.segmentActive = false;
     pendingSamples.push_back({batch.segmentPool, batch.segments, batch.segmentSlot});

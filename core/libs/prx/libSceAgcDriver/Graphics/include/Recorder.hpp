@@ -499,6 +499,7 @@ public:
         bool opened;
     };
     CommandEncoder::Statistics EncoderCounts() const { return encoder != nullptr ? encoder->Counts() : CommandEncoder::Statistics{}; }
+    std::vector<CommandEncoder::SiteWaits> EncoderWaitsBySite() const { return encoder != nullptr ? encoder->WaitsBySite() : std::vector<CommandEncoder::SiteWaits>{}; }
     // APS5_PROFILE_DRAW: syncs by source (0 device idle, 1 CPU access to pending writes, 2 CPU read
     // after a recorded store, 3 address-based dispatch, 4 other). Contract: the call announces the
     // source for the Sync/SyncThrough this thread makes NEXT, which consumes it (a sync without a
@@ -821,7 +822,7 @@ private:
     bool segmentSlotReady(const Batch& batch) const;
     void takeSegmentPool(Batch& batch);
     void beginSegment(Batch& batch);
-    void endSegment(Batch& batch);
+    void endSegment(Batch& batch, std::source_location where = std::source_location::current());
     void copySegments(VkCommandBuffer commands, std::uint32_t count);
     void retireSegments(std::uint32_t count);
     void recordQueuedDumps(VkCommandBuffer commands, std::span<const Batch::StoreRun::Queued> writes);
@@ -893,7 +894,7 @@ private:
     // form, toward the host only); returns whether the batch's host-read barrier was included.
     bool closeStoreRun(bool atSubmit = false);
     // Ends the render pass a draw left open (vkCmdEndRenderPass, the pass's trailing barrier).
-    void endOpenRenderPass(PassBreak by, bool barrier = true);
+    void endOpenRenderPass(PassBreak by, bool barrier = true, std::source_location where = std::source_location::current());
     // Records the queued key stores as one run (`forWriter`: before a command writing, reading or
     // labelling over one, not at Submit).
     void recordKeyStores(bool forWriter);

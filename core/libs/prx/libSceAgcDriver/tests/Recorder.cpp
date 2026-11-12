@@ -11326,6 +11326,15 @@ public:
         EndRenderPass(context, commands);
     }
 
+    void DrawEncoded(Recorder& recorder, const Context& encoded) const {
+        const auto start = recorder.StartDrawPass(PassKey, false, false, PassAccess{});
+        Require(start.continued, "an encoded draw did not continue the open cover pass");
+        const Recorder::EncodingWindow window(recorder);
+        encoded.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(start.commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        encoded.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(start.commands, 3, 1, 0, 0);
+        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, false, PassAccess{});
+    }
+
     static constexpr std::uint64_t Samples = 64;
 
 private:
@@ -11706,6 +11715,44 @@ void sampleDumpTests(const Device& device, Recorder& recorder) {
     }
     CoverPass cover(context);
     inPassSampleDumpTests(recorder, context, cover, words, address, target);
+}
+
+void endPassWaitsNameTheirCaller(Recorder& recorder) {
+    static_cast<void>(recorder.Commands());
+}
+
+void encoderPassEndSiteTests(const Device& device) {
+    if (!CommandEncoder::Enabled() || !device.Graphics()) return;
+    auto context = device.GetContext();
+    DeviceFunctions table;
+    FillDeviceFunctions(context, table);
+    const char* configured = std::getenv("APS5_PROFILE_ENCODER");
+    const std::string saved = configured != nullptr ? configured : "";
+    Require(setenv("APS5_PROFILE_ENCODER", "1", 1) == 0, "cannot set APS5_PROFILE_ENCODER");
+    Recorder recorder(context, false, &table, context.queueFamily);
+    if (configured != nullptr) setenv("APS5_PROFILE_ENCODER", saved.c_str(), 1);
+    else unsetenv("APS5_PROFILE_ENCODER");
+    if (!recorder.Encodes()) return;
+    context.functions = &table;
+    CoverPass cover(context);
+    cover.Draw(recorder);
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(20)); });
+    cover.DrawEncoded(recorder, context);
+    endPassWaitsNameTheirCaller(recorder);
+    CommandEncoder::SetDelayForTesting({});
+    recorder.Submit();
+    recorder.Sync();
+    const auto sites = recorder.EncoderWaitsBySite();
+    std::string seen;
+    bool caller = false;
+    for (const auto& site : sites) {
+        const auto name = CommandEncoder::Describe(site.site);
+        seen += name + "; ";
+        Require(name.find("endOpenRenderPass") == std::string::npos && name.find("endSegment") == std::string::npos, "a pass end's wait was attributed to the recorder's own pass end, not its caller: " + seen);
+        caller = caller || (site.site.kind == CommandEncoder::Wait::Quiesce && name.find("endPassWaitsNameTheirCaller") != std::string::npos && site.waits != 0);
+    }
+    Require(caller, "the wait at a pass end was not attributed to the caller of Commands(): " + seen);
+    std::cout << "Command encoder pass-end site tests passed\n";
 }
 
 void uncountedPassTests(const Device& device) {
@@ -16279,6 +16326,7 @@ int main(int argc, char** argv) {
         drawSnapshotEpochTests(device);
         gpu.lock();
         encoderFailureFollowsTheBatchTests(device, recorder, gpu);
+        encoderPassEndSiteTests(device);
         encoderSlotFallbackTests(device);
         recorder.Activate();
         const bool drew = vertexTargetRangeTests(device, recorder, false);
