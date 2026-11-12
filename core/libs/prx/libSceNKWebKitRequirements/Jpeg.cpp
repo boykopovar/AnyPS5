@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -207,10 +208,15 @@ static void APS5_VABI DefaultGuestFormatMessage_nid_no_patch(NKWebKit::GuestComm
     jpeg_std_error(&dummy_err);
     dummy.err = &dummy_err;
     dummy_err.msg_code = cinfo->err->msg_code;
-    for (int i = 0; i < 8; ++i) {
-        dummy_err.msg_parm.i[i] = cinfo->err->msg_parm.i[i];
-    }
+    dummy_err.jpeg_message_table = cinfo->err->jpeg_message_table;
+    dummy_err.last_jpeg_message = cinfo->err->last_jpeg_message;
+    dummy_err.addon_message_table = cinfo->err->addon_message_table;
+    dummy_err.first_addon_message = cinfo->err->first_addon_message;
+    dummy_err.last_addon_message = cinfo->err->last_addon_message;
+    static_assert(sizeof(dummy_err.msg_parm) == sizeof(cinfo->err->msg_parm));
+    std::memcpy(&dummy_err.msg_parm, &cinfo->err->msg_parm, sizeof(dummy_err.msg_parm));
     dummy_err.format_message(reinterpret_cast<j_common_ptr>(&dummy), buffer);
+    std::memcpy(&cinfo->err->msg_parm, &dummy_err.msg_parm, sizeof(dummy_err.msg_parm));
 }
 
 static void APS5_VABI DefaultGuestResetErrorMgr_nid_no_patch(NKWebKit::GuestCommonPtr cinfo) {

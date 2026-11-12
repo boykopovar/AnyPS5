@@ -690,6 +690,20 @@ void testMouseStickTarget() {
     check(stateLeft.sticks[3] == 90, "mouse must preserve right stick Y when targeting left stick");
 }
 
+void testPadChordRequests() {
+    auto configuration = defaults();
+    configuration.bindings.push_back(Pad::InputBinding{SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, Pad::InputControl::Screenshot, Pad::PadButton::None, 0, 0,
+        static_cast<std::uint32_t>(Pad::PadButton::Options) | static_cast<std::uint32_t>(Pad::PadButton::R1)});
+    Pad::KeyboardMouse keyboardMouse(configuration);
+    const auto options = static_cast<std::uint32_t>(Pad::PadButton::Options);
+    const auto r1 = static_cast<std::uint32_t>(Pad::PadButton::R1);
+    check(!keyboardMouse.PadChordRequests(options).screenshot, "one button of a chord does not fire it");
+    check(keyboardMouse.PadChordRequests(options | r1).screenshot, "the full chord fires once it is held");
+    check(!keyboardMouse.PadChordRequests(options | r1).screenshot, "a held chord does not fire again");
+    check(!keyboardMouse.PadChordRequests(0).screenshot, "releasing the chord does not fire");
+    check(keyboardMouse.PadChordRequests(options | r1 | static_cast<std::uint32_t>(Pad::PadButton::Cross)).screenshot, "extra buttons do not block a chord");
+}
+
 }
 
 int main() {
@@ -726,7 +740,8 @@ int main() {
             {"ToggleMute default key", testToggleMuteDefaultKey},
             {"default L2", testDefaultL2},
             {"title reads the mouse", testTitleReadsMouse},
-            {"mouse stick target", testMouseStickTarget}
+            {"mouse stick target", testMouseStickTarget},
+            {"pad chord requests", testPadChordRequests}
         };
         for (const auto& [name, test] : tests) {
             test();
