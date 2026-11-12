@@ -127,6 +127,20 @@ bool DrawFinisher::PendingOverlapsAny(std::span<const Range> ranges) {
     return false;
 }
 
+bool DrawFinisher::AnyPendingOverlaps(std::span<const Range> ranges) {
+    if (!Busy()) return false;
+    std::lock_guard lock(mutex);
+    for (const auto& held : pending) {
+        if (held.unknown) return true;
+        for (const auto& [first, last] : held.writes) {
+            for (const auto& [begin, end] : ranges) {
+                if (begin < last && first < end) return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool DrawFinisher::PendingKey(std::uint64_t key, std::uint64_t shape) {
     if (!Busy() || !finisherProducer) return false;
     std::lock_guard lock(mutex);
@@ -211,6 +225,7 @@ void DrawFinisher::run() {
     PerformanceTrace::BindThread("draw finisher");
     ReserveFinisherCore();
     for (;;) {
+        Driver::Get().ParkForRecorder();
         Job* job = nullptr;
         bool failed = false;
         std::uint64_t storing = 0;
@@ -446,6 +461,7 @@ void DrawPipeline::run() {
     ReserveCommitterCore();
     StartCommitterSampler();
     for (;;) {
+        Driver::Get().ParkForRecorder();
         Commit* commit = nullptr;
         bool isDraw = false;
         std::uint64_t storing = 0;
@@ -653,7 +669,7 @@ bool DrawPipeline::Busy() const {
 }
 
 bool DrawPipeline::OverlapsAny(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
-    if (DrawFinisher::Overlap() && DrawFinisher::Get().PendingOverlapsAny(ranges)) return true;
+    if (DrawFinisher::Overlap() && DrawFinisher::Get().AnyPendingOverlaps(ranges)) return true;
     std::lock_guard lock(mutex);
     for (const auto& [range, count] : queuedWrites) {
         for (const auto& [address, end] : ranges) {

@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionProgress.hpp"
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -11,6 +12,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <span>
 #include <thread>
@@ -24,6 +26,27 @@ struct FlipWork {
     bool finished = false;
     std::uint64_t serial = 0;
     std::shared_ptr<FlipWork> previous;
+};
+
+enum class AwaitKind { Wait, Semaphore, Rewind };
+
+struct LabelValue {
+    std::uint64_t dword = 0;
+    std::uint32_t value = 0;
+    bool known = false;
+};
+
+struct AwaitedDword {
+    std::uint64_t address = 0;
+    std::uint32_t bytes = 0;
+    bool satisfied = false;
+    bool passed = false;
+    AwaitKind kind = AwaitKind::Wait;
+    std::uint32_t queue = 0;
+    std::uint32_t function = 0;
+    std::uint64_t reference = 0;
+    std::uint64_t mask = 0;
+    std::array<std::optional<LabelValue>, 2> ahead{};
 };
 
 struct Submission {
@@ -44,7 +67,9 @@ struct Submission {
 
     std::uint64_t received = 0;
     std::vector<std::uint64_t> labelWrites;
+    std::vector<LabelValue> labelValues;
     std::set<std::size_t> heldAtSubmit;
+    std::vector<AwaitedDword> awaitedDwords;
     std::chrono::steady_clock::time_point receivedAt{};
     std::chrono::steady_clock::time_point copiedAt{};
     std::chrono::steady_clock::time_point validatedAt{};
