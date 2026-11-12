@@ -34,5 +34,13 @@ int main() {
     std::printf("allocated for-app phys=%lld len=%zu\n", static_cast<long long>(phys), page * 4);
     Require(sceKernelReleaseDirectMemory(phys, page * 4) == 0);
 
+    constexpr int64_t mib = 1024 * 1024;
+    phys = -1;
+    Require(sceKernelAllocateDirectMemory(mib, 0, mib, 0, 12, &phys) == 0);
+    Require(phys >= mib);
+    Require((phys % static_cast<int64_t>(page)) == 0);
+    Require(phys + mib <= size);
+    Require(sceKernelReleaseDirectMemory(phys, mib) == 0);
+
     return 0;
 }

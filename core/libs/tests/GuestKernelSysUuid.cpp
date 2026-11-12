@@ -46,7 +46,7 @@ int main() {
     for (const auto& uuid : first) {
         Require((uuid.timeHiAndVersion >> 12) == 1);
         Require((uuid.clockSeqHiAndReserved & 0xc0) == 0x80);
-        Require((uuid.node[0] & 0x01) != 0);
+        Require((uuid.node[0] & 0x01) == 0);
         Require(std::memcmp(uuid.node, first[0].node, sizeof(uuid.node)) == 0);
         Require(Sequence(uuid) == Sequence(first[0]));
     }
@@ -67,6 +67,6 @@ int main() {
     Require(sceKernelCreateUuidV1(kernelUuidBytes.data()) == 0);
     Require((kernelUuidBytes[6] >> 4) == 1);
     Require((kernelUuidBytes[8] & 0xc0) == 0x80);
-    Require((kernelUuidBytes[10] & 0x01) != 0);
+    Require((kernelUuidBytes[10] & 0x01) == 0);
     Require(std::memcmp(&kernelUuidBytes[10], first[0].node, sizeof(first[0].node)) == 0);
 }

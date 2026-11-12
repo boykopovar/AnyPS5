@@ -101,6 +101,12 @@ void CheckBsearch() {
     before = constraintCalls;
     Require(bsearch_s_nid_postfix(nullptr, values, 7, 0, CompareInts, &calls) == nullptr, "bsearch_s zero stride accepted a null key");
     RequireViolation(before, "bsearch_s: bad argument", 22);
+    before = constraintCalls;
+    calls = 0;
+    constexpr std::size_t twoToThe32 = std::size_t{1} << 32;
+    Require(bsearch_s_nid_postfix(&key, values, twoToThe32, twoToThe32, CompareInts, &calls) == nullptr && calls == 0,
+        "bsearch_s searched a count times size product past SIZE_MAX");
+    RequireViolation(before, "bsearch_s: bad argument", 22);
 }
 
 void CheckWcstok() {

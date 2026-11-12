@@ -226,6 +226,21 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("already provided", report)
             self.assertIn("EXAMPLE_MACRO", report)
 
+    def test_multiline_macro_invocation_counts_as_provided(self):
+        nid = nid_of("sceExampleMultiline")
+        source = ("#define EXAMPLE_MACRO(NAME) int APS5_VABI NAME(void) { return 0; }\n"
+                  "EXAMPLE_MACRO(\n"
+                  "    sceExampleMultiline\n"
+                  ")\n")
+        self.assertTrue(provides_with(source, nid))
+
+    def test_macro_call_in_uninvoked_directive_is_not_provided(self):
+        nid = nid_of("sceExampleOnlyInDefinition")
+        source = ("#define EXAMPLE_MACRO(NAME) int APS5_VABI NAME(void) { return 0; }\n"
+                  "#define UNUSED_WRAPPER(NAME) \\\n"
+                  "    EXAMPLE_MACRO(sceExampleOnlyInDefinition)\n")
+        self.assertFalse(provides_with(source, nid))
+
     def test_explicit_export_binding_counts_as_provided(self):
         nid = nid_names.compute_nid("sceExampleExplicit")
         with tempfile.TemporaryDirectory() as directory:
