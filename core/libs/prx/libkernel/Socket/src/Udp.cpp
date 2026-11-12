@@ -1674,6 +1674,10 @@ static int NoteConnectError(Socket& socket) {
 #endif
 int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
     if (const int error = AddressLengthError(address, length)) return Fail(error);
+    if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
+        if (const int error = forwards->connect(descriptor, address, length)) return Fail(error);
+        return 0;
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (socket->family != GuestUnix && socket->type == 2 && address && length >= 2 && static_cast<const unsigned char*>(address)[1] == 0

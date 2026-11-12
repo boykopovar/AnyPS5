@@ -3275,6 +3275,7 @@ void Recorder::eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterat
     auto& pool = drawSnapshotPools[SnapshotPool(std::get<1>(entry->first))];
     pool.bytes -= std::get<2>(entry->first);
     pool.recency.erase(entry->second.recent);
+    if (!entry->second.owned.words.empty()) --ownedDrawInputs;
     drawSnapshots.erase(entry);
 }
 
@@ -3508,7 +3509,10 @@ void Recorder::KeepOwnedDrawInput(std::uint64_t address, std::size_t bytes, cons
     if (buffer == nullptr || buffer->Bytes().size() != bytes || !ownedDrawInputHolds(address, bytes, proof)) return;
     auto kept = proof;
     KeepDrawSnapshot(address, bytes, proof.since, proof.registry, std::move(buffer), use, derived, true);
-    if (const auto found = drawSnapshots.find({address, use, bytes}); found != drawSnapshots.end()) found->second.owned = std::move(kept);
+    if (const auto found = drawSnapshots.find({address, use, bytes}); found != drawSnapshots.end()) {
+        found->second.owned = std::move(kept);
+        ++ownedDrawInputs;
+    }
 }
 
 bool Recorder::KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest) {
