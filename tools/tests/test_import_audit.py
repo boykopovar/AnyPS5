@@ -1172,6 +1172,28 @@ class ImportAuditTests(unittest.TestCase):
         code, out, err = work.run(registry, "--modules", str(elsewhere))
         self.assertNotIn("libSceMissing.prx is in", out)
 
+    def test_missing_module_hints_follow_the_audit_name_rules(self):
+        work = self.work
+        registry = work.root / "game.registry.json"
+        write_registry(registry, [])
+        needed = ["plugin.prx", "audio.prx", "converted.prx", "$ORIGIN/../prx/scene.prx.guest.prx"]
+        (work.root / "game.needed.json").write_text(json.dumps(needed), encoding="utf-8")
+        elsewhere = work.root / "extra"
+        elsewhere.mkdir()
+        for filename in ("Plugin.prx", "audio.sprx", "converted.prx.guest.prx", "scene.prx.guest.prx"):
+            (elsewhere / filename).write_bytes(exporting())
+        for windows in (False, True):
+            with self.subTest(windows=windows):
+                (work.libs / "libc.prx").write_bytes(build_pe([]) if windows else exporting())
+                code, out, err = work.run(registry)
+                self.assertEqual((code, err), (1, ""))
+                for library in needed[1:]:
+                    self.assertIn(f"{library} is in {elsewhere.resolve()}: pass that directory with --modules", out)
+                self.assertEqual("plugin.prx is in" in out, windows)
+                code, out, err = work.run(registry, "--modules", str(elsewhere))
+                self.assertEqual((code, err), (0 if windows else 1, ""))
+                self.assertNotIn("pass that directory with --modules", out)
+
     def test_locate_search_root_rejects_registry_symlink_loop(self):
         loop = self.work.root / "loop.json"
         try:
