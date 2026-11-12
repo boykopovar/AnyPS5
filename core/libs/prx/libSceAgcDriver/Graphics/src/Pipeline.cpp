@@ -388,7 +388,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         appendKey(key, shader.stage);
         appendKey(key, identity.low);
         appendKey(key, identity.high);
-        appendKey(key, shader.pushConstantOffset);
+        appendKey(key, KeyedPushOffset(shader));
         appendKey(key, state.meshLayerBase);
         appendKey(key, state.meshLayerCount);
         if (resources.split) {
@@ -1081,7 +1081,7 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
         append(key, identity.low);
         append(key, identity.high);
         // Where the stage's push constants sit in the block (AssemblePushConstants).
-        append(key, shader.pushConstantOffset);
+        append(key, KeyedPushOffset(shader));
     }
     append(key, state.meshLayerBase);
     append(key, state.meshLayerCount);

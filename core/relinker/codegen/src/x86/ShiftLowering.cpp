@@ -8,9 +8,8 @@ using namespace ScalarLowering;
 namespace {
 
 constexpr std::uint8_t kCountRegister = 1;
-constexpr std::int32_t kResultSlot = 0;
-constexpr std::int32_t kCountSlot = 8;
-constexpr std::int32_t kFlagsSlot = 16;
+constexpr std::int32_t kResultSlot = 8;
+constexpr std::int32_t kCountSlot = 16;
 constexpr std::int32_t kStackResultSlot = 24;
 constexpr std::uint8_t kPushFlags = 0x9C;
 constexpr std::uint8_t kPopFlags = 0x9D;
@@ -26,11 +25,11 @@ std::uint8_t _shiftDigit(const ShiftOperation operation) {
     throw CodegenException("unknown shift operation");
 }
 
-void _loadSource(StubBodyBuilder& body, const ShiftOperands& operands, const std::uint8_t result, const char* name) {
+void _loadSource(StubBodyBuilder& body, const ShiftOperands& operands, const std::uint8_t result, const char* name, const std::int32_t frame) {
     if (operands.Memory)
-        Memory(body, 0x8B, operands.Wide, *operands.Memory, result, name, kFrame);
+        Memory(body, 0x8B, operands.Wide, *operands.Memory, result, name, frame);
     else if (operands.Source == Stack)
-        StackSlot(body, 0x8D, true, result, kFrame);
+        StackSlot(body, 0x8D, true, result, frame);
     else
         Register(body, 0x8B, operands.Wide, result, operands.Source);
 }
@@ -97,18 +96,18 @@ void EmitShift(StubBodyBuilder& body, const ShiftOperands& operands) {
         used = operands.Memory ? UsedRegisters({operands.Destination, operands.Count, kCountRegister}, operands.Memory)
                                : UsedRegisters({operands.Destination, operands.Source, operands.Count, kCountRegister}, std::nullopt);
     const auto result = Scratch(used, name);
-    StackSlot(body, 0x8D, true, Stack, -kFrame);
+    const auto frame = SelectFrame(operands.Memory, operands.Wide, kFrame, 32);
+    StackSlot(body, 0x8D, true, Stack, 8 - frame);
+    body.Raw(std::array{kPushFlags});
     StackSlot(body, 0x89, true, result, kResultSlot);
     if (!rotate) StackSlot(body, 0x89, true, kCountRegister, kCountSlot);
-    body.Raw(std::array{kPushFlags});
-    StackSlot(body, 0x8F, false, 0, kFlagsSlot);
-    _loadSource(body, operands, result, name);
+    _loadSource(body, operands, result, name, frame);
     if (rotate) {
         Register(body, 0xC1, operands.Wide, _shiftDigit(operands.Operation), result);
         body.Raw(std::array{operands.Count});
     } else {
         if (operands.Count == Stack)
-            StackSlot(body, 0x8D, true, kCountRegister, kFrame);
+            StackSlot(body, 0x8D, true, kCountRegister, frame);
         else if (operands.Count != kCountRegister)
             Register(body, 0x8B, true, kCountRegister, operands.Count);
         Register(body, 0xD3, operands.Wide, _shiftDigit(operands.Operation), result);
@@ -119,14 +118,13 @@ void EmitShift(StubBodyBuilder& body, const ShiftOperands& operands) {
         StackSlot(body, 0x89, true, result, kCountSlot);
     else
         Register(body, 0x8B, operands.Wide, operands.Destination, result);
-    StackSlot(body, 0xFF, false, 6, kFlagsSlot);
-    body.Raw(std::array{kPopFlags});
     if (!rotate) StackSlot(body, 0x8B, true, kCountRegister, kCountSlot);
     StackSlot(body, 0x8B, true, result, kResultSlot);
+    body.Raw(std::array{kPopFlags});
     if (operands.Destination == Stack)
-        StackSlot(body, 0x8B, operands.Wide, Stack, kStackResultSlot);
+        StackSlot(body, 0x8B, operands.Wide, Stack, kStackResultSlot - 8);
     else
-        StackSlot(body, 0x8D, true, Stack, kFrame);
+        StackSlot(body, 0x8D, true, Stack, frame - 8);
 }
 
 }
