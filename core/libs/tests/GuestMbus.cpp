@@ -90,6 +90,10 @@ int main() {
     Require(sceDeviceServiceInitialize(3, &param) == invalidArgument, "threadParam reserved field accepted");
     param.threadParam = nullptr;
     Require(sceDeviceServiceInitialize(3, &param) == 0, "default parameter initialization failed");
+    Require(sceDeviceServiceInitialize(3, reinterpret_cast<const DeviceServiceInitParam*>(1)) == invalidArgument, "unmapped parameter accepted");
+    param.threadParam = reinterpret_cast<DeviceServiceThreadParam*>(~std::uintptr_t{0});
+    Require(sceDeviceServiceInitialize(3, &param) == invalidArgument, "unmapped thread parameter accepted");
+    param.threadParam = nullptr;
     Require(sceDeviceServiceInitialize(3, 0) == 0, "initialization failed");
     Require(sceDeviceServiceGetGeneration() == 0, "the device set started at another generation");
     Require(sceDeviceServiceGetEventState(1) == 0, "a device event was reported");
