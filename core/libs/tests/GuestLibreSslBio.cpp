@@ -42,6 +42,21 @@ using LibreSsl::Bio;
 using LibreSsl::BioBuffer;
 using LibreSsl::BioMethod;
 
+struct TestBioSslData {
+    void* ssl;
+    int renegotiates;
+    std::uint64_t renegotiateCount;
+    std::uint64_t byteCount;
+    std::uint64_t renegotiateTimeout;
+    std::int64_t lastTime;
+};
+
+static_assert(sizeof(TestBioSslData) == 48);
+static_assert(offsetof(TestBioSslData, renegotiateCount) == 16);
+static_assert(offsetof(TestBioSslData, byteCount) == 24);
+static_assert(offsetof(TestBioSslData, renegotiateTimeout) == 32);
+static_assert(offsetof(TestBioSslData, lastTime) == 40);
+
 
 #ifdef ANYPS5_BIO_DYNAMIC
 namespace {
@@ -563,6 +578,41 @@ void TestUnsupported() {
 }
 
 #ifndef ANYPS5_BIO_DYNAMIC
+void TestSslMethod() {
+    const BioMethod* method = BIO_f_ssl_nid_postfix();
+    Require(method && method->type == 0x207 && std::strcmp(method->name, "ssl") == 0, "SSL BIO method descriptor");
+    Require(method->write && method->read && method->puts && method->control && method->create && method->destroy && method->callbackControl,
+        "SSL BIO method has its callbacks");
+    Bio* bio = BIO_new_nid_postfix(method);
+    Require(bio && !bio->initialized && !bio->flags && bio->shutdown && bio->data, "SSL BIO creates zeroed private state");
+    const auto* state = static_cast<const TestBioSslData*>(bio->data);
+    Require(!state->ssl && !state->renegotiates && !state->renegotiateCount && !state->byteCount && !state->renegotiateTimeout && !state->lastTime,
+        "SSL BIO private state starts zeroed");
+    Require(BIO_ctrl_nid_postfix(bio, 1, 0, nullptr) == 0, "unattached reset returns zero");
+    Require(BIO_ctrl_nid_postfix(bio, 3, 0, nullptr) == 0, "unattached info returns zero");
+    Require(BIO_ctrl_nid_postfix(bio, 8, 0, nullptr) == 0, "unattached get-close returns zero");
+    Require(BIO_ctrl_nid_postfix(bio, 9, 0, nullptr) == 0 && bio->shutdown == 1,
+        "unattached set-close returns zero without changing shutdown");
+    void* sslSentinel = bio;
+    Require(BIO_ctrl_nid_postfix(bio, 110, 0, &sslSentinel) == 0 && sslSentinel == bio,
+        "unattached get-SSL returns zero without writing its output");
+    Require(BIO_ctrl_nid_postfix(bio, 119, 1, nullptr) == 0, "unattached SSL mode returns zero");
+    Require(BIO_ctrl_nid_postfix(bio, 126, 0, nullptr) == 0, "unattached renegotiate count returns zero");
+    bool nullSetThrew = false;
+    try { BIO_ctrl_nid_postfix(bio, 109, 0, nullptr); }
+    catch (const std::invalid_argument&) { nullSetThrew = true; }
+    Require(nullSetThrew && bio->shutdown == 0 && !bio->initialized && !state->ssl,
+        "setting a null SSL updates shutdown then faults before initialization");
+    Require(method->read(nullptr, nullptr, 1) == 0 && method->write(nullptr, nullptr, 1) == 0, "null SSL BIO buffers return zero before BIO or SSL access");
+    Require(BIO_free_nid_postfix(bio) == 1 && allocations == 0, "unattached SSL BIO frees its guest state");
+    LibreSslPutError_nid_no_patch(2, 3, 17);
+    allocationsUntilFailure = 1;
+    Require(BIO_new_nid_postfix(method) == nullptr, "SSL BIO state allocation failure rejects creation");
+    Require(ERR_get_error_nid_postfix() == 0x02003011, "SSL BIO allocation error preserves older FIFO entries");
+    RequireError(0x14fff041);
+    Require(allocations == 0, "failed SSL BIO creation frees its outer BIO");
+    allocationsUntilFailure = -1;
+}
 void TestPkcs12BioReadErrors() {
     constexpr std::uint64_t bioUnsupported = 0x20fff079;
     constexpr std::uint64_t notEnoughData = 0x0dfff08e;
@@ -1112,6 +1162,7 @@ int main(int argc, char** argv) {
     TestDispatchAndReferences();
     TestUnsupported();
 #ifndef ANYPS5_BIO_DYNAMIC
+    TestSslMethod();
     TestPkcs12BioReadErrors();
     TestPemReadBioX509NoStartLine();
     TestFileAndSocket();

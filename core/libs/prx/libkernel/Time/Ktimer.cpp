@@ -117,19 +117,24 @@ int APS5_VABI ktimer_delete_nid_postfix(int id) {
 }
 
 int APS5_VABI ktimer_settime_nid_postfix(int id, int flags, const GuestItimerspec* value, GuestItimerspec* oldValue) {
-    if (value == nullptr) return static_cast<int>(Fail(GuestEfault));
-    std::lock_guard lock(g_ktimerLock);
-    Ktimer* timer = FindTimer(id);
-    if (timer == nullptr) return static_cast<int>(Fail(GuestEinval));
-    GuestItimerspec next = *value;
-    if (!FixTimespec(next.it_value)) return static_cast<int>(Fail(GuestEinval));
-    const bool armed = next.it_value.tv_sec != 0 || next.it_value.tv_nsec != 0;
-    if (armed && !FixTimespec(next.it_interval)) return static_cast<int>(Fail(GuestEinval));
-    if (!armed) next.it_interval = {};
-    if (oldValue != nullptr) *oldValue = Remaining(*timer);
-    timer->interval = ToNanoseconds(next.it_interval);
-    timer->value = ToNanoseconds(next.it_value);
-    if (armed && (flags & TimerAbstime) == 0) timer->value += ClockNow(timer->clock);
+    GuestItimerspec next{};
+    if (!GuestCopyIn_nid_no_patch(&next, value, sizeof(next))) return static_cast<int>(Fail(GuestEfault));
+    GuestItimerspec previous{};
+    {
+        std::lock_guard lock(g_ktimerLock);
+        Ktimer* timer = FindTimer(id);
+        if (timer == nullptr) return static_cast<int>(Fail(GuestEinval));
+        if (!FixTimespec(next.it_value)) return static_cast<int>(Fail(GuestEinval));
+        const bool armed = next.it_value.tv_sec != 0 || next.it_value.tv_nsec != 0;
+        if (armed && !FixTimespec(next.it_interval)) return static_cast<int>(Fail(GuestEinval));
+        if (!armed) next.it_interval = {};
+        if (oldValue != nullptr) previous = Remaining(*timer);
+        timer->interval = ToNanoseconds(next.it_interval);
+        timer->value = ToNanoseconds(next.it_value);
+        if (armed && (flags & TimerAbstime) == 0) timer->value += ClockNow(timer->clock);
+    }
+    if (oldValue != nullptr && !GuestCopyOut_nid_no_patch(oldValue, &previous, sizeof(previous)))
+        return static_cast<int>(Fail(GuestEfault));
     return 0;
 }
 

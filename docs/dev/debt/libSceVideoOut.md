@@ -305,3 +305,8 @@
 | `Unknown` | `rJmjlPlreu4` |
 
 - Focus pause for rumble (host side, not console behaviour): while `ANYPS5_RUMBLE_ON_FOCUS_LOSS` is on and the window has no focus, the motor and non-PS5 trigger rumble requests are dropped and a controller that was rumbling gets one zero-intensity request. Not paused: the PS5 adaptive trigger vibration profiles sent as trigger effects, and the DualSense audio haptics path ([`PadInput.cpp`](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp)), which keeps running while unfocused.
+
+### Host input mapping gaps
+
+- [PadInput](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) - a `PAD:` chord fires its emulator action and its buttons still reach the title's pad state. Masking the chord buttons while the chord is held is not done, so a chord that uses a button the title needs also reaches the title.
+- [PadInput](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) - `PAD:` chords are evaluated on controller button events only and are not dispatched while the IME or a modal dialog captures input.
