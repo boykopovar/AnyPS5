@@ -23,6 +23,8 @@ int main() {
         Require(sceTtsEngineSetVolume() == notInitialized);
         Require(sceTtsEngineSetDepth() == notInitialized);
         Require(sceTtsEngineTerminate() == 0);
+        Require(sceTtsEngineInitialize() == 0);
+        Require(sceTtsEngineSetText() == notInitialized);
     }
     return 0;
 }
