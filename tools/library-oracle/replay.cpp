@@ -114,6 +114,26 @@ void* Symbol(void* module, const std::string& name) {
 #endif
 }
 
+bool OwnedByModule(void* address, const std::string& module) {
+#if defined(_WIN32)
+    HMODULE owner = nullptr;
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            static_cast<LPCSTR>(address), &owner))
+        return false;
+    std::string path(MAX_PATH, '\0');
+    DWORD length = GetModuleFileNameA(owner, path.data(), static_cast<DWORD>(path.size()));
+    if (length == 0 || length >= path.size()) return false;
+    path.resize(length);
+#else
+    Dl_info info{};
+    if (dladdr(address, &info) == 0 || info.dli_fname == nullptr) return false;
+    std::string path = info.dli_fname;
+#endif
+    const std::size_t slash = path.find_last_of("/\\");
+    const std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+    return name == module;
+}
+
 void* Resolve(const std::string& library, const std::string& function) {
     std::vector<std::string> modules;
     if (library != "-") modules.push_back(library.substr(0, library.find('.')) + ".prx");
@@ -121,8 +141,8 @@ void* Resolve(const std::string& library, const std::string& function) {
     for (const auto& module : modules) {
         void* handle = OpenModule(module);
         if (!handle) continue;
-        for (const std::string& name : {function, function + "_nid_postfix", function + "_nid_disambig1_nid_postfix"})
-            if (void* address = Symbol(handle, name)) return address;
+        for (const std::string& name : {function + "_nid_postfix", function + "_nid_disambig1_nid_postfix", function})
+            if (void* address = Symbol(handle, name); address != nullptr && OwnedByModule(address, module)) return address;
     }
     return nullptr;
 }
