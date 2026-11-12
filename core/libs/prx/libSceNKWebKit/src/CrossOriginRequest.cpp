@@ -112,6 +112,13 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * Derived from Source/WebCore/loader/CrossOriginAccessControl.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+ * Derived from Source/WebCore/platform/network/HTTPParsers.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+ * Derived from Source/WebCore/platform/network/ParsedContentType.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+ * Derived from Source/WTF/wtf/text/StringToIntegerConversion.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+ */
+
 #include "prx/libSceNKWebKit/include/CrossOriginRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreParsersExports.hpp"
 
