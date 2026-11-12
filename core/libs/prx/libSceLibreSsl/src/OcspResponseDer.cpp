@@ -1,3 +1,7 @@
+/* Derived from LibreSSL 2.5.4 (openbsd 2e2c612066aa993717528a0249c15c51128d61cb) src/lib/libcrypto/ocsp/ocsp_asn.c (ocsp_asn.c,v 1.9),
+ * asn1/tasn_dec.c (tasn_dec.c,v 1.34), asn1/tasn_new.c (tasn_new.c,v 1.17),
+ * asn1/asn1_lib.c (asn1_lib.c,v 1.38), asn1/a_int.c (a_int.c,v 1.31) and
+ * asn1/a_object.c (a_object.c,v 1.29) */
 /* $OpenBSD: ocsp_asn.c,v 1.9 2016/11/04 18:35:30 jsing Exp $ */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2000.
