@@ -396,6 +396,7 @@ int Run(const int argc, char* argv[]) {
 
         std::vector<std::filesystem::path> registryPaths;
         std::vector<std::filesystem::path> neededPaths;
+        std::vector<std::filesystem::path> hookPaths;
         if (args.writeRegistry) {
             for (const auto& executable : executables) {
                 const std::filesystem::path outFsPath = Io::NativePath(executable.OutputPath);
@@ -411,6 +412,12 @@ int Run(const int argc, char* argv[]) {
                 neededPaths.push_back(path.parent_path() / Io::NativePath(name + ".needed.json"));
             }
             for (const auto& path : neededPaths) checkOutputInputs(path, "Needed libraries");
+            for (const auto& path : registryPaths) {
+                auto name = Io::Utf8Path(path.filename());
+                name.resize(name.size() - std::string(".registry.json").size());
+                hookPaths.push_back(path.parent_path() / Io::NativePath(name + ".hooks.json"));
+            }
+            for (const auto& path : hookPaths) checkOutputInputs(path, "Hook table");
         }
 
         checkOutputInputs(Io::NativePath(absPath), "Executable");
@@ -422,6 +429,7 @@ int Run(const int argc, char* argv[]) {
         for (const auto& artifact : guestArtifacts) outputPaths.push_back(artifact.Path);
         outputPaths.insert(outputPaths.end(), registryPaths.begin(), registryPaths.end());
         outputPaths.insert(outputPaths.end(), neededPaths.begin(), neededPaths.end());
+        outputPaths.insert(outputPaths.end(), hookPaths.begin(), hookPaths.end());
         if (!manifestPath.empty()) outputPaths.push_back(manifestPath);
         if (desktopEntry) {
             outputPaths.push_back(desktopEntry->IconPath);
@@ -472,10 +480,12 @@ int Run(const int argc, char* argv[]) {
             for (std::size_t index = 0; index < executables.size(); ++index) {
                 fileWriter.Write(Io::Utf8Path(registryPaths[index]), registryWriter->WriteCallRegistry(executables[index].Result.RegistryEntries));
                 fileWriter.Write(Io::Utf8Path(neededPaths[index]), registryWriter->WriteNeededLibraries(executables[index].Result.DynamicSection.NeededLibraries));
+                fileWriter.Write(Io::Utf8Path(hookPaths[index]), registryWriter->WriteHookTable(executables[index].Result.RegistryEntries));
             }
             for (std::size_t index = 0; index < guestArtifacts.size(); ++index) {
                 fileWriter.Write(Io::Utf8Path(registryPaths[executables.size() + index]), registryWriter->WriteModuleImports(guestArtifacts[index].Imports));
                 fileWriter.Write(Io::Utf8Path(neededPaths[executables.size() + index]), registryWriter->WriteNeededLibraries(guestArtifacts[index].NeededLibraries));
+                fileWriter.Write(Io::Utf8Path(hookPaths[executables.size() + index]), registryWriter->WriteHookTable(guestArtifacts[index].Imports));
             }
         }
         if (!manifestPath.empty()) fileWriter.Write(Io::Utf8Path(manifestPath), manifestText);
