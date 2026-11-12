@@ -3,6 +3,7 @@
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -39,8 +40,10 @@ int main() {
     Require(sceSaveDataDialogInitialize() == 0, "initialize");
     Require(sceSaveDataDialogInitialize() == SAVE_DATA_DIALOG_ERROR_ALREADY_INITIALIZED, "double init");
     Require(sceSaveDataDialogOpen(nullptr) == SAVE_DATA_DIALOG_ERROR_ARG_NULL, "open with null param");
+    errno = 71;
     Require(sceSaveDataDialogOpen(reinterpret_cast<const void*>(0x10)) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
             "open with unreadable param");
+    Require(errno == 71, "open preserved errno");
     Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_INITIALIZED,
             "unreadable param must leave the dialog initialized");
     Require(sceSaveDataDialogClose(nullptr) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "close while initialized not running");
