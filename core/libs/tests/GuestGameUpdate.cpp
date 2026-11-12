@@ -1,6 +1,8 @@
 #include "prx/libSceGameUpdate/include/Api.hpp"
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -31,19 +33,28 @@ static void TestRequestArguments(int notInitialized, int invalidArgument, int in
         Require(sceGameUpdateAbortRequest(id) == notFound);
         Require(sceGameUpdateDeleteRequest(id) == notFound);
     }
+    for (int id : {-1, -2, -100, -0x20000000}) {
+        Require(sceGameUpdateCheck(id, &param, &result) == notFound);
+        Require(sceGameUpdateAbortRequest(id) == notFound);
+        Require(sceGameUpdateDeleteRequest(id) == notFound);
+    }
     Require(sceGameUpdateCheck(requestId, nullptr, &result) == invalidArgument);
     Require(sceGameUpdateCheck(requestId, &param, nullptr) == invalidArgument);
     param.size = sizeof(param) - 1;
     Require(sceGameUpdateCheck(requestId, &param, &result) == invalidSize);
+    Require(sceGameUpdateCheck(-1, &param, &result) == notFound);
     param.size = sizeof(param);
     result.size = sizeof(result) + 8;
     Require(sceGameUpdateCheck(requestId, &param, &result) == invalidSize);
+    Require(sceGameUpdateCheck(-1, &param, &result) == notFound);
     result.size = sizeof(result);
     param.option = 1;
     Require(sceGameUpdateCheck(requestId, &param, &result) == invalidArgument);
+    Require(sceGameUpdateCheck(-1, &param, &result) == notFound);
     param.option = 0;
     param.reserved[8] = 1;
     Require(sceGameUpdateCheck(requestId, &param, &result) == invalidArgument);
+    Require(sceGameUpdateCheck(-1, &param, &result) == notFound);
     param.reserved[8] = 0;
 
     Require(sceGameUpdateCreateRequest() == notInitialized);
@@ -55,10 +66,16 @@ static void TestRequestArguments(int notInitialized, int invalidArgument, int in
     Require(sceGameUpdateCheck(requestId, &param, &result) == notFound);
     Require(sceGameUpdateAbortRequest(requestId) == notFound);
     Require(sceGameUpdateDeleteRequest(requestId) == notFound);
+    for (int id : {-1, -2, -100, -0x20000000}) {
+        Require(sceGameUpdateCheck(id, &param, &result) == notFound);
+        Require(sceGameUpdateAbortRequest(id) == notFound);
+        Require(sceGameUpdateDeleteRequest(id) == notFound);
+    }
     Require(sceGameUpdateTerminate() == 0);
 }
 
 static void TestRequestLifecycle(int notFound) {
+    constexpr int invalidArgument = static_cast<int>(0x80412803);
     constexpr int tooManyRequests = static_cast<int>(0x80412806);
     constexpr int aborted = static_cast<int>(0x80412807);
     GameUpdateCheckParam param{};
@@ -76,6 +93,10 @@ static void TestRequestLifecycle(int notFound) {
     Require(ids[0] != ids[1]);
     Require(sceGameUpdateCreateRequest() == tooManyRequests);
 
+    errno = 71;
+    Require(sceGameUpdateCheck(ids[0], &param, reinterpret_cast<GameUpdateCheckResult*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+
     Require(sceGameUpdateCheck(ids[0], &param, &result) == 0);
     Require(!result.found && !result.addcont_found);
     Require(std::memcmp(&result, &original, 8) == 0);
@@ -88,6 +109,11 @@ static void TestRequestLifecycle(int notFound) {
     Require(sceGameUpdateDeleteRequest(ids[3]) == notFound);
     Require(sceGameUpdateCheck(ids[3], &param, &result) == notFound);
     Require(sceGameUpdateCreateRequest() >= 0x20000000);
+    for (int id : {-1, -2, -0x20000000}) {
+        Require(sceGameUpdateCheck(id, &param, &result) == notFound);
+        Require(sceGameUpdateAbortRequest(id) == notFound);
+        Require(sceGameUpdateDeleteRequest(id) == notFound);
+    }
 
     Require(sceGameUpdateTerminate() == 0);
     Require(sceGameUpdateInitialize() == 0);
@@ -111,6 +137,7 @@ int main() {
     TestRequestArguments(notInitialized, invalidArgument, invalidSize, notFound);
 
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, &info) == notInitialized);
+    Require(sceGameUpdateGetAddcontLatestVersion(0, &label, reinterpret_cast<GameUpdateAddcontVersionInfo*>(std::uintptr_t{0x10})) == notInitialized);
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, nullptr) == invalidArgument);
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, nullptr) == invalidArgument);
@@ -120,14 +147,17 @@ int main() {
 
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
 
-    info.size = sizeof(info) - 1;
-    RequireThrows([&] { sceGameUpdateGetAddcontLatestVersion(0, &label, &info); });
+    errno = 71;
+    Require(sceGameUpdateGetAddcontLatestVersion(0, &label, reinterpret_cast<GameUpdateAddcontVersionInfo*>(std::uintptr_t{0x10})) == invalidArgument);
+    Require(errno == 71);
 
-    std::memset(&info, 0xAB, sizeof(info));
-    info.size = sizeof(info) + 8;
-    const auto original = info;
-    RequireThrows([&] { sceGameUpdateGetAddcontLatestVersion(0, &label, &info); });
-    Require(std::memcmp(&info, &original, sizeof(info)) == 0);
+    info.size = sizeof(info);
+    info.found = true;
+    info.content_version[0] = 'X';
+    info.reserved[0] = 0x12345678;
+    Require(sceGameUpdateGetAddcontLatestVersion(0, &label, &info) == 0);
+    Require(!info.found);
+    Require(info.content_version[0] == 'X' && info.reserved[0] == 0x12345678);
     TestRequestLifecycle(notFound);
 
     Require(sceGameUpdateTerminate() == 0);
@@ -145,4 +175,9 @@ int main() {
     Require(sceGameUpdateCheck(0x20000000, &postParam, &postResult) == notInitialized);
     Require(sceGameUpdateAbortRequest(0x20000000) == notInitialized);
     Require(sceGameUpdateDeleteRequest(0x20000000) == notInitialized);
+    for (int id : {-1, -2, -0x20000000}) {
+        Require(sceGameUpdateCheck(id, &postParam, &postResult) == notFound);
+        Require(sceGameUpdateAbortRequest(id) == notFound);
+        Require(sceGameUpdateDeleteRequest(id) == notFound);
+    }
 }

@@ -4,6 +4,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <cstdlib>
+#include <cerrno>
 
 namespace {
 
@@ -34,6 +35,9 @@ int main() {
     Require(sceG2PDialogClose() == kErrNotInitialized);
     Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == kErrNotInitialized);
     Require(sceG2PDialogOpen(nullptr) == static_cast<int>(0x80B8000Du));
+    errno = 71;
+    Require(sceG2PDialogOpen(reinterpret_cast<const G2PDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceG2PDialogGetResult(nullptr) == static_cast<int>(0x80B8000Du));
     Require(sceG2PDialogGetStatus() == kStatusNone);
     Require(sceG2PDialogUpdateStatus() == kStatusNone);
@@ -44,6 +48,9 @@ int main() {
     Require(sceG2PDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceG2PDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceG2PDialogOpen(reinterpret_cast<const G2PDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == kErrNotFinished);
 
     param.base.size = 0;
@@ -75,8 +82,12 @@ int main() {
     Require(sceG2PDialogOpen(&param) == 0);
     Require(sceG2PDialogGetStatus() == kStatusFinished);
     Require(sceG2PDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceG2PDialogOpen(reinterpret_cast<const G2PDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
 
     Require(sceG2PDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(0x10)) == static_cast<int>(0x80B8000Au));
     std::int32_t prefixResult[8] = {-1, -1, -1, -1, 0x5a, 0x5a, 0x5a, 0x5a};
     Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(prefixResult)) == 0);
     Require(prefixResult[2] == kResultUserCanceled);
@@ -87,6 +98,9 @@ int main() {
     Require(sceG2PDialogTerminate() == 0);
     Require(sceG2PDialogTerminate() == kErrNotInitialized);
     Require(sceG2PDialogOpen(nullptr) == static_cast<int>(0x80B8000Du));
+    errno = 71;
+    Require(sceG2PDialogOpen(reinterpret_cast<const G2PDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceG2PDialogOpen(&param) == kErrNotInitialized);
     Require(sceG2PDialogClose() == kErrNotInitialized);
     Require(sceG2PDialogGetResult(nullptr) == static_cast<int>(0x80B8000Du));

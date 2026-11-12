@@ -30,6 +30,8 @@ struct TranslateOptions {
     std::uint32_t userDataBaseRegister = 0;
     std::uint32_t userDataCount = 64;
     std::uint32_t scratchDwords = 0;
+    std::uint32_t sharedVectorBase = 0;
+    std::uint32_t sharedVectorCount = 0;
     std::uint32_t sharedMemoryBytes = 0;
     std::uint64_t shaderHash = 0;
     bool fragmentShaderBarycentricEnabled = false;
@@ -41,6 +43,7 @@ struct TranslateOptions {
     bool float64 = false;
     bool gcnLegacyVertexInputs = false;
     bool nativeFloat16Fma = false;
+    bool nativeInteger16 = false;
     std::optional<ShaderFloatMode> floatMode;
     ShaderStageInputInfo inputInfo;
     const EmbeddedFetchPlan* embeddedFetch = nullptr;
@@ -49,9 +52,6 @@ struct TranslateOptions {
 class InstructionTranslator {
 public:
     [[nodiscard]] IrProgram Translate(const RdnaProgram& decoded, const ControlFlowGraph& cfg, const TranslateOptions& options) const;
-
-private:
-    void translateInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const ControlFlowGraph& cfg, const TranslateOptions& options) const;
 };
 
 }

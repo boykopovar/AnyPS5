@@ -2,6 +2,7 @@ import json
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_compile
 
 TOOL = Path(__file__).resolve().parents[1] / "check_compile.py"
+
+
+def is_app_execution_alias(program):
+    return getattr(os.lstat(program), "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_APPEXECLINK", None)
+
+
+def spawnable_python():
+    for program, options in ((sys.executable, ()), (shutil.which("py"), ("-3",))):
+        if program and Path(program).is_file() and not is_app_execution_alias(program):
+            return [program, *options]
+    return None
 
 
 class CheckCompileFixture(unittest.TestCase):
@@ -770,7 +782,11 @@ class CheckCompileResponseTests(CheckCompileFixture):
         source = self.source("unit.c")
         response = self.build / "flags.rsp"
         recorder = self.compiler("import json, sys\nprint(json.dumps(sys.argv[1:]))\n")
-        arguments = [compiler, "-wrapper", sys.executable + "," + str(recorder),
+        interpreter = spawnable_python()
+        if interpreter is None:
+            self.skipTest("needs a Python interpreter that is not an App Execution Alias")
+        wrapper = ",".join([*interpreter, str(recorder)])
+        arguments = [compiler, "-wrapper", wrapper,
                      "-c", str(source), "-o", str(self.build / "unit.o"), "@flags.rsp"]
         cases = (
             ('"-DVALUE=A\nB"', ["VALUE=A\nB"], False),

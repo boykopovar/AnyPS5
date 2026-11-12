@@ -1,6 +1,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libSceFreeType/include/PostScriptInfo.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include FT_TYPE1_TABLES_H
 
@@ -13,6 +14,8 @@ int APS5_VABI FT_Get_PS_Font_Info_nid_postfix(GuestFaceRec* face, GuestPSFontInf
     PS_FontInfoRec native{};
     const int error = FT_Get_PS_Font_Info(owner ? owner->host : nullptr, info ? &native : nullptr);
     if (error != 0) return error;
+    GuestArena::HostWrite write(info, sizeof(*info));
+    if (!write.Open()) return FT_Err_Invalid_Argument;
     info->version = native.version;
     info->notice = native.notice;
     info->fullName = native.full_name;
