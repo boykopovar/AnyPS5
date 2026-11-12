@@ -310,7 +310,7 @@ std::uint64_t APS5_VABI SSL_SESSION_get_master_key_nid_postfix(const void* sessi
 int APS5_VABI SSL_do_handshake_nid_postfix();
 const char* APS5_VABI SSL_get_version_nid_postfix(const LibreSsl3Ssl* ssl);
 int APS5_VABI SSL_set_accept_state_nid_postfix();
-int APS5_VABI SSL_set_alpn_protos_nid_postfix();
+int APS5_VABI SSL_set_alpn_protos_nid_postfix(LibreSsl3Ssl* ssl, const std::uint8_t* protos, std::uint32_t protosLength);
 using LibreSsl3InfoCallback = void (APS5_VABI*)(const LibreSsl3Ssl* ssl, int type, int value);
 void APS5_VABI SSL_set_info_callback_nid_postfix(LibreSsl3Ssl* ssl, LibreSsl3InfoCallback callback);
 const LibreSsl3SslMethod* APS5_VABI TLS_method_nid_postfix();
