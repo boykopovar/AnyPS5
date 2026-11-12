@@ -1,4 +1,5 @@
 #include "prx/libSceUlt/include/Api.hpp"
+#include <cerrno>
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
@@ -76,6 +77,9 @@ void MutexTryLock() {
 void MutexAndRuntimeOptParams() {
     alignas(8) std::uint8_t misaligned[sizeof(UltMutexOptParam) + 8];
     CHECK(sceUltMutexOptParamInitialize(nullptr, 0) == Null);
+    errno = 71;
+    CHECK(sceUltMutexOptParamInitialize(reinterpret_cast<UltMutexOptParam*>(0x10), 0) == Null);
+    CHECK(errno == 71);
     CHECK(sceUltMutexOptParamInitialize(reinterpret_cast<UltMutexOptParam*>(misaligned + 4), 0) == -2139029502);
     UltMutexOptParam mutexOptions;
     std::memset(&mutexOptions, 0xa5, sizeof(mutexOptions));

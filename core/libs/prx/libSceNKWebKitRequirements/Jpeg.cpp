@@ -248,6 +248,7 @@ static void SyncGuestToHost(JpegBinding* b) {
     h->enable_1pass_quant = g->enable_1pass_quant ? TRUE : FALSE;
     h->enable_external_quant = g->enable_external_quant ? TRUE : FALSE;
     h->enable_2pass_quant = g->enable_2pass_quant ? TRUE : FALSE;
+    h->actual_number_of_colors = g->actual_number_of_colors;
     h->colormap = reinterpret_cast<JSAMPARRAY>(g->colormap);
 }
 

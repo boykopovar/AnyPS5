@@ -11,9 +11,11 @@ namespace {
 std::mutex stateMutex;
 HostVolume state;
 std::atomic<std::uint32_t> publishedGain{HostVolume::UnityGain};
+std::atomic<bool> publishedFocus{true};
 
 void publish() {
     publishedGain.store(state.Gain(), std::memory_order_release);
+    publishedFocus.store(state.Focused(), std::memory_order_release);
 }
 
 }
@@ -54,4 +56,8 @@ void HostVolumeConfigureFromEnvironment_nid_no_patch() {
 
 std::uint32_t HostVolumeGain_nid_no_patch() {
     return publishedGain.load(std::memory_order_acquire);
+}
+
+bool HostVolumeFocused_nid_no_patch() {
+    return publishedFocus.load(std::memory_order_acquire);
 }

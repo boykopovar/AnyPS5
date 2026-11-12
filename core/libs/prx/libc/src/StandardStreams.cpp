@@ -87,6 +87,16 @@ FileStream* __stdinp_nid_postfix = &input;
 FileStream* __stdoutp_nid_postfix = &_Stdout_nid_postfix;
 FileStream* __stderrp_nid_postfix = &_Stderr_nid_postfix;
 int __isthreaded_nid_postfix = 1;
+int _thread_autoinit_dummy_decl_nid_postfix = 0;
+#if defined(__EMSCRIPTEN__) || defined(_MSC_VER)
+int _thread_autoinit_dummy_decl_stub_nid_postfix = 0;
+#elif defined(__APPLE__)
+__asm__(".globl \"__thread_autoinit_dummy_decl_stub_nid_postfix\"\n\t"
+        ".set \"__thread_autoinit_dummy_decl_stub_nid_postfix\", __thread_autoinit_dummy_decl_nid_postfix");
+#else
+__asm__(".globl \"_thread_autoinit_dummy_decl_stub_nid_postfix\"\n\t"
+        ".set \"_thread_autoinit_dummy_decl_stub_nid_postfix\", _thread_autoinit_dummy_decl_nid_postfix");
+#endif
 
 int APS5_VABI fwide_nid_postfix(FileStream* stream, int mode) {
     return stream->Orientation(mode);
@@ -96,9 +106,14 @@ int APS5_VABI fgetc_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
-    if (!stream->SwitchToReading()) return -1;
+    const int previousError = errno;
+    errno = 0;
+    if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return -1; }
     const int result = std::fgetc(native);
+    const int nativeError = errno;
     stream->SyncStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result == -1);
     return result;
 }
@@ -158,13 +173,18 @@ int APS5_VABI getc_unlocked_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
-    if (!stream->SwitchToReadingUnlocked()) return -1;
+    const int previousError = errno;
+    errno = 0;
+    if (!stream->SwitchToReadingUnlocked()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return -1; }
 #ifdef _WIN32
     const int result = _fgetc_nolock(native);
 #else
     const int result = getc_unlocked(native);
 #endif
+    const int nativeError = errno;
     stream->SyncUnlockedStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result == -1);
     return result;
 }
@@ -247,9 +267,14 @@ char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return nullptr; }
     if (stream) stream->Orientation(-1);
     auto* native = GetNativeStream(stream);
-    if (!stream->SwitchToReading()) return nullptr;
+    const int previousError = errno;
+    errno = 0;
+    if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return nullptr; }
     auto* result = std::fgets(buffer, size, native);
+    const int nativeError = errno;
     stream->SyncStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result == nullptr);
     return result;
 }
