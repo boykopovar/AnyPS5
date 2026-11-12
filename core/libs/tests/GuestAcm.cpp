@@ -347,6 +347,9 @@ int main() {
     commandBatch = {commands, 0, sizeof(commands)};
     std::memset(commands, 0xCC, sizeof(commands));
     Require(sceAcmBatchJobPriority(nullptr, 0) == BadPointer);
+    errno = 71;
+    Require(sceAcmBatchJobPriority(reinterpret_cast<AcmBatchInfo*>(0x10), 0) == BadPointer);
+    Require(errno == 71);
     Require(sceAcmBatchJobPriority(&commandBatch, 4) == BadPointer && commandBatch.offset == 0);
     Require(sceAcmBatchJobPriority(&commandBatch, 0xFFFFFFFFu) == BadPointer && commandBatch.offset == 0);
     Require(sceAcmBatchJobPriority(&commandBatch, 3) == 0 && commandBatch.offset == 8);
