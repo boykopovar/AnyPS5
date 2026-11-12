@@ -1004,9 +1004,9 @@ void TestPemReadX509FileWrapper() {
 
     ERR_clear_error_nid_postfix();
     Require(PEM_read_X509_nid_postfix(nullptr, &output, nullptr, nullptr) == nullptr,
-            "null FILE reaches the reader and returns null");
-    RequireError(0x09fff06c);
-    Require(allocations == 0 && output == sentinel, "null FILE frees its borrowed BIO and preserves the output");
+            "null FILE returns null");
+    RequireError(0x09fff007);
+    Require(allocations == 0 && output == sentinel, "null FILE preserves the output");
 
     std::FILE* native = std::tmpfile();
     Require(native != nullptr, "open temporary PEM file");
