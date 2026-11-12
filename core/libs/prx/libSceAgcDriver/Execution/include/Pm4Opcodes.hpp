@@ -49,6 +49,7 @@ inline constexpr Opcode Opcodes[] = {
     {0x50, "DMA_DATA"},
     {0x58, "ACQUIRE_MEM"},
     {0x59, "REWIND"},
+    {0x5D, "PRIME_UTCL2"},
     {0x63, "SET_SH_REG_INDIRECT"},
     {0x64, "SET_UCONFIG_REG_INDIRECT"},
     {0x68, "SET_CONFIG_REG"},

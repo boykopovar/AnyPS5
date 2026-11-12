@@ -451,3 +451,5 @@
 ### Guest memory read lifetime
 
 - [Guest memory reads](../../../core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp) - `CopyMapped` uses the native checked-copy API without host-read synchronization, so stale readable-page metadata cannot turn a failed speculative copy into a host fault. A successful copy does not pin the range or provide an atomic snapshot against concurrent writes or remaps. `CompareMapped` and other direct reads still require the caller to keep their mappings alive.
+
+- [PRIME_UTCL2](../../../core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp) - guest page-translation cache prefetch and acknowledgement timing are not modelled. The driver validates the measured five-dword packet without touching guest memory; host GPU virtual-memory translation is managed by the host driver. Packet bytes were compared with the pinned console oracle; no new console timing measurement was made.

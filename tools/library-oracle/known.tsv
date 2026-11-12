@@ -34,9 +34,6 @@ agcbuild_AcbMemSemaphore_c	throw	the operation argument changes the control word
 agcbuild_AcbPopMarker_a	diff	the console writes a SET_UCONFIG_REG 0x342 tag where AnyPS5 writes a NOP marker
 agcbuild_AcbPopMarker_b	diff	the console writes a SET_UCONFIG_REG 0x342 tag where AnyPS5 writes a NOP marker
 agcbuild_AcbPopMarker_c	diff	the console writes a SET_UCONFIG_REG 0x342 tag where AnyPS5 writes a NOP marker
-agcbuild_AcbPrimeUtcl2_a	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
-agcbuild_AcbPrimeUtcl2_b	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
-agcbuild_AcbPrimeUtcl2_c	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
 agcbuild_AcbResetQueue_b	diff	the packet differs from the console's; not yet analysed
 agcbuild_AcbSetFlip_a	diff	the console returns null and writes nothing for these arguments
 agcbuild_AcbSetFlip_b	diff	the console returns null and writes nothing for these arguments
@@ -111,9 +108,6 @@ agcbuild_DcbMemSemaphore_c	throw	the operation argument changes the control word
 agcbuild_DcbPopMarker_a	diff	the console writes a SET_UCONFIG_REG 0x342 tag where AnyPS5 writes a NOP marker
 agcbuild_DcbPopMarker_b	diff	the console writes a SET_UCONFIG_REG 0x342 tag where AnyPS5 writes a NOP marker
 agcbuild_DcbPopMarker_c	diff	the console writes a SET_UCONFIG_REG 0x342 tag where AnyPS5 writes a NOP marker
-agcbuild_DcbPrimeUtcl2_a	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
-agcbuild_DcbPrimeUtcl2_b	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
-agcbuild_DcbPrimeUtcl2_c	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
 agcbuild_DcbResetQueue_b	diff	the packet differs from the console's; not yet analysed
 agcbuild_DcbSetBaseIndirectArgs_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetBaseIndirectArgs_b	throw	AnyPS5 throws for arguments the console encodes
