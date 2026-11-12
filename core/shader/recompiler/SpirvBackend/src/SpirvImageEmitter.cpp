@@ -1387,12 +1387,13 @@ void EmitByStoreOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
         const auto x = AddressU32(ctx, access, 0);
         const auto y = AddressU32(ctx, access, 1);
         const auto lod = LodU32(ctx, access);
+        const auto shiftLod = Select(state, TypeU32(state), Binary(state, spv::OpUGreaterThan, TypeBool(state), lod, ConstantU32(state, 31u)), ConstantU32(state, 31u), lod);
         const auto size = state.module.AllocateId();
         state.module.AddFunction(spv::OpImageQuerySize, ImageViewSizeType(state, access.image.dimension), size, image);
         const auto levelExtent = [&](std::uint32_t axis) {
             const auto base = state.module.AllocateId();
             state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), base, size, axis);
-            const auto shifted = Binary(state, spv::OpShiftRightLogical, TypeU32(state), base, lod);
+            const auto shifted = Binary(state, spv::OpShiftRightLogical, TypeU32(state), base, shiftLod);
             return Select(state, TypeU32(state), Binary(state, spv::OpUGreaterThan, TypeBool(state), shifted, ConstantU32(state, 1)), shifted, ConstantU32(state, 1));
         };
         const auto width = levelExtent(0u);

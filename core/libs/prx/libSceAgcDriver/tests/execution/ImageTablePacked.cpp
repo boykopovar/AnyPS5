@@ -692,21 +692,28 @@ void UnsupportedStores(AgcDriver::VulkanDevice& device) {
     FillTexture(1u, Format{11u, 2u, 1u});
     FillInput(false);
     const auto initial = Texels;
-    for (const auto opcode : {0x52u, 0x53u, 0x5au, 0x5bu, 0x76u, 0x77u, 0x79u, 0x7au}) {
+    for (const auto opcode : {0x52u, 0x53u, 0x5au, 0x5bu}) {
+        const auto dmask = (opcode & 1u) != 0u ? 15u : 3u;
+        const auto direct = Run(device, Code(opcode, dmask, false), 0u, 1u, false);
+        Require(direct.faults == 0u && direct.tables == 0u, "BY2/BY4 store opcode " + std::to_string(opcode) + " rejected a direct identity-swizzled 2D image");
+        const auto table = Run(device, Code(opcode, dmask, true), 0u);
+        Require(table.log.find("image table:") != std::string::npos, "BY2/BY4 store opcode " + std::to_string(opcode) + " through an image table was not poisoned:\n" + table.log);
+        Require(Texels == initial, "BY2/BY4 store through an image table modified an image");
+    }
+    for (const auto opcode : {0x76u, 0x77u, 0x79u, 0x7au}) {
         for (const auto table : {false, true}) {
-            const auto dmask = opcode >= 0x76u ? 1u : (opcode & 1u) != 0u ? 15u : 3u;
-            const auto code = Code(opcode, dmask, table);
+            const auto code = Code(opcode, 1u, table);
             std::string refusal;
             try {
                 Run(device, code, 0u, 1u, false);
             } catch (const std::exception& error) {
                 refusal = error.what();
             }
-            Require(refusal.find("stores are not implemented") != std::string::npos, "unsupported BY/PCK store opcode " + std::to_string(opcode) + " was not rejected before GPU submission: " + refusal);
-            Require(Texels == initial, "unsupported BY/PCK store compilation modified an image");
+            Require(refusal.find("stores are not implemented") != std::string::npos, "unsupported PCK store opcode " + std::to_string(opcode) + " was not rejected before GPU submission: " + refusal);
+            Require(Texels == initial, "unsupported PCK store compilation modified an image");
         }
     }
-    std::cout << "BY stores and unmeasured PCK stores rejected without GPU submission\n";
+    std::cout << "BY stores poisoned through image tables; unmeasured PCK stores rejected without GPU submission\n";
 }
 
 struct Rejection {
