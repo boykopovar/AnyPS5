@@ -64,8 +64,10 @@ def validate_probe(probe, index):
     if not isinstance(description, str) or not description.strip():
         raise ValueError(f"probe {probe_id} description must be nonempty text")
     body = probe["body"]
-    if not isinstance(body, str) or not body.strip() or body.split()[0] != instruction:
-        raise ValueError(f"probe {probe_id} body must start with its declared instruction")
+    body_lines = [line.strip() for line in body.splitlines() if line.strip()] if isinstance(body, str) else []
+    if len(body_lines) != 1 or body_lines[0].split()[0] != instruction or any(
+            marker in body_lines[0] for marker in ("#", ";")):
+        raise ValueError(f"probe {probe_id} body must contain one uncommented declared instruction")
     output_registers = probe["output_registers"]
     if type(output_registers) is not int or output_registers not in range(1, 17):
         raise ValueError(f"probe {probe_id} output_registers must be from 1 to 16")
@@ -267,6 +269,9 @@ def run_probes(probes, digest, output_dir, device_label):
         )
         if len(outputs) != len(rows) or any(len(row) < probe["output_registers"] for row in outputs):
             raise ValueError(f"hardware oracle returned an incomplete result for {probe['id']}")
+        if any(type(word) is not int or word < 0 or word > 0xffffffff
+               for output in outputs for word in output[:probe["output_registers"]]):
+            raise ValueError(f"hardware oracle returned a non-dword result for {probe['id']}")
         report = make_result(probe, digest, device_label, target, runtime, outputs)
         write_atomic(destination, json.dumps(report, indent=2) + "\n")
         print(f"Measured {probe['id']}: {destination}")
@@ -303,7 +308,7 @@ def read_measurement(path, probe, digest, device_label):
         return "invalid", "input rows differ from the curated probe"
     if report.get("device_label") != device_label:
         return "invalid", "device label differs from the selected label"
-    if not isinstance(report.get("runtime"), str) or not isinstance(report.get("assembly_target"), str):
+    if report.get("runtime") not in hw_oracle.RUNTIMES or not report.get("assembly_target", "").strip():
         return "invalid", "runtime or assembly target is missing"
     return "measured", ""
 
@@ -386,7 +391,9 @@ def main(argv=None):
         states = coverage(selected, digest, args.results_dir, args.device_label)
         print_coverage(selected, digest, states, args.device_label, as_json=args.json)
         return int(any(item["status"] != "measured" for item in states))
-    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+    except subprocess.CalledProcessError as error:
+        parser.error(f"hardware oracle command failed with status {error.returncode}: {error.cmd}")
+    except (OSError, ValueError) as error:
         parser.error(str(error))
 
 
