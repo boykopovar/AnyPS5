@@ -732,6 +732,40 @@ void OsVersionFormatTest() {
     Require(Contains(RunReport::Serialize(MachineReport(machine), none), "\"osVersion\": \"Arch Linux (kernel 6.18.50)\""), "an Arch container image lost its OS version");
 }
 
+bool OsVersionRefusedByNames(const std::string& version, const RunReport::HostIdentifiers& host) {
+    const RunReport::HostIdentifiers none;
+    return RunReport::SafeText(version, none).has_value() && !RunReport::SafeText(version, RunReport::MachineNames(host, true)).has_value();
+}
+
+void OsVersionRefusedByNamesTest() {
+    RunReport::HostIdentifiers login;
+    login.words = {"ubuntu"};
+    login.users = {"ubuntu"};
+    login.osIdentity = {"ubuntu", "linux"};
+    Require(OsVersionRefusedByNames("Ubuntu 24.04 (kernel 6.18.58)", login), "a login name that is a word of the OS version was not taken as the reason the report refuses it");
+    RunReport::HostIdentifiers hostNamed;
+    hostNamed.words = {"ubuntu"};
+    hostNamed.hosts = {"ubuntu"};
+    hostNamed.osIdentity = {"ubuntu", "linux"};
+    Require(!OsVersionRefusedByNames("Ubuntu 24.04 (kernel 6.18.58)", hostNamed), "a distribution id as the host name was taken as the reason the OS version is refused");
+    RunReport::HostIdentifiers unrelated;
+    unrelated.words = {"builder"};
+    unrelated.users = {"builder"};
+    unrelated.osIdentity = {"ubuntu", "linux"};
+    Require(!OsVersionRefusedByNames("Ubuntu 24.04 (kernel 6.18.58)", unrelated), "an unrelated login name was taken as the reason the OS version is refused");
+    RunReport::HostIdentifiers both;
+    both.words = {"ubuntu"};
+    both.users = {"ubuntu"};
+    both.hosts = {"ubuntu"};
+    both.osIdentity = {"ubuntu", "linux"};
+    Require(OsVersionRefusedByNames("Ubuntu 24.04 (kernel 6.18.58)", both), "a name that is both the login and the host name was allowed to keep the OS version");
+    RunReport::HostIdentifiers address;
+    address.words = {"ubuntu"};
+    address.users = {"ubuntu"};
+    address.osIdentity = {"ubuntu", "linux"};
+    Require(!OsVersionRefusedByNames("Ubuntu 24.04 from 10.1.2.3", address), "a version the report refuses on its own was taken as refused because of this host's names");
+}
+
 void HostProbeTest() {
 #ifndef __linux__
     throw NotRun("the host probe is checked on Linux here");
@@ -744,13 +778,14 @@ void HostProbeTest() {
 #endif
     const auto current = RunReport::CurrentHostIdentifiers();
     const auto versionNames = RunReport::MachineNames(current, true);
-    if (host.osVersion) Require(RunReport::SafeText(*host.osVersion, versionNames).has_value(), "the OS version would be filtered out of the report: " + *host.osVersion);
     if (host.cpu) {
         auto report = SampleReport();
         report.machine.cpu = *host.cpu;
         const auto output = RunReport::Serialize(report, current);
         Require(output.find("\"cpu\": null") == std::string::npos, "the CPU model would be filtered out of the report: " + *host.cpu);
     }
+    if (host.osVersion && OsVersionRefusedByNames(*host.osVersion, current)) throw NotRun("this host's login name is a word of its OS version, which the report drops: " + *host.osVersion);
+    if (host.osVersion) Require(RunReport::SafeText(*host.osVersion, versionNames).has_value(), "the OS version would be filtered out of the report: " + *host.osVersion);
 #endif
 }
 
@@ -1241,7 +1276,10 @@ void ChildGpuTest() {
     for (const char* part : {"\"vendor\": \"NVIDIA\"", "\"name\": \"Test GPU 4090\"", "\"driver\": \"NVIDIA 575.64.03\"", "\"vulkan\": \"1.3.280\""}) {
         Require(Contains(text, part), std::string("the GPU the device code reported is not in the report: ") + part + ": " + text);
     }
-    Require(!Contains(text, "\"cpu\": null") && !Contains(text, "\"ramGiB\": null") && !Contains(text, "\"osVersion\": null"), "the host fields of a real run are null: " + text);
+    const auto probe = RunReport::ProbeHost();
+    const bool osVersionRefused = probe.osVersion && OsVersionRefusedByNames(*probe.osVersion, RunReport::CurrentHostIdentifiers());
+    Require(!Contains(text, "\"cpu\": null") && !Contains(text, "\"ramGiB\": null") && (osVersionRefused || !Contains(text, "\"osVersion\": null")),
+        std::string("the host fields of a real run are null: ") + text + (osVersionRefused ? " (the OS version is dropped because this host's login name is a word of it)" : ""));
 }
 
 void GuestRootIsNotFixedAtLoadTest() {
@@ -1369,6 +1407,7 @@ int main(int argc, char** argv) {
         Run("machine-host-name-rules", MachineHostNameRulesTest);
         Run("os-version-format", OsVersionFormatTest);
         Run("os-identity-only-for-the-os-version", OsIdentityOnlyForTheOsVersionTest);
+        Run("os-version-refused-by-names", OsVersionRefusedByNamesTest);
         Run("os-release-identity", OsReleaseIdentityTest);
         Run("public-host-name", PublicHostNameTest);
         Run("commit-with-hex-name", CommitWithHexNameTest);
