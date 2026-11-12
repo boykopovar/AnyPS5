@@ -321,7 +321,7 @@ int APS5_VABI sceUserServiceGetAccessibilityKeyremapEnable(std::int32_t userId, 
  if (enabled == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- NotImplemented_nid_no_patch(__func__);
+ throw std::runtime_error(std::string(__func__) + ": unmeasured console value");
  return 0;
 }
 
@@ -344,7 +344,7 @@ int APS5_VABI sceUserServiceGetAccessibilityZoom(std::int32_t userId, std::int32
  if (zoom == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- NotImplemented_nid_no_patch(__func__);
+ throw std::runtime_error(std::string(__func__) + ": unmeasured console value");
  return 0;
 }
 
