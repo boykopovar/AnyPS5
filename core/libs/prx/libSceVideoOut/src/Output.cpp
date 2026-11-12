@@ -419,9 +419,7 @@ int APS5_VABI sceVideoOutConfigureOutput(int handle, uint64_t mode, const VideoO
 int APS5_VABI sceVideoOutSetWindowModeMargins(int handle, int top, int bottom) try {
     (void)top;
     (void)bottom;
-    if (!VideoOutDriver::Get().IsOpen(handle)) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
-    }
+    if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
