@@ -211,9 +211,4 @@ int APS5_VABI d2i_X509_bio_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI o2i_ECPublicKey_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 }
