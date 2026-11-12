@@ -303,16 +303,21 @@ int APS5_VABI sceHmd2ReprojectionInitialize(const Hmd2::ReprojectionInitializePa
     (void)reserved;
     std::lock_guard lock(reprojectionMutex);
     if (reprojectionState != nullptr) return Hmd2::ReprojectionAlreadyInitialized;
-    if (parameter == nullptr || parameter->workMemory == nullptr || parameter->displayMemory == nullptr) {
+    if (parameter == nullptr) return Hmd2::ParameterNull;
+    Hmd2::ReprojectionInitializeParameter localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, parameter, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied || localParam.workMemory == nullptr || localParam.displayMemory == nullptr) {
         return Hmd2::ParameterNull;
     }
-    if (parameter->auxiliaryMemory != nullptr) {
+    if (localParam.auxiliaryMemory != nullptr) {
         throw std::runtime_error("sceHmd2ReprojectionInitialize: auxiliary memory not supported");
     }
-    auto* state = static_cast<Hmd2::ReprojectionState*>(parameter->workMemory);
+    auto* state = static_cast<Hmd2::ReprojectionState*>(localParam.workMemory);
     state->outputMode = 0;
-    state->timingUs = parameter->timingInterval != 0
-                          ? parameter->timingInterval
+    state->timingUs = localParam.timingInterval != 0
+                          ? localParam.timingInterval
                           : Hmd2::ReprojectionTimingDefault;
     reprojectionState = state;
     return 0;
@@ -443,16 +448,9 @@ int APS5_VABI sceHmd2RpeorjectionSetParam() {
 std::int32_t APS5_VABI Hmd2BeforeInitializeZero() {
     return BeforeInitialize(0, __func__);
 }
-APS5_EXPORT("vDgpdS2N9Rw", Hmd2BeforeInitializeZero);
-APS5_EXPORT("Ri35gKTZpvE", Hmd2BeforeInitializeZero);
 APS5_EXPORT("9oyW8puiKeI", Hmd2BeforeInitializeZero);
-APS5_EXPORT("1HZNE6jhBnQ", Hmd2BeforeInitializeZero);
 APS5_EXPORT("cdwAKBZLXjs", Hmd2BeforeInitializeZero);
 APS5_EXPORT("Yub1MF58jfY", Hmd2BeforeInitializeZero);
-APS5_EXPORT("JYXAuQFnPyw", Hmd2BeforeInitializeZero);
-APS5_EXPORT("VuPKqCu3wzw", Hmd2BeforeInitializeZero);
-APS5_EXPORT("GSThagVyW5U", Hmd2BeforeInitializeZero);
-APS5_EXPORT("J4qE5N937MY", Hmd2BeforeInitializeZero);
 APS5_EXPORT("9KnNj-dyASg", Hmd2BeforeInitializeZero);
 APS5_EXPORT("Qta2bkstbFk", Hmd2BeforeInitializeZero);
 APS5_EXPORT("5ZcObnDRBXE", Hmd2BeforeInitializeZero);
@@ -460,19 +458,7 @@ APS5_EXPORT("AvPNn0qx4WQ", Hmd2BeforeInitializeZero);
 int APS5_VABI sceHmd2SetIpdOffset(std::uint8_t enabled, float offset) {
     return BeforeInitialize(0, __func__);
 }
-APS5_EXPORT("-kZT7X7OMg0", Hmd2BeforeInitializeZero);
-APS5_EXPORT("1ewLtng-SVk", Hmd2BeforeInitializeZero);
-APS5_EXPORT("OXQ1EDf02XU", Hmd2BeforeInitializeZero);
-APS5_EXPORT("IAxfMTvFm0M", Hmd2BeforeInitializeZero);
-APS5_EXPORT("qTJtAtaLeno", Hmd2BeforeInitializeZero);
-APS5_EXPORT("j7Q16UX6l34", Hmd2BeforeInitializeZero);
 APS5_EXPORT("pmmNM06rLqU", Hmd2BeforeInitializeZero);
-APS5_EXPORT("zdQfyDK9Ods", Hmd2BeforeInitializeZero);
-APS5_EXPORT("aPRwp9GnljM", Hmd2BeforeInitializeZero);
-APS5_EXPORT("MjY1gBSaed0", Hmd2BeforeInitializeZero);
-APS5_EXPORT("evAMjJYHqW4", Hmd2BeforeInitializeZero);
-APS5_EXPORT("r93FLEZ3BBk", Hmd2BeforeInitializeZero);
-APS5_EXPORT("IdYURdEdNFo", Hmd2BeforeInitializeZero);
 int APS5_VABI sceHmd2GazeActivateGazeTracking(std::int32_t mode) {
     return BeforeInitialize(0, __func__);
 }
@@ -480,20 +466,12 @@ APS5_EXPORT("NmKIfVxr2s0", Hmd2BeforeInitializeZero);
 APS5_EXPORT("KeDLkkp62Gg", Hmd2BeforeInitializeZero);
 APS5_EXPORT("+aadu6-ra+A", Hmd2BeforeInitializeZero);
 APS5_EXPORT("FgnTiwwGSzk", Hmd2BeforeInitializeZero);
-APS5_EXPORT("PWAUwOTHbbo", Hmd2BeforeInitializeZero);
-APS5_EXPORT("WzaEApHnsP8", Hmd2BeforeInitializeZero);
-APS5_EXPORT("dXzQI8QVY7Y", Hmd2BeforeInitializeZero);
-APS5_EXPORT("cCvFKGqRh1k", Hmd2BeforeInitializeZero);
-APS5_EXPORT("uj4-2VEAFPU", Hmd2BeforeInitializeZero);
-APS5_EXPORT("sIaGStI-iLM", Hmd2BeforeInitializeZero);
 APS5_EXPORT("JzwpZOemDO8", Hmd2BeforeInitializeZero);
 APS5_EXPORT("IsC4R4bZFVU", Hmd2BeforeInitializeZero);
 
 std::int32_t APS5_VABI Hmd2BeforeInitializeNotInitialized() {
     return BeforeInitialize(Hmd2::NotInitialized, __func__);
 }
-APS5_EXPORT("sXaPEPY-fLA", Hmd2BeforeInitializeNotInitialized);
-APS5_EXPORT("3F5inHhKzXg", Hmd2BeforeInitializeNotInitialized);
 APS5_EXPORT("sJAiB-6p55U", Hmd2BeforeInitializeNotInitialized);
 APS5_EXPORT("E8hDydLjsSs", Hmd2BeforeInitializeNotInitialized);
 APS5_EXPORT("xEQkSb2WJ7Y", Hmd2BeforeInitializeNotInitialized);
@@ -505,12 +483,6 @@ APS5_EXPORT("zROtb46jTj4", Hmd2BeforeInitializeNotInitialized);
 std::int32_t APS5_VABI Hmd2BeforeInitializeError0004() {
     return BeforeInitialize(Hmd2::Error0004, __func__);
 }
-APS5_EXPORT("kAMsjYHBbNQ", Hmd2BeforeInitializeError0004);
-APS5_EXPORT("5m73zmLpsQ0", Hmd2BeforeInitializeError0004);
-APS5_EXPORT("EPeH4xuQ2XQ", Hmd2BeforeInitializeError0004);
-APS5_EXPORT("TJ8lyRsjFY4", Hmd2BeforeInitializeError0004);
-APS5_EXPORT("-XQVcLnyX68", Hmd2BeforeInitializeError0004);
-APS5_EXPORT("giQwQoHhYYA", Hmd2BeforeInitializeError0004);
 APS5_EXPORT("zNc9IkgawMI", Hmd2BeforeInitializeError0004);
 int APS5_VABI sceHmd2GazeStartUserCalibration() {
     return BeforeInitialize(Hmd2::Error0004, __func__);
@@ -533,9 +505,6 @@ std::int32_t APS5_VABI Hmd2BeforeInitializeParameterNull() {
     return BeforeInitialize(Hmd2::ParameterNull, __func__);
 }
 APS5_EXPORT("MNtiJTDOPAU", Hmd2BeforeInitializeParameterNull);
-APS5_EXPORT("RRy9WmqZfgU", Hmd2BeforeInitializeParameterNull);
-APS5_EXPORT("uobR4m9lgwc", Hmd2BeforeInitializeParameterNull);
-APS5_EXPORT("-XPk5KWBYdo", Hmd2BeforeInitializeParameterNull);
 APS5_EXPORT("J44idh9izZM", Hmd2BeforeInitializeParameterNull);
 APS5_EXPORT("Ps0wAvYaa1E", Hmd2BeforeInitializeParameterNull);
 APS5_EXPORT("kLnMR8oQ1MY", Hmd2BeforeInitializeParameterNull);
@@ -550,7 +519,6 @@ APS5_EXPORT("TJpyGGP9YEY", Hmd2BeforeInitializeParameterNull);
 APS5_EXPORT("Dih+Odk+RC0", Hmd2BeforeInitializeParameterNull);
 APS5_EXPORT("oaqdSJw+HVY", Hmd2BeforeInitializeParameterNull);
 APS5_EXPORT("m35gtHuanXU", Hmd2BeforeInitializeParameterNull);
-APS5_EXPORT("CTM7QPLJF9Q", Hmd2BeforeInitializeParameterNull);
 int APS5_VABI sceHmd2GazeObjectSelectionInitialize(const Hmd2::GazeObjectSelectionInitializeParameter* parameter) {
     return BeforeInitialize(Hmd2::ParameterNull, __func__);
 }
@@ -558,14 +526,9 @@ int APS5_VABI sceHmd2GazeObjectSelectionInitialize(const Hmd2::GazeObjectSelecti
 std::int32_t APS5_VABI Hmd2BeforeInitializeParameterInvalid() {
     return BeforeInitialize(Hmd2::ParameterInvalid, __func__);
 }
-APS5_EXPORT("bBh5bCp9coo", Hmd2BeforeInitializeParameterInvalid);
-APS5_EXPORT("G3PNDE2VjfY", Hmd2BeforeInitializeParameterInvalid);
 APS5_EXPORT("nScCT0OPU0o", Hmd2BeforeInitializeParameterInvalid);
 APS5_EXPORT("6Q0Ng7OTN9o", Hmd2BeforeInitializeParameterInvalid);
-APS5_EXPORT("-fJKh4SnFR0", Hmd2BeforeInitializeParameterInvalid);
-APS5_EXPORT("jUA2s-l0npY", Hmd2BeforeInitializeParameterInvalid);
 APS5_EXPORT("+9XhyAIJVj4", Hmd2BeforeInitializeParameterInvalid);
-APS5_EXPORT("eBGK-o6E4RQ", Hmd2BeforeInitializeParameterInvalid);
 APS5_EXPORT("MTuFeL9184E", Hmd2BeforeInitializeParameterInvalid);
 
 std::int32_t APS5_VABI Hmd2BeforeInitializeReprojectionNotInitialized() {
@@ -616,14 +579,6 @@ APS5_EXPORT("9kj9vw8UShQ", Hmd2BeforeInitializeError1003);
 std::int32_t APS5_VABI Hmd2BeforeInitializeMinusOne() {
     return BeforeInitialize(-1, __func__);
 }
-APS5_EXPORT("EAkv8Mqt33E", Hmd2BeforeInitializeMinusOne);
-APS5_EXPORT("Rv7bkmKvmz0", Hmd2BeforeInitializeMinusOne);
-APS5_EXPORT("qsmAtGw1Ncc", Hmd2BeforeInitializeMinusOne);
-APS5_EXPORT("uKhwYoMsIsA", Hmd2BeforeInitializeMinusOne);
-APS5_EXPORT("WNdaigr94dI", Hmd2BeforeInitializeMinusOne);
-APS5_EXPORT("P6S5ZVWf-H0", Hmd2BeforeInitializeMinusOne);
-APS5_EXPORT("sun6NWE1sdg", Hmd2BeforeInitializeMinusOne);
-APS5_EXPORT("--TFsJYXo04", Hmd2BeforeInitializeMinusOne);
 
 std::int32_t APS5_VABI sceHmd2InternalTrackingOpen() {
     return BeforeInitialize(0, __func__);
@@ -766,21 +721,9 @@ std::int32_t APS5_VABI Hmd2CheckFirstThenError0004(const void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
     return BeforeInitialize(Hmd2::Error0004, __func__);
 }
-APS5_EXPORT("9WeZr4kYfzk", Hmd2CheckFirstThenError0004);
-APS5_EXPORT("N+5h1hCOFAg", Hmd2CheckFirstThenError0004);
-APS5_EXPORT("w2vEs2y5ZmE", Hmd2CheckFirstThenError0004);
-APS5_EXPORT("L5gat1pe0y0", Hmd2CheckFirstThenError0004);
 APS5_EXPORT("4GnLHR9NJ1w", Hmd2CheckFirstThenError0004);
-APS5_EXPORT("AHk7nGSzef0", Hmd2CheckFirstThenError0004);
 APS5_EXPORT("ncjX9d3mc0M", Hmd2CheckFirstThenError0004);
-APS5_EXPORT("l63QYAUuogc", Hmd2CheckFirstThenError0004);
-APS5_EXPORT("mrcBySCdXSo", Hmd2CheckFirstThenError0004);
-APS5_EXPORT("ieBra+td8sU", Hmd2CheckFirstThenError0004);
-APS5_EXPORT("s+rzBnewgGs", Hmd2CheckFirstThenError0004);
-APS5_EXPORT("Nfcm0GBdzZI", Hmd2CheckFirstThenError0004);
-APS5_EXPORT("Tc9rasWfrm4", Hmd2CheckFirstThenError0004);
 APS5_EXPORT("ckTbKTX4KZg", Hmd2CheckFirstThenError0004);
-APS5_EXPORT("D7576PUbUjk", Hmd2CheckFirstThenError0004);
 APS5_EXPORT("tTJ04SrBT8U", Hmd2CheckFirstThenError0004);
 int APS5_VABI sceHmd2GazeGetDeviceStatus(std::int32_t* status) {
     if (status == nullptr) return Hmd2::ParameterNull;
@@ -791,15 +734,12 @@ int APS5_VABI sceHmd2GazeGetUserCalibrationStatus(Hmd2::GazeUserCalibrationStatu
     return BeforeInitialize(Hmd2::Error0004, __func__);
 }
 APS5_EXPORT("kozvHBNyxf0", Hmd2CheckFirstThenError0004);
-APS5_EXPORT("638Tmg5y6U4", Hmd2CheckFirstThenError0004);
 
 std::int32_t APS5_VABI Hmd2CheckFirstThenZero(const void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
     return BeforeInitialize(0, __func__);
 }
-APS5_EXPORT("8ETtFtp5zqY", Hmd2CheckFirstThenZero);
 APS5_EXPORT("CWPkBm3EXQA", Hmd2CheckFirstThenZero);
-APS5_EXPORT("R62liQQIAaA", Hmd2CheckFirstThenZero);
 APS5_EXPORT("-bcWLHsdzo0", Hmd2CheckFirstThenZero);
 int APS5_VABI sceHmd2SetFieldOfView(const Hmd2::FieldOfView* fieldOfView) {
     if (fieldOfView == nullptr) return Hmd2::ParameterNull;
@@ -813,14 +753,8 @@ std::int32_t APS5_VABI Hmd2CheckFirstThenError1002(const void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
     return BeforeInitialize(Hmd2::Error1002, __func__);
 }
-APS5_EXPORT("IG4y+drWAWw", Hmd2CheckFirstThenError1002);
-APS5_EXPORT("rhYUml9vppE", Hmd2CheckFirstThenError1002);
-APS5_EXPORT("6574xHS+jZk", Hmd2CheckFirstThenError1002);
-APS5_EXPORT("mXzaY6xVoxg", Hmd2CheckFirstThenError1002);
-APS5_EXPORT("6af-HIZQQn4", Hmd2CheckFirstThenError1002);
 APS5_EXPORT("6qWtdTHQsTk", Hmd2CheckFirstThenError1002);
 APS5_EXPORT("pUm8t8xWhFg", Hmd2CheckFirstThenError1002);
-APS5_EXPORT("A0XKI-WjxK8", Hmd2CheckFirstThenError1002);
 
 std::int32_t APS5_VABI Hmd2CheckFirstThenMinusOne(const void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
@@ -829,8 +763,6 @@ std::int32_t APS5_VABI Hmd2CheckFirstThenMinusOne(const void* a0) {
 APS5_EXPORT("A9s2j8OioPQ", Hmd2CheckFirstThenMinusOne);
 APS5_EXPORT("YIgtmrL+HLY", Hmd2CheckFirstThenMinusOne);
 APS5_EXPORT("Ng8zEkGxDNs", Hmd2CheckFirstThenMinusOne);
-APS5_EXPORT("EtslTnqO1xU", Hmd2CheckFirstThenMinusOne);
-APS5_EXPORT("hfrnRTryKQQ", Hmd2CheckFirstThenMinusOne);
 
 std::int32_t APS5_VABI Hmd2CheckFirstTwoThenParameterInvalid(const void* a0, const void* a1) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
@@ -862,7 +794,6 @@ std::int32_t APS5_VABI Hmd2CheckFirstThenParameterInvalid(const void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
     return BeforeInitialize(Hmd2::ParameterInvalid, __func__);
 }
-APS5_EXPORT("MMc+bSlqkzk", Hmd2CheckFirstThenParameterInvalid);
 APS5_EXPORT("NpZHgvSYgEA", Hmd2CheckFirstThenParameterInvalid);
 
 std::int32_t APS5_VABI Hmd2CheckAllSixThenZero(const void* a0, const void* a1, const void* a2, const void* a3, const void* a4, const void* a5) {
@@ -874,7 +805,6 @@ std::int32_t APS5_VABI Hmd2CheckAllSixThenZero(const void* a0, const void* a1, c
     if (a5 == nullptr) return Hmd2::ParameterNull;
     return BeforeInitialize(0, __func__);
 }
-APS5_EXPORT("z-serf9vsb0", Hmd2CheckAllSixThenZero);
 APS5_EXPORT("IRMUFu+uG5s", Hmd2CheckAllSixThenZero);
 
 std::int32_t APS5_VABI Hmd2CheckSecondThenParameterInvalid(const void* a0, const void* a1) {
@@ -899,7 +829,6 @@ std::int32_t APS5_VABI Hmd2CheckFirstThenError1003(const void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
     return BeforeInitialize(Hmd2::Error1003, __func__);
 }
-APS5_EXPORT("ng6eI8uA0h4", Hmd2CheckFirstThenError1003);
 
 std::int32_t APS5_VABI Hmd2CheckFirstThenError1010(const void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
@@ -912,14 +841,12 @@ std::int32_t APS5_VABI Hmd2CheckFirstTwoThenError1002(const void* a0, const void
     if (a1 == nullptr) return Hmd2::ParameterNull;
     return BeforeInitialize(Hmd2::Error1002, __func__);
 }
-APS5_EXPORT("ZupCJmV5BDI", Hmd2CheckFirstTwoThenError1002);
 
 std::int32_t APS5_VABI Hmd2CheckFirstTwoThenError1003(const void* a0, const void* a1) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
     if (a1 == nullptr) return Hmd2::ParameterNull;
     return BeforeInitialize(Hmd2::Error1003, __func__);
 }
-APS5_EXPORT("mAQZwOX1IHU", Hmd2CheckFirstTwoThenError1003);
 
 std::int32_t APS5_VABI Hmd2CheckFirstAndThirdThenZero(const void* a0, const void* a1, const void* a2) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
@@ -1023,15 +950,12 @@ std::int32_t APS5_VABI Hmd2SlotUpTo1ThenMinusOne(std::uint64_t a0) {
     return BeforeInitialize(-1, __func__);
 }
 APS5_EXPORT("cDcrvEG8j8k", Hmd2SlotUpTo1ThenMinusOne);
-APS5_EXPORT("tuqJO6O6cb4", Hmd2SlotUpTo1ThenMinusOne);
-APS5_EXPORT("fd4fu1cziaI", Hmd2SlotUpTo1ThenMinusOne);
 
 std::int32_t APS5_VABI Hmd2SlotUpTo2ThenMinusOne(std::uint64_t a0) {
     if (a0 > 2) return Hmd2::ParameterInvalid;
     return BeforeInitialize(-1, __func__);
 }
 APS5_EXPORT("UxMg7iL4nRs", Hmd2SlotUpTo2ThenMinusOne);
-APS5_EXPORT("K1GELwlaaGc", Hmd2SlotUpTo2ThenMinusOne);
 
 std::int32_t APS5_VABI Hmd2SlotUpTo2ThenError1002(std::uint64_t a0) {
     if (a0 > 2) return Hmd2::ParameterInvalid;
@@ -1102,5 +1026,250 @@ int APS5_VABI hmd2LegacyUnknown_y0VEHlxFQFs_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("y0VEHlxFQFs", hmd2LegacyUnknown_y0VEHlxFQFs_nid_no_patch);
+
+
+std::int32_t APS5_VABI sceHmd2InternalRegisterVibrationCallback() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalUnregisterVibrationCallback() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalPowerEventInitialize() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalDfuOpen() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalDfuClose() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalCrashReportOpen() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalCrashReportClose() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalRelocalizerOpen() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalRelocalizerClose() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalImageOpen() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalImageClose() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalGenDataOpen() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalGenDataClose() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalSlamTraceOpen() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalSlamTraceClose() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalGazeOpen() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalGazeClose() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalGazeStart() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalGazeStop() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalCreateSharedMemory() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalIsGameVr2d() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalIsMiniAppVr2d() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalIsCommonDlgVr2d() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalIsCommonDlgMiniAppVr2d() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalMapSharedMemory() {
+    return Hmd2BeforeInitializeZero();
+}
+std::int32_t APS5_VABI sceHmd2InternalOpen() {
+    return Hmd2BeforeInitializeNotInitialized();
+}
+std::int32_t APS5_VABI sceHmd2InternalGetDeviceInformation() {
+    return Hmd2BeforeInitializeNotInitialized();
+}
+std::int32_t APS5_VABI sceHmd2InternalSetVolume() {
+    return Hmd2BeforeInitializeError0004();
+}
+std::int32_t APS5_VABI sceHmd2InternalResetViewPosition() {
+    return Hmd2BeforeInitializeError0004();
+}
+std::int32_t APS5_VABI sceHmd2InternalGetStatus() {
+    return Hmd2BeforeInitializeError0004();
+}
+std::int32_t APS5_VABI sceHmd2InternalClearTrackerFts() {
+    return Hmd2BeforeInitializeError0004();
+}
+std::int32_t APS5_VABI sceHmd2InternalSetSlamCommand() {
+    return Hmd2BeforeInitializeError0004();
+}
+std::int32_t APS5_VABI sceHmd2InternalDfuStart() {
+    return Hmd2BeforeInitializeError0004();
+}
+std::int32_t APS5_VABI sceHmd2InternalDecryptData() {
+    return Hmd2BeforeInitializeParameterNull();
+}
+std::int32_t APS5_VABI sceHmd2InternalGetMirroringMode() {
+    return Hmd2BeforeInitializeParameterNull();
+}
+std::int32_t APS5_VABI sceHmd2InternalRelocalizerSetResultData() {
+    return Hmd2BeforeInitializeParameterNull();
+}
+std::int32_t APS5_VABI sceHmd2InternalGetFlipInfo() {
+    return Hmd2BeforeInitializeParameterNull();
+}
+std::int32_t APS5_VABI sceHmd2InternalSetPositionResetIcon() {
+    return Hmd2BeforeInitializeParameterInvalid();
+}
+std::int32_t APS5_VABI sceHmd2InternalSetPowerOff() {
+    return Hmd2BeforeInitializeParameterInvalid();
+}
+std::int32_t APS5_VABI sceHmd2InternalSetBudgetMode() {
+    return Hmd2BeforeInitializeParameterInvalid();
+}
+std::int32_t APS5_VABI sceHmd2InternalSetForceIcon() {
+    return Hmd2BeforeInitializeParameterInvalid();
+}
+std::int32_t APS5_VABI sceHmd2InternalBindDeviceWithUserId() {
+    return Hmd2BeforeInitializeParameterInvalid();
+}
+std::int32_t APS5_VABI sceHmd2InternalRelocalizerStart() {
+    return Hmd2BeforeInitializeMinusOne();
+}
+std::int32_t APS5_VABI sceHmd2InternalRelocalizerStop() {
+    return Hmd2BeforeInitializeMinusOne();
+}
+std::int32_t APS5_VABI sceHmd2InternalImageStart() {
+    return Hmd2BeforeInitializeMinusOne();
+}
+std::int32_t APS5_VABI sceHmd2InternalImageStop() {
+    return Hmd2BeforeInitializeMinusOne();
+}
+std::int32_t APS5_VABI sceHmd2InternalGenDataStart() {
+    return Hmd2BeforeInitializeMinusOne();
+}
+std::int32_t APS5_VABI sceHmd2InternalGenDataStop() {
+    return Hmd2BeforeInitializeMinusOne();
+}
+std::int32_t APS5_VABI sceHmd2InternalSlamTraceStart() {
+    return Hmd2BeforeInitializeMinusOne();
+}
+std::int32_t APS5_VABI sceHmd2InternalSlamTraceStop() {
+    return Hmd2BeforeInitializeMinusOne();
+}
+std::int32_t APS5_VABI sceHmd2InternalGetFwVersion(const void* a0) {
+    return Hmd2CheckFirstThenError0004(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalGetRequiredPUPVersion(const void* a0) {
+    return Hmd2CheckFirstThenError0004(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalGetOpticalParam(const void* a0) {
+    return Hmd2CheckFirstThenError0004(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalSetCameraSeeThroughParam(const void* a0) {
+    return Hmd2CheckFirstThenError0004(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalGetTrackerFtsData(const void* a0) {
+    return Hmd2CheckFirstThenError0004(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalGetSlamCommand(const void* a0) {
+    return Hmd2CheckFirstThenError0004(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalDfuGetStatus(const void* a0) {
+    return Hmd2CheckFirstThenError0004(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalDfuGetUpdateStatus(const void* a0) {
+    return Hmd2CheckFirstThenError0004(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalDfuCheckAfterPvt(const void* a0) {
+    return Hmd2CheckFirstThenError0004(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalRelocalizerGetVersion(const void* a0) {
+    return Hmd2CheckFirstThenError0004(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalSetHomeCalibration(const void* a0) {
+    return Hmd2CheckFirstThenError0004(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalGazeReadStatus(const void* a0) {
+    return Hmd2CheckFirstThenError0004(a0);
+}
+std::int32_t APS5_VABI sceHmd2GazeGetEnabledEye(const void* a0) {
+    return Hmd2CheckFirstThenError0004(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalGetVrMode(const void* a0) {
+    return Hmd2CheckFirstThenZero(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalGetFakeLensSeparationDistance(const void* a0) {
+    return Hmd2CheckFirstThenZero(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalRelocalizerReadData(const void* a0) {
+    return Hmd2CheckFirstThenError1002(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalRelocalizerReadDataAsync(const void* a0) {
+    return Hmd2CheckFirstThenError1002(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalRelocalizerReadData2(const void* a0) {
+    return Hmd2CheckFirstThenError1002(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalTrackingReadData(const void* a0) {
+    return Hmd2CheckFirstThenError1002(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalTrackingReadData2(const void* a0) {
+    return Hmd2CheckFirstThenError1002(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalImageReadData(const void* a0) {
+    return Hmd2CheckFirstThenError1002(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalImageStart2(const void* a0) {
+    return Hmd2CheckFirstThenMinusOne(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalImageSetConfig(const void* a0) {
+    return Hmd2CheckFirstThenMinusOne(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalSetVirtualDisplaySize(const void* a0) {
+    return Hmd2CheckFirstThenParameterInvalid(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalPushVr2dData(const void* a0, const void* a1, const void* a2, const void* a3, const void* a4, const void* a5) {
+    return Hmd2CheckAllSixThenZero(a0, a1, a2, a3, a4, a5);
+}
+std::int32_t APS5_VABI sceHmd2InternalImageGetMemoryLayout(const void* a0) {
+    return Hmd2CheckFirstThenError1003(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalImageGetFrameData(const void* a0, const void* a1) {
+    return Hmd2CheckFirstTwoThenError1002(a0, a1);
+}
+std::int32_t APS5_VABI sceHmd2InternalImageGetAverageLuminance(const void* a0, const void* a1) {
+    return Hmd2CheckFirstTwoThenError1003(a0, a1);
+}
+std::int32_t APS5_VABI sceHmd2InternalLedDetectorSetIrCameraConfigBySlot(std::uint64_t a0) {
+    return Hmd2SlotUpTo1ThenMinusOne(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalLedDetectorSetPriorityConfigBySlot(std::uint64_t a0) {
+    return Hmd2SlotUpTo1ThenMinusOne(a0);
+}
+std::int32_t APS5_VABI sceHmd2InternalImageSetConfigBySlot(std::uint64_t a0) {
+    return Hmd2SlotUpTo2ThenMinusOne(a0);
+}
 
 }

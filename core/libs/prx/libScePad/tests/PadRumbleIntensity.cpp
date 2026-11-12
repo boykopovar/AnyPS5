@@ -156,6 +156,32 @@ void EnvironmentIsReadOnceAndInvalidValuesKeepFailing() {
     Require(Pad::RumblePercent() == 30, "the value is read once for the lifetime of the process");
 }
 
+void RumbleOnFocusLossParserAcceptsOnlyZeroOrOne() {
+    Require(Pad::ParseRumbleOnFocusLoss(nullptr), "an unset variable pauses rumble on focus loss");
+    Require(Pad::ParseRumbleOnFocusLoss("1"), "1 pauses rumble on focus loss");
+    Require(!Pad::ParseRumbleOnFocusLoss("0"), "0 keeps rumble on without focus");
+    for (const char* bad : {"", " 1", "1 ", "00", "true", "yes", "-1", "2"}) {
+        bool refused = false;
+        try { Pad::ParseRumbleOnFocusLoss(bad); } catch (const std::runtime_error&) { refused = true; }
+        Require(refused, "a value other than 0 or 1 is refused");
+    }
+}
+
+void FocusSequenceResumesWithTheNextPulse() {
+    const bool sequence[] = {true, false, false, true, true, false, true};
+    const bool expected[] = {false, true, true, false, false, true, false};
+    for (std::size_t index = 0; index < sizeof(sequence); ++index) {
+        Require(Pad::RumbleSuppressed(true, sequence[index]) == expected[index], "each focus change flips the gate at once and nothing stays stuck");
+    }
+}
+
+void FocusGateSuppressesOnlyWhileUnfocusedWithThePauseOn() {
+    Require(!Pad::RumbleSuppressed(true, true), "a focused window with the pause on keeps rumble");
+    Require(Pad::RumbleSuppressed(true, false), "an unfocused window with the pause on drops rumble");
+    Require(!Pad::RumbleSuppressed(false, true), "a focused window with the pause off keeps rumble");
+    Require(!Pad::RumbleSuppressed(false, false), "an unfocused window with the pause off keeps rumble");
+}
+
 }
 
 int main() {
@@ -167,5 +193,8 @@ int main() {
     IntermediateIntensityScalesBothMotors();
     ParserAcceptsAndRefuses();
     EnvironmentIsReadOnceAndInvalidValuesKeepFailing();
+    RumbleOnFocusLossParserAcceptsOnlyZeroOrOne();
+    FocusGateSuppressesOnlyWhileUnfocusedWithThePauseOn();
+    FocusSequenceResumesWithTheNextPulse();
     return 0;
 }
