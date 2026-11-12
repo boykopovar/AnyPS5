@@ -164,6 +164,12 @@ void APS5_VABI _Atomic_thread_fence_nid_postfix(int order) {
 void APS5_VABI _Atomic_signal_fence_nid_postfix(int) {
 }
 
+static volatile unsigned char SharedPtrSpinLock = 0;
+
+void APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix() { LockFlag(&SharedPtrSpinLock); }
+
+void APS5_VABI _Unlock_shared_ptr_spin_lock_nid_postfix() { UnlockFlag(&SharedPtrSpinLock); }
+
 void APS5_VABI _Atomic_copy_nid_postfix(volatile unsigned char* flag, std::size_t size, volatile void* target, const volatile void* source, int) {
     LockFlag(flag);
     CopyBytes(target, source, size);
