@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidentMirror.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/QueueSubmitter.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -19,6 +20,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -678,8 +680,13 @@ void ResidentBuffer::submit(const std::vector<VkSparseMemoryBind>& binds) {
     {
         std::unique_lock<std::mutex> queueLock;
         std::unique_lock<GuestMemory::GpuMutexType> gpuLock;
-        if (ownQueue) queueLock = std::unique_lock(*context.sparseQueueMutex);
-        else gpuLock = std::unique_lock(GuestMemory::GpuMutex());
+        std::optional<QueueAccess> queueAccess;
+        if (ownQueue) {
+            queueLock = std::unique_lock(*context.sparseQueueMutex);
+        } else {
+            gpuLock = std::unique_lock(GuestMemory::GpuMutex());
+            queueAccess.emplace(context.queue);
+        }
         submitted = context.Function<PFN_vkQueueBindSparse>("vkQueueBindSparse")(ownQueue ? context.sparseQueue : context.queue, 1, &bind, fence);
         if (submitted == VK_SUCCESS) waited = context.Function<PFN_vkWaitForFences>("vkWaitForFences")(context.device, 1, &fence, VK_TRUE, UINT64_MAX);
     }
