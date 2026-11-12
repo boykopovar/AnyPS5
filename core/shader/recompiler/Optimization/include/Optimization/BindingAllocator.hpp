@@ -24,7 +24,7 @@ struct BindingAllocationResult : CompiledBindingLayout {
 
 class BindingAllocator {
 public:
-    [[nodiscard]] BindingAllocationResult Allocate(IrProgram& program, const BindingLayout& layout, bool registrationModules = false, bool stencilReplay = false) const;
+    [[nodiscard]] BindingAllocationResult Allocate(IrProgram& program, const BindingLayout& layout, bool registrationModules = false, bool stencilReplay = false, bool depthBounds = false) const;
     [[nodiscard]] const IrDescriptorBinding& FindBinding(const IrBindingLayout& layout, DescriptorBindingKind kind) const;
 
 };

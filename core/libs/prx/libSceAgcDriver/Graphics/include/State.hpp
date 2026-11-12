@@ -129,6 +129,7 @@ struct State {
     bool depthCopySource = false;
     VkCompareOp depthCompare = VK_COMPARE_OP_ALWAYS;
     bool depthBoundsTest = false;
+    bool depthBoundsDiscard = false;
     float minDepthBounds = 0.0f;
     float maxDepthBounds = 1.0f;
     bool depthBias = false;

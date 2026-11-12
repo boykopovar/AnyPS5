@@ -86,10 +86,10 @@ std::filesystem::path ShaderCacheDirectory() {
 namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(CompiledShaderArtifact) == 288, "CompiledShaderArtifact changed: update the artifact encoder");
+static_assert(sizeof(CompiledShaderArtifact) == 296, "CompiledShaderArtifact changed: update the artifact encoder");
 static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update the invocation encoder");
 #if defined(__cpp_lib_atomic_shared_ptr)
-static_assert(sizeof(RecompileResult) == 552, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(RecompileResult) == 560, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
 static_assert(sizeof(DescriptorBinding) == 864, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
@@ -144,7 +144,7 @@ constexpr std::size_t fieldCount() {
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 50, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 51, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 4, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
@@ -578,6 +578,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.bdaWrites);
     writer.Value(result.layerReplaySafe);
     writer.Value(result.stencilReferenceDword);
+    writer.Value(result.depthBoundsDword);
 }
 
 void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
@@ -649,6 +650,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.bdaWrites);
     reader.Value(result.layerReplaySafe);
     reader.Value(result.stencilReferenceDword);
+    reader.Value(result.depthBoundsDword);
     result.variantId = 0;
 }
 
@@ -734,6 +736,7 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
 void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
     writer.Value(layout.pushDataStartDword);
     writer.Value(layout.stencilReferenceDword);
+    writer.Value(layout.depthBoundsDword);
     writer.Value(layout.memoryOffsetDword);
     writer.Value(layout.memoryOffsetCount);
     writer.Value(layout.dispatchThreadLimit);
@@ -749,6 +752,7 @@ void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
 void decodeLayout(Reader& reader, IrBindingLayout& layout) {
     reader.Value(layout.pushDataStartDword);
     reader.Value(layout.stencilReferenceDword);
+    reader.Value(layout.depthBoundsDword);
     reader.Value(layout.memoryOffsetDword);
     reader.Value(layout.memoryOffsetCount);
     reader.Value(layout.dispatchThreadLimit);
@@ -829,6 +833,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.table);
         out.Value(image.tableOperation);
         out.Value(image.targetMerge);
+        out.Value(image.depthBoundsSource);
     });
     writer.Value(!info.runtimeImageModes.empty());
     writer.List(info.samplers, [](Writer& out, const SamplerResource& sampler) {
@@ -945,6 +950,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.table);
         in.Value(image.tableOperation);
         in.Value(image.targetMerge);
+        in.Value(image.depthBoundsSource);
     });
     bool preparedImageModes = false;
     reader.Value(preparedImageModes);
