@@ -129,7 +129,6 @@ extern "C" int APS5_VABI mkostemp_nid_postfix(char* pattern, int flags) {
     constexpr int accepted = SCE_KERNEL_O_APPEND | SCE_KERNEL_O_DIRECT | SharedLock | ExclusiveLock |
         SCE_KERNEL_O_SYNC | CloseOnExec;
     if (flags & ~accepted) return Failure(22);
-    if (flags & SCE_KERNEL_O_DIRECT) NotImplemented_nid_no_patch(__func__);
     if (!pattern) throw std::invalid_argument("mkostemp: null template");
     return TemporaryFile(pattern, flags);
 }

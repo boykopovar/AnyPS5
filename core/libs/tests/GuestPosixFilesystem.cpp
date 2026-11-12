@@ -42,7 +42,8 @@ int main() {
     constexpr int closeOnExec = 0x100000;
     const std::array flagsToTest{0, SCE_KERNEL_O_APPEND, SCE_KERNEL_O_SYNC, shared, exclusive,
         closeOnExec, shared | exclusive, shared | closeOnExec,
-        exclusive | SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC | closeOnExec};
+        exclusive | SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC | closeOnExec, SCE_KERNEL_O_DIRECT,
+        SCE_KERNEL_O_DIRECT | exclusive | SCE_KERNEL_O_APPEND | closeOnExec};
     for (const int flags : flagsToTest) {
         std::string temporary = "/anyps5-posix-test/mkostemp-XXXXXXXX";
         const int fd = mkostemp_nid_postfix(temporary.data(), flags);
@@ -105,8 +106,8 @@ int main() {
         nullThrew = true;
     }
     Require(nullThrew);
-    const std::array optionalFlags{SCE_KERNEL_O_APPEND, SCE_KERNEL_O_SYNC, shared, exclusive, closeOnExec};
-    for (unsigned int combination = 0; combination < 32; ++combination) {
+    const std::array optionalFlags{SCE_KERNEL_O_APPEND, SCE_KERNEL_O_SYNC, shared, exclusive, closeOnExec, SCE_KERNEL_O_DIRECT};
+    for (unsigned int combination = 0; combination < 64; ++combination) {
         int flags = 0;
         for (unsigned int bit = 0; bit < optionalFlags.size(); ++bit)
             if (combination & (1u << bit)) flags |= optionalFlags[bit];
@@ -114,8 +115,8 @@ int main() {
         const int fd = mkostemp_nid_postfix(combined.data(), flags);
         Require(fd >= 0);
         Require(fcntl_nid_postfix(fd, 1) == ((flags & closeOnExec) ? 1 : 0));
-        Require((fcntl_nid_postfix(fd, 3) & (SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC)) ==
-            (flags & (SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC)));
+        Require((fcntl_nid_postfix(fd, 3) & (SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC | SCE_KERNEL_O_DIRECT)) ==
+            (flags & (SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC | SCE_KERNEL_O_DIRECT)));
         Require(close_nid_postfix(fd) == 0);
         Require(unlink_nid_postfix(combined.c_str()) == 0);
     }
