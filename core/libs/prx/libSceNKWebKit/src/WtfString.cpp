@@ -68,6 +68,7 @@
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -1518,6 +1519,41 @@ String APS5_VABI _ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSla
         position = ReverseFind(view, u'/', static_cast<unsigned>(end));
     }
     return Substring(string.impl, static_cast<unsigned>(position + 1), static_cast<unsigned>(end - position));
+}
+
+CString APS5_VABI _ZN3WTF14FileSystemImpl24fileSystemRepresentationERKNS_6StringE(const String* path) {
+    return _ZNK3WTF6String4utf8ENS_14ConversionModeE(&Checked(path), 0);
+}
+
+String APS5_VABI _ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc(const char* path) {
+    if (!path) return String();
+    return _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(path));
+}
+
+String APS5_VABI _ZN3WTF14FileSystemImpl25pathByAppendingComponentsENS_10StringViewERKNS_6VectorIS1_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(StringView path, const NKWebKit::WtfAbi::Vector<StringView>* components) {
+    const auto& parts = Checked(components);
+    if (parts.size && !parts.buffer) throw std::invalid_argument("WTF::FileSystemImpl::pathByAppendingComponents: null component storage");
+    std::uint64_t length = path.length;
+    for (unsigned i = 0; i < parts.size; ++i) length += 1 + std::uint64_t{parts.buffer[i].length};
+    if (length > MaxStringLength) throw std::length_error("WTF::StringBuilder overflowed");
+    std::u16string output;
+    output.reserve(static_cast<std::size_t>(length));
+    bool is8Bit = true;
+    auto append = [&](const StringView& view) {
+        if (view.length && !view.data) throw std::invalid_argument("WTF::FileSystemImpl::pathByAppendingComponents: null characters");
+        for (unsigned i = 0; i < view.length; ++i) output.push_back(Unit(view, i));
+    };
+    append(path);
+    if (path.length && !path.is8Bit && !(path.length == 1 && output[0] <= 0xFF)) is8Bit = false;
+    for (unsigned i = 0; i < parts.size; ++i) {
+        const StringView& component = parts.buffer[i];
+        if (!component.is8Bit) is8Bit = false;
+        output.push_back(u'/');
+        append(component);
+    }
+    if (!is8Bit) return String(CopyImpl({output.data(), static_cast<unsigned>(output.size()), false}));
+    std::string narrow(output.begin(), output.end());
+    return String(CopyImpl({narrow.data(), static_cast<unsigned>(narrow.size()), true}));
 }
 
 }
