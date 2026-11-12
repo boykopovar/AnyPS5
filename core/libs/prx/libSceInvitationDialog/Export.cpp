@@ -160,7 +160,7 @@ int APS5_VABI sceInvitationDialogGetResultA_nid_postfix(InvitationDialogResultA*
         if (localResult.sentUsers == nullptr) return true;
         const std::uint32_t count = 0;
         const int savedErrno = errno;
-        const bool copied = GuestCopyOut_nid_no_patch(&localResult.sentUsers->count, &count, sizeof(count));
+        const bool copied = GuestCopyOut_nid_no_patch(localResult.sentUsers, &count, sizeof(count));
         errno = savedErrno;
         return copied;
     });

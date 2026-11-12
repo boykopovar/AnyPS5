@@ -85,6 +85,7 @@ static_assert(offsetof(InvitationDialogParamA, reserved) == 80);
 static_assert(sizeof(InvitationDialogParamA) == 144);
 static_assert(offsetof(InvitationDialogUser, accountId) == 24);
 static_assert(sizeof(InvitationDialogUser) == 32);
+static_assert(offsetof(InvitationDialogUserList, count) == 0);
 static_assert(offsetof(InvitationDialogUserList, users) == 8);
 static_assert(sizeof(InvitationDialogUserList) == 520);
 static_assert(offsetof(InvitationDialogResultA, errorCode) == 0x08);
