@@ -100,6 +100,7 @@ int main(int argc, char** argv) {
     try {
         const auto wave = argc == 2 ? static_cast<std::uint32_t>(std::stoul(argv[1])) : 32u;
         Require(wave == 32u || wave == 64u, "invalid wave size");
+        CheckRefused();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (device->Target().subgroupSize < 32u) {
@@ -113,7 +114,6 @@ int main(int argc, char** argv) {
                 Run(*device, wave, mode, partial, LdsDwords * 4u - 32u);
             }
         }
-        CheckRefused();
         std::puts("MUBUF LDS dword: 12 cases passed");
         return 0;
     } catch (const std::exception& error) {
