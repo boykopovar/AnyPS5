@@ -8,16 +8,12 @@
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
-#if defined(__x86_64__) || defined(_M_X64)
-#include <immintrin.h>
-#endif
+#include "prx/libc/include/PreciseWait.hpp"
 
 namespace AgcDriver {
 
 inline void SpinPause() {
-#if defined(__x86_64__) || defined(_M_X64)
-    _mm_pause();
-#endif
+    PreciseSpinPause();
 }
 
 inline unsigned UsableProcessors() {

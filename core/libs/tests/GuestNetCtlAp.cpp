@@ -1,6 +1,7 @@
 #include "prx/libSceNetCtlAp/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
@@ -28,13 +29,21 @@ void RequireUninitialized() {
     std::uint8_t block[184] = {};
     Require(sceNetCtlApCheckCallback() == kErrNotInitialized);
     Require(sceNetCtlApClearEvent(1) == kErrNotInitialized);
+    Require(sceNetCtlApClearEvent(0) == kErrNotInitialized);
     Require(sceNetCtlApRegisterCallback(Callback, nullptr, &value) == kErrNotInitialized && value == 0x5a5a);
+    Require(sceNetCtlApRegisterCallback(nullptr, nullptr, nullptr) == kErrNotInitialized);
     Require(sceNetCtlApUnregisterCallback(0) == kErrNotInitialized);
+    Require(sceNetCtlApUnregisterCallback(-1) == kErrNotInitialized);
     Require(sceNetCtlApGetResult(1, &value) == kErrNotInitialized && value == 0x5a5a);
+    Require(sceNetCtlApGetResult(1, nullptr) == kErrNotInitialized);
+    Require(sceNetCtlApGetResult(0, nullptr) == kErrNotInitialized);
     Require(sceNetCtlApGetInfo(block) == kErrNotInitialized);
+    Require(sceNetCtlApGetInfo(nullptr) == kErrNotInitialized);
     Require(sceNetCtlApGetState(&value) == kErrNotInitialized && value == 0x5a5a);
+    Require(sceNetCtlApGetState(nullptr) == kErrNotInitialized);
     Require(sceNetCtlApStop() == kErrNotInitialized);
     Require(sceNetCtlApGetConnectInfo(nullptr, block) == kErrNotInitialized);
+    Require(sceNetCtlApGetConnectInfo(nullptr, nullptr) == kErrNotInitialized);
 }
 
 }
@@ -46,6 +55,9 @@ int main() {
     int state = -1;
     Require(sceNetCtlApGetState(&state) == 0 && state == 0);
     Require(sceNetCtlApGetState(nullptr) == kErrInvalidAddr);
+    errno = 71;
+    Require(sceNetCtlApGetState(reinterpret_cast<int*>(0x10)) == kErrInvalidAddr);
+    Require(errno == 71);
 
     std::uint8_t info[152];
     std::memset(info, 0x5a, sizeof(info));
@@ -54,6 +66,9 @@ int main() {
     Require(sceNetCtlApGetInfo(info) == kErrNotStarted);
     for (std::size_t i = sizeof(infoSize); i < sizeof(info); ++i) Require(info[i] == 0x5a);
     Require(sceNetCtlApGetInfo(nullptr) == kErrInvalidAddr);
+    errno = 71;
+    Require(sceNetCtlApGetInfo(reinterpret_cast<void*>(0x10)) == kErrInvalidAddr);
+    Require(errno == 71);
     const std::uint64_t wrongInfoSize = sizeof(info) - 8;
     std::memcpy(info, &wrongInfoSize, sizeof(wrongInfoSize));
     Require(sceNetCtlApGetInfo(info) == kErrInvalidSize);
@@ -71,6 +86,9 @@ int main() {
     Require(sceNetCtlApGetConnectInfo("123456789", connect) == static_cast<int>(0x80412901u));
     for (std::size_t i = sizeof(connectSize); i < sizeof(connect); ++i) Require(connect[i] == 0x5a);
     Require(sceNetCtlApGetConnectInfo(option, nullptr) == kErrInvalidAddr);
+    errno = 71;
+    Require(sceNetCtlApGetConnectInfo(option, reinterpret_cast<void*>(0x10)) == kErrInvalidAddr);
+    Require(errno == 71);
     const std::uint64_t wrongConnectSize = sizeof(info);
     std::memcpy(connect, &wrongConnectSize, sizeof(wrongConnectSize));
     Require(sceNetCtlApGetConnectInfo(option, connect) == kErrInvalidSize);
@@ -82,6 +100,9 @@ int main() {
         Require(sceNetCtlApClearEvent(type) == 0);
         Require(sceNetCtlApGetResult(type, &code) == 0 && code == 0);
         Require(sceNetCtlApGetResult(type, nullptr) == kErrInvalidAddr);
+        errno = 71;
+        Require(sceNetCtlApGetResult(type, reinterpret_cast<int*>(0x10)) == kErrInvalidAddr);
+        Require(errno == 71);
     }
     for (const int type : {0, 5, -1}) {
         int code = 0x5a5a;
@@ -98,6 +119,9 @@ int main() {
     int extra = 0x5a5a;
     Require(sceNetCtlApRegisterCallback(Callback, nullptr, &extra) == kErrCallbackMax && extra == -1);
     Require(sceNetCtlApRegisterCallback(nullptr, nullptr, &extra) == kErrInvalidAddr);
+    errno = 71;
+    Require(sceNetCtlApRegisterCallback(Callback, nullptr, reinterpret_cast<int*>(0x10)) == kErrInvalidAddr);
+    Require(errno == 71);
     Require(sceNetCtlApRegisterCallback(Callback, nullptr, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlApCheckCallback() == 0 && sceNetCtlApCheckCallback() == 0);
     Require(g_calls == 0);
