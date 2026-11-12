@@ -893,6 +893,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_module_identity.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_symbolic_modules COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_symbolic_modules.py $<TARGET_FILE:relinker>)
+        add_test(NAME linux_guest_qualified_imports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_qualified_imports.py $<TARGET_FILE:relinker>)
+        set_property(TEST linux_guest_qualified_imports APPEND PROPERTY LABELS relinker)
+        set_tests_properties(linux_guest_qualified_imports PROPERTIES TIMEOUT 30)
+        add_asan_test_options(linux_guest_qualified_imports verify_asan_link_order=0)
         add_test(NAME linux_guest_zero_address_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_zero_address_exports.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
