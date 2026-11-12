@@ -10,7 +10,7 @@ export const groups = [
 export const actions = groups.flatMap(group => group.actions);
 export const padButtons = new Set(['Cross', 'Circle', 'Triangle', 'Square', 'L1', 'R1', 'L2', 'R2', 'L3', 'R3', 'Options', 'Up', 'Right', 'Down', 'Left']);
 export const mouseValues = ['Left', 'Middle', 'Right', 'X1', 'X2'];
-export const wheelValues = ['Up', 'Down'];
+export const wheelValues = ['Up', 'Down', 'Left', 'Right'];
 
 export const defaults = {
     Cross: ['KEY:Return', 'KEY:Space'], Circle: ['KEY:C'], Triangle: ['KEY:I'], Square: ['MOUSE:Left'],

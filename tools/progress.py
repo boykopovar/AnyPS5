@@ -253,7 +253,10 @@ def collect_shaders():
     isa = {}
     for line in ISA.read_text(encoding="utf-8", errors="ignore").splitlines():
         if line and not line.startswith("#"):
-            name, encoding = line.split()
+            parts = line.split()
+            if len(parts) != 2:
+                raise ValueError(f"tools/rdna_isa.txt: expected 'name encoding' per line, got: {line}")
+            name, encoding = parts
             isa[name] = encoding
     by_camel = {camel(name): name for name in isa}
     enum = re.search(r"enum class RdnaOpcode[^{]*\{(.*?)\};", OPCODES.read_text(encoding="utf-8", errors="ignore"), re.S).group(1)
@@ -386,11 +389,11 @@ def still_needed(source):
     def groups(kind, selected):
         return [(form_label(f), f[kind]) for f in forms if f[kind] and f["form"] in selected]
 
-    lists = [
+    lists = [(heading, found) for heading, found in (
         (f'Instruction forms not decoded ({sum(len(f["missing"]) for f in forms if f["form"] in plain)})', groups("missing", plain)),
         (f'DPP forms not decoded ({sum(len(f["missing"]) for f in forms if f["form"] in dpp)})', groups("missing", dpp)),
         (f'Decoded, no translator case ({sum(len(f["untranslated"]) for f in forms)})', groups("untranslated", plain + dpp)),
-    ]
+    ) if found] or [("Every instruction form is decoded and translated", [])]
     formats = source["formats"]
     return {
         "lists": lists,
@@ -435,7 +438,7 @@ def still_needed_svg(source, top):
     for heading, groups in data["lists"]:
         parts.append(plain_text(right + 4, y + 11, heading, 13))
         y += ROW
-        for label, names in groups or [("none", [])]:
+        for label, names in groups:
             rows = textwrap.wrap(", ".join(names), NAMES_WIDTH) or [""]
             parts.append(plain_text(right + 12, y + 11, label, 11))
             for row in rows:
@@ -519,7 +522,8 @@ def still_needed_html(source):
     right = ["<h3>Instruction forms still needed</h3>"]
     for heading, groups in data["lists"]:
         right.append(f"<h4>{escape(heading)}</h4>")
-        right.append("<table>" + "".join(f"<tr><td>{escape(label)}</td><td class='names'><code>{escape(', '.join(names))}</code></td></tr>" for label, names in groups) + "</table>" if groups else "<p>None.</p>")
+        if groups:
+            right.append("<table>" + "".join(f"<tr><td>{escape(label)}</td><td class='names'><code>{escape(', '.join(names))}</code></td></tr>" for label, names in groups) + "</table>")
     return "\n".join(["<h2>Still needed</h2>", '<div class="cols">', "<div>", *left, "</div>", "<div>", *right, "</div>", "</div>"])
 
 
