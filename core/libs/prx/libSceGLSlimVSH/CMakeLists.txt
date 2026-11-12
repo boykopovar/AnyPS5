@@ -6,6 +6,7 @@ add_library(libSceGLSlimVSH SHARED EXCLUDE_FROM_ALL
     src/Objects.cpp
     src/Images.cpp)
 target_include_directories(libSceGLSlimVSH PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceGLSlimVSH PRIVATE libc)
 configure_windows_unwind(libSceGLSlimVSH)
 
 if(BUILD_TESTING)
@@ -26,6 +27,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_glslim_ipc_returns COMMAND guest_glslim_ipc_returns_tests)
     if(WIN32)
         set_tests_properties(guest_glslim_ipc_returns PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGLSlimVSH>")
+    endif()
+    add_test_executable(guest_glslim_eglgetconfigs_tests tests/EglGetConfigs.cpp)
+    target_include_directories(guest_glslim_eglgetconfigs_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_glslim_eglgetconfigs_tests PRIVATE libSceGLSlimVSH libc)
+    configure_windows_unwind(guest_glslim_eglgetconfigs_tests)
+    add_test(NAME guest_glslim_eglgetconfigs COMMAND guest_glslim_eglgetconfigs_tests)
+    if(WIN32)
+        set_tests_properties(guest_glslim_eglgetconfigs PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGLSlimVSH>")
     endif()
 endif()

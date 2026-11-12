@@ -3,6 +3,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 
 #include <limits>
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -205,6 +206,14 @@ void* APS5_VABI SSL_get_wbio_nid_postfix(const LibreSslSsl* ssl) {
 
 int APS5_VABI SSL_version_nid_postfix(const LibreSslSsl* ssl) {
     return Connection(ssl, __func__).version;
+}
+
+int APS5_VABI SSL_check_private_key_nid_postfix(const LibreSslSsl* ssl) {
+    if (!ssl) {
+        LibreSslPutError_nid_no_patch(20, 0xfff, 67);
+        return 0;
+    }
+    NotImplemented_nid_no_patch(__func__);
 }
 
 std::int64_t APS5_VABI SSL_get_verify_result_nid_postfix(const LibreSslSsl* ssl) {

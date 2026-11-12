@@ -41,15 +41,15 @@ SVG_STYLE = (
 
 
 def git(*args):
-    return subprocess.run(["git", "-C", str(progress.ROOT), *args], check=True, capture_output=True).stdout
+    try:
+        return subprocess.run(["git", "-C", str(progress.ROOT), *args], check=True, capture_output=True).stdout
+    except subprocess.CalledProcessError as error:
+        reason = error.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(f"git {' '.join(args)} failed: {reason}") from error
 
 
 def daily_commits(ref):
-    try:
-        log = git("log", "--first-parent", "--format=%H %ct", ref)
-    except subprocess.CalledProcessError as error:
-        reason = error.stderr.decode("utf-8", errors="replace").strip()
-        raise ValueError(f"cannot read the history of {ref}: {reason}") from error
+    log = git("log", "--first-parent", "--format=%H %ct", ref)
     seen = {}
     for line in log.decode("utf-8").splitlines():
         sha, timestamp = line.split()
@@ -64,10 +64,7 @@ def measure(sha):
         progress.shader_scan.RECOMPILER.rstrip("/"),
         progress.shader_scan.AGC_DRIVER.rstrip("/"),
     ]
-    try:
-        tree = git("ls-tree", "-r", "--name-only", sha, "--", *candidate_paths).decode("utf-8").splitlines()
-    except subprocess.CalledProcessError:
-        return None
+    tree = git("ls-tree", "-r", "--name-only", sha, "--", *candidate_paths).decode("utf-8").splitlines()
     tree = set(tree)
     required_paths = candidate_paths[:2]
     if any(not any(name == path or name.startswith(path + "/") for name in tree) for path in required_paths):
@@ -78,14 +75,11 @@ def measure(sha):
     ]
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        try:
-            archive = tarfile.open(fileobj=io.BytesIO(git("archive", sha, "--", *paths)))
-            if hasattr(tarfile, "data_filter"):
-                archive.extractall(root, filter="data")
-            else:
-                archive.extractall(root)
-        except subprocess.CalledProcessError:
-            return None
+        archive = tarfile.open(fileobj=io.BytesIO(git("archive", sha, "--", *paths)))
+        if hasattr(tarfile, "data_filter"):
+            archive.extractall(root, filter="data")
+        else:
+            archive.extractall(root)
         saved = progress.PRX, progress.OPCODES
         progress.PRX, progress.OPCODES = root / paths[0], root / paths[1]
         try:
@@ -347,13 +341,14 @@ def daily(points):
 def page(points):
     metrics = used_shader_metrics(points)
     labels = {metric: title for metric, title, _ in SHADER_SERIES}
+    changes = ["n/a"] + [f'{p["libraries"]["done"] - q["libraries"]["done"]:+,}' for q, p in zip(points, points[1:])]
     rows = "\n".join(
         f'<tr><td>{p["date"]}</td><td>{p["libraries"]["done"]}/{p["libraries"]["total"]}</td>'
-        f'<td>{p["libraries"]["percent"]}%</td>'
+        f'<td>{p["libraries"]["percent"]}%</td><td>{change}</td>'
         + "".join(f'<td>{p["shaders"]["done"]}/{p["shaders"]["total"]}</td><td>{p["shaders"]["percent"]}%</td>'
                   if shader_metric(p) == metric else '<td>—</td><td>—</td>' for metric in metrics)
         + '</tr>'
-        for p in reversed(points))
+        for p, change in reversed(list(zip(points, changes))))
     return "\n".join([
         '<!DOCTYPE html>',
         '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -378,10 +373,10 @@ def page(points):
         'shader panel. One point per UTC day with commits on <code>main</code>, taken at the last commit of the day. Every point '
         f'is measured with the current <a href="{progress.SOURCE}/tools/progress.py">tools/progress.py</a> and '
         f'<a href="{progress.SOURCE}/tools/shader_scan.py">tools/shader_scan.py</a> rules, '
-        'so points within each series are comparable across days. The bars are the change in implemented library functions '
-        'from one point to the next. Hover a day for the exact numbers. <a href="history.json">history.json</a> records the '
+        'so points within each series are comparable across days. The bars and the Functions implemented column show the net change '
+        'in implemented library functions from one point to the next; the first point is n/a. Hover a day for the exact numbers. <a href="history.json">history.json</a> records the '
         'shader metric for each point. <a href="progress.html">Back to the current progress</a>.</p>',
-        '<table><tr><th>Date</th><th>System library functions</th><th>%</th>'
+        '<table><tr><th>Date</th><th>System library functions</th><th>%</th><th>Functions implemented</th>'
         + "".join(f'<th>{escape(labels[metric])}</th><th>%</th>' for metric in metrics) + '</tr>',
         rows,
         '</table>',
@@ -433,10 +428,10 @@ def main(argv=None):
             with (args.output / "history.csv").open("w", encoding="utf-8", newline="") as output:
                 writer = csv.writer(output)
                 writer.writerow(["date", "commit"] + [f"{name}_{key}" for name in ("libraries", "shaders")
-                                                      for key in ("done", "total", "percent")])
+                                                      for key in ("done", "total", "percent")] + ["shader_metric"])
                 writer.writerows([point["date"], point["commit"]] +
-                                 [point[name][key] for name in ("libraries", "shaders") for key in ("done", "total", "percent")]
-                                 for point in points)
+                                 [point[name][key] for name in ("libraries", "shaders") for key in ("done", "total", "percent")] +
+                                 [shader_metric(point)] for point in points)
     except OSError as error:
         parser.error(f"{error.filename or args.output}: {error.strerror or error}")
     print(f"{len(points)} days, {points[0]['date']} .. {points[-1]['date']}")

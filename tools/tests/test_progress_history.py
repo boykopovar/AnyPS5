@@ -143,6 +143,7 @@ class HistoryCsvTests(unittest.TestCase):
                     for name in ("libraries", "shaders"):
                         for key in ("done", "total", "percent"):
                             self.assertEqual(float(row[f"{name}_{key}"]), point[name][key])
+                    self.assertEqual(row["shader_metric"], point["shader_metric"])
                 original = (output / "history.csv").read_bytes()
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                     progress_history.main([str(output), "--csv", "--cache", str(output / "history.csv")])
@@ -215,6 +216,45 @@ class HistoryDateWindowTests(unittest.TestCase):
 
 
 class ProgressHistoryTests(unittest.TestCase):
+    def test_git_measurement_failure_preserves_reports_and_cache_until_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "reports"
+            cache = root / "counts.json"
+            args = [str(output), "--cache", str(cache)]
+            subprocess.run(["git", "init", "-q", directory], check=True)
+            commit(root, "2026-01-01", "first", "int APS5_VABI A() { return 0; }\n")
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    progress_history.main(args)
+                previous = {path: path.read_bytes() for path in (cache, *output.iterdir())}
+                commit(root, "2026-01-02", "second", "int APS5_VABI B() { return 0; }\n")
+                sha = progress_history.daily_commits("HEAD")[-1][1]
+                run = subprocess.run
+
+                for command in ("ls-tree", "archive"):
+                    def fail_once(argv, **kwargs):
+                        if argv[3] == command:
+                            raise subprocess.CalledProcessError(128, argv, stderr=b"object unavailable")
+                        return run(argv, **kwargs)
+
+                    with self.subTest(command=command):
+                        stderr = io.StringIO()
+                        with patch.object(subprocess, "run", side_effect=fail_once), \
+                                contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                            progress_history.main(args)
+                        self.assertEqual(raised.exception.code, 2)
+                        self.assertIn(f"git {command}", stderr.getvalue())
+                        self.assertIn(sha, stderr.getvalue())
+                        self.assertIn("object unavailable", stderr.getvalue())
+                        self.assertEqual({path: path.read_bytes() for path in previous}, previous)
+
+                with contextlib.redirect_stdout(io.StringIO()):
+                    progress_history.main(args)
+                points = json.loads((output / "history.json").read_text(encoding="utf-8"))
+                self.assertEqual([point["date"] for point in points], ["2026-01-01", "2026-01-02"])
+                self.assertEqual(points[-1]["commit"], sha)
+
     @unittest.skipUnless(os.name == "nt", "requires Windows read-only replacement semantics")
     def test_readonly_cache_failure_cleans_temporary_and_can_retry(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -402,8 +442,8 @@ class ProgressHistoryTests(unittest.TestCase):
         self.assertNotIn("1,166", decoded_panel)
         self.assertNotIn("1,460", legacy_panel)
         self.assertIn("compare points only within the same shader panel", html)
-        self.assertIn("<tr><td>2026-01-04</td><td>1/2</td><td>50.0%</td><td>1460/1460</td><td>100.0%</td><td>—</td><td>—</td></tr>", html)
-        self.assertIn("<tr><td>2026-01-02</td><td>1/2</td><td>50.0%</td><td>—</td><td>—</td><td>1166/1166</td><td>100.0%</td></tr>", html)
+        self.assertIn("<tr><td>2026-01-04</td><td>1/2</td><td>50.0%</td><td>+0</td><td>1460/1460</td><td>100.0%</td><td>—</td><td>—</td></tr>", html)
+        self.assertIn("<tr><td>2026-01-02</td><td>1/2</td><td>50.0%</td><td>+0</td><td>—</td><td>—</td><td>1166/1166</td><td>100.0%</td></tr>", html)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "site"
             with patch.object(progress_history, "collect", return_value=points):
@@ -544,6 +584,29 @@ class ProgressHistoryTests(unittest.TestCase):
         svg = progress_history.chart(points)
         for label in ("Aug 3", "Aug 10", "Aug 17", "Aug 24", "Aug 31"):
             self.assertIn(f">{label}<", svg)
+
+    def test_history_table_shows_net_implemented_functions(self):
+        def point(day, done, total):
+            return {"date": day, "libraries": {"done": done, "total": total, "percent": round(100 * done / total, 2)},
+                    "shaders": {"done": 1, "total": 1, "percent": 100.0}}
+        points = [point("2026-01-01", 100, 200), point("2026-01-02", 1505, 4000),
+                  point("2026-01-04", 1505, 5000), point("2026-01-05", 1490, 5000),
+                  point("2026-01-06", 1490, 5000)]
+        for series in (points, points[:1]):
+            with self.subTest(days=len(series)):
+                html = progress_history.page(series)
+                table = ET.fromstring(html[html.index("<table>"):html.index("</table>") + len("</table>")])
+                rows = [[cell.text for cell in row] for row in table]
+                self.assertEqual(rows[0], ["Date", "System library functions", "%", "Functions implemented",
+                                           "Decoded shader forms", "%"])
+                expected = [
+                    ["2026-01-01", "100/200", "50.0%", "n/a", "1/1", "100.0%"],
+                    ["2026-01-02", "1505/4000", "37.62%", "+1,405", "1/1", "100.0%"],
+                    ["2026-01-04", "1505/5000", "30.1%", "+0", "1/1", "100.0%"],
+                    ["2026-01-05", "1490/5000", "29.8%", "-15", "1/1", "100.0%"],
+                    ["2026-01-06", "1490/5000", "29.8%", "+0", "1/1", "100.0%"],
+                ]
+                self.assertEqual(rows[1:], list(reversed(expected[:len(series)])))
 
     def test_main_writes_utf8_output_files(self):
         point = {"date": "2026-01-01", "commit": "abc1234", "shader_metric": "decoded",

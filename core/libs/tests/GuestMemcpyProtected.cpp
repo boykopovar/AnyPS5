@@ -55,11 +55,28 @@ public:
     }
     Buffer(const Buffer&) = delete;
     Buffer& operator=(const Buffer&) = delete;
+    unsigned char* First() {
+        return allocation + page;
+    }
     unsigned char* At(std::size_t count) {
         Require(count <= page - 32);
         return allocation + page * 2 - (std::max)(count, std::size_t{1});
     }
 };
+
+static void CheckOverlappingMove(unsigned char* data, std::size_t length, bool moveRight) {
+    std::array<unsigned char, 257> original{};
+    for (std::size_t i = 0; i <= length; ++i) original[i] = static_cast<unsigned char>(i * 131 + length);
+    std::copy_n(original.begin(), length + 1, data);
+
+    const std::size_t destination = moveRight ? 1 : 0;
+    const std::size_t source = moveRight ? 0 : 1;
+    auto expected = original;
+    std::copy_n(original.begin() + source, length, expected.begin() + destination);
+
+    Require(memmove_nid_postfix(data + destination, data + source, length) == data + destination);
+    Require(std::equal(expected.begin(), expected.begin() + length + 1, data));
+}
 
 int main() {
     Buffer input, output;
@@ -75,5 +92,12 @@ int main() {
         if (length == 0) Require(destination[0] == 0xa5);
         Require(std::equal(before.begin(), before.end(), source));
         for (int i = 1; i <= 16; ++i) Require(destination[-i] == 0xa5);
+    }
+
+    for (std::size_t length = 1; length <= 256; ++length) {
+        for (bool moveRight : {false, true}) {
+            CheckOverlappingMove(output.First(), length, moveRight);
+            CheckOverlappingMove(output.At(length + 1), length, moveRight);
+        }
     }
 }

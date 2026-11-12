@@ -23,7 +23,7 @@ FcBool APS5_VABI FcPatternAddDouble(FcPattern* pattern, const char* object, doub
 FcPattern* APS5_VABI FcPatternDuplicate(const FcPattern* pattern);
 int APS5_VABI FcFontMatch();
 FcPattern* APS5_VABI FcPatternFilter(FcPattern* pattern, const FcObjectSet* objects);
-int APS5_VABI FcPatternGetFTFace();
+FcResult APS5_VABI FcPatternGetFTFace(const FcPattern* pattern, const char* object, int id, void** face);
 FcBool APS5_VABI FcPatternEqual(const FcPattern* first, const FcPattern* second);
 uint32_t APS5_VABI FcCharSetSubtractCount(const FcCharSet* first, const FcCharSet* second);
 FcBool APS5_VABI FcPatternAddInteger(FcPattern* pattern, const char* object, int value);
