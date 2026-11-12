@@ -11721,6 +11721,15 @@ void endPassWaitsNameTheirCaller(Recorder& recorder) {
     static_cast<void>(recorder.Commands());
 }
 
+// A null value removes the variable. Windows has no setenv; _putenv_s with an empty value removes it.
+bool setProfileEncoder(const char* value) {
+#ifdef _WIN32
+    return _putenv_s("APS5_PROFILE_ENCODER", value != nullptr ? value : "") == 0;
+#else
+    return value != nullptr ? setenv("APS5_PROFILE_ENCODER", value, 1) == 0 : unsetenv("APS5_PROFILE_ENCODER") == 0;
+#endif
+}
+
 void encoderPassEndSiteTests(const Device& device) {
     if (!CommandEncoder::Enabled() || !device.Graphics()) return;
     auto context = device.GetContext();
@@ -11728,10 +11737,9 @@ void encoderPassEndSiteTests(const Device& device) {
     FillDeviceFunctions(context, table);
     const char* configured = std::getenv("APS5_PROFILE_ENCODER");
     const std::string saved = configured != nullptr ? configured : "";
-    Require(setenv("APS5_PROFILE_ENCODER", "1", 1) == 0, "cannot set APS5_PROFILE_ENCODER");
+    Require(setProfileEncoder("1"), "cannot set APS5_PROFILE_ENCODER");
     Recorder recorder(context, false, &table, context.queueFamily);
-    if (configured != nullptr) setenv("APS5_PROFILE_ENCODER", saved.c_str(), 1);
-    else unsetenv("APS5_PROFILE_ENCODER");
+    setProfileEncoder(configured != nullptr ? saved.c_str() : nullptr);
     if (!recorder.Encodes()) return;
     context.functions = &table;
     CoverPass cover(context);
