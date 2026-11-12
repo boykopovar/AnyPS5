@@ -357,11 +357,31 @@ void CheckConfirmationText() {
 
 #ifdef __linux__
 void CheckConfirmationWithoutDisplay() {
+    const auto directory = MakeScratchDirectory();
+    const auto helper = directory / "zenity";
+    {
+        std::ofstream script(helper);
+        script << "#!/bin/sh\ntouch \"" << directory.string() << "/asked\"\nexit 1\n";
+    }
+    std::filesystem::permissions(helper, std::filesystem::perms::owner_all);
+    const char* inherited = std::getenv("PATH");
+    const std::string path = inherited == nullptr ? std::string() : std::string(inherited);
+    SetEnvironment("PATH", (directory.string() + ":" + path).c_str());
     SetEnvironment("DISPLAY", nullptr);
     SetEnvironment("WAYLAND_DISPLAY", nullptr);
     SetEnvironment("SDL_VIDEODRIVER", nullptr);
+    SetEnvironment("XDG_RUNTIME_DIR", nullptr);
     HostMessageBoxConfirmation confirmation;
     Require(!confirmation.Confirm("https://example.com/"));
+    Require(!std::filesystem::exists(directory / "asked"));
+    SetEnvironment("DISPLAY", "");
+    SetEnvironment("WAYLAND_DISPLAY", "");
+    Require(!confirmation.Confirm("https://example.com/"));
+    Require(!std::filesystem::exists(directory / "asked"));
+    SetEnvironment("DISPLAY", nullptr);
+    SetEnvironment("WAYLAND_DISPLAY", nullptr);
+    SetEnvironment("PATH", path.c_str());
+    std::filesystem::remove_all(directory);
 }
 #endif
 

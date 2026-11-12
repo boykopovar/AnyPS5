@@ -33,7 +33,11 @@ int APS5_VABI sceContentDeleteInitialize(const ContentDeleteInitParam* initParam
 int APS5_VABI sceContentDeleteByPath(const char* contentPath) {
     if (!g_initialized.load()) return NotInitialized;
     if (contentPath == nullptr) APS5_INVALID_ARG_EX;
-    if (*contentPath == 0) return InvalidArgument;
+    char firstChar = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&firstChar, contentPath, sizeof(firstChar));
+    errno = savedErrno;
+    if (!copied || firstChar == '\0') return InvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

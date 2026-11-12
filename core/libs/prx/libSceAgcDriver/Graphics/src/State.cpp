@@ -1979,8 +1979,10 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             else if (slotExport != 1 && slotExport != 2 && slotExport != 3 && slotExport != 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into an unsigned integer target is unsupported");
         }
         if (state.blendEnable && !reversed && (secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor))) {
-            const auto addition = [](VkBlendOp op) { return op == VK_BLEND_OP_ADD || op == VK_BLEND_OP_SUBTRACT || op == VK_BLEND_OP_REVERSE_SUBTRACT; };
-            Require(addition(state.colorBlendOp) && addition(state.alphaBlendOp), "dual-source blending with a MIN or MAX operation is unsupported");
+            const auto supported = [](VkBlendOp op, VkBlendFactor source, VkBlendFactor destination) {
+                return (op != VK_BLEND_OP_MIN && op != VK_BLEND_OP_MAX) || (source == VK_BLEND_FACTOR_ONE && destination == VK_BLEND_FACTOR_ONE);
+            };
+            Require(supported(state.colorBlendOp, state.srcColorBlendFactor, state.dstColorBlendFactor) && supported(state.alphaBlendOp, state.srcAlphaBlendFactor, state.dstAlphaBlendFactor), "dual-source blending with a MIN or MAX operation whose factors are not ONE is unsupported");
             result.dualSourceBlend = true;
         }
         if (const auto info = read(cx, 0x31c + slot * 0xfu); state.blendEnable && (info & 0x8000u) == 0 && ((info >> 8u) & 7u) <= 1u) {

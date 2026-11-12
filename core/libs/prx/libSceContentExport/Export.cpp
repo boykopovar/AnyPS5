@@ -82,12 +82,17 @@ int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportPa
     const std::int32_t sdkVersion = static_cast<std::int32_t>(CompiledSdkVersion());
     if (sdkVersion >= static_cast<std::int32_t>(MemoryPoolSdkVersion) && !g_initialized.load()) return ErrorNotInitialized;
     if (expId < 0 || expId >= MaxExecution || param == nullptr || callback == nullptr) return ErrorInvalidArgument;
+    ContentExportParam localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidArgument;
     {
         std::lock_guard lock(g_sessionMutex);
         if (!g_sessions.contains(expId)) return ErrorInvalidArgument;
     }
-    if (!SupportedContentType(param->content_type, sdkVersion)) return ErrorInvalidContentType;
-    const char* subtype = std::strrchr(param->content_type, '/');
+    if (!SupportedContentType(localParam.content_type, sdkVersion)) return ErrorInvalidContentType;
+    const char* subtype = std::strrchr(localParam.content_type, '/');
     if (subtype == nullptr || std::strlen(subtype + 1) < 2) return ErrorInvalidArgument;
     std::array<char, MaximumPathLength + 1> guestPath{};
     std::snprintf(guestPath.data(), guestPath.size(), "/av_contents/content_tmp/sce_cmgcnt%p.%s",

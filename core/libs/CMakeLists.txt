@@ -357,6 +357,11 @@ if(BUILD_TESTING)
         add_test(NAME guest_kernel_sys_paths_${case} COMMAND guest_kernel_sys_paths_tests ${UNPATCHED_DIR} unpatched ${case})
         add_test(NAME guest_kernel_sys_paths_${case}_patched COMMAND guest_kernel_sys_paths_tests ${PATCHED_DIR} patched ${case})
         set_tests_properties(guest_kernel_sys_paths_${case} guest_kernel_sys_paths_${case}_patched PROPERTIES TIMEOUT 20)
+        if(MINGW)
+            get_filename_component(kernelSysPathsRuntimeDirectory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            set_tests_properties(guest_kernel_sys_paths_${case} guest_kernel_sys_paths_${case}_patched PROPERTIES
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${kernelSysPathsRuntimeDirectory}")
+        endif()
     endforeach()
     set_tests_properties(guest_kernel_sys_paths_symlinkat guest_kernel_sys_paths_symlinkat_patched PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -891,10 +896,15 @@ if(BUILD_TESTING)
         target_compile_options(guest_kernel_sys_wait_tests PRIVATE -fasynchronous-unwind-tables)
         target_link_options(guest_kernel_sys_wait_tests PRIVATE -static -static-libgcc -static-libstdc++)
     endif()
-    foreach(case IN ITEMS wait3 wait4)
+    foreach(case IN ITEMS wait3 wait4 _wait4)
         add_test(NAME guest_kernel_sys_wait_${case} COMMAND guest_kernel_sys_wait_tests ${UNPATCHED_DIR} unpatched ${case})
         add_test(NAME guest_kernel_sys_wait_${case}_patched COMMAND guest_kernel_sys_wait_tests ${PATCHED_DIR} patched ${case})
         set_tests_properties(guest_kernel_sys_wait_${case} guest_kernel_sys_wait_${case}_patched PROPERTIES TIMEOUT 20)
+        if(MINGW)
+            get_filename_component(kernelSysWaitRuntimeDirectory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            set_tests_properties(guest_kernel_sys_wait_${case} guest_kernel_sys_wait_${case}_patched PROPERTIES
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${kernelSysWaitRuntimeDirectory}")
+        endif()
     endforeach()
     add_test_executable(guest_voice_port_attr_tests tests/GuestVoicePortAttr.cpp)
     target_include_directories(guest_voice_port_attr_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1374,6 +1384,13 @@ if(BUILD_TESTING)
         add_test(NAME prx_thread_local_destructors COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
             -DMODULES=$<TARGET_FILE_DIR:libc> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
         set_tests_properties(prx_thread_local_destructors PROPERTIES TIMEOUT 300)
+        add_test(NAME test_thread_local_destructors COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
+            -DPATTERN=*.exe -DMODULES=$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
+        set_tests_properties(test_thread_local_destructors PROPERTIES TIMEOUT 300)
+        add_test(NAME thread_local_destructors_unusable_nm COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_CURRENT_BINARY_DIR}/missing/nm
+            -DOBJDUMP=${CMAKE_OBJDUMP} -DPATTERN=ThreadLocalDestructors.cmake -DMODULES=${CMAKE_CURRENT_SOURCE_DIR}/tests
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
+        set_tests_properties(thread_local_destructors_unusable_nm PROPERTIES WILL_FAIL TRUE TIMEOUT 30)
     endif()
 
     add_test_executable(guest_np_cpp_web_api_intrusive_ptr_tests tests/GuestNpCppWebApiIntrusivePtr.cpp)
