@@ -115,17 +115,19 @@ void VertexPlanScratchEmptiesEveryList() {
         watched = owner;
         lease->fetches.push_back({1, 2, 3, 4, 5});
         lease->fetchValid.push_back(1);
+        lease->fetchLimit.push_back(1);
         lease->fetchOf.push_back(1);
         lease->zeroed.push_back(std::shared_ptr<Buffer>(owner, reinterpret_cast<Buffer*>(owner.get())));
         lease->isSolo.push_back(true);
         lease->plannedFetches.push_back({1, 2, 3, 4, 5});
         lease->plannedOf.push_back(1);
+        lease->rangeLimit.push_back(1);
         lease->rangeHandles.push_back(VK_NULL_HANDLE);
         lease->rangeOffsets.push_back(8);
         Check(!lease.Nested(), "the vertex plan lease uses the thread's scratch");
     }
     const auto& resting = VertexPlanLease::Resting();
-    Check(resting.fetches.empty() && resting.fetchValid.empty() && resting.fetchOf.empty() && resting.zeroed.empty() && resting.isSolo.empty() && resting.plannedFetches.empty() && resting.plannedOf.empty() && resting.rangeHandles.empty() && resting.rangeOffsets.empty(), "a vertex plan scratch rests empty in every list");
+    Check(resting.fetches.empty() && resting.fetchValid.empty() && resting.fetchLimit.empty() && resting.fetchOf.empty() && resting.zeroed.empty() && resting.isSolo.empty() && resting.plannedFetches.empty() && resting.plannedOf.empty() && resting.rangeLimit.empty() && resting.rangeHandles.empty() && resting.rangeOffsets.empty(), "a vertex plan scratch rests empty in every list");
     Check(watched.expired(), "a vertex plan scratch does not keep a zero buffer past its draw");
     Check(resting.fetches.capacity() >= 1 && resting.rangeOffsets.capacity() >= 1, "a vertex plan scratch keeps its capacity");
 }
