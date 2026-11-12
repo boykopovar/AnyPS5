@@ -807,7 +807,7 @@ public:
                     continue;
                 }
                 if (IsBase(inst, TessellationBaseKind::PassthroughPrimitive)) {
-                    if (stage == IrShaderStage::TessellationEvaluation) {
+                    if (stage == IrShaderStage::TessellationEvaluation && allUsesAreExportData(inst)) {
                         inst->ReplaceAllUsesWith(&constant(0u));
                         continue;
                     }
@@ -830,6 +830,35 @@ public:
     }
 
 private:
+    static bool isExportData(const IrValue* value, const IrValue* user, std::unordered_set<const IrValue*>& visited, bool& reached) {
+        if (visited.contains(user)) return true;
+        visited.insert(user);
+        if (user->Opcode() == IrOpcode::SetAttribute) {
+            if (user->Argument(0)->Resolve() == value) {
+                reached = true;
+                return true;
+            }
+            return false;
+        }
+        if (user->Opcode() == IrOpcode::CompositeConstructU32x4 || user->Opcode() == IrOpcode::Phi) {
+            if (!user->HasUses()) return false;
+            for (const IrValue* next : user->Uses()) {
+                if (!isExportData(user, next, visited, reached)) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    static bool allUsesAreExportData(const IrValue* inst) {
+        std::unordered_set<const IrValue*> visited;
+        bool reached = false;
+        for (const IrValue* user : inst->Uses()) {
+            if (!isExportData(inst, user, visited, reached)) return false;
+        }
+        return reached;
+    }
+
     void lowerOwnLaneBits() {
         LaneBits laneBits(program);
         for (IrBlock* block : program.BlockOrder()) {
