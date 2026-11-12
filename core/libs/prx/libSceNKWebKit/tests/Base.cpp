@@ -1897,6 +1897,38 @@ static void TestEmptyFrameLoaderClient() {
     Require(!assignIdentifier && !updateCachedLoader && !unableToImplementPolicy && !setTitle);
 }
 
+template <typename Function>
+static bool HasNamedLoadLifecycleThrow(Function function, const char* name) {
+    try {
+        function();
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()).find(name) == std::string::npos) {
+            throw std::runtime_error(std::string("UNEXPECTED_LOAD_LIFECYCLE_THROW: ") + error.what());
+        }
+        std::fprintf(stderr, "EXPECTED_LOAD_LIFECYCLE_THROW %s\n", name);
+        return true;
+    } catch (const std::exception& error) {
+        throw std::runtime_error(std::string("UNEXPECTED_LOAD_LIFECYCLE_EXCEPTION: ") + error.what());
+    } catch (...) {
+        throw std::runtime_error("UNEXPECTED_LOAD_LIFECYCLE_EXCEPTION: non-standard exception");
+    }
+    return false;
+}
+
+static void TestEmptyFrameLoaderLifecycleCallbacks() {
+#define CheckLoadLifecycleCallback(function) HasNamedLoadLifecycleThrow([] { function(); }, #function)
+    const bool willSendRequestThrew = CheckLoadLifecycleCallback(_ZN7WebCore22EmptyFrameLoaderClient23dispatchWillSendRequestEPNS_14DocumentLoaderEmRNS_15ResourceRequestERKNS_16ResourceResponseE);
+    const bool authenticationChallengeThrew = CheckLoadLifecycleCallback(_ZN7WebCore22EmptyFrameLoaderClient41dispatchDidReceiveAuthenticationChallengeEPNS_14DocumentLoaderEmRKNS_23AuthenticationChallengeE);
+    const bool receiveResponseThrew = CheckLoadLifecycleCallback(_ZN7WebCore22EmptyFrameLoaderClient26dispatchDidReceiveResponseEPNS_14DocumentLoaderEmRKNS_16ResourceResponseE);
+    const bool receiveContentLengthThrew = CheckLoadLifecycleCallback(_ZN7WebCore22EmptyFrameLoaderClient31dispatchDidReceiveContentLengthEPNS_14DocumentLoaderEmi);
+    const bool finishLoadingThrew = CheckLoadLifecycleCallback(_ZN7WebCore22EmptyFrameLoaderClient24dispatchDidFinishLoadingEPNS_14DocumentLoaderEm);
+    const bool failLoadingThrew = CheckLoadLifecycleCallback(_ZN7WebCore22EmptyFrameLoaderClient22dispatchDidFailLoadingEPNS_14DocumentLoaderEmRKNS_13ResourceErrorE);
+#undef CheckLoadLifecycleCallback
+    if (willSendRequestThrew || authenticationChallengeThrew || receiveResponseThrew || receiveContentLengthThrew || finishLoadingThrew || failLoadingThrew) {
+        throw std::runtime_error("EXPECTED_LOAD_LIFECYCLE_RED: one or more callbacks still throw");
+    }
+}
+
 static void TestSessionState() {
     Require(WKSessionStateCreateFromData(nullptr) == nullptr);
     Require(WKSessionStateCopyData(nullptr) == nullptr);
@@ -2290,6 +2322,12 @@ int main() {
     TestSessionState();
     TestSerializedScriptValue();
     TestRunLoop();
+    try {
+        TestEmptyFrameLoaderLifecycleCallbacks();
+    } catch (const std::runtime_error& error) {
+        std::fprintf(stderr, "%s\n", error.what());
+        return 1;
+    }
     TestFrame();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;

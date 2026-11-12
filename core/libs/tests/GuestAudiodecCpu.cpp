@@ -37,15 +37,26 @@ std::uint64_t Header(std::uint32_t channels, std::uint32_t rate, std::uint32_t b
 }
 
 struct Decoder {
-    std::vector<std::uint8_t> work = std::vector<std::uint8_t>(0x190138);
-    std::vector<std::uint8_t> input = std::vector<std::uint8_t>(0x2000);
-    std::vector<float> output = std::vector<float>(0x1000);
-    LpcmParam param{0x28, 0, 0, 0, 0, 0, Header(2, 1, 1, 1), None, None};
-    LpcmBsiInfo info{};
-    AudiodecAuInfo au{0x18, input.data(), static_cast<std::uint32_t>(input.size())};
-    AudiodecPcmItem pcm{0x18, output.data(), static_cast<std::uint32_t>(output.size() * 4)};
-    AudiodecCpuMemory memory{0x18, work.data(), 0};
-    AudiodecCtrl ctrl{&param, &info, &au, &pcm};
+    std::vector<std::uint8_t> work;
+    std::vector<std::uint8_t> input;
+    std::vector<float> output;
+    LpcmParam param;
+    LpcmBsiInfo info;
+    AudiodecAuInfo au;
+    AudiodecPcmItem pcm;
+    AudiodecCpuMemory memory;
+    AudiodecCtrl ctrl;
+
+    explicit Decoder(std::uint32_t inputBytes = 0x2000, std::uint32_t outputFloats = 0x1000)
+        : work(0x190138),
+          input(inputBytes),
+          output(outputFloats),
+          param{0x28, 0, 0, 0, 0, 0, Header(2, 1, 1, 1), None, None},
+          info{},
+          au{0x18, input.data(), inputBytes},
+          pcm{0x18, output.data(), outputFloats * 4},
+          memory{0x18, work.data(), 0},
+          ctrl{&param, &info, &au, &pcm} {}
 
     int Decode(std::uint32_t high, std::uint32_t low) {
         param.ptsHigh = high;
@@ -182,6 +193,112 @@ void TestDecodeSamples() {
     Require(decoder.au.ui_au_size == 5760 && decoder.pcm.ui_pcm_size == 1920 * 4 && decoder.info.rateIndex == 3);
 }
 
+std::uint16_t Pattern16(std::uint32_t index) {
+    return static_cast<std::uint16_t>(index * 7919u + 0x1234u);
+}
+
+std::uint32_t Pattern24(std::uint32_t index) {
+    return (index * 7919u + 0x1234u) & 0xffffffu;
+}
+
+float Expected16(std::uint32_t index) {
+    return static_cast<float>(static_cast<std::int32_t>(static_cast<std::uint32_t>(Pattern16(index)) << 16)) * 0x1p-31f;
+}
+
+float Expected24(std::uint32_t index) {
+    return static_cast<float>(static_cast<std::int32_t>(Pattern24(index) << 8)) * 0x1p-31f;
+}
+
+void Fill16(std::vector<std::uint8_t>& input) {
+    for (std::uint32_t index = 0; index < input.size() / 2; ++index) {
+        const std::uint16_t value = Pattern16(index);
+        input[index * 2] = static_cast<std::uint8_t>(value >> 8);
+        input[index * 2 + 1] = static_cast<std::uint8_t>(value);
+    }
+}
+
+void Fill24(std::vector<std::uint8_t>& input) {
+    for (std::uint32_t index = 0; index < input.size() / 3; ++index) {
+        const std::uint32_t value = Pattern24(index);
+        input[index * 3] = static_cast<std::uint8_t>(value >> 16);
+        input[index * 3 + 1] = static_cast<std::uint8_t>(value >> 8);
+        input[index * 3 + 2] = static_cast<std::uint8_t>(value);
+    }
+}
+
+void TestDecodeWrap() {
+    constexpr std::uint32_t OutputSamples = 0x43800u / 4u;
+    {
+        Decoder decoder(145 * 960, 0x12000);
+        decoder.param.header = Header(2, 1, 1, 145);
+        Require(sceAudiodecCpuInitDecoder(&decoder.ctrl, &decoder.memory, LpcmBd) == 0);
+        Fill16(decoder.input);
+        for (std::uint32_t index = 145 * 480; index < decoder.output.size(); ++index) decoder.output[index] = 1.5f;
+        Require(decoder.Decode(None, None) == 0);
+        Require(decoder.param.auBytes == 139200 && decoder.au.ui_au_size == 139200);
+        Require(decoder.pcm.ui_pcm_size == 145 * 480 * 4 && decoder.info.pcmBytes == 145 * 480 * 4);
+        Require(decoder.info.channelConfig == 2 && decoder.info.rateIndex == 1 && decoder.info.header == Header(2, 1, 1, 145));
+        for (std::uint32_t index = 0; index < 145 * 480; ++index)
+            Require(decoder.output[index] == Expected16(index % OutputSamples));
+        for (std::uint32_t index = 145 * 480; index < decoder.output.size(); ++index)
+            Require(decoder.output[index] == 1.5f);
+    }
+    {
+        Decoder decoder(144 * 960, 0x12000);
+        decoder.param.header = Header(2, 1, 1, 144);
+        Require(sceAudiodecCpuInitDecoder(&decoder.ctrl, &decoder.memory, LpcmBd) == 0);
+        Fill16(decoder.input);
+        for (std::uint32_t index = 144 * 480; index < decoder.output.size(); ++index) decoder.output[index] = 1.5f;
+        decoder.au.ui_au_size = static_cast<std::uint32_t>(decoder.input.size());
+        decoder.pcm.ui_pcm_size = static_cast<std::uint32_t>(decoder.output.size() * 4);
+        Require(sceAudiodecCpuInternalDecode(&decoder.ctrl, &decoder.memory, LpcmBd) == 0);
+        Require(decoder.param.auBytes == 138240 && decoder.pcm.ui_pcm_size == 276480 && decoder.info.pcmBytes == 276480);
+        for (std::uint32_t index = 0; index < 144 * 480; ++index)
+            Require(decoder.output[index] == Expected16(index));
+        for (std::uint32_t index = 144 * 480; index < decoder.output.size(); ++index)
+            Require(decoder.output[index] == 1.5f);
+    }
+    {
+        Decoder decoder(143 * 960, 0x12000);
+        decoder.param.header = Header(2, 1, 1, 143);
+        Require(sceAudiodecCpuInitDecoder(&decoder.ctrl, &decoder.memory, LpcmBd) == 0);
+        Fill16(decoder.input);
+        for (std::uint32_t index = 143 * 480; index < decoder.output.size(); ++index) decoder.output[index] = 1.5f;
+        Require(decoder.Decode(None, None) == 0);
+        Require(decoder.pcm.ui_pcm_size == 143 * 480 * 4);
+        for (std::uint32_t index = 0; index < 143 * 480; ++index)
+            Require(decoder.output[index] == Expected16(index));
+        for (std::uint32_t index = 143 * 480; index < decoder.output.size(); ++index)
+            Require(decoder.output[index] == 1.5f);
+    }
+    {
+        Decoder decoder(255 * 960, 0x20000);
+        decoder.param.header = Header(2, 1, 1, 255);
+        Require(sceAudiodecCpuInitDecoder(&decoder.ctrl, &decoder.memory, LpcmBd) == 0);
+        Fill16(decoder.input);
+        for (std::uint32_t index = 255 * 480; index < decoder.output.size(); ++index) decoder.output[index] = 1.5f;
+        Require(decoder.Decode(None, None) == 0);
+        Require(decoder.param.auBytes == 244800 && decoder.pcm.ui_pcm_size == 255 * 480 * 4);
+        for (std::uint32_t index = 0; index < 255 * 480; ++index)
+            Require(decoder.output[index] == Expected16(index % OutputSamples));
+        for (std::uint32_t index = 255 * 480; index < decoder.output.size(); ++index)
+            Require(decoder.output[index] == 1.5f);
+    }
+    {
+        Decoder decoder(145 * 1440, 0x12000);
+        decoder.param.header = Header(2, 1, 2, 145);
+        Require(sceAudiodecCpuInitDecoder(&decoder.ctrl, &decoder.memory, LpcmBd) == 0);
+        Fill24(decoder.input);
+        for (std::uint32_t index = 145 * 480; index < decoder.output.size(); ++index) decoder.output[index] = 1.5f;
+        Require(decoder.Decode(None, None) == 0);
+        Require(decoder.param.auBytes == 208800 && decoder.pcm.ui_pcm_size == 145 * 480 * 4);
+        for (std::uint32_t index = 0; index < 145 * 480; ++index)
+            Require(decoder.output[index] == Expected24(index % OutputSamples));
+        for (std::uint32_t index = 145 * 480; index < decoder.output.size(); ++index)
+            Require(decoder.output[index] == 1.5f);
+    }
+}
+
 void TestTimestamps() {
     Decoder decoder;
     Require(sceAudiodecCpuInitDecoder(&decoder.ctrl, &decoder.memory, LpcmBd) == 0);
@@ -241,6 +358,7 @@ int main() {
     TestInitAndClear();
     TestDecodeArguments();
     TestDecodeSamples();
+    TestDecodeWrap();
     TestTimestamps();
     TestInternalApiValidation();
     return 0;

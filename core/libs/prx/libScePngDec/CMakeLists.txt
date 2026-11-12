@@ -22,8 +22,18 @@ if(BUILD_TESTING)
         set_tests_properties(guest_png_dec_input_control PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePngDec>")
     endif()
+    add_test_executable(guest_png_dec_work_memory_tests ${LIBS_INCLUDE_DIR}/tests/GuestPngDecWorkMemory.cpp)
+    target_include_directories(guest_png_dec_work_memory_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_png_dec_work_memory_tests PRIVATE libScePngDec decoder_png libc)
+    configure_windows_unwind(guest_png_dec_work_memory_tests)
+    add_test(NAME guest_png_dec_work_memory COMMAND guest_png_dec_work_memory_tests)
+
     if(WIN32)
         set_tests_properties(guest_png_dec PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePngDec>")
+    endif()
+    if(WIN32)
+        set_tests_properties(guest_png_dec_work_memory PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePngDec>")
     endif()
 endif()

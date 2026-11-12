@@ -290,6 +290,7 @@ int APS5_VABI fsetpos_nid_postfix(FileStream* stream, const std::int64_t* positi
 void APS5_VABI rewind_nid_postfix(FileStream* stream);
 int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream);
 int APS5_VABI fflush_nid_postfix(FileStream* stream);
+int APS5_VABI malloc_stats_nid_postfix(void* stats);
 int APS5_VABI malloc_stats_fast_nid_postfix(void* stats);
 void APS5_VABI malloc_initialize_nid_postfix();
 void APS5_VABI malloc_finalize_nid_postfix();

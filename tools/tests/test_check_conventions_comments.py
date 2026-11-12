@@ -623,6 +623,50 @@ class TestFixtureExportTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("All conventions checks passed", result.stdout)
 
+    def test_comment_in_assembly_is_reported(self):
+        sources = {}
+        for stem, extension in (("Preprocessed", "S"), ("Plain", "s"), ("Asm", "asm")):
+            for style, line in (("Line", "    // save the frame"), ("Block", "    /* save the frame */"), ("Hash", "    pushq %rbp # save the frame")):
+                sources[f"core/libs/tests/{stem}{style}.{extension}"] = f".text\nFixture:\n{line}\n    ret\n"
+        result = self.check(sources)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for path in sources:
+            with self.subTest(path=path):
+                self.assertIn(f"{path}:3: error: [comment]", result.stdout)
+
+    def test_directive_words_after_a_hash_are_comments_without_the_preprocessor(self):
+        lines = ("# if we get here the frame is set", "# else fall through", '#include "macros.h"', "# endif of the loop")
+        sources = {f"tools/hw-oracle/Fixture.{extension}": ".text\n" + "\n".join(lines) + "\n    ret\n" for extension in ("s", "asm")}
+        result = self.check(sources)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for path in sources:
+            for number in range(2, 6):
+                with self.subTest(path=path, line=number):
+                    self.assertIn(f"{path}:{number}: error: [comment]", result.stdout)
+
+    def test_hash_after_a_continued_directive_in_assembly_is_reported(self):
+        result = self.check("core/libs/tests/Fixture.S", "#define NAME(n) \\\n    n ## _impl\n    pushq %rbp # save the frame\n")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("core/libs/tests/Fixture.S:3: error: [comment]", result.stdout)
+        self.assertNotIn("core/libs/tests/Fixture.S:2:", result.stdout)
+
+    def test_licence_notice_in_assembly_is_not_reported(self):
+        notice = ("/*-\n * Copyright (c) 1990 The Regents of the University of California.\n"
+                  " * Redistribution and use in source and binary forms, with or without\n"
+                  " * modification, are permitted provided that the conditions are met.\n */\n")
+        result = self.check("core/libs/tests/Fixture.S", notice + ".text\n    ret\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.check("core/libs/tests/Fixture.S", notice + ".text\n    // save the frame\n    ret\n")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("core/libs/tests/Fixture.S:7: error: [comment]", result.stdout)
+
+    def test_assembly_without_comments_passes(self):
+        result = self.check("core/libs/tests/Fixture.S",
+                            '\ufeff#include "macros.h"\n#ifdef _WIN32\n.section .rdata,"dr"\n#else\n.string "a//b#c"\n#endif // _WIN32\n#\n'
+                            '#define PUSH(r) pushq r\n#define NAME(n) \\\n    n ## _impl\n    PUSH(%rbp)\n')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("All conventions checks passed", result.stdout)
+
 
 class PullRequestTemplateTests(unittest.TestCase):
     def body_findings(self, body):
