@@ -27,6 +27,8 @@ void CallerBuilt() {
     Require(OBJ_obj2nid_nid_postfix(&unmatched) == 0, "unknown data is NID_undef");
     const LibreSslAsn1Object preset{nullptr, nullptr, 5000, 3, unknown, 0};
     Require(OBJ_obj2nid_nid_postfix(&preset) == 5000, "a nonzero NID is returned as stored");
+    const LibreSslAsn1Object missingData{nullptr, nullptr, 0, 3, nullptr, 0};
+    Require(OBJ_obj2nid_nid_postfix(&missingData) == 0, "NID 0 with null data is NID_undef");
 }
 
 void Created() {
