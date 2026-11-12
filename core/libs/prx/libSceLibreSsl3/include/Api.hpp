@@ -13,8 +13,6 @@
 #include "prx/libSceLibreSsl3/include/Cipher.hpp"
 #include "prx/libSceLibreSsl3/include/EcdsaSig.hpp"
 
-struct OCSP_CERTID;
-
 using LibreSsl3KeylogCallback = void (APS5_VABI*)(const LibreSsl3Ssl* ssl, const char* line);
 
 struct LibreSsl3Stack {

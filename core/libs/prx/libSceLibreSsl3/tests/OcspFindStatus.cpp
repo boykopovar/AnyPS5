@@ -1,4 +1,4 @@
-#include "prx/libSceLibreSsl3/include/OcspFindStatus.hpp"
+#include "prx/libSceLibreSsl3/include/Api.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -28,8 +28,8 @@ struct Fixture {
     Asn1String key {2, 4, keyBytes, 0};
     Asn1String serial {2, 2, serialBytes, 0};
     Asn1String querySerial = serial;
-    LibreSsl3OcspFindCertId stored {&algorithm, &name, &key, &serial};
-    LibreSsl3OcspFindCertId query {&queryAlgorithm, &name, &key, &querySerial};
+    OCSP_CERTID stored {&algorithm, &name, &key, &serial};
+    OCSP_CERTID query {&queryAlgorithm, &name, &key, &querySerial};
     Asn1String revocation {}, current {}, next {}, sentinel {};
     unsigned char reasonByte = 6;
     Asn1String reasonValue {1, 10, &reasonByte, 0};
@@ -44,7 +44,7 @@ struct Fixture {
     LibreSslOcspBasicResponse response {&data, nullptr, nullptr, nullptr};
 
     int Find(int* status, int* reason, Asn1String** rev, Asn1String** now, Asn1String** after) {
-        return OCSP_resp_find_status_nid_postfix(&response, reinterpret_cast<OCSP_CERTID*>(&query), status, reason, rev, now, after);
+        return OCSP_resp_find_status_nid_postfix(&response, &query, status, reason, rev, now, after);
     }
 
     void Miss(LibreSslOcspBasicResponse* bs) {
@@ -52,7 +52,7 @@ struct Fixture {
         Asn1String* rev = &sentinel;
         Asn1String* now = &sentinel;
         Asn1String* after = &sentinel;
-        Require(OCSP_resp_find_status_nid_postfix(bs, reinterpret_cast<OCSP_CERTID*>(&query), &status, &reason, &rev, &now, &after) == 0);
+        Require(OCSP_resp_find_status_nid_postfix(bs, &query, &status, &reason, &rev, &now, &after) == 0);
         Require(status == 88 && reason == 99);
         Require(rev == &sentinel && now == &sentinel && after == &sentinel);
     }

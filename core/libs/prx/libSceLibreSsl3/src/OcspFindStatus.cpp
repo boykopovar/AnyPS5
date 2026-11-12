@@ -182,7 +182,7 @@
  * [including the GNU Public Licence.]
  */
 
-#include "prx/libSceLibreSsl3/include/OcspFindStatus.hpp"
+#include "prx/libSceLibreSsl3/include/Api.hpp"
 
 #include <limits>
 #include <stdexcept>
@@ -202,7 +202,7 @@ int IntegerCompare(const Asn1String* first, const Asn1String* second) {
     return result;
 }
 
-int CertIdCompare(const LibreSsl3OcspFindCertId* first, const LibreSsl3OcspFindCertId* second) {
+int CertIdCompare(const OCSP_CERTID* first, const OCSP_CERTID* second) {
     if (!first || !second || !first->hashAlgorithm || !second->hashAlgorithm)
         throw std::invalid_argument("OCSP_resp_find_status: null certificate ID or algorithm");
     int result = OBJ_cmp_nid_postfix(first->hashAlgorithm->algorithm, second->hashAlgorithm->algorithm);
@@ -224,8 +224,7 @@ extern "C" int APS5_VABI OCSP_resp_find_status_nid_postfix(LibreSslOcspBasicResp
     for (int index = 0; index < sk_num_nid_postfix(responses); ++index) {
         const auto* single = static_cast<const LibreSslOcspSingleResponse*>(sk_value_nid_postfix(responses, index));
         if (!single) throw std::invalid_argument("OCSP_resp_find_status: null single response");
-        if (CertIdCompare(reinterpret_cast<const LibreSsl3OcspFindCertId*>(id),
-            static_cast<const LibreSsl3OcspFindCertId*>(single->certId))) continue;
+        if (CertIdCompare(id, static_cast<const OCSP_CERTID*>(single->certId))) continue;
         const int result = OCSP_single_get0_status_nid_postfix(single, reason, revtime, thisupd, nextupd);
         if (status) *status = result;
         return 1;
