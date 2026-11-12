@@ -197,6 +197,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RuntimeSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LocaleSupport.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/SonyCrt.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Process.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Hostname.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DeviceName.cpp
@@ -338,14 +339,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_memcmp_protected PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    add_test_executable(guest_update_env_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestUpdateEnv.cpp)
-    target_include_directories(guest_update_env_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_update_env_tests PRIVATE libc ${CMAKE_DL_LIBS})
-    configure_windows_unwind(guest_update_env_tests)
-    add_test(NAME guest_update_env COMMAND guest_update_env_tests $<TARGET_FILE:libc>)
+    add_test_executable(guest_env_probe_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestUpdateEnv.cpp)
+    target_include_directories(guest_env_probe_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_env_probe_tests PRIVATE libc ${CMAKE_DL_LIBS})
+    configure_windows_unwind(guest_env_probe_tests)
+    add_test(NAME guest_update_env COMMAND guest_env_probe_tests $<TARGET_FILE:libc>)
     foreach(bit RANGE 0 5)
         foreach(source RANGE 0 2)
-            add_test(NAME guest_update_env_pending_${bit}_${source} COMMAND guest_update_env_tests $<TARGET_FILE:libc> ${bit} ${source})
+            add_test(NAME guest_update_env_pending_${bit}_${source} COMMAND guest_env_probe_tests $<TARGET_FILE:libc> ${bit} ${source})
             set_tests_properties(guest_update_env_pending_${bit}_${source} PROPERTIES TIMEOUT 10 SKIP_RETURN_CODE 77)
             if(WIN32)
                 set_tests_properties(guest_update_env_pending_${bit}_${source} PROPERTIES ENVIRONMENT_MODIFICATION
@@ -2144,6 +2145,18 @@ if(BUILD_TESTING)
             target_link_libraries(guest_image_anonymous_tests PRIVATE libc)
             add_test(NAME guest_image_anonymous COMMAND guest_image_anonymous_tests)
         endif()
+    endif()
+
+    add_test_executable(unwind_enclosing_function_tests ${LIBS_INCLUDE_DIR}/tests/EnclosingFunction.cpp)
+    target_include_directories(unwind_enclosing_function_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(unwind_enclosing_function_tests PRIVATE libc)
+    configure_windows_unwind(unwind_enclosing_function_tests)
+    configure_macos_unwind(unwind_enclosing_function_tests)
+    add_test(NAME unwind_enclosing_function COMMAND unwind_enclosing_function_tests)
+    set_tests_properties(unwind_enclosing_function PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(unwind_enclosing_function PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
 

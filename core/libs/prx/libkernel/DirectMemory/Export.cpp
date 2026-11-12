@@ -264,6 +264,7 @@ size_t DirectMemorySize() {
 extern "C" {
 
 int APS5_VABI sceKernelAllocateDirectMemory(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
+ if (search_end == 0 && search_start > 0 && search_start < static_cast<int64_t>(DirectMemorySize())) search_end = static_cast<int64_t>(DirectMemorySize());
  if (search_start < 0 || search_end <= search_start || len == 0
   || (len & (PS5_PAGE_SIZE - 1)) || !phys_addr_out
   || (alignment != 0 && (alignment & (PS5_PAGE_SIZE - 1))))
@@ -374,6 +375,8 @@ int APS5_VABI sceKernelMunmap(uint64_t vaddr, size_t len) {
  if (result == 0) {
   _releaseFlexible(static_cast<uintptr_t>(vaddr), len);
   ForgetLockedRange(static_cast<uintptr_t>(vaddr), static_cast<uintptr_t>(vaddr) + len);
+  std::lock_guard lock(g_rangeNameLock);
+  EraseRangeNames(static_cast<uintptr_t>(vaddr), static_cast<uintptr_t>(vaddr) + len);
  }
  return result;
 }
@@ -568,9 +571,8 @@ int APS5_VABI sceKernelConfiguredFlexibleMemorySize(size_t* size) {
 }
 
 int APS5_VABI sceKernelInternalMemoryGetAvailableSize(std::size_t* size) {
- if (!size) return -1;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!size) return -1;
+    return -2;
 }
 
 int APS5_VABI sceKernelSetVirtualRangeName(const void* addr, uint64_t len, const char* name) {
