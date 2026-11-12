@@ -94,6 +94,12 @@ def guest_test_targets(source_root, targets, changed_paths=None):
     return load_test
 
 
+def core_lib_test_targets(source_root, targets, changed_paths=None):
+    guest = guest_test_targets(source_root, targets, changed_paths)
+    host = host_only.host_only_test_targets(source_root, targets, changed_paths)
+    return sorted(set(guest) | set(host), key=str.casefold)
+
+
 def target_artifact_names(target):
     names = set()
     for artifact in target.get("artifacts", []):
@@ -113,7 +119,8 @@ def test_owner(command, targets_by_name):
         owner_index = command.index("--") + 1
         candidates += command[owner_index:owner_index + 1]
     else:
-        candidates += [part for part in command[1:] if not part.startswith("-") and Path(part).suffix.casefold() == ".exe"]
+        candidates += [part for part in command[1:] if not part.startswith("-")
+                       and (Path(part).suffix.casefold() == ".exe" or "/" in part or "\\" in part)]
     for part in candidates:
         name = Path(part).name.casefold()
         if name.endswith(".exe"):
@@ -170,11 +177,11 @@ def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None
     elif scripts:
         run_ctest(build_dir, scripts, output_log)
     else:
-        print("No guest core/libs test sources changed; the libs build still ran")
+        print("No core/libs test sources changed; the libs build still ran")
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="build and run changed core/libs tests that link guest libc")
+    parser = argparse.ArgumentParser(description="build and run changed guest and host-only core/libs tests")
     parser.add_argument("build_dir", type=Path)
     parser.add_argument("changed_paths", nargs="?", type=Path)
     parser.add_argument("--output-log", type=Path)
@@ -183,15 +190,15 @@ def main(argv=None):
         if args.changed_paths is not None:
             listed = {Path(path).as_posix() for path in args.changed_paths.read_text(encoding="utf-8").splitlines() if path}
             if not reaches_libs(listed) and not checks_public_headers(listed):
-                print("No changed guest core/libs tests require a run")
+                print("No changed core/libs tests require a run")
                 return 0
         source_root, targets = host_only.read_reply(Path(os.path.realpath(args.build_dir)))
         changed_paths = args.changed_paths.read_text(encoding="utf-8").splitlines() if args.changed_paths else None
-        selected = guest_test_targets(source_root, targets, changed_paths)
+        selected = core_lib_test_targets(source_root, targets, changed_paths)
         if not selected:
-            print("No guest core/libs test sources changed")
+            print("No core/libs test sources changed")
         else:
-            print("Guest core/libs tests:")
+            print("Core/libs tests:")
             print("\n".join(selected))
         by_name = {target.get("name"): target for target in targets.values()}
         targets_by_name = {}
