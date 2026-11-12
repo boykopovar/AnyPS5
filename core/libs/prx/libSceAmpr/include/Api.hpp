@@ -132,7 +132,7 @@ std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeMapAsPrt(std::uint64_t add
 std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeAllocatePaForPrt(std::uint64_t address, std::uint64_t size, std::int32_t type, std::int32_t protection);
 int APS5_VABI sceAmprAmmGiveDirectMemory(std::int64_t searchStart, std::int64_t searchEnd, std::size_t size, std::size_t alignment, int usage, std::int64_t* offset);
 int APS5_VABI sceAmprAmmGetVirtualAddressRanges(std::uint64_t* start, std::uint64_t* end, std::uint64_t* multimapStart, std::uint64_t* multimapEnd);
-int APS5_VABI sceAmprAmmSetPageTablePoolOccupancyNotificationThreshold(void);
+int APS5_VABI sceAmprAmmSetPageTablePoolOccupancyNotificationThreshold(int threshold);
 int APS5_VABI sceAmprAmmSubmitCommandBuffer(void* base, std::uint32_t offset, std::uint32_t priority);
 int APS5_VABI sceAmprAmmSubmitCommandBuffer2(void* base, std::uint32_t offset, std::uint32_t priority, AmmSubmitResult* result, std::uint32_t* id);
 int APS5_VABI sceAmprAmmSubmitCommandBuffer3(void* base, std::uint32_t offset, std::uint32_t priority, std::uint32_t* id);
@@ -145,7 +145,7 @@ void APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix(void);
 SonyLconv* APS5_VABI sceAmprLocaleconv(void);
 unsigned __int128 APS5_VABI sceAmprUdivti3(unsigned __int128 dividend, unsigned __int128 divisor);
 double APS5_VABI sceAmprSinh(double x, double y);
-char* APS5_VABI sceAmprStrtokS(char* str, const char* delim, char** context);
+char* APS5_VABI sceAmprStrtokS(char* str, std::size_t* remaining, const char* delimiters, char** context);
 int APS5_VABI sceAmprCtimeS(char* buffer, std::size_t size, const std::int64_t* time);
 int APS5_VABI sceAmprWcscpyS(std::uint16_t* dest, std::size_t size, const std::uint16_t* src);
 void* APS5_VABI sceAmprSetConstraintHandlerS(void* handler);

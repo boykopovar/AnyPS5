@@ -1,8 +1,10 @@
+#include "prx/libSceBgft/include/LegacyExports.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceBgft/include/InventoryExports.hpp"
 #include "prx/libSceBgft/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -16,6 +18,16 @@ static_assert(offsetof(BgftStorageTaskParam, value104) == 104);
 
 static_assert(sizeof(BgftInitParam) == 16);
 static_assert(offsetof(BgftInitParam, heapSize) == 8);
+
+static_assert(offsetof(BgftStorageTaskParam, text16) == 16);
+static_assert(offsetof(BgftStorageTaskParam, text40) == 40);
+
+static constexpr int SCE_BGFT_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80990001);
+static constexpr int SCE_BGFT_ERROR_NOT_INITIALIZED = static_cast<int>(0x80990002);
+static constexpr int SCE_BGFT_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80990004);
+static constexpr int SCE_BGFT_ERROR_NOT_SUPPORTED = static_cast<int>(0x80990006);
+
+static bool g_initialized = false;
 
 extern "C" {
 
@@ -108,8 +120,13 @@ int APS5_VABI sceBgftServiceIntDownloadPauseTask(int32_t taskId) {
     return 0;
 }
 int APS5_VABI sceBgftServiceIntDownloadRegisterTaskByStorageEx(const BgftStorageTaskParam* params, int32_t* taskId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!g_initialized) return SCE_BGFT_ERROR_NOT_INITIALIZED;
+    if (params == nullptr || taskId == nullptr) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
+    if (params->contentId == nullptr || strnlen(params->contentId, 0x31) > 0x30) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
+    if (params->text16 != nullptr && strnlen(params->text16, 0x800) > 0x7ff) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
+    if (params->text32 != nullptr && strnlen(params->text32, 0x259) > 0x258) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
+    if (params->text40 != nullptr && strnlen(params->text40, 0x800) > 0x7ff) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
+    return SCE_BGFT_ERROR_NOT_SUPPORTED;
 }
 int APS5_VABI sceBgftServiceIntDownloadResumeTask(int32_t taskId) {
     NotImplemented_nid_no_patch(__func__);
@@ -128,7 +145,10 @@ int APS5_VABI sceBgftServiceIntDownloadUnregisterTask(int32_t taskId) {
     return 0;
 }
 int APS5_VABI sceBgftServiceIntInit(const BgftInitParam* params) {
-    NotImplemented_nid_no_patch(__func__);
+    if (g_initialized) return SCE_BGFT_ERROR_ALREADY_INITIALIZED;
+    if (params == nullptr) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
+    if (params->heapSize == 0) NotImplemented_nid_no_patch(__func__);
+    g_initialized = true;
     return 0;
 }
 int APS5_VABI sceBgftServiceDownloadQueryTask(void) {
@@ -226,9 +246,9 @@ int APS5_VABI sceBgftServiceIntDownloadQueryTask(void) {
     return 0;
 }
 
-int APS5_VABI sceBgftServiceIntDownloadRegisterTaskByStorage(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceBgftServiceIntDownloadRegisterTaskByStorage(const BgftStorageTaskParam* params, int32_t* taskId) {
+    if (params == nullptr) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
+    return sceBgftServiceIntDownloadRegisterTaskByStorageEx(params, taskId);
 }
 
 int APS5_VABI sceBgftServiceIntDownloadRestartTask(void) {
@@ -297,7 +317,6 @@ int APS5_VABI sceBgftServiceIntPlayGoResume(void) {
 }
 
 int APS5_VABI sceBgftServiceIntTerm(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -476,5 +495,19 @@ int APS5_VABI libSceBgftUnknown_tBOVSvi9EjY_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("tBOVSvi9EjY", libSceBgftUnknown_tBOVSvi9EjY_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI bgftLegacyUnknown_fuesi13BbWE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("fuesi13BbWE", bgftLegacyUnknown_fuesi13BbWE_nid_no_patch);
+
+int APS5_VABI bgftLegacyUnknown_tmiwomV8oXU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tmiwomV8oXU", bgftLegacyUnknown_tmiwomV8oXU_nid_no_patch);
 
 }

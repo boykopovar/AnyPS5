@@ -14,6 +14,8 @@ namespace {
 
 constexpr int GUEST_EDEADLK = 11;
 constexpr int GUEST_EINVAL = 22;
+constexpr int GUEST_EFAULT = 14;
+constexpr int GUEST_ERANGE = 34;
 constexpr int SCE_FAILED_CALL = static_cast<int>(0x8001ffffu);
 constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016u);
 constexpr unsigned SCE_KERNEL_ERROR_BASE = 0x80020000u;
@@ -122,12 +124,69 @@ void TestRwlockattr() {
     });
 }
 
+void TestAttr() {
+    Case("pthread_attr_setstackaddr", [] {
+        PthreadAttr attr = nullptr;
+        void* dummy = reinterpret_cast<void*>(0x1000000);
+        if (pthread_attr_setstackaddr_nid_postfix(&attr, dummy) != GUEST_EINVAL) return false;
+        if (pthread_attr_setstackaddr_nid_postfix(nullptr, dummy) != GUEST_EINVAL) return false;
+        if (pthread_attr_init_nid_postfix(&attr) != 0 || attr == nullptr) return false;
+        if (pthread_attr_setstackaddr_nid_postfix(&attr, nullptr) != GUEST_EINVAL) return false;
+        if (pthread_attr_setstackaddr_nid_postfix(&attr, dummy) != 0) return false;
+        void* retrieved = nullptr;
+        if (pthread_attr_getstackaddr_nid_postfix(&attr, &retrieved) != 0 || retrieved != dummy) return false;
+        return pthread_attr_destroy_nid_postfix(&attr) == 0;
+    });
+    Case("pthread_attr_getsolosched_np", [] {
+        PthreadAttr attr = nullptr;
+        int solosched = -1;
+        if (pthread_attr_getsolosched_np_nid_postfix(&attr, &solosched) != GUEST_EINVAL) return false;
+        if (pthread_attr_getsolosched_np_nid_postfix(nullptr, &solosched) != GUEST_EINVAL) return false;
+        if (pthread_attr_init_nid_postfix(&attr) != 0 || attr == nullptr) return false;
+        if (pthread_attr_getsolosched_np_nid_postfix(&attr, nullptr) != GUEST_EINVAL) return false;
+        if (pthread_attr_getsolosched_np_nid_postfix(&attr, &solosched) != 0 || solosched != 0) return false;
+        if (pthread_attr_setsolosched_np_nid_postfix(&attr, 16) != 0) return false;
+        if (pthread_attr_getsolosched_np_nid_postfix(&attr, &solosched) != 0 || solosched != 16) return false;
+        return pthread_attr_destroy_nid_postfix(&attr) == 0;
+    });
+    Case("pthread_attr_affinity_np", [] {
+        PthreadAttr attr = nullptr;
+        KernelCpumask mask = 0;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(nullptr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(nullptr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_init_nid_postfix(&attr) != 0 || attr == nullptr) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(mask), nullptr) != GUEST_EFAULT) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, 0, &mask) != GUEST_ERANGE) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, 4, &mask) != GUEST_ERANGE) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, 7, &mask) != GUEST_ERANGE) return false;
+        unsigned char buffer[32] = {0xFF};
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(buffer), buffer) != 0) return false;
+        for (std::size_t i = 8; i < sizeof(buffer); ++i) {
+            if (buffer[i] != 0) return false;
+        }
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, 0, nullptr) != 0) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, 4, &mask) != GUEST_ERANGE) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(mask), nullptr) != GUEST_EFAULT) return false;
+        unsigned char badBuffer[16] = {0};
+        badBuffer[8] = 1;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(badBuffer), badBuffer) != GUEST_EINVAL) return false;
+        KernelCpumask targetMask = 0x3;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(targetMask), &targetMask) != 0) return false;
+        KernelCpumask readBack = 0;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(readBack), &readBack) != 0 || readBack != targetMask) return false;
+        return pthread_attr_destroy_nid_postfix(&attr) == 0;
+    });
+}
+
 }
 
 int main(int argc, char** argv) {
     const std::string_view mode = argc > 1 ? argv[1] : "";
     if (mode == "rwlockattr") TestRwlockattr();
     else if (mode == "kind") TestKind();
+    else if (mode == "attr") TestAttr();
     else return 2;
     if (failures == 0) std::printf("all cases passed\n");
     return failures == 0 ? 0 : 1;

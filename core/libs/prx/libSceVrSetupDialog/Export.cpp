@@ -1,5 +1,6 @@
 #include "prx/libSceVrSetupDialog/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -32,7 +33,12 @@ int APS5_VABI sceVrSetupDialogInitialize(void) {
 }
 
 int APS5_VABI sceVrSetupDialogOpen(const VrSetupDialogParam* param) {
- if (param == nullptr || param->size != sizeof(*param) || param->reserved8 != 0 || param->reserved9 != 0) return VR_SETUP_DIALOG_ERROR_INVALID_ARGUMENT;
+ if (param == nullptr) return VR_SETUP_DIALOG_ERROR_INVALID_ARGUMENT;
+ VrSetupDialogParam localParam{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+ errno = savedErrno;
+ if (!copied || localParam.size != sizeof(localParam) || localParam.reserved8 != 0 || localParam.reserved9 != 0) return VR_SETUP_DIALOG_ERROR_INVALID_ARGUMENT;
  const int status = g_status.load();
  if (status == COMMON_DIALOG_STATUS_NONE) return VR_SETUP_DIALOG_ERROR_NOT_INITIALIZED;
  if (status == COMMON_DIALOG_STATUS_RUNNING) return VR_SETUP_DIALOG_ERROR_BUSY;
@@ -52,7 +58,11 @@ int APS5_VABI sceVrSetupDialogGetResult(std::int32_t* result) {
     if (result == nullptr) return VR_SETUP_DIALOG_ERROR_INVALID_ARGUMENT;
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return VR_SETUP_DIALOG_ERROR_NOT_INITIALIZED;
-    *result = COMMON_DIALOG_RESULT_USER_CANCELED;
+    const std::int32_t canceled = COMMON_DIALOG_RESULT_USER_CANCELED;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &canceled, sizeof(canceled));
+    errno = savedErrno;
+    if (!copied) return VR_SETUP_DIALOG_ERROR_INVALID_ARGUMENT;
     if (status != COMMON_DIALOG_STATUS_FINISHED) return VR_SETUP_DIALOG_ERROR_BUSY;
     return 0;
 }

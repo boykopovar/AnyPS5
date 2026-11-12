@@ -17,6 +17,21 @@ DOCUMENT = {"version": 1, "events": [{"at_ms": 10, "hold_ms": 25, "buttons": ["c
 
 
 class TimelinePreviewTests(unittest.TestCase):
+    def test_cli_accepts_utf8_bom_without_changing_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            timeline = Path(directory) / "timeline.json"
+            timeline.write_text(json.dumps(DOCUMENT), encoding="utf-8-sig")
+            original = timeline.read_bytes()
+            for options in ([], ["--json"]):
+                result = subprocess.run([sys.executable, preview_pad_timeline.__file__, str(timeline), *options],
+                                        capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if options:
+                    self.assertEqual(json.loads(result.stdout), preview_pad_timeline.preview(DOCUMENT))
+                else:
+                    self.assertIn(b"Preview only: 2 events", result.stdout)
+                self.assertEqual(timeline.read_bytes(), original)
+
     def test_repetition_and_gap_match_the_production_compiler(self):
         result = preview_pad_timeline.preview(DOCUMENT, repeat=2, gap_ms=20)
         self.assertEqual(result["event_count"], 4)
@@ -26,6 +41,13 @@ class TimelinePreviewTests(unittest.TestCase):
         compiled = pad_timeline.compile_timeline(DOCUMENT, 999, repeat=2, gap_ms=20)
         self.assertEqual([list(map(int, line.split())) for line in compiled.splitlines()[1:]],
                          [[event["at_ms"], event["hold_ms"], event["buttons"]] for event in result["events"]])
+
+    def test_stick_positions_are_previewed(self):
+        document = {"version": 1, "events": [{"at_ms": 0, "hold_ms": 300, "buttons": [], "left_stick": [255, 128]},
+                                             {"at_ms": 400, "hold_ms": 100, "buttons": ["cross"]}]}
+        result = preview_pad_timeline.preview(document)
+        self.assertEqual(result["events"][0], {"at_ms": 0, "hold_ms": 300, "buttons": 0, "left_stick": [255, 128], "right_stick": [128, 128]})
+        self.assertEqual(result["events"][1], {"at_ms": 400, "hold_ms": 100, "buttons": pad_timeline.BUTTONS["cross"]})
 
     def test_cli_previews_without_creating_or_changing_command_files(self):
         with tempfile.TemporaryDirectory() as directory:

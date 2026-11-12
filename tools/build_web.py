@@ -1,4 +1,5 @@
 import argparse
+import ast
 import hashlib
 import io
 import json
@@ -7,6 +8,7 @@ from pathlib import Path
 import sys
 import re
 import shutil
+import subprocess
 import tempfile
 import urllib.request
 import zipfile
@@ -14,8 +16,46 @@ import zipfile
 from package_release import WEB_FILES
 
 ROOT = Path(__file__).resolve().parent.parent
-REQUIRED_WEB_FILES = ("index.html", "app.mjs", "worker.mjs", "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
 MAX_EXPANDED_BYTES = 512 * 1024 * 1024
+
+
+def release_web_files(revision):
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), "show", f"{revision}:tools/package_release.py"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError as error:
+        raise ValueError(f"Cannot resolve release revision: {revision}") from error
+    if result.returncode != 0:
+        raise ValueError(f"Cannot resolve release revision: {revision}")
+    try:
+        tree = ast.parse(result.stdout)
+        for node in tree.body:
+            value = None
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "WEB_FILES":
+                        value = ast.literal_eval(node.value)
+                        break
+            elif isinstance(node, ast.AnnAssign):
+                if isinstance(node.target, ast.Name) and node.target.id == "WEB_FILES" and node.value is not None:
+                    value = ast.literal_eval(node.value)
+            if value is not None:
+                if (isinstance(value, (tuple, list)) and value
+                        and all(isinstance(item, str) and item and "\\" not in item
+                                and not item.startswith("/")
+                                and not any(part in ("..", ".", "") for part in item.split("/"))
+                                for item in value)
+                        and len(value) == len(set(value))):
+                    return set(value)
+                raise ValueError(f"Invalid web release definition in revision: {revision}")
+    except (ValueError, SyntaxError, TypeError) as error:
+        raise ValueError(f"Invalid web release definition in revision: {revision}") from error
+    raise ValueError(f"Invalid web release definition in revision: {revision}")
 
 
 def copy_sources(output):
@@ -53,8 +93,8 @@ def asset_metadata(asset, maximum):
         raise ValueError(f"Invalid release asset {name}: archive size must be a positive integer no greater than {maximum}")
     if not isinstance(asset.get("browser_download_url"), str) or not asset["browser_download_url"]:
         raise ValueError(f"Invalid release asset {name}: browser_download_url must be nonempty text")
-    if asset.get("digest") is not None and not isinstance(asset["digest"], str):
-        raise ValueError(f"Invalid release asset {name}: digest must be text or null")
+    if type(asset.get("digest")) is not str or not re.fullmatch(r"sha256:[0-9a-f]{64}", asset["digest"]):
+        raise ValueError(f"Invalid release asset {name}: digest must be sha256 followed by 64 lowercase hex digits")
     return asset
 
 
@@ -69,10 +109,17 @@ def library_assets(release):
     return assets
 
 
+def load_release(response):
+    try:
+        return json.load(response)
+    except RecursionError as error:
+        raise ValueError(f"Invalid release metadata: {error}") from error
+
+
 def publish_libraries(output, release=None):
     if release is None:
         with request("https://api.github.com/repos/boykopovar/AnyPS5/releases/latest") as response:
-            release = json.load(response)
+            release = load_release(response)
     release = release_metadata(release)
     tag = release["tag_name"]
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", tag):
@@ -97,7 +144,7 @@ def publish_libraries(output, release=None):
             if size != asset["size"]:
                 raise ValueError("Incomplete release archive")
             checksum = digest.hexdigest()
-            if asset.get("digest") and asset["digest"] != "sha256:" + checksum:
+            if asset["digest"] != "sha256:" + checksum:
                 raise ValueError("Release archive checksum mismatch")
             with zipfile.ZipFile(temporary) as archive:
                 files = archive.infolist()
@@ -111,13 +158,20 @@ def publish_libraries(output, release=None):
                     raise ValueError("Library ZIP links and special files are not supported")
                 names = {}
                 for file in files:
+                    parts = file.filename.removesuffix("/").split("/")
                     if (file.orig_filename != file.filename or not file.filename.startswith("libs/")
-                            or any(part in ("..", ".", "") for part in file.filename.rstrip("/").split("/")) or "\\" in file.filename):
+                            or any(ord(char) < 32 or char in '\\<>:"|?*' for char in file.filename)
+                            or any(part in ("..", ".", "") or part.endswith((".", " "))
+                                   or re.match(r"(?:con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\.|$)", part, re.IGNORECASE)
+                                   for part in parts)):
                         raise ValueError("Invalid library archive layout")
                     name = file.filename.rstrip("/").lower()
                     if name in names:
                         raise ValueError(f"Duplicate library archive path: {file.filename}")
                     names[name] = file.is_dir()
+                runtimes = [file for file in files if not file.is_dir() and file.filename.lower().endswith(".prx")]
+                if not runtimes or any(file.file_size == 0 for file in runtimes):
+                    raise ValueError("Library archive must contain nonempty runtime modules")
                 for name in names:
                     parts = name.split("/")
                     if any(names.get("/".join(parts[:index])) is False for index in range(1, len(parts))):
@@ -141,7 +195,7 @@ def publish_libraries(output, release=None):
 
 def publish_release(output):
     with request("https://api.github.com/repos/boykopovar/AnyPS5/releases/latest") as response:
-        release = json.load(response)
+        release = load_release(response)
     release = release_metadata(release)
     tag = release["tag_name"]
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", tag) or tag.endswith("."):
@@ -157,7 +211,7 @@ def publish_release(output):
     if len(data) != asset["size"]:
         raise ValueError("Incomplete or oversized web release archive")
     checksum = hashlib.sha256(data).hexdigest()
-    if asset.get("digest") and asset["digest"] != "sha256:" + checksum:
+    if asset["digest"] != "sha256:" + checksum:
         raise ValueError("Web release archive checksum mismatch")
     if output.is_symlink() or (output.exists() and not output.is_dir()):
         raise ValueError(f"Release output is not a directory: {output}")
@@ -170,20 +224,25 @@ def publish_release(output):
         staging.mkdir()
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             files = archive.infolist()
-            names = [file.filename for file in files]
-            allowed = {*WEB_FILES, "web-release.json"}
-            if len(set(names)) != len(names) or not allowed.issuperset(names) \
-                    or not {*REQUIRED_WEB_FILES, "web-release.json"}.issubset(names):
-                raise ValueError("Invalid web release archive layout")
             if any(file.flag_bits & 1 for file in files):
                 raise ValueError(f"Encrypted release archive {asset['name']} is not supported")
             if any(file.file_size == 0 for file in files) or sum(file.file_size for file in files) > 128 * 1024 * 1024:
                 raise ValueError("Invalid expanded web release archive size")
-            metadata = json.loads(archive.read("web-release.json"))
+            filenames = {file.filename for file in files}
+            if len(files) != len(filenames) or "web-release.json" not in filenames:
+                raise ValueError("Invalid web release archive layout")
+            try:
+                metadata = load_release(archive.open("web-release.json"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                raise ValueError("Invalid web release metadata") from error
             if (not isinstance(metadata, dict) or metadata.get("tag") != tag
                     or not isinstance(metadata.get("revision"), str)
                     or not re.fullmatch(r"[0-9a-f]{40}", metadata["revision"])):
                 raise ValueError("Web converter does not match the selected release")
+            expected_files = release_web_files(metadata["revision"])
+            expected = {*expected_files, "web-release.json"}
+            if len(files) != len(expected) or filenames != expected:
+                raise ValueError("Invalid web release archive layout")
             for file in files:
                 target = staging / file.filename
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -222,7 +281,7 @@ def main(argv=None):
     parser.add_argument("--release", "--libraries", dest="release", action="store_true",
                         help="Download the matching converter and libraries from the latest release")
     args = parser.parse_args(argv)
-    output = args.build.resolve() / "web"
+    output = Path(os.path.realpath(args.build)) / "web"
     try:
         if args.release:
             publish_release(output)
