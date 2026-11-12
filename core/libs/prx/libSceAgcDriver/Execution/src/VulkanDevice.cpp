@@ -1838,9 +1838,11 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->spirvExtensions.push_back("SPV_KHR_fma");
     }
     deviceExtensions.push_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
-    deviceExtensions.push_back(VK_KHR_8BIT_STORAGE_EXTENSION_NAME);
-    state->capabilities.push_back(4448);
-    state->spirvExtensions.push_back("SPV_KHR_8bit_storage");
+    if (byteFeatures.storageBuffer8BitAccess == VK_TRUE) {
+        deviceExtensions.push_back(VK_KHR_8BIT_STORAGE_EXTENSION_NAME);
+        state->capabilities.push_back(4448);
+        state->spirvExtensions.push_back("SPV_KHR_8bit_storage");
+    }
     state->capabilities.push_back(11);
     state->capabilities.push_back(5347);
     state->spirvExtensions.push_back("SPV_KHR_physical_storage_buffer");
@@ -2487,7 +2489,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         std::fprintf(stderr, "[gpu] APS5_NV_DIAGNOSTICS: the device does not support VK_NV_device_diagnostics_config\n");
     }
     const bool diagnosticCheckpoints = diagnostics.config && diagnostics.checkpoints;
-    bdaFeatures.pNext = &byteFeatures;
+    bdaFeatures.pNext = byteFeatures.storageBuffer8BitAccess == VK_TRUE ? &byteFeatures : byteFeatures.pNext;
     VkPhysicalDeviceRobustness2FeaturesEXT robustness2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT};
     if (hasExtension(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME)) {
         VkPhysicalDeviceFeatures2 queried{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &robustness2};

@@ -75,26 +75,17 @@ HostGpuFacts CollectHostGpuFacts(const HostGpuQuery& query) {
         if ((memory.memoryHeaps[index].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) largest = std::max<std::uint64_t>(largest, memory.memoryHeaps[index].size);
     gpu.deviceLocalMiB = largest / (1024u * 1024u);
 
-    VkPhysicalDevice8BitStorageFeatures bytes{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES};
     VkPhysicalDeviceBufferDeviceAddressFeatures address{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
     VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
-    const bool hasBytes = has(VK_KHR_8BIT_STORAGE_EXTENSION_NAME);
     const bool hasAddress = has(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
-    void** featureNext = &features.pNext;
-    if (hasBytes) {
-        *featureNext = &bytes;
-        featureNext = &bytes.pNext;
-    }
-    if (hasAddress) *featureNext = &address;
+    if (hasAddress) features.pNext = &address;
     load<PFN_vkGetPhysicalDeviceFeatures2>(query, "vkGetPhysicalDeviceFeatures2")(query.physical, &features);
     const auto& core = features.features;
     const auto required = [&](const char* name, const char* kind, bool present) { gpu.requirements.push_back({name, kind, true, present}); };
     const auto optional = [&](const char* name) { gpu.requirements.push_back({name, "extension", false, has(name)}); };
     if (query.presentation) required(VK_KHR_SWAPCHAIN_EXTENSION_NAME, "extension", has(VK_KHR_SWAPCHAIN_EXTENSION_NAME));
-    required(VK_KHR_8BIT_STORAGE_EXTENSION_NAME, "extension", hasBytes);
     required(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, "extension", hasAddress);
     required(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME, "extension", hasFloatControls);
-    required("storageBuffer8BitAccess", "feature", hasBytes && bytes.storageBuffer8BitAccess == VK_TRUE);
     required("bufferDeviceAddress", "feature", hasAddress && address.bufferDeviceAddress == VK_TRUE);
     required("shaderInt64", "feature", core.shaderInt64 == VK_TRUE);
     required("shaderSignedZeroInfNanPreserveFloat32", "feature", hasFloatControls && floatControls.shaderSignedZeroInfNanPreserveFloat32 == VK_TRUE);
@@ -108,7 +99,7 @@ HostGpuFacts CollectHostGpuFacts(const HostGpuQuery& query) {
              VK_KHR_MAINTENANCE_5_EXTENSION_NAME, VK_EXT_HDR_METADATA_EXTENSION_NAME, VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME,
              VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME, VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME,
              VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME, VK_EXT_SAMPLER_FILTER_MINMAX_EXTENSION_NAME, VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME,
-             VK_KHR_PRESENT_MODE_FIFO_LATEST_READY_EXTENSION_NAME, "VK_EXT_present_mode_fifo_latest_ready"})
+             VK_KHR_PRESENT_MODE_FIFO_LATEST_READY_EXTENSION_NAME, "VK_EXT_present_mode_fifo_latest_ready", VK_KHR_8BIT_STORAGE_EXTENSION_NAME})
         optional(name);
 
     if (query.surface != VK_NULL_HANDLE) {

@@ -157,10 +157,12 @@ void MissingExtensionsAreFound() {
     const auto missing = AgcDriver::MissingRequirements(gpu);
     std::vector<std::string> names;
     for (const auto& item : missing) names.push_back(item.name);
-    const std::vector<std::string> expected{VK_KHR_8BIT_STORAGE_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, "bufferDeviceAddress", "storageBuffer8BitAccess"};
+    const std::vector<std::string> expected{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, "bufferDeviceAddress"};
     Check(names == expected, "the missing extensions and the features that depend on them were not found");
     const auto message = AgcDriver::DescribeMissingRequirements(gpu);
-    Check(message.find("Fake GPU 9000") != std::string::npos && message.find("VK_KHR_8bit_storage (extension)") != std::string::npos, "the message does not name the GPU and the missing extension");
+    Check(message.find("Fake GPU 9000") != std::string::npos && message.find("VK_KHR_buffer_device_address (extension)") != std::string::npos, "the message does not name the GPU and the missing extension");
+    const auto* bytes = Find(gpu, VK_KHR_8BIT_STORAGE_EXTENSION_NAME);
+    Check(bytes != nullptr && !bytes->required && !bytes->present, "the absent 8-bit storage extension is not listed as optional and missing");
 }
 
 void MissingFeaturesAreFound() {
@@ -181,7 +183,7 @@ void MissingFeaturesAreFound() {
     device.address = false;
     names.clear();
     for (const auto& item : AgcDriver::MissingRequirements(AgcDriver::CollectHostGpuFacts(Query(extensions)))) names.push_back(item.name);
-    const std::vector<std::string> second{"bufferDeviceAddress", "fragmentStoresAndAtomics", "storageBuffer8BitAccess", "textureCompressionBC", "vertexPipelineStoresAndAtomics"};
+    const std::vector<std::string> second{"bufferDeviceAddress", "fragmentStoresAndAtomics", "textureCompressionBC", "vertexPipelineStoresAndAtomics"};
     Check(names == second, "the second set of unsupported features was not found");
 }
 

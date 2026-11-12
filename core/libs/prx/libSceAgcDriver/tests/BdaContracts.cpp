@@ -7,6 +7,7 @@
 #include <functional>
 #include <initializer_list>
 #include <string>
+#include <utility>
 #include <vector>
 #include <array>
 #include <initializer_list>
@@ -237,6 +238,26 @@ void RunBdaContractTests() {
     program.Resources().stage = IrShaderStage::Compute;
     program.Info().usesDma = true;
     ValidateBdaTarget(program, target);
+    const std::array<std::uint32_t, 2> wordCapabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses};
+    const std::array<std::string_view, 1> wordExtensions{"SPV_KHR_physical_storage_buffer"};
+    ValidateBdaTarget(program, SpirvTargetOptions{0x00401000u, 0x00010300u, 32, BdaAbi::Version, wordCapabilities, wordExtensions});
+    const auto declaresBytes = [](const std::vector<std::uint32_t>& words) {
+        for (std::size_t offset = 5; offset < words.size() && (words[offset] >> 16u) != 0u; offset += words[offset] >> 16u) {
+            const auto opcode = words[offset] & 0xffffu;
+            if (opcode == spv::OpCapability && words[offset + 1] == spv::CapabilityStorageBuffer8BitAccess) return true;
+            if (opcode == spv::OpTypeInt && words[offset + 2] == 8u) return true;
+        }
+        return false;
+    };
+    for (const bool bytePointers : {true, false}) {
+        SetBdaTestBytePointers(bytePointers);
+        const std::array<std::pair<std::vector<std::uint32_t>, bool>, 4> shaders{{{MakeBdaTestShader(0x1001, 8), false}, {MakeBdaTestShader(0x1001, 16), false}, {MakeBdaStoreTestShader(0x1001, 7, 8, false), true}, {MakeBdaWriteTestShader(0x1001, 7, 32, true), true}}};
+        for (const auto& [shader, stores] : shaders) {
+            AgcDriver::Graphics::Require(declaresBytes(shader) == bytePointers, bytePointers ? "a BDA byte access did not use 8-bit pointers on a target with StorageBuffer8BitAccess" : "a BDA byte access declared 8-bit storage on a target without StorageBuffer8BitAccess");
+            AgcDriver::Graphics::Require(SpirvStoresThroughAddresses(shader) == stores, "a BDA byte access was misread by the address store scan");
+        }
+    }
+    SetBdaTestBytePointers(true);
     target.bdaAbiVersion = 0;
     reject([&] { ValidateBdaTarget(program, target); }, "ABI version");
     target.bdaAbiVersion = BdaAbi::Version;

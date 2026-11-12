@@ -36,17 +36,17 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     const auto* maintenance8 = findFeatures<VkPhysicalDeviceMaintenance8FeaturesKHR>(deviceInfo.pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_8_FEATURES_KHR);
     Require(target.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version, "shader device profile has an incompatible BDA ABI");
     Require(bda != nullptr && bda->bufferDeviceAddress == VK_TRUE && core.shaderInt64 == VK_TRUE, "shader runtime requires enabled bufferDeviceAddress and shaderInt64");
-    Require(bytes != nullptr && bytes->storageBuffer8BitAccess == VK_TRUE, "shader runtime requires enabled storageBuffer8BitAccess");
     Require(core.vertexPipelineStoresAndAtomics == VK_TRUE && core.fragmentStoresAndAtomics == VK_TRUE, "shader runtime requires enabled graphics stores and atomics");
     Require(limits.maxPushConstantsSize >= ShaderRecompiler::RuntimeAbi::PushConstantDwords * sizeof(std::uint32_t) && limits.maxBoundDescriptorSets > ShaderRecompiler::RuntimeAbi::DescriptorSet, "shader runtime ABI exceeds device limits");
     Require(limits.maxStorageBufferRange >= sizeof(ShaderRecompiler::RuntimeAbi::ShaderData), "shader runtime ShaderData exceeds device limits");
     std::ranges::sort(capabilities);
     capabilities.erase(std::unique(capabilities.begin(), capabilities.end()), capabilities.end());
     const auto hasCapability = [&](spv::Capability capability) { return std::ranges::binary_search(capabilities, static_cast<std::uint32_t>(capability)); };
-    Require(hasCapability(spv::CapabilityShader) && hasCapability(spv::CapabilityInt64) && hasCapability(spv::CapabilityPhysicalStorageBufferAddresses) && hasCapability(spv::CapabilityStorageBuffer8BitAccess), "shader device profile is missing runtime capabilities");
+    Require(hasCapability(spv::CapabilityShader) && hasCapability(spv::CapabilityInt64) && hasCapability(spv::CapabilityPhysicalStorageBufferAddresses), "shader device profile is missing runtime capabilities");
     const auto checkFeature = [&](spv::Capability capability, bool enabled, const char* name) {
         Require(!hasCapability(capability) || enabled, std::string("shader device profile advertises a disabled feature: ") + name);
     };
+    checkFeature(spv::CapabilityStorageBuffer8BitAccess, bytes != nullptr && bytes->storageBuffer8BitAccess == VK_TRUE, "storageBuffer8BitAccess");
     checkFeature(spv::CapabilityFloat64, core.shaderFloat64 == VK_TRUE, "shaderFloat64");
     checkFeature(spv::CapabilityInt16, core.shaderInt16 == VK_TRUE, "shaderInt16");
     checkFeature(spv::CapabilityGeometry, core.geometryShader == VK_TRUE, "geometryShader");
@@ -82,7 +82,8 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     std::ranges::sort(extensions);
     extensions.erase(std::unique(extensions.begin(), extensions.end()), extensions.end());
     for (const auto& extension : extensions) extensionViews.emplace_back(extension);
-    Require(std::ranges::find(extensionViews, "SPV_KHR_physical_storage_buffer") != extensionViews.end() && std::ranges::find(extensionViews, "SPV_KHR_8bit_storage") != extensionViews.end(), "shader device profile is missing runtime extensions");
+    Require(std::ranges::find(extensionViews, "SPV_KHR_physical_storage_buffer") != extensionViews.end(), "shader device profile is missing runtime extensions");
+    Require(!hasCapability(spv::CapabilityStorageBuffer8BitAccess) || std::ranges::find(extensionViews, "SPV_KHR_8bit_storage") != extensionViews.end(), "shader device profile is missing runtime extensions");
     Require(std::ranges::find(extensionViews, "SPV_KHR_terminate_invocation") == extensionViews.end() || (terminate != nullptr && terminate->shaderTerminateInvocation == VK_TRUE), "shader device profile advertises a disabled feature: shaderTerminateInvocation");
     this->target.supportedCapabilities = capabilities;
     this->target.supportedExtensions = extensionViews;
