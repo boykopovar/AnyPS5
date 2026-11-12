@@ -22,6 +22,7 @@ MARKER = "<!-- pr-overlap -->"
 FETCH_REFS = 100
 PROGRESS_EVERY = 100
 MAX_REPORT_CHARS = 60000
+EXPORT_PATHS = ("core/libs/prx/*.cpp", ":(exclude,icase)**/test/**", ":(exclude,icase)**/tests/**")
 _REPO_ROOTS = {}
 
 
@@ -395,7 +396,7 @@ def scan(pr):
         pr["files"].add(path)
         if status == "A":
             pr["added"].add(path)
-    diff = git("diff", "-U0", "--no-color", old, new, "--", "core/libs/prx/*.cpp")
+    diff = git("diff", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
     pr["exports"] = exports(diff)
     pr["added_exports"] = source_changed_exports(diff, "+")
     pr["removed_exports"] = source_changed_exports(diff, "-")
@@ -411,7 +412,7 @@ def probe(pr):
             existing.add(path)
     if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
         return files, (set(), {}), existing
-    diff = git("diff", "-U0", "--no-color", base, pr["ref"], "--", "core/libs/prx/*.cpp")
+    diff = git("diff", "-U0", "--no-color", base, pr["ref"], "--", *EXPORT_PATHS)
     return files, (exports(diff), source_changed_exports(diff, "+")), existing
 
 

@@ -68,6 +68,32 @@ class RebaseVerifyTests(unittest.TestCase):
         problems = self.verify()
         self.assertTrue(any("a line is added that the branch did not add" in problem for problem in problems), problems)
 
+    def test_a_rebase_that_substitutes_a_different_deleted_line_is_reported(self):
+        self.git("checkout", "-q", "old")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", "a\nc\n")
+        self.git("commit", "-q", "-am", "fix(tools): remove a line")
+        self.git("checkout", "-q", "new")
+        self.git("reset", "-q", "--hard", "main")
+        self.write("f.txt", "a\nb\n")
+        self.git("commit", "-q", "-am", "fix(tools): remove a line")
+        problems = self.verify()
+        self.assertTrue(any("a deleted line is missing" in problem and "b" in problem for problem in problems), problems)
+        self.assertTrue(any("a line is deleted that the branch did not delete" in problem and "c" in problem for problem in problems), problems)
+
+    def test_a_line_already_deleted_upstream_needs_no_second_deletion(self):
+        self.git("checkout", "-q", "old")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", "a\nc\n")
+        self.git("commit", "-q", "-am", "fix(tools): remove a line")
+        self.git("checkout", "-q", "main")
+        self.write("f.txt", "a\nc\n")
+        self.git("commit", "-q", "-am", "docs(tools): remove the same line upstream")
+        self.git("checkout", "-q", "new")
+        self.git("reset", "-q", "--hard", "main")
+        self.git("commit", "-q", "--allow-empty", "-m", "fix(tools): remove a line")
+        self.assertEqual(self.verify(), [])
+
     def test_an_author_that_changed_is_reported(self):
         self.git("commit", "-q", "--amend", "--no-edit", "--author=Someone Else <other@example.com>", "-a")
         self.assertIn("authors or subjects differ between the old and the new commits", self.verify())
