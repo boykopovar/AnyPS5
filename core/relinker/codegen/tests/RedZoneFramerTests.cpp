@@ -1,5 +1,7 @@
 #include <codegen/x86/RedZoneFramer.hpp>
+#include <codegen/x86/StubBodyBuilder.hpp>
 #include <cstdint>
+#include <span>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -265,6 +267,35 @@ void stubsOperandsAtRspWithTheInstructionsBeforeThem() {
     const auto store = Base + 0x40 + FramelessPrologue.size();
     require(sites[2].Address == store && sites[2].Length == StoreBelowRsp.size() + LoadAtRsp.size(), "the stub site does not start at the store before the operand at rsp");
     require(sites[2].Body == stubBody({0x48, 0x89, 0x7c, 0x24, 0x00, 0x48, 0x8b, 0x44, 0x24, 0x10}), "the store before the operand and the operand at rsp were not both moved by the shift");
+}
+
+void stubsOperandsAtRspBetweenRipRelativeInstructions() {
+    const std::vector<std::uint8_t> loadRipRelative{0x48, 0x8b, 0x05, 0x34, 0x12, 0x00, 0x00};
+    const std::vector<std::uint8_t> otherRipRelative{0x8b, 0x05, 0x78, 0x56, 0x00, 0x00};
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, otherRipRelative);
+    append(body, LoadAtRsp);
+    append(body, loadRipRelative);
+    const auto input = image({framelessLeaf(FramelessPrologue, body, FramelessExit)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(report.Framed == 1 && report.OperandStubs == 1 && report.StubbedOperands == 1 && sites.size() == 3 && report.Skipped.empty(), "a leaf whose operand at rsp sits between rip-relative instructions was not framed with an operand stub");
+    const auto operand = Base + 0x40 + FramelessPrologue.size() + StoreBelowRsp.size() + otherRipRelative.size();
+    const auto& stub = sites[2];
+    require(stub.Address == operand && stub.Length == LoadAtRsp.size() + loadRipRelative.size(), "the stub site does not run from the operand at rsp over the rip-relative load after it");
+    std::vector<std::uint8_t> expected{0x48, 0x8b, 0x44, 0x24, 0x10};
+    append(expected, loadRipRelative);
+    require(stub.Body == stubBody(expected) && stub.ReturnBranchOffset == expected.size(), "the operand at rsp was not moved by the shift ahead of the rip-relative load");
+    require(stub.Relocations.size() == 1, "the rip-relative load in the stub has no relocation");
+    const auto& relocation = stub.Relocations[0];
+    require(relocation.DisplacementOffset == 8 && relocation.InstructionEnd == 12 && !relocation.AddressSize32, "the relocation does not cover the displacement of the rip-relative load");
+    require(relocation.SiteTarget == static_cast<std::int64_t>(LoadAtRsp.size() + loadRipRelative.size()) + 0x1234, "the relocation does not keep the rip-relative load's original target");
+    auto relocated = stub.Body;
+    const std::uint64_t stubAddress = 0x200000;
+    Codegen::ApplyStubRelocations(std::span<std::uint8_t>(relocated.data(), stub.ReturnBranchOffset), stub.Relocations, stub.Address, stubAddress, 0);
+    const auto displacement = static_cast<std::int32_t>(static_cast<std::uint32_t>(relocated[8]) | static_cast<std::uint32_t>(relocated[9]) << 8 | static_cast<std::uint32_t>(relocated[10]) << 16 | static_cast<std::uint32_t>(relocated[11]) << 24);
+    require(stubAddress + 12 + static_cast<std::int64_t>(displacement) == stub.Address + stub.Length + 0x1234, "the relocated load in the stub does not read the address the original load read");
 }
 
 void skipsLeavesWithOperandsThatCannotMove() {
@@ -875,6 +906,7 @@ int main() {
         stubsOperandsAtRspWithTheInstructionsAfterThem();
         stubsVexOperandsAtRsp();
         stubsOperandsAtRspWithTheInstructionsBeforeThem();
+        stubsOperandsAtRspBetweenRipRelativeInstructions();
         stubsShortOperandsAtRspBeforeABranchWithTheInstructionsBeforeThem();
         skipsShortOperandsAtRspWhoseWidenedStubCoversABranchTarget();
         skipsLeavesWithOperandsThatCannotMove();
