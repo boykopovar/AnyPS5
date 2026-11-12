@@ -21,5 +21,7 @@ char* APS5_VABI curl_easy_escape(void* handle, const char* string, int length);
 char* APS5_VABI curl_easy_unescape(void* handle, const char* string, int length, int* outputLength);
 char* APS5_VABI curl_escape(const char* string, int length);
 char* APS5_VABI curl_unescape(const char* string, int length);
+int APS5_VABI curl_strequal(const char* first, const char* second);
+int APS5_VABI curl_strnequal(const char* first, const char* second, size_t max);
 
 }
