@@ -32,23 +32,17 @@ endforeach()
 configure_file(${LIBRESSL_ROOT}/arch/${LIBRESSL_ARCH}/opensslconf.h
     ${LIBRESSL_OPENSSL_INC}/opensslconf.h COPYONLY)
 
-find_package(Perl REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 add_custom_command(
     OUTPUT ${LIBRESSL_OPENSSL_INC}/obj_mac.h ${LIBRESSL_OPENSSL_INC}/obj_dat.h
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${LIBRESSL_GEN}
-    COMMAND ${CMAKE_COMMAND} -E copy ${LIBRESSL_ROOT}/objects/objects.txt ${LIBRESSL_GEN}/objects.txt
-    COMMAND ${PERL_EXECUTABLE} -pi -e [==[s/\r//g]==] ${LIBRESSL_GEN}/objects.txt
-    COMMAND ${CMAKE_COMMAND} -E copy ${LIBRESSL_ROOT}/objects/obj_mac.num ${LIBRESSL_GEN}/obj_mac.num.tmp
-    COMMAND ${PERL_EXECUTABLE} ${LIBRESSL_ROOT}/objects/objects.pl
-        ${LIBRESSL_GEN}/objects.txt ${LIBRESSL_GEN}/obj_mac.num.tmp
-        ${LIBRESSL_OPENSSL_INC}/obj_mac.h
-    COMMAND ${PERL_EXECUTABLE} ${LIBRESSL_ROOT}/objects/obj_dat.pl
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/GenerateObjects.py
+        ${LIBRESSL_ROOT}/objects/objects.txt ${LIBRESSL_ROOT}/objects/obj_mac.num
         ${LIBRESSL_OPENSSL_INC}/obj_mac.h ${LIBRESSL_OPENSSL_INC}/obj_dat.h
     DEPENDS ${LIBRESSL_ROOT}/objects/objects.txt ${LIBRESSL_ROOT}/objects/obj_mac.num
-        ${LIBRESSL_ROOT}/objects/objects.pl ${LIBRESSL_ROOT}/objects/obj_dat.pl
+        ${CMAKE_CURRENT_SOURCE_DIR}/GenerateObjects.py
     COMMENT "Generating LibreSSL object tables"
-    WORKING_DIRECTORY ${LIBRESSL_GEN})
+    VERBATIM)
 
 set(LIBRESSL_CRYPTO_SOURCES
     cryptlib.c crypto_lock.c cpt_err.c ex_data.c malloc-wrapper.c mem_dbg.c o_time.c
