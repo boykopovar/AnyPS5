@@ -1045,6 +1045,57 @@ SpirvBufferFormatInfo SintStorageFormat(const ImageResource& image) {
     return info;
 }
 
+std::uint32_t StoreChannelClassValue(SpirvEmitterState& state, const ImageEmitAccess& access) {
+    const auto u32 = TypeU32(state);
+    const auto resource = access.mem.resource;
+    if (access.image.table != NoTable) return ConstantU32(state, 0u);
+    if (!state.registrationModules) return state.module.SpecializationConstant(u32, PipelineSpecialization::StoreChannelsBase + resource, 0u);
+    const auto word1 = RuntimeImageDword(state, resource, offsetof(RuntimeAbi::ResourceMetadata, descriptor) / sizeof(std::uint32_t) + 1u);
+    const auto code = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, word1, ConstantU32(state, 20u)), ConstantU32(state, 0x1ffu));
+    auto result = ConstantU32(state, 0u);
+    for (std::uint32_t value = 1u; value <= static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float); ++value) {
+        const auto storeClass = StoreChannelClass(value);
+        if (storeClass != 0u) result = Select(state, u32, Binary(state, spv::OpIEqual, TypeBool(state), code, ConstantU32(state, value)), ConstantU32(state, storeClass), result);
+    }
+    return result;
+}
+
+std::array<std::uint32_t, 4> MeasuredStoreChannels(SpirvEmitterState& state, std::uint32_t storeClass, const std::array<std::uint32_t, 4>& selectors, const std::array<std::uint32_t, 4>& slots,
+                                                   const std::array<std::uint32_t, 4>& fallback) {
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto equal = [&](std::uint32_t value, std::uint32_t constant) { return Binary(state, spv::OpIEqual, boolean, value, ConstantU32(state, constant)); };
+    const auto pick = [&](std::uint32_t condition, std::uint32_t yes, std::uint32_t no) { return Select(state, u32, condition, yes, no); };
+    const auto names = [&](std::uint32_t selector) { return Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, selector, ConstantU32(state, 4u)), ConstantU32(state, 0u)); };
+    const auto count = Binary(state, spv::OpBitwiseAnd, u32, storeClass, ConstantU32(state, StoreChannelCountMask));
+    const auto integerFormat = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, storeClass, ConstantU32(state, StoreChannelInteger)), ConstantU32(state, 0u));
+    const auto one = pick(integerFormat, ConstantU32(state, 1u), ConstantU32(state, 0x3f800000u));
+    const auto source = [&](std::uint32_t selector, bool reversed) {
+        auto value = pick(equal(selector, 1u), one, ConstantU32(state, 0u));
+        for (std::uint32_t index = 0; index < 4u; ++index) value = pick(equal(selector, index + 4u), slots[reversed ? 3u - index : index], value);
+        return value;
+    };
+    const auto xIsX = equal(selectors[0], 4u);
+    const auto yNames = names(selectors[1]);
+    const auto zNames = names(selectors[2]);
+    const auto zConstant = Unary(state, spv::OpLogicalNot, boolean, zNames);
+    const auto pair = Binary(state, spv::OpLogicalAnd, boolean, yNames, zConstant);
+    const auto neither = Binary(state, spv::OpLogicalAnd, boolean, Unary(state, spv::OpLogicalNot, boolean, yNames), zConstant);
+    const std::array<std::uint32_t, 2> two{
+        pick(xIsX, slots[0], pick(neither, slots[0], pick(pair, slots[1], slots[3]))),
+        pick(xIsX, pick(pair, slots[1], slots[3]), pick(neither, slots[3], slots[0])),
+    };
+    const auto yIsY = equal(selectors[1], 5u);
+    std::array<std::uint32_t, 4> result{};
+    for (std::uint32_t component = 0; component < 4u; ++component) {
+        auto value = pick(equal(count, 4u), pick(yIsY, source(selectors[component], false), source(selectors[3u - component], true)), fallback[component]);
+        if (component < 2u) value = pick(equal(count, 2u), two[component], value);
+        if (component == 0u) value = pick(equal(count, 1u), pick(xIsX, slots[0], slots[3]), value);
+        result[component] = value;
+    }
+    return result;
+}
+
 std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t data, bool integer) {
     auto& state = ctx.state;
     const auto& mem = access.mem;
@@ -1054,24 +1105,36 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
         (access.image.conversionFormat == IrBufferFormat::Format16Float || access.image.conversionFormat == IrBufferFormat::Format16_16Float || access.image.conversionFormat == IrBufferFormat::Format16_16_16_16Float);
     std::uint32_t values[4] = {};
     const auto dmask = EffectiveDmask(mem);
+    std::array<std::uint32_t, 4> slots{};
+    std::array<std::uint32_t, 4> selectors{};
+    for (std::uint32_t source = 0; source < 4u; source++) {
+        const auto packedIndex = DmaskComponentIndex(dmask, source);
+        slots[source] = ConstantU32(state, 0u);
+        if (((dmask >> source) & 1u) != 0u) {
+            slots[source] = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), slots[source], data, mem.dataBits == 16u ? packedIndex / 2u : packedIndex);
+            if (mem.dataBits == 16u) {
+                if ((packedIndex & 1u) != 0u) {
+                    slots[source] = Binary(state, spv::OpShiftRightLogical, TypeU32(state), slots[source], ConstantU32(state, 16u));
+                }
+                slots[source] = Binary(state, spv::OpBitwiseAnd, TypeU32(state), slots[source], ConstantU32(state, 0xffffu));
+            }
+        }
+        selectors[source] = RuntimeImageSwizzle(state, mem.resource, source);
+    }
+    std::array<std::uint32_t, 4> channels{};
     for (std::uint32_t component = 0; component < 4u; component++) {
-        auto raw = ConstantU32(state, 0);
+        channels[component] = ConstantU32(state, 0u);
         for (std::uint32_t reverse = 4u; reverse != 0u; --reverse) {
             const auto source = reverse - 1u;
-            const auto packedIndex = DmaskComponentIndex(dmask, source);
-            auto candidate = ConstantU32(state, 0u);
-            if (((dmask >> source) & 1u) != 0u) {
-                candidate = state.module.AllocateId();
-                state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), candidate, data, mem.dataBits == 16u ? packedIndex / 2u : packedIndex);
-            }
-            if (mem.dataBits == 16u && ((dmask >> source) & 1u) != 0u) {
-                if ((packedIndex & 1u) != 0u) {
-                    candidate = Binary(state, spv::OpShiftRightLogical, TypeU32(state), candidate, ConstantU32(state, 16u));
-                }
-                candidate = Binary(state, spv::OpBitwiseAnd, TypeU32(state), candidate, ConstantU32(state, 0xffffu));
-            }
-            raw = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), RuntimeImageSwizzle(state, mem.resource, source), ConstantU32(state, component + 4u)), candidate, raw);
+            channels[component] = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), selectors[source], ConstantU32(state, component + 4u)), slots[source], channels[component]);
         }
+    }
+    if (mem.dataBits != 16u) {
+        channels = MeasuredStoreChannels(state, StoreChannelClassValue(state, access), selectors, slots, channels);
+    }
+    for (std::uint32_t component = 0; component < 4u; component++) {
+        const auto raw = channels[component];
         values[component] = integer ? raw : mem.dataBits == 16u ? EmitF16BitsToF32(state, raw) : Unary(state, spv::OpBitcast, TypeF32(state), raw);
         if (float16 && component < storageFormat.componentCount && mem.dataBits != 16u) {
             values[component] = EmitFormatStoreComponent(state, storageFormat, component, values[component]);
