@@ -51,7 +51,7 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
 #include <unistd.h>
 #endif
 
@@ -4890,7 +4890,7 @@ bool StorageTexture::pendingUnitInside(std::uint64_t address, std::size_t bytes)
 
 namespace {
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
 std::atomic<bool> labelTrapsSet{false};
 
 std::uint64_t TrapPage() {
@@ -4995,7 +4995,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
                 ++it;
             }
         }
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
         if (!flush.empty() && labelTrapsSet.load(std::memory_order_relaxed)) {
             const auto selected = flush.size();
             for (auto it = pending.textures.begin(); it != pending.textures.end();) {
@@ -5509,7 +5509,7 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
     {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
         const bool trap = LabelTrapsEnabled();
         if (trap) labelTrapsSet.store(true, std::memory_order_relaxed);
         const auto page = TrapPage();
@@ -5523,7 +5523,7 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
 #endif
         for (const auto* texture : pending.textures) {
             if (texture->descriptor.tileMode != TextureTileMode::kLinear && texture->guestBytes > SmallStoreBytes) continue;
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
             if (trap && !sharesPage(texture) && (texture->readTrapped.load(std::memory_order_acquire) || !DirectMemoryAliased_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes))) && GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes))) {
                 texture->readTrapped.store(true, std::memory_order_release);
                 continue;
@@ -6945,7 +6945,7 @@ std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vec
 }
 
 void StorageTexture::releaseReadTraps(bool sharingPages) {
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
     if (!labelTrapsSet.load(std::memory_order_relaxed)) return;
     const auto release = [](const StorageTexture* texture) {
         if (texture->readTrapped.exchange(false, std::memory_order_acq_rel)) GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes));
@@ -6969,7 +6969,7 @@ void StorageTexture::releaseReadTraps(bool sharingPages) {
 }
 
 void StorageTexture::storeTrappedOverlaps(const char* reason) {
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
     if (!labelTrapsSet.load(std::memory_order_relaxed)) return;
     std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
     {
