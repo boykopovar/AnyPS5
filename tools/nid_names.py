@@ -73,7 +73,10 @@ def load_db(path):
             return db
         finally:
             temporary.unlink(missing_ok=True)
-    return read_db(path)
+    db = read_db(path)
+    if not any(re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) for nid in db):
+        raise ValueError(f"{path}: database contains no valid NID records")
+    return db
 
 
 def source_files(root):

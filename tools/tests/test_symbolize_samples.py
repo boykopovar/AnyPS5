@@ -1,6 +1,7 @@
 import contextlib
 import errno
 import io
+import json
 import os
 import subprocess
 import struct
@@ -375,6 +376,110 @@ class SymbolizeSamplesTests(unittest.TestCase):
         path.write_bytes(data)
         with self.assertRaisesRegex(ValueError, "COFF auxiliary"):
             symbolize_samples.PeModule(path)
+
+    def test_coff_symbols_cross_section_contamination_omits_out_of_bounds_symbols(self):
+        path = self.libs / "two_code.prx"
+        build_pe(path, second_code=True)
+        data = bytearray(path.read_bytes())
+        struct.pack_into("<I", data, 0x800 + 2 * 18 + 8, 0x1841)
+        path.write_bytes(data)
+        module = symbolize_samples.PeModule(path)
+        self.assertEqual(module.name(0x2850), "late_fn")
+        self.assertIsNone(module.name(0x1010))
+        self.assertEqual(module.name(0x1045), "AgcDriver_long_function_name")
+        self.assertNotIn("short", module.names)
+        inventory_tool = Path(__file__).resolve().parents[1] / "pe_symbol_inventory.py"
+        inventory_proc = subprocess.run([sys.executable, str(inventory_tool), str(path)],
+                                        capture_output=True, text=True, timeout=5)
+        self.assertEqual(inventory_proc.returncode, 0, inventory_proc.stderr)
+        inventory_data = json.loads(inventory_proc.stdout)
+        section1_symbols = inventory_data["code"][0]["symbols"]
+        section2_symbols = inventory_data["code"][1]["symbols"]
+        self.assertEqual([s["name"] for s in section1_symbols],
+                         ["AgcDriver_long_function_name", "static_f"])
+        self.assertEqual([s["name"] for s in section2_symbols], ["late_fn"])
+        samples = self.root / "cross_section_samples.txt"
+        samples.write_text(f"# module two_code.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\ntwo_code.prx+0x2850 10\n",
+                           encoding="utf-8")
+        out = self.root / "cross_section_out.txt"
+        cli_proc = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
+                                   "--libs", str(self.libs), "--out", str(out)],
+                                  capture_output=True, text=True, timeout=5)
+        self.assertEqual(cli_proc.returncode, 0, cli_proc.stderr)
+        self.assertEqual(out.read_text(encoding="utf-8"), "two_code.prx!late_fn 10\n")
+
+    def test_coff_symbols_equal_to_section_size_omitted_without_labeling_next_section(self):
+        path = self.libs / "boundary.prx"
+        build_pe(path, second_code=True)
+        data = bytearray(path.read_bytes())
+        struct.pack_into("<I", data, 0x800 + 2 * 18 + 8, 0x100)
+        sections = 0x58 + 240
+        struct.pack_into("<I", data, sections + 40 + 12, 0x1100)
+        struct.pack_into("<I", data, sections + 40 + 36, 0x60000020)
+        path.write_bytes(data)
+        module = symbolize_samples.PeModule(path)
+        self.assertNotIn("short", module.names)
+        self.assertIsNone(module.name(0x1100))
+        self.assertEqual(module.name(0x2840), "late_fn")
+
+    def test_coff_symbols_large_offsets_and_overflow_are_omitted(self):
+        path = self.libs / "overflow.prx"
+        build_pe(path)
+        data = bytearray(path.read_bytes())
+        for bad_value in (0x101, 0x1000, 0x80000000, 0xFFFFFFFF):
+            with self.subTest(value=bad_value):
+                struct.pack_into("<I", data, 0x800 + 2 * 18 + 8, bad_value)
+                path.write_bytes(data)
+                module = symbolize_samples.PeModule(path)
+                self.assertNotIn("short", module.names)
+                self.assertIsNone(module.name(0x1010))
+                self.assertEqual(module.name(0x1045), "AgcDriver_long_function_name")
+                for start, end, addresses, _ in module.code:
+                    for addr in addresses:
+                        self.assertGreaterEqual(addr, start)
+                        self.assertLess(addr, end)
+                        self.assertLess(addr, 0x100000000)
+
+    def test_coff_symbols_zero_and_last_in_range_offsets(self):
+        path = self.libs / "edge_offsets.prx"
+        build_pe(path)
+        data = bytearray(path.read_bytes())
+        struct.pack_into("<I", data, 0x800 + 2 * 18 + 8, 0)
+        path.write_bytes(data)
+        module = symbolize_samples.PeModule(path)
+        self.assertEqual(module.name(0x1000), "short")
+
+        struct.pack_into("<I", data, 0x800 + 2 * 18 + 8, 0xFF)
+        path.write_bytes(data)
+        module = symbolize_samples.PeModule(path)
+        self.assertEqual(module.name(0x10FF), "short")
+
+    def test_coff_symbols_in_unbacked_virtual_tail_are_retained(self):
+        path = self.libs / "bss_tail.prx"
+        build_pe(path)
+        data = bytearray(path.read_bytes())
+        sections = 0x58 + 240
+        struct.pack_into("<I", data, sections + 8, 0x200)
+        struct.pack_into("<I", data, 0x800 + 2 * 18 + 8, 0x150)
+        path.write_bytes(data)
+        module = symbolize_samples.PeModule(path)
+        self.assertIn("short", module.names)
+        self.assertEqual(module.name(0x1150), "short")
+
+    def test_coff_symbols_noncode_and_undefined_or_absolute_records_unchanged(self):
+        path = self.libs / "special_symbols.prx"
+        build_pe(path)
+        data = bytearray(path.read_bytes())
+        struct.pack_into("<h", data, 0x800 + 2 * 18 + 12, 0)
+        path.write_bytes(data)
+        module = symbolize_samples.PeModule(path)
+        self.assertNotIn("short", module.names)
+
+        struct.pack_into("<h", data, 0x800 + 2 * 18 + 12, -1)
+        path.write_bytes(data)
+        module = symbolize_samples.PeModule(path)
+        self.assertNotIn("short", module.names)
+        self.assertNotIn("data_obj", module.names)
 
     def test_export_table_names_a_module_without_symbols(self):
         module = symbolize_samples.PeModule(self.libs / "libwinpthread-1.dll")

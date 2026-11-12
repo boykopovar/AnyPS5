@@ -200,6 +200,37 @@ void Destruction() {
     Require(borrowed[0] == 9 && borrowed[1] == 8 && borrowed[2] == 7 && allocations.empty());
 }
 
+LibreSsl3X509 CertificateWith(LibreSsl3X509CertInfo& info) {
+    LibreSsl3X509 certificate;
+    std::memset(&certificate, 0xA5, sizeof(certificate));
+    certificate.certInfo = &info;
+    return certificate;
+}
+
+void X509Versions() {
+    Require(X509_set_version_nid_postfix(nullptr, 1) == 0);
+    LibreSsl3X509CertInfo info{};
+    auto certificate = CertificateWith(info);
+    for (std::int64_t version : {std::int64_t{-1}, std::int64_t{3}}) {
+        Require(X509_set_version_nid_postfix(&certificate, version) == 0);
+        Require(info.version == nullptr && info.encModified == 0);
+    }
+    Require(X509_set_version_nid_postfix(&certificate, 2) == 1);
+    Require(info.version != nullptr && info.version->type == 2);
+    Require(info.encModified == 1);
+    Require(X509_get_version_nid_postfix(&certificate) == 2);
+    auto* allocated = info.version;
+    info.encModified = 0;
+    Require(X509_set_version_nid_postfix(&certificate, 3) == 0);
+    Require(info.encModified == 0 && X509_get_version_nid_postfix(&certificate) == 2);
+    Require(X509_set_version_nid_postfix(&certificate, 1) == 1);
+    Require(info.version == allocated && info.encModified == 1);
+    Require(X509_get_version_nid_postfix(&certificate) == 1);
+    Require(X509_set_version_nid_postfix(&certificate, 0) == 1);
+    Require(info.version == allocated && X509_get_version_nid_postfix(&certificate) == 0);
+    ASN1_INTEGER_free_nid_postfix(info.version);
+}
+
 } // namespace
 
 int main() {
@@ -212,6 +243,7 @@ int main() {
     Integers();
     Compare();
     Destruction();
+    X509Versions();
     Require(allocations.empty());
     std::puts("LibreSSL3 ASN.1 value tests passed");
 }
