@@ -2409,10 +2409,6 @@ int APS5_VABI _ZN7WebCore11DisplayList11SetLineJoinD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore20TransformationMatrix16applyPerspectiveEd() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore9JSDOMRectC2EPN3JSC9StructureERNS_17JSDOMGlobalObjectEON3WTF3RefINS_7DOMRectENS6_13DumbPtrTraitsIS8_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
