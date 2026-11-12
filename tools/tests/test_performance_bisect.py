@@ -542,3 +542,23 @@ class FocusedInputEdgeTests(unittest.TestCase):
             path.write_text("[]", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "JSON object"):
                 performance_bisect.load_recipe(path)
+
+    def write_summary(self, root, summary):
+        path = root / "summary.json"
+        path.write_text(json.dumps(summary), encoding="utf-8")
+        return path
+
+    def sample_fixture(self):
+        return {"build": {"commit": GOOD[:12], "dirty": False},
+                "machine": {"os": "Linux", "gpu": "GPU", "driver": "Driver", "cpu": "CPU"},
+                "titles": {"PPSA00000": {"name": "Example", "version": "01.00",
+                                         "runs": [{"outcome": "rendering", "fps": 60.0}]}}}
+
+    def test_sample_rejects_dirty_build_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = self.sample_fixture()
+            summary["build"]["dirty"] = True
+            path = self.write_summary(Path(directory), summary)
+            with self.assertRaisesRegex(ValueError, "requested clean commit"):
+                performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
