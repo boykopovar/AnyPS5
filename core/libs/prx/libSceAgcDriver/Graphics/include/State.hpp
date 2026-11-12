@@ -117,6 +117,8 @@ struct DepthTarget {
     std::uint32_t htileVrsEncoding = 0;
     bool htileDepthOnly = false;
     bool gcn = false;
+    bool depthPartiallyResident = false;
+    bool stencilPartiallyResident = false;
 };
 
 struct State {
@@ -247,8 +249,10 @@ ColorTarget DecodeColorBuffer(const Registers& context, std::uint32_t slot, bool
 struct ReversedBlend {
     VkPipelineColorBlendAttachmentState blend;
     std::uint32_t shaderCode;
+    std::array<float, 4> constants{};
+    std::uint32_t constantMask = 0;
 };
-ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne);
+ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne, const std::array<float, 4>& constants);
 std::size_t CmaskBytes(std::uint32_t width, std::uint32_t height);
 std::uint32_t ColorWriteMask(const Registers& context);
 GuestTextureResource SurfaceForTarget(const ColorTarget& color);

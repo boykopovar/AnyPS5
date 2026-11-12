@@ -70,6 +70,7 @@ void TestDisableState() {
     Require(sceScreenShotDisableNotification() == 0 && sceScreenShotEnableNotification() == 0, "notification toggles");
     Require(sceScreenShotIsDisabled(1, &value) == 0 && value == 0, "positive id 1 is accepted");
     Require(sceScreenShotIsDisabled(2, &value) == 0 && value == 0, "positive id 2 is accepted");
+    Require(sceScreenShotIsDisabled(-2, &value) == 0 && value == 0, "negative id -2 is accepted");
 }
 
 void TestOverlay(bool large) {
@@ -87,6 +88,8 @@ void TestOverlay(bool large) {
     Require(sceScreenShotSetOverlayImage(nullptr, 0, 0) == ErrorArgument, "null path");
     const std::string longPath(1024, 'a');
     Require(sceScreenShotSetOverlayImage(longPath.c_str(), 0, 0) == ErrorArgument, "path of 1024 characters");
+    const std::string nearLimit(1023, 'a');
+    Require(sceScreenShotSetOverlayImage(nearLimit.c_str(), 0, 0) == ErrorOverlayFile, "path of 1023 characters");
     TempPath missing("missing");
     Require(sceScreenShotSetOverlayImage(missing.c_str(), 0, 0) == ErrorOverlayFile, "missing file");
     TempPath directory("directory");

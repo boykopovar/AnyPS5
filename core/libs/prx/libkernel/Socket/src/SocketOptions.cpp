@@ -170,6 +170,11 @@ int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t s
 
 }
 
+int SendBufferSize(SocketOptionState& state, int family, int type) {
+    EnsureBuffers(state, family, type);
+    return state.sendBuffer;
+}
+
 int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, const void* value, std::uint32_t length) {
     const auto handle = static_cast<NativeHandle>(native);
     if (option == GuestAcceptFilter) {
@@ -549,4 +554,23 @@ extern "C" int GuestSocketSetIpv6LevelOption_nid_no_patch(std::uintptr_t native,
 
 extern "C" int GuestSocketGetIpv6LevelOption_nid_no_patch(std::uintptr_t native, bool ipv6, int option, void* value, std::uint32_t* length) {
     return GuestSockets::GetIpv6LevelOption(native, ipv6, option, value, length);
+}
+
+extern "C" int GuestSocketSetLinger_nid_no_patch(std::uintptr_t native, const void* value, std::uint32_t length) {
+    GuestSockets::SocketOptionState state;
+    return GuestSockets::SetSocketLevelOption(native, state, 0, 0, GuestSockets::GuestLinger, value, length);
+}
+
+extern "C" int GuestSocketGetLinger_nid_no_patch(std::uintptr_t native, void* value, std::uint32_t* length) {
+    GuestSockets::SocketOptionState state;
+    return GuestSockets::GetSocketLevelOption(native, state, 0, 0, GuestSockets::GuestLinger, value, length);
+}
+
+extern "C" int GuestSocketSetReuseFlags_nid_no_patch(std::uintptr_t native, int option, int value, int* flags) {
+    if (flags == nullptr || (option != 0x4 && option != 0x200)) throw std::invalid_argument("Invalid socket reuse state");
+    GuestSockets::SocketOptionState state;
+    state.keptFlags = *flags;
+    const int error = GuestSockets::SetSocketLevelOption(native, state, 0, 0, option, &value, sizeof(value));
+    if (error == 0) *flags = state.keptFlags;
+    return error;
 }

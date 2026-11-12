@@ -80,7 +80,8 @@ int APS5_VABI sceNpWebApi2CreateRequest(int user_context_id, const char* api_gro
     (void)method;
     (void)content_parameter;
     if (!request_id) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
-    *request_id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
+    const int64_t created = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(request_id, &created, sizeof(created))) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -252,7 +253,7 @@ int APS5_VABI sceNpWebApi2CreateMultipartRequest(int user_ctx_id, const char* ap
     (void)user_ctx_id;
     if (!api_group || !path || !method) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     const int64_t created = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
-    if (request_id) *request_id = created;
+    if (request_id && !GuestCopyOut_nid_no_patch(request_id, &created, sizeof(created))) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel_web/include/Api.hpp"
+#include "prx/libkernel_sys/include/AdditionalExports.hpp"
 
 extern "C" {
 
@@ -193,19 +194,16 @@ int APS5_VABI __sys_workaround8849_nid_disambig1_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _dup2_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _dup2_nid_disambig1_nid_postfix(int from, int to) {
+    return _dup2_nid_postfix(from, to);
 }
 
-int APS5_VABI _execve_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _execve_nid_disambig1_nid_postfix(const char* path, char* const* argv, char* const* envp) {
+    return _execve_nid_postfix(path, argv, envp);
 }
 
-int APS5_VABI _execvpe_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _execvpe_nid_disambig1_nid_postfix(const char* name, char* const* argv, char* const* envp) {
+    return _execvpe_nid_postfix(name, argv, envp);
 }
 
 int APS5_VABI _wait4_nid_disambig1_nid_postfix() {

@@ -78,6 +78,33 @@ int main() {
         passed = false;
     }
 
+    KernelEvent signedFlip{};
+    signedFlip.ident = FlipEvent;
+    signedFlip.filter = EVFILT_VIDEO_OUT;
+    signedFlip.data = static_cast<std::int64_t>(0x800000001234f000ULL);
+    data = Unwritten;
+    passed = Returns("sceVideoOutGetEventCount of signed flip event", [&] { return sceVideoOutGetEventCount(&signedFlip); }, 15) && passed;
+    passed = Returns("sceVideoOutGetEventData of signed flip event", [&] { return sceVideoOutGetEventData(&signedFlip, &data); }, 0) && passed;
+    if (data != static_cast<std::int64_t>(0xffff800000001234ULL)) {
+        std::fprintf(stderr, "sceVideoOutGetEventData sign extension failed: 0x%llx\n", static_cast<unsigned long long>(data));
+        passed = false;
+    }
+
+    for (int validId : {1, 2, 8, 16}) {
+        KernelEvent ev{};
+        ev.ident = validId;
+        ev.filter = EVFILT_VIDEO_OUT;
+        ev.data = static_cast<std::int64_t>(0x800000001234a000ULL);
+        passed = Returns("sceVideoOutGetEventId of valid id " + std::to_string(validId), [&] { return sceVideoOutGetEventId(&ev); }, validId) && passed;
+        passed = Returns("sceVideoOutGetEventCount of valid id " + std::to_string(validId), [&] { return sceVideoOutGetEventCount(&ev); }, 10) && passed;
+        data = Unwritten;
+        passed = Returns("sceVideoOutGetEventData of valid id " + std::to_string(validId), [&] { return sceVideoOutGetEventData(&ev, &data); }, 0) && passed;
+        if (data != static_cast<std::int64_t>(0x0000800000001234ULL)) {
+            std::fprintf(stderr, "sceVideoOutGetEventData unsigned mode failed for %d: 0x%llx\n", validId, static_cast<unsigned long long>(data));
+            passed = false;
+        }
+    }
+
     passed = Throws("sceVideoOutGetEventId of a null event", [] { return sceVideoOutGetEventId(nullptr); }) && passed;
     passed = Throws("sceVideoOutGetEventData of a null event", [&] { return sceVideoOutGetEventData(nullptr, &data); }) && passed;
     passed = Throws("sceVideoOutGetEventData with a null data pointer", [&] { return sceVideoOutGetEventData(&flip, nullptr); }) && passed;

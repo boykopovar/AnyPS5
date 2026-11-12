@@ -906,6 +906,11 @@ std::uint32_t lastUnixInode = 0;
 bool PairPeerGone(const Socket& socket) {
     return socket.family == GuestUnix && socket.peer.expired();
 }
+bool RecordOverSendBuffer(Socket& socket, std::uint64_t length) {
+    if (socket.family != GuestUnix || (socket.type != 2 && socket.type != 5) || socket.peer.expired()) return false;
+    std::lock_guard lock(socket.modeMutex);
+    return !socket.sendShut && length > static_cast<std::uint64_t>(GuestSockets::SendBufferSize(socket.options, socket.family, socket.type));
+}
 int SetNonBlocking(Socket& socket) {
 #ifdef _WIN32
     unsigned long value = 1;
@@ -1711,12 +1716,30 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     if (socket->type == 2) socket->localAddressCleared = false;
     return 0;
 }
+#ifdef _WIN32
+bool BindUnboundStream(Socket& socket) {
+    if (socket.family != 2 && socket.family != 28) return false;
+    sockaddr_storage name{};
+    socklen_t size = sizeof(name);
+    if (::getsockname(socket.value, reinterpret_cast<sockaddr*>(&name), &size) == 0 || ::WSAGetLastError() != WSAEINVAL) return false;
+    sockaddr_storage wildcard{};
+    wildcard.ss_family = socket.family == 2 ? AF_INET : AF_INET6;
+    const socklen_t wildcardSize = socket.family == 2 ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
+    return ::bind(socket.value, reinterpret_cast<sockaddr*>(&wildcard), wildcardSize) == 0;
+}
+#endif
 int APS5_VABI listen_nid_postfix(int descriptor, int backlog) {
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (socket->type != 1) return Fail(45);
     if (::listen(socket->value, backlog) == 0) return 0;
-    const int error = NativeError();
+    int error = NativeError();
+#ifdef _WIN32
+    if (error == 22 && BindUnboundStream(*socket)) {
+        if (::listen(socket->value, backlog) == 0) return 0;
+        error = NativeError();
+    }
+#endif
     return Fail(error == 56 ? 22 : error);
 }
 int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
@@ -1764,11 +1787,20 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
     }
 }
 std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std::uint64_t length, int flags) {
+    if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
+        if ((flags & ~GuestSendFlags) != 0) return Fail(45);
+        if (length > INT_MAX) return Fail(40);
+        if (!buffer && length) return Fail(14);
+        int error = 0;
+        const auto sent = forwards->sendto(descriptor, buffer, length, flags, nullptr, 0, &error);
+        return error == 0 ? sent : Fail(error);
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
     if (SendBeforeConnect(*socket)) return Fail(57);
+    if (RecordOverSendBuffer(*socket, length)) return Fail(40);
     if (!buffer && length) return Fail(14);
 #ifdef _WIN32
     if (socket->type == 1 && PairPeerGone(*socket)) return Fail(32);
@@ -1778,6 +1810,14 @@ std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std:
     return result < 0 ? Fail(SendError(socket->type)) : result;
 }
 std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint64_t length, int flags) {
+    if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
+        if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
+        if (length > INT_MAX) return Fail(40);
+        if (!buffer && length) return Fail(14);
+        int error = 0;
+        const auto received = forwards->recvfrom(descriptor, buffer, length, flags, nullptr, nullptr, &error);
+        return error == 0 ? received : Fail(error);
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
@@ -1992,6 +2032,7 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
     if (!address && SendBeforeConnect(*socket)) return Fail(57);
+    if (RecordOverSendBuffer(*socket, length)) return Fail(40);
     if (!buffer && length) return Fail(14);
     bool sendShut = false;
     if (address && socket->family == GuestUnix) {

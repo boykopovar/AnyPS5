@@ -143,6 +143,7 @@ void testRoundTrip(const std::filesystem::path& directory) {
 
     const FrameCaptureReader reader(directory);
     check(!reader.Truncated(), "a finished capture reads as truncated");
+    check(reader.Version() == 2, "a capture this build wrote reads as calls format " + std::to_string(reader.Version()) + ", not 2");
     check(reader.Header() == "{\"magic\":\"aps5-frame-capture 1\"}\n", "header does not round-trip");
     check(reader.Calls().size() == calls.size(), "call count does not round-trip");
     for (std::size_t index = 0; index < calls.size(); ++index) check(sameCall(reader.Calls()[index], calls[index]), "call " + std::to_string(index) + " does not round-trip");
@@ -184,6 +185,30 @@ void testTruncated(const std::filesystem::path& source, const std::filesystem::p
     check(reader.Truncated(), "a cut capture does not read as truncated");
     check(reader.Calls().size() == calls.size() - 1, "a cut call record is not dropped");
     check(reader.Chunks().back().kind != FrameMemoryKind::Delta, "a cut memory chunk is not dropped");
+}
+
+void testVersionOne(const std::filesystem::path& source, const std::filesystem::path& directory) {
+    std::filesystem::remove_all(directory);
+    std::filesystem::copy(source, directory, std::filesystem::copy_options::recursive);
+    constexpr std::string_view VersionOne = "aps5-frame-calls 1\n";
+    {
+        std::fstream file(directory / FrameCaptureWriter::CallsName, std::ios::binary | std::ios::in | std::ios::out);
+        file.write(VersionOne.data(), static_cast<std::streamsize>(VersionOne.size()));
+        check(file.good(), "cannot write the calls format 1 magic");
+    }
+    std::uint32_t version = 0;
+    std::vector<FrameCall> readBack;
+    try {
+        const FrameCaptureReader reader(directory);
+        version = reader.Version();
+        readBack = reader.Calls();
+    } catch (const std::runtime_error& error) {
+        check(false, std::string("a calls format 1 capture does not read: ") + error.what());
+    }
+    check(version == 1, "a calls format 1 capture reads as format " + std::to_string(version));
+    const auto calls = sampleCalls();
+    check(readBack.size() == calls.size(), "a calls format 1 capture reads " + std::to_string(readBack.size()) + " calls, not " + std::to_string(calls.size()));
+    for (std::size_t index = 0; index < calls.size(); ++index) check(sameCall(readBack[index], calls[index]), "call " + std::to_string(index) + " of a calls format 1 capture does not round-trip");
 }
 
 void testCorrupt(const std::filesystem::path& source, const std::filesystem::path& directory) {
@@ -267,6 +292,7 @@ int main() {
     testReadAroundRanges();
     testRoundTrip(root / "capture");
     testTruncated(root / "capture", root / "truncated");
+    testVersionOne(root / "capture", root / "version-one");
     testCorrupt(root / "capture", root / "corrupt");
     testWriter(root / "writer");
     std::filesystem::remove_all(root);

@@ -422,6 +422,25 @@ void testWheelPress() {
 }
 
 
+void testWheelTilt() {
+    const auto left = static_cast<std::uint32_t>(Pad::PadButton::Left);
+    const auto right = static_cast<std::uint32_t>(Pad::PadButton::Right);
+    const auto up = static_cast<std::uint32_t>(Pad::PadButton::Up);
+    const auto unbound = Simulate(defaults(), {At(0.0, PadSimulation::TiltEvent(1))}, 1.0, 40.0);
+    check((unbound[20].state.buttons & (left | right | up)) == 0, "a wheel tilt presses nothing without a binding");
+    auto configuration = defaults();
+    configuration.bindings.push_back({SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, Pad::InputControl::Button, Pad::PadButton::Left, 0, -1});
+    configuration.bindings.push_back({SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, Pad::InputControl::Button, Pad::PadButton::Right, 0, 1});
+    const auto tilted = Simulate(configuration, {At(0.0, PadSimulation::TiltEvent(1)), At(40.0, PadSimulation::WheelEvent(1))}, 1.0, 200.0);
+    check((tilted[20].state.buttons & right) != 0 && (tilted[20].state.buttons & (left | up)) == 0, "a right tilt presses only Right");
+    check((tilted[60].state.buttons & (right | up)) == (right | up), "a vertical wheel step leaves the tilt held");
+    check((tilted[100].state.buttons & right) == 0 && (tilted[100].state.buttons & up) != 0, "a tilt press releases after its duration");
+    const auto reversed = Simulate(configuration, {At(0.0, PadSimulation::TiltEvent(1)), At(20.0, PadSimulation::TiltEvent(-1))}, 1.0, 60.0);
+    check((reversed[40].state.buttons & left) != 0 && (reversed[40].state.buttons & right) == 0, "tilting the other way lets go of the first direction");
+    const auto flipped = Simulate(configuration, {At(0.0, PadSimulation::TiltEvent(1, true))}, 1.0, 40.0);
+    check((flipped[20].state.buttons & left) != 0 && (flipped[20].state.buttons & right) == 0, "a flipped wheel tilts the other way");
+}
+
 void testWheelFocusLoss() {
     const auto samples = Simulate(defaults(), {At(0.0, PadSimulation::WheelEvent(1)), At(10.0, KeyEvent(SDL_SCANCODE_W, true)), At(20.0, PadSimulation::FocusLostEvent())}, 1.0, 40.0);
     check(samples[15].state.sticks[1] == 0, "a held key tilts the stick");
@@ -693,6 +712,7 @@ int main() {
             {"trigger ramp", testTriggerRamp},
             {"ramp keeps advance reporting", testRampKeepsAdvanceReporting},
             {"wheel press", testWheelPress},
+            {"wheel tilt", testWheelTilt},
             {"wheel and keys on focus loss", testWheelFocusLoss},
             {"focus loss releases the mouse", testFocusLossReleasesMouse},
             {"shake", testShake},

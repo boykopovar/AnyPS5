@@ -287,6 +287,7 @@ int main(int argc, char** argv) {
     Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(add)) == 0);
     Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
     Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
+    Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
     int local = 0;
     Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(&local) == -1);
     Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(nullptr) == -1);

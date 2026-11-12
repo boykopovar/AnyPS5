@@ -1,4 +1,5 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -98,8 +99,8 @@ int APS5_VABI __sys_get_proc_type_info_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __sys_is_development_mode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI __sys_is_development_mode_nid_postfix() {
+    return 0;
 }
 
 int APS5_VABI __sys_kqueueex_nid_postfix() {
@@ -216,12 +217,12 @@ int APS5_VABI __sys_workaround8849_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable) {
+    Ubsan::ReportCfiCheckFail(data, value, validVtable, true);
 }
 
-int APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable) {
+    Ubsan::ReportCfiCheckFail(data, value, validVtable, false);
 }
 
 int APS5_VABI _dup2_nid_postfix(int from, int to) {
@@ -456,8 +457,8 @@ int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* co
     return fail(accessFailure ? GuestEacces : GuestEnoent);
 }
 
-int APS5_VABI _wait4_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _wait4_nid_postfix(int pid, int* status, int options, void* usage) {
+    return wait4_nid_postfix(pid, status, options, usage);
 }
 
 int APS5_VABI adjtime_nid_postfix(const KernelTimeval* delta, KernelTimeval* oldDelta) {
@@ -1634,9 +1635,6 @@ int APS5_VABI sceKernelAddFGCInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceKernelCreateUuidV1() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI sceKernelCreateUuidV7() {
     NotImplemented_nid_no_patch(__func__);
@@ -1708,8 +1706,9 @@ int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid(int pid, std::int32_t* version) {
+    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return SCE_KERNEL_ERROR_ESRCH;
+    return sceKernelGetProsperoCompiledSdkVersion(version);
 }
 
 int APS5_VABI sceKernelGetPs4CompiledSdkVersion(std::int32_t* version) {
@@ -1722,8 +1721,9 @@ int APS5_VABI sceKernelGetPs4CompiledSdkVersion(std::int32_t* version) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid(int pid, std::int32_t* version) {
+    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return SCE_KERNEL_ERROR_ESRCH;
+    return sceKernelGetPs4CompiledSdkVersion(version);
 }
 
 int APS5_VABI sceKernelGetResidentFmemCount2() {
@@ -1899,10 +1899,6 @@ int APS5_VABI sceKernelSetAppInfoByAppId() {
 }
 
 int APS5_VABI sceKernelSetUpdatemodeDirect() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceKernelTitleWorkaroundIsEnabled2() {
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -93,12 +93,25 @@ std::int32_t APS5_VABI sceZlibWaitForDone(std::uint64_t* requestId, std::uint32_
     std::unique_lock lock(serviceMutex);
     if (!initialized) return NOT_INITIALIZED;
     if (!requestId) return INVALID_ARGUMENT;
+    std::uint32_t timeoutMicros = 0;
+    if (timeout) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&timeoutMicros, timeout, sizeof(timeoutMicros));
+        errno = savedErrno;
+        if (!copied) return INVALID_ARGUMENT;
+    }
     const std::uint64_t waitSession = session;
     const auto finished = [waitSession] { return !completed.empty() || session != waitSession; };
     if (!timeout) completion.Wait(lock, finished);
-    else if (!completion.WaitUntil(lock, TimedWait::DeadlineNanos(*timeout), finished)) return TIMED_OUT;
+    else if (!completion.WaitUntil(lock, TimedWait::DeadlineNanos(timeoutMicros), finished)) return TIMED_OUT;
     if (session != waitSession) throw std::runtime_error("sceZlibWaitForDone: finalization during a wait semantics unknown");
-    *requestId = completed.front();
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(requestId, &completed.front(), sizeof(*requestId));
+    errno = savedErrno;
+    if (!copied) {
+        completion.NotifyOne();
+        return INVALID_ARGUMENT;
+    }
     completed.pop_front();
     return 0;
 }

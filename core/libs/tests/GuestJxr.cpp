@@ -566,6 +566,23 @@ int main() {
     try { PKAlloc_nid_postfix(nullptr, 1); }
     catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
+    std::array<std::uint8_t, 64> object{};
+    std::array<std::uint8_t, 64> pixels{};
+    std::array<std::uint8_t, 16> rect{};
+    object.fill(0x5A);
+    pixels.fill(0x5A);
+    rect.fill(0x5A);
+    const auto freesBefore = frees;
+    Require(PKFormatConverter_Convert_nid_postfix(object.data(), rect.data(), pixels.data(), 16) == 0);
+    Require(PKFormatConverter_Convert_nid_postfix(nullptr, nullptr, nullptr, 0) == 0);
+    Require(PKImageDecode_SelectFrame_nid_postfix(object.data(), 3) == 0);
+    Require(PKImageEncode_CreateNewFrame_nid_postfix(object.data(), pixels.data(), pixels.size()) == 0);
+    Require(PKImageEncode_CreateNewFrame_nid_postfix(nullptr, nullptr, 0) == 0);
+    Require(PKImageEncode_Terminate_nid_postfix(object.data()) == 0);
+    for (const auto byte : object) Require(byte == 0x5A);
+    for (const auto byte : pixels) Require(byte == 0x5A);
+    for (const auto byte : rect) Require(byte == 0x5A);
+    Require(frees == freesBefore);
     TestTermPostProc();
     TestInitPostProc();
     TestExifMetadata();

@@ -328,6 +328,12 @@ static void CheckPoolStats() {
     Require(sceNetGetMemoryPoolStats(pool, &stats) == 0);
     Require(stats.pool_size == 0x4000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0);
     Require(Failed(sceNetGetMemoryPoolStats(pool, nullptr), 22));
+    errno = 71;
+    Require(Failed(sceNetGetMemoryPoolStats(pool, reinterpret_cast<NetMemoryPoolStats*>(std::uintptr_t{0x10})), 14));
+    Require(errno == 14);
+    errno = 71;
+    Require(sceNetGetMemoryPoolStats(pool, &stats) == 0);
+    Require(errno == 71);
     Require(sceNetPoolDestroy(pool) == 0);
     Require(Failed(sceNetGetMemoryPoolStats(pool, &stats), 9));
 }
@@ -578,7 +584,12 @@ static void CheckInitParam() {
     Require(Failed(sceNetGetRandom(&randomOutput), 200));
     Require(Failed(sceNetInitParam(nullptr), 22));
     Require(Failed(sceNetGetRandom(&randomOutput), 200));
+    errno = 71;
+    Require(Failed(sceNetInitParam(reinterpret_cast<const NetInitializeParameter*>(std::uintptr_t{0x10})), 14));
+    Require(errno == 14);
+    errno = 71;
     Require(sceNetInitParam(initialize) == 0);
+    Require(errno == 71);
     Require(sceNetGetRandom(&randomOutput) == 0);
     Require(Failed(sceNetInitParam(initialize), 16));
     Require(Failed(sceNetInitParam(nullptr), 16));
@@ -1483,6 +1494,29 @@ static void CheckAddressText(int family, const char* text) {
     Require(sceNetInetNtop(family, address.data(), nullptr, output.size()) == nullptr && *sceNetErrnoLoc() == 22);
 }
 
+static void CheckInetNtopGuestPointers() {
+    const auto* unreadable = reinterpret_cast<const void*>(std::uintptr_t{0x10});
+    auto* unwritable = reinterpret_cast<char*>(std::uintptr_t{0x10});
+    for (const int family : {2, 28}) {
+        std::array<std::uint8_t, 16> address{};
+        address[family == 2 ? 0 : 15] = 1;
+        std::array<char, 64> output{};
+        output.fill('x');
+
+        *sceNetErrnoLoc() = 123;
+        Require(sceNetInetNtop(family, unreadable, output.data(), 0) == nullptr && *sceNetErrnoLoc() == 14);
+        Require(std::all_of(output.begin(), output.end(), [](char value) { return value == 'x'; }));
+
+        *sceNetErrnoLoc() = 123;
+        Require(sceNetInetNtop(family, address.data(), unwritable, 0) == nullptr && *sceNetErrnoLoc() == 28);
+        *sceNetErrnoLoc() = 123;
+        Require(sceNetInetNtop(family, address.data(), unwritable, output.size()) == nullptr && *sceNetErrnoLoc() == 14);
+    }
+
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetNtop(99, unreadable, unwritable, 0) == nullptr && *sceNetErrnoLoc() == 47);
+}
+
 static void CheckInetPtonRejects(int family, const char* text) {
     std::array<std::uint8_t, 16> address{};
     address.fill(0xaa);
@@ -2259,6 +2293,7 @@ static std::array<std::uint8_t, 0xa0> RequireSockInfo(int socket, int type, int 
     std::array<std::uint8_t, 0xa0> expected{};
     std::memcpy(expected.data() + 0x24, &socket, sizeof(socket));
     expected[0x28] = static_cast<std::uint8_t>(type);
+    expected[0x2a] = 0x10;
     std::memcpy(expected.data() + 0x34, local.data() + 4, 4);
     std::memcpy(expected.data() + 0x38, remote.data() + 4, 4);
     std::memcpy(expected.data() + 0x3c, local.data() + 2, 2);
@@ -2371,6 +2406,7 @@ static void CheckSockInfo() {
     std::array<std::uint8_t, 0xa0> kernelExpected{};
     std::memcpy(kernelExpected.data() + 0x24, &kernel, sizeof(kernel));
     kernelExpected[0x28] = 2;
+    kernelExpected[0x2a] = 0x10;
     std::memcpy(kernelExpected.data() + 0x34, kernelAddress.data() + 4, 4);
     std::memcpy(kernelExpected.data() + 0x3c, kernelAddress.data() + 2, 2);
     kernelExpected[0x48] = 1;
@@ -2673,6 +2709,7 @@ int main() {
     CheckRejectedAddressText("::01.2.3.4");
     CheckRejectedAddressText("::ffff:01.2.3.4");
     CheckAddressText(28, "1234:5678:9abc:def0:1234:5678:9abc:def0");
+    CheckInetNtopGuestPointers();
     CheckInetPtonWhitespace();
     CheckInetPtonExParts();
     CheckInetPtonEx();
@@ -2734,6 +2771,9 @@ int main() {
     std::uint32_t address_size = address.size();
     Require(sceNetGetsockname(listener, address.data(), &address_size) == 0 && address_size == 16);
     Require(address[2] != 0 || address[3] != 0);
+    Require(Failed(sceNetConnect(listener, address.data(), address.size()), 45));
+    const std::array<std::uint8_t, 28> other_family{28, 28};
+    Require(Failed(sceNetConnect(listener, other_family.data(), other_family.size()), 45));
 
     const int client = sceNetSocket(nullptr, 2, 1, 6);
     Require(client >= 0);
@@ -3154,6 +3194,23 @@ int main() {
             Require(dns == before);
         }
         Require(Failed(sceNetGetDnsInfo(nullptr, 0), 22));
+        Require(errno == 22);
+        errno = 71;
+        Require(Failed(sceNetGetDnsInfo(reinterpret_cast<NetDnsInfo*>(std::uintptr_t{0x10}), 0), 14));
+        Require(errno == 14);
+        NetDnsInfo validDns{};
+        errno = 71;
+        Require(sceNetGetDnsInfo(&validDns, 0) >= 0);
+        Require(errno == 71);
+        Require(Failed(sceNetGetDns6Info(nullptr, 0), 22));
+        Require(errno == 22);
+        errno = 71;
+        Require(Failed(sceNetGetDns6Info(reinterpret_cast<NetDns6Info*>(std::uintptr_t{0x10}), 0), 14));
+        Require(errno == 14);
+        NetDns6Info validDns6{};
+        errno = 71;
+        Require(sceNetGetDns6Info(&validDns6, 0) >= 0);
+        Require(errno == 71);
     }
     NetCtlIfStat first{};
     first.device = 7;

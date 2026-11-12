@@ -1,5 +1,9 @@
+#ifndef _WIN32
+#include "prx/libc/include/general/LogMacros.hpp"
+#endif
 #include "prx/libSceNotification/include/Api.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -18,6 +22,15 @@ std::uint8_t* Pointer(std::string& value) {
     return reinterpret_cast<std::uint8_t*>(value.data());
 }
 
+#ifndef _WIN32
+std::string BannerLog;
+
+int CaptureBannerLine(std::FILE*, const char* text, std::size_t length) {
+    BannerLog.append(text, length);
+    return 0;
+}
+#endif
+
 void TestSend() {
     std::string message = "Hello from the guest test";
     Require(sceNotificationSend(0, 0, Pointer(message)) == 0, "send a notification");
@@ -31,6 +44,10 @@ void TestSend() {
     std::string empty;
     Require(sceNotificationSend(0, 0, Pointer(empty)) == Notification::InvalidMessage, "send an empty message");
     Require(sceNotificationSend(0, 0, nullptr) == Notification::InvalidMessage, "send a null message");
+    errno = 71;
+    Require(sceNotificationSend(0, 0, reinterpret_cast<std::uint8_t*>(0x10)) == Notification::InvalidMessage,
+            "send an unreadable message");
+    Require(errno == 71, "unreadable message changed host errno");
 }
 
 void TestSendById() {
@@ -57,6 +74,12 @@ void TestSendById() {
             "send by id with a null id");
     Require(sceNotificationSendById(0, 0, Pointer(id), nullptr) == Notification::InvalidMessage,
             "send by id with a null body");
+    errno = 71;
+    Require(sceNotificationSendById(0, 0, reinterpret_cast<std::uint8_t*>(0x10), Pointer(json)) == Notification::InvalidMessage,
+            "send by id with an unreadable id");
+    Require(sceNotificationSendById(0, 0, Pointer(id), reinterpret_cast<std::uint8_t*>(0x10)) == Notification::InvalidMessage,
+            "send by id with an unreadable body");
+    Require(errno == 71, "unreadable id or body changed host errno");
 }
 
 void TestBanner() {
@@ -64,6 +87,16 @@ void TestBanner() {
     Require(sceNotificationShowPsButtonPersistentBanner(Pointer(config)) == 0, "show the persistent banner");
     Require(sceNotificationShowPsButtonPersistentBanner(nullptr) == 0,
             "show the persistent banner with a null configuration");
+
+#ifndef _WIN32
+    BannerLog.clear();
+    LogSink().store(&CaptureBannerLine, std::memory_order_release);
+    sceNotificationShowPsButtonPersistentBanner(nullptr);
+    sceNotificationShowPsButtonPersistentBanner(Pointer(config));
+    LogSink().store(nullptr, std::memory_order_release);
+    Require(BannerLog.find("banner={}") != std::string::npos, "a null banner configuration logs the default object");
+    Require(BannerLog.find(config) != std::string::npos, "a non-null banner configuration is logged verbatim");
+#endif
 }
 
 void TestHide() {

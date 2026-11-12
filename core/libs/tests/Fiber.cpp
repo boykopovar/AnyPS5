@@ -1,4 +1,5 @@
 #include "prx/libSceFiber/include/Api.hpp"
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -67,6 +68,9 @@ void APS5_VABI FirstEntry(std::uint64_t argOnInitialize, std::uint64_t argOnRun)
     Require(argOnInitialize == 11 && argOnRun == 100, "first fiber arguments");
     FiberObject* self = nullptr;
     Require(sceFiberGetSelf(&self) == 0 && self == g_first, "first fiber self");
+    errno = 71;
+    Require(sceFiberGetSelf(reinterpret_cast<FiberObject**>(0x10)) == FiberErrorNull, "unwritable self pointer");
+    Require(errno == 71, "errno preserved");
     CheckActiveContext(g_first, g_firstContext.size());
     std::uint64_t framePointer = 0;
     Require(sceFiberGetThreadFramePointerAddress(nullptr) == FiberErrorNull, "frame pointer null");
@@ -110,6 +114,12 @@ alignas(16) std::array<unsigned char, 64 * 1024> g_smallArea;
 FiberStorage g_smallStorage;
 
 void APS5_VABI SmallEntry(std::uint64_t, std::uint64_t) {
+    auto* small = reinterpret_cast<FiberObject*>(&g_smallStorage);
+    auto* context = g_smallArea.data() + g_smallArea.size() - SmallContextSize;
+    Require(_sceFiberInitializeImpl_nid_postfix(small, "small", SmallEntry, 0, context, SmallContextSize, nullptr, 0) == FiberErrorState, "a running fiber cannot be initialized over its own stack");
+    FiberInfo info{};
+    info.size = sizeof(info);
+    Require(sceFiberGetInfo(small, &info) == 0 && std::strcmp(info.name, "small") == 0, "a refused initialize keeps the running fiber");
     std::uint64_t received = 0;
     for (;;) sceFiberReturnToThread(0, &received);
 }

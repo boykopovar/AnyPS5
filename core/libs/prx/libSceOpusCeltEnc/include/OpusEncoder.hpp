@@ -174,7 +174,7 @@ private:
     bool acceptedFrame(int rate, int frameSize) const {
         if (frameSize < 0 || rate <= 0) return false;
         for (std::size_t index = 0; index < codes.frameStepCount; ++index)
-            if (frameSize == rate * codes.frameSteps[index] / 400) return true;
+            if (frameSize == static_cast<std::int64_t>(rate) * codes.frameSteps[index] / 400) return true;
         return false;
     }
 

@@ -49,6 +49,7 @@ using namespace AgcDriver::Graphics;
 
 constexpr std::uint32_t Side = 256;
 constexpr std::uint32_t Format32UInt = 20;
+constexpr std::uint32_t FormatBc5UNorm = 177;
 constexpr std::uint32_t TileR64KBX = 0x1b;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::size_t SurfaceBytes = std::size_t{Side} * Side * 4u;
@@ -188,6 +189,8 @@ public:
             enabled.shaderInt64 = VK_TRUE;
             enabled.shaderStorageImageMultisample = enableStorageImageMultisample && supported.shaderStorageImageMultisample;
             context.storageImageMultisample = enabled.shaderStorageImageMultisample == VK_TRUE;
+            enabled.textureCompressionBC = supported.textureCompressionBC;
+            context.textureCompressionBC = supported.textureCompressionBC == VK_TRUE;
             address.pNext = &bytes;
             std::vector<const char*> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
             if (hasExtension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)) {
@@ -379,7 +382,7 @@ private:
     std::uint8_t* memory = nullptr;
 };
 
-std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt) {
+std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt, std::uint64_t keys = 0) {
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((side - 1u) & 3u) << 30u),
@@ -387,19 +390,31 @@ std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t sid
         0xfacu | (TileR64KBX << 20u) | (Type2D << 28u),
         0u,
         0u,
-        0u,
-        0u,
+        keys != 0 ? (1u << 21u) | (static_cast<std::uint32_t>((keys >> 8u) & 0xffu) << 24u) : 0u,
+        static_cast<std::uint32_t>(keys >> 16u),
     };
 }
 
-std::shared_ptr<Texture> Sampled(const Context& context, std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt) {
-    const auto words = Descriptor(address, side, format);
+std::shared_ptr<Texture> Sampled(const Context& context, std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt, std::uint64_t keys = 0) {
+    const auto words = Descriptor(address, side, format, keys);
     return CachedSampledTexture(context, words);
 }
 
 GuestTextureResource Resource(std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt) {
     const auto words = Descriptor(address, side, format);
     return DecodeTextureResource(words);
+}
+
+std::shared_ptr<Texture> SampledFastCleared(const Context& context, std::uint64_t address, std::uint64_t keys, std::size_t bytes) {
+    constexpr std::uint32_t side = Side * 4u;
+    Require(DescribeSurface(Resource(address, side, FormatBc5UNorm)).guestBytes == bytes, "the fast-cleared BC5 surface does not take " + std::to_string(bytes) + " bytes");
+    const auto words = Descriptor(address, side, FormatBc5UNorm, keys);
+    const auto resource = DecodeTextureResource(words);
+    Require(resource.dccAddress == keys && TextureClearKeys(resource, bytes) == DccKeys::Clear0000, "the fast-cleared BC5 surface does not name its keys or its zero keys do not read a 0000 clear");
+    const auto cleared = SampledTexturesCleared();
+    auto texture = Sampled(context, address, side, FormatBc5UNorm, keys);
+    Require(SampledTexturesCleared() == cleared, "the fast-cleared BC5 surface was cleared on the GPU, so it kept no snapshot vector for the spare pool");
+    return texture;
 }
 
 std::shared_ptr<ShaderResources> ImageResources(const Context& context, const Block& block, std::size_t first, std::uint32_t count, bool sampled) {
@@ -766,25 +781,37 @@ void recycleTests(const Context& context) {
     const auto third = Sampled(context, address);
     Require(third != second, "the replaced snapshot's size-equal buffer was not reread from guest memory");
     Require(Sampled(context, address) == third, "an unchanged surface did not serve its remade snapshot");
+    if (!context.textureCompressionBC) {
+        std::puts("BC compressed textures unavailable: a big fast-cleared snapshot taking the parked spare of its size not tested");
+        return;
+    }
     constexpr std::uint32_t BigSide = Side * 2;
     constexpr std::size_t BigBytes = std::size_t{BigSide} * BigSide * 4u;
+    const auto keys = block.Surface(Surfaces - 1);
+    std::memset(reinterpret_cast<void*>(keys), 0, SurfaceBytes);
     const WatchedSurface watchedFirst(context, BigBytes);
     const WatchedSurface watchedSecond(context, BigBytes);
-    const auto bigFirst = Sampled(context, watchedFirst.Address(), BigSide);
-    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the first big snapshot did not park its dropped " + std::to_string(BigBytes) + "-byte buffer in the spare pool");
-    const auto bigSecond = Sampled(context, watchedSecond.Address(), BigSide);
-    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big snapshot did not take the parked spare of its size");
+    const auto bigFirst = SampledFastCleared(context, watchedFirst.Address(), keys, BigBytes);
+    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the first big fast-cleared snapshot did not park its dropped " + std::to_string(BigBytes) + "-byte buffer in the spare pool");
+    const auto bigSecond = SampledFastCleared(context, watchedSecond.Address(), keys, BigBytes);
+    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big fast-cleared snapshot did not take the parked spare of its size");
 }
 
 void spareAgeTests(const Context& context) {
+    if (!context.textureCompressionBC) {
+        std::puts("BC compressed textures unavailable: spare snapshot expiry and reuse not tested");
+        return;
+    }
     Block block(context);
     ClearCachedTextures(context.device);
     constexpr std::uint32_t BigSide = Side * 2;
     constexpr std::size_t BigBytes = std::size_t{BigSide} * BigSide * 4u;
+    const auto keys = block.Surface(Surfaces - 1);
+    std::memset(reinterpret_cast<void*>(keys), 0, SurfaceBytes);
     {
         const WatchedSurface watched(context, BigBytes);
-        const auto first = Sampled(context, watched.Address(), BigSide);
-        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the big snapshot did not park its dropped buffer in the spare pool");
+        const auto first = SampledFastCleared(context, watched.Address(), keys, BigBytes);
+        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the big fast-cleared snapshot did not park its dropped buffer in the spare pool");
         for (std::uint64_t present = 0; present <= SpareSnapshotPresents; ++present) Recorder::CountPresent();
         const auto small = Sampled(context, block.Surface(0));
         Require(TextureCacheUsage().spareEntries == 0 && TextureCacheUsage().spareBytes == 0, "a spare idle for " + std::to_string(SpareSnapshotPresents + 1u) + " presents was not released");
@@ -793,10 +820,10 @@ void spareAgeTests(const Context& context) {
     {
         const WatchedSurface watchedFirst(context, BigBytes);
         const WatchedSurface watchedSecond(context, BigBytes);
-        const auto second = Sampled(context, watchedFirst.Address(), BigSide);
-        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big snapshot did not park its dropped buffer in the spare pool");
+        const auto second = SampledFastCleared(context, watchedFirst.Address(), keys, BigBytes);
+        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big fast-cleared snapshot did not park its dropped buffer in the spare pool");
         for (std::uint64_t present = 0; present < SpareSnapshotPresents; ++present) Recorder::CountPresent();
-        const auto third = Sampled(context, watchedSecond.Address(), BigSide);
+        const auto third = SampledFastCleared(context, watchedSecond.Address(), keys, BigBytes);
         Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "a spare taken within " + std::to_string(SpareSnapshotPresents) + " presents was released instead of reused");
     }
 }
@@ -1363,11 +1390,60 @@ void collectRefusalTests(Context context) {
     std::puts("collect refusal counters passed");
 }
 
+bool pendingFailCountTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    constexpr int Rounds = 3;
+    constexpr std::uint32_t ForeignSide = 16;
+    if (context.hostImportAlignment == 0) {
+        Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "the pending fast-fail count test requires host imports");
+        std::puts("skipped, host imports are unavailable");
+        return false;
+    }
+    WatchedSurface surface(context);
+    ClearCachedTextures(context.device);
+    if (HostImportFor(context, surface.Address(), SurfaceBytes) == nullptr) {
+        Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "the host import of the watched surface was refused");
+        std::puts("skipped, host imports are unavailable");
+        return false;
+    }
+    if (!AgcDriver::GuestMemory::Watched(surface.Address(), SurfaceBytes)) {
+        std::puts("skipped, the host import of the surface left the write watch (APS5_WRITE_WATCH_IMPORTS=watch keeps it)");
+        return false;
+    }
+    const auto program = SampledProgram(surface.Address());
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    auto sampled = std::make_shared<ShaderResources>(context, shader);
+    Require(sampled->Reusable() && sampled->SampledTextures().size() == 1 && sampled->SampledTextures().front()->ViewsStorageImage(), "the template over the imported surface does not bind a view of its storage image");
+    ShaderResources::ProofReport report{};
+    Require(sampled->Revalidate(shader, &report), "the template over the imported surface did not prove current");
+    auto foreign = CachedStorageSurface(context, Resource(surface.Address(), ForeignSide));
+    Require(foreign != nullptr && foreign.get() != sampled->SampledTextures().front()->StorageSource(), "no foreign storage image over the sampled surface");
+    for (int round = 0; round < Rounds; ++round) {
+        foreign->MarkDirty();
+        const auto before = ShaderResources::PendingFailCounts();
+        static_cast<void>(sampled->Revalidate(shader, &report));
+        const auto after = ShaderResources::PendingFailCounts();
+        std::printf("round %d: pending foreign +%llu, snapshot +%llu, T1 eligible +%llu\n", round, static_cast<unsigned long long>(after.foreign - before.foreign), static_cast<unsigned long long>(after.snapshot - before.snapshot), static_cast<unsigned long long>(after.t1Eligible - before.t1Eligible));
+        Require(after.foreign - before.foreign == 1, "a proof over a foreign storage image with pending results did not count one foreign pending fast-fail");
+        Require(after.t1Eligible - before.t1Eligible == 1, "a proof over a foreign storage image with pending results did not count one T1-eligible pending fast-fail");
+        Require(after.snapshot == before.snapshot, "a proof over a foreign storage image counted a snapshot pending fast-fail");
+    }
+    foreign->Flush();
+    foreign.reset();
+    sampled.reset();
+    ClearCachedTextures(context.device);
+    std::puts("pending fast-fail counters passed");
+    return true;
+}
+
 int main(int argc, char** argv) {
     try {
         const bool memory = argc > 1 && std::string(argv[1]) == "memory";
         const std::string mode = argc > 1 ? argv[1] : "";
-        if (mode == "collect-refusals") {
+        if (mode == "collect-refusals" || mode == "pending-fail-count") {
 #ifdef _WIN32
             _putenv_s("APS5_PROFILE_DRAW", "1");
 #else
@@ -1451,6 +1527,12 @@ int main(int argc, char** argv) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             collectRefusalTests(context);
             std::puts("resource cache collect refusal tests passed");
+            return 0;
+        }
+        if (mode == "pending-fail-count") {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            if (!pendingFailCountTests(context)) return VulkanTestSkipped;
+            std::puts("resource cache pending fast-fail count tests passed");
             return 0;
         }
         if (memory) {

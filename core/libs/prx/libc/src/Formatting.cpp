@@ -43,7 +43,8 @@ bool RequiresGuestFormatting(const char* format) {
     while ((format = std::strchr(format, '%')) != nullptr) {
         ++format;
         if (*format == '%') { ++format; continue; }
-        while (*format && std::strchr("-+ #00123456789.*$", *format)) ++format;
+        bool precision = false;
+        while (*format && std::strchr("-+ #00123456789.*$", *format)) precision |= *format++ == '.';
         if (*format == 'S' || *format == 'C' || *format == 'p' ||
             (*format == 'l' && (format[1] == 's' || format[1] == 'c' || format[1] == 'p'))) return true;
         const char* lengthStart = format;
@@ -52,6 +53,7 @@ bool RequiresGuestFormatting(const char* format) {
         const std::string length(lengthStart, format);
         if (*format && LibcDetail::ApplicableLength(length, *format) != length) return true;
         if (*format && std::strchr("aAeEfFgG", *format)) return true;
+        if (precision && *format == 's') return true;
         if (*format) ++format;
     }
     return false;
@@ -383,7 +385,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
                     std::memcpy(target, &value, sizeof(value));
                 } else throw std::invalid_argument("Invalid scan count length");
             }
-            if (!secure) converted = true;
+            converted = true;
             continue;
         }
         if (IsWideScan(length, conversion)) {
@@ -660,8 +662,10 @@ int APS5_VABI fprintf_nid_postfix(FileStream* stream, const char* format, ...) {
 }
 
 int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
+    std::string quadHead;
+    format = CutAtQuadScanDirective(format, quadHead);
 #ifndef _WIN32
-    if (HasNarrowCharacterScan(format) && LibcDetail::FindQuadScanDirective(format) == nullptr) {
+    if (HasNarrowCharacterScan(format)) {
         std::va_list args;
         va_start(args, format);
         const int result = ScanGuestStream(stream, format, [&] { return va_arg(args, void*); }, [] { return 0u; }, false);
@@ -1013,8 +1017,10 @@ int APS5_VABI puts_nid_postfix(const char* s) {
 extern FileStream* __stdinp_nid_postfix;
 
 int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
+    std::string quadHead;
+    format = CutAtQuadScanDirective(format, quadHead);
 #ifndef _WIN32
-    if (HasNarrowCharacterScan(format) && LibcDetail::FindQuadScanDirective(format) == nullptr) {
+    if (HasNarrowCharacterScan(format)) {
         LibcDetail::FormatArguments arguments(args);
         return ScanGuestStream(stream, format, [&] { return arguments.Next<void*>(); }, [] { return 0u; }, false);
     }
