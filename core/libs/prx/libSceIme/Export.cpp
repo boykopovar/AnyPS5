@@ -330,7 +330,7 @@ std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pendin
     throw std::invalid_argument("IME host input: unknown input kind");
 }
 
-int ValidateOpen(const Param* param, const ExtendedParam* extended, Param* outParam = nullptr) {
+int ValidateOpen(const Param* param, const ExtendedParam* extended, Param* outParam = nullptr, ExtendedParam* outExt = nullptr, std::u16string* outText = nullptr) {
     if (!param) return ErrorInvalidAddress;
     Param localParam{};
     const int savedErrno = errno;
@@ -350,8 +350,8 @@ int ValidateOpen(const Param* param, const ExtendedParam* extended, Param* outPa
     if (!(localParam.posy >= 0.0f && localParam.posy < maxY)) return ErrorInvalidPosY;
     if (localParam.horizontal_alignment > AlignmentLast) return ErrorInvalidHorizontalAlignment;
     if (localParam.vertical_alignment > AlignmentLast) return ErrorInvalidVerticalAlignment;
+    ExtendedParam localExt{};
     if (extended) {
-        ExtendedParam localExt{};
         const int extErrno = errno;
         const bool copiedExt = GuestCopyIn_nid_no_patch(&localExt, extended, sizeof(localExt));
         errno = extErrno;
@@ -366,9 +366,20 @@ int ValidateOpen(const Param* param, const ExtendedParam* extended, Param* outPa
     for (const std::int8_t byte : localParam.reserved) {
         if (byte != 0) return ErrorInvalidReserved;
     }
-    const std::size_t length = TextLength(localParam.input_text_buffer, localParam.max_text_length);
-    if (!ValidText(localParam.input_text_buffer, length, (localParam.option & OptionMultiline) != 0)) return ErrorInvalidText;
+    std::u16string localText;
+    for (std::uint32_t i = 0; i < localParam.max_text_length; ++i) {
+        char16_t unit = u'\0';
+        const int textErrno = errno;
+        const bool copiedUnit = GuestCopyIn_nid_no_patch(&unit, localParam.input_text_buffer + i, sizeof(unit));
+        errno = textErrno;
+        if (!copiedUnit) return ErrorInvalidAddress;
+        if (unit == u'\0') break;
+        localText.push_back(unit);
+    }
+    if (!ValidText(localText.data(), localText.size(), (localParam.option & OptionMultiline) != 0)) return ErrorInvalidText;
     if (outParam) *outParam = localParam;
+    if (outExt) *outExt = localExt;
+    if (outText) *outText = std::move(localText);
     return 0;
 }
 
@@ -462,12 +473,14 @@ int APS5_VABI sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* ex
     std::lock_guard lock(g_imeMutex);
     if (g_session) return ErrorBusy;
     Param localParam{};
-    if (const int error = ValidateOpen(param, extended, &localParam)) return error;
+    ExtendedParam localExt{};
+    std::u16string localText;
+    if (const int error = ValidateOpen(param, extended, &localParam, &localExt, &localText)) return error;
     Session session;
     session.id = ++g_nextSessionId;
     session.param = localParam;
-    session.extKeyboardFilter = extended ? extended->ext_keyboard_filter : nullptr;
-    session.text.assign(localParam.input_text_buffer, TextLength(localParam.input_text_buffer, localParam.max_text_length));
+    session.extKeyboardFilter = extended ? localExt.ext_keyboard_filter : nullptr;
+    session.text = std::move(localText);
     session.caret = static_cast<uint32_t>(session.text.size());
     SyncBuffers(session);
     ImeEvent open{};
