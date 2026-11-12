@@ -1,6 +1,7 @@
 #include "prx/libSceVoice/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -158,6 +159,8 @@ int main() {
     scheduled = {1, 700, 0x7f, 700, 0, 0x7f, 700, 0, 0x7f};
     Require(sceVoiceSetThreadsParams(&scheduled) == static_cast<std::int32_t>(0x804e080bu));
     Require(sceVoiceGetResourceInfo(nullptr) == invalidArgument);
+    errno = 71;
+    Require(sceVoiceGetResourceInfo(reinterpret_cast<VoiceResourceInfo*>(0x10)) == invalidArgument && errno == 71);
     struct ResourceOutput {
         VoiceResourceInfo info;
         std::uint32_t guard;
