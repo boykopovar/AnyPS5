@@ -2123,6 +2123,11 @@ struct DepthPlaneSlice {
     std::uint64_t written = 0;
 };
 
+bool DepthPlaneReuse() {
+    static const bool enabled = std::getenv("APS5_NO_DEPTH_PLANE_REUSE") == nullptr;
+    return enabled;
+}
+
 class DepthPlaneCopy {
 public:
     DepthPlaneCopy(const Context& context, VkExtent2D extent, VkFormat format, std::uint32_t layers) : context(context), extent(extent), format(format), layers(layers), guestLayers(layers), surfaceLayers(layers) {
@@ -2203,7 +2208,7 @@ public:
         auto& texture = textures[key];
         if (texture == nullptr) {
             texture = std::make_shared<Texture>(context, image, format, aspect(), components, viewType, baseLayer, owned, 0, viewLayers);
-            texture->MarkRefreshedPerUse();
+            if (!DepthPlaneReuse()) texture->MarkRefreshedPerUse();
         }
         return texture;
     }
@@ -3992,6 +3997,9 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     copy->lastUse = ++planeCopyClock();
     copy->lastPresent = Recorder::Presents();
     auto texture = copy->Refresh(slices, resource, components, cube || resource.dimension == TextureDimension::k2DArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D, layered && !cube ? resource.baseArray : 0u);
+    if (DepthPlaneReuse() && !texture->HasReuseLookup()) {
+        texture->SetReuseLookup([context, lookupWords = std::vector<std::uint32_t>(words.begin(), words.end()), resource, components] { return DepthSurfaceTexture(context, lookupWords, resource, components); });
+    }
     evictPlaneCopies(copyKey);
     return texture;
 }
