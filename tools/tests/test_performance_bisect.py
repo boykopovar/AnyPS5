@@ -676,3 +676,24 @@ class FocusedInputEdgeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "identity changed"):
             performance_bisect.summarize(samples, 5)
 
+
+    def test_first_parent_range_rejects_unrelated_bad_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.name", "Test"], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.email", "test@example.invalid"], check=True)
+            (repo / "base").write_text("base", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "base"], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "test: base"], check=True)
+            good = performance_bisect.git(repo, "rev-parse", "HEAD")
+            performance_bisect.git(repo, "switch", "--orphan", "unrelated")
+            performance_bisect.git(repo, "rm", "-rf", ".")
+            (repo / "other").write_text("other", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "other"], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "test: unrelated"], check=True)
+            bad = performance_bisect.git(repo, "rev-parse", "HEAD")
+            with self.assertRaisesRegex(ValueError, "ancestor"):
+                performance_bisect.first_parent_commits(repo, good, bad)
+
