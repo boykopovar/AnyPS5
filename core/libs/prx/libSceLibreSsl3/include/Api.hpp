@@ -273,7 +273,7 @@ int APS5_VABI d2i_PrivateKey_bio_nid_postfix(void);
 int APS5_VABI d2i_RSAPublicKey_bio_nid_postfix(void);
 int APS5_VABI d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(void);
 int APS5_VABI d2i_X509_bio_nid_postfix(void);
-int APS5_VABI o2i_ECPublicKey_nid_postfix(void);
+EcKey* APS5_VABI o2i_ECPublicKey_nid_postfix(EcKey** key, const unsigned char** in, std::int64_t length);
 unsigned char* APS5_VABI MD5_nid_postfix(const unsigned char* data, std::size_t length, unsigned char* digest);
 unsigned char* APS5_VABI SHA1_nid_postfix(const unsigned char* data, std::size_t length, unsigned char* digest);
 
