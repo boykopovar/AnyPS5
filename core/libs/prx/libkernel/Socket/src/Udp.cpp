@@ -1787,6 +1787,14 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
     }
 }
 std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std::uint64_t length, int flags) {
+    if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
+        if ((flags & ~GuestSendFlags) != 0) return Fail(45);
+        if (length > INT_MAX) return Fail(40);
+        if (!buffer && length) return Fail(14);
+        int error = 0;
+        const auto sent = forwards->sendto(descriptor, buffer, length, flags, nullptr, 0, &error);
+        return error == 0 ? sent : Fail(error);
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
@@ -1802,6 +1810,14 @@ std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std:
     return result < 0 ? Fail(SendError(socket->type)) : result;
 }
 std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint64_t length, int flags) {
+    if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
+        if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
+        if (length > INT_MAX) return Fail(40);
+        if (!buffer && length) return Fail(14);
+        int error = 0;
+        const auto received = forwards->recvfrom(descriptor, buffer, length, flags, nullptr, nullptr, &error);
+        return error == 0 ? received : Fail(error);
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
