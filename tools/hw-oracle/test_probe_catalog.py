@@ -296,6 +296,23 @@ class ProbeCoverageTests(unittest.TestCase):
             results = probe_catalog.coverage(self.catalog["probes"], self.digest, temporary, "rx-6750-xt")
             self.assertEqual([item["status"] for item in results], ["missing"] * len(self.catalog["probes"]))
 
+    def test_coverage_fraction_and_probe_filter_report_the_selected_set(self):
+        probes = self.catalog["probes"]
+        with tempfile.TemporaryDirectory() as temporary:
+            self.write_report(temporary, probes[0])
+            self.write_report(temporary, probes[1])
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = probe_catalog.main([
+                    "coverage", "--results-dir", temporary, "--device-label", "rx-6750-xt", "--json",
+                    "--probe", probes[0]["id"],
+                ])
+            report = json.loads(output.getvalue())
+            self.assertEqual(result, 0)
+            self.assertEqual((report["measured"], report["total"], report["percent"]), (1, 1, 100.0))
+            all_results = probe_catalog.coverage(probes, self.digest, temporary, "rx-6750-xt")
+            self.assertEqual(sum(item["status"] == "measured" for item in all_results), 2)
+
     def test_coverage_accepts_a_report_from_the_exact_catalog(self):
         probe = self.catalog["probes"][0]
         with tempfile.TemporaryDirectory() as temporary:
