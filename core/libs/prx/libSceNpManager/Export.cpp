@@ -2,8 +2,10 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libSceNpManager/include/InGameMessageIds.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceUserService/UserService.hpp"
@@ -684,7 +686,12 @@ int APS5_VABI sceNpManagerIntGetAuthorizationCodeWithPsnoUri(int reqId, int user
     if (userId == USER_SERVICE_USER_ID_INVALID || !uri || !output) return SCE_NP_ERROR_INVALID_ARGUMENT;
     if (size < 1 || size > 0x801) return SCE_NP_ERROR_INVALID_SIZE;
     if (mode != 0 && mode != 3 && mode != 5) return SCE_NP_ERROR_INVALID_PLATFORM_TYPE;
-    if (!std::memchr(uri, 0, 0x2000)) return SCE_NP_ERROR_OUT_OF_MEMORY;
+    std::string copiedUri;
+    const int savedErrno = errno;
+    const int copyResult = CopyGuestString_nid_no_patch(uri, 0x2000, copiedUri);
+    errno = savedErrno;
+    if (copyResult == 63 || copyResult == 12) return SCE_NP_ERROR_OUT_OF_MEMORY;
+    if (copyResult != 0) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetClientCredentialAccessToken(void) {

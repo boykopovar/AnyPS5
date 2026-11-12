@@ -84,5 +84,6 @@ int APS5_VABI _WStoldx_nid_postfix();
 int APS5_VABI _Wcscollx_nid_postfix();
 int APS5_VABI _Xp_addx_nid_postfix();
 int APS5_VABI _Tgamma_nid_postfix();
+int APS5_VABI _ZNKSbIwSt11char_traitsIwESaIwEE5_XranEv_nid_postfix();
 
 }

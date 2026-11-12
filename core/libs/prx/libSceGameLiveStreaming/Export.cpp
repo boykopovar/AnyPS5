@@ -30,7 +30,11 @@ static bool ValidFeedbackType(int type) {
 }
 
 static bool ValidString(const char* text, std::size_t maxLength) {
-    return text != nullptr && std::memchr(text, 0, maxLength + 1) != nullptr;
+    std::string value;
+    const int savedErrno = errno;
+    const int result = CopyGuestString_nid_no_patch(text, maxLength + 1, value);
+    errno = savedErrno;
+    return result == 0;
 }
 
 static bool AllZero(const std::uint8_t* bytes, std::size_t size) {

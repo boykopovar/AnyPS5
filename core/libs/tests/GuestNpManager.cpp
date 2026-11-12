@@ -5,6 +5,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -669,6 +670,9 @@ void CheckManagerIntAuthorization() {
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 0, code.bytes, 0) == InvalidSize && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a size of 0");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 0, code.bytes, 0x802) == InvalidSize && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a size above 0x801");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 4, code.bytes, 0x801) == InvalidPlatformType && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a mode other than 0, 3 or 5");
+    errno = 71;
+    Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, reinterpret_cast<const char*>(0x10), 0, code.bytes, 0x801) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse an unreadable URI");
+    Require(errno == 71, "sceNpManagerIntGetAuthorizationCodeWithPsnoUri changed host errno on an unreadable URI");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, longUri, 0, code.bytes, 0x801) == OutOfMemory && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a URI of 0x2000 bytes");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, nullptr, 0, code.bytes, 0) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri checks a null URI before the size");
     Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 4, code.bytes, 0) == InvalidSize && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri checks the size before the mode");

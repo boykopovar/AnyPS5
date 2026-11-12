@@ -307,6 +307,13 @@ void CheckLookupNet() {
     Require(sceNpLookupNetInit() == 0, "sceNpLookupNetInit", "a second initialization was refused");
     Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "the first termination failed");
     Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetTerm", "the reference count did not keep the service initialized");
+    Require(sceNpLookupNetInitWithFunctionPointer(nullptr, nullptr) == 0, "sceNpLookupNetInitWithFunctionPointer", "the function-pointer initialization failed");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetInitWithFunctionPointer", "the service dropped out of the initialized state");
+    Require(sceNpLookupNetInitWithMemoryPool(nullptr, nullptr) == 0, "sceNpLookupNetInitWithMemoryPool", "the memory-pool initialization failed");
+    Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "terminating one wrapper reference was refused");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetTerm", "a wrapper reference did not join the shared count");
+    Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "terminating the second wrapper reference was refused");
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetTerm", "the service left the initialized state while a plain reference remained");
     Require(sceNpLookupNetCreateTitleCtx(nullptr, nullptr) == InsufficientArgumentNet, "sceNpLookupNetCreateTitleCtx", "a null NpId was taken");
     const int firstContext = sceNpLookupNetCreateTitleCtx(nullptr, selfNpId);
     Require(firstContext == 1, "sceNpLookupNetCreateTitleCtx", "the first context is not id 1");
