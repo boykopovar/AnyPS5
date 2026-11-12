@@ -339,12 +339,13 @@ void Driver::storeBufferFill(std::uint32_t queueId, std::uint64_t base, std::siz
 
     static std::uint64_t uniformFills = 0, uniformBytes = 0, patternFills = 0, patternBytes = 0, chainCopies = 0;
 
-    enum FillPhase : std::size_t { FillLabels, FillCheck, FillClassify, FillDiscard, FillClearPhase, FillFlush, FillDevice, FillCpu, FillPhaseCount };
-    static constexpr const char* fillPhaseNames[FillPhaseCount] = {"labels", "check", "classify", "discard", "clear", "flush", "device", "cpu"};
+    enum FillPhase : std::size_t { FillLabels, FillCheck, FillClassify, FillDiscard, FillClearPhase, FillFlush, FillDevice, FillCpuWait, FillCpu, FillPhaseCount };
+    static constexpr const char* fillPhaseNames[FillPhaseCount] = {"labels", "check", "classify", "discard", "clear", "flush", "device", "cpu wait", "cpu"};
     static std::array<double, FillPhaseCount> fillPhaseMs{};
     static std::array<double, 8> holdByCoverMs{};
     static std::array<std::uint64_t, 8> holdByCover{};
     static std::uint64_t flushes = 0, flushed = 0, absorbedFills = 0, absorbedBytes = 0;
+    static std::array<std::uint64_t, 3> cpuSettles{};
     static auto fillReport = std::chrono::steady_clock::now();
     ++fills;
     filledBytes += bytes;
@@ -421,7 +422,8 @@ void Driver::storeBufferFill(std::uint32_t queueId, std::uint64_t base, std::siz
     if (!stored) {
         ++cpuFills;
 
-        localDevice->WaitIdle();
+        ++cpuSettles[static_cast<std::size_t>(localDevice->SettleForCpuStore(base, bytes))];
+        phase(FillCpuWait);
         static thread_local std::vector<std::byte>* blockSlot = nullptr;
         auto& block = ShaderRecompiler::ThreadOwned(blockSlot);
         const auto chunk = std::min<std::size_t>(bytes, 1u << 20u);
@@ -456,7 +458,7 @@ void Driver::storeBufferFill(std::uint32_t queueId, std::uint64_t base, std::siz
                 std::snprintf(text, sizeof(text), " %s %llu/%.0f", coverNames[i], static_cast<unsigned long long>(holdByCover[i]), holdByCoverMs[i]);
                 line += text;
             }
-            std::fprintf(stderr, "[fill] %llu buffer fills (%.0f MiB), %llu stored by the CPU; hold phases ms (cumulative):%s; pre-store flushes %llu (%llu stored an image); stored on the GPU: uniform %llu (%.0f MiB), pattern %llu (%.0f MiB), chain copies %llu\n", static_cast<unsigned long long>(fills.load()), filledBytes.load() / 1048576.0, static_cast<unsigned long long>(cpuFills.load()), line.c_str(), static_cast<unsigned long long>(flushes), static_cast<unsigned long long>(flushed), static_cast<unsigned long long>(uniformFills), uniformBytes / 1048576.0, static_cast<unsigned long long>(patternFills), patternBytes / 1048576.0, static_cast<unsigned long long>(chainCopies));
+            std::fprintf(stderr, "[fill] %llu buffer fills (%.0f MiB), %llu stored by the CPU; hold phases ms (cumulative):%s; pre-store flushes %llu (%llu stored an image); stored on the GPU: uniform %llu (%.0f MiB), pattern %llu (%.0f MiB), chain copies %llu; CPU stores after no wait %llu, a wait for the range's writers %llu, a full drain %llu\n", static_cast<unsigned long long>(fills.load()), filledBytes.load() / 1048576.0, static_cast<unsigned long long>(cpuFills.load()), line.c_str(), static_cast<unsigned long long>(flushes), static_cast<unsigned long long>(flushed), static_cast<unsigned long long>(uniformFills), uniformBytes / 1048576.0, static_cast<unsigned long long>(patternFills), patternBytes / 1048576.0, static_cast<unsigned long long>(chainCopies), static_cast<unsigned long long>(cpuSettles[0]), static_cast<unsigned long long>(cpuSettles[1]), static_cast<unsigned long long>(cpuSettles[2]));
         }
     }
     };
