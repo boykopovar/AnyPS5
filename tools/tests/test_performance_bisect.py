@@ -604,3 +604,12 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "integer of at least 3"):
                 performance_bisect.load_recipe(path)
 
+
+    def test_recipe_requires_regression_threshold_inside_open_interval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for value in (0, 100):
+                with self.subTest(value=value):
+                    path = self.recipe_path(Path(directory), regression_pct=value)
+                    with self.assertRaisesRegex(ValueError, "between 0 and 100"):
+                        performance_bisect.load_recipe(path)
+
