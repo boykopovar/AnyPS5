@@ -293,11 +293,6 @@ int APS5_VABI SSL_CTX_use_PrivateKey_nid_postfix(LibreSslCtx*, void* pkey) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI SSL_CTX_use_PrivateKey_ASN1_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_CTX_use_PrivateKey_file_nid_postfix(LibreSslCtx* ctx, const char* file, int type) {
     constexpr int ErrorLibrarySsl = 20;
     constexpr int ErrorFunctionUnknown = 0xfff;
