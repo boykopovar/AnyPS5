@@ -231,6 +231,8 @@ void CheckFailures(const std::string& base) {
 
 void CheckRepresentations(const std::string& base) {
     bool passed = true;
+    int legacyPassed = 0;
+    int legacySnapshots = 0;
     const auto run = [&](const char* name, auto action) {
         try {
             action(base + "/identity/" + name + "/payload.bin");
@@ -253,10 +255,25 @@ void CheckRepresentations(const std::string& base) {
             Read(client.get(), 0, 31);
         });
     }
+    for (const char* name : {"date-rfc850", "date-asctime", "date-legacy-rfc850-date", "date-legacy-asctime-date",
+                             "date-legacy-rfc850-both", "date-legacy-asctime-both", "date-legacy-asctime-two-digit",
+                             "date-legacy-century", "date-legacy-200-match", "date-legacy-206-omit"}) {
+        run(name, [&](const std::string& url) {
+            auto client = Create();
+            Check(Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 1, "legacy date source open failed");
+            Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 100000, "legacy date source exposed a fallback snapshot");
+            Read(client.get(), 0, 31);
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "legacy date source seek failed");
+            Read(client.get(), 90000, 67);
+            Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 0) == 0, "legacy date source rewind failed");
+            Read(client.get(), 0, 31);
+            ++legacyPassed;
+        });
+    }
     for (const char* name : {"etag-200-absent", "etag-200-changed", "etag-200-weak", "etag-200-invalid", "date-200-absent", "date-200-changed", "both-200-absent", "etag-206-changed", "date-206-changed", "late-size", "late-range", "late-short", "late-chunk", "late-redirect-path", "late-redirect-query", "late-redirect-host",
                              "etag-200-trailer-changed", "etag-200-trailer-weak", "etag-200-trailer-conflict",
                              "etag-206-trailer-conflict", "etag-206-trailer-changed", "etag-200-trailer-duplicate", "etag-200-trailer-malformed",
-                             "etag-200-trailer-name", "date-200-trailer-only"}) {
+                             "etag-200-trailer-name", "date-200-trailer-only", "date-legacy-206-changed"}) {
         run(name, [&](const std::string& url) {
             auto client = Create();
             Check(Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 1, "changing source open failed");
@@ -283,7 +300,10 @@ void CheckRepresentations(const std::string& base) {
     for (const char* name : {"absent", "absent-chunk", "absent-close", "weak", "weak-date", "invalid-tag", "tag-space", "tag-quote", "tag-unclosed", "recent-date", "invalid-date", "date-without-date", "complete-range", "initial-full", "initial-chunk", "initial-close",
                              "date-short-year", "date-short-day", "date-short-time", "date-full-names", "date-wrong-case",
                              "date-wrong-weekday", "date-early-year", "date-invalid-day", "date-short-response-time",
-                             "date-wrong-response-weekday", "date-extra-response-space", "date-rfc850", "date-asctime",
+                             "date-wrong-response-weekday", "date-extra-response-space",
+                             "date-legacy-rfc850-weekday", "date-legacy-asctime-weekday", "date-legacy-rfc850-month", "date-legacy-asctime-month",
+                             "date-legacy-rfc850-recent", "date-legacy-asctime-recent", "date-legacy-rfc850-short-year", "date-legacy-asctime-short-year",
+                             "date-legacy-rfc850-time", "date-legacy-asctime-day",
                              "date-trailer-only", "weak-trailer-date"}) {
         run(name, [&](const std::string& url) {
             auto client = Create();
@@ -296,6 +316,7 @@ void CheckRepresentations(const std::string& base) {
             Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 0) == 0, "snapshot rewind failed");
             Read(client.get(), 0, 777, true);
             End(client.get());
+            if (std::string(name).starts_with("date-legacy-")) ++legacySnapshots;
         });
     }
     for (const char* name : {"fallback-206", "fallback-short", "fallback-chunk", "fallback-refused"}) {
@@ -316,7 +337,8 @@ void CheckRepresentations(const std::string& base) {
             End(client.get());
         });
     }
-    Check(passed, "HTTP representation integrity cases failed");
+    std::printf("HTTP legacy date cases: %d/10; conservative snapshots: %d/10\n", legacyPassed, legacySnapshots);
+    Check(passed && legacyPassed == 10 && legacySnapshots == 10, "HTTP representation integrity cases failed");
 }
 
 void CheckCancellation(const std::string& base) {
@@ -350,12 +372,17 @@ void CheckCancellation(const std::string& base) {
 
 int main(int argc, char** argv) {
     try {
-        Check(argc == 2, "missing server URL");
+        Check(argc == 2 || (argc == 3 && std::string(argv[2]) == "--transformed"), "invalid server arguments");
         std::filesystem::create_directories("app0");
         Write("payload.bin", 100000);
         Write("alternate.bin", 777, true);
         Write("empty.bin", 0);
         const std::string base = argv[1];
+        if (argc == 3) {
+            CheckRepresentations(base + "/transformed");
+            std::puts("HTTP 203 representation tests passed");
+            return 0;
+        }
         CheckInputValidation(base);
         CheckBodies(base);
         CheckEmpty(base);

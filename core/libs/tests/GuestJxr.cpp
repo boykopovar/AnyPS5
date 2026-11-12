@@ -260,6 +260,304 @@ void InitializeHeap() {
     ApplicationHeapInitialize_nid_no_patch(process.data());
 }
 
+void TestGpsMetadata() {
+    struct Fixture {
+        Jxr::ImageEncodeMetadataPrefix encoder;
+        std::array<std::byte, 32> trailing;
+    } fixture;
+    std::memset(&fixture, 0xa5, sizeof(fixture));
+    fixture.encoder.headerDone = 0;
+    fixture.encoder.gpsInfoMetadata = nullptr;
+    fixture.encoder.gpsInfoMetadataByteCount = 0xfeed;
+    auto& encoder = fixture.encoder;
+    auto* const encoderPointer = reinterpret_cast<tagPKImageEncode*>(&encoder);
+    const auto snapshot = [&] {
+        std::array<std::byte, sizeof(fixture)> bytes;
+        std::memcpy(bytes.data(), &fixture, sizeof(fixture));
+        return bytes;
+    };
+    const auto requireOnlyGps = [&](const std::array<std::byte, sizeof(fixture)>& before, const std::uint8_t* pointer,
+                                    std::uint32_t size) {
+        auto expected = before;
+        std::memcpy(expected.data() + offsetof(Fixture, encoder) + offsetof(Jxr::ImageEncodeMetadataPrefix, gpsInfoMetadata),
+                    &pointer, sizeof(pointer));
+        std::memcpy(expected.data() + offsetof(Fixture, encoder) + offsetof(Jxr::ImageEncodeMetadataPrefix, gpsInfoMetadataByteCount),
+                    &size, sizeof(size));
+        Require(std::memcmp(expected.data(), &fixture, sizeof(fixture)) == 0);
+    };
+    const std::array<std::uint8_t, 5> first {0x11, 0x22, 0x33, 0x44, 0x55};
+    const std::array<std::uint8_t, 3> second {0xa1, 0xb2, 0xc3};
+    auto before = snapshot();
+    const auto firstCalloc = callocCalls;
+    Require(PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, first.data(), static_cast<std::uint32_t>(first.size())) == 0);
+    Require(callocCalls == firstCalloc + 1 && lastCount == 1 && lastSize == first.size());
+    Require(encoder.gpsInfoMetadata != first.data() && encoder.gpsInfoMetadataByteCount == first.size());
+    Require(std::memcmp(encoder.gpsInfoMetadata, first.data(), first.size()) == 0);
+    requireOnlyGps(before, encoder.gpsInfoMetadata, static_cast<std::uint32_t>(first.size()));
+
+    auto* const previous = encoder.gpsInfoMetadata;
+    before = snapshot();
+    const auto previousFrees = frees;
+    Require(PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, second.data(), static_cast<std::uint32_t>(second.size())) == 0);
+    Require(frees == previousFrees + 1 && lastFreed == previous);
+    Require(encoder.gpsInfoMetadataByteCount == second.size());
+    Require(std::memcmp(encoder.gpsInfoMetadata, second.data(), second.size()) == 0);
+    requireOnlyGps(before, encoder.gpsInfoMetadata, static_cast<std::uint32_t>(second.size()));
+
+    auto* const current = encoder.gpsInfoMetadata;
+    const auto currentSize = encoder.gpsInfoMetadataByteCount;
+    encoder.headerDone = 1;
+    before = snapshot();
+    const auto guardedFrees = frees;
+    const auto guardedCallocs = callocCalls;
+    Require(PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, first.data(), static_cast<std::uint32_t>(first.size())) == -109);
+    Require(PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())) == -109);
+    Require(snapshot() == before && encoder.gpsInfoMetadata == current && encoder.gpsInfoMetadataByteCount == currentSize);
+    Require(frees == guardedFrees && callocCalls == guardedCallocs);
+    encoder.headerDone = 0;
+
+    bool threw = false;
+    try { PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(nullptr, first.data(), static_cast<std::uint32_t>(first.size())); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    before = snapshot();
+    const auto nullInputFrees = frees;
+    const auto nullInputCallocs = callocCalls;
+    threw = false;
+    try { PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && frees == nullInputFrees + 1 && lastFreed == current);
+    Require(callocCalls == nullInputCallocs + 1 && encoder.gpsInfoMetadata == lastAllocated && encoder.gpsInfoMetadataByteCount == 0);
+    requireOnlyGps(before, encoder.gpsInfoMetadata, 0);
+    void* nullInputAllocation = encoder.gpsInfoMetadata;
+    Require(PKFree_nid_postfix(&nullInputAllocation) == 0);
+    encoder.gpsInfoMetadata = static_cast<std::uint8_t*>(nullInputAllocation);
+
+    Require(PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, second.data(), static_cast<std::uint32_t>(second.size())) == 0);
+    auto* const allocationFailurePrevious = encoder.gpsInfoMetadata;
+    before = snapshot();
+    const auto failureCallocs = callocCalls;
+    const auto failureFrees = frees;
+    failAllocation = true;
+    Require(PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())) == -101);
+    failAllocation = false;
+    Require(callocCalls == failureCallocs + 1 && lastAllocated == nullptr);
+    Require(frees == failureFrees + 1 && lastFreed == allocationFailurePrevious);
+    Require(encoder.gpsInfoMetadata == nullptr && encoder.gpsInfoMetadataByteCount == 0);
+    requireOnlyGps(before, nullptr, 0);
+    std::uint8_t emptyInput = 0;
+    before = snapshot();
+    const auto zeroResult = PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, &emptyInput, 0);
+    Require(zeroResult == (lastAllocated ? 0 : -101));
+    Require(encoder.gpsInfoMetadata == lastAllocated && encoder.gpsInfoMetadataByteCount == 0);
+    requireOnlyGps(before, encoder.gpsInfoMetadata, 0);
+    void* emptyAllocation = encoder.gpsInfoMetadata;
+    Require(PKFree_nid_postfix(&emptyAllocation) == 0);
+    encoder.gpsInfoMetadata = static_cast<std::uint8_t*>(emptyAllocation);
+}
+
+void TestIptcMetadata() {
+    struct Fixture {
+        Jxr::ImageEncodeMetadataPrefix encoder;
+        std::array<std::byte, 32> trailing;
+    } fixture;
+    std::memset(&fixture, 0xa5, sizeof(fixture));
+    fixture.encoder.headerDone = 0;
+    fixture.encoder.iptcNaaMetadata = nullptr;
+    fixture.encoder.iptcNaaMetadataByteCount = 0xfeed;
+    auto& encoder = fixture.encoder;
+    auto* const encoderPointer = reinterpret_cast<tagPKImageEncode*>(&encoder);
+    const auto snapshot = [&] {
+        std::array<std::byte, sizeof(fixture)> bytes;
+        std::memcpy(bytes.data(), &fixture, sizeof(fixture));
+        return bytes;
+    };
+    const auto requireOnlyIptc = [&](const std::array<std::byte, sizeof(fixture)>& before, const std::uint8_t* pointer,
+                                    std::uint32_t size) {
+        auto expected = before;
+        std::memcpy(expected.data() + offsetof(Fixture, encoder) + offsetof(Jxr::ImageEncodeMetadataPrefix, iptcNaaMetadata),
+                    &pointer, sizeof(pointer));
+        std::memcpy(expected.data() + offsetof(Fixture, encoder) + offsetof(Jxr::ImageEncodeMetadataPrefix, iptcNaaMetadataByteCount),
+                    &size, sizeof(size));
+        Require(std::memcmp(expected.data(), &fixture, sizeof(fixture)) == 0);
+    };
+    const std::array<std::uint8_t, 5> first {0x11, 0x22, 0x33, 0x44, 0x55};
+    const std::array<std::uint8_t, 3> second {0xa1, 0xb2, 0xc3};
+    auto before = snapshot();
+    const auto firstCalloc = callocCalls;
+    Require(PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix(encoderPointer, first.data(), static_cast<std::uint32_t>(first.size())) == 0);
+    Require(callocCalls == firstCalloc + 1 && lastCount == 1 && lastSize == first.size());
+    Require(encoder.iptcNaaMetadata != first.data() && encoder.iptcNaaMetadataByteCount == first.size());
+    Require(std::memcmp(encoder.iptcNaaMetadata, first.data(), first.size()) == 0);
+    requireOnlyIptc(before, encoder.iptcNaaMetadata, static_cast<std::uint32_t>(first.size()));
+
+    auto* const previous = encoder.iptcNaaMetadata;
+    before = snapshot();
+    const auto previousFrees = frees;
+    Require(PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix(encoderPointer, second.data(), static_cast<std::uint32_t>(second.size())) == 0);
+    Require(frees == previousFrees + 1 && lastFreed == previous);
+    Require(encoder.iptcNaaMetadataByteCount == second.size());
+    Require(std::memcmp(encoder.iptcNaaMetadata, second.data(), second.size()) == 0);
+    requireOnlyIptc(before, encoder.iptcNaaMetadata, static_cast<std::uint32_t>(second.size()));
+
+    auto* const current = encoder.iptcNaaMetadata;
+    const auto currentSize = encoder.iptcNaaMetadataByteCount;
+    encoder.headerDone = -7;
+    before = snapshot();
+    const auto guardedFrees = frees;
+    const auto guardedCallocs = callocCalls;
+    Require(PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix(encoderPointer, first.data(), static_cast<std::uint32_t>(first.size())) == -109);
+    Require(PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())) == -109);
+    Require(snapshot() == before && encoder.iptcNaaMetadata == current && encoder.iptcNaaMetadataByteCount == currentSize);
+    Require(frees == guardedFrees && callocCalls == guardedCallocs);
+    encoder.headerDone = 0;
+
+    bool threw = false;
+    try { PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix(nullptr, first.data(), static_cast<std::uint32_t>(first.size())); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    before = snapshot();
+    const auto nullInputFrees = frees;
+    const auto nullInputCallocs = callocCalls;
+    threw = false;
+    try { PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && frees == nullInputFrees + 1 && lastFreed == current);
+    Require(callocCalls == nullInputCallocs + 1 && encoder.iptcNaaMetadata == lastAllocated && encoder.iptcNaaMetadataByteCount == 0);
+    requireOnlyIptc(before, encoder.iptcNaaMetadata, 0);
+    void* nullInputAllocation = encoder.iptcNaaMetadata;
+    Require(PKFree_nid_postfix(&nullInputAllocation) == 0);
+    encoder.iptcNaaMetadata = static_cast<std::uint8_t*>(nullInputAllocation);
+
+    Require(PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix(encoderPointer, second.data(), static_cast<std::uint32_t>(second.size())) == 0);
+    auto* const allocationFailurePrevious = encoder.iptcNaaMetadata;
+    before = snapshot();
+    const auto failureCallocs = callocCalls;
+    const auto failureFrees = frees;
+    failAllocation = true;
+    Require(PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())) == -101);
+    failAllocation = false;
+    Require(callocCalls == failureCallocs + 1 && lastAllocated == nullptr);
+    Require(frees == failureFrees + 1 && lastFreed == allocationFailurePrevious);
+    Require(encoder.iptcNaaMetadata == nullptr && encoder.iptcNaaMetadataByteCount == 0);
+    requireOnlyIptc(before, nullptr, 0);
+
+    std::uint8_t emptyInput = 0;
+    before = snapshot();
+    const auto zeroCallocs = callocCalls;
+    const auto zeroResult = PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix(encoderPointer, &emptyInput, 0);
+    Require(callocCalls == zeroCallocs + 1 && lastCount == 1 && lastSize == 0);
+    Require(zeroResult == (lastAllocated ? 0 : -101));
+    Require(encoder.iptcNaaMetadata == lastAllocated && encoder.iptcNaaMetadataByteCount == 0);
+    requireOnlyIptc(before, encoder.iptcNaaMetadata, 0);
+    if (encoder.iptcNaaMetadata) {
+        void* emptyAllocation = encoder.iptcNaaMetadata;
+        Require(PKFree_nid_postfix(&emptyAllocation) == 0);
+        encoder.iptcNaaMetadata = static_cast<std::uint8_t*>(emptyAllocation);
+    }
+}
+
+void TestPhotoshopMetadata() {
+    struct Fixture {
+        Jxr::ImageEncodeMetadataPrefix encoder;
+        std::array<std::byte, 32> trailing;
+    } fixture;
+    std::memset(&fixture, 0xa5, sizeof(fixture));
+    fixture.encoder.headerDone = 0;
+    fixture.encoder.photoshopMetadata = nullptr;
+    fixture.encoder.photoshopMetadataByteCount = 0xfeed;
+    auto& encoder = fixture.encoder;
+    auto* const encoderPointer = reinterpret_cast<tagPKImageEncode*>(&encoder);
+    const auto snapshot = [&] {
+        std::array<std::byte, sizeof(fixture)> bytes;
+        std::memcpy(bytes.data(), &fixture, sizeof(fixture));
+        return bytes;
+    };
+    const auto requireOnlyPhotoshop = [&](const std::array<std::byte, sizeof(fixture)>& before, const std::uint8_t* pointer,
+                                    std::uint32_t size) {
+        auto expected = before;
+        std::memcpy(expected.data() + offsetof(Fixture, encoder) + offsetof(Jxr::ImageEncodeMetadataPrefix, photoshopMetadata),
+                    &pointer, sizeof(pointer));
+        std::memcpy(expected.data() + offsetof(Fixture, encoder) + offsetof(Jxr::ImageEncodeMetadataPrefix, photoshopMetadataByteCount),
+                    &size, sizeof(size));
+        Require(std::memcmp(expected.data(), &fixture, sizeof(fixture)) == 0);
+    };
+    const std::array<std::uint8_t, 5> first {0x11, 0x22, 0x33, 0x44, 0x55};
+    const std::array<std::uint8_t, 3> second {0xa1, 0xb2, 0xc3};
+    auto before = snapshot();
+    const auto firstCalloc = callocCalls;
+    Require(PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix(encoderPointer, first.data(), static_cast<std::uint32_t>(first.size())) == 0);
+    Require(callocCalls == firstCalloc + 1 && lastCount == 1 && lastSize == first.size());
+    Require(encoder.photoshopMetadata != first.data() && encoder.photoshopMetadataByteCount == first.size());
+    Require(std::memcmp(encoder.photoshopMetadata, first.data(), first.size()) == 0);
+    requireOnlyPhotoshop(before, encoder.photoshopMetadata, static_cast<std::uint32_t>(first.size()));
+
+    auto* const previous = encoder.photoshopMetadata;
+    before = snapshot();
+    const auto previousFrees = frees;
+    Require(PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix(encoderPointer, second.data(), static_cast<std::uint32_t>(second.size())) == 0);
+    Require(frees == previousFrees + 1 && lastFreed == previous);
+    Require(encoder.photoshopMetadataByteCount == second.size());
+    Require(std::memcmp(encoder.photoshopMetadata, second.data(), second.size()) == 0);
+    requireOnlyPhotoshop(before, encoder.photoshopMetadata, static_cast<std::uint32_t>(second.size()));
+
+    auto* const current = encoder.photoshopMetadata;
+    const auto currentSize = encoder.photoshopMetadataByteCount;
+    encoder.headerDone = -7;
+    before = snapshot();
+    const auto guardedFrees = frees;
+    const auto guardedCallocs = callocCalls;
+    Require(PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix(encoderPointer, first.data(), static_cast<std::uint32_t>(first.size())) == -109);
+    Require(PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())) == -109);
+    Require(snapshot() == before && encoder.photoshopMetadata == current && encoder.photoshopMetadataByteCount == currentSize);
+    Require(frees == guardedFrees && callocCalls == guardedCallocs);
+    encoder.headerDone = 0;
+
+    bool threw = false;
+    try { PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix(nullptr, first.data(), static_cast<std::uint32_t>(first.size())); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    before = snapshot();
+    const auto nullInputFrees = frees;
+    const auto nullInputCallocs = callocCalls;
+    threw = false;
+    try { PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && frees == nullInputFrees + 1 && lastFreed == current);
+    Require(callocCalls == nullInputCallocs + 1 && encoder.photoshopMetadata == lastAllocated && encoder.photoshopMetadataByteCount == 0);
+    requireOnlyPhotoshop(before, encoder.photoshopMetadata, 0);
+    void* nullInputAllocation = encoder.photoshopMetadata;
+    Require(PKFree_nid_postfix(&nullInputAllocation) == 0);
+    encoder.photoshopMetadata = static_cast<std::uint8_t*>(nullInputAllocation);
+
+    Require(PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix(encoderPointer, second.data(), static_cast<std::uint32_t>(second.size())) == 0);
+    auto* const allocationFailurePrevious = encoder.photoshopMetadata;
+    before = snapshot();
+    const auto failureCallocs = callocCalls;
+    const auto failureFrees = frees;
+    failAllocation = true;
+    Require(PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())) == -101);
+    failAllocation = false;
+    Require(callocCalls == failureCallocs + 1 && lastAllocated == nullptr);
+    Require(frees == failureFrees + 1 && lastFreed == allocationFailurePrevious);
+    Require(encoder.photoshopMetadata == nullptr && encoder.photoshopMetadataByteCount == 0);
+    requireOnlyPhotoshop(before, nullptr, 0);
+
+    std::uint8_t emptyInput = 0;
+    before = snapshot();
+    const auto zeroCallocs = callocCalls;
+    const auto zeroResult = PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix(encoderPointer, &emptyInput, 0);
+    Require(callocCalls == zeroCallocs + 1 && lastCount == 1 && lastSize == 0);
+    Require(zeroResult == (lastAllocated ? 0 : -101));
+    Require(encoder.photoshopMetadata == lastAllocated && encoder.photoshopMetadataByteCount == 0);
+    requireOnlyPhotoshop(before, encoder.photoshopMetadata, 0);
+    if (encoder.photoshopMetadata) {
+        void* emptyAllocation = encoder.photoshopMetadata;
+        Require(PKFree_nid_postfix(&emptyAllocation) == 0);
+        encoder.photoshopMetadata = static_cast<std::uint8_t*>(emptyAllocation);
+    }
+}
+
 void TestExifMetadata() {
     struct Fixture {
         Jxr::ImageEncodeMetadataPrefix encoder;
@@ -1007,6 +1305,9 @@ int main() {
     TestTermPostProc();
     TestInitPostProc();
     TestExifMetadata();
+    TestGpsMetadata();
+    TestIptcMetadata();
+    TestPhotoshopMetadata();
     TestDecodeInitialize();
     TestDecodeQueries();
     TestDecodeRelease();

@@ -295,10 +295,6 @@ int APS5_VABI unorm2_getNFKDInstance() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ures_close() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ures_getByKey() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -308,22 +304,6 @@ int APS5_VABI ures_getStringByKey() {
 }
 
 int APS5_VABI ures_open() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uscript_getScript() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uscript_getShortName() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uscript_hasScript() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI utext_close() {
     NotImplemented_nid_no_patch(__func__);
 }
 

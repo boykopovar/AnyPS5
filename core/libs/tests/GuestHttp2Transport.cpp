@@ -117,6 +117,7 @@ struct ResponseSpec {
     int status = 0;
     std::vector<std::pair<std::string, std::string>> headers;
     std::vector<std::pair<std::string, std::string>> informationalHeaders;
+    std::array<std::string, 3> chunkWhitespace{};
 };
 
 class Server {
@@ -513,7 +514,9 @@ private:
         if (mode == Mode::Http11StallBody) { write(response); Stage(2); Stall(); return; }
         if (mode == Mode::Http11TruncatedSplit) { write(response + "sh"); Stall(); write("ort"); return; }
         if (headers.find(":method")->second != "HEAD") {
-            if (mode == Mode::Http11Chunked) response += "8;test=yes\r\nresponse\r\n5\r\n body\r\n0\r\nX-Trailer: done\r\n\r\n";
+            if (mode == Mode::Http11Chunked) response += "8" + configured.chunkWhitespace[0] + ";test=yes\r\nresponse\r\n5" +
+                configured.chunkWhitespace[1] + (configured.chunkWhitespace[1].empty() ? "" : ";part=two") + "\r\n body\r\n0" +
+                configured.chunkWhitespace[2] + (configured.chunkWhitespace[2].empty() ? "" : ";last=yes") + "\r\nX-Trailer: done\r\n\r\n";
             else if (mode == Mode::Http11BadChunk) response += "z\r\n";
             else if (mode == Mode::Http11Gzip) response += StoredGzip("response body");
             else response += mode == Mode::Http11Truncated ? "short" : "response body";
@@ -961,6 +964,31 @@ void SslCallbacks(int trusted) {
         Require(observed.calls == 2 && observed.errors == 0, "each TLS hop reports its chain");
     }
     Require(sceSslTerm_nid_postfix(untrusted) == 0, "untrusted SSL context cleanup");
+}
+
+void Http1ChunkWhitespace(int ssl) {
+    constexpr std::array<std::string_view, 3> whitespace{" ", "\t", " \t "};
+    unsigned accepted = 0;
+    for (std::size_t padding = 0; padding < whitespace.size(); ++padding) {
+        for (std::size_t chunk = 0; chunk < 3; ++chunk) {
+            try {
+                Server server(Mode::Http11Chunked);
+                ResponseSpec response;
+                response.chunkWhitespace[chunk] = whitespace[padding];
+                server.SetResponse(std::move(response));
+                Client client(ssl, 4, 0, 2);
+                client.Create(server.Url("127.0.0.1"));
+                Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 whitespace chunk send");
+                Response(client, 200);
+                server.Join();
+                ++accepted;
+            } catch (const std::exception& error) {
+                std::fprintf(stderr, "HTTP1 chunk whitespace refused: padding %zu chunk %zu: %s\n", padding, chunk, error.what());
+            }
+        }
+    }
+    std::printf("HTTP1 chunk extension whitespace accepted: %u/9\n", accepted);
+    Require(accepted == 9, "HTTP1 valid chunk extension whitespace rejected");
 }
 
 void Http1Transport(int ssl) {
@@ -1916,6 +1944,7 @@ int main(int argc, char** argv) {
     } else if (argc == 2 && std::string_view(argv[1]) == "--http1") {
         Http1GzipPolicy(ssl);
         Http1Transport(ssl);
+        Http1ChunkWhitespace(ssl);
         Http1Policies(ssl);
         Http1Cancellation(ssl);
         Http1BufferedDeadline(ssl);

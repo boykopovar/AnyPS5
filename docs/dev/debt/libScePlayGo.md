@@ -1,5 +1,9 @@
 # libScePlayGo technical debt
 
+### Functional
+
+- [scePlayGoGetOptionalChunk, scePlayGoGetSupportedOptionalChunk, scePlayGoRequestOptionalChunk and scePlayGoSetToDoList](../../../core/libs/prx/libScePlayGo/Export.cpp) (libScePlayGo) - returning `0x80B2000A` (`SCE_PLAYGO_ERROR_BAD_POINTER`) for unmapped or unreadable chunk parameter pointers is a defensive host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+
 ### Unknown function info
 
 - [scePlayGoSnapshot](../../../core/libs/prx/libScePlayGo/Export.cpp) (libScePlayGo) - throws and is declared without parameters. [pgo_stub](https://github.com/drakmor/pgo_stub/blob/c95dec777563/library.h#L130) and [rps5e](https://github.com/keklick1337/rps5e/blob/7028192c3246/crates/ps5hle/src/playgo.rs#L711-L715) give `(int handle, const char* filename)` but disagree on what it does: pgo_stub writes a summary file of its own format, rps5e writes nothing. What the library writes is not known

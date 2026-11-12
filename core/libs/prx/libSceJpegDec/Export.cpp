@@ -281,6 +281,8 @@ void forgetStream(const Context* context) {
     streams.erase(context);
 }
 
+bool endFound(InputStream& stream);
+
 void pull(InputStream& stream, std::uint32_t size) {
     while (size > 0 && stream.status == 0) {
         if (stream.chunkSize == 0) {
@@ -304,6 +306,7 @@ void pull(InputStream& stream, std::uint32_t size) {
         stream.chunk += count;
         stream.chunkSize -= count;
         size -= count;
+        if (endFound(stream) && stream.end) return;
     }
 }
 
