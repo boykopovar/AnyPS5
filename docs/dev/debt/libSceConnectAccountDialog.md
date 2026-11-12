@@ -1,17 +1,7 @@
 # libSceConnectAccountDialog technical debt
 
-### Additional callable exports
+### Silent stubs
 
-- [Additional callable exports](../../../core/libs/prx/libSceConnectAccountDialog/Export.cpp) - 7 entries observed in a 3.20-labelled image and a later 13.60-labelled image are import-resolution declarations only. Neither image label authenticates a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
-
-[Version-pinned selected ELF export records](https://gist.github.com/kyon-eth/3fbb1a4a6f95a936b4cd58e9c3d8c50c/5e3af709224ed8235af11337309af0725e5685cb) list every NID below with its image label, decoded export module and library, raw qualified symbol, ELF function type, value and size for each inspected version-labelled image. The extract SHA-256 is `02ab27f12bcd0cc9fa03fa33f55fc201110f0d54a86bbbaa093d55d0a8cf262d`; its full-module sorted-function-NID digests and raw module-parameter words permit independent comparison. This is an analyst-produced metadata record, not independent authentication of the original images or proof of prototypes or behavior.
-
-| Name | NID |
-| --- | --- |
-| `sceConnectAccountDialogClose` | `9ShAQi6BXhg` |
-| `sceConnectAccountDialogGetResult` | `T+wthkoDDFE` |
-| `sceConnectAccountDialogGetStatus` | `BsY6ldG11CU` |
-| `sceConnectAccountDialogInitialize` | `41VeaFH-BlE` |
-| `sceConnectAccountDialogOpen` | `5dDAY+FchRM` |
-| `sceConnectAccountDialogTerminate` | `pr2u71StfRo` |
-| `sceConnectAccountDialogUpdateStatus` | `B24oCJO6Awg` |
+- [sceConnectAccountDialogOpen](../../../core/libs/prx/libSceConnectAccountDialog/Export.cpp) (libSceConnectAccountDialog) - with `ANYPS5_PSN_DIALOGS=show`, a successful open shows AnyPS5's notice that the feature needs PlayStation Network; the console's own display without PlayStation Network is not measured, and the notice wording is AnyPS5's.
+- [libSceConnectAccountDialog](../../../core/libs/prx/libSceConnectAccountDialog/Export.cpp) - the dialog runs the common-dialog state machine but shows nothing and reports the user as having cancelled, as there is no PlayStation Network account to link; console behaviour is not measured. The names and NIDs are from the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv); no type database gives the prototypes ([Orbital's](https://github.com/AlexAltea/orbital/blob/b321fcdbd700cc02da1cb1ad25412781d5ec73c6/tools/ida/db_types.json), which the sibling dialogs cite, has none for this library). The declarations are the common-dialog family shape Orbital gives every dialog it types (`const struct *param`, `struct *result`, `void`), not measured prototypes: nothing is read through `param`, and only the leading `int32_t` result code of `result` is written, as the rest of the layout is not known.
+- [sceConnectAccountDialogGetResult](../../../core/libs/prx/libSceConnectAccountDialog/Export.cpp) - returning `COMMON_DIALOG_ERROR_ARG_NULL` for an unwritable result pointer is a host-safety fallback with console behaviour unmeasured.

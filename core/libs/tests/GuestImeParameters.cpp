@@ -4,15 +4,30 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 
 static_assert(sizeof(Param) == 96);
 static_assert(offsetof(Param, option) == 32);
 static_assert(offsetof(Param, reserved) == 88);
 
+static constexpr int NotOpened = static_cast<int>(0x80bc0002u);
+
 static void Require(bool value, const char* message) {
     if (value) return;
     std::fprintf(stderr, "%s\n", message);
     std::abort();
+}
+
+template <typename TCall>
+static void RequireNotImplemented(TCall call, const std::string& name) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == name + " not implemented", "a pending ime function threw another error");
+        return;
+    }
+    Require(false, "a pending ime function returned");
 }
 
 static void CheckInitialization() {
@@ -120,6 +135,7 @@ static void CheckClosedPanel() {
     Require(sceImeSetTextGeometry(TextAreaMode::Edit, &geometry) == notOpened, "geometry needs an open panel");
     Require(sceImeSetTextGeometry(TextAreaMode::Edit, nullptr) == notOpened, "null geometry checks open panel first");
     Require(sceImeClose_nid_postfix() == notOpened, "closing needs an open panel");
+    Require(sceImeDisableController() == notOpened, "disabling the controller needs an open panel");
     PositionAndForm form;
     std::memset(&form, 0xa5, sizeof(form));
     Require(sceImeGetPanelPositionAndForm(&form) == notOpened, "panel position needs an open panel");
@@ -148,11 +164,14 @@ static void CheckOpenPanel() {
             "unwritable panel position and form");
     PositionAndForm form{};
     Require(sceImeGetPanelPositionAndForm(&form) == 0, "valid panel position and form");
+    RequireNotImplemented([] { sceImeDisableController(); }, "sceImeDisableController");
+    RequireNotImplemented([] { sceImeDisableController(); }, "sceImeDisableController");
+    Require(sceImeGetPanelPositionAndForm(&form) == 0, "panel still open after the controller release threw");
     Require(sceImeClose_nid_postfix() == 0, "close ime panel");
+    Require(sceImeDisableController() == NotOpened, "disabling the controller needs an open panel after close");
 }
 
 static void CheckKeyboardResourceIds() {
-    constexpr int NotOpened = static_cast<int>(0x80bc0002u);
     constexpr int ConnectionFailed = static_cast<int>(0x80bc0004u);
     constexpr int InvalidUserId = static_cast<int>(0x80bc0010u);
     constexpr int InvalidAddress = static_cast<int>(0x80bc0031u);

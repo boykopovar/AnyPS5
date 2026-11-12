@@ -13,6 +13,8 @@ struct ConfigStorage {
     std::size_t keyLength = 0;
     std::uint8_t* ca = nullptr;
     std::size_t caLength = 0;
+    std::uint8_t* cert = nullptr;
+    std::size_t certLength = 0;
     std::uint32_t protocols = 24;
     int verifyClient = 0;
     int verifyName = 1;
@@ -87,6 +89,7 @@ void Release(ConfigStorage* config) {
         return;
     ClearKey(*config);
     ClearMemory(config->ca, config->caLength);
+    ClearMemory(config->cert, config->certLength);
     delete config;
 }
 
@@ -182,6 +185,12 @@ int APS5_VABI tls_config_set_ca_mem_nid_postfix(TlsConfig* config, const std::ui
     if (!config) return -1;
     auto* storage = Storage(config);
     return SetMemory(storage->ca, storage->caLength, ca, length);
+}
+
+int APS5_VABI tls_config_set_cert_mem_nid_postfix(TlsConfig* config, const std::uint8_t* cert, std::size_t length) {
+    if (!config) return -1;
+    auto* storage = Storage(config);
+    return SetMemory(storage->cert, storage->certLength, cert, length);
 }
 
 int APS5_VABI tls_config_set_protocols_nid_postfix(TlsConfig* config, std::uint32_t protocols) {

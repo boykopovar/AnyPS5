@@ -16,6 +16,10 @@ extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* name, con
     throw std::runtime_error(name);
 }
 
+extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* name, const char*, int) {
+    throw std::runtime_error(name);
+}
+
 namespace {
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {

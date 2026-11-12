@@ -79,8 +79,11 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set_property(TARGET anyps5_curl_backend APPEND PROPERTY INTERFACE_LINK_LIBRARIES pthread)
 endif()
 
-set(curlSources Export.cpp src/CurlSockets.cpp)
-add_library(libcurl SHARED EXCLUDE_FROM_ALL ${curlSources})
+add_library(libcurl SHARED EXCLUDE_FROM_ALL
+    Export.cpp
+    src/CurlSockets.cpp
+    src/FormFree.cpp
+)
 if(WIN32)
     target_compile_definitions(libcurl PRIVATE FD_SETSIZE=1024)
 endif()
@@ -115,14 +118,13 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcurl>")
     endif()
 
-    set(curlTestTopics Utility Url SlistMime Options Handles Transfers Sockets)
-    foreach(test_topic IN LISTS curlTestTopics)
+    foreach(test_topic IN ITEMS Utility Url SlistMime Options Handles Transfers MimeCallback Sockets)
         set(test_name guest_curl_${test_topic}_tests)
         string(TOLOWER "${test_topic}" test_slug)
         add_test_executable(${test_name} tests/Curl${test_topic}.cpp)
         target_include_directories(${test_name} PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(${test_name} PRIVATE libcurl libkernel libc)
-        if(test_topic STREQUAL "Transfers")
+        if(test_topic MATCHES "^(Transfers|MimeCallback)$")
             target_link_libraries(${test_name} PRIVATE anyps5_curl_backend)
         endif()
         if(test_topic STREQUAL "Sockets" AND WIN32)
