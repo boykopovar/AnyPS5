@@ -194,6 +194,9 @@ int main() {
     NpSignalingAccountPlatformPair noPlatform{0x1234, 0, 0};
     Require(sceNpSignalingActivateConnectionA(context, nullptr, &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "a null peer was taken");
     Require(sceNpSignalingActivateConnectionA(context, &account, nullptr) == InvalidArgument, "sceNpSignalingActivateConnectionA", "a null output was taken");
+    errno = 71;
+    Require(sceNpSignalingActivateConnectionA(context, reinterpret_cast<const NpSignalingAccountPlatformPair*>(0x10), &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "unreadable peerAddr was taken");
+    Require(errno == 71, "sceNpSignalingActivateConnectionA", "errno was not preserved");
     Require(sceNpSignalingActivateConnectionA(99, &noAccount, &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "account id 0 was not refused before the context");
     Require(sceNpSignalingActivateConnectionA(99, &noPlatform, &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "platform 0 was not refused before the context");
     Require(sceNpSignalingActivateConnectionA(99, &account, &connection) == CtxNotFound, "sceNpSignalingActivateConnectionA", "an unknown context was taken");

@@ -528,6 +528,34 @@ void testProgressRules() {
 
 }
 
+void testGreaterFilters() {
+    const char definitions[] = R"({"statDefinitionArray":[
+        {"statId":10,"dataType":"int32","aggregation":"max"},
+        {"statId":20,"dataType":"uint32","aggregation":"latest"}]})";
+    const char extraction[] = R"({"statsExtractionRuleArray":[
+        {"condition":{"eventName":"COLLECTED","property":{"path":"$.rings","comparator":">","value":"-1"}},"action":{"input":"$.rings","output":{"statId":10}}},
+        {"condition":{"eventName":"CLIMBED","property":{"path":"$.climbs","comparator":">","value":0}},"action":{"input":"$.climbs","output":{"statId":20}}},
+        {"condition":{"eventName":"CLIMBED","property":{"path":"$.climbs","comparator":">","value":"one"}},"action":{"input":"$.climbs","output":{"statId":20}}},
+        {"condition":{"eventName":"CLIMBED","property":{"path":"$.climbs","comparator":">=","value":"0"}},"action":{"input":"$.climbs","output":{"statId":20}}}]})";
+    const auto rules = NpTrophy2::ParseStatRules(ucp({{"stats_definition.json", definitions}, {"stats_extraction.json", extraction}}));
+    check(rules.events.size() == 2 && rules.events.at("COLLECTED").size() == 1 && rules.events.at("CLIMBED").size() == 1 && rules.skipped.size() == 2 &&
+              contains(rules.skipped[0], "statsExtractionRuleArray[2]") && contains(rules.skipped[1], "statsExtractionRuleArray[3]"),
+          "a filter greater than an integer was not kept, or another comparator or a bound that is not an integer was");
+    NpTrophy2::StatStore stats("greater");
+    const auto collected = [&](std::optional<std::uint64_t> value, const char* text) { return NpTrophy2::ApplyStatRules(rules, event("COLLECTED", {{"rings", value, text}}), stats, InitialUser, 0); };
+    const auto unknown = collected(std::nullopt, "-1");
+    check(unknown.updates.empty() && unknown.problems.empty() && !stats.Value(InitialUser, 0, 10), "a value equal to the bound passed a greater-than filter");
+    const auto none = collected(0, "0");
+    check(none.updates.size() == 1 && stats.Value(InitialUser, 0, 10) == std::optional<std::uint64_t>(0), "a value above a negative bound did not pass");
+    const auto some = collected(12, "12");
+    check(some.updates.size() == 1 && stats.Value(InitialUser, 0, 10) == std::optional<std::uint64_t>(12), "a greater-than filter did not copy its input");
+    const auto climbed = [&](std::uint64_t value) { return NpTrophy2::ApplyStatRules(rules, event("CLIMBED", {{"climbs", value, std::to_string(value)}}), stats, InitialUser, 0); };
+    const auto first = climbed(3);
+    const auto reset = climbed(0);
+    check(first.updates.size() == 1 && reset.updates.empty() && reset.problems.empty() && stats.Value(InitialUser, 0, 20) == std::optional<std::uint64_t>(3),
+          "a value not above the bound changed a latest statistic");
+}
+
 int main() {
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-trophy-package-" + std::to_string(std::random_device{}()));
@@ -543,6 +571,7 @@ int main() {
     testUnsupportedStatActions();
     testApplyStatRules();
     testProgressRules();
+    testGreaterFilters();
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
     std::puts("Trophy package tests passed");

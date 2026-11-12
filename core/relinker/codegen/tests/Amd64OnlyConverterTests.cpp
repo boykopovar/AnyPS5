@@ -843,6 +843,57 @@ void wideStoreSplit() {
     const Bytes absolute32 = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x25, 0xF8, 0xFF, 0xFF, 0x7F};
     const auto absolute32Split = Codegen::DecodeVexWideStore(absolute32.data(), absolute32.size());
     require(absolute32Split && absolute32Split->Low.Bytes == Bytes{0x67, 0xC5, 0xF8, 0x11, 0x04, 0x25, 0xF8, 0xFF, 0xFF, 0x7F} && absolute32Split->High.Bytes == Bytes{0x67, 0xC4, 0xE3, 0x7D, 0x19, 0x04, 0x25, 0x08, 0x00, 0x00, 0x80, 0x01}, "A 32-bit absolute 256-bit store was not split across the signed displacement boundary");
+    const auto intel = Codegen::MakeAmd64OnlyInstructionMatcher();
+    const auto rosetta32 = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const std::vector<Case> dynamicAddressCases = {
+        {{0xC5, 0xFE, 0x7F, 0x01}, {0xC5, 0xFA, 0x7F, 0x01}, {0xC4, 0xE3, 0x7D, 0x19, 0x41, 0x10, 0x01}, "vmovdqu (%rcx)"},
+        {{0xC5, 0xFC, 0x11, 0x41, 0xF8}, {0xC5, 0xF8, 0x11, 0x41, 0xF8}, {0xC4, 0xE3, 0x7D, 0x19, 0x41, 0x08, 0x01}, "vmovups -8(%rcx)"},
+        {{0xC5, 0xFD, 0x11, 0x81, 0x00, 0x01, 0x00, 0x00}, {0xC5, 0xF9, 0x11, 0x81, 0x00, 0x01, 0x00, 0x00}, {0xC4, 0xE3, 0x7D, 0x19, 0x81, 0x10, 0x01, 0x00, 0x00, 0x01}, "vmovupd 256(%rcx)"},
+        {{0xC5, 0xFE, 0x7F, 0x81, 0x00, 0xFF, 0xFF, 0xFF}, {0xC5, 0xFA, 0x7F, 0x81, 0x00, 0xFF, 0xFF, 0xFF}, {0xC4, 0xE3, 0x7D, 0x19, 0x81, 0x10, 0xFF, 0xFF, 0xFF, 0x01}, "vmovdqu -256(%rcx)"},
+        {{0xC5, 0xFC, 0x11, 0x04, 0x0D, 0x00, 0x00, 0x00, 0x00}, {0xC5, 0xF8, 0x11, 0x04, 0x0D, 0x00, 0x00, 0x00, 0x00}, {0xC4, 0xE3, 0x7D, 0x19, 0x04, 0x0D, 0x10, 0x00, 0x00, 0x00, 0x01}, "vmovups (,%rcx)"},
+        {{0xC5, 0xFE, 0x7F, 0x04, 0x89}, {0xC5, 0xFA, 0x7F, 0x04, 0x89}, {0xC4, 0xE3, 0x7D, 0x19, 0x44, 0x89, 0x10, 0x01}, "vmovdqu (%rcx,%rcx,4)"},
+        {{0xC4, 0xA1, 0x7C, 0x11, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00}, {0xC4, 0xA1, 0x78, 0x11, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00}, {0xC4, 0xA3, 0x7D, 0x19, 0x04, 0x25, 0x10, 0x00, 0x00, 0x00, 0x01}, "vmovups (,%r12)"},
+        {{0xC4, 0xC1, 0x7C, 0x11, 0x45, 0x00}, {0xC4, 0xC1, 0x78, 0x11, 0x45, 0x00}, {0xC4, 0xC3, 0x7D, 0x19, 0x45, 0x10, 0x01}, "vmovups (%r13)"}};
+    for (const auto& item : dynamicAddressCases) {
+        const auto split = Codegen::DecodeVexWideStore(item.Original.data(), item.Original.size());
+        require(split && split->Low.Bytes == item.Low && split->High.Bytes == item.High && !split->Low.RipDisplacementOffset && !split->High.RipDisplacementOffset, (std::string("A 64-bit addressed wide store lost its supported split: ") + item.Name).c_str());
+        auto dynamic32 = item.Original;
+        dynamic32.insert(dynamic32.begin(), 0x67);
+        requireFailure([&] { (void)Codegen::DecodeVexWideStore(dynamic32.data(), dynamic32.size()); }, "A runtime 32-bit address can wrap the upper half despite a small displacement");
+        requireFailure([&] { (void)rosetta32->Match(dynamic32.data(), dynamic32.size()); }, "Rosetta conversion accepted an unsafe 32-bit addressed wide-store split");
+        require(!intel->Match(dynamic32.data(), dynamic32.size()), "Intel conversion changed a native 32-bit addressed wide store");
+    }
+    for (const auto& unchanged32 : {
+             Bytes{0x67, 0xC5, 0xF8, 0x11, 0x01}, Bytes{0x67, 0xC5, 0xF9, 0x11, 0x01}, Bytes{0x67, 0xC5, 0xFA, 0x7F, 0x01},
+             Bytes{0x67, 0xC5, 0xFC, 0x29, 0x01}, Bytes{0x67, 0xC5, 0xFD, 0x29, 0x01}, Bytes{0x67, 0xC5, 0xFD, 0x7F, 0x01}}) {
+        require(!Codegen::DecodeVexWideStore(unchanged32.data(), unchanged32.size()), "A 128-bit or aligned 256-bit store entered the unsafe wide-store check");
+        require(!rosetta32->Match(unchanged32.data(), unchanged32.size()), "Rosetta conversion changed a native 128-bit or aligned 256-bit store");
+    }
+    const Bytes lastAbsolute32 = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x25, 0xEF, 0xFF, 0xFF, 0xFF};
+    const auto lastAbsolute32Split = Codegen::DecodeVexWideStore(lastAbsolute32.data(), lastAbsolute32.size());
+    require(lastAbsolute32Split && lastAbsolute32Split->High.Bytes == Bytes{0x67, 0xC4, 0xE3, 0x7D, 0x19, 0x04, 0x25, 0xFF, 0xFF, 0xFF, 0xFF, 0x01}, "The last representable 32-bit absolute upper-half address was rejected");
+    const Bytes firstWrappedAbsolute32 = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x25, 0xF0, 0xFF, 0xFF, 0xFF};
+    requireFailure([&] { (void)Codegen::DecodeVexWideStore(firstWrappedAbsolute32.data(), firstWrappedAbsolute32.size()); }, "A 32-bit absolute upper-half address wrapped to zero");
+    const Bytes eip = {0x67, 0xC5, 0xFC, 0x11, 0x05, 0x00, 0x01, 0x00, 0x00};
+    const auto eipSplit = Codegen::DecodeVexWideStore(eip.data(), eip.size());
+    require(eipSplit && eipSplit->Low.RipTarget == 9 + 0x100 && eipSplit->High.RipTarget == 9 + 0x110, "EIP-relative wide-store target metadata changed");
+    for (const auto segment : {std::uint8_t{0x64}, std::uint8_t{0x65}}) {
+        auto segmentAbsolute = absolute32;
+        segmentAbsolute.insert(segmentAbsolute.begin(), segment);
+        auto expectedLow = absolute32Split->Low.Bytes;
+        auto expectedHigh = absolute32Split->High.Bytes;
+        expectedLow.insert(expectedLow.begin(), segment);
+        expectedHigh.insert(expectedHigh.begin(), segment);
+        const auto absoluteSplit = Codegen::DecodeVexWideStore(segmentAbsolute.data(), segmentAbsolute.size());
+        require(absoluteSplit && absoluteSplit->Low.Bytes == expectedLow && absoluteSplit->High.Bytes == expectedHigh && !absoluteSplit->Low.RipDisplacementOffset && !absoluteSplit->High.RipDisplacementOffset, "A segment-prefixed 32-bit absolute store lost its prefixes or split");
+        auto segmentEip = eip;
+        segmentEip.insert(segmentEip.begin(), segment);
+        const auto segmentEipSplit = Codegen::DecodeVexWideStore(segmentEip.data(), segmentEip.size());
+        require(segmentEipSplit && segmentEipSplit->Low.Bytes == Bytes{segment, 0x67, 0xC5, 0xF8, 0x11, 0x05, 0x00, 0x01, 0x00, 0x00} && segmentEipSplit->High.Bytes == Bytes{segment, 0x67, 0xC4, 0xE3, 0x7D, 0x19, 0x05, 0, 0, 0, 0, 0x01}, "A segment-prefixed EIP-relative store lost its prefixes or split");
+        require(segmentEipSplit->Low.RipDisplacementOffset == 6 && segmentEipSplit->High.RipDisplacementOffset == 7 && segmentEipSplit->Low.RipTarget == 10 + 0x100 && segmentEipSplit->High.RipTarget == 10 + 0x110, "A segment-prefixed EIP-relative store changed its relocation metadata");
+        const auto segmentEipMatch = rosetta32->Match(segmentEip.data(), segmentEip.size());
+        require(segmentEipMatch && segmentEipMatch->Relocations.size() == 2 && segmentEipMatch->Relocations[0].AddressSize32 && segmentEipMatch->Relocations[1].AddressSize32 && segmentEipMatch->Relocations[0].SiteTarget == 10 + 0x100 && segmentEipMatch->Relocations[1].SiteTarget == 10 + 0x110, "Rosetta conversion lost a segment-prefixed EIP-relative relocation's address size or target");
+    }
     const Bytes disp32 = {0x67, 0xC5, 0xFC, 0x11, 0x80, 0xF8, 0xFF, 0xFF, 0x7F};
     requireFailure([&] { (void)Codegen::DecodeVexWideStore(disp32.data(), disp32.size()); }, "A 32-bit base-relative 256-bit store whose upper half can wrap was split");
     const Bytes indexed32 = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x0D, 0xF8, 0xFF, 0xFF, 0x7F};
@@ -1157,6 +1208,39 @@ void converterWideStoreIslandAcrossInt64Max() {
     require(Bytes(high.Bytes.begin() + 0x205, high.Bytes.begin() + 0x207) == Bytes{0xEB, 0x0D}, "The short jump to an island across 2^63 has the wrong displacement");
 }
 
+void converterAddressSizeJumpTableTargets() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes dispatch = {0x48, 0x63, 0x04, 0x81, 0x48, 0x01, 0xC8, 0xFF, 0xE0, 0x48, 0x83, 0xC1, 0x01, 0xC5, 0xFC, 0x11, 0x07, 0x48, 0x83, 0xC2, 0x01, 0xC3};
+    for (const bool addressSize32 : {false, true}) {
+        for (const std::uint8_t segment : {0x00, 0x64, 0x65}) {
+            for (const std::uint64_t table : {0x3000ull, 0x80001010ull}) {
+                Bytes first;
+                first.reserve(9);
+                if (segment != 0) first.push_back(segment);
+                if (addressSize32) first.push_back(0x67);
+                first.insert(first.end(), {0x48, 0x8D, 0x0D, 0, 0, 0, 0});
+                write<std::uint32_t>(first, first.size() - 4, static_cast<std::uint32_t>(table - (0x1000 + first.size())));
+                Bytes file(0x400, 0xCC);
+                std::copy(first.begin(), first.end(), file.begin() + 0x200);
+                std::copy(dispatch.begin(), dispatch.end(), file.begin() + static_cast<std::ptrdiff_t>(0x200 + first.size()));
+                write<std::uint32_t>(file, 0x300, static_cast<std::uint32_t>(0x1000 + first.size() + 9 - table));
+                write<std::uint32_t>(file, 0x304, static_cast<std::uint32_t>(0x1000 + first.size() + 17 - table));
+                const auto size = first.size() + dispatch.size();
+                const auto result = converter->Convert(file, {{1, 5, 0x200, 0x1000, 0, size, size, 16}, {1, 4, 0x300, table, 0, 8, 8, 16}});
+                const bool reachableTable = addressSize32 || table == 0x3000;
+                const auto expectedOffset = 0x200 + first.size() + (reachableTable ? 9 : 13);
+                require(result.Trampolines.size() == 1 && result.Trampolines[0].Offset == expectedOffset && result.Trampolines[0].Length == 8,
+                        "A jump table's address size did not protect the instruction after a 256-bit store");
+                if (reachableTable) {
+                    const auto target = 0x200 + first.size() + 17;
+                    require(std::equal(file.begin() + static_cast<std::ptrdiff_t>(target), file.begin() + static_cast<std::ptrdiff_t>(target + 4), result.Bytes.begin() + static_cast<std::ptrdiff_t>(target)),
+                            "Conversion overwrote a jump-table destination");
+                }
+            }
+        }
+    }
+}
+
 void converterJumpTableTargets() {
     const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
     const Bytes leaTable = {0x48, 0x8D, 0x0D, 0xF9, 0x1F, 0x00, 0x00};
@@ -1192,6 +1276,29 @@ void converterJumpTableTargets() {
     require(placedAt(convert(leaTable, {{0x300, table(0x3000, {0x1010})}, {0x380, table(0x3000, {0x1018})}}, {code, data, {0x61000000, 4, 0x380, 0x3000, 0, 0x10, 0x10, 16}}), 0x214), "A jump table was read from a segment that is not loaded");
     require(placedAt(convert(leaTable, {{0x300, table(0x3000, {0x1010, 0x1018})}, {0x3A0, store}}, {code, data, {2, 5, 0x3A0, 0x2000, 0, 4, 4, 16}}), 0x210), "A segment that is not loaded was converted");
     requireFailure([&] { (void)convert(leaTable, {{0x300, table(0x3000, {0x1010, 0x1018})}}, {code, {1, 4, 0x300, 0x3000, 0, 0x1000, 0x1000, 16}}); }, "A jump table was read from a segment that exceeds the file");
+}
+
+void converterAvxShortSites() {
+    const auto avx = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Avx);
+    const auto convert = [](const std::unique_ptr<Codegen::IAmd64OnlyConverter>& converter, const Bytes& text) {
+        Bytes file(0x300 + text.size(), 0xCC);
+        std::copy(text.begin(), text.end(), file.begin() + 0x200);
+        return converter->Convert(file, {segmentHeader(text.size())});
+    };
+    const Bytes count = {0xF3, 0x0F, 0xBC, 0xC1, 0x72, 0x10, 0x90, 0xC3};
+    const auto branched = convert(avx, count);
+    require(branched.Trampolines.size() == 1 && branched.KeptCount == 0 && branched.Reports.size() == 1 && branched.Reports[0].InstructionName == "TZCNT", "A 4-byte TZCNT before a conditional branch was not lowered");
+    require(branched.Trampolines[0].Offset == 0x200 && branched.Trampolines[0].Length == 6, "A 4-byte TZCNT did not take the following conditional branch into its stub");
+    const Bytes movbe = {0x0F, 0x38, 0xF0, 0x07, 0xC3};
+    const auto returned = convert(avx, movbe);
+    require(returned.Trampolines.size() == 1 && returned.Reports.size() == 1 && returned.Reports[0].InstructionName == "MOVBE" && returned.Trampolines[0].Length == 5, "A 4-byte MOVBE before a return was not lowered with the return");
+    const auto rosetta = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    require(convert(rosetta, count).Reports.empty() && convert(rosetta, movbe).Reports.empty(), "The Rosetta target lowered TZCNT or MOVBE");
+    const Bytes rosettaOnly = {0xC5, 0xFC, 0x11, 0x07, 0x0F, 0xC7, 0xF8, 0x0F, 0xAE, 0x37, 0xC3};
+    require(convert(avx, rosettaOnly).Reports.empty(), "The AVX target applied a Rosetta workaround to a 256-bit store, RDSEED or XSAVEOPT");
+    const Bytes rdpid = {0xF3, 0x0F, 0xC7, 0xF9, 0x48, 0x83, 0xC1, 0x01, 0xC3};
+    const auto processor = convert(avx, rdpid);
+    require(processor.Reports.size() == 1 && processor.Reports[0].InstructionName == "RDPID", "The AVX target did not lower RDPID");
 }
 
 void converterRosetta() {
@@ -2463,6 +2570,7 @@ int main() {
         rosettaSubstitutions();
         xsaveoptExecution();
         converterRosetta();
+        converterAvxShortSites();
         rosettaScalarCompares();
         converterRosettaScalarCompare();
         rosettaLegacyScalarCompares();
@@ -2473,6 +2581,7 @@ int main() {
         rdpidExecution();
         rdseedExecution();
         clwbExecution();
+        converterAddressSizeJumpTableTargets();
         wideStoreSplit();
         converterWideStoreWindows();
         converterWideStoreIslandAcrossInt64Max();

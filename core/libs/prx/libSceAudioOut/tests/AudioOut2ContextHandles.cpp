@@ -1,6 +1,7 @@
 #include "prx/libSceAudioOut/libSceAudioOut.hpp"
 #include "SceTypes.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -212,6 +213,21 @@ void FirmwareExSignatures() {
     getVolume.value = readBack;
     getVolume.value_size = sizeof(readBack);
     Require(sceAudioOut2LoPortGetAttributes(exPort, &getVolume, 1) == 0 && readBack[0] == 0.5f && readBack[1] == 0.25f, "the volume attribute did not round trip");
+    auto* unreadableAttributes = reinterpret_cast<AudioOut2Attribute*>(0x10);
+    errno = 73;
+    Require(sceAudioOut2LoPortGetAttributes(exPort, unreadableAttributes, 1) == errorInvalidParam, "an unreadable port attribute record was accepted");
+    Require(errno == 73, "an unreadable port attribute record changed host errno");
+    Require(sceAudioOut2LoPortGetAttributes(portSentinel, unreadableAttributes, 1) == errorInvalidHandle, "an unreadable port attribute record hid an invalid handle");
+    Require(sceAudioOut2LoPortGetAttributes(exPort, unreadableAttributes, 0) == 0, "an empty port attribute read touched its pointer");
+    Require(sceAudioOut2LoPortGetAttributes(exPort, nullptr, 1) == errorInvalidParam, "a null port attribute record was accepted");
+    void* readOnlyValue = AllocatePage(true);
+    Require(readOnlyValue != nullptr, "a read-only port attribute output page was not mapped");
+    getVolume.value = readOnlyValue;
+    errno = 73;
+    Require(sceAudioOut2LoPortGetAttributes(exPort, &getVolume, 1) == errorInvalidParam, "an unwritable port attribute value was accepted");
+    Require(errno == 73, "an unwritable port attribute value changed host errno");
+    FreePage(readOnlyValue);
+    getVolume.value = readBack;
     AudioOut2Attribute badAttribute{};
     badAttribute.attribute_id = 5;
     badAttribute.value = readBack;

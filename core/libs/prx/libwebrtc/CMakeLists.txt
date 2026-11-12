@@ -2,6 +2,7 @@ add_library(libwebrtc SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export
 target_include_directories(libwebrtc PRIVATE ${LIBS_INCLUDE_DIR})
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoFrameDimensions.cpp)
 configure_windows_unwind(libwebrtc)
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RtcpNack.cpp)
 
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/I420BufferChroma.cpp)
 
@@ -591,5 +592,19 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_webrtc_sequence_checker PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_webrtc_rtcp_nack_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/RtcpNack.cpp)
+    target_include_directories(guest_webrtc_rtcp_nack_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_webrtc_rtcp_nack_tests PRIVATE libwebrtc libc)
+    configure_windows_unwind(guest_webrtc_rtcp_nack_tests)
+    add_test(NAME guest_webrtc_rtcp_nack COMMAND guest_webrtc_rtcp_nack_tests)
+    add_test(NAME guest_webrtc_rtcp_nack_wraparound COMMAND guest_webrtc_rtcp_nack_tests wraparound)
+    set_tests_properties(guest_webrtc_rtcp_nack guest_webrtc_rtcp_nack_wraparound PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_webrtc_rtcp_nack guest_webrtc_rtcp_nack_wraparound PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

@@ -1,4 +1,5 @@
 #include "prx/libScePlayGo/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <charconv>
@@ -186,7 +187,12 @@ static uint64_t SupportedOptionalChunkMask(uint32_t type) {
 static int ValidateOptionalChunkRequest(uint32_t type, const PlayGoOptionalChunk* option) {
     if (!option) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (type > PLAYGO_OPTIONAL_CHUNK_TYPE_LAST) return SCE_PLAYGO_ERROR_BAD_OPTIONAL_TYPE;
-    if (type == PLAYGO_OPTIONAL_CHUNK_TYPE_SCENARIO && (option->bitmask & ~PLAYGO_SCENARIO_MASK_ALL) != 0) return SCE_PLAYGO_ERROR_BAD_SCENARIO_CONFIGURATION;
+    PlayGoOptionalChunk localOption{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
+    errno = savedErrno;
+    if (!copied) return SCE_PLAYGO_ERROR_BAD_POINTER;
+    if (type == PLAYGO_OPTIONAL_CHUNK_TYPE_SCENARIO && (localOption.bitmask & ~PLAYGO_SCENARIO_MASK_ALL) != 0) return SCE_PLAYGO_ERROR_BAD_SCENARIO_CONFIGURATION;
     return 0;
 }
 
@@ -337,8 +343,13 @@ int APS5_VABI scePlayGoSetToDoList(int handle, const PlayGoToDo* todo_list, uint
     if (!todo_list) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (number_of_entries == 0) return SCE_PLAYGO_ERROR_BAD_SIZE;
     for (uint32_t index = 0; index < number_of_entries; ++index) {
-        if (!IsKnownChunk(todo_list[index].chunk_id)) return SCE_PLAYGO_ERROR_BAD_CHUNK_ID;
-        const int8_t locus = todo_list[index].locus;
+        PlayGoToDo entry{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&entry, &todo_list[index], sizeof(entry));
+        errno = savedErrno;
+        if (!copied) return SCE_PLAYGO_ERROR_BAD_POINTER;
+        if (!IsKnownChunk(entry.chunk_id)) return SCE_PLAYGO_ERROR_BAD_CHUNK_ID;
+        const int8_t locus = entry.locus;
         if (locus != PLAYGO_LOCUS_NOT_DOWNLOADED && locus != PLAYGO_LOCUS_LOCAL_SLOW && locus != PLAYGO_LOCUS_LOCAL_FAST) return SCE_PLAYGO_ERROR_BAD_LOCUS;
     }
     return 0;

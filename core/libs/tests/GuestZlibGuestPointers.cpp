@@ -1,6 +1,7 @@
 #include "prx/libSceZlib/include/Api.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -28,9 +29,13 @@ int main() {
     std::uint64_t requestId = 0x1122334455667788;
 
     Check(sceZlibInitialize(nullptr, 0) == 0);
+    errno = EDOM;
     Check(sceZlibInflate(invalidSource, 1, output.data(), output.size(), &requestId) == invalidArgument);
+    Check(requestId == 0x1122334455667788 && errno == EDOM);
     Check(sceZlibInflate(compressed.data(), compressed.size(), invalidDestination, output.size(), &requestId) == invalidArgument);
+    Check(requestId == 0x1122334455667788 && errno == EDOM);
     Check(sceZlibInflate(compressed.data(), compressed.size(), output.data(), output.size(), invalidId) == invalidArgument);
+    Check(requestId == 0x1122334455667788 && errno == EDOM);
     Check(requestId == 0x1122334455667788);
     std::uint64_t completed = 0;
     std::uint32_t timeout = 0;
