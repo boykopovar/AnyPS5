@@ -475,6 +475,15 @@ int main() {
     KernelUseconds efTimeout = 1000;
     Require(sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_OR, &pattern, &efTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(pattern == 0);
+    for (const std::uint32_t mode : {0x00u, 0x03u, 0x04u, 0x31u}) {
+        pattern = 0xdeadbeef;
+        efTimeout = 1000;
+        Require(sceKernelWaitEventFlag(ef, 1, mode, &pattern, &efTimeout) == SCE_KERNEL_ERROR_EINVAL && pattern == 0xdeadbeef && efTimeout == 1000);
+    }
+    pattern = 0xdeadbeef;
+    efTimeout = 1000;
+    Require(sceKernelWaitEventFlag(ef, 0, EVF_WAITMODE_AND, &pattern, &efTimeout) == SCE_KERNEL_ERROR_EINVAL && pattern == 0xdeadbeef && efTimeout == 1000);
+    pattern = 0;
 
     int waitThreads = -1;
     Require(sceKernelCancelEventFlag(ef, 0x42, &waitThreads) == SCE_OK);

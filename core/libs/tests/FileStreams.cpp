@@ -1130,6 +1130,12 @@ static void CheckStreamWritesAfterReads(const std::string& base) {
         clearerr_nid_postfix(stream);
         errno = 0;
         Require(fprintf_nid_postfix(stream, "%s", "XY") == -1 && errno == EBADF && ferror_nid_postfix(stream) != 0, "fprintf after fgetc on a read-only stream");
+        clearerr_nid_postfix(stream);
+        errno = 0;
+        Require(fputwc_nid_postfix(u'X', stream) == -1 && errno == EBADF && ferror_nid_postfix(stream) != 0, "fputwc after fgetc on a read-only stream");
+        clearerr_nid_postfix(stream);
+        errno = 0;
+        Require(fputws_nid_postfix(u"XY", stream) == -1 && errno == EBADF && ferror_nid_postfix(stream) != 0, "fputws after fgetc on a read-only stream");
     });
     CheckReadsOnWriteOnlyStreams(base + ".write-only");
     Require(std::remove(path.c_str()) == 0);

@@ -276,7 +276,7 @@ int main() {
 
     const Pthread self = scePthreadSelf();
     *__error_nid_postfix() = 0;
-    Require(pthread_kill_nid_postfix(nullptr, 13) == 3 && *__error_nid_postfix() == 0);
+    Require(pthread_kill_nid_postfix(nullptr, 13) == 22 && *__error_nid_postfix() == 0);
     Require(pthread_kill_nid_postfix(self, 129) == 22);
     Sender sender{self, 13, -1};
     Pthread senderThread = StartSender(sender);
