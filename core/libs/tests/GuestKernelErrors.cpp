@@ -728,4 +728,44 @@ int main() {
         concurrentPoll.join();
         Require(pollResult == SCE_OK || pollResult == SCE_KERNEL_ERROR_ESRCH);
     }
+
+    for (int iter = 0; iter < 100; ++iter) {
+        KernelEventFlag releaseEf = nullptr;
+        std::atomic<int> releasedRes{-1};
+        std::uint64_t releasedPat = 0xdeadbeef;
+        const auto startWaiter = [&](const char* name, std::uint32_t attr, std::uint32_t mode) {
+            releasedRes = -1;
+            releasedPat = 0xdeadbeef;
+            Require(sceKernelCreateEventFlag(&releaseEf, name, attr, 0, nullptr) == SCE_OK);
+            std::thread waiter([&, mode] {
+                releasedRes = sceKernelWaitEventFlag(releaseEf, 0x01, mode, &releasedPat, nullptr);
+            });
+            WaitForEventFlagWaiters(releaseEf, 1);
+            return waiter;
+        };
+        std::uint64_t releasePattern = 0xdeadbeef;
+        int releaseWaiting = -1;
+
+        std::thread setSingle = startWaiter("set_single", EVF_ATTR_SINGLE, EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_PAT);
+        Require(sceKernelSetEventFlag(releaseEf, 0x03) == SCE_OK);
+        Require(sceKernelWaitEventFlag(releaseEf, 0x02, EVF_WAITMODE_AND, &releasePattern, nullptr) == SCE_OK && releasePattern == 0x02);
+        Require(sceKernelCancelEventFlag(releaseEf, 0x04, &releaseWaiting) == SCE_OK && releaseWaiting == 0);
+        setSingle.join();
+        Require(releasedRes == SCE_OK && releasedPat == 0x03);
+        Require(sceKernelDeleteEventFlag(releaseEf) == SCE_OK);
+
+        std::thread setDelete = startWaiter("set_delete", EVF_ATTR_MULTI, EVF_WAITMODE_OR);
+        Require(sceKernelSetEventFlag(releaseEf, 0x01) == SCE_OK);
+        Require(sceKernelDeleteEventFlag(releaseEf) == SCE_OK);
+        setDelete.join();
+        Require(releasedRes == SCE_OK && releasedPat == 0x01);
+
+        std::thread cancelSet = startWaiter("cancel_set", EVF_ATTR_SINGLE, EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_PAT);
+        Require(sceKernelCancelEventFlag(releaseEf, 0, &releaseWaiting) == SCE_OK && releaseWaiting == 1);
+        Require(sceKernelSetEventFlag(releaseEf, 0x01) == SCE_OK);
+        Require(sceKernelPollEventFlag(releaseEf, 0x01, EVF_WAITMODE_AND, &releasePattern) == SCE_OK && releasePattern == 0x01);
+        cancelSet.join();
+        Require(releasedRes == SCE_KERNEL_ERROR_ECANCELED && releasedPat == 0);
+        Require(sceKernelDeleteEventFlag(releaseEf) == SCE_OK);
+    }
 }
