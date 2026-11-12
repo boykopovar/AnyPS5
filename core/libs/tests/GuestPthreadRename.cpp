@@ -7,7 +7,28 @@
 #include <cstring>
 #include <string>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 static void Require(bool value) { if (!value) std::abort(); }
+
+#ifdef _WIN32
+static void CheckDescription(const std::wstring& expected) {
+    PWSTR description = nullptr;
+    Require(SUCCEEDED(GetThreadDescription(GetCurrentThread(), &description)) && description != nullptr);
+    const std::wstring actual(description);
+    LocalFree(description);
+    if (actual != expected) {
+        std::fprintf(stderr, "thread description units:");
+        for (const wchar_t unit : actual) std::fprintf(stderr, " %04x", static_cast<unsigned>(unit));
+        std::fprintf(stderr, "; expected:");
+        for (const wchar_t unit : expected) std::fprintf(stderr, " %04x", static_cast<unsigned>(unit));
+        std::fprintf(stderr, "\n");
+        std::abort();
+    }
+}
+#endif
 
 static void CheckStoredName(Pthread thread, const std::string& expected) {
     std::array<unsigned char, 64> buffer;
@@ -37,6 +58,19 @@ static void CheckThreadRename(Pthread thread) {
         Require(*__error_nid_postfix() == 77);
         CheckStoredName(thread, names[3]);
     }
+    constexpr int nameTooLong = static_cast<int>(0x8002003fu);
+    for (const std::size_t length : {32u, 40u}) {
+        const std::string name(length, 'x');
+        Require(scePthreadRename(thread, name.c_str()) == nameTooLong);
+        CheckStoredName(thread, names[3]);
+    }
+    for (const std::size_t length : {32u, 33u, 40u}) {
+        const std::string name(length, 'x');
+        *__error_nid_postfix() = 0;
+        pthread_set_name_np_nid_postfix(thread, name.c_str());
+        Require(*__error_nid_postfix() == 63);
+        CheckStoredName(thread, names[3]);
+    }
     Require(pthread_rename_np_nid_postfix(thread, "renamed") == 0);
     CheckStoredName(thread, "renamed");
     *__error_nid_postfix() = savedError;
@@ -45,6 +79,11 @@ static void CheckThreadRename(Pthread thread) {
 static void* APS5_VABI Worker(void*) {
     const Pthread self = scePthreadSelf();
     Require(self != nullptr);
+#ifdef _WIN32
+    CheckDescription(L"Z\u00e4hler");
+    Require(scePthreadRename(self, "Z\xc3\xa4hler-\xe6\x97\xa5") == 0);
+    CheckDescription(L"Z\u00e4hler-\u65e5");
+#endif
     CheckThreadRename(self);
     return nullptr;
 }
@@ -54,6 +93,6 @@ int main() {
     Require(self != nullptr);
     CheckThreadRename(self);
     Pthread thread = nullptr;
-    Require(scePthreadCreate(&thread, nullptr, Worker, nullptr, "rename-test") == 0);
+    Require(scePthreadCreate(&thread, nullptr, Worker, nullptr, "Z\xc3\xa4hler") == 0);
     Require(scePthreadJoin(thread, nullptr) == 0);
 }

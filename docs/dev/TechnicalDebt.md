@@ -1,6 +1,6 @@
 # Project technical debt
 
-Entries about one library or component are in [debt](debt/), one file per library or component, under the same sections as this page. Entries that belong to none stay here. An entry may end with `Closes when:` and the measurement, title or test that would close it, such as `Closes when: measured on a PS5`, so the entries a contributor can re-check are found by searching for it.
+Entries about one library or component are in [debt](debt/), one file per library or component, under the same sections as this page. Entries that belong to none stay here. An entry may end with `Closes when:` and the measurement, title or test that would close it, such as `Closes when: measured on a PS5`, so the entries a contributor can re-check are found by searching for it. It may also end with `Labels:` and labels that replace what [`tools/debt_report.py`](../../tools/debt_report.py) infers for that family: `console`, `firmware`, `gpu`, `title` or `code` for what would close it, `no-test` or `tested`, and `windows`, `macos` or `linux`.
 
 ### Build
 
@@ -12,12 +12,11 @@ Entries about one library or component are in [debt](debt/), one file per librar
 
 ### Silent stubs
 
-Throughout the project, every function at every stage either **does exactly what it's supposed to or throws an exception**. Everywhere... except:
+Throughout the project, every function at every stage either **does exactly what it's supposed to or throws an exception**. The exceptions are listed under **Silent stubs** in each library's file in [debt](debt/).
 
 ### Unknown function info
 
 - AudioIn and NpSessionSignaling exports added without an implementation have assumed signatures
-- `sceNetCtlGetIfStat` signature and 56-byte layout come from PPSA09030's call site and SharpProspero's `SceNetCtlIfStat`; the device kind is always 0, the byte counters are the host's totals over its up non-loopback hardware interfaces (not "since cleared"), and the not-connected result is assumed to match `sceNetCtlGetState`
 - Font, Http2, Net, Ssl, SystemService and libkernel exports imported by PPSA12544 and added without an implementation have unknown signatures
 - The Share, NpTrophy2, NpEntitlementAccess and WebBrowserDialog exports imported by PPSA12544's Unity plugins and added without an implementation have unknown signatures
 - Acm, GameLiveStreaming, Net, NpEntitlementAccess, VoiceQoS, WebBrowserDialog and libkernel exports imported by PPSA14632 and added without an implementation are declared without parameters; of the VoiceQoS ones only those still throwing remain so
@@ -30,3 +29,5 @@ Throughout the project, every function at every stage either **does exactly what
 - [Quick syntax checks](../../tools/check_compile.py) do not support Windows-style response-file quoting. GNU response files reject empty options, byte order marks, quoted CRLF, Windows text-mode EOF markers and escapes whose meanings differ between GCC and Clang, including backslashes in single quotes, most backslashes in double quotes and escaped line endings. Supply expanded compile arguments for those forms; the Ninja fallback uses `ninja -t compdb -x`.
 - [Quick syntax checks](../../tools/check_compile.py) do not model every compiler option's operand count. A preprocessing mode following an unrecognized option without a joined value is rejected rather than risk removing that option's operand. Compiler wrappers with their own option grammar are not covered, except a leading `cmake -E env`, whose options other than `NAME=VALUE`, `--unset=`, `--modify` and `--` are rejected. Forwarded frontend actions (`-Xclang`, `-Xpreprocessor` and their joined forms) are rejected. Comma-forwarded options (`-Wp,`) allow only recognized macro/include operands; response-file tokens are rejected even as operands, and other options are rejected because unmodeled actions or output operands could bypass syntax analysis or write outputs. See the [Clang option grammar](https://clang.llvm.org/docs/ClangCommandLineReference.html).
 - [Quick syntax checks](../../tools/check_compile.py) reject `-save-temps=` and `--save-temps=` values other than `cwd` and `obj` instead of passing them to the compiler: an unknown value fails on GCC, while newer Clang builds take any value as an output prefix and write preprocessed files even under `-fsyntax-only` (measured on Apple clang 21), so a passed-through mode either fails the check on one compiler or silently writes outputs on the other.
+
+- Focus pause for rumble, not verified on hardware: real controllers (DualSense, Xbox, generic) and real focus changes on Windows, macOS and Linux have not been tested. The console-side behaviour is not measured; the pause is a host-side comfort setting and is not a console behaviour.

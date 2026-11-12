@@ -30,8 +30,16 @@ struct BitIo {
     std::size_t referenceOffset;
 };
 
+struct SimpleBitIo {
+    Stream* stream;
+    std::uint32_t bytesRead;
+    std::uint8_t accumulator;
+    std::uint32_t bitsLeft;
+};
+
 static_assert(sizeof(Stream) == 88 && offsetof(Stream, read) == 56 && offsetof(Stream, setPosition) == 72);
 static_assert(sizeof(BitIo) == 48 && offsetof(BitIo, start) == 16 && offsetof(BitIo, referenceOffset) == 40);
+static_assert(sizeof(SimpleBitIo) == 24 && offsetof(SimpleBitIo, bytesRead) == 8 && offsetof(SimpleBitIo, accumulator) == 12 && offsetof(SimpleBitIo, bitsLeft) == 16);
 
 } // namespace Jxr
 

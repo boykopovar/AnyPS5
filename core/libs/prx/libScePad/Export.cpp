@@ -84,12 +84,19 @@ bool OpenHandle(int handle) {
 }
 
 constexpr std::size_t PAD_LEONARDO_UNIQUE_DATA_SIZE = 0x18;
+constexpr std::uint32_t PAD_HISTORY_BUFFER_SIZE = 0x960;
+constexpr std::int32_t PAD_OPEN_EXT2_PARAM_SIZE = 0x10;
+
+void WriteDefaultData(PadData* data) {
+    std::memset(data, 0, sizeof(*data));
+    data->left_stick_x = data->left_stick_y = data->right_stick_x = data->right_stick_y = 0x80;
+    data->orientation_w = 1.0f;
+    data->acceleration_y = 1.0f;
+}
 
 PadData SpecialData() {
-    PadData data{};
-    data.left_stick_x = data.left_stick_y = data.right_stick_x = data.right_stick_y = 0x80;
-    data.orientation_w = 1.0f;
-    data.acceleration_y = 1.0f;
+    PadData data;
+    WriteDefaultData(&data);
     return data;
 }
 
@@ -195,7 +202,7 @@ int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformatio
  info->stickInfo.deadZoneLeft = 13;
  info->stickInfo.deadZoneRight = 13;
  info->connectionType = PAD_CONNECTION_TYPE_LOCAL;
- const bool connected = PortOf(handle) != 0 || Pad::IsConnected(0);
+ const bool connected = Pad::IsConnected(PortOf(handle));
  info->connectedCount = connected ? 1 : 0;
  info->connected = connected;
  info->deviceClass = PAD_DEVICE_CLASS_STANDARD;
@@ -236,9 +243,14 @@ int APS5_VABI scePadGetInfo_nid_postfix(PadInfo* info) {
 }
 
 int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInformation* info) {
+ if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
- std::memset(info, 0, sizeof(*info));
+ if (SpecialHandle(handle)) {
+  std::memset(info, 0, sizeof(*info));
+  return PAD_OK;
+ }
+ PadGetTriggerEffectState_nid_postfix(PortOf(handle), info->state);
  return PAD_OK;
 }
 
@@ -310,7 +322,7 @@ int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void
  const bool knownType = type == PAD_PORT_TYPE_STANDARD || type == PAD_PORT_TYPE_SPECIAL || SystemRemote(userId, type);
  if (!unknownType && !knownType) return PAD_ERROR_INVALID_ARG;
  if (userId == PAD_USER_ID_INVALID) return PAD_ERROR_INVALID_USER_ID;
- if (unknownType) NotImplemented_nid_no_patch(__func__);
+ if (unknownType) return PAD_ERROR_INVALID_ARG;
  if (index != 0) return PAD_ERROR_INVALID_PORT_INDEX;
  if (type == PAD_PORT_TYPE_SPECIAL) {
   if (SpecialHandleOf(userId) != PAD_ERROR_DEVICE_NO_HANDLE) return PAD_ERROR_ALREADY_OPENED;
@@ -350,8 +362,9 @@ int APS5_VABI scePadSetFeatureReport(std::int32_t handle, std::uint8_t reportId,
 int APS5_VABI scePadOutputReport(std::int32_t handle, std::uint8_t reportId, const void* data, std::uint64_t size) { NotImplemented_nid_no_patch(__func__); return 0; }
 
 int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
+ if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+ if (data == nullptr || num < 1 || num > 64) return PAD_ERROR_INVALID_ARG;
  if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
- if (data == nullptr || num <= 0) return PAD_ERROR_INVALID_ARG;
  if (RemoteHandle(handle)) {
   data[0] = PadData{};
   return 1;
@@ -364,8 +377,10 @@ int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
 }
 
 int APS5_VABI scePadReadState(int handle, PadData* data) {
- if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (data == nullptr) return PAD_ERROR_INVALID_ARG;
+ WriteDefaultData(data);
+ if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+ if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
 
  *data = RemoteHandle(handle) ? PadData{} : SpecialHandle(handle) ? SpecialData() : Pad::ReadState(PortOf(handle));
 
@@ -391,6 +406,12 @@ int APS5_VABI scePadSetAngularVelocityDeadbandState(int handle, bool enable) {
  if (SpecialHandle(handle)) return PAD_OK;
  Pad::SetAngularVelocityDeadband(PortOf(handle), enable);
  return PAD_OK;
+}
+
+int APS5_VABI scePadSetConnection(std::int32_t handle, bool connected) {
+ if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
 }
 
 int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param) {
@@ -426,8 +447,8 @@ int APS5_VABI scePadSetTriggerEffect(int handle, const void* param) {
  }
  std::uint32_t mode[2] = {};
  for (int trigger = 0; trigger < 2; ++trigger) std::memcpy(&mode[trigger], bytes + 8 + 56 * trigger, 4);
- if (mode[0] > 6 || mode[1] > 6) {
-  return PAD_ERROR_INVALID_ARG;
+ for (int trigger = 0; trigger < 2; ++trigger) {
+  if ((mask & (1u << trigger)) != 0 && mode[trigger] > 6) return PAD_ERROR_INVALID_ARG;
  }
  const int port = PortOf(handle);
  for (int trigger = 0; trigger < 2; ++trigger) {
@@ -448,7 +469,7 @@ int APS5_VABI scePadSetVibrationMode(int handle, int mode) {
  if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (mode <= 0) return PAD_ERROR_INVALID_ARG;
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
- if (mode > 3 && mode != 5) return PAD_ERROR_INVALID_ARG;
+ if (mode > 5) return PAD_ERROR_INVALID_ARG;
  if (SpecialHandle(handle)) return PAD_OK;
  Pad::SetVibrationMode(PortOf(handle), mode);
  return PAD_OK;
@@ -558,8 +579,10 @@ int APS5_VABI scePadLastLotusButtonData(std::int32_t handle, std::uint32_t param
 }
 
 int APS5_VABI scePadReadStateExt(std::int32_t handle, PadDataExtended* data) {
+    if (data == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePadSetExtensionReport(std::int32_t handle, const PadExtensionReport* report) {
@@ -568,8 +591,10 @@ int APS5_VABI scePadSetExtensionReport(std::int32_t handle, const PadExtensionRe
 }
 
 int APS5_VABI scePadGetExtensionUnitInfo(std::int32_t handle, PadExtensionUnitInfo* info) {
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (info == nullptr) return PAD_ERROR_INVALID_ARG;
+    static_cast<void>(handle);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePadEnableExtensionPort(bool enabled) {
@@ -581,9 +606,11 @@ int APS5_VABI scePadEnableSpecificDeviceClass(std::int32_t deviceClass) {
     return 0;
 }
 
-int APS5_VABI scePadOpenExt2(std::uint64_t deviceId, std::int32_t type, const void* reserved) {
+int APS5_VABI scePadOpenExt2(std::int32_t userId, std::int32_t paramSize, const void* param) {
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (paramSize != PAD_OPEN_EXT2_PARAM_SIZE || param == nullptr) return PAD_ERROR_INVALID_ARG;
+    static_cast<void>(userId);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePadDeviceOpen(std::uint64_t deviceId, std::int32_t type, std::int32_t index) {
@@ -622,18 +649,22 @@ int APS5_VABI scePadSetLightBarBaseBrightness(std::int32_t handle, std::uint32_t
 }
 
 int APS5_VABI scePadSetLightBarBlinking(std::int32_t handle, const PadLightBarBlinkingParameter* parameter) {
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    if (parameter == nullptr) return PAD_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 std::uint64_t APS5_VABI scePadGetIdleCount(std::int32_t userId) {
+    if (!Pad::IsInitialized()) return 0;
+    static_cast<void>(userId);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePadGetControllerIdleCount(std::int32_t handle, std::uint64_t* count) {
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (handle == 0 || count == nullptr) return PAD_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePadSetPowerSavingState(std::int32_t handle, std::uint8_t state) {
@@ -672,8 +703,10 @@ int APS5_VABI scePadSetLoginUserNumber(std::int32_t number) {
 }
 
 int APS5_VABI scePadGetCapability(std::int32_t deviceId, std::uint32_t* capability) {
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (capability == nullptr) return PAD_ERROR_INVALID_ARG;
+    static_cast<void>(deviceId);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePadShareOutputData(std::int32_t source, std::int32_t destination) {
@@ -697,8 +730,10 @@ int APS5_VABI scePadSetVibrationForce(std::int32_t handle, const PadVibrationPar
 }
 
 int APS5_VABI scePadGetVersionInfo(std::int32_t handle, PadVersionInfo* info) {
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (info == nullptr) return PAD_ERROR_INVALID_ARG;
+    static_cast<void>(handle);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePadGetControllerType(std::int32_t handle, std::int32_t* type) {
@@ -741,8 +776,10 @@ int APS5_VABI scePadSwitchConnection(std::int32_t handle, std::uint32_t flags) {
 }
 
 int APS5_VABI scePadDisableTriggerEffect(std::int32_t handle, bool disabled) {
-    (void)disabled;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    if (SpecialHandle(handle)) return PAD_OK;
+    Pad::SetTriggerEffectsDisabled(PortOf(handle), disabled);
     return PAD_OK;
 }
 
@@ -962,7 +999,8 @@ int APS5_VABI scePadSetProfileIndicatorAnimation(std::int32_t handle, std::uint8
 }
 
 int APS5_VABI scePadIsCoPilot(std::int32_t handle) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    (void)handle;
     return 0;
 }
 
@@ -982,18 +1020,27 @@ int APS5_VABI scePadGetTelemetryInfo(std::int32_t handle, PadTelemetryInfo* info
 }
 
 int APS5_VABI scePadGetActiveTime(std::int32_t handle, std::int32_t type, std::uint64_t* activeTime) {
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (activeTime == nullptr) return PAD_ERROR_INVALID_ARG;
+    static_cast<void>(handle);
+    static_cast<void>(type);
+    *activeTime = 0;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePadGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (deviceId == nullptr) return PAD_ERROR_INVALID_ARG;
+    *deviceId = -1;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePadGetInfoByPortType(std::int32_t type, PadPortInfo* info) {
+    if (info == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if ((static_cast<std::uint32_t>(type) & ~2u) != 0) return PAD_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePadResetLightBarAll(void) {
@@ -1084,7 +1131,8 @@ int APS5_VABI scePadGetBluetoothAddress(std::int32_t handle, std::uint64_t* addr
 }
 
 int APS5_VABI scePadIsMoveReproductionModel(std::int32_t handle) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    (void)handle;
     return 0;
 }
 
@@ -1124,8 +1172,10 @@ int APS5_VABI scePadDisconnectDevice(std::int32_t deviceId) {
 }
 
 int APS5_VABI scePadGetDeviceInfo(std::int32_t deviceId, PadDeviceInfo* info) {
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (info == nullptr) return PAD_ERROR_INVALID_ARG;
+    static_cast<void>(deviceId);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePadSetProcessFocus(const PadProcessFocusParameter* parameter) {
@@ -1182,8 +1232,9 @@ int APS5_VABI scePadSetShareButtonMaskForRemotePlay(std::uint8_t mask) {
 }
 
 int APS5_VABI scePadSetPS4BcVibrationMode(std::uint8_t mode) {
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    static_cast<void>(mode);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePadSetVirtualDeviceComponentInformation(std::int32_t deviceId, const PadVirtualDeviceComponentInformation* info) {
@@ -1201,9 +1252,12 @@ int APS5_VABI scePadGetLicenseControllerInformation(std::int32_t handle, PadLice
     return 0;
 }
 
-int APS5_VABI scePadReadHistory(std::int32_t handle, PadHistoryData* data, std::int32_t count) {
+int APS5_VABI scePadReadHistory(std::int32_t handle, PadHistoryData* data, std::uint32_t size) {
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (size != PAD_HISTORY_BUFFER_SIZE) return PAD_ERROR_INVALID_ARG;
+    static_cast<void>(handle);
+    static_cast<void>(data);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePadStartRecording(void) {
@@ -1242,87 +1296,127 @@ int APS5_VABI scePadSetMuteLed(std::int32_t handle, std::uint32_t mode) {
 }
 
 int APS5_VABI scePadBondUpdateInit(void) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch("scePadBondUpdateInit: the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadBondUpdateIsReady(std::int32_t deviceId, std::int32_t* ready) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (ready == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadBondUpdateIsReady: the driver answer behind the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadBondUpdateStart(std::int32_t handle, const PadUpdateParameter* parameter) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)handle;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (parameter == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadBondUpdateStart: the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadBondUpdateGetStatus(std::int32_t deviceId, std::int32_t* status) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (status == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadBondUpdateGetStatus: the driver answer behind the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadBondUpdateSendData(std::int32_t deviceId, const PadUpdateData* data) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (data == nullptr || data->size != 0x8000) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadBondUpdateSendData: the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadBondUpdateResetBond(std::int32_t deviceId) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch("scePadBondUpdateResetBond: the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadBondUpdateGetReconnectStatus(std::int32_t* status) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (status == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadBondUpdateGetReconnectStatus: the driver answer behind the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadBondUpdateTerm(void) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch("scePadBondUpdateTerm: the bond-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateInit(void) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch("scePadControllerUpdateInit: the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateIsUpdateNeeded2(std::int32_t deviceId, const std::uint32_t* version, std::uint16_t* status) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (status == nullptr) return PAD_ERROR_INVALID_ARG;
+    *status = 0;
+    if (version == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadControllerUpdateIsUpdateNeeded2: the driver answer behind the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateIsReady(std::int32_t deviceId, std::int32_t* ready) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (ready == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadControllerUpdateIsReady: the driver answer behind the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateStart(std::int32_t handle, const PadUpdateParameter* parameter) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)handle;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (parameter == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadControllerUpdateStart: the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateGetStatus(std::int32_t deviceId, std::int32_t* status) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (status == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadControllerUpdateGetStatus: the driver answer behind the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateSendData(std::int32_t deviceId, const PadUpdateData* data) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (data == nullptr || data->size != 0x8000) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadControllerUpdateSendData: the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateResetController(std::int32_t deviceId) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)deviceId;
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch("scePadControllerUpdateResetController: the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateGetReconnectStatus(std::int32_t* status) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (status == nullptr) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadControllerUpdateGetReconnectStatus: the driver answer behind the controller-update ioctl");
     return 0;
 }
 
 int APS5_VABI scePadControllerUpdateTerm(void) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch("scePadControllerUpdateTerm: the controller-update ioctl");
     return 0;
 }
 
