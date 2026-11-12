@@ -143,8 +143,26 @@ void CheckEmpty(const std::string& base) {
     Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/range/empty.bin").c_str()) == 1, "empty source open failed");
     Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 0, "empty source size differs");
     End(client.get());
+    bool opened = true;
+    for (const char* name : {"lower", "title", "upper", "mixed", "padded"}) {
+        if (Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/empty-range/" + name + "/empty.bin").c_str()) != 1) {
+            std::fprintf(stderr, "Empty Content-Range open failed: %s\n", name);
+            opened = false;
+            continue;
+        }
+        Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 0, "empty range source size differs");
+        Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 2) == 0, "empty range end-relative seek failed");
+        End(client.get());
+        std::printf("Empty Content-Range open, size, seek and EOF passed: %s\n", name);
+    }
+    for (const char* name : {"other-unit", "bad-unit", "missing-length", "nonzero", "negative", "signed", "suffix",
+                             "spacing", "unknown", "overflow", "satisfied", "missing-header"}) {
+        Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/empty-range/" + name + "/empty.bin").c_str()) == 0, "invalid empty Content-Range accepted");
+        Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == -1, "refused empty range retained the previous source");
+    }
     Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/range/alternate.bin").c_str()) == 1, "reopen after empty source failed");
     Read(client.get(), 0, 777, true);
+    Check(opened, "valid empty Content-Range rejected");
 }
 
 void CheckCacheAndReopen(const std::string& base) {

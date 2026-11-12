@@ -64,6 +64,7 @@ static void HostEmitMessage(j_common_ptr cinfo, int msg_level) {
     if (gerr->emit_message) {
         gerr->emit_message(reinterpret_cast<NKWebKit::GuestCommonPtr>(b->guest_cinfo), msg_level);
     }
+    b->host_err.trace_level = gerr->trace_level;
 }
 
 static void HostOutputMessage(j_common_ptr cinfo) {
@@ -182,9 +183,12 @@ static void APS5_VABI DefaultGuestErrorExit_nid_no_patch(NKWebKit::GuestCommonPt
 }
 
 static void APS5_VABI DefaultGuestEmitMessage_nid_no_patch(NKWebKit::GuestCommonPtr cinfo, int32_t msg_level) {
-    if (cinfo && cinfo->err && msg_level < 0) {
-        cinfo->err->num_warnings++;
-    }
+    if (!cinfo || !cinfo->err) return;
+    auto* error = cinfo->err;
+    const bool warning = msg_level < 0;
+    const bool output = warning ? error->num_warnings == 0 || error->trace_level >= 3 : error->trace_level >= msg_level;
+    if (output && error->output_message) error->output_message(cinfo);
+    if (warning) ++error->num_warnings;
 }
 
 static void APS5_VABI DefaultGuestOutputMessage_nid_no_patch(NKWebKit::GuestCommonPtr cinfo) {
@@ -192,6 +196,7 @@ static void APS5_VABI DefaultGuestOutputMessage_nid_no_patch(NKWebKit::GuestComm
     char buffer[200];
     if (cinfo->err->format_message) {
         cinfo->err->format_message(cinfo, buffer);
+        std::fprintf(stderr, "%s\n", buffer);
     }
 }
 
@@ -228,6 +233,7 @@ static JpegBinding* FindBinding(NKWebKit::GuestJpegDecompress* cinfo) {
 static void SyncGuestToHost(JpegBinding* b) {
     auto* g = b->guest_cinfo;
     auto* h = &b->host_cinfo;
+    if (g->err) b->host_err.trace_level = g->err->trace_level;
     if (g->src) {
         b->host_src.next_input_byte = g->src->next_input_byte;
         b->host_src.bytes_in_buffer = static_cast<size_t>(g->src->bytes_in_buffer);
@@ -248,6 +254,7 @@ static void SyncGuestToHost(JpegBinding* b) {
     h->enable_1pass_quant = g->enable_1pass_quant ? TRUE : FALSE;
     h->enable_external_quant = g->enable_external_quant ? TRUE : FALSE;
     h->enable_2pass_quant = g->enable_2pass_quant ? TRUE : FALSE;
+    h->actual_number_of_colors = g->actual_number_of_colors;
     h->colormap = reinterpret_cast<JSAMPARRAY>(g->colormap);
 }
 
