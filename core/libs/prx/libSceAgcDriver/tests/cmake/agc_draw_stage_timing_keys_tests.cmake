@@ -3,5 +3,5 @@ target_include_directories(agc_draw_stage_timing_keys_tests PRIVATE ${LIBS_INCLU
 configure_host_test_executable(agc_draw_stage_timing_keys_tests)
 
 if(BUILD_TESTING)
-    add_test(NAME agc_draw_stage_timing_keys COMMAND agc_draw_stage_timing_keys_tests)
+    agc_add_default_test(agc_draw_stage_timing_keys_tests)
 endif()
