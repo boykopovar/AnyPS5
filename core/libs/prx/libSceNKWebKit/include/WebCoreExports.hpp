@@ -17,6 +17,7 @@ void APS5_VABI _ZN7WebCore10LayoutRectC1ERKNS_9FloatRectE(WebCore::LayoutRect* s
 void APS5_VABI _ZN7WebCore10LayoutRectC2ERKNS_9FloatRectE(WebCore::LayoutRect* self, const WebCore::FloatRect& r);
 void APS5_VABI _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_( WebCore::RoundedRect* self, const WebCore::LayoutRect& rect, const WebCore::LayoutSize& topLeft, const WebCore::LayoutSize& topRight, const WebCore::LayoutSize& bottomLeft, const WebCore::LayoutSize& bottomRight);
 void APS5_VABI _ZN7WebCore11RoundedRectC2ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_( WebCore::RoundedRect* self, const WebCore::LayoutRect& rect, const WebCore::LayoutSize& topLeft, const WebCore::LayoutSize& topRight, const WebCore::LayoutSize& bottomLeft, const WebCore::LayoutSize& bottomRight);
+WebCore::LayoutPoint APS5_VABI _ZN7WebCore14ScrollableArea34constrainScrollPositionForOverhangERKNS_10LayoutRectERKNS_10LayoutSizeERKNS_11LayoutPointES9_ii(const WebCore::LayoutRect& visibleContentRect, const WebCore::LayoutSize& totalContentsSize, const WebCore::LayoutPoint& scrollPosition, const WebCore::LayoutPoint& scrollOrigin, int headerHeight, int footerHeight);
 WebCore::IntRect APS5_VABI _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(const WebCore::FloatRect& rect);
 void APS5_VABI _ZN7WebCore15AffineTransform12makeIdentityEv(WebCore::AffineTransform* self);
 void APS5_VABI _ZN7WebCore15AffineTransformC1Ev(WebCore::AffineTransform* self);
