@@ -1193,7 +1193,7 @@ void testAcquireMem() {
         check(measured.words[7] == gcrWord, "acquire cache control word does not set bit 15 with bit 14");
     }
     const auto* measuredBase = reinterpret_cast<const volatile void*>(0x100000ull);
-    const std::array<std::tuple<std::uint64_t, std::uint32_t, std::uint32_t>, 10> sizes{{{0, 0, 0}, {1, 1, 0}, {0xff, 1, 0}, {0x100, 1, 0}, {0x101, 2, 0}, {0x1000, 0x10, 0}, {0xffffffffull, 0x1000000u, 0}, {0x100000000ull, 0x1000000u, 0}, {1ull << 40u, 0, 1}, {0xffffffffffffffffull, 0xffffefffu, 0xff}}};
+    const std::array<std::tuple<std::uint64_t, std::uint32_t, std::uint32_t>, 13> sizes{{{0, 0, 0}, {1, 1, 0}, {0xff, 1, 0}, {0x100, 1, 0}, {0x101, 2, 0}, {0x1000, 0x10, 0}, {0xffffffffull, 0x1000000u, 0}, {0x100000000ull, 0x1000000u, 0}, {1ull << 40u, 0, 1}, {(1ull << 48u) - 0x100u, 0xffffffffu, 0xff}, {(1ull << 48u) - 0xffu, 0xffffefffu, 0xff}, {(1ull << 48u) - 1u, 0xffffefffu, 0xff}, {0xffffffffffffffffull, 0xffffefffu, 0xff}}};
     for (const auto& [sizeBytes, low, high] : sizes) {
         Storage measured;
         sceAgcDcbAcquireMem(&measured.buffer, 0, 0, 0x4380u, measuredBase, sizeBytes, 0xa0);

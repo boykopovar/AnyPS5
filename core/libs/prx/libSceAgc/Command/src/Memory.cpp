@@ -11,7 +11,7 @@ std::uint32_t* WriteAcquireMem(CommandBuffer* buffer, std::uint32_t engine, std:
     const auto requested = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
     const bool wholeRange = (cbDbOp & 0x04004000u) != 0;
     const std::uint64_t page = wholeRange ? 1u : requested >> 8u;
-    const std::uint64_t blocks = !wholeRange && sizeBytes < (1ull << 48u) ? (sizeBytes + (requested & 0xffu) + 0xffu) >> 8u : page < lastPage ? lastPage - page : 0;
+    const std::uint64_t blocks = !wholeRange && sizeBytes <= (lastPage << 8u) - (requested & 0xffu) ? (sizeBytes + (requested & 0xffu) + 0xffu) >> 8u : page < lastPage ? lastPage - page : 0;
     const auto control = gcrControl & 0x7ffffu;
     return Emit(buffer, 0x58u, {((engine & 1u) << 31u) | (cbDbOp & 0x06007fc0u), static_cast<std::uint32_t>(blocks), static_cast<std::uint32_t>(blocks >> 32u) & 0xffu,
         static_cast<std::uint32_t>(page), static_cast<std::uint32_t>(page >> 32u) & 0xffffffu, std::min(pollCycles >> 4u, 0xffffu), control | ((control & 0x4000u) << 1u)}, function);
