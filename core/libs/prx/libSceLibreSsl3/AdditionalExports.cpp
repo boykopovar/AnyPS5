@@ -120,10 +120,9 @@ int APS5_VABI SSL_CTX_set_max_early_data_nid_postfix(void* ctx, std::uint32_t ma
     return 1;
 }
 
-int APS5_VABI Unknown_A_minus_Hs_minus_8mau_plus_8_nid_no_patch() {
+int APS5_VABI i2d_PUBKEY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("A-Hs-8mau+8", Unknown_A_minus_Hs_minus_8mau_plus_8_nid_no_patch);
 
 int APS5_VABI ERR_load_X509_strings_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
