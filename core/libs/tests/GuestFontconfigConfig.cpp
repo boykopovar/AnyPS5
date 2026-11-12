@@ -4,6 +4,7 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <cerrno>
 #include <cstdint>
 #include <type_traits>
 
@@ -14,6 +15,7 @@ static_assert(std::is_same_v<decltype(FcConfigDestroy(nullptr)), void>);
 int main() {
     std::uint64_t sentinel = UINT64_C(0x8877665544332211);
     auto* nonnull = reinterpret_cast<FcConfig*>(&sentinel);
+    errno = 53;
     for (int i = 0; i < 256; ++i) {
         FcConfig* created = FcConfigCreate();
         assert(created == nullptr);
@@ -24,5 +26,6 @@ int main() {
         FcConfigDestroy(nullptr);
         FcConfigDestroy(nonnull);
     }
+    assert(errno == 53);
     assert(sentinel == UINT64_C(0x8877665544332211));
 }
