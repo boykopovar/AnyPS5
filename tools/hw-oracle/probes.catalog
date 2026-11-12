@@ -867,6 +867,54 @@
           ]
         }
       ]
+    },
+    {
+      "id": "v-add-f32-ieee-disabled",
+      "instruction": "v_add_f32",
+      "description": "Opposite infinities, quiet NaN payloads and signed zero with IEEE mode disabled.",
+      "body": "v_add_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 3,
+        "denorm16": 3,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {
+          "name": "opposite-infinities",
+          "input": [
+            "0x7f800000",
+            "0xff800000",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "quiet-nan-payload",
+          "input": [
+            "0x7fc12345",
+            "0x3f800000",
+            0,
+            0
+          ]
+        },
+        {
+          "name": "opposite-signed-zeros",
+          "input": [
+            "0x00000000",
+            "0x80000000",
+            0,
+            0
+          ]
+        }
+      ]
     }
   ]
 }
