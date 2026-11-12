@@ -323,6 +323,9 @@ void TestNoDevice() {
 
     std::uint8_t exists = 1;
     Require(sceUsbStorageIsExist(0, "/mnt/usb0", &exists) == true && exists == 0, "device 0 does not exist");
+    errno = 71;
+    Require(ThrowsWith([] { sceUsbStorageIsExist(0, "/mnt/usb0", reinterpret_cast<std::uint8_t*>(0x10)); }, "sceUsbStorageIsExist: an unwritable output is not implemented"), "an unmapped exists output");
+    Require(errno == 71, "the unmapped output preserves errno");
     exists = 1;
     Require(sceUsbStorageIsExist(1, nullptr, &exists) == true && exists == 0, "device 1 does not exist");
     exists = 1;
