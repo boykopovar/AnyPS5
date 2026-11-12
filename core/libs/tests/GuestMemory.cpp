@@ -140,17 +140,29 @@ static void CheckFlexibleMappingIgnoresFlag8000() {
     Require(static_cast<volatile unsigned char*>(again)[length - 1] == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(again), length) == 0);
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
-    bool rejected = false;
-    void* unknown = nullptr;
-    try { sceKernelMapFlexibleMemory(&unknown, length, 3, 0x20000); } catch (const std::exception&) { rejected = true; }
-    Require(rejected && unknown == nullptr);
-    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
     Require(sceKernelAvailableFlexibleMemorySize(nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelAvailableFlexibleMemorySize(reinterpret_cast<std::size_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     std::size_t configured = 0;
     Require(sceKernelConfiguredFlexibleMemorySize(&configured) == 0 && configured > 0);
     Require(sceKernelConfiguredFlexibleMemorySize(nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelConfiguredFlexibleMemorySize(reinterpret_cast<std::size_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+}
+
+static void CheckFlexibleMappingRefusesMeasuredFlags() {
+    constexpr std::size_t length = 0x10000;
+    std::size_t before = 0;
+    std::size_t available = 0;
+    Require(sceKernelAvailableFlexibleMemorySize(&before) == 0);
+    for (const int flag : {0x1, 0x2, 0x4, 0x8, 0x20, 0x40, 0x100, 0x200, 0x400, 0x800, 0x1000, 0x2000, 0x4000, 0x10000, 0x20000, 0x40000, 0x80000, 0x100000}) {
+        void* mapped = nullptr;
+        Require(sceKernelMapFlexibleMemory(&mapped, length, 3, flag) == SCE_KERNEL_ERROR_EINVAL && mapped == nullptr);
+        void* sentinel = reinterpret_cast<void*>(0x1000);
+        Require(sceKernelMapFlexibleMemory(&sentinel, length, 3, flag) == SCE_KERNEL_ERROR_EINVAL && sentinel == reinterpret_cast<void*>(0x1000));
+        Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
+    }
+    void* named = nullptr;
+    Require(sceKernelMapNamedFlexibleMemory(&named, length, 3, 0x8000, "flag 8000") == SCE_KERNEL_ERROR_EINVAL && named == nullptr);
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
 }
 
 static void CheckPageTableStats() {
@@ -172,6 +184,9 @@ static void CheckPageTableStats() {
 
 static void CheckInternalMemoryAvailableSize() {
     Require(sceKernelInternalMemoryGetAvailableSize(nullptr) == -1);
+    std::size_t size = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceKernelInternalMemoryGetAvailableSize(&size) == -2);
+    Require(size == 0x5a5a5a5a5a5a5a5aull);
 }
 
 static void CheckNamedAndHintedMappings() {
@@ -211,9 +226,21 @@ static void CheckVirtualRangeNames() {
     Require(sceKernelSetVirtualRangeName(mapping, length, "first") == 0);
     Require(sceKernelSetVirtualRangeName(mapping, length, "second") == 0);
     Require(std::strcmp(NameAt(mapping), "second") == 0);
+    const char* const longest = "0123456789012345678901234567890";
+    Require(sceKernelSetVirtualRangeName(mapping, length, longest) == 0);
+    Require(std::strcmp(NameAt(mapping), longest) == 0);
+    Require(sceKernelSetVirtualRangeName(mapping, length, "01234567890123456789012345678901") == static_cast<int>(0x8002003fu));
+    Require(std::strcmp(NameAt(mapping), longest) == 0);
+    Require(sceKernelSetVirtualRangeName(mapping, 0, "zero") == 0);
+    Require(std::strcmp(NameAt(mapping), longest) == 0);
     Require(sceKernelClearVirtualRangeName(mapping, length) == 0);
     Require(NameAt(mapping)[0] == '\0');
+    Require(sceKernelSetVirtualRangeName(mapping, length, "before munmap") == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), length) == 0);
+    void* again = mapping;
+    Require(sceKernelMapFlexibleMemory(&again, length, 3, 0x90) == 0 && again == mapping);
+    Require(NameAt(again)[0] == '\0');
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(again), length) == 0);
 }
 
 static void CheckAudioCoprocessorProtection() {
@@ -229,6 +256,16 @@ static void CheckAudioCoprocessorProtection() {
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(writable), length) == 0);
     void* undefined = nullptr;
     Require(sceKernelMapFlexibleMemory(&undefined, length, 0x400, 0) == SCE_KERNEL_ERROR_EINVAL && undefined == nullptr);
+}
+
+static void CheckMprotectLengthZero() {
+    constexpr std::size_t length = 0x4000;
+    void* mapping = nullptr;
+    Require(sceKernelMapFlexibleMemory(&mapping, length, 3, 0) == 0);
+    Require(sceKernelMprotect(mapping, 0, 1) == 0);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(mapping, 0, &info, sizeof(info)) == 0 && info.protection == 3);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), length) == 0);
 }
 
 static void CheckMprotectIgnoresUndefinedBits() {
@@ -328,6 +365,15 @@ static void CheckStrictMemoryProtectionBits() {
         Require(sceKernelGetDirectMemoryType(physical, &type, &start, &end) == 0 && type == 0);
         Require(bytes[0] == 5 && bytes[length - 1] == 7);
     }
+    for (const int flags : {0x1000000, 0x40000000, -1}) {
+        void* invalid = nullptr;
+        Require(sceKernelMapDirectMemory2(&invalid, length, 0, 3, flags, physical, 0) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+    }
+    for (const std::size_t alignment : {std::size_t{1}, std::size_t{0x2000}, std::size_t{0x3000}, std::size_t{0x6000}, std::size_t{0x80000000}}) {
+        void* invalid = nullptr;
+        Require(sceKernelMapDirectMemory2(&invalid, length, 0, 3, 0, physical, alignment) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+    }
+    Require(bytes[0] == 5 && bytes[length - 1] == 7);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), length) == 0);
     Require(sceKernelReleaseDirectMemory(physical, length) == 0);
 }
@@ -938,6 +984,29 @@ static void CheckFixedMappingReplacesPartialOverlap() {
     Require(static_cast<unsigned char*>(fixed)[page * 2 + 7] == 0x5c);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(fixed), page * 3) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
+}
+
+static void CheckFixedDirectMapRejectsAlignmentBeforeReplacing() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
+    void* flexible = nullptr;
+    Require(sceKernelMapFlexibleMemory(&flexible, page * 2, 3, 0) == 0);
+    auto* survivor = static_cast<volatile unsigned char*>(flexible) + page;
+    survivor[7] = 0x3e;
+    void* fixed = static_cast<unsigned char*>(flexible) + page;
+    bool threw = false;
+    try {
+        sceKernelMapDirectMemory(&fixed, page * 2, 3, 0x10, phys, 0x5000);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && fixed == static_cast<unsigned char*>(flexible) + page);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(const_cast<unsigned char*>(survivor), 0, &info, sizeof(info)) == 0 && info.protection == 3);
+    Require(survivor[7] == 0x3e);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(flexible), page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
 }
 
 static void CheckFixedMappingOverHoleInsideAllocation() {
@@ -3989,6 +4058,14 @@ static void CheckSceKernelMmap() {
     void* untouched = &mapped;
     Require(sceKernelMmap(nullptr, 0, 3, 0x1002, -1, 0, &untouched) == static_cast<int>(0x80020016u));
     Require(untouched == &mapped);
+    void* probe = nullptr;
+    Require(sceKernelMmap(nullptr, page, 3, 0x1002, -1, 0, &probe) == 0 && probe != nullptr);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(probe), page) == 0);
+    Require(sceKernelMmap(probe, page, 3, 0x1012, -1, 0, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    VirtualQueryInfo gone{};
+    Require(sceKernelVirtualQuery(probe, 0, &gone, sizeof(gone)) == SCE_KERNEL_ERROR_EACCES);
+    Require(sceKernelMmap(probe, page, 3, 0x1012, -1, 0, reinterpret_cast<void**>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelVirtualQuery(probe, 0, &gone, sizeof(gone)) == SCE_KERNEL_ERROR_EACCES);
 }
 
 static void CheckVirtualQueryPartialMunmap() {
@@ -4280,6 +4357,7 @@ int main(int argc, char** argv) {
     CheckMemoryPoolBlockStats();
     CheckReleaseFlexibleMemory();
     CheckFlexibleMappingIgnoresFlag8000();
+    CheckFlexibleMappingRefusesMeasuredFlags();
     CheckPrtApertures();
     CheckSceKernelMmap();
     CheckInternalMemoryAvailableSize();
@@ -4300,6 +4378,7 @@ int main(int argc, char** argv) {
     CheckCheckedReleaseDirectMemory();
     CheckReleaseSkipsFreePages();
     CheckAudioCoprocessorProtection();
+    CheckMprotectLengthZero();
     CheckMprotectIgnoresUndefinedBits();
     CheckStrictMemoryProtectionBits();
     CheckDirectMapRefusesExecute();
@@ -4317,6 +4396,7 @@ int main(int argc, char** argv) {
     CheckReleaseDirectMemoryClearsMappings();
     CheckReleaseDirectMemoryRejectsInvalidRanges();
     CheckFixedMappingReplacesPartialOverlap();
+    CheckFixedDirectMapRejectsAlignmentBeforeReplacing();
     CheckFixedMappingOverHoleInsideAllocation();
     CheckDirectMemoryGpuProtBits();
     CheckSplitPrivateCollect();

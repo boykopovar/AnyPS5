@@ -514,7 +514,7 @@ int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* 
 }
 
 int APS5_VABI sceHttp2AbortRequest(int req_id) {
-    const auto request = Transport(req_id, false);
+    const auto request = Transport(req_id, !IsWebSocket(req_id));
     if (!request) return ERROR_INVALID_ID;
     request->Cancel();
     return 0;
@@ -728,4 +728,16 @@ int APS5_VABI sceHttp2Unknown_001_nid_no_patch() {
 }
 APS5_EXPORT("AS45QoYHjc4", sceHttp2Unknown_001_nid_no_patch);
 
+}
+
+extern "C" void Http2SetConnectHook_nid_no_patch(Http2::ConnectHook hook) {
+    Http2::ConnectHookSlot().store(hook, std::memory_order_release);
+}
+
+extern "C" void Http2SetPollHook_nid_no_patch(Http2::PollHook hook) {
+    Http2::PollHookSlot().store(hook, std::memory_order_release);
+}
+
+extern "C" void Http2SetWriteHook_nid_no_patch(Http2::WriteHook hook) {
+    Http2::WriteHookSlot().store(hook, std::memory_order_release);
 }
