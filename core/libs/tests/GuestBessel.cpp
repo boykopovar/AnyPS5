@@ -293,6 +293,97 @@ static void CheckFloatOne() {
     std::feclearexcept(FE_ALL_EXCEPT);
 }
 
+static void CheckFloatIntegerOrders() {
+    struct FloatOrderCase { int order; std::uint32_t input; std::uint32_t first; std::uint32_t second; };
+    const FloatOrderCase cases[] = {
+        {0, 0x3f000000u, 0x3f703f8fu, 0xbee397f5u},
+        {1, 0x3f000000u, 0x3e781539u, 0xbfbc5935u},
+        {2, 0x3f000000u, 0x3cfab54bu, 0xc0ae1fb6u},
+        {3, 0x3e000000u, 0x382a8005u, 0xc5234b29u},
+        {4, 0x3f800000u, 0x3b224f1cu, 0xc2051d1au},
+        {0, 0x00000001u, 0x3f800000u, 0xc283a57cu},
+        {1, 0x00000001u, 0x00000000u, 0xff800000u},
+        {2, 0x00000001u, 0x00000000u, 0xff800000u},
+        {3, 0x80000001u, 0x80000000u, 0x7fc00000u},
+        {2, 0x307fffffu, 0x1ffffffeu, 0xdda2f985u},
+        {2, 0x30800000u, 0x20000000u, 0xdda2f983u},
+        {2, 0x30800001u, 0x20000002u, 0xdda2f981u},
+        {3, 0x30800000u, 0x0faaaaabu, 0xeda2f983u},
+        {33, 0x30000000u, 0x00000000u, 0xff800000u},
+        {34, 0x30000000u, 0x00000000u, 0xff800000u},
+        {3, 0x403fffffu, 0x3e9e3d76u, 0xbf09dddfu},
+        {3, 0x40400000u, 0x3e9e3d77u, 0xbf09dddeu},
+        {3, 0x40400001u, 0x3e9e3d7bu, 0xbf09ddddu},
+        {3, 0x3f800000u, 0x3ca04354u, 0xc0ba49dfu},
+        {40, 0x3fc00000u, 0x00000000u, 0xff800000u},
+        {300, 0x3f800000u, 0x00000000u, 0xff800000u},
+        {100, 0x42c7ffffu, 0x3dc55bccu, 0xbe2aed81u},
+        {100, 0x42c80000u, 0x3dc55becu, 0xbe2aed70u},
+        {100, 0x42c80001u, 0x3dc55bfau, 0xbe2aed5cu},
+        {6, 0x501502f9u, 0xb6120061u, 0x3700ca5bu},
+        {7, 0x71800000u, 0x2644a000u, 0xa55d4605u},
+        {8, 0x7f7fffffu, 0x1e3f4fecu, 0x9f469478u},
+        {-1, 0x3f000000u, 0xbe781539u, 0x3fbc5935u},
+        {-3, 0x3fa00000u, 0xbd170347u, 0x404ef7cau},
+        {-4, 0x3fa00000u, 0x3bc093cdu, 0xc1654535u},
+        {3, 0xbfa00000u, 0xbd170347u, 0x7fc00000u},
+        {4, 0xbfa00000u, 0x3bc093cdu, 0x7fc00000u},
+        {INT_MIN, 0x3f000000u, 0x3e781539u, 0xbfbc5935u},
+        {INT_MIN, 0xbf000000u, 0x3e781539u, 0x7fc00000u},
+        {INT_MAX, 0x30000000u, 0x00000000u, 0xff800000u},
+        {0, 0x00000000u, 0x3f800000u, 0xff800000u},
+        {1, 0x80000000u, 0x80000000u, 0xff800000u},
+        {2, 0x00000000u, 0x00000000u, 0xff800000u},
+        {3, 0x80000000u, 0x80000000u, 0xff800000u},
+        {-3, 0x00000000u, 0x80000000u, 0xff800000u},
+        {-4, 0x80000000u, 0x00000000u, 0xff800000u},
+        {0, 0x7f800000u, 0x00000000u, 0x00000000u},
+        {1, 0x7f800000u, 0x00000000u, 0x00000000u},
+        {2, 0x7f800000u, 0x00000000u, 0x00000000u},
+        {-3, 0x7f800000u, 0x80000000u, 0x00000000u},
+        {INT_MIN, 0x7f800000u, 0x00000000u, 0x00000000u},
+        {INT_MAX, 0x7f800000u, 0x00000000u, 0x00000000u},
+        {2, 0xff800000u, 0x00000000u, 0xffc00000u},
+        {3, 0xff800000u, 0x80000000u, 0xffc00000u},
+        {-3, 0xff800000u, 0x00000000u, 0xffc00000u},
+        {0, 0x7fc00123u, 0x7fc00123u, 0x7fc00123u},
+        {1, 0xffc00123u, 0xffc00123u, 0xffc00123u},
+        {3, 0x7fc00123u, 0x7fc00123u, 0x7fc00123u},
+        {INT_MIN, 0xffc00123u, 0xffc00123u, 0xffc00123u},
+    };
+    for (const auto& test : cases) {
+        for (int kind = 0; kind < 2; ++kind) {
+            *__error_nid_postfix() = 12345;
+            const float input = std::bit_cast<float>(test.input);
+            const float result = kind == 0 ? jnf_nid_postfix(test.order, input) : ynf_nid_postfix(test.order, input);
+            const std::uint32_t expected = kind == 0 ? test.first : test.second;
+            const bool invalidInfinity = kind == 1 && test.input == 0xff800000u;
+            if ((invalidInfinity ? !std::isnan(result) : std::bit_cast<std::uint32_t>(result) != expected) || *__error_nid_postfix() != 12345) {
+                std::fprintf(stderr, "Guest %s(%d, %08x): result %08x, expected %08x, errno %d\n", kind == 0 ? "jnf" : "ynf", test.order,
+                             test.input, std::bit_cast<std::uint32_t>(result), expected, *__error_nid_postfix());
+                std::abort();
+            }
+        }
+    }
+    for (const int order : {INT_MIN, -3, -2, -1, 0, 1, 2, 3, INT_MAX}) {
+        for (const std::uint32_t bits : {0x80000001u, 0xbf800000u, 0xff7fffffu}) {
+            for (const int flags : {0, FE_INEXACT, FE_DIVBYZERO}) {
+                std::feclearexcept(FE_ALL_EXCEPT);
+                std::feraiseexcept(flags);
+                const int expectedFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                *__error_nid_postfix() = 12345;
+                const float result = ynf_nid_postfix(order, std::bit_cast<float>(bits));
+                Require(std::bit_cast<std::uint32_t>(result) == 0x7fc00000u);
+                Require(std::fetestexcept(FE_ALL_EXCEPT) == expectedFlags && *__error_nid_postfix() == 12345);
+            }
+        }
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isnan(ynf_nid_postfix(order, -std::numeric_limits<float>::infinity())));
+        Require((std::fetestexcept(FE_INVALID) & FE_INVALID) != 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+}
+
 static void CheckIntegerOrders() {
     const OrderCase first[] = {
         {2, 0x3ddb7cdfd9d7bdbbull, 0x3b979ca10c924224ull}, {5, 0xbddb7cdfd9d7bdbbull, 0xb4cfed4f3ec0c466ull}, {33, 0x3e00000000000000ull, 0x0000000000000000ull},
@@ -377,6 +468,7 @@ int main() {
     CheckFloatSecondKindZero();
     CheckFloatSecondKind();
     CheckFloatOne();
+    CheckFloatIntegerOrders();
     CheckIntegerOrders();
     CheckValues();
     return 0;
