@@ -50,6 +50,34 @@ class CatalogLoadingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "duplicate probe id"):
                 probe_catalog.read_catalog(path)
 
+    def test_probe_ids_and_catalog_shape_are_restricted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "catalog"
+            for invalid in ([], {"schema_version": 1, "probes": []},
+                            {"schema_version": 1, "probes": self.catalog["probes"], "extra": True}):
+                with self.subTest(invalid=type(invalid).__name__):
+                    path.write_text(json.dumps(invalid), encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        probe_catalog.read_catalog(path)
+            malformed = copy.deepcopy(self.catalog)
+            malformed["probes"][0]["id"] = "not/a/path"
+            path.write_text(json.dumps(malformed), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "id must contain lowercase"):
+                probe_catalog.read_catalog(path)
+
+    def test_instruction_body_must_start_with_the_declared_form(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "catalog"
+            malformed = copy.deepcopy(self.catalog)
+            malformed["probes"][0]["body"] = "v_sub_f32 v10, v4, v5"
+            path.write_text(json.dumps(malformed), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "body must start"):
+                probe_catalog.read_catalog(path)
+            malformed["probes"][0]["instruction"] = "bad mnemonic"
+            path.write_text(json.dumps(malformed), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "instruction must be an assembly mnemonic"):
+                probe_catalog.read_catalog(path)
+
 
 if __name__ == "__main__":
     unittest.main()
