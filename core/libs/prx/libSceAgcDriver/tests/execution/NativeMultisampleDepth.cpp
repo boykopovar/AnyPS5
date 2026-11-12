@@ -1878,8 +1878,12 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                         }
                         if (fault == ClearFault::Overlap) NoteHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes), nativeBytes);
                         if (fault == ClearFault::SupersededClear) {
+                            QueueHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+                            recorder.NotePendingWrite(target.htileAddress, static_cast<std::size_t>(metadataBytes));
                             Require(NoteHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes), nativeBytes), "a superseding native HTILE clear dispatch was not noted");
                             ArmHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+                            QueueHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+                            recorder.NotePendingWrite(target.htileAddress, static_cast<std::size_t>(metadataBytes));
                             CompleteHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes));
                         }
                         const auto storedBytes = fault == ClearFault::PartialStore ? 4u : static_cast<std::size_t>(metadataBytes);

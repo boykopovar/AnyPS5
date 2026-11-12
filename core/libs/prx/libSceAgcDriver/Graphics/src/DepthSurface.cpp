@@ -1680,6 +1680,7 @@ public:
     bool clearPending = false;
     std::uint64_t clearGeneration = 0u;
     bool clearCompletionQueued = false;
+    std::uint32_t clearDispatchesPending = 0u;
     VkImageAspectFlags clearAspects = 0u;
     std::optional<std::uint32_t> clearPattern;
     std::uint64_t clearFillNote = 0u;
@@ -3847,20 +3848,24 @@ void ArmHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes) {
 void QueueHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes) {
     std::lock_guard lock(surfacesMutex());
     for (const auto& surface : surfaces()) {
-        if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || surface->target.htileAddress != htileAddress || surface->clearGeneration == 0u || !surface->sampling.refusal.empty()) continue;
-        if (bytes >= surface->sampling.initial[1].bytes) surface->clearCompletionQueued = true;
+        if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || surface->target.htileAddress != htileAddress) continue;
+        if (bytes < surface->sampling.initial[1].bytes) continue;
+        ++surface->clearDispatchesPending;
+        if (surface->clearGeneration == 0u || !surface->sampling.refusal.empty()) continue;
+        surface->clearCompletionQueued = true;
     }
 }
 
 void CompleteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes) {
     std::lock_guard lock(surfacesMutex());
     for (const auto& surface : surfaces()) {
-        if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || surface->target.htileAddress != htileAddress || surface->clearGeneration == 0u) continue;
+        if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || surface->target.htileAddress != htileAddress) continue;
         const auto& metadata = surface->sampling.initial[1];
         if (bytes < metadata.bytes) continue;
+        if (surface->clearDispatchesPending != 0u && --surface->clearDispatchesPending == 0u) surface->clearCompletionQueued = false;
+        if (surface->clearGeneration == 0u) continue;
         Require(GuestMemory::UnchangedSinceCollected(metadata.address, metadata.bytes, surface->clearGeneration), "CPU writes raced native multisample depth clear");
         GuestMemory::MarkWritten(metadata.address, metadata.bytes);
-        surface->clearCompletionQueued = false;
     }
 }
 
