@@ -233,6 +233,12 @@ int main() {
     Require(WKMutableArrayCreate() != nullptr);
 
     const AllocationResult allocationResults[] = {
+        TestAllocation(&_ZN7WebCore9GLContextnwEm, &_ZN7WebCore9GLContextdlEPv, "_ZN7WebCore9GLContextnwEm"),
+        TestAllocation(&_ZN7WebCore9GLContextnaEm, &_ZN7WebCore9GLContextdaEPv, "_ZN7WebCore9GLContextnaEm"),
+        TestDelete(&_ZN7WebCore9GLContextdlEPv, "_ZN7WebCore9GLContextdlEPv"),
+        TestDelete(&_ZN7WebCore9GLContextdaEPv, "_ZN7WebCore9GLContextdaEPv"),
+        TestPlacement(&_ZN7WebCore9GLContextnwEmPv, "_ZN7WebCore9GLContextnwEmPv"),
+        TestPlacement(&_ZN7WebCore9GLContextnaEmPv, "_ZN7WebCore9GLContextnaEmPv"),
         TestAllocation(&_ZN7WebCore6ISOBoxnwEm, &_ZN7WebCore6ISOBoxdlEPv, "_ZN7WebCore6ISOBoxnwEm"),
         TestAllocation(&_ZN7WebCore6ISOBoxnaEm, &_ZN7WebCore6ISOBoxdaEPv, "_ZN7WebCore6ISOBoxnaEm"),
         TestDelete(&_ZN7WebCore6ISOBoxdlEPv, "_ZN7WebCore6ISOBoxdlEPv"),

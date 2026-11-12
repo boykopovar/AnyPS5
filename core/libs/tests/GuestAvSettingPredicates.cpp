@@ -1,4 +1,5 @@
 #include "prx/libSceAvSetting/include/Api.hpp"
+#include "prx/libSceAvSetting/include/InventoryExports.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 
@@ -97,6 +98,15 @@ void TestModeFlags(void* videoOutMode) {
     Require(!sceAvControlIsModeSystemDefault(videoOutMode), "set system-default bit was accepted");
 }
 
+void TestModeBit8(void* videoOutMode) {
+    constexpr std::array<std::uint32_t, 6> Flags{0x0, 0x100, 0xff, 0xfffffeff, 0xffffffff, 0x80000101};
+    for (const std::uint32_t flags : Flags) {
+        WriteField(videoOutMode, 0x30, flags);
+        Require(libSceAvSettingUnknown_kvYuLJa0CyU_nid_no_patch(videoOutMode) == static_cast<int>((flags >> 8) & 1),
+                "bit 8 of the mode flags was not returned");
+    }
+}
+
 }
 
 int main() {
@@ -106,6 +116,7 @@ int main() {
     TestDeepColor(monitorInfo);
     TestHdr(monitorInfo);
     TestModeFlags(videoOutMode);
+    TestModeBit8(videoOutMode);
     std::puts("AvSetting predicate tests passed");
     return 0;
 }

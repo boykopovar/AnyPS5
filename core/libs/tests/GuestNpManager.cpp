@@ -5,10 +5,12 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -415,6 +417,57 @@ struct SentinelBuffer {
     }
 };
 
+void CheckPushLifecycle() {
+    constexpr int PushAlreadyInitialized = static_cast<int>(0x8055A001u);
+    constexpr int PushNotInitialized = static_cast<int>(0x8055A002u);
+    constexpr int PushInvalidArgument = static_cast<int>(0x8055A003u);
+    constexpr int Push2NotInitialized = static_cast<int>(0x8055C002u);
+    constexpr int Push2InvalidArgument = static_cast<int>(0x8055C003u);
+    constexpr int Push2NoSlot = static_cast<int>(0x8055C005u);
+
+    Require(sceNpPushCheckCallback() == PushNotInitialized, "sceNpPushCheckCallback must refuse an uninitialized library");
+    Require(sceNpPushTerm() == PushNotInitialized, "sceNpPushTerm must refuse an uninitialized library");
+    Require(sceNpPushInit() == 0, "sceNpPushInit must initialize the library");
+    Require(sceNpPushInit() == PushAlreadyInitialized, "sceNpPushInit must refuse a second initialization");
+    std::int32_t connectionState = 0x5a5a5a5a;
+    Require(sceNpPushIntGetConnectionState(&connectionState) == 0 && connectionState == 0, "sceNpPushIntGetConnectionState must report the offline state");
+    Require(sceNpPushIntGetConnectionState(nullptr) == PushInvalidArgument, "sceNpPushIntGetConnectionState must refuse a null output");
+    Require(sceNpPushCheckCallback() == 0, "sceNpPushCheckCallback must answer an initialized library");
+    Require(sceNpPushTerm() == 0, "sceNpPushTerm must terminate the library");
+    Require(sceNpPushTerm() == PushNotInitialized, "sceNpPushTerm must refuse a second termination");
+
+    Require(!sceNpPush2IsInit(), "sceNpPush2IsInit must be false before initialization");
+    Require(sceNpPush2OptionalCheckCallback() == Push2NotInitialized, "sceNpPush2OptionalCheckCallback must refuse an uninitialized library");
+    Require(sceNpPush2TriggerEmptyUserEvent() == PushNotInitialized, "sceNpPush2TriggerEmptyUserEvent must report the uninitialized error");
+    Require(sceNpPush2Init(nullptr) == Push2InvalidArgument, "sceNpPush2Init must refuse a null parameter");
+    std::uint8_t parameter[0x18] {};
+    Require(sceNpPush2Init(parameter) == Push2InvalidArgument, "sceNpPush2Init must refuse a zero mode");
+    *reinterpret_cast<std::uint32_t*>(parameter + 0x10) = 2;
+    *reinterpret_cast<std::uint32_t*>(parameter + 0x14) = 1;
+    Require(sceNpPush2Init(parameter) == Push2InvalidArgument, "sceNpPush2Init must refuse an allocator kind above 1");
+    *reinterpret_cast<std::uint32_t*>(parameter + 0x10) = 0;
+    const int firstContext = sceNpPush2Init(parameter);
+    const int secondContext = sceNpPush2Init(parameter);
+    Require(firstContext == 1 && secondContext == 2, "sceNpPush2Init must return consecutive context ids");
+    Require(sceNpPush2IsInit(), "sceNpPush2IsInit must be true after initialization");
+    Require(sceNpPush2OptionalCheckCallback() == 0, "sceNpPush2OptionalCheckCallback must answer an initialized library");
+    Require(sceNpPush2TriggerEmptyUserEvent() == 0, "sceNpPush2TriggerEmptyUserEvent must answer an initialized library");
+    Require(sceNpPush2SetGlobalMutex(nullptr) == Push2InvalidArgument, "sceNpPush2SetGlobalMutex must refuse a null mutex");
+    int mutexToken = 0;
+    Require(sceNpPush2SetGlobalMutex(&mutexToken) == 0, "sceNpPush2SetGlobalMutex must accept a mutex");
+    Require(sceNpPush2Term(firstContext) == 0, "sceNpPush2Term must terminate a context");
+    Require(sceNpPush2IsInit(), "sceNpPush2IsInit must stay true while a context is live");
+    Require(sceNpPush2Term(secondContext) == 0, "sceNpPush2Term must terminate the second context");
+    Require(!sceNpPush2IsInit(), "sceNpPush2IsInit must be false after every context is terminated");
+    Require(sceNpPush2OptionalCheckCallback() == Push2NotInitialized, "sceNpPush2OptionalCheckCallback must refuse a terminated library");
+    for (int expected = 1; expected <= 32; ++expected) {
+        Require(sceNpPush2Init(parameter) == expected, "sceNpPush2Init must hand out every context slot");
+    }
+    Require(sceNpPush2Init(parameter) == Push2NoSlot, "sceNpPush2Init must refuse a full context table");
+    for (int contextId = 1; contextId <= 32; ++contextId) sceNpPush2Term(contextId);
+    Require(!sceNpPush2IsInit(), "sceNpPush2Term must empty the context table");
+}
+
 void CheckManagerIntProfileGetters() {
     const int live = sceNpManagerIntCreateRequest();
     const int deleted = sceNpManagerIntCreateRequest();
@@ -719,6 +772,8 @@ void CheckPlusAndContentRestriction() {
     bad.ageRestrictionCount = 0x101;
     bad.ageRestrictions = ages;
     Require(SetContentRestriction(bad) == InvalidArgument, "sceNpSetContentRestriction must reject more than 256 restrictions");
+    bad.ageRestrictionCount = -1;
+    Require(SetContentRestriction(bad) == InvalidArgument, "sceNpSetContentRestriction must reject a negative restriction count");
     bad.ageRestrictionCount = 0x100;
     Require(SetContentRestriction(bad) == 0, "sceNpSetContentRestriction must accept 256 restrictions");
     bad.ageRestrictions = nullptr;
@@ -981,12 +1036,44 @@ void CheckEmptyDestructors() {
     libSceNpManagerUnknown_z8eiw8_plus_UfEo_nid_no_patch();
 }
 
+void CheckUnknownFieldComparisons() {
+    struct Object {
+        std::uint64_t first;
+        std::uint64_t second;
+    };
+    Object left{0, 0};
+    Object right{0, 0};
+    const std::int32_t values[] = {0, 1, -1, 0x7fffffff, static_cast<std::int32_t>(0x80000000)};
+    for (const std::int32_t a : values) {
+        for (const std::int32_t b : values) {
+            std::memcpy(reinterpret_cast<std::byte*>(&left) + 8, &a, sizeof(a));
+            std::memcpy(reinterpret_cast<std::byte*>(&right) + 8, &b, sizeof(b));
+            Require(libSceNpManagerUnknown_Gv4cB8leZaU_nid_no_patch(&left, b) == (a == b), "Gv4cB8leZaU compares +8 with the value");
+            Require(libSceNpManagerUnknown_j6YmS_minus_P2zAA_nid_no_patch(&left, &right) == (a == b), "j6YmS-P2zAA compares +8 with +8");
+            std::int32_t plain = a;
+            Require(libSceNpManagerUnknown_b1nDsAsD4Fo_nid_no_patch(&plain, &right) == (a == b), "b1nDsAsD4Fo compares +0 with +8");
+            Require(libSceNpManagerUnknown_BQA2KNZr2H0_nid_no_patch(&plain, &right) == (a != b), "BQA2KNZr2H0 compares +0 with +8");
+        }
+    }
+    std::memset(&left, 0xa5, sizeof(left));
+    std::memset(&right, 0xa5, sizeof(right));
+    std::int32_t plain = 7;
+    const std::int32_t seven = 7;
+    std::memcpy(reinterpret_cast<std::byte*>(&right) + 8, &seven, sizeof(seven));
+    Require(libSceNpManagerUnknown_b1nDsAsD4Fo_nid_no_patch(&plain, &right), "b1nDsAsD4Fo reads only 32 bits at +8");
+    for (const std::uint64_t value : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{0x0123456789abcdefULL}, ~std::uint64_t{0}}) {
+        left.second = value;
+        Require(libSceNpManagerUnknown__minus_OrDVMqLIG4_nid_no_patch(&left) == value, "-OrDVMqLIG4 returns the 64 bits at +8");
+    }
+}
+
 int main() {
     CheckNpOfflineGetters();
     CheckAsmLifecycle();
     CheckEmptyDestructors();
     CheckSandboxInfo();
     CheckTicketTeardown();
+    CheckPushLifecycle();
     CheckValueClasses();
     CheckUnregisteredClientError();
     CheckAccountQueriesAndPremiumCallback();
@@ -1008,6 +1095,7 @@ int main() {
     CheckManagerIntUserLookups();
     CheckManagerIntAuthorization();
     CheckPlusAndContentRestriction();
+    CheckUnknownFieldComparisons();
     NpId npId{};
     std::memset(&npId, 0x5a, sizeof(npId));
     NpId untouched{};

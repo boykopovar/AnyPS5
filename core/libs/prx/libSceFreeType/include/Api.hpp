@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libSceFreeType/include/MemoryAllocation.hpp"
 
 #include "prx/libSceFreeType/include/GuestList.hpp"
 #include "prx/libSceFreeType/include/PostScriptPrivate.hpp"
@@ -148,6 +149,15 @@ void APS5_VABI FT_Vector_Rotate_nid_postfix(FreeType::GuestVector* vector, std::
 std::int64_t APS5_VABI FT_Atan2_nid_postfix(std::int64_t x, std::int64_t y);
 void APS5_VABI FT_Vector_From_Polar_nid_postfix(FreeType::GuestVector* vector, std::int64_t length, std::int64_t angle);
 int APS5_VABI FT_Open_Face_nid_postfix(FreeType::GuestLibrary* library, const FreeType::GuestOpenArgs* args, std::int64_t faceIndex, FreeType::GuestFaceRec** aface);
+int APS5_VABI FT_Get_Var_Blend_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, std::int64_t* coordinates);
+int APS5_VABI FT_Get_Var_Design_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, std::int64_t* coordinates);
+int APS5_VABI FT_Set_MM_Design_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FT_Set_MM_Blend_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FT_Set_Var_Blend_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FT_Get_MM_Var_nid_postfix(FreeType::GuestFaceRec* face, void** master);
+int APS5_VABI FT_Set_Var_Design_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FT_Get_Multi_Master_nid_postfix(FreeType::GuestFaceRec* face, void* master);
+int APS5_VABI FT_Done_MM_Var_nid_postfix(FreeType::GuestLibrary* library, void* master);
 
 int APS5_VABI FT_Outline_New_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Outline_Done_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline);
@@ -155,7 +165,6 @@ int APS5_VABI sceFreeTypeOtOutlineDone_nid_no_patch();
 int APS5_VABI sceFreeTypeOtOutlineNew_nid_no_patch();
 int APS5_VABI sceFreeTypeOtGlyphSlotEmbolden_nid_no_patch();
 int APS5_VABI sceFreeTypeOtGlyphSlotOblique_nid_no_patch();
-int APS5_VABI sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch();
 int APS5_VABI sceFreeTypeOtLibrarySetLcdFilter_nid_no_patch();
 int APS5_VABI sceFreeTypeOtLibrarySetLcdFilterWeights_nid_no_patch();
 void* APS5_VABI FT_Get_Module_nid_postfix(FreeType::GuestLibrary* library, const char* moduleName);
