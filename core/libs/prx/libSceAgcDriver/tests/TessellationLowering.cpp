@@ -1070,7 +1070,50 @@ int main() {
         return result.helpers > 0u && result.mismatches > 0u;
     });
 
-    passed &= run("a domain shader with primitive VGPR use on a non-export path lowers with constant zero", [] {
+    passed &= run("a domain shader with primitive VGPR use in a phi export lowers with constant zero", [] {
+        IrProgram program;
+        IrBuilder builder{program};
+        program.Resources().stage = IrShaderStage::TessellationEvaluation;
+        auto makeBlock = [&](IrBlock*& blk) -> IrBlock& {
+            auto& created = program.CreateBlock();
+            program.BlockOrder().push_back(&created);
+            BlockInfo info;
+            info.id = created.Id();
+            program.Metadata().blockInfo.push_back(info);
+            blk = &created;
+            return created;
+        };
+        IrBlock* entryPtr = nullptr;
+        IrBlock* firstPtr = nullptr;
+        IrBlock* secondPtr = nullptr;
+        IrBlock* togetherPtr = nullptr;
+        auto& entry = makeBlock(entryPtr);
+        auto& first = makeBlock(firstPtr);
+        auto& second = makeBlock(secondPtr);
+        auto& together = makeBlock(togetherPtr);
+        program.SetEntryBlock(entry);
+        builder.SetInsertionPoint(entry);
+        builder.BranchConditional(builder.ConstantBool(true), first, second);
+        builder.SetInsertionPoint(first);
+        auto& prim = builder.Emit(IrOpcode::TessellationBase, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(TessellationBaseKind::PassthroughPrimitive))});
+        builder.Branch(together);
+        builder.SetInsertionPoint(second);
+        auto& alt = builder.Constant(1u);
+        builder.Branch(together);
+        builder.SetInsertionPoint(together);
+        auto& phi = builder.Emit(IrOpcode::Phi, IrType::U32, {});
+        phi.AddPhiOperand(&first, &prim);
+        phi.AddPhiOperand(&second, &alt);
+        auto& comp = builder.Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&phi, &builder.Constant(0u), &builder.Constant(0u), &builder.Constant(0u)});
+        program.Metadata().exportInfo.push_back(ExportInfo{.kind = ExportTargetKind::Parameter, .index = 5u, .en = 0xFu, .done = true, .vm = true});
+        auto& exportInst = builder.Emit(IrOpcode::SetAttribute, IrType::Void, {&comp, &builder.ConstantBool(true)}, ExportFlags{0u, 0u});
+        static_cast<void>(exportInst);
+        const Outcome outcome = Lower(program);
+        if (!outcome.lowered) return false;
+        return phi.Argument(0)->HasImmediate() && phi.Argument(0)->ImmediateU32() == 0u;
+    });
+
+    passed &= run("a domain shader with primitive VGPR use in arithmetic fails lowering", [] {
         IrProgram program;
         IrBuilder builder{program};
         program.Resources().stage = IrShaderStage::TessellationEvaluation;
@@ -1082,11 +1125,11 @@ int main() {
         program.Metadata().blockInfo.push_back(info);
         builder.SetInsertionPoint(block);
         auto& prim = builder.Emit(IrOpcode::TessellationBase, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(TessellationBaseKind::PassthroughPrimitive))});
-        auto& ref = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&prim});
-        static_cast<void>(ref);
+        auto& add = builder.Emit(IrOpcode::IAdd32, IrType::U32, {&prim, &builder.Constant(1u)});
+        static_cast<void>(add);
         const Outcome outcome = Lower(program);
-        if (!outcome.lowered) return false;
-        return ref.Argument(0)->HasImmediate() && ref.Argument(0)->ImmediateU32() == 0u;
+        if (outcome.lowered) return false;
+        return outcome.reason.find("the primitive VGPR is used other than as the passthrough primitive export") != std::string::npos;
     });
 
     passed &= run("a hull shader with primitive VGPR use fails lowering", [] {
