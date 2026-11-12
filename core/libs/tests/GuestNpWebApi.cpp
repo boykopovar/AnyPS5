@@ -706,6 +706,32 @@ void TestIntCreateCtxIndExtdPushEventFilter() {
     Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the extended push event filter library contexts");
 }
 
+void TestConnectionChecks() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int other = sceNpWebApiInitialize(1, 0x10000);
+    Require(context > 0 && other > 0 && sceNpWebApiTerminate(other) == 0, "library contexts for the connection checks");
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for the connection checks");
+    unsigned char stats[64] = {};
+
+    Require(sceNpWebApiClearUnusedConnection(user, nullptr, false) == InvalidArgument, "clear connections without a target");
+    Require(sceNpWebApiClearUnusedConnection(-1, nullptr, true) == InvalidArgument, "the clear target is checked before the contexts");
+    Require(sceNpWebApiClearUnusedConnection((other << 16) | 1, "group", false) == LibContextNotFound, "clear connections of a terminated library context");
+    Require(sceNpWebApiClearUnusedConnection(-1, "group", false) == LibContextNotFound, "clear connections of user context -1");
+    Require(sceNpWebApiClearUnusedConnection(user + 1, "group", true) == UserContextNotFound, "clear connections of an unknown user context");
+
+    Require(sceNpWebApiGetConnectionStats(user, nullptr, stats) == InvalidArgument, "connection stats without a target");
+    Require(sceNpWebApiGetConnectionStats(user, "group", nullptr) == InvalidArgument, "connection stats without an output");
+    Require(sceNpWebApiGetConnectionStats(-1, nullptr, nullptr) == InvalidArgument, "the stats arguments are checked before the contexts");
+    Require(sceNpWebApiGetConnectionStats((other << 16) | 1, "group", stats) == LibContextNotFound, "connection stats of a terminated library context");
+    Require(sceNpWebApiGetConnectionStats(user + 1, "group", stats) == UserContextNotFound, "connection stats of an unknown user context");
+    for (const unsigned char byte : stats) Require(byte == 0, "a failed stats call writes nothing");
+
+    Require(sceNpWebApiDeleteContext(user) == 0, "delete the user context of the connection checks");
+    Require(sceNpWebApiClearUnusedConnection(user, "group", false) == UserContextNotFound, "clear connections of a deleted user context");
+    Require(sceNpWebApiTerminate(context) == 0, "terminate the connection checks library context");
+}
+
 }
 
 int main() {
@@ -727,5 +753,6 @@ int main() {
     TestMultipartParts();
     TestUtilityParseNpId();
     TestIntCreateCtxIndExtdPushEventFilter();
+    TestConnectionChecks();
     return 0;
 }

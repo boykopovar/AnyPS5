@@ -404,6 +404,9 @@ if(BUILD_TESTING)
         add_test(NAME performance_csv COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_csv.py)
         set_tests_properties(performance_csv PROPERTIES TIMEOUT 20)
+        add_test(NAME performance_bisect COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_bisect.py)
+        set_tests_properties(performance_bisect PROPERTIES TIMEOUT 20)
         add_test(NAME emsdk_pin COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_emsdk_pin.py)
         set(conventions_wrapped_declarations_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py")
@@ -709,6 +712,9 @@ if(BUILD_TESTING)
         set_tests_properties(ab_split_csv PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_agent_files COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_agent_files.py)
+        add_test(NAME tools_nid_offline COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_nid_offline.py)
+        set_tests_properties(tools_nid_offline PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_alignment COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_alignment.py)
         add_test(NAME tools_intervals_complete COMMAND ${Python3_EXECUTABLE}
