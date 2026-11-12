@@ -213,6 +213,7 @@ std::vector<std::byte> copyDataSource(std::span<const std::uint32_t> packet, con
         }
         return data;
     }
+    if (source == CopyDataSelectGds) return copySource(GdsAddress() + packet[2], bytes, false);
     if (source != CopyDataGpuClockSource) return copySource(address(packet[2], packet[3]), bytes, CopyDataImmediate(source));
     const auto value = gpuClockCount();
     std::vector<std::byte> data(bytes);
@@ -561,7 +562,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             size(6);
             require((packet[1] & ~(0x40110f0fu | CopyDataCachePolicy)) == 0, "COPY_DATA engine or reserved fields are not implemented");
             const auto source = CopyDataSource(packet);
-            const auto destination = ((packet[1] >> 8u) & 0xfu) << 1u;
+            const auto destination = CopyDataDestination(packet);
             if (CopyDataToRegister(packet)) {
                 require(source == 2 || source == 4, "COPY_DATA to a register from a register, GDS, immediate or clock source is not implemented");
                 require((packet[2] & 3u) == 0, "misaligned COPY_DATA source");
@@ -570,9 +571,11 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
                 break;
             }
             require(destination <= 10, "invalid COPY_DATA destination");
-            require(destination == 2 || destination == 4 || destination == 10, "COPY_DATA GDS or performance-counter destination is not implemented");
-            require(source == 2 || source == 4 || source == 5 || source == 10 || source == 11 || source == CopyDataGpuClockSource || source == CopyDataRegisterSource, "COPY_DATA GDS or reference-clock source is not implemented");
+            require(destination == 2 || destination == 4 || destination == 10 || destination == CopyDataSelectGds, "COPY_DATA performance-counter destination is not implemented");
+            require(source == 2 || source == 4 || source == 5 || source == 10 || source == 11 || source == CopyDataGpuClockSource || source == CopyDataRegisterSource || source == CopyDataSelectGds, "COPY_DATA reference-clock source is not implemented");
             require(source != CopyDataRegisterSource || (packet[3] == 0 && registerBankBase(packet[2]) != 0 && registerBankBase(packet[2]) == registerBankBase(packet[2] + copyDataCount(packet) - 1)), "COPY_DATA from a register outside the shader, context and user config registers is not implemented");
+            require(source != CopyDataSelectGds || (packet[3] == 0 && gdsRange(packet[2], CopyDataBytes(packet))), "COPY_DATA GDS source range exceeds the GDS");
+            require(destination != CopyDataSelectGds || (packet[5] == 0 && gdsRange(packet[4], CopyDataBytes(packet))), "COPY_DATA GDS destination range exceeds the GDS");
             require(source < 10 || source == CopyDataGpuClockSource || ((packet[1] & 0x10000u) == 0 && packet[3] == 0), "64-bit immediate COPY_DATA is not implemented");
             break;
         }
@@ -594,13 +597,9 @@ bool IsTagMarker(std::span<const std::uint32_t> packet) {
     return packet.size() >= 3 && ((packet[0] >> 8u) & 0xffu) == 0x79u && packet[1] == 0x342u;
 }
 
-namespace {
-
-bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_t value) {
-    const std::uint64_t reference = wide ? address(packet[4], packet[5]) : packet[4];
-    const std::uint64_t mask = wide ? address(packet[6], packet[7]) : packet[5];
+bool WaitCompares(std::uint32_t function, std::uint64_t reference, std::uint64_t mask, std::uint64_t value) {
     const auto masked = value & mask;
-    switch (packet[1] & 7u) {
+    switch (function) {
         case 0: return true;
         case 1: return masked < reference;
         case 2: return masked <= reference;
@@ -610,6 +609,12 @@ bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_
         case 6: return masked > reference;
         default: return false;
     }
+}
+
+namespace {
+
+bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_t value) {
+    return WaitCompares(packet[1] & 7u, wide ? address(packet[4], packet[5]) : packet[4], wide ? address(packet[6], packet[7]) : packet[5], value);
 }
 
 }
@@ -950,6 +955,15 @@ DrawArguments ReadDrawArguments(const DrawParameters::IndirectDraw& indirect, st
     return {words[0], words[1], words[2], 0, words[3]};
 }
 
+DrawArguments ReadDrawArgumentsUnsynced(const DrawParameters::IndirectDraw& indirect, std::uint32_t record) {
+    require(record < indirect.count, "indirect draw record index exceeds the packet's count");
+    std::array<std::uint32_t, 5> words{};
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::IndirectArguments);
+    GuestMemory::ReadCommittedUnsynced(indirect.arguments + static_cast<std::uint64_t>(record) * indirect.stride, std::as_writable_bytes(std::span(words)).first(indirect.recordBytes));
+    if (indirect.recordBytes == 20) return {words[0], words[1], words[2], words[3], words[4]};
+    return {words[0], words[1], words[2], 0, words[3]};
+}
+
 std::uint32_t ReadDrawCount(const DrawParameters::IndirectDraw& indirect) {
     require(indirect.countIndirect && indirect.countAddress != 0, "indirect draw has no count address");
     std::uint32_t count = 0;
@@ -1241,7 +1255,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
                 for (std::uint32_t i = 0; i < count; ++i) writeRegister(queue, 0x69, packet[4] - ContextRegisterBase + i, values[i]);
                 return;
             }
-            const auto destination = address(packet[4], packet[5]);
+            const auto destination = CopyDataDestination(packet) == CopyDataSelectGds ? GdsAddress() + packet[4] : address(packet[4], packet[5]);
             const auto data = copyDataSource(packet, queue, CopyDataBytes(packet));
             GuestMemory::CheckRange(reinterpret_cast<void*>(destination), data.size(), 1, true);
             GuestMemory::Write(destination, data);

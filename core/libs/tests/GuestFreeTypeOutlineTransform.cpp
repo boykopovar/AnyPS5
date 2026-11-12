@@ -100,7 +100,8 @@ static void TestTransform() {
     for (const GuestMatrix& matrix : matrices) {
         for (const auto& make : {+[] { return Square(false); }, +[] { return Frame(); }, +[] { return Curved(); }}) {
             Pair pair(make());
-            const FT_Matrix native{matrix.xx, matrix.xy, matrix.yx, matrix.yy};
+            const FT_Matrix native{static_cast<FT_Fixed>(matrix.xx), static_cast<FT_Fixed>(matrix.xy), static_cast<FT_Fixed>(matrix.yx),
+                                   static_cast<FT_Fixed>(matrix.yy)};
             FT_Outline_Transform_nid_postfix(&pair.guest, &matrix);
             FT_Outline_Transform(&pair.native, &native);
             pair.Matches();

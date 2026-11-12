@@ -326,7 +326,7 @@ short VersionedExp(TFloat* value, TFloat y, short scale, TScale scaleBits) {
         TFloat ratio = (even + odd) / (even - odd);
         ratio += ratio;
         result = ExpProduct(y, ratio);
-        --whole;
+        whole = static_cast<int>(static_cast<unsigned>(whole) - 1u);
     }
     *value = result;
     const short code = scaleBits(value, static_cast<std::int64_t>(static_cast<short>(whole)) + scale);
@@ -353,6 +353,44 @@ TFloat FusedPolynomial(TFloat x, const TFloat* table, int degree) {
     TFloat result = table[0];
     for (int index = 1; index <= degree; ++index) result = std::fma(result, x, table[index]);
     return result;
+}
+
+bool NanBits(double value) { return (std::bit_cast<std::uint64_t>(value) & 0x7fffffffffffffffull) > 0x7ff0000000000000ull; }
+
+double QuietNan(double value) { return std::bit_cast<double>(std::bit_cast<std::uint64_t>(value) | 0x0008000000000000ull); }
+
+double OperandOrderFma(double accumulator, double x, double addend) {
+    const double fused = std::fma(accumulator, x, addend);
+    if (!NanBits(fused)) return fused;
+    if (NanBits(x)) return QuietNan(x);
+    if (NanBits(accumulator)) return QuietNan(accumulator);
+    if (NanBits(addend)) return QuietNan(addend);
+    return fused;
+}
+
+template<typename TFloat, typename TCoefficient, typename TLogarithm>
+TFloat LanczosLogGamma(TFloat x, TLogarithm logarithm, TCoefficient series, TCoefficient root) {
+    static constexpr TCoefficient Coefficients[] = {
+        static_cast<TCoefficient>(76.18009172947146),
+        static_cast<TCoefficient>(-86.50532032941678),
+        static_cast<TCoefficient>(24.01409824083091),
+        static_cast<TCoefficient>(-1.23173972450155),
+        static_cast<TCoefficient>(0.001208650973866179),
+        static_cast<TCoefficient>(-5.395239384953e-06),
+    };
+    const TFloat shifted = x + static_cast<TFloat>(5.5);
+    const TFloat logShifted = logarithm(shifted);
+    TFloat term = x + 1;
+    TFloat sum = Coefficients[0] / term + series;
+    for (int index = 1; index < 6; ++index) {
+        term += 1;
+        sum += Coefficients[index] / term;
+    }
+    const TFloat half = x + static_cast<TFloat>(0.5);
+    TFloat rest;
+    if constexpr (sizeof(TFloat) > sizeof(double)) rest = shifted - half * logShifted;
+    else rest = std::fma(-half, logShifted, shifted);
+    return logarithm(sum * root / x) - rest;
 }
 
 }
@@ -635,6 +673,18 @@ long double APS5_VABI _LPoly_nid_postfix(long double x, const long double* table
         result += table[index];
     }
     return result;
+}
+
+double APS5_VABI _ZNSt8__sce_v25_PolyEdPKdi_nid_postfix(double x, const double* table, int degree) {
+    double result = table[0];
+    for (int index = 1; index <= degree; ++index) result = OperandOrderFma(result, x, table[index]);
+    return result;
+}
+float APS5_VABI _ZNSt8__sce_v28_XLgammaEf_nid_postfix(float x) { return LanczosLogGamma<float, float>(x, logf_nid_postfix, 1.0f, 2.5066282746310007f); }
+double APS5_VABI _ZNSt8__sce_v28_XLgammaEd_nid_postfix(double x) { return LanczosLogGamma<double, double>(x, log_nid_postfix, 1.000000000190015, 2.5066282746310007); }
+
+long double APS5_VABI _ZNSt8__sce_v28_XLgammaEe_nid_postfix(long double x) {
+    return LanczosLogGamma<long double, double>(x, logl_nid_postfix, 1.000000000190015, 2.5066282746310007);
 }
 
 }

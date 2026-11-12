@@ -4,6 +4,21 @@
 
 extern "C" {
 
+int APS5_VABI libSceVideoOutUnknown__minus_7inAKRfvfE_nid_no_patch();
+int APS5_VABI libSceVideoOutUnknown_24GHCH4jyzU_nid_no_patch();
+int APS5_VABI libSceVideoOutUnknown_9jqDAT2tPAg_nid_no_patch();
+int APS5_VABI libSceVideoOutUnknown_DFNafp_plus_tWs8_nid_no_patch();
+int APS5_VABI libSceVideoOutUnknown_G0FPxnpizUc_nid_no_patch();
+int APS5_VABI libSceVideoOutUnknown_JpVPYbAVxRQ_nid_no_patch();
+int APS5_VABI libSceVideoOutUnknown_KEOpdUvfQHQ_nid_no_patch();
+int APS5_VABI libSceVideoOutUnknown_koLWa3yaO_minus_8_nid_no_patch();
+
+int APS5_VABI sceVideoOutLatencyMeasureSetStartPointAuto();
+int APS5_VABI sceVideoOutSetDrrMonitorCapability();
+int APS5_VABI sceVideoOutSysAddFlipEvent();
+int APS5_VABI sceVideoOutSysDeleteFlipEvent();
+int APS5_VABI sceVideoOutSysSetBusTransfer();
+
 int APS5_VABI sceVideoOutDebugLatencyMeasureGetLatestLatency();
 int APS5_VABI sceVideoOutGetHandleByBus();
 int APS5_VABI sceVideoOutPostProcessorAddCallback();

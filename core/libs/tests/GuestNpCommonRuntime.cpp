@@ -435,7 +435,7 @@ void TestSemaphoreObjects() {
     _ZN3sce2np9SemaphoreC1Ev(owned);
     Require(_ZN3sce2np9Semaphore6CreateEiiPKc(owned, 1, 1, "NpSemaphoreOwned") == 0, "an allocated semaphore is created");
     using Destructor = void APS5_VABI (*)(NpSemaphoreObject*);
-    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    reinterpret_cast<Destructor>(const_cast<void*>(owned->vtable[1]))(owned);
     Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 
@@ -525,12 +525,12 @@ void TestMutexAndCondObjects() {
     auto* ownedMutex = static_cast<NpMutexObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpMutexObject), &allocator));
     _ZN3sce2np5MutexC1Ev(ownedMutex);
     Require(_ZN3sce2np5Mutex4InitEPKcj(ownedMutex, "NpMutexOwned", 0) == 0, "an allocated mutex is initialized");
-    reinterpret_cast<MutexDestructor>(ownedMutex->vtable[1])(ownedMutex);
+    reinterpret_cast<MutexDestructor>(const_cast<void*>(ownedMutex->vtable[1]))(ownedMutex);
     Require(record.released == record.block.data(), "the mutex deleting destructor frees through the stored allocator");
     record.released = nullptr;
     auto* ownedCond = static_cast<NpCondObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpCondObject), &allocator));
     _ZN3sce2np4CondC1Ev(ownedCond);
-    reinterpret_cast<CondDestructor>(ownedCond->vtable[1])(ownedCond);
+    reinterpret_cast<CondDestructor>(const_cast<void*>(ownedCond->vtable[1]))(ownedCond);
     Require(record.released == record.block.data(), "the condition deleting destructor frees through the stored allocator");
 }
 
@@ -667,9 +667,62 @@ void TestRingBuf() {
         "the next write takes the expanded full buffer for empty and starts over the queued data, as in the module");
     _ZN3sce2np13RingBufMemory7DestroyEv(&full);
     using Destructor = void (APS5_VABI*)(NpRingBufMemory*);
-    reinterpret_cast<Destructor>(memory->ringBuf.vtable[1])(memory);
+    reinterpret_cast<Destructor>(const_cast<void*>(memory->ringBuf.vtable[1]))(memory);
 
     Require(record.released == record.block.data(), "the deleting destructor frees the object through its allocator");
+    sceNpMemoryHeapDestroy(&memoryHeap);
+}
+
+void TestRingBufBounds() {
+    constexpr int NoSpace = static_cast<int>(0x80559E0A);
+    std::uint8_t storage[8];
+    NpRingBuf ring {};
+    _ZN3sce2np7RingBufC1Ev(&ring);
+    Require(_ZN3sce2np7RingBuf4InitEPvm(&ring, storage, sizeof(storage)) == 0 && _ZN3sce2np7RingBuf5WriteEPKvm(&ring, "abc", 3) == 0,
+        "a ring buffer holds three bytes");
+    char out[16] = {};
+    Require(_ZN3sce2np7RingBuf4PeekEmPvm(&ring, 1, out, SIZE_MAX) == NoSpace && _ZNK3sce2np7RingBuf11GetDataSizeEv(&ring) == 3,
+        "a peek whose size wraps the offset sum is refused");
+    _ZN3sce2np7RingBuf7DestroyEv(&ring);
+
+    NpRingBuf empty {};
+    _ZN3sce2np7RingBufC1Ev(&empty);
+    Require(_ZN3sce2np7RingBuf4InitEPvm(&empty, storage, sizeof(storage)) == 0, "an empty ring buffer takes the storage");
+    bool refused = false;
+    try {
+        _ZN3sce2np7RingBuf15CheckinForWriteEm(&empty, 9);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && empty.writePointer == empty.buf && _ZNK3sce2np7RingBuf11GetDataSizeEv(&empty) == 0,
+        "a checkin for write past the end of the storage leaves the ring unchanged");
+    refused = false;
+    try {
+        _ZN3sce2np7RingBuf15CheckinForWriteEm(&empty, SIZE_MAX - 7);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && empty.writePointer == empty.buf && _ZNK3sce2np7RingBuf11GetDataSizeEv(&empty) == 0,
+        "a checkin for write whose size wraps the write pointer is refused");
+    _ZN3sce2np7RingBuf7DestroyEv(&empty);
+
+    NpMemoryHeap memoryHeap {};
+    Require(sceNpMemoryHeapInit(&memoryHeap, 0x1000, "np-expand") == 0, "a memory heap is created for expansion");
+    NpAllocatorEx heapAllocator {};
+    sceNpMemoryHeapGetAllocatorEx(&memoryHeap, 0x1235, &heapAllocator);
+    NpRingBufMemory expanding {};
+    _ZN3sce2np13RingBufMemoryC1EP16SceNpAllocatorEx(&expanding, &heapAllocator);
+    Require(_ZN3sce2np13RingBufMemory4InitEm(&expanding, 4) == 0, "a memory ring buffer is initialized for expansion");
+    std::uint8_t* const original = expanding.ringBuf.buf;
+    refused = false;
+    try {
+        _ZN3sce2np13RingBufMemory6ExpandEm(&expanding, SIZE_MAX - 2);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && expanding.ringBuf.bufSize == 4 && expanding.ringBuf.buf == original,
+        "an expansion whose new size overflows is refused before the storage is reallocated");
+    _ZN3sce2np13RingBufMemory7DestroyEv(&expanding);
     sceNpMemoryHeapDestroy(&memoryHeap);
 }
 
@@ -860,7 +913,7 @@ void TestEventFlagObjects() {
     _ZN3sce2np9EventFlagC1Ev(owned);
     Require(_ZN3sce2np9EventFlag6CreateEPKcj(owned, "NpEventFlagOwned", 0) == 0, "an allocated event flag is created");
     using Destructor = void APS5_VABI (*)(NpEventFlagObject*);
-    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    reinterpret_cast<Destructor>(const_cast<void*>(owned->vtable[1]))(owned);
     Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 
@@ -912,6 +965,31 @@ void TestCallouts() {
         "the later callout is still pending after the rejected start");
     Require(sceNpCalloutStopOnCtx(&context, &queuedFirst, &wasPending) == 0 && wasPending == 1, "the earlier callout is still pending");
 
+    NpCalloutContext wide {};
+    NpCallout sixtyFirst {};
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyFirst, 0, RecordFirst, nullptr) == NpNotInitialized,
+        "the 64-bit start needs an initialised context");
+    Require(sceNpCalloutInitCtx(&wide, "np-callout-64", 0x4000, 0, 0) == 0, "a second callout context starts");
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyFirst, 60ull * 1000000ull, RecordUnexpected, nullptr) == 0,
+        "the 64-bit start queues a distant callout");
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyFirst, 60ull * 1000000ull, RecordUnexpected, nullptr) == NpAlreadyQueued,
+        "the 64-bit start rejects a queued callout");
+    Require(sixtyFirst.handler == RecordUnexpected && sixtyFirst.arg == nullptr,
+        "a rejected 64-bit start leaves the callout unchanged");
+    NpCallout sixtyTail {};
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyTail, 1ull << 32, RecordUnexpected, nullptr) == 0,
+        "a 64-bit deadline beyond the 32-bit range is queued");
+    Require(sixtyFirst.next == &sixtyTail, "the 64-bit queue keeps its order");
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyFirst, 1000, RecordFirst, &wide) == NpAlreadyQueued,
+        "a rejected 64-bit restart reports the queued answer for the earlier callout");
+    Require(sixtyFirst.handler == RecordUnexpected && sixtyFirst.arg == nullptr && sixtyFirst.next == &sixtyTail,
+        "the rejected 64-bit restart leaves the entry and the queue unchanged");
+    Require(sceNpCalloutStopOnCtx(&wide, &sixtyTail, &wasPending) == 0 && wasPending == 1,
+        "the later callout is still pending after the rejected 64-bit restart");
+    Require(sceNpCalloutStopOnCtx(&wide, &sixtyFirst, &wasPending) == 0 && wasPending == 1,
+        "the earlier callout is still pending after the rejected 64-bit restart");
+    sceNpCalloutTermCtx(&wide);
+
     NpCallout later {};
     Require(sceNpCalloutStartOnCtx(&context, &later, 20000, RecordSecond, nullptr) == 0, "a later callout is queued");
     Require(sceNpCalloutStartOnCtx(&context, &callout, 1000, RecordFirst, nullptr) == 0, "an earlier callout is queued");
@@ -927,6 +1005,7 @@ void TestCallouts() {
 struct SelfTermination {
     NpCalloutContext* context {};
     std::atomic<int> finished {0};
+    std::atomic<int> reused {0};
     std::string message;
 };
 
@@ -941,6 +1020,10 @@ void APS5_VABI TerminateOwnContext(void*) {
     g_selfTermination.finished.store(1, std::memory_order_release);
 }
 
+void APS5_VABI MarkReused(void*) {
+    g_selfTermination.reused.store(1, std::memory_order_release);
+}
+
 void TestCalloutSelfTermination() {
     NpCalloutContext context {};
     NpCallout callout {};
@@ -950,12 +1033,19 @@ void TestCalloutSelfTermination() {
     for (int i = 0; i < 2000 && g_selfTermination.finished.load(std::memory_order_acquire) == 0; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     Require(g_selfTermination.finished.load(std::memory_order_acquire) == 1, "the terminating callout returns");
-    Require(g_selfTermination.message.find("sceNpCalloutTermCtx") == 0, "terminating a context from its own callout is refused");
-    Require(context.initialized == 1, "a refused termination leaves the context running");
-
+    Require(g_selfTermination.message.empty(), "terminating a context from its own callout returns");
+    Require(context.initialized == 0, "a callout's termination of its own context clears it");
     sceNpCalloutTermCtx(&context);
 
-    Require(context.initialized == 0, "the context terminates from another thread");
+    NpCallout again {};
+    Require(sceNpCalloutInitCtx(&context, "np-self-term-again", 0x4000, 0, 0) == 0, "the context starts again");
+    Require(sceNpCalloutStartOnCtx(&context, &again, 0, MarkReused, nullptr) == 0, "a callout is queued on the restarted context");
+    for (int i = 0; i < 2000 && g_selfTermination.reused.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(g_selfTermination.reused.load(std::memory_order_acquire) == 1, "a callout runs on the restarted context");
+    sceNpCalloutTermCtx(&context);
+
+    Require(context.initialized == 0, "the restarted context terminates from another thread");
 }
 
 bool Equals(const char* actual, const char* expected) {
@@ -1536,8 +1626,12 @@ void TestHexAndCopies() {
     Require(sceNpStrcpyToBuf(copy, 6, "Hello") == 0 && Equals(copy, "Hello"), "a string that fits is copied");
     Require(sceNpStrcpyToBuf(copy, 5, "Hello") == NpBufferTooSmall, "a string without room for its terminator is refused");
     copy[0] = 'x';
+    Require(sceNpStrcpyToBuf(copy, 6, nullptr) == NpUtilInvalid && copy[0] == 'x', "a null source is refused");
+    copy[0] = 'x';
     Require(sceNpStrncpyToBuf(copy, 0, nullptr, 0) == NpBufferTooSmall && copy[0] == 'x', "a null source with a zero limit still needs room for the terminator");
     Require(sceNpStrncpyToBuf(copy, 1, nullptr, 0) == 0 && copy[0] == '\0', "a null source with a zero limit copies an empty string into a one-byte buffer");
+    copy[0] = 'x';
+    Require(sceNpStrncpyToBuf(copy, 8, nullptr, 4) == NpUtilInvalid && copy[0] == 'x', "a null source with a non-zero limit is refused");
     Require(sceNpStrncpyToBuf(copy, 6, "Hello World", 5) == 0 && Equals(copy, "Hello"), "the length limit sizes the copy");
     Require(sceNpStrncpyToBuf(copy, 5, "Hello World", 5) == NpBufferTooSmall, "the limited string still needs a terminator");
     const char unterminated[] = {'A', 'B', 'C', 'D', 'E', 'F', '\0'};
@@ -1657,6 +1751,30 @@ int APS5_VABI SumNotify(NpStreamCtx* self, const void* data, std::size_t size) {
     return context->result;
 }
 
+struct OverReader {
+    NpStreamReader base;
+    std::size_t extra;
+    int calls;
+};
+
+int APS5_VABI OverRead(NpStreamReader* self, void*, void*, std::size_t size, std::size_t* read) {
+    auto* reader = reinterpret_cast<OverReader*>(self);
+    *read = reader->calls++ == 0 ? size + reader->extra : 0;
+    return 0;
+}
+
+struct OverWriter {
+    NpStreamWriter base;
+    std::size_t extra;
+};
+
+int APS5_VABI OverWrite(NpStreamWriter* self, void*, const void*, std::size_t size, std::size_t* written) {
+    *written = size + reinterpret_cast<OverWriter*>(self)->extra;
+    return 0;
+}
+
+const void* const OverReaderVtable[] = {nullptr, nullptr, reinterpret_cast<const void*>(&OverRead)};
+const void* const OverWriterVtable[] = {nullptr, nullptr, reinterpret_cast<const void*>(&OverWrite)};
 const void* const ChunkReaderVtable[] = {nullptr, nullptr, reinterpret_cast<const void*>(&ChunkRead)};
 const void* const CollectWriterVtable[] = {nullptr, nullptr, reinterpret_cast<const void*>(&CollectWrite)};
 const void* const SumContextVtable[] = {nullptr, nullptr, reinterpret_cast<const void*>(&SumNotify)};
@@ -1726,6 +1844,28 @@ void TestStreamHelpers() {
     writer = {{CollectWriterVtable}, {}, 0, 4};
     Require(_ZN3sce2np12StreamWriter5WriteEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm(&writer.base, nullptr, nullptr, source.data(), 10, &count) == 0 && count == 4,
         "Write makes a single stream call");
+
+    OverReader over {{OverReaderVtable}, 1, 0};
+    SumContext notified {{SumContextVtable}, 0, 0, 0};
+    Require(_ZN3sce2np12StreamReader8ReadDataEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(&over.base, nullptr, &notified.base, out.data(), 10, &count) ==
+                NpStreamBufferTooSmall && count == 0 && notified.bytes == 0,
+        "ReadData refuses a callback that reports more bytes than it was asked for");
+    over = {{OverReaderVtable}, 1, 0};
+    skipped = 0;
+    Require(_ZN3sce2np12StreamReader7SkipAllEPNS0_6HandleEPNS0_9StreamCtxEPl(&over.base, nullptr, nullptr, &skipped) == NpStreamBufferTooSmall &&
+                skipped == 0,
+        "SkipAll refuses a chunk larger than its buffer");
+    over = {{OverReaderVtable}, 1, 0};
+    Require(_ZN3sce2np12StreamReader8SkipDataEPNS0_6HandleElPl(&over.base, nullptr, 10, &skipped) == NpStreamBufferTooSmall &&
+                skipped == 0,
+        "SkipData refuses a callback that reports more bytes than it was asked for");
+
+    OverWriter overWriter {{OverWriterVtable}, 1};
+    Require(_ZN3sce2np12StreamWriter9WriteDataEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm(&overWriter.base, nullptr, nullptr, source.data(), 10, &count) ==
+                NpStreamBufferTooSmall && count == 0,
+        "WriteData refuses a callback that reports more bytes than it was given");
+    Require(_ZN3sce2np12StreamWriter15WriteFilledDataEPNS0_6HandleEcl(&overWriter.base, nullptr, 'x', 200) == NpStreamBufferTooSmall,
+        "WriteFilledData refuses a callback that reports more bytes than it was given");
 }
 
 void TestRefObjects() {
@@ -1818,6 +1958,7 @@ int main() {
     TestMutexAndCondObjects();
     TestAllocatorExRecorded();
     TestRingBuf();
+    TestRingBufBounds();
     TestMemoryStreams();
     TestTitleIdObjects();
     TestTitleSecretObjects();
