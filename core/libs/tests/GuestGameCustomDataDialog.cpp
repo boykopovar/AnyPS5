@@ -97,8 +97,8 @@ struct Result {
 
 static_assert(sizeof(Result) == 0x38);
 
-using OpenFn = int (*)(const void*);
-using GetResultFn = int (*)(void*);
+using OpenFn = int (APS5_VABI *)(const void*);
+using GetResultFn = int (APS5_VABI *)(void*);
 
 const char* const kPlatforms[] = {"first", "second"};
 const char* const kNullPlatform[] = {"first", nullptr};
