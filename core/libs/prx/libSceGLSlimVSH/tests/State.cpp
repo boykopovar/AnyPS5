@@ -51,6 +51,10 @@ static void Defaults() {
     glVertexAttrib2f_nid_postfix(3, 2, -3);
     glGetVertexAttribfv_nid_postfix(3, 0x8626, attr.data());
     Require((attr == std::array<GLfloat, 4>{2, -3, 0, 1}));
+    glGetVertexAttribfv_nid_postfix(3, 0x8626, nullptr);
+    glVertexAttrib2f_nid_postfix(3, 4, -1);
+    glGetVertexAttribfv_nid_postfix(3, 0x8626, attr.data());
+    Require((attr == std::array<GLfloat, 4>{4, -1, 0, 1}));
     glVertexAttrib1f_nid_postfix(8, 1);
     Error(0x0501);
     glEnable_nid_postfix(0xffffffff);
