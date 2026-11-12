@@ -30744,22 +30744,6 @@ int APS5_VABI _ZNK7WebCore16JSXMLHttpRequest8responseERN3JSC14JSGlobalObjectE() 
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore16TrackPrivateBase17startTimeVarianceEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore16TrackPrivateBase2idEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore16TrackPrivateBase5labelEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore16TrackPrivateBase8languageEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore16URLDecomposition4hashEv() {
     NotImplemented_nid_no_patch(__func__);
 }
