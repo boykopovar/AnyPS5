@@ -6,6 +6,18 @@ if(WIN32)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_http_dates_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttpDates.cpp)
+    target_include_directories(guest_http_dates_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_http_dates_tests PRIVATE libc)
+    configure_windows_unwind(guest_http_dates_tests)
+    add_test(NAME guest_http_dates COMMAND guest_http_dates_tests)
+    set_tests_properties(guest_http_dates PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        target_link_libraries(guest_http_dates_tests PRIVATE ws2_32)
+        set_tests_properties(guest_http_dates PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_http_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttp.cpp)
     target_include_directories(guest_http_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_http_tests PRIVATE libSceHttp libc)
