@@ -195,10 +195,6 @@ int main(int argc, char** argv) {
     Require(sem_setname_nid_postfix(&sem, "") == -1 && *__error_nid_postfix() == 35, "second setname with an empty name must report EAGAIN");
     Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 1, "setname must preserve the count");
     bool rejected = false;
-    try { sem_setname_nid_postfix(&sem, nullptr); }
-    catch (const std::invalid_argument&) { rejected = true; }
-    Require(rejected, "null name must throw");
-    rejected = false;
     try { sem_setname_nid_postfix(nullptr, "semaphore"); }
     catch (const std::invalid_argument&) { rejected = true; }
     Require(rejected, "null semaphore must throw");
@@ -209,4 +205,11 @@ int main(int argc, char** argv) {
     Require(sem_init_nid_postfix(&sem, 0, 0) == 0, "reinitialized semaphore must initialize");
     Require(sem_setname_nid_postfix(&sem, "again") == 0, "a reinitialized semaphore can be named again");
     Require(sem_destroy_nid_postfix(&sem) == 0, "reinitialized semaphore destroy must succeed");
+    Require(sem_init_nid_postfix(&sem, 0, 0) == 0, "fresh semaphore must initialize");
+    *__error_nid_postfix() = 0;
+    Require(sem_setname_nid_postfix(&sem, nullptr) == -1 && *__error_nid_postfix() == 22, "null name must report EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_setname_nid_postfix(&sem, "01234567890123456789012345678901") == -1 && *__error_nid_postfix() == 63, "name of 32 characters must report ENAMETOOLONG");
+    Require(sem_setname_nid_postfix(&sem, "0123456789012345678901234567890") == 0, "name of 31 characters must be accepted");
+    Require(sem_destroy_nid_postfix(&sem) == 0, "named semaphore destroy must succeed");
 }

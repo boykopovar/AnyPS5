@@ -2,7 +2,7 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceNpWebApi/InventoryExports.cpp) - 38 NIDs occur as functions under the same module and logical library in both version-labelled images. The labels do not independently authenticate retail firmware provenance; the NIDs are absent from the pinned public 3.20 catalogue. Names, prototypes and behavior are unverified. These import-resolution declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Additional callable exports](../../../core/libs/prx/libSceNpWebApi/InventoryExports.cpp) - 36 NIDs occur as functions under the same module and logical library in both version-labelled images. The labels do not independently authenticate retail firmware provenance; the NIDs are absent from the pinned public 3.20 catalogue. Names, prototypes and behavior are unverified. These import-resolution declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
 
 | Name | NID |
 | --- | --- |
@@ -37,13 +37,13 @@
 | Unknown | `meMsH0c36rQ` |
 | Unknown | `nP9mHqC8v4M` |
 | Unknown | `nrDh9GesOyk` |
-| Unknown | `ojGP5vur+qM` |
 | Unknown | `ugei4b97OXE` |
 | Unknown | `vQgD7uDMKaA` |
 | Unknown | `vm9OVSS7E18` |
 | Unknown | `wNSQ60gepNA` |
 | Unknown | `wXXTksptCEo` |
-| Unknown | `zQE2rxZdLy8` |
+
+- [Unknown NIDs `ojGP5vur+qM` and `zQE2rxZdLy8`](../../../core/libs/prx/libSceNpWebApi/InventoryExports.cpp) (libSceNpWebApi) - names are unknown; the pointer parameter and `bool` result come from the bodies, not a prototype, and nothing is claimed about the object beyond the field read. In firmware 13.42's `libSceNpWebApi.sprx` (SHA-256 `682be03706848ada18ac61ba04b39bc1fbee29e6f61ef189dd6371d21463de6b`), read from disassembly and not run on a console, `ojGP5vur+qM` (`0xea70`) answers whether the 64-bit value at `+0x20` of its argument differs from -1 and `zQE2rxZdLy8` (`0xe6d0`) whether the 32-bit value at `+0xc` does; each writes only `al` and checks no pointer, so firmware faults on a bad one, and here that throws.
 
 ### Unknown function info
 
@@ -74,3 +74,4 @@
 - [sceNpWebApiIntRegisterServicePushEventCallback and sceNpWebApiIntRegisterServicePushEventCallbackA](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi) - not measured on a PS5: a null callback returns `INVALID_ARGUMENT` on every SDK version, then they follow `sceNpWebApiRegisterServicePushEventCallback`, as [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/98ef621decb6a35dba62e367a8a89186f5d49dcc/src/core/libraries/np/np_web_api/np_web_api.cpp#L469-L491) does. No service push event filter is ever created, so from SDK 2.50 they return `SERVICE_PUSH_EVENT_FILTER_NOT_FOUND`; callbacks are never called.
 - [sceNpWebApiCreateContextA, sceNpWebApiGetMemoryPoolStats, sceNpWebApiCreateExtdPushEventFilter, sceNpWebApiDeleteExtdPushEventFilter, sceNpWebApiRegisterExtdPushEventCallbackA, sceNpWebApiUnregisterExtdPushEventCallback](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi, PS4) - `sceNpWebApiGetMemoryPoolStats` reports no pool memory in use where a PS4 Pro (firmware 10.71) reports 1920 bytes right after `sceNpWebApiInitialize`; `sceNpWebApiCreateContextA` accepts only the initial user, a second signed-in user is not measured, and an unknown library context answers `INVALID_LIB_CONTEXT_ID` because only -1 was measured; a null callback is not checked; the names of 0x8055291C and 0x8055291D are guesses for measured values. Without a PSN sign-in no extended filter exists, so the register, unregister and delete calls answer not found, as the console does offline.
 - [sceNpWebApiReadData, sceNpWebApiGetHttpResponseHeaderValue, sceNpWebApiGetHttpResponseHeaderValueLength](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi, PS4) - no request is ever sent, so none has a response: `sceNpWebApiReadData` returns libSceHttp `INVALID_ID` (0x80431100) and the header getters `PARSE_HTTP_INVALID_RESPONSE` (0x80432060), as an offline PS4 Pro probe on firmware 10.71 measured for an unsent request, along with `LIB_CONTEXT_NOT_FOUND` for request -1 (#9797). shadPS4 reads 0 bytes there instead. The argument checks before the lookup, `ABORTED` from `sceNpWebApiReadData` for an aborted request and the unwritten outputs follow shadPS4; they are not checked on a console.
+- [sceNpWebApiUtilityParseNpId](../../../core/libs/prx/libSceNpWebApi/ParseNpId.cpp) (libSceNpWebApi) - not measured on a console; the Base64 decoder and the parser are adapted from [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/2183807e592b36d4440384878165b43d930c1dee/src/core/libraries/np/np_web_api/np_web_api.cpp#L598-L630). A null output pointer with a valid input string writes nothing and returns 0.

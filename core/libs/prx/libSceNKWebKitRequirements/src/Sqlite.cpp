@@ -20,6 +20,87 @@
 
 namespace {
 
+sqlite3_vfs* NativeVfs(sqlite3_vfs* vfs) {
+    return static_cast<sqlite3_vfs*>(vfs->pAppData);
+}
+
+template<auto TCallback, class... TArgs>
+int ForwardVfs(sqlite3_vfs* vfs, TArgs... arguments) {
+    auto* native = NativeVfs(vfs);
+    return (native->*TCallback)(native, arguments...);
+}
+
+int GuestFullPathname(sqlite3_vfs* vfs, const char* name, int size, char* result) {
+    auto* native = NativeVfs(vfs);
+    try {
+        const auto host = ResolvePath_nid_no_patch(name).u8string();
+        return native->xFullPathname(native, reinterpret_cast<const char*>(host.c_str()), size, result);
+    } catch (const std::bad_alloc&) {
+        return SQLITE_NOMEM;
+    } catch (...) {
+        return SQLITE_CANTOPEN;
+    }
+}
+
+int GuestFileOpen(sqlite3_vfs* vfs, sqlite3_filename name, sqlite3_file* file, int flags, int* outFlags) {
+    auto* native = NativeVfs(vfs);
+    int openedFlags = 0;
+    int* actualFlags = outFlags ? outFlags : &openedFlags;
+    const int result = native->xOpen(native, name, file, flags, actualFlags);
+    if (result != SQLITE_OK || !name || !(flags & SQLITE_OPEN_MAIN_DB) || !(*actualFlags & SQLITE_OPEN_READWRITE)) {
+        return result;
+    }
+    int error;
+    try {
+        const std::filesystem::path host(std::u8string(name, name + std::strlen(name)));
+        for (const char* suffix : {"", "-wal", "-shm", "-journal"}) {
+            auto path = host;
+            path += suffix;
+            RecordWrittenPath_nid_no_patch(path);
+        }
+        return SQLITE_OK;
+    } catch (const std::bad_alloc&) {
+        error = SQLITE_NOMEM;
+    } catch (...) {
+        error = SQLITE_IOERR;
+    }
+    file->pMethods->xClose(file);
+    file->pMethods = nullptr;
+    return error;
+}
+
+int RegisterGuestVfs() {
+    auto* native = sqlite3_vfs_find(nullptr);
+    if (!native) return SQLITE_CANTOPEN;
+    static sqlite3_vfs guest{};
+    guest.iVersion = native->iVersion >= 2 && native->xCurrentTimeInt64 ? 2 : 1;
+    guest.szOsFile = native->szOsFile;
+    guest.mxPathname = native->mxPathname;
+    guest.zName = native->zName;
+    guest.pAppData = native;
+    guest.xOpen = GuestFileOpen;
+    guest.xDelete = ForwardVfs<&sqlite3_vfs::xDelete>;
+    guest.xAccess = ForwardVfs<&sqlite3_vfs::xAccess>;
+    guest.xFullPathname = GuestFullPathname;
+    guest.xRandomness = ForwardVfs<&sqlite3_vfs::xRandomness>;
+    guest.xSleep = ForwardVfs<&sqlite3_vfs::xSleep>;
+    guest.xCurrentTime = ForwardVfs<&sqlite3_vfs::xCurrentTime>;
+    if (native->xGetLastError) guest.xGetLastError = ForwardVfs<&sqlite3_vfs::xGetLastError>;
+    if (guest.iVersion >= 2) guest.xCurrentTimeInt64 = ForwardVfs<&sqlite3_vfs::xCurrentTimeInt64>;
+
+    auto* memory = sqlite3_vfs_find("memdb");
+    while (auto* registered = sqlite3_vfs_find(nullptr)) sqlite3_vfs_unregister(registered);
+    if (memory) sqlite3_vfs_register(memory, 0);
+    return sqlite3_vfs_register(&guest, 1);
+}
+
+int InitializeGuestVfs() {
+    const int result = sqlite3_initialize();
+    if (result != SQLITE_OK) return result;
+    static const int registered = RegisterGuestVfs();
+    return registered;
+}
+
 constexpr const char* GuestHooksKey = "anyps5.guest";
 
 struct GuestHooks {
@@ -66,7 +147,6 @@ int CallBusy(void* hooks, int count) {
 
 int CallAuthorizer(void* hooks, int action, const char* first, const char* second, const char* schema,
     const char* trigger) {
-    if (action == SQLITE_ATTACH && first != nullptr && *first != '\0') return SQLITE_DENY;
     auto* guest = static_cast<GuestHooks*>(hooks);
     if (guest->authorizer == nullptr) return SQLITE_OK;
     return guest->authorizer(guest->authorizerArgument, action, first, second, schema, trigger);
@@ -189,6 +269,11 @@ int APS5_VABI sqlite3_bind_parameter_count_nid_postfix(sqlite3_stmt* statement) 
     return sqlite3_bind_parameter_count(statement);
 }
 
+int APS5_VABI sqlite3_bind_text_nid_postfix(sqlite3_stmt* statement, int index, const char* text, int size,
+    NKWebKit::GuestSqliteDestructor destructor) {
+    return sqlite3_bind_text(statement, index, text, size, HostDestructor(destructor));
+}
+
 int APS5_VABI sqlite3_bind_text16_nid_postfix(sqlite3_stmt* statement, int index, const void* text, int size,
     NKWebKit::GuestSqliteDestructor destructor) {
     return sqlite3_bind_text16(statement, index, text, size, HostDestructor(destructor));
@@ -212,6 +297,10 @@ int APS5_VABI sqlite3_busy_handler_nid_postfix(sqlite3* db, NKWebKit::GuestSqlit
 
 int APS5_VABI sqlite3_busy_timeout_nid_postfix(sqlite3* db, int milliseconds) {
     return sqlite3_busy_timeout(db, milliseconds);
+}
+
+int APS5_VABI sqlite3_changes_nid_postfix(sqlite3* db) {
+    return sqlite3_changes(db);
 }
 
 int APS5_VABI sqlite3_clear_bindings_nid_postfix(sqlite3_stmt* statement) {
@@ -250,8 +339,16 @@ std::int64_t APS5_VABI sqlite3_column_int64_nid_postfix(sqlite3_stmt* statement,
     return sqlite3_column_int64(statement, column);
 }
 
+const char* APS5_VABI sqlite3_column_name_nid_postfix(sqlite3_stmt* statement, int column) {
+    return sqlite3_column_name(statement, column);
+}
+
 const void* APS5_VABI sqlite3_column_name16_nid_postfix(sqlite3_stmt* statement, int column) {
     return sqlite3_column_name16(statement, column);
+}
+
+const unsigned char* APS5_VABI sqlite3_column_text_nid_postfix(sqlite3_stmt* statement, int column) {
+    return sqlite3_column_text(statement, column);
 }
 
 const void* APS5_VABI sqlite3_column_text16_nid_postfix(sqlite3_stmt* statement, int column) {
@@ -293,6 +390,10 @@ int APS5_VABI sqlite3_create_function_nid_postfix(sqlite3* db, const char* name,
 
 int APS5_VABI sqlite3_data_count_nid_postfix(sqlite3_stmt* statement) {
     return sqlite3_data_count(statement);
+}
+
+int APS5_VABI sqlite3_db_release_memory_nid_postfix(sqlite3* db) {
+    return sqlite3_db_release_memory(db);
 }
 
 int APS5_VABI sqlite3_errcode_nid_postfix(sqlite3* db) {
@@ -351,39 +452,17 @@ static bool MemoryUri(const char* filename) {
     return memory;
 }
 
-static int GuardAttach(int result, sqlite3** db) {
-    if (result != SQLITE_OK || db == nullptr || *db == nullptr) return result;
-    sqlite3_mutex_enter(sqlite3_db_mutex(*db));
-    GuestHooks* hooks = Hooks(*db);
-    const int installed = hooks ? sqlite3_set_authorizer(*db, CallAuthorizer, hooks) : SQLITE_NOMEM;
-    sqlite3_mutex_leave(sqlite3_db_mutex(*db));
-    if (installed == SQLITE_OK) return SQLITE_OK;
-    sqlite3_close(*db);
-    *db = nullptr;
-    return installed;
-}
-
 int APS5_VABI sqlite3_open_v2_nid_postfix(const char* filename, sqlite3** db, int flags, const char* vfs) {
     static_cast<void>(vfs);
-    const bool uri = filename && (flags & SQLITE_OPEN_URI) && std::strncmp(filename, "file:", 5) == 0;
-    const bool memory = uri ? MemoryUri(filename) :
-        (!filename || !*filename || std::strcmp(filename, ":memory:") == 0 || (flags & SQLITE_OPEN_MEMORY));
-    if (memory) {
-        return GuardAttach(sqlite3_open_v2(filename, db, flags, nullptr), db);
-    }
-    if (uri) {
+    if (filename && (flags & SQLITE_OPEN_URI) && std::strncmp(filename, "file:", 5) == 0 && !MemoryUri(filename)) {
         NotImplemented_nid_no_patch("sqlite3_open_v2 file URI");
     }
-    const std::filesystem::path host = ResolvePath_nid_no_patch(filename);
-    const int result = GuardAttach(sqlite3_open_v2(reinterpret_cast<const char*>(host.u8string().c_str()), db, flags, nullptr), db);
-    if (result == SQLITE_OK && (flags & SQLITE_OPEN_READWRITE)) {
-        for (const char* suffix : {"", "-wal", "-shm", "-journal"}) {
-            std::filesystem::path file = host;
-            file += suffix;
-            RecordWrittenPath_nid_no_patch(file);
-        }
+    const int ready = InitializeGuestVfs();
+    if (ready != SQLITE_OK) {
+        *db = nullptr;
+        return ready;
     }
-    return result;
+    return sqlite3_open_v2(filename, db, flags, nullptr);
 }
 
 int APS5_VABI sqlite3_prepare_v2_nid_postfix(sqlite3* db, const char* sql, int size, sqlite3_stmt** statement,
@@ -428,6 +507,10 @@ int APS5_VABI sqlite3_stmt_busy_nid_postfix(sqlite3_stmt* statement) {
     return sqlite3_stmt_busy(statement);
 }
 
+int APS5_VABI sqlite3_stmt_readonly_nid_postfix(sqlite3_stmt* statement) {
+    return sqlite3_stmt_readonly(statement);
+}
+
 int APS5_VABI sqlite3_total_changes_nid_postfix(sqlite3* db) {
     return sqlite3_total_changes(db);
 }
@@ -436,8 +519,16 @@ void* APS5_VABI sqlite3_user_data_nid_postfix(sqlite3_context* context) {
     return static_cast<GuestFunction*>(sqlite3_user_data(context))->application;
 }
 
+int APS5_VABI sqlite3_value_bytes_nid_postfix(sqlite3_value* value) {
+    return sqlite3_value_bytes(value);
+}
+
 double APS5_VABI sqlite3_value_double_nid_postfix(sqlite3_value* value) {
     return sqlite3_value_double(value);
+}
+
+const unsigned char* APS5_VABI sqlite3_value_text_nid_postfix(sqlite3_value* value) {
+    return sqlite3_value_text(value);
 }
 
 const void* APS5_VABI sqlite3_value_text16_nid_postfix(sqlite3_value* value) {
