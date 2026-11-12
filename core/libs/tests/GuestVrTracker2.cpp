@@ -188,25 +188,31 @@ int main() {
     Require(VrTracker2ClearWideResult(wide.data()) == NotInitialized, "wide result return");
     Require(AllEqual(wide.data(), wide.data() + 24, 0) && AllEqual(wide.data() + 24, wide.data() + 32, 0xAA), "wide result clears 24 bytes");
     Require(VrTracker2ClearWideResult(nullptr) == InvalidArgument, "wide result null");
+    errno = 73;
+    Require(VrTracker2ClearWideResult(reinterpret_cast<void*>(0x10)) == InvalidArgument, "wide result unwritable");
+    Require(errno == 73, "wide result unwritable errno");
 
     auto narrow = Filled();
-    Require(VrTracker2ClearNarrowResult(narrow.data()) == NotInitialized, "narrow result return");
+    Require(sceVrTracker2GetRelocalizerResult(narrow.data()) == NotInitialized, "narrow result return");
     Require(AllEqual(narrow.data(), narrow.data() + 16, 0) && AllEqual(narrow.data() + 16, narrow.data() + 32, 0xAA), "narrow result clears 16 bytes");
-    Require(VrTracker2ClearNarrowResult(nullptr) == InvalidArgument, "narrow result null");
+    Require(sceVrTracker2GetRelocalizerResult(nullptr) == InvalidArgument, "narrow result null");
+    errno = 74;
+    Require(sceVrTracker2GetRelocalizerResult(reinterpret_cast<void*>(0x10)) == InvalidArgument, "narrow result unwritable");
+    Require(errno == 74, "narrow result unwritable errno");
 
     auto second = Filled();
-    Require(VrTracker2CheckSecondThenReportNotInitialized(nullptr, second.data()) == NotInitialized, "second checked, first null");
-    Require(VrTracker2CheckSecondThenReportNotInitialized(second.data(), nullptr) == InvalidArgument, "second null");
+    Require(sceVrTracker2GetMapQuality(nullptr, second.data()) == NotInitialized, "second checked, first null");
+    Require(sceVrTracker2GetMapQuality(second.data(), nullptr) == InvalidArgument, "second null");
     Require(AllEqual(second.data(), second.data() + 32, 0xAA), "second untouched");
 
     Require(VrTracker2Accept() == 0, "accepting export");
 
     auto defaults = Filled();
-    Require(VrTracker2FillDefaults(defaults.data()) == 0, "defaults return");
+    Require(SceVrTracker2DepthCubeMapInit(defaults.data()) == 0, "defaults return");
     const std::array<std::uint8_t, 16> expected{0xAA, 0xAA, 0xAA, 0xAA, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x40, 0x00};
     Require(std::memcmp(defaults.data(), expected.data(), expected.size()) == 0, "defaults layout");
     Require(AllEqual(defaults.data() + 16, defaults.data() + 32, 0xAA), "defaults stop at 16 bytes");
-    Require(Throws([] { VrTracker2FillDefaults(nullptr); }), "defaults null");
+    Require(Throws([] { SceVrTracker2DepthCubeMapInit(nullptr); }), "defaults null");
 
     auto word = Filled();
     Require(VrTracker2ClearWord(word.data()) == 0, "clear word return");

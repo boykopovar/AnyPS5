@@ -60,6 +60,21 @@ int APS5_VABI SSL_up_ref_nid_postfix(LibreSsl3Ssl* ssl) {
     return Retain_nid_no_patch(ssl->references);
 }
 
+const LibreSsl3SslMethod* APS5_VABI TLS_method_nid_postfix() {
+    static constexpr LibreSsl3SslMethod method{0, 1, Tls13Version, Tls1Version, Tls13Version};
+    return &method;
+}
+
+const LibreSsl3SslMethod* APS5_VABI TLS_server_method_nid_postfix() {
+    return TLS_method_nid_postfix();
+}
+
+void APS5_VABI SSL_set_info_callback_nid_postfix(LibreSsl3Ssl* ssl, LibreSsl3InfoCallback callback) {
+    if (!ssl)
+        throw std::invalid_argument("SSL_set_info_callback requires an SSL");
+    ssl->infoCallback = reinterpret_cast<void*>(callback);
+}
+
 int APS5_VABI SSL_SESSION_up_ref_nid_postfix(LibreSsl3SslSession* session) {
     if (!session)
         throw std::invalid_argument("SSL_SESSION_up_ref requires a session");
@@ -112,6 +127,12 @@ std::size_t APS5_VABI SSL_get_client_random_nid_postfix(const LibreSsl3Ssl* ssl,
         throw std::invalid_argument("SSL_get_client_random requires SSL3 state");
     std::memcpy(out, ssl->s3->clientRandom, length);
     return length;
+}
+
+void APS5_VABI SSL_CTX_set_keylog_callback_nid_postfix(LibreSsl3SslCtx* context, LibreSsl3KeylogCallback callback) {
+    if (!context)
+        throw std::invalid_argument("SSL_CTX_set_keylog_callback requires a context");
+    context->keylogCallback = reinterpret_cast<void*>(callback);
 }
 
 }
