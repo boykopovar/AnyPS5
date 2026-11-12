@@ -7,6 +7,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: area-labels
+  cancel-in-progress: true
+
 jobs:
   label:
     runs-on: ubuntu-latest
