@@ -1,6 +1,7 @@
 #include "prx/libSceGic/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -25,6 +26,14 @@ extern "C" {
 
 int APS5_VABI sceGicGetValue(void* output) {
     if (output == nullptr) return ErrorInvalidArgument;
+    std::uint8_t probe = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&probe, output, sizeof(probe)) ||
+        !GuestCopyOut_nid_no_patch(output, &probe, sizeof(probe))) {
+        errno = savedErrno;
+        return ErrorDeviceUnavailable;
+    }
+    errno = savedErrno;
     const int descriptor = sceKernelOpen("/dev/gic", 2, 0);
     if (descriptor < 0) return ErrorDeviceUnavailable;
     Request request{output, 0, 0};

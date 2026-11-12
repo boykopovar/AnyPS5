@@ -1,4 +1,5 @@
 #include "prx/libSceGic/libSceGic.hpp"
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -27,9 +28,13 @@ int main() {
     std::filesystem::current_path(directory);
 
     Require(sceGicGetValue(nullptr) == ErrorInvalidArgument, "null output");
+    errno = 71;
+    Require(sceGicGetValue(reinterpret_cast<void*>(0x10)) == ErrorDeviceUnavailable, "unwritable output");
+    Require(errno == 71, "preserves errno");
     std::uint8_t buffer[32];
     std::memset(buffer, 0xAB, sizeof(buffer));
     Require(sceGicGetValue(buffer) == ErrorDeviceUnavailable, "GetValue without /dev/gic");
+    for (std::size_t i = 0; i < sizeof(buffer); ++i) Require(buffer[i] == 0xAB, "preserves buffer on unavailable");
     for (const std::uint8_t byte : buffer) Require(byte == 0xAB, "a failed call writes nothing");
 
     std::filesystem::current_path(original);
