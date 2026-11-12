@@ -337,6 +337,7 @@ public:
     // overlapping pending image, as before).
     static bool FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr, const char* reason = "memory access", PublishScope scope = PublishScope::Whole, bool* published = nullptr, bool waited = false, VkDevice device = VK_NULL_HANDLE);
     static void FlushAllPending(const char* reason, VkDevice device = VK_NULL_HANDLE);
+    static void StoreBeforeRelease(VkDevice device);
     static bool FlushAllPendingUntil(const char* reason, const std::function<bool()>& stop, VkDevice device = VK_NULL_HANDLE);
     static bool WaitForFlushing(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr);
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);

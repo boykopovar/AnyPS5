@@ -102,6 +102,7 @@ bool AccessesMemory(std::uint32_t header);
 // Whether an ACQUIRE_MEM packet asks only for GPU cache actions (no CPU-visible memory
 // synchronization): such a packet needs a pipeline barrier, not a device drain.
 bool UsesGpuCacheBarrier(std::span<const std::uint32_t> packet);
+bool ReleaseWritesBackL2(std::span<const std::uint32_t> packet);
 bool IsTagMarker(std::span<const std::uint32_t> packet);
 inline bool Predicated(std::uint32_t header) { return !FillerPacket(header) && (header & 1u) != 0; }
 bool PredicationPasses(const QueueState& queue);
