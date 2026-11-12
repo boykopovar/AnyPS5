@@ -485,9 +485,19 @@ extern "C" {
 
 int APS5_VABI sceVideodec2QueryComputeMemoryInfo_nid_postfix(ComputeMemoryInfo* info) {
     if (!info) return Videodec2ErrorArgumentPointer;
-    if (info->thisSize != sizeof(ComputeMemoryInfo)) return Videodec2ErrorStructureSize;
-    if (Trace()) std::fprintf(stderr, "[videodec2] QueryComputeMemoryInfo size=%llu\n", static_cast<unsigned long long>(info->thisSize));
-    info->cpuGpuMemorySize = WorkMemoryBytes;
+    ComputeMemoryInfo localInfo{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo))) {
+        errno = savedErrno;
+        return Videodec2ErrorArgumentPointer;
+    }
+    if (localInfo.thisSize != sizeof(ComputeMemoryInfo)) return Videodec2ErrorStructureSize;
+    if (Trace()) std::fprintf(stderr, "[videodec2] QueryComputeMemoryInfo size=%llu\n", static_cast<unsigned long long>(localInfo.thisSize));
+    localInfo.cpuGpuMemorySize = WorkMemoryBytes;
+    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) {
+        errno = savedErrno;
+        return Videodec2ErrorArgumentPointer;
+    }
     return 0;
 }
 

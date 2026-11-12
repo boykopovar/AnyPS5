@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -132,18 +133,31 @@ int APS5_VABI libSceVcodecUnknown_X0qscgxx1MI_nid_no_patch(std::uint32_t budget,
 APS5_EXPORT("X0qscgxx1MI", libSceVcodecUnknown_X0qscgxx1MI_nid_no_patch);
 
 int APS5_VABI libSceVcodecUnknown_Ipf4PM5PIHE_nid_no_patch(std::uint64_t* result, const void* config) {
-    if (result != nullptr) *result = 0;
+    const int savedErrno = errno;
+    if (result != nullptr) {
+        std::uint64_t zero = 0;
+        if (!GuestCopyOut_nid_no_patch(result, &zero, sizeof(zero))) {
+            errno = savedErrno;
+            return ErrorInvalidArgument;
+        }
+    }
     if (config == nullptr) return ErrorInvalidArgument;
-    std::uint32_t copied[4];
-    std::memcpy(copied, config, sizeof(copied));
-    std::uint32_t profile = 0;
-    std::memcpy(&profile, static_cast<const std::uint8_t*>(config) + 0x10, sizeof(profile));
-    const std::uint32_t fields[5] = {copied[0], copied[1], copied[2], copied[3], profile};
+    std::uint32_t fields[5]{};
+    if (!GuestCopyIn_nid_no_patch(fields, config, sizeof(fields))) {
+        errno = savedErrno;
+        return ErrorInvalidArgument;
+    }
     Request request{};
-    std::memcpy(&request.fields[1], copied, sizeof(copied));
+    std::memcpy(&request.fields[1], fields, 4 * sizeof(std::uint32_t));
     request.fields[5] = BudgetClass(fields);
     const int status = Control<ClassCommand>(request);
-    if (status >= 0 && result != nullptr) *result = request.fields[0];
+    if (status >= 0 && result != nullptr) {
+        const std::uint64_t value = request.fields[0];
+        if (!GuestCopyOut_nid_no_patch(result, &value, sizeof(value))) {
+            errno = savedErrno;
+            return ErrorInvalidArgument;
+        }
+    }
     return status;
 }
 APS5_EXPORT("Ipf4PM5PIHE", libSceVcodecUnknown_Ipf4PM5PIHE_nid_no_patch);
