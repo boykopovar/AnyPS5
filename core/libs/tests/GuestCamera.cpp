@@ -1,4 +1,5 @@
 #include "prx/libSceCamera/libSceCamera.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -73,6 +74,14 @@ void CheckClosed() {
     Require(sceCameraGetAutoExposureGain(1, 3, &enable, nullptr) == ErrorParam, "reading auto exposure of both channels at once must be rejected");
     Require(sceCameraGetAutoExposureGain(1, 1, nullptr, nullptr) == ErrorParam, "reading auto exposure without an output must be rejected");
     Require(enable == 7, "a refused auto exposure read must leave the output alone");
+    Require(sceCameraGetDeviceInfo(0, nullptr) == ErrorParam, "null device info must be rejected");
+    errno = 71;
+    Require(sceCameraGetDeviceInfo(0, reinterpret_cast<const CameraDeviceInfo*>(0x10)) == ErrorParam, "unmapped device info must be rejected");
+    Require(errno == 71, "preserve errno on unmapped device info");
+    Require(sceCameraGetCalibrationData(nullptr, nullptr) == ErrorParam, "null calibration param must be rejected");
+    errno = 71;
+    Require(sceCameraGetCalibrationData(reinterpret_cast<const CameraGetCalibrationDataParameter*>(0x10), reinterpret_cast<void*>(0x20)) == ErrorParam, "unmapped calibration param must be rejected");
+    Require(errno == 71, "preserve errno on unmapped calibration param");
 }
 
 void CheckOpen() {
@@ -81,6 +90,10 @@ void CheckOpen() {
     Require(sceCameraOpen(SystemUser, 0, 1, nullptr) == ErrorParam, "a camera index other than 0 must be rejected");
     Require(sceCameraOpen(SystemUser, 0, 0, nullptr) == 1, "the first open must return handle 1");
     Require(sceCameraOpen(SystemUser, 0, 0, nullptr) == 2, "the second open must return handle 2");
+    Require(sceCameraGetMmapConnectedCount(nullptr) == ErrorParam, "null count must be rejected");
+    errno = 71;
+    Require(sceCameraGetMmapConnectedCount(reinterpret_cast<std::uint32_t*>(0x10)) == ErrorParam, "unmapped count must be rejected");
+    Require(errno == 71, "preserve errno on unmapped count");
 }
 
 void CheckStart() {
