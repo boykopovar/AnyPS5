@@ -6,9 +6,12 @@
 #include <cstring>
 #include <cstdio>
 #include <initializer_list>
+#include <source_location>
 
-static void Require(bool condition) {
-    if (!condition) std::abort();
+static void Require(bool condition, std::source_location location = std::source_location::current()) {
+    if (condition) return;
+    std::fprintf(stderr, "curl form test failed at line %u\n", location.line());
+    std::abort();
 }
 
 static guest_curl_slist* GuestNode(const char* text, guest_curl_slist* next) {
@@ -19,8 +22,65 @@ static guest_curl_slist* GuestNode(const char* text, guest_curl_slist* next) {
     return node;
 }
 
+static void FreeGuestForms(guest_curl_httppost* form) {
+    while (form) {
+        auto* const next = form->next;
+        if (!(form->flags & CURL_HTTPPOST_PTRNAME)) free_nid_postfix(form->name);
+        if (!(form->flags & (CURL_HTTPPOST_PTRCONTENTS | CURL_HTTPPOST_BUFFER | CURL_HTTPPOST_CALLBACK)))
+            free_nid_postfix(form->contents);
+        free_nid_postfix(form->contenttype);
+        free_nid_postfix(form->showfilename);
+        free_nid_postfix(form);
+        form = next;
+    }
+}
+
 int main() {
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
+    guest_curl_httppost* form = nullptr;
+    guest_curl_httppost* last = nullptr;
+    auto* firstName = strdup_nid_postfix("first");
+    auto* firstContents = strdup_nid_postfix("one");
+    Require(curl_formadd_nid_postfix(&form, &last, CURLFORM_COPYNAME, firstName,
+        CURLFORM_COPYCONTENTS, firstContents, CURLFORM_END) == CURL_FORMADD_OK);
+    free_nid_postfix(firstName);
+    free_nid_postfix(firstContents);
+    Require(form != nullptr && last == form && std::strcmp(form->name, "first") == 0 &&
+        std::strcmp(form->contents, "one") == 0);
+    auto* secondName = strdup_nid_postfix("second");
+    auto* secondContents = strdup_nid_postfix("two");
+    Require(curl_formadd_nid_postfix(&form, &last, CURLFORM_COPYNAME, secondName,
+        CURLFORM_COPYCONTENTS, secondContents, CURLFORM_END) == CURL_FORMADD_OK);
+    free_nid_postfix(secondName);
+    free_nid_postfix(secondContents);
+    Require(form->next == last && last != form && std::strcmp(last->name, "second") == 0 &&
+        std::strcmp(last->contents, "two") == 0);
+    const guest_curl_forms arrayOptions[] = {
+        {CURLFORM_COPYNAME, strdup_nid_postfix("array")},
+        {CURLFORM_COPYCONTENTS, strdup_nid_postfix("three")},
+        {CURLFORM_END, nullptr},
+    };
+    Require(curl_formadd_nid_postfix(&form, &last, CURLFORM_ARRAY, arrayOptions, CURLFORM_END) == CURL_FORMADD_OK);
+    free_nid_postfix(const_cast<char*>(arrayOptions[0].value));
+    free_nid_postfix(const_cast<char*>(arrayOptions[1].value));
+    Require(form->next->next == last && last->next == nullptr && std::strcmp(last->name, "array") == 0 &&
+        std::strcmp(last->contents, "three") == 0);
+    const char binaryName[] = {'b', 'i', 'n', 'X'};
+    const char binaryContents[] = {'a', '\0', 'b'};
+    auto* const previous = last;
+    Require(curl_formadd_nid_postfix(&form, &last, CURLFORM_COPYNAME, binaryName, CURLFORM_NAMELENGTH, std::int64_t{3},
+        CURLFORM_COPYCONTENTS, binaryContents, CURLFORM_CONTENTSLENGTH, std::int64_t{3}, CURLFORM_END) == CURL_FORMADD_OK);
+    Require(previous->next == last && last != previous && last->namelength == 3 && last->contentlen == 3 &&
+        (last->flags & CURL_HTTPPOST_LARGE) && last->name != binaryName && last->contents != binaryContents &&
+        std::memcmp(last->name, "bin", 3) == 0 && std::memcmp(last->contents, binaryContents, 3) == 0);
+    auto* const tail = last;
+    Require(curl_formadd_nid_postfix(&form, &last, CURLFORM_COPYNAME, "named", CURLFORM_COPYCONTENTS, "value",
+        CURLFORM_ARRAY, static_cast<const guest_curl_forms*>(nullptr), CURLFORM_END) == CURL_FORMADD_NULL);
+    Require(last == tail && tail->next == nullptr);
+    Require(curl_formadd_nid_postfix(&form, &last, CURLFORM_COPYNAME, "named", CURLFORM_COPYNAME, "again",
+        CURLFORM_ARRAY, static_cast<const guest_curl_forms*>(nullptr), CURLFORM_END) == CURL_FORMADD_OPTION_TWICE);
+    Require(last == tail && tail->next == nullptr);
+    FreeGuestForms(form);
     CURL* easy = curl_easy_init_nid_postfix();
     Require(easy != nullptr);
     curl_mime* mime = curl_mime_init_nid_postfix(easy);

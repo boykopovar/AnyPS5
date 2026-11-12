@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 #ifdef _WIN32
 #define CURL_ARGS_START(last) __builtin_sysv_va_list args; __builtin_sysv_va_start(args, last)
@@ -40,6 +41,83 @@ extern curl_calloc_callback Curl_ccalloc;
 }
 
 namespace {
+
+void AddFormOption(std::vector<curl_forms>& options, CURLformoption option, const char* value) {
+    if (option == CURLFORM_NAMELENGTH || option == CURLFORM_BUFFERLENGTH) {
+        const auto length = static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(value));
+        if (length < LONG_MIN || length > LONG_MAX) throw std::out_of_range("curl_formadd length does not fit host long");
+    }
+    options.push_back({option, value});
+}
+
+bool IsFormLengthOption(CURLformoption option) {
+    return option == CURLFORM_NAMELENGTH || option == CURLFORM_CONTENTSLENGTH || option == CURLFORM_BUFFERLENGTH;
+}
+
+bool IsFormPointerOption(CURLformoption option) {
+    switch (option) {
+    case CURLFORM_COPYNAME:
+    case CURLFORM_PTRNAME:
+    case CURLFORM_COPYCONTENTS:
+    case CURLFORM_PTRCONTENTS:
+    case CURLFORM_FILECONTENT:
+    case CURLFORM_FILE:
+    case CURLFORM_BUFFER:
+    case CURLFORM_BUFFERPTR:
+    case CURLFORM_CONTENTTYPE:
+    case CURLFORM_CONTENTHEADER:
+    case CURLFORM_FILENAME:
+    case CURLFORM_STREAM:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void FreeGuestFormNodes(guest_curl_httppost* form) {
+    while (form) {
+        auto* const next = form->next;
+        FreeGuestFormNodes(form->more);
+        Curl_cfree(form);
+        form = next;
+    }
+}
+
+guest_curl_httppost* GuestFormFromHost(curl_httppost* host) {
+    if (!host) return nullptr;
+    auto* const guest = static_cast<guest_curl_httppost*>(Curl_ccalloc(1, sizeof(guest_curl_httppost)));
+    if (!guest) return nullptr;
+    guest->more = GuestFormFromHost(host->more);
+    guest->next = GuestFormFromHost(host->next);
+    if ((host->more && !guest->more) || (host->next && !guest->next)) {
+        FreeGuestFormNodes(guest->more);
+        FreeGuestFormNodes(guest->next);
+        Curl_cfree(guest);
+        return nullptr;
+    }
+    guest->name = host->name;
+    guest->namelength = host->namelength;
+    guest->contents = host->contents;
+    guest->contentslength = host->contentslength;
+    guest->buffer = host->buffer;
+    guest->bufferlength = host->bufferlength;
+    guest->contenttype = host->contenttype;
+    guest->contentheader = reinterpret_cast<guest_curl_slist*>(host->contentheader);
+    guest->flags = host->flags;
+    guest->showfilename = host->showfilename;
+    guest->userp = host->userp;
+    guest->contentlen = host->contentlen;
+    return guest;
+}
+
+void FreeHostFormNodes(curl_httppost* form) {
+    while (form) {
+        auto* const next = form->next;
+        FreeHostFormNodes(form->more);
+        Curl_cfree(form);
+        form = next;
+    }
+}
 
 void* GuestCurlMalloc(size_t size) {
     return malloc_nid_postfix(size);
@@ -680,7 +758,55 @@ char* APS5_VABI curl_pushheader_byname_nid_postfix(struct curl_pushheaders* h, c
 }
 
 std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** httppost, struct guest_curl_httppost** last_post, ...) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!httppost || !last_post) NotImplemented_nid_no_patch(__func__);
+    std::vector<curl_forms> options;
+    bool nullArray = false;
+    CURL_ARGS_START(last_post);
+    for (;;) {
+        const auto option = static_cast<CURLformoption>(CURL_ARG(int));
+        if (option == CURLFORM_END) break;
+        if (option == CURLFORM_ARRAY) {
+            const auto* forms = CURL_ARG(const guest_curl_forms*);
+            if (!forms) {
+                nullArray = true;
+                break;
+            }
+            for (; forms->option != CURLFORM_END; ++forms)
+                AddFormOption(options, static_cast<CURLformoption>(forms->option), forms->value);
+            continue;
+        }
+        if (IsFormLengthOption(option) || option == CURLFORM_CONTENTLEN) {
+            AddFormOption(options, option, reinterpret_cast<const char*>(static_cast<std::uintptr_t>(CURL_ARG(std::int64_t))));
+        } else if (IsFormPointerOption(option)) {
+            AddFormOption(options, option, CURL_ARG(const char*));
+        } else {
+            AddFormOption(options, option, nullptr);
+            break;
+        }
+    }
+    CURL_ARGS_END();
+    options.push_back({CURLFORM_END, nullptr});
+
+    curl_httppost* hostHead = nullptr;
+    curl_httppost* hostTail = nullptr;
+    auto result = ::curl_formadd(&hostHead, &hostTail, CURLFORM_ARRAY, options.data(), CURLFORM_END);
+    if (nullArray) {
+        ::curl_formfree(hostHead);
+        return result == CURL_FORMADD_OK ? CURL_FORMADD_NULL : result;
+    }
+    if (!hostHead) return result;
+    auto* const guest = GuestFormFromHost(hostHead);
+    if (!guest) {
+        ::curl_formfree(hostHead);
+        return CURL_FORMADD_MEMORY;
+    }
+    FreeHostFormNodes(hostHead);
+    if (*last_post)
+        (*last_post)->next = guest;
+    else
+        *httppost = guest;
+    *last_post = guest;
+    return result;
 }
 
 int APS5_VABI curl_formget_nid_postfix(struct guest_curl_httppost* form, void* arg, guest_curl_formget_callback append) {
