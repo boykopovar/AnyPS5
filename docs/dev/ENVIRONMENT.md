@@ -259,6 +259,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_COPY_ALIAS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | keeps every device copy a transfer instead of aliasing the source storage image |
 | `APS5_NO_COPY_HLE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferCopy.cpp` |  | disables the copy-kernel HLE, so matching copies run as compute |
 | `APS5_NO_COPY_KNOWN_VALUES` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferCopy.cpp` |  | disables serving a copy's destination from source values the driver already knows |
+| `APS5_NO_COVERAGE_SUMMARY` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp` |  | proves a range covered by write watching by scanning the exclusion mask of each 64 KiB block between its ends instead of testing the per-block summary bits, on Windows |
 | `APS5_NO_CPU_COPY` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferCopy.cpp` |  | disables the CPU copy path of the copy HLE |
 | `APS5_NO_D24S8` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/TextureFormat.cpp` |  | samples guest `8_24_UNORM` (format 141) through the `R32_SFLOAT` repack even where `VK_FORMAT_D24_UNORM_S8_UINT` is usable |
 | `APS5_NO_DATA_HITS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/DispatchCache.cpp` |  | disables dispatch-cache hits that differ only in ShaderData or FlattenedSrt words |
