@@ -230,6 +230,7 @@ void EmitWindowLaneGuard(SpirvValueEmitContext& ctx, const IrValue& inst, std::u
 void EmitDescriptorFault(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t condition, std::uint32_t low, std::uint32_t high, std::uint32_t programCounter);
 void EmitControlNop(SpirvValueEmitContext& context);
 void EmitWaitcnt(SpirvValueEmitContext& context);
+void EmitGuestFence(SpirvValueEmitContext& context);
 void EmitSendmsg(SpirvValueEmitContext& context);
 void EmitTtraceData(SpirvValueEmitContext& context);
 void EmitInstPrefetch(SpirvValueEmitContext& context);

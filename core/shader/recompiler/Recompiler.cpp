@@ -710,6 +710,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.meshWindowBuffer = request.target.meshWindowBuffer;
     targetOptions.float16WidenNans = request.target.float16WidenNans;
     targetOptions.float16NarrowNans = request.target.float16NarrowNans;
+    targetOptions.coherentBufferAtomics = request.target.coherentBufferAtomics;
 
     constexpr SpirvEmitter spirvEmitter;
     CompiledShaderArtifact result;
