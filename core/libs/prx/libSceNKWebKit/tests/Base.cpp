@@ -1163,6 +1163,43 @@ static void TestBundleDOMWindowExtension() {
     Require(threw);
 }
 
+static void TestBundleNodeHandle() {
+    Require(WKBundleNodeHandleGetTypeID() == 122);
+    auto handle = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    const void* ref = handle.Get();
+    Require(WKBundleNodeHandleCopyDocument(ref) == nullptr);
+    Require(WKBundleNodeHandleCopyDocumentFrame(ref) == nullptr);
+    Require(WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(ref) == nullptr);
+
+    auto doc = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    auto docFrame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    auto iframeContent = NKWebKit::Make<NKWebKit::BundleFrame>();
+
+    handle->document = doc;
+    handle->documentFrame = docFrame;
+    handle->htmlIFrameElementContentFrame = iframeContent;
+
+    auto* copiedDoc = WKBundleNodeHandleCopyDocument(ref);
+    Require(copiedDoc == doc.Get());
+    WKRelease(copiedDoc);
+
+    auto* copiedDocFrame = WKBundleNodeHandleCopyDocumentFrame(ref);
+    Require(copiedDocFrame == docFrame.Get());
+    WKRelease(copiedDocFrame);
+
+    auto* copiedIframe = WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(ref);
+    Require(copiedIframe == iframeContent.Get());
+    WKRelease(copiedIframe);
+
+    bool threw = false;
+    try {
+        WKBundleNodeHandleCopyDocument(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultGetTypeID() == 120);
     auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
@@ -2438,6 +2475,7 @@ int main() {
     TestBundleScriptWorld();
     TestBundleDOMWindowExtension();
     TestBundleHitTestResult();
+    TestBundleNodeHandle();
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();

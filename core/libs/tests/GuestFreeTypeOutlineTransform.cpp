@@ -115,8 +115,24 @@ static void TestTransform() {
     FT_Outline_Transform_nid_postfix(&noPoints, &matrices[0]);
 }
 
+static void TestWideTransformSums() {
+    GuestVector points[] = {{0x40000000, 0x40000000}, {-0x40000001, -0x40000001}, {7, -3}};
+    unsigned char tags[] = {1, 1, 1};
+    unsigned short contours[] = {2};
+    GuestOutline outline{1, 3, points, tags, contours, FT_OUTLINE_EVEN_ODD_FILL};
+    const GuestMatrix matrix{0x10000, 0x10000, 0x10000, 0x10000};
+    FT_Outline_Transform_nid_postfix(&outline, &matrix);
+    Require(points[0].x == 0x80000000ll && points[0].y == 0x80000000ll);
+    Require(points[1].x == -0x80000002ll && points[1].y == -0x80000002ll);
+    Require(points[2].x == 4 && points[2].y == 4);
+    Require(outline.n_points == 3 && outline.n_contours == 1 && outline.flags == FT_OUTLINE_EVEN_ODD_FILL);
+    Require(outline.points == points && outline.tags == tags && outline.contours == contours);
+    Require(tags[0] == 1 && tags[1] == 1 && tags[2] == 1 && contours[0] == 2);
+}
+
 int main() {
     TestEmbolden();
     TestEmboldenXY();
     TestTransform();
+    TestWideTransformSums();
 }
