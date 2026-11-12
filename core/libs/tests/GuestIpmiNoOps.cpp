@@ -33,12 +33,16 @@ int main() {
         _ZN4IPMI6Server12EventHandler21onAsyncMethodDispatchEPNS_7SessionEjjPKNS_8DataInfoEj,
     };
 
+    constexpr unsigned char fills[] = {0x00, 0x5a, 0xff};
     for (const Handler handler : handlers) {
-        alignas(8) unsigned char object[0x100];
-        for (std::size_t index = 0; index < sizeof(object); ++index) object[index] = 0x5a;
-        handler(object);
-        for (std::size_t index = 0; index < sizeof(object); ++index) {
-            Require(object[index] == 0x5a, "the handler leaves the object untouched");
+        for (const unsigned char fill : fills) {
+            alignas(8) unsigned char object[0x100];
+            for (std::size_t index = 0; index < sizeof(object); ++index) object[index] = fill;
+            handler(object);
+            handler(object);
+            for (std::size_t index = 0; index < sizeof(object); ++index) {
+                Require(object[index] == fill, "the handler leaves the object untouched");
+            }
         }
     }
 
