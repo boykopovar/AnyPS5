@@ -1823,6 +1823,7 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
     // Every use of a compute build is a recorded dispatch that calls MarkGpuWrites, which staged
     // buffers need (a synchronous draw's use would not).
     guestMemory.AllowDeviceStaging();
+    guestMemory.AllowBufferResidency();
     static const std::uint64_t addressStagingMinThreads = [] {
         const char* value = std::getenv("APS5_BDA_STAGING_MIN_THREADS");
         return value != nullptr ? std::strtoull(value, nullptr, 10) : 512ull;

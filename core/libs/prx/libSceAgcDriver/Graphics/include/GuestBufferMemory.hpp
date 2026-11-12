@@ -78,6 +78,24 @@ struct BufferCopySegment {
     VkDeviceAddress address;
 };
 
+struct BufferResidency;
+
+struct BufferResidencyCounts {
+    std::uint64_t uses = 0;
+    std::uint64_t residentUses = 0;
+    std::uint64_t refreshes = 0;
+    std::uint64_t refreshedBytes = 0;
+    std::uint64_t admitted = 0;
+    std::uint64_t evicted = 0;
+    std::uint64_t cpuModifiedUses = 0;
+    std::uint64_t inPlaceBudget = 0;
+    std::uint64_t inPlaceWritten = 0;
+    std::uint64_t inPlaceDirty = 0;
+    std::uint64_t inPlaceOther = 0;
+    std::uint64_t heldBytes = 0;
+    std::uint64_t heldRanges = 0;
+};
+
 struct SegmentedBufferCounts {
     std::uint64_t served = 0;
     std::uint64_t servedBytes = 0;
@@ -234,6 +252,10 @@ bool HostImportsReconciledUnchanged(const Context& context, const HostImportsPro
 HostImportsProof HostImportsIdentity(const Context& context);
 void SetDeviceLocalFullForTests(bool full);
 std::uint64_t StagingShadowsRefused();
+BufferResidencyCounts BufferResidencyStats();
+std::string BufferResidencyReport();
+void ClearBufferResidencies(VkDevice device);
+void SetBufferResidencyForTests(std::uint64_t capBytes, std::int64_t minIdleMs);
 
 // Identity of the read-only image mirror serving [address, address + bytes) (the counterpart of
 // HostImportSerial for main-image ranges, which no import serves): a serial unique for the life of
@@ -380,6 +402,11 @@ public:
     // calls RecordCopyBacks (a dispatch or a recorded draw), since a staged region's results reach
     // guest memory by that copy alone. Call before Upload.
     void AllowDeviceStaging() { stagingAllowed = true; }
+    void AllowBufferResidency() { residencyAllowed = true; }
+    bool HasResidentBuffers() const {
+        for (const auto& region : regions) if (region.residency != nullptr) return true;
+        return false;
+    }
     void DisallowAddressStaging() { addressStaging = false; }
     void AllowAdjustedRegions() { adjustedRegions = true; }
     bool HoldsMirror(const std::shared_ptr<ImageMirror>& mirror) const;
@@ -465,7 +492,7 @@ public:
     SnapshotService SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const;
     std::size_t CopiedBytes() const {
         std::size_t bytes = 0;
-        for (const auto& region : regions) if (region.buffer != nullptr) bytes += static_cast<std::size_t>((region.bufferEnd != 0 ? region.bufferEnd : region.end) - region.begin);
+        for (const auto& region : regions) if (region.buffer != nullptr && region.residency == nullptr) bytes += static_cast<std::size_t>((region.bufferEnd != 0 ? region.bufferEnd : region.end) - region.begin);
         return bytes;
     }
     // Every uploaded region as [begin, end) when all of them are served by host imports, in place or
@@ -551,6 +578,9 @@ private:
         bool unstaged = false;
         bool overlay = false;
         bool adaptiveInPlace = false;
+        std::shared_ptr<BufferResidency> residency {};
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> refreshRuns {};
+        std::uint64_t refreshGeneration = 0;
     };
 
     // How [begin, end) lies against the space's base regions.
@@ -604,10 +634,12 @@ private:
     // Records the import-to-buffer copies of the given gpuCopy regions into the open batch, with
     // the barriers that order them after earlier recorded writes and before the shaders reading them.
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);
+    void refreshResident(std::span<Region* const> resident);
     void takeHeapReferences();
     void releaseHeapReferences() noexcept;
     Context context;
     bool stagingAllowed = false;
+    bool residencyAllowed = false;
     bool addressStaging = true;
     bool adjustedRegions = false;
     GuestAllocations::Lease lease;

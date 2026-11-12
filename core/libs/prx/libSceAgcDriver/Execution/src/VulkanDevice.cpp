@@ -1190,6 +1190,7 @@ struct VulkanDevice::State {
             Graphics::ClearCachedTextures(device);
             Graphics::ClearSnapshotCopies(device);
             Graphics::ClearImageMirrors(device);
+            Graphics::ClearBufferResidencies(device);
             Graphics::ClearHostImports(device);
             patternBuffers.clear();
             repeatedFills.clear();
