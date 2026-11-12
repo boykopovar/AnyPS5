@@ -305,6 +305,31 @@ void TestThreadPriority() {
     Require(sceUserServiceTerminate() == USER_SERVICE_OK);
 }
 
+void TestUnwritablePointers() {
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
+    UserServiceSetUserConnected_nid_postfix(0, true);
+    errno = 71;
+    Require(sceUserServiceGetInitialUser(reinterpret_cast<int*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetForegroundUser(reinterpret_cast<int*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetUserNumber(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<int*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<uint32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetRegisteredUserIdList(reinterpret_cast<UserServiceRegisteredUserIdList*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetAccessibilityZoomFollowFocus(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
+}
+
 }
 
 int main() {
@@ -377,4 +402,5 @@ int main() {
     Require(sceUserServiceTerminate() == USER_SERVICE_OK);
 
     TestThreadPriority();
+    TestUnwritablePointers();
 }
