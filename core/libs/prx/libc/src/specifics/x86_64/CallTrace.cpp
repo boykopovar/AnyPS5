@@ -258,6 +258,8 @@ bool WriteCallGraph(const std::filesystem::path& path) {
         if (imported.providerResolved) WriteJsonString(file, imported.providerModule); else file << "null";
         file << ", \"offset\": ";
         if (imported.providerResolved) WriteJsonString(file, HexValue(imported.providerOffset)); else file << "null";
+        file << ", \"address\": ";
+        WriteJsonString(file, HexValue(reinterpret_cast<std::uintptr_t>(imported.target)));
         file << "}}";
     }
     if (!entries.empty()) file << '\n';
