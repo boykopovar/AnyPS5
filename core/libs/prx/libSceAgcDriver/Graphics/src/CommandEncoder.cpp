@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommandEncoder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -18,6 +19,13 @@ namespace {
 
 constexpr std::size_t ChunkBytes = 64 * 1024;
 constexpr std::size_t PooledChunks = 16;
+constexpr std::size_t PrintedSites = 16;
+constexpr std::chrono::seconds SitePrintInterval{10};
+
+bool SiteProfileRequested() {
+    const char* configured = std::getenv("APS5_PROFILE_ENCODER");
+    return configured != nullptr && std::strcmp(configured, "0") != 0;
+}
 constexpr long long LongestIdleSpinUs = 10000;
 
 std::chrono::nanoseconds EncoderIdleSpin() {
@@ -454,7 +462,7 @@ std::unique_ptr<CommandEncoder> CommandEncoder::Attach(VkDevice device, DeviceFu
     }
 }
 
-CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot) : table(table), real(table), device(device), slot(slot) {
+CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot) : table(table), real(table), device(device), slot(slot), profiled(SiteProfileRequested()), printedAt(std::chrono::steady_clock::now()) {
     static_cast<void>(HandoffSpinWindow());
     static_cast<void>(EncoderIdleSpin());
     try {
@@ -482,6 +490,7 @@ CommandEncoder::~CommandEncoder() {
     posted.fetch_add(1, std::memory_order_seq_cst);
     posted.notify_all();
     worker.join();
+    if (profiled) printSites(true);
     delete filling;
     for (auto* chunk = spare; chunk != nullptr;) delete std::exchange(chunk, chunk->next);
     std::lock_guard lock(slotMutex());
@@ -611,7 +620,8 @@ void CommandEncoder::await(const WaitSite& site, bool flushed) noexcept {
 }
 
 void CommandEncoder::note(const WaitSite& site, std::uint64_t ns, bool waited, bool flushed) noexcept {
-    std::lock_guard lock(siteMutex);
+    if (!profiled) return;
+    std::unique_lock lock(siteMutex);
     auto* entry = std::find_if(sites.begin(), sites.begin() + siteCount, [&](const SiteWaits& tracked) { return sameSite(tracked.site, site); });
     if (entry == sites.begin() + siteCount) {
         if (siteCount + 1 < sites.size()) {
@@ -625,6 +635,20 @@ void CommandEncoder::note(const WaitSite& site, std::uint64_t ns, bool waited, b
     entry->waits += waited ? 1 : 0;
     entry->waitNs += ns;
     entry->flushes += flushed ? 1 : 0;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - printedAt < SitePrintInterval) return;
+    printedAt = now;
+    lock.unlock();
+    printSites(false);
+}
+
+void CommandEncoder::printSites(bool final) noexcept {
+    const auto totals = Counts();
+    try {
+        AgcDriver::ProfilePrint_nid_no_patch("[encoder] %s: %llu chunks, %llu commands, %.1f ms recording, %llu parks; %llu waits, %.1f ms; waits by site (waits/ms/flushes):%s\n", final ? "at teardown" : "so far", static_cast<unsigned long long>(totals.posts), static_cast<unsigned long long>(totals.commands), static_cast<double>(totals.encodeNs) / 1e6, static_cast<unsigned long long>(totals.parks), static_cast<unsigned long long>(totals.waits), static_cast<double>(totals.waitNs) / 1e6, Report(WaitsBySite(), PrintedSites).c_str());
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[encoder] the wait-site profile could not be printed: %s\n", error.what());
+    }
 }
 
 void CommandEncoder::awaitSpare() noexcept {

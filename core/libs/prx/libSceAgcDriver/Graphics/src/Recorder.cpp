@@ -83,7 +83,6 @@ struct SyncSiteWaits {
 std::vector<SyncSiteWaits> syncSites;
 constexpr std::size_t NoSyncSite = static_cast<std::size_t>(-1);
 constexpr std::size_t SyncSiteLimit = 48;
-constexpr std::size_t ReportedEncoderSites = 16;
 thread_local std::size_t activeSyncSite = NoSyncSite;
 
 bool SyncSitesProfiled() {
@@ -4877,7 +4876,6 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
                     if (recorder.encoder != nullptr) {
                         const auto encoded = recorder.encoder->Counts();
                         AgcDriver::ProfilePrint_nid_no_patch("[recorder] encoder: %llu chunks, %llu commands, %.1f ms recording; %llu waits for it, %.1f ms\n", static_cast<unsigned long long>(encoded.posts), static_cast<unsigned long long>(encoded.commands), static_cast<double>(encoded.encodeNs) / 1e6, static_cast<unsigned long long>(encoded.waits), static_cast<double>(encoded.waitNs) / 1e6);
-                        AgcDriver::ProfilePrint_nid_no_patch("[recorder] encoder waits by site (waits/ms/flushes):%s\n", CommandEncoder::Report(recorder.encoder->WaitsBySite(), ReportedEncoderSites).c_str());
                     }
                     const auto reads = Recorder::ReadCounts();
                     AgcDriver::ProfilePrint_nid_no_patch("[recorder] in-place reads: %llu noted, %llu queries, hits by reader: dispatch element %llu, gpu copy %llu, address-based %llu, indirect %llu, storage upload %llu, copy source %llu, draw input %llu, address-based read-only %llu; %llu hits on signaled batches ignored\n", static_cast<unsigned long long>(reads.noted), static_cast<unsigned long long>(reads.queries), static_cast<unsigned long long>(reads.hits[0]), static_cast<unsigned long long>(reads.hits[1]), static_cast<unsigned long long>(reads.hits[2]), static_cast<unsigned long long>(reads.hits[3]), static_cast<unsigned long long>(reads.hits[4]), static_cast<unsigned long long>(reads.hits[5]), static_cast<unsigned long long>(reads.hits[6]), static_cast<unsigned long long>(reads.hits[7]), static_cast<unsigned long long>(reads.staleIgnored));

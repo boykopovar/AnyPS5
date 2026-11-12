@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -91,6 +92,7 @@ public:
     };
     Statistics Counts() const;
     std::vector<SiteWaits> WaitsBySite() const;
+    bool ProfilesSites() const { return profiled; }
     static void SetDelayForTesting(std::function<void()> delay);
     class UnwindQuiesce {
     public:
@@ -155,6 +157,9 @@ private:
     std::atomic<std::uint64_t> waitCount{0};
     std::atomic<std::uint64_t> waitNs{0};
     std::atomic<std::uint64_t> encodeNs{0};
+    void printSites(bool final) noexcept;
+    const bool profiled;
+    std::chrono::steady_clock::time_point printedAt;
     mutable std::mutex siteMutex;
     std::array<SiteWaits, TrackedSites> sites{};
     std::size_t siteCount = 0;

@@ -596,14 +596,43 @@ void RequireSite(const std::vector<CommandEncoder::SiteWaits>& sites, const Comm
     Require(entry->waitNs >= waits * 1'000'000ull, name + " reported " + std::to_string(entry->waitNs) + " ns for " + std::to_string(waits) + " waits on a 2 ms replay");
 }
 
+void SetEnvironment(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+void SitesAreCountedOnlyWhenProfiled() {
+    SetEnvironment("APS5_PROFILE_ENCODER", "0");
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x55);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    const auto commands = Handle<VkCommandBuffer>(0x1800);
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(2)); });
+    encoder.Open(commands, RecordingOf(commands));
+    table.cmdDraw(commands, 1, 1, 0, 0);
+    encoder.Quiesce();
+    encoder.Close();
+    CommandEncoder::SetDelayForTesting({});
+    Require(!encoder.ProfilesSites(), "the encoder profiles its wait sites with APS5_PROFILE_ENCODER=0");
+    Require(encoder.Counts().waits == 1, "the encoder's wait total is not kept without APS5_PROFILE_ENCODER");
+    Require(encoder.WaitsBySite().empty(), "wait sites were counted without APS5_PROFILE_ENCODER:" + CommandEncoder::Report(encoder.WaitsBySite(), CommandEncoder::TrackedSites));
+}
+
 void WaitsAreAttributedToTheirCallSites() {
     using Wait = CommandEncoder::Wait;
     using Site = CommandEncoder::WaitSite;
+    SetEnvironment("APS5_PROFILE_ENCODER", "1");
     Reset();
     auto table = FakeTable();
     const auto device = Handle<VkDevice>(0x53);
     const auto attached = Attached(device, table);
     auto& encoder = *attached;
+    Require(encoder.ProfilesSites(), "the encoder does not profile its wait sites with APS5_PROFILE_ENCODER=1");
     const auto first = Handle<VkCommandBuffer>(0x1500);
     const auto second = Handle<VkCommandBuffer>(0x1580);
     const std::uint32_t word = 7;
@@ -964,6 +993,7 @@ int main() {
         EncoderParksBetweenSpacedPosts();
         ReplayFailureNeedsNoAllocation();
         WaitsAreAttributedToTheirCallSites();
+        SitesAreCountedOnlyWhenProfiled();
         std::cout << "command encoder tests passed\n";
         return 0;
     } catch (const std::exception& error) {
