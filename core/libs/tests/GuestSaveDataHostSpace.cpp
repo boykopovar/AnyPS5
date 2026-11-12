@@ -22,6 +22,7 @@ namespace {
 constexpr std::uint32_t MountReadWrite = 2;
 constexpr std::uint32_t MountCreate2 = 32;
 constexpr int SaveDataErrorParameter = -2137063424;
+constexpr int SaveDataErrorNotMounted = -2137063420;
 constexpr int SaveDataErrorNoSpaceFs = -2137063414;
 constexpr std::uint64_t BlockBytes = 65536;
 
@@ -189,8 +190,11 @@ std::uint64_t MountInfoFreeBlocks(const char* name, std::uint64_t* blocks) {
     SaveDataMountResult result{};
     Check(sceSaveDataMount3(&mount, &result) == 0, std::string("open for mount info: ") + name);
     SaveDataMountInfo info{};
+    Check(sceSaveDataGetMountInfo(nullptr, &info) == SaveDataErrorParameter, "null mount point to getMountInfo returns PARAMETER");
+    Check(sceSaveDataGetMountInfo(&result.mount_point, nullptr) == SaveDataErrorParameter, "null info to getMountInfo returns PARAMETER");
     Check(sceSaveDataGetMountInfo(&result.mount_point, &info) == 0, std::string("mount info of ") + name);
     Check(sceSaveDataUmount2(0, &result.mount_point) == 0, std::string("unmount after mount info: ") + name);
+    Check(sceSaveDataGetMountInfo(&result.mount_point, &info) == SaveDataErrorNotMounted, "unmounted mount point to getMountInfo returns NOT_MOUNTED");
     *blocks = info.blocks;
     return info.free_blocks;
 }

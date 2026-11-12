@@ -29,6 +29,10 @@ int main(int argc, char** argv) {
         for (int byte = 0; byte < 100000; ++byte) file.put(static_cast<char>(byte % 251));
     }
     {
+        std::ofstream file("app0/alternate.bin", std::ios::binary);
+        for (int byte = 0; byte < 777; ++byte) file.put(static_cast<char>((byte * 13 + 71) % 251));
+    }
+    {
         AvPlayer::HttpStream invalid;
         auto url = std::string(argv[1]) + "/range/payload.bin";
         url.push_back('\0');
@@ -71,4 +75,38 @@ int main(int argc, char** argv) {
     Require(modified.Open(std::string(argv[1]) + "/range/payload.bin"), "reopening the AVIO adapter failed");
     Require(avio_read(modified.Context(), bytes.data(), bytes.size()) == bytes.size(), "reopened adapter read failed");
     for (std::size_t byte = 0; byte < bytes.size(); ++byte) Require(bytes[byte] == byte, "reopened adapter retained its old position");
+    for (const char* name : {"etag-200-absent", "date-200-absent", "both-200-absent", "late-redirect-path"}) {
+        AvPlayer::HttpStream source;
+        Require(source.Open(std::string(argv[1]) + "/identity/" + name + "/payload.bin"), "opening identity source failed");
+        Require(avio_read(source.Context(), bytes.data(), bytes.size()) == bytes.size(), "identity initial read failed");
+        Require(avio_seek(source.Context(), 90000, SEEK_SET) == 90000, "identity seek failed");
+        bytes.fill(0xa5);
+        Require(avio_read(source.Context(), bytes.data(), bytes.size()) < 0, "unverified representation reached AVIO");
+        for (const auto byte : bytes) Require(byte == 0xa5, "failed identity read changed AVIO destination");
+        bool rejected = false;
+        try { source.Rethrow(); } catch (const std::exception&) { rejected = true; }
+        Require(rejected, "identity failure was not retained by AVIO");
+        Require(avio_size(source.Context()) == 100000, "identity failure changed AVIO source size");
+        Require(source.Open(std::string(argv[1]) + "/range/payload.bin"), "reopen after identity failure failed");
+        source.Rethrow();
+        Require(avio_read(source.Context(), bytes.data(), bytes.size()) == bytes.size(), "reopened identity read failed");
+        for (std::size_t byte = 0; byte < bytes.size(); ++byte) Require(bytes[byte] == byte, "reopened identity source returned incorrect bytes");
+    }
+    for (const char* name : {"etag-206-omit", "date-206-omit", "etag-200-match", "date-200-match", "both-200-match"}) {
+        AvPlayer::HttpStream source;
+        Require(source.Open(std::string(argv[1]) + "/identity/" + name + "/payload.bin"), "opening validated AVIO source failed");
+        Require(avio_seek(source.Context(), 90000, SEEK_SET) == 90000, "validated AVIO seek failed");
+        Require(avio_read(source.Context(), bytes.data(), bytes.size()) == bytes.size(), "validated representation was refused by AVIO");
+        for (std::size_t byte = 0; byte < bytes.size(); ++byte) Require(bytes[byte] == (90000 + byte) % 251, "validated AVIO source returned incorrect bytes");
+        source.Rethrow();
+    }
+    for (const char* name : {"absent", "absent-chunk", "absent-close", "weak-date"}) {
+        AvPlayer::HttpStream source;
+        Require(source.Open(std::string(argv[1]) + "/identity/" + name + "/payload.bin"), "opening AVIO snapshot failed");
+        Require(avio_size(source.Context()) == 777, "AVIO exposed the discarded partial response size");
+        Require(avio_seek(source.Context(), 700, SEEK_SET) == 700, "AVIO snapshot seek failed");
+        Require(avio_read(source.Context(), bytes.data(), bytes.size()) == bytes.size(), "AVIO snapshot read failed");
+        for (std::size_t byte = 0; byte < bytes.size(); ++byte) Require(bytes[byte] == ((700 + byte) * 13 + 71) % 251, "AVIO snapshot mixed partial response bytes");
+        source.Rethrow();
+    }
 }
