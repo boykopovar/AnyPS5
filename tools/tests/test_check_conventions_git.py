@@ -64,5 +64,21 @@ class StaleOriginBaseTests(unittest.TestCase):
             self.assertIn("Commit subject is not Conventional Commits", stale.stdout + stale.stderr)
 
 
+class GitIgnoreTests(unittest.TestCase):
+    def test_tracked_json_files_are_not_ignored(self):
+        tracked = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-files", "*.json"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+        ignored = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "check-ignore", "--no-index", *tracked],
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        self.assertEqual(ignored, [])
+
+
 if __name__ == "__main__":
     unittest.main()

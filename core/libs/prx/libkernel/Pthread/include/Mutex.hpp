@@ -8,6 +8,7 @@ class MutexOperations {
 public:
     static int Timedlock(PthreadMutex* mutex, const KernelTimespec* abstime);
     static bool IsOwned(const PthreadMutex* mutex);
+    static int LoadAttribute(const PthreadMutexattr* attr, PthreadMutexattr& handle);
     static bool SpinAcquire(PthreadMutex mutex, std::timed_mutex& native);
     static bool SpinAcquire(PthreadMutex mutex, std::recursive_timed_mutex& native);
 

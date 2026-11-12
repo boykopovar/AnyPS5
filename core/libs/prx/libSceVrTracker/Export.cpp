@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVrTracker/include/InventoryExports.hpp"
 #include "prx/libSceVrTracker/include/Api.hpp"
+#include <cerrno>
 #include <atomic>
 #include <mutex>
 #include <cstdint>
@@ -67,6 +68,22 @@ constexpr std::uint32_t DeviceGun = 3;
 std::mutex g_devicesMutex;
 std::int32_t g_deviceHandles[DeviceGun + 1] = {-1, -1, -1, -1};
 
+template<typename TValue>
+bool CopyInGuest(TValue& destination, const TValue* source) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&destination, source, sizeof(TValue));
+    errno = savedErrno;
+    return copied;
+}
+
+template<typename TValue>
+bool CopyOutGuest(TValue* destination, const TValue& source) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &source, sizeof(TValue));
+    errno = savedErrno;
+    return copied;
+}
+
 } // namespace
 
 extern "C" {
@@ -131,18 +148,22 @@ int APS5_VABI sceVrTrackerNotifyEndOfCpuProcess(const void* param) {
     return 0;
 }
 int APS5_VABI sceVrTrackerQueryMemory(const void* param, void* result) {
-    const auto* query = static_cast<const QueryMemoryParam*>(param);
-    auto* memory = static_cast<QueryMemoryResult*>(result);
-    if (!query || !memory || query->size != sizeof(QueryMemoryParam) || (query->profile != 0 && query->profile != 100) ||
-        !ValidCalibration(query->calibration_settings)) {
+    if (!param || !result) return ArgumentInvalid;
+    QueryMemoryParam localQuery{};
+    if (!CopyInGuest(localQuery, static_cast<const QueryMemoryParam*>(param))) return ArgumentInvalid;
+    if (localQuery.size != sizeof(QueryMemoryParam) || (localQuery.profile != 0 && localQuery.profile != 100) ||
+        !ValidCalibration(localQuery.calibration_settings)) {
         return ArgumentInvalid;
     }
-    memory->direct_memory_onion_size = OnionSize(query->calibration_settings);
-    memory->direct_memory_onion_alignment = MemoryAlignment;
-    memory->direct_memory_garlic_size = GarlicSize;
-    memory->direct_memory_garlic_alignment = MemoryAlignment;
-    memory->work_memory_size = WorkSize;
-    memory->work_memory_alignment = MemoryAlignment;
+    QueryMemoryResult localResult{};
+    if (!CopyInGuest(localResult, static_cast<const QueryMemoryResult*>(result))) return ArgumentInvalid;
+    localResult.direct_memory_onion_size = OnionSize(localQuery.calibration_settings);
+    localResult.direct_memory_onion_alignment = MemoryAlignment;
+    localResult.direct_memory_garlic_size = GarlicSize;
+    localResult.direct_memory_garlic_alignment = MemoryAlignment;
+    localResult.work_memory_size = WorkSize;
+    localResult.work_memory_alignment = MemoryAlignment;
+    if (!CopyOutGuest(static_cast<QueryMemoryResult*>(result), localResult)) return ArgumentInvalid;
     return 0;
 }
 int APS5_VABI sceVrTrackerRecalibrate(const void* param) {
