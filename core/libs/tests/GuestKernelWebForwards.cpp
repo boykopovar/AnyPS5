@@ -8,8 +8,6 @@
 #include <cstdlib>
 #include <cstring>
 
-extern "C" int APS5_VABI fstat_nid_disambig2_nid_postfix(int d, FileStat* sb);
-
 namespace {
 
 constexpr int GuestEnoent = 2;
