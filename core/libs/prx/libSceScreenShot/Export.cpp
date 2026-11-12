@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceScreenShot/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -119,14 +120,26 @@ int APS5_VABI sceScreenShotIsVshScreenCaptureDisabled(int* isDisabled) {
     ScreenShotService(__func__);
 }
 int APS5_VABI sceScreenShotSetDrcParam(const void* param) {
-    if (!param || Field<std::uint64_t>(param, 0x28) != 0 || Field<std::uint32_t>(param, 0x00) != 0x30) return ErrorArgument;
-    if (!Field<const void*>(param, 0x08) || !Field<const void*>(param, 0x18)) return ErrorArgument;
-    if (Field<std::uint32_t>(param, 0x10) != 0x400 || Field<std::uint32_t>(param, 0x20) != 0x8000) return ErrorArgument;
+    std::byte buffer[0x30];
+    const int savedErrno = errno;
+    if (!param || !GuestCopyIn_nid_no_patch(buffer, param, sizeof(buffer))) {
+        errno = savedErrno;
+        return ErrorArgument;
+    }
+    if (Field<std::uint64_t>(buffer, 0x28) != 0 || Field<std::uint32_t>(buffer, 0x00) != 0x30) return ErrorArgument;
+    if (!Field<const void*>(buffer, 0x08) || !Field<const void*>(buffer, 0x18)) return ErrorArgument;
+    if (Field<std::uint32_t>(buffer, 0x10) != 0x400 || Field<std::uint32_t>(buffer, 0x20) != 0x8000) return ErrorArgument;
     ScreenShotService(__func__);
 }
 int APS5_VABI sceScreenShotSetParam(const void* param) {
-    if (!param || Field<std::uint64_t>(param, 0x20) != 0 || Field<std::uint32_t>(param, 0x00) != 0x28) return ErrorArgument;
-    if (!StringFits(Field<const char*>(param, 0x08), 255) || !StringFits(Field<const char*>(param, 0x10), 255) || !StringFits(Field<const char*>(param, 0x18), 511)) return ErrorArgument;
+    std::byte buffer[0x28];
+    const int savedErrno = errno;
+    if (!param || !GuestCopyIn_nid_no_patch(buffer, param, sizeof(buffer))) {
+        errno = savedErrno;
+        return ErrorArgument;
+    }
+    if (Field<std::uint64_t>(buffer, 0x20) != 0 || Field<std::uint32_t>(buffer, 0x00) != 0x28) return ErrorArgument;
+    if (!StringFits(Field<const char*>(buffer, 0x08), 255) || !StringFits(Field<const char*>(buffer, 0x10), 255) || !StringFits(Field<const char*>(buffer, 0x18), 511)) return ErrorArgument;
     ScreenShotService(__func__);
 }
 
