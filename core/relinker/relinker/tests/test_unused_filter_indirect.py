@@ -114,6 +114,11 @@ def cases():
     table = struct.pack("<ii", SECOND_FUNCTION - TABLE, FUNCTION - TABLE)
     yield "jump-table-case-block", True, build(
         at_offset([(0, jump), (0x40, b"\xc3"), (0x60, load_slot(SECOND_FUNCTION))]), data=[(TABLE, table)])
+    code_table = CODE + 0x80
+    code_jump = b"\x48\x8d\x0d" + rel(CODE + 7, code_table) + b"\x48\x63\x04\x91\x48\x01\xc8\xff\xe0"
+    yield "jump-table-in-code", True, build(at_offset([
+        (0, code_jump), (0x40, b"\xc3"), (0x60, load_slot(SECOND_FUNCTION)),
+        (0x80, struct.pack("<ii", SECOND_FUNCTION - code_table, FUNCTION - code_table))]))
     yield "got-slot-lea", True, build(at_offset([(0, b"\x48\x8d\x05" + rel(CODE + 7, SLOT) + b"\xc3")]))
     yield "got-slot-push", True, build(at_offset([(0, b"\xff\x35" + rel(CODE + 6, SLOT) + b"\x58\xc3")]))
     yield "got-slot-compare", True, build(
