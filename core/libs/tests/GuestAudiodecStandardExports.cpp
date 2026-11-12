@@ -29,9 +29,9 @@ int main() {
         return EXIT_FAILURE;
     }
     static_cast<void>(initLibrary);
-    for (const char* name : {"sceAudiodecGetAjmContext", "sceAudiodecUnregisterCodec"}) {
+    for (const char* name : {"sceAudiodecGetAjmContext", "sceAudiodecUnregisterCodec", "", "sceAudiodecNotExported"}) {
         if (Find(name) != nullptr) {
-            std::fprintf(stderr, "%s is exported by libSceAudiodec, which only the native module exports on the console\n", name);
+            std::fprintf(stderr, "%s is unexpectedly exported by libSceAudiodec\n", name);
             return EXIT_FAILURE;
         }
     }
