@@ -360,6 +360,7 @@ void CheckConfirmationWithoutDisplay() {
     SetEnvironment("DISPLAY", nullptr);
     SetEnvironment("WAYLAND_DISPLAY", nullptr);
     SetEnvironment("SDL_VIDEODRIVER", nullptr);
+    SetEnvironment("XDG_RUNTIME_DIR", nullptr);
     HostMessageBoxConfirmation confirmation;
     Require(!confirmation.Confirm("https://example.com/"));
 }
