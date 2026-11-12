@@ -107,6 +107,10 @@ void PadInput::openController(int deviceIndex) {
     }
     const char* controllerSerial = SDL_GameControllerGetSerial(gc);
     const std::string serial = controllerSerial != nullptr ? controllerSerial : "";
+    const char* logSerial = std::getenv("ANYPS5_PAD_LOG_CONTROLLER_SERIAL");
+    if (logSerial != nullptr && std::strcmp(logSerial, "1") == 0) {
+        APS5_LOG_OUT("Pad: SDL controller %d serial: %s", deviceIndex, serial.empty() ? "<unavailable>" : serial.c_str());
+    }
     const int slot = controllerAssignment.SelectSlot(serial, occupied);
     if (slot < 0) {
         SDL_GameControllerClose(gc);
