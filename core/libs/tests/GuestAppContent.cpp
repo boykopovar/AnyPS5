@@ -105,6 +105,7 @@ int main() {
     sdkVersion = 0x01400000;
     std::memcpy(process.data() + 16, &sdkVersion, sizeof(sdkVersion));
     Require(sceAppContentInitialize(nullptr, &boot) == 0);
+    Require(sceAppContentInitialize(reinterpret_cast<const AppContentInitParam*>(std::uintptr_t{0x10}), &boot) == 0);
     AppContentMountPoint download{};
     std::memcpy(download.data, "/download0", 11);
     const auto reachesService = [](auto call) {
