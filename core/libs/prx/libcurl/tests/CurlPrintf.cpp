@@ -31,28 +31,28 @@ static char* MvAprintf(const char* format, ...) {
     return text;
 }
 
-static int MvPrintf(const char* format, ...) {
+static int APS5_VABI MvPrintf(const char* format, ...) {
     TEST_ARGS_START(format);
     const int result = curl_mvprintf_nid_postfix(format, reinterpret_cast<VaList*>(&args));
     TEST_ARGS_END();
     return result;
 }
 
-static int MvSprintf(char* buffer, const char* format, ...) {
+static int APS5_VABI MvSprintf(char* buffer, const char* format, ...) {
     TEST_ARGS_START(format);
     const int result = curl_mvsprintf_nid_postfix(buffer, format, reinterpret_cast<VaList*>(&args));
     TEST_ARGS_END();
     return result;
 }
 
-static int MvSnprintf(char* buffer, std::size_t maximum, const char* format, ...) {
+static int APS5_VABI MvSnprintf(char* buffer, std::size_t maximum, const char* format, ...) {
     TEST_ARGS_START(format);
     const int result = curl_mvsnprintf_nid_postfix(buffer, maximum, format, reinterpret_cast<VaList*>(&args));
     TEST_ARGS_END();
     return result;
 }
 
-static int MvFprintf(FileStream* stream, const char* format, ...) {
+static int APS5_VABI MvFprintf(FileStream* stream, const char* format, ...) {
     TEST_ARGS_START(format);
     const int result = curl_mvfprintf_nid_postfix(reinterpret_cast<std::FILE*>(stream), format, reinterpret_cast<VaList*>(&args));
     TEST_ARGS_END();
