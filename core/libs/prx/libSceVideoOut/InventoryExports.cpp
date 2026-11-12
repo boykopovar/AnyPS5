@@ -4,9 +4,12 @@
 #include "prx/libSceVideoOut/include/InventoryExports.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 
 namespace {
 constexpr int VideoOutErrorCurveSamplePoints = static_cast<int>(0x8029001Cu);
@@ -435,9 +438,13 @@ int APS5_VABI sceVideoOutSysHdmiMonitorInfoIsMorpheus() {
 }
 
 void APS5_VABI sceVideoOutSysInitMode(void* mode) {
-    std::memset(mode, 0xFF, 0x20);
+    std::array<std::byte, 0x20> bytes{};
+    bytes.fill(std::byte{0xFF});
     const std::uint32_t size = 0x20;
-    std::memcpy(mode, &size, sizeof(size));
+    std::memcpy(bytes.data(), &size, sizeof(size));
+    if (!GuestBytes(mode).CopyOut(bytes.data(), bytes.size())) {
+        throw std::runtime_error("sceVideoOutSysInitMode: VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
 }
 
 int APS5_VABI sceVideoOutSysIsModeS3d(const void* mode) {

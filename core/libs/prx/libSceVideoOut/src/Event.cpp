@@ -6,6 +6,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 
@@ -172,8 +173,12 @@ int APS5_VABI sceVideoOutGetEventId(const KernelEvent* ev) {
     if (ev == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
-    if (ev->filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
-    const uintptr_t ident = ev->ident;
+    KernelEvent event{};
+    if (!GuestPtr<const KernelEvent>(ev).CopyIn(event)) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    if (event.filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
+    const uintptr_t ident = event.ident;
     if (ident != VIDEO_OUT_EVENT_FLIP && ident != VIDEO_OUT_EVENT_VBLANK && ident != VIDEO_OUT_EVENT_PRE_VBLANK_START && ident != VIDEO_OUT_EVENT_SET_MODE && ident != VIDEO_OUT_EVENT_VRR_STATUS) return VIDEO_OUT_ERROR_INVALID_EVENT;
     return static_cast<int>(ident);
 }
@@ -182,12 +187,18 @@ int APS5_VABI sceVideoOutGetEventData(const KernelEvent* ev, int64_t* data) {
     if (ev == nullptr || data == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
-    if (ev->filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
-    uint64_t eventData = static_cast<uint64_t>(ev->data) >> 16u;
-    if (ev->ident == static_cast<uintptr_t>(VIDEO_OUT_EVENT_FLIP) && (static_cast<uint64_t>(ev->data) & 0x8000000000000000ULL) != 0) {
+    KernelEvent event{};
+    if (!GuestPtr<const KernelEvent>(ev).CopyIn(event)) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    if (event.filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
+    uint64_t eventData = static_cast<uint64_t>(event.data) >> 16u;
+    if (event.ident == static_cast<uintptr_t>(VIDEO_OUT_EVENT_FLIP) && (static_cast<uint64_t>(event.data) & 0x8000000000000000ULL) != 0) {
         eventData |= 0xffff000000000000ULL;
     }
-    *data = static_cast<int64_t>(eventData);
+    if (!GuestPtr<int64_t>(data).CopyOut(static_cast<int64_t>(eventData))) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
     return 0;
 }
 
@@ -195,8 +206,12 @@ int APS5_VABI sceVideoOutGetEventCount(const KernelEvent* ev) {
     if (ev == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
-    if (ev->filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
-    return static_cast<int>((static_cast<uint64_t>(ev->data) >> 12u) & 0xfu);
+    KernelEvent event{};
+    if (!GuestPtr<const KernelEvent>(ev).CopyIn(event)) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    if (event.filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
+    return static_cast<int>((static_cast<uint64_t>(event.data) >> 12u) & 0xfu);
 }
 
 }
