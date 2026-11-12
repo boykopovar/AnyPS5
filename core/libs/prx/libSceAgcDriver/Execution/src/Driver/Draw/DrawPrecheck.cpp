@@ -78,7 +78,10 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
     if (const auto copy = Graphics::DecodeDepthCopyPass(queue)) {
         require(!drawParameters.indirect, "indirect DB depth copies are unsupported");
         auto copyDraw = DepthCopyDraw(queue, *copy);
-        return draw(copyDraw, packet, submission, packetOffset, rejected);
+        std::uint32_t splitTargets = 0;
+        const auto verdict = draw(copyDraw, packet, submission, packetOffset, rejected, splitTargets);
+        require(verdict != DrawVerdict::Split, "a DB depth copy asked for a late-test merge split");
+        return verdict;
     }
     if (const auto control = Graphics::DecodeDepthRenderControl(queue); control && Graphics::DepthRenderControlDrains(*control)) {
         if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (packet[0] >> 8u) & 0xffu);

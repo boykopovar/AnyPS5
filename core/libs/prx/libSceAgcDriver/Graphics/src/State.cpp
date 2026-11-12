@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
@@ -2089,10 +2090,31 @@ GuestTextureResource TargetMergeSurface(const ColorTarget& color) {
     return surface;
 }
 
+namespace {
+
+bool stencilWrites(const State& state) {
+    const auto writes = [](const VkStencilOpState& face) { return (face.writeMask & 0xffu) != 0 && (face.failOp != VK_STENCIL_OP_KEEP || face.passOp != VK_STENCIL_OP_KEEP || face.depthFailOp != VK_STENCIL_OP_KEEP); };
+    return state.stencilTest && (writes(state.stencilFront) || writes(state.stencilBack));
+}
+
+}
+
 bool DepthStencilWrites(const State& state) {
     if (!state.depth) return false;
-    const auto writes = [](const VkStencilOpState& face) { return (face.writeMask & 0xffu) != 0 && (face.failOp != VK_STENCIL_OP_KEEP || face.passOp != VK_STENCIL_OP_KEEP || face.depthFailOp != VK_STENCIL_OP_KEEP); };
-    return state.depthWrite || (state.stencilTest && (writes(state.stencilFront) || writes(state.stencilBack)));
+    return state.depthWrite || stencilWrites(state);
+}
+
+std::uint32_t LateTestMergeSplitTargets(const Registers& context, const State& state) {
+    if (const auto renderControl = find(context, 0x000); renderControl != context.end() && (renderControl->second & 1u) != 0) return 0;
+    if (!state.pixelKill || state.pixelEarlyZ || !state.depth || !state.depthWrite || stencilWrites(state) || state.depthCompare == VK_COMPARE_OP_NEVER || state.alphaToCoverage) return 0;
+    std::uint32_t targets = 0;
+    for (const auto& color : state.colors) {
+        if (color.partialWriteMask == 0) continue;
+        if (targets != 0 || color.samples != 1u || color.slot >= 8u) return 0;
+        targets = 0xfu << (color.slot * 4u);
+    }
+    const auto* recorder = Recorder::Active();
+    return recorder != nullptr && recorder->CountingSamples() ? 0u : targets;
 }
 
 bool DepthStencilTests(const State& state) {
