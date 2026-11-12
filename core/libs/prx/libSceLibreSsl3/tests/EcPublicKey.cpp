@@ -116,7 +116,7 @@ void RejectsAMissingKeyOrGroup() {
     EC_KEY_free_nid_postfix(key);
 }
 
-void Rejects(EcKey* key, const std::vector<unsigned char>& input, std::int64_t length) {
+void Rejects(EcKey* key, const std::vector<unsigned char>& input, std::int64_t length, const std::vector<unsigned char>& point) {
     ERR_clear_error_nid_postfix();
     const unsigned char* cursor = input.data();
     Require(o2i_ECPublicKey_nid_postfix(&key, &cursor, length) == nullptr);
@@ -124,6 +124,7 @@ void Rejects(EcKey* key, const std::vector<unsigned char>& input, std::int64_t l
     Require(key->conversionForm == 2);
     Require(ERR_get_error_nid_postfix() == EcLibraryFailure);
     Require(ERR_get_error_nid_postfix() == 0);
+    Require(Encoded(key) == point);
 }
 
 void RejectsBadEncodings() {
@@ -131,25 +132,36 @@ void RejectsBadEncodings() {
     Require(key != nullptr);
     const unsigned char* cursor = P256Compressed.data();
     Require(o2i_ECPublicKey_nid_postfix(&key, &cursor, static_cast<std::int64_t>(P256Compressed.size())) == key);
-    std::vector<unsigned char> offCurve = P256Uncompressed;
-    offCurve.back() ^= 1;
+    const EcPoint* point = key->publicKey;
     std::vector<unsigned char> badForm = P256Uncompressed;
     badForm[0] = 0x05;
     std::vector<unsigned char> hybridParity = P256Uncompressed;
     hybridParity[0] = 0x06;
-    Rejects(key, offCurve, 65);
-    Rejects(key, badForm, 65);
-    Rejects(key, hybridParity, 65);
-    Rejects(key, P256Uncompressed, 64);
-    Rejects(key, P256Uncompressed, 0);
-    Rejects(key, P384Uncompressed, static_cast<std::int64_t>(P384Uncompressed.size()));
-    Require(key->publicKey != nullptr);
+    std::vector<unsigned char> xAboveField = P256Uncompressed;
+    std::memset(xAboveField.data() + 1, 0xff, 32);
+    const std::vector<unsigned char> compressedOffCurve = Hex("0260fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb7");
+    Rejects(key, badForm, 65, P256Uncompressed);
+    Rejects(key, hybridParity, 65, P256Uncompressed);
+    Rejects(key, xAboveField, 65, P256Uncompressed);
+    Rejects(key, compressedOffCurve, 33, P256Uncompressed);
+    Rejects(key, P256Uncompressed, 64, P256Uncompressed);
+    Rejects(key, P256Uncompressed, 0, P256Uncompressed);
+    Rejects(key, P384Uncompressed, static_cast<std::int64_t>(P384Uncompressed.size()), P256Uncompressed);
+    std::vector<unsigned char> offCurve = P256Uncompressed;
+    offCurve.back() ^= 1;
+    Rejects(key, offCurve, 65, offCurve);
+    std::vector<unsigned char> hybridOffCurve = P256Uncompressed;
+    hybridOffCurve[0] = 0x07;
+    hybridOffCurve.back() ^= 2;
+    std::vector<unsigned char> storedHybrid = hybridOffCurve;
+    storedHybrid[0] = 0x04;
+    Rejects(key, hybridOffCurve, 65, storedHybrid);
+    Require(key->publicKey == point);
     EC_KEY_free_nid_postfix(key);
     key = EC_KEY_new_by_curve_name_nid_postfix(Secp256r1);
     Require(key != nullptr);
     key->conversionForm = 2;
-    Rejects(key, offCurve, 65);
-    Require(key->publicKey != nullptr);
+    Rejects(key, offCurve, 65, offCurve);
     EC_KEY_free_nid_postfix(key);
 }
 
