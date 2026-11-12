@@ -2220,7 +2220,7 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     color.mipCount = 1;
     const ColorTargetLayout layout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
     Require(layout.Bytes() == static_cast<std::size_t>(pitch) * color.extent.height * color.elementBytes, "PS4 color target pitch or slice is not padded the way its tile mode pads them");
-    color.surfaceAddress = (static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u) + static_cast<std::uint64_t>(slice) * layout.Bytes();
+    color.surfaceAddress = (static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u) + static_cast<std::uint64_t>(slice) * layout.Bytes() * fragments;
     color.address = color.surfaceAddress;
     color.bytes = layout.Bytes();
     color.format = decoded.format;
@@ -2235,6 +2235,7 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
         color.cmaskAddress = static_cast<std::uint64_t>(read(cx, 0x31f + stride)) << 8u;
         Require(color.cmaskAddress != 0, "a multisampled GCN color target with fast clear or FMASK compression has no CMASK address");
         color.cmaskBytes = (static_cast<std::size_t>(read(cx, 0x320 + stride) & 0x3fffu) + 1u) * 128u;
+        color.cmaskAddress += static_cast<std::uint64_t>(slice) * color.cmaskBytes;
         color.cmaskFastClear = (info & 0x2000u) != 0;
     }
     if (fragments < color.coverageSamples && (info & 0x4000u) != 0) {
@@ -2242,6 +2243,7 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
         Require(color.fmaskAddress != 0, "a compressed GCN color target with fewer fragments than samples has no FMASK address");
         const auto fmaskBitsPerPixel = fragments * (fragments == 1u ? 8u : color.coverageSamples);
         color.gcnFmaskBytes = ((read(cx, 0x322 + stride) & 0x3fffffu) + 1u) * 8u * fmaskBitsPerPixel;
+        color.fmaskAddress += static_cast<std::uint64_t>(slice) * color.gcnFmaskBytes;
     }
     Require(color.eqaaFragments == 0 || color.fmaskAddress != 0, "GCN color targets with fewer fragments than samples (EQAA) are supported only with FMASK (CB_COLOR_INFO COMPRESSION and a CB_COLOR_FMASK base)");
     GuestMemory::CheckRange(reinterpret_cast<const void*>(color.address), color.bytes, layout.Alignment(), true);
