@@ -44,6 +44,7 @@ namespace {
 
 constexpr int GUEST_ENOENT = 2;
 constexpr int GUEST_EFAULT = 14;
+constexpr int GUEST_ENOTSUP = 45;
 constexpr int GUEST_EINVAL = 22;
 
 struct AprFile {
@@ -145,6 +146,11 @@ AprFile _file(std::uint32_t id) {
     std::lock_guard lock(g_filesLock);
     if (id >= g_files.size()) throw std::runtime_error("APR: unknown file id " + std::to_string(id));
     return g_files[id];
+}
+
+bool _known(std::uint32_t id) {
+    std::lock_guard lock(g_filesLock);
+    return id < g_files.size();
 }
 
 constexpr std::uint32_t INVALID_FILE_ID = 0xFFFFFFFFu;
@@ -916,6 +922,7 @@ int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIds(const char* prefix, co
 }
 
 int APS5_VABI sceKernelAprGetFileSize(uint32_t id, uint64_t* size) {
+    if (!_known(id)) return _fail(GUEST_ENOTSUP);
     if (!size) return _fail(GUEST_EINVAL);
     const std::uint64_t bytes = _file(id).size;
     if (!GuestCopyOut_nid_no_patch(size, &bytes, sizeof(bytes))) return _fail(GUEST_EFAULT);
@@ -923,6 +930,7 @@ int APS5_VABI sceKernelAprGetFileSize(uint32_t id, uint64_t* size) {
 }
 
 int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
+    if (!_known(id)) return _fail(GUEST_ENOTSUP);
     if (!stat) return _fail(GUEST_EINVAL);
     FileStat result{};
     File::FillFileStat(_file(id).path, &result);
