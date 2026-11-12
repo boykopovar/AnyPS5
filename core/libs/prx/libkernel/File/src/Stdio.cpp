@@ -862,6 +862,7 @@ static constexpr std::pair<std::uint64_t, const char*> GUEST_FILE_FLAGS[] = {
     {0x00010000, "SF_ARCHIVED"}, {0x00020000, "SF_IMMUTABLE"}, {0x00040000, "SF_APPEND"}, {0x00100000, "SF_NOUNLINK"},
     {0x00200000, "SF_SNAPSHOT"}};
 static constexpr std::uint64_t GUEST_SF_SETTABLE = 0xffff0000;
+static constexpr std::uint64_t GUEST_UNSUPPORTED_USER_FLAGS[] = {0x00000001, 0x00000008};
 
 static std::string FileFlagNames(std::uint64_t flags) {
     std::string names;
@@ -878,6 +879,8 @@ static int SetFileFlags(const char* function, const std::string& target, std::ui
     for (const auto& entry : GUEST_FILE_FLAGS) known |= entry.first;
     if ((flags & ~known) != 0) return GUEST_EOPNOTSUPP;
     if ((flags & GUEST_SF_SETTABLE) != 0) return GUEST_EPERM;
+    for (const std::uint64_t unsupported : GUEST_UNSUPPORTED_USER_FLAGS)
+        if (flags == unsupported) return GUEST_EOPNOTSUPP;
     if (flags != 0)
         throw std::runtime_error(std::string(function) + ": setting " + FileFlagNames(flags) + " on " + target + " is not supported, the host keeps no BSD file flags");
     return 0;
