@@ -8,6 +8,8 @@ namespace File {
 
 bool IsRandomDevicePath(std::string_view path);
 int OpenRandomDevice();
+int OpenNullDevice(int flags);
+bool IsNullDevice(int fd);
 bool IsRandomDevice(int fd);
 bool ReadRandomDevice(int fd, void* buf, std::size_t nbytes);
 void RememberRandomDevice(int fd);
