@@ -443,8 +443,12 @@ void CheckBackups() {
     restore.dir_name = &kept;
     Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorBusy, "checkBackupData of a mounted save is BUSY");
     Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorBusy, "restoreBackupData of a mounted save is BUSY");
-    Check(sceSaveDataUmountWithBackup(&mounted.mount_point) == 0, "umountWithBackup succeeds");
+    SaveDataMountPoint unterminatedPoint{};
+    std::memset(unterminatedPoint.data, 'a', sizeof(unterminatedPoint.data));
+    Check(sceSaveDataUmountWithBackup(&unterminatedPoint) == SaveDataErrorParameter, "umountWithBackup unterminated point is PARAMETER");
     SaveDataMountInfo info{};
+    Check(sceSaveDataGetMountInfo(&mounted.mount_point, &info) == 0, "umountWithBackup of an unterminated point keeps the save mounted");
+    Check(sceSaveDataUmountWithBackup(&mounted.mount_point) == 0, "umountWithBackup succeeds");
     Check(sceSaveDataGetMountInfo(&mounted.mount_point, &info) == SaveDataErrorNotMounted, "umountWithBackup unmounts the save");
 
     SaveDataEvent event{};
@@ -935,6 +939,7 @@ int main() {
     std::filesystem::current_path(root);
     Check(sceSaveDataAbort() == SaveDataErrorNotInitialized, "abort pre-init is NOT_INITIALIZED");
     Check(sceSaveDataClearProgress() == SaveDataErrorNotInitialized, "clearProgress pre-init is NOT_INITIALIZED");
+    Check(sceSaveDataTerminate() == SaveDataErrorNotInitialized, "terminate pre-init is NOT_INITIALIZED");
     Check(MountedCountThrows(0, nullptr), "mounted count throws before initialization");
     CheckUnmountedCalls();
     Check(sceSaveDataSyncSaveDataMemory(nullptr) == static_cast<int>(0x809F0000), "null param rejected in memory sync");

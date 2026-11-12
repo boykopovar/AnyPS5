@@ -100,6 +100,7 @@ StringImpl* EmptyStringImpl();
 StringImpl* CreateUninitialized(unsigned length, bool is8Bit, void*& characters);
 StringImpl* TryCreateUninitialized(unsigned length, bool is8Bit, void*& characters);
 String SubstringSharingImpl(const String& string, unsigned start, unsigned length);
+String FromUTF8ReplacingInvalidSequences_nid_no_patch(const unsigned char* input, std::size_t length);
 
 struct StringVector {
     String* buffer;
