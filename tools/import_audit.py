@@ -439,8 +439,8 @@ def audit_host_dependencies(direct, libraries, modules, windows=()):
         stack = [(name, [root, name]) for name in reversed(direct[root])]
         while stack:
             name, chain = stack.pop()
-            if chain[-2] in windows:
-                matches = folded.get(name.lower(), ())
+            if origin_name(chain[-2]) in windows:
+                matches = folded.get(origin_name(name).lower(), ())
                 if len(matches) > 1:
                     raise AuditError(f"ambiguous Windows host library {name}: {', '.join(sorted(matches))}")
                 name = next(iter(matches), name)
@@ -996,8 +996,14 @@ def locate_search_root(path):
     return resolved.parent
 
 
-def locate_missing(names, roots, depth=4):
-    wanted = {name.lower(): name for name in names}
+def locate_missing(names, roots, depth=4, *, fold=False):
+    wanted_files = defaultdict(list)
+    wanted_stems = defaultdict(list)
+    for name in names:
+        filename = origin_name(name)
+        wanted_files[filename.lower() if fold else filename].append(name)
+        if (stem := module_stem(filename, fold)) is not None:
+            wanted_stems[stem].append(name)
     found = {}
     for root in roots:
         root = Path(root)
@@ -1008,9 +1014,11 @@ def locate_missing(names, roots, depth=4):
             if len(Path(directory).parts) - base >= depth:
                 directories[:] = []
             for file in files:
-                name = wanted.get(file.lower())
-                if name is not None and name not in found:
-                    found[name] = Path(directory)
+                for filename in {file, file.removesuffix(".guest.prx")}:
+                    exact = wanted_files.get(filename.lower() if fold else filename, ())
+                    by_stem = wanted_stems.get(module_stem(filename, fold), ())
+                    for name in (*exact, *by_stem):
+                        found.setdefault(name, Path(directory))
     return found
 
 
@@ -1111,7 +1119,7 @@ def main(argv=None):
                            "name": entry["stop"]["name"] if entry["stop"] else None} for entry in stops]
             result = {"source_commit": commit, "source_dirty": dirty, "registries": [str(path) for path in args.registries], "dependency_registries": [str(path) for path in dependency_registries], "needed_libraries": needed, **summary, "stops": json_stops, "imports": records}
             write_json(args.json, result)
-        located = locate_missing(missing, {locate_search_root(path) for path in args.registries}) if missing else None
+        located = locate_missing(missing, {locate_search_root(path) for path in args.registries}, fold=modules.fold) if missing else None
     except AuditError as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 2

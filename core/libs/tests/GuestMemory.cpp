@@ -258,6 +258,16 @@ static void CheckAudioCoprocessorProtection() {
     Require(sceKernelMapFlexibleMemory(&undefined, length, 0x400, 0) == SCE_KERNEL_ERROR_EINVAL && undefined == nullptr);
 }
 
+static void CheckMprotectLengthZero() {
+    constexpr std::size_t length = 0x4000;
+    void* mapping = nullptr;
+    Require(sceKernelMapFlexibleMemory(&mapping, length, 3, 0) == 0);
+    Require(sceKernelMprotect(mapping, 0, 1) == 0);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(mapping, 0, &info, sizeof(info)) == 0 && info.protection == 3);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), length) == 0);
+}
+
 static void CheckMprotectIgnoresUndefinedBits() {
     constexpr std::size_t length = 0x4000;
     const auto check = [&](void* mapping, int protection) {
@@ -4368,6 +4378,7 @@ int main(int argc, char** argv) {
     CheckCheckedReleaseDirectMemory();
     CheckReleaseSkipsFreePages();
     CheckAudioCoprocessorProtection();
+    CheckMprotectLengthZero();
     CheckMprotectIgnoresUndefinedBits();
     CheckStrictMemoryProtectionBits();
     CheckDirectMapRefusesExecute();
