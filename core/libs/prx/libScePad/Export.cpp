@@ -313,7 +313,7 @@ int APS5_VABI scePadGetContainerIdInformation(int handle, PadContainerIdInformat
  localInfo.size = 0;
  localInfo.id[0] = '\0';
  const int savedErrno = errno;
- const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+ const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, offsetof(PadContainerIdInformation, id) + 1);
  errno = savedErrno;
  if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;

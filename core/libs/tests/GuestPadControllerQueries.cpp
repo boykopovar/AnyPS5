@@ -48,6 +48,9 @@ int main() {
     std::memset(&container, 0x5a, sizeof(container));
     Require(scePadGetContainerIdInformation(handle, &container) == PAD_OK);
     Require(container.size == 0 && container.id[0] == '\0');
+    for (size_t i = 1; i < sizeof(container.id); ++i) {
+        Require(static_cast<unsigned char>(container.id[i]) == 0x5a);
+    }
     errno = 71;
     Require(scePadGetContainerIdInformation(handle, reinterpret_cast<PadContainerIdInformation*>(0x10)) == PAD_ERROR_INVALID_ARG);
     Require(errno == 71);
