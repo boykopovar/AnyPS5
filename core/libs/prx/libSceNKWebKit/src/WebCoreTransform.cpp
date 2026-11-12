@@ -1,8 +1,13 @@
 /*
  * Copyright (C) 2005, 2006, 2013 Apple Inc.  All rights reserved.
  * Copyright (C) 2009 Torch Mobile, Inc.
+ * Copyright (C) 2009 Apple Inc. All rights reserved.
+ * Copyright (C) 2016 Apple Inc.  All rights reserved.
  *
  * Derived from Source/WebCore/platform/graphics/transforms/TransformationMatrix.cpp@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/TransformOperation.cpp@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/Matrix3DTransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/Matrix3DTransformOperation.cpp@c55364d53f971f63a709976f168d932d558b8909
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,6 +29,40 @@
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+/*
+ * Copyright (C) 1999 Antti Koivisto (koivisto@kde.org)
+ * Copyright (C) 2000 Lars Knoll (knoll@kde.org)
+ * Copyright (C) 2003, 2005-2008, 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2004, 2005, 2006, 2007, 2008 Apple Inc. All rights reserved.
+ * Copyright (C) 2006 Graham Dennis (graham.dennis@gmail.com)
+ *
+ * Derived from Source/WebCore/platform/graphics/transforms/TransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/IdentityTransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/RotateTransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/RotateTransformOperation.cpp@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/ScaleTransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/ScaleTransformOperation.cpp@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/SkewTransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/SkewTransformOperation.cpp@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/MatrixTransformOperation.h@c55364d53f971f63a709976f168d932d558b8909
+ * Derived from Source/WebCore/platform/graphics/transforms/MatrixTransformOperation.cpp@c55364d53f971f63a709976f168d932d558b8909
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ *
  */
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/TransformOperationExports.hpp"
