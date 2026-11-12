@@ -1,4 +1,5 @@
 #include "prx/libSceOpusDec/include/Api.hpp"
+#include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -88,6 +89,9 @@ void CheckReference(int rate, int channels) {
 int main() {
     constexpr std::uint32_t errorBase = 0x81740000u;
     Require(sceOpusDecInitialize(nullptr) == static_cast<int>(errorBase + 13));
+    errno = 71;
+    Require(sceOpusDecInitialize(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(errorBase + 13));
+    Require(errno == 71);
     Require(sceOpusDecDestroy(nullptr) == static_cast<int>(errorBase));
     for (int rate : {8000, 12000, 16000, 24000, 48000})
         for (int channels : {1, 2}) CheckReference(rate, channels);
