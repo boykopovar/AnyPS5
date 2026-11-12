@@ -8,6 +8,8 @@
 
 namespace WebCore {
 
+enum class XFrameOptionsDisposition : std::uint8_t { None, Deny, SameOrigin, AllowAll, Invalid, Conflict };
+
 enum class HTMLIntegerParsingError : int { NegativeOverflow, PositiveOverflow, Other };
 
 struct ExpectedInt {
@@ -20,9 +22,12 @@ struct ExpectedInt {
 
 enum class CrossOriginResourcePolicy : std::uint8_t { None, CrossOrigin, SameOrigin, SameSite, Invalid };
 
+enum class Mode : std::int32_t { Rfc2045, MimeSniff };
+
 static_assert(sizeof(ExpectedInt) == 8);
 static_assert(offsetof(ExpectedInt, hasValue) == 4);
 static_assert(std::is_trivially_copyable_v<ExpectedInt>);
+static_assert(sizeof(Mode) == 4);
 
 }  // namespace WebCore
 
@@ -48,8 +53,10 @@ static_assert(offsetof(ByteVector, size) == 12);
 
 extern "C" {
 
+WebCore::XFrameOptionsDisposition APS5_VABI _ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(const NKWebKit::WtfAbi::String& header);
 WebCore::ExpectedInt APS5_VABI _ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(NKWebKit::WtfAbi::StringView input);
 WebCore::CrossOriginResourcePolicy APS5_VABI _ZN7WebCore36parseCrossOriginResourcePolicyHeaderEN3WTF10StringViewE(NKWebKit::WtfAbi::StringView header);
+bool APS5_VABI _ZN7WebCore18isValidContentTypeERKN3WTF6StringENS_4ModeE(const NKWebKit::WtfAbi::String& input, WebCore::Mode mode);
 NKWebKit::WtfAbi::ByteVector APS5_VABI _ZN3WTF24normalizeLineEndingsToLFEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(NKWebKit::WtfAbi::ByteVector&& vector);
 NKWebKit::WtfAbi::ByteVector APS5_VABI _ZN3WTF26normalizeLineEndingsToCRLFEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(NKWebKit::WtfAbi::ByteVector&& source);
 NKWebKit::WtfAbi::ByteVector APS5_VABI _ZN3WTF28normalizeLineEndingsToNativeEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(NKWebKit::WtfAbi::ByteVector&& from);

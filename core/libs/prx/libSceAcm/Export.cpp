@@ -309,6 +309,8 @@ int APS5_VABI sceAcm_ConvReverb_SharedInput(AcmBatchInfo* batch, std::uint32_t m
     }
     const auto blockCount = input->blockCount;
     if (!input->history || blockCount == 0) return SCE_ACM_ERROR_BAD_POINTER;
+    if (input->availableBlocks != 0 && input->currentBlock != 0 && input->currentBlock > blockCount) return SCE_ACM_ERROR_BAD_POINTER;
+    if (std::uint64_t{blockCount} * blockSize * (input->sampleFormat == 0 ? 8 : 4) > 0xFFFFFFFFu) return SCE_ACM_ERROR_BAD_POINTER;
     input->currentBlock = (input->availableBlocks == 0 || input->currentBlock == 0 ? blockCount : input->currentBlock) - 1;
     input->availableBlocks = std::min(input->availableBlocks + 1, blockCount);
     const auto channelCount = input->channelCount;
@@ -437,15 +439,22 @@ int APS5_VABI sceAcmBatchJobPriority(AcmBatchInfo* batch, std::uint32_t priority
 
 int APS5_VABI sceAcm_ConvReverb_SharedIr() {
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAcm_IFFT(AcmBatchInfo* batch, std::int32_t transformSize, std::uint32_t transformCount, std::int32_t inputFormat, const void* const* inputs, std::int32_t outputFormat, void* const* outputs, std::int32_t flags) {
     return EncodeTransforms(batch, true, transformSize, transformCount, inputFormat, inputs, outputFormat, outputs, flags);
 }
 
-int APS5_VABI sceAcmBatchJobNotification() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAcmBatchJobNotification(AcmBatchInfo* batch, std::uint32_t value, void* notification) {
+    if (value == 0 || !batch || !notification) return SCE_ACM_ERROR_BAD_POINTER;
+    if (reinterpret_cast<std::uintptr_t>(notification) & 0x7f) return SCE_ACM_ERROR_ALIGNMENT;
+    const std::uint64_t offset = batch->offset;
+    const std::uint64_t end = offset + 0x10;
+    if (end > batch->buffer_size) return SCE_ACM_ERROR_BATCH_FULL;
+    std::memset(notification, 0, 0x80);
+    const std::uint64_t words[2] = {0xeu | (static_cast<std::uint64_t>(static_cast<std::uint8_t>(value)) << 24), reinterpret_cast<std::uintptr_t>(notification)};
+    std::memcpy(static_cast<std::byte*>(batch->buffer) + offset, words, sizeof(words));
+    batch->offset = end;
     return 0;
 }
 
@@ -453,8 +462,26 @@ int APS5_VABI sceAcmBatchJobNotification() {
 
 extern "C" {
 
-int APS5_VABI libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void* APS5_VABI libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch(void* ring) {
+    if (!ring) return nullptr;
+    auto* const fields = static_cast<std::byte*>(ring);
+    std::uint64_t base = 0;
+    std::uint32_t capacity = 0;
+    std::uint32_t count = 0;
+    std::uint32_t index = 0;
+    std::memcpy(&base, fields, sizeof(base));
+    std::memcpy(&capacity, fields + 0x8, sizeof(capacity));
+    std::memcpy(&count, fields + 0xc, sizeof(count));
+    const std::uint32_t nextCount = std::min(count + 1u, capacity);
+    std::memcpy(fields + 0xc, &nextCount, sizeof(nextCount));
+    std::uint32_t next = capacity;
+    if (count != 0) {
+        std::memcpy(&index, fields + 0x10, sizeof(index));
+        next = index + 1u;
+    }
+    if (next == capacity) next = 0;
+    std::memcpy(fields + 0x10, &next, sizeof(next));
+    return reinterpret_cast<void*>(base + (static_cast<std::uint64_t>(next << 8) << 2));
 }
 APS5_EXPORT("9+f3tPdeyP0", libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch);
 

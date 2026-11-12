@@ -1,0 +1,18 @@
+target_sources(jxr_lookup_native PRIVATE src/NativePostProc.c)
+target_sources(libSceJxr PRIVATE src/PostProc.cpp)
+
+if(BUILD_TESTING)
+    add_library(jxr_postproc_reference STATIC ${LIBS_INCLUDE_DIR}/tests/GuestJxrPostProcReference.c)
+    configure_jxr_native(jxr_postproc_reference)
+    target_link_libraries(jxr_postproc_reference PRIVATE jxr)
+    add_test_executable(guest_jxr_postproc_tests ${LIBS_INCLUDE_DIR}/tests/GuestJxrPostProc.cpp)
+    target_include_directories(guest_jxr_postproc_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_jxr_postproc_tests PRIVATE libSceJxr libc libkernel jxr_postproc_reference)
+    configure_windows_unwind(guest_jxr_postproc_tests)
+    add_test(NAME guest_jxr_postproc COMMAND guest_jxr_postproc_tests)
+    set_tests_properties(guest_jxr_postproc PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_jxr_postproc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJxr>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()

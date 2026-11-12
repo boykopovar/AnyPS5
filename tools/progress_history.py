@@ -1,4 +1,5 @@
 import argparse
+import csv
 import hashlib
 import io
 import json
@@ -40,15 +41,15 @@ SVG_STYLE = (
 
 
 def git(*args):
-    return subprocess.run(["git", "-C", str(progress.ROOT), *args], check=True, capture_output=True).stdout
+    try:
+        return subprocess.run(["git", "-C", str(progress.ROOT), *args], check=True, capture_output=True).stdout
+    except subprocess.CalledProcessError as error:
+        reason = error.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(f"git {' '.join(args)} failed: {reason}") from error
 
 
 def daily_commits(ref):
-    try:
-        log = git("log", "--first-parent", "--format=%H %ct", ref)
-    except subprocess.CalledProcessError as error:
-        reason = error.stderr.decode("utf-8", errors="replace").strip()
-        raise ValueError(f"cannot read the history of {ref}: {reason}") from error
+    log = git("log", "--first-parent", "--format=%H %ct", ref)
     seen = {}
     for line in log.decode("utf-8").splitlines():
         sha, timestamp = line.split()
@@ -63,10 +64,7 @@ def measure(sha):
         progress.shader_scan.RECOMPILER.rstrip("/"),
         progress.shader_scan.AGC_DRIVER.rstrip("/"),
     ]
-    try:
-        tree = git("ls-tree", "-r", "--name-only", sha, "--", *candidate_paths).decode("utf-8").splitlines()
-    except subprocess.CalledProcessError:
-        return None
+    tree = git("ls-tree", "-r", "--name-only", sha, "--", *candidate_paths).decode("utf-8").splitlines()
     tree = set(tree)
     required_paths = candidate_paths[:2]
     if any(not any(name == path or name.startswith(path + "/") for name in tree) for path in required_paths):
@@ -77,14 +75,11 @@ def measure(sha):
     ]
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        try:
-            archive = tarfile.open(fileobj=io.BytesIO(git("archive", sha, "--", *paths)))
-            if hasattr(tarfile, "data_filter"):
-                archive.extractall(root, filter="data")
-            else:
-                archive.extractall(root)
-        except subprocess.CalledProcessError:
-            return None
+        archive = tarfile.open(fileobj=io.BytesIO(git("archive", sha, "--", *paths)))
+        if hasattr(tarfile, "data_filter"):
+            archive.extractall(root, filter="data")
+        else:
+            archive.extractall(root)
         saved = progress.PRX, progress.OPCODES
         progress.PRX, progress.OPCODES = root / paths[0], root / paths[1]
         try:
@@ -399,10 +394,15 @@ def main(argv=None):
     parser.add_argument("output", type=Path)
     parser.add_argument("--ref", default="HEAD", help="branch or commit whose first-parent history is measured")
     parser.add_argument("--cache", type=Path, help="reuse per-commit counts while the scanner, ISA list and Python version match")
+    parser.add_argument("--csv", action="store_true", help="also write history.csv with the measured JSON points")
     args = parser.parse_args(argv)
     outputs = [args.output / name for name in ("history.json", "history.svg", "history.html", "badge-week.svg")]
+    if args.csv:
+        outputs.append(args.output / "history.csv")
     try:
         for index, path in enumerate(outputs):
+            if (path.exists() or path.is_symlink()) and not path.is_file():
+                raise ValueError(f"{path}: report destination must be a regular file")
             for other in outputs[index + 1:]:
                 if (path.exists() and other.exists() and path.samefile(other)) or same_location(path, other):
                     raise ValueError(f"generated reports cannot alias each other: {path.name} and {other.name}")
@@ -423,6 +423,14 @@ def main(argv=None):
         (args.output / "history.svg").write_text(chart(points) + "\n", encoding="utf-8")
         (args.output / "history.html").write_text(page(points), encoding="utf-8")
         (args.output / "badge-week.svg").write_text(weekly_badge(points), encoding="utf-8")
+        if args.csv:
+            with (args.output / "history.csv").open("w", encoding="utf-8", newline="") as output:
+                writer = csv.writer(output)
+                writer.writerow(["date", "commit"] + [f"{name}_{key}" for name in ("libraries", "shaders")
+                                                      for key in ("done", "total", "percent")])
+                writer.writerows([point["date"], point["commit"]] +
+                                 [point[name][key] for name in ("libraries", "shaders") for key in ("done", "total", "percent")]
+                                 for point in points)
     except OSError as error:
         parser.error(f"{error.filename or args.output}: {error.strerror or error}")
     print(f"{len(points)} days, {points[0]['date']} .. {points[-1]['date']}")
