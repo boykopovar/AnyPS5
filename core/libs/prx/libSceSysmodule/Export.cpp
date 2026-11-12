@@ -178,6 +178,9 @@ extern "C" {
 
 int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info) {
     (void)flags;
+    if (!info) {
+        throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: null info");
+    }
     if (!fillModuleInfoForUnwind(addr, info)) {
         throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: address not found");
     }

@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNpUtility/include/InventoryExports.hpp"
 #include "prx/libSceNpUtility/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <condition_variable>
@@ -13,6 +14,7 @@
 
 static constexpr int SCE_NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550003);
 static constexpr int SCE_NP_ERROR_SIGNED_OUT = static_cast<int>(0x80550006);
+static constexpr int SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED = static_cast<int>(0x80550702);
 static constexpr int SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550704);
 static constexpr int SCE_NP_COMMUNITY_ERROR_TOO_MANY_OBJECTS = static_cast<int>(0x80550706);
 static constexpr int SCE_NP_COMMUNITY_ERROR_ABORTED = static_cast<int>(0x80550707);
@@ -75,7 +77,23 @@ struct Service {
 };
 
 Service lookup(1, 1);
+Service lookupNet(1, 1);
 Service wordFilter(WORD_FILTER_TITLE_CTX_ID_OFFSET + 1, WORD_FILTER_REQUEST_ID_OFFSET + 1);
+
+std::mutex lookupNetStateMutex;
+bool lookupNetInitialized = false;
+int lookupNetRefCount = 0;
+
+bool LookupNetIsInitialized() {
+    std::lock_guard lock(lookupNetStateMutex);
+    return lookupNetInitialized;
+}
+
+void LookupNetReset() {
+    std::lock_guard lock(lookupNet.mutex);
+    lookupNet.titleContexts.clear();
+    lookupNet.requests.clear();
+}
 
 struct ServiceChecker2 {
     std::mutex mutex;
@@ -213,6 +231,13 @@ int AbortRequest(Service& service, int reqId) {
     return 0;
 }
 
+bool CopyOutInt(int* dst, int value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dst, &value, sizeof(value));
+    errno = savedErrno;
+    return copied;
+}
+
 int PollAsync(Service& service, int reqId, int* result, int synchronousError) {
     if (!result) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(service.mutex);
@@ -220,7 +245,7 @@ int PollAsync(Service& service, int reqId, int* result, int synchronousError) {
     if (request == service.requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     if (!request->second.async) return synchronousError;
     if (!request->second.finished) return POLL_RUNNING;
-    *result = request->second.result;
+    if (!CopyOutInt(result, request->second.result)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return POLL_FINISHED;
 }
 
@@ -235,7 +260,7 @@ int WaitAsync(Service& service, int reqId, int* result, int synchronousError) {
         return request == service.requests.end() || request->second.finished;
     });
     if (request == service.requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    *result = request->second.result;
+    if (!CopyOutInt(result, request->second.result)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -285,7 +310,7 @@ int APS5_VABI sceNpBandwidthTestAbort(int context_id) {
 
 int APS5_VABI sceNpBandwidthTestGetStatus(int context_id, int* status) {
     (void)context_id;
-    if (status) *status = 0;
+    if (status && !CopyOutInt(status, 0)) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_INVALID_ARGUMENT;
 }
 
@@ -437,13 +462,17 @@ int APS5_VABI sceNpLookupCreateTitleCtxA(int userId) {
     (void)userId;
     return AddTitleContext(lookup);
 }
-int APS5_VABI sceNpLookupNetAbortRequest() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpLookupNetAbortRequest(std::int32_t requestId) {
+    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    return AbortRequest(lookupNet, requestId);
 }
-int APS5_VABI sceNpLookupNetCensorComment() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpLookupNetCensorComment(std::int32_t requestId, const void* npId, const char* comment, const void* option) {
+    if (!comment) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (const int error = CheckComment(comment)) return error;
+    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    if (!npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    return StartOffline(lookupNet, requestId);
 }
 int APS5_VABI sceNpLookupNetConvertJidToNpId() {
     NotImplemented_nid_no_patch(__func__);
@@ -453,52 +482,71 @@ int APS5_VABI sceNpLookupNetConvertNpIdToJid() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpLookupNetCreateRequest() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpLookupNetCreateRequest(std::int32_t titleCtxId) {
+    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    return CreateRequest(lookupNet, titleCtxId, false);
+}
+int APS5_VABI sceNpLookupNetCreateTitleCtx(const void* selfNpId, const void* npId) {
+    (void)selfNpId;
+    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    if (!npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    return AddTitleContext(lookupNet);
+}
+int APS5_VABI sceNpLookupNetDeleteRequest(std::int32_t requestId) {
+    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    return DeleteRequest(lookupNet, requestId);
+}
+int APS5_VABI sceNpLookupNetDeleteTitleCtx(std::int32_t titleCtxId) {
+    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    return DeleteTitleContext(lookupNet, titleCtxId);
+}
+int APS5_VABI sceNpLookupNetInit(void) {
+    std::lock_guard lock(lookupNetStateMutex);
+    ++lookupNetRefCount;
+    lookupNetInitialized = true;
     return 0;
 }
-int APS5_VABI sceNpLookupNetCreateTitleCtx() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpLookupNetInitWithFunctionPointer(const void* param, const void* functionPointer) {
+    (void)param;
+    (void)functionPointer;
+    return sceNpLookupNetInit();
+}
+int APS5_VABI sceNpLookupNetInitWithMemoryPool(const void* param, const void* pool) {
+    (void)param;
+    (void)pool;
+    return sceNpLookupNetInit();
+}
+int APS5_VABI sceNpLookupNetIsInit(std::int32_t* out) {
+    const std::int32_t value = LookupNetIsInitialized() ? 1 : 0;
+    if (out && !GuestCopyOut_nid_no_patch(out, &value, sizeof(value))) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
-int APS5_VABI sceNpLookupNetDeleteRequest() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpLookupNetNpId(std::int32_t requestId, const void* onlineId, void* npId, const void* option) {
+    (void)option;
+    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    if (!onlineId || !npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    return StartOffline(lookupNet, requestId);
 }
-int APS5_VABI sceNpLookupNetDeleteTitleCtx() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpLookupNetSanitizeComment(std::int32_t requestId, const void* npId, const char* comment, char* sanitizedComment, const void* option) {
+    if (!comment || !sanitizedComment) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (const int error = CheckComment(comment)) return error;
+    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    if (!npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    return StartOffline(lookupNet, requestId);
 }
-int APS5_VABI sceNpLookupNetInit() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpLookupNetSetTimeout(std::int32_t id, std::int32_t resolveRetry, std::int32_t resolveTimeout, std::int32_t connectTimeout, std::int32_t sendTimeout, std::int32_t receiveTimeout) {
+    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    return SetTimeout(lookupNet, id, resolveRetry, static_cast<std::uint32_t>(resolveTimeout), static_cast<std::uint32_t>(connectTimeout), static_cast<std::uint32_t>(sendTimeout), static_cast<std::uint32_t>(receiveTimeout));
 }
-int APS5_VABI sceNpLookupNetInitWithFunctionPointer() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpLookupNetInitWithMemoryPool() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpLookupNetIsInit() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpLookupNetNpId() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpLookupNetSanitizeComment() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpLookupNetSetTimeout() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpLookupNetTerm() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpLookupNetTerm(void) {
+    {
+        std::lock_guard lock(lookupNetStateMutex);
+        if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+        if (--lookupNetRefCount > 0) return 0;
+        lookupNetInitialized = false;
+    }
+    LookupNetReset();
     return 0;
 }
 int APS5_VABI sceNpServiceChecker2IntAbortRequest(int requestId) {
@@ -515,9 +563,10 @@ int APS5_VABI sceNpServiceChecker2IntCreateRequest(int* requestId) {
     if (serviceChecker2.requests.size() >= MAX_SERVICE_CHECKER2_REQUESTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_OBJECTS;
     std::uint32_t id = serviceChecker2.nextRequest;
     while (serviceChecker2.requests.contains(static_cast<int>(id))) id = id >= MAX_SERVICE_CHECKER2_REQUEST_ID ? 1 : id + 1;
+    const int value = static_cast<int>(id);
+    if (!GuestCopyOut_nid_no_patch(requestId, &value, sizeof(value))) return SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT;
     serviceChecker2.nextRequest = id >= MAX_SERVICE_CHECKER2_REQUEST_ID ? 1 : id + 1;
-    serviceChecker2.requests.insert(static_cast<int>(id));
-    *requestId = static_cast<int>(id);
+    serviceChecker2.requests.insert(value);
     return 0;
 }
 int APS5_VABI sceNpServiceChecker2IntDestroyRequest(int requestId) {

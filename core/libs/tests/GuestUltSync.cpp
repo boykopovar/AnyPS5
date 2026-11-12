@@ -1,7 +1,9 @@
 #include "prx/libSceUlt/include/Api.hpp"
+#include <cerrno>
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -76,6 +78,9 @@ void MutexTryLock() {
 void MutexAndRuntimeOptParams() {
     alignas(8) std::uint8_t misaligned[sizeof(UltMutexOptParam) + 8];
     CHECK(sceUltMutexOptParamInitialize(nullptr, 0) == Null);
+    errno = 71;
+    CHECK(sceUltMutexOptParamInitialize(reinterpret_cast<UltMutexOptParam*>(0x10), 0) == Null);
+    CHECK(errno == 71);
     CHECK(sceUltMutexOptParamInitialize(reinterpret_cast<UltMutexOptParam*>(misaligned + 4), 0) == -2139029502);
     UltMutexOptParam mutexOptions;
     std::memset(&mutexOptions, 0xa5, sizeof(mutexOptions));
@@ -86,8 +91,11 @@ void MutexAndRuntimeOptParams() {
     UltUlthreadRuntimeOptParam runtimeOptions;
     std::memset(&runtimeOptions, 0xa5, sizeof(runtimeOptions));
     CHECK(sceUltUlthreadRuntimeOptParamInitialize(nullptr, 0) == Null);
-    CHECK(sceUltUlthreadRuntimeOptParamInitialize(&runtimeOptions, 0) == Ok);
-    for (const std::uint8_t byte : runtimeOptions.bytes) CHECK(byte == 0);
+    CHECK(sceUltUlthreadRuntimeOptParamInitialize(&runtimeOptions, 0x12400000) == Ok);
+    const std::uint8_t console[40] = {0x75, 0x62, 0x69, 0x6c, 0x61, 0x6d, 0x74, 0x6c, 0x00, 0x63, 0x69, 0x67, 0x00, 0x00, 0x40, 0x12, 0x00, 0x40, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0xff, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbc, 0x02, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00};
+    CHECK(std::memcmp(runtimeOptions.bytes, console, sizeof(console)) == 0);
+    for (std::size_t i = sizeof(console); i < sizeof(runtimeOptions.bytes); i++) CHECK(runtimeOptions.bytes[i] == 0);
 }
 
 void OptParams() {
@@ -309,6 +317,12 @@ void Ulthreads() {
     UlthreadObject first{};
     std::uint8_t context[4096];
     CHECK(sceUltUlthreadCreate(&first, "exits", ExitingEntry, 42, context, sizeof(context), &runtime, nullptr, 0) == Ok);
+    UltUlthreadInfo threadQueryInfo{};
+    CHECK(sceUltGetUlthreadInfo(&first, &threadQueryInfo) == Ok);
+    CHECK(std::strcmp(threadQueryInfo.name, "exits") == 0);
+    errno = 71;
+    CHECK(sceUltGetUlthreadInfo(&first, reinterpret_cast<UltUlthreadInfo*>(0x10)) == Null);
+    CHECK(errno == 71);
     std::int32_t status = 0;
     CHECK(sceUltUlthreadJoin(&first, &status) == Ok);
     CHECK(status == 42 && gSelf.load() == &first && gYield.load() == Ok && !gPastExit.load());
@@ -553,6 +567,9 @@ void GetInfoTests() {
     CHECK(sceUltUlthreadRuntimeCreate(rtObj, "test-rt", 2, 1, nullptr, nullptr, 0) == Ok);
     void* activeThreads[4]{};
     CHECK(sceUltGetUlthreadRuntimeInfo(rtObj, &rtInfo, activeThreads, 4, nullptr, 0) == Ok);
+    errno = 71;
+    CHECK(sceUltGetUlthreadRuntimeInfo(rtObj, reinterpret_cast<UltUlthreadRuntimeInfo*>(0x10), nullptr, 0, nullptr, 0) == Null);
+    CHECK(errno == 71);
     CHECK(rtInfo.size == sizeof(UltUlthreadRuntimeInfo));
     CHECK(rtInfo.object == rtObj);
     CHECK(std::strcmp(rtInfo.name, "test-rt") == 0);

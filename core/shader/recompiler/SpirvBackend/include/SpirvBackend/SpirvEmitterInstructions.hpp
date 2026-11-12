@@ -16,6 +16,16 @@ std::uint32_t EmitPackFloat2x16Rtz(SpirvEmitterState& state, std::uint32_t arg0,
 std::uint32_t EmitFPAdd16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitFPMul16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitFPFma16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2);
+std::uint32_t EmitIAdd16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
+std::uint32_t EmitISub16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
+std::uint32_t EmitIMul16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
+std::uint32_t EmitShiftLeftLogical16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
+std::uint32_t EmitShiftRightLogical16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
+std::uint32_t EmitShiftRightArithmetic16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
+std::uint32_t EmitSMin16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
+std::uint32_t EmitSMax16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
+std::uint32_t EmitUMin16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
+std::uint32_t EmitUMax16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitFPSaturate32(SpirvEmitterState& state, std::uint32_t arg0);
 std::uint32_t EmitIAdd64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitISub64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
@@ -187,6 +197,7 @@ std::uint32_t EmitFPAdd64(SpirvEmitterState& state, std::uint32_t arg0, std::uin
 std::uint32_t EmitFPMul64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitFPFma64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2);
 std::uint32_t EmitFPFmaScale64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3);
+std::uint32_t EmitFPFmaScale32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3);
 std::uint32_t EmitFPMin64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitFPMax64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitFPSaturate64(SpirvEmitterState& state, std::uint32_t arg0);

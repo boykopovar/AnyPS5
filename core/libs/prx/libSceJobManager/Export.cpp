@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -739,9 +740,9 @@ int CreateIn(Manager* manager, TSequences& sequences, std::uint32_t& free, std::
     const std::lock_guard guard(manager->lock);
     if (free == 0) return SequenceNoneFree;
     const int index = std::countr_zero(free);
-    free &= ~(std::uint32_t{1} << index);
     Sequence& sequence = sequences[static_cast<std::size_t>(index)].value;
     if (!sequence.Open(manager, limits, priority, name)) return SequenceNoNodes;
+    free &= ~(std::uint32_t{1} << index);
     *out = &sequence;
     return 0;
 }
@@ -1016,8 +1017,16 @@ int Initialize(void* self, void* memory, std::uint64_t size, std::uint32_t worke
         const BlockHeader header{0x4d4a, static_cast<std::uint16_t>(StateOffset), 0x05000001, static_cast<std::uint32_t>(size), 0};
         std::memcpy(memory, &header, sizeof(header));
     }
-    if (config != nullptr && config->version > 1) return ManagerInvalidArgument;
-    const ConfigParams& settings = config != nullptr ? *config : DefaultConfig;
+    ConfigParams localConfig{};
+    if (config != nullptr) {
+        const int savedErrno = errno;
+        if (!GuestCopyIn_nid_no_patch(&localConfig, config, sizeof(localConfig))) {
+            errno = savedErrno;
+            return ManagerInvalidArgument;
+        }
+        if (localConfig.version > 1) return ManagerInvalidArgument;
+    }
+    const ConfigParams& settings = config != nullptr ? localConfig : DefaultConfig;
     const auto computeQueues = computeSequences != 0 ? static_cast<std::uint32_t>(std::popcount(computeQueueMask)) : 0;
     const auto layout = LayoutFor(base, size, workers, sequences, computeQueues);
     if (layout.nodes == 0) return ManagerMemoryTooSmall;
@@ -1114,31 +1123,38 @@ void APS5_VABI _ZN3sce3Job10JobManagerD2Ev(void* self) {
 }
 
 std::uint64_t APS5_VABI _ZN3sce3Job10JobManager27calculateRequiredMemorySizeEPKNS1_21MemorySizeQueryParamsE(const MemorySizeQueryParams* params) {
-    if (params == nullptr || params->version > 1 || params->workers == 0 || params->workers > MaxWorkers || params->sequences > MaxSequences) return 0;
-    const bool unified = params->version == 1;
-    const std::uint32_t computeSequences = unified ? params->computeSequences : 0;
-    if (unified) {
-        if (computeSequences > MaxSequences || params->sequences + computeSequences == 0 || params->sequences + computeSequences > MaxSequences) return 0;
-        if ((params->computeQueueMask >> 56) != 0 || static_cast<std::uint32_t>(std::popcount(params->computeQueueMask)) < computeSequences) return 0;
-    } else if (params->sequences == 0) {
+    if (params == nullptr) return 0;
+    MemorySizeQueryParams localParams{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localParams, params, sizeof(localParams))) {
+        errno = savedErrno;
         return 0;
     }
-    const std::uint64_t total = params->sequences + computeSequences;
-    if (params->invocations > total * MaxInvocations || params->dispatches > total * MaxDispatches || params->syncPoints > total * MaxSyncPoints || params->waits > total * MaxWaits) return 0;
-    std::uint64_t bytes = (NodeBytes * params->workers + 0x317) & 0xfc0;
+    if (localParams.version > 1 || localParams.workers == 0 || localParams.workers > MaxWorkers || localParams.sequences > MaxSequences) return 0;
+    const bool unified = localParams.version == 1;
+    const std::uint32_t computeSequences = unified ? localParams.computeSequences : 0;
+    if (unified) {
+        if (computeSequences > MaxSequences || localParams.sequences + computeSequences == 0 || localParams.sequences + computeSequences > MaxSequences) return 0;
+        if ((localParams.computeQueueMask >> 56) != 0 || static_cast<std::uint32_t>(std::popcount(localParams.computeQueueMask)) < computeSequences) return 0;
+    } else if (localParams.sequences == 0) {
+        return 0;
+    }
+    const std::uint64_t total = localParams.sequences + computeSequences;
+    if (localParams.invocations > total * MaxInvocations || localParams.dispatches > total * MaxDispatches || localParams.syncPoints > total * MaxSyncPoints || localParams.waits > total * MaxWaits) return 0;
+    std::uint64_t bytes = (NodeBytes * localParams.workers + 0x317) & 0xfc0;
     bytes = (bytes + 0x13f) & ~std::uint64_t{0x3f};
     bytes = (bytes + 0x0bf) & ~std::uint64_t{0x3f};
     bytes = (bytes + 0x13f) & ~std::uint64_t{0x3f};
     if (computeSequences != 0) {
-        const auto queues = static_cast<std::uint64_t>(std::popcount(params->computeQueueMask));
-        bytes = (bytes + (params->sequences + queues) * SequenceBytes + 0x267) & ~std::uint64_t{0xff};
+        const auto queues = static_cast<std::uint64_t>(std::popcount(localParams.computeQueueMask));
+        bytes = (bytes + (localParams.sequences + queues) * SequenceBytes + 0x267) & ~std::uint64_t{0xff};
         bytes = (bytes + MeasureComputeCommands().budget * queues + 3) & ~std::uint64_t{3};
         bytes = (bytes + 4 * queues + 7) & ~std::uint64_t{7};
         bytes += 8 * queues;
     } else {
-        bytes += params->sequences * SequenceBytes;
+        bytes += localParams.sequences * SequenceBytes;
     }
-    const std::uint32_t nodes = params->dispatches + params->syncPoints + params->waits + static_cast<std::uint32_t>(total) + 1;
+    const std::uint32_t nodes = localParams.dispatches + localParams.syncPoints + localParams.waits + static_cast<std::uint32_t>(total) + 1;
     return AlignUp(bytes, 64) + std::uint64_t{nodes} * NodeBytes + 0x800;
 }
 
