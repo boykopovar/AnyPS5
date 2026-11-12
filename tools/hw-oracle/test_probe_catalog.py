@@ -78,6 +78,56 @@ class CatalogLoadingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "instruction must be an assembly mnemonic"):
                 probe_catalog.read_catalog(path)
 
+    def test_probe_rows_reject_duplicate_names_and_non_four_word_inputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "catalog"
+            malformed = copy.deepcopy(self.catalog)
+            malformed["probes"][0]["rows"][1]["name"] = malformed["probes"][0]["rows"][0]["name"]
+            path.write_text(json.dumps(malformed), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate row name"):
+                probe_catalog.read_catalog(path)
+            malformed = copy.deepcopy(self.catalog)
+            malformed["probes"][0]["rows"][0]["input"] = [0, 1, 2]
+            path.write_text(json.dumps(malformed), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "four dwords"):
+                probe_catalog.read_catalog(path)
+
+    def test_probe_rows_reject_boolean_negative_and_overflow_words(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "catalog"
+            for value, message in ((True, "unsigned 32-bit integer or numeric string"),
+                                   (-1, "unsigned 32-bit integer"),
+                                   (0x100000000, "unsigned 32-bit integer"),
+                                   (1.5, "unsigned 32-bit integer or numeric string")):
+                with self.subTest(value=value):
+                    malformed = copy.deepcopy(self.catalog)
+                    malformed["probes"][0]["rows"][0]["input"][0] = value
+                    path.write_text(json.dumps(malformed), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, message):
+                        probe_catalog.read_catalog(path)
+
+    def test_probe_modes_and_dimensions_are_checked_before_execution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "catalog"
+            cases = (
+                ("wave_size", 16, "wave_size must be 32 or 64"),
+                ("output_registers", 0, "output_registers must be from 1 to 16"),
+                ("lds_bytes", 65537, "lds_bytes must be from 0"),
+                ("memory", "shared", "memory must be fine or coarse"),
+            )
+            for field, value, message in cases:
+                with self.subTest(field=field):
+                    malformed = copy.deepcopy(self.catalog)
+                    malformed["probes"][0][field] = value
+                    path.write_text(json.dumps(malformed), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, message):
+                        probe_catalog.read_catalog(path)
+            malformed = copy.deepcopy(self.catalog)
+            malformed["probes"][0]["floating_point_modes"]["ieee"] = True
+            path.write_text(json.dumps(malformed), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "mode ieee must be"):
+                probe_catalog.read_catalog(path)
+
 
 if __name__ == "__main__":
     unittest.main()
