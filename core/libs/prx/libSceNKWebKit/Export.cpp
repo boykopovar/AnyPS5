@@ -6060,10 +6060,6 @@ int APS5_VABI _ZN7WebCore15GraphicsContext28setImageInterpolationQualityENS_20In
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore20LegacySchemeRegistry27shouldTreatURLSchemeAsLocalERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore15GraphicsContextC1ERKN3WTF8FunctionIFSt10unique_ptrINS_19GraphicsContextImplESt14default_deleteIS4_EERS0_EEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7408,10 +7404,6 @@ int APS5_VABI _ZN7WebCore13GraphicsLayer17distributeOpacityEf() {
 }
 
 int APS5_VABI _ZN7WebCore13JSHTMLElement6createEPN3JSC9StructureEPNS_17JSDOMGlobalObjectEON3WTF3RefINS_11HTMLElementENS6_13DumbPtrTraitsIS8_EEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore20LegacySchemeRegistry34shouldLoadURLSchemeAsEmptyDocumentERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
